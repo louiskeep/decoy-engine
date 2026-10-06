@@ -84,7 +84,7 @@ PREDICATES: dict[str, str] = {
 def operator_column(kind: str) -> dict[str, Any]:
     return {
         "redact": redact("s"),
-        "truncate": truncate("s", 3),
+        "truncate": truncate("s", 2),
         "hash": hash_col("s"),
         "categorical": categorical("s"),
     }[kind]
@@ -103,8 +103,9 @@ def when_config(
 @contextmanager
 def companion_missing(monkeypatch: Any) -> Iterator[None]:
     """Force the oracle leg with the stock adapter: a hash column then has no kernel."""
-    monkeypatch.setitem(sys.modules, "decoy_engine_native", None)
-    yield
+    with monkeypatch.context() as scoped:
+        scoped.setitem(sys.modules, "decoy_engine_native", None)
+        yield
 
 
 def run_native(
@@ -139,7 +140,10 @@ def run_oracle_leg(
             hash_col("h"),
         ]
     )
-    chunks = [t.append_column("h", pa.array([f"h{i}" for i in range(t.num_rows)])) for t in chunks]
+    chunks = [
+        t.append_column("h", pa.array([f"h{i}" for i in range(t.num_rows)], pa.string()))
+        for t in chunks
+    ]
     with companion_missing(monkeypatch):
         out, ev = run_native(config, chunks)
     assert ev.native_admitted is False, ev

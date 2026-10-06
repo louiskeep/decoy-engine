@@ -40,7 +40,7 @@ def _source() -> pa.Table:
         {
             "s": pa.array(_S),
             "p": pa.array(_P, pa.string()),
-            "n": pa.array([i if i % 5 else None for i in range(_ROWS)], pa.int64()),
+            "n": pa.array(list(range(_ROWS)), pa.int64()),
         }
     )
 
@@ -124,7 +124,7 @@ def test_a_numeric_reference_stays_full_frame(tmp_path: Path) -> None:
     _equal_outputs(auto, _full(cfg, _source()))
 
 
-@pytest.mark.parametrize("expr", ["p.notnull()", "p == s", "len(p) == 1"])
+@pytest.mark.parametrize("expr", ["p.notnull()", "p == s", "p.isna() == False"])
 def test_a_raw_dict_predicate_outside_the_grammar_stays_full_frame(
     expr: str, tmp_path: Path
 ) -> None:

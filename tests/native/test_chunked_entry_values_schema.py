@@ -20,6 +20,7 @@ from decoy_engine import run_mask_chunked, run_mask_pipeline_chunked
 from decoy_engine.execution import ExecutionError, run_pipeline
 from decoy_engine.execution.native._dispatch import NativeRouteEvidence
 from tests.native._chunked_entry_support import (
+    COMPANION_PRESENT,
     ENGINE_VERSION,
     FORCE_ORACLE_VALUE,
     NEEDS_COMPANION,
@@ -142,7 +143,7 @@ def _when_config(column: dict[str, Any]) -> dict[str, Any]:
     ],
     ids=["redact", "truncate", "passthrough", "hash", "passthrough_numeric", "redact_zero_numeric"],
 )
-def test_when_predicate_routes_to_oracle_and_matches_it(column: dict[str, Any]) -> None:
+def test_when_predicate_matches_the_oracle_and_routes_by_admission(column: dict[str, Any]) -> None:
     config = _when_config(column)
     chunks = split(_WHEN_SOURCE, 3)
     evidence: list[NativeRouteEvidence] = []
@@ -154,8 +155,16 @@ def test_when_predicate_routes_to_oracle_and_matches_it(column: dict[str, Any]) 
     for g, w in zip(got, want, strict=True):
         assert g.column(name).type == w.column(name).type
         assert g.column(name).to_pylist() == w.column(name).to_pylist()
-    assert evidence[0].native_admitted is False
-    assert evidence[0].reroute_reason == f"when_predicate_not_native:{name}"
+    # A redact, truncate or hash column over a string source with a closed-grammar predicate
+    # is admitted natively (slice C8-i); every other column keeps the oracle leg.
+    admitted = name == "s" and column["strategy"] in ("redact", "truncate", "hash")
+    if admitted and (column["strategy"] != "hash" or COMPANION_PRESENT):
+        assert evidence[0].native_admitted is True, evidence[0].reroute_reason
+    elif admitted:
+        assert evidence[0].reroute_reason == "crypto_extension_unavailable"
+    else:
+        assert evidence[0].native_admitted is False
+        assert evidence[0].reroute_reason == f"when_predicate_not_native:{name}"
     # False and null rows keep their original value.
     if name == "s" and column["strategy"] != "passthrough":
         assert column_values(got, "s")[1] == _WHEN_SOURCE.column("s")[1].as_py()

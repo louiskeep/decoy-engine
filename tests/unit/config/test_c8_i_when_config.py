@@ -8,6 +8,7 @@ as the engine's own `ValidationError` (which is not a `ValueError` and would esc
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import pyarrow as pa
@@ -104,7 +105,9 @@ def test_the_manifest_round_trips_the_predicate() -> None:
     assert seeds_again["s"].when == "s != 'a'" and seeds_again["n"].when is None
 
 
-def test_a_validated_config_with_when_runs_end_to_end_on_the_chunked_native_route() -> None:
+def test_a_validated_config_with_when_runs_end_to_end_on_the_chunked_native_route(
+    tmp_path: Path,
+) -> None:
     from decoy_engine.execution import run_pipeline
     from decoy_engine.keyprovider import SecretKeyProvider
 
@@ -115,7 +118,12 @@ def test_a_validated_config_with_when_runs_end_to_end_on_the_chunked_native_rout
             "n": pa.array(range(n), pa.int64()),
         }
     )
+    import pyarrow.parquet as pq
+
     raw = _raw("s in ['name-1', 'name-4', 'name-7'] or s == 'name-10'")
+    path = str(tmp_path / "source.parquet")
+    pq.write_table(source, path)
+    raw["sources"]["t"] = {"type": "file", "format": "parquet", "path": path}
     config = PipelineConfig.model_validate(raw).model_dump()
     kwargs: dict[str, Any] = {
         "engine_version": ENGINE_VERSION,

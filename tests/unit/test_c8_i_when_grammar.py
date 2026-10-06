@@ -187,7 +187,7 @@ def test_every_excluded_form_is_refused_with_the_grammar_code(expr: str) -> None
 
 
 def test_a_very_deeply_nested_predicate_is_refused_not_a_recursion_error() -> None:
-    deep = "not " * 400 + "s == 'a'"
+    deep = "not " * 1000 + "s == 'a'"
     with pytest.raises(ValidationError) as info:
         parse_when(deep)
     assert info.value.code == WHEN_OUTSIDE_GRAMMAR_CODE

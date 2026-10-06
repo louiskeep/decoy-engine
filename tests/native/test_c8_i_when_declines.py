@@ -50,21 +50,31 @@ def _outcome(call: Any) -> Any:
 
 
 def _declined_equals_today(config: dict[str, Any], code: str) -> None:
+    from decoy_engine import run_mask_chunked
+    from tests.native._chunked_entry_support import ENGINE_VERSION, key_provider
+
     chunks = chunk_by_sizes(source_table(), [4, 4, 3])
+    evidence: list[Any] = []
     got: list[pa.Table] = []
-    evidence: Any = None
 
     def run_entry() -> list[pa.Table]:
-        nonlocal evidence
-        out, evidence = run_native(config, chunks)
+        out = list(
+            run_mask_chunked(
+                config,
+                list(chunks),
+                table=TABLE,
+                engine_version=ENGINE_VERSION,
+                key_provider=key_provider(),
+                route_evidence_sink=evidence,
+            )
+        )
         got.extend(out)
         return out
 
     entry = _outcome(run_entry)
-    assert evidence is not None and evidence.native_admitted is False
-    assert evidence.reroute_reason is not None and evidence.reroute_reason.startswith(code), (
-        evidence.reroute_reason
-    )
+    assert evidence and evidence[0].native_admitted is False
+    reason = evidence[0].reroute_reason or ""
+    assert reason.startswith(code), reason
     today = _outcome(lambda: run_public_oracle(config, chunks))
     assert entry[0] == today[0]
     if entry[0] == "ok":

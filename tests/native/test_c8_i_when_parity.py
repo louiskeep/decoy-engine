@@ -154,6 +154,11 @@ def _spy(monkeypatch: pytest.MonkeyPatch, name: str) -> list[int]:
     return calls
 
 
+def _calls(evidence: Any) -> dict[str, int]:
+    """Kernel calls of the operator under test (the passthrough columns count their own)."""
+    return {k: v for k, v in evidence.kernel_calls.items() if k != "passthrough"}
+
+
 def _per_chunk_executed(sink: list[Any], column: str) -> list[str]:
     out = []
     for result in sink:
@@ -174,7 +179,7 @@ def test_a_zero_match_chunk_makes_no_kernel_call_and_counts_nothing(
     assert evidence.native_admitted is True
     # [6:8) holds p = [None, 'y']: no selected row.
     assert calls == [3, 3, 3]
-    assert evidence.kernel_calls == {"redact": 3}
+    assert _calls(evidence) == {"redact": 3}
     assert len(out) == 4
     assert out[2].column("s").to_pylist() == source.column("s").to_pylist()[6:8]
 
@@ -187,7 +192,7 @@ def test_an_all_zero_match_run_counts_no_kernel_call_at_all(
         when_config("redact", "p == 'zzz'"), chunk_by_sizes(source_table(), [4, 4, 3])
     )
     assert calls == []
-    assert evidence.kernel_calls == {} and evidence.compiled_kernel_executed is False
+    assert _calls(evidence) == {} and evidence.compiled_kernel_executed is False
     assert _values(out, "s") == source_table().column("s").to_pylist()
 
 
@@ -197,7 +202,7 @@ def test_a_zero_row_chunk_is_a_zero_match_chunk(monkeypatch: pytest.MonkeyPatch)
         when_config("truncate", "p == 'x'"), chunk_by_sizes(source_table(), [0, 5, 0, 6])
     )
     assert calls == [5, 6]
-    assert evidence.kernel_calls == {"truncate": 2}
+    assert _calls(evidence) == {"truncate": 2}
 
 
 @NEEDS_COMPANION
@@ -215,7 +220,7 @@ def test_the_compiled_backend_is_credited_only_for_chunks_that_ran(
         "rust_companion",
     ]
     assert evidence.compiled_kernel_executed is True
-    assert evidence.kernel_calls == {"hash": 3}
+    assert _calls(evidence) == {"hash": 3}
 
 
 @NEEDS_COMPANION
@@ -226,4 +231,4 @@ def test_a_run_of_only_zero_match_chunks_never_credits_the_compiled_backend() ->
     )
     assert _per_chunk_executed(sink, "s") == ["arrow_python"] * 3
     assert evidence.compiled_kernel_executed is False
-    assert evidence.kernel_calls == {}
+    assert _calls(evidence) == {}

@@ -17,14 +17,13 @@ live sets by tests.
 from __future__ import annotations
 
 import math
-import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, Union
 
 import lark
 
-from decoy_engine.errors import ValidationError
+from decoy_engine.errors import DecoyError, ValidationError
 
 WHEN_OUTSIDE_GRAMMAR_CODE = "when_outside_closed_grammar"
 
@@ -37,7 +36,7 @@ _MAX_EXPR_LENGTH = 4096
 _MAX_NESTING_DEPTH = 50
 _INT64_MIN = -(2**63)
 _INT64_MAX = 2**63 - 1
-_INTEGER = re.compile(r"-?[0-9]+")
+_INTEGER_CHARS = frozenset("-0123456789")
 
 # numexpr.expressions.functions (48 names), pandas' DEFAULT_GLOBALS, the names pandas
 # eval resolves from the frame itself, and the Python keywords. Frozen on purpose.
@@ -94,7 +93,7 @@ class BoolOp:
 WhenExpr = Union[Compare, InList, Not, BoolOp]  # noqa: UP007
 
 
-class _RejectError(Exception):
+class _RejectError(DecoyError):
     """A construct the closed grammar refuses; carries the reason for the config error."""
 
 
@@ -109,7 +108,7 @@ def _name(token: Any) -> str:
 
 def _number(token: Any) -> int | float:
     text = str(token)
-    if _INTEGER.fullmatch(text):
+    if set(text) <= _INTEGER_CHARS:
         value = int(text)
         if not _INT64_MIN <= value <= _INT64_MAX:
             raise _RejectError("integer literal outside the int64 range")

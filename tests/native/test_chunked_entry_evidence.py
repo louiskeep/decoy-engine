@@ -240,8 +240,9 @@ def _veto_case(
         )
     if case == "when_veto":
         config = make_config([redact("r"), truncate("t"), passthrough("p")])
-        config["tables"][0]["columns"][0]["when"] = "p > 2"
-        return config, ["r", "t", "p"], {}, "when_predicate_not_native:r", arrow
+        # Outside the closed `when` grammar, so the native route declines it.
+        config["tables"][0]["columns"][0]["when"] = "p + 0 > 2"
+        return config, ["r", "t", "p"], {}, "when_predicate_outside_native_subset:r", arrow
     if case == "adapter_veto":
         return (
             make_config([redact("r"), truncate("t"), passthrough("p")]),
