@@ -8,8 +8,10 @@ Both are runtime errors; peers, not subclasses of `PlanCompileError`.
 
 from __future__ import annotations
 
+from decoy_engine.errors import DecoyError
 
-class GenerationError(Exception):
+
+class GenerationError(DecoyError):
     """Runtime failure inside the pool sampler or canonicalizer.
 
     Codes used in S5:
@@ -31,7 +33,7 @@ class GenerationError(Exception):
         super().__init__(f"[{code}] {message}" if message else f"[{code}]")
 
 
-class PoolCapacityError(Exception):
+class PoolCapacityError(DecoyError):
     """Pool-construction or cache-budget failure.
 
     Codes used in S5:

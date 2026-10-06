@@ -24,6 +24,7 @@ from typing import Any
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from decoy_engine.errors import DecoyError
 from decoy_engine.execution._row_errors import RowErrorRecord
 
 __all__ = [
@@ -40,7 +41,7 @@ __all__ = [
 _STAGING_DIR_PREFIX = "_decoy_isolated_stage_"
 
 
-class CommitError(Exception):
+class CommitError(DecoyError):
     """The atomic staging -> output_dir rename failed (dennis review MED-1).
 
     Raised by `atomic_commit` so both callers (the isolated path's commit

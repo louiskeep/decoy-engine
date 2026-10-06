@@ -35,6 +35,7 @@ import importlib.util
 from collections.abc import Collection, Sequence
 from typing import Any
 
+from decoy_engine.errors import DecoyError
 from decoy_engine.storm.detectors import Span
 
 DEFAULT_NER_MODEL = "en_core_web_sm"
@@ -58,7 +59,7 @@ NER_ENTITY_MAP: dict[str, str] = {
 }
 
 
-class NerUnavailableError(Exception):
+class NerUnavailableError(DecoyError):
     """spaCy or the requested model is not installed. Machine-readable code."""
 
     def __init__(self, *, code: str, message: str) -> None:

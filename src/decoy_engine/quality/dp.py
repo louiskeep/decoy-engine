@@ -67,6 +67,7 @@ import math
 import uuid
 from typing import TYPE_CHECKING, Any
 
+from decoy_engine.errors import DecoyError
 from decoy_engine.quality.carriers import (
     CarrierTable,
     released_values,
@@ -123,7 +124,7 @@ _DP_FLAG_DTYPE_LABEL = "bool"
 _logger = logging.getLogger(__name__)
 
 
-class DpError(Exception):
+class DpError(DecoyError):
     """Invalid DP fit request, or a budget the accountant could not
     certify. Machine-readable code."""
 

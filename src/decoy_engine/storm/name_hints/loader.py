@@ -35,11 +35,13 @@ from typing import Any
 
 import yaml
 
+from decoy_engine.errors import DecoyError
+
 _V1_DIR = Path(__file__).parent / "v1"
 _MANIFEST_NAME = "manifest.yaml"
 
 
-class NameHintLoaderError(Exception):
+class NameHintLoaderError(DecoyError):
     """Raised when the name-hint library cannot be loaded.
 
     Always carries a concrete file path and a clear reason so the

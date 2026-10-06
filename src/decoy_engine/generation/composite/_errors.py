@@ -16,8 +16,10 @@ Codes used in S8:
 
 from __future__ import annotations
 
+from decoy_engine.errors import DecoyError
 
-class CompositeError(Exception):
+
+class CompositeError(DecoyError):
     """Composite-generator failure. Carries a machine-readable code."""
 
     def __init__(self, *, code: str, message: str = "") -> None:

@@ -48,6 +48,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from decoy_engine.determinism._hkdf import hkdf_sha256
+from decoy_engine.errors import DecoyError
 
 # The version byte mixed into every HMAC input. Bumping it requires a
 # release-notes line per done-definition.md; manifests with an older
@@ -143,7 +144,7 @@ _SEED_LENGTHS = (8, 32)
 _POOL_SIZE_MAX = 1 << 56  # > 2**56 raises pool_size_overflow
 
 
-class DeterminismError(Exception):
+class DeterminismError(DecoyError):
     """Runtime input-validation failure inside the determinism layer.
 
     Not a subclass of PlanCompileError: the determinism layer is a runtime

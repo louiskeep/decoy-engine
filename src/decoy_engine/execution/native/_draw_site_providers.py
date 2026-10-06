@@ -53,6 +53,7 @@ import numpy as np
 
 from decoy_engine.determinism import derive, derive_index, derive_value
 from decoy_engine.determinism._derive import Domain
+from decoy_engine.errors import DecoyError
 from decoy_engine.execution.native._determinism_protocol import (
     DRAW_SITES,
     DrawSite,
@@ -86,7 +87,7 @@ def unit_float_from_bits53(raw_u64: int) -> float:
     return (raw_u64 >> 11) / _TWO_POW_53
 
 
-class DrawSiteProtocolError(RuntimeError):
+class DrawSiteProtocolError(DecoyError, RuntimeError):
     """Coded failure raised by a draw-site provider.
 
     Mirrors the repo's kwargs-only coded-error shape (``DeterminismError``, ``StrategyError``)
@@ -96,10 +97,9 @@ class DrawSiteProtocolError(RuntimeError):
         site_not_partitionable: a partitioned draw was requested from a provider whose site is
             ``partitionable=False`` (a whole-column or per-group stream). Phase 1 cannot route
             these; they stay on the full-frame oracle until Phase 4.
-        site_not_reproducible: a reproduction was requested from a provider
-            whose site is unseeded by contract (non-deterministic mode). Its
-            output differs run to run by design; there is no sequence to
-            reproduce.
+        site_not_reproducible: a reproduction was requested from a provider whose site is
+            unseeded by contract (non-deterministic mode). Its output differs run to run by
+            design; there is no sequence to reproduce.
     """
 
     def __init__(self, *, code: str, draw_site_id: str, message: str = "") -> None:

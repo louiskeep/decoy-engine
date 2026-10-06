@@ -40,6 +40,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from decoy_engine.determinism._hkdf import hkdf_sha256
+from decoy_engine.errors import DecoyError
 from decoy_engine.release import is_pre_ga
 
 if TYPE_CHECKING:
@@ -56,7 +57,7 @@ _KEYPROVIDER_SALT = b"decoy-engine/keyprovider/v1"
 MIN_SECRET_BYTES = 32
 
 
-class MaskSecretError(Exception):
+class MaskSecretError(DecoyError):
     """A keyed-mask secret was required but absent, unresolvable, or too weak.
 
     Kwargs-only constructor mirroring `DeterminismError` so callers can

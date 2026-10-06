@@ -15,8 +15,10 @@ Codes used in S9:
 
 from __future__ import annotations
 
+from decoy_engine.errors import DecoyError
 
-class ExecutionError(Exception):
+
+class ExecutionError(DecoyError):
     """Execution-boundary / runner failure. Carries a machine-readable code."""
 
     def __init__(self, *, code: str, message: str = "") -> None:

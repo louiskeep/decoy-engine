@@ -75,6 +75,7 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 import opendp.prelude as _dp
 
+from decoy_engine.errors import DecoyError
 from decoy_engine.quality.dp_schedule import Schedule
 
 if TYPE_CHECKING:
@@ -166,7 +167,7 @@ class _InfeasibleAtEpsQError(Exception):
     that the fit is broken."""
 
 
-class DpBudgetError(Exception):
+class DpBudgetError(DecoyError):
     """A DP fit's schedule or budget could not be satisfied or was violated.
     Machine-readable code, mirroring `quality.dp.DpError`'s shape."""
 

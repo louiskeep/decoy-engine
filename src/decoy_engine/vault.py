@@ -73,6 +73,7 @@ from typing import TYPE_CHECKING, Any
 import pyarrow as pa
 
 from decoy_engine.determinism import SEED_PROTOCOL_VERSION, derive
+from decoy_engine.errors import DecoyError
 
 if TYPE_CHECKING:
     from decoy_engine.keyprovider import KeyProvider
@@ -115,7 +116,7 @@ def _read_frame(blob: bytes, offset: int) -> tuple[bytes, int]:
     return blob[start:end], end
 
 
-class VaultError(Exception):
+class VaultError(DecoyError):
     """Vault read/write failure. Machine-readable code."""
 
     def __init__(self, *, code: str, message: str) -> None:

@@ -64,6 +64,8 @@ from typing import Any
 
 import numpy as np
 
+from decoy_engine.errors import DecoyError
+
 # Re-exported so the DP artifact schema is anchored in this pandas-free
 # layer rather than in the pandas-bearing `snapshot.py` (guide section 3.8).
 from decoy_engine.quality.dp_schema import DP_SNAPSHOT_SCHEMA_VERSION
@@ -86,7 +88,7 @@ __all__ = [
 _VALID_CARRIERS = ("number", "flag", "text")
 
 
-class CarrierError(Exception):
+class CarrierError(DecoyError):
     """A canonical-invariant violation the carrier layer cannot silently
     degrade past (guide section 3.1). Structural (a `bool` row_count, a
     schema/key mismatch, a dtype or length that is not what the carrier
