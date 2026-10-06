@@ -32,6 +32,7 @@ from decoy_engine.execution.native._chunked_evidence import (
     RUST_POOL_SELECT,
 )
 from decoy_engine.execution.native._companion_status import native_companion_status
+from decoy_engine.execution.native._operator_params import GroupKeyParams
 from decoy_engine.execution.physical._compiler import compile_physical_plan
 from decoy_engine.execution.physical._plan import ExecutionBinding, KeyBinding
 from decoy_engine.execution.physical._shadow_context import ShadowContext
@@ -481,9 +482,7 @@ def _group_key_binding() -> ExecutionBinding:
         diagnostic_obligations=(),
         required_prepasses=(),
         batch_estimate=None,
-        group_key_group_by="gb",
-        group_key_length=16,
-        group_key_prefix="",
+        params=GroupKeyParams("gb", 16, "", "group_key/gk"),
     )
 
 

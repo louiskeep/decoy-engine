@@ -22,7 +22,7 @@ from decoy_engine.errors import RowErrorsFailedError
 from decoy_engine.execution._chunked import check_chunked_compatibility
 from decoy_engine.execution._chunked_output_sink import OutputEvidenceAccumulator
 from decoy_engine.execution._planner import _whole_column_state_rejections
-from decoy_engine.execution.native import _chunk_masking, _dispatch
+from decoy_engine.execution.native import _dispatch, _operator_step
 from decoy_engine.execution.native._chunked_entry import aggregate_chunked_route_evidence
 from decoy_engine.execution.native._chunked_evidence import plan_column_backends
 from decoy_engine.execution.native._crypto_ext import CryptoExtensionUnavailableError
@@ -439,13 +439,13 @@ def test_the_branch_passes_exact_config_and_reuses_the_preflight_index_kernel(
 ) -> None:
     kernel = spy_index_kernel(monkeypatch)
     seen: list[dict[str, Any]] = []
-    real = _chunk_masking.native_date_shift
+    real = _operator_step.native_date_shift
 
     def spy(*args: Any, **kwargs: Any) -> Any:
         seen.append(kwargs)
         return real(*args, **kwargs)
 
-    monkeypatch.setattr(_chunk_masking, "native_date_shift", spy)
+    monkeypatch.setattr(_operator_step, "native_date_shift", spy)
     chunks = split(source([date_value(i) for i in range(7)]), 3)
     config = make_config(
         [ds_col(date_format="%Y-%m-%d", min_days=-5, max_days=9), passthrough("p")]

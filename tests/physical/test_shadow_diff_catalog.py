@@ -8,6 +8,7 @@ import pyarrow as pa
 import pytest
 
 from decoy_engine.execution.native._crypto_ext import CryptoExtensionUnavailableError
+from decoy_engine.execution.native._operator_params import HashParams
 from decoy_engine.execution.physical._plan import ExecutionBinding, KeyBinding
 from decoy_engine.execution.physical._shadow_context import ShadowContext
 from decoy_engine.execution.physical._shadow_diff_codes import (
@@ -79,6 +80,7 @@ def _hash_binding(namespace: str = "n") -> ExecutionBinding:
         diagnostic_obligations=(),
         required_prepasses=(),
         batch_estimate=None,
+        params=HashParams(namespace, None),
     )
 
 
@@ -101,6 +103,7 @@ def test_crypto_extension_unavailable_maps_to_native_companion_unavailable(
         run_operator(array, binding=binding, ctx=ctx, evidence=evidence)
     assert excinfo.value.code == NATIVE_COMPANION_UNAVAILABLE
     assert "native_keyed_hash" in excinfo.value.detail
+    assert "compiled hash companion unavailable" in excinfo.value.detail
     assert isinstance(excinfo.value.__cause__, CryptoExtensionUnavailableError)
     # Never falls back: no evidence of a successful call is recorded.
     assert evidence.executed is False

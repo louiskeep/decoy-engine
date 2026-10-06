@@ -9,6 +9,20 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Changed (one kernel step per native operator, shared by both routes, 2026-10-06)
+
+Internal refactor, no behavior change. The unified full-frame route and the chunked route each
+assembled their own arguments for the nine native operators' kernels, so every default, coercion
+and namespace rule was written twice. Both now resolve an operator's parameters once, through
+one resolver (`execution/native/_operator_params.py`), and call one kernel step
+(`execution/native/_operator_step.py::run_kernel_step`) that returns the output, whether a
+compiled kernel ran, and any date_shift format-error positions. `ExecutionBinding` carries one
+`params` object in place of its eleven per-operator fields. Each route adapter keeps what is
+genuinely its own: evidence flags, the missing-companion decline, row-error shaping, the
+bucket_perturb null cast and the group_key sibling feed. Routing decisions, reason codes, output
+bytes and types, evidence and error positions are unchanged. `sample_faker_array` and
+`_resolve_truncate_keep` moved into the two new modules; `_dispatch` still re-exports the latter.
+
 ### Changed (engine exception roots all inherit `DecoyError`, 2026-10-06)
 
 `DecoyError` is documented as the base class of every engine exception, but 25 exception

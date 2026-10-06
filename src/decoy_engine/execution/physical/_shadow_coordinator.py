@@ -337,7 +337,7 @@ class ShadowCoordinator:
                     # on the sibling `group_by`'s original source value (admission
                     # proved the sibling unmasked, so it equals what the oracle reads)
                     # and writes to `column`; every other operator reads `column`.
-                    input_column = binding.group_key_group_by or column
+                    input_column = binding.group_key_sibling or column
                     parts: list[pa.Array] = []
                     # `_batches` slices in order from 0, so the running row count is
                     # each batch's table-global start offset.
@@ -357,7 +357,7 @@ class ShadowCoordinator:
                         # carried through `_batches`.
                         group_key_sibling = (
                             batch.select([input_column])
-                            if binding.group_key_group_by is not None
+                            if binding.group_key_sibling is not None
                             else None
                         )
                         with operator_invariants_fail_loud(binding.operator_id):

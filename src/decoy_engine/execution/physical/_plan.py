@@ -20,6 +20,13 @@ from typing import Any, Literal
 
 import pyarrow as pa
 
+from decoy_engine.execution.native._operator_params import (
+    BucketPerturbParams,
+    CategoricalParams,
+    DateShiftParams,
+    GroupKeyParams,
+    OperatorParams,
+)
 from decoy_engine.execution.physical._types import DriverId
 
 __all__ = [
@@ -93,15 +100,12 @@ class ExecutionBinding:
     the resident source table's row count when known, for reporting only --
     it does not gate anything.
 
-    Phase 5 Track B adds the deterministic-categorical carriers. `categorical_
-    deterministic` is set True only for a bound categorical node, sourced from
-    `ColumnSeed.deterministic` (equal by construction to `is_deterministic_
-    categorical(config)`) -- the runtime asserts it before invoking the native
-    operator so the position-keyed variant can never reach it under a wiring bug.
-    `categorical_categories` is the resolved STRING category tuple; `categorical
-    _cdf` is the resolved integer CDF (`_build_cdf`) for the weighted variant,
-    `None` for the uniform one. All four default so every non-categorical
-    construction is unchanged.
+    `params` carries the node's resolved operator parameters (`native/_operator_params.py`):
+    the defaults, coercions, namespace and, for categorical, the prepared categories and
+    CDF, resolved once at bind time by the same resolver the chunked route calls. It is
+    `None` only on a hand-built binding. The marker properties below answer "is this a bound
+    X node" field by field, so a half-built binding behaves as it did when each parameter
+    was its own field.
     """
 
     operator_id: str
@@ -115,43 +119,8 @@ class ExecutionBinding:
     diagnostic_obligations: tuple[str, ...]
     required_prepasses: tuple[str, ...]
     batch_estimate: int | None
-    # Task 4.6 slice 1: LAST field before Phase 5, defaulted to None, so every
-    # pre-existing construction (the four scalar operators) is unchanged.
     pool_binding: PoolBinding | None = None
-    # Phase 5 Track B (deterministic categorical); all defaulted, so no
-    # pre-existing ExecutionBinding construction changes shape.
-    categorical_deterministic: bool = False
-    categorical_categories: tuple[str, ...] | None = None
-    categorical_cdf: tuple[int, ...] | None = None
-    # Phase 5 S-slate (native bucket_perturb); both defaulted, so no pre-existing
-    # ExecutionBinding construction changes shape. `bucket_perturb_bucket` is the
-    # resolved bucket name (week/month/quarter) and doubles as the "this is a
-    # bound bucket_perturb node" marker the coordinator's index-kernel-load check
-    # reads; `bucket_perturb_date_format` is the resolved explicit format string.
-    # A bound bucket_perturb node also carries a `KeyBinding` (it is source-keyed,
-    # like hash/categorical), reusing the `key_binding` field above.
-    bucket_perturb_bucket: str | None = None
-    bucket_perturb_date_format: str | None = None
-    # Phase 5 S-slate (native group_key); all defaulted, so no pre-existing
-    # ExecutionBinding construction changes shape. group_key keys on a DIFFERENT
-    # (sibling) column than the target: `group_key_group_by` is the resolved
-    # sibling column name and doubles as the "this is a bound group_key node"
-    # marker the coordinator's sibling-input feed reads; `group_key_length` /
-    # `group_key_prefix` are the resolved config. A bound group_key node also
-    # carries a `KeyBinding` whose namespace is the SYNTHESIZED f"group_key/{target}"
-    # (not the plan namespace), reusing the `key_binding` field above.
-    group_key_group_by: str | None = None
-    group_key_length: int | None = None
-    group_key_prefix: str | None = None
-    # Native date_shift; all defaulted, so no pre-existing construction changes
-    # shape. `date_shift_date_format` is the resolved explicit format and doubles
-    # as the "bound date_shift node" marker; the day bounds are the raw config
-    # values (swap + range_size are resolved by the operator, as in the oracle).
-    # A bound date_shift node carries a source-keyed `KeyBinding` and NO
-    # `pool_binding`: it derives over the source directly, it is not pool-backed.
-    date_shift_date_format: str | None = None
-    date_shift_min_days: int | None = None
-    date_shift_max_days: int | None = None
+    params: OperatorParams | None = None
 
     @property
     def needs_index_kernel(self) -> bool:
@@ -160,12 +129,28 @@ class ExecutionBinding:
         date_shift. The coordinator loads the kernel once per run for any such
         node. Deliberately separate from `pool_binding`, which alone gates POOL
         RESOLUTION: a date_shift node needs the kernel but has no pool."""
+        params = self.params
         return (
             self.pool_binding is not None
             or self.categorical_deterministic
-            or self.bucket_perturb_bucket is not None
-            or self.date_shift_date_format is not None
+            or (isinstance(params, BucketPerturbParams) and params.bucket is not None)
+            or (isinstance(params, DateShiftParams) and params.date_format is not None)
         )
+
+    @property
+    def categorical_deterministic(self) -> bool:
+        """True for a bound source-keyed categorical node. The unified operator is always
+        source-keyed, so a position-keyed one (`prepared.positional`) must never reach it."""
+        return isinstance(self.params, CategoricalParams) and not self.params.prepared.positional
+
+    @property
+    def group_key_sibling(self) -> str | None:
+        """The sibling column a bound group_key node keys on, or `None`. The coordinator's
+        input feed and unified admission's resident-type check both read it from here."""
+        params = self.params
+        if isinstance(params, GroupKeyParams) and params.group_by is not None:
+            return params.group_by
+        return None
 
 
 @dataclass(frozen=True)

@@ -19,7 +19,7 @@ import pytest
 
 from decoy_engine import run_mask_chunked
 from decoy_engine.execution._chunked import concat_masked_chunks
-from decoy_engine.execution.native import _chunk_masking
+from decoy_engine.execution.native import _operator_step
 from decoy_engine.execution.native._chunked_schema_rule import build_schema_rule
 from decoy_engine.execution.native._group_key_kernel import native_group_key
 from decoy_engine.providers_v2 import get_default_registry
@@ -284,7 +284,7 @@ def test_the_branch_receives_the_resolved_mask_key_namespace_and_sibling_slice(
         calls.append((args, kwargs))
         return real(*args, **kwargs)
 
-    monkeypatch.setattr(_chunk_masking, "native_group_key", spy)
+    monkeypatch.setattr(_operator_step, "native_group_key", spy)
     run_one(make_config(columns(gk_col(length=24, prefix="HH-"))), split(gk_source(["a", "b"]), 1))
     assert len(calls) == 2
     for args, kwargs in calls:

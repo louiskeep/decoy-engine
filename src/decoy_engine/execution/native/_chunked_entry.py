@@ -71,6 +71,7 @@ from decoy_engine.execution.native._dispatch import (
     _oracle_evidence,
     plan_native_route,
 )
+from decoy_engine.execution.native._operator_params import resolve_params_by_column
 from decoy_engine.generation.pool import PoolCache, ValuePool
 from decoy_engine.instrumentation.timing import StrategyTimingRecord
 
@@ -225,7 +226,7 @@ def _native_route(
     by `_run_chunked`; the ingest guards run here on the chunk as the source produced it,
     and only then are null-typed columns cast. `unconfigured` names the source columns
     the plan does not cover; they are carried unchanged. A group_key column reads its sibling
-    from the raw chunk, so the loop keeps both tables (see `_mask_group_key`); everything else
+    from the raw chunk, so the loop keeps both tables (see `_mask_chunk_native`); everything else
     works on the cast one."""
     from decoy_engine.errors import RowErrorsFailedError
     from decoy_engine.keyprovider import require_mask_key
@@ -240,6 +241,9 @@ def _native_route(
         )
     col_seed_by_name = dict(table_seed.per_column)
     unconfigured_set = frozenset(unconfigured)
+    params_by_column = resolve_params_by_column(
+        col_seed_by_name, categorical_by_column, excluded=unconfigured_set | stored_index
+    )
 
     def _guard(raw: pa.Table) -> pa.Table:
         # The oracle route re-checks this on every chunk before masking; without it a
@@ -273,7 +277,7 @@ def _native_route(
                 column_elapsed_s=elapsed_s,
                 unconfigured=unconfigured_set,
                 stored_index=stored_index,
-                categorical_by_column=categorical_by_column,
+                params_by_column=params_by_column,
                 kernel_idle=kernel_idle,
                 row_offset=row_offset,
                 format_errors=format_errors,

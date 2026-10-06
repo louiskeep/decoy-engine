@@ -50,6 +50,7 @@ from decoy_engine.execution.native._companion_status import (
 from decoy_engine.execution.native._date_shift_ext import FORMAT_ERROR_REASON, native_date_shift
 from decoy_engine.execution.native._dispatch import plan_native_route
 from decoy_engine.execution.native._index_ext import load_compiled_index_kernel
+from decoy_engine.execution.native._operator_params import DateShiftParams
 from decoy_engine.execution.native._plan import native_route_eligibility
 from decoy_engine.execution.physical import _shadow_coordinator
 from decoy_engine.execution.physical._compiler import compile_physical_plan
@@ -963,6 +964,9 @@ def test_quarantine_configured_job_takes_oracle(tmp_path: Path) -> None:
 # ── Runtime fail-closed guards at dispatch ───────────────────────────
 
 
+_FULL_PARAMS = DateShiftParams(_FMT, -365, 365, "ns")
+
+
 def _binding(**overrides: Any) -> ExecutionBinding:
     base: dict[str, Any] = dict(
         operator_id="native_date_shift",
@@ -976,9 +980,7 @@ def _binding(**overrides: Any) -> ExecutionBinding:
         diagnostic_obligations=("reduce_row_error:format_error",),
         required_prepasses=(),
         batch_estimate=None,
-        date_shift_date_format=_FMT,
-        date_shift_min_days=-365,
-        date_shift_max_days=365,
+        params=_FULL_PARAMS,
     )
     base.update(overrides)
     return ExecutionBinding(**base)
@@ -1000,7 +1002,10 @@ def test_date_shift_binding_needs_kernel_not_pool() -> None:
     binding = _binding()
     assert binding.needs_index_kernel is True
     assert binding.pool_binding is None
-    assert _binding(date_shift_date_format=None).needs_index_kernel is False
+    assert (
+        _binding(params=dataclasses.replace(_FULL_PARAMS, date_format=None)).needs_index_kernel
+        is False
+    )
 
 
 @_NEEDS_COMPANION
@@ -1119,17 +1124,17 @@ def test_invariant_codes_cover_every_index_kernel_consumer() -> None:
             "date_shift node reached run_operator with no KeyBinding",
         ),
         (
-            {"date_shift_date_format": None},
+            {"params": dataclasses.replace(_FULL_PARAMS, date_format=None)},
             {},
             "date_shift node reached run_operator with no resolved date_format/min_days/max_days",
         ),
         (
-            {"date_shift_min_days": None},
+            {"params": dataclasses.replace(_FULL_PARAMS, min_days=None)},
             {},
             "date_shift node reached run_operator with no resolved date_format/min_days/max_days",
         ),
         (
-            {"date_shift_max_days": None},
+            {"params": dataclasses.replace(_FULL_PARAMS, max_days=None)},
             {},
             "date_shift node reached run_operator with no resolved date_format/min_days/max_days",
         ),

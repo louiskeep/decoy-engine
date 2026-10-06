@@ -23,11 +23,13 @@ import pytest
 from decoy_engine.execution import run_pipeline
 from decoy_engine.execution._chunked_profile import first_chunk_profile
 from decoy_engine.execution._unified_slice import QUALITY_METRICS_KEY
+from decoy_engine.execution.native._categorical_prepared import PreparedCategorical
 from decoy_engine.execution.native._companion_status import native_companion_status
 from decoy_engine.execution.native._dispatch import plan_native_route
 from decoy_engine.execution.native._operator_config_rejections import (
     is_deterministic_categorical,
 )
+from decoy_engine.execution.native._operator_params import CategoricalParams
 from decoy_engine.execution.native._plan import native_route_eligibility
 from decoy_engine.execution.physical._compiler import compile_physical_plan
 from decoy_engine.execution.physical._plan import ExecutionBinding, KeyBinding
@@ -273,9 +275,8 @@ def test_run_operator_asserts_categorical_determinism() -> None:
         diagnostic_obligations=(),
         required_prepasses=(),
         batch_estimate=None,
-        categorical_deterministic=False,  # the wiring-bug case the assertion guards
-        categorical_categories=("a", "b"),
-        categorical_cdf=None,
+        # The wiring-bug case the assertion guards: a position-keyed categorical.
+        params=CategoricalParams(PreparedCategorical(("a", "b"), None, positional=True), "ns"),
     )
     ctx = SimpleNamespace(mask_key=_MASK_KEY, native_threads=None)
     evidence = OperatorCallEvidence(planned_operator="native_categorical")

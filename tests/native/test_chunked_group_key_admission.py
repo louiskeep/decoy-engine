@@ -23,7 +23,7 @@ import pytest
 from decoy_engine import run_mask_chunked, run_mask_pipeline_chunked
 from decoy_engine.execution import _chunked_profile
 from decoy_engine.execution._chunked import check_chunked_compatibility
-from decoy_engine.execution.native import _chunk_masking, _chunked_evidence, _dispatch
+from decoy_engine.execution.native import _chunked_evidence, _dispatch, _operator_step
 from decoy_engine.execution.native import _group_key_kernel as gk_kernel
 from decoy_engine.execution.native._chunked_entry import aggregate_chunked_route_evidence
 from decoy_engine.execution.native._chunked_evidence import plan_column_backends
@@ -566,7 +566,7 @@ def test_an_empty_chunk_is_branch_counted_but_reports_idle(monkeypatch: pytest.M
         calls.append(sum(kwargs["derive_calls"]))
         return out
 
-    monkeypatch.setattr(_chunk_masking, "native_group_key", spy)
+    monkeypatch.setattr(_operator_step, "native_group_key", spy)
     empty = _table([], pa.string())
     run = run_one(make_config(columns()), [empty])
     assert run.ev[0].native_admitted is True
@@ -607,7 +607,7 @@ def test_the_derive_spy_sees_work_only_when_the_kernel_ran(
         seen.append(sum(kwargs["derive_calls"]))
         return out
 
-    monkeypatch.setattr(_chunk_masking, "native_group_key", spy)
+    monkeypatch.setattr(_operator_step, "native_group_key", spy)
     run_one(make_config(columns()), [_table(["a", "b"]), _table([], pa.string()), _table(["a"])])
     assert seen[0] > 0 and seen[1] == 0 and seen[2] > 0
 

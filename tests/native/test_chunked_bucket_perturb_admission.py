@@ -16,7 +16,7 @@ from decoy_engine import run_mask_chunked
 from decoy_engine.execution._chunked import check_chunked_compatibility
 from decoy_engine.execution._chunked_output_sink import OutputEvidenceAccumulator
 from decoy_engine.execution._errors import StrategyError
-from decoy_engine.execution.native import _chunk_masking, _dispatch
+from decoy_engine.execution.native import _dispatch, _operator_step
 from decoy_engine.execution.native._chunked_entry import aggregate_chunked_route_evidence
 from decoy_engine.execution.native._crypto_ext import CryptoExtensionUnavailableError
 from decoy_engine.execution.native._plan import native_route_eligibility
@@ -475,13 +475,13 @@ def test_the_branch_passes_exact_config_and_reuses_the_preflight_index_kernel(
 ) -> None:
     kernel = spy_index_kernel(monkeypatch)
     seen: list[dict[str, Any]] = []
-    real = _chunk_masking.native_bucket_perturb
+    real = _operator_step.native_bucket_perturb
 
     def spy(*args: Any, **kwargs: Any) -> Any:
         seen.append(kwargs)
         return real(*args, **kwargs)
 
-    monkeypatch.setattr(_chunk_masking, "native_bucket_perturb", spy)
+    monkeypatch.setattr(_operator_step, "native_bucket_perturb", spy)
     chunks = split(source([date_value(i) for i in range(7)]), 3)
     config = make_config([bp_col(bucket="quarter", date_format="%Y-%m-%d"), passthrough("p")])
     run_one(config, chunks, native_threads=threads)

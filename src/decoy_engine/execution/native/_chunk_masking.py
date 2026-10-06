@@ -1,14 +1,13 @@
 """Per-chunk native masking (compiled kernels + faker pool selection).
 
 Split out of `_dispatch.py` (module-size ratchet, native-throughput program):
-these functions do the actual per-chunk-column masking work once a table has
-already been admitted to the native route, while `_dispatch` owns the
-PREFLIGHT route decision (admission, evidence, the oracle/native fork). The
-dependency is one-directional -- `_dispatch` imports these functions back --
-so this module must never import `_dispatch` at runtime (that would be a
-cycle); the `NativeRouteEvidence` type whose counters it mutates is imported
-only under `TYPE_CHECKING` for annotations, and mutated here via plain
-attribute access.
+`_mask_chunk_native` is the chunked route's adapter around the shared kernel step
+(`_operator_step.run_kernel_step`) once a table has already been admitted to the native
+route, while `_dispatch` owns the PREFLIGHT route decision (admission, evidence, the
+oracle/native fork). The dependency is one-directional -- `_dispatch` imports these functions
+back -- so this module must never import `_dispatch` at runtime (that would be a cycle); the
+`NativeRouteEvidence` type whose counters it mutates is imported only under `TYPE_CHECKING`
+for annotations, and mutated here via plain attribute access.
 """
 
 from __future__ import annotations
@@ -16,261 +15,25 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING, Any
 
-import numpy as np
 import pyarrow as pa
 
 from decoy_engine.execution._adapter import provider_config_to_dict
-from decoy_engine.execution.native._bucket_perturb_ext import native_bucket_perturb
-from decoy_engine.execution.native._categorical_ext import (
-    native_categorical,
-    native_categorical_positional,
+from decoy_engine.execution.native._operator_params import (
+    BucketPerturbParams,
+    CategoricalParams,
+    FakerParams,
+    GroupKeyParams,
+    OperatorParams,
 )
-from decoy_engine.execution.native._date_shift_ext import (
-    DEFAULT_MAX_DAYS,
-    DEFAULT_MIN_DAYS,
-    native_date_shift,
-)
-from decoy_engine.execution.native._group_key_kernel import native_group_key
-from decoy_engine.execution.native._kernels_keyed import native_keyed_hash
-from decoy_engine.execution.native._kernels_scalar import (
-    native_passthrough,
-    native_redact,
-    native_truncate,
-)
-from decoy_engine.generation.pool import GenerationError, PoolBuilder, PoolCache, ValuePool
+from decoy_engine.execution.native._operator_step import run_kernel_step
+from decoy_engine.generation.pool import PoolBuilder, PoolCache, ValuePool
 from decoy_engine.generation.pool._identity import resolve_faker_pool_identity
 from decoy_engine.providers_v2 import get_default_registry
 
 if TYPE_CHECKING:
-    from decoy_engine.execution.native._categorical_prepared import PreparedCategorical
     from decoy_engine.execution.native._dispatch import NativeRouteEvidence
     from decoy_engine.execution.native._group_key_ext import RawHexDerivationKernel
     from decoy_engine.execution.native._index_ext import IndexDerivationKernel
-
-
-def _resolve_truncate_keep(cfg: dict[str, Any]) -> str:
-    """Resolve the legacy `from_end` key to `keep` the way `TruncateHandler.run`
-    does: an explicit `keep` wins; otherwise `from_end` maps tail/head.
-
-    This is only the from_end->keep RESOLUTION, not the config VALIDATION: an
-    invalid `keep` is rejected upstream at admission (Task 2.6's
-    `truncate_config_rejection`, which reroutes the table before it reaches here)
-    and again by `native_truncate` itself, so a bad value never reaches this
-    admitted-only path.
-    """
-    keep = cfg.get("keep")
-    if keep is not None:
-        return keep
-    return "tail" if bool(cfg.get("from_end", False)) else "head"
-
-
-def sample_faker_array(
-    source: pa.Array | pa.ChunkedArray,
-    *,
-    pool: ValuePool,
-    namespace: str,
-    mask_key: bytes | None,
-    index_kernel: IndexDerivationKernel,
-    native_threads: int | None,
-) -> pa.Array:
-    """Select one batch's faker values from the already-built `pool` via the
-    preflight-verified compiled index kernel (Task 2.3 Phase 3).
-
-    Promoted (Task 4.6 slice 1) to a shared helper importable by BOTH the
-    native chunked route (`_mask_chunk_native`) and the physical-plan shadow
-    operator (`_shadow_operators.run_operator`), so the two call the
-    IDENTICAL selection code -- never two independently-written copies that
-    could drift. `namespace` is passed explicitly (rather than a `col_seed`
-    object) since the shadow side has only a `KeyBinding.namespace`, not a
-    compiled `ColumnSeed`.
-
-    Reproduces `FakerStrategyHandler.run`'s deterministic-reuse selection
-    exactly, scoped to the ONE JC-5-admitted variant
-    (`faker_pool_precondition_met` already proved `deterministic=True`,
-    `cardinality_mode=reuse`, a namespace, and a pool_size before this table
-    reached the native route): `select_seed` is always `mask_key` (the DE-02
-    seam re-keys deterministic selection onto the keyed IKM; pool BUILD stays
-    on job_seed, resolved once before the chunk loop by `_resolve_faker_pools`).
-    `pool_size` is `pool.size` -- the pool as actually BUILT -- never the
-    compiled config's own pool-size value (the build may have resolved it
-    differently), matching the oracle's own `PoolSampler._deterministic`.
-
-    One batch call derives every row's pool index; the gather is then a
-    null-safe NumPy lookup into `pool.values`, never a per-row Python loop.
-    Null handling is POSITIONAL: nulls in `source` restore to `None` at the
-    exact same position, never label-aligned (an Arrow column carries no
-    label index to misalign with in the first place).
-    """
-    if mask_key is None:  # pragma: no cover - require_mask_key never returns None
-        raise AssertionError(
-            "faker pool selection reached with mask_key=None; require_mask_key "
-            "always resolves a concrete key before the native route dispatches."
-        )
-    col = source.combine_chunks() if isinstance(source, pa.ChunkedArray) else source
-    n = len(col)
-    idx = index_kernel.derive_index_batch(
-        col,
-        mask_key=mask_key,
-        namespace=namespace,
-        pool_size=pool.size,
-        native_threads=native_threads,
-    )
-
-    # Runtime invariants on the kernel's own result: a malformed compiled (or
-    # stub, in tests) kernel must fail HERE, coded and fail-closed, never as an
-    # uncoded exception. The isinstance/type check comes FIRST: a non-`pa.Array`
-    # result (a bare list, None) has no `.type`/`.is_valid()`, so probing those
-    # (or `len`) before confirming the shape would leak an uncoded AttributeError
-    # instead of the coded error every other malformed shape gets.
-    if not isinstance(idx, pa.Array) or idx.type != pa.uint64():
-        got = idx.type if isinstance(idx, pa.Array) else type(idx).__name__
-        raise GenerationError(
-            code="index_batch_type_mismatch",
-            message=f"derive_index_batch returned {got}, expected a uint64 Arrow array",
-        )
-    if len(idx) != n:
-        raise GenerationError(
-            code="index_batch_length_mismatch",
-            message=f"derive_index_batch returned {len(idx)} indices for {n} input rows",
-        )
-    idx_valid = idx.is_valid().to_numpy(zero_copy_only=False)
-    col_valid = col.is_valid().to_numpy(zero_copy_only=False)
-    if not np.array_equal(idx_valid, col_valid):
-        raise GenerationError(
-            code="index_batch_null_mask_mismatch",
-            message="derive_index_batch's null positions do not match the source column's",
-        )
-    idx_np = idx.fill_null(0).to_numpy(zero_copy_only=False)
-    if idx_valid.any() and int(idx_np[idx_valid].max()) >= pool.size:
-        raise GenerationError(
-            code="index_batch_out_of_bounds",
-            message=(
-                f"derive_index_batch returned an index >= pool_size {pool.size}; "
-                "refusing to gather from the pool with it"
-            ),
-        )
-
-    # Null-safe NumPy gather (no dedup, raw pool order preserved -- pool.values
-    # may be gathered with repeats): scatter valid selections positionally,
-    # leave null positions as None.
-    out = np.empty(n, dtype=object)
-    out[idx_valid] = pool.values[idx_np[idx_valid]]
-    out[~idx_valid] = None
-    return pa.array(out, type=pa.string())
-
-
-def _mask_bucket_perturb(
-    source: pa.Array | pa.ChunkedArray,
-    *,
-    cfg: dict[str, Any],
-    namespace: str | None,
-    mask_key: bytes | None,
-    index_kernel: IndexDerivationKernel | None,
-    native_threads: int | None,
-) -> tuple[pa.Array, bool]:
-    """One chunk of a bucket_perturb column: `(masked array, whether a compiled kernel ran)`.
-
-    The kernel always returns `pa.string()`, but the oracle chunked route gives Arrow
-    `null` for a zero-row or all-null chunk (promotable when the chunks are joined) and
-    `string` for any chunk holding a non-null value, an all-unparseable one included.
-    The cast to null is the chunked counterpart of `_shadow_assembly`'s whole-column
-    reconciliation, and it is why bucket_perturb is not string-pinned by the schema rule.
-    """
-    if index_kernel is None:  # pragma: no cover - admission implies a loaded kernel
-        raise AssertionError(
-            "native route admitted a bucket_perturb column with no index_kernel; "
-            "preflight's index probe should have loaded one for any admitted node."
-        )
-    derive_calls: list[int] = []
-    out = native_bucket_perturb(
-        source,
-        bucket=str(cfg.get("bucket", "month")),
-        date_format=cfg["date_format"],
-        mask_key=mask_key,
-        namespace=namespace or "",
-        index_kernel=index_kernel,
-        native_threads=native_threads,
-        derive_calls=derive_calls,
-    )
-    if len(out) == 0 or out.null_count == len(out):
-        out = pa.nulls(len(out))
-    return out, sum(derive_calls) > 0
-
-
-def _mask_date_shift(
-    source: pa.Array | pa.ChunkedArray,
-    *,
-    cfg: dict[str, Any],
-    namespace: str | None,
-    mask_key: bytes | None,
-    index_kernel: IndexDerivationKernel | None,
-    native_threads: int | None,
-) -> tuple[pa.Array, bool, tuple[int, ...]]:
-    """One chunk of a date_shift column: `(shifted array, whether a compiled kernel ran,
-    chunk-local format_error positions)`.
-
-    The positions stay relative to this chunk. The oracle chunked leg records `row_index`
-    within its chunk and never adds the chunk's global offset, so rebasing here would make
-    the two legs disagree. The array is `pa.string()` for every chunk shape; the schema rule
-    pins the column to `string` on both legs, which is why no null-shape cast happens here.
-    """
-    if index_kernel is None:  # pragma: no cover - admission implies a loaded kernel
-        raise AssertionError(
-            "native route admitted a date_shift column with no index_kernel; "
-            "preflight's index probe should have loaded one for any admitted node."
-        )
-    derive_calls: list[int] = []
-    out, positions = native_date_shift(
-        source,
-        min_days=cfg.get("min_days", DEFAULT_MIN_DAYS),
-        max_days=cfg.get("max_days", DEFAULT_MAX_DAYS),
-        date_format=cfg["date_format"],
-        mask_key=mask_key,
-        namespace=namespace or "",
-        index_kernel=index_kernel,
-        native_threads=native_threads,
-        derive_calls=derive_calls,
-    )
-    return out, sum(derive_calls) > 0, positions
-
-
-def _mask_group_key(
-    sibling: pa.Table,
-    *,
-    name: str,
-    cfg: dict[str, Any],
-    mask_key: bytes | None,
-    raw_hex_kernel: RawHexDerivationKernel | None,
-    native_threads: int | None,
-) -> tuple[pa.Array, bool]:
-    """One chunk of a group_key column: `(key array, whether a compiled kernel ran)`.
-
-    `sibling` is the single-column slice of the RAW chunk, the table as the source produced
-    it. The oracle stringifies the raw chunk (a null-typed later chunk's null is "None" there,
-    "<NA>" once cast to the first chunk's integer type), and `cast_null_columns` drops the
-    schema metadata that decides a nullable string or boolean sibling's dtype, so the cast
-    table would key a null differently. The namespace is synthesized from the TARGET column,
-    never the plan namespace, as the oracle handler does. The array is `pa.string()` for every
-    chunk shape; the schema rule pins the column to `string` on both legs.
-    """
-    if raw_hex_kernel is None:  # pragma: no cover - admission implies a loaded kernel
-        raise AssertionError(
-            "native route admitted a group_key column with no raw_hex_kernel; "
-            "preflight's raw-hex probe should have loaded one for any admitted node."
-        )
-    derive_calls: list[int] = []
-    out = native_group_key(
-        sibling,
-        length=cfg.get("length", 16),
-        # The oracle and the full-frame binding both str() the prefix: None -> "None".
-        prefix=str(cfg.get("prefix", "")),
-        mask_key=mask_key,
-        namespace=f"group_key/{name}",
-        native_threads=native_threads,
-        raw_hex_kernel=raw_hex_kernel,
-        derive_calls=derive_calls,
-    )
-    return out, sum(derive_calls) > 0
 
 
 def _mask_chunk_native(
@@ -285,7 +48,7 @@ def _mask_chunk_native(
     column_elapsed_s: dict[str, float] | None = None,
     unconfigured: frozenset[str] = frozenset(),
     stored_index: frozenset[str] = frozenset(),
-    categorical_by_column: dict[str, PreparedCategorical] | None = None,
+    params_by_column: dict[str, OperatorParams] | None = None,
     kernel_idle: set[str] | None = None,
     row_offset: int = 0,
     format_errors: dict[str, tuple[int, ...]] | None = None,
@@ -314,27 +77,33 @@ def _mask_chunk_native(
     precondition. `index_kernel` is the preflight-verified compiled index
     kernel (Task 2.3): non-`None` whenever the admitted table has a faker,
     categorical, bucket_perturb or date_shift column, since preflight's index probe already ran
-    before this ever executes. `categorical_by_column` holds each admitted categorical column's
-    prepared categories and CDF, built once per run and reused by every chunk.
+    before this ever executes. `params_by_column` holds each admitted column's resolved operator
+    parameters (categorical categories and CDF included), built once per table and reused by
+    every chunk.
 
     `kernel_idle`, when given, receives each column that ran its strategy branch but no
-    compiled kernel this chunk (a bucket_perturb or date_shift chunk with no parseable row, or
-    an empty group_key chunk),
-    so the chunk's route evidence does not credit the companion for work it did not do.
+    compiled kernel this chunk (a bucket_perturb or date_shift chunk with no parseable row, an
+    empty group_key chunk, or a zero-row chunk of the seeded categorical), so the chunk's route
+    evidence does not credit the companion for work it did not do.
 
     `format_errors`, when given, receives each date_shift column's chunk-local positions of
-    non-null values that did not parse. A date_shift column that has such positions with no
-    `format_errors` to carry them raises: dropping them would let the raw value reach the
-    output with the job succeeding.
+    non-null values that did not parse. The oracle chunked leg records `row_index` within its
+    chunk and never adds the chunk's global offset, so these are not rebased either. A date_shift
+    column that has such positions with no `format_errors` to carry them raises: dropping them
+    would let the raw value reach the output with the job succeeding.
 
     `raw_chunk` is the chunk as the source produced it, before null-typed columns were cast to
     the first chunk's types; only a group_key column reads it (for its sibling), every other
     branch masks `chunk`. It defaults to `chunk`, which is the same table when nothing was cast.
-    `raw_hex_kernel` is the preflight-verified raw-hex kernel group_key derives with.
+    The oracle stringifies the raw chunk (a null-typed later chunk's null is "None" there, "<NA>"
+    once cast to the first chunk's integer type), and `cast_null_columns` drops the schema
+    metadata that decides a nullable string or boolean sibling's dtype, so the cast table would
+    key a null differently. `raw_hex_kernel` is the preflight-verified raw-hex kernel group_key
+    derives with.
 
     `row_offset` is the global position of the chunk's first row; only the seeded
     non-deterministic categorical keys on it. A zero-row chunk of that variant makes no
-    compiled call (idle, typed empty `string`); an all-null non-empty one does run it.
+    compiled call (idle, uncounted, typed empty `string`); an all-null non-empty one does run it.
     """
     arrays: dict[str, pa.Array] = {}
     for name in chunk.schema.names:
@@ -343,145 +112,61 @@ def _mask_chunk_native(
         if name in unconfigured:
             arrays[name] = chunk.column(name)
             continue
-        col_seed = col_seed_by_name[name]
-        strategy = col_seed.strategy
-        cfg = provider_config_to_dict(col_seed.provider_config)
+        strategy = col_seed_by_name[name].strategy
+        params = (params_by_column or {}).get(name)
+        if params is None:  # pragma: no cover - admission implies parameters for every column
+            raise AssertionError(
+                f"native route admitted column {name!r} with strategy {strategy!r} but no "
+                "resolved operator parameters; the preflight admission check should have "
+                "excluded this table, or `_prepared_categoricals` should have prepared it."
+            )
         source = chunk.column(name)
         t0 = time.perf_counter()
-        counted = True
-        if strategy == "passthrough":
-            arrays[name] = native_passthrough(source)
-        elif strategy == "redact":
-            arrays[name] = native_redact(source, redact_with=cfg.get("redact_with", "REDACTED"))
-        elif strategy == "truncate":
-            # Admission (`truncate_config_rejection`) already proved `length` is
-            # a valid positive int before this table reached the native route;
-            # `native_truncate` re-validates it anyway (defense in depth).
-            length = cfg.get("length")
-            arrays[name] = native_truncate(
-                source,
-                length=length if isinstance(length, int) else 0,
-                keep=_resolve_truncate_keep(cfg),
-                mask_char=cfg.get("mask_char"),
-            )
-        elif strategy == "hash":
-            arrays[name] = native_keyed_hash(
-                source,
-                mask_key=mask_key,
-                namespace=col_seed.namespace,
-                truncate=cfg.get("truncate"),
-                native_threads=native_threads,
-            )
-            # native_keyed_hash never falls back to the pure-Python reference
-            # (see _kernels_keyed.py); a successful call IS the compiled kernel.
-            evidence.compiled_kernel_executed = True
-        elif strategy == "faker":
-            if index_kernel is None:  # pragma: no cover - admission implies a loaded kernel
+        sibling: pa.Table | None = None
+        if isinstance(params, GroupKeyParams):
+            sibling = (chunk if raw_chunk is None else raw_chunk).select([params.group_by])
+            if raw_hex_kernel is None:  # pragma: no cover - admission implies a loaded kernel
                 raise AssertionError(
-                    f"native route admitted faker column {name!r} with no index_kernel; "
-                    "preflight's index probe should have loaded one for any admitted "
-                    "faker node."
+                    "native route admitted a group_key column with no raw_hex_kernel; "
+                    "preflight's raw-hex probe should have loaded one for any admitted node."
                 )
-            arrays[name] = sample_faker_array(
-                source,
-                pool=pool_by_column[name],
-                namespace=col_seed.namespace,
-                mask_key=mask_key,
-                index_kernel=index_kernel,
-                native_threads=native_threads,
-            )
+        result = run_kernel_step(
+            params,
+            source,
+            mask_key=mask_key,
+            native_threads=native_threads,
+            index_kernel=index_kernel,
+            raw_hex_kernel=raw_hex_kernel,
+            pool=pool_by_column[name] if isinstance(params, FakerParams) else None,
+            sibling=sibling,
+            row_offset=row_offset,
+        )
+        out = result.out
+        # The kernel always returns `pa.string()`, but the oracle chunked route gives Arrow `null`
+        # for a zero-row or all-null bucket_perturb chunk (promotable when the chunks are joined)
+        # and `string` for any chunk holding a value, an all-unparseable one included.
+        if isinstance(params, BucketPerturbParams) and (
+            len(out) == 0 or out.null_count == len(out)
+        ):
+            out = pa.nulls(len(out))
+        arrays[name] = out
+        counted = True
+        if isinstance(params, FakerParams):
             evidence.pool_select_executed = True
             evidence.pool_select_calls += 1
-        elif strategy == "categorical":
-            prepared = (categorical_by_column or {}).get(name)
-            if (
-                index_kernel is None or prepared is None
-            ):  # pragma: no cover - admission implies both
+        elif result.ran:
+            evidence.compiled_kernel_executed = True
+        elif result.ran is False:
+            counted = not isinstance(params, CategoricalParams)
+            if kernel_idle is not None:
+                kernel_idle.add(name)
+        if result.format_error_positions:
+            if format_errors is None:
                 raise AssertionError(
-                    f"native route admitted categorical column {name!r} without a loaded "
-                    "index kernel and prepared mapping; preflight should have loaded one "
-                    "and `prepare_chunked_categoricals` should have produced the other."
+                    f"date_shift column {name!r} has unparseable values but the caller "
+                    "gave no format_errors channel to carry them."
                 )
-            if prepared.positional and len(source) == 0:
-                arrays[name] = pa.array([], pa.string())
-                counted = False
-                if kernel_idle is not None:
-                    kernel_idle.add(name)
-            elif prepared.positional:
-                arrays[name] = native_categorical_positional(
-                    source,
-                    row_offset=row_offset,
-                    categories=prepared.categories,
-                    cdf=prepared.cdf,
-                    mask_key=mask_key,
-                    namespace=col_seed.namespace or "",
-                    index_kernel=index_kernel,
-                    native_threads=native_threads,
-                )
-                evidence.compiled_kernel_executed = True
-            else:
-                arrays[name] = native_categorical(
-                    source,
-                    categories=prepared.categories,
-                    cdf=prepared.cdf,
-                    mask_key=mask_key,
-                    namespace=col_seed.namespace or "",
-                    index_kernel=index_kernel,
-                    native_threads=native_threads,
-                )
-                evidence.compiled_kernel_executed = True
-        elif strategy == "bucket_perturb":
-            arrays[name], ran = _mask_bucket_perturb(
-                source,
-                cfg=cfg,
-                namespace=col_seed.namespace,
-                mask_key=mask_key,
-                index_kernel=index_kernel,
-                native_threads=native_threads,
-            )
-            if ran:
-                evidence.compiled_kernel_executed = True
-            elif kernel_idle is not None:
-                kernel_idle.add(name)
-        elif strategy == "date_shift":
-            arrays[name], ran, positions = _mask_date_shift(
-                source,
-                cfg=cfg,
-                namespace=col_seed.namespace,
-                mask_key=mask_key,
-                index_kernel=index_kernel,
-                native_threads=native_threads,
-            )
-            if ran:
-                evidence.compiled_kernel_executed = True
-            elif kernel_idle is not None:
-                kernel_idle.add(name)
-            if positions:
-                if format_errors is None:
-                    raise AssertionError(
-                        f"date_shift column {name!r} has unparseable values but the caller "
-                        "gave no format_errors channel to carry them."
-                    )
-                format_errors[name] = positions
-        elif strategy == "group_key":
-            arrays[name], ran = _mask_group_key(
-                (chunk if raw_chunk is None else raw_chunk).select([cfg["group_by"]]),
-                name=name,
-                cfg=cfg,
-                mask_key=mask_key,
-                raw_hex_kernel=raw_hex_kernel,
-                native_threads=native_threads,
-            )
-            if ran:
-                evidence.compiled_kernel_executed = True
-            elif kernel_idle is not None:
-                kernel_idle.add(name)
-        else:  # pragma: no cover - preflight admission already excludes this
-            raise AssertionError(
-                f"native route admitted column {name!r} with strategy {strategy!r}, "
-                "which is outside NATIVE_KERNEL_STRATEGIES and NATIVE_POOL_STRATEGIES; "
-                "the preflight admission check should have excluded this table."
-            )
+            format_errors[name] = result.format_error_positions
         elapsed = time.perf_counter() - t0
         if counted:
             evidence.kernel_calls[strategy] = evidence.kernel_calls.get(strategy, 0) + 1

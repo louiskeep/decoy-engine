@@ -464,16 +464,16 @@ def test_prepared_chunked_categoricals_keeps_admissible_string_source_columns_on
 def test_the_native_thread_budget_reaches_the_categorical_kernel_call(
     threads: int, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from decoy_engine.execution.native import _chunk_masking
+    from decoy_engine.execution.native import _operator_step
 
     seen: list[int | None] = []
-    real = _chunk_masking.native_categorical
+    real = _operator_step.native_categorical
 
     def spy(*args: Any, **kwargs: Any) -> Any:
         seen.append(kwargs["native_threads"])
         return real(*args, **kwargs)
 
-    monkeypatch.setattr(_chunk_masking, "native_categorical", spy)
+    monkeypatch.setattr(_operator_step, "native_categorical", spy)
     chunks = split(source(["a", "b", "c", "a", "b"]), 2)
     run_one(make_config([cat_col(), passthrough("p")]), chunks, native_threads=threads)
     assert seen == [threads] * len(chunks)

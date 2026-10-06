@@ -43,6 +43,7 @@ from decoy_engine.execution._unified_slice import QUALITY_METRICS_KEY
 from decoy_engine.execution.native._companion_status import native_companion_status
 from decoy_engine.execution.native._dispatch import plan_native_route
 from decoy_engine.execution.native._group_key_kernel import native_group_key
+from decoy_engine.execution.native._operator_params import GroupKeyParams
 from decoy_engine.execution.native._plan import native_route_eligibility
 from decoy_engine.execution.physical._plan import ExecutionBinding, KeyBinding
 from decoy_engine.execution.physical._shadow_operators import OperatorCallEvidence, run_operator
@@ -752,9 +753,7 @@ def _binding(**overrides: Any) -> ExecutionBinding:
         diagnostic_obligations=(),
         required_prepasses=(),
         batch_estimate=None,
-        group_key_group_by=_GB,
-        group_key_length=16,
-        group_key_prefix="",
+        params=GroupKeyParams(_GB, 16, "", f"group_key/{_TARGET}"),
     )
     base.update(overrides)
     return ExecutionBinding(**base)
@@ -821,6 +820,27 @@ def test_full_frame_operator_still_declines_when_the_raw_hex_loader_raises(
     with pytest.raises(ShadowDifference) as exc:
         _run_gk_operator(pa.array(rows, type=pa.string()))
     assert exc.value.code == "native_companion_unavailable"
+    assert "compiled raw-hex companion unavailable" in exc.value.detail
+
+
+@_NEEDS_COMPANION
+def test_full_frame_operator_lets_the_kernel_load_its_own_raw_hex_companion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The unified route passes no preloaded raw-hex kernel: the load inside `native_group_key`
+    is its only companion probe, so a preloaded kernel would hide a missing companion."""
+    import decoy_engine.execution.native._operator_step as step_mod
+
+    seen: list[object] = []
+    real = step_mod.native_group_key
+
+    def spy(*args: Any, **kwargs: Any) -> Any:
+        seen.append(kwargs.get("raw_hex_kernel", "absent"))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(step_mod, "native_group_key", spy)
+    _run_gk_operator(pa.array(["a", "b"], type=pa.string()))
+    assert seen == [None]
 
 
 @_NEEDS_COMPANION

@@ -52,7 +52,6 @@ from decoy_engine.execution.native._categorical_positional import (
 from decoy_engine.execution.native._chunk_masking import (  # noqa: F401 -- re-exported for tests
     _mask_chunk_native,
     _resolve_faker_pools,
-    _resolve_truncate_keep,
 )
 from decoy_engine.execution.native._chunk_schema import NativeChunkSchemaDriftError
 from decoy_engine.execution.native._chunked_group_key_gate import (
@@ -71,6 +70,9 @@ from decoy_engine.execution.native._group_key_ext import (
 from decoy_engine.execution.native._index_ext import (
     IndexDerivationKernel,
     load_compiled_index_kernel,
+)
+from decoy_engine.execution.native._operator_params import (  # noqa: F401 -- re-exported for tests
+    _resolve_truncate_keep,
 )
 from decoy_engine.execution.native._plan import compile_native_plan
 from decoy_engine.execution.native._real_type_admission import real_type_rejection

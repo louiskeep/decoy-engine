@@ -13,6 +13,13 @@ import pyarrow as pa
 import pytest
 
 from decoy_engine.execution.native._companion_status import native_companion_status
+from decoy_engine.execution.native._operator_params import (
+    FakerParams,
+    HashParams,
+    OperatorParams,
+    PassthroughParams,
+    resolve_operator_params,
+)
 from decoy_engine.execution.physical._plan import (
     ExecutionBinding,
     KeyBinding,
@@ -41,7 +48,9 @@ from decoy_engine.generation.pool import PoolCache
 from decoy_engine.providers_v2 import get_default_registry
 
 
-def _binding(operator_id: str, *, resolved_config: tuple = ()) -> ExecutionBinding:
+def _binding(
+    operator_id: str, *, resolved_config: tuple = (), params: OperatorParams | None = None
+) -> ExecutionBinding:
     return ExecutionBinding(
         operator_id=operator_id,
         operator_reason=f"slice_native_admitted:{operator_id}",
@@ -54,11 +63,16 @@ def _binding(operator_id: str, *, resolved_config: tuple = ()) -> ExecutionBindi
         diagnostic_obligations=(),
         required_prepasses=(),
         batch_estimate=None,
+        params=params,
     )
 
 
 def _plan_with_one_node(
-    strategy: str, operator_id: str, *, resolved_config: tuple = ()
+    strategy: str,
+    operator_id: str,
+    *,
+    resolved_config: tuple = (),
+    params: OperatorParams | None = None,
 ) -> PhysicalPlan:
     node = PhysicalNode(
         node_id="t:c:scalar:" + strategy,
@@ -68,7 +82,7 @@ def _plan_with_one_node(
         strategy=strategy,
         fallback_policy="native",
         provider_class=None,
-        execution=_binding(operator_id, resolved_config=resolved_config),
+        execution=_binding(operator_id, resolved_config=resolved_config, params=params),
     )
     table = PhysicalTable(
         table="t",
@@ -97,7 +111,7 @@ def test_duplicate_node_id_raises_coded_difference() -> None:
     coordinator must surface it with DUPLICATE_NODE_DECLARATION, not hide it."""
     from dataclasses import replace
 
-    plan = _plan_with_one_node("passthrough", "native_passthrough")
+    plan = _plan_with_one_node("passthrough", "native_passthrough", params=PassthroughParams())
     node = plan.tables[0].nodes[0]
     table = replace(plan.tables[0], nodes=(node, node))  # same node_id twice
     plan = replace(plan, tables=(table,))
@@ -142,7 +156,9 @@ def test_batches_covers_a_ragged_final_chunk() -> None:
     reason="compiled decoy-engine-native companion unavailable",
 )
 def test_coordinator_runs_the_hash_kernel_over_the_synthesized_empty_batch() -> None:
-    plan = _plan_with_one_node("hash", "native_keyed_hash", resolved_config=())
+    plan = _plan_with_one_node(
+        "hash", "native_keyed_hash", resolved_config=(), params=HashParams("n", None)
+    )
     # Rebind with a real KeyBinding (the fixture above uses key_binding=None).
     from dataclasses import replace
 
@@ -174,7 +190,7 @@ def test_coordinator_runs_the_hash_kernel_over_the_synthesized_empty_batch() -> 
 def test_planned_vs_actual_route_diff_is_raised_on_mismatch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    plan = _plan_with_one_node("passthrough", "native_passthrough")
+    plan = _plan_with_one_node("passthrough", "native_passthrough", params=PassthroughParams())
     source = pa.table({"c": pa.array(["a", "b"], type=pa.string())})
     snapshot = capture_shadow_snapshot({"t": source})
     ctx = ShadowContext(mask_key=b"\x03" * 32)
@@ -265,7 +281,13 @@ def test_run_operator_truncate_defaults_keep_to_head_when_config_omits_it() -> N
     "head")` fallback is a second, independently testable default."""
     from decoy_engine.execution.physical._shadow_operators import run_operator
 
-    binding = _binding("native_truncate", resolved_config=(("length", 3),))
+    binding = _binding(
+        "native_truncate",
+        resolved_config=(("length", 3),),
+        params=resolve_operator_params(
+            "truncate", target="c", provider_config={"length": 3}, namespace=None
+        ),
+    )
     ctx = ShadowContext(mask_key=b"\x05" * 32)
     evidence = OperatorCallEvidence(planned_operator=binding.operator_id)
     array = pa.array(["abcdef"], type=pa.string())
@@ -282,7 +304,11 @@ def test_run_operator_truncate_falls_back_to_length_zero_which_fails_closed() ->
     from decoy_engine.execution._errors import StrategyError
     from decoy_engine.execution.physical._shadow_operators import run_operator
 
-    binding = _binding("native_truncate", resolved_config=())
+    binding = _binding(
+        "native_truncate",
+        resolved_config=(),
+        params=resolve_operator_params("truncate", target="c", provider_config={}, namespace=None),
+    )
     ctx = ShadowContext(mask_key=b"\x06" * 32)
     evidence = OperatorCallEvidence(planned_operator=binding.operator_id)
     array = pa.array(["abcdef"], type=pa.string())
@@ -292,7 +318,7 @@ def test_run_operator_truncate_falls_back_to_length_zero_which_fails_closed() ->
 
 
 def test_route_evidence_batches_run_counts_every_batch() -> None:
-    plan = _plan_with_one_node("passthrough", "native_passthrough")
+    plan = _plan_with_one_node("passthrough", "native_passthrough", params=PassthroughParams())
     source = pa.table({"c": pa.array(list(range(7)), type=pa.int64())})
     snapshot = capture_shadow_snapshot({"t": source})
     ctx = ShadowContext(mask_key=b"\x07" * 32, batch_size_rows=3)
@@ -392,6 +418,7 @@ def test_faker_non_string_registry_override_is_declined() -> None:
         required_prepasses=(),
         batch_estimate=None,
         pool_binding=PoolBinding(provider="person_first_name", plan_pool_size=5),
+        params=FakerParams("ns_int_override"),
     )
     ctx = ShadowContext(mask_key=b"\x09" * 32, job_seed=b"12345678")
     coordinator = ShadowCoordinator(ctx=ctx, registry=custom_registry)
@@ -413,7 +440,7 @@ def test_bound_node_run_under_a_collector_records_exactly_one_timing() -> None:
     ",".join(node.columns))` call (`_pandas_adapter.py`)."""
     from decoy_engine.instrumentation.timing import TimingCollector, use_collector
 
-    plan = _plan_with_one_node("passthrough", "native_passthrough")
+    plan = _plan_with_one_node("passthrough", "native_passthrough", params=PassthroughParams())
     snapshot = capture_shadow_snapshot(
         {"t": pa.table({"c": pa.array(["a", "b", "c"], type=pa.string())})}
     )
@@ -437,7 +464,7 @@ def test_multi_batch_run_produces_one_timing_record_not_one_per_batch() -> None:
     yields exactly one record -- batches must never multiply records."""
     from decoy_engine.instrumentation.timing import TimingCollector, use_collector
 
-    plan = _plan_with_one_node("passthrough", "native_passthrough")
+    plan = _plan_with_one_node("passthrough", "native_passthrough", params=PassthroughParams())
     source = pa.table({"c": pa.array([f"v{i}" for i in range(7)], type=pa.string())})
     snapshot = capture_shadow_snapshot({"t": source})
     # 7 rows over batch_size_rows=2 forces 4 batches (2, 2, 2, 1 rows).
@@ -467,7 +494,7 @@ def test_no_active_collector_makes_no_clock_or_rss_calls(
     monkeypatch.setattr(timing_module, "_rss_kb", _boom)
     monkeypatch.setattr(time, "perf_counter", _boom)
 
-    plan = _plan_with_one_node("passthrough", "native_passthrough")
+    plan = _plan_with_one_node("passthrough", "native_passthrough", params=PassthroughParams())
     snapshot = capture_shadow_snapshot(
         {"t": pa.table({"c": pa.array(["a", "b", "c"], type=pa.string())})}
     )
