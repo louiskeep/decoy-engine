@@ -39,10 +39,14 @@ def load_disguises(directory: Path | None = None) -> list[Disguise]:
             with path.open("r", encoding="utf-8") as fh:
                 data = yaml.safe_load(fh)
         except yaml.YAMLError as exc:
+            # PyYAML's message quotes the offending text; log only where it failed.
+            mark = getattr(exc, "problem_mark", None)
+            where = f" at line {mark.line + 1}, column {mark.column + 1}" if mark else ""
             _log.error(
-                "load_disguises: YAML parse failed for %s: %s",
+                "load_disguises: YAML parse failed for %s (%s%s)",
                 path.name,
-                exc,
+                type(exc).__name__,
+                where,
             )
             continue
         except OSError as exc:
@@ -60,10 +64,30 @@ def load_disguises(directory: Path | None = None) -> list[Disguise]:
             out.append(Disguise(**data))
         except Exception as exc:
             # pydantic.ValidationError + any other constructor failure.
-            # Broad except keeps the loader resilient to schema drift.
+            # Broad except keeps the loader resilient to schema drift. The
+            # exception text echoes the offending input, which can hold config
+            # expressions and literals, so only locations and error types are logged.
             _log.error(
                 "load_disguises: schema validation failed for %s: %s",
                 path.name,
-                exc,
+                _safe_validation_summary(exc),
             )
     return out
+
+
+def _safe_validation_summary(exc: Exception) -> str:
+    """Field locations and error types from a validation failure, never the input values."""
+    errors = getattr(exc, "errors", None)
+    if callable(errors):
+        try:
+            items = errors(include_input=False, include_url=False, include_context=False)
+        except TypeError:
+            items = None
+        if isinstance(items, list):
+            parts = [
+                f"{'.'.join(str(p) for p in item.get('loc', ()))}: {item.get('type', '?')}"
+                for item in items
+                if isinstance(item, dict)
+            ]
+            return f"{type(exc).__name__} ({'; '.join(parts)})"
+    return type(exc).__name__

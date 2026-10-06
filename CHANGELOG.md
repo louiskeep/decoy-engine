@@ -9,6 +9,31 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Security (engine log lines stop carrying expression text and data values, 2026-10-06)
+
+- **Fallback warnings.** The numexpr-fallback warnings for `when:` predicates
+  (`execution/_when_gate.py`) and table transforms (`execution/_transforms.py`) logged the full
+  expression, so a predicate such as `email == 'bob@example.com'` wrote a literal value into server
+  logs. They now name only where the expression came from: the `when` column and strategy, or the
+  transform op (`filter`, `derive '<column>'`).
+- **date_shift.** The legacy `DateShiftStrategy` logged up to 20 unparseable source values. It now
+  logs a count and the column name.
+- **Formula errors.** Formula generation logged one warning per failing row with the exception text,
+  which can quote cell values. It now logs one line per column with a count and the exception type
+  names. When a formula fails because it references an undefined name or function (simpleeval's
+  `NameNotDefined` / `FunctionNotDefined`), that line also lists the names, which are config, not data.
+
+- **More log sites.**
+  - The distribution datetime sampler no longer logs unparseable snapshot bounds.
+  - The disguise loader logs validation-error locations and types instead of the full pydantic
+    error, whose input echo can hold config literals.
+  - The legacy date_shift key-derivation failure logs the exception type only.
+
+Scope: these are the log sites found in a 2026-10-06 sweep. One known site is deferred to the
+post-Phase F observability program: `geo_generalize` logs a 3-digit zip prefix at DEBUG level.
+Error messages raised to the caller are unchanged: they go to the user who wrote the config, not to
+the server log.
+
 ### Changed (text_redact runs on both native routes, 2026-10-06)
 
 A table with a plain `text_redact` column no longer falls back to pandas for every column in it.

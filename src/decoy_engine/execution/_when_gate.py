@@ -84,6 +84,8 @@ def _eval_predicate(
     pdf: pd.DataFrame,
     expression: str,
     strategy: str,
+    *,
+    column: str | None = None,
 ) -> pd.Series[bool]:
     """Shared numexpr-pinned, scope-clamped predicate eval.
 
@@ -113,8 +115,11 @@ def _eval_predicate(
         for _w in _caught:
             if issubclass(_w.category, RuntimeWarning):
                 _log.warning(
-                    "when expression %r: numexpr fell back to the python engine (%s)",
-                    expression,
+                    # Never the expression: a predicate can embed literal data values.
+                    "when predicate on column %r (strategy %s): numexpr fell back to the "
+                    "python engine (%s)",
+                    column,
+                    strategy,
                     _w.message,
                 )
     except ImportError as exc:
@@ -197,7 +202,7 @@ def run_with_when_gate(
     if preflight is not None:
         preflight(plan, ctx)
 
-    mask = _eval_predicate(df, plan.when, plan.strategy)
+    mask = _eval_predicate(df, plan.when, plan.strategy, column=column)
 
     if not mask.any():
         return df, []

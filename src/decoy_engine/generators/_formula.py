@@ -9,9 +9,11 @@ extracted only to keep the generator module under the size cap.
 from __future__ import annotations
 
 import random
+from collections import Counter
 from typing import Any
 
 import pandas as pd
+from simpleeval import FunctionNotDefined, NameNotDefined
 
 from decoy_engine.expressions import BASE_GLOBALS, safe_eval
 from decoy_engine.internal.crypto import hmac_hex
@@ -42,6 +44,19 @@ def _formula_hash_keyed(value: str, local_seed: int) -> str:
     # the per-row keying purpose.
     seed_bytes = (local_seed & ((1 << 64) - 1)).to_bytes(8, "big")
     return hmac_hex(seed_bytes * 4, value)[:8]
+
+
+def _undefined_name(exc: Exception) -> str | None:
+    """The undefined name a formula referenced, if that is why it failed. A name is
+    config, not data, and is what the formula's author needs to fix. `safe_eval` runs
+    on simpleeval, which raises its own exceptions rather than `NameError`."""
+    if isinstance(exc, NameNotDefined):
+        return str(exc.name)
+    if isinstance(exc, FunctionNotDefined):
+        return str(exc.func_name)
+    if isinstance(exc, NameError) and exc.name:
+        return exc.name
+    return None
 
 
 class _FormulaMixin:
@@ -139,6 +154,9 @@ class _FormulaMixin:
         # .seed_instance still serializes module-level state internally (Faker
         # library limitation; see synthesize.py _FAKER_CALL_LOCK).
         row_rng = random.Random()
+        # Exception text can echo cell values, so only type names and counts are logged.
+        error_types: Counter[str] = Counter()
+        missing_names: set[str] = set()
         for i in range(len(out)):
             local_seed = gen_ctx.row_int("py", i)
             row_rng.seed(local_seed)
@@ -158,9 +176,18 @@ class _FormulaMixin:
                 result = safe_eval(formula, BASE_GLOBALS, scope)
                 values.append(result)
             except Exception as exc:
-                self.logger.warning(f"Formula column {col_name!r} row {i} eval error: {exc}")
+                error_types[type(exc).__name__] += 1
+                name = _undefined_name(exc)
+                if name is not None:
+                    missing_names.add(name)
                 values.append(None)
 
+        if error_types:
+            self.logger.warning(
+                f"Formula column {col_name!r}: {sum(error_types.values())} row(s) failed to "
+                f"evaluate and were set to None ({dict(error_types)!r})"
+                + (f"; undefined name(s) {sorted(missing_names)!r}" if missing_names else "")
+            )
         if null_subs:
             self.logger.warning(
                 f"Formula column {col_name!r}: substituted '' for null cells in "
@@ -197,6 +224,8 @@ class _FormulaMixin:
         # RNG + keyed hash, faker for Faker) replace column_seed + i. See
         # fill_referenced_formula_column for the rationale.
         row_rng = random.Random()
+        error_types: Counter[str] = Counter()
+        missing_names: set[str] = set()
         for i in range(num_rows):
             local_seed = gen_ctx.row_int("py", i)
             row_rng.seed(local_seed)
@@ -210,15 +239,18 @@ class _FormulaMixin:
                 result = safe_eval(formula, BASE_GLOBALS, scope)
                 values.append(result)
             except Exception as e:
-                error_msg = str(e)
-                if "not defined" in error_msg:
-                    self.logger.warning(f"Name not available in formula for row {i}: {error_msg}")
-                    self.logger.info(f"Available names: {sorted(list(scope.keys()))}")
-                else:
-                    self.logger.warning(f"Error evaluating formula for row {i}: {error_msg}")
-                self.logger.debug(f"Formula: {formula}")
+                error_types[type(e).__name__] += 1
+                name = _undefined_name(e)
+                if name is not None:
+                    missing_names.add(name)
                 values.append(None)
 
+        if error_types:
+            self.logger.warning(
+                f"Formula column {column_name!r}: {sum(error_types.values())} row(s) failed to "
+                f"evaluate and were set to None ({dict(error_types)!r})"
+                + (f"; undefined name(s) {sorted(missing_names)!r}" if missing_names else "")
+            )
         return pd.Series(values)
 
     def _formula_scope(self, local_seed: int, rng: random.Random | None = None) -> dict[str, Any]:

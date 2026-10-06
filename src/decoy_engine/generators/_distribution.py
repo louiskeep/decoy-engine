@@ -333,9 +333,9 @@ class _DistributionMixin:
             ts_min = pd.Timestamp(min_iso)
             ts_max = pd.Timestamp(max_iso)
         except (TypeError, ValueError):
+            # The bounds are source data values, so they stay out of the log.
             self.logger.warning(
-                f"distribution datetime snapshot has unparseable min/max "
-                f"({min_iso!r}, {max_iso!r}); emitting nulls",
+                "distribution datetime snapshot has an unparseable min/max; emitting nulls",
             )
             return pd.Series([pd.NaT] * num_rows, dtype="datetime64[ns]")
 
