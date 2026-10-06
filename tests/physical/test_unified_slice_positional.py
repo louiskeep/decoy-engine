@@ -854,6 +854,21 @@ def test_8_each_positional_faker_condition_is_enforced(tmp_path: Path, clause: s
     assert _bindable(_FAKER_PRED, case, replace=replace) is False
 
 
+def test_8_a_provider_the_registry_marks_not_poolable_is_not_bindable(tmp_path: Path) -> None:
+    from decoy_engine.providers_v2 import get_default_registry
+
+    default = get_default_registry()
+    caps = default.get_capabilities("person_first_name").model_copy(update={"poolable": False})
+    registry = default.override("person_first_name", default.get_adapter("person_first_name"), caps)
+    case = _cat_case(_fresh(tmp_path, "p"), nd_faker())
+    assert _bindable(_FAKER_PRED, case) is True
+    inputs = capture_physical_plan_inputs(
+        case.config, {"t": case.source}, engine_version=ENGINE_VERSION, registry=registry
+    )
+    check = _shadow_bindings.positional_faker_bindable
+    assert check(plan_slice=_slice_of(inputs), table="t", column="c", inputs=inputs) is False
+
+
 @pytest.mark.parametrize("variant", ["faker", "categorical"])
 def test_8_the_fk_exclusion_holds_on_the_multi_table_binding_path(
     tmp_path: Path, variant: str
@@ -898,10 +913,12 @@ def test_8_an_admitted_node_binds_with_the_variant_parameters(tmp_path: Path, va
         assert binding.key_binding.key_source == "job_seed"
         assert binding.key_binding.namespace == default_namespace("t", "c")
         assert binding.pool_binding is not None
+        assert binding.determinism_family == "source_keyed_hmac"
     else:
         assert isinstance(binding.params, CategoricalParams)
         assert binding.params.prepared.positional is True
         assert binding.key_binding is not None
         assert binding.key_binding.key_source == "mask_key"
         assert binding.key_binding.namespace == "ns_cat"
+        assert binding.determinism_family == "source_keyed_hmac"
     assert binding.needs_index_kernel is True
