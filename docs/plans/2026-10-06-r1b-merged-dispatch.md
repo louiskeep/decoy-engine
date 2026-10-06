@@ -1,4 +1,4 @@
-Status: plan (revision 2, author = Opus). Codex plan gate: round 1 REVISE folded; round 2 pending.
+Status: plan (revision 3, author = Opus). Codex plan gate: rounds 1 and 2 REVISE folded; round 3 pending.
 Rules consulted: 00-universal, development-loop, refactoring, architecture, testing, code-review, scope-discipline
 
 # R1b: one kernel step per operator, shared by both routes
@@ -24,7 +24,7 @@ Out of scope (deliberately):
 - Faker pool resolution (`_resolve_pool` in the coordinator vs `_resolve_faker_pools` in the chunked route). Both already call `resolve_faker_pool_identity`; the remaining difference is route lifecycle.
 - Merging the two evidence records (`OperatorCallEvidence` vs `NativeRouteEvidence`). Different contracts by design.
 - The categorical positive-evidence question (open follow-up from route evidence).
-- Any change to admission, preflight, or the schema rule. In particular `_prepared_categoricals` (`native/_chunked_entry.py:375`), which runs before route selection, skips inadmissible columns, and feeds the output-type pin on BOTH legs, is untouched.
+- Any change to admission, preflight, or the schema rule, except one representation-only read in unified admission (§3b: `_unified_slice_resident_types.py:58` reads the group_key sibling name from the binding). In particular `_prepared_categoricals` (`native/_chunked_entry.py:375`), which runs before route selection, skips inadmissible columns, and feeds the output-type pin on BOTH legs, is untouched.
 
 ## 2. Established facts (inventory at `a71800f3`, verified by reading the code)
 
@@ -67,7 +67,8 @@ Already shared: `sample_faker_array`, `_resolve_truncate_keep`, and `prepare_cat
 - 8 tests patch kernel names in `_chunk_masking` via `monkeypatch.setattr(_chunk_masking, "native_*", ...)`. Seven are POSITIVE spies that wrap the real kernel and inspect calls (`test_chunked_{categorical,date_shift,bucket_perturb}_admission.py`, `test_chunked_group_key_admission.py:569,610`, `test_chunked_group_key_parity.py:287`, `test_chunked_nondet_categorical_parity.py:341`). One is a NEGATIVE sentinel that must never run (`test_dispatch_faker.py:1374-1391`, `_fail_hash`).
 - Malformed-binding tests: `test_shadow_date_shift.py` builds bindings through `_binding(**overrides)` (`:966`) and `dataclasses.replace(n.execution, **changes)` (`:750`), and a parametrized table (`:1115-1135`) asserts exact `AssertionError` messages for `key_binding=None`, `date_shift_date_format=None`, `date_shift_min_days=None`, and so on. `:1003` asserts `needs_index_kernel` is False when `date_shift_date_format=None`. The missing-`column` test (`:987-995`) passes a deliberately unusable kernel (`object()`) and relies on the guard firing BEFORE the kernel call (`_shadow_operators.py:341-347`).
 - Helper homes: `sample_faker_array` and `_resolve_truncate_keep` live in `_chunk_masking.py:51-159`, imported by `_shadow_operators.py:25`, `_shadow_bindings.py:29`, `_chunked_entry.py:50`, re-exported by `_dispatch.py:52` for tests, and imported by `tests/native/test_sample_faker_array.py:17`.
-- No platform or CLI code reads `ExecutionBinding` fields (Codex static search, round 1).
+- Production readers of the eleven fields, outside `_shadow_bindings.py` and `_shadow_operators.py` (full `grep` of `src/`, round 2): `physical/_plan.py:165-167` (`needs_index_kernel`), `physical/_shadow_coordinator.py:340,360` (group_key sibling feed), and `_unified_slice_resident_types.py:58` (`binding.group_key_group_by`, called from unified admission at `_unified_slice_admission.py:493`, before execution). No other reader exists; the `mask.categorical_deterministic` strings in `native/_draw_site_providers.py` and `_determinism_protocol.py` are draw-site ids, not field reads.
+- No platform or CLI code reads `ExecutionBinding` fields (Codex static search, rounds 1 and 2).
 - `test_shadow_date_shift.py:596` patches `_shadow_coordinator.run_operator`; the coordinator keeps calling `run_operator` by that name.
 - Sentry: `test_production_execution_modules_are_byte_identical_to_origin_main` allowlists the execution modules a branch may change; new modules need entries. `native/` must not import `physical/` (`test_physical_seam_disconnection.py:64-72`).
 
@@ -106,15 +107,18 @@ It holds every default in §2.1, each exactly once. It does not validate or decl
 
 **3b. `ExecutionBinding` carries the parameter object.** Replace the eleven per-operator fields (`categorical_deterministic`, `categorical_categories`, `categorical_cdf`, `bucket_perturb_bucket`, `bucket_perturb_date_format`, `group_key_group_by`, `group_key_length`, `group_key_prefix`, `date_shift_date_format`, `date_shift_min_days`, `date_shift_max_days`) with one `params: OperatorParams | None = None` field (Fowler: Introduce Parameter Object; Replace Type Code with Subclasses).
 
-- `needs_index_kernel` and the coordinator's two marker reads (`bucket_perturb_bucket`, `group_key_group_by`) become `isinstance` checks on `params`.
-- `categorical_deterministic` becomes "`params` is a `CategoricalParams` whose `prepared.positional` is False".
+- Marker predicates stay FIELD-SENSITIVE, so every partial binding behaves as today:
+  - `needs_index_kernel` = `pool_binding is not None` OR (`params` is `CategoricalParams` and not `prepared.positional`) OR (`params` is `BucketPerturbParams` and `params.bucket is not None`) OR (`params` is `DateShiftParams` and `params.date_format is not None`). This mirrors `_plan.py:164-167` field for field.
+  - "Bound group_key node" (coordinator `:340,360`, resident types `:58`) = `params` is `GroupKeyParams` and `params.group_by is not None`. A small helper on `ExecutionBinding`, e.g. `group_key_sibling` returning that name or None, is the one place this is computed, and all three readers call it.
+  - `categorical_deterministic` becomes "`params` is a `CategoricalParams` whose `prepared.positional` is False".
+- `_unified_slice_resident_types.py:58` reads the sibling through that helper. This is the only admission edit and it is representation-only: the missing or invalid sibling, schema-shape and masked-sibling declines are unchanged.
 - `resolved_config` stays (evidence and diagnostics read it). `KeyBinding` stays; for every keyed operator (hash, faker, categorical, bucket_perturb, group_key, date_shift) its namespace is taken from `params.namespace`, so the two cannot diverge.
 - `_shadow_bindings.execution_binding_for_slice_node` keeps every `return None` guard it has today (key source, namespace presence, faker pool bindability, string categories, date_format presence, int bounds, sibling input-schema rebind), then calls the resolver. For categorical it calls `prepare_categorical(deterministic=True, ...)` and returns None on a reason, which matches today's `# pragma: no cover` branches (admission already ran the same function).
 
 Test edits for 3b, enumerated rather than called mechanical:
 - (i) The 9 construction sites pass `params=<XParams>(...)` instead of the per-operator kwargs.
 - (ii) The 10 field reads become `binding.params.<field>`.
-- (iii) Every malformed-binding override (`_binding(**overrides)`, `dataclasses.replace(n.execution, **changes)`, the parametrized table at `test_shadow_date_shift.py:1115-1135`, and `:1003`) is mapped to the equivalent `params` malformation: a field set to None becomes `params=dataclasses.replace(p, <field>=None)`; "no marker" becomes `params=None`. Each case keeps its exact expected outcome and message. The builder lists every mapped case in the build record (file:line, old override, new override, unchanged expectation).
+- (iii) Every malformed-binding override (`_binding(**overrides)`, `dataclasses.replace(n.execution, **changes)`, the parametrized table at `test_shadow_date_shift.py:1115-1135`, and `:1003`) is mapped LITERALLY: a field set to None becomes `params=dataclasses.replace(p, <field>=None)`, never `params=None`. Each case keeps its exact expected outcome and message (for example `:1003` still expects `needs_index_kernel is False` for `date_format=None`, which the field-sensitive predicate gives). A separate new case covers `params=None` for each marker predicate. The builder lists every mapped case in the build record (file:line, old override, new override, unchanged expectation).
 - (iv) `test_run_operator_asserts_categorical_determinism` builds its binding with `prepared.positional=True` instead of `categorical_deterministic=False`. Same intent: a position-keyed categorical must never reach the unified operator.
 
 **3c. Kernel step (E2b).** New module `src/decoy_engine/execution/native/_operator_step.py`. `sample_faker_array` moves here from `_chunk_masking.py`; `_chunk_masking`, `_shadow_operators` and `tests/native/test_sample_faker_array.py` import it from the new home (the test file's import line is the only change there). Dependency direction is acyclic: `_operator_params` (leaf: registry-free, imports `_categorical_prepared`, determinism defaults) <- `_operator_step` (imports params and kernels) <- `_chunk_masking`, `physical/_shadow_operators`. Neither new module imports `physical/`.
@@ -192,7 +196,7 @@ Chunked:
 
 All new tests are under `tests/native/` unless noted. "Baseline" tests are committed BEFORE any source change, pass on unmodified `a71800f3`, and must stay green after.
 
-1. **Baseline: cross-route kernel kwargs (Hypothesis).** For the eight operators both routes can run (all except positional categorical), generate configs inside each operator's admission rules: truncate lengths with keep/from_end forms; redact value absent or present; hash truncate absent or int; bucket week, month, quarter or absent; date_shift bounds absent, int, or swapped; group_key length absent or a valid even int, and prefix absent, str or None; categorical categories with weights absent or valid; faker over a fixed small pool. Each example runs the same source through the unified `run_operator` and the chunked `_mask_chunk_native` (one chunk) and asserts the recorded kwargs are equal, except `raw_hex_kernel` for group_key. Constraints:
+1. **Baseline: cross-route kernel kwargs (Hypothesis).** For all nine operators (passthrough, redact, truncate, hash, faker, categorical, bucket_perturb, group_key, date_shift; categorical in its deterministic variant only, since the positional variant cannot bind on the unified route and is covered by tests 3, 7 and the existing positional parity suite), generate configs inside each operator's admission rules: truncate lengths with keep/from_end forms; redact value absent or present; hash truncate absent or int; bucket week, month, quarter or absent; date_shift bounds absent, int, or swapped; group_key length absent or a valid even int, and prefix absent, str or None; categorical categories with weights absent or valid; faker over a fixed small pool. Each example runs the same source through the unified `run_operator` and the chunked `_mask_chunk_native` (one chunk) and asserts the recorded kwargs are equal, except `raw_hex_kernel` for group_key. Constraints:
    - (a) Assert the unified binding is non-None. A config that does not bind is a generator bug.
    - (b) Import every candidate call-site module (`_shadow_operators`, `_chunk_masking`, `_operator_step` when present) before patching, capture each original kernel before replacing it, and patch with `raising=False`.
    - (c) Reset recordings inside each example.
@@ -209,10 +213,12 @@ All new tests are under `tests/native/` unless noted. "Baseline" tests are commi
    - (b) Unified group_key passes `raw_hex_kernel=None`, checked by a spy on `native_group_key` at the step.
    - (c) Chunked faker writes `pool_select_*`, not `compiled_kernel_executed` (existing `test_dispatch_faker.py:347,372`).
    - (d) The missing-`column` date_shift test (`test_shadow_date_shift.py:987-995`) passes unedited, with its unusable kernel.
-9. **Import seam.** `_operator_params` and `_operator_step` import nothing from `physical/`, enforced by the extended sentry.
-10. **Mutation check** (a build step, not a test file). Mutate each resolver default (`"month"` to `"week"`, group_key `16` to `18`, the redact default, a date_shift default, the truncate coercion) and the `or ""` rule in the step. Test 1, 2 or 3 must fail for each mutation. Record the results.
+9. **Unified group_key activation end to end.** A unified-slice run of a group_key job (through the coordinator, not a direct `run_operator` call) asserts that the unified route activated and admitted the node, that the output equals the oracle's, and that unified admission's resident-types check read the sibling. The existing negative admission cases (missing sibling, masked sibling, schema shape) pass unedited. This catches a missed binding reader that direct operator comparisons cannot see.
+10. **Marker predicates.** For each predicate (`needs_index_kernel`, the group_key sibling helper), assert the result for a full binding, for each partial-field binding (field set to None), and for `params=None`, matching today's field-based results.
+11. **Import seam.** `_operator_params` and `_operator_step` import nothing from `physical/`, enforced by the extended sentry.
+12. **Mutation check** (a build step, not a test file). Mutate each resolver default (`"month"` to `"week"`, group_key `16` to `18`, the redact default, a date_shift default, the truncate coercion) and the `or ""` rule in the step. Test 1, 2 or 3 must fail for each mutation. Record the results.
 
-Red-before: tests 6, 7 and 9 fail on `a71800f3` (the modules do not exist, or the literals are still in the adapters). Tests 1 to 4 are green-before by design.
+Red-before: tests 6, 7, 10 and 11 fail on `a71800f3` (the modules, helper or params field do not exist, or the literals are still in the adapters). Tests 1 to 4 and 9 are green-before by design.
 
 Every new test also runs under the Python 3.10 mirror (`~/.cache/decoy-ci-mirror-venv`).
 
@@ -225,6 +231,7 @@ Every new test also runs under the Python 3.10 mirror (`~/.cache/decoy-ci-mirror
 | Guard order changes which exception a malformed binding raises | §3d step 1 fixes the order. Malformed-binding cases keep their exact messages (§3b iii). The missing-column test is unedited (test 8d). |
 | Evidence semantics merged by accident | The step returns `ran`; each adapter writes its own flags (§3d). The exact-evidence suite pins it. |
 | Import cycle from moved helpers | Fixed direction (§3c); the import sentry covers it. |
+| A binding reader is missed | Full `src/` grep recorded in §2.3; test 9 exercises unified admission end to end; mypy flags any attribute that no longer exists. |
 | Module size | New modules stay under 600; census entries are removed at 600 or below. |
 
 Rollback: revert the merge commit. No data, config or API surface changes.
@@ -243,3 +250,7 @@ Gates: Codex plan gate on this plan; Sonnet build; dennis; Codex final gate; ci-
   - M3: baseline test constraints added; namespace rule is tested by direct characterization (test 3).
   - M4: the literal sentry is narrowed to the three adapter modules.
   - Census entries at 600 or below are removed.
+- Codex round 2, REVISE (1 HIGH, 1 MEDIUM). Folded in rev 3:
+  - H: the missed reader `_unified_slice_resident_types.py:58` is now in scope through one helper; an end-to-end unified group_key test was added (test 9).
+  - M: marker predicates are field-sensitive and malformed-binding mapping is literal; `params=None` cases added (test 10).
+  - Test 1 now enumerates all nine operators.
