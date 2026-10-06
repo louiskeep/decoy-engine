@@ -1054,8 +1054,12 @@ keywords. Rename the column or compare it through another one.
 A null cell behaves as pandas treats it. It equals no literal, so `==`, `in` and
 the ordering tests do not select it, while `!=`, `not in` and `not (...)` do. A
 nullable column can give a missing result for a test, and a missing result
-selects nothing. The engine takes the selection from the same pandas call on every
-route, so what a predicate selects does not depend on the route.
+selects nothing. The native chunked route takes the selection from the same pandas
+call the chunked oracle makes for the same chunk, so the two agree at identical
+chunking. A whole-frame run can select differently for a numeric column whose
+representation depends on the rows present (an integer column with nulls is read as
+floating point, so values above 2**53 compare differently); that is why the planner
+auto-chunks a `when:` table only when every referenced column is a string.
 
 Chunked execution runs `when:` natively for `hash`, `redact`, `truncate` and
 deterministic `categorical` columns over a string source. The predicate may read

@@ -198,3 +198,17 @@ def test_a_set_when_moves_both_hashes() -> None:
     pipeline, canonical = _hashes(_hash_fixture(when="b == 'x'"))
     assert pipeline != _PRE_WHEN_PIPELINE_HASH
     assert canonical != _PRE_WHEN_CANONICAL_SHA
+
+
+def test_a_multiline_predicate_is_rejected_at_its_nested_location() -> None:
+    import pydantic
+    import pytest
+
+    from decoy_engine.config import PipelineConfig
+
+    raw = _hash_fixture(when="b == 'x'\nand b != 'y'")
+    with pytest.raises(pydantic.ValidationError) as info:
+        PipelineConfig.model_validate(raw)
+    (error,) = info.value.errors()
+    assert error["type"] == "when_outside_closed_grammar"
+    assert error["loc"] == ("tables", 0, "columns", 0, "when")

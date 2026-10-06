@@ -184,6 +184,9 @@ def parse_when(expr: str) -> WhenExpr:
     text = expr.strip()
     if not text:
         raise _reject("the predicate is empty")
+    if "\n" in text or "\r" in text:
+        # pandas eval reads a multi-line expression as a block of assignments.
+        raise _reject("the predicate must be on one line")
     if len(text) > _MAX_EXPR_LENGTH:
         raise _reject(f"the predicate is longer than {_MAX_EXPR_LENGTH} characters")
     if text.count("(") > _MAX_NESTING_DEPTH:

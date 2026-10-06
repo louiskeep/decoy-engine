@@ -39,7 +39,8 @@ literal: NUMBER    -> number_lit
 
 CMP: "==" | "!=" | "<=" | ">=" | "<" | ">"
 IDENT: /[A-Za-z_][A-Za-z0-9_]*/
-NUMBER: /-?[0-9]+(\.[0-9]+)?([eE][+-]?[0-9]+)?/
+// No leading zeros: pandas eval rejects `01` as a Python syntax error.
+NUMBER: /-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?/
 SQ_STRING: /'[^'"\\\x00-\x1f\x7f-\x9f  ]*'/
 DQ_STRING: /"[^'"\\\x00-\x1f\x7f-\x9f  ]*"/
 

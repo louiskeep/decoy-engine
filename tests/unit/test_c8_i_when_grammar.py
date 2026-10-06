@@ -343,3 +343,27 @@ def test_the_largest_accepted_predicates_evaluate_under_the_oracle() -> None:
         parse_when(predicate)
         mask = _eval_predicate(frame, predicate, "hash")
         assert len(mask) == 3
+
+
+@pytest.mark.parametrize(
+    "predicate",
+    ["n == 01", "n == -01", "n == 007", "s == 'x'\nand n == 1", "s == 'x'\r\nand n == 1"],
+    ids=["leading_zero", "negative_leading_zero", "padded", "newline", "crlf"],
+)
+def test_spellings_pandas_eval_cannot_run_are_rejected(predicate: str) -> None:
+    from decoy_engine.errors import ValidationError
+    from decoy_engine.expressions._when_parser import parse_when
+
+    with pytest.raises(ValidationError):
+        parse_when(predicate)
+
+
+@pytest.mark.parametrize("predicate", ["n == 0", "n == -0", "n == 0.5", "n == 10", "n == 1e05"])
+def test_ordinary_numbers_still_parse_and_evaluate(predicate: str) -> None:
+    import pandas as pd
+
+    from decoy_engine.execution._when_gate import _eval_predicate
+    from decoy_engine.expressions._when_parser import parse_when
+
+    parse_when(predicate)
+    assert len(_eval_predicate(pd.DataFrame({"n": [0, 10, None]}), predicate, "hash")) == 3
