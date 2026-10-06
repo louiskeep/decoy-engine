@@ -198,6 +198,18 @@ def test_the_predicate_declines_deterministic_nested_composite_and_other_strateg
     assert positional_faker_config_of_entry(entry) is None
 
 
+def test_the_allow_collisions_alias_is_deterministic_and_keeps_its_veto() -> None:
+    """`allow_collisions` compiles to a deterministic faker, so it is not position-keyed."""
+    from decoy_engine.execution.native._faker_positional_admission import (
+        positional_faker_config_of_entry,
+    )
+
+    col = nd_faker(namespace="ns_f", allow_collisions=True)
+    entry = make_config([col])["tables"][0]["columns"][0]
+    assert positional_faker_config_of_entry(entry) is None
+    assert _code([col, passthrough("p")]) == VETO
+
+
 def test_the_column_lookup_matches_both_the_table_and_the_column_name() -> None:
     from decoy_engine.execution.native._faker_positional_admission import (
         positional_faker_config_for_column,

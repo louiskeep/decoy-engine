@@ -282,6 +282,19 @@ def test_the_resolver_carries_the_selection_namespace_of_the_table(namespace: st
     assert other.selection_namespace == (namespace or "faker-nd/1:u/1:f")
 
 
+@pytest.mark.parametrize("mode", ["unique", "match_source_cardinality", "scale_source_cardinality"])
+def test_a_whole_column_mode_is_never_resolved_as_position_keyed(mode: str) -> None:
+    from decoy_engine.execution.native._operator_params import (
+        FakerParams,
+        resolve_params_by_column,
+    )
+    from tests.native._chunked_faker_support import seed_of
+
+    seed = seed_of("ns_f", mode=mode)
+    params = resolve_params_by_column({"f": seed}, {}, excluded=frozenset(), table="t")["f"]
+    assert params == FakerParams("ns_f")
+
+
 def test_the_deterministic_resolver_path_is_unchanged() -> None:
     from decoy_engine.execution.native._operator_params import (
         FakerParams,

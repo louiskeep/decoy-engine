@@ -191,7 +191,7 @@ def write_source(table: pa.Table, path: Path) -> str:
     return str(path)
 
 
-def seed_of(namespace: str | None, *, deterministic: bool = False) -> Any:
+def seed_of(namespace: str | None, *, deterministic: bool = False, mode: str = "reuse") -> Any:
     """The compiled `ColumnSeed` of a `person_first_name` Faker column, built directly."""
     from decoy_engine.plan._types import ColumnSeed
 
@@ -201,7 +201,7 @@ def seed_of(namespace: str | None, *, deterministic: bool = False) -> Any:
         provider="person_first_name",
         backend_type="faker",
         backend_version="v",
-        cardinality_mode="reuse",
+        cardinality_mode=mode,
         deterministic=deterministic,
         provider_config=(("pool_size", POOL_SIZE),),
         coherent_with=(),

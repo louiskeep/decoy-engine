@@ -137,14 +137,24 @@ def test_a_range_past_the_uint64_domain_raises_the_faker_code() -> None:
     assert oracle.value.code == info.value.code
 
 
-def test_a_malformed_kernel_result_fails_closed() -> None:
+@pytest.mark.parametrize(
+    ("result", "code"),
+    [
+        (pa.array([0, 1, 2], pa.int64()), "index_batch_type_mismatch"),
+        ([0, 1, 2], "index_batch_type_mismatch"),
+        (pa.array([0, 1], pa.uint64()), "index_batch_length_mismatch"),
+        (pa.array([0, 1, 99], pa.uint64()), "index_batch_out_of_bounds"),
+    ],
+    ids=["wrong_dtype", "not_an_array", "wrong_length", "out_of_bounds"],
+)
+def test_a_malformed_kernel_result_fails_closed(result: Any, code: str) -> None:
     class _Bad:
         def derive_index_batch(self, *args: Any, **kwargs: Any) -> Any:
-            return pa.array([0] * 3, pa.int64())
+            return result
 
     with pytest.raises(GenerationError) as info:
         _positional(pa.array(["a", "b", "c"], pa.string()), index_kernel=_Bad())
-    assert info.value.code == "index_batch_type_mismatch"
+    assert info.value.code == code
 
 
 # ---------------------------------------------------------------------------
@@ -199,6 +209,11 @@ def test_a_zero_row_source_returns_a_typed_empty_array_without_calling_the_kerne
 def test_positional_faker_without_a_job_seed_asserts() -> None:
     with pytest.raises(AssertionError):
         _step(pa.array(["a"], pa.string()), job_seed=None)
+
+
+def test_a_zero_row_source_with_no_job_seed_still_asserts() -> None:
+    with pytest.raises(AssertionError):
+        _step(pa.array([], pa.string()), job_seed=None)
 
 
 def test_the_step_never_reads_the_mask_key_for_the_positional_draw() -> None:

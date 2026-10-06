@@ -285,6 +285,9 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         # C1b-ii: seeded non-deterministic categorical chunked-admission adapters; imports
         # nothing from `execution.physical` (full-frame physical native stays closed).
         "src/decoy_engine/execution/native/_categorical_positional.py",
+        # C5b-ii: the non-deterministic REUSE faker's chunked-admission predicate and `when:`
+        # gate; imports nothing from `execution.physical` (the unified route stays closed).
+        "src/decoy_engine/execution/native/_faker_positional_admission.py",
         # Task 4.6 slice 5b-i: the shared generate+mask output-stitch helper
         # both `_pipeline.py` and `execution/physical/_shadow_mixed.py` call,
         # so the "mask wins ties" precedence cannot drift between the two.
