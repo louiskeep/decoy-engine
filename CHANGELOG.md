@@ -28,9 +28,10 @@ pandas handler, so they are not admitted. A non-string source column (chunked ro
 `detectors` list still means every detector.
 
 Documented chunked output type: an admitted text_redact column is `string` on every chunk of the
-chunked route, with or without the compiled companion. A zero-row chunk of such a column was
-`double` and an all-null chunk was `null` before; both are `string` now, including when another
-column sends the table to the oracle chunked leg.
+chunked route, with or without the compiled companion. A zero-row or all-null chunk of such a
+column was not `string` before (`null` on `run_mask_chunked`); both are `string` now, including
+when another column sends the table to the oracle chunked leg. Before this change the chunk types
+of one column could mix (`string`, then `null`); now they are consistent.
 The unified full-frame route still gives Arrow `null` for an entirely empty or all-null column,
 the same route-dependent difference redact and truncate already carry. Values do not change.
 
