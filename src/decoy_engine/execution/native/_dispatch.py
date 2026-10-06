@@ -44,6 +44,7 @@ from typing import Any, Literal
 
 import pyarrow as pa
 
+from decoy_engine.execution._operator_registry import OPERATORS
 from decoy_engine.execution._transforms_gate import reject_per_table_transforms
 from decoy_engine.execution.native._categorical_positional import (
     positional_config_for_column,
@@ -83,8 +84,11 @@ from decoy_engine.generation.pool import PoolCache
 RouteTag = Literal["native_kernel", "native_pool", "oracle"]
 
 # Strategies whose native chunk path calls the compiled index kernel, so preflight
-# loads and self-tests it once and downgrades the table when it is missing.
-_INDEX_KERNEL_STRATEGIES = frozenset({"faker", "categorical", "bucket_perturb", "date_shift"})
+# loads and self-tests it once and downgrades the table when it is missing. Derived from the
+# operator registry (`required_kernel == "index"`); edit the registry.
+_INDEX_KERNEL_STRATEGIES = frozenset(
+    spec.strategy for spec in OPERATORS.values() if spec.required_kernel == "index"
+)
 
 
 @dataclass(frozen=True)

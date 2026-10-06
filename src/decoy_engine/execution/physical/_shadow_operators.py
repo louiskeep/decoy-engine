@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Final
 
 import pyarrow as pa
 
+from decoy_engine.execution._operator_registry import OPERATORS
 from decoy_engine.execution._row_errors import RowError
 from decoy_engine.execution.native._bucket_perturb_ext import native_bucket_perturb
 from decoy_engine.execution.native._categorical_ext import native_categorical
@@ -52,15 +53,15 @@ __all__ = [
     "run_operator",
 ]
 
-_PASSTHROUGH: Final = "native_passthrough"
-_REDACT: Final = "native_redact"
-_TRUNCATE: Final = "native_truncate"
-_KEYED_HASH: Final = "native_keyed_hash"
-_FAKER_SELECT: Final = "native_faker_select"
-_CATEGORICAL: Final = "native_categorical"
-_BUCKET_PERTURB: Final = "native_bucket_perturb"
-_GROUP_KEY: Final = "native_group_key"
-_DATE_SHIFT: Final = "native_date_shift"
+_PASSTHROUGH: Final = OPERATORS["passthrough"].operator_id
+_REDACT: Final = OPERATORS["redact"].operator_id
+_TRUNCATE: Final = OPERATORS["truncate"].operator_id
+_KEYED_HASH: Final = OPERATORS["hash"].operator_id
+_FAKER_SELECT: Final = OPERATORS["faker"].operator_id
+_CATEGORICAL: Final = OPERATORS["categorical"].operator_id
+_BUCKET_PERTURB: Final = OPERATORS["bucket_perturb"].operator_id
+_GROUP_KEY: Final = OPERATORS["group_key"].operator_id
+_DATE_SHIFT: Final = OPERATORS["date_shift"].operator_id
 
 # The `GenerationError` codes every index-kernel consumer raises when the
 # compiled `derive_index_batch` result violates its contract (type, length,

@@ -20,7 +20,6 @@ from decoy_engine.execution.native import _dispatch
 from decoy_engine.execution.native._chunked_entry import aggregate_chunked_route_evidence
 from decoy_engine.execution.native._crypto_ext import CryptoExtensionUnavailableError
 from decoy_engine.execution.native._dispatch import NativeRouteEvidence
-from decoy_engine.execution.native._phase3_eligibility import phase3_c1_eligibility
 from decoy_engine.execution.native._plan import native_route_eligibility
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.providers_v2 import get_default_registry
@@ -187,17 +186,6 @@ def test_categorical_is_not_in_the_chunked_veto_set() -> None:
 
     assert "categorical" not in CHUNKED_ROUTE_VETOED_STRATEGIES
     assert frozenset() == CHUNKED_ROUTE_VETOED_STRATEGIES
-
-
-def test_config_only_eligibility_mirror_admits_an_admissible_categorical() -> None:
-    result = phase3_c1_eligibility(make_config([cat_col(), passthrough("p")]), table=TABLE)
-    assert not any("categorical_not_native_chunked_route" in r for r in result.reasons)
-
-
-def test_config_only_eligibility_mirror_still_declines_a_non_native_column() -> None:
-    result = phase3_c1_eligibility(make_config([cat_col(), force_oracle("b")]), table=TABLE)
-    assert result.admitted is False
-    assert "categorical_categories_not_all_string:b" in result.reasons
 
 
 @NEEDS_COMPANION

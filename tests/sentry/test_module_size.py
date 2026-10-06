@@ -93,7 +93,7 @@ ALLOWLIST: dict[str, int] = {
     # routing dispatch; logic already lives in the _transforms_* siblings, dense reviewed exception.
     "src/decoy_engine/execution/_pipeline.py": 684,
     # resident Arrow type resolution; move it into its own module with the next operator gate.
-    "src/decoy_engine/execution/native/_requirements.py": 646,
+    "src/decoy_engine/execution/native/_requirements.py": 641,
     # sequential FK route threading; split the per-table mask/quarantine loop.
     "src/decoy_engine/execution/_sequential.py": 649,
     # transactional publish hardening and row mask; split the publish cluster.

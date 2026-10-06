@@ -23,11 +23,11 @@ import pyarrow as pa
 
 from decoy_engine.execution._adapter import provider_config_to_dict
 from decoy_engine.execution._errors import StrategyError
+from decoy_engine.execution._operator_registry import OPERATORS
 from decoy_engine.execution._strategies._categorical import _build_cdf
 from decoy_engine.execution.native._capabilities import capabilities_for
 from decoy_engine.execution.native._chunk_masking import _resolve_truncate_keep
 from decoy_engine.execution.native._date_shift_ext import DEFAULT_MAX_DAYS, DEFAULT_MIN_DAYS
-from decoy_engine.execution.native._phase3_eligibility import C1_PROVIDER_ALLOWLIST
 from decoy_engine.execution.native._provider_class import classify_provider
 from decoy_engine.execution.native._requirements import resolve_input_arrow_type
 from decoy_engine.execution.physical._plan import ExecutionBinding, KeyBinding, PoolBinding
@@ -41,30 +41,14 @@ if TYPE_CHECKING:
 # The slice strategies the shadow coordinator admits (TASK-4.4-PLAN.md C2 +
 # Task 4.6 slice 1's faker addition); a node outside this set is never bound,
 # regardless of native admission.
-SLICE_STRATEGIES: Final[frozenset[str]] = frozenset(
-    {
-        "passthrough",
-        "redact",
-        "truncate",
-        "hash",
-        "faker",
-        "categorical",
-        "bucket_perturb",
-        "group_key",
-        "date_shift",
-    }
-)
+# Derived from the operator registry; edit the registry.
+SLICE_STRATEGIES: Final[frozenset[str]] = frozenset(OPERATORS)
+
+# The Faker providers the slice can pool natively (read from the operator registry).
+_FAKER_PROVIDER_ALLOWLIST = OPERATORS["faker"].provider_allowlist or frozenset()
 
 OPERATOR_ID_BY_STRATEGY: Final[dict[str, str]] = {
-    "passthrough": "native_passthrough",
-    "redact": "native_redact",
-    "truncate": "native_truncate",
-    "hash": "native_keyed_hash",
-    "faker": "native_faker_select",
-    "categorical": "native_categorical",
-    "bucket_perturb": "native_bucket_perturb",
-    "group_key": "native_group_key",
-    "date_shift": "native_date_shift",
+    spec.strategy: spec.operator_id for spec in OPERATORS.values()
 }
 
 _SLICE_ADMITTED_REASON_PREFIX: Final = "slice_native_admitted"
@@ -138,16 +122,15 @@ def _faker_pool_bindable(
     by the caller's `requirements.fallback_policy == "native"` check): no
     `when` gate or vault persistence, a registered POOLABLE provider in the
     frozen C1 allowlist, a resident string/large_string source, and no FK
-    participation for `table`. Mirrors the native route's own
-    `_phase3_eligibility._faker_column_rejection` predicate rather than
-    inventing a weaker parallel one.
+    participation for `table`. The allowlist is the one the chunked route's
+    `real_type_rejection` reads, so the two routes cannot disagree on it.
     """
     if plan_slice.when or plan_slice.vault:
         return False
     provider = plan_slice.provider
     if not isinstance(provider, str) or not provider:
         return False
-    if provider not in C1_PROVIDER_ALLOWLIST:
+    if provider not in _FAKER_PROVIDER_ALLOWLIST:
         return False
     if classify_provider(provider, None, registry=inputs.registry) != "pool_native":
         return False

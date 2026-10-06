@@ -28,6 +28,25 @@ the original lookup so their scalar types, and the column dtype, are unchanged),
 dtype-identical to the old path; every CI job now has `timeout-minutes`; the CI ruff pin
 matches the `[lint]` extra (0.15.22); stale comments and docs naming removed modules were fixed.
 
+### Changed (one descriptor per native masking operator, 2026-10-06)
+
+Internal refactor, no behavior change. The shared facts about each of the nine native slice
+operators (operator id, planned backend, compiled kernel, unified resident types, full-frame
+assembly shape, Faker provider allowlist) now live in one frozen `OperatorSpec` registry,
+`execution/_operator_registry.py`, a leaf module (stdlib and pyarrow only). The seventeen
+hand-written parallel tables that restated them, across admission, evidence, the physical
+bindings and the native route, are one-line derivations over it and keep their names, types and
+values (pinned by a literal snapshot test taken before the refactor). The backend vocabulary
+(`RUST_COMPANION` and the rest) moved into the registry; `_chunked_evidence` re-exports it.
+Adding an operator now means one registry entry plus its kernel call and route-specific gates.
+
+Also: the three identical string-only chunked source-type gates (categorical, bucket_perturb,
+date_shift) are one `string_source_type_rejection` with byte-identical reason codes. The unused
+`phase3_c1_eligibility` predicate, `Phase3Eligibility` and their tests are removed
+(`native_route_eligibility` is unchanged); `C1_PROVIDER_ALLOWLIST` is now read from the Faker
+descriptor. A new guard test fails loudly, with migration steps, if the forced-oracle test
+stand-in (numeric-category categorical) ever becomes native-admissible.
+
 ### Changed (non-deterministic reuse Faker is position-keyed on the job seed, 2026-10-05)
 
 OUTPUT BREAK, pre-GA, owner-approved. Every `faker` column with `deterministic: false` and

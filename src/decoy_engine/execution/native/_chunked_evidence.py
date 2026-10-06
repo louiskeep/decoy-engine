@@ -20,25 +20,38 @@ from typing import Any
 import pyarrow as pa
 
 from decoy_engine.execution._errors import ExecutionError
+from decoy_engine.execution._operator_registry import (
+    ARROW_PYTHON,
+    OPERATORS,
+    PANDAS_ORACLE,
+    RUST_COMPANION,
+    RUST_POOL_SELECT,
+)
 from decoy_engine.execution.native._categorical_positional import positional_config_for_column
 from decoy_engine.execution.native._chunked_group_key_gate import sibling_resident_sources
 from decoy_engine.execution.native._plan import compile_native_plan
-from decoy_engine.execution.native._requirements import (
-    CHUNKED_ROUTE_VETOED_STRATEGIES,
-    NATIVE_KERNEL_STRATEGIES,
-    NATIVE_POOL_STRATEGIES,
-)
+from decoy_engine.execution.native._requirements import CHUNKED_ROUTE_VETOED_STRATEGIES
 
-RUST_COMPANION = "rust_companion"
-RUST_POOL_SELECT = "rust_pool_select"
-ARROW_PYTHON = "arrow_python"
-PANDAS_ORACLE = "pandas_oracle"
+__all__ = [
+    "ARROW_PYTHON",
+    "PANDAS_ORACLE",
+    "RUST_COMPANION",
+    "RUST_POOL_SELECT",
+    "ColumnPlan",
+    "aggregate_chunked_route_evidence",
+    "chunk_route_evidence",
+    "executed_backend",
+    "merge_executed_backend",
+    "plan_column_backends",
+]
 
-# hash runs on the compiled crypto kernel; categorical, bucket_perturb and date_shift on
-# the compiled index kernel; group_key on the compiled raw-hex kernel. All five report the
-# companion as their planned backend.
+# The backend vocabulary lives in the leaf operator registry (this module imports the planner,
+# so the registry cannot import it back); re-exported above so existing imports keep working.
+
+# Derived from the operator registry; edit the registry. hash, categorical, bucket_perturb,
+# date_shift and group_key run on a compiled kernel and report the companion as their backend.
 _COMPANION_STRATEGIES = frozenset(
-    {"hash", "categorical", "bucket_perturb", "date_shift", "group_key"}
+    s.strategy for s in OPERATORS.values() if s.planned_backend == RUST_COMPANION
 )
 
 
@@ -55,13 +68,8 @@ def _planned_backend(node: Any) -> str:
     strategy = node.strategy
     if strategy in CHUNKED_ROUTE_VETOED_STRATEGIES:
         return PANDAS_ORACLE
-    if strategy in NATIVE_POOL_STRATEGIES:
-        return RUST_POOL_SELECT
-    if strategy in _COMPANION_STRATEGIES:
-        return RUST_COMPANION
-    if strategy in NATIVE_KERNEL_STRATEGIES:
-        return ARROW_PYTHON
-    return PANDAS_ORACLE
+    spec = OPERATORS.get(strategy)
+    return PANDAS_ORACLE if spec is None else spec.planned_backend
 
 
 def plan_column_backends(

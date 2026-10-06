@@ -313,8 +313,8 @@ def enforce_pool_quality(
 ) -> None:
     """Route-local `pool_quality` gate for the native C1 faker route.
 
-    Callers invoke this ONLY for a column the C1 phase3 eligibility
-    predicate (Task 3.3) admitted; it has no opinion on eligibility itself
+    Callers invoke this ONLY for a column the native chunked
+    admission (`_dispatch`, `_real_type_admission`) admitted; it has no opinion on eligibility itself
     and never runs for a non-C1 obligation or a non-C1 path (HIGH 4 -- this
     function does not read or change `capabilities_for` or the general
     resolver). Raises `PoolQualityError` before publication when:

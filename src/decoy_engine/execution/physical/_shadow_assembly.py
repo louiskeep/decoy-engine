@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import pyarrow as pa
 
+from decoy_engine.execution._operator_registry import OPERATORS
+
 __all__ = ["assemble_column"]
 
 # Tokenizing strategies build a fresh column: empty -> float64, all-null -> null,
@@ -20,10 +22,13 @@ __all__ = ["assemble_column"]
 # group_key never emits all-null (a null cell keys on "None") but its empty ->
 # float64 rule matches, so it belongs here (the empty golden pins this).
 # date_shift assigns a fresh list (`df[column] = out`), so it is tokenizing too.
+# Derived from the operator registry (`full_frame_assembly`); edit the registry.
 _TOKENIZING_STRATEGIES = frozenset(
-    {"redact", "truncate", "hash", "faker", "categorical", "group_key", "date_shift"}
+    spec.strategy for spec in OPERATORS.values() if spec.full_frame_assembly == "tokenizing"
 )
-_NULL_ON_EMPTY_STRATEGIES = frozenset({"bucket_perturb"})
+_NULL_ON_EMPTY_STRATEGIES = frozenset(
+    spec.strategy for spec in OPERATORS.values() if spec.full_frame_assembly == "null_on_empty"
+)
 
 
 def assemble_column(strategy: str, parts: list[pa.Array]) -> pa.Array:

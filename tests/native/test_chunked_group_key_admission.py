@@ -37,7 +37,6 @@ from decoy_engine.execution.native._group_key_ext import (
     load_compiled_raw_hex_kernel,
 )
 from decoy_engine.execution.native._group_key_kernel import native_group_key
-from decoy_engine.execution.native._phase3_eligibility import phase3_c1_eligibility
 from decoy_engine.execution.native._real_type_admission import real_type_rejection
 from decoy_engine.execution.native._requirements import CHUNKED_ROUTE_VETOED_STRATEGIES
 from decoy_engine.plan._errors import PlanCompileError
@@ -112,11 +111,6 @@ def _no_raw_hex(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_the_chunked_veto_set_is_exactly_empty() -> None:
     assert frozenset() == CHUNKED_ROUTE_VETOED_STRATEGIES
-
-
-def test_config_only_eligibility_mirror_admits_group_key() -> None:
-    result = phase3_c1_eligibility(make_config(columns()), table=TABLE)
-    assert not any(r.startswith(f"{_STRATEGY}_not_native") for r in result.reasons)
 
 
 def test_static_route_decision_admits_group_key() -> None:

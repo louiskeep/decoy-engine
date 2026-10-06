@@ -7,8 +7,7 @@ full compiled-plan path (mostly `@_NEEDS_COMPANION`, since it exercises the
 real dispatch route). These three functions are pure config predicates over a
 `ColumnSeed` (no compiled kernel, no I/O), so this module unit-tests every
 branch directly against a hand-built `ColumnSeed`, without the companion or a
-full plan compile -- the same faker-only-lane pattern
-`test_phase3_eligibility.py` uses for the layer above this one.
+full plan compile.
 """
 
 from __future__ import annotations

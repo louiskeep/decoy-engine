@@ -52,14 +52,10 @@ import pyarrow as pa
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._fk_keys import to_pandas_fk_safe
 from decoy_engine.execution._guards import reject_null_bearing_int
+from decoy_engine.execution._operator_registry import OPERATORS
 from decoy_engine.execution._unified_slice_resident_types import (
     _ADMITTED_RESIDENT_TYPES,
     _group_key_sibling_admitted,
-)
-from decoy_engine.execution.native._chunked_evidence import (
-    ARROW_PYTHON,
-    RUST_COMPANION,
-    RUST_POOL_SELECT,
 )
 from decoy_engine.execution.native._companion_status import native_kernel_availability
 from decoy_engine.profile._readers import LazySource
@@ -88,67 +84,36 @@ __all__ = [
     "resident_contract_admission",
 ]
 
-# The operators the 4.4 shadow coordinator dispatches for this slice
-# (`_shadow_bindings.OPERATOR_ID_BY_STRATEGY.values()`); restated here rather
-# than imported so this module's cheap-admission surface stays importable
-# with zero `execution.physical` reach. Public (no leading underscore):
-# `_unified_slice.py`'s D7 evidence check reads `HASH_OPERATOR_ID` and `FAKER_OPERATOR_ID`.
-ALLOWED_OPERATOR_IDS = frozenset(
-    {
-        "native_passthrough",
-        "native_redact",
-        "native_truncate",
-        "native_keyed_hash",
-        "native_categorical",
-        "native_bucket_perturb",
-        "native_group_key",
-        "native_date_shift",
-        "native_faker_select",
-    }
-)
+# Every table below is derived from the operator registry (`_operator_registry.OPERATORS`);
+# edit the registry, not these. They keep their names so consumers do not change. The
+# registry is a leaf module, so this cheap-admission surface still reaches no
+# `execution.physical`. `HASH_OPERATOR_ID` and `FAKER_OPERATOR_ID` are read by
+# `_unified_slice_evidence.py`'s positive-kernel-evidence check.
+ALLOWED_OPERATOR_IDS = frozenset(spec.operator_id for spec in OPERATORS.values())
 # The backend each admitted operator plans to run on, in the chunked route's vocabulary.
-# Declared next to `ALLOWED_OPERATOR_IDS` so a new admitted operator must name its backend
-# (a sentry test pins that the keys equal the allowed set).
+# A new operator names its backend in its registry entry, so it cannot be left out.
 BACKEND_BY_OPERATOR_ID: Final[Mapping[str, str]] = MappingProxyType(
-    {
-        "native_keyed_hash": RUST_COMPANION,
-        "native_categorical": RUST_COMPANION,
-        "native_bucket_perturb": RUST_COMPANION,
-        "native_date_shift": RUST_COMPANION,
-        "native_group_key": RUST_COMPANION,
-        "native_faker_select": RUST_POOL_SELECT,
-        "native_redact": ARROW_PYTHON,
-        "native_truncate": ARROW_PYTHON,
-        "native_passthrough": ARROW_PYTHON,
-    }
+    {spec.operator_id: spec.planned_backend for spec in OPERATORS.values()}
 )
-HASH_OPERATOR_ID = "native_keyed_hash"
+HASH_OPERATOR_ID = OPERATORS["hash"].operator_id
 # Phase 5 Track B / S-slate: like hash, categorical and bucket_perturb consume
 # their namespace through the compiled index kernel at every batch invocation
 # and need the native companion loadable at this host, so
 # `resident_contract_admission` gates all three the same way (the
 # `_COMPANION_DEPENDENT_OPERATOR_IDS` set below).
-CATEGORICAL_OPERATOR_ID = "native_categorical"
-BUCKET_PERTURB_OPERATOR_ID = "native_bucket_perturb"
-GROUP_KEY_OPERATOR_ID = "native_group_key"
-DATE_SHIFT_OPERATOR_ID = "native_date_shift"
-FAKER_OPERATOR_ID = "native_faker_select"
+CATEGORICAL_OPERATOR_ID = OPERATORS["categorical"].operator_id
+BUCKET_PERTURB_OPERATOR_ID = OPERATORS["bucket_perturb"].operator_id
+GROUP_KEY_OPERATOR_ID = OPERATORS["group_key"].operator_id
+DATE_SHIFT_OPERATOR_ID = OPERATORS["date_shift"].operator_id
+FAKER_OPERATOR_ID = OPERATORS["faker"].operator_id
 
-# The operators whose native execution needs the compiled companion loadable at
-# this host: hash (its crypto kernel), the index-kernel operators (categorical,
-# bucket_perturb, date_shift, faker), and group_key (its raw-hex kernel). A table
-# carrying any of these declines to the oracle when the companion is absent --
-# the CI `substrate(pandas)` leg. Named as a set so a new index/crypto operator
-# joins by one edit, not another ad-hoc branch in `resident_contract_admission`.
+# The operators whose native execution needs a compiled kernel loadable at this host: hash
+# (crypto), the index-kernel operators (categorical, bucket_perturb, date_shift, faker), and
+# group_key (raw-hex). A table carrying any of these declines to the oracle when the
+# companion is absent -- the CI `substrate(pandas)` leg. Derived from the operator registry
+# (every operator that names a `required_kernel`); edit the registry.
 _COMPANION_DEPENDENT_OPERATOR_IDS = frozenset(
-    {
-        HASH_OPERATOR_ID,
-        CATEGORICAL_OPERATOR_ID,
-        BUCKET_PERTURB_OPERATOR_ID,
-        GROUP_KEY_OPERATOR_ID,
-        DATE_SHIFT_OPERATOR_ID,
-        FAKER_OPERATOR_ID,
-    }
+    spec.operator_id for spec in OPERATORS.values() if spec.required_kernel is not None
 )
 
 # Which compiled kernel each companion-dependent operator actually loads, so the
@@ -158,13 +123,11 @@ _COMPANION_DEPENDENT_OPERATOR_IDS = frozenset(
 # `derive_hex_raw_batch`. A companion missing only the additive raw-hex symbol
 # therefore keeps hash / categorical / bucket_perturb native and declines just
 # group_key (matching `_group_key_ext`'s own hash-only-stays-native contract).
+# Derived from the operator registry; edit the registry.
 _OPERATOR_REQUIRED_KERNEL: dict[str, str] = {
-    HASH_OPERATOR_ID: "crypto",
-    CATEGORICAL_OPERATOR_ID: "index",
-    BUCKET_PERTURB_OPERATOR_ID: "index",
-    GROUP_KEY_OPERATOR_ID: "raw_hex",
-    DATE_SHIFT_OPERATOR_ID: "index",
-    FAKER_OPERATOR_ID: "index",
+    spec.operator_id: spec.required_kernel
+    for spec in OPERATORS.values()
+    if spec.required_kernel is not None
 }
 
 # The ONE diagnostic obligation the coordinator routes, per operator: date_shift's
@@ -172,9 +135,13 @@ _OPERATOR_REQUIRED_KERNEL: dict[str, str] = {
 # `finalize_validators_and_quarantine` (a non-empty set raises there and the
 # unified slice reroutes the table to the oracle, which fails identically). Any
 # other obligation (a warning reducer, a second trigger) or any other operator
-# carrying one still declines: nothing else is routed.
+# carrying one still declines: nothing else is routed. This is coordinator POLICY,
+# read from each descriptor's `routed_diagnostics`; it must not be derived from the
+# capability reducers, or the `obligations <= routed` gate below would always pass.
 _ROUTED_DIAGNOSTIC_OBLIGATIONS: dict[str, frozenset[str]] = {
-    DATE_SHIFT_OPERATOR_ID: frozenset({"reduce_row_error:format_error"}),
+    spec.operator_id: spec.routed_diagnostics
+    for spec in OPERATORS.values()
+    if spec.routed_diagnostics
 }
 
 # Track A Option 2: the sanctioned single-file-source formats. Widened from
