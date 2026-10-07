@@ -177,8 +177,8 @@ def test_a_zero_match_chunk_makes_no_kernel_call_and_counts_nothing(
     sink: list[Any] = []
     out, evidence = run_native(config, chunk_by_sizes(source, [3, 3, 2, 3]), sink=sink)
     assert evidence.native_admitted is True
-    # [6:8) holds p = [None, 'y']: no selected row.
-    assert calls == [3, 3, 3]
+    # [6:8) holds p = [None, 'y']: no selected row. Each call sees only its chunk's selected rows.
+    assert calls == [1, 2, 2]
     assert _calls(evidence) == {"redact": 3}
     assert len(out) == 4
     assert out[2].column("s").to_pylist() == source.column("s").to_pylist()[6:8]
@@ -201,7 +201,7 @@ def test_a_zero_row_chunk_is_a_zero_match_chunk(monkeypatch: pytest.MonkeyPatch)
     _out, evidence = run_native(
         when_config("truncate", "p == 'x'"), chunk_by_sizes(source_table(), [0, 5, 0, 6])
     )
-    assert calls == [5, 6]
+    assert calls == [2, 3]
     assert _calls(evidence) == {"truncate": 2}
 
 

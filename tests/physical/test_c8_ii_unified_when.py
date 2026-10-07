@@ -472,15 +472,33 @@ def _faker(name: str) -> dict[str, Any]:
     }
 
 
-def test_6_a_predicate_that_raises_declines_before_any_node_runs(tmp_path: Path) -> None:
+def _spy_mask_step(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """Record each lane-side mask computation, so a test proves the lane reached that step."""
+    import decoy_engine.execution._unified_slice as unified
+
+    calls: list[int] = []
+    real = unified.compute_when_masks
+
+    def spy(frame: Any, nodes: Any) -> Any:
+        calls.append(1)
+        return real(frame, nodes)
+
+    monkeypatch.setattr(unified, "compute_when_masks", spy)
+    return calls
+
+
+def test_6_a_predicate_that_raises_declines_before_any_node_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     # A string compared to a number: the oracle raises when it evaluates the mask.
     case = Case(tmp_path, source(), [target("redact"), PASS_S], mutate=with_when({"c": "s < 1"}))
     with pytest.raises(StrategyError) as off_info:
         case.run(lane=False)
+    mask_calls = _spy_mask_step(monkeypatch)
     with pytest.raises(StrategyError) as on_info:
         case.run(lane=True)
-    assert on_info.value.code == off_info.value.code
-    assert off_info.value.code in {"when_expression_error", "when_expression_not_boolean"}
+    assert mask_calls, "the lane declined before its mask step, so the decline path was not tested"
+    assert on_info.value.code == off_info.value.code == "when_expression_error"
     assert str(on_info.value) == str(off_info.value)
 
 
@@ -488,7 +506,7 @@ def test_6_a_predicate_that_raises_declines_before_any_node_runs(tmp_path: Path)
 @pytest.mark.parametrize("faker_first", [True, False], ids=["faker_first", "predicate_first"])
 @pytest.mark.parametrize("config_reversed", [False, True], ids=["config_order", "config_reversed"])
 def test_6_competing_failures_raise_the_oracles_first_error(
-    tmp_path: Path, faker_first: bool, config_reversed: bool
+    tmp_path: Path, faker_first: bool, config_reversed: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     n = 10
     names = ("a", "b") if faker_first else ("b", "a")
@@ -506,13 +524,15 @@ def test_6_competing_failures_raise_the_oracles_first_error(
     case = Case(tmp_path, src, columns, mutate=with_when({pred_name: "s < 1"}))
     with pytest.raises(Exception) as off_info:
         case.run(lane=False, registry=_failing_registry())
+    mask_calls = _spy_mask_step(monkeypatch)
     with pytest.raises(Exception) as on_info:
         case.run(lane=True, registry=_failing_registry())
+    assert mask_calls, "the lane declined before its mask step, so the decline path was not tested"
     assert type(on_info.value) is type(off_info.value)
     assert getattr(on_info.value, "code", None) == getattr(off_info.value, "code", None)
     assert str(on_info.value) == str(off_info.value)
     expected = "first_name_fail" if faker_first else "when_expression_error"
-    assert getattr(off_info.value, "code", None) in {expected, "when_expression_not_boolean"}
+    assert getattr(off_info.value, "code", None) == expected
 
 
 # ---------------------------------------------------------------------------

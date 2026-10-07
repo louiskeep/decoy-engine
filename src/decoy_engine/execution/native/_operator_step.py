@@ -397,20 +397,21 @@ def run_kernel_step_masked(
 
     `mask` is a non-null boolean array over `source`. With no selected row the kernel is not
     called and `source` comes back unchanged with `ran=False`, so the adapter counts nothing
-    and credits no compiled backend for the chunk. Otherwise the kernel runs over every row and
-    `if_else` keeps the source value elsewhere. For the value-keyed operators over a string
-    source (hash, redact, truncate, deterministic categorical) that equals the oracle's run on
-    the selected subset plus its write-back, row by row, because each row's output depends only
-    on that row's value and the config. Unselected nulls stay null.
+    and credits no compiled backend for the chunk. Otherwise the kernel runs over the selected
+    rows only and their outputs are scattered back into place, so the cost follows selectivity.
+    For the value-keyed operators over a string source (hash, redact, truncate, deterministic
+    categorical) that equals the oracle's run on the selected subset plus its write-back, row by
+    row, because each row's output depends only on that row's value and the config. Unselected
+    rows, nulls included, keep their source value.
     """
     plain = source.combine_chunks() if isinstance(source, pa.ChunkedArray) else source
     if not (pc.sum(mask).as_py() or 0):
         return StepResult(plain, False)
     result = run_kernel_step(
         params,
-        plain,
+        pc.filter(plain, mask),
         mask_key=mask_key,
         native_threads=native_threads,
         index_kernel=index_kernel,
     )
-    return StepResult(pc.if_else(mask, result.out, plain), result.ran)
+    return StepResult(pc.replace_with_mask(plain, mask, result.out), result.ran)
