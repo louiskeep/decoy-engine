@@ -1,4 +1,4 @@
-Status: plan (rev 3, BUILD-READY: Codex plan gate GO in round 3)
+Status: plan (rev 4, BUILD-READY: Codex plan gate GO in round 3; rev 4 corrects the test oracle to the approved guarantee 3)
 
 Rules consulted: 00-universal, development-loop, risk-and-exceptions, feature-dev, testing, code-review.
 
@@ -58,7 +58,13 @@ So the string-only rule is stricter than the real hazard requires. The goal is t
 
 ## 3. Acceptance tests (written first; never weakened)
 
-Every case runs on the auto route, compares lane-on (auto-chunked) output byte-for-byte against the WHOLE-FRAME oracle run, and asserts the route taken.
+Every case runs on the auto route and asserts the route taken. Its output is compared against the approved auto-chunk output contract (guarantee 3 of `docs/plans/2026-10-01-dispatcher-auto-chunk.md`):
+- the `when` mask and every masked column (values, nulls and Arrow type) equal the WHOLE-FRAME run (`auto_chunk=False`);
+- every passthrough column, including every `when` reference, equals the SOURCE column exactly (`field.equals(source_field, check_metadata=True)` plus values);
+- the column names, order and rows equal the whole-frame run;
+- no difference outside guarantee 3 (b) to (d) is allowed.
+
+The whole frame goes through pandas, so on it a passthrough NaN float becomes null, large_string becomes string, and date64 becomes date32. Those are the pandas behaviors that guarantee 3 deliberately does not copy (rev 4; see the review log).
 
 1. **Relaxed and auto-chunked:**
    - int64 and uint64 references, null-free, including values above 2**53 and uint64 above 2**63. The uint64 numexpr quirk is the same in both runs, so the outputs still match;
@@ -101,7 +107,7 @@ Every case runs on the auto route, compares lane-on (auto-chunked) output byte-f
 | A reference type whose chunk dtype varies gets relaxed | An explicit allow-list from measured conversions; bool and int require a KNOWN zero null count; test 2 |
 | Unknown statistics treated as zero | `None` never relaxes; test 2 |
 | The integer gate is loosened later | The reference's own null-count check; test 4 |
-| Auto-chunk output differs from whole-frame | Test 1 compares against the whole frame, not the chunked oracle |
+| Auto-chunk output differs from whole-frame | Test 1 compares the mask and masked columns against the whole frame (not the chunked oracle), and passthrough columns against the source, per the approved guarantee 3 |
 
 Rollback: revert the merge commit.
 
@@ -116,3 +122,4 @@ Rollback: revert the merge commit.
   - date32/date64 expectations pinned to what the oracle actually does (all-false equality and membership, all-true inequality, ordering errors), plus a compound date-plus-string strict-subset case; timestamps keep the strict-subset requirement;
   - the section 1 dtype table is labeled as default conversion, the int and dictionary rows are corrected, and the "gates already applied" conclusion is removed.
 - **Codex plan gate, round 3: GO** (high confidence). Both round-2 findings closed; 208 partition and predicate checks passed. Its note: an all-null date chunk can return all-false for ordering, but populated runs still raise consistently, so the run-level requirement holds.
+- **Rev 4 (Opus, during build).** The builder stopped because the passthrough reference column differed from the whole-frame run for NaN float64, large_string and date64. The same difference reproduces on main with no `when:`. It is the documented, deliberate output contract of auto-chunk routing (dispatcher plan guarantee 3(c): passthrough equals the source exactly, and the pandas full frame does not). So test 1's oracle was misstated. Rev 4 compares masks and masked columns against the whole frame and passthrough columns against the source. That is stricter on passthrough than before, not weaker. The Codex final gate verifies this correction against guarantee 3.
