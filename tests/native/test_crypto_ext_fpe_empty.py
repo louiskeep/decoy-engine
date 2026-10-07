@@ -15,7 +15,7 @@ from decoy_engine.errors import FpeUnencryptableError, MaskKeyRequiredError
 from decoy_engine.execution._adapter import StrategyContext
 from decoy_engine.execution._strategies._fpe import FpeStrategyHandler
 from decoy_engine.execution.native import _crypto_reference
-from decoy_engine.execution.native._crypto_ext import FpeConfig
+from decoy_engine.execution.native._crypto_ext import FpeConfig, FpeConfigError
 from decoy_engine.execution.native._crypto_reference import reference_fpe
 from decoy_engine.generation.pool._cache import PoolCache
 from decoy_engine.plan._types import ColumnSeed
@@ -208,9 +208,9 @@ def test_missing_key_still_raises_before_any_value(forward: bool) -> None:
 
 @pytest.mark.parametrize("forward", [True, False])
 def test_invalid_charset_still_raises_with_empty_input(forward: bool) -> None:
-    with pytest.raises(Exception) as excinfo:
+    with pytest.raises(FpeConfigError) as excinfo:
         _ref(forward, [""], {"charset": "aa"})
-    assert not isinstance(excinfo.value, MaskKeyRequiredError)
+    assert excinfo.value.code == "fpe.config_invalid"
 
 
 @pytest.mark.parametrize("forward", [True, False])

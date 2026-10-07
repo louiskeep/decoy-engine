@@ -33,7 +33,7 @@ Date: 2026-10-07. Branch `fix/fpe-reference-empty`, base engine main `9bbde63c`.
 | `text.strip() == ""` | killed (4 fail) |
 | warning append moved before the skip | killed (2 fail) |
 | `value == ""` instead of `text == ""` | killed (4 fail) |
-| `isinstance` shortcut before `str()` | equivalent, same behavior |
+| `text = value if isinstance(value, str) else str(value)` in place of `text = str(value)` | equivalent: the kernel only receives `pa.Array.to_pylist()` values, which are plain `str`, and `str(s) is s`; only a `str` subclass overriding `__str__` could differ, and none reaches the kernel |
 
 ## Not in scope
 
