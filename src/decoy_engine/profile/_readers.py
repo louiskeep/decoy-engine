@@ -223,23 +223,17 @@ class LazySource:
     `pyarrow.parquet.ParquetFile.iter_batches`, which decodes one `batch_size` chunk at a
     time rather than the whole file; schema and row count come from the Parquet footer,
     which parsing does not touch column data.
-
-    `scratch=True` marks a file the engine itself wrote into its own scratch space; it is
-    read directly and never through a policy.
     """
 
     path: Path
     access: FileAccess | None = field(default=None, compare=False, repr=False)
     field_key: str = field(default="source.path", compare=False)
-    scratch: bool = field(default=False, compare=False)
 
     def __post_init__(self) -> None:
-        if not self.scratch and self.access is None:
+        if self.access is None:
             object.__setattr__(self, "access", fileaccess.capture())
 
     def _handle(self) -> FileHandle:
-        if self.scratch:
-            return fileaccess.engine_handle(self.path)
         if self.access is None:  # pragma: no cover - set in __post_init__
             raise fileaccess.FileAccessUnavailable("no file access policy")
         return self.access.open_read(
