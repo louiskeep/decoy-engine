@@ -2,9 +2,9 @@ Status: plan
 
 Rules consulted: 00-universal, development-loop, risk-and-exceptions, debugging, testing, observability-and-resilience, code-review.
 
-# Isolated-run OOM classification: one failure site, classified by cause
+# Isolated-run OOM classification: name every memory failure correctly
 
-Branch `fix/oom-classification` off engine main `9bbde63c`. It is built AFTER C8-ii merges, because both touch `_unified_slice_admission.py`. Risk R2: it changes how memory failures propagate on the default path.
+Branch `fix/oom-classification` off engine main `9bbde63c`. It is built AFTER C8-ii merges, because both touch `_unified_slice_admission.py`. Risk R1 after rev 2: no execution behavior changes; only classification, the stored error text and a test message change.
 
 ## 1. Problem
 
@@ -27,15 +27,17 @@ The isolated-run guarantee is: "a running job that exhausts its memory cap is na
 2. **Post-run steps run outside the classifier.** `_isolated_worker.py:215-216` calls `_finalize_outputs` and `_stage_row_errors` outside `_run`'s `try`. A MemoryError there reaches `main()`, which hard-codes `"crashed"` (`:240-249`).
 3. **The arrow-to-pandas OOM message is matched too narrowly, and it leaks data.**
    - `_isolated_common.py:114-116` matches `Wrapping \S+ failed`, so a cell value containing whitespace ("Wrapping John Smith failed") is missed.
-   - The same message is copied into `result.error` (`_isolated_worker.py:211`), putting a raw cell value into the run result.
+   - The same message is copied into `result.error` (`_isolated_worker.py:212`), putting a raw cell value into the run result.
 4. **Native deaths by a signal other than KILL or ABRT** (for example SIGSEGV or SIGBUS on a native OOM path) are `crashed` unless stderr carries a memory marker (`_isolated_common.classify_abnormal_exit`). Not fixed here; see section 6.
 
 ## 2. Scope
 
 **In:**
-- Fixes 1-3.
+- Fixes 2 and 3.
 - A diagnostic assertion message on the flaking test.
-- Unit tests per path.
+- Classifier parity tests.
+
+**Kept as-is (rev 2):** root cause 1's fallbacks. Codex round 1 showed a capped job that fails Arrow conversion but succeeds through the existing kernel-input and redact fallbacks. The admission round trip is also a speculative allocation the legacy route need not make. Failing fast would turn jobs that succeed today into failures. Every shape the second site produced in the investigation (`ArrowMemoryError`, the Wrapping message, SIGABRT) is classified `oom_killed` once fix 3 lands, so the nondeterminism stays harmless to classification. The reroute catch in `_unified_slice.py:362-364` (Codex round 1) is kept for the same reason.
 
 **Out:**
 - Root cause 4 (section 6).
@@ -43,45 +45,53 @@ The isolated-run guarantee is: "a running job that exhausts its memory cap is na
 
 ## 3. Decisions
 
-**3a. A memory failure is never a reason to decline or fall back.**
-- One helper, `reraise_if_memory_failure(exc)`, re-raises when the exception is a memory failure under the SAME predicate the classifier uses (`is_memory_failure`, or a dependency-free core of it if importing `_isolated_common` from these modules would pull duckdb or create a cycle; the builder chooses and records why).
-- Each of the four catch sites calls it first, then keeps its existing decline or fallback for every other exception.
-- Effect: the job fails at the FIRST allocation that exhausts the cap, as a memory error. In-process (non-isolated) runs behave the same way: a MemoryError at unified admission now propagates instead of retrying the identical conversion on the legacy path, which needs at least as much memory.
+**3a. (Removed in rev 2.)** No catch site changes; see section 2.
 
 **3b. Post-run steps inside the classified region.**
 - `_finalize_outputs` and `_stage_row_errors` move inside `_run`'s `try`, so a memory failure there self-reports `oom_killed`.
 - `main()`'s outer handler classifies with `is_memory_failure` instead of hard-coding `crashed`. A malformed payload still gives `crashed`.
 
 **3c. The Wrapping pattern and the stored error.**
-- The pattern becomes `Unknown error: Wrapping .* failed` with DOTALL, so any value is matched.
-- Before an error string is stored in the envelope, a Wrapping message has its value replaced by `<value>`. The class name and the rest of the message are kept.
-- This one scrub is in scope because this slice's own fix makes the message more common. Other messages stay as they are (section 2).
+- Recognition: the pattern becomes `Unknown error: Wrapping .+ failed` with DOTALL, applied to the FULL message, so a value with spaces or newlines is matched.
+- Scrub: one function, `scrub_error_text(message)`. In a recognized Wrapping message, the span from just after the first `Wrapping ` to just before the LAST ` failed` is replaced by `<value>`. A value containing `failed`, or repeated Wrapping fragments, are therefore removed whole. Any other message is returned unchanged.
+- Order: both worker handlers (`_run`'s and `main()`'s) build `f"{type(exc).__name__}: {scrub_error_text(str(exc))}"` and only THEN truncate to 500. Truncating first can cut off the terminal `failed`, so the scrub would not match (Codex round 1 MEDIUM).
+- Classification is done on the exception object, before any scrub or truncation, so it is unaffected.
+- This one scrub is in scope because the slice touches exactly this message. Other messages go to the Observability program (section 2).
 
 **3d. Diagnostic on the flaking test.** Its assertion gains the message `f"{result.error!r} rc={result.returncode} sig={result.signal_number}"`, or the fields the result actually carries. The next CI failure then shows its shape. The assertion itself is unchanged.
 
 ## 4. Acceptance tests (written first; no later contributor weakens them)
 
-1. For each of the four catch sites: a `MemoryError` (and an `ArrowMemoryError`) raised at the site propagates instead of declining or falling back. A non-memory exception still declines or falls back exactly as before. Existing decline tests stay green unmodified.
+1. **Fallbacks preserved:** the redact and kernel-input fallbacks still succeed after an `ArrowMemoryError` from the direct conversion (Codex's counterexample shape, by fault injection). Existing decline and fallback tests stay green unmodified.
 2. A MemoryError injected into `_finalize_outputs`, and one injected into `_stage_row_errors`, give `oom_killed`.
 3. A MemoryError raised in `main()` outside `_run` gives `oom_killed`. A malformed payload gives `crashed`.
-4. Pattern: `Wrapping John Smith failed`, a value with a newline, and the original single-token form are all memory failures. An unrelated `ArrowException` is not.
-5. Scrub: an envelope built from a Wrapping error contains no part of the value.
-6. A one-site check: with a cap that exhausts during unified admission, the traceback recorded in the envelope shows the failure at the admission conversion. It never reaches `_pandas_adapter.py`.
-7. A local soak, not a CI test: the flaking test 20 times at 1536 MiB and 20 times at 2280 MiB on the CI-mirror venv, plus the same on the companion venv. Zero `crashed` and every run `oom_killed`. The counts go in the build record.
+4. Pattern: `Wrapping John Smith failed`, a value with a newline, a value containing `failed`, a 600-character value, and the original single-token form are all memory failures. An unrelated `ArrowException` is not.
+5. Scrub, through both worker handlers: no part of the value survives for long, multiline, embedded-`failed` and repeated-fragment values. A long value is scrubbed before truncation. A non-Wrapping error text is unchanged.
+6. Classifier parity: `MemoryError`, `ArrowMemoryError`, `duckdb.OutOfMemoryException`, `OSError(ENOMEM)`, both OpenSSL markers, the Wrapping message, and abnormal exits by SIGKILL and SIGABRT with and without stderr markers are all `oom_killed`. A non-memory exception and a SIGSEGV without a marker are `crashed`; the SIGSEGV case is pinned as current, deferred behavior (section 6).
+7. A local soak, not a CI test: the flaking test 20 times at 1536 MiB and 20 times at 2280 MiB on the CI-mirror venv. Zero `crashed`. The counts and each run's (scrubbed) error shape go in the build record.
 8. Sentries: log interpolation, module size, the public import boundary.
-9. Mutation on the helper, the four call sites, the moved `try` and the pattern. Equivalents are argued in the record.
+9. Mutation on the moved `try`, `main()`'s classification, the pattern and the scrub. Equivalents are argued in the record.
 
 ## 5. Failure modes
 
 | Risk | Closed by |
 |---|---|
-| A memory failure still declines somewhere unlisted | Test 6 (one site); a grep audit listed in the record of every `except Exception` / `except pa.ArrowException` on the conversion path |
-| Re-raise changes non-memory behavior | Test 1's non-memory half; existing decline tests unmodified |
-| The helper pulls duckdb into hot modules | 3a lets the builder use a dependency-free core; import-boundary sentry |
+| A successful fallback becomes a failure | Rev 2 changes no catch site; test 1 |
+| Scrub misses a value, or truncation defeats it | Scrub before truncate; test 5 |
 | Scrub removes useful diagnostics | Only the value is replaced; class and message shape stay |
+| A memory shape still classified `crashed` | Test 6 parity table; the 3d diagnostic names any new shape in CI |
 
 Rollback: revert the merge commit.
 
 ## 6. Deferred: classify native deaths by cause (root cause 4)
 
 The driver could sample the child's VmData (the quantity RLIMIT_DATA bounds) from `/proc/<pid>/status` while it waits. Any non-completed death whose peak came within a margin of the cap would be named `oom_killed`, with "VmData peak X of cap Y" recorded. That covers native deaths whose shape nobody listed, but it is new machinery. It is held for a separate decision, made only if the diagnostic in 3d shows a CI failure of that shape after this slice merges.
+
+## 7. Review log
+
+- **Codex plan gate, round 1: REVISE** (2 HIGH, 2 MEDIUM). Rev 2:
+  - **HIGH (fallbacks that succeed):** fail-fast removed (3a). The slice keeps every fallback and fixes classification only. Test 1 pins that the fallbacks still succeed.
+  - **HIGH (reroute catch in `_unified_slice.py:362-364`):** moot once nothing propagates; it stays a fallback like the others.
+  - **MEDIUM (scrub ordering):** scrub before truncation in both handlers, with a defined replacement span; test 5 widened.
+  - **MEDIUM (traceback evidence does not exist):** the one-site test is dropped (no fail-fast to prove); a classifier parity table is added instead (test 6).
+  - Codex confirmed deferring the other native signals: the SIGABRT shape seen in the investigation is already classified `oom_killed`. The raw error assignment is at `_isolated_worker.py:212`.
