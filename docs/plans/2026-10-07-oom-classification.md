@@ -4,7 +4,7 @@ Rules consulted: 00-universal, development-loop, risk-and-exceptions, debugging,
 
 # Isolated-run OOM classification: name every memory failure correctly
 
-Branch `fix/oom-classification` off engine main `9bbde63c`. It is built AFTER C8-ii merges, because both touch `_unified_slice_admission.py`. Risk R1 after rev 2: no execution behavior changes; only classification, the stored error text and a test message change.
+Branch `fix/oom-classification` off engine main `9bbde63c`. Rev 2 touches no file C8-ii changes, so it can build in parallel. Risk R1 after rev 2: no execution behavior changes; only classification, the stored error text and a test message change.
 
 ## 1. Problem
 
