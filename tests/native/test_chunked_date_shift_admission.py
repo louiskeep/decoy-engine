@@ -471,8 +471,8 @@ def test_the_branch_passes_exact_config_and_reuses_the_preflight_index_kernel(
 # ---------------------------------------------------------------------------
 
 
-def test_a_when_predicate_keeps_the_table_off_the_native_route_and_off_auto_chunk() -> None:
-    config = make_config([ds_col(), passthrough("p")])
+def test_a_when_predicate_keeps_an_implicit_format_table_off_native_and_off_auto_chunk() -> None:
+    config = make_config([ds_col(date_format=None), passthrough("p")])
     config["tables"][0]["columns"][0]["when"] = "d != ''"
     run = run_one(config, [_valued()])
     assert run.ev[0].native_admitted is False

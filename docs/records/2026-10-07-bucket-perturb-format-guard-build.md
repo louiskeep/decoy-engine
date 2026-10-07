@@ -58,11 +58,23 @@ After the fix: 282 pass across those four files and the three tuple-pin files.
 - `scripts/test_flight.py` (check only): 5/5 job fingerprints match golden, 53 of 53 invariant checks pass.
 - Sentries (`tests/sentry`) on 3.10 and 3.11 after the final commit: all pass except the physical-seam permit list, fixed as above.
 
-## Drift against main
+## Merge of main and post-rebase migration
 
-Local main moved to `4a08f570` (C8-iii-a, PR #223) after this branch was cut. A trial merge conflicts in two files only: `CHANGELOG.md` and `execution/native/_operator_config_rejections.py` (both sides add a decline after the timezone check). Keep both there, C8's `bucket_perturb_special_date_format` first.
+Main moved to `4a08f570` (C8-iii-a, PR #223) after this branch was cut, so main was merged in (a merge commit, nothing force-pushed). Two conflicts: `CHANGELOG.md` (kept both entries) and `execution/native/_operator_config_rejections.py` (kept both checks, C8's `bucket_perturb_special_date_format` first, then the shared rule; the special-format check is now redundant but harmless).
 
-C8-iii-a's own tests pin `mixed` and `ISO8601` as accepted formats whose output is the format text (the goldens record `["ISO8601", "ISO8601", null]`). With this guard in place, 36 tests fail in a trial merge: 34 in `tests/native/test_c8_iii_a_when_chunked.py` and `tests/physical/test_c8_iii_a_when_unified.py` (the `test_4_special_format*` cases), and 2 of this branch's own native-gate cases, which expect the shared-rule code where main's special-format code now wins. These must be migrated when the branches meet: the `mixed`/`ISO8601` cases should assert the compile rejection, and `_c8_iii_a_main_goldens.json` loses the destroyed-literal entries. That migration was not done here because the contract fixes the base at `7ee20b55`.
+C8-iii-a pinned `mixed` and `ISO8601` as accepted formats whose output is the format name written over every date. That output is the defect this change removes, so those cases now assert the compile rejection `PlanCompileError(bucket_perturb_date_format_unsupported)`, raised before any output. No other C8-iii-a test changed. All eight entries of `tests/native/_c8_iii_a_main_goldens.json` were special-format cases, so the file is now `{}`; no other golden existed. Evidence: `git show main:tests/native/_c8_iii_a_main_goldens.json` has the keys `ISO8601/{all_null,empty,ordinary_dates,uniform_offset}` and `mixed/{...same four}`, and nothing else.
+
+| Test (file) | Old assertion | New assertion | Reason |
+|---|---|---|---|
+| `test_4_special_formats_unmasked_decline_with_the_new_code` (chunked), renamed `test_4_special_formats_are_rejected_at_compile_before_any_output` | native leg declines to the oracle with `bucket_perturb_special_date_format`; both legs run and match | both legs (native and forced oracle) raise the compile error, no chunk output, no sink writes | the format cannot write a date back |
+| `test_4_special_format_jobs_that_succeeded_natively_keep_their_output` (chunked), renamed `..._that_ran_natively_are_now_rejected` | output equals the main golden (format name in every date) | the job raises the compile error before any output | the golden is the destroyed output |
+| `test_4_special_formats_unmasked_decline_and_equal_the_oracle` (unified), renamed `..._unmasked_are_rejected_at_compile` | lane declines and equals lane-off | both lanes raise the compile error | same |
+| `test_4_special_format_jobs_that_succeeded_natively_keep_their_output` (unified), renamed `..._that_ran_natively_are_now_rejected` | output, schema and pandas metadata equal the golden | both lanes raise the compile error | same |
+| `test_4_special_formats_masked_decline_and_equal_lane_off` (unified), renamed `..._masked_are_rejected_at_compile_under_when` | lane declines under three predicates and equals lane-off | both lanes raise the compile error under each predicate, including ones selecting no row | same, and `when:` must not hide it |
+| `test_4_the_config_gate_names_special_formats` (unified) | unchanged | unchanged (C8's code still wins) | none |
+| `test_the_native_reason_is_the_shared_rule_code` (this branch) | `mixed`/`ISO8601` expected the shared-rule code | split: `mixed`/`ISO8601` expect C8's special-format code; other formats keep the shared-rule code | the earlier check wins |
+
+`test_4_special_formats_masked_on_the_explicit_chunked_route_raise_the_gate` is untouched: on `run_mask_chunked` the chunked `when:` gate still raises first.
 
 ## Not covered
 

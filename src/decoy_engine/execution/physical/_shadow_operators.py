@@ -297,7 +297,7 @@ def run_operator(
     the native chunked route's own preflight-once, thread-through contract).
     `when_mask` is the batch's slice of the node's `when:` row mask (non-null booleans). A
     binding that carries a predicate fails closed without one, so a `when` node can never mask
-    every row. Only the four value-keyed string operators carry a predicate, and they read
+    every row. Only the admitted value-keyed string operators carry a predicate, and they read
     nothing the masked step does not pass.
     group_key's `raw_hex_kernel` is left unset on purpose: the kernel loads it inside the
     call each batch, which is this route's only companion probe, so an empty column still

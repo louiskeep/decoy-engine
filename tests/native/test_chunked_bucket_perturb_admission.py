@@ -274,9 +274,27 @@ def test_missing_namespace_fails_eagerly_before_any_chunk_is_masked() -> None:
     assert len(consumed) <= 1, "fails before any chunk is masked; only the profile peek reads one"
 
 
-def test_a_when_predicate_is_rejected_with_its_exact_code() -> None:
-    config = make_config([bp_col(when="d != ''"), passthrough("p")])
+@pytest.mark.parametrize(
+    "column",
+    [
+        bp_col(date_format="mixed", when="d != ''"),
+        bp_col(date_format="ISO8601", when="d != ''"),
+        bp_col(date_format=None, when="d != ''"),
+        bp_col(namespace=None, when="d != ''"),
+        bp_col(when="d.notnull()"),
+    ],
+    ids=["mixed", "iso8601", "implicit_format", "no_namespace", "predicate_outside_grammar"],
+)
+def test_a_when_predicate_on_a_config_the_native_route_declines_is_rejected_with_its_code(
+    column: dict[str, Any],
+) -> None:
+    config = make_config([column, passthrough("p")])
     assert _code(config) == "chunked_bucket_perturb_when_not_supported"
+
+
+def test_a_when_predicate_on_an_admitted_config_passes_the_gate() -> None:
+    config = make_config([bp_col(when="d != ''"), passthrough("p")])
+    assert _code(config) is None
 
 
 def _fk(parent_cols: list[dict[str, Any]], child_cols: list[dict[str, Any]]) -> dict[str, Any]:

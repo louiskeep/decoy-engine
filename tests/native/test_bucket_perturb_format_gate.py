@@ -76,7 +76,12 @@ def test_every_format_compile_rejects_is_rejected_natively(fmt: Any) -> None:
     assert _native(fmt) is not None
 
 
-@pytest.mark.parametrize("fmt", ["mixed", "ISO8601", "foo", "%Q", "%H:%M:%S"])
+@pytest.mark.parametrize("fmt", ["mixed", "ISO8601"])
+def test_pandas_special_names_keep_the_earlier_special_format_decline(fmt: str) -> None:
+    assert _native(fmt) == "bucket_perturb_special_date_format:c"
+
+
+@pytest.mark.parametrize("fmt", ["foo", "%Q", "%H:%M:%S"])
 def test_the_native_reason_is_the_shared_rule_code(fmt: str) -> None:
     assert _native(fmt) == "bucket_perturb_date_format_unsupported:c"
 

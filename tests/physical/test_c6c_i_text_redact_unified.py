@@ -244,12 +244,13 @@ def test_a_non_string_source_declines_the_lane_and_equals_the_oracle(
     _assert_declined_and_equal(off, on)
 
 
-def test_a_when_predicate_declines_the_lane_and_leaves_output_unchanged(tmp_path: Path) -> None:
+def test_an_unadmitted_when_predicate_declines_the_lane_and_equals_the_oracle(
+    tmp_path: Path,
+) -> None:
+    # The column alone is admitted; a chained comparison is outside the closed grammar.
     source = _source(CORPUS)
-    off, on = _run_both(tmp_path, source, [tr_col("s"), _PASS], when="p > 3")
+    off, on = _run_both(tmp_path, source, [tr_col("s"), _PASS], when="0 < p < 3")
     _assert_declined_and_equal(off, on)
-    # `when:` redacts only the rows that satisfy it, so the two outputs differ in the rows it skips.
-    assert on.outputs["t"].column("s").to_pylist()[:4] == CORPUS[:4]
 
 
 # ---------------------------------------------------------------------------
