@@ -1,4 +1,4 @@
-Status: plan
+Status: plan (rev 3, BUILD-READY: Codex plan gate GO in round 3)
 
 Rules consulted: 00-universal, development-loop, risk-and-exceptions, debugging, testing, code-review.
 
@@ -69,7 +69,7 @@ Today `validate_bucket_perturb_config` (`:175-192`) checks only `bucket`, and no
      - `%H:%M:%S` (time-only), `%f`, `%z` and `%Z` alone, `%Q` (unknown);
      - `%%%%Y` (two escapes, no directive), `%Y %Q` (date plus unknown), `%Y%` (date plus a dangling `%`);
      - a non-string value, including a falsy non-string such as `0`.
-   - Compile cleanly: `%Y-%m-%d`, `%d/%m/%Y`, `%Y`, `%x`, `%c`, `100%% %Y`, `%%%Y` (an escape, then `%Y`), `%Y-%m-%dT%H:%M:%S%z`, and an empty or unset format.
+   - Compile cleanly: `%Y-%m-%d`, `%d/%m/%Y`, `%Y`, `%x`, `%c`, `100%% %Y`, `%%%Y` (an escape, then `%Y`), `%Y-%m-%dT%H:%M:%S%z`, `%Y-%m-%d %f`, `%Y-%m-%d %Z`, `%%Q %Y` (a literal `%Q`), and an empty or unset format, each keeping today's rendering.
    - A non-bucket_perturb column with a `date_format` key is untouched.
 2a. **Nested:** a nested bucket_perturb child with `date_format: mixed` is rejected at compile, naming the child path. At run time it is rejected for populated, empty, all-null and zero-match leaves.
 2. **Handler backstop.** A raw-dict run that bypasses compile, with `date_format: mixed`, raises `StrategyError(bucket_perturb_invalid_config)` on the oracle and on both out-of-core paths, before any output write (an output-write spy proves it). The rejection still happens with empty input, with all-null input, and under a `when:` predicate that selects nothing, tested through the REAL `when` gate (the preflight path).
@@ -81,7 +81,7 @@ Today `validate_bucket_perturb_config` (`:175-192`) checks only `bucket`, and no
 
 | Risk | Closed by |
 |---|---|
-| A valid user format rejected | Rejection requires the absence of any `%` directive; test 1's accept cases |
+| A valid user format rejected | The whole-string recognized-directive rule requires at least one DATE directive (2a); test 1's accept cases |
 | Raw-dict path bypasses compile | 2c backstop; test 2 |
 | Native admits what compile rejects | 2d shared rule; test 3 |
 
@@ -102,3 +102,4 @@ Rollback: revert the merge commit.
   - an explicit recognized-directive table and whole-string boundary tests (2a, test 1). `%C`, `%h`, `%e`, `%D` and `%F` were dropped because they fail pandas parsing.
 
   The section 2e follow-up (undetectable-format passthrough) is now on the platform roadmap.
+- **Codex plan gate, round 3: GO.** Two LOWs folded: a corrected failure-mode row, and the accepted cases `%Y-%m-%d %f`, `%Y-%m-%d %Z` and `%%Q %Y`.
