@@ -46,8 +46,8 @@ New files: `test_c5c_a_nullable_int_faker.py`, `test_c5c_a_gate_and_writers.py`,
 | Suite | Python | Result |
 |---|---|---|
 | `ruff check .`, `ruff format --check .`, `mypy src` | 3.10 | clean (489 source files) |
-| `tests/sentry` | 3.10 | 2434 passed, 1 skipped |
-| `tests/sentry` | 3.11 | 2434 passed, 1 skipped |
+| `tests/sentry` | 3.10 | 2435 passed, 1 skipped |
+| `tests/sentry` | 3.11 | 2435 passed, 1 skipped |
 | New files, `test_when_gate_mutation_kills.py`, `test_column_access_surfaces.py`, `test_c5b_i_metadata_inventory.py` | 3.10 | 268 passed, 8 skipped (compiled-kernel tests skip without the companion) |
 | `tests/unit/execution` | 3.11 | 6510 passed, 5 skipped |
 | `tests/unit/generation` | 3.11 | 529 passed, 9 skipped |
