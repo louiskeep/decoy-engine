@@ -15,8 +15,16 @@ from decoy_engine.profile._readers import LazySource
 from tests.fileaccess.support import RecordingFileAccess, RootRelative
 
 
-def _open_fds() -> int:
-    return len(os.listdir("/proc/self/fd"))
+def _open_fds(root: Path) -> int:
+    """Descriptors that point into the test tree: unrelated interpreter fds come and go."""
+    count = 0
+    for name in os.listdir("/proc/self/fd"):
+        try:
+            target = os.readlink(f"/proc/self/fd/{name}")
+        except OSError:
+            continue
+        count += target.startswith(str(root))
+    return count
 
 
 @pytest.fixture
@@ -68,28 +76,28 @@ def test_a_granted_lazy_source_reads_through_one_request_per_operation(tree) -> 
 def test_the_handle_outlives_a_rename_and_is_closed_with_the_batches(tree) -> None:  # type: ignore[no-untyped-def]
     root, inside, _outside, policy = tree
     lazy = LazySource(inside, access=policy)
-    baseline = _open_fds()
+    baseline = _open_fds(root)
     opened = lazy.open_batches(10)
     first = next(opened.batches)
     os.replace(inside, root / "moved.parquet")
     os.symlink(root / "moved.parquet", inside)
     rest = sum(b.num_rows for b in opened.batches)
     assert first.num_rows + rest == 50
-    assert _open_fds() > baseline
+    assert _open_fds(root) > baseline
     opened.close()
     opened.close()
-    assert _open_fds() == baseline
+    assert _open_fds(root) == baseline
 
 
 def test_an_interrupted_consumption_still_releases_the_handle(tree) -> None:  # type: ignore[no-untyped-def]
-    _root, inside, _outside, policy = tree
+    root, inside, _outside, policy = tree
     lazy = LazySource(inside, access=policy)
-    baseline = _open_fds()
+    baseline = _open_fds(root)
     opened = lazy.open_batches(10)
     next(opened.batches)
     opened.close()
-    assert _open_fds() == baseline
+    assert _open_fds(root) == baseline
     gen = lazy.iter_batches(10)
     next(gen)
     gen.close()
-    assert _open_fds() == baseline
+    assert _open_fds(root) == baseline

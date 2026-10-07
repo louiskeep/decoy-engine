@@ -138,7 +138,28 @@ construction rule, owner and reason, is `tests/sentry/file_access_registry.toml`
 
 ## Results
 
-RESULTS_PLACEHOLDER
+Run on the final tree (Python 3.11 is the native-companion venv; 3.10 is the CI mirror).
+
+| Check | Result |
+|---|---|
+| `tests` (full), 3.11, strace available | 1 failed, 25371 passed, 172 skipped, 21 deselected, 59 xfailed |
+| `tests/sentry` + `tests/fileaccess`, 3.10 | 2850 passed, 1 skipped (after the fd-count fix; the one failure in the first pass was a process-wide fd count, now counted per test tree) |
+| `tests/sentry`, 3.11 | 2578 passed, 1 skipped |
+| `tests/fileaccess`, 3.11 | 88 E1-0 characterization tests green on the base and on head; the policy suites pass |
+| `ruff check`, `ruff format --check`, `mypy src` (3.10 venv) | clean (511 source files) |
+| `scripts/test_flight.py` (check only) | 53/53 invariant checks, 5/5 fingerprints match golden |
+
+The one failure in the full run is `tests/unit/test_v2_cloud_sources.py::TestCloudSourceEndToEnd::test_profile_gcs_source_via_mocked_client`:
+`No module named 'google'` in the native venv. It fails on the base the same way (the venv lacks the
+GCS extra) and touches no changed code.
+
+Red before, new-API tests: collecting `tests/fileaccess` policy suites against the base source stops at
+`ModuleNotFoundError: No module named 'decoy_engine.fileaccess'` (the conftest imports the package),
+so every new test is red there. The behavior-level red is the probe table above.
+
+Order of commits on `feat/file-access-policy`: E1-0 `d830c0a4`, E1-1 `b098c5ad`, a WIP checkpoint
+`6440e23e` taken when a session limit interrupted the port, E1-3/E1-4 `7177c302`, the mask-secret text
+read, the lazy-reader test fix, and the record/docs commit.
 
 ## Not verified
 
@@ -151,4 +172,20 @@ RESULTS_PLACEHOLDER
 
 ## PR body draft: compatibility contract section 9 checklist
 
-PRBODY_PLACEHOLDER
+- [x] Additive public surface: every changed public signature adds a keyword-only `file_access=`
+  or an optional trailing argument (signature diff in judgment call 17). Exceptions: the quarantine
+  staged-file helpers now take and return an opaque `OutputTxn`, and six stdlib re-exports on private
+  modules are gone.
+- [x] Behavior unchanged without a policy except two refusals: a bare `../` traversal read (V15) and
+  discovery SQL `read_text` (V22). Evidence: `redbefore_head` probe and `tests/fileaccess/test_char_*`
+  (88 tests, green on base and head).
+- [x] Output semantics preserved: publish, failure, and zero-record behavior of the table sink pinned
+  by characterization tests on the base and still green.
+- [x] Route parity: all 11 corpus jobs match the golden, with and without the native companion, under
+  the ambient policy and under a real `RootedFileAccess` (`openat2`) and the forced descriptor walk.
+- [x] No path or locator text in errors or logs; the log-interpolation sentry passes.
+- [x] Sentries pass on 3.10 and 3.11 after the final commit; registry has 163 reviewed entries.
+- [x] Module sizes within the census; `_pipeline.py` unchanged at 684.
+- [ ] Platform wiring (`forbid_ambient()`, `PrincipalFileAccess`, platform sentries): not in this PR.
+- [ ] Version bump, tag, publish: not done; the 0.9.0 release needs Cam's go.
+- [ ] Coverage and mutation on the changed units; dennis and Codex gates: not run.
