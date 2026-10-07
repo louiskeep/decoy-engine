@@ -9,6 +9,22 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (memory evidence on capped isolated runs, 2026-10-07)
+
+`run_pipeline_isolated` with `mem_cap_bytes` now samples the child's `VmData` (or `VmSize` for
+`rlimit_kind="as"`) every 50 ms while it waits and returns the result as
+`IsolatedRunResult.memory_evidence`: sample count, last and peak size, the age of the last sample,
+why sampling stopped, and a `suspected_memory_pressure` flag. `to_dict()` returns JSON primitives.
+
+The flag is a suspicion, not a verdict. It is set only when the child died without a result
+envelope and its last sample, taken within 250 ms of the driver seeing it exit, was within
+max(64 MiB, 10% of the cap), bounded to half the cap, of the cap. A timeout never sets it. A native
+allocator that gets NULL back at the cap and segfaults is still classified `crashed`; the evidence
+is what tells it apart from an unrelated crash. Outcomes, return codes and every existing error
+text are unchanged, except that an abnormal-exit error with samples gains a trailing
+`; memory: last X MiB, peak Y MiB of Z MiB (kind)` (sizes only). Uncapped and in-process runs carry
+no evidence.
+
 ### Fixed (deterministic Faker over integer columns with nulls, 2026-10-07)
 
 A deterministic `faker` column over an integer column that holds at least one null no longer
