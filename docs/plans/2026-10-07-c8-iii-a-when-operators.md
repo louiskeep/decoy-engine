@@ -1,4 +1,4 @@
-Status: plan
+Status: plan (rev 3, BUILD-READY: Codex plan gate GO in round 3)
 
 Rules consulted: 00-universal, development-loop, risk-and-exceptions, feature-dev, testing, observability-and-resilience, code-review.
 
@@ -34,8 +34,8 @@ A `when:` column whose strategy is text_redact, bucket_perturb or date_shift run
 - `.loc` write-back (`:222`).
 
 **text_redact** (`_strategies/_text_redact.py`):
-- one `iter_spans` call per cell (`:150-156`), so it is value-keyed;
-- writes an object Series (`:187`), and string targets stay the same dtype;
+- for admitted non-NER configs, each NON-NULL cell gets its own `iter_spans` call (`:150-156`), so it is value-keyed;
+- the handler assigns an object Series (`:187`). Under `when`, the gate's `.loc` write-back keeps the original string target dtype (Codex round 3);
 - returns `df, []`, so it adds no row errors and no warnings (`:188`);
 - the native gate declines `ner` (`native/_operator_config_rejections.py:261-276`).
 
@@ -173,3 +173,4 @@ Rollback: revert the merge commit.
   - **MEDIUM (contradictory fallback for masked special formats):** route-specific expectations in 3a-ii and test 4. The explicit chunked route keeps today's rejection.
   - **LOW (positional exclusion reason):** corrected in section 1.
   - **Also added:** the previously successful unmasked special-format jobs, as a route change with identical output.
+- **Codex plan gate, round 3: GO.** All six earlier findings are closed. One LOW correction to the text_redact dtype wording in section 2 is folded in.
