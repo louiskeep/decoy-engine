@@ -1,4 +1,4 @@
-Status: plan
+Status: plan (rev 2, BUILD-READY: Codex plan gate GO in round 2)
 
 Rules consulted: 00-universal, development-loop, risk-and-exceptions, debugging, feature-dev, testing, code-review.
 
@@ -52,7 +52,10 @@ The positional (non-deterministic) path never reads values and is untouched.
 
 **2e. The compiled pool-index path** (`_sampler.py`, `pa.Array.from_pandas` with fallback to the reference) receives the same exact values. Test 1 asserts the exact values at BOTH kernel boundaries, including uint64 above 2**63 (where the compiled path may fall back). It requires evidence that the compiled path actually ran for admitted widths, not two fallback runs.
 
-**2f. Known limitation, kept.** A gate that selects only SOME rows of an integer column, with a string-output provider, leaves a column of mixed strings and numbers. Output conversion then raises `ArrowTypeError`, as it already does for any partially gated type-changing column today. This slice adds no output coercion, so that case still fails: with a new error in place of the canonicalization error. Test 3b pins it.
+**2f. Known limitations, kept.**
+- **Partial gate, string provider:** if at least one unselected NON-NULL numeric value survives, the column ends up mixing strings and numbers. Output conversion then raises `ArrowTypeError`, as it already does for any partially gated type-changing column today. This slice adds no output coercion, so that case still fails: with a new error in place of the canonicalization error. A gate that selects every non-null value succeeds, even when it leaves out null rows. Test 3b pins both cases.
+- **Numeric-output chunk drift:** a numeric-output provider can infer `int64` for one chunk and `double` for another, which `concat_masked_chunks` rejects as `chunked_schema_mismatch`. That output-inference limit already exists and is outside this sampling-boundary fix. A characterization test documents it.
+- **Positions are local:** positions index the table or chunk actually handed to the handler, and are never offset by `row_offset`.
 
 **2g. No other change.** The frame, predicates, other strategies, unified admission and the native routes are untouched. The native routes still decline non-string deterministic Faker; C5c-ii opens them.
 
@@ -68,9 +71,12 @@ The positional (non-deterministic) path never reads values and is untouched.
    - a nullable `Int64`-metadata source.
 3. **Gate positions:**
    - (a) With a numeric-output provider, under a gate that selects some rows and one that selects all rows, each selected value maps as in test 1 and unselected rows keep their source value. This includes a non-default pandas index (parquet metadata with non-range row labels), a duplicate index, a nonzero chunk offset, and a nullable-boolean predicate with `pd.NA`.
-   - (b) With a string-output provider under a partial gate, the mixed-type output rejection (`ArrowTypeError`) is preserved and pinned. An all-rows gate succeeds.
+   - (b) With a string-output provider:
+     - a partial gate that leaves an unselected non-null number keeps the mixed-type rejection (`ArrowTypeError`);
+     - a gate selecting every non-null value but excluding null rows succeeds;
+     - an all-rows gate succeeds.
    - (c) An unrelated strategy (string redact) under a nullable-boolean `pd.NA` predicate still succeeds, byte-identical to main.
-4. **Chunked stability:** a nullable int column with nulls in some chunks and not others gives the same output as one pass (the chunked oracle against whole-frame).
+4. **Chunked stability:** with a STRING-output provider, a nullable int column that has nulls in some chunks and not others gives the same output as one pass (the chunked oracle against whole-frame). A separate characterization test documents the kept numeric-output `chunked_schema_mismatch` (2f).
 5. **Earlier writer:**
    - a column that an earlier-RUN node writes keeps main's behavior exactly, whether that is success or the existing error;
    - an FK-delayed node and a multi-column writer are both handled from the adapter's real order.
@@ -104,3 +110,4 @@ Rollback: revert the merge commit.
   - **MEDIUM:** the partial-gate mixed-type limitation, stated and pinned;
   - **MEDIUM:** test migration;
   - **LOW:** facts qualified and coverage completed.
+- **Codex plan gate, round 2: GO.** It confirmed every round-1 finding is closed and found no missed route. Two LOW clarifications are folded in: the exact partial-gate failure condition, and numeric-output chunk drift characterized rather than fixed.
