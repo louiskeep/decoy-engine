@@ -730,3 +730,59 @@ def test_a_declined_predicate_failure_logs_no_predicate_text(
         case.run(lane=True)
     assert "sentinel_literal" not in caplog.text
     assert "s < 1" not in caplog.text
+
+
+def _when_node(expression: str | None) -> Any:
+    binding = SimpleNamespace(when_expression=expression)
+    return SimpleNamespace(node_id="n", strategy="redact", columns=("c",), execution=binding)
+
+
+def test_a_mask_of_the_wrong_length_raises_an_invariant_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from decoy_engine.execution import _unified_slice_when
+
+    monkeypatch.setattr(
+        _unified_slice_when, "_eval_predicate", lambda *a, **k: pd.Series([True, False])
+    )
+    frame = pd.DataFrame({"c": ["a", "b", "c"]})
+    with pytest.raises(UnifiedSliceInvariantError, match="rows"):
+        _unified_slice_when.compute_when_masks(frame, [_when_node("c == 'a'")])
+
+
+def test_a_node_without_a_predicate_gets_no_mask() -> None:
+    from decoy_engine.execution._unified_slice_when import compute_when_masks
+
+    masks = compute_when_masks(pd.DataFrame({"c": ["a"]}), [_when_node(None)])
+    assert masks.selected == {} and masks.arrow == {}
+
+
+def test_reconstruction_of_a_when_node_without_its_mask_raises() -> None:
+    from decoy_engine.execution._unified_slice_evidence import reconstruct_source_shaped_output
+
+    frame = pd.DataFrame({"c": ["a", "b"]})
+    masked = pa.table({"c": pa.array(["X", "Y"], pa.string())})
+    with pytest.raises(UnifiedSliceInvariantError, match="mask"):
+        reconstruct_source_shaped_output(
+            table="t",
+            frame=frame,
+            masked_table=masked,
+            nodes=[_when_node("c == 'a'")],
+            when_selected={},
+        )
+
+
+def test_reconstruction_writes_back_only_the_selected_rows() -> None:
+    from decoy_engine.execution._unified_slice_evidence import reconstruct_source_shaped_output
+
+    frame = pd.DataFrame({"c": pd.array(["a", None, "c"], dtype="string")})
+    masked = pa.table({"c": pa.array(["X", "Y", "Z"], pa.string())})
+    out = reconstruct_source_shaped_output(
+        table="t",
+        frame=frame,
+        masked_table=masked,
+        nodes=[_when_node("c == 'a'")],
+        when_selected={"n": np.array([True, False, True])},
+    )["t"]
+    assert out.column("c").to_pylist() == ["X", None, "Z"]
+    assert json.loads(out.schema.metadata[b"pandas"])["columns"][0]["numpy_type"] == "string"
