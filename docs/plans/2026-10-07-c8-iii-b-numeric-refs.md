@@ -1,4 +1,4 @@
-Status: plan (rev 3)
+Status: plan (rev 3, BUILD-READY: Codex plan gate GO in round 3)
 
 Rules consulted: 00-universal, development-loop, risk-and-exceptions, feature-dev, testing, code-review.
 
@@ -115,3 +115,4 @@ Rollback: revert the merge commit.
 - **Codex plan gate, round 2: REVISE** (1 MEDIUM, 1 LOW). 703 partition comparisons: 12 mismatches, all on excluded nullable int references. Rev 3:
   - date32/date64 expectations pinned to what the oracle actually does (all-false equality and membership, all-true inequality, ordering errors), plus a compound date-plus-string strict-subset case; timestamps keep the strict-subset requirement;
   - the section 1 dtype table is labeled as default conversion, the int and dictionary rows are corrected, and the "gates already applied" conclusion is removed.
+- **Codex plan gate, round 3: GO** (high confidence). Both round-2 findings closed; 208 partition and predicate checks passed. Its note: an all-null date chunk can return all-false for ordering, but populated runs still raise consistently, so the run-level requirement holds.
