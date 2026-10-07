@@ -106,8 +106,24 @@ def _outcome(fn: Any) -> tuple[str, Any]:
         return "err", exc
 
 
+def _assert_output_contract(got: pa.Table, full: pa.Table, source: pa.Table) -> None:
+    """The auto-chunk output contract (dispatcher plan, guarantee 3): names, order and row
+    count equal the whole-frame run; the masked column equals the whole frame in values,
+    nulls and Arrow type; every passthrough column (each `when` reference included) equals
+    the SOURCE column exactly, field metadata too, because the whole frame's pandas round
+    trip is allowed to change it (NaN to null, large_string to string, date64 to date32)."""
+    assert got.schema.names == full.schema.names
+    assert got.num_rows == full.num_rows == source.num_rows
+    for name in got.schema.names:
+        if name == "s":
+            assert _canon(got.select([name])) == _canon(full.select([name]))
+            continue
+        assert got.schema.field(name).equals(source.schema.field(name), check_metadata=True), name
+        assert _canon(got.select([name])) == _canon(source.select([name])), name
+
+
 def _assert_chunked_equals_full(
-    cfg: dict[str, Any], source: Any, oracle: pa.Table, chunk: int = 7
+    cfg: dict[str, Any], source: Any, oracle: pa.Table, chunk: int = 7, grammar: bool = True
 ) -> list[bool] | None:
     """Assert the auto run equals the whole-frame run; the applied mask, or None when both
     runs raise the same `when` evaluation error (the planner must still have relaxed it)."""
@@ -119,7 +135,7 @@ def _assert_chunked_equals_full(
         assert getattr(got[1], "code", None) == getattr(want[1], "code", None)
         assert getattr(got[1], "code", None) == "when_expression_error"
         relaxed = planner_relaxed_when_columns(cfg, None, TABLE, {TABLE: source}, {})
-        assert relaxed == frozenset({"s"})
+        assert relaxed == (frozenset({"s"}) if grammar else frozenset())
         return None
     assert got[0] == "ok", got[1]
     auto, full = got[1], want[1]
@@ -128,7 +144,7 @@ def _assert_chunked_equals_full(
     assert full.quality_metrics["auto_chunk"]["mode"] == "full_frame"
     route = auto.quality_metrics["chunked_route"]
     assert route["native_admitted"] is True, route["reroute_reason"]
-    assert _canon(auto.outputs[TABLE]) == _canon(full.outputs[TABLE])
+    _assert_output_contract(auto.outputs[TABLE], full.outputs[TABLE], oracle)
     assert _selected(auto) == _selected(full)
     return _selected(auto)
 
@@ -156,6 +172,7 @@ class Case:
     predicate: str
     selection: str = "free"  # strict | none | all | error | free
     kinds: tuple[str, ...] = ("resident", "lazy")
+    in_grammar: bool = True
 
 
 def _cases() -> dict[str, Case]:
@@ -180,8 +197,11 @@ def _cases() -> dict[str, Case]:
         "int64_ne_above_2_53": Case({"n": ints}, f"n != {_BIG + 1}", "strict"),
         "int64_in_above_2_53": Case({"n": ints}, f"n in [{_BIG + 1}, {_BIG + 3}]", "strict"),
         "int64_gt": Case({"n": ints}, f"n > {_BIG + 1}", "strict"),
-        # numexpr cannot take a literal above int64 against uint64: both runs must raise it.
-        "uint64_literal_above_int64": Case({"u": u64}, f"u == {2**63 + 1}", "error"),
+        # A literal above int64 is outside the closed grammar: the planner declines and both
+        # runs raise the same error.
+        "uint64_literal_above_int64": Case(
+            {"u": u64}, f"u == {2**63 + 1}", "error", in_grammar=False
+        ),
         "uint64_above_2_63": Case({"u": u64}, "u > 9"),
         "uint64_in_int64_range": Case({"u": u64}, "u != 5"),
         "float_eq": Case({"f": f64}, "f == 1.5", "strict"),
@@ -256,7 +276,7 @@ def test_a_relaxed_reference_auto_chunks_and_equals_the_whole_frame(
     cfg, source, oracle = _setup(
         tmp_path, _cols(case.refs, case.predicate), table, kind, row_group_size=9
     )
-    mask = _assert_chunked_equals_full(cfg, source, oracle, chunk)
+    mask = _assert_chunked_equals_full(cfg, source, oracle, chunk, grammar=case.in_grammar)
     if case.selection == "error":
         assert mask is None
         return
@@ -275,7 +295,7 @@ _PRED = {
     "float64": ["r != 1.5", "r == 1.5", "r in [0.5, 1.5]", "r > 0.5"],
     "timestamp": ["r >= '2020-01-03'", "r == '2020-01-01 07:00:00'", "r != '2020-01-02'"],
     "int64": [f"r == {_BIG + 1}", f"r != {_BIG + 2}", f"r in [{_BIG + 1}, {_BIG + 3}]"],
-    "uint64": [f"r == {2**63 + 1}", f"r != {2**63 + 2}"],
+    "uint64": ["r > 1", "r != 5", "r == 9223372036854775807"],
     "bool": ["r == True", "r != True"],
 }
 
