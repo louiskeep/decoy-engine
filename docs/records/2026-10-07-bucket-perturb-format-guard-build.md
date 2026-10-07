@@ -39,13 +39,14 @@ Searched `tests/`, `scripts/`, `testflight/`, `docs/` for bucket_perturb configs
 | `tests/unit/plan/test_compile_s2_refactor.py` | tuple, count 31 to 32, negative indexes before the new entry shift by one | the new check is registered right after `top_code_config` | position is pinned, not loosened |
 | `tests/unit/plan/test_compile_basic.py` | set gains `bucket_perturb_config` | same | none |
 | `tests/unit/plan/test_checks_non_poolable.py` | `run_config_only_checks` tuple gains `bucket_perturb_config` | same | none |
+| `tests/sentry/test_physical_seam_disconnection.py` | three files added to the permitted non-physical edits (`_strategies/_bucket_perturb.py`, `_strategies/_nested.py`, `out_of_core/_mask_group_c.py`) with a reason | the seam sentry lists every execution file changed against main | none |
 | `tests/sentry/test_module_size.py` | `_compile.py` census 703 to 682 | comment-only trims in `_compile.py` paid for the registration; the file is now below the 700 max and is an ordinary dense entry at its exact LOC | none |
 
 No planned or existing assertion was weakened. No existing test other than the five above changed.
 
 ## Tests first
 
-The new tests (170 cases in 4 files) were written and run against an exported base tree (`git archive 7ee20b55` plus the new test files): 150 failed, 19 passed, and the rule file failed at collection (`ImportError`, the function does not exist). The 19 passes are the negative controls (valid formats, other strategies, autodetect). Failure reasons were `DID NOT RAISE`, the new check name missing from `checks_passed`, and the native gate returning `None`; none was a fixture error.
+The new tests (169 cases collected from three files, plus a fourth file for the rule itself) were written and run against an exported base tree (`git archive 7ee20b55` plus the new test files): 150 failed, 19 passed, and the rule file failed at collection (`ImportError`, the function does not exist). The 19 passes are the negative controls (valid formats, other strategies, autodetect). Failure reasons were `DID NOT RAISE`, the new check name missing from `checks_passed`, and the native gate returning `None`; none was a fixture error.
 
 After the fix: 282 pass across those four files and the three tuple-pin files.
 
@@ -55,7 +56,7 @@ After the fix: 282 pass across those four files and the three tuple-pin files.
 - 3.11 `tests/unit tests/native tests/physical tests/parity tests/integration tests/perf`: 22427 passed, 159 skipped, 59 xfailed, 10 deselected, 1 failed. The one failure (`tests/unit/test_v2_cloud_sources.py::...test_profile_gcs_source_via_mocked_client`, `No module named 'google'`) fails identically on the base tree; it is the venv, not this change.
 - Hand mutation on the rule (10 mutants: `%%` not consumed, date requirement removed, dangling accepted, unknown accepted, time directive counted as date, a date directive dropped, a time directive dropped, `""` rejected, `%%` treated as unknown, non-string accepted): all 10 killed by the rule and compile tests.
 - `scripts/test_flight.py` (check only): 5/5 job fingerprints match golden, 53 of 53 invariant checks pass.
-- Sentries: see the final commit message of the sentry run in the build report.
+- Sentries (`tests/sentry`) on 3.10 and 3.11 after the final commit: all pass except the physical-seam permit list, fixed as above.
 
 ## Drift against main
 
