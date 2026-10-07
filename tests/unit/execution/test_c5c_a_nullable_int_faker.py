@@ -542,6 +542,7 @@ def _fk_child_job(
             "provider_config": {"pool_size": 64},
         }
 
+    tmp_path.mkdir(parents=True, exist_ok=True)
     paths = {}
     for name, table in (("parent", parent), ("child", child)):
         paths[name] = str(tmp_path / f"{name}.parquet")
