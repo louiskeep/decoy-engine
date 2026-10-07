@@ -185,6 +185,17 @@ class TestScrub:
         text = "ValueError: column 'x' not found, failed twice"
         assert scrub_error_text(text) == text
 
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "step failed: Wrapping abc",
+            "Wrapping abc",
+            "Wrapping failed",
+        ],
+    )
+    def test_wrapping_without_a_later_failed_is_unchanged(self, text):
+        assert scrub_error_text(text) == text
+
     @pytest.mark.parametrize("name", list(_VALUES))
     def test_run_handler_scrubs(self, name, tmp_path, monkeypatch):
         exc = pa.lib.ArrowException(_WRAPPING.format(_VALUES[name]))

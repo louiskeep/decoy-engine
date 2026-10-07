@@ -198,7 +198,7 @@ def scrub_error_text(message: str) -> str:
     if start < 0:
         return message
     value_start = start + len(_WRAPPING_OPEN)
-    value_end = message.rfind(_WRAPPING_CLOSE, value_start - 1)
+    value_end = message.rfind(_WRAPPING_CLOSE)
     if value_end < value_start:
         return message
     return f"{message[:value_start]}<value>{message[value_end:]}"
