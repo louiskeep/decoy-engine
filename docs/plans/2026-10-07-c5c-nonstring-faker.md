@@ -76,17 +76,30 @@ Positional Faker reads only the null mask of its source (`_strategies/_faker.py:
 
 Deterministic Faker keeps its string-only checks unchanged.
 
-**3b. Null mask equals pandas `isna`.**
-- The native positional step's null mask (`_operator_step.py:~173`, which uses `col.is_valid()` today) becomes `is_valid AND NOT is_nan` for float32 and float64. For int, uint and bool, `is_valid` already equals pandas `isna`, because pandas has no other null sentinel for these after conversion: an int with nulls becomes float NaN at exactly the null positions, and a bool with nulls becomes object None.
-- One helper computes this mask, and the chunked and unified paths both call it.
+**3b. The null mask comes from the oracle's own conversion (rev 3).**
+- Pandas missingness depends on the dtype the conversion rebuilds. Codex round 2 showed a float column written from an Arrow-backed pandas series (`pd.ArrowDtype`) keeps NaN as a VALID value, and the oracle draws for it. A blanket "NaN is null" rule would change that job.
+- So the positional step's null mask is computed the way the oracle computes it: convert the source column for the current chunk or batch with the oracle's own conversion (the same `to_pandas` / `to_pandas_fk_safe` call and the same schema metadata the adapter uses), then take `isna()`.
+- This is the C8 pattern (`native/_when_mask.py`): reuse the oracle's function on the oracle's conversion, so the result matches by construction for every admitted family and every metadata form, with no per-type rules.
+- The conversion is one column per chunk, and its cost goes in the perf record.
+- One helper computes the mask, both routes call it, and it runs inside the chunked oracle leg's carry diagnosis, so a conversion failure raises the same coded error with the same attribution.
 
-**3c. Unified route.** The binder admits the families from 3a. The existing round-trip gate still decides whether a candidate reaches it, so int-with-nulls and NaN-bearing floats decline there. Test 5 pins that.
+**3c. Unified route.**
+- The binder admits the families from 3a. The existing round-trip gate (`_unified_slice_admission.py:375-399`) still decides which candidates reach it, and is unchanged.
+- **Declines:** default-conversion int with nulls widens to `double` and fails the gate.
+- **Reaches the binder:**
+  - pandas nullable `Int64` and `UInt64` metadata columns, which round-trip exactly;
+  - all-null and empty columns, which the gate exempts at `:391`.
+- Test 3 and test 5 pin both sides.
 
 **3d. Logs.** No data values; the log sentry passes unchanged.
 
 ## 4. Acceptance tests (written first; never weakened)
 
-Differential = lane-on against an explicit lane-off run, comparing:
+Parity is strict between native and oracle execution WITHIN each route (Codex round 2). Across routes, positional VALUES are compared, and the existing degenerate-schema differences are pinned explicitly rather than asserted equal:
+- the chunked output is pinned to `string` (`native/_chunked_schema_rule.py`, declared output in `native/_requirements.py`);
+- the whole-frame and unified empty and all-null types are reconciled by `physical/_shadow_assembly.assemble_column`.
+
+Differential = lane-on against an explicit lane-off run on the same route, comparing:
 - output tables byte-equal (schema and `b"pandas"` metadata);
 - warnings and row errors;
 - metrics minus timings and the activation leaf.
@@ -100,14 +113,25 @@ Admitted cases poison the oracle fallback, so a silent reroute fails the test.
    - several chunks, nulls across chunk boundaries, an all-null chunk, an empty chunk.
 
    Output equals the chunked oracle and whole-frame (position-keyed draws).
-2. **NaN is null:** a float source whose only "missing" values are Arrow-valid NaN gives null output at exactly those rows, matching the oracle.
-3. **Unified, admitted cases:** null-free int and uint, bool with and without nulls (if the round trip passes; the builder pins which), and NaN-free float with nulls. Several batches. Activation asserted.
+2. **Missingness follows the oracle's conversion.** float32 and float64 with Arrow-valid NaN and real nulls, under three metadata forms:
+   - plain NumPy, where NaN is missing;
+   - a pandas nullable `Float64`;
+   - an Arrow-extension `pd.ArrowDtype`, where NaN is a valid value and gets a draw.
+
+   Each matches the oracle on both routes. Also a chunked run whose chunks carry different metadata.
+3. **Unified, admitted cases:** activation asserted, with values, final schema and pandas metadata equal to lane-off, for:
+   - null-free int and uint;
+   - pandas nullable `Int64` and `UInt64` columns with nulls;
+   - bool with and without nulls (the builder pins which round-trip);
+   - NaN-free float with nulls;
+   - typed all-null and empty columns of each admitted family;
+   - several batches.
 4. **Declines unchanged:**
    - deterministic Faker over every non-string family still declines on both routes;
    - positional Faker over timestamp, date32, date64, time64, duration, decimal128, decimal256, binary, a list, a struct, float16, the null type and dictionary still declines.
 
    Each case's outcome (output or error) equals lane-off.
-5. **Unified round-trip declines:** positional Faker over int with nulls, and over float with real NaN values, declines on the unified route with the existing reason, and its output equals lane-off.
+5. **Unified round-trip declines:** positional Faker over a DEFAULT-conversion int with nulls (which widens to `double`), and over a plain float with real NaN values, declines on the unified route with the existing reason, and its output equals lane-off.
 6. **Old decline tests:** the tests that pinned "non-string declines" (`tests/native/test_dispatch_faker.py`, `test_chunked_nondet_faker_admission.py`, `test_chunked_nondet_faker_auto_route.py`, `tests/physical/test_unified_slice_faker.py`, and the registry snapshot tests) change ONLY for the families admitted here, and only for the positional variant. The record lists every changed assertion and why.
 7. **Testflight:** if any fingerprint moves, STOP and report.
 8. **Sentries.** A perf record (positional Faker over int64, 1M rows, both routes). Mutation on the mask helper and the admission checks.
@@ -116,7 +140,8 @@ Admitted cases poison the oracle fallback, so a silent reroute fails the test.
 
 | Risk | Closed by |
 |---|---|
-| The native null mask differs from pandas | 3b rule; tests 1-2 cover NaN, inf and -0.0 |
+| The native null mask differs from pandas | 3b computes it from the oracle's own conversion; test 2's three metadata forms |
+| The extra conversion costs too much | Perf record (test 8) |
 | A non-admitted family slips through | Explicit type lists; test 4 |
 | The unified route admits a column its round trip rejects | The gate is unchanged; test 5 |
 | An old decline test is silently dropped | Test 6 rule |
@@ -130,3 +155,7 @@ Rollback: revert the merge commit.
   - **HIGH 3 (unified round trip and registry):** the round-trip gate is kept and pinned (test 5); the admitted families are explicit registry instances.
   - **HIGH 4 (temporal NaT and conversion failures):** temporal families are out of scope.
   - **HIGH 5 (degenerate deterministic output):** deterministic Faker is out of scope until C5c-ii, which must design it explicitly.
+- **Codex plan gate, round 2: REVISE** (1 HIGH, 2 MEDIUM). All five round-1 HIGHs are confirmed closed. Rev 3:
+  - **HIGH (an unconditional NaN rule breaks Arrow-extension floats):** the null mask now comes from the oracle's own per-chunk conversion (3b, the C8 pattern). Test 2 covers three metadata forms.
+  - **MEDIUM (unified matrix):** pandas nullable `Int64`/`UInt64` and typed all-null and empty columns reach the binder and get positive tests. The decline is pinned only for a default-conversion int that widens.
+  - **MEDIUM (output-type claims):** parity is strict within a route. Across routes, values are compared and the existing degenerate-schema differences are pinned, citing `native/_requirements.py` and `_shadow_assembly.py`.
