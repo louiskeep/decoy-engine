@@ -1,4 +1,4 @@
-Status: plan (rev 2)
+Status: plan (rev 3)
 
 Rules consulted: 00-universal, development-loop, risk-and-exceptions, feature-dev, testing, code-review, security.
 
@@ -51,8 +51,12 @@ Chained causes leak the same text: pandas' `DateParseError` for `x < 'SENTINEL'`
 
 **2c. Plan-level validation, then an evaluator backstop.**
 - **Plan level (primary).** A new `validate_plan_when(plan)` sits next to the parser. It parses EVERY `ColumnSeed.when` in a supplied `Plan`, whether or not that seed will reach the scalar gate. That includes FK-resolved and composite nodes and seeds for tables absent from the supplied sources. It raises `ValidationError(when_outside_closed_grammar)` naming table and column only.
-  - It runs at the start of each adapter entrypoint that accepts a Plan (`PandasExecutionAdapter.run`, `run_single`, `run_sequential`, and any other public Plan-taking entry the builder finds), BEFORE any handler, sink or output write.
-  - It also runs in plan deserialization (`_serialize`), so a stored plan fails at load.
+  - It runs at the start of each public entrypoint that accepts a Plan, BEFORE any handler, provider, sink or output write:
+    - `PandasExecutionAdapter.run`, `run_single` and `run_sequential`;
+    - `generate_tables(plan)`, which reaches the providers without an adapter;
+    - any other Plan-taking public entry the builder finds, each listed in the record.
+  - It iterates the whole seed envelope, independently of the supplied sources and the work-node selection.
+  - It also runs in plan deserialization (`_serialize`) on the reconstructed seed envelope before the Plan is returned, so a stored plan fails at load. Runtime guards stay, because Plans can be built directly.
   - The reason: sequential execution writes each finished table (`_sequential.py:493`). An evaluator-only check found a bad predicate on table 2 after table 1 was already written, which Codex round 1 reproduced.
 - **Evaluator backstop (retained).** `_eval_predicate` calls a cached `parse_when` before `pdf.eval`, for hand-built calls that reach the evaluator without a Plan. On failure it raises `StrategyError(code="when_outside_closed_grammar")`. The cache is keyed by the expression string.
 
@@ -62,6 +66,8 @@ Chained causes leak the same text: pandas' `DateParseError` for `x < 'SENTINEL'`
   - `parse_when` stops attaching the Lark cause (`_when_parser.py:177`) and raises its `ValidationError` with no cause.
   - `_eval_predicate`'s pandas-error boundary raises `from None`.
   - The new compile, plan-level and backstop rejections raise `from None`.
+  - Every explicit `raise ... from exc` in `parse_when` is replaced, not only `_reject`'s `__cause__` assignment.
+  - `from None` suppresses rendering but keeps `__context__` on the object. The guarantee is that tracebacks and logging output carry no predicate text. It is not object-level erasure.
   - The numexpr and pandas exception class name may be logged at debug level, as a class name only. Diagnosing a failing predicate then relies on its position and construct, not the text.
 
 **2e. Native admission.** `when_predicate_outside_native_subset` becomes unreachable for any config that compiled. Keep the native gate's own parse, because it builds the reference list from the AST. Keep the reason code as defense for raw-`ColumnSeed` callers that skip compile; the backstop then raises on the oracle leg anyway. Delete no code in this slice.
@@ -84,18 +90,24 @@ Chained causes leak the same text: pandas' `DateParseError` for `x < 'SENTINEL'`
    - a 5000-character predicate;
    - a non-string `when` (`1`, `True`, a list).
    Blank and whitespace-only predicates compile with no gate. `  region == 'US'  ` compiles and behaves like the stripped form.
-2. **Plan-level, zero writes.** Deserialize a two-table plan whose SECOND table has `when: "s.notnull()"`, then run it with `run_sequential` into an in-memory callable sink. It raises `ValidationError(when_outside_closed_grammar)` with ZERO sink writes. The same holds through `run` and `run_single`, and in each of these places:
-   - on an FK-resolved node;
-   - on a composite node;
-   - on a seed whose table is absent from the supplied sources;
-   - in `plan_from_yaml` of the same YAML.
+2. **Plan-level, zero writes.**
+   - (i) **Deserialization.** A serialized two-table plan whose second table has `when: "s.notnull()"` is rejected by `plan_from_yaml` (and the dict loader) with `ValidationError(when_outside_closed_grammar)`. Run that case on its own.
+   - (ii) **Adapters and entrypoints.** Build the invalid Plan with `dataclasses.replace` from a VALID fixture (no guard bypassed and no deserialization involved), then call each entrypoint directly:
+     - `run_sequential` into an in-memory callable sink: the typed rejection with ZERO sink writes and zero handler calls (spy);
+     - `run`: the typed rejection before any handler call;
+     - `run_single` targeting table A while the invalid seed stays on table B: the typed rejection;
+     - `generate_tables`: the typed rejection with the provider never called (spy).
+   - (iii) The same rejection in each of these places: an FK-resolved node, a composite node, and a seed whose table is absent from the supplied sources.
 3. **One test per boundary, each with its expected class (no guard bypassed to label a test native):**
    - (a) public entrypoints (`run_pipeline`, the chunked config entrypoints including zero-chunk input, `run_config_only_checks`): `PlanCompileError`;
-   - (b) native and unified admission given a hand-built spec: the existing `ValidationError(when_outside_closed_grammar)` from `when_specs`, unchanged;
+   - (b) admission, unchanged (section 2e), each tested directly:
+     - native admission returns the decline code `when_predicate_outside_native_subset:<col>`;
+     - unified admission returns `False`;
+     - separately, `when_specs` raises `ValidationError(when_outside_closed_grammar)`.
    - (c) the direct mask helpers (`_eval_predicate`, the unified-slice mask, the native mask) with explicitly constructed bindings: `StrategyError(when_outside_closed_grammar)`, on a non-empty and on a zero-row frame.
 4. **No echo, anywhere it can render.** Use the sentinel literal `'SENTINEL-4417'` in:
    - a grammar-valid datetime comparison with an invalid date literal (`x < 'SENTINEL-4417'` on a datetime column), which hits `when_expression_error`;
-   - a malformed predicate whose Lark diagnostic would carry it (`s == 'SENTINEL-4417' and x.notnull()`), on every rejection boundary of 1 to 3;
+   - a malformed predicate whose Lark diagnostic would carry it (`s == 'SENTINEL-4417' and x.notnull()`), on every boundary of 1 to 3 that RAISES (the admission declines in 3(b) return values and are not rendered);
    - an accepted predicate whose eval is patched to return a non-boolean, which hits `when_expression_not_boolean`.
 
    For each, assert that the sentinel is absent from `str(exc)`, from `traceback.format_exception(exc)` (the full chain), and from the formatted output of a `logging` handler that calls `logger.error(..., exc_info=True)`. Asserting only on `str(exc)` or `record.getMessage()` is not enough.
@@ -136,4 +148,9 @@ Rollback: revert the merge commit.
   - **MEDIUM:** test 3 is split by boundary, each with its exception class;
   - **LOW:** section 2f's null-test wording;
   - section 1 factual corrections (the serializer's lack of filtering, usable versus reachable predicates, line `:157`, the nested finding).
+- **Codex plan gate, round 2: REVISE** (2 MEDIUM). All three round-1 HIGHs are closed at plan level. Chain suppression is safe: 367 grammar and config cases pass, and nothing depends on the Lark cause. Rev 3:
+  - test 2 splits deserialization rejection from the entrypoint guards; the entrypoint tests use `dataclasses.replace` Plans, a handler or provider spy, and zero sink writes;
+  - test 3(b) tests native decline, unified `False` and `when_specs` separately;
+  - `generate_tables` is named in the entrypoint inventory;
+  - every `raise ... from exc` is replaced, and the `__context__` limit is stated.
 
