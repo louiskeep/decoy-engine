@@ -2,86 +2,110 @@ Status: plan
 
 Rules consulted: 00-universal, development-loop, risk-and-exceptions, debugging, testing, observability-and-resilience, code-review.
 
-# Isolated-run OOM classification by measured memory (the deferred VmData monitor)
+# Isolated-run memory evidence for silent crashes (rev 2)
 
-Follows `docs/plans/2026-10-07-oom-classification.md` (#219), whose section 6 deferred this fix "until the diagnostic shows a CI failure of that shape". It did: main CI on #220 (run 37592337361, attempt 1) failed `TestMemCapOom` with `error="child terminated abnormally (returncode=-11, signal=SIGSEGV); stderr tail: ''"`. Cam approved building it (2026-10-07). Branch `fix/oom-vmdata-monitor` off engine main `2ed9eb4c`. Risk R2: a change to how capped runs are classified.
+Follows `docs/plans/2026-10-07-oom-classification.md` (#219), section 6. Main CI on #220 (run 37592337361, attempt 1) failed `TestMemCapOom` with `error="child terminated abnormally (returncode=-11, signal=SIGSEGV); stderr tail: ''"`. Branch `fix/oom-vmdata-monitor` off engine main `2ed9eb4c`. Risk R1 after rev 2: no outcome changes, only added evidence.
+
+**Rev 2 direction (Cam, 2026-10-07: "Evidence, not relabel").** Codex round 1 showed that driver-side memory sampling is a probabilistic SUSPICION, not causal attribution:
+- **False negatives:** a rejected large allocation is never sampled, and growth plus death can happen between samples.
+- **False positives:** a stale earlier peak followed by an unrelated crash.
+
+So the run's OUTCOME is NOT changed. Classification stays exactly as today. The driver records memory evidence on the result, including a `suspected_memory_pressure` flag, so the platform and the logs can show it. Nothing is mislabeled or wrongly retried.
 
 ## 1. Problem
 
-When a capped child process dies by a signal other than SIGKILL or SIGABRT, and stderr shows no memory marker, the run is classified `crashed` (`_isolated_common.classify_abnormal_exit`, ~:213-245). Native code that hits RLIMIT_DATA can get a NULL back from malloc and segfault without printing anything. The run truly exhausted its cap, but it reports as an opaque crash. That breaks the isolated-run guarantee ("a running job that exhausts its cap is `oom_killed`, never `crashed`"), and it is the remaining cause of the `TestMemCapOom` flake.
+A capped child that dies by a signal other than SIGKILL or SIGABRT, with no memory marker on stderr, is classified `crashed` (`_isolated_common.classify_abnormal_exit`, ~:213-245). Native code that hits RLIMIT_DATA can get a NULL back from malloc and segfault silently. Today nothing on the result tells a silent memory crash apart from a genuine bug. As a result:
+- an operator cannot tell which one happened;
+- `TestMemCapOom` flakes.
 
-Message wording cannot fix this, because there is no message. The evidence has to come from the process itself: how much of its capped memory it was using.
+## 2. Established facts (confirmed by Codex round 1)
 
-## 2. Established facts
-
-- **Where the cap is set.** The worker sets it in-child with `resource.setrlimit(RLIMIT_KINDS[rlimit_kind], (cap, cap))` (`_isolated_common.apply_mem_cap`, :161-169). `RLIMIT_KINDS = {"as": RLIMIT_AS, "data": RLIMIT_DATA}` (:86).
-- **What the driver knows.** `mem_cap_bytes` and `rlimit_kind` are passed through `_run_isolated` (`_isolated_run.py` :315-345).
-- **How the driver waits.** It runs the child with `subprocess.Popen` and blocks in `proc.communicate(timeout=timeout_s)` (`_isolated_run.py` ~:395-440). The `on_spawn` hook gets the live pid.
-- **Where the classifier runs.** When no envelope arrives, `classify_abnormal_exit(returncode, stderr)` decides (`_isolated_run.py` ~:470-500), and the result records `returncode`, `signal_number` and an error tail.
-- **What `/proc/<pid>/status` reports (Linux).**
-  - `VmData` is the data-segment size the kernel charges against `RLIMIT_DATA` (private writable mappings plus heap).
-  - `VmSize` is the total virtual size that `RLIMIT_AS` bounds.
-  - `VmPeak` is the peak of `VmSize`. There is no peak counterpart for `VmData`.
-  - Once the child exits and is reaped, its `/proc` entry is gone. A zombie's status carries no `Vm*` lines.
+- **What VmData measures.** `VmData` in `/proc/<pid>/status` exposes `mm->data_vm`, which the kernel checks against RLIMIT_DATA (mm/mmap.c, Linux 5.4 and 6.6; mmap enforcement since 4.7). It counts private writable non-stack mappings. This is virtual allocation, not residency.
+- **The other fields.** `VmSize` is total virtual size, the quantity RLIMIT_AS bounds. `VmPeak` is the peak of `VmSize`.
+- **Zombies and reaping.** A zombie still has `/proc/<pid>/status`, but without `Vm*` fields. Reaping removes the entry.
+- **The cap and the driver.** The worker sets the cap in-child (`apply_mem_cap`, `_isolated_common.py:161-169`). The driver waits in `proc.communicate(timeout=...)` (`_isolated_run.py` ~:395-440). `on_spawn` receives the live pid. The timeout and callback-failure paths return before classification.
+- **Kernel memory groups.** cgroup v2 `memory.events` counts kernel OOM kills against charged memory. An RLIMIT rejection increments no memcg counter.
 
 ## 3. Decisions
 
-**3a. Sample while waiting.**
-- When `mem_cap_bytes` is set, the driver runs a small daemon sampler thread while it waits in `communicate`.
-- Every `_SAMPLE_INTERVAL_S` (50 ms) the thread reads `/proc/<pid>/status` and keeps the running maximum of the field that matches the cap kind: `VmData` for `"data"` and `VmSize` for `"as"`.
-- It also reads `VmPeak` once at the end, if it is still readable, for the `"as"` kind.
-- It stops when the process exits, or the `/proc` entry or field disappears.
-- Any read error ends sampling quietly. It must never fail or slow the run.
-- The thread is joined, with a short timeout, before classification.
+**3a. Outcomes unchanged.** `classify_abnormal_exit` and every envelope path behave exactly as on main, for every input.
 
-**3b. Classify by measured headroom.** In the abnormal-exit branch only, after the existing marker and signal rules have returned `crashed`, a capped run is reclassified `oom_killed` if its sampled peak was at or above `cap - margin`.
-- **Margin:** `margin = max(_MIN_MARGIN_BYTES, _MARGIN_FRACTION * cap)`, with `_MIN_MARGIN_BYTES = 256 MiB` and `_MARGIN_FRACTION = 0.20`.
-- **Why that margin:** the failing allocation is not visible to a sampler. The investigation saw single Arrow allocations of 64 to 256 MiB fail (`malloc of size 268435456`), so the process can die with its last sample well below the cap. That is why the margin is generous.
-- **Ordering:** the existing `oom_killed` rules (markers, SIGKILL, SIGABRT) are unchanged and checked first.
-- **Not affected:** the envelope paths (the self-reported outcomes) and uncapped runs.
-- **Margin rationale on record:** the margin is chosen and recorded from the soak (test 6), not tuned silently.
+**3b. Sampling lifecycle (Codex round 1, MEDIUM).**
+- `_spawn_and_classify` receives `mem_cap_bytes` and `rlimit_kind` explicitly.
+- When a cap is set, the sampler starts BEFORE `on_spawn`, as a daemon thread with a stop `Event`.
+- Cleanup sits in an unconditional `finally`: set the event, then join with a bound.
+- The result is published as a lock-protected snapshot.
+- A thread-start failure means no evidence, and the run continues.
+- The sampler owns no pipes and never waits on or reaps the child.
+- Read errors, a missing or malformed field, a zombie (no `Vm*`) or a missing procfs all end sampling quietly.
+- Timeout returns, callback exceptions, governor SIGKILL, envelopes and uncapped runs behave as on main. The timeout and callback paths may carry the evidence gathered so far.
 
-**3c. Evidence on the result.**
-- The error text gains `"memory peak <X> MiB of <cap> MiB (<kind>)"` whenever a capped run dies abnormally, whatever the outcome. A crash far from the cap stays `crashed` and shows how far it was.
-- `IsolatedRunResult.peak_rss_mb` stays `None` on this branch, since it means RSS. A new field `peak_capped_mb: float | None` carries the sampled peak.
-- No data values are recorded; these are only sizes.
+**3c. What is sampled.**
+- Every 50 ms, the sampler reads the field matching the cap kind (`VmData` for `"data"`, `VmSize` for `"as"`).
+- For `"as"` it also reads `VmPeak` on every sample, because a read after `communicate` cannot recover it.
+- It keeps the sample count, the first and last sample timestamps, the LAST sampled value, and the maximum.
 
-**3d. What a false positive costs.** A genuine non-memory segfault in a job already running within the margin of its cap is now named `oom_killed`. The platform then reroutes it to a bounded route instead of surfacing a crash. That trade is accepted on purpose: such a job was about to hit its cap regardless, and the recorded peak makes the call auditable. A crash far from the cap is still `crashed`.
+**3d. Evidence on the result.** A new optional field, `IsolatedRunResult.memory_evidence`, set only for capped isolated runs. It is a small frozen record:
+- `cap_mb`, `kind`;
+- `last_mb`, `peak_mb`;
+- `samples`, `window_ms`;
+- `suspected_memory_pressure: bool`;
+- `basis: str`, a short fixed phrase such as `"last sample within margin of cap"`.
 
-**3e. Portability.** On a system without `/proc/<pid>/status` (non-Linux), sampling yields no peak and classification is exactly as today. A test pins this.
+The suspected flag works like this:
+- **Rule:** `suspected_memory_pressure` is True only when the run ended abnormally (no envelope) AND its LAST sample was within the margin of the cap. The LAST sample is used, never the lifetime peak, so a stale earlier peak cannot set it (Codex round 1, HIGH 2).
+- **Margin:** `margin = min(max(64 MiB, 0.10 * cap), 0.5 * cap)`. That stays positive and bounded for small caps, and caps below 128 MiB are documented as unsupported for the flag. It is a suspicion, recorded with its basis. It is not a verdict.
+- **Error text:** the abnormal-exit error text gains `memory: last <X> MiB, peak <Y> MiB of <cap> MiB (<kind>)`. Sizes only, no data.
 
-## 4. Acceptance tests (written first; never weakened)
+**3e. `TestMemCapOom` (Cam-approved change of assertion).** The test accepts:
+- `oom_killed`, as before; or
+- `crashed` with `memory_evidence.suspected_memory_pressure` true.
 
-1. **Sampler unit tests** (a fake status reader):
-   - takes the maximum across samples;
-   - picks the right field per kind;
-   - stops cleanly when the entry disappears;
-   - read errors never raise;
-   - the thread is joined.
-2. **Classifier table:**
-   - SIGSEGV with an empty stderr and a peak inside the margin gives `oom_killed`;
-   - the same peak outside the margin gives `crashed`;
-   - an uncapped run gives `crashed`;
-   - SIGKILL and SIGABRT stay `oom_killed`, and marker rules are unchanged;
-   - a positive returncode with no envelope follows the same headroom rule;
-   - the error text carries the peak and the cap.
-3. **Real child, kept OUT of the default CI run if it is flaky** (marker `isolated_soak`, documented):
-   - a tiny C-level segfault after allocating close to the cap gives `oom_killed` (for example, a child that grows a bytearray to near the cap and then calls `ctypes.string_at(0)`);
-   - the same segfault at low usage gives `crashed`.
-4. **`TestMemCapOom` unchanged:** its assertion and diagnostic stay. It must now pass whichever failure shape occurs.
-5. **No regressions:** every existing `test_isolated_run.py` and OOM-classification test passes unmodified.
-6. **Soak, local, recorded:** the flaking test 30 times at 1536 MiB and 30 times at 2280 MiB on the CI-mirror venv. Zero `crashed`. Record the sampled peaks against the caps to justify the margin. Mind the disk: each soak item leaves basetemp, so clean `/tmp/pytest-one` between batches.
-7. **Overhead:** the sampler adds less than 1% to an isolated run of about 30 s. Recorded.
-8. **Sentries** (log interpolation, module size, physical seam) and mutation on the headroom rule and sampler loop.
+Any other result fails, including a crash far from the cap. The diagnostic message stays. This is the one assertion this slice changes. Cam approved it on 2026-10-07 as part of choosing evidence over relabeling.
+
+**3f. Alternatives, decided.** A per-job cgroup v2 (`memory.max`, retained `memory.events.local` deltas, a supervisor outside the job) would give kernel-attributed OOM kills. It is NOT built now:
+- it needs cgroup delegation on the self-hosted box and in Docker, which is unverified;
+- it caps charged memory, not VmData;
+- RLIMIT rejections never reach it.
+
+It is recorded as the upgrade path if the evidence proves insufficient. Ptrace and seccomp are rejected as too intrusive or as giving no result evidence. Diagnostics inside a SIGSEGV handler are unsafe.
+
+## 4. Acceptance tests (written first; never weakened except 3e, which Cam approved)
+
+1. **Sampler units** (fake reader): last, max and count; field per kind; `VmPeak` read on every `"as"` sample; missing or malformed fields; zombie; read errors never raise; stop event; bounded join; a thread-start failure yields no evidence and the run is unaffected.
+2. **Lifecycle:** the sampler starts before `on_spawn`. A slow `on_spawn` and a raising `on_spawn` both still clean up. Timeout, governor SIGKILL, envelope outcomes and uncapped runs: outcome, returncode and error are byte-identical to main, apart from the added evidence text where 3d says so.
+3. **Flag rule:**
+   - last sample within the margin gives True;
+   - a high peak with a low last sample (peak then release) gives False;
+   - the threshold boundary;
+   - a small cap uses the bounded margin;
+   - an envelope (self-reported) run gives False;
+   - uncapped runs get no evidence.
+4. **Deterministic integration child, kept in CI:** a handshake child allocates to a verified usage, waits for the driver to acknowledge an observed sample, then segfaults (`ctypes.string_at(0)`) with core dumps disabled.
+   - Near the cap: `crashed` with the flag True.
+   - Far from the cap: `crashed` with the flag False.
+5. **Classifier unchanged:** every existing case in `test_isolated_run.py` and the OOM-classification tests passes unmodified, and a table test pins `classify_abnormal_exit` outputs.
+6. **TestMemCapOom 3e:** the new assertion, plus a soak of 20 runs at 1536 MiB and 20 at 2280 MiB on the CI-mirror venv. Record every outcome with its evidence. Clean `/tmp/pytest-one` between batches.
+7. **Overhead:** under 1% on an isolated run of about 30 s. Recorded.
+8. **Sentries and mutation** on the flag rule and the sampler loop.
 
 ## 5. Failure modes
 
 | Risk | Closed by |
 |---|---|
-| A real segfault is mislabeled OOM | Only within the margin of the cap; the peak is recorded; 3d accepts this on purpose |
-| The sampler misses the final spike | A generous margin (3b); the soak records real peaks |
-| The sampler hurts or fails the run | A daemon thread, errors swallowed, a bounded join; test 1 |
-| Non-Linux hosts | No peak means today's behavior; 3e test |
-| The test flake continues | Soak, test 6 |
+| A real crash mislabeled OOM | Outcomes never change (3a) |
+| The flag misleads | Last sample, not peak; the basis is recorded; the doc says it is a suspicion |
+| The sampler hurts the run | Daemon thread, quiet errors, Event plus finally, bounded join; tests 1 and 2 |
+| Lifecycle regressions | Test 2's byte-identical paths |
+| Flaky integration test | Handshake child; test 4 |
 
 Rollback: revert the merge commit.
+
+## 6. Review log
+
+- **Codex plan gate, round 1: REVISE** (2 HIGH, 3 MEDIUM). Cam then chose "evidence, not relabel" (2026-10-07), and rev 2 is rebuilt around it:
+  - **HIGH 1 (no guarantee):** the outcome is unchanged; the flag is documented as a suspicion with its basis and sample record.
+  - **HIGH 2 (stale peak, small caps, routing):** the flag uses the last sample, the margin is bounded, and there are no routing changes.
+  - **MEDIUM 3 (lifecycle):** handled in 3b.
+  - **MEDIUM 4 (flaky integration test):** the handshake child, plus the case list in tests 1-3.
+  - **MEDIUM 5 (alternatives):** the decision is recorded in 3f.
