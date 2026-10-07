@@ -123,7 +123,7 @@ class ExecutionBinding:
     batch_estimate: int | None
     pool_binding: PoolBinding | None = None
     params: OperatorParams | None = None
-    # The node's `when:` predicate, for the four strategies the masked kernel step covers.
+    # The node's `when:` predicate; the masked kernel step covers the admitted value-keyed strategies.
     # A binding that carries one must never run without a row mask.
     when_expression: str | None = None
 

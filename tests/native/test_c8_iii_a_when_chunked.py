@@ -20,6 +20,7 @@ from decoy_engine import run_mask_chunked
 from decoy_engine.errors import RowErrorsFailedError
 from decoy_engine.execution import _chunked_oracle
 from decoy_engine.execution._row_errors import RowErrorRecord
+from decoy_engine.execution.native._plan import native_route_eligibility
 from decoy_engine.plan._errors import PlanCompileError
 from tests.native._b8_support import FORCE, identical, with_force
 from tests.native._c6c_i_support import ADMITTED_CONFIGS
@@ -269,7 +270,10 @@ def test_4_special_formats_unmasked_decline_with_the_new_code(fmt: str, split: s
     native = run_outcome(make_config(cols), chunks)
     forced = run_outcome(make_config([*cols, force_oracle(FORCE)]), [with_force(c) for c in chunks])
     assert native.ev[0].native_admitted is False
-    assert "bucket_perturb_special_date_format:v" in (native.ev[0].reroute_reason or "")
+    assert (
+        "bucket_perturb_special_date_format:v"
+        in native_route_eligibility(make_config(cols), table=TABLE).rejections
+    )
     assert native.error is None and forced.error is None
     for got, want in zip(native.out, forced.out, strict=True):
         assert identical(got, want.drop_columns([FORCE]))
@@ -294,7 +298,10 @@ def test_4_special_format_jobs_that_succeeded_natively_keep_their_output(
     outcome = run_outcome(make_config(cols), [_job_table(c) for c in SPECIAL_FORMAT_JOBS[job]])
     assert outcome.error is None
     assert outcome.ev[0].native_admitted is False
-    assert "bucket_perturb_special_date_format:d" in (outcome.ev[0].reroute_reason or "")
+    assert (
+        "bucket_perturb_special_date_format:d"
+        in native_route_eligibility(make_config(cols), table=TABLE).rejections
+    )
     got = [
         {"schema": str(t.schema.field("d").type), "d": t.column("d").to_pylist()}
         for t in outcome.out

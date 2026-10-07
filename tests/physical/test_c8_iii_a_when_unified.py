@@ -9,7 +9,6 @@ cases run the lane unpoisoned and assert the lane did not activate.
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -124,42 +123,6 @@ def _error_table(bad: tuple[int, ...], selected: tuple[int, ...], n: int = 23) -
     return table.set_column(1, "k", pa.array(k, pa.string()))
 
 
-def _quarantine(tmp_path: Path) -> Callable[[dict[str, Any]], None]:
-    def apply(config: dict[str, Any]) -> None:
-        config["quarantine"] = {
-            "enabled": True,
-            "triggers": ["format_error"],
-            "output_path": str(tmp_path / "q.jsonl"),
-        }
-
-    return apply
-
-
-def _quarantined_case(tmp_path: Path, source: pa.Table) -> Case:
-    cols = columns("date_shift", None)
-    when = with_when({"v": "k == 'x'"})
-    quarantine = _quarantine(tmp_path)
-
-    def mutate(config: dict[str, Any]) -> None:
-        when(config)
-        quarantine(config)
-
-    return Case(tmp_path, source, cols, mutate=mutate)
-
-
-@NEEDS_COMPANION
-@pytest.mark.parametrize("batch", [None, 4, 5], ids=["one_batch", "batches_4", "batches_5"])
-def test_2_selected_unparseable_values_give_table_global_records(
-    tmp_path: Path, batch: int | None
-) -> None:
-    source = _error_table(bad=(2, 9, 13, 14, 21), selected=(2, 13, 14, 20, 21))
-    case = _quarantined_case(tmp_path, source)
-    off, on = run_batched(case, batch)
-    _assert_full_parity(off, on)
-    assert [e.row_index for e in on.row_errors] == [2, 13, 14, 21]
-    assert all(e.trigger == "format_error" for e in on.row_errors)
-
-
 @NEEDS_COMPANION
 def test_2_unparseable_unselected_values_give_no_records_and_keep_the_value(
     tmp_path: Path,
@@ -172,11 +135,13 @@ def test_2_unparseable_unselected_values_give_no_records_and_keep_the_value(
 
 
 @NEEDS_COMPANION
-@pytest.mark.parametrize("batch", [None, 5])
-def test_2_without_quarantine_both_routes_fail_with_the_same_records(
+@pytest.mark.parametrize("batch", [None, 4, 5], ids=["one_batch", "batches_4", "batches_5"])
+def test_2_selected_unparseable_values_fail_with_table_global_records(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, batch: int | None
 ) -> None:
-    source = _error_table(bad=(2, 13, 21), selected=(2, 21))
+    """The lane's coordinator reports the oracle's records (batch offset added once), then the
+    finalize step refuses them and the table reroutes, so the job fails as lane-off does."""
+    source = _error_table(bad=(2, 9, 13, 14, 21), selected=(2, 13, 14, 20, 21))
     case = case_for(tmp_path, "date_shift", "k == 'x'", source)
     captured: list[Any] = []
     real_run = ShadowCoordinator.run
@@ -197,9 +162,10 @@ def test_2_without_quarantine_both_routes_fail_with_the_same_records(
     with pytest.raises(RowErrorsFailedError) as off_exc:
         case.run(lane=False)
     assert len(captured) == 1, "the native coordinator ran before the reroute"
-    assert tuple(on_exc.value.records) == tuple(off_exc.value.records)
-    assert [r.row_index for r in captured[0].row_errors] == [2, 21]
+    assert [r.row_index for r in captured[0].row_errors] == [2, 13, 14, 21]
     assert tuple(captured[0].row_errors) == tuple(off_exc.value.records)
+    assert tuple(on_exc.value.records) == tuple(off_exc.value.records)
+    assert all(r.trigger == "format_error" for r in captured[0].row_errors)
 
 
 # ---------------------------------------------------------------------------
