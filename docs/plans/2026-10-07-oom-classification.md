@@ -1,8 +1,8 @@
-Status: plan
+Status: plan (rev 3, BUILD-READY: Codex plan gate GO in round 3)
 
 Rules consulted: 00-universal, development-loop, risk-and-exceptions, debugging, testing, observability-and-resilience, code-review.
 
-# Isolated-run OOM classification: name every memory failure correctly
+# Isolated-run OOM classification: post-run memory failures, Wrapping scrub, CI diagnostic
 
 Branch `fix/oom-classification` off engine main `9bbde63c`. Rev 2 touches no file C8-ii changes, so it can build in parallel. Risk R1 after rev 2: no execution behavior changes; only classification, the stored error text and a test message change.
 
@@ -32,12 +32,11 @@ The isolated-run guarantee is: "a running job that exhausts its memory cap is na
 
 ## 2. Scope
 
-**In:**
-- Fixes 2 and 3.
-- A diagnostic assertion message on the flaking test.
-- Classifier parity tests.
+**In:** this slice classifies post-run and outer-handler memory failures as `oom_killed`, scrubs the value out of worker Wrapping messages, and adds the CI diagnostic plus classifier parity tests.
 
-**Kept as-is (rev 2):** root cause 1's fallbacks. Codex round 1 showed a capped job that fails Arrow conversion but succeeds through the existing kernel-input and redact fallbacks. The admission round trip is also a speculative allocation the legacy route need not make. Failing fast would turn jobs that succeed today into failures. Every shape the second site produced in the investigation (`ArrowMemoryError`, the Wrapping message, SIGABRT) is classified `oom_killed` once fix 3 lands, so the nondeterminism stays harmless to classification. The reroute catch in `_unified_slice.py:362-364` (Codex round 1) is kept for the same reason.
+**Known limitations, kept:** Wrapping recognition is unchanged. A whitespace-bearing OOM message stays `crashed`, and the single-token form stays ambiguous with malformed input. The original CI failure is not yet explained or proven fixed. The diagnostic is how the next occurrence will show its shape.
+
+**Kept as-is (rev 2):** root cause 1's fallbacks. Codex round 1 showed a capped job that fails Arrow conversion but succeeds through the existing kernel-input and redact fallbacks. The admission round trip is also a speculative allocation the legacy route need not make. Failing fast would turn jobs that succeed today into failures. `ArrowMemoryError` and SIGABRT are already classified `oom_killed`. The Wrapping message is only partly covered (see the known limitations). The reroute catch in `_unified_slice.py:362-364` (Codex round 1) is kept for the same reason.
 
 **Out:**
 - Root cause 4 (section 6).
@@ -100,3 +99,4 @@ This is also the right fix for the ambiguous Wrapping message (3c): allocation e
   - **MEDIUM (malformed UTF-8 shares the Wrapping wording):** recognition is left unchanged. The scrub is separate and applies to every Wrapping message. Test 4 adds the real malformed-data case, which must stay `crashed`.
   - **LOW (causal claim):** section 1 now describes each fallback separately and labels the CI cause unresolved.
   - **Also folded:** driver-side Wrapping cases with a positive exit code and SIGSEGV (test 6); the stderr-tail exposure at `_isolated_run.py:478` recorded for the Observability program.
+- **Codex plan gate, round 3: GO.** One LOW (scope wording left over from rev 2), fixed: section 2 now states the slice's real reach and its known limitations.
