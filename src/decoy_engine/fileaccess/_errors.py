@@ -7,17 +7,19 @@ basename or third-party error text rides with it (CWE-209).
 
 from __future__ import annotations
 
-import warnings
+import errno
+import os
 from collections.abc import Callable, Iterable, Iterator
 from typing import Any, NewType, TypeVar
 
-from decoy_engine.fileaccess._types import FileAccessDenied
+from decoy_engine.fileaccess._types import FileAccessDenied, FileAccessReadError
 
 EncodedKey = NewType("EncodedKey", str)
 
 _MAX_KEY = 256
 _TRUNCATED = "...[truncated]"
 T = TypeVar("T")
+_RESOURCE_ERRNOS = frozenset({errno.ENOSPC, errno.EDQUOT, errno.ENOMEM})
 
 
 def encode_field_key(key: str) -> EncodedKey:
@@ -69,47 +71,67 @@ def scrub(exc: BaseException) -> BaseException:
     return exc
 
 
+def _passes_through(exc: Exception) -> bool:
+    """Failures the caller classifies by type (memory pressure, a full disk or quota) keep
+    their class under a strict policy: masking them as a read failure would break OOM
+    handling and disk-quota reporting."""
+    if isinstance(exc, MemoryError):
+        return True
+    if isinstance(exc, OSError) and exc.errno in _RESOURCE_ERRNOS:
+        return True
+    # The engine's own predicate also recognises DuckDB's and OpenSSL's under-cap shapes.
+    from decoy_engine.execution._isolated_common import is_memory_failure
+
+    return is_memory_failure(exc)
+
+
+def _resurface(exc: Exception) -> Exception:
+    """The exception to raise for a pass-through failure: a resource `OSError` is rebuilt
+    without its filename (the library names the descriptor path there); others as they are."""
+    if isinstance(exc, OSError) and exc.errno in _RESOURCE_ERRNOS:
+        return type(exc)(exc.errno, os.strerror(exc.errno or 0))
+    return exc
+
+
 def guarded(display: str, strict: bool, fn: Callable[..., T], *args: Any, **kwargs: Any) -> T:
-    """Run a library call. Under a strict policy any library exception or warning becomes a
-    denial naming only `display`; under the local policy the call is made as it is, so CLI
-    text is unchanged. The denial is raised after the `except` block closes so no library
-    error is left as its `__context__`."""
+    """Run a library call. Under a strict policy a library failure becomes the typed
+    `FileAccessReadError` naming only `display`; memory and disk-resource failures keep
+    their class; a denial from inside passes unchanged. Under the local policy the call is
+    made as it is, so CLI text is unchanged. The new error is raised after the `except`
+    block closes so no library error is left as its `__context__`."""
     if not strict:
         return fn(*args, **kwargs)
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        try:
-            return fn(*args, **kwargs)
-        except FileAccessDenied:
-            raise
-        except Exception:
-            pass
-    raise deny(display) from None
+    resurfaced: Exception | None = None
+    try:
+        return fn(*args, **kwargs)
+    except (FileAccessDenied, FileAccessReadError, StopIteration):
+        raise
+    except Exception as exc:
+        if _passes_through(exc):
+            resurfaced = _resurface(exc)
+            if resurfaced is exc:
+                raise
+    if resurfaced is not None:
+        raise resurfaced from None
+    raise read_error(display) from None
+
+
+def read_error(field_key: str) -> FileAccessReadError:
+    exc = FileAccessReadError(field_key)
+    exc.__suppress_context__ = True
+    return exc
 
 
 def guarded_iter(display: str, strict: bool, it: Iterable[T]) -> Iterator[T]:
-    """Step an iterator under `guarded` semantics: each step's library failure becomes the
-    denial. Under the local policy it is a plain `yield from`, so CLI text is unchanged."""
+    """Step an iterator under `guarded` semantics. Under the local policy it is a plain
+    `yield from`, so CLI text is unchanged."""
     if not strict:
         yield from it
         return
     iterator = iter(it)
     while True:
-        failed = False
-        done = False
-        item: T | None = None
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            try:
-                item = next(iterator)
-            except StopIteration:
-                done = True
-            except FileAccessDenied:
-                raise
-            except Exception:
-                failed = True
-        if failed:
-            raise deny(display) from None
-        if done:
+        try:
+            item = guarded(display, True, next, iterator)
+        except StopIteration:
             return
-        yield item  # type: ignore[misc]
+        yield item

@@ -41,12 +41,21 @@ class FileRole(str, enum.Enum):
     JOB_OUTPUT = "job_output"
     CUSTOM_PROVIDER_ROOT = "custom_provider_root"
     MODEL_PACK_ROOT = "model_pack_root"
+    DISGUISE_ROOT = "disguise_root"
     LOG_OUTPUT = "log_output"
 
 
 Access = Literal["read", "stat", "read_dir", "write"]
 StageLabel = Literal[
-    "table_sink", "quarantine", "quarantine_direct", "isolated", "hold", "subset", "vault", "pack"
+    "table_sink",
+    "quarantine",
+    "quarantine_direct",
+    "isolated",
+    "hold",
+    "subset",
+    "vault",
+    "vault_direct",
+    "pack",
 ]
 
 
@@ -75,8 +84,39 @@ class FileAccessDenied(DecoyError):  # noqa: N818 - the plan's name for the one 
         return (FileAccessDenied, (self.field_key,))
 
 
+class FileAccessReadError(DecoyError):
+    """A library failed on a file the policy authorized (corrupt data, a decode error).
+
+    Not a denial: the policy said yes. `str()` is `file could not be read: <encoded field
+    key>` and nothing else, raised `from None`, so the library's text (which can carry a
+    locator or a cell value) never rides with it."""
+
+    def __init__(self, field_key: str) -> None:
+        from decoy_engine.fileaccess._errors import encode_field_key
+
+        self.field_key: str = encode_field_key(field_key)
+        super().__init__(f"file could not be read: {self.field_key}")
+
+    def __reduce__(self) -> tuple[object, tuple[str]]:
+        return (FileAccessReadError, (self.field_key,))
+
+
 class FileAccessUnavailable(DecoyError):  # noqa: N818 - the plan's name
     """No policy where one is required, or a route a strict policy cannot serve."""
+
+
+class EntryView(Protocol):
+    """What a directory listing exposes: a name and type queries that, for a strict policy,
+    never follow a symlink (a link inside a granted directory can point outside it)."""
+
+    @property
+    def name(self) -> str: ...
+
+    def is_file(self, *, follow_symlinks: bool = True) -> bool: ...
+
+    def is_dir(self, *, follow_symlinks: bool = True) -> bool: ...
+
+    def is_symlink(self) -> bool: ...
 
 
 @runtime_checkable
@@ -115,7 +155,7 @@ class DirHandle(Protocol):
 
     display: str
 
-    def entries(self) -> Iterator[os.DirEntry[str]]: ...
+    def entries(self) -> Iterator[EntryView]: ...
 
     def open_file(self, rel: str) -> FileHandle: ...
 

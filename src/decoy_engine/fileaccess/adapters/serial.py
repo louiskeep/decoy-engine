@@ -21,7 +21,7 @@ def read_all(handle: FileHandle, limit: int | None = None) -> bytes:
 
 
 def read_text(handle: FileHandle, encoding: str = "utf-8") -> str:
-    return read_all(handle).decode(encoding)
+    return guarded(handle.display, _strict(handle), read_all(handle).decode, encoding)
 
 
 def json_load(handle: FileHandle) -> Any:

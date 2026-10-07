@@ -22,6 +22,7 @@ from decoy_engine import fileaccess
 from decoy_engine.fileaccess import (
     FileAccess,
     FileAccessDenied,
+    FileAccessReadError,
     FileHandle,
     FileRequest,
     FileRole,
@@ -90,13 +91,18 @@ def load_table(
         handle = fileaccess.engine_handle(shipped_path(name))
     else:
         handle = fileaccess.current().open_read(
-            FileRequest(FileRole.REFERENCE, "read", str(path), "joint_mask.reference")
+            FileRequest(
+                FileRole.REFERENCE,
+                "read",
+                str(path),
+                fileaccess.position_key("joint_mask.reference"),
+            )
         )
 
     try:
         try:
             arrow_table = arrow_adapter.read_table(handle)
-        except FileAccessDenied:
+        except (FileAccessDenied, FileAccessReadError):
             raise
         except Exception as exc:
             raise ValueError(f"failed to read Parquet at {handle.display}: {exc}") from exc

@@ -215,6 +215,9 @@ def _redact_ref(ref: str) -> str:
     return f"<redacted ref, {len(ref)} chars>"
 
 
+_SECRET_FIELD_KEY = "global_settings.mask_secret_ref"  # noqa: S105 - a config position, not a credential
+
+
 @fileaccess.entry_point
 def resolve_mask_secret_ref(ref: str, *, file_access: FileAccess | None = None) -> bytes:
     """Resolve a `mask_secret_ref` (`env:NAME` or `file:/PATH`) to raw bytes.
@@ -240,25 +243,38 @@ def resolve_mask_secret_ref(ref: str, *, file_access: FileAccess | None = None) 
         path = ref[len("file:") :]
         if not path:
             raise MaskSecretError(code="bad_secret_ref", message="file ref has no path.")
+        strict = not fileaccess.is_ambient()
+        unreadable = not_utf8 = False
+        raw = ""
         try:
-            raw = fileaccess.read_text(FileRole.SECRET, path, "global_settings.mask_secret_ref")
+            raw = fileaccess.read_text(FileRole.SECRET, path, _SECRET_FIELD_KEY)
         except OSError as exc:
-            raise MissingMaskSecret(
-                f"mask secret file {path!r} (from mask_secret_ref) could not be read: {exc}."
-            ) from exc
+            if not strict:
+                raise MissingMaskSecret(
+                    f"mask secret file {path!r} (from mask_secret_ref) could not be read: {exc}."
+                ) from exc
+            unreadable = True
         except UnicodeDecodeError as exc:
-            # The file exists and is readable, but is not valid UTF-8 text --
-            # a distinct failure mode from "missing" (bad_secret_ref, not
-            # MissingMaskSecret), and it must not escape as a raw
-            # UnicodeDecodeError (an uncaught crash instead of a clean,
-            # typed gate error the CLI maps to EXIT_USAGE). Read stays TEXT
-            # (not bytes) -- switching to a raw-bytes read would change key
-            # derivation for existing file-based secrets, a determinism/
-            # compat break outside this fix's scope (see PR body follow-up).
+            if not strict:
+                # The file is readable but not UTF-8: a distinct, typed failure the CLI maps
+                # to EXIT_USAGE. Read stays TEXT; bytes would change key derivation for
+                # existing file-backed secrets.
+                raise MaskSecretError(
+                    code="bad_secret_ref",
+                    message=(
+                        f"mask secret file {path!r} (from mask_secret_ref) is not valid UTF-8: {exc}."
+                    ),
+                ) from exc
+            not_utf8 = True
+        # Strict: raised outside the handlers so the decoder error (which holds the whole file
+        # in `.object`) is neither the cause nor the context, and no locator is named.
+        if unreadable:
+            raise MissingMaskSecret(f"mask secret file ({_SECRET_FIELD_KEY}) could not be read.")
+        if not_utf8:
             raise MaskSecretError(
                 code="bad_secret_ref",
-                message=f"mask secret file {path!r} (from mask_secret_ref) is not valid UTF-8: {exc}.",
-            ) from exc
+                message=f"mask secret file ({_SECRET_FIELD_KEY}) is not valid UTF-8.",
+            )
         return _decode_secret_material(raw)
     raise MaskSecretError(
         code="bad_secret_ref",
