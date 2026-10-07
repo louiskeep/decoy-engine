@@ -1,4 +1,4 @@
-Status: plan
+Status: plan (rev 2, BUILD-READY: Codex plan gate GO in round 2)
 
 Rules consulted: 00-universal, development-loop, risk-and-exceptions, feature-dev, testing, observability-and-resilience, code-review.
 
@@ -179,3 +179,4 @@ Rollback: revert the merge commit.
   - **MEDIUM (silent fallback in the matrix):** admitted and decline cases are split, admitted cases poison the fallback, and the numeric references are restated against what admission really accepts.
   - **LOW (resolver aliasing):** full-frame evaluation plus a collision decline.
   - **Fact qualifications noted:** redact's `try` also wraps the kernel and the assignment, and reconstruction uses `to_pandas()` for empty tables (`_unified_slice_evidence.py`). 3d leaves the empty-table branch as it is: an empty table selects no rows.
+- **Codex plan gate, round 2: GO.** All five round-1 findings closed; no new findings. 72 read-only redact/truncate probes of oracle gate against the proposed replay passed. Hash and categorical kernel probes need the companion and are build-gate obligations.
