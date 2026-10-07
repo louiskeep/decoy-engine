@@ -293,6 +293,15 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         # and import nothing from `execution.physical` (the unified route still declines `when:`).
         "src/decoy_engine/execution/native/_when_admission.py",
         "src/decoy_engine/execution/native/_when_mask.py",
+        # C5c-i: positional Faker over numeric sources. `_faker_null_mask.py` takes the null mask
+        # from the oracle's own conversion; `_operator_registry.py` declares the wider source
+        # domain, `_unified_slice_resident_types.py` and `_unified_slice_admission.py` read it, and
+        # `_dispatch.py` reads it for the chunked route. None imports `execution.physical`.
+        "src/decoy_engine/execution/native/_faker_null_mask.py",
+        "src/decoy_engine/execution/_operator_registry.py",
+        "src/decoy_engine/execution/_unified_slice_resident_types.py",
+        "src/decoy_engine/execution/_unified_slice_admission.py",
+        "src/decoy_engine/execution/native/_dispatch.py",
         # Task 4.6 slice 5b-i: the shared generate+mask output-stitch helper
         # both `_pipeline.py` and `execution/physical/_shadow_mixed.py` call,
         # so the "mask wins ties" precedence cannot drift between the two.

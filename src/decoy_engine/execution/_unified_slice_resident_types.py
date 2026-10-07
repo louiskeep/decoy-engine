@@ -33,6 +33,20 @@ _ADMITTED_RESIDENT_TYPES: dict[str, frozenset[pa.DataType]] = {
     if spec.unified_resident_types is not None
 }
 
+_POSITIONAL_RESIDENT_TYPES: dict[str, frozenset[pa.DataType]] = {
+    spec.strategy: spec.positional_resident_types
+    for spec in OPERATORS.values()
+    if spec.positional_resident_types is not None
+}
+
+
+def positional_resident_types(strategy: str, params: Any) -> frozenset[pa.DataType] | None:
+    """The wider domain of a bound position-keyed node, or `None` for any other node. The
+    variant reads only its source's null mask, so it admits more than the value-keyed one."""
+    if getattr(params, "positional", False):
+        return _POSITIONAL_RESIDENT_TYPES.get(strategy)
+    return None
+
 
 def _group_key_sibling_admitted(
     binding: Any, physical_table: PhysicalTable, source: pa.Table

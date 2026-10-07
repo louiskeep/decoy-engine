@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -75,7 +74,7 @@ def test_3_pandas_nullable_integer_with_nulls(
     tmp_path: Path, pandas_dtype: str, typ: pa.DataType
 ) -> None:
     series = pd.Series(pd.array([1, None, 3, 4, None, 6, 7, 8, 9], dtype=pandas_dtype))
-    table = one_col(pa.array(series.tolist(), type=typ), meta=pandas_meta(series))
+    table = one_col(pa.array(series, type=typ), meta=pandas_meta(series))
     case = Case(tmp_path, table, [nd_faker()])
     parity(case, batch=4)
 
@@ -152,9 +151,7 @@ def test_4_positional_faker_over_a_declined_family_declines(tmp_path: Path, kind
 def test_4_deterministic_faker_over_a_non_string_source_declines(
     tmp_path: Path, typ: pa.DataType
 ) -> None:
-    case = Case(
-        tmp_path, one_col(typed_array(typ, nulls=False)), [nd_faker(deterministic=True)]
-    )
+    case = Case(tmp_path, one_col(typed_array(typ, nulls=False)), [nd_faker(deterministic=True)])
     _assert_declines_with_the_oracle_output(case)
 
 

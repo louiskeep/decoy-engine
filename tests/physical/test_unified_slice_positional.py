@@ -493,13 +493,17 @@ def _typed(typ: pa.DataType) -> pa.Table:
     return pa.table({"c": pa.array([f"s{i % 5}" for i in range(30)], type=typ)})
 
 
+def _timestamps() -> pa.Table:
+    return pa.table({"c": pa.array(list(range(30)), type=pa.timestamp("us"))})
+
+
 _DECLINES: dict[str, tuple[pa.Table, list[dict[str, Any]], Callable[..., None] | None]] = {
     "faker_provider_outside_allowlist": (str_source(30), [nd_faker(provider="person_email")], None),
     "faker_no_pool_size": (str_source(30), [nd_faker(pool_size=None)], None),
     "faker_unique": (str_source(30), [nd_faker(cardinality_mode="unique")], None),
     "faker_when": (str_source(30), [nd_faker()], _when),
     "faker_vault": (str_source(30), [nd_faker(vault=True)], None),
-    "faker_int_source": (_typed(pa.int64()), [nd_faker()], None),
+    "faker_timestamp_source": (_timestamps(), [nd_faker()], None),
     "faker_large_string_source": (_typed(pa.large_string()), [nd_faker()], None),
     "cat_from_profile": (
         str_source(30),
@@ -872,7 +876,7 @@ _FAKER_CLAUSES: dict[str, Callable[[Path], tuple[Case, dict[str, Any] | None]]] 
     "provider_outside_allowlist": lambda p: (_cat_case(p, nd_faker(provider="person_email")), None),
     "when": lambda p: (_cat_case(p, nd_faker(), mutate=_when), None),
     "vault": lambda p: (_cat_case(p, nd_faker(vault=True)), None),
-    "int_source": lambda p: (_cat_case(p, nd_faker(), source=_typed(pa.int64())), None),
+    "timestamp_source": lambda p: (_cat_case(p, nd_faker(), source=_timestamps()), None),
 }
 
 

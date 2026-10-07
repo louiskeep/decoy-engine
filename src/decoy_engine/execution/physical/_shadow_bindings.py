@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Any, Final
 import pyarrow as pa
 
 from decoy_engine.execution._adapter import provider_config_to_dict
-from decoy_engine.execution._operator_registry import OPERATORS
+from decoy_engine.execution._operator_registry import OPERATORS, POSITIONAL_FAKER_SOURCE_TYPES
 from decoy_engine.execution.native._capabilities import capabilities_for
 from decoy_engine.execution.native._categorical_prepared import (
     prepare_categorical,
@@ -145,14 +145,19 @@ def _resident_source_type(
 
 
 def _faker_pool_bindable(
-    *, plan_slice: ColumnSeed, table: str, column: str, inputs: PhysicalPlanInputs
+    *,
+    plan_slice: ColumnSeed,
+    table: str,
+    column: str,
+    inputs: PhysicalPlanInputs,
+    extra_source_types: frozenset[pa.DataType] = frozenset(),
 ) -> bool:
     """The slice domain's remaining requirements beyond JC-5 (already proven
     by the caller's `requirements.fallback_policy == "native"` check): no
     `when` gate or vault persistence, a registered POOLABLE provider in the
-    frozen C1 allowlist, a resident string/large_string source, and no FK
-    participation for `table`. The allowlist is the one the chunked route's
-    `real_type_rejection` reads, so the two routes cannot disagree on it.
+    frozen C1 allowlist, a resident string/large_string source (or one of
+    `extra_source_types`), and no FK participation for `table`. The allowlist is the one the
+    chunked route's `real_type_rejection` reads, so the two routes cannot disagree on it.
     """
     if plan_slice.when or plan_slice.vault:
         return False
@@ -165,7 +170,9 @@ def _faker_pool_bindable(
         return False
     resident_type = _resident_source_type(table, column, inputs)
     if resident_type is None or not (
-        pa.types.is_string(resident_type) or pa.types.is_large_string(resident_type)
+        pa.types.is_string(resident_type)
+        or pa.types.is_large_string(resident_type)
+        or resident_type in extra_source_types
     ):
         return False
     return not _table_in_fk_relationship(table, inputs)
@@ -200,12 +207,18 @@ def positional_faker_bindable(
     """Whether a non-deterministic REUSE faker may bind natively: the chunked route's stage A
     (explicit `pool_size`, allowlisted provider) over the raw config, plus the unified
     domain's own conditions (`_faker_pool_bindable`: no `when:` or vault, a poolable
-    provider, a resident string source, no FK relationship). The slice's own determinism and
+    provider, a resident string or numeric source, no FK relationship). The slice's own determinism and
     cardinality mode are checked too, so a config and a compiled seed that disagree decline."""
     return (
         is_positional_faker_seed(plan_slice)
         and positional_faker_config_for_column(inputs.config, table, column) is not None
-        and _faker_pool_bindable(plan_slice=plan_slice, table=table, column=column, inputs=inputs)
+        and _faker_pool_bindable(
+            plan_slice=plan_slice,
+            table=table,
+            column=column,
+            inputs=inputs,
+            extra_source_types=POSITIONAL_FAKER_SOURCE_TYPES,
+        )
     )
 
 
