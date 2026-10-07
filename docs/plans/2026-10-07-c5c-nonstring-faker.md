@@ -2,24 +2,31 @@ Status: plan
 
 Rules consulted: 00-universal, development-loop, risk-and-exceptions, feature-dev, testing, observability-and-resilience, code-review.
 
-# C5c-i: Faker over non-string sources
+# C5c-i: positional Faker over numeric and boolean sources
 
-Program: `docs/plans/2026-09-30-rust-engine-program.md`, Phase C. Branch `feat/c5c-nonstring-faker` off engine main `eaa623ca`. Risk R2: one oracle bug fix plus wider native admission on two routes. Facts come from a code survey on 2026-10-07 (session scratchpad report). Each fact is cited below so the gate can check it.
+Program: `docs/plans/2026-09-30-rust-engine-program.md`, Phase C. Branch `feat/c5c-nonstring-faker` off engine main `eaa623ca`. Risk R2. Facts come from a code survey (2026-10-07) and Codex plan-gate round 1; each is cited so the gate can check it.
+
+**Rev 2 re-scope (Codex round 1: 5 HIGH).** Rev 1 bundled three changes:
+- an oracle fix for nullable integers under deterministic Faker;
+- positional Faker over every type;
+- deterministic Faker over several types.
+
+Codex showed that each needs more design than one slice can carry. The split is now:
+- **C5c-i (this plan):** positional (non-deterministic REUSE) Faker over integer, unsigned integer, boolean and floating-point sources only.
+- **C5c-a (next, own plan):** Cam's oracle fix. Deterministic Faker over integers with nulls must work. Per Codex, it is done at the Faker sampling boundary, with exact integer values supplied to the sampler. The shared frame, predicates and other readers are left alone.
+- **C5c-ii (after C5c-a):** deterministic Faker over bool, integers and tz-aware timestamps. It includes an explicit design for the degenerate (all-null and empty) output types.
+- **Later:** temporal sources (timestamp, date, time, duration), decimal, binary, nested, float16, the null type and dictionary sources.
 
 ## 1. Goal and scope
 
-Faker columns whose source is not a string run on the native routes where the oracle's result is chunk-stable and a native encoder already reproduces it. One oracle bug is fixed on the way.
+Positional Faker reads only the null mask of its source (`_strategies/_faker.py:97-110`); the values are ignored. It runs natively today only over string sources. This slice admits integer, unsigned integer, bool and float sources on both native routes, where the native null mask provably equals pandas' `isna` after the oracle's own conversion.
 
-**In:**
-- **(A) Oracle fix (Cam, 2026-10-07: "make it work").** Deterministic Faker over an integer column with nulls works, instead of failing with `float_canonicalization_unsupported`.
-- **(B) Positional (non-deterministic REUSE) Faker** over every non-dictionary source type, on both native routes.
-- **(C) Deterministic Faker** over bool, signed and unsigned integers (nulls included, after A) and timezone-aware timestamps, on both native routes.
+**In:** positional Faker over int8-int64, uint8-uint64, bool, float32 and float64.
 
-**Out (C5c-ii or later):**
-- Deterministic Faker over `date32`/`date64` and decimal. The oracle supports them, but Rust has no encoder (`decoy-engine-native/src/canonicalize.rs:218-223`).
-- Dictionary-encoded sources (kept declined).
-- `large_string` on the unified route, unless it falls out for free.
-- Float and naive-timestamp sources under deterministic Faker. The oracle raises for these by design (`generation/pool/_canonicalize.py:89`, `:101-114`), so they decline to the oracle, which raises the same error as today.
+**Out:**
+- every other source family (listed above);
+- deterministic Faker over any non-string source (C5c-a, C5c-ii);
+- any change to the oracle or to unified admission's round-trip check.
 
 ## 2. Established facts
 
@@ -55,70 +62,71 @@ Faker columns whose source is not a string run on the native routes where the or
 - Deterministic Faker is not pinned. How the chunk joiner handles a deterministic string-source column today (native `string` against an oracle chunk of `null` or float64) applies unchanged, because the output never depends on the source type. The builder confirms this with a test, not by assumption.
 - Unified: the output type is `string` for Faker (`physical/_requirements.py:295-315`). Reconstruction replaces the whole column (`_unified_slice_evidence.py`), which matches the oracle.
 
+**Added from Codex round 1:**
+- **Unified admission round trip.** `_unified_slice_admission.py:375-399` declines any column whose pandas round trip is not type- and value-identical to the source. An int column with nulls becomes `double`, and a float column with real NaN values has them become nulls, so both fail. This slice does NOT change that check, so on the unified route those cases keep declining. Only null-free int and uint, bool and NaN-free float columns can reach the unified binder.
+- **Registry types.** The operator registry stores exact datatype instances (`_operator_registry.py:76, 137`; `_unified_slice_resident_types.py:16-34`). The admitted families are therefore listed as explicit instances, not as a predicate over arbitrary types.
+- **Temporal sentinels.** Arrow-valid `-2**63` in a timestamp or duration becomes pandas `NaT`, and `time64` can fail pandas conversion outright. That is why temporal families are out of scope.
+- **Degenerate deterministic output.** All-null and empty deterministic Faker chunks produce `null` and `double` on the oracle against `string` natively, and the joiners reject `double` beside `string`. Positional Faker is unaffected, because its chunked output is pinned to `string` by config (`native/_chunked_schema_rule.py:38-44, 110-123, 257`). This is why deterministic Faker is out of scope.
+
 ## 3. Decisions
 
-**3a. Oracle fix (A).**
-- In `PandasExecutionAdapter`'s conversion (`_pandas_adapter.py:209-218`), the protected set gains each DETERMINISTIC Faker target column whose Arrow type is an integer AND whose column has at least one null (`null_count > 0` on the table being converted).
-- `to_pandas_fk_safe` then reads it as the matching nullable integer dtype (`Int64`, `UInt64` and so on), exact even above 2**53.
-- The Faker handler's existing path then masks `pd.NA` and canonicalizes the values as Python ints, the same bytes as a null-free int64 column.
-- **Why only columns that have nulls:** a null-free integer column already converts to int64 and works today. Protecting it would change the dtype that other readers of that column see in jobs that succeed now. Columns with nulls are exactly the ones whose jobs fail today, so only failing jobs change (Cam: a bug fix).
-- **Chunked:** the same rule applies per chunk, so a chunk without nulls stays int64, a chunk with nulls becomes `Int64`, and both give identical keys. The chunked oracle becomes chunk-stable for this case.
-- The compiled pool-index path (`_sampler.py` `pa.Array.from_pandas`) must accept the nullable dtype and give the same result as the reference path. Test 1.
-- The same carve-out goes in the chunked oracle leg's conversion and any other place the adapter's protected set is rebuilt (the chunked carry's `adapter_fk_safe_columns`), so both legs agree. The builder lists every site in the record.
+**3a. Admitted families.** Positional Faker over int8-int64, uint8-uint64, bool, float32 and float64 is admitted:
+- on the chunked native route (`native/_dispatch.py:426-446`, a per-variant admitted-type check);
+- on the unified route (`physical/_shadow_bindings.py` `positional_faker_bindable`, plus the registry entry).
 
-**3b. Positional Faker (B).**
-- Both routes admit any source type except dictionary-encoded.
-- The native null mask becomes "pandas null": `is_valid`, AND, for floating-point types, NOT NaN (`pc.is_nan`).
-- Timestamps and dates have no NaN distinct from null in Arrow, and decimals cannot hold NaN. The builder verifies both with a test.
+Deterministic Faker keeps its string-only checks unchanged.
 
-**3c. Deterministic Faker (C).**
-- Both routes admit bool, int8-int64, uint8-uint64 (with or without nulls) and timestamp with a timezone.
-- Float, naive timestamp, date, decimal and dictionary sources keep declining, with the existing code or a precise new one recorded in the record.
-- The Rust encoder already covers the admitted types.
+**3b. Null mask equals pandas `isna`.**
+- The native positional step's null mask (`_operator_step.py:~173`, which uses `col.is_valid()` today) becomes `is_valid AND NOT is_nan` for float32 and float64. For int, uint and bool, `is_valid` already equals pandas `isna`, because pandas has no other null sentinel for these after conversion: an int with nulls becomes float NaN at exactly the null positions, and a bool with nulls becomes object None.
+- One helper computes this mask, and the chunked and unified paths both call it.
 
-**3d. Registry and admission.**
-- Faker's `unified_resident_types` widens to the admitted set, split by variant if the registry needs it.
-- `_faker_pool_bindable` and `positional_faker_bindable` check the variant's admitted set.
-- The chunked `faker_source_type_not_string` check becomes a per-variant admitted-type check.
-- The existing all-null and empty-table behavior is unchanged.
+**3c. Unified route.** The binder admits the families from 3a. The existing round-trip gate still decides whether a candidate reaches it, so int-with-nulls and NaN-bearing floats decline there. Test 5 pins that.
 
-**3e. Logs.** No data values are logged; the log sentry passes unchanged.
+**3d. Logs.** No data values; the log sentry passes unchanged.
 
 ## 4. Acceptance tests (written first; never weakened)
 
-Every differential compares lane-on against an explicit lane-off run with the fallback poisoned for admitted cases: output tables byte-equal (schema and `b"pandas"` metadata), warnings, row errors, and metrics minus timings and the activation leaf.
+Differential = lane-on against an explicit lane-off run, comparing:
+- output tables byte-equal (schema and `b"pandas"` metadata);
+- warnings and row errors;
+- metrics minus timings and the activation leaf.
 
-1. **Oracle fix:**
-   - deterministic Faker over int64 with nulls, int32 with nulls, and uint64 with nulls including values above 2**63, completes;
-   - each non-null value maps to the same fake value it gets in a null-free copy of the column;
-   - nulls stay null;
-   - values above 2**53 key exactly;
-   - the compiled and reference pool-index paths agree;
-   - a null-free int column's frame dtype is unchanged from main (it is not protected).
-2. **Only failing jobs change:** a job with a null-free integer Faker source, plus a `when:` predicate and a group_key sibling reading that column, has byte-identical output to main.
-3. **Chunked stability:** an int64 column with nulls in some chunks and not others gives the same output as one pass, on the chunked oracle and on the native route.
-4. **Positional, every type:**
-   - int, uint, float (with real NaN values and nulls), bool, date32, timestamp tz and naive, decimal;
-   - both routes, several batches, nulls across boundaries;
-   - native output equals the oracle, including NaN rows becoming null.
-5. **Deterministic, admitted types:** bool, int8-int64 and uint8-uint64 (boundaries, with and without nulls) and tz-aware timestamps in all four units, on both routes.
-6. **Declines:**
-   - deterministic float, naive timestamp, date32, decimal and dictionary all decline;
-   - the job's outcome (output or error) equals lane-off;
-   - float and naive raise the oracle's error.
-7. **The chunk joiner** for deterministic Faker over a non-string source with an all-null chunk and an empty chunk matches the oracle.
-8. **The tests that pinned the old decline** (listed in the survey: `tests/native/test_dispatch_faker.py`, `test_chunked_nondet_faker_admission.py`, `test_chunked_nondet_faker_auto_route.py`, `tests/physical/test_unified_slice_faker.py` decline cases, plus the registry snapshot tests) are updated ONLY where the admitted set changed. A decline that still applies keeps its test. The record lists each change and why.
-9. **Testflight:** if any fingerprint moves, STOP and report.
-10. **Sentries;** a perf record at 1M rows (positional over int64, deterministic over int64 with nulls); mutation on the changed units.
+Admitted cases poison the oracle fallback, so a silent reroute fails the test.
+
+1. **Chunked, every admitted family:**
+   - int8-int64 and uint8-uint64 at their boundaries, with and without nulls;
+   - bool with and without nulls;
+   - float32 and float64 with nulls, real NaN values, `inf` and `-0.0`;
+   - several chunks, nulls across chunk boundaries, an all-null chunk, an empty chunk.
+
+   Output equals the chunked oracle and whole-frame (position-keyed draws).
+2. **NaN is null:** a float source whose only "missing" values are Arrow-valid NaN gives null output at exactly those rows, matching the oracle.
+3. **Unified, admitted cases:** null-free int and uint, bool with and without nulls (if the round trip passes; the builder pins which), and NaN-free float with nulls. Several batches. Activation asserted.
+4. **Declines unchanged:**
+   - deterministic Faker over every non-string family still declines on both routes;
+   - positional Faker over timestamp, date32, date64, time64, duration, decimal128, decimal256, binary, a list, a struct, float16, the null type and dictionary still declines.
+
+   Each case's outcome (output or error) equals lane-off.
+5. **Unified round-trip declines:** positional Faker over int with nulls, and over float with real NaN values, declines on the unified route with the existing reason, and its output equals lane-off.
+6. **Old decline tests:** the tests that pinned "non-string declines" (`tests/native/test_dispatch_faker.py`, `test_chunked_nondet_faker_admission.py`, `test_chunked_nondet_faker_auto_route.py`, `tests/physical/test_unified_slice_faker.py`, and the registry snapshot tests) change ONLY for the families admitted here, and only for the positional variant. The record lists every changed assertion and why.
+7. **Testflight:** if any fingerprint moves, STOP and report.
+8. **Sentries.** A perf record (positional Faker over int64, 1M rows, both routes). Mutation on the mask helper and the admission checks.
 
 ## 5. Failure modes
 
 | Risk | Closed by |
 |---|---|
-| The oracle fix changes jobs that work today | Protect only integer columns with nulls; test 2 |
-| Native and oracle disagree on what counts as null | 3b NaN rule; test 4 |
-| The chunked oracle and native disagree on a chunk with nulls | The same carve-out on both legs; test 3 |
-| Large integers lose precision | Nullable dtypes are exact; test 1 values above 2**53 |
-| A decline test is silently dropped | Test 8 rule and record list |
+| The native null mask differs from pandas | 3b rule; tests 1-2 cover NaN, inf and -0.0 |
+| A non-admitted family slips through | Explicit type lists; test 4 |
+| The unified route admits a column its round trip rejects | The gate is unchanged; test 5 |
+| An old decline test is silently dropped | Test 6 rule |
 
 Rollback: revert the merge commit.
+
+## 6. Review log
+
+- **Codex plan gate, round 1: REVISE** (5 HIGH). Rev 2 re-scopes rather than patching:
+  - **HIGH 1 ("only failing jobs change" is false) and HIGH 2 (incomplete conversion sites):** the oracle fix moves to its own slice, C5c-a, designed at the sampling boundary as Codex proposed.
+  - **HIGH 3 (unified round trip and registry):** the round-trip gate is kept and pinned (test 5); the admitted families are explicit registry instances.
+  - **HIGH 4 (temporal NaT and conversion failures):** temporal families are out of scope.
+  - **HIGH 5 (degenerate deterministic output):** deterministic Faker is out of scope until C5c-ii, which must design it explicitly.
