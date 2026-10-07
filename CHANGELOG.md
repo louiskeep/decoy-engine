@@ -9,6 +9,15 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Fixed (isolated-run memory failures after the job returns, 2026-10-07)
+
+An isolated run that hit its memory cap while staging outputs or row errors, or in the worker's
+outer handler, was reported as `crashed`. Both now report `oom_killed`, as a failure inside the
+job already did. The stored error text for an Arrow `Wrapping <value> failed` message now has the
+cell value replaced by `<value>` before the 500-character cut, so a raw cell value no longer lands
+in the run result. Which messages count as memory failures is unchanged, and every existing
+fallback still runs. Other exception messages are not scrubbed.
+
 ### Fixed (internal: FPE reference kernel handles empty strings like the strategy, 2026-10-07)
 
 The pure-Python FPE reference kernel used as the native contract oracle now keeps a non-null `""` as `""` on encrypt and decrypt, with no row error and no residual-risk warning input, matching the strategy and unmask. No shipped output changes.

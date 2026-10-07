@@ -308,7 +308,10 @@ class TestMemCapOom:
             auto_chunk=False,
         )
 
-        assert result.outcome == "oom_killed"
+        assert result.outcome == "oom_killed", (
+            f"error={result.error!r} returncode={result.returncode} "
+            f"signal_number={result.signal_number}"
+        )
         assert result.outputs is None
         # A clean diagnostic: short, names the failure, not a raw multi-KB
         # traceback dump.

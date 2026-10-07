@@ -93,6 +93,7 @@ from decoy_engine.execution._isolated_common import (
     IsolatedRunOutcome,
     IsolatedRunResult,
     classify_abnormal_exit,
+    exception_error_text,
     is_memory_failure,
     peak_rss_mb,
 )
@@ -263,7 +264,7 @@ def _run_in_process(
             table_kinds={},
             returncode=None,
             signal_number=None,
-            error=f"{type(exc).__name__}: {exc}",
+            error=exception_error_text(exc),
             isolated=False,
         )
 
@@ -464,7 +465,7 @@ def _spawn_and_classify(
             "crashed",
         )
     ):
-        return _result_from_envelope(envelope, output_dir, proc.pid)
+        return _result_from_envelope(envelope, output_dir, proc.pid, staging_output_dir)
 
     # The child died too hard to self-report (a harder rlimit trip the
     # kernel turned into a signal, or an external SIGKILL -- the governor
@@ -501,11 +502,13 @@ def _spawn_and_classify(
 
 
 def _result_from_envelope(
-    envelope: dict[str, Any], output_dir: Path | None, pid: int
+    envelope: dict[str, Any], output_dir: Path | None, pid: int, staging_output_dir: Path
 ) -> IsolatedRunResult:
     outcome = envelope["outcome"]
     peak = envelope.get("peak_rss_mb")
     if outcome != "completed":
+        # A self-reported failure may have staged part of its output; nothing commits it.
+        shutil.rmtree(staging_output_dir, ignore_errors=True)
         return IsolatedRunResult(
             outcome=outcome,
             peak_rss_mb=peak,

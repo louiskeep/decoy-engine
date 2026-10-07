@@ -34,12 +34,18 @@ from decoy_engine.execution._adapter import ExecutionResult
 from decoy_engine.execution._isolated_common import (
     RESULT_FILENAME,
     apply_mem_cap,
+    exception_error_text,
     is_memory_failure,
     peak_rss_mb,
 )
 from decoy_engine.execution._pipeline import run_pipeline
 from decoy_engine.execution._transactional_sink import ParquetTransactionalSink
 from decoy_engine.profile._readers import LazySource
+
+
+def _error_text(exc: BaseException) -> str:
+    """Stored error text: scrub first, then truncate, or a cut could hide the scrub's anchor."""
+    return exception_error_text(exc)[:500]
 
 
 def _write_envelope_file(envelope: dict[str, Any], result_path: Path) -> None:
@@ -204,16 +210,17 @@ def _run(payload: dict[str, Any]) -> dict[str, Any]:
         # happens inside `run_pipeline`, after this call is already made).
         sink = ParquetTransactionalSink(Path(staging_output_dir))
         result = run_pipeline(payload["config"], sources, sink=sink, **payload["kwargs"])
+        # Staging allocates too, so a memory failure here must self-report as well.
+        staged_tables = _finalize_outputs(result, staging_output_dir)
+        _stage_row_errors(result.row_errors, staging_output_dir)
     except BaseException as exc:
         outcome = "oom_killed" if is_memory_failure(exc) else "crashed"
         return {
             "outcome": outcome,
             "peak_rss_mb": round(peak_rss_mb(), 1),
-            "error": f"{type(exc).__name__}: {exc}"[:500],
+            "error": _error_text(exc),
         }
 
-    staged_tables = _finalize_outputs(result, staging_output_dir)
-    _stage_row_errors(result.row_errors, staging_output_dir)
     return {
         "outcome": "completed",
         "peak_rss_mb": round(peak_rss_mb(), 1),
@@ -242,11 +249,11 @@ def main(argv: list[str]) -> int:
         with open(payload_path, encoding="utf-8") as fh:
             payload = json.load(fh)
         envelope = _run(payload)
-    except BaseException as exc:  # payload itself unreadable/malformed
+    except BaseException as exc:  # payload unreadable, or a failure outside `_run`'s try
         envelope = {
-            "outcome": "crashed",
+            "outcome": "oom_killed" if is_memory_failure(exc) else "crashed",
             "peak_rss_mb": round(peak_rss_mb(), 1),
-            "error": f"{type(exc).__name__}: {exc}"[:500],
+            "error": _error_text(exc),
         }
     _write_envelope_file(envelope, result_path)
     return 0

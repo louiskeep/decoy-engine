@@ -46,8 +46,10 @@ __all__ = [
     "IsolatedRunResult",
     "apply_mem_cap",
     "classify_abnormal_exit",
+    "exception_error_text",
     "is_memory_failure",
     "peak_rss_mb",
+    "scrub_error_text",
 ]
 
 # Set in the environment of every child `run_pipeline_isolated` spawns. A
@@ -114,6 +116,8 @@ _MEMORY_ERROR_MARKERS: tuple[str, ...] = (
 _MEMORY_ERROR_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"Unknown error: Wrapping \S+ failed"),
 )
+_WRAPPING_OPEN = "Wrapping "
+_WRAPPING_CLOSE = " failed"
 _GLIBC_TLS_OOM_MARKER = "cannot allocate memory for thread-local data"
 
 # Stderr markers a driver-side (outside-the-process) classification checks
@@ -181,6 +185,29 @@ def is_memory_failure(exc: BaseException) -> bool:
     if any(marker in message for marker in _MEMORY_ERROR_MARKERS):
         return True
     return any(pattern.search(message) for pattern in _MEMORY_ERROR_PATTERNS)
+
+
+def scrub_error_text(message: str) -> str:
+    """Replace the cell value in an Arrow `Wrapping <value> failed` message.
+
+    Arrow embeds the offending cell value in this message, and the worker stores the
+    text in the run result. The span runs to the LAST ` failed` so a value that
+    itself contains `failed` is removed whole. Recognition (`is_memory_failure`) is
+    separate and unchanged: the same wording also covers undecodable input.
+    """
+    start = message.find(_WRAPPING_OPEN)
+    if start < 0:
+        return message
+    value_start = start + len(_WRAPPING_OPEN)
+    value_end = message.rfind(_WRAPPING_CLOSE)
+    if value_end < value_start:
+        return message
+    return f"{message[:value_start]}<value>{message[value_end:]}"
+
+
+def exception_error_text(exc: BaseException) -> str:
+    """The stored text for a failed run: class name plus the scrubbed message."""
+    return f"{type(exc).__name__}: {scrub_error_text(str(exc))}"
 
 
 def classify_abnormal_exit(returncode: int, stderr: str) -> IsolatedRunOutcome:
