@@ -1,4 +1,4 @@
-Status: plan
+Status: plan (rev 3)
 
 Rules consulted: 00-universal, development-loop, risk-and-exceptions, feature-dev, testing, code-review.
 
@@ -20,20 +20,20 @@ The survey also found that the auto-chunk route rejects any table with an intege
 - So the relax rule must NOT rely on that later gate. It independently requires a KNOWN-zero null count for integer and bool references (2a, 2b).
 - The int-to-float64 widening described here is the DEFAULT, unprotected conversion. pandas nullable metadata (`Int64`, `boolean`) keeps a column in one nullable dtype in every chunk.
 
-Measured with `to_pandas_fk_safe` (pandas 2.3.3, pyarrow 24.0.0):
+Measured with `to_pandas_fk_safe` under DEFAULT conversion (pandas 2.3.3, pyarrow 24.0.0). Nullable pandas metadata (`Int64`, `boolean`) is the exception noted above: it keeps one dtype per chunk.
 
 | Reference type | Dtype stable across null-free and null-bearing chunks? |
 |---|---|
-| int, uint | Yes, once null-free is guaranteed by the gate above |
+| int, uint | No by default (int when null-free, float64 when null-bearing); admission independently requires a known-zero null count |
 | float32, float64 | Yes |
 | timestamp | Yes (datetime64) |
 | date32 | Yes (object either way) |
 | string | Yes |
 | large_string | Yes |
 | bool | No: bool when null-free, object when null-bearing |
-| decimal, dictionary, nested | Never reach this rule, because the runtime gate declines the table first (`:504-510`) |
+| decimal, dictionary, nested | Reach this rule but stay outside its allow-list; the later runtime gate (`:504-510`) independently declines their tables |
 
-So the string-only rule is stricter than the real hazard requires. The goal is to relax it to the reference types whose chunk conversion is provably stable, given the gates already applied.
+So the string-only rule is stricter than the real hazard requires. The goal is to relax it to the reference types whose chunk conversion is provably stable, using the relax rule's own checks rather than any later gate.
 
 ## 2. Decision
 
@@ -64,8 +64,8 @@ Every case runs on the auto route, compares lane-on (auto-chunked) output byte-f
    - int64 and uint64 references, null-free, including values above 2**53 and uint64 above 2**63. The uint64 numexpr quirk is the same in both runs, so the outputs still match;
    - float64 references with NaN and nulls, using `!=`, `==` and `in`;
    - **Temporal, with EXPECTED masks pinned, not only output equality** (Codex round 1, because stable dtype does not imply that datetime-string coercion selects anything):
-     - date32 and date64: equality, inequality and membership against string literals. Each case asserts which rows are selected and which are not, including a case that selects a strict subset. Ordering comparisons (`>`), which raise `when_expression_error` on both runs, are pinned as an equal error.
-     - tz-aware timestamps use offset-bearing literals. Naive timestamps use naive literals. Both selected and unselected rows are asserted.
+     - date32 and date64 (default conversion gives Python dates in object columns, and string literals are not coerced): equality and membership against a string literal pin ALL-FALSE masks, inequality pins ALL-TRUE, and ordering (`>`) pins an equal `when_expression_error` on both runs. A compound date-plus-string predicate (for example `d != '1970-01-01' and s == 'x'`) pins a strict-subset selection, exercising date-reference dispatch without changing oracle semantics.
+     - tz-aware timestamps use offset-bearing literals. Naive timestamps use naive literals. Each asserts a STRICT-SUBSET selection (both selected and unselected rows).
    - null-free bool references;
    - large_string references;
    - mixed: one string reference plus one int reference;
@@ -112,3 +112,6 @@ Rollback: revert the merge commit.
   - an exact admitted-type list (timestamp, date32 and date64 only, with time and duration declined), plus precision, narrow-int, nullable-metadata, all-null-chunk and generated-partition cases;
   - section 1's gate ordering and default-conversion wording corrected;
   - a multi-table regression added.
+- **Codex plan gate, round 2: REVISE** (1 MEDIUM, 1 LOW). 703 partition comparisons: 12 mismatches, all on excluded nullable int references. Rev 3:
+  - date32/date64 expectations pinned to what the oracle actually does (all-false equality and membership, all-true inequality, ordering errors), plus a compound date-plus-string strict-subset case; timestamps keep the strict-subset requirement;
+  - the section 1 dtype table is labeled as default conversion, the int and dictionary rows are corrected, and the "gates already applied" conclusion is removed.
