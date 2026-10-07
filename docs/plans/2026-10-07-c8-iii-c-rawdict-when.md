@@ -1,4 +1,4 @@
-Status: plan (rev 1)
+Status: plan (rev 2)
 
 Rules consulted: 00-universal, development-loop, risk-and-exceptions, feature-dev, testing, code-review, security.
 
@@ -10,18 +10,31 @@ Program: `docs/plans/2026-09-30-rust-engine-program.md`, Phase C, after C8-i/ii/
 
 C8-i made the public `ColumnConfig.when` field accept only the closed grammar (`expressions/when_grammar.lark`, `_when_parser.parse_when`), validated by the pydantic field validator (`config/_tables.py:129-152`). A config that reaches the engine as a raw dict skips that validator:
 - `plan/_seed_envelope.py:250-251` copies any non-blank string into `ColumnSeed.when`;
-- `plan/_serialize.py:475` does the same for a deserialized plan;
+- `plan/_serialize.py:475` copies `data.get("when")` for a deserialized plan with NO type or blank filtering (a YAML round trip keeps `a.notnull()`); `plan_from_yaml` plus the adapter's `run`, `run_single` and `run_sequential` never compile again;
 - the oracle then evaluates it with `DataFrame.eval` (`execution/_when_gate._eval_predicate`, numexpr engine, empty scopes).
 
-So a raw-dict caller can still use anything pandas eval accepts:
+So a raw-dict caller reaches pandas eval with anything. These work as gates (Codex round 1 probed them):
 - method calls (`x.notnull()`);
 - bytes and f-string literals;
 - column-to-column comparisons;
-- bare names and constants (`x`, `1 == 1`).
+- a boolean bare column (`x`).
+
+Others reach evaluation but fail there: `s == f'{x}'` errors, and `1 == 1` gives a scalar that fails the boolean check.
 
 The native route already declines these (`when_predicate_outside_native_subset`, `native/_when_admission.py:36`), so they fall back to pandas.
 
-A second defect sits in the same function. `_eval_predicate`'s two error messages echo the predicate (`{expression!r}`, `_when_gate.py:141-155`). A predicate can embed literal data values (`ssn == '123-45-6789'`), and those messages reach job errors and logs. The standing log-hygiene rule forbids that.
+A second defect sits in the same function. `_eval_predicate`'s two error messages echo the predicate (`{expression!r}`, `_when_gate.py:142` and `:157`). A predicate can embed literal data values (`ssn == '123-45-6789'`), and those messages reach job errors through `str(exc)`.
+
+Chained causes leak the same text: pandas' `DateParseError` for `x < 'SENTINEL'`, and the Lark diagnostic that `parse_when` deliberately chains (`_when_parser.py:177`, `err.__cause__ = cause`). Any traceback or `logger.error(..., exc_info=True)` renders them. The standing log-hygiene rule forbids all of this.
+
+**Single evaluator (verified, Codex round 1).** `_eval_predicate` is the only production evaluator of `when` strings:
+- every pandas, sequential, multi-table, generate-plus-mask and chunked-oracle path goes through `run_with_when_gate`;
+- the unified slice (`_unified_slice_when.py:88`) and the native mask (`native/_when_mask.py:59`) call it directly;
+- out-of-core rejects an effective `when` (`out_of_core/_compat.py:224`);
+- chunked FK, group-key and text_mask reject the chunked combinations;
+- filter and derive transforms evaluate other expressions.
+
+**Nested.** A nested child cannot carry an effective gate: `_nested.py:190` builds the child seed with `when=None`. A `when` key inside a child's `strategy_config` is inert provider configuration. This slice leaves both alone, because validating such a key would not implement child gating.
 
 ## 2. Decision
 
@@ -33,22 +46,30 @@ A second defect sits in the same function. `_eval_predicate`'s two error message
 - The message carries the parser's reason. It never echoes the predicate text.
 - A non-string, non-None `when` is rejected with the same code. Today the seed envelope silently drops it, so a gate the user asked for disappears without warning.
 - Blank or whitespace-only still means "no gate", which is unchanged.
-- **Nested children.** If a `strategy: nested` child config can carry `when` (the builder confirms), the check walks the children and reports the child path. If children cannot carry `when`, the record says so and cites the code.
+- **Nested children.** Nothing is walked, per the section 1 finding. The record cites `_nested.py:190`.
 - **Ordering.** The check runs before any masking or output write. Source profiling may already have happened, the same timing as the bucket_perturb guard.
 
-**2c. Run-time backstop.**
-- `_eval_predicate` calls a cached `parse_when` on the expression BEFORE `pdf.eval`. On failure it raises `StrategyError(code="when_outside_closed_grammar")`.
-- Every evaluator shares this one function: the oracle gate, the unified slice and the native per-chunk mask. So deserialized plans, hand-built `ColumnSeed`s and any future caller are covered.
-- The cache is keyed by the expression string, so per-chunk evaluation does not re-parse.
+**2c. Plan-level validation, then an evaluator backstop.**
+- **Plan level (primary).** A new `validate_plan_when(plan)` sits next to the parser. It parses EVERY `ColumnSeed.when` in a supplied `Plan`, whether or not that seed will reach the scalar gate. That includes FK-resolved and composite nodes and seeds for tables absent from the supplied sources. It raises `ValidationError(when_outside_closed_grammar)` naming table and column only.
+  - It runs at the start of each adapter entrypoint that accepts a Plan (`PandasExecutionAdapter.run`, `run_single`, `run_sequential`, and any other public Plan-taking entry the builder finds), BEFORE any handler, sink or output write.
+  - It also runs in plan deserialization (`_serialize`), so a stored plan fails at load.
+  - The reason: sequential execution writes each finished table (`_sequential.py:493`). An evaluator-only check found a bad predicate on table 2 after table 1 was already written, which Codex round 1 reproduced.
+- **Evaluator backstop (retained).** `_eval_predicate` calls a cached `parse_when` before `pdf.eval`, for hand-built calls that reach the evaluator without a Plan. On failure it raises `StrategyError(code="when_outside_closed_grammar")`. The cache is keyed by the expression string.
 
-**2d. Message hygiene.** Both `_eval_predicate` failure messages drop the expression text. They name the column and strategy and keep the typed code. The chained cause (`from exc`) is kept for `when_expression_error`, because numexpr exception text can echo the expression, and the chain is NOT rendered into the message. The builder checks whether the engine's error rendering or logging prints chained causes. If it does, the builder uses `from None` and records why.
+**2d. Message hygiene, including exception chains.**
+- Both `_eval_predicate` failure messages drop the expression text. They name the column and strategy and keep the typed code.
+- **Chains are suppressed at the source.**
+  - `parse_when` stops attaching the Lark cause (`_when_parser.py:177`) and raises its `ValidationError` with no cause.
+  - `_eval_predicate`'s pandas-error boundary raises `from None`.
+  - The new compile, plan-level and backstop rejections raise `from None`.
+  - The numexpr and pandas exception class name may be logged at debug level, as a class name only. Diagnosing a failing predicate then relies on its position and construct, not the text.
 
 **2e. Native admission.** `when_predicate_outside_native_subset` becomes unreachable for any config that compiled. Keep the native gate's own parse, because it builds the reference list from the AST. Keep the reason code as defense for raw-`ColumnSeed` callers that skip compile; the backstop then raises on the oracle leg anyway. Delete no code in this slice.
 
 **2f. Out of scope, recorded on the roadmap:**
 - the `filter` and `derive` transforms' `_eval_clamped` (`execution/_transforms.py:71-83`), which is a separate pandas-eval surface for transform expressions;
 - simplifying `_column_access.predicate_names` (the pandas tokenizer) to `when_column_refs(parse_when(...))`, which is now possible but is a refactor;
-- null checks (`x.notnull()`), which are NOT in the closed grammar. A user who needs "only rows where x is not null" has no way to say it after this slice. Recorded as a grammar-extension candidate for Cam, not decided here.
+- a general null test. The grammar has no general-purpose null predicate. Some known dtype domains admit equivalent comparisons (strings: `x >= ''`; numbers: `x < 0 or x >= 0`), but these are not universal replacements for `.notnull()`. An explicit null-test grammar extension is tracked separately for Cam. It does not block this slice, which carries out Cam's pre-GA decision.
 
 ## 3. Acceptance tests (written first; never weakened)
 
@@ -63,19 +84,31 @@ A second defect sits in the same function. `_eval_predicate`'s two error message
    - a 5000-character predicate;
    - a non-string `when` (`1`, `True`, a list).
    Blank and whitespace-only predicates compile with no gate. `  region == 'US'  ` compiles and behaves like the stripped form.
-2. **Nested** (if children carry `when`): rejected with the child path.
-3. **Backstop.** A raw-dict `ColumnSeed` or a deserialized plan with `when: "x.notnull()"`, run without compile, raises `StrategyError(when_outside_closed_grammar)` on each route:
-   - the oracle gate;
-   - the unified full-frame route;
-   - the chunked native route;
-   - each out-of-core path that evaluates `when`. The builder lists which out-of-core paths do. If none do, the record says so with the evidence.
-   It also raises with an empty frame and with a zero-row chunk. An output-write spy proves nothing is written.
-4. **No echo.** For `when_expression_error` (an in-grammar predicate on a missing column) and `when_expression_not_boolean`, the error message and every captured log record contain no literal from the predicate. Use a distinctive literal such as `'SENTINEL-4417'`.
+2. **Plan-level, zero writes.** Deserialize a two-table plan whose SECOND table has `when: "s.notnull()"`, then run it with `run_sequential` into an in-memory callable sink. It raises `ValidationError(when_outside_closed_grammar)` with ZERO sink writes. The same holds through `run` and `run_single`, and in each of these places:
+   - on an FK-resolved node;
+   - on a composite node;
+   - on a seed whose table is absent from the supplied sources;
+   - in `plan_from_yaml` of the same YAML.
+3. **One test per boundary, each with its expected class (no guard bypassed to label a test native):**
+   - (a) public entrypoints (`run_pipeline`, the chunked config entrypoints including zero-chunk input, `run_config_only_checks`): `PlanCompileError`;
+   - (b) native and unified admission given a hand-built spec: the existing `ValidationError(when_outside_closed_grammar)` from `when_specs`, unchanged;
+   - (c) the direct mask helpers (`_eval_predicate`, the unified-slice mask, the native mask) with explicitly constructed bindings: `StrategyError(when_outside_closed_grammar)`, on a non-empty and on a zero-row frame.
+4. **No echo, anywhere it can render.** Use the sentinel literal `'SENTINEL-4417'` in:
+   - a grammar-valid datetime comparison with an invalid date literal (`x < 'SENTINEL-4417'` on a datetime column), which hits `when_expression_error`;
+   - a malformed predicate whose Lark diagnostic would carry it (`s == 'SENTINEL-4417' and x.notnull()`), on every rejection boundary of 1 to 3;
+   - an accepted predicate whose eval is patched to return a non-boolean, which hits `when_expression_not_boolean`.
+
+   For each, assert that the sentinel is absent from `str(exc)`, from `traceback.format_exception(exc)` (the full chain), and from the formatted output of a `logging` handler that calls `logger.error(..., exc_info=True)`. Asserting only on `str(exc)` or `record.getMessage()` is not enough.
+4a. **Kept defenses, tested directly.**
+   - The pandas scope clamps: an eval spy on an ACCEPTED predicate asserts `engine="numexpr"`, `local_dict={}` and `global_dict={}`.
+   - The `when_expression_not_boolean` branch, using an accepted predicate plus an injected non-boolean result. This replaces the `n + 1` style tests, which become grammar rejections.
 5. **No change for grammar predicates.** Every existing test whose predicate is inside the grammar stays green unmodified.
-6. **Inventory first.** BEFORE implementing, the builder lists every test, fixture and helper whose raw-dict predicate is outside the grammar (survey hits: `tests/native/` has `b'zz'`, `.notnull()`, bare names, `1 == 1`, f-strings and backticks across about 20 files). For each one, record its intent and pick one of two moves:
-   - (a) rewrite it to an in-grammar predicate with the same selection, when the predicate was just a vehicle for "some `when`" (for example, `s != b'zz'` becomes `s != 'zz'` with the column's literal type checked); or
-   - (b) turn it into a rejection test, when its point was the non-grammar shape (for example, the C8-i "stays full-frame" decline cases).
-   The record lists every change. No test is deleted without (b).
+6. **Inventory first.** BEFORE implementing, the builder lists every test, fixture and helper with a predicate outside the grammar. That includes raw-config integration tests AND direct helper tests (`predicate_names`, `_column_access`, `_when_gate` mutation kills, composite admission, rev9 read sets). For each one, record what it protects, which may be any of: selection, routing, read-set, dtype or metadata preservation, or a side effect. Then pick exactly one disposition:
+   - (a) **Rewrite to a grammar predicate.** Allowed only when every protected property is preserved and asserted. For example, `s != b'zz'` is NOT the same as `s != 'zz'`, because the bytes form selects every row; a valid rewrite must keep the same selection on the fixture, and the same read set and route.
+   - (b) **Turn it into a rejection test.** Allowed only when the non-grammar shape WAS the point, with nothing else protected.
+   - (c) **Keep or relocate the lower-level defensive coverage unchanged.** Use this when the test exercises a retained defense through a helper below compile, such as conservative read sets for backticks and f-strings (`test_chunked_entry_rev9_read.py:438, 445`), or `2**53` nullable-int preservation under conservative reads (`test_composite_admission.py:625`). Call the helper directly so compile cannot reject the input first.
+
+   Mixed-route coverage (`test_c8_i_when_auto_route.py:166`) is kept with a grammar-valid predicate that still declines native admission. Compile-rejection tests are added separately and never replace one of the above. The record lists every test with its protected properties and its disposition. No test is deleted without (b).
 7. **Testflight:** STOP if a fingerprint moves, because no golden config uses a non-grammar `when`. Run the sentries, including log-interpolation, plus mutation on `_check_when_grammar` and the backstop branch.
 8. **Docs:**
    - CHANGELOG under "Breaking (pre-GA)", with a migration table from common pandas forms to grammar forms;
@@ -86,13 +119,21 @@ A second defect sits in the same function. `_eval_predicate`'s two error message
 | Risk | Closed by |
 |---|---|
 | A caller path that skips compile still evaluates arbitrary pandas | 2c backstop in the one shared evaluator; test 3 per route |
-| Predicate literals leak through errors or logs | 2d; test 4 |
+| Predicate literals leak through errors, tracebacks or logs | 2d with chains suppressed at the source; test 4 renders the full chain and the logging output |
+| A bad predicate on a later table after earlier output is written | 2c plan-level validation before any handler or sink; test 2 |
 | A valid grammar predicate is newly rejected | The compile check calls the same `parse_when` the public validator already uses; test 5 |
 | A silently dropped non-string `when` | 2b rejects it; test 1 |
-| Test migration launders a behavior change | The test 6 inventory with a recorded intent per change; dennis checks it against the diff |
+| Test migration erases unrelated coverage | Test 6's three dispositions with protected properties recorded; test 4a; dennis checks the record against the diff |
 
 Rollback: revert the merge commit.
 
 ## 5. Review log
 
-(none yet)
+- **Codex plan gate, round 1: REVISE** (3 HIGH, 1 MEDIUM, 1 LOW). It confirmed `_eval_predicate` is the single production evaluator. Rev 2:
+  - **HIGH (exception chains):** chains are suppressed at the source (`parse_when`, the evaluator, and every new rejection), and test 4 renders tracebacks and logging output;
+  - **HIGH (writes before detection):** plan-level validation of every seed before any handler or sink, also at deserialization, plus the two-table zero-write test;
+  - **HIGH (migration erasing coverage):** test 6 records protected properties and adds disposition (c); test 4a; mixed-route coverage kept;
+  - **MEDIUM:** test 3 is split by boundary, each with its exception class;
+  - **LOW:** section 2f's null-test wording;
+  - section 1 factual corrections (the serializer's lack of filtering, usable versus reachable predicates, line `:157`, the nested finding).
+
