@@ -114,7 +114,11 @@ def sampling_source(
     Python ints for valid rows and None for nulls, full length, in the frame column's index.
     The dtype is set explicitly because inference would widen to float again.
     """
-    exact = ctx.exact_int_sources.get((ctx.current_table, column)) if deterministic else None
+    # A nested child call samples synthetic leaves under a placeholder column name; it must
+    # never pick up a real column's exact integers that happen to share that name.
+    nested = bool(getattr(ctx, "nested_outer_column", ""))
+    key = (ctx.current_table, column)
+    exact = ctx.exact_int_sources.get(key) if deterministic and not nested else None
     if exact is None:
         return frame_column
     taken = exact if ctx.gate_positions is None else exact.take(pa.array(ctx.gate_positions))

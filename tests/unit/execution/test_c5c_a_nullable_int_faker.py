@@ -584,3 +584,34 @@ def test_fk_child_column_is_untouched_and_a_nullable_sibling_now_works(tmp_path:
     assert with_null_n["child"]["n"][1] is None
     assert with_null_n["child"]["n"][0] == null_free_n["child"]["n"][0]
     assert with_null_n["child"]["n"][2] == null_free_n["child"]["n"][2]
+
+
+# Nested child calls never read a real column's exact integers ---------------------------------
+
+
+def _leaves_ctx(source: pa.ChunkedArray) -> StrategyContext:
+    """A context registering a real column whose name collides with nested dispatch's leaf name."""
+    return _ctx({("t", "_nested_leaves"): source}, nested_outer_column="payload")
+
+
+def test_nested_leaves_ignore_a_same_named_source_with_a_different_null_mask() -> None:
+    leaves = pd.DataFrame({"_nested_leaves": ["alice", "bob", None]})
+    source = pa.chunked_array([pa.array([1, None, 3], type=pa.int64())])
+    out, _ = FakerStrategyHandler().run(
+        leaves.copy(), "_nested_leaves", sup.faker_seed(), _leaves_ctx(source)
+    )
+    assert out["_nested_leaves"].iloc[2] is None
+
+
+def test_nested_leaves_key_on_their_own_values_when_the_null_masks_match() -> None:
+    # Identical leaf values must map identically; keyed from [1, None, 3] they would not.
+    leaves = pd.DataFrame({"_nested_leaves": ["alice", None, "alice"]})
+    source = pa.chunked_array([pa.array([1, None, 3], type=pa.int64())])
+    out, _ = FakerStrategyHandler().run(
+        leaves.copy(), "_nested_leaves", sup.faker_seed(), _leaves_ctx(source)
+    )
+    plain, _ = FakerStrategyHandler().run(
+        leaves.copy(), "_nested_leaves", sup.faker_seed(), _ctx({}, nested_outer_column="payload")
+    )
+    assert out["_nested_leaves"].iloc[0] == out["_nested_leaves"].iloc[2]
+    assert out["_nested_leaves"].to_list() == plain["_nested_leaves"].to_list()
