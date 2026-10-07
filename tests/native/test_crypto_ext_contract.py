@@ -188,6 +188,13 @@ def test_hash_missing_key_fails_closed() -> None:
             ["AB12CD", "ZZ99ZZ", None],
         ),
         ({"charset": "digits", "validate_luhn": True}, "pan", ["4111111111111111"]),
+        # Empty strings are missing-data cells: preserved as "", never ciphered.
+        ({"charset": "digits"}, "acct", ["", "123456", None, "678901", ""]),
+        ({"charset": "digits"}, "acct", ["123456", "", "", None, "678901"]),
+        ({"charset": "digits"}, "acct", ["", "", ""]),
+        ({"charset": "digits"}, "ssn", ["", "123-45-6789", None, ""]),
+        ({"charset": "ALPHANUM"}, "code", ["", "AB12CD", "", None, "ZZ99ZZ"]),
+        ({"charset": "digits", "validate_luhn": True}, "pan", ["", "4111111111111111", ""]),
     ],
 )
 def test_reference_fpe_matches_shipped_strategy(
@@ -213,6 +220,7 @@ def test_reference_fpe_matches_shipped_strategy(
             assert pd.isna(shipped)
         else:
             assert ref == shipped
+    assert ref_vals.count("") == rows.count("")
 
 
 @pytest.mark.parametrize(
