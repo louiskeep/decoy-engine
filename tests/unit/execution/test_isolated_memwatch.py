@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import signal
 import threading
+import time
 from typing import Any
 
 import pytest
@@ -161,10 +162,20 @@ class TestSamplerThread:
         assert snap.samples >= 0
         assert not any(t.name == mw.THREAD_NAME and t.is_alive() for t in threading.enumerate())
 
+    def test_sampling_is_paced_by_the_interval_not_a_busy_loop(self):
+        s = mw.MemorySampler(
+            1, _MIB, "data", read=lambda pid, names: {"VmData": 1}, interval_s=0.05
+        )
+        s.start()
+        time.sleep(0.3)
+        count = s.stop().samples
+        assert 2 <= count <= 10
+
     def test_thread_ends_on_process_exit_and_stop_keeps_that_reason(self):
         s = mw.MemorySampler(1, _MIB, "data", read=_ScriptedReader([{"VmData": 1}]), interval_s=0)
         s.start()
         s._thread.join(2)  # type: ignore[attr-defined]
+        assert not s._thread.is_alive()  # type: ignore[attr-defined]
         assert s.stop().stop_reason == "process_exited"
 
     def test_stalled_read_cannot_change_the_published_snapshot(self):

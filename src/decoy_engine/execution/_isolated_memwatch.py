@@ -315,11 +315,8 @@ class MemorySampler:
         return False
 
     def _run(self) -> None:
-        while not self._stop.is_set():
-            if not self.step():
-                return
-            if self._stop.wait(self._interval_s):
-                return
+        while not self._stop.is_set() and self.step():
+            self._stop.wait(self._interval_s)
 
     def start(self) -> bool:
         try:
