@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import duckdb
 
+from decoy_engine.execution._isolated_memwatch import MemoryEvidence
 from decoy_engine.execution._row_errors import RowErrorRecord
 
 if TYPE_CHECKING:
@@ -304,3 +305,6 @@ class IsolatedRunResult:
     # outcome -- there is nothing to attribute a row error to.
     row_errors: tuple[RowErrorRecord, ...] = ()
     extra: dict[str, Any] = field(default_factory=dict)
+    # Driver-side memory sampling of a capped isolated run; a suspicion beside an unchanged
+    # outcome, never a verdict. None for uncapped and in-process runs.
+    memory_evidence: MemoryEvidence | None = None

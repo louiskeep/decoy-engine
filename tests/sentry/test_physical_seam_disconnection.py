@@ -496,6 +496,9 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         "src/decoy_engine/execution/_isolated_common.py",
         # The driver removes staging on a self-reported failure and scrubs in-process error text.
         "src/decoy_engine/execution/_isolated_run.py",
+        # Isolated-run memory evidence: the sampler lives in `_isolated_memwatch.py`; the driver and
+        # `_isolated_common.py` thread `memory_evidence`. None imports `execution.physical`.
+        "src/decoy_engine/execution/_isolated_memwatch.py",
         # B6b (LazySource batch input): `_chunked_input.py` captures a lazy source's footer
         # facts once, re-cuts reader batches to the resident chunk boundaries and owns the
         # handle's close; `_planner.py` judges a `LazySource` from those facts (the old
