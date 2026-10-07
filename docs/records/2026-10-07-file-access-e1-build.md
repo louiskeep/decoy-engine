@@ -88,6 +88,21 @@ or published; the version is still 0.7.0 and the 0.9.0 release needs Cam's go.
     sizes (`_compile.py`, `trainer.py`, `_runner.py`, the last by moving scratch-root creation into
     `out_of_core/_scratch.py`).
 15. The plan's `RecordingFileAccess` lives in `tests/fileaccess/support.py`, not the package.
+16. **Config and CI changes outside the package.** `.github/workflows/ci.yml` installs `strace`
+    (the D10 runtime detector fails rather than skips without it) and adds `tests/fileaccess` to the
+    routing guard so the new directory cannot fall out of CI. `pyproject.toml` excludes
+    `tests/sentry/fa_fixtures` from ruff: those files are deliberately bad code (negative sentry
+    fixtures with unused imports and raw sinks) that the sentries must scan, so they cannot be linted
+    clean or formatted.
+17. **Public API diff** (signature comparison of 1239 base symbols against head, `apisurf.py`): every
+    change adds a keyword-only `file_access=` or an optional trailing parameter, except two that are
+    not additive and are noted for the compatibility checklist: `quarantine.write_jsonl_staged`
+    now returns an opaque `OutputTxn` and `publish_staged_jsonl` / `discard_staged_jsonl` take it
+    (they took and returned a `Path`; nothing in this repo or the platform source outside the
+    quarantine module calls them), and six private-module attributes that were stdlib re-exports
+    (`pq`, `shutil`, `tempfile`, `logging` imported into `_transactional_sink`, `quarantine`,
+    `_codeset_loader`) are gone. `read_fixed_width` and `run_discovery_sql` keep their old calls and
+    gain optional arguments.
 
 ## Red before
 

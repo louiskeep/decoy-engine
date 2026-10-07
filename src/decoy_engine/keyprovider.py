@@ -241,10 +241,7 @@ def resolve_mask_secret_ref(ref: str, *, file_access: FileAccess | None = None) 
         if not path:
             raise MaskSecretError(code="bad_secret_ref", message="file ref has no path.")
         try:
-            # Read as bytes, decode, then translate newlines exactly as text mode did, so
-            # key derivation for an existing file-backed secret cannot change.
-            data = fileaccess.read_all(FileRole.SECRET, path, "global_settings.mask_secret_ref")
-            raw = data.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
+            raw = fileaccess.read_text(FileRole.SECRET, path, "global_settings.mask_secret_ref")
         except OSError as exc:
             raise MissingMaskSecret(
                 f"mask secret file {path!r} (from mask_secret_ref) could not be read: {exc}."
