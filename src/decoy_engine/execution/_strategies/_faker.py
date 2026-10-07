@@ -25,7 +25,7 @@ from __future__ import annotations
 import pandas as pd
 
 from decoy_engine.execution._adapter import StrategyContext, provider_config_to_dict
-from decoy_engine.execution._exact_int_faker import exact_sampling_series
+from decoy_engine.execution._exact_int_faker import sampling_source
 from decoy_engine.execution._strategies._faker_positional import (
     positional_pool_indices,
     resolve_selection_namespace,
@@ -116,14 +116,12 @@ class FakerStrategyHandler:
         # for the draw and generate off job_seed (generation, not a re-identification
         # surface).
         select_seed = ctx.mask_key if plan.deterministic else ctx.job_seed
-        # Integer columns that pandas widened around a null key from their exact Arrow values.
-        exact = exact_sampling_series(ctx, column, source) if plan.deterministic else None
         sampled = PoolSampler().sample(
             pool,
             n,
             mode=mode,
             seed=select_seed,
-            source=source if exact is None else exact,
+            source=sampling_source(ctx, column, source, deterministic=plan.deterministic),
             namespace=plan.namespace,
             deterministic=plan.deterministic,
             scale=scale,

@@ -90,7 +90,7 @@ GEN_POOL_DRAW_SITES: tuple[DrawSite, ...] = (
     DrawSite(
         draw_site_id="mask.faker_nondeterministic",
         family="source_keyed_hmac",
-        call_site="execution/_strategies/_faker.py:101",
+        call_site="execution/_strategies/_faker.py:102",
         entropy_root="job_seed",
         seed_derivation=(
             "derive_index(job_seed, selection_namespace, encode_int(row_offset + i), "

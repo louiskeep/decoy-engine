@@ -142,7 +142,7 @@ import pyarrow as pa
 from decoy_engine.errors import RowErrorsFailedError
 from decoy_engine.execution._adapter import ExecutionResult, StrategyContext
 from decoy_engine.execution._errors import ExecutionError
-from decoy_engine.execution._exact_int_faker import exact_int_faker_sources, release_table
+from decoy_engine.execution._exact_int_faker import register_exact_int_sources, release_table
 from decoy_engine.execution._fk_keys import fk_columns_for_table, to_pandas_fk_safe
 from decoy_engine.execution._guards import reject_null_bearing_int
 from decoy_engine.execution._output_projection import (
@@ -383,9 +383,7 @@ def run_sequential(
                 )
                 conversion_ms += (time.perf_counter() - t0) * 1000.0
                 frames[table] = df
-                ctx.exact_int_sources.update(
-                    exact_int_faker_sources(table, src, df, nodes_by_table.get(table, ()))
-                )
+                register_exact_int_sources(ctx, table, src, df, nodes_by_table.get(table, ()))
                 del src
 
                 # Snapshot this table's parent-key columns pre-mask, for its outgoing

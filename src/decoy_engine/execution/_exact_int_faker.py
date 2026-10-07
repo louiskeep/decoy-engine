@@ -68,6 +68,17 @@ def exact_int_faker_sources(
     return out
 
 
+def register_exact_int_sources(
+    ctx: StrategyContext,
+    table: str,
+    source: pa.Table,
+    frame: pd.DataFrame,
+    nodes: Iterable[WorkNode],
+) -> None:
+    """Record the table's exact-int Faker columns on the context, for its frame's lifetime."""
+    ctx.exact_int_sources.update(exact_int_faker_sources(table, source, frame, nodes))
+
+
 def release_table(sources: dict[tuple[str, str], pa.ChunkedArray], table: str) -> None:
     for key in [k for k in sources if k[0] == table]:
         del sources[key]
@@ -93,17 +104,17 @@ def gated_context(ctx: StrategyContext, column: str, positions: np.ndarray[Any, 
     return dataclasses.replace(ctx, gate_positions=positions)
 
 
-def exact_sampling_series(
-    ctx: StrategyContext, column: str, frame_column: pd.Series[Any]
-) -> pd.Series[Any] | None:
-    """The full-length object Series to key from, or None when the column has no exact source.
+def sampling_source(
+    ctx: StrategyContext, column: str, frame_column: pd.Series[Any], *, deterministic: bool
+) -> pd.Series[Any]:
+    """The Series the deterministic sampler keys from: exact Arrow ints when registered.
 
-    Python ints for valid rows and None for nulls, in the frame column's index. The dtype
-    is set explicitly because inference would widen to float again.
+    Python ints for valid rows and None for nulls, full length, in the frame column's index.
+    The dtype is set explicitly because inference would widen to float again.
     """
-    exact = ctx.exact_int_sources.get((ctx.current_table, column))
+    exact = ctx.exact_int_sources.get((ctx.current_table, column)) if deterministic else None
     if exact is None:
-        return None
+        return frame_column
     taken = exact if ctx.gate_positions is None else exact.take(pa.array(ctx.gate_positions))
     if len(taken) != len(frame_column) or not np.array_equal(
         taken.is_null().to_numpy(), frame_column.isna().to_numpy()
