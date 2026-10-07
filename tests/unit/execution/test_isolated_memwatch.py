@@ -465,3 +465,47 @@ class TestAgeClockStopsAtObservedExit:
     def test_an_exit_seen_late_cannot_exceed_communicate(self):
         ev = _evidence(self._ended("process_exited", 100.90), observed=100.40)
         assert ev.last_sample_age_ms == pytest.approx(400.0, abs=0.1)
+
+
+class _SlowReader:
+    """A read that is descheduled: the clock moves on while the value is being read."""
+
+    def __init__(self, clock: _Clock, value: int, delay_s: float, then: BaseException) -> None:
+        self.clock, self.value, self.delay_s, self.then = clock, value, delay_s, then
+        self.calls = 0
+
+    def __call__(self, _pid: int, _names: Any) -> dict[str, int]:
+        self.calls += 1
+        if self.calls == 1:
+            self.clock.now += self.delay_s
+            return {"VmData": self.value}
+        raise self.then
+
+
+class TestSampleTimestampPrecedesTheRead:
+    def test_a_descheduled_read_cannot_make_a_stale_sample_look_fresh(self):
+        # The value was read at 100.0 but the read only returned at 100.6; the child then
+        # released memory and crashed. The sample must age from 100.0, so it is stale.
+        clock = _Clock(100.0)
+        reader = _SlowReader(clock, 1000 * _MIB, 0.6, FileNotFoundError())
+        s = mw.MemorySampler(4242, 1024 * _MIB, "data", read=reader, clock=clock)
+        assert s.step() is True
+        assert s.step() is False
+        snap = s.snapshot()
+        assert snap.last_at == pytest.approx(100.0)
+        ev = _evidence(snap, observed=100.6)
+        assert ev.last_sample_age_ms == pytest.approx(600.0, abs=0.1)
+        assert ev.suspected_memory_pressure is False
+
+    def test_a_read_that_returns_after_stop_is_not_published(self):
+        clock = _Clock(100.0)
+        holder: dict[str, mw.MemorySampler] = {}
+
+        def read(_pid: int, _names: Any) -> dict[str, int]:
+            holder["s"].stop()  # the driver finishes while this read is in flight
+            return {"VmData": 1000 * _MIB}
+
+        s = mw.MemorySampler(4242, 1024 * _MIB, "data", read=read, clock=clock)
+        holder["s"] = s
+        assert s.step() is False
+        assert s.snapshot().samples == 0

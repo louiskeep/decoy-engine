@@ -281,6 +281,9 @@ class MemorySampler:
 
     def step(self) -> bool:
         """Take one sample; False means sampling is over (the reason is published)."""
+        # Stamped before the read: a descheduled read can only make the sample look older
+        # than it is, never fresher, so a stale value cannot pass the freshness rule.
+        at = self._clock()
         try:
             fields = self._read(self.pid, self._names)
             value = fields[self._names[0]]
@@ -290,7 +293,6 @@ class MemorySampler:
             return self._end("field_missing")
         except Exception:
             return self._end("read_error")
-        at = self._clock()
         with self._lock:
             if self._closed:
                 return False
