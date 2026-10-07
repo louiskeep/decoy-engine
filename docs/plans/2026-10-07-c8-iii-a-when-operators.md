@@ -21,7 +21,7 @@ A `when:` column whose strategy is text_redact, bucket_perturb or date_shift run
 - **date_shift:** a string source with an explicit `date_format`, no `group_by`, and not windowed_date.
 
 **Out of scope:**
-- positional categorical and positional Faker. They are keyed on the row ordinal, and under the oracle gate a handler sees SUBSET ordinals (`ctx.row_offset + i`; `gated_context` never changes `row_offset`, `execution/_exact_int_faker.py:16-27`). So select-then-scatter cannot reproduce them;
+- positional categorical and positional Faker. This slice does not extend the masked-step interface (positional offset, pool and related inputs) to reproduce their subset-relative sampling and route-specific offsets (Codex round 2). Cam also decided on 2026-10-07 that positional draws under `when` should key on the FULL-TABLE row number, a pre-GA output change. That is its own slice, C8-iii-d;
 - deterministic Faker. The native routes build every Faker pool up front (`native/_chunk_masking.py:~261-310`), while the oracle builds it inside `handler.run`, which a zero-match gate never reaches (`_when_gate.py:207-208`). A pool-build failure would surface natively but not on the oracle. That needs its own design;
 - group_key, text_mask, code_set, top_code and windowed_date. These keep their rejections.
 
@@ -80,7 +80,10 @@ The planner's string-only reference rule (`native/_when_admission.planner_relaxe
 
 `bucket_perturb_config_rejection` (`native/_operator_config_rejections.py:63-`) rejects `%z`/`%Z` but admits pandas' special format names `mixed` and `ISO8601`. Codex reproduced the case: with selected values `2024-01-15T12:00:00+01:00` and `2024-07-15T12:00:00+02:00` (ordinary seasonal offsets), the oracle succeeds while native execution raises a `ValueError` when it builds the `DatetimeIndex`. Splitting the values across batches changes the failure. This is an EXISTING defect on today's unmasked native bucket_perturb route, not something `when` introduces.
 
-The gate therefore rejects `date_format` values `mixed` and `ISO8601` with a new code, `bucket_perturb_special_date_format:<col>`, for masked and unmasked columns alike. Those columns run on the oracle, which handles them, and output equals main's oracle output. date_shift's gate already excludes them, so the two gates become consistent.
+The gate therefore rejects `date_format` values `mixed` and `ISO8601` with a new code, `bucket_perturb_special_date_format:<col>`, for masked and unmasked columns alike. date_shift's gate already excludes them, so the two gates become consistent. What happens next depends on the route (Codex round 2):
+- **Unmasked, both routes:** the native decline sends the whole table to the oracle, and output equals the oracle. This is a ROUTE change for jobs that succeed natively today, such as ordinary dates, uniform-offset timestamps, all-null and empty input. Their output must stay identical.
+- **Masked, unified and full-frame:** declines to the oracle. Output is compared with lane-off.
+- **Masked, explicit chunked route:** still rejected by the chunked oracle gate with `chunked_bucket_perturb_when_not_supported`, before the predicate is evaluated, so zero-match predicates are rejected too. This is today's behavior, unchanged. Supporting masked special formats on the chunked route would need a separately specified relaxation of that oracle gate, which is out of scope.
 
 **3b. Row errors through the masked step.**
 - `run_kernel_step_masked` carries `format_error_positions`, remapped from subset positions to chunk or batch positions: `selected_positions[p]`, where `selected_positions = np.flatnonzero(mask)`.
@@ -129,7 +132,10 @@ Admitted cases poison the oracle fallback, so any reroute fails the test.
    - spans in selected and unselected rows (unselected rows unchanged).
 4. **bucket_perturb:**
    - explicit strftime formats are admitted, and only selected rows are bucketed;
-   - `mixed` and `ISO8601` decline with the new code, both masked and UNMASKED, and their outputs equal lane-off on both routes. Cases: mixed-offset values together in one batch, split across chunks and batches, and under a zero-match gate.
+   - `mixed` and `ISO8601`, UNMASKED, on both routes: the decline carries the new code and output equals the oracle. Cases:
+     - mixed-offset values together in one batch, and split across chunks and batches;
+     - jobs that succeed natively on main today (ordinary dates, uniform-offset timestamps, all-null input, empty input), where output must stay byte-identical to main's native output and only the route evidence changes.
+   - `mixed` and `ISO8601`, MASKED: on unified and full-frame, output equals lane-off. On the explicit chunked route, the same `chunked_bucket_perturb_when_not_supported` exception is raised on both legs, including under a zero-match predicate.
 5. **Degenerate outputs:** an all-null source, an empty table, a chunk where every selected row is null, and selected nulls beside unselected values. Each case checks the EMITTED schema after normalization (string-pinned on chunked) and the unified reconstruction, including pandas string metadata.
 6. **Declines unchanged**, outcomes equal to lane-off:
    - NER text_redact;
@@ -163,3 +169,7 @@ Rollback: revert the merge commit.
   - **HIGH 2:** bucket_perturb's special formats `mixed` and `ISO8601` are rejected at the shared config gate for masked AND unmasked columns. This fixes an existing native defect at its source (3a-ii, test 4).
   - **MEDIUM 3:** emitted schemas are asserted after C8's string-pin normalization (3c, test 5).
   - **LOW 4:** no claim of custom-spec support; explicit detector cases (test 3).
+- **Codex plan gate, round 2: REVISE** (1 MEDIUM, 1 LOW). It confirmed every round-1 finding is closed. Rev 3:
+  - **MEDIUM (contradictory fallback for masked special formats):** route-specific expectations in 3a-ii and test 4. The explicit chunked route keeps today's rejection.
+  - **LOW (positional exclusion reason):** corrected in section 1.
+  - **Also added:** the previously successful unmasked special-format jobs, as a route change with identical output.
