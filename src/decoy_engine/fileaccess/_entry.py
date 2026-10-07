@@ -24,7 +24,12 @@ F = TypeVar("F", bound=Callable[..., Any])
 _CURRENT: contextvars.ContextVar[FileAccess | None] = contextvars.ContextVar(
     "decoy_file_access", default=None
 )
+_POSITION: contextvars.ContextVar[str] = contextvars.ContextVar("decoy_file_position", default="")
 _ambient_forbidden = False
+# Set the first time a non-ambient policy is installed or captured: from then on a context
+# with no policy (a raw thread, a callback) fails closed instead of falling back to the CLI
+# policy, since the process is evidently serving policy-bound work.
+_strict_in_use = False
 
 
 def forbid_ambient() -> None:
@@ -46,7 +51,7 @@ def current() -> FileAccess:
     policy = _CURRENT.get()
     if policy is not None:
         return policy
-    if _ambient_forbidden:
+    if _ambient_forbidden or _strict_in_use:
         raise FileAccessUnavailable("no file access policy is installed")
     return _ambient()
 
@@ -71,7 +76,7 @@ def is_ambient(policy: FileAccess | None = None) -> bool:
     if policy is None:
         policy = _CURRENT.get()
         if policy is None:
-            return not _ambient_forbidden
+            return not (_ambient_forbidden or _strict_in_use)
     return isinstance(policy, LocalFileAccess)
 
 
@@ -84,15 +89,28 @@ def require_ambient(what: str) -> None:
         raise FileAccessUnavailable(f"{what} needs the ambient file access policy")
 
 
+def _note(policy: FileAccess) -> FileAccess:
+    global _strict_in_use
+    if not isinstance(policy, LocalFileAccess):
+        _strict_in_use = True
+    return policy
+
+
+def _reset_for_tests() -> None:
+    """Return the process to its default state (test isolation only)."""
+    global _strict_in_use
+    _strict_in_use = False
+
+
 def _resolve(explicit: FileAccess | None) -> FileAccess:
     if explicit is not None:
         if _ambient_forbidden and isinstance(explicit, LocalFileAccess):
             raise FileAccessUnavailable("the ambient policy is forbidden in this process")
-        return explicit
+        return _note(explicit)
     existing = _CURRENT.get()
     if existing is not None:
         return existing
-    if _ambient_forbidden:
+    if _ambient_forbidden or _strict_in_use:
         raise FileAccessUnavailable(
             "no file access policy was given and ambient access is forbidden"
         )
@@ -115,6 +133,24 @@ def scope(file_access: FileAccess | None = None) -> Iterator[FileAccess]:
         yield policy
     finally:
         _CURRENT.reset(token)
+
+
+@contextmanager
+def at_position(path: str) -> Iterator[None]:
+    """Name the config position (for example `tables.orders.columns.zip`) that the reads in
+    the block belong to, so a denial can say which field asked. A host that validates one
+    column at a time wraps its call in this; the engine does so where it walks a config."""
+    token = _POSITION.set(path)
+    try:
+        yield
+    finally:
+        _POSITION.reset(token)
+
+
+def position_key(suffix: str) -> str:
+    """`<position>.<suffix>` inside `at_position`, else just `suffix`."""
+    base = _POSITION.get()
+    return f"{base}.{suffix}" if base else suffix
 
 
 class _BoundIterator:
@@ -210,6 +246,7 @@ def entry_point(fn: F) -> F:
 
 __all__ = [
     "ambient_forbidden",
+    "at_position",
     "bind_iterator",
     "capture",
     "current",
@@ -218,6 +255,7 @@ __all__ = [
     "installed",
     "is_ambient",
     "map_in_context",
+    "position_key",
     "require_ambient",
     "run_in_context",
     "scope",

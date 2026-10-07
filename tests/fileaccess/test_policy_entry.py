@@ -18,6 +18,7 @@ import pytest
 from decoy_engine import fileaccess
 from decoy_engine.fileaccess import (
     FileAccessDenied,
+    FileAccessReadError,
     FileRequest,
     FileRole,
     LocalFileAccess,
@@ -74,11 +75,12 @@ def test_entry_point_installs_for_the_call_and_never_downgrades(nothing_installe
         seen["outer"] = current()
         inner()
 
+    # Ambient first: once a strict policy has been used, a no-policy call fails closed.
+    outer()
+    assert isinstance(seen["outer"], LocalFileAccess) and isinstance(seen["inner"], LocalFileAccess)
     strict = _Marker("strict")
     outer(file_access=strict)  # type: ignore[arg-type]
     assert seen["outer"] is strict and seen["inner"] is strict
-    outer()
-    assert isinstance(seen["outer"], LocalFileAccess) and isinstance(seen["inner"], LocalFileAccess)
     assert fileaccess.installed() is None
 
 
@@ -288,7 +290,7 @@ def test_field_key_is_escaped_and_bounded() -> None:
     assert len(FileAccessDenied("short.key").field_key) == len("short.key")
 
 
-def test_library_errors_become_the_denial_under_a_strict_handle(
+def test_library_errors_become_the_typed_read_error_under_a_strict_handle(
     rooted: RootedFileAccess, root_dir: Path
 ) -> None:
     import warnings
@@ -301,9 +303,9 @@ def test_library_errors_become_the_denial_under_a_strict_handle(
     handle = rooted.open_read(FileRequest(FileRole.SOURCE, "read", "bad.parquet", "sources.t.path"))
     with warnings.catch_warnings():
         warnings.simplefilter("error")
-        with pytest.raises(FileAccessDenied) as info:
+        with pytest.raises(FileAccessReadError) as info:
             arrow.read_table(handle)
-    assert str(info.value) == "file access denied: sources.t.path"
+    assert str(info.value) == "file could not be read: sources.t.path"
     assert info.value.__cause__ is None and info.value.__context__ is None
     assert TOKEN not in "".join(traceback.format_exception(info.value))
 
@@ -325,3 +327,49 @@ def test_a_nested_entry_point_call_does_not_downgrade_a_strict_policy(
     strict = _Marker("strict")
     middle(file_access=strict)  # type: ignore[arg-type]
     assert seen == [strict, strict]
+
+
+def test_a_raw_thread_fails_closed_once_a_strict_policy_has_been_used(rooted, root_dir) -> None:  # type: ignore[no-untyped-def]
+    """A thread started without `run_in_context` has no policy in its context; after any
+    strict policy was installed in the process it must not fall back to ambient access."""
+    import threading
+
+    from decoy_engine import fileaccess
+    from decoy_engine.fileaccess import FileAccessUnavailable, FileRequest, FileRole
+
+    outside = root_dir.parent / "outside.txt"
+    outside.write_text("OUTSIDE")
+    with fileaccess.scope(rooted):
+        assert not fileaccess.is_ambient()
+    seen: list[object] = []
+
+    def worker() -> None:
+        try:
+            fileaccess.current().open_read(
+                FileRequest(FileRole.SOURCE, "read", str(outside), "source.path")
+            )
+            seen.append("READ")
+        except FileAccessUnavailable:
+            seen.append("closed")
+        try:
+            fileaccess.require_ambient("raw thread")
+            seen.append("ambient-ok")
+        except FileAccessUnavailable:
+            seen.append("ambient-refused")
+
+    thread = threading.Thread(target=worker)
+    thread.start()
+    thread.join()
+    assert seen == ["closed", "ambient-refused"]
+
+
+def test_a_process_that_never_used_a_strict_policy_keeps_the_ambient_default() -> None:
+    import threading
+
+    from decoy_engine import fileaccess
+
+    seen: list[bool] = []
+    thread = threading.Thread(target=lambda: seen.append(fileaccess.is_ambient()))
+    thread.start()
+    thread.join()
+    assert seen == [True]

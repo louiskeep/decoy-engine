@@ -85,7 +85,7 @@ def test_v6_corpus_outside_the_root_is_denied_and_inside_loads(world: World) -> 
     secret = _table(world.outside / f"{TOKEN}.parquet", code=[MARKER, "B2"])
     with pytest.raises(FileAccessDenied) as info:
         load_corpus("c", secret, file_access=world.policy)
-    _assert_denial(info.value, "provider_config.corpus_source")
+    _assert_denial(info.value, "code_set.corpus_source")
     ok = _table(world.root / "c.parquet", code=["A1", "B2"])
     assert {r["code"] for r in load_corpus("c", ok, file_access=world.policy)} == {"A1", "B2"}
 
@@ -125,8 +125,10 @@ def test_v8_and_v18_snapshot_outside_the_root_is_denied(world: World) -> None:
 def test_v18_fingerprint_of_an_own_snapshot_matches_the_ambient_value(world: World) -> None:
     own = world.inside("own.json", b'{"schema_version": "x"}')
     config = {"snapshot_file": str(own), "type": "faker"}
+    # Ambient first: once a strict policy has been used, a no-policy call fails closed.
+    ambient = strategy_config_fingerprint(config)
     strict = strategy_config_fingerprint(config, file_access=world.policy)
-    assert strict == strategy_config_fingerprint(config)
+    assert strict == ambient
 
 
 def test_v9_secret_file_outside_the_root_is_denied(world: World) -> None:
