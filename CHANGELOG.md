@@ -9,6 +9,22 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Fixed (deterministic Faker over integer columns with nulls, 2026-10-07)
+
+A deterministic `faker` column over an integer column that holds at least one null no longer
+fails the job with `float_canonicalization_unsupported`. Each non-null value now maps to the same
+fake value it gets in a column with no nulls, including values past 2**53 and unsigned 64-bit
+values, and nulls stay null. This holds on the whole-frame, sequential and chunked routes, so a
+chunked run no longer depends on which chunks happen to contain a null.
+
+Jobs that worked before produce the same output. A `when:` gate that selects every non-null value
+works with any provider. With a string-output provider, a gate that leaves a non-null number
+unselected still fails at output conversion, as a partially gated type-changing column already
+did. A float source column still raises `float_canonicalization_unsupported`.
+
+A `when:` gate whose predicate evaluates to a missing value (a nullable boolean) now remaps row
+errors to the right rows instead of raising on the missing value.
+
 ### Changed (positional Faker runs natively over numeric and boolean sources, 2026-10-07)
 
 A non-deterministic `reuse` Faker column over an integer, unsigned integer, boolean or
