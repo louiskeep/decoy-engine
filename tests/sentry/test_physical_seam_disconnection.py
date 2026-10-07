@@ -345,6 +345,9 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         "src/decoy_engine/execution/_strategies/_top_code.py",
         "src/decoy_engine/execution/_substrate.py",
         "src/decoy_engine/execution/_when_gate.py",
+        # C5c-a: exact Arrow keys for nullable-int deterministic Faker at the sampling boundary.
+        # Parent-level module that imports nothing from `execution.physical`.
+        "src/decoy_engine/execution/_exact_int_faker.py",
         "src/decoy_engine/execution/native/_determinism_protocol.py",
         # Slice C1b-i (seeded non-deterministic categorical, 2026-10-04): the oracle
         # strategy now draws through `derive_index` keyed by the handler-frame ordinal,

@@ -19,6 +19,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
+import numpy as np
 import pandas as pd
 import pyarrow as pa
 
@@ -196,6 +197,13 @@ class StrategyContext:
     # value-keyed (not position-keyed) contract the other CHUNK_SAFE
     # strategies rely on.
     row_offset: int = 0
+    # Integer Faker sources that pandas widened to float64, as their original Arrow
+    # columns keyed (table, column), so deterministic keying sees exact integers. The
+    # adapter fills it per table or chunk and releases it with that frame.
+    exact_int_sources: dict[tuple[str, str], pa.ChunkedArray] = field(default_factory=dict)
+    # Positions, in the full frame, of the rows a `when:` gate handed to the handler.
+    # None means every row in order. Set only on the per-call copy the gate makes.
+    gate_positions: np.ndarray[Any, Any] | None = None
 
     def __post_init__(self) -> None:
         # A frozen dataclass forbids attribute assignment; object.__setattr__ is

@@ -43,6 +43,7 @@ from decoy_engine.execution._adapter import (
     StrategyHandler,
 )
 from decoy_engine.execution._errors import ExecutionError
+from decoy_engine.execution._exact_int_faker import exact_int_faker_sources
 from decoy_engine.execution._fk_keys import (
     fk_all_null_array,
     fk_columns_for_table,
@@ -251,6 +252,10 @@ class PandasExecutionAdapter:
 
         ordered = order_work(build_work_list(plan, registry), relationship_graph)
         node_by_key: dict[_NodeKey, WorkNode] = {n.key: n for n in ordered}
+        for t, frame in frames.items():
+            ctx.exact_int_sources.update(
+                exact_int_faker_sources(t, sources[t], frame, (n for n in ordered if n.table == t))
+            )
 
         # FK-parent columns are snapshotted pre-mask so an FK child can rebuild
         # the parent source->masked key map. Parents always mask before children
