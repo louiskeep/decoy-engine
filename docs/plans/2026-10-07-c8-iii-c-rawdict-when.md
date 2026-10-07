@@ -1,4 +1,4 @@
-Status: plan (rev 3)
+Status: plan (rev 3, BUILD-READY: Codex plan gate GO in round 3)
 
 Rules consulted: 00-universal, development-loop, risk-and-exceptions, feature-dev, testing, code-review, security.
 
@@ -153,4 +153,4 @@ Rollback: revert the merge commit.
   - test 3(b) tests native decline, unified `False` and `when_specs` separately;
   - `generate_tables` is named in the entrypoint inventory;
   - every `raise ... from exc` is replaced, and the `__context__` limit is stated.
-
+- **Codex plan gate, round 3: GO** (high confidence). Both round-2 MEDIUMs closed. Runtime probes confirmed that today's `run`, `run_single`, sequential and `generate_tables` all proceed past an invalid seed, so the new tests will detect missing guards.
