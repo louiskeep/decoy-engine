@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import copy
 import datetime as dt
+import decimal
 import re
 import tempfile
 from dataclasses import dataclass
@@ -107,8 +108,21 @@ def _outcome(fn: Any) -> tuple[str, Any]:
 
 def _assert_chunked_equals_full(
     cfg: dict[str, Any], source: Any, oracle: pa.Table, chunk: int = 7
-) -> Any:
-    auto, full = _auto(cfg, source, chunk), _full(cfg, oracle)
+) -> list[bool] | None:
+    """Assert the auto run equals the whole-frame run; the applied mask, or None when both
+    runs raise the same `when` evaluation error (the planner must still have relaxed it)."""
+    want = _outcome(lambda: _full(cfg, oracle))
+    got = _outcome(lambda: _auto(cfg, source, chunk))
+    if want[0] == "err":
+        assert got[0] == "err", "the whole frame raised but the auto run did not"
+        assert type(got[1]) is type(want[1])
+        assert getattr(got[1], "code", None) == getattr(want[1], "code", None)
+        assert getattr(got[1], "code", None) == "when_expression_error"
+        relaxed = planner_relaxed_when_columns(cfg, None, TABLE, {TABLE: source}, {})
+        assert relaxed == frozenset({"s"})
+        return None
+    assert got[0] == "ok", got[1]
+    auto, full = got[1], want[1]
     block = auto.quality_metrics["auto_chunk"]
     assert block["mode"] == "chunked", block["reason"]
     assert full.quality_metrics["auto_chunk"]["mode"] == "full_frame"
@@ -116,7 +130,7 @@ def _assert_chunked_equals_full(
     assert route["native_admitted"] is True, route["reroute_reason"]
     assert _canon(auto.outputs[TABLE]) == _canon(full.outputs[TABLE])
     assert _selected(auto) == _selected(full)
-    return auto
+    return _selected(auto)
 
 
 def _cols(refs: dict[str, pa.Array], predicate: str) -> list[dict[str, Any]]:
@@ -166,7 +180,10 @@ def _cases() -> dict[str, Case]:
         "int64_ne_above_2_53": Case({"n": ints}, f"n != {_BIG + 1}", "strict"),
         "int64_in_above_2_53": Case({"n": ints}, f"n in [{_BIG + 1}, {_BIG + 3}]", "strict"),
         "int64_gt": Case({"n": ints}, f"n > {_BIG + 1}", "strict"),
-        "uint64_above_2_63": Case({"u": u64}, f"u == {2**63 + 1}"),
+        # numexpr cannot take a literal above int64 against uint64: both runs must raise it.
+        "uint64_literal_above_int64": Case({"u": u64}, f"u == {2**63 + 1}", "error"),
+        "uint64_above_2_63": Case({"u": u64}, "u > 9"),
+        "uint64_in_int64_range": Case({"u": u64}, "u != 5"),
         "float_eq": Case({"f": f64}, "f == 1.5", "strict"),
         "float_ne": Case({"f": f64}, "f != 1.5", "strict"),
         "float_in": Case({"f": f64}, "f in [0.5, 1.5]", "strict"),
@@ -239,21 +256,11 @@ def test_a_relaxed_reference_auto_chunks_and_equals_the_whole_frame(
     cfg, source, oracle = _setup(
         tmp_path, _cols(case.refs, case.predicate), table, kind, row_group_size=9
     )
+    mask = _assert_chunked_equals_full(cfg, source, oracle, chunk)
     if case.selection == "error":
-        a, b = _outcome(lambda: _auto(cfg, source, chunk)), _outcome(lambda: _full(cfg, oracle))
-        assert a[0] == b[0] == "err"
-        assert type(a[1]) is type(b[1])
-        assert getattr(a[1], "code", None) == getattr(b[1], "code", None) == "when_expression_error"
-        assert planner_relaxed_when_columns(
-            cfg,
-            None,
-            TABLE,
-            {TABLE: source},
-            {},
-        ) == frozenset({"s"})
+        assert mask is None
         return
-    auto = _assert_chunked_equals_full(cfg, source, oracle, chunk)
-    mask = _selected(auto)
+    assert mask is not None
     if case.selection == "strict":
         assert any(mask) and not all(mask)
     elif case.selection == "none":
@@ -500,7 +507,7 @@ def _non_null(typ: pa.DataType) -> pa.Array:
     if pa.types.is_binary(typ):
         return pa.array([b"a", b"b", b"a", b"b"])
     if pa.types.is_decimal(typ):
-        return pa.array([1, 2, 3, 4]).cast(pa.decimal128(10, 2))
+        return pa.array([decimal.Decimal(i) for i in range(4)], pa.decimal128(10, 2))
     if pa.types.is_list(typ):
         return pa.array([[1], [2], [3], [4]], typ)
     if pa.types.is_struct(typ):
