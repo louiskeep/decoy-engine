@@ -415,8 +415,8 @@ def run_kernel_step_masked(
     rows only and their outputs are scattered back into place, so the cost follows selectivity.
     For the value-keyed operators over a string source (hash, redact, truncate, deterministic
     categorical, text_redact, bucket_perturb, date_shift) that equals the oracle's run on the
-    selected subset plus its write-back, row by row, because each row's output depends only on that row's value and the config. Unselected
-    rows, nulls included, keep their source value.
+    selected subset plus its write-back, row by row, because each row's output depends only on
+    that row's value and the config. Unselected rows, nulls included, keep their source value.
     """
     plain = source.combine_chunks() if isinstance(source, pa.ChunkedArray) else source
     if not (pc.sum(mask).as_py() or 0):

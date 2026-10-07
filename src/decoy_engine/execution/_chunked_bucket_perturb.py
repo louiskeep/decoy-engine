@@ -195,10 +195,13 @@ def reject_unsafe_bucket_perturb_chunk_schema(
 
 
 def _when_column_is_chunk_safe(col_entry: dict[str, Any]) -> bool:
-    """Whether a `bucket_perturb` column's `when:` runs per chunk exactly as it does whole-frame.
+    """Whether a `bucket_perturb` column's `when:` may run on the explicit chunked route.
 
-    That holds for a predicate in the closed grammar (no whole-column reduction) on a column the
-    native config gate admits, which is the set the native route runs and the oracle must match.
+    It needs a predicate in the closed grammar (no whole-column reduction) on a column the native
+    config gate admits, the set the native route runs and the chunked oracle must match. Both
+    chunked legs evaluate the predicate per chunk; that per-chunk mask can still differ from
+    whole-frame for a numeric reference above 2**53 with nulls in some chunks (C8-iii-b), which
+    the auto-chunk planner keeps off this route.
     """
     from decoy_engine.execution.native._operator_config_rejections import (
         bucket_perturb_config_rejection,

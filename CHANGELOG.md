@@ -24,10 +24,14 @@ explicit format no longer raises `chunked_bucket_perturb_when_not_supported`; ot
 ### Fixed (`bucket_perturb` with `date_format: mixed` or `ISO8601`, 2026-10-07)
 
 These pandas format names are no longer run natively. Native execution raised a `ValueError` on
-values whose UTC offsets differ (for example `+01:00` and `+02:00`) and the result depended on how
-the rows split into chunks or batches. Such jobs now run on the pandas route and succeed. Jobs
-that ran natively before (ordinary dates, one UTC offset, all-null or empty input) produce the
-same output.
+values whose UTC offsets differ (for example `+01:00` and `+02:00`), and the result depended on how
+the rows split into chunks or batches. Such jobs now run on the pandas route instead, and their
+output is the same as before (jobs that ran natively, with ordinary dates, one UTC offset, or
+all-null or empty input, produce byte-identical output).
+
+Known defect, NOT fixed here: with either format name, `bucket_perturb` writes the literal format
+name (`mixed` or `ISO8601`) in place of every date it parses, on every route, as it did before
+this change. A follow-up rejects these two values for `bucket_perturb` with a clear config error.
 
 ### Added (memory evidence on capped isolated runs, 2026-10-07)
 

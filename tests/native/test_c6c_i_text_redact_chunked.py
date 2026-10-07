@@ -386,9 +386,10 @@ def test_a_rejected_text_redact_config_is_not_string_pinned(name: str) -> None:
     assert "s" not in _rule(tr_col(**cfg), source(CORPUS)).string_columns
 
 
-def test_a_rejected_text_redact_config_with_a_when_predicate_is_not_string_pinned() -> None:
-    config = make_config([tr_col(token=7), passthrough("p")])
-    config["tables"][0]["columns"][0]["when"] = "p > 1"
+def test_an_admitted_text_redact_config_with_an_unadmitted_when_is_not_string_pinned() -> None:
+    # The column alone is admitted; a chained comparison is outside the closed grammar.
+    config = make_config([tr_col(), passthrough("p")])
+    config["tables"][0]["columns"][0]["when"] = "0 < p < 3"
     rule = build_schema_rule(
         config, table=TABLE, first=source(CORPUS), registry=get_default_registry()
     )

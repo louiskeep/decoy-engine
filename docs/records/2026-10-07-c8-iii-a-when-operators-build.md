@@ -97,3 +97,20 @@ text_redact gains nothing on the chunked route (the span scan is pure Python in 
 - No mixed generate+mask run with a `when:` date_shift or bucket_perturb column.
 - The unified route's row-error path is checked through the coordinator spy; a successful lane run cannot carry row errors (see judgment call 2).
 - The planner's auto-chunk decision for the three operators is covered by the shared verdict and the existing auto-route tests, with no new planner test.
+
+## dennis gate and remediation
+
+dennis returned NO-GO with 0 BLOCKER, 1 HIGH, 2 MEDIUM and 4 LOW. The block was a wrong claim in the release notes, not a code defect: every code probe matched.
+
+- **HIGH (CHANGELOG):** the Fixed entry said special-format bucket_perturb jobs "now succeed". They run on the pandas route with output identical to main. But on every route, bucket_perturb writes the literal format name (`mixed` or `ISO8601`) in place of every date it parses, a pre-existing defect. The entry now says exactly that, flags the defect, and names the follow-up. Cam then chose "reject with a clear error" (2026-10-07), tracked as its own slice `fix/bucket-perturb-format-guard`.
+- **MEDIUM (`transforms/bucket_perturb.py:170`, the pre-existing literal-format defect):** fixed at its source in that follow-up slice, not here. This slice's output equals main's.
+- **MEDIUM (text_redact unified cost):** dennis could not reproduce the 4.05 s. Best of two: pandas 2.53 s, chunked 2.71 s, unified 2.92 s. In the profile, `iter_spans` (pure Python) is 4.16 of 5.39 s. The same gap exists without `when`. The admission is kept to match unmasked admission. The carry-forward is the Rust span kernel (C6c-ii).
+- **LOW, docstring:** `_when_column_is_chunk_safe` no longer claims per-chunk equals whole-frame. It cites C8-iii-b.
+- **LOW, decline tests:** three test-7 edits had lost their `when`-specific purpose. They now use an ADMITTED config with an out-of-grammar chained-comparison predicate:
+  - `test_c6c_i_text_redact_chunked.py`, the not-string-pinned test;
+  - `test_c6c_i_text_redact_unified.py`, the decline test;
+  - `test_bucket_perturb_chunked.py`, the `_when_bearing_bucket_perturb_cfg` helper.
+- **LOW, line length:** the over-long docstring line in `_operator_step.py` is wrapped.
+- **LOW, rebase:** rebased onto main with #222, keeping both CHANGELOG entries. Sentries rerun after the rebase.
+
+After remediation, the touched suites passed: 452.
