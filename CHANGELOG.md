@@ -9,6 +9,10 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Fixed (internal: FPE reference kernel handles empty strings like the strategy, 2026-10-07)
+
+The pure-Python FPE reference kernel used as the native contract oracle now keeps a non-null `""` as `""` on encrypt and decrypt, with no row error and no residual-risk warning input, matching the strategy and unmask. No shipped output changes.
+
 ### Changed (`when:` runs on the unified full-frame route, 2026-10-07)
 
 A single-table full-frame job whose `when:` columns are all `hash`, `redact`, `truncate` or

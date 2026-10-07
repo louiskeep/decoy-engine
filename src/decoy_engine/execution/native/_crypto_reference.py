@@ -150,6 +150,10 @@ class _ReferenceFpe:
                 out.append(None)
                 continue
             text = str(value)
+            if text == "":
+                # Missing-data policy shared with the strategy and unmask: no cipher, no warning.
+                out.append("")
+                continue
             non_na_values.append(text)
             try:
                 out.append(

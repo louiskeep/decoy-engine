@@ -513,6 +513,9 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         # `native_text_redact`, which calls the oracle's `iter_spans` and `_splice`. It imports
         # nothing from `execution.physical`, and the import-direction sweeps above still apply.
         "src/decoy_engine/execution/native/_kernels_scalar.py",
+        # FPE reference kernel: `_crypto_reference.py` keeps an empty string as missing data like
+        # the strategy does. It imports nothing from `execution.physical`.
+        "src/decoy_engine/execution/native/_crypto_reference.py",
     }
     unexpected = [
         name
