@@ -57,6 +57,7 @@ from decoy_engine.execution._unified_slice_resident_types import (
     _ADMITTED_RESIDENT_TYPES,
     _group_key_sibling_admitted,
 )
+from decoy_engine.execution._unified_slice_when import when_columns_admitted
 from decoy_engine.execution.native._companion_status import native_kernel_availability
 from decoy_engine.profile._readers import LazySource
 
@@ -199,6 +200,7 @@ def cheap_admission(
     profile: Profile,
     table_kinds: Mapping[str, str],
     caller_sources: Mapping[str, pa.Table | LazySource],
+    registry: ProviderRegistry | None = None,
 ) -> CheapCandidate | None:
     """D3's no-I/O admission half. Returns `None` on ANY doubt -- the caller
     falls through to the unchanged old route without a reason code, matching
@@ -305,12 +307,9 @@ def cheap_admission(
         return None
     if any(bool(col.get("vault", False)) for col in columns_cfg):
         return None
-    if any(_has_when_gate(col) for col in columns_cfg):
-        # D3: a `when:` predicate gates masking to matching rows only
-        # (`_pandas_adapter.py:405`'s `run_with_when_gate`); the coordinator
-        # masks the whole array with no row gate, so an admitted `when:`
-        # column would over-mask. Decline until the physical path implements
-        # `when` gating (`_seed_envelope.py`'s `ColumnSeed.when`).
+    if not when_columns_admitted(columns_cfg, source, registry, table=table):
+        # A `when:` column runs on this route only when the chunked route's per-column
+        # verdict admits it (see `_unified_slice_when`); one miss sends the table to the oracle.
         return None
 
     try:
@@ -404,11 +403,6 @@ def cheap_admission(
         source_frame=frame,
         boundary_conversion_ms=boundary_conversion_ms,
     )
-
-
-def _has_when_gate(col: Mapping[str, Any]) -> bool:
-    when = col.get("when")
-    return isinstance(when, str) and bool(when.strip())
 
 
 def resident_contract_admission(

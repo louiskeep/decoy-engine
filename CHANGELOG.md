@@ -9,6 +9,20 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Changed (`when:` runs on the unified full-frame route, 2026-10-07)
+
+A single-table full-frame job whose `when:` columns are all `hash`, `redact`, `truncate` or
+deterministic `categorical` over a `string` column now takes the unified lane instead of the
+pandas path. Output is unchanged: the same values, types, `b"pandas"` metadata, warnings, row
+errors and metrics. The row mask comes from the pandas run's own predicate call, evaluated once on
+the same frame, so the selection matches for any column type the lane accepts. Rows a predicate
+does not select keep their source value and the column keeps its pandas dtype. A predicate that
+reads a column an earlier node masks, one outside the closed grammar, a column the source lacks,
+or a table with two column names that pandas' expression resolver maps to one name still runs on
+the pandas path. A predicate that raises declines the table before any node runs, so the job
+raises the pandas run's error. A node whose predicate selects no row reports an idle kernel in
+the activation evidence. The shadow and mixed harnesses still do not run `when:` columns.
+
 ### Changed (position-keyed categorical and Faker run on the unified route, 2026-10-06)
 
 The seeded non-deterministic `categorical` and the non-deterministic `reuse` `faker` now run on

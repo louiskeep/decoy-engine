@@ -240,16 +240,13 @@ def test_cheap_admission_declines_vault_column(tmp_path: Path) -> None:
     assert _cheap_ok(config, profile, source) is None
 
 
-def test_cheap_admission_declines_when_gated_column(tmp_path: Path) -> None:
-    """Codex final-gate BLOCKER: a `when:` predicate gates masking to only
-    the matching rows (`_pandas_adapter.py:405`'s `run_with_when_gate`); the
-    coordinator masks the whole array with no row gate, so an admitted
-    `when:` column would over-mask. `when` is not a declared `ColumnConfig`
-    field (unreachable through `PipelineConfig.model_validate` today, same
-    gap the `dtype` field docstring in `config/_tables.py` documents), so
-    the raw dict is mutated post-validation to exercise the admission check
-    in isolation, matching `test_cheap_admission_declines_duplicate_column_
-    declaration`'s established pattern for this exact situation."""
+def test_cheap_admission_admits_a_when_gated_column_the_native_verdict_accepts(
+    tmp_path: Path,
+) -> None:
+    """A `when:` column the chunked route's verdict admits runs on this route (the row mask
+    comes from the oracle's own predicate, see `_unified_slice_when`). `when` is not a declared
+    `ColumnConfig` field, so the raw dict is mutated post-validation, matching
+    `test_cheap_admission_declines_duplicate_column_declaration`'s pattern."""
     source = pa.table(
         {
             "c": pa.array(["a", "b", "c"], type=pa.string()),
@@ -259,6 +256,28 @@ def test_cheap_admission_declines_when_gated_column(tmp_path: Path) -> None:
     config, source = _build(
         tmp_path,
         [{"name": "c", "strategy": "redact"}, {"name": "flag", "strategy": "passthrough"}],
+        source,
+    )
+    config = dict(config)
+    config["tables"][0]["columns"][0]["when"] = "flag == 1"
+    profile, _ = _profile_and_plan(config, source)
+    assert _cheap_ok(config, profile, source) is not None
+
+
+def test_cheap_admission_declines_a_when_gate_on_a_strategy_the_verdict_rejects(
+    tmp_path: Path,
+) -> None:
+    """The masked kernel step covers hash, redact, truncate and categorical only: a `when:` on
+    anything else still declines to the oracle."""
+    source = pa.table(
+        {
+            "c": pa.array(["a", "b", "c"], type=pa.string()),
+            "flag": pa.array([1, 0, 1], type=pa.int64()),
+        }
+    )
+    config, source = _build(
+        tmp_path,
+        [{"name": "c", "strategy": "passthrough"}, {"name": "flag", "strategy": "passthrough"}],
         source,
     )
     config = dict(config)

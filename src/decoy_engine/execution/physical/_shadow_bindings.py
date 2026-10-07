@@ -50,6 +50,7 @@ from decoy_engine.execution.native._operator_params import (
 )
 from decoy_engine.execution.native._provider_class import classify_provider
 from decoy_engine.execution.native._requirements import resolve_input_arrow_type
+from decoy_engine.execution.native._when_admission import ADMITTED_WHEN_STRATEGIES
 from decoy_engine.execution.physical._plan import ExecutionBinding, KeyBinding, PoolBinding
 from decoy_engine.plan._types import ColumnSeed
 
@@ -390,4 +391,5 @@ def execution_binding_for_slice_node(
         batch_estimate=_batch_estimate(table, inputs),
         pool_binding=pool_binding,
         params=params,
+        when_expression=plan_slice.when if strategy in ADMITTED_WHEN_STRATEGIES else None,
     )

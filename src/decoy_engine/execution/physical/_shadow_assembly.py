@@ -10,11 +10,14 @@ here with the strategy-classification constants it reads.
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
+
 import pyarrow as pa
 
 from decoy_engine.execution._operator_registry import OPERATORS
+from decoy_engine.execution._row_errors import RowError, RowErrorRecord
 
-__all__ = ["assemble_column"]
+__all__ = ["assemble_column", "batch_when_mask", "rebase_row_errors"]
 
 # Tokenizing strategies build a fresh column: empty -> float64, all-null -> null,
 # else -> string (passthrough is separate). bucket_perturb differs ONLY on empty
@@ -75,3 +78,30 @@ def assemble_column(strategy: str, parts: list[pa.Array]) -> pa.Array:
     # source.
     normalized = pa.Table.from_pandas(pa.table({"c": combined}).to_pandas(), preserve_index=False)
     return normalized.column("c").combine_chunks()
+
+
+def batch_when_mask(
+    when_masks: Mapping[str, pa.Array] | None, node_id: str, row_offset: int, num_rows: int
+) -> pa.Array | None:
+    """The batch's slice of a node's whole-table `when:` mask, or `None` for a node with no
+    mask. `row_offset` is the batch's table-global start, so the slice lines up with the batch."""
+    if not when_masks or node_id not in when_masks:
+        return None
+    return when_masks[node_id].slice(row_offset, num_rows)
+
+
+def rebase_row_errors(
+    table: str, batch_errors: Iterable[RowError], row_offset: int
+) -> list[RowErrorRecord]:
+    """Attribute a batch's local row errors to `table` and rebase their indices to table-global
+    positions: the oracle records `row_index` over the whole column."""
+    return [
+        RowErrorRecord(
+            table=table,
+            column=e.column,
+            row_index=e.row_index + row_offset,
+            trigger=e.trigger,
+            reason=e.reason,
+        )
+        for e in batch_errors
+    ]
