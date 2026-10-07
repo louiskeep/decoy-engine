@@ -428,6 +428,9 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         # `when:` admission and row masks for the unified route. It reads the compiled
         # bindings through untyped nodes and imports no `execution.physical` module.
         "src/decoy_engine/execution/_unified_slice_when.py",
+        # The chunked `bucket_perturb` + `when:` gate now lets through the columns the native
+        # route admits; it imports only native config helpers, lazily.
+        "src/decoy_engine/execution/_chunked_bucket_perturb.py",
         # Chunked dispatcher production contract: the public
         # `run_mask_chunked` entry point and the pieces it is built from. The
         # oracle's eager preflight and per-chunk loop move out of `_chunked.py`
