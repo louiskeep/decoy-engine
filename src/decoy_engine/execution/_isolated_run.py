@@ -69,6 +69,7 @@ import subprocess
 import sys
 import tempfile
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -97,6 +98,7 @@ from decoy_engine.execution._isolated_common import (
     is_memory_failure,
     peak_rss_mb,
 )
+from decoy_engine.execution._isolated_memwatch import error_suffix, evidence_of, start_sampler
 from decoy_engine.execution._pipeline import run_pipeline
 from decoy_engine.execution._row_errors import RowErrorRecord
 
@@ -346,6 +348,8 @@ def _run_isolated(
             output_dir_path,
             on_spawn=on_spawn,
             timeout_s=timeout_s,
+            mem_cap_bytes=mem_cap_bytes,
+            rlimit_kind=rlimit_kind,
         )
     finally:
         if owns_work_root:
@@ -400,6 +404,8 @@ def _spawn_and_classify(
     *,
     on_spawn: Callable[[int], None] | None,
     timeout_s: float | None,
+    mem_cap_bytes: int | None,
+    rlimit_kind: str,
 ) -> IsolatedRunResult:
     # HIGH-1: the envelope is a known FILE in work_root (payload_path's own
     # parent), never stdout's last line -- see `_isolated_common.RESULT_
@@ -419,6 +425,10 @@ def _spawn_and_classify(
         cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
     )
 
+    # Started before on_spawn so a callback that kills the child still leaves samples.
+    sampler = (
+        start_sampler(proc.pid, mem_cap_bytes, rlimit_kind) if mem_cap_bytes is not None else None
+    )
     try:
         if on_spawn is not None:
             # The child's PID is live NOW, mid-run -- this is the hook a
@@ -428,9 +438,12 @@ def _spawn_and_classify(
             # and gets the child killed + reaped rather than leaked.
             on_spawn(proc.pid)
         stdout, stderr = proc.communicate(timeout=timeout_s)
+        # Stop before envelope work so late parsing cannot age or extend the evidence.
+        finished = sampler.finish() if sampler else None
     except subprocess.TimeoutExpired:
         proc.kill()
         _stdout, _stderr = proc.communicate()
+        finished = sampler.finish() if sampler else None
         shutil.rmtree(staging_output_dir, ignore_errors=True)
         return IsolatedRunResult(
             outcome="crashed",
@@ -443,6 +456,7 @@ def _spawn_and_classify(
             error=f"child exceeded timeout_s={timeout_s}s and was killed",
             isolated=True,
             pid=proc.pid,
+            memory_evidence=evidence_of(finished, abnormal=False),
         )
     except BaseException:
         # MED-3: on_spawn raised (a governor bug, not the child's fault).
@@ -452,6 +466,8 @@ def _spawn_and_classify(
         # clean up themselves.
         proc.kill()
         proc.communicate()
+        if sampler:
+            sampler.finish()
         raise
 
     envelope = read_envelope(result_path)
@@ -465,7 +481,8 @@ def _spawn_and_classify(
             "crashed",
         )
     ):
-        return _result_from_envelope(envelope, output_dir, proc.pid, staging_output_dir)
+        result = _result_from_envelope(envelope, output_dir, proc.pid, staging_output_dir)
+        return replace(result, memory_evidence=evidence_of(finished, abnormal=False))
 
     # The child died too hard to self-report (a harder rlimit trip the
     # kernel turned into a signal, or an external SIGKILL -- the governor
@@ -482,6 +499,7 @@ def _spawn_and_classify(
     # child died without a parseable envelope, so whatever it printed before
     # dying is the best remaining clue.
     stdout_tail = stdout.strip().splitlines()[-1][:300] if stdout.strip() else ""
+    evidence = evidence_of(finished, abnormal=True)
     return IsolatedRunResult(
         outcome=outcome,
         peak_rss_mb=None,  # unrecoverable: the child is gone and never reported
@@ -495,9 +513,11 @@ def _spawn_and_classify(
             f"{f', signal={signal_name}' if signal_name else ''}); "
             f"stderr tail: {stderr_tail!r}"
             f"{f'; stdout tail: {stdout_tail!r}' if stdout_tail else ''}"
+            f"{error_suffix(evidence) if evidence else ''}"
         ),
         isolated=True,
         pid=proc.pid,
+        memory_evidence=evidence,
     )
 
 
