@@ -10,6 +10,10 @@ Date: 2026-10-07. Branch `fix/fpe-reference-empty`, base engine main `9bbde63c`.
   `fpe_unencryptable_domain` row error on `""` or a warning-count mismatch.
 - `6fe72a60` the fix in `_ReferenceFpe._run`: a non-null value whose `str()` is `""` is output as
   `""`, skips the transform, and is not added to the warning inputs.
+- `8b61821f` adds `_crypto_reference.py` to the `permitted_non_physical` ledger in
+  `tests/sentry/test_physical_seam_disconnection.py`. That sentry fails any change under
+  `execution/` outside `physical/` that is not listed; every earlier slice added its own entry.
+  No assertion changed.
 
 ## What changed
 
