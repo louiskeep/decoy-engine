@@ -44,9 +44,9 @@ the rows split into chunks or batches. Such jobs now run on the pandas route ins
 output is the same as before (jobs that ran natively, with ordinary dates, one UTC offset, or
 all-null or empty input, produce byte-identical output).
 
-Known defect, NOT fixed here: with either format name, `bucket_perturb` writes the literal format
-name (`mixed` or `ISO8601`) in place of every date it parses, on every route, as it did before
-this change. A follow-up rejects these two values for `bucket_perturb` with a clear config error.
+Superseded the same day: both values (and every other format with no date directive) are now
+rejected before the job runs; see "bucket_perturb date_format that destroyed dates"
+above. The native decline remains as a second line behind that check.
 
 ### Added (memory evidence on capped isolated runs, 2026-10-07)
 
