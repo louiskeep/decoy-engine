@@ -122,7 +122,14 @@ across runs. Null and unparseable values are left as-is. Needs a namespace.
 
 - `min_days` / `max_days`: the offset range (defaults -365 and 365). If
   reversed, they are swapped.
-- `date_format`: a strftime format; auto-detected from the column if omitted.
+- `date_format`: a strftime format; auto-detected from the column if omitted. It
+  must contain at least one date directive (`%Y`, `%m`, `%d`, ...) because the same
+  format writes each perturbed date back. `ISO8601`, `mixed`, a bare `%Q` or a
+  time-only format such as `%H:%M:%S` is rejected at compile time with
+  `bucket_perturb_date_format_unsupported`, and by the handler as
+  `bucket_perturb_invalid_config`. Write a concrete pattern such as `%Y-%m-%d`.
+  Time, fractional-second and timezone directives are allowed but write midnight,
+  zero or nothing, since the strategy perturbs the calendar date.
 
 Use it for HIPAA-style date generalization where relative spacing matters but
 the absolute date must move.

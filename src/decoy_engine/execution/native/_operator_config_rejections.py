@@ -92,9 +92,14 @@ def bucket_perturb_config_rejection(
     # kernel keeps tz-aware Timestamps. Imported lazily so the pandas-bearing
     # kernel module stays off the planning boundary's module-load path.
     from decoy_engine.execution.native._bucket_perturb_ext import has_timezone_directive
+    from decoy_engine.transforms.bucket_perturb import bucket_perturb_date_format_problem
 
     if has_timezone_directive(date_format):
         return f"bucket_perturb_timezone_directive:{name}"
+    # The shared rule compile and the handlers apply, so compile rejection
+    # implies native rejection; the declines above stay native-only.
+    if bucket_perturb_date_format_problem(date_format) is not None:
+        return f"bucket_perturb_date_format_unsupported:{name}"
     # With neither a profile nor a resident source, the input type is
     # unknowable; defer to the unified-slice resident-type gate (matches
     # hash). A RESOLVED non-string type is rejected here, early.

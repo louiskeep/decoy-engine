@@ -260,6 +260,10 @@ class NestedStrategyHandler:
         # order byte-identical to the pre-extraction behavior (passing
         # `column` preserves the "(column=...)" message suffix).
         child_handler, child_seed = self._resolve_child(plan, column)
+        # A bucket_perturb child must reject an unwritable date_format even for an
+        # empty, all-null or zero-match column, which return before the child runs.
+        if child_seed.strategy == "bucket_perturb":
+            child_handler.preflight(child_seed, ctx)
 
         try:
             jsonpath_expr = jsonpath_ng.parse(target_path)

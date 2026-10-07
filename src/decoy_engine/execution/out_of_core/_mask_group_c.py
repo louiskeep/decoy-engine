@@ -414,13 +414,6 @@ def _bucket_perturb_array(
             message="bucket_perturb strategy requires a namespace.",
         )
     bucket = str(cfg.get("bucket", "month"))
-    date_format: str | None = cfg.get("date_format") or None
-    if date_format is None:
-        raise ExecutionError(
-            code="out_of_core_bucket_perturb_autodetect_unsupported",
-            message="out-of-core bucket_perturb requires an explicit date_format "
-            "(gate should reject); whole-column format detection does not chunk.",
-        )
     try:
         validate_bucket_perturb_config({**cfg, "bucket": bucket})
     except ValueError as exc:
@@ -429,6 +422,13 @@ def _bucket_perturb_array(
             strategy="bucket_perturb",
             message=str(exc),
         ) from exc
+    date_format: str | None = cfg.get("date_format") or None
+    if date_format is None:
+        raise ExecutionError(
+            code="out_of_core_bucket_perturb_autodetect_unsupported",
+            message="out-of-core bucket_perturb requires an explicit date_format "
+            "(gate should reject); whole-column format detection does not chunk.",
+        )
 
     series = _to_series(values)
     perturbed = apply_bucket_perturb(
