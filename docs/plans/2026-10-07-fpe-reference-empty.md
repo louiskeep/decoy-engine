@@ -1,4 +1,4 @@
-Status: plan
+Status: plan (rev 2, BUILD-READY: Codex plan gate GO in round 2)
 
 Rules consulted: 00-universal, development-loop, risk-and-exceptions, testing, code-review.
 
@@ -60,3 +60,4 @@ Rollback: revert the merge commit.
   - a spy proving empty cells never reach the transform.
 
   Codex confirmed the section 1 facts, the `str(value) == ""` policy on both sides, and that only the contract tests call the reference.
+- **Codex plan gate, round 2: GO.** No new findings.
