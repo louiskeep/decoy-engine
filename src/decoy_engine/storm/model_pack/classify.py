@@ -26,8 +26,12 @@ Determinism:
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from decoy_engine import fileaccess
+from decoy_engine.fileaccess import DirHandle, FileAccess
 
 if TYPE_CHECKING:
     import pandas  # classify_fields signature only; imported lazily at call-time
@@ -84,23 +88,22 @@ def _default_pack_dir() -> Path:
 
 
 def _is_default_pack_dir(pack_dir: Path) -> bool:
-    """True if *pack_dir* resolves to the first-party default pack location.
+    """True if *pack_dir* names the first-party default pack location (a lexical comparison;
+    the path is never opened).
 
     Lets a caller that passes the default path explicitly keep the trusted
     posture (avoids a silent ML-off downgrade for callers -- e.g. the platform
     classify-fields endpoint -- that were already pointing at the shipped pack);
     a genuinely different pack stays untrusted (DE-04 Option C).
     """
-    try:
-        return pack_dir.resolve() == _default_pack_dir().resolve()
-    except OSError:
-        return False
+    return Path(os.path.abspath(pack_dir)) == Path(os.path.abspath(_default_pack_dir()))
 
 
 def classify_fields(
     df: pandas.DataFrame,
     *,
     pack_dir: Path | None = None,
+    file_access: FileAccess | None = None,
 ) -> dict[str, dict[str, Any]] | None:
     """Classify each column in *df* using the trained LightGBM model pack.
 
@@ -164,14 +167,17 @@ def classify_fields(
     # fail-closes it before joblib.load runs). A pack_dir that resolves to the
     # default location stays trusted, so a caller pinning the shipped pack
     # explicitly (e.g. the platform endpoint) is not silently downgraded to None.
-    if pack_dir is None:
-        resolved_dir = _default_pack_dir()
+    resolved_dir: Path | DirHandle
+    if pack_dir is None or _is_default_pack_dir(pack_dir):
+        # The shipped default is package data the engine owns, so it is read directly. A
+        # caller path that names it is replaced by the engine's own constant, never opened.
+        resolved_dir = fileaccess.engine_dir_handle(_default_pack_dir())
         trusted = True
     else:
         resolved_dir = pack_dir
-        trusted = _is_default_pack_dir(pack_dir)
+        trusted = False
 
-    loader = ModelPackLoader(resolved_dir, trusted=trusted)
+    loader = ModelPackLoader(resolved_dir, trusted=trusted, file_access=file_access)
     pack = loader.load_with_fallback()
     if pack is None:
         # ML disabled or pack unavailable; caller uses the regex baseline.

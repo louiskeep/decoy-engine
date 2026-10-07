@@ -15,6 +15,8 @@ from typing import Any
 
 import polars as pl
 
+from decoy_engine.fileaccess import FileAccess, entry_point
+from decoy_engine.fileaccess.adapters import serial
 from decoy_engine.plan._types import PlanRelationship
 from decoy_engine.subset._closure import ClosureResult, compute_closure, verify_closure
 from decoy_engine.subset._edges import build_subset_edges, relationships_from_config
@@ -129,6 +131,7 @@ def _compute(
     return plan, key_frames, edges, directions, closure
 
 
+@entry_point
 def plan_subset(
     *,
     sources: dict[str, SubsetSource],
@@ -137,6 +140,7 @@ def plan_subset(
     policy: FanOutPolicy,
     job_seed: bytes,
     engine_version: str,
+    file_access: FileAccess | None = None,
 ) -> SubsetPlan:
     """The dry-run. Never writes anything; never reads non-key columns."""
     plan, _key_frames, _edges, _directions, _closure = _compute(
@@ -150,6 +154,7 @@ def plan_subset(
     return plan
 
 
+@entry_point
 def run_subset(
     *,
     sources: dict[str, SubsetSource],
@@ -159,6 +164,7 @@ def run_subset(
     job_seed: bytes,
     engine_version: str,
     output_dir: str | Path,
+    file_access: FileAccess | None = None,
 ) -> SubsetResult:
     """Plan, verify, then materialize + write the manifest.
 
@@ -176,14 +182,17 @@ def run_subset(
         engine_version=engine_version,
     )
 
-    output_dir = Path(output_dir)
-    output_paths = materialize_subset(
-        sources=sources, survivors=closure.survivors, output_dir=output_dir
+    txn, output_paths = materialize_subset(
+        sources=sources, survivors=closure.survivors, output_dir=Path(output_dir)
     )
-    manifest = build_manifest(plan, engine_version)
-    (output_dir / "subset-manifest.json").write_text(
-        json.dumps(to_json_dict(manifest), sort_keys=True, indent=2)
-    )
+    try:
+        manifest = build_manifest(plan, engine_version)
+        text = json.dumps(to_json_dict(manifest), sort_keys=True, indent=2)
+        serial.write_text(txn, "subset-manifest.json", text)
+        txn.publish()
+    except BaseException:
+        txn.abort()
+        raise
     return SubsetResult(plan=plan, manifest=manifest, output_paths=output_paths)
 
 

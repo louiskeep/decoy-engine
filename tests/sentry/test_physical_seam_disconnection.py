@@ -528,6 +528,21 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         # FPE reference kernel: `_crypto_reference.py` keeps an empty string as missing data like
         # the strategy does. It imports nothing from `execution.physical`.
         "src/decoy_engine/execution/native/_crypto_reference.py",
+        # E1 (the FileAccess policy, 2026-10-07): every file the engine opens goes through
+        # `decoy_engine.fileaccess`. These modules gain a policy-bound reader, a stage or a
+        # propagated context and import nothing from `execution.physical`: the governor and its
+        # RSS monitor thread (`run_in_context`), the FPE thread pool (`map_in_context`), the
+        # capacity estimate (a lexical path join), the DuckDB connection helper (the adapter),
+        # the spill estimate's output-device probe (a policy `stat`), the out-of-core key
+        # stager's scratch `LazySource`, and the new scratch-root helper.
+        "src/decoy_engine/execution/_governor.py",
+        "src/decoy_engine/execution/_governor_monitor.py",
+        "src/decoy_engine/execution/_strategies/_fpe.py",
+        "src/decoy_engine/execution/capacity.py",
+        "src/decoy_engine/execution/out_of_core/_duckdb.py",
+        "src/decoy_engine/execution/out_of_core/_scratch.py",
+        "src/decoy_engine/execution/out_of_core/_spill_estimate.py",
+        "src/decoy_engine/execution/out_of_core/_stage.py",
     }
     unexpected = [
         name

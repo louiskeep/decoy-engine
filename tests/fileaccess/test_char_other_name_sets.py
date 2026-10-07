@@ -63,7 +63,10 @@ def test_staging_dir_is_a_sibling_of_the_output_dir(tmp_path: Path) -> None:
     stage = commit.sibling_staging_dir(out)
     assert stage.parent == out.parent
     assert stage.name.startswith("_decoy_isolated_stage_")
-    assert commit.resolve_staging_output_dir(tmp_path / "work", None) == tmp_path / "work" / "staging_output"
+    assert (
+        commit.resolve_staging_output_dir(tmp_path / "work", None)
+        == tmp_path / "work" / "staging_output"
+    )
 
 
 def test_parquet_roundtrip_of_staged_table(tmp_path: Path) -> None:

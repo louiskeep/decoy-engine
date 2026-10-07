@@ -90,19 +90,19 @@ def _std_source(tmp: Path, rows: int = support.ROWS) -> tuple[dict[str, Any], pa
 
 def full_frame(tmp: Path, mp: pytest.MonkeyPatch, ctx: dict[str, Any]) -> dict[str, Any]:
     cfg, src = _std_source(tmp)
-    return _record(support.run_full_frame(cfg, src), tmp)
+    return _record(support.run_full_frame(cfg, src, **ctx["kw"]), tmp)
 
 
 def auto_chunk_resident(tmp: Path, mp: pytest.MonkeyPatch, ctx: dict[str, Any]) -> dict[str, Any]:
     cfg, src = _std_source(tmp)
-    return _record(support.run_default(cfg, src), tmp)
+    return _record(support.run_default(cfg, src, **ctx["kw"]), tmp)
 
 
 def streamed_to_sink(tmp: Path, mp: pytest.MonkeyPatch, ctx: dict[str, Any]) -> dict[str, Any]:
     cfg, src = _std_source(tmp)
     out = tmp / "out"
     res = run_pipeline(
-        cfg, sources={"t": src}, sink=ctx["sink"](out), **support.run_kwargs()
+        cfg, sources={"t": src}, sink=ctx["sink"](out), **support.run_kwargs(**ctx["kw"])
     )
     return _record(res, tmp, out)
 
@@ -111,7 +111,9 @@ def streamed_lazy_source(tmp: Path, mp: pytest.MonkeyPatch, ctx: dict[str, Any])
     cfg, src = _std_source(tmp)
     out = tmp / "out"
     lazy = ctx["lazy"](Path(cfg["sources"]["t"]["path"]))
-    res = run_pipeline(cfg, sources={"t": lazy}, sink=ctx["sink"](out), **support.run_kwargs())
+    res = run_pipeline(
+        cfg, sources={"t": lazy}, sink=ctx["sink"](out), **support.run_kwargs(**ctx["kw"])
+    )
     return _record(res, tmp, out)
 
 
@@ -121,7 +123,9 @@ def holdback_spill(tmp: Path, mp: pytest.MonkeyPatch, ctx: dict[str, Any]) -> di
     mp.setattr(mod, "ROW_GROUP_ROWS", 20)
     cfg, src = _late_typed_job(tmp)
     out = tmp / "level_one" / "out"
-    res = run_pipeline(cfg, sources={"t": src}, sink=ctx["sink"](out), **support.run_kwargs())
+    res = run_pipeline(
+        cfg, sources={"t": src}, sink=ctx["sink"](out), **support.run_kwargs(**ctx["kw"])
+    )
     record = _record(res, tmp, out)
     record["spilled"] = res.quality_metrics["auto_chunk"]["output"]["spilled_chunks"] > 0
     return record
@@ -136,7 +140,7 @@ def multi_table_dispatch(tmp: Path, mp: pytest.MonkeyPatch, ctx: dict[str, Any])
         },
     )
     out = tmp / "out"
-    res = run_pipeline(cfg, sources=sources, sink=ctx["sink"](out), **mt.kw())
+    res = run_pipeline(cfg, sources=sources, sink=ctx["sink"](out), **mt.kw(**ctx["kw"]))
     return _record(res, tmp, out)
 
 
@@ -148,7 +152,7 @@ def transform_bearing_lazy(
         tmp, tbl, transforms=[{"op": "filter", "expression": "id > 2"}, {"op": "limit", "n": 4}]
     )
     lazy = ctx["lazy"](Path(cfg["sources"]["t"]["path"]))
-    res = run_pipeline(cfg, sources={"t": lazy}, engine_version="e1-corpus")
+    res = run_pipeline(cfg, sources={"t": lazy}, engine_version="e1-corpus", **ctx["kw"])
     return _record(res, tmp)
 
 
@@ -169,7 +173,9 @@ def native_when(tmp: Path, mp: pytest.MonkeyPatch, ctx: dict[str, Any]) -> dict[
                 column["when"] = "amount > 10"
     cfg = PipelineConfig.model_validate(cfg).model_dump()
     res = run_pipeline(
-        cfg, sources={"tbl": table}, **support.run_kwargs(),
+        cfg,
+        sources={"tbl": table},
+        **support.run_kwargs(**ctx["kw"]),
     )
     return _record(res, tmp)
 
@@ -186,6 +192,7 @@ def sequential_fk(tmp: Path, mp: pytest.MonkeyPatch, ctx: dict[str, Any]) -> dic
         engine_version="e1-corpus",
         execution_mode="sequential",
         sink=ctx["sink"](out),
+        **ctx["kw"],
     )
     return _record(res, tmp, out)
 
@@ -202,6 +209,7 @@ def out_of_core_fk(tmp: Path, mp: pytest.MonkeyPatch, ctx: dict[str, Any]) -> di
         engine_version="e1-corpus",
         execution_mode="out_of_core",
         sink=ctx["sink"](out),
+        **ctx["kw"],
     )
     return _record(res, tmp, out)
 
@@ -225,7 +233,7 @@ def generate_only(tmp: Path, mp: pytest.MonkeyPatch, ctx: dict[str, Any]) -> dic
         cfg = PipelineConfig.model_validate(raw).model_dump()
     except Exception as exc:
         return {"config_error": type(exc).__name__}
-    res = run_pipeline(cfg, sources=None, engine_version="e1-corpus")
+    res = run_pipeline(cfg, sources=None, engine_version="e1-corpus", **ctx["kw"])
     return _record(res, tmp)
 
 
@@ -246,7 +254,7 @@ JOBS: dict[str, Job] = {
 
 def default_ctx() -> dict[str, Any]:
     """How a job builds its sink and lazy source today: the no-policy constructors."""
-    return {"sink": ParquetTransactionalSink, "lazy": LazySource}
+    return {"sink": ParquetTransactionalSink, "lazy": LazySource, "kw": {}}
 
 
 def env_key() -> str:

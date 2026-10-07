@@ -48,7 +48,9 @@ from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from typing import Any
 
+from decoy_engine import fileaccess
 from decoy_engine.errors import DecoyError
+from decoy_engine.fileaccess import FileRole
 from decoy_engine.quality.snapshot import DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION
 
 _SUPPORTED_KINDS = ("numeric", "categorical", "datetime", "freetext")
@@ -147,12 +149,11 @@ def spec_from_dict(data: Mapping[str, Any]) -> StatisticalSpec:
 # takes the already-parsed snapshot mapping as an explicit argument. This
 # function remains for compile-time callers that still need to read a
 # path (the compiler's read-once pass) and for tests building fixtures.
-def _load_snapshot(path: str) -> tuple[str, dict[str, Any]]:
+def _load_snapshot(path: str, field_key: str = "snapshot_file") -> tuple[str, dict[str, Any]]:
     """Read + parse a snapshot artifact. Returns `(content_sha256, parsed)`.
     No caching: every call is a fresh read + hash + parse."""
     try:
-        with open(path, "rb") as fh:
-            raw = fh.read()
+        raw = fileaccess.read_all(FileRole.SNAPSHOT, path, field_key)
     except OSError as exc:
         raise StatisticalSpecError(
             code="statistical_snapshot_unreadable",

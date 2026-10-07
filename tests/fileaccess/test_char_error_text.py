@@ -174,7 +174,10 @@ def test_r10_vault_read_errors() -> None:
     )
     Path("bad.dcyvault").write_bytes(b"junk")
     bad = _raises(lambda: load_vault("bad.dcyvault", b"12345678"))
-    assert _text(bad) == "[vault_unreadable] 'bad.dcyvault' is not a decoy vault file (bad magic header)."
+    assert (
+        _text(bad)
+        == "[vault_unreadable] 'bad.dcyvault' is not a decoy vault file (bad magic header)."
+    )
 
 
 def test_r12_config_file_errors() -> None:

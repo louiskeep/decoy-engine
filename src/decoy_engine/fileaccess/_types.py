@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import enum
 import os
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, BinaryIO, Literal, Protocol, TextIO, runtime_checkable
 
@@ -98,7 +98,7 @@ class FileHandle(Protocol):
 
     def read_all(self, limit: int | None = None) -> bytes: ...
 
-    def open_binary(self) -> BinaryIO: ...
+    def open_binary(self, opener: Callable[..., BinaryIO] | None = None) -> BinaryIO: ...
 
     def open_text(self, encoding: str = "utf-8") -> TextIO: ...
 

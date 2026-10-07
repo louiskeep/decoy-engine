@@ -106,6 +106,7 @@ from decoy_engine.execution._governor_monitor import _RssMonitor
 from decoy_engine.execution._isolated_common import IsolatedRunResult
 from decoy_engine.execution._isolated_run import run_pipeline_isolated
 from decoy_engine.execution._substrate import require_bool
+from decoy_engine.fileaccess import FileAccess, entry_point
 
 if TYPE_CHECKING:
     import pyarrow as pa
@@ -254,6 +255,7 @@ def _exhausted_diagnostic(trips: tuple[GovernorTripRecord, ...], budget_bytes: i
     )
 
 
+@entry_point
 def run_job_with_governor(
     config: dict[str, Any],
     sources: dict[str, pa.Table] | None = None,
@@ -264,6 +266,7 @@ def run_job_with_governor(
     hard_threshold_fraction: float = _DEFAULT_HARD_THRESHOLD_FRACTION,
     poll_interval_s: float = _DEFAULT_POLL_INTERVAL_S,
     on_trip: Callable[[GovernorTripRecord], None] | None = None,
+    file_access: FileAccess | None = None,
     **isolated_kwargs: Any,
 ) -> GovernorResult:
     """Run one job under the runtime governor: monitor its child process's

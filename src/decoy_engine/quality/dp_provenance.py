@@ -63,7 +63,9 @@ from typing import NamedTuple
 
 from packaging.utils import canonicalize_name
 
+from decoy_engine import fileaccess
 from decoy_engine.errors import DecoyError
+from decoy_engine.fileaccess import FileHandle, FileRequest, FileRole
 
 __all__ = [
     "CERTIFIED_PLATFORM",
@@ -514,9 +516,17 @@ def assert_lock_matches_installed(lock_path: str | Path | None = None) -> None:
 
     from packaging.markers import Marker
 
-    path = Path(lock_path) if lock_path is not None else _default_lock_path()
+    lock_file: FileHandle
+    if lock_path is None:
+        path = _default_lock_path()
+        lock_file = fileaccess.engine_handle(path)
+    else:
+        path = Path(lock_path)
+        lock_file = fileaccess.capture().open_read(
+            FileRequest(FileRole.CONFIG, "read", str(path), "dp.lock_path")
+        )
     try:
-        with path.open("rb") as handle:
+        with lock_file.open_binary() as handle:
             lock = toml_reader.load(handle)
     except (OSError, ValueError) as exc:
         raise ProvenanceError(

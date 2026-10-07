@@ -1,0 +1,1496 @@
+# Reviewed registry of sink call sites (plan D9, rule 3), one entry per call site.
+# `ordinal` is the index of the call among identical sinks in the function. An entry may be
+# removed freely; adding one needs a `rule` (how the path is built), an `owner` and a `reason`.
+# `ambient_only` marks a caller-derived path that is reached only after `require_ambient`.
+# Count: 163 (asserted by the sentry).
+
+[[entry]]
+module = "decoy_engine/connectors/sftp.py"
+function = "_open_sftp"
+sink = "os.path.exists"
+ordinal = 0
+rule = "operator-set `DECOY_SFTP_KNOWN_HOSTS` or `~/.ssh/known_hosts`"
+owner = "cam"
+reason = "SFTP host-key file; the cloud route is the FA-2 follow-up"
+
+[[entry]]
+module = "decoy_engine/data_discovery.py"
+function = "run_discovery_sql"
+sink = "duckdb.connection.execute"
+ordinal = 0
+rule = "connection yielded by `untrusted_session`: external access off, configuration locked, SQL checked to be exactly one SELECT"
+owner = "cam"
+reason = "the discovery query runs on the locked in-memory connection"
+
+[[entry]]
+module = "decoy_engine/disguises/loader.py"
+function = "load_disguises"
+sink = "engine_dir_handle"
+ordinal = 0
+rule = "`Path(__file__).parent`"
+owner = "cam"
+reason = "the shipped disguise YAML directory"
+
+[[entry]]
+module = "decoy_engine/execution/_chunked_fk_dtype_safety.py"
+function = "declared_fk_hash_dtype_is_safe"
+sink = "<dynamic>"
+ordinal = 0
+rule = "`getattr(pyarrow, f\"decimal{width}\")` where width matched a regex of 32|64|128|256"
+owner = "cam"
+reason = "an Arrow decimal type constructor, never a file API"
+
+[[entry]]
+module = "decoy_engine/execution/_governor_monitor.py"
+function = "_read_child_status"
+sink = "open"
+ordinal = 0
+rule = "`/proc/<pid>/status` or `/proc/self/status`, a constant procfs path"
+owner = "cam"
+reason = "process memory readout for the governor; no caller or config value reaches the path"
+
+[[entry]]
+module = "decoy_engine/execution/_isolated_commit.py"
+function = "stage_tables"
+sink = "Path.mkdir"
+ordinal = 0
+rule = "path derived from the caller's staging_dir, output_dir or temp_dir, or an engine-created `tempfile.mkdtemp`; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
+owner = "cam"
+reason = "the subprocess and scratch route cannot carry a strict policy (D6 fail-closed fallback), so a strict policy never gets here"
+ambient_only = true
+
+[[entry]]
+module = "decoy_engine/execution/_isolated_commit.py"
+function = "stage_tables"
+sink = "pyarrow.parquet.write_table"
+ordinal = 0
+rule = "path derived from the caller's staging_dir, output_dir or temp_dir, or an engine-created `tempfile.mkdtemp`; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
+owner = "cam"
+reason = "the subprocess and scratch route cannot carry a strict policy (D6 fail-closed fallback), so a strict policy never gets here"
+ambient_only = true
+
+[[entry]]
+module = "decoy_engine/execution/_isolated_commit.py"
+function = "atomic_commit"
+sink = "Path.mkdir"
+ordinal = 0
+rule = "path derived from the caller's staging_dir, output_dir or temp_dir, or an engine-created `tempfile.mkdtemp`; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
+owner = "cam"
+reason = "the subprocess and scratch route cannot carry a strict policy (D6 fail-closed fallback), so a strict policy never gets here"
+ambient_only = true
+
+[[entry]]
+module = "decoy_engine/execution/_isolated_commit.py"
+function = "atomic_commit"
+sink = "os.replace"
+ordinal = 0
+rule = "path derived from the caller's staging_dir, output_dir or temp_dir, or an engine-created `tempfile.mkdtemp`; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
+owner = "cam"
+reason = "the subprocess and scratch route cannot carry a strict policy (D6 fail-closed fallback), so a strict policy never gets here"
+ambient_only = true
+
+[[entry]]
+module = "decoy_engine/execution/_isolated_commit.py"
+function = "read_staged_row_errors"
+sink = "Path.read_text"
+ordinal = 0
+rule = "path derived from the caller's staging_dir, output_dir or temp_dir, or an engine-created `tempfile.mkdtemp`; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
+owner = "cam"
+reason = "the subprocess and scratch route cannot carry a strict policy (D6 fail-closed fallback), so a strict policy never gets here"
+ambient_only = true
+
+[[entry]]
+module = "decoy_engine/execution/_isolated_commit.py"
+function = "read_envelope"
+sink = "Path.read_text"
+ordinal = 0
+rule = "path derived from the caller's staging_dir, output_dir or temp_dir, or an engine-created `tempfile.mkdtemp`; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
+owner = "cam"
+reason = "the subprocess and scratch route cannot carry a strict policy (D6 fail-closed fallback), so a strict policy never gets here"
+ambient_only = true
+
+[[entry]]
+module = "decoy_engine/execution/_isolated_common.py"
+function = "peak_rss_mb"
+sink = "Path.read_text"
+ordinal = 0
+rule = "`/proc/<pid>/status` or `/proc/self/status`, a constant procfs path"
+owner = "cam"
+reason = "process memory readout for the governor; no caller or config value reaches the path"
+
+[[entry]]
+module = "decoy_engine/execution/_isolated_run.py"
+function = "_run_in_process"
+sink = "shutil.rmtree"
+ordinal = 0
+rule = "path derived from the caller's staging_dir, output_dir or temp_dir, or an engine-created `tempfile.mkdtemp`; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
+owner = "cam"
+reason = "the subprocess and scratch route cannot carry a strict policy (D6 fail-closed fallback), so a strict policy never gets here"
+ambient_only = true
+
+[[entry]]
+module = "decoy_engine/execution/_isolated_run.py"
+function = "_run_isolated"
+sink = "tempfile.mkdtemp"
+ordinal = 0
+rule = "path derived from the caller's staging_dir, output_dir or temp_dir, or an engine-created `tempfile.mkdtemp`; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
+owner = "cam"
+reason = "the subprocess and scratch route cannot carry a strict policy (D6 fail-closed fallback), so a strict policy never gets here"
+ambient_only = true
+
+[[entry]]
+module = "decoy_engine/execution/_isolated_run.py"
+function = "_run_isolated"
+sink = "Path.mkdir"
+ordinal = 0
+rule = "path derived from the caller's staging_dir, output_dir or temp_dir, or an engine-created `tempfile.mkdtemp`; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
+owner = "cam"
+reason = "the subprocess and scratch route cannot carry a strict policy (D6 fail-closed fallback), so a strict policy never gets here"
+ambient_only = true
+
+[[entry]]
+module = "decoy_engine/execution/_isolated_run.py"
+function = "_run_isolated"
+sink = "shutil.rmtree"
+ordinal = 0
+rule = "path derived from the caller's staging_dir, output_dir or temp_dir, or an engine-created `tempfile.mkdtemp`; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
+owner = "cam"
+reason = "the subprocess and scratch route cannot carry a strict policy (D6 fail-closed fallback), so a strict policy never gets here"
+ambient_only = true
+
+[[entry]]
+module = "decoy_engine/execution/_isolated_run.py"
+function = "_write_payload"
+sink = "Path.mkdir"
+ordinal = 0
+rule = "path derived from the caller's staging_dir, output_dir or temp_dir, or an engine-created `tempfile.mkdtemp`; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
+owner = "cam"
+reason = "the subprocess and scratch route cannot carry a strict policy (D6 fail-closed fallback), so a strict policy never gets here"
+ambient_only = true
+
+[[entry]]
+module = "decoy_engine/execution/_isolated_run.py"
+function = "_write_payload"
+sink = "pyarrow.parquet.write_table"
+ordinal = 0
+rule = "path derived from the caller's staging_dir, output_dir or temp_dir, or an engine-created `tempfile.mkdtemp`; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
+owner = "cam"
+reason = "the subprocess and scratch route cannot carry a strict policy (D6 fail-closed fallback), so a strict policy never gets here"
+ambient_only = true
+
+[[entry]]
+module = "decoy_engine/execution/_isolated_run.py"
+function = "_write_payload"
+sink = "Path.write_text"
+ordinal = 0
+rule = "path derived from the caller's staging_dir, output_dir or temp_dir, or an engine-created `tempfile.mkdtemp`; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
+owner = "cam"
+reason = "the subprocess and scratch route cannot carry a strict policy (D6 fail-closed fallback), so a strict policy never gets here"
+ambient_only = true
+
+[[entry]]
+module = "decoy_engine/execution/_isolated_run.py"
+function = "_write_payload"
+sink = "os.chmod"
+ordinal = 0
+rule = "path derived from the caller's staging_dir, output_dir or temp_dir, or an engine-created `tempfile.mkdtemp`; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
+owner = "cam"
+reason = "the subprocess and scratch route cannot carry a strict policy (D6 fail-closed fallback), so a strict policy never gets here"
+ambient_only = true
+
+[[entry]]
+module = "decoy_engine/execution/_isolated_run.py"
+function = "_spawn_and_classify"
+sink = "subprocess.Popen"
+ordinal = 0
+rule = "path derived from the caller's staging_dir, output_dir or temp_dir, or an engine-created `tempfile.mkdtemp`; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
+owner = "cam"
+reason = "the subprocess and scratch route cannot carry a strict policy (D6 fail-closed fallback), so a strict policy never gets here"
+ambient_only = true
+
+[[entry]]
+module = "decoy_engine/execution/_isolated_run.py"
+function = "_spawn_and_classify"
+sink = "shutil.rmtree"
+ordinal = 0
+rule = "path derived from the caller's staging_dir, output_dir or temp_dir, or an engine-created `tempfile.mkdtemp`; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
+owner = "cam"
+reason = "the subprocess and scratch route cannot carry a strict policy (D6 fail-closed fallback), so a strict policy never gets here"
+ambient_only = true
+
+[[entry]]
+module = "decoy_engine/execution/_isolated_run.py"
+function = "_spawn_and_classify"
+sink = "shutil.rmtree"
+ordinal = 1
+rule = "path derived from the caller's staging_dir, output_dir or temp_dir, or an engine-created `tempfile.mkdtemp`; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
+owner = "cam"
+reason = "the subprocess and scratch route cannot carry a strict policy (D6 fail-closed fallback), so a strict policy never gets here"
+ambient_only = true
+
+[[entry]]
+module = "decoy_engine/execution/_isolated_run.py"
+function = "_result_from_envelope"
+sink = "shutil.rmtree"
+ordinal = 0
+rule = "path derived from the caller's staging_dir, output_dir or temp_dir, or an engine-created `tempfile.mkdtemp`; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
+owner = "cam"
+reason = "the subprocess and scratch route cannot carry a strict policy (D6 fail-closed fallback), so a strict policy never gets here"
+ambient_only = true
+
+[[entry]]
+module = "decoy_engine/execution/_isolated_run.py"
+function = "_commit"
+sink = "pyarrow.parquet.read_table"
+ordinal = 0
+rule = "path derived from the caller's staging_dir, output_dir or temp_dir, or an engine-created `tempfile.mkdtemp`; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
+owner = "cam"
+reason = "the subprocess and scratch route cannot carry a strict policy (D6 fail-closed fallback), so a strict policy never gets here"
+ambient_only = true
+
+[[entry]]
+module = "decoy_engine/execution/_isolated_run.py"
+function = "_commit"
+sink = "shutil.rmtree"
+ordinal = 0
+rule = "path derived from the caller's staging_dir, output_dir or temp_dir, or an engine-created `tempfile.mkdtemp`; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
+owner = "cam"
+reason = "the subprocess and scratch route cannot carry a strict policy (D6 fail-closed fallback), so a strict policy never gets here"
+ambient_only = true
+
+[[entry]]
+module = "decoy_engine/execution/_isolated_run.py"
+function = "_commit"
+sink = "shutil.rmtree"
+ordinal = 1
+rule = "path derived from the caller's staging_dir, output_dir or temp_dir, or an engine-created `tempfile.mkdtemp`; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
+owner = "cam"
+reason = "the subprocess and scratch route cannot carry a strict policy (D6 fail-closed fallback), so a strict policy never gets here"
+ambient_only = true
+
+[[entry]]
+module = "decoy_engine/execution/_isolated_worker.py"
+function = "_write_envelope_file"
+sink = "Path.write_text"
+ordinal = 0
+rule = "path handed over by the parent in the payload: an engine-created scratch file or stage directory"
+owner = "cam"
+reason = "the isolated child reads its payload and writes its staged output; the parent refused every policy but the ambient one before spawning it"
+
+[[entry]]
+module = "decoy_engine/execution/_isolated_worker.py"
+function = "_load_sources"
+sink = "pyarrow.parquet.read_table"
+ordinal = 0
+rule = "path handed over by the parent in the payload: an engine-created scratch file or stage directory"
+owner = "cam"
+reason = "the isolated child reads its payload and writes its staged output; the parent refused every policy but the ambient one before spawning it"
+
+[[entry]]
+module = "decoy_engine/execution/_isolated_worker.py"
+function = "_stage_outputs"
+sink = "os.makedirs"
+ordinal = 0
+rule = "path handed over by the parent in the payload: an engine-created scratch file or stage directory"
+owner = "cam"
+reason = "the isolated child reads its payload and writes its staged output; the parent refused every policy but the ambient one before spawning it"
+
+[[entry]]
+module = "decoy_engine/execution/_isolated_worker.py"
+function = "_stage_outputs"
+sink = "pyarrow.parquet.write_table"
+ordinal = 0
+rule = "path handed over by the parent in the payload: an engine-created scratch file or stage directory"
+owner = "cam"
+reason = "the isolated child reads its payload and writes its staged output; the parent refused every policy but the ambient one before spawning it"
+
+[[entry]]
+module = "decoy_engine/execution/_isolated_worker.py"
+function = "_finalize_outputs"
+sink = "Path.glob"
+ordinal = 0
+rule = "path handed over by the parent in the payload: an engine-created scratch file or stage directory"
+owner = "cam"
+reason = "the isolated child reads its payload and writes its staged output; the parent refused every policy but the ambient one before spawning it"
+
+[[entry]]
+module = "decoy_engine/execution/_isolated_worker.py"
+function = "_stage_row_errors"
+sink = "open"
+ordinal = 0
+rule = "path handed over by the parent in the payload: an engine-created scratch file or stage directory"
+owner = "cam"
+reason = "the isolated child reads its payload and writes its staged output; the parent refused every policy but the ambient one before spawning it"
+
+[[entry]]
+module = "decoy_engine/execution/_isolated_worker.py"
+function = "main"
+sink = "open"
+ordinal = 0
+rule = "path handed over by the parent in the payload: an engine-created scratch file or stage directory"
+owner = "cam"
+reason = "the isolated child reads its payload and writes its staged output; the parent refused every policy but the ambient one before spawning it"
+
+[[entry]]
+module = "decoy_engine/execution/_isolated_worker.py"
+function = "main"
+sink = "json.load"
+ordinal = 0
+rule = "path handed over by the parent in the payload: an engine-created scratch file or stage directory"
+owner = "cam"
+reason = "the isolated child reads its payload and writes its staged output; the parent refused every policy but the ambient one before spawning it"
+
+[[entry]]
+module = "decoy_engine/execution/_pipeline_route_exec.py"
+function = "run_out_of_core_route"
+sink = "shutil.disk_usage"
+ordinal = 0
+rule = "`default_ooc_temp_root()`, `tempfile.gettempdir()`"
+owner = "cam"
+reason = "free-disk probe on the engine's own temp filesystem"
+
+[[entry]]
+module = "decoy_engine/execution/native/_pool_quality.py"
+function = "measure_pool_quality"
+sink = "pyarrow.parquet.write_table"
+ordinal = 0
+rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, built from a counter or relation id"
+owner = "cam"
+reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
+module = "decoy_engine/execution/native/_pool_quality.py"
+function = "measure_pool_quality"
+sink = "duckdb.connection.execute"
+ordinal = 0
+rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, built from a counter or relation id"
+owner = "cam"
+reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
+module = "decoy_engine/execution/native/_pool_quality.py"
+function = "measure_pool_quality"
+sink = "Path.unlink"
+ordinal = 0
+rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, built from a counter or relation id"
+owner = "cam"
+reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_batch_join.py"
+function = "ChildFkBatchJoiner.__init__"
+sink = "pyarrow.parquet.read_metadata"
+ordinal = 0
+rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, built from a counter or relation id"
+owner = "cam"
+reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_batch_join.py"
+function = "ChildFkBatchJoiner.__init__"
+sink = "duckdb.connection.execute"
+ordinal = 0
+rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, built from a counter or relation id"
+owner = "cam"
+reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_budget.py"
+function = "detect_host_memory_bytes"
+sink = "Path.read_text"
+ordinal = 0
+rule = "constant `/proc` or `/sys/fs/cgroup` path"
+owner = "cam"
+reason = "host memory limit detection; no caller or config value reaches the path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_budget.py"
+function = "_read_cgroup_bytes_value"
+sink = "Path.read_text"
+ordinal = 0
+rule = "constant `/proc` or `/sys/fs/cgroup` path"
+owner = "cam"
+reason = "host memory limit detection; no caller or config value reaches the path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_budget.py"
+function = "_cgroup_leaf_dir"
+sink = "Path.read_text"
+ordinal = 0
+rule = "constant `/proc` or `/sys/fs/cgroup` path"
+owner = "cam"
+reason = "host memory limit detection; no caller or config value reaches the path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_budget.py"
+function = "temp_disk_bytes"
+sink = "Path.exists"
+ordinal = 0
+rule = "scratch root the out-of-core runner created (`tempfile.mkdtemp`) or `tempfile.gettempdir()`"
+owner = "cam"
+reason = "disk-budget accounting over the engine's own spill space"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_budget.py"
+function = "temp_disk_bytes"
+sink = "os.walk"
+ordinal = 0
+rule = "scratch root the out-of-core runner created (`tempfile.mkdtemp`) or `tempfile.gettempdir()`"
+owner = "cam"
+reason = "disk-budget accounting over the engine's own spill space"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_budget.py"
+function = "temp_disk_bytes"
+sink = "os.path.getsize"
+ordinal = 0
+rule = "scratch root the out-of-core runner created (`tempfile.mkdtemp`) or `tempfile.gettempdir()`"
+owner = "cam"
+reason = "disk-budget accounting over the engine's own spill space"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_budget.py"
+function = "_nearest_existing_ancestor"
+sink = "Path.exists"
+ordinal = 0
+rule = "scratch root the out-of-core runner created (`tempfile.mkdtemp`) or `tempfile.gettempdir()`"
+owner = "cam"
+reason = "disk-budget accounting over the engine's own spill space"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_budget.py"
+function = "check_disk_spill_preflight"
+sink = "shutil.disk_usage"
+ordinal = 0
+rule = "scratch root the out-of-core runner created (`tempfile.mkdtemp`) or `tempfile.gettempdir()`"
+owner = "cam"
+reason = "disk-budget accounting over the engine's own spill space"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_duckdb.py"
+function = "connect_duckdb"
+sink = "Path.mkdir"
+ordinal = 0
+rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, built from a counter or relation id"
+owner = "cam"
+reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_duckdb.py"
+function = "connect_duckdb"
+sink = "os.chmod"
+ordinal = 0
+rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, built from a counter or relation id"
+owner = "cam"
+reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_external_sort.py"
+function = "BoundedExternalSorter.__init__"
+sink = "Path.mkdir"
+ordinal = 0
+rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, built from a counter or relation id"
+owner = "cam"
+reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_external_sort.py"
+function = "BoundedExternalSorter._write_run"
+sink = "pyarrow.OSFile"
+ordinal = 0
+rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, built from a counter or relation id"
+owner = "cam"
+reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_external_sort.py"
+function = "BoundedExternalSorter._write_run"
+sink = "pyarrow.ipc.new_file"
+ordinal = 0
+rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, built from a counter or relation id"
+owner = "cam"
+reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_external_sort.py"
+function = "BoundedExternalSorter.finish"
+sink = "Path.unlink"
+ordinal = 0
+rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, built from a counter or relation id"
+owner = "cam"
+reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_external_sort.py"
+function = "BoundedExternalSorter._merge_group"
+sink = "pyarrow.OSFile"
+ordinal = 0
+rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, built from a counter or relation id"
+owner = "cam"
+reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_external_sort.py"
+function = "BoundedExternalSorter._merge_group"
+sink = "pyarrow.ipc.new_file"
+ordinal = 0
+rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, built from a counter or relation id"
+owner = "cam"
+reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_external_sort.py"
+function = "BoundedExternalSorter.iter_ordered"
+sink = "pyarrow.OSFile"
+ordinal = 0
+rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, built from a counter or relation id"
+owner = "cam"
+reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_external_sort.py"
+function = "BoundedExternalSorter.iter_ordered"
+sink = "pyarrow.ipc.open_file"
+ordinal = 0
+rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, built from a counter or relation id"
+owner = "cam"
+reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_external_sort.py"
+function = "BoundedExternalSorter.close"
+sink = "Path.unlink"
+ordinal = 0
+rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, built from a counter or relation id"
+owner = "cam"
+reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_external_sort_run.py"
+function = "_RunHead.__init__"
+sink = "pyarrow.OSFile"
+ordinal = 0
+rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, built from a counter or relation id"
+owner = "cam"
+reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_external_sort_run.py"
+function = "_RunHead.__init__"
+sink = "pyarrow.ipc.open_file"
+ordinal = 0
+rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, built from a counter or relation id"
+owner = "cam"
+reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_join.py"
+function = "mask_child_fk"
+sink = "duckdb.connection.execute"
+ordinal = 0
+rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, built from a counter or relation id"
+owner = "cam"
+reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_join.py"
+function = "mask_child_fk"
+sink = "duckdb.connection.execute"
+ordinal = 1
+rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, built from a counter or relation id"
+owner = "cam"
+reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_join.py"
+function = "mask_child_fk"
+sink = "duckdb.connection.execute"
+ordinal = 2
+rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, built from a counter or relation id"
+owner = "cam"
+reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_join.py"
+function = "mask_child_fk"
+sink = "duckdb.connection.execute"
+ordinal = 3
+rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, built from a counter or relation id"
+owner = "cam"
+reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_payload_store.py"
+function = "SpillPayloadStore.append"
+sink = "Path.mkdir"
+ordinal = 0
+rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, built from a counter or relation id"
+owner = "cam"
+reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_payload_store.py"
+function = "SpillPayloadStore.append"
+sink = "pyarrow.ipc.new_stream"
+ordinal = 0
+rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, built from a counter or relation id"
+owner = "cam"
+reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_payload_store.py"
+function = "SpillPayloadStore.iter_batches"
+sink = "pyarrow.ipc.open_stream"
+ordinal = 0
+rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, built from a counter or relation id"
+owner = "cam"
+reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_payload_store.py"
+function = "RawParentKeySpill.__init__"
+sink = "Path.mkdir"
+ordinal = 0
+rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, built from a counter or relation id"
+owner = "cam"
+reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_payload_store.py"
+function = "RawParentKeySpill.__init__"
+sink = "pyarrow.ipc.new_stream"
+ordinal = 0
+rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, built from a counter or relation id"
+owner = "cam"
+reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_payload_store.py"
+function = "RawParentKeySpill.__iter__"
+sink = "pyarrow.ipc.open_stream"
+ordinal = 0
+rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, built from a counter or relation id"
+owner = "cam"
+reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_payload_store.py"
+function = "SpillChildKeys.__init__"
+sink = "Path.mkdir"
+ordinal = 0
+rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, built from a counter or relation id"
+owner = "cam"
+reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_payload_store.py"
+function = "SpillChildKeys.__init__"
+sink = "pyarrow.ipc.new_stream"
+ordinal = 0
+rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, built from a counter or relation id"
+owner = "cam"
+reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_payload_store.py"
+function = "SpillChildKeys.open_reader"
+sink = "pyarrow.ipc.open_stream"
+ordinal = 0
+rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, built from a counter or relation id"
+owner = "cam"
+reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_relation.py"
+function = "_build_relation"
+sink = "Path.mkdir"
+ordinal = 0
+rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, built from a counter or relation id"
+owner = "cam"
+reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_relation.py"
+function = "_build_relation"
+sink = "duckdb.connection.execute"
+ordinal = 0
+rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, built from a counter or relation id"
+owner = "cam"
+reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_relation.py"
+function = "_build_relation"
+sink = "duckdb.connection.execute"
+ordinal = 1
+rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, built from a counter or relation id"
+owner = "cam"
+reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_relation.py"
+function = "_build_relation"
+sink = "duckdb.connection.execute"
+ordinal = 2
+rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, built from a counter or relation id"
+owner = "cam"
+reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_relation.py"
+function = "_build_relation"
+sink = "Path.unlink"
+ordinal = 0
+rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, built from a counter or relation id"
+owner = "cam"
+reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_relation.py"
+function = "_build_relation"
+sink = "Path.unlink"
+ordinal = 1
+rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, built from a counter or relation id"
+owner = "cam"
+reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_relation.py"
+function = "_build_relation"
+sink = "Path.unlink"
+ordinal = 2
+rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, built from a counter or relation id"
+owner = "cam"
+reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_route_policy.py"
+function = "_parent_key_count"
+sink = "pyarrow.parquet.read_metadata"
+ordinal = 0
+rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, built from a counter or relation id"
+owner = "cam"
+reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_runner.py"
+function = "run_fk_out_of_core"
+sink = "shutil.rmtree"
+ordinal = 0
+rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, built from a counter or relation id"
+owner = "cam"
+reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_runner.py"
+function = "run_fk_out_of_core"
+sink = "shutil.rmtree"
+ordinal = 1
+rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, built from a counter or relation id"
+owner = "cam"
+reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_runner.py"
+function = "run_fk_out_of_core"
+sink = "shutil.rmtree"
+ordinal = 2
+rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, built from a counter or relation id"
+owner = "cam"
+reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_runner.py"
+function = "run_fk_out_of_core"
+sink = "shutil.rmtree"
+ordinal = 3
+rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, built from a counter or relation id"
+owner = "cam"
+reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_scratch.py"
+function = "scratch_root"
+sink = "tempfile.mkdtemp"
+ordinal = 0
+rule = "path derived from the caller's staging_dir, output_dir or temp_dir, or an engine-created `tempfile.mkdtemp`; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
+owner = "cam"
+reason = "the subprocess and scratch route cannot carry a strict policy (D6 fail-closed fallback), so a strict policy never gets here"
+ambient_only = true
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_scratch.py"
+function = "scratch_root"
+sink = "Path.mkdir"
+ordinal = 0
+rule = "path derived from the caller's staging_dir, output_dir or temp_dir, or an engine-created `tempfile.mkdtemp`; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
+owner = "cam"
+reason = "the subprocess and scratch route cannot carry a strict policy (D6 fail-closed fallback), so a strict policy never gets here"
+ambient_only = true
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_scratch.py"
+function = "scratch_root"
+sink = "os.chmod"
+ordinal = 0
+rule = "path derived from the caller's staging_dir, output_dir or temp_dir, or an engine-created `tempfile.mkdtemp`; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
+owner = "cam"
+reason = "the subprocess and scratch route cannot carry a strict policy (D6 fail-closed fallback), so a strict policy never gets here"
+ambient_only = true
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_spill_estimate.py"
+function = "_output_shares_temp_filesystem"
+sink = "os.stat"
+ordinal = 0
+rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, built from a counter or relation id"
+owner = "cam"
+reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_stage.py"
+function = "MaskedKeyStager.__init__"
+sink = "Path.mkdir"
+ordinal = 0
+rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, built from a counter or relation id"
+owner = "cam"
+reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_stage.py"
+function = "MaskedKeyStager.__init__"
+sink = "pyarrow.parquet.ParquetWriter"
+ordinal = 0
+rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, built from a counter or relation id"
+owner = "cam"
+reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_stream_driver.py"
+function = "stream_table"
+sink = "shutil.rmtree"
+ordinal = 0
+rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, built from a counter or relation id"
+owner = "cam"
+reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_stream_join.py"
+function = "StreamFkJoiner.__init__"
+sink = "pyarrow.parquet.read_metadata"
+ordinal = 0
+rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, built from a counter or relation id"
+owner = "cam"
+reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_stream_join.py"
+function = "StreamFkJoiner._ensure_conn"
+sink = "duckdb.connection.execute"
+ordinal = 0
+rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, built from a counter or relation id"
+owner = "cam"
+reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_stream_join.py"
+function = "StreamFkJoiner._ensure_conn"
+sink = "duckdb.connection.execute"
+ordinal = 1
+rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, built from a counter or relation id"
+owner = "cam"
+reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
+module = "decoy_engine/expressions/_lark_parser.py"
+function = "<module>"
+sink = "Path.read_text"
+ordinal = 0
+rule = "`Path(__file__).parent / <literal grammar file>`, read at import"
+owner = "cam"
+reason = "the packaged lark grammar is parsed when the module is imported; no caller or config value reaches the path"
+
+[[entry]]
+module = "decoy_engine/expressions/_when_parser.py"
+function = "<module>"
+sink = "Path.read_text"
+ordinal = 0
+rule = "`Path(__file__).parent / <literal grammar file>`, read at import"
+owner = "cam"
+reason = "the packaged lark grammar is parsed when the module is imported; no caller or config value reaches the path"
+
+[[entry]]
+module = "decoy_engine/fileaccess/_local.py"
+function = "LocalHandle.fileno"
+sink = "os.open"
+ordinal = 0
+rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
+owner = "cam"
+reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
+
+[[entry]]
+module = "decoy_engine/fileaccess/_local.py"
+function = "LocalHandle.stat"
+sink = "Path.stat"
+ordinal = 0
+rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
+owner = "cam"
+reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
+
+[[entry]]
+module = "decoy_engine/fileaccess/_local.py"
+function = "LocalHandle.identity"
+sink = "Path.resolve"
+ordinal = 0
+rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
+owner = "cam"
+reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
+
+[[entry]]
+module = "decoy_engine/fileaccess/_local.py"
+function = "LocalHandle.read_all"
+sink = "open"
+ordinal = 0
+rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
+owner = "cam"
+reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
+
+[[entry]]
+module = "decoy_engine/fileaccess/_local.py"
+function = "LocalHandle.open_binary"
+sink = "open"
+ordinal = 0
+rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
+owner = "cam"
+reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
+
+[[entry]]
+module = "decoy_engine/fileaccess/_local.py"
+function = "LocalHandle.open_text"
+sink = "open"
+ordinal = 0
+rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
+owner = "cam"
+reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
+
+[[entry]]
+module = "decoy_engine/fileaccess/_local.py"
+function = "LocalDirHandle.entries"
+sink = "os.scandir"
+ordinal = 0
+rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
+owner = "cam"
+reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
+
+[[entry]]
+module = "decoy_engine/fileaccess/_local.py"
+function = "_LocalStageDir.create_file"
+sink = "os.open"
+ordinal = 0
+rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
+owner = "cam"
+reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
+
+[[entry]]
+module = "decoy_engine/fileaccess/_local.py"
+function = "_LocalStageDir.open_file"
+sink = "os.open"
+ordinal = 0
+rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
+owner = "cam"
+reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
+
+[[entry]]
+module = "decoy_engine/fileaccess/_local.py"
+function = "_LocalStageDir.create_dir"
+sink = "Path.mkdir"
+ordinal = 0
+rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
+owner = "cam"
+reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
+
+[[entry]]
+module = "decoy_engine/fileaccess/_local.py"
+function = "_LocalStageDir.remove"
+sink = "Path.is_symlink"
+ordinal = 0
+rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
+owner = "cam"
+reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
+
+[[entry]]
+module = "decoy_engine/fileaccess/_local.py"
+function = "_LocalStageDir.remove"
+sink = "Path.is_dir"
+ordinal = 0
+rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
+owner = "cam"
+reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
+
+[[entry]]
+module = "decoy_engine/fileaccess/_local.py"
+function = "_LocalStageDir.remove"
+sink = "shutil.rmtree"
+ordinal = 0
+rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
+owner = "cam"
+reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
+
+[[entry]]
+module = "decoy_engine/fileaccess/_local.py"
+function = "_LocalStageDir.remove"
+sink = "os.unlink"
+ordinal = 0
+rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
+owner = "cam"
+reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
+
+[[entry]]
+module = "decoy_engine/fileaccess/_local.py"
+function = "_LocalStageDir.rename"
+sink = "os.rename"
+ordinal = 0
+rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
+owner = "cam"
+reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
+
+[[entry]]
+module = "decoy_engine/fileaccess/_local.py"
+function = "LocalOutputTxn.__init__"
+sink = "Path.mkdir"
+ordinal = 0
+rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
+owner = "cam"
+reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
+
+[[entry]]
+module = "decoy_engine/fileaccess/_local.py"
+function = "LocalOutputTxn.__init__"
+sink = "tempfile.mkdtemp"
+ordinal = 0
+rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
+owner = "cam"
+reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
+
+[[entry]]
+module = "decoy_engine/fileaccess/_local.py"
+function = "LocalOutputTxn.create_file"
+sink = "Path.mkdir"
+ordinal = 0
+rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
+owner = "cam"
+reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
+
+[[entry]]
+module = "decoy_engine/fileaccess/_local.py"
+function = "LocalOutputTxn.create_file"
+sink = "os.open"
+ordinal = 0
+rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
+owner = "cam"
+reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
+
+[[entry]]
+module = "decoy_engine/fileaccess/_local.py"
+function = "LocalOutputTxn.create_file"
+sink = "tempfile.mkstemp"
+ordinal = 0
+rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
+owner = "cam"
+reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
+
+[[entry]]
+module = "decoy_engine/fileaccess/_local.py"
+function = "LocalOutputTxn.create_file"
+sink = "os.open"
+ordinal = 1
+rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
+owner = "cam"
+reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
+
+[[entry]]
+module = "decoy_engine/fileaccess/_local.py"
+function = "LocalOutputTxn._writes_through"
+sink = "Path.is_file"
+ordinal = 0
+rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
+owner = "cam"
+reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
+
+[[entry]]
+module = "decoy_engine/fileaccess/_local.py"
+function = "LocalOutputTxn._writes_through"
+sink = "Path.exists"
+ordinal = 0
+rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
+owner = "cam"
+reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
+
+[[entry]]
+module = "decoy_engine/fileaccess/_local.py"
+function = "LocalOutputTxn._writes_through"
+sink = "Path.is_symlink"
+ordinal = 0
+rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
+owner = "cam"
+reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
+
+[[entry]]
+module = "decoy_engine/fileaccess/_local.py"
+function = "LocalOutputTxn.publish"
+sink = "Path.mkdir"
+ordinal = 0
+rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
+owner = "cam"
+reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
+
+[[entry]]
+module = "decoy_engine/fileaccess/_local.py"
+function = "LocalOutputTxn.publish"
+sink = "os.replace"
+ordinal = 0
+rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
+owner = "cam"
+reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
+
+[[entry]]
+module = "decoy_engine/fileaccess/_local.py"
+function = "LocalOutputTxn.publish"
+sink = "os.replace"
+ordinal = 1
+rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
+owner = "cam"
+reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
+
+[[entry]]
+module = "decoy_engine/fileaccess/_local.py"
+function = "LocalOutputTxn.publish"
+sink = "os.link"
+ordinal = 0
+rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
+owner = "cam"
+reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
+
+[[entry]]
+module = "decoy_engine/fileaccess/_local.py"
+function = "LocalOutputTxn.publish"
+sink = "Path.unlink"
+ordinal = 0
+rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
+owner = "cam"
+reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
+
+[[entry]]
+module = "decoy_engine/fileaccess/_local.py"
+function = "LocalOutputTxn.publish"
+sink = "os.unlink"
+ordinal = 0
+rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
+owner = "cam"
+reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
+
+[[entry]]
+module = "decoy_engine/fileaccess/_local.py"
+function = "LocalOutputTxn.abort"
+sink = "shutil.rmtree"
+ordinal = 0
+rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
+owner = "cam"
+reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
+
+[[entry]]
+module = "decoy_engine/fileaccess/_local.py"
+function = "LocalOutputTxn.abort"
+sink = "Path.unlink"
+ordinal = 0
+rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
+owner = "cam"
+reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
+
+[[entry]]
+module = "decoy_engine/fileaccess/_local.py"
+function = "LocalOutputDir.ensure_dir"
+sink = "Path.mkdir"
+ordinal = 0
+rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
+owner = "cam"
+reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
+
+[[entry]]
+module = "decoy_engine/fileaccess/_local.py"
+function = "LocalOutputDir.ensure_dir"
+sink = "Path.mkdir"
+ordinal = 1
+rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
+owner = "cam"
+reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
+
+[[entry]]
+module = "decoy_engine/fileaccess/_local.py"
+function = "LocalOutputDir.is_empty_or_absent"
+sink = "Path.iterdir"
+ordinal = 0
+rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
+owner = "cam"
+reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
+
+[[entry]]
+module = "decoy_engine/fileaccess/_local.py"
+function = "LocalOutputDir.is_empty_or_absent"
+sink = "Path.exists"
+ordinal = 0
+rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
+owner = "cam"
+reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
+
+[[entry]]
+module = "decoy_engine/fileaccess/_local.py"
+function = "LocalFileAccess.stat"
+sink = "os.stat"
+ordinal = 0
+rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
+owner = "cam"
+reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
+
+[[entry]]
+module = "decoy_engine/fileaccess/_local.py"
+function = "LocalFileAccess.log_handler"
+sink = "Path.mkdir"
+ordinal = 0
+rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
+owner = "cam"
+reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
+
+[[entry]]
+module = "decoy_engine/fileaccess/_local.py"
+function = "LocalFileAccess.log_handler"
+sink = "logging.handlers.RotatingFileHandler"
+ordinal = 0
+rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
+owner = "cam"
+reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
+
+[[entry]]
+module = "decoy_engine/plan/_serialize.py"
+function = "plan_from_yaml"
+sink = "yaml.safe_load"
+ordinal = 0
+rule = "YAML text held in memory"
+owner = "cam"
+reason = "parses a string, not a file"
+
+[[entry]]
+module = "decoy_engine/profile/_cloud_readers.py"
+function = "_read_parquet_row_count"
+sink = "pyarrow.parquet.ParquetFile"
+ordinal = 0
+rule = "in-memory bytes buffer holding a cloud object's range; no file is opened"
+owner = "cam"
+reason = "pyarrow and pandas readers over `io.BytesIO` of data fetched from S3/GCS; the cloud route is the FA-2 follow-up"
+
+[[entry]]
+module = "decoy_engine/profile/_cloud_readers.py"
+function = "_read_parquet_schema"
+sink = "pyarrow.parquet.ParquetFile"
+ordinal = 0
+rule = "in-memory bytes buffer holding a cloud object's range; no file is opened"
+owner = "cam"
+reason = "pyarrow and pandas readers over `io.BytesIO` of data fetched from S3/GCS; the cloud route is the FA-2 follow-up"
+
+[[entry]]
+module = "decoy_engine/profile/_cloud_readers.py"
+function = "_read_parquet_sample"
+sink = "pyarrow.parquet.ParquetFile"
+ordinal = 0
+rule = "in-memory bytes buffer holding a cloud object's range; no file is opened"
+owner = "cam"
+reason = "pyarrow and pandas readers over `io.BytesIO` of data fetched from S3/GCS; the cloud route is the FA-2 follow-up"
+
+[[entry]]
+module = "decoy_engine/profile/_cloud_readers.py"
+function = "_csv_sample_from_window"
+sink = "pandas.read_csv"
+ordinal = 0
+rule = "in-memory bytes buffer holding a cloud object's range; no file is opened"
+owner = "cam"
+reason = "pyarrow and pandas readers over `io.BytesIO` of data fetched from S3/GCS; the cloud route is the FA-2 follow-up"
+
+[[entry]]
+module = "decoy_engine/profile/_cloud_readers.py"
+function = "S3ParquetSource.to_frame"
+sink = "pandas.read_parquet"
+ordinal = 0
+rule = "in-memory bytes buffer holding a cloud object's range; no file is opened"
+owner = "cam"
+reason = "pyarrow and pandas readers over `io.BytesIO` of data fetched from S3/GCS; the cloud route is the FA-2 follow-up"
+
+[[entry]]
+module = "decoy_engine/profile/_cloud_readers.py"
+function = "S3CsvSource.to_frame"
+sink = "pandas.read_csv"
+ordinal = 0
+rule = "in-memory bytes buffer holding a cloud object's range; no file is opened"
+owner = "cam"
+reason = "pyarrow and pandas readers over `io.BytesIO` of data fetched from S3/GCS; the cloud route is the FA-2 follow-up"
+
+[[entry]]
+module = "decoy_engine/profile/_cloud_readers.py"
+function = "GcsParquetSource.to_frame"
+sink = "pandas.read_parquet"
+ordinal = 0
+rule = "in-memory bytes buffer holding a cloud object's range; no file is opened"
+owner = "cam"
+reason = "pyarrow and pandas readers over `io.BytesIO` of data fetched from S3/GCS; the cloud route is the FA-2 follow-up"
+
+[[entry]]
+module = "decoy_engine/profile/_cloud_readers.py"
+function = "GcsCsvSource.to_frame"
+sink = "pandas.read_csv"
+ordinal = 0
+rule = "in-memory bytes buffer holding a cloud object's range; no file is opened"
+owner = "cam"
+reason = "pyarrow and pandas readers over `io.BytesIO` of data fetched from S3/GCS; the cloud route is the FA-2 follow-up"
+
+[[entry]]
+module = "decoy_engine/profile/_fixed_width_reader.py"
+function = "_parse_records"
+sink = "open"
+ordinal = 0
+rule = "the builtin `open` handed to `handle.open_binary`, which calls it with the handle's own path under the ambient policy and ignores it under a strict one"
+owner = "cam"
+reason = "keeps the module-level `open` seam an existing test patches, with no path of its own"
+
+[[entry]]
+module = "decoy_engine/profile/_readers.py"
+function = "LazySource._handle"
+sink = "engine_handle"
+ordinal = 0
+rule = "`self.path` of a LazySource built with scratch=True (an engine scratch file)"
+owner = "cam"
+reason = "reads a Parquet file the engine itself staged"
+
+[[entry]]
+module = "decoy_engine/quality/dp_provenance.py"
+function = "_default_lock_path"
+sink = "Path.resolve"
+ordinal = 0
+rule = "`Path(__file__).resolve().parents[3] / \"uv.lock\"`"
+owner = "cam"
+reason = "locating the repository lockfile for the DP certification check"
+
+[[entry]]
+module = "decoy_engine/quality/dp_provenance.py"
+function = "assert_lock_matches_installed"
+sink = "engine_handle"
+ordinal = 0
+rule = "`Path(__file__).resolve().parents[3] / \"uv.lock\"`"
+owner = "cam"
+reason = "locating the repository lockfile for the DP certification check"
+
+[[entry]]
+module = "decoy_engine/reference_tables/_loader.py"
+function = "load_table"
+sink = "engine_handle"
+ordinal = 0
+rule = "`shipped_path(name)` for a name in the shipped-table registry"
+owner = "cam"
+reason = "package data"
+
+[[entry]]
+module = "decoy_engine/storm/model_pack/classify.py"
+function = "_default_pack_dir"
+sink = "Path.is_dir"
+ordinal = 0
+rule = "package data: `importlib.resources.files(\"decoy_engine\")` or `Path(__file__).parents[4]`"
+owner = "cam"
+reason = "locating the shipped default model pack"
+
+[[entry]]
+module = "decoy_engine/storm/model_pack/classify.py"
+function = "_default_pack_dir"
+sink = "Path.is_file"
+ordinal = 0
+rule = "package data: `importlib.resources.files(\"decoy_engine\")` or `Path(__file__).parents[4]`"
+owner = "cam"
+reason = "locating the shipped default model pack"
+
+[[entry]]
+module = "decoy_engine/storm/model_pack/classify.py"
+function = "classify_fields"
+sink = "engine_dir_handle"
+ordinal = 0
+rule = "package data: `importlib.resources.files(\"decoy_engine\")` or `Path(__file__).parents[4]`"
+owner = "cam"
+reason = "locating the shipped default model pack"
+
+[[entry]]
+module = "decoy_engine/storm/model_pack/loader.py"
+function = "ModelPackLoader._deserialise"
+sink = "joblib.load"
+ordinal = 0
+rule = "`io.BytesIO` of bytes already read through a capability and SHA-256 checked (or about to be written through one)"
+owner = "cam"
+reason = "joblib over an in-memory buffer; the file itself goes through the pack directory capability"
+
+[[entry]]
+module = "decoy_engine/storm/model_pack/trainer.py"
+function = "train_and_evaluate"
+sink = "joblib.dump"
+ordinal = 0
+rule = "`io.BytesIO` of bytes already read through a capability and SHA-256 checked (or about to be written through one)"
+owner = "cam"
+reason = "joblib over an in-memory buffer; the file itself goes through the pack directory capability"
+
+[[entry]]
+module = "decoy_engine/storm/model_pack/trainer.py"
+function = "load_pack"
+sink = "joblib.load"
+ordinal = 0
+rule = "`io.BytesIO` of bytes already read through a capability and SHA-256 checked (or about to be written through one)"
+owner = "cam"
+reason = "joblib over an in-memory buffer; the file itself goes through the pack directory capability"
+
+[[entry]]
+module = "decoy_engine/storm/name_hints/loader.py"
+function = "load_name_hint_terms"
+sink = "engine_dir_handle"
+ordinal = 0
+rule = "`Path(__file__).parent / \"v1\"`"
+owner = "cam"
+reason = "the shipped name-hint library"
+
+[[entry]]
+module = "decoy_engine/transforms/_codeset_loader.py"
+function = "_resolve_read_path"
+sink = "Path.exists"
+ordinal = 0
+rule = "`_CODESETS_DIR / f\"{name}.parquet\"` for a name in the shipped corpus registry"
+owner = "cam"
+reason = "existence check of a shipped corpus"
+
+[[entry]]
+module = "decoy_engine/transforms/_codeset_loader.py"
+function = "_read_corpus_record"
+sink = "engine_handle"
+ordinal = 0
+rule = "`_CODESETS_DIR / f\"{name}.parquet\"` for a name in the shipped corpus registry"
+owner = "cam"
+reason = "existence check of a shipped corpus"
+
+[[entry]]
+module = "decoy_engine/vault.py"
+function = "VaultWriter.write"
+sink = "pyarrow.parquet.write_table"
+ordinal = 0
+rule = "in-memory Arrow buffer (`pa.BufferOutputStream` or `pa.BufferReader`) of one encrypted chunk"
+owner = "cam"
+reason = "serializes a chunk to bytes; the file itself goes through the OutputDir or FileHandle"
+
+[[entry]]
+module = "decoy_engine/vault.py"
+function = "load_vault"
+sink = "pyarrow.parquet.read_table"
+ordinal = 0
+rule = "in-memory Arrow buffer (`pa.BufferOutputStream` or `pa.BufferReader`) of one encrypted chunk"
+owner = "cam"
+reason = "serializes a chunk to bytes; the file itself goes through the OutputDir or FileHandle"

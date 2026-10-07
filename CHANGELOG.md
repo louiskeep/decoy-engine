@@ -9,6 +9,54 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (the `FileAccess` policy, 0.9.0 pending, 2026-10-07)
+
+New public package `decoy_engine.fileaccess`. Every file the engine opens, stats, lists, creates,
+renames or deletes on behalf of a config value or a caller now goes through one `FileAccess` policy
+or a capability it issued (an open file handle, a directory capability, an output transaction), so a
+host that serves several users can decide which files an engine call may touch without keeping a list
+of config fields. Entry points (`run_pipeline`, `run_mask_pipeline_chunked`, `run_mask_chunked`,
+`profile_source`, `compile_plan`, `load_table`, `load_corpus`, `run_subset`, `run_discovery_sql`,
+`unmask_pipeline`, `load_vault`, `vault_writer_for_config`, and the rest of
+`decoy_engine.fileaccess.ENTRY_POINTS`) take a keyword-only `file_access=`. Policies ship for the
+ambient CLI behavior (`LocalFileAccess`), deny-by-default rooted access confined with
+`openat2(RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS)` (`RootedFileAccess`), and pre-opened descriptors
+(`PreopenedFileAccess`). A process that must never fall back to ambient access calls
+`fileaccess.forbid_ambient()` once at startup. `ParquetTransactionalSink`, `LazySource`,
+`VaultWriter`, `load_vault` and `unmask_pipeline` also accept the capability objects directly. A
+denial is one `FileAccessDenied` whose message is `file access denied: <config position>`, with no
+path, basename or file content. Contract: `docs/security/file-access-policy.md`.
+
+With no policy argument the engine behaves as before: paths, symlinks, error text, output names, the
+default log file, accepted and rejected table names and the table sink's publish and failure
+semantics are unchanged. A new sentry fails CI if any engine code reaches a file-system call outside
+an adapter, a capability module or a reviewed registry entry.
+
+### Changed (bare reference names and discovery SQL, 0.9.0 pending, 2026-10-07)
+
+Two behavior changes, both closing a read of an arbitrary host file.
+
+- A bare `joint_mask.reference` name must be one of the shipped reference tables. A name that is not
+  shipped, including `../../x` and an absolute path, raises the same `FileNotFoundError` as before
+  (validation reports `joint_mask_reference_not_found`) and never reads a file. Before, the loader
+  joined any bare name onto its data directory. `customer:<path>` is unchanged and is the only path
+  form.
+- `run_discovery_sql` runs on a locked in-memory DuckDB connection with external access off and
+  accepts exactly one `SELECT` over the tables it is given. `read_text`, `read_blob`, `glob`,
+  `FROM '<path>'`, `COPY`, `ATTACH`, `INSTALL`, `LOAD` and `SET` can no longer reach a file, write
+  one or turn this off. Tables are registered as Arrow datasets, so projections and predicates still
+  push down.
+
+Smaller changes under the same program: the three unused helpers `get_file_size`, `is_path_exists`
+and `create_directory_for_file` in `internal/fs.py` are removed; `quarantine.write_jsonl_staged`
+returns an opaque stage (publish it with `publish_staged_jsonl`, discard it with
+`discard_staged_jsonl`) instead of a path; `ParquetTransactionalSink` and the hold-back spill create
+their stages through the policy, with the same directory names, publish semantics and error behavior;
+a vault write replaces its target atomically instead of writing in place; subset output is staged and
+published with one rename instead of being written in place. Under a policy other than the ambient
+one, `run_pipeline_isolated` (when it would spawn a child or is given a `staging_dir` or `output_dir`)
+and `run_fk_out_of_core` with a caller-named `temp_dir` raise `FileAccessUnavailable` before any I/O.
+
 ### Fixed (deterministic Faker over integer columns with nulls, 2026-10-07)
 
 A deterministic `faker` column over an integer column that holds at least one null no longer

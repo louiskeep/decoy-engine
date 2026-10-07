@@ -25,6 +25,8 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
+from decoy_engine import fileaccess
+from decoy_engine.fileaccess import FileRole
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.plan._types import (
     DpVerification,
@@ -67,7 +69,13 @@ def _iter_statistical_snapshot_paths(config: dict[str, Any]) -> list[str]:
     """Every distinct `snapshot_file` path referenced by a `type:
     statistical` generate column, in declared order (tables then columns),
     de-duplicated by path string while preserving first-seen order."""
-    seen: dict[str, None] = {}
+    return list(_snapshot_field_keys(config))
+
+
+def _snapshot_field_keys(config: dict[str, Any]) -> dict[str, str]:
+    """`{path: config position}` for the same paths, first-seen position kept, so a
+    denial names where the path was written and never the path."""
+    seen: dict[str, str] = {}
     tables = config.get("tables", []) if isinstance(config.get("tables"), list) else []
     for table_entry in tables:
         if not isinstance(table_entry, dict):
@@ -77,8 +85,9 @@ def _iter_statistical_snapshot_paths(config: dict[str, Any]) -> list[str]:
                 continue
             path = col_entry.get("snapshot_file")
             if path:
-                seen.setdefault(str(path), None)
-    return list(seen)
+                key = f"tables.{table_entry.get('name')}.generate_columns.{col_entry.get('name')}.snapshot_file"
+                seen.setdefault(str(path), key)
+    return seen
 
 
 def read_and_pin_snapshots(
@@ -105,10 +114,9 @@ def read_and_pin_snapshots(
 
     pinned: dict[str, ReadSnapshot] = {}
     failures: dict[str, Any] = {}
-    for path in _iter_statistical_snapshot_paths(config):
+    for path, field_key in _snapshot_field_keys(config).items():
         try:
-            with open(path, "rb") as fh:
-                raw = fh.read()
+            raw = fileaccess.read_all(FileRole.SNAPSHOT, path, field_key)
         except OSError as exc:
             failures[path] = StatisticalSpecError(
                 code="statistical_snapshot_unreadable",

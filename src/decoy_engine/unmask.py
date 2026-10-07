@@ -39,10 +39,12 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
+from decoy_engine import fileaccess
 from decoy_engine.determinism import derive
 from decoy_engine.errors import FpeUnencryptableError
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._strategies._fpe import FF1_KEY_LABEL
+from decoy_engine.fileaccess import FileAccess, FileHandle
 from decoy_engine.plan._seed import _normalize_job_seed
 from decoy_engine.transforms.fpe import (
     FF1_TWEAK_SCOPE_COLUMN,
@@ -212,12 +214,15 @@ def _vault_recover_column(
     )
 
 
+@fileaccess.entry_point
 def unmask_pipeline(
     config: dict[str, Any],
     masked_sources: dict[str, pa.Table],
     *,
     vault_path: str | None = None,
     key_provider: KeyProvider | None = None,
+    vault: FileHandle | None = None,
+    file_access: FileAccess | None = None,
 ) -> UnmaskResult:
     """Invert the fpe and vaulted columns of `masked_sources` under `config`.
 
@@ -228,7 +233,8 @@ def unmask_pipeline(
     from `masked_sources` are reported `table_missing`, never invented.
     `vault_path` names the encrypted vault artifact the mask run wrote;
     one-way columns declared `vault: true` recover through it (see
-    `decoy_engine.vault` for the security model).
+    `decoy_engine.vault` for the security model). `vault` is a handle the policy issued
+    for that artifact; a `vault_path` string is accepted only under the ambient CLI policy.
 
     Raises:
         ExecutionError: ``code='fpe_requires_namespace'`` when an fpe
@@ -268,7 +274,7 @@ def unmask_pipeline(
         for t in (config.get("tables") or [])
         for c in (t.get("columns") or [])
     )
-    _keyed_reversal = vault_path is not None or _has_fpe
+    _keyed_reversal = vault_path is not None or vault is not None or _has_fpe
     if _keyed_reversal and not _authenticated and not is_pre_ga():
         raise KeyedStrategyRequiresSecret(
             "unmask reverses keyed columns (fpe / vaulted) which at GA require the "
@@ -277,11 +283,11 @@ def unmask_pipeline(
         )
     vault_map: dict[tuple[str, str], str] | None = None
     vault_ambiguous = 0
-    if vault_path is not None:
+    if vault_path is not None or vault is not None:
         from decoy_engine.vault import VaultError, load_vault
 
         try:
-            vault_map, vault_ambiguous = load_vault(vault_path, mask_key)
+            vault_map, vault_ambiguous = load_vault(vault_path, mask_key, vault=vault)
         except VaultError as exc:
             raise ExecutionError(code=exc.code, message=exc.message) from exc
     reports: list[UnmaskColumnReport] = []

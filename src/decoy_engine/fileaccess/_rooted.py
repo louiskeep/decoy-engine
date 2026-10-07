@@ -116,7 +116,7 @@ class FdHandle:
             offset += len(data)
         return b"".join(chunks)
 
-    def open_binary(self) -> BinaryIO:
+    def open_binary(self, opener: object = None) -> BinaryIO:
         return io.BufferedReader(_PreadRaw(self._fd, self.display))
 
     def open_text(self, encoding: str = "utf-8") -> TextIO:
@@ -145,7 +145,7 @@ def open_checked(
     flags = _READ_FLAGS | (os.O_DIRECTORY if want == "dir" else 0)
     fd = -1
     try:
-        fd = _openat2.confined_open(dir_fd, rel, flags)
+        fd = _openat2._confined_open(dir_fd, rel, flags)
     except OSError:
         pass
     ok = False
@@ -276,16 +276,22 @@ class RootedFileAccess:
         )
 
     def open_read(self, req: FileRequest) -> FileHandle:
+        if req.access not in ("read", "stat"):
+            raise deny(req.field_key)
         root, rel = self.select(req)
         fd = self.open_beneath(root, rel, field_key=req.field_key)
         return FdHandle(fd, req.field_key)
 
     def open_dir(self, req: FileRequest) -> FdDirHandle:
+        if req.access not in ("read_dir", "read"):
+            raise deny(req.field_key)
         root, rel = self.select(req)
         fd = self.open_beneath(root, rel, field_key=req.field_key, want="dir")
         return FdDirHandle(fd, req.field_key, self.deny_inodes)
 
     def stat(self, req: FileRequest) -> os.stat_result:
+        if req.access not in ("stat", "read_dir", "read"):
+            raise deny(req.field_key)
         root, rel = self.select(req)
         fd = self.open_beneath(root, rel, field_key=req.field_key, want="any")
         try:

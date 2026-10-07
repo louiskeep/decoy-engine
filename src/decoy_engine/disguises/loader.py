@@ -12,14 +12,19 @@ from pathlib import Path
 
 import yaml
 
+from decoy_engine import fileaccess
 from decoy_engine.disguises.schema import Disguise
+from decoy_engine.fileaccess import DirHandle, FileAccess, FileRequest, FileRole
+from decoy_engine.fileaccess.adapters import serial
 
 _log = logging.getLogger(__name__)
 
 _DISGUISES_DIR = Path(__file__).parent
 
 
-def load_disguises(directory: Path | None = None) -> list[Disguise]:
+def load_disguises(
+    directory: Path | None = None, *, file_access: FileAccess | None = None
+) -> list[Disguise]:
     """Load every *.yaml file in `directory` (defaults to this package's dir).
 
     Files are validated against the Disguise schema. QA-internal-synth-
@@ -31,13 +36,32 @@ def load_disguises(directory: Path | None = None) -> list[Disguise]:
     silently absent). Now each bad file logs an error + skips so the
     rest of the bundle catalogue still loads.
     """
-    target = directory or _DISGUISES_DIR
-    yamls = sorted(target.glob("*.yaml"))
+    folder: DirHandle
+    if directory is None:
+        # The shipped disguises are package data the engine owns.
+        folder = fileaccess.engine_dir_handle(_DISGUISES_DIR)
+    else:
+        # A directory a caller names is a directory-valued input and goes through the policy.
+        folder = fileaccess.capture(file_access).open_dir(
+            FileRequest(FileRole.MODEL_PACK_ROOT, "read_dir", str(directory), "disguises")
+        )
+    try:
+        return _load_from(folder)
+    finally:
+        folder.close()
+
+
+def _load_from(folder: DirHandle) -> list[Disguise]:
+    names = sorted(e.name for e in folder.entries() if e.name.endswith(".yaml"))
     out: list[Disguise] = []
-    for path in yamls:
+    for name in names:
+        path = Path(name)
         try:
-            with path.open("r", encoding="utf-8") as fh:
-                data = yaml.safe_load(fh)
+            member = folder.open_file(name)
+            try:
+                data = serial.yaml_safe_load(member)
+            finally:
+                member.close()
         except yaml.YAMLError as exc:
             # PyYAML's message quotes the offending text; log only where it failed.
             mark = getattr(exc, "problem_mark", None)

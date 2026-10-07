@@ -29,20 +29,20 @@ combined copy of the group being written, not a hard cap.
 from __future__ import annotations
 
 import dataclasses
-import os
-import shutil
-import tempfile
 from collections.abc import Iterable, Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
+from decoy_engine import fileaccess
 from decoy_engine.execution._adapter import ExecutionResult
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._substrate import require_bool
 from decoy_engine.execution._transactional_sink import TransactionalSink
 from decoy_engine.execution.native._chunked_evidence import merge_executed_backend
+from decoy_engine.fileaccess import FileRequest, FileRole, OutputTxn
+from decoy_engine.fileaccess.adapters import arrow as arrow_adapter
 
 if TYPE_CHECKING:
     from decoy_engine.execution._pipeline_multi_table import MultiTableSplit
@@ -412,32 +412,34 @@ def _cast(chunk: pa.Table, schema: pa.Schema) -> pa.Table:
 
 
 class _Spill:
-    """Held-back chunks beyond one row group, one Arrow IPC file each in a private
-    directory. Read back with `OSFile`, not a memory map, so pages do not stay resident."""
+    """Held-back chunks beyond one row group, one Arrow IPC file each in a private scratch
+    stage beside the sink's own staging directory. The stage is a policy-issued output
+    transaction, so a strict policy decides where spilled rows may land and `TMPDIR` is never
+    consulted. Read back through the stage, not a memory map, so pages do not stay resident."""
 
     def __init__(self, stats: StreamStats, sink: Any, table: str) -> None:
         self.stats = stats
         self.sink = sink
         self.table = table
-        self.directory: str | None = None
-        self.paths: list[str] = []
+        self.txn: OutputTxn | None = None
+        self.names: list[str] = []
 
     @property
     def active(self) -> bool:
-        return self.directory is not None
+        return self.txn is not None
 
     def add(self, chunk: pa.Table) -> None:
-        if self.directory is None:
-            self.directory = self._make_directory()
-        path = os.path.join(self.directory, f"{len(self.paths):08d}.arrow")
-        with pa.OSFile(path, "wb") as sink, pa.ipc.new_file(sink, chunk.schema) as writer:
+        if self.txn is None:
+            self.txn = self._make_stage()
+        name = f"{len(self.names):08d}.arrow"
+        with arrow_adapter.ipc_new_file(self.txn, name, chunk.schema) as writer:
             writer.write_table(chunk)
-        self.paths.append(path)
+        self.names.append(name)
         self.stats.spilled_chunks += 1
 
-    def _make_directory(self) -> str:
-        """Create the private spill directory beside the sink's own staging directory, on the
-        output's filesystem; `TMPDIR` is never consulted."""
+    def _make_stage(self) -> OutputTxn:
+        """Create the private spill stage beside the sink's own staging directory, on the
+        output's filesystem."""
         parent = getattr(self.sink, "spill_parent", None)
         if parent is None:
             raise ExecutionError(
@@ -447,20 +449,25 @@ class _Spill:
                     "so they must spill to disk, but the sink names no `spill_parent`."
                 ),
             )
-        Path(parent).mkdir(parents=True, exist_ok=True)
-        return tempfile.mkdtemp(prefix="_decoy_hold_", dir=str(parent))
+        out = fileaccess.current().output_dir(
+            FileRequest(
+                FileRole.TARGET_OUTPUT, "write", str(Path(parent) / "_hold"), "targets.spill"
+            )
+        )
+        return out.begin("dir", "exclusive", label="hold")
 
     def replay(self) -> Iterator[pa.Table]:
-        for path in self.paths:
-            with pa.OSFile(path, "rb") as source:
-                table = pa.ipc.open_file(source).read_all()
-            os.remove(path)
+        for name in self.names:
+            if self.txn is None:  # pragma: no cover - names only exist after a spill stage
+                return
+            table = arrow_adapter.ipc_read_file(self.txn, name)
+            self.txn.remove(name)
             yield table
 
     def close(self) -> None:
-        if self.directory is not None:
-            shutil.rmtree(self.directory, ignore_errors=True)
-            self.directory = None
+        if self.txn is not None:
+            self.txn.abort()
+            self.txn = None
 
 
 def _hold_back(

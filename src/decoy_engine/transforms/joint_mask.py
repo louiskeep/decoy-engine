@@ -54,8 +54,10 @@ import numpy as np
 import pandas as pd
 
 from decoy_engine.determinism import derive
+from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.reference_tables import ReferenceTable, load_table
+from decoy_engine.reference_tables._registry import JOINT_MASK_TABLES
 
 # DE-02: source label for the secret-derived HMAC key of the mask-mode keyed
 # row selection. `derive(mask_key, namespace, _KEYED_ROW_SOURCE)` yields a
@@ -66,16 +68,8 @@ _DEFAULT_NAMESPACE = "joint_mask"
 
 _LOG = logging.getLogger(__name__)
 
-# Shipped table names that joint_mask can use out of the box.
-# SP-08b: ndc_labeler_drug_strength + mcc_category_description added.
-_KNOWN_TABLES = frozenset(
-    {
-        "us_zip5_city_state",
-        "vehicle_make_model_year",
-        "ndc_labeler_drug_strength",
-        "mcc_category_description",
-    }
-)
+# Shipped table names that joint_mask can use out of the box (the shipped-table registry owns them).
+_KNOWN_TABLES = JOINT_MASK_TABLES
 
 # Prefix that identifies a customer-provided reference table path (SP-08b).
 _CUSTOMER_PREFIX = "customer:"
@@ -134,7 +128,10 @@ class JointMaskConfig:
         return self._table
 
 
-def validate_joint_mask_config(cfg: dict[str, Any]) -> None:
+@entry_point
+def validate_joint_mask_config(
+    cfg: dict[str, Any], *, file_access: FileAccess | None = None
+) -> None:
     """Validate a joint_mask config dict; raise PlanCompileError on any failure.
 
     Checks:

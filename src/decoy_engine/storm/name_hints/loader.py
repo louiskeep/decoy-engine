@@ -30,12 +30,16 @@ require restarting the engine.
 
 from __future__ import annotations
 
+import stat
 from pathlib import Path
 from typing import Any
 
 import yaml
 
+from decoy_engine import fileaccess
 from decoy_engine.errors import DecoyError
+from decoy_engine.fileaccess import DirHandle, FileAccess, FileRequest, FileRole
+from decoy_engine.fileaccess.adapters import serial
 
 _V1_DIR = Path(__file__).parent / "v1"
 _MANIFEST_NAME = "manifest.yaml"
@@ -49,25 +53,55 @@ class NameHintLoaderError(DecoyError):
     """
 
 
-def load_name_hint_terms(directory: Path | None = None) -> dict[str, list[str]]:
+def load_name_hint_terms(
+    directory: Path | None = None, *, file_access: FileAccess | None = None
+) -> dict[str, list[str]]:
     """Read the YAML library and return ``{detector_id: [terms]}``.
 
-    The directory defaults to ``v1/`` next to this module. Tests pass
-    a temp directory to exercise edge cases (malformed YAML, missing
-    files, duplicate ids) without touching the shipped data.
+    The directory defaults to ``v1/`` next to this module, which is package data the engine
+    owns. Tests pass a temp directory to exercise edge cases (malformed YAML, missing
+    files, duplicate ids) without touching the shipped data; a directory a caller names is
+    read through the file-access policy.
 
     Returns a fresh dict on each call; the caller owns it.
     """
-    target = directory or _V1_DIR
+    handle: DirHandle
+    if directory is None:
+        handle = fileaccess.engine_dir_handle(_V1_DIR)
+        target = _V1_DIR
+    else:
+        policy = fileaccess.capture(file_access)
+        handle = policy.open_dir(
+            FileRequest(FileRole.MODEL_PACK_ROOT, "read_dir", str(directory), "storm.name_hints")
+        )
+        target = directory
+    try:
+        return _load_terms(handle, target)
+    finally:
+        handle.close()
+
+
+def _is_file(handle: DirHandle, name: str) -> bool:
+    try:
+        member = handle.open_file(name)
+        try:
+            return stat.S_ISREG(member.stat().st_mode)
+        finally:
+            member.close()
+    except (FileNotFoundError, NotADirectoryError):
+        return False
+
+
+def _load_terms(handle: DirHandle, target: Path) -> dict[str, list[str]]:
     manifest_path = target / _MANIFEST_NAME
-    if not manifest_path.is_file():
+    if not _is_file(handle, _MANIFEST_NAME):
         raise NameHintLoaderError(
             f"name-hint manifest not found at {manifest_path}. "
             "Every name-hint directory must contain a manifest.yaml that "
             "lists the YAML files to load."
         )
 
-    manifest = _read_yaml(manifest_path)
+    manifest = _read_yaml(handle, _MANIFEST_NAME, manifest_path)
     files = manifest.get("files") if isinstance(manifest, dict) else None
     if not isinstance(files, list) or not files:
         raise NameHintLoaderError(f"{manifest_path} must define a non-empty `files:` list.")
@@ -85,11 +119,11 @@ def load_name_hint_terms(directory: Path | None = None) -> dict[str, list[str]]:
                 f"{manifest_path} `files:` entry must be a string, got {fname!r}."
             )
         file_path = target / fname
-        if not file_path.is_file():
+        if not _is_file(handle, fname):
             raise NameHintLoaderError(
                 f"{manifest_path} lists {fname!r} but {file_path} does not exist."
             )
-        for det_id, terms in _read_detector_file(file_path).items():
+        for det_id, terms in _read_detector_file(handle, fname, file_path).items():
             if det_id in merged:
                 first = detector_origin[det_id]
                 raise NameHintLoaderError(
@@ -103,14 +137,14 @@ def load_name_hint_terms(directory: Path | None = None) -> dict[str, list[str]]:
     return merged
 
 
-def _read_detector_file(path: Path) -> dict[str, list[str]]:
+def _read_detector_file(handle: DirHandle, name: str, path: Path) -> dict[str, list[str]]:
     """Parse one YAML file's ``detectors:`` list into {detector_id: [terms]}.
 
     A file with no detectors (empty list or missing key) is permitted
     -- it's a no-op contribution. A file with an entry that lacks
     ``detector_id`` or ``patterns`` is an error.
     """
-    data = _read_yaml(path)
+    data = _read_yaml(handle, name, path)
     if data is None:
         return {}
     if not isinstance(data, dict):
@@ -158,10 +192,12 @@ def _read_detector_file(path: Path) -> dict[str, list[str]]:
     return out
 
 
-def _read_yaml(path: Path) -> Any:
+def _read_yaml(handle: DirHandle, name: str, path: Path) -> Any:
     """yaml.safe_load with a clear error chain on parse failure."""
+    member = handle.open_file(name)
     try:
-        with path.open("r", encoding="utf-8") as fh:
-            return yaml.safe_load(fh)
+        return serial.yaml_safe_load(member)
     except yaml.YAMLError as exc:
         raise NameHintLoaderError(f"could not parse {path}: {exc}") from exc
+    finally:
+        member.close()

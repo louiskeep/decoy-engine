@@ -37,9 +37,7 @@ pandas-oracle parity suite pins.
 
 from __future__ import annotations
 
-import os
 import shutil
-import tempfile
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -82,8 +80,10 @@ from decoy_engine.execution.out_of_core._route_policy import (
     resolve_reorder_threshold_rows,
     validate_outgoing_parent_columns,
 )
+from decoy_engine.execution.out_of_core._scratch import scratch_root
 from decoy_engine.execution.out_of_core._source import LazySource
 from decoy_engine.execution.out_of_core._stream_driver import stream_table
+from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.keyprovider import require_mask_key
 from decoy_engine.plan._types import ColumnSeed
 from decoy_engine.relationships._graph import OrphanPolicy
@@ -111,6 +111,7 @@ if TYPE_CHECKING:
     TableSource: TypeAlias = pa.Table | LazySource
 
 
+@entry_point
 def run_fk_out_of_core(
     plan: Plan,
     sources: Mapping[str, pa.Table | LazySource],
@@ -126,6 +127,7 @@ def run_fk_out_of_core(
     unconfigured_column_policy: UnconfiguredColumnPolicy | None = None,
     key_provider: KeyProvider | None = None,
     out_of_core_reorder_threshold_rows: int | None = None,
+    file_access: FileAccess | None = None,
 ) -> ExecutionResult:
     """Run the out-of-core FK relationship route as a batch stream.
 
@@ -197,9 +199,7 @@ def run_fk_out_of_core(
             )
 
     owned_temp = temp_dir is None
-    root = Path(tempfile.mkdtemp(prefix="decoy-ooc-")) if temp_dir is None else temp_dir
-    root.mkdir(parents=True, exist_ok=True)
-    os.chmod(root, 0o700)
+    root = scratch_root(temp_dir)
     committed = False
     try:
         incoming, outgoing = _edge_indexes(relationship_graph)

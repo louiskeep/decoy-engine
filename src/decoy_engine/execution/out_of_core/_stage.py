@@ -90,7 +90,7 @@ class MaskedKeyStager:
         self._writer.close()
 
     def source(self) -> LazySource:
-        return LazySource(self._path)
+        return LazySource(self._path, scratch=True)
 
 
 __all__ = ["MaskedKeyStager"]

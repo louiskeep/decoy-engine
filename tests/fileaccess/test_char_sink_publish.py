@@ -139,7 +139,9 @@ def test_write_batches_matches_write_bytes(tmp_path: Path) -> None:
     b = ParquetTransactionalSink(tmp_path / "b")
     b.write_batches("t", iter(TABLE.to_batches()), schema=TABLE.schema)
     b.commit()
-    assert (tmp_path / "a" / "t.parquet").read_bytes() == (tmp_path / "b" / "t.parquet").read_bytes()
+    assert (tmp_path / "a" / "t.parquet").read_bytes() == (
+        tmp_path / "b" / "t.parquet"
+    ).read_bytes()
 
 
 def test_writing_the_same_table_twice_replaces_the_staged_file(tmp_path: Path) -> None:

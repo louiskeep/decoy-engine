@@ -22,13 +22,16 @@ RECORDS = [{"a": 1, "b": "x"}, {"a": 2, "b": None}]
 
 
 def _stages(directory: Path) -> list[str]:
-    return sorted(p.name for p in directory.iterdir() if p.name.startswith("_decoy_quarantine_stage_"))
+    return sorted(
+        p.name for p in directory.iterdir() if p.name.startswith("_decoy_quarantine_stage_")
+    )
 
 
 def test_staged_file_sits_beside_the_final_path_and_never_touches_it(tmp_path: Path) -> None:
     final = tmp_path / "deep" / "q.jsonl"
-    staged = write_jsonl_staged(str(final), RECORDS)
-    assert staged.parent == final.parent
+    write_jsonl_staged(str(final), RECORDS)
+    # The stage is observed on disk: the returned object is an opaque capability.
+    (staged,) = [p for p in final.parent.iterdir()]
     assert staged.name.startswith("_decoy_quarantine_stage_") and staged.name.endswith(".jsonl")
     assert not final.exists()
     assert [json.loads(x) for x in staged.read_text().splitlines()] == RECORDS

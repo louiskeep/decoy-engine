@@ -196,9 +196,9 @@ def test_every_name_taking_operation_validates_before_any_syscall(
     sentinel_dir = tmp_path / "beside"
     sentinel_dir.mkdir()
     (sentinel_dir / "s").write_text("S")
-    before = _inodes(tmp_path)
     txn = _out(rooted).begin("dir", "exclusive", label="table_sink")
     _put(txn, "good")
+    before = {k: v for k, v in _inodes(tmp_path).items() if "_decoy_stage_" not in k}
     ops = [
         lambda: txn.create_file(bad),
         lambda: txn.open_file(bad),

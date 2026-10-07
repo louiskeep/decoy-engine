@@ -16,11 +16,11 @@ import os
 import secrets
 import shutil
 import tempfile
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import BinaryIO, Literal, TextIO
 
-from decoy_engine.fileaccess._component import validate_component
+from decoy_engine.fileaccess._errors import deny
 from decoy_engine.fileaccess._output import CREATES_PARENTS, STAGE_PREFIX, STAGE_SUFFIX
 from decoy_engine.fileaccess._types import (
     FileAccessUnavailable,
@@ -62,8 +62,9 @@ class LocalHandle:
         with open(self._path, "rb") as fh:
             return fh.read() if limit is None else fh.read(limit)
 
-    def open_binary(self) -> BinaryIO:
-        return open(self._path, "rb")
+    def open_binary(self, opener: Callable[..., BinaryIO] | None = None) -> BinaryIO:
+        """`opener` lets a caller that already routes `open` through a seam keep doing so."""
+        return (opener or open)(self._path, "rb")
 
     def open_text(self, encoding: str = "utf-8") -> TextIO:
         return open(self._path, encoding=encoding)
@@ -136,10 +137,13 @@ class _LocalStageDir:
         self._finished = False
 
     def _check(self, *components: str) -> None:
+        """Refuse a name that would leave the stage. Length and NUL are left to the operating
+        system so the ambient policy raises the same errors a plain path write always did."""
         if self._finished:
             raise FileAccessUnavailable("output transaction is finished")
         for component in components:
-            validate_component(component, self._display)
+            if not component or component in (".", "..") or "/" in component:
+                raise deny(self._display)
 
     def create_file(self, component: str) -> int:
         self._check(component)

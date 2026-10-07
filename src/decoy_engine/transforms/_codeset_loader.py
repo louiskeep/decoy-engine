@@ -21,8 +21,10 @@ from pathlib import Path
 from typing import Any
 
 import pyarrow as pa
-import pyarrow.parquet as pq
 
+from decoy_engine import fileaccess
+from decoy_engine.fileaccess import FileAccess, FileAccessDenied, FileHandle, FileRequest, FileRole
+from decoy_engine.fileaccess.adapters import arrow as arrow_adapter
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.transforms._codeset_index import SelectionIndexes, build_selection_indexes
 from decoy_engine.transforms._codeset_provenance import CODESET_REGISTRY, CodeSetProvenance
@@ -102,7 +104,17 @@ _CUSTOMER_CACHE_MAX_ENTRIES = 32
 _customer_cache: OrderedDict[tuple[str, int, int, int], _CorpusRecord] = OrderedDict()
 
 
-def load_corpus(name: str, path: Path | None = None) -> list[dict[str, Any]]:
+def _open_customer(path: Path) -> FileHandle:
+    """The policy's handle for a customer corpus; the config position is named, never the path."""
+    return fileaccess.current().open_read(
+        FileRequest(FileRole.CORPUS, "read", str(path), "provider_config.corpus_source")
+    )
+
+
+@fileaccess.entry_point
+def load_corpus(
+    name: str, path: Path | None = None, *, file_access: FileAccess | None = None
+) -> list[dict[str, Any]]:
     """Load a corpus Parquet file and return rows as a sorted list of dicts.
 
     Rows are sorted ascending by ``code`` to establish a stable, file-order-
@@ -131,7 +143,10 @@ def load_corpus(name: str, path: Path | None = None) -> list[dict[str, Any]]:
     return [dict(row) for row in record.rows]
 
 
-def load_corpus_provenance(name: str, path: Path | None = None) -> CodeSetProvenance | None:
+@fileaccess.entry_point
+def load_corpus_provenance(
+    name: str, path: Path | None = None, *, file_access: FileAccess | None = None
+) -> CodeSetProvenance | None:
     """Return the parsed provenance for a corpus (HC-1 slice 1).
 
     Shares the module cache with :func:`load_corpus`, so calling this before
@@ -175,12 +190,17 @@ def _resolve_read_path(name: str, path: Path | None) -> Path:
             )
         return shipped
 
-    if not path.exists():
+    handle = _open_customer(path)
+    try:
+        handle.stat()
+    except (FileNotFoundError, NotADirectoryError):
         raise PlanCompileError(
             code="code_set_corpus_path_not_found",
             path="provider_config.corpus_source",
-            message=f"customer corpus not found at path {path}.",
-        )
+            message=f"customer corpus not found at path {handle.display}.",
+        ) from None
+    finally:
+        handle.close()
     return path
 
 
@@ -210,8 +230,8 @@ def _get_corpus_record(
     rather than only at the point the record is first read from disk.
     """
     resolved = _resolve_read_path(name, path)
-    resolved_str = str(resolved.resolve())
     if is_shipped:
+        resolved_str = str(resolved.resolve())
         cached = _shipped_cache.get(resolved_str)
         if cached is not None:
             record = cached
@@ -225,34 +245,40 @@ def _get_corpus_record(
     # `_resolve_read_path`'s existence check and this stat (TOCTOU). Translate
     # the bare OSError to the loader's typed error contract (load_corpus
     # documents PlanCompileError for missing/unreadable corpora) instead of
-    # leaking FileNotFoundError/PermissionError.
+    # leaking FileNotFoundError/PermissionError. The handle is opened first so the
+    # policy decides before any cache lookup: a cached record is never served to a
+    # request the policy refuses.
+    handle = _open_customer(resolved)
     try:
-        stat = resolved.stat()
-    except FileNotFoundError as exc:
-        raise PlanCompileError(
-            code="code_set_corpus_path_not_found",
-            path="provider_config.corpus_source",
-            message=f"customer corpus at {resolved} became unavailable after the existence check.",
-        ) from exc
-    except OSError as exc:
-        raise PlanCompileError(
-            code="code_set_corpus_read_error",
-            path="provider_config.corpus_source",
-            message=f"failed to stat customer corpus at {resolved}: {exc}",
-        ) from exc
-    # Best-effort file identity, not a content hash (see the module-level
-    # comment on `_customer_cache` for why ctime is included and a hash is
-    # not).
-    cache_key = (resolved_str, stat.st_mtime_ns, stat.st_ctime_ns, stat.st_size)
-    cached = _customer_cache.get(cache_key)
-    if cached is not None:
-        _customer_cache.move_to_end(cache_key)  # LRU: mark as most recently used.
-        record = cached
-    else:
-        record = _read_corpus_record(name, resolved, is_shipped=False)
-        _customer_cache[cache_key] = record
-        if len(_customer_cache) > _CUSTOMER_CACHE_MAX_ENTRIES:
-            _customer_cache.popitem(last=False)  # evict the least-recently-used entry.
+        try:
+            stat = handle.stat()
+        except FileNotFoundError as exc:
+            raise PlanCompileError(
+                code="code_set_corpus_path_not_found",
+                path="provider_config.corpus_source",
+                message=f"customer corpus at {handle.display} became unavailable after the existence check.",
+            ) from exc
+        except OSError as exc:
+            raise PlanCompileError(
+                code="code_set_corpus_read_error",
+                path="provider_config.corpus_source",
+                message=f"failed to stat customer corpus at {handle.display}: {exc}",
+            ) from exc
+        # Best-effort file identity, not a content hash (see the module-level
+        # comment on `_customer_cache` for why ctime is included and a hash is
+        # not).
+        cache_key = (handle.identity(), stat.st_mtime_ns, stat.st_ctime_ns, stat.st_size)
+        cached = _customer_cache.get(cache_key)
+        if cached is not None:
+            _customer_cache.move_to_end(cache_key)  # LRU: mark as most recently used.
+            record = cached
+        else:
+            record = _read_corpus_record(name, resolved, is_shipped=False, handle=handle)
+            _customer_cache[cache_key] = record
+            if len(_customer_cache) > _CUSTOMER_CACHE_MAX_ENTRIES:
+                _customer_cache.popitem(last=False)  # evict the least-recently-used entry.
+    finally:
+        handle.close()
     _check_source_version_pin(name, resolved, record, expected_source_version)
     return record
 
@@ -378,20 +404,35 @@ def _check_corpus_schema(tbl: pa.Table, path: Path) -> None:
             )
 
 
-def _read_corpus_record(name: str, path: Path, *, is_shipped: bool) -> _CorpusRecord:
+def _read_corpus_record(
+    name: str, path: Path, *, is_shipped: bool, handle: FileHandle | None = None
+) -> _CorpusRecord:
     """Internal: read, validate, and index a corpus from disk (uncached).
 
     Validation is execution-time, pre-mutation (fail-closed). No data is
-    mutated before this check. Invalid corpora raise PlanCompileError.
+    mutated before this check. Invalid corpora raise PlanCompileError. A shipped
+    corpus is package data the engine owns; any other path is read through the
+    handle the caller's policy issued.
     """
+    if handle is None:
+        handle = fileaccess.engine_handle(path) if is_shipped else _open_customer(path)
+        owned = True
+    else:
+        owned = False
     try:
-        tbl = pq.read_table(str(path))  # type: ignore[no-untyped-call, unused-ignore]
-    except Exception as exc:
-        raise PlanCompileError(
-            code="code_set_corpus_read_error",
-            path="provider_config.corpus_source",
-            message=f"failed to read corpus Parquet at {path}: {exc}",
-        ) from exc
+        try:
+            tbl = arrow_adapter.read_table(handle)
+        except FileAccessDenied:
+            raise
+        except Exception as exc:
+            raise PlanCompileError(
+                code="code_set_corpus_read_error",
+                path="provider_config.corpus_source",
+                message=f"failed to read corpus Parquet at {handle.display}: {exc}",
+            ) from exc
+    finally:
+        if owned:
+            handle.close()
 
     _check_corpus_schema(tbl, path)
 
@@ -543,7 +584,8 @@ class CorpusVerifyReport:
     problems: tuple[str, ...] = ()
 
 
-def verify_corpus(path: Path) -> CorpusVerifyReport:
+@fileaccess.entry_point
+def verify_corpus(path: Path, *, file_access: FileAccess | None = None) -> CorpusVerifyReport:
     """Validate a corpus Parquet file without running a masking job.
 
     Runs the EXACT same schema check (:func:`_check_corpus_schema`) and

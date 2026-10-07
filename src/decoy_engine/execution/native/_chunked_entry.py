@@ -75,6 +75,7 @@ from decoy_engine.execution.native._dispatch import (
 from decoy_engine.execution.native._faker_null_mask import plan_faker_null_masks
 from decoy_engine.execution.native._operator_params import resolve_params_by_column
 from decoy_engine.execution.native._when_mask import plan_when_masks
+from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.generation.pool import PoolCache, ValuePool
 from decoy_engine.instrumentation.timing import StrategyTimingRecord
 
@@ -537,6 +538,7 @@ def _run_chunked(
     )
 
 
+@entry_point
 def run_mask_chunked(
     config: dict[str, Any],
     chunks: Iterable[pa.Table],
@@ -552,6 +554,7 @@ def run_mask_chunked(
     native_threads: int = 1,
     route_evidence_sink: list[NativeRouteEvidence] | None = None,
     pool_cache: PoolCache | None = None,
+    file_access: FileAccess | None = None,
 ) -> Iterator[pa.Table]:
     """Mask `table` chunk-by-chunk, natively when the whole table admits.
 

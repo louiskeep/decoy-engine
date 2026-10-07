@@ -17,6 +17,7 @@ from typing import Any
 import pandas as pd
 
 from decoy_engine.context import ExecutionContext, emit_lineage, emit_step
+from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.storm._classification import (
     _classify_alphabet,
     _classify_numeric_range,
@@ -442,6 +443,7 @@ def _profile_column(
 # ── public entry point ───────────────────────────────────────────────────────
 
 
+@entry_point
 def run_storm(
     df: pd.DataFrame,
     source_label: str,
@@ -451,6 +453,7 @@ def run_storm(
     custom_detectors: list[CustomDetectorSpec] | None = None,
     extra_name_hints: dict[str, list[str]] | None = None,
     ctx: ExecutionContext | None = None,
+    file_access: FileAccess | None = None,
 ) -> StormProfile:
     """Scan a DataFrame and produce a StormProfile.
 

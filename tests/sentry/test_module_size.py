@@ -67,28 +67,28 @@ ALLOWLIST: dict[str, int] = {
     # fan-in guard on the budget resolver; split the disk-preflight helpers into _disk_budget.py.
     "src/decoy_engine/execution/out_of_core/_budget.py": 608,
     # float FK key token pricing; split the disk-width helpers into _spill_widths.py.
-    "src/decoy_engine/execution/out_of_core/_spill_estimate.py": 623,
+    "src/decoy_engine/execution/out_of_core/_spill_estimate.py": 641,
     # pinned-Plan generation threading through the per-generator dispatch; split the statistical/derived/formula branches.
     "src/decoy_engine/generation/synthesize.py": 632,
     "src/decoy_engine/storm/detectors.py": 1046,
     "src/decoy_engine/generators/columns.py": 660,
-    "src/decoy_engine/storm/profiler.py": 635,
+    "src/decoy_engine/storm/profiler.py": 638,
     "src/decoy_engine/quality/synth_report.py": 863,
     # expanded ML training corpus generators split out of fixtures.py; split value-generators from corpus builders next.
     "src/decoy_engine/storm/eval/corpus.py": 976,
     # monolithic train_and_evaluate; decompose into split/fit/calibrate/evaluate modules.
-    "src/decoy_engine/storm/model_pack/trainer.py": 715,
+    "src/decoy_engine/storm/model_pack/trainer.py": 712,
     # compile-check ownership table; split into per-strategy check modules once the check set stabilises.
     "src/decoy_engine/plan/_checks.py": 783,
     # statistical-column check threading; same per-strategy-check decomposition target as _checks.py.
-    "src/decoy_engine/plan/_compile.py": 703,
+    "src/decoy_engine/plan/_compile.py": 701,
     # safety invariants documented in docstrings are part of the fix; extract the emission builders into _mem_telemetry_emit.py.
     "src/decoy_engine/execution/_mem_telemetry.py": 762,
     # chunk-parity invariant text and admission gate calls; dense exception.
-    "src/decoy_engine/execution/_chunked.py": 626,
+    "src/decoy_engine/execution/_chunked.py": 629,
     # dispatch entry plus the table-keyed params, the job-seed hand-off and the eager string-pool
     # check for the position-keyed faker; dense exception, the pool check itself lives in _chunk_masking.
-    "src/decoy_engine/execution/native/_chunked_entry.py": 615,
+    "src/decoy_engine/execution/native/_chunked_entry.py": 618,
     # scale-aware chunked-FK dtype family and rootness check; split the FK helpers.
     "src/decoy_engine/execution/_chunked_fk.py": 970,
     # fail-closed output projection and corpus pinning on the mask route; split the FK-resolution helpers.
@@ -98,13 +98,13 @@ ALLOWLIST: dict[str, int] = {
     # resident Arrow type resolution; move it into its own module with the next operator gate.
     "src/decoy_engine/execution/native/_requirements.py": 644,
     # sequential FK route threading; split the per-table mask/quarantine loop.
-    "src/decoy_engine/execution/_sequential.py": 652,
+    "src/decoy_engine/execution/_sequential.py": 655,
     # transactional publish hardening and row mask; split the publish cluster.
-    "src/decoy_engine/quarantine.py": 645,
+    "src/decoy_engine/quarantine.py": 637,
     # code_set provenance and FF1 notice plumbing through the streaming runner.
     "src/decoy_engine/execution/out_of_core/_runner.py": 707,
     # corpus schema checks and verify_corpus; split into _codeset_verify.py when next touched.
-    "src/decoy_engine/transforms/_codeset_loader.py": 606,
+    "src/decoy_engine/transforms/_codeset_loader.py": 648,
     # DRAW_SITES catalogue; split into _draw_sites_mask.py / _draw_sites_gen.py if it grows.
     "src/decoy_engine/execution/native/_determinism_protocol.py": 928,
     # one provider class per draw mechanism across 30 sites; the size is fan-out, not tangle.
@@ -112,9 +112,13 @@ ALLOWLIST: dict[str, int] = {
     # load-time self-test and native_threads plumbing; no cleaner class split identified.
     "src/decoy_engine/execution/out_of_core/_stream_join.py": 720,
     # custom-provider registry snapshot for the shadow-parity gate; one cohesive module, no split identified.
-    "src/decoy_engine/internal/faker_setup.py": 622,
+    "src/decoy_engine/internal/faker_setup.py": 648,
     # FF1 span path and sub-floor policy; split into _text_mask_sub_floor.py when next touched.
     "src/decoy_engine/transforms/text_mask.py": 722,
+    # policy-bound file sources (LazySource, Csv/Parquet/FixedWidth); split the cloud-agnostic helpers when next touched.
+    "src/decoy_engine/profile/_readers.py": 604,
+    # ambient guard for the subprocess route (D6 fail-closed); split the in-process fallback into its own module when next touched.
+    "src/decoy_engine/execution/_isolated_run.py": 620,
 }
 
 

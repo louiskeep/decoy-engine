@@ -54,8 +54,10 @@ from typing import Any
 import pandas as pd
 from pydantic import ValidationError as PydanticValidationError
 
+from decoy_engine import fileaccess
 from decoy_engine.config._fixed_width import FixedWidthColumn, FixedWidthLayout
 from decoy_engine.errors import ConfigError, FixedWidthParseError
+from decoy_engine.fileaccess import FileAccess, FileHandle, FileRequest, FileRole
 
 _CASTERS: dict[str, type] = {
     "str": str,
@@ -131,11 +133,15 @@ def _resolve_layout(layout: FixedWidthLayout | dict[str, Any], *, path: str) -> 
     )
 
 
+@fileaccess.entry_point
 def read_fixed_width(
     path: str | os.PathLike[str],
     layout: FixedWidthLayout | dict[str, Any],
     *,
     max_records: int | None = None,
+    file_access: FileAccess | None = None,
+    role: FileRole = FileRole.SOURCE,
+    field_key: str = "source.path",
 ) -> pd.DataFrame:
     """Parse a fixed-width file at `path` into a DataFrame per `layout`.
 
@@ -189,6 +195,8 @@ def read_fixed_width(
             outside the data-error guarantee and its traceback frames may hold
             records already parsed (see
             docs/security/error-reporting-and-data-exposure.md).
+        FileAccessDenied: the installed policy refused `path` for `role`
+            (`file_access`, `role` and `field_key` name who asks and for what).
     """
     if isinstance(max_records, bool) or not isinstance(max_records, (int, type(None))):
         raise TypeError(f"max_records must be an int or None, got {type(max_records).__name__}")
@@ -200,9 +208,24 @@ def read_fixed_width(
         raise TypeError(f"path must be a str or os.PathLike[str], got {type(path).__name__}")
     if "\x00" in path:
         raise ValueError("path must not contain a NUL character")
+    handle = fileaccess.current().open_read(FileRequest(role, "read", path, field_key))
+    try:
+        return read_fixed_width_handle(handle, layout, max_records=max_records)
+    finally:
+        handle.close()
+
+
+def read_fixed_width_handle(
+    handle: FileHandle,
+    layout: FixedWidthLayout | dict[str, Any],
+    *,
+    max_records: int | None = None,
+) -> pd.DataFrame:
+    """`read_fixed_width` over a handle the caller's policy already authorized."""
+    path = handle.display
     spec = _resolve_layout(layout, path=path)
 
-    records, failure = _parse_records(path, spec, max_records)
+    records, failure = _parse_records(handle, spec, max_records)
     if failure is not None:
         # Raised here, after `_parse_records` has returned: this frame holds
         # no line, value or parsed record, so nothing reachable from the
@@ -220,7 +243,7 @@ __all__ = ["read_fixed_width"]
 
 
 def _parse_records(
-    path: str, spec: FixedWidthLayout, max_records: int | None
+    handle: FileHandle, spec: FixedWidthLayout, max_records: int | None
 ) -> tuple[list[dict[str, Any]] | None, str | None]:
     """Parse up to `max_records` records. Returns `(records, None)`, or
     `(None, message)` on the first bad line; never raises for bad data, so
@@ -228,11 +251,12 @@ def _parse_records(
     required_width = spec.record_width
     records: list[dict[str, Any]] = []
     line_no = 0
+    path = handle.display
     rendered = _render_path(path)
     # Binary, one physical line per read: a text-mode reader decodes ahead in
     # ~8 KB chunks, so a capped read could fail on bytes past the cap and a
     # decode error could not name its real line.
-    with open(path, "rb") as fh:
+    with handle.open_binary(open) as fh:
         while max_records is None or len(records) < max_records:
             raw_bytes = fh.readline()
             if raw_bytes == b"":

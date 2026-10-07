@@ -51,6 +51,7 @@ from decoy_engine.determinism import derive
 from decoy_engine.errors import FpeChecksumError, FpeUnencryptableError
 from decoy_engine.execution._adapter import StrategyContext, provider_config_to_dict
 from decoy_engine.execution._errors import StrategyError
+from decoy_engine.fileaccess import map_in_context
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.plan._types import ColumnSeed
 from decoy_engine.transforms import _ff1
@@ -324,6 +325,6 @@ class FpeStrategyHandler:
         chunks = [list(chunk) for chunk in np.array_split(np.array(values, dtype=object), workers)]
         with ThreadPoolExecutor(max_workers=workers) as executor:
             chunk_results = list(
-                executor.map(lambda chunk: [encrypt_one(v) for v in chunk], chunks)
+                map_in_context(executor, lambda chunk: [encrypt_one(v) for v in chunk], chunks)
             )
         return [value for chunk_result in chunk_results for value in chunk_result]

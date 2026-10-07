@@ -97,7 +97,7 @@ def _load_sources(
     when they actually reach that point, never up front.
     """
     if lazy:
-        return {name: LazySource(Path(path)) for name, path in manifest.items()}
+        return {name: LazySource(Path(path), scratch=True) for name, path in manifest.items()}
     return {
         name: pq.read_table(path)  # type: ignore[no-untyped-call, unused-ignore]
         for name, path in manifest.items()

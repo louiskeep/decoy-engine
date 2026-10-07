@@ -74,7 +74,7 @@ FORCE_PORTABLE = False
 _usable: bool | None = None
 
 
-def confined_open(dir_fd: int, rel: str, flags: int) -> int:
+def _confined_open(dir_fd: int, rel: str, flags: int) -> int:
     """Open `rel` beneath `dir_fd` without leaving it and without following a link.
 
     One `openat2` call where the kernel has it. Elsewhere, a walk that opens each component with
@@ -83,19 +83,18 @@ def confined_open(dir_fd: int, rel: str, flags: int) -> int:
     refused outright. Raises `OSError` on any refusal."""
     if not FORCE_PORTABLE and usable():
         return openat2(dir_fd, rel, flags)
-    parts = rel.split("/")
-    for part in parts:
-        if not is_valid_component(part):
-            raise OSError(errno.EXDEV, "path leaves the root")
+    *directories, leaf = rel.split("/")
+    if not is_valid_component(leaf) or not all(is_valid_component(part) for part in directories):
+        raise OSError(errno.EXDEV, "path leaves the root")
     fd = os.dup(dir_fd)
     try:
-        for part in parts[:-1]:
+        for part in directories:
             child = os.open(
                 part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=fd
             )
             os.close(fd)
             fd = child
-        return os.open(parts[-1], flags | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=fd)
+        return os.open(leaf, flags | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=fd)
     finally:
         os.close(fd)
 

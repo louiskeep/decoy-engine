@@ -38,7 +38,9 @@ import os
 from collections.abc import Callable
 from typing import Any
 
+from decoy_engine import fileaccess
 from decoy_engine.determinism import SEED_PROTOCOL_VERSION
+from decoy_engine.fileaccess import FileAccess, FileRole, entry_point
 
 # Fields that are intentionally excluded from the fingerprint. ``name``
 # is the rename surface R3.10 is severing. ``null_probability`` is a
@@ -75,7 +77,7 @@ _EXCLUDED_FROM_FINGERPRINT = frozenset(
 _SNAPSHOT_FILE_KEY = "snapshot_file"
 
 
-def _snapshot_content_digest(path: str) -> str:
+def _snapshot_content_digest(path: str, field_key: str = "snapshot_file") -> str:
     """SHA-256 hex of a snapshot file's raw bytes, for use in the fingerprint.
 
     Content, not path: the same snapshot at any location fingerprints
@@ -84,8 +86,7 @@ def _snapshot_content_digest(path: str) -> str:
     which would reintroduce the path-coupling bug.
     """
     try:
-        with open(path, "rb") as fh:
-            data = fh.read()
+        data = fileaccess.read_all(FileRole.SNAPSHOT, path, field_key)
     except OSError as exc:
         raise RuntimeError(
             f"strategy_config_fingerprint: snapshot_file {path!r} is missing or "
@@ -96,8 +97,12 @@ def _snapshot_content_digest(path: str) -> str:
     return "sha256:" + hashlib.sha256(data).hexdigest()
 
 
+@entry_point
 def strategy_config_fingerprint(
-    column_config: dict[str, Any], *, snapshot_content_digest: str | None = None
+    column_config: dict[str, Any],
+    *,
+    snapshot_content_digest: str | None = None,
+    file_access: FileAccess | None = None,
 ) -> str:
     """SHA-256 hex of canonical JSON of the strategy-relevant config.
 

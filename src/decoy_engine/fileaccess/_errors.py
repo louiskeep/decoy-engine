@@ -29,12 +29,7 @@ def encode_field_key(key: str) -> EncodedKey:
 
 
 def _escape(ch: str) -> str:
-    if ch == "\\":
-        return "\\\\"
-    code = ord(ch)
-    if code <= 0xFF:
-        return f"\\x{code:02x}"
-    return f"\\u{code:04x}" if code <= 0xFFFF else f"\\U{code:08x}"
+    return ch.encode("unicode_escape").decode("ascii")
 
 
 def deny(field_key: str) -> FileAccessDenied:

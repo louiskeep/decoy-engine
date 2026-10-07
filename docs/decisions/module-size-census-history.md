@@ -670,3 +670,24 @@ Task 5.2 FF1 (2026-09-12): 657 -> 722 for the sub_floor_span redact|synthetic
 policy (deterministic valid-format synthetic PAN/NPI with checksum recompute)
 and the FF1-keyed span path. The `_text_mask_sub_floor.py` decomposition above
 is the standing target when this module is next touched.
+
+## E1: the `FileAccess` policy port (2026-10-07)
+
+Growth under a reviewed census bump, each from routing a file access through `decoy_engine.fileaccess`
+(plan `docs/plans/2026-10-02-file-access-authz-engine-platform.md`, slice E1):
+
+- `transforms/_codeset_loader.py` 606 -> 648: the customer corpus is opened through the policy before
+  the existence check and again before the cache lookup, so a cached record is never served to a request
+  the policy refuses. Decomposition target unchanged: split `verify_corpus` into `_codeset_verify.py`.
+- `internal/faker_setup.py` 622 -> 648: `load_custom_providers` reads the directory through a directory
+  capability (stat, then entries and children beneath its descriptor). No new concern was added.
+- `execution/out_of_core/_spill_estimate.py` 623 -> 641: the output-device probe asks the policy to
+  `stat` each target's nearest existing ancestor.
+- `profile/_readers.py` (new entry, 604): `LazySource` and the three file sources keep the policy they
+  were built under and open their file through it on every read; the handle outlives the batches.
+- `execution/_isolated_run.py` (new entry, 620): the ambient guard for the subprocess route.
+- `+3` each in `_chunked.py`, `_sequential.py`, `native/_chunked_entry.py`, `storm/profiler.py`: the
+  `file_access=` keyword and its `entry_point` decorator.
+- Shrinks: `quarantine.py` 645 -> 637, `plan/_compile.py` 703 -> 701 and `storm/model_pack/trainer.py`
+  715 -> 712 (legacy over-max files may only shrink, so each gave back what the keyword and the policy
+  calls added by tightening comments and a helper).

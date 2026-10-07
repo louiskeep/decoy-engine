@@ -39,8 +39,10 @@ import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
+from decoy_engine import fileaccess
 from decoy_engine.determinism._hkdf import hkdf_sha256
 from decoy_engine.errors import DecoyError
+from decoy_engine.fileaccess import FileAccess, FileRole
 from decoy_engine.release import is_pre_ga
 
 if TYPE_CHECKING:
@@ -213,7 +215,8 @@ def _redact_ref(ref: str) -> str:
     return f"<redacted ref, {len(ref)} chars>"
 
 
-def resolve_mask_secret_ref(ref: str) -> bytes:
+@fileaccess.entry_point
+def resolve_mask_secret_ref(ref: str, *, file_access: FileAccess | None = None) -> bytes:
     """Resolve a `mask_secret_ref` (`env:NAME` or `file:/PATH`) to raw bytes.
 
     The ref is a REFERENCE, never the secret itself. Supported kinds:
@@ -238,8 +241,10 @@ def resolve_mask_secret_ref(ref: str) -> bytes:
         if not path:
             raise MaskSecretError(code="bad_secret_ref", message="file ref has no path.")
         try:
-            with open(path, encoding="utf-8") as handle:
-                raw = handle.read()
+            # Read as bytes, decode, then translate newlines exactly as text mode did, so
+            # key derivation for an existing file-backed secret cannot change.
+            data = fileaccess.read_all(FileRole.SECRET, path, "global_settings.mask_secret_ref")
+            raw = data.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
         except OSError as exc:
             raise MissingMaskSecret(
                 f"mask secret file {path!r} (from mask_secret_ref) could not be read: {exc}."
@@ -264,7 +269,10 @@ def resolve_mask_secret_ref(ref: str) -> bytes:
     )
 
 
-def key_provider_from_ref(ref: str, *, key_version: str = "v1") -> SecretKeyProvider:
+@fileaccess.entry_point
+def key_provider_from_ref(
+    ref: str, *, key_version: str = "v1", file_access: FileAccess | None = None
+) -> SecretKeyProvider:
     """Build a SecretKeyProvider from a `mask_secret_ref`. Validates >=32 bytes."""
     return SecretKeyProvider(resolve_mask_secret_ref(ref), key_version=key_version)
 

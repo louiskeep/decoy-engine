@@ -27,7 +27,7 @@ _THREAD_BYTES_PER_THREAD = 2 * 1024 * 1024 * 1024  # 2 GiB
 def connect_duckdb(*, temp_dir: Path, memory_limit: str | None = None):
     """Open an in-memory DuckDB connection with a restricted temp directory."""
     try:
-        import duckdb
+        from decoy_engine.fileaccess.adapters import duckdb as duckdb_adapter
     except ModuleNotFoundError as exc:  # pragma: no cover - covered in no-duckdb envs
         raise ExecutionError(
             code="out_of_core_backend_unavailable",
@@ -56,7 +56,7 @@ def connect_duckdb(*, temp_dir: Path, memory_limit: str | None = None):
         threads = _threads_for_memory_limit(memory_limit)
         if threads is not None:
             config["threads"] = threads
-    return duckdb.connect(database=":memory:", config=config)
+    return duckdb_adapter.connect_internal(config)
 
 
 def _threads_for_memory_limit(memory_limit: str | None) -> int | None:

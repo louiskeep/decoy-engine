@@ -298,7 +298,7 @@ class RootedOutputDir:
                         os.mkdir(part, 0o777, dir_fd=fd)
                     except FileExistsError:
                         pass
-                child = _openat2.confined_open(fd, part, os.O_RDONLY | os.O_DIRECTORY)
+                child = _openat2._confined_open(fd, part, os.O_RDONLY | os.O_DIRECTORY)
                 _close(fd)
                 fd = child
         except OSError:
@@ -334,7 +334,7 @@ class RootedOutputDir:
             try:
                 os.mkdir(self._leaf, 0o777, dir_fd=parent)
             except FileExistsError:
-                child = _openat2.confined_open(parent, self._leaf, os.O_RDONLY | os.O_DIRECTORY)
+                child = _openat2._confined_open(parent, self._leaf, os.O_RDONLY | os.O_DIRECTORY)
                 _close(child)
         except OSError:
             failed = True
@@ -348,7 +348,7 @@ class RootedOutputDir:
         parent = -1
         try:
             parent = self._open_parent(create=False)
-            child = _openat2.confined_open(parent, self._leaf, os.O_RDONLY | os.O_DIRECTORY)
+            child = _openat2._confined_open(parent, self._leaf, os.O_RDONLY | os.O_DIRECTORY)
         except FileNotFoundError:
             return True
         except OSError:
