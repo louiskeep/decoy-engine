@@ -20,13 +20,24 @@ Today `validate_bucket_perturb_config` (`:175-192`) checks only `bucket`, and no
 
 **2a. One rule, one owner.** A new function `bucket_perturb_date_format_problem(date_format) -> str | None` in `transforms/bucket_perturb.py` returns a reason, or `None` when the format is acceptable.
 - `None` or empty is acceptable. It means autodetect, which is today's behavior and unchanged here.
-- A string is acceptable only if it contains at least one strftime directive (`%` followed by a directive character). The two names `ISO8601` and `mixed` are rejected, whatever their case.
+- **Guarantee (rev 2, Codex round 1 HIGH):** this rejects formats that cannot write a DATE back. It does not reject every lossy format.
+  - bucket_perturb perturbs the calendar date: the oracle calls `.date()` before `strftime`. So time, fractional-second and timezone directives always write midnight, zero or empty. That is an inherent, documented property of this date strategy, and this slice does not change it.
+- **Rule:** scan the string left to right.
+  - `%%` is consumed as a literal percent and counts for nothing.
+  - A real directive is `%` followed by one character.
+  - The format is acceptable only if at least one real directive is a DATE directive: `%Y %y %G %C %m %b %B %h %d %e %j %U %W %V %a %A %u %w %x %c %D %F`. Locale `%x` and `%c` are accepted.
+  - A dangling trailing `%` is rejected.
+  - An unknown directive (for example `%Q`) is rejected with the same code. The record documents this as an intentional move of today's runtime `ValueError` to an up-front error.
+  - A non-string value is rejected.
+  - `ISO8601`, `mixed` and any other string with no date directive are rejected, whatever their case. Time-only formats such as `%H:%M:%S` are rejected too, because they would write midnight over every value.
 - The message names the field and asks for a concrete pattern such as `%Y-%m-%d`. It never echoes data.
 
 **2b. Compile-time check.**
-- A new `plan/_checks_bucket_perturb.py` holds `check_bucket_perturb_config(config)`, wired next to `check_truncate_config` in `plan/_compile.py:~252`.
+- A new `plan/_checks_bucket_perturb.py` holds `check_bucket_perturb_config(config)`. It is registered in BOTH engine validation entrypoints and their reporting tuples: next to `check_truncate_config` in the compile path (`plan/_compile.py:~252`) and in `run_config_only_checks` (`:~555`), Codex round 1.
 - It raises `PlanCompileError(code="bucket_perturb_date_format_unsupported")` for any bucket_perturb column whose `provider_config.date_format` fails 2a.
-- So a job fails before it reads any data, on every authoring path (CLI, YAML, platform).
+- **Timing (rev 2).** The job fails before any masking or output write. That is NOT before source reads, because `run_pipeline` profiles sources before compiling (`_pipeline.py:380-382`).
+- **Routes.** The check is verified on the whole-frame, sequential, multi-table, generate-plus-mask, chunked and both out-of-core paths.
+- **Platform save-time validation.** `api/pipelines/v2_validation.py` keeps its own validators and has none for bucket_perturb. Adding one is EXCLUDED from this engine slice, because platform CI has no GitHub billing and platform merges need the local check. It is noted on the roadmap as a follow-up. The engine check still rejects at run time for every platform job.
 
 **2c. Handler backstop.**
 - `validate_bucket_perturb_config` also applies 2a. The existing callers then raise `StrategyError(code="bucket_perturb_invalid_config")` at run time:
@@ -34,7 +45,7 @@ Today `validate_bucket_perturb_config` (`:175-192`) checks only `bucket`, and no
   - out-of-core (`out_of_core/_mask_group_c.py:425, 462`).
 - This covers raw-dict callers that skip compile.
 
-**2d. Native gate.** `bucket_perturb_config_rejection` (`native/_operator_config_rejections.py:63-`) reuses 2a, so it never admits a column that compile rejects. On main it already requires a non-empty string and rejects `%z`/`%Z`. C8-iii-a's special-format decline becomes redundant but harmless.
+**2d. Native gate.** `bucket_perturb_config_rejection` (`native/_operator_config_rejections.py:63-`) reuses 2a. Compile rejection IMPLIES native rejection, but the two verdicts are not identical: native keeps its own extra restrictions, such as no autodetect and no `%z`/`%Z` (Codex round 1). On main it already requires a non-empty string and rejects `%z`/`%Z`. C8-iii-a's special-format decline becomes redundant but harmless.
 
 **2e. Out of scope.** These are recorded for Cam and not changed here:
 - **Undetectable format.** When `date_format` is unset and `_detect_format` finds nothing, the handler passes the column through UNMASKED with only a warning (`:151-155`). That is the same silent-passthrough class the truncate check closed in Sprint 13, and it needs its own decision.
@@ -42,13 +53,18 @@ Today `validate_bucket_perturb_config` (`:175-192`) checks only `bucket`, and no
 
 ## 3. Acceptance tests (written first)
 
-1. **Compile.**
-   - `ISO8601`, `iso8601`, `mixed`, `YYYY-MM-DD` and `foo` each raise `bucket_perturb_date_format_unsupported`, naming the column and not echoing data.
-   - `%Y-%m-%d`, `%d/%m/%Y`, `%Y` and an unset format all compile.
+1. **Compile (both entrypoints).**
+   - Rejected with `bucket_perturb_date_format_unsupported`, naming the column and not echoing data:
+     - `ISO8601`, `iso8601`, `mixed`;
+     - `YYYY-MM-DD`, `foo`;
+     - `%%Y` (escaped), a trailing `%`;
+     - `%H:%M:%S` (time-only), `%Q` (unknown);
+     - a non-string value.
+   - Compile cleanly: `%Y-%m-%d`, `%d/%m/%Y`, `%Y`, `%x`, `%c`, `100%% %Y`, and an empty or unset format.
    - A non-bucket_perturb column with a `date_format` key is untouched.
-2. **Handler backstop.** A raw-dict run that bypasses compile, with `date_format: mixed`, raises `StrategyError(bucket_perturb_invalid_config)` on the oracle and on out-of-core, BEFORE writing any output.
-3. **Native gate.** A rejected format is never admitted natively. The verdict agrees with the compile rule for every case in test 1.
-4. **No change for valid configs.** Existing bucket_perturb tests stay green unmodified, apart from ones that pinned the destructive literal output (each listed in the record with the reason). Testflight fingerprints are unchanged; STOP if one moves.
+2. **Handler backstop.** A raw-dict run that bypasses compile, with `date_format: mixed`, raises `StrategyError(bucket_perturb_invalid_config)` on the oracle and on both out-of-core paths, before any output write (an output-write spy proves it). The rejection still happens with empty input, with all-null input, and under a `when:` predicate that selects nothing.
+3. **Native gate.** Every format test 1 rejects is also rejected natively. Native's own extra declines (autodetect, `%z`) are kept.
+4. **No change for valid configs.** BEFORE implementing, the builder lists every existing config and test affected. That includes tests that pinned the destructive literal output, the C8-iii-a goldens, and tests that expect `%Q` to raise at runtime, which now raise up front. Each change is recorded with its reason and a migration note to a concrete pattern. Every other test stays green unmodified. Testflight fingerprints are unchanged; STOP if one moves.
 5. **Sentries and mutation** on 2a.
 
 ## 4. Failure modes
@@ -60,3 +76,13 @@ Today `validate_bucket_perturb_config` (`:175-192`) checks only `bucket`, and no
 | Native admits what compile rejects | 2d shared rule; test 3 |
 
 Rollback: revert the merge commit.
+
+## 5. Review log
+
+- **Codex plan gate, round 1: REVISE** (1 HIGH, 3 MEDIUM). Rev 2:
+  - **HIGH:** the guarantee is "a date must be written back". The rule requires a real DATE directive, consumes `%%`, and rejects time-only, unknown and dangling formats. Time, fractional-second and timezone loss is documented as inherent to this date strategy.
+  - **MEDIUM:** both engine entrypoints; precise timing; the route matrix; the platform validator explicitly excluded and tracked.
+  - **MEDIUM:** compile rejection implies native rejection; native's extra restrictions are kept.
+  - **MEDIUM:** an inventory of affected configs and tests before implementation, including the `%Q` timing move.
+
+  Codex agreed that section 2e (undetectable-format passthrough) stays separate and tracked.
