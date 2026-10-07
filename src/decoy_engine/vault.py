@@ -324,10 +324,12 @@ class VaultWriter:
                 )
             out = self._access.output_dir(FileRequest(FileRole.VAULT, "write", str(path), "vault"))
             mode: Literal["exclusive", "replace"] = "replace"
+            label: Literal["vault", "vault_direct"] = "vault_direct"
         else:
             out = path
             mode = "exclusive"
-        with out.begin("file", mode, label="vault") as txn:
+            label = "vault"
+        with out.begin("file", mode, label=label) as txn:
             serial.write_bytes(txn, "vault", b"".join(parts))
             txn.publish()
         return len(rows)

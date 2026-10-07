@@ -25,7 +25,9 @@ ambient CLI behavior (`LocalFileAccess`), deny-by-default rooted access confined
 `fileaccess.forbid_ambient()` once at startup. `ParquetTransactionalSink`, `LazySource`,
 `VaultWriter`, `load_vault` and `unmask_pipeline` also accept the capability objects directly. A
 denial is one `FileAccessDenied` whose message is `file access denied: <config position>`, with no
-path, basename or file content. Contract: `docs/security/file-access-policy.md`.
+path, basename or file content; a library failure on a file the policy allowed (corrupt Parquet, bad
+YAML) is a separate `FileAccessReadError` with the same hygiene, and memory and disk-quota errors keep
+their class. Contract: `docs/security/file-access-policy.md`.
 
 With no policy argument the engine behaves as before: paths, symlinks, error text, output names, the
 default log file, accepted and rejected table names and the table sink's publish and failure
@@ -52,7 +54,7 @@ and `create_directory_for_file` in `internal/fs.py` are removed; `quarantine.wri
 returns an opaque stage (publish it with `publish_staged_jsonl`, discard it with
 `discard_staged_jsonl`) instead of a path; `ParquetTransactionalSink` and the hold-back spill create
 their stages through the policy, with the same directory names, publish semantics and error behavior;
-a vault write replaces its target atomically instead of writing in place; subset output is staged and
+a vault write to a path keeps writing in place, as before (a strict policy's `OutputDir` gets an exclusive create instead); subset output is staged and
 published with one rename instead of being written in place. Under a policy other than the ambient
 one, `run_pipeline_isolated` (when it would spawn a child or is given a `staging_dir` or `output_dir`)
 and `run_fk_out_of_core` with a caller-named `temp_dir` raise `FileAccessUnavailable` before any I/O.

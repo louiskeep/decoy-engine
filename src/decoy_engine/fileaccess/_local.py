@@ -31,6 +31,7 @@ from decoy_engine.fileaccess._types import (
 _logger = logging.getLogger("decoy_engine.quarantine")
 
 _CREATE = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC
+_CREATE_IN_PLACE = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_CLOEXEC
 
 
 class LocalHandle:
@@ -203,6 +204,13 @@ class LocalOutputTxn(_LocalStageDir):
             self._check(component)
             if self._staged_file is not None:
                 raise FileAccessUnavailable("a file stage holds exactly one file")
+            if self._label == "vault_direct":
+                # The ambient vault write truncates and rewrites the named file in place,
+                # as `Path.write_bytes` always did (hardlinks, a read-only directory and a
+                # missing parent behave as before). Only this policy issues the label.
+                self._direct = True
+                self._staged_file = self._target
+                return os.open(self._target, _CREATE_IN_PLACE, 0o666)
             if self._label in CREATES_PARENTS:
                 self._target.parent.mkdir(parents=True, exist_ok=True)
             if self._mode == "replace" and self._writes_through():
