@@ -304,8 +304,8 @@ class MemorySampler:
         if observer is not None:
             try:
                 observer(value)
-            except Exception:
-                _logger.debug("memwatch observer raised", exc_info=True)
+            except Exception as exc:  # a test hook must not end sampling
+                _logger.debug("memwatch observer raised %s", type(exc).__name__)
         return True
 
     def _end(self, reason: str) -> bool:
