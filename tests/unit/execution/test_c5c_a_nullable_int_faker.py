@@ -335,6 +335,38 @@ def test_sequential_route_releases_the_references_with_the_table(
     assert held["ctx"].exact_int_sources == {}
 
 
+def test_two_tables_with_the_same_column_name_keep_separate_sources() -> None:
+    from types import SimpleNamespace
+
+    from decoy_engine.plan._types import SeedEnvelope, TableSeed
+
+    seed = sup.faker_seed()
+    plan = SimpleNamespace(
+        seed_envelope=SeedEnvelope(
+            job_seed=sup.SEED,
+            per_table=tuple(
+                (name, TableSeed(per_column=(("n", seed),), per_group=())) for name in ("a", "b")
+            ),
+        )
+    )
+    a_vals: list[int | None] = [1, None, 2]
+    b_vals: list[int | None] = [None, 2, 1]
+    out = PandasExecutionAdapter().run(
+        plan,
+        {
+            "a": pa.table({"n": pa.array(a_vals, type=pa.int64())}),
+            "b": pa.table({"n": pa.array(b_vals, type=pa.int64())}),
+        },
+        registry=sup.REG,
+        relationship_graph=sup.GRAPH,
+        namespace_registry=sup.NS,
+    )
+    a = out.outputs["a"].column("n").to_pylist()
+    b = out.outputs["b"].column("n").to_pylist()
+    assert a[1] is None and b[0] is None
+    assert a[0] == b[2] and a[2] == b[1]
+
+
 # 7. Float sources unchanged -------------------------------------------------------
 
 
