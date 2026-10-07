@@ -299,3 +299,23 @@ def test_a_disguise_directory_needs_its_own_role(rooted, root_dir) -> None:  # t
     with pytest.raises(FileAccessDenied) as info:
         load_disguises(root_dir / "d", file_access=rooted)
     assert str(info.value) == "file access denied: disguises.directory"
+
+
+def test_the_joint_mask_handler_names_its_table_and_column(world: World) -> None:
+    from types import SimpleNamespace
+
+    from decoy_engine.execution._strategies._joint_mask import JointMaskHandler
+
+    outside = world.sentinel(f"{TOKEN}.ref.parquet", b"x")
+    plan = SimpleNamespace(
+        provider_config=(
+            ("columns", ["zip"]),
+            ("reference", f"customer:{outside}"),
+            ("key_by", "zip"),
+        ),
+        namespace="n",
+    )
+    ctx = SimpleNamespace(current_table="orders", nested_outer_column="", mask_key=b"k")
+    with scope(world.policy), pytest.raises(FileAccessDenied) as info:
+        JointMaskHandler().run(None, "zip", plan, ctx)  # type: ignore[arg-type]
+    _assert_denial(info.value, "tables.orders.columns.zip.joint_mask.reference")

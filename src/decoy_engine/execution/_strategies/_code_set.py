@@ -65,6 +65,7 @@ from __future__ import annotations
 
 import pandas as pd
 
+from decoy_engine import fileaccess
 from decoy_engine.execution._adapter import StrategyContext, provider_config_to_dict
 from decoy_engine.execution._errors import StrategyError
 from decoy_engine.execution._row_errors import RowError
@@ -179,7 +180,8 @@ class CodeSetHandler:
         record_key = (ctx.current_table, ctx.nested_outer_column or column)
         corpus_record = ctx.code_set_records.get(record_key)
         if corpus_record is None:
-            corpus_record = resolve_corpus_record(code_cfg)
+            with fileaccess.at_position(f"tables.{record_key[0]}.columns.{record_key[1]}"):
+                corpus_record = resolve_corpus_record(code_cfg)
             ctx.code_set_records[record_key] = corpus_record
         evidence = describe_loaded_corpus(code_cfg, record=corpus_record)
 

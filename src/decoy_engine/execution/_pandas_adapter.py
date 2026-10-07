@@ -36,7 +36,6 @@ from typing import TYPE_CHECKING
 import pandas as pd
 import pyarrow as pa
 
-from decoy_engine import fileaccess
 from decoy_engine.execution._adapter import (
     ExecutionAdapter,
     ExecutionResult,
@@ -409,10 +408,7 @@ class PandasExecutionAdapter:
                 code="unsupported_strategy",
                 message=f"scalar node {node.columns} has a non-ColumnSeed plan slice.",
             )
-        with (
-            timed_strategy(node.strategy, ",".join(node.columns)),
-            fileaccess.at_position(f"tables.{node.table}.columns.{node.columns[0]}"),
-        ):
+        with timed_strategy(node.strategy, ",".join(node.columns)):
             # MG-3 / M3 (2026-05-31): the when_gate is a no-op when
             # plan_slice.when is None (byte-identical to calling handler.run()
             # directly). When set, it evaluates the predicate via numexpr
