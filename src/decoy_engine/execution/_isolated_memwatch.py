@@ -19,6 +19,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from decoy_engine.errors import DecoyError
+
 __all__ = [
     "MemoryEvidence",
     "MemorySampler",
@@ -58,7 +60,7 @@ _FIELDS = {"data": ("VmData",), "as": ("VmSize", "VmPeak")}
 live_observer: Callable[[int], None] | None = None
 
 
-class FieldMissing(Exception):  # noqa: N818 - a value-parse signal, not an error type
+class FieldMissing(DecoyError):  # noqa: N818 - a value-parse signal, not an error type
     """A requested `Vm*` line is absent or unparseable (a zombie drops them all)."""
 
 
