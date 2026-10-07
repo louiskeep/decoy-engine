@@ -30,6 +30,8 @@ from tests.native._c5c_i_support import (
 from tests.physical.test_unified_slice_faker import NEEDS_COMPANION, Case, lane_run
 from tests.physical.test_unified_slice_positional import (
     FAKER_OP,
+    _inputs,
+    _slice_of,
     lane_batch_rows,
     nd_faker,
     node_evidence,
@@ -153,6 +155,42 @@ def test_4_deterministic_faker_over_a_non_string_source_declines(
 ) -> None:
     case = Case(tmp_path, one_col(typed_array(typ, nulls=False)), [nd_faker(deterministic=True)])
     _assert_declines_with_the_oracle_output(case)
+
+
+def test_4_the_resident_domain_is_wider_only_for_a_bound_positional_node() -> None:
+    from decoy_engine.execution._operator_registry import OPERATORS
+    from decoy_engine.execution._unified_slice_resident_types import positional_resident_types
+    from decoy_engine.execution.native._operator_params import FakerParams
+
+    wider = OPERATORS["faker"].positional_resident_types
+    assert wider is not None and pa.int32() in wider
+    assert positional_resident_types("faker", FakerParams("ns", positional=True)) == wider
+    assert positional_resident_types("faker", FakerParams("ns")) is None
+    assert positional_resident_types("hash", FakerParams("ns", positional=True)) is None
+
+
+def test_4_the_binder_takes_a_numeric_source_only_for_the_positional_variant(
+    tmp_path: Path,
+) -> None:
+    from decoy_engine.execution.physical import _shadow_bindings
+
+    table = one_col(typed_array(pa.int32(), nulls=False))
+    for name, column, expected in (
+        ("det", nd_faker(deterministic=True), False),
+        ("pos", nd_faker(), True),
+    ):
+        sub = tmp_path / name
+        sub.mkdir()
+        inputs = _inputs(Case(sub, table, [column]))
+        plan_slice = _slice_of(inputs)
+        pool_only = _shadow_bindings._faker_pool_bindable(
+            plan_slice=plan_slice, table="t", column="c", inputs=inputs
+        )
+        assert pool_only is False
+        positional = _shadow_bindings.positional_faker_bindable(
+            plan_slice=plan_slice, table="t", column="c", inputs=inputs
+        )
+        assert positional is expected
 
 
 # ---------------------------------------------------------------------------
