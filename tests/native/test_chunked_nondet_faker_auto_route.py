@@ -94,13 +94,13 @@ def test_the_auto_routed_job_succeeds_and_equals_the_full_frame_run(
 
 @NEEDS_COMPANION
 @pytest.mark.parametrize("kind", ["string", "int64", "float64", "null"])
-def test_string_runs_the_native_leg_and_every_non_string_runs_the_oracle_leg(
+def test_string_and_numeric_run_the_native_leg_and_every_other_source_runs_the_oracle_leg(
     kind: str, tmp_path: Path
 ) -> None:
     auto = _run(_config(kind, tmp_path, None), kind, auto_chunk_threshold_rows=3, chunk_size_rows=4)
     route = auto.quality_metrics["chunked_route"]
     evidence = _f_evidence(auto)
-    if kind == "string":
+    if kind != "null":
         assert route["native_admitted"] is True
         assert evidence["planned_backend"] == evidence["executed_backend"] == "rust_companion"
     else:

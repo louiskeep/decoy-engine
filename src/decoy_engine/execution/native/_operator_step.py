@@ -133,6 +133,7 @@ def sample_faker_array_positional(
     namespace: str,
     index_kernel: IndexDerivationKernel,
     native_threads: int | None,
+    missing_mask: pa.Array | None = None,
 ) -> pa.Array:
     """Select one batch's non-deterministic REUSE faker values by global row position.
 
@@ -145,6 +146,10 @@ def sample_faker_array_positional(
     Unlike `sample_faker_array` the keys are a dense `uint64` column, so the index null mask
     is the keys' (none) and cannot equal the source's. Nulls are restored from the SOURCE and
     still consume their ordinal, as the oracle's `na_mask` does.
+
+    `missing_mask` is the oracle's own missingness for the batch (see `_faker_null_mask`): pandas
+    decides it from the dtype it rebuilds, so it is not always Arrow validity. Both routes pass
+    it; `None` falls back to Arrow validity, which is the oracle's answer for a string source.
     """
     if job_seed is None:  # pragma: no cover - the chunked adapter always passes the job seed
         raise AssertionError("positional faker selection reached with job_seed=None.")
@@ -167,7 +172,13 @@ def sample_faker_array_positional(
             code="index_batch_null_mask_mismatch",
             message="derive_index_batch returned null indices for non-null positional keys",
         )
-    return _gather_pool_values(pool, idx, col.is_valid().to_numpy(zero_copy_only=False))
+    if missing_mask is None:
+        valid = col.is_valid().to_numpy(zero_copy_only=False)
+    else:
+        if len(missing_mask) != n:  # pragma: no cover - the routes build it from the same rows
+            raise AssertionError("positional faker missing mask length differs from the batch")
+        valid = ~missing_mask.to_numpy(zero_copy_only=False)
+    return _gather_pool_values(pool, idx, valid)
 
 
 def _checked_batch(idx: object, *, n: int) -> pa.Array:
@@ -244,12 +255,14 @@ def run_kernel_step(
     sibling: pa.Table | None = None,
     row_offset: int = 0,
     job_seed: bytes | None = None,
+    missing_mask: pa.Array | None = None,
 ) -> StepResult:
     """Run one operator's compiled kernel over `source` and say whether it ran.
 
     `sibling` is group_key's input (the single-column slice of its group_by column) and
     `source` is ignored for it. `row_offset` only matters to the position-keyed categorical and
-    the position-keyed faker, which also keys on `job_seed` (never `mask_key`).
+    the position-keyed faker, which also keys on `job_seed` (never `mask_key`) and reads
+    `missing_mask` for which rows are null.
     `raw_hex_kernel=None` lets group_key load its own, which the unified route relies on as
     its one companion probe. `ran` for bucket_perturb, group_key and date_shift is each
     kernel's own `derive_calls` total, and those kernels disagree on purpose: group_key counts
@@ -302,6 +315,7 @@ def run_kernel_step(
             namespace=params.selection_namespace,
             index_kernel=_index_kernel_for(params, index_kernel),
             native_threads=native_threads,
+            missing_mask=missing_mask,
         )
         return StepResult(out, True)
     if isinstance(params, FakerParams):

@@ -44,7 +44,7 @@ from typing import Any, Literal
 
 import pyarrow as pa
 
-from decoy_engine.execution._operator_registry import OPERATORS
+from decoy_engine.execution._operator_registry import OPERATORS, POSITIONAL_FAKER_SOURCE_TYPES
 from decoy_engine.execution._transforms_gate import reject_per_table_transforms
 from decoy_engine.execution.native._chunk_masking import (  # noqa: F401 -- re-exported for tests
     _mask_chunk_native,
@@ -433,12 +433,19 @@ def plan_native_route(
             # yielded -- partial native output the whole-frame oracle never
             # produces. C1's faker columns are string-typed; a faker column over
             # a non-string source reroutes the WHOLE table to the oracle
-            # (narrower, never wider).
+            # (narrower, never wider). The position-keyed variant never reads source
+            # values, only the oracle's own null mask, so it also admits the numeric
+            # families whose mask `_faker_null_mask` takes from the oracle's conversion.
             for node in decision.node_routes:
                 if node.strategy != "faker":
                     continue
                 ftype = first_schema.field(node.column).type
-                if not (pa.types.is_string(ftype) or pa.types.is_large_string(ftype)):
+                admitted = pa.types.is_string(ftype) or pa.types.is_large_string(ftype)
+                if not admitted and chunked_positional_column(
+                    config, table, node.strategy, node.column
+                ):
+                    admitted = ftype in POSITIONAL_FAKER_SOURCE_TYPES
+                if not admitted:
                     decision = _downgrade_to_oracle(
                         decision, f"faker_source_type_not_string:{node.column}:{ftype}"
                     )

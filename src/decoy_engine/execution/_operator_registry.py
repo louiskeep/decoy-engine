@@ -29,6 +29,7 @@ __all__ = [
     "ARROW_PYTHON",
     "OPERATORS",
     "PANDAS_ORACLE",
+    "POSITIONAL_FAKER_SOURCE_TYPES",
     "RUST_COMPANION",
     "RUST_POOL_SELECT",
     "OperatorSpec",
@@ -67,6 +68,9 @@ class OperatorSpec:
     unified_resident_types: frozenset[pa.DataType] | None
     full_frame_assembly: AssemblyShape
     provider_allowlist: frozenset[str] | None = None
+    # The wider source-type domain of the position-keyed variant, which reads only its source's
+    # null mask. `None` means the variant has no domain of its own.
+    positional_resident_types: frozenset[pa.DataType] | None = None
     # Diagnostic obligations the unified-slice coordinator actually ROUTES for this
     # operator. A coordinator policy, not a capability fact: an operator whose
     # capabilities declare any diagnostic outside this set declines the unified slice.
@@ -74,6 +78,24 @@ class OperatorSpec:
 
 
 _STRING_ONLY = frozenset({pa.string()})
+
+# Source families whose pandas missingness the positional Faker step takes from the oracle's own
+# conversion. Explicit instances, not a predicate: the registry compares exact datatypes.
+POSITIONAL_FAKER_SOURCE_TYPES: Final = frozenset(
+    {
+        pa.int8(),
+        pa.int16(),
+        pa.int32(),
+        pa.int64(),
+        pa.uint8(),
+        pa.uint16(),
+        pa.uint32(),
+        pa.uint64(),
+        pa.bool_(),
+        pa.float32(),
+        pa.float64(),
+    }
+)
 
 _SPECS = (
     OperatorSpec(
@@ -136,6 +158,7 @@ _SPECS = (
         positive_kernel_evidence=True,
         unified_resident_types=_STRING_ONLY,
         full_frame_assembly="tokenizing",
+        positional_resident_types=_STRING_ONLY | POSITIONAL_FAKER_SOURCE_TYPES,
         # The frozen C1 recipe's providers (FIRST=person_first_name, LAST/MAIDEN=
         # person_last_name). Every other pool_native provider is out of scope and is
         # rejected with a coded reason rather than silently admitted.

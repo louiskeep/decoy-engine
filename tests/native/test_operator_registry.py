@@ -99,3 +99,29 @@ def test_group_key_sibling_types_exclude_floats_even_if_passthrough_widens() -> 
     widened = frozenset({pa.string(), pa.int64(), pa.bool_(), pa.float64(), pa.decimal128(10, 2)})
     assert group_key_sibling_types(widened) == frozenset({pa.string(), pa.int64(), pa.bool_()})
     assert group_key_sibling_types(None) == frozenset()
+
+
+def test_only_faker_declares_a_positional_resident_domain() -> None:
+    from decoy_engine.execution._operator_registry import POSITIONAL_FAKER_SOURCE_TYPES
+
+    numeric = frozenset(
+        {
+            pa.int8(),
+            pa.int16(),
+            pa.int32(),
+            pa.int64(),
+            pa.uint8(),
+            pa.uint16(),
+            pa.uint32(),
+            pa.uint64(),
+            pa.bool_(),
+            pa.float32(),
+            pa.float64(),
+        }
+    )
+    assert numeric == POSITIONAL_FAKER_SOURCE_TYPES
+    assert OPERATORS["faker"].positional_resident_types == numeric | {pa.string()}
+    assert OPERATORS["faker"].unified_resident_types == frozenset({pa.string()})
+    assert all(
+        spec.positional_resident_types is None for key, spec in OPERATORS.items() if key != "faker"
+    )

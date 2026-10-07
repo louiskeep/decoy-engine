@@ -9,6 +9,18 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Changed (positional Faker runs natively over numeric and boolean sources, 2026-10-07)
+
+A non-deterministic `reuse` Faker column over an integer, unsigned integer, boolean or
+floating-point source now runs on both native routes. It ran natively only over string sources
+before, and a numeric source sent the table to the pandas path. Output is unchanged: the same
+values, types, `b"pandas"` metadata, warnings and row errors. Which rows count as null comes from
+pandas' own conversion of the source chunk, so a float NaN is null or a value exactly as it is on
+the pandas path, under NumPy, nullable and Arrow-extension dtypes alike. On the full-frame route
+the existing round-trip check still declines a default-conversion integer with nulls and a float
+holding NaN. Deterministic Faker over a non-string source, and every temporal, decimal, binary,
+nested, float16, null-typed and dictionary source, still run on the pandas path.
+
 ### Fixed (isolated-run memory failures after the job returns, 2026-10-07)
 
 An isolated run that hit its memory cap while staging outputs or row errors, or in the worker's

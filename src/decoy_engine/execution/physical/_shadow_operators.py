@@ -23,6 +23,7 @@ from decoy_engine.execution._operator_registry import OPERATORS
 from decoy_engine.execution._row_errors import RowError
 from decoy_engine.execution.native._crypto_ext import CryptoExtensionUnavailableError
 from decoy_engine.execution.native._date_shift_ext import FORMAT_ERROR_REASON
+from decoy_engine.execution.native._faker_null_mask import faker_missing_mask
 from decoy_engine.execution.native._operator_params import (
     BucketPerturbParams,
     CategoricalParams,
@@ -269,6 +270,7 @@ def run_operator(
     column: str | None = None,
     row_offset: int = 0,
     when_mask: pa.Array | None = None,
+    source_slice: pa.Table | None = None,
 ) -> tuple[pa.Array, tuple[RowError, ...]]:
     """Dispatch one batch to `binding`'s bound operator, directly. Raises a
     coded `ShadowDifference(native_companion_unavailable)` -- never falls
@@ -284,6 +286,9 @@ def run_operator(
     of `array`'s first row, which only the two position-keyed operators read: they draw by
     `row_offset + i`, so a batch reproduces the whole-frame draw. The position-keyed Faker
     keys on `ctx.job_seed`; every other operator ignores it.
+
+    `source_slice` is the batch as a single-column table with its schema metadata: the position-keyed
+    Faker takes its null mask from the oracle's conversion of it (`_faker_null_mask`).
 
     `pool` is used only by the faker branch; `index_kernel` by faker AND
     categorical (Phase 5 Track B): the coordinator resolves the pool once per
@@ -335,6 +340,11 @@ def run_operator(
                 sibling=group_key_sibling,
                 row_offset=row_offset,
                 job_seed=job_seed,
+                missing_mask=(
+                    faker_missing_mask(source_slice, column)
+                    if positional_faker and source_slice is not None and column is not None
+                    else None
+                ),
             )
     except CryptoExtensionUnavailableError as exc:
         detail = _COMPANION_UNAVAILABLE_DETAIL.get(binding.operator_id)

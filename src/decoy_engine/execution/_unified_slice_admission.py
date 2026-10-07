@@ -56,6 +56,7 @@ from decoy_engine.execution._operator_registry import OPERATORS
 from decoy_engine.execution._unified_slice_resident_types import (
     _ADMITTED_RESIDENT_TYPES,
     _group_key_sibling_admitted,
+    positional_resident_types,
 )
 from decoy_engine.execution._unified_slice_when import when_columns_admitted
 from decoy_engine.execution.native._companion_status import native_kernel_availability
@@ -508,7 +509,10 @@ def resident_contract_admission(
         # pandas/Arrow give a wholly-null CSV column with no declared dtype)
         # is not in any strategy's admitted domain, so it declines here rather
         # than being treated as compatible with whatever the strategy expects.
-        if resident_type not in _ADMITTED_RESIDENT_TYPES.get(node.strategy, frozenset()):
+        domain = positional_resident_types(node.strategy, binding.params)
+        if domain is None:
+            domain = _ADMITTED_RESIDENT_TYPES.get(node.strategy, frozenset())
+        if resident_type not in domain:
             return None
         if binding.operator_id in _COMPANION_DEPENDENT_OPERATOR_IDS:
             # hash / categorical / bucket_perturb / date_shift / faker consume their namespace
