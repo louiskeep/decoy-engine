@@ -513,7 +513,8 @@ class ModuleScanner:
                 return
         if attr in {"submit", "map"}:
             key = _name_key(recv)
-            if key is not None and key in info.executor_vars and node.args:
+            chained = self._is_executor(recv, scope)  # `ThreadPoolExecutor().submit(...)`
+            if (chained or (key is not None and key in info.executor_vars)) and node.args:
                 if not _is_run_in_context(node.args[0], scope, self.index):
                     self._record(info, f"executor.{attr}", "executor", node)
 

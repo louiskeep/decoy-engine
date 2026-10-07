@@ -257,6 +257,18 @@ def check_capability_site(site: Site) -> Violation | None:
     node = site.node
     wrapped = isinstance(node.func, ast.Name) and node.func.id == "_call"
     args = node.args[1:] if wrapped else node.args
+    if sink == "ctypes.CDLL":
+        # `CDLL(None)` binds the already-linked C library (the openat2 system call wrapper);
+        # a path argument would load a file.
+        only_none = (
+            len(node.args) == 1
+            and isinstance(node.args[0], ast.Constant)
+            and node.args[0].value is None
+            and all(kw.arg == "use_errno" for kw in node.keywords)
+        )
+        if only_none:
+            return None
+        return Violation(site, "ctypes.CDLL with anything but None loads a file")
     if sink not in ALLOWED_RAW:
         return Violation(
             site, "not a raw fd-relative primitive; third-party and path APIs are forbidden here"

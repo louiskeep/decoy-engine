@@ -166,6 +166,40 @@ def test_sentry_bites_on_a_plain_module(fixture_scan, name: str) -> None:  # typ
     assert by_file.get(f"fx/plain/{name}.py"), f"{name} was not flagged"
 
 
+# Each fixture names the sink it exists for; the test fails unless THAT sink is the one flagged.
+SPECIFIC_SINKS = {
+    "sink_pa_input_stream": "pyarrow.input_stream",
+    "sink_pa_output_stream": "pyarrow.output_stream",
+    "sink_pa_create_memory_map": "pyarrow.create_memory_map",
+    "sink_pa_orc": "pyarrow.orc.read_table",
+    "sink_np_loadtxt": "numpy.loadtxt",
+    "sink_np_fromfile": "numpy.fromfile",
+    "sink_np_memmap": "numpy.memmap",
+    "sink_pd_hdfstore": "pandas.HDFStore",
+    "sink_pd_excelwriter": "pandas.ExcelWriter",
+    "sink_codecs_open": "codecs.open",
+    "sink_ctypes_cdll": "ctypes.CDLL",
+    "sink_runpy": "runpy.run_path",
+    "sink_spec_from_file": "importlib.util.spec_from_file_location",
+    "chained_pool_submit": "executor.submit",
+}
+SPECIFIC_CAP_SINKS = {"bad_cdll_path": "ctypes.CDLL"}
+
+
+@pytest.mark.parametrize("name,sink", sorted(SPECIFIC_CAP_SINKS.items()))
+def test_sentry_flags_the_specific_capability_sink(fixture_scan, name: str, sink: str) -> None:  # type: ignore[no-untyped-def]
+    violations, _ = classify(fixture_scan, FIXTURE_ROLES, {})
+    flagged = {v.site.sink for v in violations if v.site.module == f"fx/cap/{name}.py"}
+    assert sink in flagged, f"{name}: expected {sink}, flagged {sorted(flagged)}"
+
+
+@pytest.mark.parametrize("name,sink", sorted(SPECIFIC_SINKS.items()))
+def test_sentry_flags_the_specific_sink(fixture_scan, name: str, sink: str) -> None:  # type: ignore[no-untyped-def]
+    violations, _ = classify(fixture_scan, FIXTURE_ROLES, {})
+    flagged = {v.site.sink for v in violations if v.site.module == f"fx/plain/{name}.py"}
+    assert sink in flagged, f"{name}: expected {sink}, flagged {sorted(flagged)}"
+
+
 @pytest.mark.parametrize("name", ["bad_str_param", "bad_module_constant"])
 def test_sentry_bites_on_a_bad_adapter(fixture_scan, name: str) -> None:  # type: ignore[no-untyped-def]
     by_file = _violations_by_file(fixture_scan, FIXTURE_ROLES)
@@ -180,6 +214,7 @@ def test_sentry_bites_on_a_bad_adapter(fixture_scan, name: str) -> None:  # type
         "bad_caller_name",
         "bad_scandir_str",
         "bad_descriptor_caller_int",
+        "bad_cdll_path",
     ],
 )
 def test_sentry_bites_on_a_bad_capability_module(fixture_scan, name: str) -> None:  # type: ignore[no-untyped-def]
