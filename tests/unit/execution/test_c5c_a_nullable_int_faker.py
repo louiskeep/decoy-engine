@@ -518,7 +518,7 @@ def test_registration_follows_the_real_order_for_a_multi_column_writer() -> None
     assert list(exact_int_faker_sources("t", table, frame, [faker, writer])) == [("t", "n")]
 
 
-def _fk_job(
+def _fk_child_job(
     tmp_path: Path, child_pids: list[int | None], child_n: list[int | None]
 ) -> dict[str, Any]:
     """Parent/child job: deterministic Faker on the FK child column and on a nullable-int column."""
@@ -578,8 +578,8 @@ def _fk_job(
 def test_fk_child_column_is_untouched_and_a_nullable_sibling_now_works(tmp_path: Path) -> None:
     # The FK child `pid` converts FK-safe (never float64), so it is not an exact-int source and
     # its resolution is unchanged; the nullable `n` beside it now masks like its null-free copy.
-    with_null_n = _fk_job(tmp_path / "a", [1, None, 3], [5, None, 7])
-    null_free_n = _fk_job(tmp_path / "b", [1, None, 3], [5, 6, 7])
+    with_null_n = _fk_child_job(tmp_path / "a", [1, None, 3], [5, None, 7])
+    null_free_n = _fk_child_job(tmp_path / "b", [1, None, 3], [5, 6, 7])
     assert with_null_n["child"]["pid"] == null_free_n["child"]["pid"]
     assert with_null_n["child"]["n"][1] is None
     assert with_null_n["child"]["n"][0] == null_free_n["child"]["n"][0]
