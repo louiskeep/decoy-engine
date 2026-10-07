@@ -303,7 +303,7 @@ def _typed_source(kind: str, n: int = 10) -> pa.Table:
 
 
 @pytest.mark.parametrize("namespace", [None, "ns_f"], ids=["none", "configured"])
-@pytest.mark.parametrize("kind", ["int64", "float64", "dictionary", "null"])
+@pytest.mark.parametrize("kind", ["dictionary", "null"])
 def test_a_non_string_source_runs_the_chunked_oracle_leg_and_equals_whole_frame(
     kind: str, namespace: str | None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -452,7 +452,7 @@ def test_native_admitted_override_fails_closed_before_any_write() -> None:
 
 @NEEDS_COMPANION
 def test_override_downgraded_by_a_non_string_source_fails_closed() -> None:
-    chunks = split(_typed_source("int64"), 4)
+    chunks = split(_typed_source("dictionary"), 4)
     exc = _override_run([nd_faker(), passthrough("p")], chunks)
     _assert_pool_error(exc)
 

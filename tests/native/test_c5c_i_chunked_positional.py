@@ -8,7 +8,6 @@ of a float column are covered explicitly.
 
 from __future__ import annotations
 
-import copy
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -22,6 +21,7 @@ from tests.native._b8_support import (
     FORCE,
     Run,
     assert_same_as_oracle,
+    identical,
     run_one,
     with_force,
 )
@@ -213,34 +213,53 @@ _DECLINED: dict[str, pa.Array] = {
 }
 
 
+def _outcome(config: dict[str, Any], chunks: list[pa.Table]) -> tuple[Any, list[Any]]:
+    """The run's result or the exception it raised, plus its route decision either way."""
+    evidence: list[Any] = []
+    try:
+        return run_one(config, chunks, route_evidence_sink=evidence), evidence
+    except Exception as exc:
+        return exc, evidence
+
+
+def assert_declines_with_the_oracle_outcome(
+    cols: list[dict[str, Any]], table: pa.Table, reason_prefix: str
+) -> None:
+    gs = {"unconfigured_column_policy": "warn"}
+    got, ev = _outcome(make_config(cols, global_settings=gs), [table])
+    want, _ = _outcome(
+        make_config([*cols, force_oracle(FORCE)], global_settings=gs), [with_force(table)]
+    )
+    if ev:
+        assert ev[0].native_admitted is False
+        assert reason_prefix in (ev[0].reroute_reason or "")
+    else:
+        # A nested source fails in the profiler before any route decision, on both legs.
+        assert isinstance(got, Exception)
+    if isinstance(want, Exception):
+        assert type(got) is type(want) and str(got) == str(want)
+    else:
+        assert not isinstance(got, Exception), got
+        assert identical(got.out[0], want.out[0].drop_columns([FORCE]))
+
+
 @pytest.mark.parametrize("kind", sorted(_DECLINED))
 def test_4_positional_faker_over_a_declined_family_runs_the_oracle_leg(kind: str) -> None:
     array = _DECLINED[kind]
     table = pa.table({"f": array, "p": pa.array(range(len(array)), pa.int64())})
-    config = make_config(columns())
-    run = run_one(config, [table])
-    ev = run.ev[0]
-    assert ev.native_admitted is False
-    assert f"faker_source_type_not_string:f:{array.type}" in (ev.reroute_reason or "")
-    assert run.out[0].schema.field("f").type == pa.string()
+    assert_declines_with_the_oracle_outcome(
+        columns(), table, f"faker_source_type_not_string:f:{array.type}"
+    )
 
 
 @pytest.mark.parametrize("typ", [pa.int64(), pa.uint8(), pa.bool_(), pa.float64()], ids=type_id)
 def test_4_deterministic_faker_over_a_non_string_source_still_declines(typ: pa.DataType) -> None:
     table = int_table(typ, typed_array(typ, nulls=False))
-    det = nd_faker(deterministic=True, namespace="ns_det")
-    config = make_config([det, passthrough("p")])
-    cfg = copy.deepcopy(config)
-    try:
-        run = run_one(cfg, [table])
-    except Exception as exc:  # the oracle may reject the config; the reroute is the point
-        assert "native_admitted" not in str(exc)
-        return
-    assert run.ev[0].native_admitted is False
-    assert "faker_source_type_not_string:f:" in (run.ev[0].reroute_reason or "")
+    cols = [nd_faker(deterministic=True, namespace="ns_det"), passthrough("p")]
+    assert_declines_with_the_oracle_outcome(cols, table, "faker_source_type_not_string:f:")
 
 
 def test_4_the_admitted_set_is_exactly_the_planned_families() -> None:
     from decoy_engine.execution.native._faker_null_mask import POSITIONAL_FAKER_SOURCE_TYPES
 
-    assert POSITIONAL_FAKER_SOURCE_TYPES == frozenset([*SIGNED, *UNSIGNED, pa.bool_(), *FLOATS])
+    assert frozenset([*SIGNED, *UNSIGNED, pa.bool_(), *FLOATS]) == POSITIONAL_FAKER_SOURCE_TYPES

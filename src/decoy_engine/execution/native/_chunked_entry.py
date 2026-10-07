@@ -72,6 +72,7 @@ from decoy_engine.execution.native._dispatch import (
     _oracle_evidence,
     plan_native_route,
 )
+from decoy_engine.execution.native._faker_null_mask import plan_faker_null_masks
 from decoy_engine.execution.native._operator_params import resolve_params_by_column
 from decoy_engine.execution.native._when_mask import plan_when_masks
 from decoy_engine.generation.pool import PoolCache, ValuePool
@@ -252,6 +253,7 @@ def _native_route(
 
     # The oracle's own predicate function decides each `when:` column's rows (see `_when_mask`).
     when = plan_when_masks(col_seed_by_name, state, table=table)
+    faker_nulls = plan_faker_null_masks(col_seed_by_name, state, table=table)
 
     def _guard(raw: pa.Table) -> pa.Table:
         # The oracle route re-checks this on every chunk before masking; without it a
@@ -293,6 +295,7 @@ def _native_route(
                 raw_hex_kernel=raw_hex_kernel,
                 job_seed=plan.seed_envelope.job_seed,
                 when_masks=when.for_chunk(raw_chunk, i),
+                faker_missing=faker_nulls.for_chunk(raw_chunk, i),
             )
             # The one enforcement point: the same call the stock adapter makes, so the
             # warning (and, if a table were ever admitted under `error`, the refusal)

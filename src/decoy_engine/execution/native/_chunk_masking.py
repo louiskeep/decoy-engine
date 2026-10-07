@@ -62,6 +62,7 @@ def _mask_chunk_native(
     raw_hex_kernel: RawHexDerivationKernel | None = None,
     job_seed: bytes | None = None,
     when_masks: Mapping[str, pa.Array] | None = None,
+    faker_missing: Mapping[str, pa.Array] | None = None,
 ) -> pa.Table:
     """Mask one chunk column-by-column through the admitted native kernels.
 
@@ -112,6 +113,9 @@ def _mask_chunk_native(
     `when_masks` holds the row mask of each admitted `when:` column for this chunk (see
     `_when_mask`); such a column goes through `run_kernel_step_masked`, and a chunk where the
     predicate selects no row is idle and uncounted, like an empty positional chunk.
+
+    `faker_missing` holds each positional Faker column's missing mask for this chunk, taken from
+    the oracle's conversion of the raw chunk (see `_faker_null_mask`).
 
     `row_offset` is the global position of the chunk's first row; only the seeded
     non-deterministic categorical and the position-keyed faker key on it (the faker also on
@@ -165,6 +169,7 @@ def _mask_chunk_native(
                 sibling=sibling,
                 row_offset=row_offset,
                 job_seed=job_seed,
+                missing_mask=(faker_missing or {}).get(name),
             )
         out = result.out
         # The kernel always returns `pa.string()`, but the oracle chunked route gives Arrow `null`
