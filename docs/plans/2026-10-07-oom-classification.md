@@ -23,7 +23,7 @@ The isolated-run guarantee is: "a running job that exhausts its memory cap is na
    - `_unified_slice_admission.py:384-386`: `except Exception` around `Table.from_pandas`.
    - `_strategies/_redact.py:36-42` and `_adapter.py:~310-312`: `except pa.ArrowException`, of which `ArrowMemoryError` is a subclass.
 
-   The job then repeats the same large allocation on a heavier path (the legacy adapter's conversion, `_pandas_adapter.py:212`), and the final failure happens at a second site in an unpredictable shape. This is the source of the nondeterminism.
+   Each catch can hide an earlier allocation failure and let the job continue on another path. The admission catches hand the job to the legacy route, which makes its own conversion (`_pandas_adapter.py:212`). The redact and kernel-input catches run after that conversion and do not repeat it. Whether a repeated allocation caused the CI failures is NOT established: the CI cause is unresolved, and the 3d diagnostic exists to resolve it. (The 3-of-10 abort count at 2280 MiB came from a probe with conversion threading disabled.)
 2. **Post-run steps run outside the classifier.** `_isolated_worker.py:215-216` calls `_finalize_outputs` and `_stage_row_errors` outside `_run`'s `try`. A MemoryError there reaches `main()`, which hard-codes `"crashed"` (`:240-249`).
 3. **The arrow-to-pandas OOM message is matched too narrowly, and it leaks data.**
    - `_isolated_common.py:114-116` matches `Wrapping \S+ failed`, so a cell value containing whitespace ("Wrapping John Smith failed") is missed.
@@ -52,11 +52,11 @@ The isolated-run guarantee is: "a running job that exhausts its memory cap is na
 - `main()`'s outer handler classifies with `is_memory_failure` instead of hard-coding `crashed`. A malformed payload still gives `crashed`.
 
 **3c. The Wrapping pattern and the stored error.**
-- Recognition: the pattern becomes `Unknown error: Wrapping .+ failed` with DOTALL, applied to the FULL message, so a value with spaces or newlines is matched.
-- Scrub: one function, `scrub_error_text(message)`. In a recognized Wrapping message, the span from just after the first `Wrapping ` to just before the LAST ` failed` is replaced by `<value>`. A value containing `failed`, or repeated Wrapping fragments, are therefore removed whole. Any other message is returned unchanged.
+- **Recognition is unchanged (rev 3).** Arrow emits `Unknown error: Wrapping <value> failed` for a failed allocation AND for a value it cannot decode, such as malformed UTF-8 (Codex round 2, reproduced on pyarrow 25.0.1 with no cap). The message alone cannot attribute an OOM, so widening the pattern would turn bad input into a false `oom_killed`. The existing single-token pattern (`_isolated_common.py:114-116`) keeps its current behavior. Its pre-existing ambiguity is recorded here and in section 6, where independent allocation evidence (VmData) is the right fix.
+- Scrub, separate from recognition: one function, `scrub_error_text(message)`. In ANY message containing `Wrapping ` followed later by ` failed`, the span from just after the first `Wrapping ` to just before the LAST ` failed` is replaced by `<value>`. A value containing `failed`, or repeated Wrapping fragments, are therefore removed whole. Any other message is returned unchanged.
 - Order: both worker handlers (`_run`'s and `main()`'s) build `f"{type(exc).__name__}: {scrub_error_text(str(exc))}"` and only THEN truncate to 500. Truncating first can cut off the terminal `failed`, so the scrub would not match (Codex round 1 MEDIUM).
 - Classification is done on the exception object, before any scrub or truncation, so it is unaffected.
-- This one scrub is in scope because the slice touches exactly this message. Other messages go to the Observability program (section 2).
+- This one scrub is in scope because the slice touches exactly this message. Other messages go to the Observability program (section 2), as does the driver-side abnormal-exit stderr tail copied into the result at `_isolated_run.py:478`, which this slice does not scrub.
 
 **3d. Diagnostic on the flaking test.** Its assertion gains the message `f"{result.error!r} rc={result.returncode} sig={result.signal_number}"`, or the fields the result actually carries. The next CI failure then shows its shape. The assertion itself is unchanged.
 
@@ -65,9 +65,9 @@ The isolated-run guarantee is: "a running job that exhausts its memory cap is na
 1. **Fallbacks preserved:** the redact and kernel-input fallbacks still succeed after an `ArrowMemoryError` from the direct conversion (Codex's counterexample shape, by fault injection). Existing decline and fallback tests stay green unmodified.
 2. A MemoryError injected into `_finalize_outputs`, and one injected into `_stage_row_errors`, give `oom_killed`.
 3. A MemoryError raised in `main()` outside `_run` gives `oom_killed`. A malformed payload gives `crashed`.
-4. Pattern: `Wrapping John Smith failed`, a value with a newline, a value containing `failed`, a 600-character value, and the original single-token form are all memory failures. An unrelated `ArrowException` is not.
+4. **Recognition unchanged:** the single-token form is still a memory failure. `Wrapping John Smith failed` is still NOT one. A real malformed-UTF-8 Parquet string with whitespace (`b"John Smith\xff"`), read without a cap, classifies `crashed` and its stored error is scrubbed.
 5. Scrub, through both worker handlers: no part of the value survives for long, multiline, embedded-`failed` and repeated-fragment values. A long value is scrubbed before truncation. A non-Wrapping error text is unchanged.
-6. Classifier parity: `MemoryError`, `ArrowMemoryError`, `duckdb.OutOfMemoryException`, `OSError(ENOMEM)`, both OpenSSL markers, the Wrapping message, and abnormal exits by SIGKILL and SIGABRT with and without stderr markers are all `oom_killed`. A non-memory exception and a SIGSEGV without a marker are `crashed`; the SIGSEGV case is pinned as current, deferred behavior (section 6).
+6. Classifier parity. This includes driver-side cases with a Wrapping message in stderr under a positive exit code and under SIGSEGV, because the SIGKILL and SIGABRT cases pass regardless of the pattern: `MemoryError`, `ArrowMemoryError`, `duckdb.OutOfMemoryException`, `OSError(ENOMEM)`, both OpenSSL markers, the Wrapping message, and abnormal exits by SIGKILL and SIGABRT with and without stderr markers are all `oom_killed`. A non-memory exception and a SIGSEGV without a marker are `crashed`; the SIGSEGV case is pinned as current, deferred behavior (section 6).
 7. A local soak, not a CI test: the flaking test 20 times at 1536 MiB and 20 times at 2280 MiB on the CI-mirror venv. Zero `crashed`. The counts and each run's (scrubbed) error shape go in the build record.
 8. Sentries: log interpolation, module size, the public import boundary.
 9. Mutation on the moved `try`, `main()`'s classification, the pattern and the scrub. Equivalents are argued in the record.
@@ -80,12 +80,13 @@ The isolated-run guarantee is: "a running job that exhausts its memory cap is na
 | Scrub misses a value, or truncation defeats it | Scrub before truncate; test 5 |
 | Scrub removes useful diagnostics | Only the value is replaced; class and message shape stay |
 | A memory shape still classified `crashed` | Test 6 parity table; the 3d diagnostic names any new shape in CI |
+| Bad input misread as OOM | Recognition unchanged (3c); test 4's malformed-UTF-8 case |
 
 Rollback: revert the merge commit.
 
 ## 6. Deferred: classify native deaths by cause (root cause 4)
 
-The driver could sample the child's VmData (the quantity RLIMIT_DATA bounds) from `/proc/<pid>/status` while it waits. Any non-completed death whose peak came within a margin of the cap would be named `oom_killed`, with "VmData peak X of cap Y" recorded. That covers native deaths whose shape nobody listed, but it is new machinery. It is held for a separate decision, made only if the diagnostic in 3d shows a CI failure of that shape after this slice merges.
+This is also the right fix for the ambiguous Wrapping message (3c): allocation evidence, not message wording, should attribute an OOM. The driver could sample the child's VmData (the quantity RLIMIT_DATA bounds) from `/proc/<pid>/status` while it waits. Any non-completed death whose peak came within a margin of the cap would be named `oom_killed`, with "VmData peak X of cap Y" recorded. That covers native deaths whose shape nobody listed, but it is new machinery. It is held for a separate decision, made only if the diagnostic in 3d shows a CI failure of that shape after this slice merges.
 
 ## 7. Review log
 
@@ -95,3 +96,7 @@ The driver could sample the child's VmData (the quantity RLIMIT_DATA bounds) fro
   - **MEDIUM (scrub ordering):** scrub before truncation in both handlers, with a defined replacement span; test 5 widened.
   - **MEDIUM (traceback evidence does not exist):** the one-site test is dropped (no fail-fast to prove); a classifier parity table is added instead (test 6).
   - Codex confirmed deferring the other native signals: the SIGABRT shape seen in the investigation is already classified `oom_killed`. The raw error assignment is at `_isolated_worker.py:212`.
+- **Codex plan gate, round 2: REVISE** (1 MEDIUM, 1 LOW). Rev 3:
+  - **MEDIUM (malformed UTF-8 shares the Wrapping wording):** recognition is left unchanged. The scrub is separate and applies to every Wrapping message. Test 4 adds the real malformed-data case, which must stay `crashed`.
+  - **LOW (causal claim):** section 1 now describes each fallback separately and labels the CI cause unresolved.
+  - **Also folded:** driver-side Wrapping cases with a positive exit code and SIGSEGV (test 6); the stderr-tail exposure at `_isolated_run.py:478` recorded for the Observability program.
