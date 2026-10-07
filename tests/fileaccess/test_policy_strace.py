@@ -8,6 +8,7 @@ syscalls the policy itself makes are `openat2` relative to an already-open root 
 
 from __future__ import annotations
 
+import re
 import uuid
 from pathlib import Path
 
@@ -91,6 +92,10 @@ def test_a_policy_decided_denial_makes_no_syscall_naming_the_target(tmp_path: Pa
     script = (
         HEADER.format(repo=REPO, root=root, outside=out)
         + f"""
+from decoy_engine.fileaccess import FileRole
+from decoy_engine.fileaccess._rooted import Root, RootedFileAccess
+fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+policy = RootedFileAccess([Root("r", fd, frozenset(FileRole), frozenset({"read", "stat"}), prefix="data")])
 mark("/ATE3-BEGIN")
 for target in ({secret!r}, "../{outside}/secret.parquet", "/etc/hostname"):
     config = {{"sources": {{"t": {{"type": "file", "format": "parquet", "path": target}}}}}}
@@ -147,12 +152,18 @@ mark("/COLD-END")
     window = run_traced(script, tmp_path).window("COLD-BEGIN", "COLD-END")
     grammar = [ln for ln in window if "when_grammar.lark" in ln and "openat" in ln]
     assert grammar, "the packaged when_grammar.lark read was not observed at import"
+    # Import-time reads that are registered: the shipped name-hint YAML (storm detectors load it
+    # at import) and the default log file. Anything else read at import is a new, unregistered one.
+    registered = ("storm/name_hints/v1/", "logs/decoy_engine.log")
     package_data = [
         ln
         for ln in window
-        if "openat" in ln
+        if re.match(r"\d+ openat", ln)
         and "decoy_engine" in ln
-        and not ln.split('"')[1].endswith((".py", ".pyc", ".so", ".lark"))
+        and not (re.search(r'"([^"]*)"', ln) or [None, ""])[1].endswith(
+            (".py", ".pyc", ".so", ".lark")
+        )
+        and not any(r in ln for r in registered)
         and "ENOENT" not in ln
         and "O_DIRECTORY" not in ln
     ]

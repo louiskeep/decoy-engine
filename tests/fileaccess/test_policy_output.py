@@ -198,7 +198,16 @@ def test_every_name_taking_operation_validates_before_any_syscall(
     (sentinel_dir / "s").write_text("S")
     txn = _out(rooted).begin("dir", "exclusive", label="table_sink")
     _put(txn, "good")
-    before = {k: v for k, v in _inodes(tmp_path).items() if "_decoy_stage_" not in k}
+
+    def snapshot() -> dict[str, tuple[int, ...]]:
+        # The stage's parent changes when the stage is removed, which is not a leak.
+        return {
+            k: v
+            for k, v in _inodes(tmp_path).items()
+            if "_decoy_stage_" not in k and k != "root/out"
+        }
+
+    before = snapshot()
     ops = [
         lambda: txn.create_file(bad),
         lambda: txn.open_file(bad),
@@ -219,7 +228,7 @@ def test_every_name_taking_operation_validates_before_any_syscall(
         [*stage_listing, "nested"]
     )
     txn.abort()
-    after = {k: v for k, v in _inodes(tmp_path).items() if "_decoy_stage_" not in k}
+    after = snapshot()
     assert {k: v for k, v in before.items() if k in after} == {
         k: v for k, v in after.items() if k in before
     }
