@@ -6,7 +6,8 @@ auto-chunk planner. The row mask itself comes from the oracle's own predicate fu
 (`_when_mask`), so any predicate in the closed grammar qualifies; what this module decides
 is whether the COLUMN around it is one the masked kernel step reproduces exactly:
 
-1. the strategy is hash, redact, truncate or deterministic categorical, and its own config
+1. the strategy is hash, redact, truncate, deterministic categorical, text_redact, bucket_perturb
+   or date_shift, and its own config
    passes the same config-only gate the native route already applies;
 2. the target source type is `string`, because the masked step selects between two string
    arrays;
@@ -35,7 +36,9 @@ NOT_NATIVE_CODE = "when_predicate_not_native"
 OUTSIDE_SUBSET_CODE = "when_predicate_outside_native_subset"
 READS_MASKED_CODE = "when_predicate_reads_masked_column"
 
-ADMITTED_WHEN_STRATEGIES = frozenset({"hash", "redact", "truncate", "categorical"})
+ADMITTED_WHEN_STRATEGIES = frozenset(
+    {"hash", "redact", "truncate", "categorical", "text_redact", "bucket_perturb", "date_shift"}
+)
 
 
 def table_column_entries(config: Mapping[str, Any], table: str) -> list[Mapping[str, Any]]:

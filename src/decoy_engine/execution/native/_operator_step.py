@@ -414,9 +414,9 @@ def run_kernel_step_masked(
     and credits no compiled backend for the chunk. Otherwise the kernel runs over the selected
     rows only and their outputs are scattered back into place, so the cost follows selectivity.
     For the value-keyed operators over a string source (hash, redact, truncate, deterministic
-    categorical) that equals the oracle's run on the selected subset plus its write-back, row by
-    row, because each row's output depends only on that row's value and the config. Unselected
-    rows, nulls included, keep their source value.
+    categorical, text_redact, bucket_perturb, date_shift) that equals the oracle's run on the
+    selected subset plus its write-back, row by row, because each row's output depends only on
+    that row's value and the config. Unselected rows, nulls included, keep their source value.
     """
     plain = source.combine_chunks() if isinstance(source, pa.ChunkedArray) else source
     if not (pc.sum(mask).as_py() or 0):
@@ -428,4 +428,9 @@ def run_kernel_step_masked(
         native_threads=native_threads,
         index_kernel=index_kernel,
     )
-    return StepResult(pc.replace_with_mask(plain, mask, result.out), result.ran)
+    positions = result.format_error_positions
+    if positions:
+        # The kernel numbered its errors within the selected subset; callers need chunk positions.
+        selected = np.flatnonzero(mask.to_numpy(zero_copy_only=False))
+        positions = tuple(int(selected[p]) for p in positions)
+    return StepResult(pc.replace_with_mask(plain, mask, result.out), result.ran, positions)

@@ -25,6 +25,12 @@ from decoy_engine.execution.native._requirements import resolve_input_arrow_type
 _VALID_BUCKET_PERTURB_BUCKETS = frozenset({"week", "month", "quarter"})
 
 
+# pandas `format=` values that are NOT strptime directives: "mixed" infers a
+# format per element and "ISO8601" accepts any ISO shape. Neither is an explicit
+# format in the v1 sense, so both decline.
+_PANDAS_SPECIAL_DATE_FORMATS = frozenset({"mixed", "ISO8601"})
+
+
 def is_deterministic_categorical(resolved_config: Any) -> bool:
     """Whether a categorical column's resolved config selects the deterministic
     (source-keyed, row-local) path -- the SINGLE source of truth the native
@@ -95,6 +101,10 @@ def bucket_perturb_config_rejection(
 
     if has_timezone_directive(date_format):
         return f"bucket_perturb_timezone_directive:{name}"
+    # Pandas parses these per element and accepts mixed UTC offsets that the native
+    # DatetimeIndex build rejects, so the oracle must run them.
+    if date_format in _PANDAS_SPECIAL_DATE_FORMATS:
+        return f"bucket_perturb_special_date_format:{name}"
     # With neither a profile nor a resident source, the input type is
     # unknowable; defer to the unified-slice resident-type gate (matches
     # hash). A RESOLVED non-string type is rejected here, early.
@@ -106,12 +116,6 @@ def bucket_perturb_config_rejection(
         if resolved is not None and resolved != pa.string():
             return f"bucket_perturb_source_not_string:{name}:{resolved!s}"
     return None
-
-
-# pandas `format=` values that are NOT strptime directives: "mixed" infers a
-# format per element and "ISO8601" accepts any ISO shape. Neither is an explicit
-# format in the v1 sense, so both decline.
-_PANDAS_SPECIAL_DATE_FORMATS = frozenset({"mixed", "ISO8601"})
 
 
 # Distinguishes an ABSENT bound (the oracle applies its default) from one set

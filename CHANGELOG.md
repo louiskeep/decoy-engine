@@ -9,6 +9,30 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Changed (`when:` runs natively for text_redact, bucket_perturb and date_shift, 2026-10-07)
+
+A `text_redact`, `bucket_perturb` or `date_shift` column with a `when:` predicate now runs on the
+native chunked and unified routes, with output, row errors, warnings and metrics equal to the
+pandas run. The existing config limits still apply: no NER for `text_redact`, an explicit
+strftime `date_format` for the two date strategies, no `group_by` for `date_shift`. A
+`date_shift` value that fails to parse in a selected row is a `format_error` row error at its
+position in the chunk (chunked route) or table (unified route); an unselected row never errors.
+On the explicit chunked route, a `bucket_perturb` column with a closed-grammar `when:` and an
+explicit format no longer raises `chunked_bucket_perturb_when_not_supported`; other
+`bucket_perturb` plus `when:` columns still do.
+
+### Fixed (`bucket_perturb` with `date_format: mixed` or `ISO8601`, 2026-10-07)
+
+These pandas format names are no longer run natively. Native execution raised a `ValueError` on
+values whose UTC offsets differ (for example `+01:00` and `+02:00`), and the result depended on how
+the rows split into chunks or batches. Such jobs now run on the pandas route instead, and their
+output is the same as before (jobs that ran natively, with ordinary dates, one UTC offset, or
+all-null or empty input, produce byte-identical output).
+
+Known defect, NOT fixed here: with either format name, `bucket_perturb` writes the literal format
+name (`mixed` or `ISO8601`) in place of every date it parses, on every route, as it did before
+this change. A follow-up rejects these two values for `bucket_perturb` with a clear config error.
+
 ### Added (memory evidence on capped isolated runs, 2026-10-07)
 
 `run_pipeline_isolated` with `mem_cap_bytes` now samples the child's `VmData` (or `VmSize` for

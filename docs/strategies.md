@@ -1061,9 +1061,13 @@ representation depends on the rows present (an integer column with nulls is read
 floating point, so values above 2**53 compare differently); that is why the planner
 auto-chunks a `when:` table only when every referenced column is a string.
 
-Both native routes run `when:` for `hash`, `redact`, `truncate` and
-deterministic `categorical` columns over a string source: chunked execution and
-the unified full-frame route (a single-table whole-frame job). The predicate may
+Both native routes run `when:` for `hash`, `redact`, `truncate`, deterministic
+`categorical`, `text_redact` (no NER), `bucket_perturb` and `date_shift` columns over a
+string source: chunked execution and the unified full-frame route (a single-table
+whole-frame job). `bucket_perturb` and `date_shift` need an explicit strftime
+`date_format`, and `date_shift` needs no `group_by`. A `date_shift` value that fails to
+parse in a selected row is a `format_error` row error; an unselected row keeps its value
+and never errors. The predicate may
 read any column, with one condition: a column that an earlier work node masks is
 read after that mask by the pandas run, so a predicate that reads such a column
 keeps the table on the pandas leg. Work nodes run in column-name order. Every

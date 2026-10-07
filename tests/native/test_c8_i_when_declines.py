@@ -95,7 +95,7 @@ def _declined_equals_today(config: dict[str, Any], code: str) -> None:
     "column",
     [
         passthrough("s"),
-        {"name": "s", "strategy": "text_redact"},
+        {"name": "s", "strategy": "text_redact", "provider_config": {"token": 7}},
         redact("s", redact_with=7),
         {"name": "s", "strategy": "truncate", "provider_config": {"length": 0}},
         {
@@ -108,7 +108,7 @@ def _declined_equals_today(config: dict[str, Any], code: str) -> None:
     ],
     ids=[
         "passthrough",
-        "text_redact",
+        "text_redact_non_string_token",
         "redact_non_string",
         "truncate_bad_length",
         "categorical_numeric",

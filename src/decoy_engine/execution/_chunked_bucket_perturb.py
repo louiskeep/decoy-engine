@@ -194,8 +194,37 @@ def reject_unsafe_bucket_perturb_chunk_schema(
     )
 
 
+def _when_column_is_chunk_safe(col_entry: dict[str, Any]) -> bool:
+    """Whether a `bucket_perturb` column's `when:` may run on the explicit chunked route.
+
+    It needs a predicate in the closed grammar (no whole-column reduction) on a column the native
+    config gate admits, the set the native route runs and the chunked oracle must match. Both
+    chunked legs evaluate the predicate per chunk; that per-chunk mask can still differ from
+    whole-frame for a numeric reference above 2**53 with nulls in some chunks (C8-iii-b), which
+    the auto-chunk planner keeps off this route.
+    """
+    from decoy_engine.execution.native._operator_config_rejections import (
+        bucket_perturb_config_rejection,
+    )
+    from decoy_engine.execution.native._when_admission import parsed_when
+
+    config = col_entry.get("provider_config")
+    return (
+        parsed_when(col_entry) is not None
+        and bucket_perturb_config_rejection(
+            str(col_entry.get("name", "?")),
+            "",
+            None,
+            namespace=col_entry.get("namespace"),
+            provider_config=config if isinstance(config, dict) else {},
+        )
+        is None
+    )
+
+
 def reject_bucket_perturb_when(table_cfg: dict[str, Any], *, table: str) -> None:
-    """Reject a `bucket_perturb` column that also carries a `when:` predicate.
+    """Reject a `bucket_perturb` column that also carries a `when:` predicate, unless the column
+    is one the native route admits (see `_when_column_is_chunk_safe`).
 
     Raises:
         PlanCompileError: ``code='chunked_bucket_perturb_when_not_supported'``.
@@ -206,6 +235,7 @@ def reject_bucket_perturb_when(table_cfg: dict[str, Any], *, table: str) -> None
         if isinstance(col_entry, dict)
         and col_entry.get("strategy") == "bucket_perturb"
         and col_entry.get("when")
+        and not _when_column_is_chunk_safe(col_entry)
     )
     if not when_cols:
         return

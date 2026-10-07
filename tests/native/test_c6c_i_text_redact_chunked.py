@@ -304,14 +304,15 @@ def test_the_auto_router_equals_the_full_frame_run_for_string_and_non_string_sou
 # ---------------------------------------------------------------------------
 
 
-def test_a_when_predicate_keeps_text_redact_off_the_native_route() -> None:
-    config = make_config([tr_col(), passthrough("p")])
+def test_a_when_predicate_keeps_a_rejected_text_redact_config_off_the_native_route() -> None:
+    # A non-string token is a config the native gate declines, so `when:` cannot admit it.
+    config = make_config([tr_col(token=7), passthrough("p")])
     config["tables"][0]["columns"][0]["when"] = "s != ''"
     chunks = split(source(CORPUS), 6)
     run = run_one(config, chunks)
     assert run.ev[0].native_admitted is False
     assert "when_predicate_not_native" in (run.ev[0].reroute_reason or "")
-    plain = run_one(make_config([tr_col(), passthrough("p")]), chunks)
+    plain = run_one(make_config([tr_col(token=7), passthrough("p")]), chunks)
     assert [t.column("s").to_pylist() for t in run.out] == [
         t.column("s").to_pylist() for t in plain.out
     ]
@@ -385,14 +386,23 @@ def test_a_rejected_text_redact_config_is_not_string_pinned(name: str) -> None:
     assert "s" not in _rule(tr_col(**cfg), source(CORPUS)).string_columns
 
 
-def test_a_text_redact_column_with_a_when_predicate_is_not_string_pinned() -> None:
-    column = {**tr_col(), "when": "p > 1"}
+def test_an_admitted_text_redact_config_with_an_unadmitted_when_is_not_string_pinned() -> None:
+    # The column alone is admitted; a chained comparison is outside the closed grammar.
     config = make_config([tr_col(), passthrough("p")])
-    config["tables"][0]["columns"][0]["when"] = column["when"]
+    config["tables"][0]["columns"][0]["when"] = "0 < p < 3"
     rule = build_schema_rule(
         config, table=TABLE, first=source(CORPUS), registry=get_default_registry()
     )
     assert "s" not in rule.string_columns
+
+
+def test_an_admitted_text_redact_column_with_a_when_predicate_is_string_pinned() -> None:
+    config = make_config([tr_col(), passthrough("p")])
+    config["tables"][0]["columns"][0]["when"] = "p > 1"
+    rule = build_schema_rule(
+        config, table=TABLE, first=source(CORPUS), registry=get_default_registry()
+    )
+    assert "s" in rule.string_columns
 
 
 def test_a_rejected_config_over_an_int64_source_keeps_the_oracle_type_when_chunked() -> None:
