@@ -161,6 +161,40 @@ Order of commits on `feat/file-access-policy`: E1-0 `d830c0a4`, E1-1 `b098c5ad`,
 `6440e23e` taken when a session limit interrupted the port, E1-3/E1-4 `7177c302`, the mask-secret text
 read, the lazy-reader test fix, and the record/docs commit.
 
+## dennis gate and remediation
+
+dennis returned NO-GO on the first build: 3 HIGH, 6 MEDIUM, 4 LOW. Each is fixed at its source in
+its own commit (the series after `1405151b`). Findings, root cause, fix, test:
+
+| # | Finding | Root cause | Fix | Test |
+|---|---|---|---|---|
+| H1 | Strict policy turned every library exception into a denial: corrupt Parquet or YAML, `MemoryError`, `ArrowMemoryError`, ENOSPC and EDQUOT lost their class | `guarded` treated "the library failed" as "the policy said no" | A denial only when the policy decides. A library failure on an authorized handle is `FileAccessReadError` (`file could not be read: <position>`, no chain). Memory failures (the engine's own `is_memory_failure`, so DuckDB and OpenSSL shapes too) and ENOSPC/EDQUOT/ENOMEM keep their class; the resource `OSError` is rebuilt without its filename | `test_policy_errors.py`: corrupt Parquet, YAML, JSON, undecodable text; every under-cap shape survives; ENOSPC/EDQUOT keep errno, drop filename |
+| H2 | `LazySource(path, scratch=True)` read any path through `engine_handle`, registry-legitimized | A public flag stood in for a capability | Flag removed. The out-of-core stager builds a `ScratchAccess` over its own directory descriptor, constructible only through `scratch_access_for` (issuer token); the isolated child uses the plain ambient source. The `engine_handle` registry entry is gone | `test_policy_scratch.py` |
+| H3 | A non-UTF-8 secret file leaked the locator and a byte through `UnicodeDecodeError`, chained, with the whole file in `.object` | The decode error was the cause of the raised error | Under a strict policy the message names only the config position and is raised after the `except` block closes, so the decoder error is neither cause nor context. The ambient message is unchanged | `test_policy_errors.py`: no locator, byte value, cause or context. Checklist line below corrected |
+| M4 | A raw thread fell back to ambient under a strict policy | `current()` only consulted `forbid_ambient()` | Using any non-ambient policy latches the process: a context with no policy raises, and `is_ambient()` is false there. Tests reset the latch in an autouse fixture | thread test and default-process test in `test_policy_entry.py`. Existing tests that called a no-policy entry after a strict one were reordered |
+| M5 | Sentry missed stream, memory-map, numpy, HDF/Excel, `codecs.open`, `ctypes.CDLL`, `runpy`, `spec_from_file_location`, `pyarrow.orc`, chained pool submit | Incomplete Appendix B | All added with one negative fixture each; each test asserts the specific sink was flagged. `CDLL(None)` stays allowed in the one capability module that binds `openat2` | `test_sentry_flags_the_specific_sink` (14) and the capability case |
+| M6 | The "no read" strace assertion could not fail | `read`/`pread64`/`close` were not traced | Added to the trace set. Positive control: a direct open, read and close is detected. D10 self-tests: in-process, child process, execve, `dir_fd` open, directory listing, `renameat2` (with `RENAME_NOREPLACE`, since glibc maps flag 0 to `renameat`), pyarrow, pandas, polars, DuckDB read and write | `test_policy_strace.py`, `test_strace_selftest.py` |
+| M7 | Ambient vault write changed: read-only directory, missing-parent error text, hardlink | The write went through a staged replace | Restored: a path under the ambient policy truncates and rewrites in place (`vault_direct` label, issued only by `LocalFileAccess`). A strict `OutputDir` still gets an exclusive create. CHANGELOG corrected | `test_char_vault_in_place.py`, green on the base too |
+| M8 | Generic field keys; `disguises` used `MODEL_PACK_ROOT` | A key was fixed per call site | `fileaccess.at_position(...)` carries the config position; the engine sets it where it walks a config (pandas adapter per column, chunked code_set resolver) and the loaders append their suffix. New `DISGUISE_ROOT` role | `test_policy_denials.py` |
+| M9 | Probe route should be inconclusive under a strict policy | The probe would reach the isolated route | `resolve_probe_recovery` returns `None` when the policy is not ambient; `run_pipeline_isolated` and the governor keep failing closed with `FileAccessUnavailable` | `test_policy_routes.py` |
+| L1 | `os.link` followed symlinks | default | `follow_symlinks=False` | covered by output tests |
+| L2 | `warnings.catch_warnings` is process-global | | Dropped; library warnings are no longer suppressed under a strict policy | |
+| L3 | `FdDirHandle.entries()` stat followed links out of the root | `DirEntry` defaults | Entries are wrapped; type queries never follow a link | `test_policy_rooted.py` |
+| L4 | Entry-point sentry exempted whole packages | Prefix list | The exemption is six named seams with reasons, each asserted to exist and to reach the policy. `run_fk_out_of_core`, which the platform calls, is checked to be an entry point | `test_file_access_entry_points.py` |
+
+Judgment calls added by the remediation:
+
+- The latch in M4 is one-way for the process, like `forbid_ambient()`. A process that mixes ambient
+  CLI calls with strict-policy calls must make the ambient ones first.
+- `DISGUISE_ROOT` is a new `FileRole` member. It is additive, but the platform's policy must decide
+  it (a deny-by-default policy already refuses it).
+- Field keys fall back to the generic name where the engine receives a detached config dict with no
+  table or column (`validate_joint_mask_config(cfg)`, `strategy_config_fingerprint(cfg)`). A host that
+  knows the column wraps the call in `at_position`. Plumbing the position through those dict-only
+  signatures would change public signatures, which this gate did not authorize.
+- Library warnings are no longer suppressed under a strict policy (L2). None of the library calls in
+  scope emits a warning that names a path; this is not verified for every library version.
+
 ## Not verified
 
 - The platform half (P1): `forbid_ambient()` wiring, `PrincipalFileAccess`, the platform sentries.
@@ -183,7 +217,9 @@ read, the lazy-reader test fix, and the record/docs commit.
   by characterization tests on the base and still green.
 - [x] Route parity: all 11 corpus jobs match the golden, with and without the native companion, under
   the ambient policy and under a real `RootedFileAccess` (`openat2`) and the forced descriptor walk.
-- [x] No path or locator text in errors or logs; the log-interpolation sentry passes.
+- [x] No path or locator text in errors or logs for denials and read errors, including an undecodable
+  secret file (`test_policy_errors.py`); the log-interpolation sentry passes. Ambient CLI messages
+  keep their paths, as before.
 - [x] Sentries pass on 3.10 and 3.11 after the final commit; registry has 163 reviewed entries.
 - [x] Module sizes within the census; `_pipeline.py` unchanged at 684.
 - [ ] Platform wiring (`forbid_ambient()`, `PrincipalFileAccess`, platform sentries): not in this PR.

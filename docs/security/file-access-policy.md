@@ -35,15 +35,21 @@ that policy for its duration and keeps it on any iterator or object it returns, 
 iterator, a `LazySource`, a `ParquetTransactionalSink` or a `VaultWriter` is judged by the policy it
 was created under, whatever is installed when it is used later. A nested engine call never downgrades
 the installed policy. After `forbid_ambient()`, a call with no policy raises `FileAccessUnavailable`
-instead of falling back to ambient access. `forbid_ambient()` is one way for the process.
+instead of falling back to ambient access. `forbid_ambient()` is one way for the process. So is the
+first use of any non-ambient policy: from then on a context with no policy installed (a raw thread, a
+callback) raises `FileAccessUnavailable` rather than reading through the ambient CLI policy. Work a
+thread pool does for a call must be submitted with `fileaccess.run_in_context` or `map_in_context`.
+`fileaccess.at_position("tables.orders.columns.zip")` names the config position that the reads in a
+block belong to; the engine sets it where it walks a config, and a host that validates one column at
+a time can wrap its call so a denial names the field.
 
 ## Requests and capabilities
 
 A policy decides `FileRequest(role, access, locator, field_key)`:
 
 - `role` says what the file is for (`SOURCE`, `REFERENCE`, `CORPUS`, `SNAPSHOT`, `SECRET`, `VAULT`,
-  `CONFIG`, `QUARANTINE_OUTPUT`, `TARGET_OUTPUT`, and the directory roles `CUSTOM_PROVIDER_ROOT` and
-  `MODEL_PACK_ROOT`).
+  `CONFIG`, `QUARANTINE_OUTPUT`, `TARGET_OUTPUT`, and the directory roles `CUSTOM_PROVIDER_ROOT`,
+  `MODEL_PACK_ROOT` and `DISGUISE_ROOT`).
 - `locator` is the bare string from the config, scheme already stripped (`customer:` and `file:`).
 - `field_key` is the config position, for example `sources.orders.path`. It is the only thing a
   denial names.
@@ -70,8 +76,12 @@ rules) and reuse `RootedFileAccess.open_beneath` for the kernel part.
 One exception type, `FileAccessDenied`, with one message, `file access denied: <field key>`. It is
 raised `from None`, carries no locator, path, basename, resolved value or file content, and the field
 key is escaped and bounded to 256 characters. A missing file, a foreign file, an escape, a symlink, a
-non-regular file and a refused role all produce the same message. Library errors and warnings raised
-over a strict handle are replaced by the same denial, so no third-party error text names a path.
+non-regular file and a refused role all produce the same message. A policy that says yes does not
+turn a library failure into a denial: corrupt Parquet, malformed YAML or an undecodable text file on
+an authorized strict handle raises `FileAccessReadError` (`file could not be read: <field key>`),
+raised `from None` with no library text, so no third-party message names a path or a value. Memory
+failures and `ENOSPC`/`EDQUOT`/`ENOMEM` keep their own class (an `OSError` is rebuilt without its
+filename), so OOM classification and disk-quota handling still see them.
 `fileaccess.scrub(exc)` turns any exception chain that holds a denial into a fresh one with nothing
 attached, for use at a process or API boundary.
 
@@ -99,6 +109,9 @@ names, publish and failure semantics of the table sink, error text.
 - `load_vault(path)`, `VaultWriter.write(path)` and `unmask_pipeline(vault_path=)` accept a path string
   only under the ambient policy; under any other, pass a `FileHandle` or `OutputDir`.
 - The log file setting is ignored unless the ambient policy is installed.
+- The probe-recovery step of routing (`resolve_probe_recovery`) runs the job in a child process; under
+  a strict policy it answers "inconclusive" and routing falls back to the static estimate. The
+  isolated and governor routes themselves fail closed with `FileAccessUnavailable`.
 
 ## Operator requirements
 

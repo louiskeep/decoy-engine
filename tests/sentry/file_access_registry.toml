@@ -2,7 +2,7 @@
 # `ordinal` is the index of the call among identical sinks in the function. An entry may be
 # removed freely; adding one needs a `rule` (how the path is built), an `owner` and a `reason`.
 # `ambient_only` marks a caller-derived path that is reached only after `require_ambient`.
-# Count: 163 (asserted by the sentry).
+# Count: 164 (asserted by the sentry).
 
 [[entry]]
 module = "decoy_engine/connectors/sftp.py"
@@ -839,6 +839,15 @@ reason = "the subprocess and scratch route cannot carry a strict policy (D6 fail
 ambient_only = true
 
 [[entry]]
+module = "decoy_engine/execution/out_of_core/_scratch.py"
+function = "ScratchAccess.__init__"
+sink = "os.open"
+ordinal = 0
+rule = "a directory the out-of-core stager created under the engine's own scratch root; ScratchAccess is built only by scratch_access_for (issuer token) and serves reads beneath that one descriptor"
+owner = "cam"
+reason = "opens the engine's own staging directory once so staged key files are read through a descriptor-confined policy instead of an ambient path"
+
+[[entry]]
 module = "decoy_engine/execution/out_of_core/_spill_estimate.py"
 function = "_output_shares_temp_filesystem"
 sink = "os.stat"
@@ -1075,6 +1084,15 @@ reason = "ambient CLI semantics: the one policy that follows a caller path; neve
 [[entry]]
 module = "decoy_engine/fileaccess/_local.py"
 function = "LocalOutputTxn.create_file"
+sink = "os.open"
+ordinal = 0
+rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
+owner = "cam"
+reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
+
+[[entry]]
+module = "decoy_engine/fileaccess/_local.py"
+function = "LocalOutputTxn.create_file"
 sink = "Path.mkdir"
 ordinal = 0
 rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
@@ -1085,7 +1103,7 @@ reason = "ambient CLI semantics: the one policy that follows a caller path; neve
 module = "decoy_engine/fileaccess/_local.py"
 function = "LocalOutputTxn.create_file"
 sink = "os.open"
-ordinal = 0
+ordinal = 1
 rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
 owner = "cam"
 reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
@@ -1103,7 +1121,7 @@ reason = "ambient CLI semantics: the one policy that follows a caller path; neve
 module = "decoy_engine/fileaccess/_local.py"
 function = "LocalOutputTxn.create_file"
 sink = "os.open"
-ordinal = 1
+ordinal = 2
 rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
 owner = "cam"
 reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
@@ -1359,15 +1377,6 @@ ordinal = 0
 rule = "the builtin `open` handed to `handle.open_binary`, which calls it with the handle's own path under the ambient policy and ignores it under a strict one"
 owner = "cam"
 reason = "keeps the module-level `open` seam an existing test patches, with no path of its own"
-
-[[entry]]
-module = "decoy_engine/profile/_readers.py"
-function = "LazySource._handle"
-sink = "engine_handle"
-ordinal = 0
-rule = "`self.path` of a LazySource built with scratch=True (an engine scratch file)"
-owner = "cam"
-reason = "reads a Parquet file the engine itself staged"
 
 [[entry]]
 module = "decoy_engine/quality/dp_provenance.py"

@@ -276,3 +276,26 @@ def test_denials_leave_no_warning_or_log_record_with_a_locator(
             load_corpus("c", secret, file_access=world.policy)
     assert TOKEN not in caplog.text
     assert not any(TOKEN in str(w.message) for w in caught)
+
+
+def test_a_denial_names_the_config_position_the_read_belongs_to(world: World) -> None:
+    from decoy_engine import fileaccess
+
+    outside = Path(world.sentinel(f"{TOKEN}.parquet", b"x"))
+    with fileaccess.at_position("tables.orders.columns.zip"), scope(world.policy):
+        with pytest.raises(FileAccessDenied) as info:
+            load_table("customer_table", outside)
+    _assert_denial(info.value, "tables.orders.columns.zip.joint_mask.reference")
+    with scope(world.policy), pytest.raises(FileAccessDenied) as bare:
+        load_table("customer_table", outside)
+    _assert_denial(bare.value, "joint_mask.reference")
+
+
+def test_a_disguise_directory_needs_its_own_role(rooted, root_dir) -> None:  # type: ignore[no-untyped-def]
+    from decoy_engine.disguises.loader import load_disguises
+
+    (root_dir / "d").mkdir()
+    # The fixture grants MODEL_PACK_ROOT but not DISGUISE_ROOT.
+    with pytest.raises(FileAccessDenied) as info:
+        load_disguises(root_dir / "d", file_access=rooted)
+    assert str(info.value) == "file access denied: disguises.directory"

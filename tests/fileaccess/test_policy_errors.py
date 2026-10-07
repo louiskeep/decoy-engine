@@ -150,3 +150,34 @@ def test_an_unreadable_secret_under_a_strict_policy_is_a_denial_not_a_path(roote
     with pytest.raises(FileAccessDenied) as ei:
         resolve_mask_secret_ref("file:missing.txt", file_access=rooted)
     assert "missing.txt" not in str(ei.value)
+
+
+def _memory_shapes():  # type: ignore[no-untyped-def]
+    import duckdb
+
+    return [
+        MemoryError("x"),
+        pa.ArrowMemoryError("malloc failed"),
+        duckdb.OutOfMemoryException("Out of Memory Error: could not allocate block"),
+        ValueError("not able to copy ctx"),
+        pa.ArrowInvalid("Unknown error: Wrapping 5 failed"),
+        OSError(errno.ENOMEM, os.strerror(errno.ENOMEM)),
+    ]
+
+
+@pytest.mark.parametrize("index", range(6))
+def test_every_documented_under_cap_failure_shape_survives_a_strict_guard(index: int) -> None:
+    """The isolated worker classifies by these shapes (`is_memory_failure`); a strict policy
+    must hand the same exception class and text rules through, not a read error."""
+    from decoy_engine.execution._isolated_common import is_memory_failure
+
+    exc = _memory_shapes()[index]
+
+    def boom() -> None:
+        raise exc
+
+    with pytest.raises(type(exc)) as ei:
+        guarded("k", True, boom)
+    assert is_memory_failure(ei.value)
+    with pytest.raises(type(exc)):
+        list(guarded_iter("k", True, _raising_iter(exc)))

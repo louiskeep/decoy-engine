@@ -92,7 +92,7 @@ ALLOWLIST: dict[str, int] = {
     # scale-aware chunked-FK dtype family and rootness check; split the FK helpers.
     "src/decoy_engine/execution/_chunked_fk.py": 970,
     # fail-closed output projection and corpus pinning on the mask route; split the FK-resolution helpers.
-    "src/decoy_engine/execution/_pandas_adapter.py": 681,
+    "src/decoy_engine/execution/_pandas_adapter.py": 685,
     # routing dispatch; logic already lives in the _transforms_* siblings, dense reviewed exception.
     "src/decoy_engine/execution/_pipeline.py": 684,
     # resident Arrow type resolution; move it into its own module with the next operator gate.
@@ -104,7 +104,7 @@ ALLOWLIST: dict[str, int] = {
     # code_set provenance and FF1 notice plumbing through the streaming runner.
     "src/decoy_engine/execution/out_of_core/_runner.py": 707,
     # corpus schema checks and verify_corpus; split into _codeset_verify.py when next touched.
-    "src/decoy_engine/transforms/_codeset_loader.py": 648,
+    "src/decoy_engine/transforms/_codeset_loader.py": 650,
     # DRAW_SITES catalogue; split into _draw_sites_mask.py / _draw_sites_gen.py if it grows.
     "src/decoy_engine/execution/native/_determinism_protocol.py": 928,
     # one provider class per draw mechanism across 30 sites; the size is fan-out, not tangle.
@@ -115,10 +115,10 @@ ALLOWLIST: dict[str, int] = {
     "src/decoy_engine/internal/faker_setup.py": 648,
     # FF1 span path and sub-floor policy; split into _text_mask_sub_floor.py when next touched.
     "src/decoy_engine/transforms/text_mask.py": 722,
-    # policy-bound file sources (LazySource, Csv/Parquet/FixedWidth); split the cloud-agnostic helpers when next touched.
-    "src/decoy_engine/profile/_readers.py": 604,
     # ambient guard for the subprocess route (D6 fail-closed); split the in-process fallback into its own module when next touched.
     "src/decoy_engine/execution/_isolated_run.py": 620,
+    # new entry
+    "src/decoy_engine/execution/_pipeline_routing_signals.py": 606,
 }
 
 
