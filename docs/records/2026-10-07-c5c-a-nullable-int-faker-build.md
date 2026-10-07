@@ -91,3 +91,20 @@ The first run of the helper-level mutants (ignore deterministic flag, drop float
 
 - A generate-mask job end to end (see judgment calls).
 - Memory behavior on a large table. `to_pylist()` builds one Python int per row of an exact-int column, only for columns that failed before.
+
+## dennis gate and remediation
+
+dennis GO (0 BLOCKER, 0 HIGH, 2 MEDIUM, 2 LOW).
+
+What it confirmed:
+- The 11 goldens reproduce on extracted main `src`.
+- Its own main-vs-branch probes (14 whole-frame jobs, an FK child, an FK REMAP orphan, null-free FK) changed only jobs that fail on main.
+- The row-error remap change is confined to jobs that raise on main.
+- The conditional context copy, the writer order, the lifetimes and the census are all sound.
+
+Fixed:
+- **MEDIUM (goldens pin library versions).** The golden snapshots carried pyarrow's `creator` version and `pandas_version` inside the pandas schema metadata. CI installs unpinned, so a patch release would have turned main red. The comparison now strips those two keys on both sides and keeps the rest of the metadata.
+- **MEDIUM (missing FK case, plan test 5).** New test: deterministic Faker on a nullable FK child column (`pid`) next to a nullable int column (`n`). `pid` resolves exactly as with a null-free `n`, and each non-null `n` value masks like its null-free copy. The FK column converts FK-safe and is never registered.
+- **LOW:** `gated_context` is typed `StrategyContext`.
+- **LOW, tracked not fixed:** `to_pylist()` makes one Python object per row, which costs several GB at 100M rows on the whole-frame route. Only jobs that failed before take this path. Revisit when C5c-ii opens the native route.
+

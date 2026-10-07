@@ -92,7 +92,9 @@ def selected_positions(mask: pd.Series[Any]) -> np.ndarray[Any, Any]:
     return np.flatnonzero(mask.to_numpy(dtype=bool, na_value=False))
 
 
-def gated_context(ctx: StrategyContext, column: str, positions: np.ndarray[Any, Any]) -> Any:
+def gated_context(
+    ctx: StrategyContext, column: str, positions: np.ndarray[Any, Any]
+) -> StrategyContext:
     """A one-call copy of `ctx` that carries the gate's positions, when the handler needs them.
 
     Only a column with exact Arrow values reads positions, so every other column keeps the

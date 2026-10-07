@@ -43,6 +43,22 @@ def _snapshot(result: Any) -> str:
     return json.dumps(doc, sort_keys=True, default=repr)
 
 
+_LIBRARY_VERSION_KEYS = ("creator", "pandas_version")
+
+
+def _version_free(snapshot: str) -> str:
+    """The snapshot minus library version stamps, so a pyarrow or pandas patch release is not a diff."""
+    doc = json.loads(snapshot)
+    for table in doc["tables"].values():
+        raw = table["metadata"].get("pandas")
+        if raw is not None:
+            meta = json.loads(raw)
+            for key in _LIBRARY_VERSION_KEYS:
+                meta.pop(key, None)
+            table["metadata"]["pandas"] = json.dumps(meta, sort_keys=True)
+    return json.dumps(doc, sort_keys=True)
+
+
 def _faker(**kw: Any) -> Any:
     return sup.faker_seed(**kw)
 
@@ -173,4 +189,4 @@ def test_write_goldens() -> None:
 def test_job_output_is_unchanged(name: str) -> None:
     golden = _load()
     assert name in golden, "golden missing; regenerate from the pre-fix tree"
-    assert _snapshot(_SCENARIOS[name]()) == golden[name]
+    assert _version_free(_snapshot(_SCENARIOS[name]())) == _version_free(golden[name])

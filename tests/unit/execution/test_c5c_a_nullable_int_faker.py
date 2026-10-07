@@ -516,3 +516,71 @@ def test_registration_follows_the_real_order_for_a_multi_column_writer() -> None
     writer = _node("a", sup.seed_of("composite"), kind="composite", columns=("a", "n"))
     assert exact_int_faker_sources("t", table, frame, [writer, faker]) == {}
     assert list(exact_int_faker_sources("t", table, frame, [faker, writer])) == [("t", "n")]
+
+
+def _fk_job(
+    tmp_path: Path, child_pids: list[int | None], child_n: list[int | None]
+) -> dict[str, Any]:
+    """Parent/child job: deterministic Faker on the FK child column and on a nullable-int column."""
+    parent = pa.table({"id": pa.array([1, 2, 3], type=pa.int64())})
+    child = pa.table(
+        {
+            "cid": pa.array(range(len(child_pids)), type=pa.int64()),
+            "pid": pa.array(child_pids, type=pa.int64()),
+            "n": pa.array(child_n, type=pa.int64()),
+        }
+    )
+
+    def col(name: str, ns: str) -> dict[str, Any]:
+        return {
+            "name": name,
+            "strategy": "faker",
+            "provider": "person_email",
+            "deterministic": True,
+            "namespace": ns,
+            "cardinality_mode": "reuse",
+            "provider_config": {"pool_size": 64},
+        }
+
+    paths = {}
+    for name, table in (("parent", parent), ("child", child)):
+        paths[name] = str(tmp_path / f"{name}.parquet")
+        pq.write_table(table, paths[name])
+    cfg = PipelineConfig.model_validate(
+        {
+            "version": 1,
+            "global_settings": {"seed": 42},
+            "sources": {
+                k: {"type": "file", "path": v, "format": "parquet"} for k, v in paths.items()
+            },
+            "targets": {
+                k: {"type": "file", "path": v + ".out", "format": "parquet"}
+                for k, v in paths.items()
+            },
+            "tables": [
+                {"name": "parent", "columns": [col("id", "p_ns")]},
+                {"name": "child", "columns": [col("pid", "p_ns"), col("n", "n_ns")]},
+            ],
+            "relationships": [
+                {
+                    "parent": {"table": "parent", "columns": ["id"]},
+                    "children": [{"table": "child", "columns": ["pid"]}],
+                    "orphan_policy": "preserve",
+                    "namespace": "p_ns",
+                }
+            ],
+        }
+    ).model_dump()
+    result = run_pipeline(cfg, sources={"parent": parent, "child": child}, engine_version="x")
+    return {name: table.to_pydict() for name, table in result.outputs.items()}
+
+
+def test_fk_child_column_is_untouched_and_a_nullable_sibling_now_works(tmp_path: Path) -> None:
+    # The FK child `pid` converts FK-safe (never float64), so it is not an exact-int source and
+    # its resolution is unchanged; the nullable `n` beside it now masks like its null-free copy.
+    with_null_n = _fk_job(tmp_path / "a", [1, None, 3], [5, None, 7])
+    null_free_n = _fk_job(tmp_path / "b", [1, None, 3], [5, 6, 7])
+    assert with_null_n["child"]["pid"] == null_free_n["child"]["pid"]
+    assert with_null_n["child"]["n"][1] is None
+    assert with_null_n["child"]["n"][0] == null_free_n["child"]["n"][0]
+    assert with_null_n["child"]["n"][2] == null_free_n["child"]["n"][2]
