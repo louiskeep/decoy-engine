@@ -119,6 +119,9 @@ def test_3_a_positional_faker_beside_a_passthrough_over_several_batches(tmp_path
 _DECLINED: dict[str, pa.Array] = {
     "timestamp": pa.array([1, None, 3, 4], pa.timestamp("us")),
     "date32": pa.array([1, None, 3, 4], pa.date32()),
+    "date64": pa.array([86_400_000, None, 3 * 86_400_000, 4 * 86_400_000], pa.date64()),
+    "time64": pa.array([1_000, None, 3_000, 4_000], pa.time64("us")),
+    "decimal256": pa.array([1, None, 3, 4], pa.decimal256(40, 2)),
     "duration": pa.array([1, None, 3, 4], pa.duration("us")),
     "decimal128": pa.array([1, None, 3, 4], pa.decimal128(10, 2)),
     "binary": pa.array([b"a", None, b"c", b"d"], pa.binary()),

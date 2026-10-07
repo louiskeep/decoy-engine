@@ -202,6 +202,9 @@ def test_2_normalization_does_not_hide_an_arrow_extension_nan(typ: pa.DataType) 
 _DECLINED: dict[str, pa.Array] = {
     "timestamp": pa.array([1, None, 3, 4], pa.timestamp("us")),
     "date32": pa.array([1, None, 3, 4], pa.date32()),
+    "date64": pa.array([86_400_000, None, 3 * 86_400_000, 4 * 86_400_000], pa.date64()),
+    "time64": pa.array([1_000, None, 3_000, 4_000], pa.time64("us")),
+    "decimal256": pa.array([1, None, 3, 4], pa.decimal256(40, 2)),
     "duration": pa.array([1, None, 3, 4], pa.duration("us")),
     "decimal128": pa.array([1, None, 3, 4], pa.decimal128(10, 2)),
     "binary": pa.array([b"a", None, b"c", b"d"], pa.binary()),
@@ -263,3 +266,25 @@ def test_4_the_admitted_set_is_exactly_the_planned_families() -> None:
     from decoy_engine.execution.native._faker_null_mask import POSITIONAL_FAKER_SOURCE_TYPES
 
     assert frozenset([*SIGNED, *UNSIGNED, pa.bool_(), *FLOATS]) == POSITIONAL_FAKER_SOURCE_TYPES
+
+
+@pytest.mark.parametrize("dtype", ["object", "string", "arrow"])
+@pytest.mark.parametrize("arrow_type", [pa.string(), pa.large_string()])
+def test_string_mask_skips_the_conversion_and_equals_it(
+    dtype: str, arrow_type: pa.DataType
+) -> None:
+    import pandas as pd
+
+    from decoy_engine.execution.native import _faker_null_mask
+
+    values = ["a", None, "nan", "", "b"]
+    series = {
+        "object": pd.Series(values, dtype=object),
+        "string": pd.Series(values, dtype="string"),
+        "arrow": pd.Series(values, dtype=pd.ArrowDtype(pa.string())),
+    }[dtype]
+    raw = pa.Table.from_pandas(pd.DataFrame({"f": series}), preserve_index=False)
+    raw = raw.cast(pa.schema([pa.field("f", arrow_type)], metadata=raw.schema.metadata))
+    fast = _faker_null_mask.faker_missing_mask(raw, "f")
+    converted = _faker_null_mask.to_pandas_fk_safe(raw, set())["f"].isna().to_list()
+    assert fast.to_pylist() == converted == [False, True, False, False, False]

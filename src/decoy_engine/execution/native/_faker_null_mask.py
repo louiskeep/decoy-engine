@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import pyarrow as pa
+import pyarrow.compute as pc
 
 from decoy_engine.execution._fk_keys import to_pandas_fk_safe
 from decoy_engine.execution._operator_registry import POSITIONAL_FAKER_SOURCE_TYPES
@@ -35,6 +36,11 @@ __all__ = [
 
 def faker_missing_mask(raw: pa.Table, column: str, protected: Collection[str] = ()) -> pa.Array:
     """Boolean array, True where the oracle's frame holds a missing value in `column`."""
+    source = raw.column(column)
+    if pa.types.is_string(source.type) or pa.types.is_large_string(source.type):
+        # A string value is never missing in pandas, so Arrow validity is the mask and the
+        # conversion would only cost time on the path that ran natively before.
+        return pc.is_null(source.combine_chunks())
     frame = to_pandas_fk_safe(raw.select([column]), set(protected) & {column})
     return pa.array(frame[column].isna().to_numpy(dtype=bool), type=pa.bool_())
 

@@ -48,7 +48,7 @@ Each mutant was applied to one file, the new tests plus the touched old ones wer
 |---|---|
 | M1 mask from Arrow nulls instead of `isna` | killed |
 | M2 chunked mask from the normalized chunk | killed (normalization trap) |
-| M3 protected set dropped | survived, equivalent: a positional Faker on a protected column cannot reach the native route |
+| M3 protected set dropped | survived, equivalent by semantics (corrected by dennis): the protected set changes only integer columns (`_fk_keys.py:533-536`), and nullable `Int64` and float64-with-NaN have identical `isna()`, so the mask is the same either way |
 | M4 step ignores the mask | killed |
 | M5 step inverts the mask | killed |
 | M6 dispatch admits any type | killed |
@@ -79,4 +79,18 @@ The conversion is noise next to the run. The unified end-to-end time is close to
 
 ## Verification
 
-Filled in at the end of the build; see the report.
+Builder, final tree (3.11 with the companion, physical + native + unit/execution + parity + perf): 14661 passed, 12 skipped, 59 xfailed, 0 failed. tests/sentry: 2435 passed on 3.10 and 3.11. `scripts/test_flight.py`: 5 of 5 fingerprints match golden, exit 0. On 3.10: ruff, format and mypy clean.
+
+## dennis gate and remediation
+
+dennis GO (0 BLOCKER, 0 HIGH, 1 MEDIUM, 2 LOW). Its own differential probes all matched:
+- Arrow-extension, NumPy and nullable float NaN;
+- bool and int nulls, including uint64 extremes;
+- mixed-metadata chunks;
+- the normalization trap;
+- mixed configs.
+
+Fixed:
+- **MEDIUM (string-source cost):** the pandas conversion ran on every positional chunk, strings included. That cost about 7.7% (1.617 s against 1.502 s on 2M strings in 200k chunks) on a path that was already native. For `string` and `large_string`, Arrow validity is exactly pandas missingness, so `faker_missing_mask` now returns `is_null` for them without converting, which restores main's path. A test pins that the fast mask equals the conversion's mask under object, `string` and Arrow-extension metadata.
+- **LOW:** `date64`, `time64` and `decimal256` added to both declined tables, as plan test 4 listed.
+- **LOW:** this Verification section filled in, the testflight result recorded, and M3's rationale corrected.
