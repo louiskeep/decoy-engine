@@ -216,6 +216,33 @@ def test_chunked_native_entry_falls_back_to_the_oracle_for_int_faker(tmp_path: P
     assert out.column("n").to_pylist() == _whole(tmp_path, table).column("n").to_pylist()
 
 
+def test_numeric_output_drift_between_chunks_is_still_rejected_on_concat(
+    tmp_path: Path,
+) -> None:
+    # Known limit: a numeric-output provider yields int64 for a chunk with no null and double
+    # for one with a null, and the chunk concatenation refuses to promote. Sampling cannot fix it.
+    from decoy_engine.execution._chunked import concat_masked_chunks
+    from decoy_engine.execution._errors import ExecutionError
+
+    table = pa.table({"n": pa.array([1, 2, 3, None], type=pa.int64())})
+    pq.write_table(table, tmp_path / "in.parquet")
+    column = {**_faker_cfg(), "provider": "address_zip"}
+    cfg = _config(str(tmp_path / "in.parquet"), [column])
+    out = list(
+        run_mask_pipeline_chunked(
+            cfg,
+            _chunks(table, 2),
+            table="t",
+            engine_version="c5c-a",
+            registry=sup.int_registry(),
+        )
+    )
+    assert [o.schema.field("n").type for o in out] == [pa.int64(), pa.float64()]
+    with pytest.raises(ExecutionError) as exc:
+        concat_masked_chunks(out, table="t")
+    assert exc.value.code == "chunked_schema_mismatch"
+
+
 # 1. Works on the sequential route -------------------------------------------------
 
 
