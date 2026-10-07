@@ -418,6 +418,9 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         "src/decoy_engine/execution/_operator_registry.py",
         "src/decoy_engine/execution/_unified_slice_resident_types.py",
         "src/decoy_engine/execution/_unified_slice_evidence.py",
+        # `when:` admission and row masks for the unified route. It reads the compiled
+        # bindings through untyped nodes and imports no `execution.physical` module.
+        "src/decoy_engine/execution/_unified_slice_when.py",
         # Chunked dispatcher production contract: the public
         # `run_mask_chunked` entry point and the pieces it is built from. The
         # oracle's eager preflight and per-chunk loop move out of `_chunked.py`
