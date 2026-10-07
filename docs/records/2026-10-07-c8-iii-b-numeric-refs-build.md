@@ -1,4 +1,4 @@
-Status: record (build STOPPED at the test gate; not ready to merge)
+Status: record (WIP: build stopped at the usage limit, mutation incomplete; not ready to merge)
 
 Plan: `docs/plans/2026-10-07-c8-iii-b-numeric-refs.md` (rev 3).
 
@@ -30,3 +30,29 @@ With the implementation in place, every mask and every `when` target column equa
 | date64 | `date64[ms]` | `date32[day]` |
 
 Per the plan's rules the tests are not narrowed and the mismatch is not called benign. Open decision: fix the whole-frame/auto-chunk output representation at its source (a separate slice), or amend the plan's comparison for these types. Nothing past the test gate (sentries, full suite, testflight, mutation) was run.
+
+## Rev 4 (test oracle follows the auto-chunk output contract)
+
+Plan rev 4 (1ac61943) corrects test 1: the `when` mask and the masked column `s` equal the whole-frame run; names, order and row count equal the whole frame; every passthrough column, each `when` reference included, equals the SOURCE column (Arrow field with metadata, plus values). `_assert_output_contract` implements exactly that, with no column excluded. The float NaN, large_string and date64 differences above are therefore the approved contract and are no longer failures.
+
+Test setup corrections made on the way: a uint64 literal above int64 is outside the closed grammar, so the planner declines it and both runs raise (the case carries `in_grammar=False`; generated uint64 predicates use in-range literals).
+
+## Pin changes (final list)
+
+- `test_c8_i_when_auto_route.py::test_a_numeric_reference_stays_full_frame` renamed `..._with_unstable_chunks_stays_full_frame`, reference is now a bool with nulls.
+- `tests/unit/execution/test_auto_chunk_routing.py::TestChunkStateGates` (`_when_bearing_config`): `amount` was a null-free int with `amount > 30`, which now auto-chunks; it is now a bool with nulls and `amount == True`, so both tests keep their intent (still full-frame, still rejected by the planner).
+- `tests/unit/execution/test_multi_table_when.py::_when_case`: same change (bool with nulls, `amount == True`).
+- `test_planner_mutation_kills.py` and `test_c8_i_when_declines.py` unchanged.
+
+## Checks
+
+Finished:
+- New file plus old pins: 268 passed, 8 skipped (Python 3.11 native venv, `~/bin/pytest-one`).
+- Sentries (after commit): 2451 passed, 1 skipped. `_when_admission.py` is 261 LOC, under the 600 census threshold.
+- Full `tests/` on Python 3.11: 25565 passed, 4 failed, 180 skipped. Three failures were the pins fixed above (re-run after the fix: 90 passed across the two files). The fourth, `test_v2_cloud_sources.py::test_profile_gcs_source_via_mocked_client`, fails with `ModuleNotFoundError: No module named 'google'` (the native venv lacks the cloud extra); not caused by this change, not re-run on main.
+- Testflight (check mode): 53/53 invariant checks passed, FINGERPRINTS 5/5 match golden.
+- ruff check and format: clean. mypy on changed files: no errors in them (5 pyarrow-stub errors in untouched files, 3.10 venv).
+
+Not finished:
+- Mutation: a manual mutant harness (mutmut is not installed; scratch script, not committed) over `_stable_when_reference` and the `all(...)` / refs-guard lines had 24 mutants planned (null-count comparison, int/bool branches, each allowed type dropped, time/duration/decimal/dictionary/nested/binary/null added, `all` to `any`, dropped guards). Only the first 4 ran before the stop: all 4 (null-count mutants) KILLED. Kill rate on the 4 run is 4/4; the other 20 were not run, so no overall score.
+- The full suite was run before the pin fix; only the two affected files were re-run after it.
