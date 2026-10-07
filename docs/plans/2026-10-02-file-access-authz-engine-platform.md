@@ -1,3 +1,5 @@
+Status: plan (rev 3.2 for E1: rev 3.1 plus the 2026-10-07 delta below; BUILD-READY per Codex delta gate)
+
 # PLAN: Close the host-file read/write class at the engine's open calls (engine + platform)
 
 Status: plan, rev 3.1 (Opus, 2026-10-02). Build-ready pending owner acknowledgement (Codex PLAN gate
@@ -910,6 +912,44 @@ Final: rerun the scheduler verification matrix against the merged P1 and P3 path
 6. P3 lands before S14, so S14 and S15 are built against the final output layout (CD-8).
 7. The final scheduler matrix is rerun against the merged P1 and P3 paths, both flag states, and
    the results go in the build record.
+
+### Rev 3.2 delta for E1 (2026-10-07, against engine main `2ed9eb4c`)
+
+E1 rebases onto engine main as it stands after Phase C slices #200-#221. A Codex delta gate checked E1 against that main and returned BUILD-READY-AFTER-DELTAS. These deltas fold in without reopening the settled design. Each one is a requirement on E1, with the same force as the sections it extends.
+
+1. **B6a hold-back spill** (HIGH; D1/D9, E1-2, Appendix A R8 and registry, AT-E3/E6). Inventory these as sinks:
+   - `execution/_chunked_output_sink.py:429-462`: `_Spill.add`, `_make_directory`, `replay`, `close`. These cover Arrow IPC writes and reads, parent creation, temporary-directory creation, unlink and cleanup;
+   - `execution/_transactional_sink.py:225`.
+
+   `spill_parent` derives from the sink's target parent, so it is NOT an automatic engine-owned ambient-temp exemption. Under strict policy, E1 allocates and keeps capability-backed scratch on the output filesystem, and routes IPC through the Arrow adapter. Tests cover forced spill, replay, failure cleanup and denied spill destinations.
+2. **B6b lazy readers and lifetime** (HIGH; D1-D4, R1, E1-2, AT-E3/E11). Cover `LazySource.footer_facts`, `column_null_counts`, and the `OpenedLazyBatches` returned by `open_batches` (`profile/_readers.py:145, 211, 242, 261`; `execution/_chunked_input.py:120, 321`).
+   - Authorization comes before routing and footer reads, as well as before batch reads.
+   - The authorized handle is kept through `OpenedLazyBatches` and `InputChunks` closure, including early failure and interrupted consumption.
+   - Footer comparison, row-count checks and bounded buffering are preserved.
+   - Policy-switch and rename-race tests extend to these objects, not only to returned generators.
+3. **Publication lifecycle** (MEDIUM; D1, R8, E1-0, AT-E6). The publication reference is now `_transactional_sink.commit()` at `:265`, with the rename at `:291` (not "~149"). Characterize B6a auto-chunk and fully dispatched multi-table output (`_chunked_output_sink.py:114`, `_pipeline.py:683`):
+   - commit is the final pipeline action;
+   - failures abort the open publish session;
+   - "no writes" is told apart from "a zero-row streamed table".
+
+   The absent, empty and non-empty directory rename semantics stay as specified.
+4. **Isolated execution** (HIGH; D5/D6, R14, AT-E7/E8).
+   - **What changed:** every isolated job now builds lazy sources, and child sink publication produces staged output that the parent publishes in a separate step (`_isolated_worker.py:201-225`, `_isolated_run.py:505-511`, `_isolated_commit.py:89`).
+   - **What E1 must cover:** carry capabilities through both stages, streamed and resident finalization, row-error staging and parent readback, plus the new `_result_from_envelope` failure cleanup.
+   - **Keep #219:** OOM classification and cleanup stay as they are, and denial scrubbing still runs before envelope truncation.
+   - **Fallback:** D6's fail-closed alternative stays if this route cannot carry capabilities.
+5. **Import-time package read** (MEDIUM; D9/D10, registry, AT-E1/E3). Register the module-initialization read of the packaged `when_grammar.lark` (`expressions/_when_parser.py:30-32`), with its construction rule and owner. Registry entries may identify module-level call sites. Add a cold-import detector control. No new sink primitive is needed, because Appendix B covers `Path.read_text`.
+6. **Current-main route corpus** (MEDIUM; AT-E3/E4/E9/E10 and compatibility evidence). The characterization and parity corpus exercises:
+   - transform-bearing lazy-source materialization (`_pipeline_sources.py:143-173`);
+   - B6b streamed input (`_chunked_input.py:376`) and B6a streamed output;
+   - multi-table dispatch;
+   - unified and chunked native `when`;
+   - nullable exact-integer Faker sources (`_exact_int_faker.py:44`).
+
+   It pins actual route evidence and current-main output and error behavior.
+7. **Release baseline** (LOW). `pyproject.toml` declares 0.7.0, `decoy-engine-native/pyproject.toml` declares 0.1.0, and a local `v0.8.0rc1` tag exists. 0.9.0 remains the planned version, and the paired native artifact is recorded when released. The chunked entry anchor is now `execution/_chunked.py:368` (not ~358). **Tagging or publishing 0.9.0 is an outward action that needs Cam's explicit go.**
+
+No other changed filesystem sites were found in DuckDB, reference tables, model packs, vault or native Rust code, and no new production basetemp surface.
 
 ### Slice E1: engine `fileaccess` (decoy-engine `feat/file-access-policy`, ships as 0.9.0)
 
