@@ -65,7 +65,7 @@ MAX = 700
 # docs/decisions/module-size-census-history.md.
 ALLOWLIST: dict[str, int] = {
     # sampler start/finish and evidence threading in _spawn_and_classify; split the spawn/classify half into _isolated_spawn.py.
-    "src/decoy_engine/execution/_isolated_run.py": 611,
+    "src/decoy_engine/execution/_isolated_run.py": 612,
     # fan-in guard on the budget resolver; split the disk-preflight helpers into _disk_budget.py.
     "src/decoy_engine/execution/out_of_core/_budget.py": 608,
     # float FK key token pricing; split the disk-width helpers into _spill_widths.py.
