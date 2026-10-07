@@ -203,6 +203,8 @@ class RootedOutputTxn(_StageDir):
         if issuer is not _ISSUER:
             raise FileAccessUnavailable("an output transaction is issued by an OutputDir")
         validate_component(leaf, display)
+        if label not in STAGE_PREFIX:
+            raise deny(display)  # an in-place label exists only for the ambient policy
         self._leaf = leaf
         self._publish_mode = mode
         name = f"{STAGE_PREFIX[label]}{secrets.token_hex(6)}{STAGE_SUFFIX.get(label, '')}"
@@ -241,7 +243,14 @@ class RootedOutputTxn(_StageDir):
         parent = state.parent_fd
         if state.kind == "file" and self._publish_mode == "exclusive":
             try:
-                _call(os.link, state.stage_name, self._leaf, src_dir_fd=parent, dst_dir_fd=parent)
+                _call(
+                    os.link,
+                    state.stage_name,
+                    self._leaf,
+                    src_dir_fd=parent,
+                    dst_dir_fd=parent,
+                    follow_symlinks=False,
+                )
             except FileExistsError:
                 _discard(state)
                 raise

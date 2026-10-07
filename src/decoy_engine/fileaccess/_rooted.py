@@ -174,6 +174,27 @@ def _clear_nonblock(fd: int) -> None:
     os.set_blocking(fd, True)
 
 
+class _Entry:
+    """A listing entry whose type queries never follow a symlink, even by default: stat on
+    a link would resolve it outside the granted root."""
+
+    def __init__(self, entry: os.DirEntry[str]) -> None:
+        self._entry = entry
+
+    @property
+    def name(self) -> str:
+        return self._entry.name
+
+    def is_file(self, *, follow_symlinks: bool = False) -> bool:
+        return self._entry.is_file(follow_symlinks=False)
+
+    def is_dir(self, *, follow_symlinks: bool = False) -> bool:
+        return self._entry.is_dir(follow_symlinks=False)
+
+    def is_symlink(self) -> bool:
+        return stat_mod.S_ISLNK(self._entry.stat(follow_symlinks=False).st_mode)
+
+
 class FdDirHandle:
     """An open, authorized directory. Children are opened only beneath its own descriptor,
     so renaming the directory's path after open cannot redirect a later child open."""
@@ -186,8 +207,10 @@ class FdDirHandle:
         self._deny = deny_inodes
         self._closer = weakref.finalize(self, _close_quietly, fd)
 
-    def entries(self) -> Iterator[os.DirEntry[str]]:
-        yield from os.scandir(self._fd)
+    def entries(self) -> Iterator[_Entry]:
+        with os.scandir(self._fd) as it:
+            for entry in it:
+                yield _Entry(entry)
 
     def open_file(self, rel: str) -> FdHandle:
         fd = open_checked(

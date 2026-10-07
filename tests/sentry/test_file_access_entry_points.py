@@ -20,14 +20,22 @@ from tests.sentry.fa.callgraph import build_graph
 
 SRC = Path(__file__).parents[2] / "src"
 
-# Seams the platform never calls directly: their exports reach the policy only through the
-# declared entry points that call them.
-INTERNAL_PREFIXES = (
-    "decoy_engine.execution.native",
-    "decoy_engine.execution.out_of_core",
-    "decoy_engine.execution.physical",
-    "decoy_engine.fileaccess",
-)
+# The policy package itself defines `current()`; it is not a caller of it.
+INTERNAL_PREFIXES = ("decoy_engine.fileaccess",)
+
+# Public re-exports of the native, out-of-core and physical seams that reach the policy but are
+# not entry points. Each is called only from inside a declared entry point (the platform and CLI
+# call `run_pipeline`, `run_fk_out_of_core` and the other listed entries, never these), so a
+# policy is already installed when they run. A new public name in these packages that reaches
+# the policy fails the sentry until it is made an entry point or added here with its reason.
+INTERNAL_SEAMS: dict[str, str] = {
+    "decoy_engine.execution.native._dispatch.plan_native_route": "routing helper of run_pipeline",
+    "decoy_engine.execution.native._dispatch.run_native_or_oracle_chunked": "chunked route driver",
+    "decoy_engine.execution.out_of_core._mask.mask_batch": "per-batch step of the FK route",
+    "decoy_engine.execution.out_of_core._mask.mask_column": "per-column step of the FK route",
+    "decoy_engine.execution.out_of_core._relation.build_parent_key_relation": "FK route step",
+    "decoy_engine.execution.physical._snapshot.capture_physical_plan_inputs": "shadow-plan capture",
+}
 
 
 @pytest.fixture(scope="module")
@@ -57,6 +65,7 @@ def test_every_public_function_that_reaches_the_policy_is_an_entry_point(graph) 
         and name in graph.funcs
         and not name.startswith(INTERNAL_PREFIXES)
         and name not in ENTRY_POINTS
+        and name not in INTERNAL_SEAMS
     )
     assert not missing, (
         f"public callables reaching the file-access policy, not in ENTRY_POINTS: {missing}"
@@ -94,3 +103,15 @@ def test_an_entry_point_that_returns_an_iterator_goes_through_the_binding_wrappe
         if isinstance(c, ast.Call) and isinstance(c.func, ast.Name)
     }
     assert "bind_iterator" in calls
+
+
+def test_every_internal_seam_exemption_is_real_and_not_also_an_entry_point(graph) -> None:  # type: ignore[no-untyped-def]
+    reach = graph.reachers()
+    for name in INTERNAL_SEAMS:
+        assert name in graph.funcs, f"stale exemption: {name}"
+        assert name in reach, f"{name} no longer reaches the policy; drop the exemption"
+        assert name not in ENTRY_POINTS, name
+
+
+def test_the_out_of_core_driver_the_platform_calls_is_an_entry_point() -> None:
+    assert "decoy_engine.execution.out_of_core._runner.run_fk_out_of_core" in ENTRY_POINTS

@@ -202,3 +202,26 @@ def test_stat_of_a_spill_hint_directory(rooted: RootedFileAccess, root_dir: Path
     assert st.st_dev == os.stat(root_dir).st_dev
     with pytest.raises(FileAccessDenied):
         rooted.stat(FileRequest(FileRole.SPILL_HINT, "stat", "../x", "targets.t.path"))
+
+
+def test_a_listing_never_follows_a_symlink_out_of_the_granted_directory(rooted, root_dir) -> None:  # type: ignore[no-untyped-def]
+    from decoy_engine.fileaccess import FileRequest, FileRole
+
+    outside = root_dir.parent / "outside_dir"
+    outside.mkdir()
+    (outside / "x.txt").write_text("x")
+    base = root_dir / "d"
+    base.mkdir()
+    (base / "sub").mkdir()
+    (base / "real.txt").write_text("r")
+    os.symlink(outside, base / "link_dir")
+    os.symlink(outside / "x.txt", base / "link_file.txt")
+    handle = rooted.open_dir(FileRequest(FileRole.CUSTOM_PROVIDER_ROOT, "read_dir", "d", "k"))
+    try:
+        seen = {e.name: (e.is_file(), e.is_dir(), e.is_symlink()) for e in handle.entries()}
+    finally:
+        handle.close()
+    assert seen["real.txt"] == (True, False, False)
+    assert seen["sub"] == (False, True, False)
+    assert seen["link_dir"][:2] == (False, False) and seen["link_dir"][2]
+    assert seen["link_file.txt"][:2] == (False, False) and seen["link_file.txt"][2]
