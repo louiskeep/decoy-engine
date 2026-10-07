@@ -33,9 +33,15 @@ Date: 2026-10-07. Branch `fix/fpe-reference-empty`, base engine main `9bbde63c`.
 | `text.strip() == ""` | killed (4 fail) |
 | warning append moved before the skip | killed (2 fail) |
 | `value == ""` instead of `text == ""` | killed (4 fail) |
-| `text = value if isinstance(value, str) else str(value)` in place of `text = str(value)` | equivalent: the kernel only receives `pa.Array.to_pylist()` values, which are plain `str`, and `str(s) is s`; only a `str` subclass overriding `__str__` could differ, and none reaches the kernel |
+| `text = value if isinstance(value, str) else str(value)` in place of `text = str(value)` | NOT equivalent (Codex final): the reference also accepts plain lists, and a `str` subclass whose `__str__` returns `""` is empty under the strategy's `str(value)` rule but not under the mutant. Killed by `test_emptiness_is_decided_on_str_of_the_value`. |
 
 ## Not in scope
 
 Strategy, unmask and the value functions in `transforms/fpe.py` are untouched. The native extension
 is C6a.
+
+## Codex final gate
+
+GO, with 2 LOW:
+- **The mutant classification was wrong.** It is corrected above and the mutant is now killed by a new test.
+- **A pre-existing raw-list null mismatch, NOT fixed here.** `kernel/_scalar.py::_is_missing` treats `pd.NA` in a plain list as non-missing (the bool conversion raises), so the reference emits a row error where the strategy treats the value as null. This is outside this slice's empty-string guarantee. It is tracked for C6a, whose byte-matched Rust kernel must agree with the strategy on every null form.

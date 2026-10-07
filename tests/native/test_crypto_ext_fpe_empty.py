@@ -233,3 +233,17 @@ def test_empty_cells_never_reach_the_transform(
     result = _ref(forward, ["", "123456", _EmptyText(), None, ""], {"charset": "digits"})
     assert result.errors == ()
     assert seen == ["123456"]
+
+
+class _StrEmpty(str):
+    """A str subclass whose str() is empty: the reference keys emptiness on str(value)."""
+
+    def __str__(self) -> str:
+        return ""
+
+
+@pytest.mark.parametrize("forward", [True, False])
+def test_emptiness_is_decided_on_str_of_the_value(forward: bool) -> None:
+    result = _ref(forward, [_StrEmpty("123456")], {"charset": "digits"})
+    assert result.to_pylist() == [""]
+    assert result.errors == ()
