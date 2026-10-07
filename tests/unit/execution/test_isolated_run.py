@@ -308,9 +308,18 @@ class TestMemCapOom:
             auto_chunk=False,
         )
 
-        assert result.outcome == "oom_killed", (
+        # A native allocator that hits RLIMIT_DATA can segfault silently instead of raising;
+        # that is accepted only with driver-side evidence that the child sat near its cap.
+        evidence = result.memory_evidence
+        silent_memory_crash = (
+            result.outcome == "crashed"
+            and evidence is not None
+            and evidence.suspected_memory_pressure
+        )
+        assert result.outcome == "oom_killed" or silent_memory_crash, (
             f"error={result.error!r} returncode={result.returncode} "
-            f"signal_number={result.signal_number}"
+            f"signal_number={result.signal_number} "
+            f"memory_evidence={evidence.to_dict() if evidence is not None else None}"
         )
         assert result.outputs is None
         # A clean diagnostic: short, names the failure, not a raw multi-KB
