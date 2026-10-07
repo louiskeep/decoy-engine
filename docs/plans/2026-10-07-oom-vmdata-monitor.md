@@ -1,4 +1,4 @@
-Status: plan
+Status: plan (rev 4, BUILD-READY: review cap reached at Codex round 3; Cam approved folding the round-3 fixes and building, 2026-10-07)
 
 Rules consulted: 00-universal, development-loop, risk-and-exceptions, debugging, testing, observability-and-resilience, code-review.
 
@@ -65,7 +65,8 @@ The suspected flag works like this:
   - its LAST sample was within the margin of the cap;
   - that sample is FRESH. Its age at driver-observed termination, meaning `communicate` returning, is at most `_MAX_SAMPLE_AGE_MS = 250` (five sample intervals).
 
-  A stale or absent sample can never set the flag (Codex round 2). The LAST sample is used, never the lifetime peak (Codex round 1, HIGH 2). The record exports `last_sample_age_ms` and `stop_reason`.
+  A stale or absent sample can never set the flag (Codex round 2).
+- **Timeouts never set the flag (rev 4).** Eligibility is computed from the original abnormal-exit branch only. A timeout result keeps its evidence but always has `suspected_memory_pressure=False`. The LAST sample is used, never the lifetime peak (Codex round 1, HIGH 2). The record exports `last_sample_age_ms` and `stop_reason`.
 - **Margin:** `margin = min(max(64 MiB, 0.10 * cap), 0.5 * cap)`. That stays positive and bounded for small caps, and caps below 128 MiB are documented as unsupported for the flag. It is a suspicion, recorded with its basis. It is not a verdict.
 - **Error text:** the abnormal-exit error text gains `memory: last <X> MiB, peak <Y> MiB of <cap> MiB (<kind>)`. Sizes only, no data.
 
@@ -105,14 +106,24 @@ It is recorded as the upgrade path if the evidence proves insufficient. Ptrace a
    - timeout keeps main's diagnostics and outcome;
    - a real governor kill-and-reroute still routes as on main;
    - envelope outcomes and uncapped runs: outcome, returncode and error are byte-identical to main, apart from the added evidence text where 3d says so.
-3. **Flag rule** (also: a near-cap sample, then a read failure, then release, then a delayed crash gives `False`, because the sample is stale):
+3. **Flag rule, with an injected clock:**
+   - a near-cap sample, then a read failure, then release, then a delayed crash gives `False`, because the sample is stale;
+   - freshness just below, at and above 250 ms;
+   - absent samples give `False`;
+   - a fresh near-cap TIMEOUT gives `False`;
+   - JSON `null` for absent and zero-sample fields;
+   - the remaining cases:
    - last sample within the margin gives True;
    - a high peak with a low last sample (peak then release) gives False;
    - the threshold boundary;
    - a small cap uses the bounded margin;
    - an envelope (self-reported) run gives False;
    - uncapped runs get no evidence.
-4. **Deterministic integration child, kept in CI:**
+4. **Integration child, kept in CI (rev 4 fixes Codex round 3):**
+   - **Live observer.** The handshake does NOT wait on the final snapshot, which only exists after `communicate`. A private test observer hook receives each successful live sample as it is taken, and the test driver uses that to decide when to ACK.
+   - **Channel ownership.** The READY/ACK pipe pair is passed to the child explicitly through `Popen(pass_fds=...)`, because `close_fds` otherwise closes it. The test owns both parent ends. The coordinator runs in its own thread, concurrently with `communicate`. Every end is closed in a `finally` block, and a test checks cleanup when the handshake fails.
+   - **Target allocation.** The child allocates toward a measured TOTAL `VmData` or `VmSize` target, read from its own `/proc/self/status` before it allocates. This accounts for the interpreter baseline, rather than adding the cap-relative target on top of it.
+   - **Assertions.** The real child does not assert flag True unconditionally, because scheduling after exit can make a correct sample stale. It asserts that the evidence holds a qualifying near-cap sample, and that the flag equals the production predicate applied to the recorded `last_sample_age_ms`. The True/False and freshness boundaries are proven deterministically with an injected clock in test 3.
    - **Channel:** a dedicated pipe pair, separate from stdout and stderr.
    - **Child:** allocates and TOUCHES the target size, then writes `READY <bytes>`.
    - **Test driver:** waits until the sampler has published a sample of at least the target (target-qualified, so an import-time sample cannot satisfy it), then writes `ACK`.
@@ -153,3 +164,9 @@ Rollback: revert the merge commit.
   - **(3)** a target-qualified READY/ACK handshake on a dedicated channel with independent deadlines (test 4);
   - **(4)** TestMemCapOom stays probabilistic, and any failure goes to Cam, never to a widened margin (3e);
   - **(5)** the risk raised to R2, an appended field, a primitive JSON format, the consumer inventory, and a round-trip test (3d-ii, 7b).
+- **Codex plan gate, round 3: REVISE** (3 MEDIUM). Codex confirmed the design is settled: outcomes are unchanged, the flag uses a fresh near-cap last sample, and the lifecycle and serialization are adequate. The review cap was reached, and Cam approved folding these fixes and building without a 4th round (2026-10-07). Rev 4:
+  - **(1)** a live test observer separate from final publication, explicit `pass_fds` channel ownership, and a concurrent coordinator with cleanup;
+  - **(2)** freshness boundaries proven with an injected clock, the real child asserting the predicate on its recorded age, and allocation toward a measured total target;
+  - **(3)** timeouts never set the flag, plus the boundary tests.
+
+  dennis and Codex final check these three points in the built code.
