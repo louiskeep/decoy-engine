@@ -392,3 +392,68 @@ def pa_positions(values: list[int]) -> Any:
     import numpy as np
 
     return np.asarray(values, dtype=np.intp)
+
+
+# Which columns the adapter registers ----------------------------------------------
+
+
+def _node(column: str, seed: Any, *, kind: str = "scalar", columns: tuple[str, ...] | None = None):
+    from decoy_engine.execution._runner import WorkNode
+
+    return WorkNode(
+        table="t",
+        columns=columns or (column,),
+        kind=kind,
+        strategy=seed.strategy,
+        provider=seed.provider,
+        plan_slice=seed,
+    )
+
+
+def _registered(arrow: pa.Array, *, frame: pd.DataFrame | None = None, seed: Any = None) -> bool:
+    from decoy_engine.execution._exact_int_faker import exact_int_faker_sources
+
+    table = pa.table({"n": arrow})
+    frame = table.to_pandas() if frame is None else frame
+    node = _node("n", seed or sup.faker_seed())
+    return ("t", "n") in exact_int_faker_sources("t", table, frame, [node])
+
+
+def test_only_a_widened_nullable_integer_column_is_registered() -> None:
+    assert _registered(pa.array([1, None, 3], type=pa.int64()))
+    assert _registered(pa.array([1, None], type=pa.uint8()))
+    # Already exact in the frame, or nothing to key.
+    assert not _registered(pa.array([1, 2, 3], type=pa.int64()))
+    assert not _registered(pa.array([None, None], type=pa.int64()))
+    assert not _registered(pa.array([], type=pa.int64()))
+    nullable = pa.table({"n": pa.array([1, None], type=pa.int64())}).to_pandas()
+    assert not _registered(
+        pa.array([1, None], type=pa.int64()), frame=nullable.astype({"n": "Int64"})
+    )
+    # Not an integer source, or not a deterministic Faker node.
+    assert not _registered(pa.array([1.5, None], type=pa.float64()))
+    assert not _registered(pa.array(["a", None]))
+    assert not _registered(
+        pa.array([1, None], type=pa.int64()), seed=sup.faker_seed(deterministic=False)
+    )
+    assert not _registered(pa.array([1, None], type=pa.int64()), seed=sup.seed_of("redact"))
+
+
+def test_a_nondeterministic_faker_ignores_registered_exact_values() -> None:
+    df = pd.DataFrame({"n": [1.0, None, 3.0]})
+    exact = pa.chunked_array([pa.array([1, None, 3], type=pa.int64())])
+    seed = sup.faker_seed(deterministic=False)
+    with_exact, _ = FakerStrategyHandler().run(df.copy(), "n", seed, _ctx({("t", "n"): exact}))
+    without, _ = FakerStrategyHandler().run(df.copy(), "n", seed, _ctx({}))
+    assert with_exact["n"].tolist() == without["n"].tolist()
+
+
+def test_registration_follows_the_real_order_for_a_multi_column_writer() -> None:
+    from decoy_engine.execution._exact_int_faker import exact_int_faker_sources
+
+    table = pa.table({"a": pa.array(["x", "y"]), "n": pa.array([1, None], type=pa.int64())})
+    frame = table.to_pandas()
+    faker = _node("n", sup.faker_seed())
+    writer = _node("a", sup.seed_of("composite"), kind="composite", columns=("a", "n"))
+    assert exact_int_faker_sources("t", table, frame, [writer, faker]) == {}
+    assert list(exact_int_faker_sources("t", table, frame, [faker, writer])) == [("t", "n")]
