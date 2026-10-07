@@ -244,12 +244,14 @@ def test_a_non_string_source_declines_the_lane_and_equals_the_oracle(
     _assert_declined_and_equal(off, on)
 
 
-def test_a_when_predicate_declines_the_lane_and_leaves_output_unchanged(tmp_path: Path) -> None:
+def test_a_when_predicate_on_a_rejected_config_declines_the_lane_and_leaves_output_unchanged(
+    tmp_path: Path,
+) -> None:
     source = _source(CORPUS)
-    off, on = _run_both(tmp_path, source, [tr_col("s"), _PASS], when="p > 3")
+    off, on = _run_both(tmp_path, source, [tr_col("s", token=7), _PASS], when="p > 3")
     _assert_declined_and_equal(off, on)
-    # `when:` redacts only the rows that satisfy it, so the two outputs differ in the rows it skips.
-    assert on.outputs["t"].column("s").to_pylist()[:4] == CORPUS[:4]
+    # A non-string token leaves the source column unchanged on the pandas run.
+    assert on.outputs["t"].column("s").to_pylist() == CORPUS
 
 
 # ---------------------------------------------------------------------------
