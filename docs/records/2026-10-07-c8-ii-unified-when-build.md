@@ -20,14 +20,14 @@ Plan: `docs/plans/2026-10-07-c8-ii-unified-when.md` (rev 2, Codex plan gate GO).
 2. **Module size without a census entry.** To stay under 600 the coordinator's row-error rebase moved to `rebase_row_errors` in `_shadow_assembly.py` (a pure move, behavior unchanged), and the mask slicing is `batch_when_mask` there. `_unified_slice.py` ends at 599 lines. No census entry added.
 3. **`WhenMasks` carries both forms.** One object with `.selected` and `.arrow` keeps the driver change to three lines. The coordinator still receives a `Mapping[node_id, pa.Array]` as planned.
 4. **Evidence exemption keyed on `rows_selected`, not on the binding.** Only a masked run ever sets the field, so a node without a mask cannot reach the exemption. Hand-built bindings in existing evidence tests carry no `when_expression`, and this keeps them working.
-5. **`compute_when_masks` takes `Iterable[Any]`.** Importing `PhysicalNode` for the annotation would put the new module on the physical-seam import sentry's list. The sentry list was left alone.
+5. **`compute_when_masks` takes `Iterable[Any]`.** Importing `PhysicalNode` for the annotation would put the new module on the physical-seam import sentry's list. It still had to be added to that sentry's permitted list, which names every changed execution module versus main (see below).
 6. **One existing test rewritten.** `test_cheap_admission_declines_when_gated_column` pinned the blanket veto this slice removes (a redact `when` over an int64 passthrough sibling). It now asserts admission, and a sibling test keeps a decline pinned for a strategy the verdict rejects (passthrough with `when`). No assertion about any other behavior changed.
 7. **Decline reasons.** `cheap_admission` returns `None` without a code, as before, so no code was added. The `when_native_rejection` code is available to a future telemetry pass.
 8. **Mask failure logging.** A failing predicate falls into the existing generic reroute log, which records the exception type and table name only. A test asserts no predicate text reaches the log.
 
 ## Tests
 
-`tests/physical/test_c8_ii_unified_when.py`, 93 tests written first (73 failed against the old code for the right reason: the oracle ran where the lane was expected). Covers plan tests 1 to 9 and the admission units. Test 10 is the existing sentries. The numeric-reference decline cases assert the decline: a plain Arrow `int64` with nulls (round-trip check) and a float passthrough sibling (resident type domain).
+`tests/physical/test_c8_ii_unified_when.py`, 93 tests written first (72 failed against the old code, re-measured by dennis; the build first reported 73, for the right reason: the oracle ran where the lane was expected). Covers plan tests 1 to 9 and the admission units. Test 10 is the existing sentries. The numeric-reference decline cases assert the decline: a plain Arrow `int64` with nulls (round-trip check) and a float passthrough sibling (resident type domain).
 
 Competing-failure cases (test 6) use a rebound Faker provider that fails pool build, with both work orders and both config orders.
 
@@ -97,3 +97,11 @@ At 1% the lane is slower because `run_kernel_step_masked` runs the kernel over e
 - Roadmap and shipped-log updates are for merge time, per the plan.
 - No new decline code was needed.
 - The physical-seam sentry's permitted-exceptions list gained `_unified_slice_when.py` (it lists every changed execution module versus main).
+
+## dennis gate and remediation
+
+dennis GO (0 BLOCKER, 0 HIGH, 2 MEDIUM, 3 LOW) at de5d1a4b. Fixed at 435080a6:
+- **MEDIUM-1 (low-selectivity cost).** `run_kernel_step_masked` ran the kernel over every row, so at 1% selectivity on 1M rows the lane took 1.41s against the oracle's 0.41s. Of that, 0.92s was kernel work and about 0.4s fixed lane overhead. The step now filters to the selected rows, runs the kernel, and scatters back with `replace_with_mask`. dennis checked equivalence across 880 selected calls for all four operators. This changes the chunked route too, and the two C8-i spy tests that pinned full-length kernel calls now pin the selected-row counts ([1, 2, 2] and [2, 3]), the true call shape. By default, tables of 100k rows or more auto-chunk to the chunked route, so the unified route mostly sees small tables.
+- **MEDIUM-2 (unmasked guard covered four strategies).** The binding now carries `plan_slice.when` for every strategy, so the `run_operator` guard fails closed for any `when` node that reaches execution without a mask.
+- **LOW-1 and LOW-2 (test 6).** Both test-6 tests now spy on `compute_when_masks` to prove the lane reached its mask step, and they pin the exact first error code per case.
+- **LOW-3.** Judgment call 5 and the red-test count are corrected above.

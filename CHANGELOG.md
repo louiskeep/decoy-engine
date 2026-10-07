@@ -23,6 +23,12 @@ the pandas path. A predicate that raises declines the table before any node runs
 raises the pandas run's error. A node whose predicate selects no row reports an idle kernel in
 the activation evidence. The shadow and mixed harnesses still do not run `when:` columns.
 
+On both native routes the masked kernel now runs only on the rows a predicate selects and scatters
+their outputs back into place, so its cost follows selectivity. Before, it ran over every row.
+Every binding now carries its column's predicate, so a `when:` column that reaches execution
+without a row mask fails closed whatever its strategy. At very low selectivity on a small table,
+the lane's fixed conversion cost can still make it slightly slower than the pandas path.
+
 ### Changed (position-keyed categorical and Faker run on the unified route, 2026-10-06)
 
 The seeded non-deterministic `categorical` and the non-deterministic `reuse` `faker` now run on
