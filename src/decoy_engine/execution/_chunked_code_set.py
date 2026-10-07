@@ -67,6 +67,7 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
+from decoy_engine import fileaccess
 from decoy_engine.execution._adapter import provider_config_to_dict
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.plan._types import ColumnSeed
@@ -290,7 +291,8 @@ def resolve_pinned_code_set_records(
         if not isinstance(plan_slice, ColumnSeed):
             continue
         code_cfg = CodeSetConfig.from_dict(provider_config_to_dict(plan_slice.provider_config))
-        records[(table, node.columns[0])] = resolve_corpus_record(code_cfg)
+        with fileaccess.at_position(f"tables.{table}.columns.{node.columns[0]}"):
+            records[(table, node.columns[0])] = resolve_corpus_record(code_cfg)
     return records
 
 

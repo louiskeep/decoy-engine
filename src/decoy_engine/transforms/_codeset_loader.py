@@ -107,7 +107,9 @@ _customer_cache: OrderedDict[tuple[str, int, int, int], _CorpusRecord] = Ordered
 def _open_customer(path: Path) -> FileHandle:
     """The policy's handle for a customer corpus; the config position is named, never the path."""
     return fileaccess.current().open_read(
-        FileRequest(FileRole.CORPUS, "read", str(path), "provider_config.corpus_source")
+        FileRequest(
+            FileRole.CORPUS, "read", str(path), fileaccess.position_key("code_set.corpus_source")
+        )
     )
 
 

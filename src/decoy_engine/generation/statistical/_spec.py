@@ -153,7 +153,7 @@ def _load_snapshot(path: str, field_key: str = "snapshot_file") -> tuple[str, di
     """Read + parse a snapshot artifact. Returns `(content_sha256, parsed)`.
     No caching: every call is a fresh read + hash + parse."""
     try:
-        raw = fileaccess.read_all(FileRole.SNAPSHOT, path, field_key)
+        raw = fileaccess.read_all(FileRole.SNAPSHOT, path, fileaccess.position_key(field_key))
     except OSError as exc:
         raise StatisticalSpecError(
             code="statistical_snapshot_unreadable",

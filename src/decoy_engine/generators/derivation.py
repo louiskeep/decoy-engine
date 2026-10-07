@@ -86,7 +86,7 @@ def _snapshot_content_digest(path: str, field_key: str = "snapshot_file") -> str
     which would reintroduce the path-coupling bug.
     """
     try:
-        data = fileaccess.read_all(FileRole.SNAPSHOT, path, field_key)
+        data = fileaccess.read_all(FileRole.SNAPSHOT, path, fileaccess.position_key(field_key))
     except OSError as exc:
         raise RuntimeError(
             f"strategy_config_fingerprint: snapshot_file {path!r} is missing or "

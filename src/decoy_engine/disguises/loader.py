@@ -43,7 +43,7 @@ def load_disguises(
     else:
         # A directory a caller names is a directory-valued input and goes through the policy.
         folder = fileaccess.capture(file_access).open_dir(
-            FileRequest(FileRole.MODEL_PACK_ROOT, "read_dir", str(directory), "disguises")
+            FileRequest(FileRole.DISGUISE_ROOT, "read_dir", str(directory), "disguises.directory")
         )
     try:
         return _load_from(folder)
