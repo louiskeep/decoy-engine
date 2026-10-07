@@ -123,6 +123,9 @@ class ExecutionBinding:
     batch_estimate: int | None
     pool_binding: PoolBinding | None = None
     params: OperatorParams | None = None
+    # The node's `when:` predicate, for the four strategies the masked kernel step covers.
+    # A binding that carries one must never run without a row mask.
+    when_expression: str | None = None
 
     @property
     def needs_index_kernel(self) -> bool:

@@ -75,7 +75,11 @@ from decoy_engine.execution.native._index_ext import (
 from decoy_engine.execution.native._operator_params import FakerParams
 from decoy_engine.execution.physical._context import SeamContext
 from decoy_engine.execution.physical._plan import ExecutionBinding, PhysicalPlan, SynthesisStage
-from decoy_engine.execution.physical._shadow_assembly import assemble_column
+from decoy_engine.execution.physical._shadow_assembly import (
+    assemble_column,
+    batch_when_mask,
+    rebase_row_errors,
+)
 from decoy_engine.execution.physical._shadow_context import ShadowContext
 from decoy_engine.execution.physical._shadow_diff_codes import (
     DUPLICATE_NODE_DECLARATION,
@@ -103,6 +107,8 @@ from decoy_engine.generation.pool._identity import PoolIdentity, resolve_faker_p
 from decoy_engine.instrumentation.timing import timed_strategy
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from decoy_engine.execution._adapter import ExecutionResult
     from decoy_engine.generation.pool._events import QualityWarning
     from decoy_engine.plan._types import Plan
@@ -233,6 +239,7 @@ class ShadowCoordinator:
         snapshot: ShadowSnapshot,
         *,
         admitted_edges: tuple[RelationshipEdge, ...] = (),
+        when_masks: Mapping[str, pa.Array] | None = None,
     ) -> ShadowRunResult:
         # Task 4.6 slice 5a: a PURE-GENERATE plan (no mask tables at all)
         # dispatches through the Task 4.2 SynthesisStageAdapter instead of
@@ -372,20 +379,12 @@ class ShadowCoordinator:
                                 group_key_sibling=group_key_sibling,
                                 column=column,
                                 row_offset=row_offset,
+                                when_mask=batch_when_mask(
+                                    when_masks, node.node_id, row_offset, batch.num_rows
+                                ),
                             )
                         parts.append(out)
-                        # Rebase batch-local indices to table-global and attribute the
-                        # table: the oracle records `row_index` over the whole column.
-                        row_errors.extend(
-                            RowErrorRecord(
-                                table=table.table,
-                                column=e.column,
-                                row_index=e.row_index + row_offset,
-                                trigger=e.trigger,
-                                reason=e.reason,
-                            )
-                            for e in batch_errors
-                        )
+                        row_errors.extend(rebase_row_errors(table.table, batch_errors, row_offset))
                         row_offset += batch.num_rows
 
                     if not evidence.executed:  # pragma: no cover - run_operator always sets this

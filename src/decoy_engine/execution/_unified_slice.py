@@ -40,6 +40,7 @@ from typing import TYPE_CHECKING, Any, Final
 from decoy_engine.errors import DecoyError
 from decoy_engine.execution import _unified_slice_admission as _admission
 from decoy_engine.execution._row_errors import RowErrorRecord
+from decoy_engine.execution._unified_slice_when import compute_when_masks
 from decoy_engine.generation.pool._events import QualityWarning
 
 if TYPE_CHECKING:
@@ -249,12 +250,13 @@ def _execute_admitted(
         )
         snapshot = capture_shadow_snapshot({candidate.table: candidate.source})
 
+        when = compute_when_masks(candidate.source_frame, physical_table.nodes)
         collector = TimingCollector()
         try:
             with use_collector(collector):
                 shadow_result = ShadowCoordinator(
                     ctx=ctx, registry=inputs.registry, pool_cache=pool_cache
-                ).run(physical_plan, snapshot)
+                ).run(physical_plan, snapshot, when_masks=when.arrow)
         except ShadowDifference as exc:
             if exc.code == FAKER_POOL_NON_STRING_OUTPUT:
                 # A rebound provider yielded non-strings. The pool is already in
@@ -291,6 +293,7 @@ def _execute_admitted(
             frame=candidate.source_frame,
             masked_table=shadow_result.outputs[candidate.table],
             nodes=physical_table.nodes,
+            when_selected=when.selected,
         )
         boundary_conversion_ms = (
             candidate.boundary_conversion_ms + (time.perf_counter() - bridge_t0) * 1000.0
@@ -452,6 +455,7 @@ def maybe_run_unified_slice(
         profile=profile,
         table_kinds=table_kinds,
         caller_sources=caller_sources,
+        registry=registry,
     )
     if candidate is None:
         return None

@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final
 
 import pyarrow as pa
+import pyarrow.compute as pc
 
 from decoy_engine.execution._operator_registry import OPERATORS
 from decoy_engine.execution._row_errors import RowError
@@ -35,7 +36,7 @@ from decoy_engine.execution.native._operator_params import (
     TextRedactParams,
     TruncateParams,
 )
-from decoy_engine.execution.native._operator_step import run_kernel_step
+from decoy_engine.execution.native._operator_step import run_kernel_step, run_kernel_step_masked
 from decoy_engine.execution.physical._plan import ExecutionBinding
 from decoy_engine.execution.physical._shadow_context import ShadowContext
 from decoy_engine.execution.physical._shadow_diff_codes import (
@@ -135,6 +136,9 @@ class OperatorCallEvidence:
     # Rows the operator was handed, summed per batch. `None` until a batch is recorded, so a
     # hand-built record that never counted reads as non-empty and keeps the strict check.
     rows_seen: int | None = None
+    # Rows a `when:` mask selected, summed per batch. `None` for a node with no mask, so only
+    # a masked node can be exempt from the positive-kernel check when it selected nothing.
+    rows_selected: int | None = None
 
 
 # The two operators whose kernel loads a companion of its own inside the call; the loader's
@@ -264,6 +268,7 @@ def run_operator(
     group_key_sibling: pa.Table | None = None,
     column: str | None = None,
     row_offset: int = 0,
+    when_mask: pa.Array | None = None,
 ) -> tuple[pa.Array, tuple[RowError, ...]]:
     """Dispatch one batch to `binding`'s bound operator, directly. Raises a
     coded `ShadowDifference(native_companion_unavailable)` -- never falls
@@ -285,10 +290,19 @@ def run_operator(
     node and loads the index kernel once per run, then threads both explicitly
     here so every batch shares the identical verified kernel wrapper (mirroring
     the native chunked route's own preflight-once, thread-through contract).
+    `when_mask` is the batch's slice of the node's `when:` row mask (non-null booleans). A
+    binding that carries a predicate fails closed without one, so a `when` node can never mask
+    every row. Only the four value-keyed string operators carry a predicate, and they read
+    nothing the masked step does not pass.
     group_key's `raw_hex_kernel` is left unset on purpose: the kernel loads it inside the
     call each batch, which is this route's only companion probe, so an empty column still
     declines when the companion is absent.
     """
+    if binding.when_expression is not None and when_mask is None:
+        raise ShadowDifference(
+            code=OPERATOR_INVARIANT_VIOLATION,
+            detail=f"operator={binding.operator_id!r}: a when node reached run_operator unmasked",
+        )
     positional_faker = isinstance(binding.params, FakerParams) and binding.params.positional
     job_seed = ctx.job_seed if positional_faker else None
     params = _bound_params(
@@ -300,18 +314,28 @@ def run_operator(
         job_seed=job_seed,
     )
     try:
-        result = run_kernel_step(
-            params,
-            array,
-            mask_key=ctx.mask_key,
-            native_threads=ctx.native_threads,
-            index_kernel=index_kernel,
-            raw_hex_kernel=None,
-            pool=pool,
-            sibling=group_key_sibling,
-            row_offset=row_offset,
-            job_seed=job_seed,
-        )
+        if when_mask is not None:
+            result = run_kernel_step_masked(
+                params,
+                array,
+                when_mask,
+                mask_key=ctx.mask_key,
+                native_threads=ctx.native_threads,
+                index_kernel=index_kernel,
+            )
+        else:
+            result = run_kernel_step(
+                params,
+                array,
+                mask_key=ctx.mask_key,
+                native_threads=ctx.native_threads,
+                index_kernel=index_kernel,
+                raw_hex_kernel=None,
+                pool=pool,
+                sibling=group_key_sibling,
+                row_offset=row_offset,
+                job_seed=job_seed,
+            )
     except CryptoExtensionUnavailableError as exc:
         detail = _COMPANION_UNAVAILABLE_DETAIL.get(binding.operator_id)
         if detail is None:
@@ -335,4 +359,6 @@ def run_operator(
     evidence.executed = True
     evidence.batches_run += 1
     evidence.rows_seen = (evidence.rows_seen or 0) + len(array)
+    if when_mask is not None:
+        evidence.rows_selected = (evidence.rows_selected or 0) + (pc.sum(when_mask).as_py() or 0)
     return result.out, row_errors

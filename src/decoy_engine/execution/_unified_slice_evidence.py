@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Final
 
+import numpy as np
 import pyarrow as pa
 
 from decoy_engine.execution import _unified_slice_admission as _admission
@@ -120,6 +121,8 @@ def assemble_node_evidence(
             binding.operator_id in _POSITIVE_KERNEL_EVIDENCE_OPERATOR_IDS
             and not evidence.compiled_kernel_executed
             and not (evidence.rows_seen == 0 and _is_positional_faker(binding))
+            # A `when:` node whose mask selected nothing never calls its kernel.
+            and evidence.rows_selected != 0
         ):
             raise UnifiedSliceInvariantError(
                 f"unified slice: {binding.operator_id} node {node.node_id!r} completed "
@@ -143,12 +146,41 @@ def assemble_node_evidence(
     return node_evidence
 
 
+def _when_mask_of(
+    node: PhysicalNode, when_selected: Mapping[str, np.ndarray[Any, np.dtype[np.bool_]]] | None
+) -> np.ndarray[Any, np.dtype[np.bool_]]:
+    mask = (when_selected or {}).get(node.node_id)
+    if mask is None:
+        raise UnifiedSliceInvariantError(
+            f"unified slice: when node {node.node_id!r} reached reconstruction without a mask."
+        )
+    return mask
+
+
+def _write_back_when(
+    frame: pd.DataFrame,
+    column: str,
+    masked_col: pa.ChunkedArray,
+    selected: np.ndarray[Any, np.dtype[np.bool_]],
+) -> None:
+    """Replay the oracle's `when:` gate on the frame: the handler writes a list onto a copy of
+    the selected rows, and `.loc` copies that back, so the column keeps its own dtype and
+    unselected rows keep their source values. A mask that selects nothing leaves the frame
+    untouched, as the gate returns it."""
+    if not selected.any():
+        return
+    sub = frame.loc[selected].copy()
+    sub[column] = masked_col.filter(pa.array(selected, type=pa.bool_())).to_pylist()
+    frame.loc[selected, column] = sub[column]
+
+
 def reconstruct_source_shaped_output(
     *,
     table: str,
     frame: pd.DataFrame,
     masked_table: pa.Table,
     nodes: Iterable[PhysicalNode],
+    when_selected: Mapping[str, np.ndarray[Any, np.dtype[np.bool_]]] | None = None,
 ) -> dict[str, pa.Table]:
     # CHANGE 2 (hardened D9 fix): SOURCE-SHAPED reconstruction, not a round-
     # trip of the coordinator's own metadata-free output. `candidate.
@@ -185,6 +217,9 @@ def reconstruct_source_shaped_output(
             continue
         column = node.columns[0]
         masked_col = masked_table.column(column)
+        if node.execution is not None and node.execution.when_expression is not None:
+            _write_back_when(frame, column, masked_col, _when_mask_of(node, when_selected))
+            continue
         frame[column] = masked_col.to_pandas() if empty else masked_col.to_pylist()
     outputs = {table: pa.Table.from_pandas(frame, preserve_index=False)}
     return outputs

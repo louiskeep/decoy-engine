@@ -390,4 +390,6 @@ def execution_binding_for_slice_node(
         batch_estimate=_batch_estimate(table, inputs),
         pool_binding=pool_binding,
         params=params,
+        # Carried for every strategy so the run_operator guard fails closed on any unmasked `when`.
+        when_expression=plan_slice.when,
     )

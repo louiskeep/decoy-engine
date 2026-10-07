@@ -1061,13 +1061,18 @@ representation depends on the rows present (an integer column with nulls is read
 floating point, so values above 2**53 compare differently); that is why the planner
 auto-chunks a `when:` table only when every referenced column is a string.
 
-Chunked execution runs `when:` natively for `hash`, `redact`, `truncate` and
-deterministic `categorical` columns over a string source. The predicate may read
-any column, with one condition: a column that an earlier work node masks is read
-after that mask by the pandas run, so a predicate that reads such a column keeps
-the table on the pandas leg. Work nodes run in column-name order. Every other
-strategy with `when:` runs the pandas leg, and the unified full-frame route
-declines any `when:` column. A job large enough to auto-chunk keeps a `when:`
+Both native routes run `when:` for `hash`, `redact`, `truncate` and
+deterministic `categorical` columns over a string source: chunked execution and
+the unified full-frame route (a single-table whole-frame job). The predicate may
+read any column, with one condition: a column that an earlier work node masks is
+read after that mask by the pandas run, so a predicate that reads such a column
+keeps the table on the pandas leg. Work nodes run in column-name order. Every
+other strategy with `when:` runs the pandas leg, as does a table that has two
+column names pandas' expression resolver reads as one. The unified route evaluates
+the predicate once, with the same pandas call and on the same frame the pandas run
+uses, so its selection equals the pandas run's for any column type it accepts,
+numeric references included. If that evaluation raises, the job runs the pandas
+leg from the start and raises that run's error. A job large enough to auto-chunk keeps a `when:`
 table chunked only when the column is native-admitted and every column the
 predicate reads is a string; otherwise it runs whole-frame. The chunked output
 type of a native-admitted `when:` column is `string` on every chunk. The
