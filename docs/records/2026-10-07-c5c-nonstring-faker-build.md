@@ -24,7 +24,7 @@ A non-deterministic `reuse` Faker column over int8-int64, uint8-uint64, bool, fl
 - The mask conversion runs for every positional Faker chunk, strings included. A string-type shortcut would add a per-type rule the plan avoids, and the measured cost is small (below).
 - On the unified route the mask is redundant for every admitted column: the unchanged round-trip gate already proves the pandas missingness equals Arrow validity there (a valid NaN fails the gate). The plan asked both routes to call the helper, so both do. It is the safeguard if that gate ever loosens, and mutation M15 below shows no admitted case can observe it today.
 - A nested source (list, struct) fails in the profiler before any route decision on both legs, so the chunked decline test compares the error with the oracle's instead of asserting a reroute reason.
-- Census: `_chunked_entry.py` 612 to 615 (dense entry). Physical-seam permitted list: `_faker_null_mask.py`, `_operator_registry.py`, `_unified_slice_resident_types.py`, `_unified_slice_admission.py`, `_dispatch.py`.
+- Census: `_chunked_entry.py` 612 to 615 (dense entry). Physical-seam permitted list: one new entry, `native/_faker_null_mask.py`. The other `execution/` modules this build edits were already permitted.
 
 ## Test 6: changed decline tests
 
