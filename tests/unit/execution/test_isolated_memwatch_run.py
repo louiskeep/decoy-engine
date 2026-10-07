@@ -258,6 +258,8 @@ class _Handshake:
         if self._thread is not None:
             self._thread.join(timeout=self.ready_deadline_s + self.sample_deadline_s + 5)
         for fd in (self.ready_r, self.ready_w, self.ack_r, self.ack_w):
+            if fd < 0:
+                continue
             try:
                 os.close(fd)
             except OSError:
@@ -280,6 +282,8 @@ def _with_channel(monkeypatch, hs: _Handshake) -> None:
         # The parent keeps only its own ends, so a dead child yields EOF, not a hang.
         for fd in hs.child_fds:
             os.close(fd)
+        # Closed here; mark them so close() never touches a reused fd number.
+        hs.ready_w = hs.ack_r = -1
         return proc
 
     monkeypatch.setattr("decoy_engine.execution._isolated_run.subprocess.Popen", popen)
@@ -363,3 +367,28 @@ class TestHandshakeCleanup:
         assert result.memory_evidence.suspected_memory_pressure is False
         assert not any(_fd_open(fd) for fd in fds)
         assert _sampler_threads() == []
+
+
+def test_a_sampler_construction_error_still_kills_and_reaps_the_child(monkeypatch, tmp_path):
+    """A failure while building the sampler must not leak the already-spawned child."""
+    from decoy_engine.execution import _isolated_run
+
+    _install(tmp_path, monkeypatch, "hang_worker", _HANGING)
+    spawned: list[int] = []
+    real_popen = subprocess.Popen
+
+    def popen(*args, **kwargs):
+        proc = real_popen(*args, **kwargs)
+        spawned.append(proc.pid)
+        return proc
+
+    def boom(*_args, **_kwargs):
+        raise KeyError("unknown rlimit kind")
+
+    monkeypatch.setattr("decoy_engine.execution._isolated_run.subprocess.Popen", popen)
+    monkeypatch.setattr(_isolated_run, "start_sampler", boom)
+    with pytest.raises(KeyError):
+        _run(mem_cap_bytes=64 * 1024 * 1024)
+    assert spawned, "the child was never spawned, so the leak path was not exercised"
+    with pytest.raises(ProcessLookupError):
+        os.kill(spawned[0], 0)

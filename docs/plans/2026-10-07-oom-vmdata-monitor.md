@@ -170,3 +170,11 @@ Rollback: revert the merge commit.
   - **(3)** timeouts never set the flag, plus the boundary tests.
 
   dennis and Codex final check these three points in the built code.
+- **dennis gate, after the build: GO** (1 MEDIUM, 3 LOW). Amendment to 3d, a measurement fix that does NOT widen anything:
+  - **The finding:** the sample's age was measured against when `communicate` returned. That moment comes after the kernel frees the child's whole address space, which takes longer the bigger the process. dennis measured about 50 ms of true age showing up as 96-162 ms, so a busy CI runner could push a fresh sample past 250 ms.
+  - **The fix:** age is now measured against the EARLIER of `communicate` returning and the moment the sampler itself saw the process gone (`process_exited` / `field_missing`, recorded as `ended_at`). A `read_error` stop is not proof of exit, so it keeps the `communicate` reference. The stale-sample rule and the 250 ms window are unchanged.
+  - **The LOWs:**
+    - a double close in a test, fixed;
+    - `start_sampler` moved inside the `try`, so a construction error still kills and reaps the child. Tests pin this, and also pin that `_FIELDS` covers every `RLIMIT_KINDS` kind;
+    - a real capped-governor test. dennis ran a manual A/B against main with a real child (identical outcomes); the automated version is tracked as a follow-up.
+

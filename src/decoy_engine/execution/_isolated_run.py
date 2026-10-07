@@ -425,11 +425,12 @@ def _spawn_and_classify(
         cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
     )
 
-    # Started before on_spawn so a callback that kills the child still leaves samples.
-    sampler = (
-        start_sampler(proc.pid, mem_cap_bytes, rlimit_kind) if mem_cap_bytes is not None else None
-    )
+    sampler = None
     try:
+        # Started before on_spawn so a callback that kills the child still leaves samples;
+        # inside the try so a construction error still kills and reaps the child.
+        if mem_cap_bytes is not None:
+            sampler = start_sampler(proc.pid, mem_cap_bytes, rlimit_kind)
         if on_spawn is not None:
             # The child's PID is live NOW, mid-run -- this is the hook a
             # governor (or a test simulating one) uses to SIGKILL it before

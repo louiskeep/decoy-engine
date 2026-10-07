@@ -422,3 +422,46 @@ class TestClassifierUnchanged:
     )
     def test_table(self, returncode, stderr, expected):
         assert classify_abnormal_exit(returncode, stderr) == expected
+
+
+def test_every_rlimit_kind_has_sampled_fields():
+    from decoy_engine.execution._isolated_common import RLIMIT_KINDS
+
+    assert set(mw._FIELDS) == set(RLIMIT_KINDS)
+
+
+class TestAgeClockStopsAtObservedExit:
+    """The sample's age is measured to when the sampler saw the process gone, not to when
+    the driver's `communicate` returned after the kernel freed the address space."""
+
+    def _ended(self, reason: str, ended_at: float | None):
+        last = int(1000.0 * _MIB)
+        return mw.MemorySnapshot(
+            samples=3,
+            first_at=99.9,
+            last_at=100.0,
+            last_bytes=last,
+            max_bytes=last,
+            stop_reason=reason,
+            ended_at=ended_at,
+        )
+
+    def test_slow_teardown_does_not_stale_a_sample_taken_just_before_exit(self):
+        # Sample at 100.00, exit seen at 100.05, communicate returns at 100.40 (teardown).
+        ev = _evidence(self._ended("process_exited", 100.05), observed=100.40)
+        assert ev.last_sample_age_ms == pytest.approx(50.0, abs=0.1)
+        assert ev.suspected_memory_pressure is True
+
+    def test_field_missing_also_stops_the_clock(self):
+        ev = _evidence(self._ended("field_missing", 100.05), observed=100.40)
+        assert ev.last_sample_age_ms == pytest.approx(50.0, abs=0.1)
+
+    def test_a_read_error_keeps_the_communicate_reference(self):
+        # A read failure is not proof the process exited, so the stale-sample rule stands.
+        ev = _evidence(self._ended("read_error", 100.05), observed=100.40)
+        assert ev.last_sample_age_ms == pytest.approx(400.0, abs=0.1)
+        assert ev.suspected_memory_pressure is False
+
+    def test_an_exit_seen_late_cannot_exceed_communicate(self):
+        ev = _evidence(self._ended("process_exited", 100.90), observed=100.40)
+        assert ev.last_sample_age_ms == pytest.approx(400.0, abs=0.1)

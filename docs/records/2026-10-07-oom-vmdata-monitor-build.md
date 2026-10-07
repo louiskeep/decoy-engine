@@ -40,3 +40,15 @@ Contract: `docs/plans/2026-10-07-oom-vmdata-monitor.md` rev 4. Branch `fix/oom-v
 - cgroup v2 attribution stays out of scope (plan 3f).
 - The flag is a suspicion. A rejected large allocation with a low last sample, or growth between two samples, still produces `crashed` with the flag off, and `TestMemCapOom` would then fail. It is recorded as an unresolved acceptance failure for a decision, never fixed by widening the margin, the window or the assertion.
 - Caps below 128 MiB are unsupported for the flag (the margin becomes half the cap).
+
+## dennis gate and remediation
+
+dennis GO (0 BLOCKER, 0 HIGH, 1 MEDIUM, 3 LOW). All seven plan pins hold. dennis's governor A/B against main used a real child and a 2 GiB cap: the outcomes were identical, and only the evidence field differed.
+
+- **MEDIUM:** the freshness clock now stops at the sampler's own observation of the child's exit, so kernel teardown time no longer ages the sample. See the plan's review-log amendment to 3d. Tests cover four cases: slow teardown stays fresh, `field_missing` also stops the clock, `read_error` keeps the `communicate` reference, and an exit seen late can never exceed the `communicate` time.
+- **LOW 1:** fixed the double fd close in the handshake test.
+- **LOW 2:** `start_sampler` now sits inside the `try`. A test checks that a sampler construction error still kills and reaps the child, and that `_FIELDS` keys equal `RLIMIT_KINDS` keys.
+- **LOW 3:** the real capped-governor test is tracked as a follow-up. dennis's manual A/B is the evidence for now.
+
+After remediation: the memwatch, isolated-run and OOM-classification tests pass (165 passed).
+

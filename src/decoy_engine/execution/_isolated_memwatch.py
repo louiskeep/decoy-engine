@@ -99,6 +99,13 @@ class MemorySnapshot:
     max_bytes: int | None = None
     peak_bytes: int | None = None
     stop_reason: str | None = None
+    # When the sampler first saw the process gone; the age clock stops here, because the
+    # driver's own notice waits for the kernel to free the whole address space.
+    ended_at: float | None = None
+
+
+# Stop reasons that mean the process itself is gone, so `ended_at` marks its exit.
+_EXIT_REASONS = frozenset({"process_exited", "field_missing"})
 
 
 @dataclass(frozen=True)
@@ -151,8 +158,9 @@ def _mb(value: int | None) -> float | None:
 def build_evidence(
     snap: MemorySnapshot, *, cap_bytes: int, kind: str, observed_at: float, abnormal: bool
 ) -> MemoryEvidence:
-    """`observed_at` is the driver's clock when `communicate` returned; the flag rule needs
-    the age of the last sample against that moment, not against the time of this call."""
+    """`observed_at` is the driver's clock when `communicate` returned. The age of the last
+    sample is measured against the earlier of that and the moment the sampler saw the process
+    gone, so kernel address-space teardown (longer for bigger processes) never ages it."""
     if snap.samples == 0 or snap.last_at is None or snap.first_at is None:
         return MemoryEvidence(
             cap_mb=_mb(cap_bytes) or 0.0,
@@ -166,7 +174,10 @@ def build_evidence(
             suspected_memory_pressure=False,
             basis=BASIS_NO_SAMPLE,
         )
-    age_ms = round(max(0.0, (observed_at - snap.last_at) * 1000.0), 1)
+    reference = observed_at
+    if snap.stop_reason in _EXIT_REASONS and snap.ended_at is not None:
+        reference = min(observed_at, snap.ended_at)
+    age_ms = round(max(0.0, (reference - snap.last_at) * 1000.0), 1)
     flag = suspected_pressure(
         last_bytes=snap.last_bytes, age_ms=age_ms, cap_bytes=cap_bytes, abnormal=abnormal
     )
@@ -309,9 +320,12 @@ class MemorySampler:
         return True
 
     def _end(self, reason: str) -> bool:
+        at = self._clock()
         with self._lock:
             if not self._closed:
-                self._snap = _with_reason(self._snap, reason)
+                self._snap = _with_reason(
+                    self._snap, reason, at if reason in _EXIT_REASONS else None
+                )
         return False
 
     def _run(self) -> None:
@@ -342,7 +356,9 @@ class MemorySampler:
             return self._snap
 
 
-def _with_reason(snap: MemorySnapshot, reason: str) -> MemorySnapshot:
+def _with_reason(
+    snap: MemorySnapshot, reason: str, ended_at: float | None = None
+) -> MemorySnapshot:
     return MemorySnapshot(
         samples=snap.samples,
         first_at=snap.first_at,
@@ -351,6 +367,7 @@ def _with_reason(snap: MemorySnapshot, reason: str) -> MemorySnapshot:
         max_bytes=snap.max_bytes,
         peak_bytes=snap.peak_bytes,
         stop_reason=reason,
+        ended_at=ended_at,
     )
 
 
