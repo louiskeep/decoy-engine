@@ -80,3 +80,9 @@ C8-iii-a pinned `mixed` and `ISO8601` as accepted formats whose output is the fo
 
 - The undetectable-format passthrough (plan 2e) is unchanged and tracked on the roadmap.
 - Platform save-time validation is excluded by the plan.
+
+## Where work stopped (post-merge verification incomplete)
+
+The merge of main and the C8-iii-a migration are committed (`76774a32`). Done on the merged head: ruff check, ruff format and mypy clean; the migrated C8-iii-a tests and the native-gate tests pass (343 passed); `tests/sentry` passes on 3.10 (2455 passed, 1 skipped).
+
+Not run on the merged head, because the usage limit ended the session: `tests/sentry` on 3.11, the full 3.11 suite (unit, native, physical, parity, integration, perf) with `-rfE`, and the testflight check. Run those before merging. The pre-merge head (`c4c8c294`) had the full suite and testflight green.
