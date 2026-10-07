@@ -25,7 +25,11 @@ Today `validate_bucket_perturb_config` (`:175-192`) checks only `bucket`, and no
 - **Rule:** scan the string left to right.
   - `%%` is consumed as a literal percent and counts for nothing.
   - A real directive is `%` followed by one character.
-  - The format is acceptable only if at least one real directive is a DATE directive: `%Y %y %G %C %m %b %B %h %d %e %j %U %W %V %a %A %u %w %x %c %D %F`. Locale `%x` and `%c` are accepted.
+  - **Recognized directives (rev 3):**
+    - DATE: `%Y %y %G %m %b %B %d %j %U %W %V %a %A %u %w %x %c`. `%C`, `%h`, `%e`, `%D` and `%F` fail pandas parsing, so they are not listed.
+    - TIME and OTHER: `%H %I %M %S %p %f %z %Z`.
+    - Every other directive is unknown.
+  - The format is acceptable only if the WHOLE string contains no unknown directive, no dangling `%`, AND at least one DATE directive. Locale `%x` and `%c` are accepted.
   - A dangling trailing `%` is rejected.
   - An unknown directive (for example `%Q`) is rejected with the same code. The record documents this as an intentional move of today's runtime `ValueError` to an up-front error.
   - A non-string value is rejected.
@@ -38,6 +42,10 @@ Today `validate_bucket_perturb_config` (`:175-192`) checks only `bucket`, and no
 - **Timing (rev 2).** The job fails before any masking or output write. That is NOT before source reads, because `run_pipeline` profiles sources before compiling (`_pipeline.py:380-382`).
 - **Routes.** The check is verified on the whole-frame, sequential, multi-table, generate-plus-mask, chunked and both out-of-core paths.
 - **Platform save-time validation.** `api/pipelines/v2_validation.py` keeps its own validators and has none for bucket_perturb. Adding one is EXCLUDED from this engine slice, because platform CI has no GitHub billing and platform merges need the local check. It is noted on the roadmap as a follow-up. The engine check still rejects at run time for every platform job.
+
+**2c-0. Handler preflight (rev 3, Codex round 2).** The `when` gate skips `handler.run` when nothing matches (`_when_gate.py`). `BucketPerturbStrategyHandler` therefore gains `preflight(plan, ctx)`, using the same shared validation and error mapping as `run`, as code_set and top_code already do. A zero-match gate or an empty frame then still rejects.
+
+**2c-1. Nested configurations (rev 3).** Both compile entrypoints also check bucket_perturb child configs inside `strategy: nested` (`strategy_config`), and report the child config path. At run time, the child's validation runs before any nested early return (`_strategies/_nested.py`), so empty, all-null and zero-match leaves still reject.
 
 **2c. Handler backstop.**
 - `validate_bucket_perturb_config` also applies 2a. The existing callers then raise `StrategyError(code="bucket_perturb_invalid_config")` at run time:
@@ -58,11 +66,13 @@ Today `validate_bucket_perturb_config` (`:175-192`) checks only `bucket`, and no
      - `ISO8601`, `iso8601`, `mixed`;
      - `YYYY-MM-DD`, `foo`;
      - `%%Y` (escaped), a trailing `%`;
-     - `%H:%M:%S` (time-only), `%Q` (unknown);
-     - a non-string value.
-   - Compile cleanly: `%Y-%m-%d`, `%d/%m/%Y`, `%Y`, `%x`, `%c`, `100%% %Y`, and an empty or unset format.
+     - `%H:%M:%S` (time-only), `%f`, `%z` and `%Z` alone, `%Q` (unknown);
+     - `%%%%Y` (two escapes, no directive), `%Y %Q` (date plus unknown), `%Y%` (date plus a dangling `%`);
+     - a non-string value, including a falsy non-string such as `0`.
+   - Compile cleanly: `%Y-%m-%d`, `%d/%m/%Y`, `%Y`, `%x`, `%c`, `100%% %Y`, `%%%Y` (an escape, then `%Y`), `%Y-%m-%dT%H:%M:%S%z`, and an empty or unset format.
    - A non-bucket_perturb column with a `date_format` key is untouched.
-2. **Handler backstop.** A raw-dict run that bypasses compile, with `date_format: mixed`, raises `StrategyError(bucket_perturb_invalid_config)` on the oracle and on both out-of-core paths, before any output write (an output-write spy proves it). The rejection still happens with empty input, with all-null input, and under a `when:` predicate that selects nothing.
+2a. **Nested:** a nested bucket_perturb child with `date_format: mixed` is rejected at compile, naming the child path. At run time it is rejected for populated, empty, all-null and zero-match leaves.
+2. **Handler backstop.** A raw-dict run that bypasses compile, with `date_format: mixed`, raises `StrategyError(bucket_perturb_invalid_config)` on the oracle and on both out-of-core paths, before any output write (an output-write spy proves it). The rejection still happens with empty input, with all-null input, and under a `when:` predicate that selects nothing, tested through the REAL `when` gate (the preflight path).
 3. **Native gate.** Every format test 1 rejects is also rejected natively. Native's own extra declines (autodetect, `%z`) are kept.
 4. **No change for valid configs.** BEFORE implementing, the builder lists every existing config and test affected. That includes tests that pinned the destructive literal output, the C8-iii-a goldens, and tests that expect `%Q` to raise at runtime, which now raise up front. Each change is recorded with its reason and a migration note to a concrete pattern. Every other test stays green unmodified. Testflight fingerprints are unchanged; STOP if one moves.
 5. **Sentries and mutation** on 2a.
@@ -86,3 +96,9 @@ Rollback: revert the merge commit.
   - **MEDIUM:** an inventory of affected configs and tests before implementation, including the `%Q` timing move.
 
   Codex agreed that section 2e (undetectable-format passthrough) stays separate and tracked.
+- **Codex plan gate, round 2: REVISE** (3 MEDIUM). Rev 3:
+  - a handler `preflight`, so a zero-match `when` gate cannot bypass the check (2c-0);
+  - nested child configs checked at compile and before nested early returns (2c-1, test 2a);
+  - an explicit recognized-directive table and whole-string boundary tests (2a, test 1). `%C`, `%h`, `%e`, `%D` and `%F` were dropped because they fail pandas parsing.
+
+  The section 2e follow-up (undetectable-format passthrough) is now on the platform roadmap.
