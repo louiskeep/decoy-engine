@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
+from decoy_engine import fileaccess
 from decoy_engine.execution._mem_estimate_arrow import column_arrow_types as _column_arrow_types
 from decoy_engine.execution._mem_estimate_arrow import source_nullable_columns
 from decoy_engine.execution._transforms_admission import admission_signals, decline_out_of_core
@@ -379,6 +380,7 @@ def resolve_probe_recovery(
     measure:
 
       - either flag is off;
+      - a strict file-access policy is installed (the probe needs a child process);
       - `full_frame_fits_estimate is True` already -- nothing to recover,
         the static estimate already admits full_frame;
       - no mask-kind table exists;
@@ -421,6 +423,10 @@ def resolve_probe_recovery(
     if not (use_probe_routing and use_byte_estimate_routing):
         return None
     if full_frame_fits_estimate is True:
+        return None
+    if not fileaccess.is_ambient():
+        # The probe runs the job in a child process, which cannot carry a strict policy;
+        # "inconclusive" leaves routing to the static estimate instead of refusing the job.
         return None
 
     mask_tables = [t for t in profile.tables if table_kinds.get(t.name) == "mask"]

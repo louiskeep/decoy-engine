@@ -385,3 +385,42 @@ def test_every_entry_point_refuses_before_any_syscall_once_ambient_is_forbidden(
         [sys.executable, "-c", code], capture_output=True, text=True, timeout=120
     )
     assert out.returncode == 0 and out.stdout.strip() == "ok", out.stderr
+
+
+def test_probe_recovery_is_inconclusive_under_a_strict_policy(rooted) -> None:  # type: ignore[no-untyped-def]
+    """The probe needs a child process a strict policy cannot serve: the answer is None
+    (inconclusive, leave routing to the static estimate), never a refusal."""
+    from decoy_engine import fileaccess
+    from decoy_engine.execution._pipeline_routing_signals import resolve_probe_recovery
+
+    class _Profile:
+        tables = [object()]
+
+    with fileaccess.scope(rooted):
+        verdict = resolve_probe_recovery(
+            True,
+            True,
+            _Profile(),
+            {},
+            {},
+            None,
+            None,
+            config={},
+            engine_version="e",
+        )
+    assert verdict is None
+
+
+def test_the_isolated_route_fails_closed_with_a_typed_error_under_a_strict_policy(rooted) -> None:  # type: ignore[no-untyped-def]
+    import pyarrow as pa
+
+    from decoy_engine.execution import run_pipeline_isolated
+    from decoy_engine.fileaccess import FileAccessUnavailable
+
+    with pytest.raises(FileAccessUnavailable, match="run_pipeline_isolated"):
+        run_pipeline_isolated(
+            {"tables": []},
+            {"t": pa.table({"a": [1]})},
+            engine_version="e",
+            file_access=rooted,
+        )
