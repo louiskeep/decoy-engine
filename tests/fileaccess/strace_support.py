@@ -22,7 +22,8 @@ TRACE_SET = (
     "open,openat,openat2,creat,stat,lstat,fstat,newfstatat,statx,access,faccessat,faccessat2,"
     "readlink,readlinkat,getdents64,mkdir,mkdirat,rename,renameat,renameat2,link,linkat,symlink,"
     "symlinkat,unlink,unlinkat,rmdir,truncate,ftruncate,chmod,fchmodat,utimensat,chdir,fchdir,"
-    "execve,execveat,clone,clone3,fork,vfork,sendmsg,recvmsg,pidfd_getfd"
+    "execve,execveat,clone,clone3,fork,vfork,sendmsg,recvmsg,pidfd_getfd,"
+    "read,pread64,readv,preadv,close"
 )
 _FD_DECORATION = re.compile(r"\d+<[^>]*>")
 

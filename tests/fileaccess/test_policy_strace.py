@@ -131,7 +131,9 @@ mark("/ATE3-END")
     )
     window = run_traced(script, tmp_path).window("ATE3-BEGIN", "ATE3-END")
     assert not mentions_at_all(window, outside), "\n".join(mentions_at_all(window, outside))
-    assert not [ln for ln in window if "read(" in ln or "pread" in ln]
+    # `-yy` decorates each descriptor with its path, so a read of the target would name it;
+    # the `read`/`pread64` calls are in the trace set, so this can fail (see the control below).
+    assert not [ln for ln in window if re.match(r"\d+ p?read", ln) and "secret.parquet" in ln]
 
 
 def test_cold_import_reads_the_packaged_grammar_and_the_detector_sees_it(tmp_path: Path) -> None:
@@ -168,3 +170,22 @@ mark("/COLD-END")
         and "O_DIRECTORY" not in ln
     ]
     assert not package_data, "\n".join(package_data[:10])
+
+
+def test_the_detector_sees_a_direct_open_and_read_of_the_target(tmp_path: Path) -> None:
+    """Positive control for the assertions above: a plain path open of the same file, with a
+    read, appears in the window as an open naming the target and a read of its descriptor."""
+    inside, outside, root, out = _dirs(tmp_path)
+    script = (
+        HEADER.format(repo=REPO, root=root, outside=out)
+        + f"""
+mark("/ATE3-BEGIN")
+with open({out + "/secret.parquet"!r}, "rb") as fh:
+    fh.read(16)
+mark("/ATE3-END")
+"""
+    )
+    window = run_traced(script, tmp_path).window("ATE3-BEGIN", "ATE3-END")
+    assert [ln for ln in window if re.match(r"\d+ openat", ln) and "secret.parquet" in ln]
+    assert [ln for ln in window if re.match(r"\d+ p?read", ln) and "secret.parquet" in ln]
+    assert [ln for ln in window if re.match(r"\d+ close", ln) and "secret.parquet" in ln]
