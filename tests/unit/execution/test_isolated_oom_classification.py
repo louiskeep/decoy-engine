@@ -278,3 +278,31 @@ class TestClassifierParity:
 
     def test_positive_exit_without_marker_is_crashed(self):
         assert classify_abnormal_exit(1, "Traceback: ValueError") == "crashed"
+
+
+class TestDriverResidue:
+    """A self-reported failure leaves no staged output, and the in-process path scrubs too."""
+
+    @pytest.mark.parametrize("outcome", ["oom_killed", "crashed"])
+    def test_self_reported_failure_removes_staging(self, tmp_path: Path, outcome: str) -> None:
+        from decoy_engine.execution._isolated_run import _result_from_envelope
+
+        staging = tmp_path / "_decoy_isolated_stage_x"
+        (staging / "t").mkdir(parents=True)
+        (staging / "t" / "part-0.parquet").write_bytes(b"partial")
+        envelope = {"outcome": outcome, "peak_rss_mb": 1.0, "error": "MemoryError: x"}
+        result = _result_from_envelope(envelope, tmp_path / "out", 123, staging)
+        assert result.outcome == outcome
+        assert not staging.exists()
+
+    def test_in_process_failure_text_is_scrubbed(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from decoy_engine.execution import _isolated_run
+
+        def boom(*_args: Any, **_kwargs: Any) -> Any:
+            raise pa.ArrowException(_WRAPPING.format("John Smith"))
+
+        monkeypatch.setattr(_isolated_run, "run_pipeline", boom)
+        result = _isolated_run._run_in_process({}, None, {}, None)
+        assert result.error is not None
+        assert "John Smith" not in result.error
+        assert "<value>" in result.error

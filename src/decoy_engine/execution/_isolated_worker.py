@@ -34,9 +34,9 @@ from decoy_engine.execution._adapter import ExecutionResult
 from decoy_engine.execution._isolated_common import (
     RESULT_FILENAME,
     apply_mem_cap,
+    exception_error_text,
     is_memory_failure,
     peak_rss_mb,
-    scrub_error_text,
 )
 from decoy_engine.execution._pipeline import run_pipeline
 from decoy_engine.execution._transactional_sink import ParquetTransactionalSink
@@ -45,7 +45,7 @@ from decoy_engine.profile._readers import LazySource
 
 def _error_text(exc: BaseException) -> str:
     """Stored error text: scrub first, then truncate, or a cut could hide the scrub's anchor."""
-    return f"{type(exc).__name__}: {scrub_error_text(str(exc))}"[:500]
+    return exception_error_text(exc)[:500]
 
 
 def _write_envelope_file(envelope: dict[str, Any], result_path: Path) -> None:

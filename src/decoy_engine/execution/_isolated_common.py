@@ -46,6 +46,7 @@ __all__ = [
     "IsolatedRunResult",
     "apply_mem_cap",
     "classify_abnormal_exit",
+    "exception_error_text",
     "is_memory_failure",
     "peak_rss_mb",
     "scrub_error_text",
@@ -202,6 +203,11 @@ def scrub_error_text(message: str) -> str:
     if value_end < value_start:
         return message
     return f"{message[:value_start]}<value>{message[value_end:]}"
+
+
+def exception_error_text(exc: BaseException) -> str:
+    """The stored text for a failed run: class name plus the scrubbed message."""
+    return f"{type(exc).__name__}: {scrub_error_text(str(exc))}"
 
 
 def classify_abnormal_exit(returncode: int, stderr: str) -> IsolatedRunOutcome:
