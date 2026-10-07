@@ -70,3 +70,12 @@ In the first soak pass 3 of 40 pytest items ended without a result line (2 faile
 - The original CI failure (`crashed`, run 37337950399 and 37548252974) is not reproduced or explained; the diagnostic message will show its shape on the next occurrence.
 - Native deaths by other signals (SIGSEGV or SIGBUS without a marker) stay `crashed`, pinned by test 6 (plan section 6).
 - The driver-side stderr tail copied into the result is not scrubbed.
+
+## dennis gate and remediation
+
+dennis GO (0 BLOCKER, 0 HIGH, 2 MEDIUM, 1 LOW). The three soak items with no result were the soak harness exhausting `/tmp` (about 480 MB of basetemp per item, kept for the whole session), not this slice. dennis's rerun of 5 iterations at each cap gave 10 of 10 `oom_killed`. Fixed at 5de563a7:
+- **MEDIUM (pre-existing): partial staged output left behind.** `_result_from_envelope` now removes `staging_output_dir` when the child self-reports `oom_killed` or `crashed`, as the timeout and abnormal-exit paths already did. A test pins it.
+- **MEDIUM: the in-process path stored raw error text.** `exception_error_text` moves to `_isolated_common`, and the worker and `_run_in_process` both use it. A test pins that a Wrapping value never reaches `result.error` in process.
+- **LOW:** rebased onto main `5bfab301`, with the CHANGELOG conflict resolved by keeping both entries. tests/sentry plus the two isolated-run test files: 2515 passed, 1 skipped.
+
+The driver-side abnormal-exit stderr tail (`_isolated_run.py:478`) is still unscrubbed and stays on the Observability list.
