@@ -30,10 +30,10 @@ import warnings
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
-import numpy as np
 import pandas as pd
 
 from decoy_engine.execution._errors import StrategyError
+from decoy_engine.execution._exact_int_faker import gated_context, selected_positions
 from decoy_engine.execution._row_errors import RowError
 
 _log = logging.getLogger(__name__)
@@ -207,16 +207,17 @@ def run_with_when_gate(
     if not mask.any():
         return df, []
 
+    positions = selected_positions(mask)
     sub_df = df.loc[mask].copy()
     err_start = len(ctx.row_errors)
-    sub_df, warnings = handler.run(sub_df, column, plan, ctx)
+    sub_df, warnings = handler.run(sub_df, column, plan, gated_context(ctx, column, positions))
     # B1: remap subset-relative row-error indices to full-table positions
     # BEFORE they leave the gate (see _remap_gated_row_errors). The k-th
-    # mask-True row's full-table position is np.flatnonzero(mask)[k], and
-    # the handler records positions 0..len(sub_df)-1 into the subset in the
-    # same order (our row-error producers preserve row order).
+    # mask-True row's full-table position is positions[k], and the handler
+    # records positions 0..len(sub_df)-1 into the subset in the same order
+    # (our row-error producers preserve row order).
     if len(ctx.row_errors) > err_start:
         # `.tolist()` (only on the rare error path) gives a plain Sequence.
-        _remap_gated_row_errors(ctx, err_start, np.flatnonzero(mask.to_numpy()).tolist())
+        _remap_gated_row_errors(ctx, err_start, positions.tolist())
     df.loc[mask, column] = sub_df[column]
     return df, warnings

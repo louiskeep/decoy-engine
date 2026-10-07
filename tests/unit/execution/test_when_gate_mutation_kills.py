@@ -226,3 +226,81 @@ def test_pandas_gate_selects_predicate_rows():
     # Hardcoded: rows with age>=20 (positions 1,2) redacted; 0,3 untouched.
     expected = ["a", "REDACTED", "REDACTED", "d"]
     assert pandas_out["v"].tolist() == expected
+
+
+# ── gate positions for exact-int Faker columns (real StrategyContext) ──
+
+
+def _real_ctx(**kw):
+    from decoy_engine.execution._adapter import StrategyContext
+    from decoy_engine.generation.pool._cache import PoolCache
+    from decoy_engine.providers_v2 import get_default_registry
+    from decoy_engine.relationships._graph import RelationshipGraph
+    from decoy_engine.relationships._namespace import NamespaceRegistry
+
+    kw.setdefault("current_table", "t")
+    return StrategyContext(
+        registry=get_default_registry(),
+        pool_cache=PoolCache(),
+        relationship_graph=RelationshipGraph(edges=(), ordering=()),
+        namespace_registry=NamespaceRegistry(bindings=()),
+        job_seed=b"\x01" * 8,
+        **kw,
+    )
+
+
+def _exact_sources():
+    import pyarrow as pa
+
+    return {("t", "v"): pa.chunked_array([pa.array([1, 2, 3, 4], type=pa.int64())])}
+
+
+def test_gate_hands_selected_positions_to_a_column_with_exact_values():
+    df = pd.DataFrame({"v": [1.0, 2.0, 3.0, 4.0], "flag": [0, 1, 0, 1]})
+    ctx = _real_ctx(exact_int_sources=_exact_sources())
+    h = _RecordingPandasHandler()
+    run_with_when_gate(h, df, "v", _seed(when="flag == 1"), ctx)
+    got = h.got[3]
+    assert got is not ctx
+    assert got.gate_positions.tolist() == [1, 3]
+    # The sinks stay shared so the adapter's identity-based drains still work.
+    assert got.row_errors is ctx.row_errors
+    assert got.code_set_corpora is ctx.code_set_corpora
+    assert got.exact_int_sources is ctx.exact_int_sources
+    # The caller's own context is not modified.
+    assert ctx.gate_positions is None
+
+
+def test_gate_keeps_the_callers_context_for_other_columns():
+    df = pd.DataFrame({"v": [1.0, 2.0, 3.0, 4.0], "flag": [0, 1, 0, 1]})
+    ctx = _real_ctx(exact_int_sources=_exact_sources())
+    h = _RecordingPandasHandler()
+    run_with_when_gate(h, df, "flag", _seed(when="flag == 1"), ctx)
+    assert h.got[3] is ctx
+
+
+def test_gate_positions_ignore_a_missing_value_in_a_nullable_boolean_mask():
+    df = pd.DataFrame({"v": [1.0, 2.0, 3.0, 4.0], "flag": pd.array([1, None, 1, 0], dtype="Int64")})
+    ctx = _real_ctx(exact_int_sources=_exact_sources())
+    h = _RecordingPandasHandler()
+    run_with_when_gate(h, df, "v", _seed(when="flag == 1"), ctx)
+    assert h.got[3].gate_positions.tolist() == [0, 2]
+
+
+def test_gate_remaps_row_errors_through_a_nullable_boolean_mask():
+    # `<NA>` selects nothing, so rows 0, 2 and 3 are the subset and its row 1 is full row 2.
+    df = pd.DataFrame({"v": ["a", "b", "c", "d"], "flag": pd.array([1, None, 1, 1], dtype="Int64")})
+    ctx = _real_ctx()
+    run_with_when_gate(
+        _PandasAppendingHandler(sub_row_index=1), df, "v", _seed(when="flag == 1"), ctx
+    )
+    assert [e.row_index for e in ctx.row_errors] == [2]
+
+
+def test_no_gate_never_sets_positions():
+    df = pd.DataFrame({"v": [1.0, 2.0, 3.0, 4.0]})
+    ctx = _real_ctx(exact_int_sources=_exact_sources())
+    h = _RecordingPandasHandler()
+    run_with_when_gate(h, df, "v", _seed(when=None), ctx)
+    assert h.got[3] is ctx
+    assert ctx.gate_positions is None

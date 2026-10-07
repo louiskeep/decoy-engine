@@ -170,7 +170,7 @@ version only: the modular index shifts if `row_count` changes.
 `HMAC-SHA256(mask_key, matched_text)`. The span text keys the shift.
 
 ### mask.faker
-`execution/_strategies/_faker.py:118`. The masking `faker` strategy, deterministic
+`execution/_strategies/_faker.py:119`. The masking `faker` strategy, deterministic
 selection. The value-visible draw is the pool SELECTION: `PoolSampler.sample` runs a
 per-row `derive_index(mask_key, namespace, canonical(source), pool.size)` over a provider
 value pool. The selection re-keys onto `mask_key`; the pool BUILD stays on `job_seed` (see
@@ -180,7 +180,7 @@ value pool. The selection re-keys onto `mask_key`; the pool BUILD stays on `job_
 `job_seed` through `PoolSampler` (`gen.pool_nondeterministic`) and are not partitionable.
 
 ### mask.faker_nondeterministic
-`execution/_strategies/_faker.py:101`. Position-keyed on `job_seed`, for non-deterministic
+`execution/_strategies/_faker.py:102`. Position-keyed on `job_seed`, for non-deterministic
 `cardinality_mode: reuse`. Row `g` takes
 `pool.values[derive_index(job_seed, selection_namespace, encode_int(g), pool_size=pool.size)]`,
 where `g = ctx.row_offset + i` and `i` is the row's ordinal in the frame the handler

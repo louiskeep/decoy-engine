@@ -254,6 +254,7 @@ _PINNED_RUN_CALLS = frozenset(
         "pa.Table.from_pandas",
         "parent_cols.get",
         "parent_cols.setdefault",
+        "register_exact_int_sources",
         "require_mask_key",
         "row_error_records.extend",
         "run_chunk_ingest_guards",
