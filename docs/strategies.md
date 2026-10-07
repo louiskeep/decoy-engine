@@ -1066,7 +1066,11 @@ call the chunked oracle makes for the same chunk, so the two agree at identical
 chunking. A whole-frame run can select differently for a numeric column whose
 representation depends on the rows present (an integer column with nulls is read as
 floating point, so values above 2**53 compare differently); that is why the planner
-auto-chunks a `when:` table only when every referenced column is a string.
+auto-chunks a `when:` table only when every referenced column keeps one pandas type in
+every chunk: string, large string, float of any width, timestamp, date32 or date64, plus an
+integer or bool column whose null count is known to be zero (the Parquet footer or the
+resident table). An integer or bool with nulls, an unknown null count, a dictionary,
+decimal, nested, time or duration column keeps the table whole-frame.
 
 Both native routes run `when:` for `hash`, `redact`, `truncate`, deterministic
 `categorical`, `text_redact` (no NER), `bucket_perturb` and `date_shift` columns over a
@@ -1084,8 +1088,8 @@ the predicate once, with the same pandas call and on the same frame the pandas r
 uses, so its selection equals the pandas run's for any column type it accepts,
 numeric references included. If that evaluation raises, the job runs the pandas
 leg from the start and raises that run's error. A job large enough to auto-chunk keeps a `when:`
-table chunked only when the column is native-admitted and every column the
-predicate reads is a string; otherwise it runs whole-frame. The chunked output
+table chunked only when the column is native-admitted, its target is a string and every column
+the predicate reads is of a type listed above; otherwise it runs whole-frame. The chunked output
 type of a native-admitted `when:` column is `string` on every chunk. The
 whole-frame route keeps the type pandas infers for a column that is empty or
 entirely null (Arrow `null`).
