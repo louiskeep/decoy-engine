@@ -195,6 +195,26 @@ Judgment calls added by the remediation:
 - Library warnings are no longer suppressed under a strict policy (L2). None of the library calls in
   scope emits a warning that names a path; this is not verified for every library version.
 
+## Where remediation stopped (usage limit)
+
+All thirteen findings are fixed and committed (the series after `1405151b`, last code commit
+`48647012`). Verification done on the tree before the final handler follow-up, or partial:
+
+- Lint, format and `mypy src` clean on the final tree (3.10 venv).
+- Narrow 3.11 runs of `tests/fileaccess`, `tests/sentry` and the touched unit/property files passed on
+  the commits before the follow-up (last: 2998 passed). One full `tests` run on 3.11 before the
+  follow-up: 2 failed, 25434 passed; the failures were the pinned `_dispatch_mask_node` call
+  inventory (fixed by moving `at_position` into the handlers) and the pre-existing missing
+  `google` module.
+- `test_char_vault_in_place.py` passes on the untouched base (4 passed).
+
+Not done: the final full `tests` run on 3.11 and the 3.10/3.11 `tests/sentry` + `tests/fileaccess`
+runs on the head commit, and `scripts/test_flight.py` after the follow-up. A full 3.11 run was in
+flight when the limit hit; its output is in the scratch directory and was not read. The first thing
+to do on resume is those three runs and then a re-read of the pinned-inventory test
+(`tests/native/test_column_access_surfaces.py`) and `tests/sentry/test_module_size.py`, which the
+follow-up could affect.
+
 ## Not verified
 
 - The platform half (P1): `forbid_ambient()` wiring, `PrincipalFileAccess`, the platform sentries.
