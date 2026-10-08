@@ -193,12 +193,12 @@ def test_the_backstop_rejects_a_blank_predicate() -> None:
 
 
 def test_the_backstop_parse_is_cached_per_expression(monkeypatch: pytest.MonkeyPatch) -> None:
-    from decoy_engine.execution import _when_gate
+    from decoy_engine.expressions import _when_parser
 
     seen: list[str] = []
-    real = _when_gate.parse_when
-    _when_gate._cached_parse.cache_clear()
-    monkeypatch.setattr(_when_gate, "parse_when", lambda e: (seen.append(e), real(e))[1])
+    real = _when_parser.parse_when
+    _when_parser.parse_when_cached.cache_clear()
+    monkeypatch.setattr(_when_parser, "parse_when", lambda e: (seen.append(e), real(e))[1])
     for _ in range(3):
         _eval_predicate(_frame(), "x > 0", "redact", column="s")
     assert seen == ["x > 0"]
@@ -299,6 +299,9 @@ def test_parse_when_names_the_position_and_attaches_no_lark_cause() -> None:
     ],
 )
 def test_no_raising_boundary_renders_the_predicate(boundary: str, tmp_path: Path) -> None:
+    (tmp_path / "job").mkdir()
+    (tmp_path / "single").mkdir()
+    (tmp_path / "rp").mkdir()
     job = sup.two_table_job(tmp_path / "job")
     config, sources = sup.single_table_config(tmp_path / "single")
 
@@ -359,7 +362,7 @@ def test_no_raising_boundary_renders_the_predicate(boundary: str, tmp_path: Path
 
     del sources
     exc = _raise_from(call)
-    assert not isinstance(exc, (AssertionError, AttributeError, TypeError)), repr(exc)
+    assert isinstance(exc, (PlanCompileError, ValidationError, StrategyError)), repr(exc)
     sup.assert_no_sentinel(exc)
 
 

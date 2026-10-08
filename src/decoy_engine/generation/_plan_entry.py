@@ -100,6 +100,11 @@ def generate_tables(
             "generate_tables(plan) requires a compiled decoy_engine.plan.Plan; got "
             f"{type(plan).__name__!r}. Call compile_plan(config, profile, ...) first."
         )
+    from decoy_engine.expressions._when_parser import validate_plan_when
+
+    # Before any provider runs: a deserialized or hand-built Plan can carry a `when` the
+    # compile check never saw.
+    validate_plan_when(plan)
     if plan.generation is None:
         raise TypeError(
             "generate_tables: this Plan has no generation payload (compiled from a "

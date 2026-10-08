@@ -28,6 +28,7 @@ from typing import Any
 
 import yaml
 
+from decoy_engine.expressions._when_parser import validate_envelope_when
 from decoy_engine.plan._checks import check_statistical_columns
 from decoy_engine.plan._checks_dp import verify_dp_snapshots
 from decoy_engine.plan._errors import PlanCompileError
@@ -247,13 +248,17 @@ def _generation_plan_to_dict(gp: GenerationPlan) -> dict[str, Any]:
 
 def _plan_from_dict(data: dict[str, Any]) -> Plan:
     generation_raw = data.get("generation")
+    seed_envelope = _seed_envelope_from_dict(data["seed_envelope"])
+    # A stored plan is untrusted input: reject a `when` outside the closed grammar at load,
+    # before the Plan reaches any run.
+    validate_envelope_when(seed_envelope)
     return Plan(
         plan_version=data["plan_version"],
         seed_protocol_version=data["seed_protocol_version"],
         engine_version=data["engine_version"],
         pipeline_config_hash=data["pipeline_config_hash"],
         profile_hash=data["profile_hash"],
-        seed_envelope=_seed_envelope_from_dict(data["seed_envelope"]),
+        seed_envelope=seed_envelope,
         relationships=tuple(_relationship_from_dict(r) for r in data.get("relationships", [])),
         namespaces=tuple(
             _namespace_from_dict(name, body)

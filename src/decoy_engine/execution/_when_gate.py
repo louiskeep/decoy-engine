@@ -32,9 +32,15 @@ from typing import TYPE_CHECKING
 
 import pandas as pd
 
+from decoy_engine.errors import ValidationError
 from decoy_engine.execution._errors import StrategyError
 from decoy_engine.execution._exact_int_faker import gated_context, selected_positions
 from decoy_engine.execution._row_errors import RowError
+from decoy_engine.expressions._when_parser import (
+    WHEN_OUTSIDE_GRAMMAR_CODE,
+    parse_when,
+    parse_when_cached,
+)
 
 _log = logging.getLogger(__name__)
 
@@ -80,6 +86,25 @@ def _remap_gated_row_errors(
         )
 
 
+def _require_closed_grammar(expression: object, strategy: str, column: str | None) -> None:
+    """Backstop for callers that reach the evaluator without a compiled Plan.
+
+    `parse_when` is the one definition of an acceptable predicate. Compile and plan-level
+    validation reject first; this catches a hand-built `ColumnSeed` or a direct helper call.
+    """
+    try:
+        if isinstance(expression, str):
+            parse_when_cached(expression)
+        else:
+            parse_when(expression)  # type: ignore[arg-type]
+    except ValidationError:
+        raise StrategyError(
+            code=WHEN_OUTSIDE_GRAMMAR_CODE,
+            strategy=strategy,
+            message=f"when expression on column {column!r} is outside the closed grammar",
+        ) from None
+
+
 def _eval_predicate(
     pdf: pd.DataFrame,
     expression: str,
@@ -90,15 +115,20 @@ def _eval_predicate(
     """Shared numexpr-pinned, scope-clamped predicate eval.
 
     Returns the boolean mask Series. Raises `StrategyError` with one
-    of three typed codes on failure:
+    of four typed codes on failure:
+      - `when_outside_closed_grammar` if the expression is not in the
+        closed `when` grammar (checked before pandas sees it, so the
+        scope clamps below are a second line of defense, not the first)
       - `numexpr_required` if numexpr is not installed
       - `when_expression_error` if the expression raises
       - `when_expression_not_boolean` if the result is not a bool
         Series.
 
     The strategy name is threaded through so the runner can attribute
-    the failure when it bubbles up.
+    the failure when it bubbles up. No message or exception chain carries
+    the expression: a predicate can embed literal data values.
     """
+    _require_closed_grammar(expression, strategy, column)
     try:
         # Audit L1 (2026-06-12): same fallback surfacing as
         # execution/_transforms._eval_clamped -- pandas silently drops
@@ -129,20 +159,23 @@ def _eval_predicate(
             message=("when: requires numexpr; install with: pip install numexpr"),
         ) from exc
     except Exception as exc:
-        # L2 close (Dennis MG-3 gate, 2026-05-31): keep the original
-        # exception chained via `from exc` so engineers can recover the
-        # numexpr-internal type from the traceback, but only surface
-        # the typed code + the offending expression to the operator-
-        # facing message. The internal class name (e.g.
-        # NumExpr2.NumExprError) leaks implementation detail.
+        # pandas' own errors quote the predicate (a bad datetime literal, an undefined name),
+        # so the chain is cut here; only the class name is kept, at debug level, to tell
+        # failures apart.
+        _log.debug(
+            "when predicate on column %r (strategy %s): evaluation failed (%s)",
+            column,
+            strategy,
+            type(exc).__name__,
+        )
         raise StrategyError(
             code="when_expression_error",
             strategy=strategy,
             message=(
-                f"when expression {expression!r} failed to evaluate; "
+                f"when expression on column {column!r} failed to evaluate; "
                 "check column names + comparison syntax"
             ),
-        ) from exc
+        ) from None
 
     # QA-3 F4 (2026-05-31): accept pandas nullable BooleanDtype too.
     # The pre-fix check `mask.dtype != bool` rejected `pd.BooleanDtype()`
@@ -154,7 +187,7 @@ def _eval_predicate(
             code="when_expression_not_boolean",
             strategy=strategy,
             message=(
-                f"when expression {expression!r} did not produce a "
+                f"when expression on column {column!r} did not produce a "
                 f"boolean Series (got {type(mask).__name__}"
                 + (f", dtype={mask.dtype}" if isinstance(mask, pd.Series) else "")
                 + ")"

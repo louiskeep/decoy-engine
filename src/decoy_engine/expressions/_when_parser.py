@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal, Union
 
@@ -170,19 +171,19 @@ class _Build(lark.Transformer):  # type: ignore[type-arg]
         return False
 
 
-def _reject(reason: str, cause: BaseException | None = None) -> ValidationError:
-    err = ValidationError(
+def _reject(reason: str) -> ValidationError:
+    return ValidationError(
         f"when expression is outside the closed grammar: {reason}", code=WHEN_OUTSIDE_GRAMMAR_CODE
     )
-    err.__cause__ = cause
-    return err
 
 
 def parse_when(expr: str) -> WhenExpr:
     """Parse `expr` into a frozen AST, or raise `ValidationError(code="when_outside_closed_grammar")`.
 
-    The message names the position and the construct, never the expression text, so a
-    caller that logs the error does not log a predicate that may embed data values.
+    The message names the position and the construct, never the expression text, and no
+    exception chain is kept: Lark's diagnostics quote the offending text, so every raise below
+    is `from None`. A caller that logs the error, with its traceback, never logs a predicate
+    that may embed data values.
     """
     if not isinstance(expr, str):
         raise _reject("the predicate must be a string")
@@ -204,16 +205,57 @@ def parse_when(expr: str) -> WhenExpr:
     except lark.exceptions.VisitError as exc:
         orig = exc.orig_exc
         if isinstance(orig, _RejectError):
-            raise _reject(str(orig), exc) from exc
-        raise
+            raise _reject(str(orig)) from None
+        # Any other transformer failure carries its own message, which can quote the text.
+        raise _reject("the predicate does not parse") from None
     except lark.exceptions.UnexpectedInput as exc:
-        raise _reject(
-            f"unexpected input at position {getattr(exc, 'pos_in_stream', '?')}", exc
-        ) from exc
-    except lark.exceptions.LarkError as exc:
-        raise _reject("the predicate does not parse", exc) from exc
-    except RecursionError as exc:
-        raise _reject("the predicate is nested too deeply", exc) from exc
+        raise _reject(f"unexpected input at position {getattr(exc, 'pos_in_stream', '?')}") from None
+    except lark.exceptions.LarkError:
+        raise _reject("the predicate does not parse") from None
+    except RecursionError:
+        raise _reject("the predicate is nested too deeply") from None
+
+
+@lru_cache(maxsize=1024)
+def parse_when_cached(expr: str) -> WhenExpr:
+    """`parse_when` memoized per expression string, for the per-chunk and per-call re-checks.
+
+    Only successful parses are cached (an exception is never stored), so a rejected predicate
+    is re-parsed and re-raised each time, which costs nothing on a path that is already failing.
+    """
+    return parse_when(expr)
+
+
+def validate_envelope_when(envelope: Any) -> None:
+    """Raise `ValidationError(when_outside_closed_grammar)` for any seed `when` outside the grammar.
+
+    Walks the whole seed envelope, every table and every column, whether or not a given seed
+    will reach the scalar gate (FK-resolved and composite nodes, tables with no supplied source).
+    `None` means no gate; anything else, including a blank or non-string value, must parse. The
+    message names the table and column only, never the predicate.
+    """
+    for table, table_seed in envelope.per_table:
+        for column, seed in table_seed.per_column:
+            when = seed.when
+            if when is None:
+                continue
+            try:
+                if isinstance(when, str):
+                    parse_when_cached(when)
+                else:
+                    parse_when(when)
+            except ValidationError:
+                raise ValidationError(
+                    f"the when predicate of table {table!r} column {column!r} is outside the "
+                    "closed grammar",
+                    path=f"tables.{table}.columns.{column}.when",
+                    code=WHEN_OUTSIDE_GRAMMAR_CODE,
+                ) from None
+
+
+def validate_plan_when(plan: Any) -> None:
+    """`validate_envelope_when` over a compiled `Plan`; runs before any handler, sink or provider."""
+    validate_envelope_when(plan.seed_envelope)
 
 
 def _check_size(ast: WhenExpr) -> None:
@@ -258,5 +300,8 @@ __all__ = [
     "Not",
     "WhenExpr",
     "parse_when",
+    "parse_when_cached",
+    "validate_envelope_when",
+    "validate_plan_when",
     "when_column_refs",
 ]

@@ -75,6 +75,7 @@ from decoy_engine.execution._strategies._fpe import FpeStrategyHandler
 from decoy_engine.execution._strategies._orphan import make_remap_fn
 from decoy_engine.execution._transactional_sink import TransactionalSink
 from decoy_engine.execution._when_gate import run_with_when_gate
+from decoy_engine.expressions._when_parser import validate_plan_when
 from decoy_engine.generation.pool._cache import PoolCache
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.instrumentation.timing import TimingCollector, timed_strategy, use_collector
@@ -185,6 +186,9 @@ class PandasExecutionAdapter:
         code_set_records: Mapping[tuple[str, str], object] | None = None,
     ) -> ExecutionResult:
         """Mask every table in `sources`; inputs must already be transformed (a Plan has none)."""
+        # Every seed's `when`, before a handler, provider or sink runs: a bad predicate on a
+        # later table would otherwise surface after earlier output was written.
+        validate_plan_when(plan)
         # B1 (S13): reject integer + null-bearing columns under truncate/hash/
         # categorical on the Arrow sources, before to_pandas widens int+null to
         # float. Backstops the plan-compile check for the no_profile path; both
@@ -447,6 +451,7 @@ class PandasExecutionAdapter:
         fail-loud/quarantine rule `run()` enforces, per table, before that
         table's write/eviction. Implemented in execution/_sequential.py; see
         docs/relationships-memory-scaling.md."""
+        validate_plan_when(plan)
         return _run_sequential(
             self,
             plan,

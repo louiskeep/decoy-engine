@@ -251,7 +251,11 @@ def _fk_plan(tmp_path: Path) -> Any:
         path = tmp_path / f"{name}.parquet"
         pq.write_table(table, path)
         cfg["sources"][name] = {"type": "file", "path": str(path), "format": "parquet"}
-        cfg["targets"][name] = {"type": "file", "path": str(tmp_path / "o.parquet")}
+        cfg["targets"][name] = {
+            "type": "file",
+            "path": str(tmp_path / f"{name}.out.parquet"),
+            "format": "parquet",
+        }
     from decoy_engine.config import PipelineConfig
 
     cfg = PipelineConfig.model_validate(cfg).model_dump()
@@ -269,8 +273,6 @@ def _fk_col(name: str) -> dict[str, Any]:
 
 
 def _composite_plan(tmp_path: Path) -> Any:
-    from decoy_engine.config import PipelineConfig
-    from tests.unit.execution import _auto_chunk_support as support
     from tests.unit.execution import _multi_table_support as mt
 
     def col(name: str, others: list[str]) -> dict[str, Any]:
@@ -298,7 +300,6 @@ def _composite_plan(tmp_path: Path) -> Any:
         col("email", ["first_name", "last_name"]),
     ]
     cfg, _ = mt.build_job(tmp_path, {"t": (cols, table)})
-    del support, PipelineConfig
     return sup.compile_job(cfg)[0]
 
 
