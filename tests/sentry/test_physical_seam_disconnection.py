@@ -370,6 +370,11 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         # Both import nothing from execution.physical.
         "src/decoy_engine/execution/_strategies/_nested.py",
         "src/decoy_engine/execution/_strategies/_windowed_date.py",
+        # C8-iii-d-2: the shared per-chunk string-type guard for a positional draw under `when:`,
+        # installed in `_oracle_preflight` so both chunked entries enforce string target/references
+        # per chunk. Parent-level module; imports only the two config-classification helpers and
+        # the when parser, nothing from execution.physical.
+        "src/decoy_engine/execution/_chunked_when_guard.py",
         # C5b-i: the `mask.faker_nondeterministic` draw site and its provider, placed in the
         # gen_pool siblings because the capped protocol/provider modules cannot grow. Neither
         # imports `execution.physical`. The shared reference index kernel derives its HKDF key
