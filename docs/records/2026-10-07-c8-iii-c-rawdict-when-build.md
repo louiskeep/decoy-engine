@@ -229,3 +229,18 @@ Mutants killed first time include every guard removal (compile x2, adapter `run`
   - `test_reads_unknown_keeps_candidates_and_writes_unknown_empties_them`
 - `tests/native/test_unconfigured_passthrough_read.py` (1 cases)
   - `test_bytes_literal_in_a_predicate_reads_every_passthrough_column`
+
+## dennis round 1 remediation + verification (Opus, 2026-10-08)
+
+dennis round 1 was NO-GO (2 HIGH, 1 LOW). Fixes (committed f00ec621, 4a891cda, 3d301b83):
+- HIGH 1: `hide_input_in_errors=True` so pydantic ValidationError no longer renders the predicate; boundary test added.
+- HIGH 2: the CHANGELOG `isna` migration rows corrected (no grammar equivalent on pandas nullable dtypes); strategies.md mirrored; a test pins zero-selection on Int64-with-nulls.
+- LOW 1: the compile and evaluator rejections raise after the except block, so `__context__` is None; asserted.
+
+Verification on the fixed head (3d301b83):
+- ruff check + format: clean.
+- sentries 3.11: 2455 passed.
+- full 3.11 suite (`-rfE`): 25556 passed, 1 pre-existing GCS `google` env failure, 172 skipped, 59 xfailed.
+- testflight check: 5/5 fingerprints, 53/53 invariants.
+
+Built by Opus 4.8 as the builder (Sonnet rate-limited until 2026-10-10); dennis and Codex still gate.
