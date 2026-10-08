@@ -644,3 +644,15 @@ def test_identically_named_references_are_judged_per_table(tmp_path: Path) -> No
     assert mt.dispatched_tables(got) == ["tbl_a"]
     for name in ("tbl_a", "tbl_b"):
         assert _canon(got.outputs[name]) == _canon(off.outputs[name])
+
+
+def test_one_unstable_reference_declines_even_beside_a_stable_one(tmp_path: Path) -> None:
+    refs = {
+        "f": _col(_F, pa.float64()),
+        "b": _col([None if i % 4 == 0 else i % 3 == 0 for i in range(N)], pa.bool_()),
+    }
+    cfg, source, oracle = _setup(
+        tmp_path, _cols(refs, "f > 0.5 and b == True"), _table(refs), "resident"
+    )
+    assert planner_relaxed_when_columns(cfg, None, TABLE, {TABLE: source}, {}) == frozenset()
+    assert _declined_columns(_declined(cfg, source, oracle)) == ["s"]
