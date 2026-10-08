@@ -38,7 +38,7 @@ import yaml
 
 from decoy_engine import fileaccess
 from decoy_engine.errors import DecoyError
-from decoy_engine.fileaccess import DirHandle, FileAccess, FileRequest, FileRole
+from decoy_engine.fileaccess import DirHandle, FileAccess, FileAccessDenied, FileRequest, FileRole
 from decoy_engine.fileaccess.adapters import serial
 
 _V1_DIR = Path(__file__).parent / "v1"
@@ -90,7 +90,9 @@ def _is_file(handle: DirHandle, name: str) -> bool:
             return stat.S_ISREG(member.stat().st_mode)
         finally:
             member.close()
-    except (FileNotFoundError, NotADirectoryError):
+    except (FileNotFoundError, NotADirectoryError, FileAccessDenied):
+        # A strict policy collapses missing, foreign and non-regular into one denial (no existence
+        # oracle), so an absent member arrives as FileAccessDenied, not FileNotFoundError.
         return False
 
 
