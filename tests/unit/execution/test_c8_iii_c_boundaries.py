@@ -292,6 +292,25 @@ def test_parse_when_names_the_position_and_attaches_no_lark_cause() -> None:
         assert exc.__suppress_context__ is True
 
 
+def _validated_config_with_when(predicate: str) -> dict[str, Any]:
+    """A schema-shaped raw config whose only fault is the `when`."""
+    return {
+        "version": 1,
+        "global_settings": {"seed": 1},
+        "sources": {"t": {"type": "file", "format": "csv", "path": "/dev/null"}},
+        "targets": {"t": {"type": "file", "format": "csv", "path": "/dev/null"}},
+        "tables": [
+            {
+                "name": "t",
+                "columns": [
+                    {"name": "s", "strategy": "redact", "when": predicate},
+                    {"name": "x", "strategy": "passthrough"},
+                ],
+            }
+        ],
+    }
+
+
 @pytest.mark.parametrize(
     "boundary",
     [
@@ -309,6 +328,8 @@ def test_parse_when_names_the_position_and_attaches_no_lark_cause() -> None:
         "eval_predicate",
         "unified_mask",
         "native_mask",
+        "pydantic_model_validate",
+        "validate_config",
     ],
 )
 def test_no_raising_boundary_renders_the_predicate(boundary: str, tmp_path: Path) -> None:
@@ -370,12 +391,21 @@ def test_no_raising_boundary_renders_the_predicate(boundary: str, tmp_path: Path
                 execution=SimpleNamespace(when_expression=LEAKY),
             )
             compute_when_masks(_frame(), [node])
+        elif boundary == "pydantic_model_validate":
+            from decoy_engine.config import PipelineConfig
+
+            PipelineConfig.model_validate(_validated_config_with_when(LEAKY))
+        elif boundary == "validate_config":
+            from decoy_engine.validation import validate_config
+
+            validate_config(_validated_config_with_when(LEAKY))
         else:
             when_mask(WhenSpec("s", "redact", LEAKY, ("x",)), _chunks()[0], set())
 
     del sources
     exc = _raise_from(call)
-    assert isinstance(exc, (PlanCompileError, ValidationError, StrategyError)), repr(exc)
+    if boundary not in {"pydantic_model_validate", "validate_config"}:
+        assert isinstance(exc, (PlanCompileError, ValidationError, StrategyError)), repr(exc)
     sup.assert_no_sentinel(exc)
 
 
@@ -430,3 +460,13 @@ def test_an_undefined_column_is_an_expression_error_with_no_text() -> None:
         _eval_predicate(_frame(), "absent_col == 'q'", "redact", column="s")
     assert info.value.code == "when_expression_error"
     assert "absent_col" not in str(info.value)
+
+
+@pytest.mark.parametrize("model", ["ColumnConfig", "TableConfig"])
+def test_a_config_submodel_validated_alone_renders_no_predicate(model: str) -> None:
+    from decoy_engine.config import _tables
+
+    column = {"name": "s", "strategy": "redact", "when": LEAKY}
+    payload = column if model == "ColumnConfig" else {"name": "t", "columns": [column]}
+    exc = _raise_from(lambda: getattr(_tables, model).model_validate(payload))
+    sup.assert_no_sentinel(exc)
