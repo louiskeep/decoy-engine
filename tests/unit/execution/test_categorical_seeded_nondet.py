@@ -60,7 +60,7 @@ KAT_WEIGHTED_INDEX = [0, 1, 1, 1, 1, 0, 0, 0]
 
 @dataclass(frozen=True)
 class _Ctx:
-    # A frozen dataclass so the `when` gate's `gated_context` (dataclasses.replace) works on it,
+    # A frozen dataclass so the `when` gate's `gated_context` (copy.copy + object.__setattr__) works on it,
     # the same shape a real StrategyContext has for the fields these tests touch.
     mask_key: bytes = MK
     row_offset: int = 0

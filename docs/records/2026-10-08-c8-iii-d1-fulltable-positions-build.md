@@ -21,7 +21,7 @@ Section 2d: a `when:`-selected row's output equals that row's output in an ungat
   - categorical `test_when_gate_selected_rows_equal_the_ungated_run` (property 2d directly against a baseline run);
   - categorical `test_when_gate_composes_with_a_nonzero_row_offset` (row_offset + gate positions);
   - windowed_date `TestC8IiiDFullTablePositions`: `positions` select full-table rows; the null-anchor split (a full run with a null anchor raises, a gate excluding it succeeds and matches the full-frame surviving rows).
-- The categorical test `_Ctx` became a frozen dataclass so `gated_context`'s `dataclasses.replace` works on it (the real StrategyContext is already a frozen dataclass).
+- The categorical test `_Ctx` became a frozen dataclass so `gated_context`'s copy (copy.copy + object.__setattr__) works on it (the real StrategyContext is already a frozen dataclass).
 - Still-declined: native/unified/chunked declines for positional strategies under `when:` are unchanged (d-2 lifts them); the existing admission tests still pass.
 
 ## Verification
