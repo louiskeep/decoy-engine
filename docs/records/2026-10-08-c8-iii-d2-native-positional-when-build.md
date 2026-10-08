@@ -151,3 +151,8 @@ do not appear in CI. My one added `pc.filter(missing_mask, mask)` is the identic
 - The red-before profile is partial by design: the config-time rejection cases (numeric reference,
   per-chunk drift) already held on the base at config time, so only the native-admission cases are
   red-before. Recorded above.
+
+## Gates complete (2026-10-08)
+- Codex plan GO (round 3), dennis GO, Codex final GO (high confidence), ci-mirror PASS (8268 passed).
+- Full 3.11 suite 25442 passed (only the pre-existing GCS env failure); testflight 5/5; mutation 10/10.
+Merge-ready locally; held on push per Cam.
