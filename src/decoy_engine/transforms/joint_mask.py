@@ -48,7 +48,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, NoReturn
 
 import numpy as np
 import pandas as pd
@@ -129,6 +129,20 @@ class JointMaskConfig:
         return self._table
 
 
+def _raise_without_chain(err: PlanCompileError) -> NoReturn:
+    """Raise `err` with no cause or context. The rejected `load_table` error is still being
+    handled here, so a plain raise would attach it as `__context__` and its traceback would
+    carry the raw reference (X2). Caught, cleared and re-raised bare, mirroring the keyprovider's
+    `raise_clean`."""
+    try:
+        raise err
+    except PlanCompileError as fresh:
+        fresh.__cause__ = None
+        fresh.__context__ = None
+        fresh.__suppress_context__ = True
+        raise
+
+
 @entry_point
 def validate_joint_mask_config(
     cfg: dict[str, Any], *, file_access: FileAccess | None = None
@@ -187,20 +201,29 @@ def validate_joint_mask_config(
     try:
         tbl = load_table(ref_name)
     except FileNotFoundError:
-        raise PlanCompileError(
-            code="joint_mask_reference_not_found",
-            path="joint_masks.reference",
-            message=(
-                f"reference table {shown_ref!r} not found. "
-                f"Known shipped tables: {sorted(_KNOWN_TABLES)}. "
-                f"To use a customer-provided table, set reference: customer:/path/to/file.parquet."
-            ),
+        # Clear the chain: the rejected `FileNotFoundError` names the config position under a
+        # strict policy, but its traceback would otherwise surface the raw reference as the
+        # PlanCompileError's `__context__` (X2). `from None` only suppresses display, so the
+        # context is nulled outright.
+        _raise_without_chain(
+            PlanCompileError(
+                code="joint_mask_reference_not_found",
+                path="joint_masks.reference",
+                message=(
+                    f"reference table {shown_ref!r} not found. "
+                    f"Known shipped tables: {sorted(_KNOWN_TABLES)}. "
+                    "To use a customer-provided table, set reference: "
+                    "customer:/path/to/file.parquet."
+                ),
+            )
         )
     except ValueError as exc:
-        raise PlanCompileError(
-            code="joint_mask_reference_invalid",
-            path="joint_masks.reference",
-            message=f"reference table {shown_ref!r} failed to load: {exc}",
+        _raise_without_chain(
+            PlanCompileError(
+                code="joint_mask_reference_invalid",
+                path="joint_masks.reference",
+                message=f"reference table {shown_ref!r} failed to load: {exc}",
+            )
         )
 
     ref_cols = set(tbl.column_names) - {"id"}

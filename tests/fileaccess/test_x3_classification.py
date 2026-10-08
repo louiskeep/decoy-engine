@@ -152,6 +152,15 @@ def _site_pack_weights(world: XWorld, mp: pytest.MonkeyPatch, factory: Any) -> C
     return ModelPackLoader(pack, file_access=world.policy)._read_weights
 
 
+def _site_sign_pack(world: XWorld, mp: pytest.MonkeyPatch, factory: Any) -> Callable[[], Any]:
+    from decoy_engine.storm.model_pack import _packio, provenance
+
+    pack = world.sub / "pack"
+    pack.mkdir()
+    mp.setattr(_packio, "read_member", _boom(factory))
+    return lambda: provenance.sign_pack(pack, b"k" * 32)
+
+
 def _site_disguises(world: XWorld, mp: pytest.MonkeyPatch, factory: Any) -> Callable[[], Any]:
     from decoy_engine.disguises import loader
 
@@ -253,6 +262,7 @@ SITES: dict[str, Site] = {
     "snapshot_digest": _site_digest,
     "pack_fallback": _site_pack_fallback,
     "pack_weights": _site_pack_weights,
+    "sign_pack": _site_sign_pack,
     "disguises": _site_disguises,
     "custom_providers": _site_custom_providers,
     "lockfile": _site_lockfile,

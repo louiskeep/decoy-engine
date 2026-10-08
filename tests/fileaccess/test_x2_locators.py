@@ -364,19 +364,40 @@ def test_name_hint_diagnostics_name_no_locator(xworld: XWorld) -> None:
         load_name_hint_terms(folder)
     assert LOCATOR_SENTINEL in str(control.value)
     with fileaccess.scope(xworld.policy):
-        with pytest.raises(NameHintLoaderError) as missing:
+        # An absent manifest and a manifest that lists a missing file both surface as a preserved
+        # denial under a strict policy (deny-by-default, no existence oracle): the loader no longer
+        # launders them into a "does not exist" message built from a locator.
+        with pytest.raises(fileaccess.FileAccessDenied) as missing:
             load_name_hint_terms(folder, file_access=xworld.policy)
         (folder / "manifest.yaml").write_text("files: []\n")
         with pytest.raises(NameHintLoaderError) as empty:
             load_name_hint_terms(folder, file_access=xworld.policy)
         (folder / "manifest.yaml").write_text("files: [a.yaml]\n")
-        with pytest.raises(NameHintLoaderError) as unlisted:
+        with pytest.raises(fileaccess.FileAccessDenied) as unlisted:
             load_name_hint_terms(folder, file_access=xworld.policy)
     for exc in (missing.value, empty.value, unlisted.value):
         assert_no_locator(xworld, rendered(exc))
 
 
 # -- other inventoried sites -----------------------------------------------------------------
+
+
+def test_sign_pack_malformed_manifest_names_no_locator(xworld: XWorld) -> None:
+    """`sign_pack`'s translating handler names the pack by its config position under a strict
+    policy, not by `pack_dir`; a malformed manifest's own parse text may appear (authorized
+    content, D5) but the directory locator may not."""
+    from decoy_engine.storm.model_pack.provenance import sign_pack
+
+    pack = xworld.sub / "pack"
+    pack.mkdir()
+    (pack / "manifest.json").write_text("{not json")
+    # ambient control: the message names the pack directory
+    with pytest.raises(ValueError) as control:
+        sign_pack(pack, b"k" * 32)
+    assert LOCATOR_SENTINEL in str(control.value)
+    with fileaccess.scope(xworld.policy), pytest.raises(ValueError) as info:
+        sign_pack(pack, b"k" * 32)
+    assert_no_locator(xworld, rendered(info.value))
 
 
 def test_custom_provider_directory_warning_names_no_locator(
@@ -469,3 +490,58 @@ def test_joint_mask_unknown_reference_names_no_locator(xworld: XWorld) -> None:
     ):
         validate_joint_mask_config(cfg)
     assert_no_locator(xworld, rendered(info.value))
+
+
+def test_load_table_rejects_a_path_passed_as_a_name_without_a_locator(xworld: XWorld) -> None:
+    """A caller (or a raw `reference:` value) can pass a path as the lookup name. The shipped
+    registry has no such key, so the rejection fires before any file access. Under a strict
+    policy that rejection names nothing (X4); the direct message and the whole traceback carry
+    no locator."""
+    from decoy_engine.reference_tables import load_table
+
+    name_as_path = str(xworld.sub / "secretref.parquet")
+    # ambient control: the message echoes the rejected name
+    with pytest.raises(FileNotFoundError) as control:
+        load_table(name_as_path)
+    assert LOCATOR_SENTINEL in str(control.value)
+    with fileaccess.scope(xworld.policy), pytest.raises(FileNotFoundError) as info:
+        load_table(name_as_path, file_access=xworld.policy)
+    assert_no_locator(xworld, rendered(info.value))
+
+
+def test_joint_mask_bare_path_reference_chain_names_no_locator(xworld: XWorld) -> None:
+    """A `reference:` that is a bare path (no `customer:` prefix) reaches the shipped-name
+    rejection in `load_table`. The validator's own message already uses the position, but the
+    chained `FileNotFoundError` must not surface the rejected path through the traceback, so the
+    chain is cleared."""
+    from decoy_engine.plan._errors import PlanCompileError
+    from decoy_engine.transforms.joint_mask import validate_joint_mask_config
+
+    cfg = {"columns": ["a"], "reference": str(xworld.sub / "bare_ref.parquet"), "key_by": "a"}
+    with pytest.raises(PlanCompileError) as control:
+        validate_joint_mask_config(cfg)
+    assert LOCATOR_SENTINEL in str(control.value)  # positive control (ambient)
+    with fileaccess.scope(xworld.policy), pytest.raises(PlanCompileError) as info:
+        validate_joint_mask_config(cfg)
+    assert_no_locator(xworld, rendered(info.value))
+    assert info.value.__cause__ is None and info.value.__context__ is None
+
+
+def test_name_hint_absolute_listed_file_preserves_denial_and_names_no_path(
+    xworld: XWorld,
+) -> None:
+    """An authorized manifest that lists an absolute file outside the root. Under a strict
+    `DirHandle` the listed open is denied (deny-by-default, no existence oracle): the denial is
+    preserved, not laundered into a locator-bearing "does not exist" message built from
+    `target / fname`."""
+    from decoy_engine.storm.name_hints.loader import load_name_hint_terms
+
+    hints = xworld.sub / "hints"
+    hints.mkdir()
+    outside = xworld.root.parent / f"outside_{LOCATOR_SENTINEL}.yaml"
+    outside.write_text("detectors: []\n")
+    (hints / "manifest.yaml").write_text(f"files: ['{outside}']\n")
+    with fileaccess.scope(xworld.policy), pytest.raises(fileaccess.FileAccessDenied) as info:
+        load_name_hint_terms(hints, file_access=xworld.policy)
+    assert_no_locator(xworld, rendered(info.value))
+    assert str(outside) not in "".join(rendered(info.value))

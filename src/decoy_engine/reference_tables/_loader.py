@@ -83,6 +83,14 @@ def load_table(
     handle: FileHandle
     if path is None:
         if name not in SHIPPED_TABLES:
+            if not fileaccess.is_ambient():
+                # A rejected name may be a path a caller handed in as the lookup key, so under a
+                # strict policy the message names nothing (X4). Membership is checked before any
+                # file access, so this is a lookup miss, never an existence oracle.
+                raise FileNotFoundError(
+                    "no shipped reference table of that name. Provide a path= override or a "
+                    "'customer:' reference."
+                )
             raise FileNotFoundError(
                 f"no shipped reference table {name!r}. "
                 f"Provide a path= override, a 'customer:/path/to/file.parquet' reference, "
