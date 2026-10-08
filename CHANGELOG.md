@@ -28,8 +28,12 @@ the run. Leaving `date_format` unset still autodetects.
 
 A large job whose `when:` predicate reads float, timestamp, date32, date64 or large string
 columns now auto-chunks instead of running whole-frame, as does one that reads an integer or
-bool column with a known zero null count (Parquet footer or resident table). The output equals
-the whole-frame run. A reference that is an integer or bool with nulls, has no null-count
+bool column with a known zero null count (Parquet footer or resident table). The `when`
+selection and every masked column equal the whole-frame run. Passthrough columns, including the
+columns the predicate reads, follow the auto-chunk output contract and equal the source column
+exactly, so these jobs now show its visible differences from a whole-frame run: a NaN float
+stays NaN (whole-frame writes null), and `large_string` and `date64` keep their type
+(whole-frame writes `string` and `date32`). A reference that is an integer or bool with nulls, has no null-count
 statistic, or is a dictionary, decimal, nested, time or duration column still runs whole-frame,
 and the target must still be a string. An explicit chunked run is unchanged.
 

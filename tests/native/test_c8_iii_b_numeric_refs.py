@@ -1,8 +1,9 @@
 """C8-iii-b acceptance tests: auto-chunk a `when:` column whose predicate reads non-string columns.
 
-Plan: docs/plans/2026-10-07-c8-iii-b-numeric-refs.md (rev 3), section 3. Every admitted case
-compares the auto-chunked output against the WHOLE-FRAME run (not the chunked oracle) and
-asserts the route taken. Cases that must stay declined assert the existing planner reason.
+Plan: docs/plans/2026-10-07-c8-iii-b-numeric-refs.md (rev 4), section 3. Every admitted case
+asserts the route taken and checks the auto-chunk output contract: the `when` mask and the masked
+column equal the WHOLE-FRAME run (not the chunked oracle), and every passthrough column, the
+`when` references included, equals the SOURCE column exactly. Cases that must stay declined assert the existing planner reason.
 """
 
 from __future__ import annotations

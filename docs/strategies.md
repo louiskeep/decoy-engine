@@ -1089,7 +1089,9 @@ uses, so its selection equals the pandas run's for any column type it accepts,
 numeric references included. If that evaluation raises, the job runs the pandas
 leg from the start and raises that run's error. A job large enough to auto-chunk keeps a `when:`
 table chunked only when the column is native-admitted, its target is a string and every column
-the predicate reads is of a type listed above; otherwise it runs whole-frame. The chunked output
+the predicate reads is of a type listed above; otherwise it runs whole-frame. On the
+auto-chunked route, passthrough columns (including the ones the predicate reads) equal the
+source column exactly, so a NaN float stays NaN and `large_string` and `date64` keep their type. The chunked output
 type of a native-admitted `when:` column is `string` on every chunk. The
 whole-frame route keeps the type pandas infers for a column that is empty or
 entirely null (Arrow `null`).

@@ -1,8 +1,8 @@
 Status: record (build complete; awaiting the review gates and Cam's merge call)
 
-Plan: `docs/plans/2026-10-07-c8-iii-b-numeric-refs.md` (rev 3).
+Plan: `docs/plans/2026-10-07-c8-iii-b-numeric-refs.md` (rev 4).
 
-# C8-iii-b build record (partial)
+# C8-iii-b build record
 
 ## What was built
 
