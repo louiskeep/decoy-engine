@@ -1,4 +1,4 @@
-Status: plan (rev 3, DRAFT)
+Status: plan (rev 3, BUILD-READY: Codex plan gate GO in round 3)
 
 Rules consulted: 00-universal, feature-dev, testing.
 
@@ -101,3 +101,4 @@ Rollback: revert the merge commit. No data migration, no config surface change; 
   - Factual correction: the chunked oracle-leg fallback IS position-correct (Codex verified across 60 rows / offset 37); the guarded property is reference chunk-stability, not position composition.
   - classification via `positional_config_of_entry`; string faker missing-mask is an Arrow mask (threaded); tests require native-execution evidence and force multiple unified batches.
 - **Codex plan gate, round 2: REVISE** (1 MEDIUM). Round-1's reference rule and the oracle-leg correction confirmed closed; shared-preflight placement closes the early-return bypass. Rev 3 folds the remaining gap: the target/reference type check must run on the FIRST chunk AND every subsequent raw chunk (per-chunk guard on both entry paths incl. the direct `_oracle_*` loop), accepting `pa.string()`/`pa.null()` and rejecting drift before the offending chunk runs; test 1b added; wording fixed (config-time rejects can't see Arrow types; unified numeric references use the full-frame oracle fallback).
+- **Codex plan gate, round 3: GO** (high confidence). The per-chunk guard is implementable in `_oracle_preflight` (it owns the remaining iterator; wrap before `validated_rest`); a null probe confirmed `pa.null()` later chunks carry no widening hazard. Build-ready.
