@@ -69,19 +69,25 @@ class FileRequest:
     field_key: str
 
 
+def _rebuild(cls: type, encoded_key: str) -> object:
+    """Unpickle helper: rebuild a file-access error around a key that is already encoded."""
+    return cls(encoded_key, encoded=True)
+
+
 class FileAccessDenied(DecoyError):  # noqa: N818 - the plan's name for the one denial
     """The one denial. `str()` is `file access denied: <encoded field key>` and nothing else.
 
     Raised `from None` so no cause, context or locator rides with it across a boundary."""
 
-    def __init__(self, field_key: str) -> None:
+    def __init__(self, field_key: str, *, encoded: bool = False) -> None:
         from decoy_engine.fileaccess._errors import encode_field_key
 
-        self.field_key: str = encode_field_key(field_key)
+        self.field_key: str = field_key if encoded else encode_field_key(field_key)
         super().__init__(f"file access denied: {self.field_key}")
 
-    def __reduce__(self) -> tuple[object, tuple[str]]:
-        return (FileAccessDenied, (self.field_key,))
+    def __reduce__(self) -> tuple[object, tuple[type, str]]:
+        # The stored key is already encoded; a rebuild must not escape it again.
+        return (_rebuild, (FileAccessDenied, self.field_key))
 
 
 class FileAccessReadError(DecoyError):
@@ -91,14 +97,15 @@ class FileAccessReadError(DecoyError):
     key>` and nothing else, raised `from None`, so the library's text (which can carry a
     locator or a cell value) never rides with it."""
 
-    def __init__(self, field_key: str) -> None:
+    def __init__(self, field_key: str, *, encoded: bool = False) -> None:
         from decoy_engine.fileaccess._errors import encode_field_key
 
-        self.field_key: str = encode_field_key(field_key)
+        self.field_key: str = field_key if encoded else encode_field_key(field_key)
         super().__init__(f"file could not be read: {self.field_key}")
 
-    def __reduce__(self) -> tuple[object, tuple[str]]:
-        return (FileAccessReadError, (self.field_key,))
+    def __reduce__(self) -> tuple[object, tuple[type, str]]:
+        # The stored key is already encoded; a rebuild must not escape it again.
+        return (_rebuild, (FileAccessReadError, self.field_key))
 
 
 class FileAccessUnavailable(DecoyError):  # noqa: N818 - the plan's name

@@ -61,7 +61,7 @@ def scrub(exc: BaseException) -> BaseException:
     seen: set[int] = set()
     while inner is not None and id(inner) not in seen:
         if isinstance(inner, FileAccessDenied):
-            fresh = FileAccessDenied(inner.field_key)
+            fresh = FileAccessDenied(inner.field_key, encoded=True)
             fresh.__cause__ = None
             fresh.__context__ = None
             fresh.__suppress_context__ = True
@@ -71,26 +71,40 @@ def scrub(exc: BaseException) -> BaseException:
     return exc
 
 
-def _passes_through(exc: Exception) -> bool:
-    """Failures the caller classifies by type (memory pressure, a full disk or quota) keep
-    their class under a strict policy: masking them as a read failure would break OOM
+def _passes_by_type(exc: Exception) -> bool:
+    """Failures the caller classifies by TYPE keep their class under a strict policy: memory
+    pressure, and a full disk or quota. Masking them as a read failure would break OOM
     handling and disk-quota reporting."""
     if isinstance(exc, MemoryError):
         return True
     if isinstance(exc, OSError) and exc.errno in _RESOURCE_ERRNOS:
         return True
-    # The engine's own predicate also recognises DuckDB's and OpenSSL's under-cap shapes.
-    from decoy_engine.execution._isolated_common import is_memory_failure
+    import duckdb
 
-    return is_memory_failure(exc)
+    return isinstance(exc, duckdb.OutOfMemoryException)
 
 
-def _resurface(exc: Exception) -> Exception:
-    """The exception to raise for a pass-through failure: a resource `OSError` is rebuilt
-    without its filename (the library names the descriptor path there); others as they are."""
+def _resurface(exc: Exception) -> Exception | None:
+    """The exception to raise for a failure the caller must still classify, or None when it
+    is an ordinary library failure (a read error).
+
+    By-type failures keep their object, except a resource `OSError`, rebuilt without the
+    filename the library puts there. A failure the engine recognises only by its TEXT (Arrow's
+    `Wrapping <cell> failed`, OpenSSL's context copy) is rebuilt as the same type around the
+    scrubbed text, because that text can carry a cell value."""
     if isinstance(exc, OSError) and exc.errno in _RESOURCE_ERRNOS:
         return type(exc)(exc.errno, os.strerror(exc.errno or 0))
-    return exc
+    if _passes_by_type(exc):
+        return exc
+    from decoy_engine.execution._isolated_common import is_memory_failure, scrub_error_text
+
+    if not is_memory_failure(exc):
+        return None
+    try:
+        rebuilt = type(exc)(scrub_error_text(str(exc)))
+    except Exception:
+        return None
+    return rebuilt if is_memory_failure(rebuilt) else None
 
 
 def guarded(display: str, strict: bool, fn: Callable[..., T], *args: Any, **kwargs: Any) -> T:
@@ -107,10 +121,9 @@ def guarded(display: str, strict: bool, fn: Callable[..., T], *args: Any, **kwar
     except (FileAccessDenied, FileAccessReadError, StopIteration):
         raise
     except Exception as exc:
-        if _passes_through(exc):
-            resurfaced = _resurface(exc)
-            if resurfaced is exc:
-                raise
+        resurfaced = _resurface(exc)
+        if resurfaced is exc:
+            raise
     if resurfaced is not None:
         raise resurfaced from None
     raise read_error(display) from None

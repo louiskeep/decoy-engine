@@ -181,3 +181,52 @@ def test_every_documented_under_cap_failure_shape_survives_a_strict_guard(index:
     assert is_memory_failure(ei.value)
     with pytest.raises(type(exc)):
         list(guarded_iter("k", True, _raising_iter(exc)))
+
+
+def test_a_text_matched_memory_failure_is_scrubbed_but_still_classified(rooted, root_dir) -> None:  # type: ignore[no-untyped-def]
+    """Arrow embeds the offending cell in its `Wrapping <cell> failed` text, which is also the
+    under-cap marker. The class and the marker survive; the cell value does not."""
+    import numpy as np
+    import pyarrow.parquet as pq
+
+    from decoy_engine.execution._isolated_common import is_memory_failure
+    from decoy_engine.fileaccess.adapters import pandas as pandas_adapter
+
+    cell = b"SSN-123-45-6789\xff\xfe"
+    offsets = np.array([0, len(cell)], dtype="int32").tobytes()
+    column = pa.Array.from_buffers(
+        pa.string(), 1, [None, pa.py_buffer(offsets), pa.py_buffer(cell)]
+    )
+    pq.write_table(pa.table({"a": column}), root_dir / "cells.parquet")
+    with pytest.raises(pa.ArrowException) as info:
+        pandas_adapter.read_parquet(_handle(rooted, "cells.parquet"))
+    text = f"{info.value!s} {info.value!r}"
+    assert "SSN-123-45-6789" not in text and "6789" not in text
+    assert is_memory_failure(info.value)
+    assert info.value.__cause__ is None and info.value.__context__ is None
+    assert not isinstance(info.value, FileAccessReadError)
+
+
+def test_an_exception_that_cannot_be_rebuilt_becomes_a_read_error() -> None:
+    class OddError(Exception):
+        def __init__(self, a: int, b: int) -> None:
+            super().__init__("not able to copy ctx SECRET")
+
+    def boom() -> None:
+        raise OddError(1, 2)
+
+    with pytest.raises(FileAccessReadError) as ei:
+        guarded("k", True, boom)
+    assert "SECRET" not in str(ei.value)
+
+
+def test_a_field_key_is_encoded_once_across_pickle_round_trips() -> None:
+    import pickle
+
+    key = "tables.a\nb.columns.c\\d"
+    for cls in (FileAccessDenied, FileAccessReadError):
+        exc = cls(key)
+        once = exc.field_key
+        for _ in range(2):
+            exc = pickle.loads(pickle.dumps(exc))  # noqa: S301 - round-trips our own object
+        assert exc.field_key == once and once in str(exc)

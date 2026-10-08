@@ -102,7 +102,7 @@ ALLOWLIST: dict[str, int] = {
     # transactional publish hardening and row mask; split the publish cluster.
     "src/decoy_engine/quarantine.py": 637,
     # code_set provenance and FF1 notice plumbing through the streaming runner.
-    "src/decoy_engine/execution/out_of_core/_runner.py": 707,
+    "src/decoy_engine/execution/out_of_core/_runner.py": 663,
     # corpus schema checks and verify_corpus; split into _codeset_verify.py when next touched.
     "src/decoy_engine/transforms/_codeset_loader.py": 650,
     # DRAW_SITES catalogue; split into _draw_sites_mask.py / _draw_sites_gen.py if it grows.

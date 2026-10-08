@@ -38,7 +38,7 @@ pandas-oracle parity suite pins.
 from __future__ import annotations
 
 import shutil
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -83,15 +83,13 @@ from decoy_engine.execution.out_of_core._route_policy import (
 from decoy_engine.execution.out_of_core._scratch import scratch_root
 from decoy_engine.execution.out_of_core._source import LazySource
 from decoy_engine.execution.out_of_core._stream_driver import stream_table
+from decoy_engine.execution.out_of_core._stream_driver_support import (
+    _code_set_records_and_evidence_for_table,
+)
 from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.keyprovider import require_mask_key
 from decoy_engine.plan._types import ColumnSeed
 from decoy_engine.relationships._graph import OrphanPolicy
-from decoy_engine.transforms.code_set import (
-    CodeSetConfig,
-    describe_loaded_corpus,
-    resolve_corpus_record,
-)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -104,7 +102,6 @@ if TYPE_CHECKING:
     from decoy_engine.providers_v2 import ProviderRegistry
     from decoy_engine.relationships import RelationshipGraph
     from decoy_engine.relationships._graph import RelationshipEdge
-    from decoy_engine.transforms._codeset_loader import _CorpusRecord
 
     # One source per table: a resident Arrow table (back-compat) or a
     # path-backed lazy reader (the bounded-residency capability path).
@@ -621,47 +618,6 @@ def _fixed_output_schema(
         else:
             fields.append(field)
     return pa.schema(fields, metadata=source_schema.metadata)
-
-
-def _code_set_records_and_evidence_for_table(
-    plan: Plan,
-    table_name: str,
-    column_names: Sequence[str],
-    *,
-    skip_columns: frozenset[str],
-) -> tuple[dict[str, _CorpusRecord], dict[tuple[str, str], dict[str, Any]]]:
-    """code_set corpus record + provenance evidence for one table.
-
-    Mirrors `CodeSetHandler.run`'s once-per-(table, column) stamp (counts +
-    identifiers only, no raw codes) so the out-of-core route surfaces the same
-    `code_set_corpora` block the pandas/sequential routes merge into
-    quality_metrics. Keyed by (table, column) -- two tables may bind a
-    same-named code_set column to different corpora -- and each evidence dict
-    carries its own table/column identity, since the flattened metrics list
-    discards the sink's keys. Restricted to columns present in this table's
-    schema and not consumed as an FK child. Returns CANDIDATE evidence (keyed on
-    schema presence, not observed masking); `_stream_table` withholds the stamp
-    for a column that masks nothing. The pinned `_CorpusRecord` is resolved ONCE
-    and returned alongside its evidence, then threaded into every `mask_batch`
-    call, so a mid-stream corpus swap cannot make masking and evidence disagree.
-    """
-    seed = table_seed(plan, table_name)
-    if seed is None:
-        return {}, {}
-    names = frozenset(column_names)
-    records: dict[str, _CorpusRecord] = {}
-    corpora: dict[tuple[str, str], dict[str, Any]] = {}
-    for column, column_seed in seed.per_column:
-        if column_seed.strategy != "code_set":
-            continue
-        if column not in names or column in skip_columns:
-            continue
-        code_cfg = CodeSetConfig.from_dict(provider_config_to_dict(column_seed.provider_config))
-        record = resolve_corpus_record(code_cfg)
-        records[column] = record
-        evidence = describe_loaded_corpus(code_cfg, record=record)
-        corpora[(table_name, column)] = {**evidence, "table": table_name, "column": column}
-    return records, corpora
 
 
 def _remap_values(

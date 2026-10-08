@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
+from decoy_engine import fileaccess
 from decoy_engine.execution._adapter import provider_config_to_dict
 from decoy_engine.execution.out_of_core._mask import masked_output_type, table_seed
 from decoy_engine.transforms.code_set import (
@@ -159,7 +160,8 @@ def _code_set_records_and_evidence_for_table(
         if column not in names or column in skip_columns:
             continue
         code_cfg = CodeSetConfig.from_dict(provider_config_to_dict(column_seed.provider_config))
-        record = resolve_corpus_record(code_cfg)
+        with fileaccess.at_position(f"tables.{table_name}.columns.{column}"):
+            record = resolve_corpus_record(code_cfg)
         records[column] = record
         evidence = describe_loaded_corpus(code_cfg, record=record)
         corpora[(table_name, column)] = {**evidence, "table": table_name, "column": column}

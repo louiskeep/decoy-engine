@@ -175,7 +175,7 @@ its own commit (the series after `1405151b`). Findings, root cause, fix, test:
 | M5 | Sentry missed stream, memory-map, numpy, HDF/Excel, `codecs.open`, `ctypes.CDLL`, `runpy`, `spec_from_file_location`, `pyarrow.orc`, chained pool submit | Incomplete Appendix B | All added with one negative fixture each; each test asserts the specific sink was flagged. `CDLL(None)` stays allowed in the one capability module that binds `openat2` | `test_sentry_flags_the_specific_sink` (14) and the capability case |
 | M6 | The "no read" strace assertion could not fail | `read`/`pread64`/`close` were not traced | Added to the trace set. Positive control: a direct open, read and close is detected. D10 self-tests: in-process, child process, execve, `dir_fd` open, directory listing, `renameat2` (with `RENAME_NOREPLACE`, since glibc maps flag 0 to `renameat`), pyarrow, pandas, polars, DuckDB read and write | `test_policy_strace.py`, `test_strace_selftest.py` |
 | M7 | Ambient vault write changed: read-only directory, missing-parent error text, hardlink | The write went through a staged replace | Restored: a path under the ambient policy truncates and rewrites in place (`vault_direct` label, issued only by `LocalFileAccess`). A strict `OutputDir` still gets an exclusive create. CHANGELOG corrected | `test_char_vault_in_place.py`, green on the base too |
-| M8 | Generic field keys; `disguises` used `MODEL_PACK_ROOT` | A key was fixed per call site | `fileaccess.at_position(...)` carries the config position; the engine sets it where it walks a config (pandas adapter per column, chunked code_set resolver) and the loaders append their suffix. New `DISGUISE_ROOT` role | `test_policy_denials.py` |
+| M8 | Generic field keys; `disguises` used `MODEL_PACK_ROOT` | A key was fixed per call site | `fileaccess.at_position(...)` carries the config position; the engine sets it where a corpus or reference is resolved (the code_set and joint_mask handlers, the chunked code_set resolver, the out-of-core resolver) and the loaders append their suffix. New `DISGUISE_ROOT` role | `test_policy_denials.py` |
 | M9 | Probe route should be inconclusive under a strict policy | The probe would reach the isolated route | `resolve_probe_recovery` returns `None` when the policy is not ambient; `run_pipeline_isolated` and the governor keep failing closed with `FileAccessUnavailable` | `test_policy_routes.py` |
 | L1 | `os.link` followed symlinks | default | `follow_symlinks=False` | covered by output tests |
 | L2 | `warnings.catch_warnings` is process-global | | Dropped; library warnings are no longer suppressed under a strict policy | |
@@ -194,6 +194,30 @@ Judgment calls added by the remediation:
   signatures would change public signatures, which this gate did not authorize.
 - Library warnings are no longer suppressed under a strict policy (L2). None of the library calls in
   scope emits a warning that names a path; this is not verified for every library version.
+
+## dennis round 2 (GO) and the fixes before the Codex final
+
+- **M-1.** The strict guard passed text-matched memory failures through unscrubbed; Arrow's
+  `Wrapping <cell> failed` carries the cell value (dennis's probe: `SSN-123-45-6789` read through the
+  pandas adapter). Now only failures recognised by TYPE keep their object (`MemoryError` including
+  `ArrowMemoryError`, `duckdb.OutOfMemoryException`, `OSError` ENOMEM/ENOSPC/EDQUOT with the filename
+  dropped). A failure recognised only by its text is rebuilt as the same type around
+  `scrub_error_text(...)`, raised `from None`, and kept only if `is_memory_failure` still matches the
+  scrubbed text; otherwise it becomes `FileAccessReadError`. Test uses a real invalid-UTF-8 cell.
+- **M-2.** The out-of-core runner carried a byte-for-byte copy of the stream driver's
+  `_code_set_records_and_evidence_for_table`. The root cause of the missing position was the copy, so
+  the runner now imports the one function and the copy is deleted (`_runner.py` 707 to 663 lines, census
+  lowered). The shared function sets `at_position(tables.<t>.columns.<c>)`. One denial-key test per
+  resolution site: the pandas `CodeSetHandler`, `resolve_pinned_code_set_records`, and the shared
+  out-of-core resolver; a fourth test asserts the runner uses that same function. The M8 row above is
+  corrected (no `at_position` in the pandas adapter).
+- **L-1.** Field keys were re-encoded on every unpickle. `FileAccessDenied` and `FileAccessReadError`
+  now rebuild around the stored (already encoded) key; `scrub` does the same. Test: two round trips.
+- **L-2 (tracked follow-up, not fixed).** Write failures under a strict policy are reported as "file
+  could not be read" because `guarded` serves reads and writes alike.
+- **L-3 (tracked follow-up, not fixed).** `fileaccess/_errors.py` imports the memory classifier from
+  `execution/_isolated_common`, a package-layering inversion; the classifier should move to a neutral
+  module.
 
 ## Final verification (head 807ccd88, code last changed in 48647012)
 
