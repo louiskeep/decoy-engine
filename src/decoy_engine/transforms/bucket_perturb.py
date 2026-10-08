@@ -51,7 +51,7 @@ _VALID_BUCKETS = frozenset({"week", "month", "quarter"})
 # TIME/other ones are legal but write midnight, zero or nothing. Anything else is
 # unknown. `%C %h %e %D %F` are absent on purpose: pandas cannot parse them.
 _DATE_DIRECTIVES = frozenset("YyGmbBdjUWVaAuwxc")
-_OTHER_DIRECTIVES = frozenset("HIMSpfzZ")
+_OTHER_DIRECTIVES = frozenset("HIMSpfzZX")
 _FORMAT_ADVICE = "Use a concrete pattern such as %Y-%m-%d."
 
 # Quarter start month by quarter index (0-based: 0=Q1, 1=Q2, 2=Q3, 3=Q4).

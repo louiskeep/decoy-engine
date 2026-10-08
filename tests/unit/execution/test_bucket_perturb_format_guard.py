@@ -224,7 +224,7 @@ class _SpySink:
 
 
 def _fk_job(
-    fmt: Any, values: list[str | None]
+    fmt: Any, values: list[str | None], *, parent_fmt: Any = None
 ) -> tuple[Any, dict[str, pa.Table], RelationshipGraph]:
     key = ColumnSeed(
         namespace="kns",
@@ -252,7 +252,10 @@ def _fk_job(
     )
     plan = _plan(
         (
-            ("parent", TableSeed(per_column=(("pk", key), ("pay", _bp(fmt))), per_group=())),
+            (
+                "parent",
+                TableSeed(per_column=(("pk", key), ("pay", _bp(parent_fmt or fmt))), per_group=()),
+            ),
             ("child", TableSeed(per_column=(("fk", key), ("cpay", _bp(fmt))), per_group=())),
         )
     )
@@ -279,6 +282,16 @@ class TestOutOfCoreRunner:
     @pytest.mark.parametrize("fmt", ["mixed", "%Q"])
     def test_runner_rejects_before_any_write(self, fmt: str, values: list[str | None]) -> None:
         plan, sources, graph = _fk_job(fmt, values)
+        sink = _SpySink()
+        with pytest.raises(StrategyError) as exc:
+            run_fk_out_of_core(plan, sources, registry=_REG, relationship_graph=graph, sink=sink)  # type: ignore[arg-type]
+        assert exc.value.code == CODE
+        assert sink.writes == []
+        assert not sink.committed
+
+    def test_a_later_table_rejects_before_the_first_table_is_written(self) -> None:
+        # The parent's format is valid; only the child (processed second) is not.
+        plan, sources, graph = _fk_job("mixed", ["2024-01-15", "2024-03-02"], parent_fmt="%Y-%m-%d")
         sink = _SpySink()
         with pytest.raises(StrategyError) as exc:
             run_fk_out_of_core(plan, sources, registry=_REG, relationship_graph=graph, sink=sink)  # type: ignore[arg-type]

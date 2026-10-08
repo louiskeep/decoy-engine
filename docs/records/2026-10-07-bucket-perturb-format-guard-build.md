@@ -87,3 +87,9 @@ C8-iii-a pinned `mixed` and `ISO8601` as accepted formats whose output is the fo
 - **Full suite** (`tests`, 3.11, `-rfE`): 25594 passed, 1 failed, 172 skipped, 59 xfailed. The failure is `test_v2_cloud_sources.py::...test_profile_gcs_source_via_mocked_client` (`No module named 'google'`). It fails identically on main 4a08f570 in the same venv, an environment gap.
 - **Testflight** (check mode): 53/53 invariants, 5/5 fingerprints match the golden.
 - **dennis gate:** GO (1 MEDIUM, this record section; 2 LOW, CHANGELOG spacing and the platform roadmap flip at merge).
+
+## Codex final gate round 1 remediation (Opus)
+
+- **`%X`** is added to `_OTHER_DIRECTIVES`. Tests: `%Y-%m-%d %X` is accepted; a bare `%X` is rejected.
+- **Out-of-core preflight.** `_mask_group_c.preflight_group_c(work)` runs in `run_fk_out_of_core` after the compatibility check and before the temp root or any table. A new test, `test_a_later_table_rejects_before_the_first_table_is_written`, gives a valid parent and a `mixed` child and asserts zero sink writes. `_runner.py` stays at 707 LOC: the import became a module import and one comment was compressed.
+- **docs/strategies.md:** the guard paragraph is under bucket_perturb; date_shift's line is restored to main's text.

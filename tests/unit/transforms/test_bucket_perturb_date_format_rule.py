@@ -31,6 +31,7 @@ _REJECTED: list[Any] = [
     "%f",
     "%z",
     "%Z",
+    "%X",  # locale time only
     "%Q",  # unknown directive
     "%%%%Y",  # two escapes, no directive
     "%Y %Q",  # date plus unknown
@@ -55,6 +56,7 @@ _ACCEPTED: list[str | None] = [
     "%Y-%m-%dT%H:%M:%S%z",
     "%Y-%m-%d %f",
     "%Y-%m-%d %Z",
+    "%Y-%m-%d %X",  # locale time beside a date
     "%%Q %Y",  # a literal %Q
     "%j-%Y",
     "%d-%b-%Y",

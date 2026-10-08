@@ -27,7 +27,7 @@ Today `validate_bucket_perturb_config` (`:175-192`) checks only `bucket`, and no
   - A real directive is `%` followed by one character.
   - **Recognized directives (rev 3):**
     - DATE: `%Y %y %G %m %b %B %d %j %U %W %V %a %A %u %w %x %c`. `%C`, `%h`, `%e`, `%D` and `%F` fail pandas parsing, so they are not listed.
-    - TIME and OTHER: `%H %I %M %S %p %f %z %Z`.
+    - TIME and OTHER: `%H %I %M %S %p %f %z %Z %X` (`%X` added in Codex final round 1; it parses and writes on main).
     - Every other directive is unknown.
   - The format is acceptable only if the WHOLE string contains no unknown directive, no dangling `%`, AND at least one DATE directive. Locale `%x` and `%c` are accepted.
   - A dangling trailing `%` is rejected.
@@ -103,3 +103,7 @@ Rollback: revert the merge commit.
 
   The section 2e follow-up (undetectable-format passthrough) is now on the platform roadmap.
 - **Codex plan gate, round 3: GO.** Two LOWs folded: a corrected failure-mode row, and the accepted cases `%Y-%m-%d %f`, `%Y-%m-%d %Z` and `%%Q %Y`.
+- **Codex final gate, round 1: NO-GO** (2 MEDIUM, 1 LOW). Fixed:
+  - `%X` (locale time) was missing from TIME/OTHER, which rejected `%Y-%m-%d %X`, a format that works on main;
+  - the out-of-core runner validated table by table, so a valid first table reached the sink before a later table's bad format was caught. It now preflights every bucket_perturb node before any table (`preflight_group_c`), with a later-table zero-write test;
+  - the docs paragraph moved from date_shift to bucket_perturb.
