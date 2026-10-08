@@ -26,6 +26,27 @@ from decoy_engine.transforms.bucket_perturb import (
 )
 
 
+def _validated_config(plan: ColumnSeed) -> tuple[str, str | None]:
+    """Resolve ``(bucket, date_format)``, failing closed on an invalid config.
+
+    Validates before any data is touched, on the raw ``date_format`` so a falsy
+    non-string cannot slide into autodetect. ``bucket`` defaults to "month" and
+    the validator sees that default, not the possibly absent raw key.
+    """
+    cfg = provider_config_to_dict(plan.provider_config)
+    bucket = str(cfg.get("bucket", "month"))
+    try:
+        validate_bucket_perturb_config({**cfg, "bucket": bucket})
+    except ValueError as exc:
+        raise StrategyError(
+            code="bucket_perturb_invalid_config",
+            strategy="bucket_perturb",
+            message=str(exc),
+        ) from exc
+    date_format: str | None = cfg.get("date_format") or None
+    return bucket, date_format
+
+
 class BucketPerturbStrategyHandler:
     """Coarse time-bucket generalization: snap dates to a deterministic position
     within their ISO week, calendar month, or calendar quarter.
@@ -36,6 +57,14 @@ class BucketPerturbStrategyHandler:
     """
 
     name: str = "bucket_perturb"
+
+    def preflight(self, plan: ColumnSeed, ctx: StrategyContext) -> None:
+        """Validate the config even when a `when:` gate selects no row.
+
+        The gate skips `run` on a zero-match predicate, which would let a
+        `date_format` that cannot write a date back pass unchecked.
+        """
+        _validated_config(plan)
 
     def run(
         self,
@@ -50,22 +79,7 @@ class BucketPerturbStrategyHandler:
                 strategy="bucket_perturb",
                 message=f"column {column!r} uses bucket_perturb but has no namespace.",
             )
-        cfg = provider_config_to_dict(plan.provider_config)
-        bucket = str(cfg.get("bucket", "month"))
-        date_format: str | None = cfg.get("date_format") or None
-
-        # Validate fail-closed before touching any data. apply_bucket_perturb
-        # must never run with an unrecognized bucket. Pass a resolved cfg so the
-        # validator sees the default-applied bucket value, not the raw (possibly
-        # absent) key.
-        try:
-            validate_bucket_perturb_config({**cfg, "bucket": bucket})
-        except ValueError as exc:
-            raise StrategyError(
-                code="bucket_perturb_invalid_config",
-                strategy="bucket_perturb",
-                message=str(exc),
-            ) from exc
+        bucket, date_format = _validated_config(plan)
 
         col = df[column]
         perturbed = apply_bucket_perturb(

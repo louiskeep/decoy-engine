@@ -8,7 +8,6 @@ cases run the lane unpoisoned and assert the lane did not activate.
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +22,7 @@ from decoy_engine.execution.native._operator_config_rejections import (
     bucket_perturb_config_rejection,
 )
 from decoy_engine.execution.physical._shadow_coordinator import ShadowCoordinator
+from decoy_engine.plan._errors import PlanCompileError
 from tests.native._c6c_i_support import ADMITTED_CONFIGS
 from tests.native._c8_iii_a_support import (
     BAD_DATE,
@@ -39,14 +39,11 @@ from tests.native._c8_iii_a_support import (
 )
 from tests.native._chunked_bucket_perturb_support import bp_col, date_value
 from tests.native._chunked_entry_support import NEEDS_COMPANION
-from tests.physical.test_c8_ii_unified_when import admitted, declined, with_when
+from tests.physical.test_c8_ii_unified_when import admitted, with_when
 from tests.physical.test_unified_slice_faker import Case, lane_run
 from tests.physical.test_unified_slice_parity import _assert_full_parity
 from tests.physical.test_unified_slice_positional import lane_batch_rows
 
-GOLDENS = json.loads(
-    (Path(__file__).parents[1] / "native" / "_c8_iii_a_main_goldens.json").read_text()
-)
 PASS_K = {"name": "k", "strategy": "passthrough"}
 PASS_P = {"name": "p", "strategy": "passthrough"}
 
@@ -229,46 +226,47 @@ def test_4_the_config_gate_names_special_formats(fmt: str) -> None:
     assert code == "bucket_perturb_special_date_format:v"
 
 
+def _assert_rejected_on_both_lanes(case: Case) -> None:
+    for lane in (False, True):
+        with pytest.raises(PlanCompileError) as exc:
+            case.run(lane=lane)
+        assert exc.value.code == "bucket_perturb_date_format_unsupported"
+
+
 @NEEDS_COMPANION
 @pytest.mark.parametrize("fmt", SPECIAL_FORMATS)
-def test_4_special_formats_unmasked_decline_and_equal_the_oracle(tmp_path: Path, fmt: str) -> None:
+def test_4_special_formats_unmasked_are_rejected_at_compile(tmp_path: Path, fmt: str) -> None:
     vals: list[str | None] = [*MIXED_OFFSET_VALUES, None, "junk"]
-    declined(_special_case(tmp_path, fmt, vals, None))
+    _assert_rejected_on_both_lanes(_special_case(tmp_path, fmt, vals, None))
 
 
 @NEEDS_COMPANION
 @pytest.mark.parametrize("job", sorted(SPECIAL_FORMAT_JOBS))
 @pytest.mark.parametrize("fmt", SPECIAL_FORMATS)
-def test_4_special_format_jobs_that_succeeded_natively_keep_their_output(
+def test_4_special_format_jobs_that_ran_natively_are_now_rejected(
     tmp_path: Path, fmt: str, job: str
 ) -> None:
-    golden = GOLDENS[f"{fmt}/{job}"]["unified"]
-    assert golden["native"] is True, "recorded on main"
     vals = [v for chunk in SPECIAL_FORMAT_JOBS[job] for v in chunk]
     table = pa.table(
         {"d": pa.array(vals, pa.string()), "p": pa.array(list(range(len(vals))), pa.int64())}
     )
-    case = Case(tmp_path, table, [bp_col("d", date_format=fmt), PASS_P])
-    on = declined(case)
-    out = on.outputs["t"]
-    assert str(out.schema.field("d").type) == golden["schema"]
-    assert out.column("d").to_pylist() == golden["d"]
-    assert (b"pandas" in (out.schema.metadata or {})) is golden["has_pandas_meta"]
+    _assert_rejected_on_both_lanes(Case(tmp_path, table, [bp_col("d", date_format=fmt), PASS_P]))
 
 
 @NEEDS_COMPANION
 @pytest.mark.parametrize("fmt", SPECIAL_FORMATS)
 @pytest.mark.parametrize("predicate", ["k == 'zzz'", "k == 'x'", "k != 'zzz'"])
 @pytest.mark.parametrize("shape", ["ordinary", "mixed_offsets"])
-def test_4_special_formats_masked_decline_and_equal_lane_off(
+def test_4_special_formats_masked_are_rejected_at_compile_under_when(
     tmp_path: Path, fmt: str, predicate: str, shape: str
 ) -> None:
+    """Even a `when:` that selects no row must not hide the unwritable format."""
     vals: list[str | None] = (
         [date_value(i) for i in range(6)]
         if shape == "ordinary"
         else [*MIXED_OFFSET_VALUES, None, date_value(2)]
     )
-    declined(_special_case(tmp_path, fmt, vals, predicate))
+    _assert_rejected_on_both_lanes(_special_case(tmp_path, fmt, vals, predicate))
 
 
 # ---------------------------------------------------------------------------

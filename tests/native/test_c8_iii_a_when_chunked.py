@@ -7,10 +7,8 @@ columns beside a forced-oracle column, which keeps the chunked oracle's own outp
 
 from __future__ import annotations
 
-import json
 from collections.abc import Iterator
 from contextlib import contextmanager
-from pathlib import Path
 from typing import Any
 
 import pyarrow as pa
@@ -20,7 +18,6 @@ from decoy_engine import run_mask_chunked
 from decoy_engine.errors import RowErrorsFailedError
 from decoy_engine.execution import _chunked_oracle
 from decoy_engine.execution._row_errors import RowErrorRecord
-from decoy_engine.execution.native._plan import native_route_eligibility
 from decoy_engine.plan._errors import PlanCompileError
 from tests.native._b8_support import FORCE, identical, with_force
 from tests.native._c6c_i_support import ADMITTED_CONFIGS
@@ -53,8 +50,6 @@ from tests.native._chunked_entry_support import (
     make_config,
     passthrough,
 )
-
-GOLDENS = json.loads((Path(__file__).parent / "_c8_iii_a_main_goldens.json").read_text())
 
 
 @contextmanager
@@ -258,25 +253,25 @@ def test_4_explicit_formats_are_admitted_and_only_selected_rows_change(
     assert any(out[i] != vals[i] for i in range(23) if sel[i] == "x")
 
 
+def _assert_rejected_before_output(*outcomes: Outcome) -> None:
+    for outcome in outcomes:
+        assert isinstance(outcome.error, PlanCompileError), outcome.error
+        assert outcome.error.code == "bucket_perturb_date_format_unsupported"
+        assert not outcome.out and not outcome.sink
+
+
 @NEEDS_COMPANION
 @pytest.mark.parametrize("fmt", SPECIAL_FORMATS)
 @pytest.mark.parametrize("split", ["one_chunk", "split_chunks"])
-def test_4_special_formats_unmasked_decline_with_the_new_code(fmt: str, split: str) -> None:
-    """Mixed offsets: the oracle parses them, native raised on main. Now both take the oracle."""
+def test_4_special_formats_are_rejected_at_compile_before_any_output(fmt: str, split: str) -> None:
+    """`mixed` and `ISO8601` have no date directive, so the format text would replace every date."""
     vals: list[str | None] = [*MIXED_OFFSET_VALUES, None, "junk"]
     table = make_table("bucket_perturb", v=vals, k=["x"] * 4)
     chunks = [table] if split == "one_chunk" else chunk_by_sizes(table, [1, 1, 2])
     cols = [bp_col("v", date_format=fmt), passthrough("k"), passthrough("p")]
     native = run_outcome(make_config(cols), chunks)
     forced = run_outcome(make_config([*cols, force_oracle(FORCE)]), [with_force(c) for c in chunks])
-    assert native.ev[0].native_admitted is False
-    assert (
-        "bucket_perturb_special_date_format:v"
-        in native_route_eligibility(make_config(cols), table=TABLE).rejections
-    )
-    assert native.error is None and forced.error is None
-    for got, want in zip(native.out, forced.out, strict=True):
-        assert identical(got, want.drop_columns([FORCE]))
+    _assert_rejected_before_output(native, forced)
 
 
 def _job_table(chunk: list[str | None]) -> pa.Table:
@@ -288,25 +283,11 @@ def _job_table(chunk: list[str | None]) -> pa.Table:
 @NEEDS_COMPANION
 @pytest.mark.parametrize("job", sorted(SPECIAL_FORMAT_JOBS))
 @pytest.mark.parametrize("fmt", SPECIAL_FORMATS)
-def test_4_special_format_jobs_that_succeeded_natively_keep_their_output(
-    fmt: str, job: str
-) -> None:
-    """Main ran these natively. The route changes to the oracle; the output does not."""
-    golden = GOLDENS[f"{fmt}/{job}"]["chunked"]
-    assert golden["native"] is True, "recorded on main"
+def test_4_special_format_jobs_that_ran_natively_are_now_rejected(fmt: str, job: str) -> None:
+    """Main ran these and wrote the format name over every date; they now fail up front."""
     cols = [bp_col("d", date_format=fmt), passthrough("p")]
     outcome = run_outcome(make_config(cols), [_job_table(c) for c in SPECIAL_FORMAT_JOBS[job]])
-    assert outcome.error is None
-    assert outcome.ev[0].native_admitted is False
-    assert (
-        "bucket_perturb_special_date_format:d"
-        in native_route_eligibility(make_config(cols), table=TABLE).rejections
-    )
-    got = [
-        {"schema": str(t.schema.field("d").type), "d": t.column("d").to_pylist()}
-        for t in outcome.out
-    ]
-    assert got == golden["chunks"]
+    _assert_rejected_before_output(outcome)
 
 
 @NEEDS_COMPANION

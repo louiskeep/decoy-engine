@@ -72,11 +72,13 @@ handle them), never a wrong output:
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
 from decoy_engine.errors import FpeUnencryptableError
+from decoy_engine.execution._adapter import provider_config_to_dict
 from decoy_engine.execution._errors import ExecutionError, StrategyError
 from decoy_engine.execution._strategies._code_set import _PER_VALUE_CODE_SET_ERRORS
 from decoy_engine.generation.pool._events import QualityWarning
@@ -414,13 +416,6 @@ def _bucket_perturb_array(
             message="bucket_perturb strategy requires a namespace.",
         )
     bucket = str(cfg.get("bucket", "month"))
-    date_format: str | None = cfg.get("date_format") or None
-    if date_format is None:
-        raise ExecutionError(
-            code="out_of_core_bucket_perturb_autodetect_unsupported",
-            message="out-of-core bucket_perturb requires an explicit date_format "
-            "(gate should reject); whole-column format detection does not chunk.",
-        )
     try:
         validate_bucket_perturb_config({**cfg, "bucket": bucket})
     except ValueError as exc:
@@ -429,6 +424,13 @@ def _bucket_perturb_array(
             strategy="bucket_perturb",
             message=str(exc),
         ) from exc
+    date_format: str | None = cfg.get("date_format") or None
+    if date_format is None:
+        raise ExecutionError(
+            code="out_of_core_bucket_perturb_autodetect_unsupported",
+            message="out-of-core bucket_perturb requires an explicit date_format "
+            "(gate should reject); whole-column format detection does not chunk.",
+        )
 
     series = _to_series(values)
     perturbed = apply_bucket_perturb(
@@ -444,6 +446,19 @@ def _bucket_perturb_array(
 # ---------------------------------------------------------------------------
 # analytic output types (schema resolved before any batch is seen)
 # ---------------------------------------------------------------------------
+
+
+def preflight_group_c(work: Sequence[Any]) -> None:
+    """Validate every bucket_perturb node's config before any table runs.
+
+    The runner masks and emits table by table, so a bad config on a later table would
+    otherwise surface after an earlier table reached the sink.
+    """
+    for node in work:
+        if node.strategy == "bucket_perturb":
+            group_c_output_type(
+                node.plan_slice, provider_config_to_dict(node.plan_slice.provider_config)
+            )
 
 
 def group_c_output_type(seed: ColumnSeed, cfg: dict[str, Any]) -> pa.DataType:

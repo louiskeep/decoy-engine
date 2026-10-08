@@ -9,6 +9,22 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Fixed (bucket_perturb date_format that destroyed dates, 2026-10-07)
+
+A `bucket_perturb` column whose `date_format` has no date directive, such as `ISO8601`,
+`mixed` or `foo`, used to replace every date that parsed with the format text itself. The job
+succeeded and the column held `mixed` in every row. It now fails before any masking or output write
+with `bucket_perturb_date_format_unsupported`, naming the column and asking for a concrete pattern
+such as `%Y-%m-%d`. The check runs in `compile_plan` and `run_config_only_checks`, covers a
+`nested` bucket_perturb child, and is repeated in the handler and both out-of-core paths for
+configs that skip compile. The native route declines the same formats.
+
+A format that has a date directive is accepted: `%Y`, `%d/%m/%Y`, `%Y-%m-%dT%H:%M:%S%z` and
+`100%% %Y` all still run and give the same output. Time, fractional-second and timezone directives
+still write midnight, zero or nothing, because the strategy perturbs the calendar date. An unknown
+directive such as `%Q` now fails up front as a coded error instead of a bare `ValueError` during
+the run. Leaving `date_format` unset still autodetects.
+
 ### Changed (`when:` runs natively for text_redact, bucket_perturb and date_shift, 2026-10-07)
 
 A `text_redact`, `bucket_perturb` or `date_shift` column with a `when:` predicate now runs on the
@@ -29,9 +45,9 @@ the rows split into chunks or batches. Such jobs now run on the pandas route ins
 output is the same as before (jobs that ran natively, with ordinary dates, one UTC offset, or
 all-null or empty input, produce byte-identical output).
 
-Known defect, NOT fixed here: with either format name, `bucket_perturb` writes the literal format
-name (`mixed` or `ISO8601`) in place of every date it parses, on every route, as it did before
-this change. A follow-up rejects these two values for `bucket_perturb` with a clear config error.
+Superseded the same day: both values (and every other format with no date directive) are now
+rejected before the job runs; see "bucket_perturb date_format that destroyed dates"
+above. The native decline remains as a second line behind that check.
 
 ### Added (memory evidence on capped isolated runs, 2026-10-07)
 

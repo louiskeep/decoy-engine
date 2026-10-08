@@ -138,7 +138,14 @@ value always maps to the same output position. Needs a namespace.
 - `bucket` (str, required): one of `week`, `month`, or `quarter`. An invalid
   or misspelled value raises `StrategyError(bucket_perturb_invalid_config)` at
   execution time, before any row is processed (fail-closed).
-- `date_format`: a strftime format; auto-detected from the column if omitted.
+- `date_format`: a strftime format; auto-detected from the column if omitted. It
+  must contain at least one date directive (`%Y`, `%m`, `%d`, ...) because the same
+  format writes each perturbed date back. `ISO8601`, `mixed`, a bare `%Q` or a
+  time-only format such as `%H:%M:%S` is rejected at compile time with
+  `bucket_perturb_date_format_unsupported`, and by the handler as
+  `bucket_perturb_invalid_config`. Write a concrete pattern such as `%Y-%m-%d`.
+  Time, fractional-second and timezone directives are allowed but write midnight,
+  zero or nothing, since the strategy perturbs the calendar date.
 
 Bucket semantics:
 

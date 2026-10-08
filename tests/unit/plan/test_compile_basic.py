@@ -90,6 +90,7 @@ class TestCompilePlanHappyPath:
             "faker_requires_provider",
             "date_shift_group_by_refs",
             "top_code_config",
+            "bucket_perturb_config",
             "freetext_advisory",
         }
 

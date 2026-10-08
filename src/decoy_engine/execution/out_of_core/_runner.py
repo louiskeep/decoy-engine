@@ -57,6 +57,7 @@ from decoy_engine.execution._output_projection import (
 from decoy_engine.execution._runner import build_work_list, order_work
 from decoy_engine.execution._transactional_sink import TransactionalSink
 from decoy_engine.execution.out_of_core import _join as _join_ooc
+from decoy_engine.execution.out_of_core import _mask_group_c
 from decoy_engine.execution.out_of_core._batch_join import ChildFkBatchJoiner
 from decoy_engine.execution.out_of_core._budget import check_temp_disk_budget
 from decoy_engine.execution.out_of_core._compat import check_out_of_core_compatibility
@@ -72,7 +73,6 @@ from decoy_engine.execution.out_of_core._mask import (
     masked_output_type,
     table_seed,
 )
-from decoy_engine.execution.out_of_core._mask_group_c import text_mask_sub_floor_warning
 from decoy_engine.execution.out_of_core._memory_estimate import resolve_phase_memory_limits
 from decoy_engine.execution.out_of_core._relation import build_parent_key_relation_aligned
 from decoy_engine.execution.out_of_core._route_policy import (
@@ -178,9 +178,8 @@ def run_fk_out_of_core(
         )
     # Validate the override before creating the temp root: an invalid value must not leak a scratch dir.
     reorder_threshold_rows = resolve_reorder_threshold_rows(out_of_core_reorder_threshold_rows)
-    # DE-02 (Codex BLOCKER 4): fail-closed gate FIRST -- before any admissibility
-    # or source checks -- so a keyed out-of-core job can never run off job_seed at
-    # GA regardless of entry point.
+    # DE-02 (Codex BLOCKER 4): fail-closed gate FIRST, before any admissibility or source
+    # check, so a keyed out-of-core job can never run off job_seed at GA from any entry point.
     mask_key = require_mask_key(plan, key_provider)
     work = order_work(build_work_list(plan, registry), relationship_graph)
     compat = check_out_of_core_compatibility(plan, work, relationship_graph)
@@ -189,6 +188,7 @@ def run_fk_out_of_core(
             code=compat.primary_code or "out_of_core_rejected",
             message=compat.message(),
         )
+    _mask_group_c.preflight_group_c(work)
     for edge in relationship_graph.edges:
         if edge.parent_table not in sources or edge.child_table not in sources:
             raise ExecutionError(
@@ -509,7 +509,7 @@ def _stream_table(
                     cfg = provider_config_to_dict(column_seed.provider_config)
                     policy = cfg.get("sub_floor_span")
                     warnings.append(
-                        text_mask_sub_floor_warning(
+                        _mask_group_c.text_mask_sub_floor_warning(
                             column, str(policy) if policy is not None else None, by_detector
                         )
                     )

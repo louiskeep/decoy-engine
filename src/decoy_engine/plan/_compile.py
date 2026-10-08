@@ -59,49 +59,23 @@ from decoy_engine.plan._checks import (
     check_vault_columns,
 )
 
-# Sprint 13 / coercion-13 S3 (2026-07-03): fail-closed checks for truncate
-# (the primary leak, finding 0.4) and its GATE-1 Q4 siblings (bucketize
-# custom-width, categorical char-iteration). Per-strategy modules for the
-# same _checks.py size-ceiling reason as the SP-10c/SP-46 block above.
+# Per-strategy fail-closed check modules (truncate, bucketize, categorical, ...),
+# split out of _checks.py for its size ceiling.
+from decoy_engine.plan._checks_bucket_perturb import check_bucket_perturb_config
 from decoy_engine.plan._checks_bucketize import check_bucketize_config
 from decoy_engine.plan._checks_categorical import check_categorical_categories
-
-# HC-3a: date_shift `group_by` entity-anchor ref check (its own module for the
-# same _checks.py size-ceiling reason as the sibling per-strategy modules).
 from decoy_engine.plan._checks_date_shift import check_date_shift_group_by_refs
-
-# SP-10b: derived_aggregate check extracted from _checks.py to keep that
-# module under its allowlisted ceiling. See test_module_size.py ALLOWLIST.
 from decoy_engine.plan._checks_derived_aggregate import check_derived_aggregate_refs
 from decoy_engine.plan._checks_dp import (
     check_dp_generate_contract,
     verify_dp_snapshots,
 )
-
-# DE-03 sibling: reject `strategy: faker` with no provider at compile (the
-# seed-envelope builder otherwise silently drops it, leaking the raw value).
 from decoy_engine.plan._checks_faker import check_faker_requires_provider
-
-# Sprint 2 honesty pack (2026-07-04, S6, GATE-1 Q4): fpe degenerate-charset
-# whole-column passthrough (discovery 0.1, DISCOVERY 2). Its own module for
-# the same _checks.py size-ceiling reason as the blocks above.
 from decoy_engine.plan._checks_fpe import check_fpe_charset_config
-
-# SP-10c + SP-46: per-strategy check modules (grouped_series, windowed_date,
-# group_key) and the fpe_join_group structural validation (SP-46).
 from decoy_engine.plan._checks_fpe_join import check_fpe_join_groups
-
-# HC-7 (2026-07-17): clinical free-text advisory, warn-only. Own module for
-# the same _checks.py / _compile.py size-ceiling reason as the sibling
-# per-strategy check modules; unlike them it never raises (see
-# quality/_freetext_advisory.py for the full warn-only rationale).
 from decoy_engine.plan._checks_freetext_advisory import check_freetext_advisory
 from decoy_engine.plan._checks_group_key import check_group_key_refs
 from decoy_engine.plan._checks_grouped_series import check_grouped_series_refs
-
-# Row 28 (HC-3b, 2026-07-17): top_code bound-resolution check (its own module
-# for the same _checks.py size-ceiling reason as the sibling per-strategy
-# modules).
 from decoy_engine.plan._checks_top_code import check_top_code_config
 from decoy_engine.plan._checks_truncate import check_truncate_config
 from decoy_engine.plan._checks_windowed_date import check_windowed_date_refs
@@ -258,6 +232,7 @@ def compile_plan(
     # bound (silent-passthrough leak). Config-only; both branches +
     # run_config_only_checks.
     check_top_code_config(config)
+    check_bucket_perturb_config(config)
     # Row 24 (Sprint 13 / coercion-13 S3, GATE-1 Q4, 2026-07-03): reject
     # categorical (mask) columns whose categories is not a proper non-empty
     # list (sibling silent-corruption leak). Config-only; both branches +
@@ -354,6 +329,7 @@ def compile_plan(
             "bucketize_config",
             # Row 28 (HC-3b): top_code bound resolution.
             "top_code_config",
+            "bucket_perturb_config",
             # Row 24 (Sprint 13 S3, GATE-1 Q4): categorical categories shape.
             "categorical_categories",
             # Row 25 (Sprint 2 honesty pack S6, GATE-1 Q4): fpe charset resolution.
@@ -425,6 +401,7 @@ def compile_plan(
             "bucketize_config",
             # Row 28 (HC-3b): top_code bound resolution.
             "top_code_config",
+            "bucket_perturb_config",
             # Row 24 (Sprint 13 S3, GATE-1 Q4): categorical categories shape.
             "categorical_categories",
             # Row 25 (Sprint 2 honesty pack S6, GATE-1 Q4): fpe charset resolution.
@@ -558,6 +535,7 @@ def run_config_only_checks(config: dict[str, Any]) -> tuple[str, ...]:
     # Row 28 (HC-3b, 2026-07-17): reject top_code columns with no resolvable
     # bound (silent-passthrough leak). Config-only.
     check_top_code_config(config)
+    check_bucket_perturb_config(config)
     # Row 24 (Sprint 13 S3, GATE-1 Q4): categorical (mask) categories shape.
     check_categorical_categories(config)
     # Row 25 (Sprint 2 honesty pack S6, GATE-1 Q4): fpe degenerate-charset
@@ -591,6 +569,7 @@ def run_config_only_checks(config: dict[str, Any]) -> tuple[str, ...]:
         "bucketize_config",
         # Row 28 (HC-3b): top_code bound resolution.
         "top_code_config",
+        "bucket_perturb_config",
         # Row 24 (Sprint 13 S3, GATE-1 Q4): categorical categories shape.
         "categorical_categories",
         # Row 25 (Sprint 2 honesty pack S6, GATE-1 Q4): fpe charset resolution.

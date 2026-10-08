@@ -101,6 +101,8 @@ class TestRunConfigOnlyChecks:
             "bucketize_config",
             # Row 28 (HC-3b): top_code bound resolution.
             "top_code_config",
+            # Date-format guard: bucket_perturb date_format must write a date back.
+            "bucket_perturb_config",
             # Row 24 (Sprint 13 S3, GATE-1 Q4): categorical categories shape.
             "categorical_categories",
             # Row 25 (Sprint 2 honesty pack, S6, GATE-1 Q4): fpe charset resolution.

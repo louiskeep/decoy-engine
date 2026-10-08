@@ -461,24 +461,25 @@ class TestAdmissionBoundary:
     def test_invalid_but_truthy_date_format_raises_equivalently_on_both_routes(
         self, tmp_path
     ) -> None:
-        # "%Q" is truthy (admission does not validate format VALIDITY, only
-        # presence) but is not a real strptime directive, so pandas raises a
-        # bare ValueError from strptime on both routes -- neither route
-        # swallows it or treats it as a silent passthrough.
+        # "%Q" is not a real strptime directive. It used to reach pandas and raise
+        # a bare ValueError from strptime mid-run; the shared date_format rule now
+        # rejects it up front with the same coded error on both routes.
         columns = [_bucket_perturb_col("d", date_format="%Q")]
         cfg = _config(tmp_path, columns)
         table = pa.table({"d": pa.array(["2024-01-15"], type=pa.string())})
-        with pytest.raises(ValueError, match="bad directive"):
+        with pytest.raises(PlanCompileError) as chunked:
             list(
                 run_mask_pipeline_chunked(
                     cfg, [table], table="records", engine_version=_ENGINE_VERSION
                 )
             )
+        assert chunked.value.code == "bucket_perturb_date_format_unsupported"
         _write_csv_stub(tmp_path, "records", table)
-        with pytest.raises(ValueError, match="bad directive"):
+        with pytest.raises(PlanCompileError) as whole:
             run_pipeline(
                 cfg, sources={"records": table}, engine_version=_ENGINE_VERSION, auto_chunk=False
             )
+        assert whole.value.code == "bucket_perturb_date_format_unsupported"
 
     def test_when_rejected_manual_entry(self, tmp_path) -> None:
         cfg = _when_bearing_bucket_perturb_cfg(tmp_path)

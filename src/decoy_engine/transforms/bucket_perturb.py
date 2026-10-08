@@ -46,6 +46,14 @@ _LOG = logging.getLogger(__name__)
 # Supported bucket names and their corresponding date-truncation strategies.
 _VALID_BUCKETS = frozenset({"week", "month", "quarter"})
 
+# strftime directives by what they write back. bucket_perturb perturbs the
+# calendar date, so only DATE directives let a date survive the round trip; the
+# TIME/other ones are legal but write midnight, zero or nothing. Anything else is
+# unknown. `%C %h %e %D %F` are absent on purpose: pandas cannot parse them.
+_DATE_DIRECTIVES = frozenset("YyGmbBdjUWVaAuwxc")
+_OTHER_DIRECTIVES = frozenset("HIMSpfzZX")
+_FORMAT_ADVICE = "Use a concrete pattern such as %Y-%m-%d."
+
 # Quarter start month by quarter index (0-based: 0=Q1, 1=Q2, 2=Q3, 3=Q4).
 _QUARTER_START_MONTH = [1, 4, 7, 10]
 
@@ -172,6 +180,41 @@ def apply_bucket_perturb(
     return result
 
 
+def bucket_perturb_date_format_problem(date_format: Any) -> str | None:
+    """Why ``date_format`` cannot write a perturbed date back, or None if it can.
+
+    The same format both parses a value and writes the perturbed date back with
+    ``strftime``. With no date directive ``strftime`` returns the format text, so
+    every parsed date would be overwritten by it. None and "" mean autodetect and
+    are accepted here. The whole string is scanned with ``%%`` consumed as a
+    literal percent. The reason never carries a data value.
+    """
+    if date_format is None or (isinstance(date_format, str) and date_format == ""):
+        return None
+    if not isinstance(date_format, str):
+        return f"date_format must be a string, got {type(date_format).__name__}. {_FORMAT_ADVICE}"
+    has_date = False
+    i = 0
+    while i < len(date_format):
+        if date_format[i] != "%":
+            i += 1
+            continue
+        if i + 1 == len(date_format):
+            return f"date_format ends with a bare '%' (write '%%' for a literal). {_FORMAT_ADVICE}"
+        directive = date_format[i + 1]
+        if directive in _DATE_DIRECTIVES:
+            has_date = True
+        elif directive != "%" and directive not in _OTHER_DIRECTIVES:
+            return f"date_format has the unsupported directive '%{directive}'. {_FORMAT_ADVICE}"
+        i += 2
+    if not has_date:
+        return (
+            "date_format has no date directive, so a perturbed date cannot be "
+            f"written back and the format text would replace every value. {_FORMAT_ADVICE}"
+        )
+    return None
+
+
 def validate_bucket_perturb_config(cfg: dict[str, Any]) -> None:
     """Validate bucket_perturb config dict; raise ValueError on any invalid field.
 
@@ -179,7 +222,8 @@ def validate_bucket_perturb_config(cfg: dict[str, Any]) -> None:
         cfg: Raw config dict with keys ``bucket`` and optionally ``date_format``.
 
     Raises:
-        ValueError: ``bucket`` is missing or not a supported value.
+        ValueError: ``bucket`` is missing or not a supported value, or
+            ``date_format`` cannot write a date back.
     """
     bucket = cfg.get("bucket")
     if not bucket:
@@ -191,3 +235,7 @@ def validate_bucket_perturb_config(cfg: dict[str, Any]) -> None:
             f"bucket_perturb: unsupported bucket {bucket!r}. "
             f"Supported values: {sorted(_VALID_BUCKETS)}."
         )
+    if "date_format" in cfg:
+        problem = bucket_perturb_date_format_problem(cfg["date_format"])
+        if problem is not None:
+            raise ValueError(f"bucket_perturb: {problem}")

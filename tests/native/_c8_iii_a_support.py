@@ -108,9 +108,8 @@ def predicates(kind: str) -> dict[str, str]:
     }
 
 
-# Unmasked bucket_perturb jobs that succeed natively on main. Their output is recorded in
-# `_c8_iii_a_main_goldens.json` and must not change when the special-format gate moves them to
-# the oracle.
+# Unmasked bucket_perturb jobs that main ran natively, writing the format name over every date.
+# They are now rejected at compile, so these shapes feed rejection tests.
 SPECIAL_FORMATS = ("mixed", "ISO8601")
 SPECIAL_FORMAT_JOBS: dict[str, list[list[str | None]]] = {
     "ordinary_dates": [
