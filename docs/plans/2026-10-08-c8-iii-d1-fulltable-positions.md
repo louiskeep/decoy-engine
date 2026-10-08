@@ -1,4 +1,4 @@
-Status: plan (rev 1)
+Status: plan (rev 2)
 
 Rules consulted: 00-universal, development-loop, risk-and-exceptions, feature-dev, testing, code-review.
 
@@ -29,15 +29,17 @@ The gate already knows the full-table positions: `selected_positions(mask)` (`ex
 ## 2. Decision
 
 **2a. One owner for row positions.** Add `row_positions(ctx, n) -> np.ndarray[uint64]` to `execution/_positional_keys.py`:
-- it returns `ctx.row_offset + ctx.gate_positions` when the handler runs under a gate;
+- it returns `ctx.row_offset + ctx.gate_positions` when the handler runs under a gate (and `len(gate_positions) == n`);
 - otherwise it returns `ctx.row_offset + arange(n)`, today's contiguous range;
 - it raises the existing domain error when a position leaves the uint64 domain.
+- **Scalar conversion (rev 2, Codex round 1 finding 3).** The categorical encoder (`encode_int`) and windowed_date (`i.to_bytes(...)`) need a PYTHON `int`, which `np.uint64` is not (`np.uint64(3).bit_length()` and `.to_bytes(...)` both fail). So the per-row scalar is converted to Python `int` at the point it is encoded or serialized. The Faker path, which already uses a uint64 array via `positional_key_array`, keeps the array form. The byte encoding is unchanged; test 3 pins it against base `4a08f570`.
 
 All three positional handlers key from it. Nothing else computes a position.
 
-**2b. The gate always carries positions.**
+**2b. The gate always carries positions, EXCEPT into nested children.**
 - `gated_context` sets `gate_positions` for every gated call, not only exact-integer columns.
 - `sampling_source` keeps reading it only when an exact source is registered, so its behavior is unchanged.
+- **Nested isolation (rev 2, Codex round 1 finding 1).** A nested child's position is a LEAF ordinal, not an outer row. `_strategies/_nested.py` forwards the outer context to the child, so the child must NOT consume the outer `gate_positions`. The nested dispatch clears `gate_positions` (sets it to None) on the child context before calling the child handler, so a child positional strategy keeps its existing `row_offset + leaf_ordinal` keying. Without this, a child would miskey or fail the length check (`n` leaves vs the outer gated count). Changing nested semantics stays deferred; preserving them is required here.
 - The sinks stay shared, as today.
 
 **2c. Kernels take positions, not an offset.** These three gain an explicit positions argument used for the key:
@@ -47,7 +49,10 @@ All three positional handlers key from it. Nothing else computes a position.
 
 When there is no gate, positions equal today's contiguous range, so the output is byte-identical for every call without `when:`, including chunked calls with `row_offset`. The existing `row_offset` callers (chunked oracle and native) keep passing the contiguous form.
 
-**2d. The resulting property.** For a selected row `r`, the output equals that row's output in the same job run without `when:`. Unselected rows stay raw. This holds for any predicate, and it is the parity target d-2 will reuse.
+**2d. The resulting property (narrowed, Codex round 1 finding 2).** For the three TOP-LEVEL positional strategies, with identical handler inputs and config except the target gate: a selected row `r`'s output equals that row's output in the unfiltered run WHEN THAT UNFILTERED RESULT EXISTS. Unselected rows stay raw. Null TARGET values stay covered.
+- windowed_date raises on a null or invalid ANCHOR (`NaTType does not support strftime`). A full-table run with such an anchor fails, but a `when:` predicate that excludes those rows succeeds. So the equality fixtures use valid anchors, and a SEPARATE test pins that excluding null/invalid anchors still succeeds while the unfiltered run still fails.
+- Nested children and stream strategies are explicitly outside this property.
+- This is the parity target d-2 will reuse.
 
 **2e. Out of scope, recorded:**
 - nested children: their positional key is a LEAF ordinal, not a row position, and they are unchanged;
@@ -56,11 +61,14 @@ When there is no gate, positions equal today's contiguous range, so the output i
 
 ## 3. Acceptance tests (written first; never weakened)
 
-1. **Full-table invariance (the core property).** For each of the three strategies, over a 50-row table with nulls in the source and assorted predicates (none selected, all selected, every other row, a contiguous block, a predicate on another column):
-   - every selected row's output equals the same row's output in the run without `when:`;
-   - unselected rows are byte-identical to the source.
+1. **Full-table invariance (the core property, per 2d).** For each of the three strategies, over a 50-row table with assorted predicates (none selected, all selected, every other row, a contiguous block, a predicate on another column):
+   - every selected row's output equals the same row's output in the run without `when:`, WHERE the unfiltered result exists (categorical and Faker use source nulls freely; windowed_date equality fixtures use valid anchors);
+   - unselected rows are byte-identical to the source;
+   - null target values stay covered.
 
    Run on the full-frame oracle, sequential, multi-table and generate-plus-mask (the masking side). Also cover a nonzero `row_offset` caller: the adapter `run(..., row_offset=k)`. In that case, positions equal `k` plus the full-table index.
+1a. **windowed_date null-anchor split.** A table with a null/invalid anchor: the unfiltered run raises (`NaTType does not support strftime`); a `when:` predicate excluding that row succeeds and the surviving rows satisfy property 1.
+1b. **Nested isolation.** A gated nested categorical and a gated nested Faker, with multiple leaves, unmatched paths and null leaves, produce output byte-identical to main (nested keying unchanged).
 2. **Predicate independence.** Two predicates that both select row `r` give `r` the same value.
 3. **No change without `when:`.** Byte-identical output to main for all three strategies, on full-frame, chunked-oracle and native routes, for representative configs. Testflight fingerprints unchanged (no golden uses `when:` with these strategies; STOP if a fingerprint moves).
 4. **Unchanged declines.** Every existing chunked rejection code and native or unified decline for these strategies under `when:` is still raised, with the same codes.
@@ -75,7 +83,7 @@ When there is no gate, positions equal today's contiguous range, so the output i
 
    The builder lists every changed test before implementing.
 7. **Domain.** A gated position near the uint64 limit raises the existing domain error code.
-8. **Sentries; mutation** on `row_positions`, the gate change and each kernel's use of positions.
+8. **Sentries; mutation** on `row_positions`, the gate change, the nested `gate_positions` clear, the scalar int conversion, and each kernel's use of positions.
 9. **Docs.** A CHANGELOG entry under "Changed (pre-GA output)": what changes, why, and that values for gated rows now equal the unfiltered run's. Update the `when:` section of `docs/strategies.md` and the C1b/C5b/windowed_date sections.
 
 ## 4. Failure modes
@@ -91,4 +99,7 @@ Rollback: revert the merge commit.
 
 ## 5. Review log
 
-(none yet)
+- **Codex plan gate, round 1: REVISE** (3 MEDIUM; no double-count route, split and exact-source safety confirmed; a 50-row probe found 17/20/25 mismatches, so the core test can fail). Rev 2:
+  - nested children must not consume outer `gate_positions`; dispatch clears it; test 1b (finding 1);
+  - the invariance property holds only where the unfiltered result exists; windowed_date null-anchor split, test 1a (finding 2);
+  - positions convert to Python `int` before `encode_int`/`to_bytes`; byte encoding pinned against base (finding 3).
