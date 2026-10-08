@@ -1059,8 +1059,11 @@ data values. What is refused: arithmetic, function and method calls, attributes,
 subscripts, `@` references, comparing two columns, chained comparisons, `None`, empty
 lists, bare references, bytes and f-string literals, backtick-quoted names and
 names with characters other than ASCII letters, digits and `_`. There is no null
-check in the grammar (see the CHANGELOG migration table for string and numeric
-columns). A name that pandas would not
+check in the grammar. `x >= ''` (string) and `x < 0 or x >= 0` (numeric) select the
+non-null rows. Their negations select the null rows only on numpy-backed columns; on a
+pandas nullable dtype (`string`, `Int64`, `Float64`, including Parquet written by pandas)
+the negation selects no rows, so there is no way to gate on "is null" there (see the
+CHANGELOG migration table). A name that pandas would not
 read as a column is reserved and refused as a reference: the numexpr function
 names (`sin`, `abs`, `where` and the rest), the pandas eval names (`inf`, `nan`,
 `index`, `columns`, `Timestamp`, `datetime`, `list`, `tuple`) and the Python

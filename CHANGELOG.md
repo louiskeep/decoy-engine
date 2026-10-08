@@ -63,8 +63,8 @@ Migration from the pandas forms that used to work:
 
 | Was | Use | Note |
 |---|---|---|
-| `x.notnull()` | `x >= ''` on a string column, `x < 0 or x >= 0` on a numeric column | The grammar has no general null test. These select the same rows only in those two domains. |
-| `x.isna()` | `not (x >= '')` on a string column, `not (x < 0 or x >= 0)` on a numeric column | Same limit. |
+| `x.notnull()` | `x >= ''` on a string column, `x < 0 or x >= 0` on a numeric column | The grammar has no general null test. These select the non-null rows on numpy-backed and on pandas nullable dtypes (`string`, `string[pyarrow]`, `Int64`, `Float64`). They do not work on other types (dates, booleans, nested). |
+| `x.isna()` | `not (x >= '')` on a string column, `not (x < 0 or x >= 0)` on a numeric column, only when the column has a numpy dtype (object strings, `float64`) | There is no grammar equivalent when the column has a pandas nullable dtype. NOT of a missing result is missing, so on `string`, `string[pyarrow]`, `Int64` and `Float64` these select zero rows and the column is left unmasked. Pandas-written Parquet restores those dtypes. Drop the gate, or wait for the null-test grammar extension (tracked separately). |
 | `x.isin(['a', 'b'])` | `x in ['a', 'b']` | |
 | `x.between(1, 5)` | `x >= 1 and x <= 5` | |
 | `0 < p < 3` | `p > 0 and p < 3` | Chained comparisons are refused. |

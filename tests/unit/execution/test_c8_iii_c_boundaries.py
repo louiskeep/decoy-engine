@@ -470,3 +470,46 @@ def test_a_config_submodel_validated_alone_renders_no_predicate(model: str) -> N
     payload = column if model == "ColumnConfig" else {"name": "t", "columns": [column]}
     exc = _raise_from(lambda: getattr(_tables, model).model_validate(payload))
     sup.assert_no_sentinel(exc)
+
+
+# The CHANGELOG migration table documents these forms for `x.notnull()` and `x.isna()`. The
+# negated form selects nothing on a pandas nullable dtype (NOT of NA is NA), so the table says
+# there is no `isna` equivalent there. These cases keep that caveat honest.
+_NULLABLE = {
+    "string": lambda: pd.array(["a", "", None], dtype="string"),
+    "string_pyarrow": lambda: pd.array(["a", "", None], dtype="string[pyarrow]"),
+    "Int64": lambda: pd.array([1, 0, None], dtype="Int64"),
+    "Float64": lambda: pd.array([1.5, 0.0, None], dtype="Float64"),
+}
+_NOT_NULL_FORM = {"string": "x >= ''", "string_pyarrow": "x >= ''"}
+_NUMERIC_NOT_NULL = "x < 0 or x >= 0"
+
+
+def _selected(values: Any, predicate: str) -> list[bool]:
+    mask = _eval_predicate(pd.DataFrame({"x": values}), predicate, "redact", column="x")
+    return [bool(v) for v in mask.fillna(False).to_numpy(dtype=bool)]
+
+
+@pytest.mark.parametrize("dtype", sorted(_NULLABLE))
+def test_the_notnull_form_selects_the_non_null_rows_on_nullable_dtypes(dtype: str) -> None:
+    predicate = _NOT_NULL_FORM.get(dtype, _NUMERIC_NOT_NULL)
+    assert _selected(_NULLABLE[dtype](), predicate) == [True, True, False]
+
+
+@pytest.mark.parametrize("dtype", sorted(_NULLABLE))
+def test_the_negated_form_selects_no_rows_on_nullable_dtypes(dtype: str) -> None:
+    predicate = f"not ({_NOT_NULL_FORM.get(dtype, _NUMERIC_NOT_NULL)})"
+    assert _selected(_NULLABLE[dtype](), predicate) == [False, False, False]
+
+
+def test_the_negated_form_selects_the_null_row_on_numpy_dtypes() -> None:
+    assert _selected(pd.array([1.5, 0.0, None], dtype="float64"), f"not ({_NUMERIC_NOT_NULL})") == [
+        False,
+        False,
+        True,
+    ]
+    assert _selected(pd.array(["a", "", None], dtype=object), "not (x >= '')") == [
+        False,
+        False,
+        True,
+    ]
