@@ -244,3 +244,9 @@ Verification on the fixed head (3d301b83):
 - testflight check: 5/5 fingerprints, 53/53 invariants.
 
 Built by Opus 4.8 as the builder (Sonnet rate-limited until 2026-10-10); dennis and Codex still gate.
+
+## Gates complete (2026-10-08)
+- dennis re-gate: GO (clean, 0/0/0/0).
+- Codex final gate: GO (high confidence).
+- ci-mirror (clean env, correct paths): PASS, 8481 passed.
+Merge-ready locally; held on push per Cam (2026-10-08).
