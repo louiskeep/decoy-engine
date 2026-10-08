@@ -83,7 +83,7 @@ ALLOWLIST: dict[str, int] = {
     # compile-check ownership table; split into per-strategy check modules once the check set stabilises.
     "src/decoy_engine/plan/_checks.py": 783,
     # statistical-column check threading; same per-strategy-check decomposition target as _checks.py.
-    "src/decoy_engine/plan/_compile.py": 666,
+    "src/decoy_engine/plan/_compile.py": 645,
     # safety invariants documented in docstrings are part of the fix; extract the emission builders into _mem_telemetry_emit.py.
     "src/decoy_engine/execution/_mem_telemetry.py": 762,
     # chunk-parity invariant text and admission gate calls; dense exception.
