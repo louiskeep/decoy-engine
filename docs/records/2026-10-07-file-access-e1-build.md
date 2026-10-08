@@ -274,3 +274,73 @@ fingerprints match golden. The full `tests` run was not repeated after round 2 (
 - [ ] Platform wiring (`forbid_ambient()`, `PrincipalFileAccess`, platform sentries): not in this PR.
 - [ ] Version bump, tag, publish: not done; the 0.9.0 release needs Cam's go.
 - [ ] Coverage and mutation on the changed units; dennis and Codex gates: not run.
+
+## Rev 3.3 delta (X1-X4) finish: remaining gaps closed (2026-10-08)
+
+A prior session built most of the rev 3.3 delta (X1 secret decode, X3 classification, most X2,
+opaque scratch ids in `_runner.py`/`_relation.py`, the census and seam-permit updates) and was cut
+off by a rate limit. This session closed the remaining AT-X2 gaps and investigated the AT-X4
+holdouts.
+
+Fixes (one commit each, on `feat/file-access-policy`):
+
+- **X2 descriptor-path leak in discovery.** `fileaccess.redact_locators` replaced only the exact
+  locator/display pairs it was given. A third-party message on an authorized file can name the
+  descriptor path by a different fd number than the handle we recorded, so the pair miss left
+  `/proc/self/fd/<n>` in the text. `redact_locators` now also collapses any `/proc/self/fd/<n>` or
+  `/dev/fd/<n>` form to a fixed marker after the pair pass, which its own docstring already promised.
+  Ambient text is unchanged (the ambient policy never hands a library a descriptor path).
+  Closes `run_discovery_sql` at both execute and fetch time.
+- **X2 strict denial in the name-hint loader.** Under a strict `DirHandle` a missing member raises
+  `FileAccessDenied` (deny-by-default, no existence oracle; D5), not `FileNotFoundError`. The
+  loader's `_is_file` caught only the ambient filesystem errors, so the denial escaped instead of
+  the loader raising its own `NameHintLoaderError` at the config position. `_is_file` now also
+  catches `FileAccessDenied`.
+- **X2 lockfile test ordering.** `assert_lock_matches_installed` is not an entry point, so its
+  ambient positive control went through `capture()`. The test placed one ambient control AFTER a
+  strict `scope` block, and installing a strict policy latches the process one-way (M4), so that
+  control was refused with `FileAccessUnavailable`. Reordered so both ambient controls run before
+  the strict checks, as every other AT-X2 test already does. No assertion changed; only the
+  sequence. (`dp_provenance.py` already named the config position via `fileaccess.shown`, so no
+  source change was needed there.)
+
+Codex-final finding -> now-passing test:
+
+| Codex final finding | Requirement | Tests (all green unless noted) |
+|---|---|---|
+| 1 (config-derived scratch names) | X4 opaque scratch ids | `test_x4_scratch_and_names.py::test_scratch_stays_inside_its_root_and_the_output_is_unchanged`, `test_relations_sharing_one_parent_do_not_collide`, `test_the_isolated_source_scratch_names_are_opaque` PASS; `test_the_reorder_driver_names_nothing_from_a_column_or_edge` and `test_the_pool_spool_name_is_opaque_and_the_site_ran` left RED (test issues, see below) |
+| 2 (shipped-name resolvers) | X4 membership-first | `test_shipped_corpus_resolvers_reject_unknown_names_without_a_file_system_call`, `test_the_unknown_corpus_message_is_fixed`, `test_shipped_names_still_load`, `test_reference_tables_check_membership_before_any_file_system_call` PASS |
+| 3 (secret material in an error) | X1 | `test_x1_secret.py` (all 10) PASS |
+| 4 (locators, execute/fetch) | X2 | `test_x2_locators.py::test_discovery_errors_at_execute_and_fetch_name_no_locator` PASS (descriptor-path fix) |
+| 5 (locators; YAML tag content) | X2 + D5 scope | all `test_x2_locators.py` PASS; content from an authorized file may appear (D5), only locators may not |
+| 6 (classification survives a translating handler) | X3 | `test_x3_classification.py` (all 5) PASS |
+
+Two AT-X4 tests left RED, reported to Cam, NOT edited to force green:
+
+- `test_the_pool_spool_name_is_opaque_and_the_site_ran`. The spool already uses an opaque per-run
+  name (`pairs_<uuid>.parquet`, `_pool_quality.py` ~244) and the site executes for every column.
+  The failing assertion is `assert column not in path.name` for the WEIRD column `"."`, which is
+  unsatisfiable alongside the required `path.name.endswith(".parquet")`: every Parquet filename
+  contains `.`. This is a test-authoring bug (the WEIRD list from the confinement test is reused for
+  a substring-in-filename check). Recommended fix: assert against `path.stem` (the part the code
+  constructs), or drop `.`/`..` from the spool-name embedding loop. Needs sign-off.
+- `test_the_reorder_driver_names_nothing_from_a_column_or_edge`. The probe records the output's
+  PARENT dir (`tmp_path`) and the sibling `_decoy_stage_*` staging dir. Both come from the
+  `ParquetTransactionalSink` output transaction: `LocalOutputTxn.publish()` does
+  `target.parent.mkdir(parents=True, exist_ok=True)` before the atomic rename, and the stage is a
+  `tempfile.mkdtemp(dir=target.parent)` beside the target (same filesystem, so publication is one
+  rename). This is legitimate output-staging near the declared output dir, identical on main, with
+  an opaque name derived from no column or edge. It is NOT a scratch-confinement escape. The test's
+  assertion (every probed path under `work` or `tmp_path/out`) is too strict. Recommended fix:
+  point the sink target under `work`, or allow the output-parent interactions in the assertion.
+  Left RED pending Cam's sign-off (a security test must not be reinterpreted to pass).
+
+Verification (head after these commits; `~/bin/pytest-one`, native 3.11 venv, `STRACE` set to a
+scratch strace binary since the devbox has none):
+
+| Check | Result |
+|---|---|
+| `ruff check` / `ruff format --check` | clean (1398 files) |
+| `mypy src` (3.10 `.venv`) | 5 pre-existing errors in native modules (`_operator_step.py`, `_faker_null_mask.py`, `_shadow_operators.py`: `decoy_engine_native` attr-defined), unrelated to the changed files; the 3.10 venv lacks the native companion. The three changed files are clean |
+| `tests/fileaccess` + `tests/sentry` (3.11) | 5 failed, 3154 passed, 1 skipped. The 5 are the two AT-X4 tests above (the reorder one across 4 params). strace selftests PASS with the scratch binary (no environmental strace skips this run) |
+| `scripts/test_flight.py` (check) | 53/53 invariant checks, 5/5 fingerprints match golden |
