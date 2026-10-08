@@ -118,10 +118,20 @@ def _oracle_preflight(
         # stored index field, so a config naming it could not resolve (or raise a raw
         # KeyError) after the work above had started.
         reject_config_references_stored_index(config, table, first.schema, resolved_registry)
+        from decoy_engine.execution._chunked_when_guard import plan_positional_when_guard
         from decoy_engine.execution.native._chunk_schema import stored_index_guard
 
         # A stored-index change after chunk 0 is schema drift on both public entries.
         chunk_iter = stored_index_guard(first, chunk_iter, table=table)
+        # A positional draw under `when:` runs chunked only with a string target and string
+        # references; the config veto cannot see Arrow types, so the first chunk is checked here
+        # and every later chunk through the wrap, before it masks (C8-iii-d-2). Shared by both
+        # entries: the native route wraps `validated_rest` outside this, so a positional-column
+        # drift still raises this code first.
+        when_guard = plan_positional_when_guard(config, table)
+        if when_guard is not None:
+            when_guard.check_schema(first.schema, table=table)
+            chunk_iter = when_guard.wrap(chunk_iter, table=table)
     # A keyed job with zero rows and a missing or invalid mask secret must still
     # fail the fail-closed gate, so the profile/plan/gate sequence runs for an
     # empty source too (from `empty_input_profile`) and the empty-input return
