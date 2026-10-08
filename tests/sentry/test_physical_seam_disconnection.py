@@ -535,8 +535,8 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         # capacity estimate (a lexical path join), the DuckDB connection helper (the adapter),
         # the spill estimate's output-device probe (a policy `stat`), the out-of-core key
         # stager's scratch `LazySource`, and the new scratch-root helper. Also the chunked
-        # code_set resolver and the code_set and joint_mask handlers,
-        # which name the column a corpus read belongs to (`at_position`).
+        # code_set resolver and the code_set and joint_mask handlers and the shared
+        # out-of-core resolver, which name the column a corpus read belongs to (`at_position`).
         "src/decoy_engine/execution/_governor.py",
         "src/decoy_engine/execution/_governor_monitor.py",
         "src/decoy_engine/execution/_strategies/_fpe.py",
@@ -547,6 +547,7 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         "src/decoy_engine/execution/out_of_core/_stage.py",
         "src/decoy_engine/execution/_chunked_code_set.py",
         "src/decoy_engine/execution/_strategies/_code_set.py",
+        "src/decoy_engine/execution/out_of_core/_stream_driver_support.py",
         "src/decoy_engine/execution/_strategies/_joint_mask.py",
     }
     unexpected = [
