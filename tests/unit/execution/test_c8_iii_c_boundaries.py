@@ -186,6 +186,15 @@ def test_the_backstop_stops_before_pandas_eval_runs(monkeypatch: pytest.MonkeyPa
     assert calls == []
 
 
+@pytest.mark.parametrize(
+    "value", [5, None, ["x > 0"], b"x > 0"], ids=["int", "none", "list", "bytes"]
+)
+def test_the_backstop_rejects_a_non_string_predicate(value: Any) -> None:
+    with pytest.raises(StrategyError) as info:
+        _eval_predicate(_frame(), value, "redact", column="s")
+    assert info.value.code == CODE
+
+
 def test_the_backstop_rejects_a_blank_predicate() -> None:
     with pytest.raises(StrategyError) as info:
         _eval_predicate(_frame(), "   ", "redact", column="s")

@@ -50,7 +50,7 @@ BAD_IDS = [
     "str_accessor",
     "five_thousand_chars",
 ]
-NON_STRING = [1, True, ["region == 'US'"]]
+NON_STRING = [1, 0, True, False, ["region == 'US'"], [], {}]
 
 
 def _compile(config: dict[str, Any], entry: str, profile: Any) -> Any:
@@ -87,7 +87,11 @@ def test_out_of_grammar_predicate_is_rejected_with_code_and_path(
 
 
 @pytest.mark.parametrize("entry", ENTRIES)
-@pytest.mark.parametrize("value", NON_STRING, ids=["int", "bool", "list"])
+@pytest.mark.parametrize(
+    "value",
+    NON_STRING,
+    ids=["int", "zero", "true", "false", "list", "empty_list", "empty_dict"],
+)
 def test_non_string_when_is_rejected_not_silently_dropped(
     job: tuple[dict[str, Any], Any], entry: str, value: Any
 ) -> None:
@@ -141,3 +145,28 @@ def test_a_grammar_predicate_is_not_newly_rejected(job: tuple[dict[str, Any], An
         raw = sup.with_when(config, "t", "s", predicate)
         assert run_config_only_checks(raw)
         assert sup.column_seed(_compile(raw, "compile_plan", profile), "t", "s").when == predicate
+
+
+def test_the_check_skips_malformed_table_and_column_entries() -> None:
+    """Shape errors belong to other checks; this one only reads dict entries."""
+    from decoy_engine.plan._checks_when import check_when_grammar
+
+    check_when_grammar({})
+    check_when_grammar({"tables": None})
+    check_when_grammar({"tables": ["junk", None, {"name": "t", "columns": None}]})
+    check_when_grammar(
+        {"tables": [{"name": "t", "columns": ["junk", None, {"name": "s", "when": "s == 'a'"}]}]}
+    )
+    with pytest.raises(PlanCompileError) as info:
+        check_when_grammar(
+            {"tables": ["junk", {"name": "t", "columns": [None, {"name": "s", "when": "s.x"}]}]}
+        )
+    assert info.value.path == "tables.t.columns.s.when"
+
+
+def test_a_table_or_column_without_a_name_is_reported_with_a_placeholder() -> None:
+    from decoy_engine.plan._checks_when import check_when_grammar
+
+    with pytest.raises(PlanCompileError) as info:
+        check_when_grammar({"tables": [{"columns": [{"when": "s.x"}]}]})
+    assert info.value.path == "tables.?.columns.?.when"
