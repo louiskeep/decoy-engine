@@ -104,3 +104,4 @@ Rollback: revert the merge commit.
   - the invariance property holds only where the unfiltered result exists; windowed_date null-anchor split, test 1a (finding 2);
   - positions convert to Python `int` before `encode_int`/`to_bytes`; byte encoding pinned against base (finding 3).
 - **Codex plan gate, round 2: GO** (high confidence). All three round-1 findings closed; no new defect. Build-ready.
+- **dennis gate: GO** (2 LOW doc, fixed). **Codex final gate: GO** (high confidence): 120 gated-equivalence probes, 24 ungated baselines, 6 adapter comparisons, nested isolation and copy semantics all pass. Two LOW docs folded: the chunked-decline rationale reworded as a retained restriction, and the CHANGELOG + strategies.md public note added.

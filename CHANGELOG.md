@@ -75,6 +75,17 @@ Migration from the pandas forms that used to work:
 | `` `my col` > 4 `` | rename the column to `my_col`, then `my_col > 4` | Names are ASCII letters, digits and `_`. |
 | `a != b` (two columns) | no equivalent | Compare each column with a literal, or drop the gate. |
 | `s.str.startswith('A')`, `len(s) > 3`, `@limit` | no equivalent | Enumerate the values with `in [...]`, or drop the gate. |
+### Changed (pre-GA output: positional draws under `when:` key on the full-table row, 2026-10-08)
+
+A `when:` predicate on a non-deterministic `categorical`, a REUSE `faker`, or a `windowed_date`
+column now keys each selected row's draw on its full-table row number, not on its position within
+the selected subset. A selected row therefore gets the same value it would in an ungated run, so
+changing the predicate (or adding rows elsewhere) no longer shifts the output of rows whose own
+values did not change. This is a pre-GA output change for these three strategies under `when:`;
+columns with no `when:` are byte-identical to before. Nested children (keyed on the leaf position)
+and the order-dependent stream strategies (`shuffle`, Faker UNIQUE/MATCH/SCALE, `joint_mask`) are
+unchanged. The native, unified and chunked routes still send these gated columns to the oracle;
+running them natively under `when:` is a later change (C8-iii-d-2).
 
 ### Changed (`when:` runs natively for text_redact, bucket_perturb and date_shift, 2026-10-07)
 

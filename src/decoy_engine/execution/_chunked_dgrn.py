@@ -27,13 +27,13 @@ module enforces:
    slice (`chunked_fk_parent_strategy_not_self_mask_safe`, or -- for
    windowed_date specifically, since it was never chunk-safe to begin with
    -- would have been even before that 2026-09-02 narrowing).
-2. `windowed_date` + `when:` must be rejected on the chunked route.
-   Since C8-iii-d-1 the full-frame oracle keys each matching row on its
-   FULL-TABLE row (`_positional_keys.row_positions` from the gate's
-   positions), not the filtered ordinal. The chunked route does not yet
-   thread those gate positions to its per-chunk `row_offset`, so it
-   cannot reproduce that numbering; C8-iii-d-2 lifts this once it does.
-   Until then byte parity cannot hold, so the route declines. The
+2. `windowed_date` + `when:` is an admission restriction the chunked
+   route keeps for now. Since C8-iii-d-1 the full-frame oracle keys each
+   matching row on its FULL-TABLE row (`_positional_keys.row_positions`
+   from the gate's positions). The chunked route's per-chunk gate is not
+   yet wired to pass those positions into `row_offset`, so admitting it
+   now would re-number within the chunk. C8-iii-d-2 wires it and lifts
+   this restriction; until then the route declines to stay byte-exact. The
    auto-planner separately rejects ALL `when` predicates for auto-
    routing (`_planner._whole_column_state_rejections`), but that gate
    does not run for a direct `run_mask_pipeline_chunked` call, so

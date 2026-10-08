@@ -1114,6 +1114,15 @@ the native route takes its row mask from that same call. A config that skips
 validation (a raw dict handed to `run_pipeline`) keeps today's behavior and is
 not restricted to the grammar.
 
+Positional draws under `when:` key on the full-table row. A non-deterministic
+`categorical`, a REUSE `faker`, or a `windowed_date` column under a `when:`
+predicate draws for each selected row as if the predicate were not there: the
+row's value depends on its position in the whole table, not on how many earlier
+rows the predicate selected. So a selected row keeps the same value when the
+predicate changes. Nested children (keyed on the leaf position) and the
+order-dependent strategies (`shuffle`, Faker UNIQUE/MATCH/SCALE, `joint_mask`)
+are not affected.
+
 ## Generation strategies (generate mode)
 
 In `mode: generate`, each column declares a `type` instead of a `strategy`.
