@@ -51,6 +51,7 @@ def _spied_adapter() -> tuple[PandasExecutionAdapter, list[str]]:
 
 def _assert_typed(exc: ValidationError, table: str = "b", column: str = "s") -> None:
     assert exc.code == CODE
+    assert exc.path == f"tables.{table}.columns.{column}.when"
     assert BAD not in str(exc)
     assert table in str(exc) and column in str(exc)
 
