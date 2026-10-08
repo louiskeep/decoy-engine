@@ -53,7 +53,9 @@ def test_the_pool_spool_name_is_opaque_and_the_site_ran(
         assert path.parent == work
         assert path.name.startswith("pairs_") and path.name.endswith(".parquet")
         for column in WEIRD:
-            assert column not in path.name
+            # The real property is that the column NAME is not embedded in the constructed name;
+            # check the stem so the fixed ".parquet" extension does not make "." a trivial match.
+            assert column not in path.stem
     assert list(work.iterdir()) == [], "the spool is removed"
 
 
@@ -225,6 +227,11 @@ def test_the_reorder_driver_names_nothing_from_a_column_or_edge(
     outer = tmp_path / "outer"
     outer.mkdir()
     work = outer / "work"
+    # The sink stages beside its target (`_decoy_stage_*` plus a `target.parent.mkdir`), which is
+    # legitimate output staging, not scratch. Nest the target so that staging lands under `out/`,
+    # the prefix the confinement assertion already allows.
+    out = tmp_path / "out"
+    out.mkdir()
     before = _listing(tmp_path)
     probe = _Probe(monkeypatch)
     run_fk_out_of_core(
@@ -232,7 +239,7 @@ def test_the_reorder_driver_names_nothing_from_a_column_or_edge(
         lazy,
         registry=_REG,
         relationship_graph=graph,
-        sink=ParquetTransactionalSink(tmp_path / "out"),
+        sink=ParquetTransactionalSink(out / "result"),
         temp_dir=work,
         budget_bytes=1 << 30,
         temp_disk_budget_bytes=200 << 30,

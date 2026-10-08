@@ -308,32 +308,35 @@ Codex-final finding -> now-passing test:
 
 | Codex final finding | Requirement | Tests (all green unless noted) |
 |---|---|---|
-| 1 (config-derived scratch names) | X4 opaque scratch ids | `test_x4_scratch_and_names.py::test_scratch_stays_inside_its_root_and_the_output_is_unchanged`, `test_relations_sharing_one_parent_do_not_collide`, `test_the_isolated_source_scratch_names_are_opaque` PASS; `test_the_reorder_driver_names_nothing_from_a_column_or_edge` and `test_the_pool_spool_name_is_opaque_and_the_site_ran` left RED (test issues, see below) |
+| 1 (config-derived scratch names) | X4 opaque scratch ids | all `test_x4_scratch_and_names.py` PASS (`test_scratch_stays_inside_its_root_and_the_output_is_unchanged`, `test_relations_sharing_one_parent_do_not_collide`, `test_the_isolated_source_scratch_names_are_opaque`, `test_the_reorder_driver_names_nothing_from_a_column_or_edge`, `test_the_pool_spool_name_is_opaque_and_the_site_ran`; the last two after the non-weakening test corrections below) |
 | 2 (shipped-name resolvers) | X4 membership-first | `test_shipped_corpus_resolvers_reject_unknown_names_without_a_file_system_call`, `test_the_unknown_corpus_message_is_fixed`, `test_shipped_names_still_load`, `test_reference_tables_check_membership_before_any_file_system_call` PASS |
 | 3 (secret material in an error) | X1 | `test_x1_secret.py` (all 10) PASS |
 | 4 (locators, execute/fetch) | X2 | `test_x2_locators.py::test_discovery_errors_at_execute_and_fetch_name_no_locator` PASS (descriptor-path fix) |
 | 5 (locators; YAML tag content) | X2 + D5 scope | all `test_x2_locators.py` PASS; content from an authorized file may appear (D5), only locators may not |
 | 6 (classification survives a translating handler) | X3 | `test_x3_classification.py` (all 5) PASS |
 
-Two AT-X4 tests left RED, reported to Cam, NOT edited to force green:
+Two AT-X4 tests were over-constraining (flagged to Cam, who judged both as test-authoring issues,
+not production defects); fixed with Cam-approved NON-WEAKENING test corrections, production behavior
+unchanged:
 
 - `test_the_pool_spool_name_is_opaque_and_the_site_ran`. The spool already uses an opaque per-run
   name (`pairs_<uuid>.parquet`, `_pool_quality.py` ~244) and the site executes for every column.
-  The failing assertion is `assert column not in path.name` for the WEIRD column `"."`, which is
-  unsatisfiable alongside the required `path.name.endswith(".parquet")`: every Parquet filename
-  contains `.`. This is a test-authoring bug (the WEIRD list from the confinement test is reused for
-  a substring-in-filename check). Recommended fix: assert against `path.stem` (the part the code
-  constructs), or drop `.`/`..` from the spool-name embedding loop. Needs sign-off.
-- `test_the_reorder_driver_names_nothing_from_a_column_or_edge`. The probe records the output's
-  PARENT dir (`tmp_path`) and the sibling `_decoy_stage_*` staging dir. Both come from the
-  `ParquetTransactionalSink` output transaction: `LocalOutputTxn.publish()` does
-  `target.parent.mkdir(parents=True, exist_ok=True)` before the atomic rename, and the stage is a
-  `tempfile.mkdtemp(dir=target.parent)` beside the target (same filesystem, so publication is one
-  rename). This is legitimate output-staging near the declared output dir, identical on main, with
-  an opaque name derived from no column or edge. It is NOT a scratch-confinement escape. The test's
-  assertion (every probed path under `work` or `tmp_path/out`) is too strict. Recommended fix:
-  point the sink target under `work`, or allow the output-parent interactions in the assertion.
-  Left RED pending Cam's sign-off (a security test must not be reinterpreted to pass).
+  The assertion `column not in path.name` was unsatisfiable for the WEIRD column `"."` because every
+  Parquet filename contains a `.` in its extension, while the test also requires
+  `endswith(".parquet")`. The real property is that the column NAME is not embedded in the
+  constructed name, so the check now runs against `path.stem` (extension stripped); every weird name,
+  including `.` and `..`, is kept. Over-constraining: dot-in-filename, not a leak.
+- `test_the_reorder_driver_names_nothing_from_a_column_or_edge`. The probe recorded the output's
+  PARENT dir and the sibling `_decoy_stage_*` dir, both from the `ParquetTransactionalSink` output
+  transaction (`LocalOutputTxn.publish()` does `target.parent.mkdir(parents=True, exist_ok=True)`
+  before the atomic rename, and the stage is a `tempfile.mkdtemp(dir=target.parent)` beside the
+  target). That is legitimate output staging near the declared output dir, identical to main, opaque,
+  derived from no column or edge, not scratch. The assertion conflated output staging with scratch
+  confinement. Fixed WITHOUT widening the assertion: the sink target is nested one level deeper
+  (`tmp_path/out/result`) so its parent and the stage land under the `out/` prefix the
+  `startswith((work, out))` check already allows; the separate scratch-name check
+  (`name not in entry` over `_listing(work)`) is unchanged. Over-constraining: output staging vs
+  scratch confinement, not a leak.
 
 Verification (head after these commits; `~/bin/pytest-one`, native 3.11 venv, `STRACE` set to a
 scratch strace binary since the devbox has none):
@@ -342,5 +345,5 @@ scratch strace binary since the devbox has none):
 |---|---|
 | `ruff check` / `ruff format --check` | clean (1398 files) |
 | `mypy src` (3.10 `.venv`) | 5 pre-existing errors in native modules (`_operator_step.py`, `_faker_null_mask.py`, `_shadow_operators.py`: `decoy_engine_native` attr-defined), unrelated to the changed files; the 3.10 venv lacks the native companion. The three changed files are clean |
-| `tests/fileaccess` + `tests/sentry` (3.11) | 5 failed, 3154 passed, 1 skipped. The 5 are the two AT-X4 tests above (the reorder one across 4 params). strace selftests PASS with the scratch binary (no environmental strace skips this run) |
+| `tests/fileaccess` + `tests/sentry` (3.11) | 3159 passed, 1 skipped, 0 failed (after the two AT-X4 test corrections). strace selftests PASS with the scratch binary (no environmental strace skips this run) |
 | `scripts/test_flight.py` (check) | 53/53 invariant checks, 5/5 fingerprints match golden |
