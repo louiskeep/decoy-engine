@@ -134,7 +134,11 @@ def _assert_chunked_equals_full(
         assert got[0] == "err", "the whole frame raised but the auto run did not"
         assert type(got[1]) is type(want[1])
         assert getattr(got[1], "code", None) == getattr(want[1], "code", None)
-        assert getattr(got[1], "code", None) == "when_expression_error"
+        # C8-iii-c: an out-of-grammar predicate is rejected at compile (when_outside_closed_grammar)
+        # before it can reach eval; an in-grammar predicate that still fails at eval keeps
+        # when_expression_error. Both the auto and whole-frame runs raise the same one.
+        expect = "when_expression_error" if grammar else "when_outside_closed_grammar"
+        assert getattr(got[1], "code", None) == expect
         relaxed = planner_relaxed_when_columns(cfg, None, TABLE, {TABLE: source}, {})
         assert relaxed == (frozenset({"s"}) if grammar else frozenset())
         return None
@@ -446,10 +450,16 @@ def test_a_duration_reference_is_not_relaxed() -> None:
     assert planner_relaxed_when_columns(cfg, None, TABLE, {TABLE: table}, {}) == frozenset()
 
 
-def test_a_predicate_outside_the_grammar_on_a_float_reference_is_declined(tmp_path: Path) -> None:
+def test_an_out_of_grammar_predicate_is_rejected_at_compile(tmp_path: Path) -> None:
+    # C8-iii-c: an out-of-grammar predicate (here `f.notnull()`, a method call) no longer reaches
+    # the auto-chunk planner's decline path; it is rejected at compile for every caller. The
+    # planner-decline path for an in-grammar but unstable reference is covered by
+    # test_one_unstable_reference_declines_even_beside_a_stable_one.
     refs = {"f": _col(_F, pa.float64())}
     cfg, source, oracle = _setup(tmp_path, _cols(refs, "f.notnull()"), _table(refs), "resident")
-    assert _declined_columns(_declined(cfg, source, oracle)) == ["s"]
+    err = _outcome(lambda: _full(cfg, oracle))
+    assert err[0] == "err"
+    assert getattr(err[1], "code", None) == "when_outside_closed_grammar"
 
 
 def test_a_numeric_reference_masked_earlier_is_declined(tmp_path: Path) -> None:
@@ -479,7 +489,7 @@ def test_the_reason_names_exactly_the_declined_columns(tmp_path: Path) -> None:
     columns = [
         {**redact("s"), "when": "f > 0.5 and l == 'x'"},
         {**truncate("t"), "when": "b == True"},
-        {**redact("u"), "when": "f.notnull()"},
+        {**redact("u"), "when": "b == True"},
         *(passthrough(k) for k in refs),
     ]
     cfg, source, oracle = _setup(tmp_path, columns, table, "resident")
