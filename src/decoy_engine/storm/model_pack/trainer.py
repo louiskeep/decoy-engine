@@ -625,10 +625,10 @@ def load_pack(pack_dir: Path) -> dict[str, Any]:
     """
     manifest_bytes = _packio.read_member(pack_dir, "manifest.json")
     if manifest_bytes is None:
-        raise FileNotFoundError(f"Missing manifest.json in {pack_dir}")
+        raise FileNotFoundError(f"Missing manifest.json in {_packio.member_display(pack_dir)}")
     model_bytes = _packio.read_member(pack_dir, "model.joblib")
     if model_bytes is None:
-        raise FileNotFoundError(f"Missing model.joblib in {pack_dir}")
+        raise FileNotFoundError(f"Missing model.joblib in {_packio.member_display(pack_dir)}")
 
     manifest = ModelPackManifest.from_dict(json.loads(manifest_bytes.decode("utf-8")))
     if manifest.format_version != PACK_FORMAT:

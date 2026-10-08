@@ -355,6 +355,45 @@ def test_model_pack_refusals_log_no_locator(
         pass
 
 
+def test_trainer_load_pack_names_no_locator(
+    xworld: XWorld, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`trainer.load_pack` reads the pack through `_packio` without naming the policy itself.
+    Under a strict policy a missing member is a preserved denial (locator-free); an injected
+    resource failure keeps its class and errno (no translating handler swallows it)."""
+    import errno
+
+    pytest.importorskip("lightgbm")  # trainer is import-gated on the [ml] extra
+    pytest.importorskip("sklearn")
+
+    from decoy_engine.execution._isolated_common import is_memory_failure
+    from decoy_engine.storm.model_pack import _packio, trainer
+
+    pack = xworld.sub / "pack"
+    pack.mkdir()
+    # ambient control: the missing-member message names the pack directory
+    with pytest.raises(FileNotFoundError) as control:
+        trainer.load_pack(pack)
+    assert LOCATOR_SENTINEL in str(control.value)
+    with fileaccess.scope(xworld.policy):
+        with pytest.raises(fileaccess.FileAccessDenied) as denied:
+            trainer.load_pack(pack)
+        monkeypatch.setattr(
+            _packio, "read_member", _read_failure_raiser(OSError(errno.ENOMEM, "oom"))
+        )
+        with pytest.raises(OSError) as oom:
+            trainer.load_pack(pack)
+    assert_no_locator(xworld, rendered(denied.value))
+    assert oom.value.errno == errno.ENOMEM and is_memory_failure(oom.value)
+
+
+def _read_failure_raiser(exc: Exception):  # type: ignore[no-untyped-def]
+    def boom(*a: Any, **k: Any):  # type: ignore[no-untyped-def]
+        raise exc
+
+    return boom
+
+
 def test_name_hint_diagnostics_name_no_locator(xworld: XWorld) -> None:
     from decoy_engine.storm.name_hints.loader import NameHintLoaderError, load_name_hint_terms
 

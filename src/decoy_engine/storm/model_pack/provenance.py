@@ -152,7 +152,7 @@ def sign_pack(pack_dir: Path, key: bytes) -> str:
     """
     if not key:
         raise ValueError("sign_pack: key must be non-empty bytes")
-    shown = fileaccess.shown(str(pack_dir), fileaccess.position_key("storm.model_pack"))
+    shown = _packio.member_display(pack_dir)
     try:
         data = _packio.read_member(pack_dir, "manifest.json")
         if data is None:

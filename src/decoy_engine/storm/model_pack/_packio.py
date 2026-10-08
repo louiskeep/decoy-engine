@@ -14,6 +14,15 @@ from pathlib import Path
 from decoy_engine import fileaccess
 from decoy_engine.fileaccess import DirHandle, FileAccess, FileRequest, FileRole
 
+#: Config position a model-pack diagnostic names the directory by (X2).
+_PACK_POSITION = "storm.model_pack"
+
+
+def member_display(pack_dir: Path) -> str:
+    """How a diagnostic names the pack: its path on the ambient CLI, the config position under a
+    strict policy. Readers (`trainer`, `provenance`) call this instead of naming `pack_dir` raw."""
+    return fileaccess.shown(str(pack_dir), fileaccess.position_key(_PACK_POSITION))
+
 
 def open_pack_dir(pack_dir: Path, file_access: FileAccess | None = None) -> DirHandle:
     policy = fileaccess.capture(file_access)
