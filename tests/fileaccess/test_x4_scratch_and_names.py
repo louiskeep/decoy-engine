@@ -114,29 +114,35 @@ class _Probe:
 
     def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
         self.paths: list[Path] = []
-        record = self.paths.append
+
+        def record(where: Any) -> None:
+            # A writer may be handed an already-open file object (the sink opens through its
+            # own capability); only a path names a scratch location this probe can judge.
+            if isinstance(where, (str, os.PathLike)):
+                self.paths.append(Path(where))
+
         real_mkdir, real_makedirs, real_os_mkdir = Path.mkdir, os.makedirs, os.mkdir
         real_write, real_writer = pq.write_table, pq.ParquetWriter
 
         def mkdir(path: Path, *a: Any, **k: Any) -> None:
-            record(Path(path))
+            record(path)
             return real_mkdir(path, *a, **k)
 
         def makedirs(name: Any, *a: Any, **k: Any) -> None:
-            record(Path(name))
+            record(name)
             return real_makedirs(name, *a, **k)
 
         def os_mkdir(path: Any, *a: Any, **k: Any) -> None:
-            record(Path(path))
+            record(path)
             return real_os_mkdir(path, *a, **k)
 
         def write_table(table: Any, where: Any, *a: Any, **k: Any) -> None:
-            record(Path(where))
+            record(where)
             return real_write(table, where, *a, **k)
 
         class Writer(real_writer):  # type: ignore[misc, valid-type]
             def __init__(self, where: Any, *a: Any, **k: Any) -> None:
-                record(Path(where))
+                record(where)
                 super().__init__(where, *a, **k)
 
         monkeypatch.setattr(Path, "mkdir", mkdir)

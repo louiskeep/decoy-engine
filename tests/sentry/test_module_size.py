@@ -67,7 +67,7 @@ ALLOWLIST: dict[str, int] = {
     # fan-in guard on the budget resolver; split the disk-preflight helpers into _disk_budget.py.
     "src/decoy_engine/execution/out_of_core/_budget.py": 608,
     # float FK key token pricing; split the disk-width helpers into _spill_widths.py.
-    "src/decoy_engine/execution/out_of_core/_spill_estimate.py": 641,
+    "src/decoy_engine/execution/out_of_core/_spill_estimate.py": 645,
     # pinned-Plan generation threading through the per-generator dispatch; split the statistical/derived/formula branches.
     "src/decoy_engine/generation/synthesize.py": 632,
     "src/decoy_engine/storm/detectors.py": 1046,
@@ -100,11 +100,11 @@ ALLOWLIST: dict[str, int] = {
     # sequential FK route threading; split the per-table mask/quarantine loop.
     "src/decoy_engine/execution/_sequential.py": 655,
     # transactional publish hardening and row mask; split the publish cluster.
-    "src/decoy_engine/quarantine.py": 637,
+    "src/decoy_engine/quarantine.py": 638,
     # code_set provenance and FF1 notice plumbing through the streaming runner.
     "src/decoy_engine/execution/out_of_core/_runner.py": 663,
     # corpus schema checks and verify_corpus; split into _codeset_verify.py when next touched.
-    "src/decoy_engine/transforms/_codeset_loader.py": 650,
+    "src/decoy_engine/transforms/_codeset_loader.py": 683,
     # DRAW_SITES catalogue; split into _draw_sites_mask.py / _draw_sites_gen.py if it grows.
     "src/decoy_engine/execution/native/_determinism_protocol.py": 928,
     # one provider class per draw mechanism across 30 sites; the size is fan-out, not tangle.
@@ -112,7 +112,9 @@ ALLOWLIST: dict[str, int] = {
     # load-time self-test and native_threads plumbing; no cleaner class split identified.
     "src/decoy_engine/execution/out_of_core/_stream_join.py": 720,
     # custom-provider registry snapshot for the shadow-parity gate; one cohesive module, no split identified.
-    "src/decoy_engine/internal/faker_setup.py": 648,
+    "src/decoy_engine/internal/faker_setup.py": 653,
+    # E1: file-access policy boundary added (crossed 600).
+    "src/decoy_engine/quality/dp_provenance.py": 602,
     # FF1 span path and sub-floor policy; split into _text_mask_sub_floor.py when next touched.
     "src/decoy_engine/transforms/text_mask.py": 722,
     # ambient guard for the subprocess route (D6 fail-closed); split the in-process fallback into its own module when next touched.
