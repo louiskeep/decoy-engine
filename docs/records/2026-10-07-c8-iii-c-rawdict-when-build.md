@@ -79,7 +79,7 @@ git archive 4a08f570 | tar -x -C <scratch>/c8iiic-old     # then the four test f
 ~/bin/pytest-one <py3.11> <the three test files>           # run with cwd = the old tree
 ```
 
-A one-off check confirmed `decoy_engine.__file__` resolved inside the old tree. First attempt: 111 failed, 23 passed, and a fixture bug (an unmade directory) made 14 of the failures fail for the wrong reason. After the fix, plus a stricter type assertion in the no-render test (one case passed vacuously because an `ImportError` is not an assertion error): **112 failed, 22 passed on the old tree; 134 passed on the new code.** The failures are the intended ones: `DID NOT RAISE PlanCompileError` (56), `DID NOT RAISE ValidationError` (11), `ImportError: validate_plan_when` (11), not raising the expected `StrategyError` or any exception at the boundaries (21), the sentinel found in `str(exc)`, the traceback or logging output (rest). The 22 that pass on the old tree are the guards for behavior that must not change: blank and padded predicates compile, a grammar predicate is not newly rejected, a grammar plan round-trips, admission verdicts (3(b)), the eval-scope clamps, the non-boolean branch, and `numexpr_required`.
+A one-off check confirmed `decoy_engine.__file__` resolved inside the old tree. First attempt: 111 failed, 23 passed, and a fixture bug (an unmade directory) made 14 of the failures fail for the wrong reason. After the fix, plus a stricter type assertion in the no-render test (one case passed vacuously because an `ImportError` is not an assertion error): **112 failed, 22 passed on the old tree; 134 passed on the new code.** The failures are the intended ones. In the 111-failure run: `DID NOT RAISE PlanCompileError` (56), `DID NOT RAISE ValidationError` (11), `ImportError: validate_plan_when` (11), no exception at all at a boundary the new code must reject (12 `BaseException` and 3 `Exception`), `DID NOT RAISE StrategyError` (6), and assertions on the sentinel, the cache, the absent `parse_when_cached` and the chain (the rest). The 22 that pass on the old tree are the guards for behavior that must not change: blank and padded predicates compile, a grammar predicate is not newly rejected, a grammar plan round-trips, admission verdicts (3(b)), the eval-scope clamps, the non-boolean branch, and `numexpr_required`.
 
 ## 4. Test changes
 
@@ -111,13 +111,13 @@ Prediction check: after the source change the affected files ran again. 79 tests
 | 21 bucket_perturb auto route | (a): the shared helper uses `date_format="mixed"` (native still declines) and `d > '2000' and d < '2030'` (same selection as the chained form). |
 | 22 categorical seeded | (a), `keep == True` (a bool column, same selection). |
 
-Nothing was deleted. No assertion was dropped, loosened or narrowed. The test counts in the changed files are equal or higher except where a parametrized e2e test became a rejection test plus a helper test.
+Nothing was deleted. No assertion was dropped, loosened or narrowed; a case moved to a rejection test keeps its fixture, and the claim it protected stays in the helper-level test named in its row.
 
 ## 5. Quality gates
 
 - **Lint.** `ruff check`, `ruff format --check` clean on every changed Python file. `mypy` on the seven changed source files reports nothing in them; five pre-existing `Module has no attribute` errors for pyarrow compute functions appear in three untouched files in the default venv.
 - **Sentries** (rerun after the commits; the seam sentry diffs committed HEAD): `tests/sentry` 2455 passed, 1 skipped, including the module-size census at exact LOC and the log-interpolation sentry. The census moved `_compile.py` 703 -> 666 and `_pandas_adapter.py` 681 -> 686.
-- **Full suite, Python 3.11, `-rfE`:** baseline at `4a08f570` 25368 passed, 1 failed (the known `test_profile_gcs_source_via_mocked_client`, `No module named 'google'`); final run is in section 6.
+- **Full suite, Python 3.11, `-rfE`:** baseline at `4a08f570` 25368 passed, 1 failed (the known `test_profile_gcs_source_via_mocked_client`, `No module named 'google'`); final run at HEAD `e2f9b15b` plus the record: **25533 passed, 172 skipped, 59 xfailed, 1 failed** (the same known GCS failure; 165 more passes than baseline, all new tests).
 - **Testflight, check mode** (`scripts/test_flight.py`, run under the shared lock): exit 0, 53 of 53 invariant checks passed, strategy coverage guard passed, **`FINGERPRINTS: 5/5 match golden`**. No fingerprint moved.
 
 ## 6. Mutation (hand harness, mutmut is not installed)
