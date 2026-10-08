@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import errno
 import os
+import re
 from collections.abc import Callable, Iterable, Iterator
 from typing import Any, NewType, TypeVar
 
@@ -20,6 +21,13 @@ _MAX_KEY = 256
 _TRUNCATED = "...[truncated]"
 T = TypeVar("T")
 _RESOURCE_ERRNOS = frozenset({errno.ENOSPC, errno.EDQUOT, errno.ENOMEM})
+
+# A descriptor path (`/proc/self/fd/<n>`, `/dev/fd/<n>`) is the locator a strict policy hands a
+# library. The specific one is redacted by pair, but a third-party message may name a different
+# fd number than the handle we recorded; any descriptor path is a locator, so collapse the whole
+# form (CWE-209). No field position is known for an unrecognized fd, so it goes to a fixed marker.
+_FD_PATH_RE = re.compile(r"/proc/self/fd/\d+|/dev/fd/\d+")
+_FD_REDACTED = "<redacted>"
 
 
 def encode_field_key(key: str) -> EncodedKey:
@@ -82,7 +90,7 @@ def redact_locators(text: str, pairs: Iterable[tuple[str, str]]) -> str:
     for locator, display in sorted(pairs, key=lambda p: len(p[0]), reverse=True):
         if locator and locator != display:
             out = out.replace(locator, display)
-    return out
+    return _FD_PATH_RE.sub(_FD_REDACTED, out)
 
 
 def passes_by_type(exc: Exception) -> bool:
