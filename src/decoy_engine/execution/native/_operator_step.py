@@ -134,6 +134,7 @@ def sample_faker_array_positional(
     index_kernel: IndexDerivationKernel,
     native_threads: int | None,
     missing_mask: pa.Array | None = None,
+    gate_positions: np.ndarray[Any, Any] | None = None,
 ) -> pa.Array:
     """Select one batch's non-deterministic REUSE faker values by global row position.
 
@@ -142,6 +143,10 @@ def sample_faker_array_positional(
     the whole-frame draw. `namespace` is the SELECTION namespace; the pool was built from the
     configured one. The key is `job_seed`, never the secret-derived `mask_key`: this mode
     generates fresh values and does not re-identify a source value.
+
+    Under a `when:` gate the masked step hands only the selected subset and its full-table
+    positions as `gate_positions` (C8-iii-d-2), so the key of local row `i` is
+    `row_offset + gate_positions[i]` -- that row's full-table number, equal to the d-1 oracle's.
 
     Unlike `sample_faker_array` the keys are a dense `uint64` column, so the index null mask
     is the keys' (none) and cannot equal the source's. Nulls are restored from the SOURCE and
@@ -155,7 +160,9 @@ def sample_faker_array_positional(
         raise AssertionError("positional faker selection reached with job_seed=None.")
     col = source.combine_chunks() if isinstance(source, pa.ChunkedArray) else source
     n = len(col)
-    keys = positional_key_array(row_offset, n, code="faker_position_out_of_domain")
+    keys = positional_key_array(
+        row_offset, n, code="faker_position_out_of_domain", gate_positions=gate_positions
+    )
     idx = _checked_batch(
         index_kernel.derive_index_batch(
             keys,
@@ -256,13 +263,16 @@ def run_kernel_step(
     row_offset: int = 0,
     job_seed: bytes | None = None,
     missing_mask: pa.Array | None = None,
+    gate_positions: np.ndarray[Any, Any] | None = None,
 ) -> StepResult:
     """Run one operator's compiled kernel over `source` and say whether it ran.
 
     `sibling` is group_key's input (the single-column slice of its group_by column) and
     `source` is ignored for it. `row_offset` only matters to the position-keyed categorical and
     the position-keyed faker, which also keys on `job_seed` (never `mask_key`) and reads
-    `missing_mask` for which rows are null.
+    `missing_mask` for which rows are null. `gate_positions` is set only by the masked step
+    (`run_kernel_step_masked`) for a `when:` gate: the selected subset's full-table positions,
+    which the two positional kernels key on so a selected row reproduces the d-1 oracle's draw.
     `raw_hex_kernel=None` lets group_key load its own, which the unified route relies on as
     its one companion probe. `ran` for bucket_perturb, group_key and date_shift is each
     kernel's own `derive_calls` total, and those kernels disagree on purpose: group_key counts
@@ -316,6 +326,7 @@ def run_kernel_step(
             index_kernel=_index_kernel_for(params, index_kernel),
             native_threads=native_threads,
             missing_mask=missing_mask,
+            gate_positions=gate_positions,
         )
         return StepResult(out, True)
     if isinstance(params, FakerParams):
@@ -355,6 +366,7 @@ def run_kernel_step(
             namespace=params.namespace or "",
             index_kernel=kernel,
             native_threads=native_threads,
+            gate_positions=gate_positions,
         )
         return StepResult(out, True)
     derive_calls: list[int] = []
@@ -406,6 +418,10 @@ def run_kernel_step_masked(
     mask_key: bytes | None,
     native_threads: int | None,
     index_kernel: IndexDerivationKernel | None = None,
+    pool: ValuePool | None = None,
+    row_offset: int = 0,
+    job_seed: bytes | None = None,
+    missing_mask: pa.Array | None = None,
 ) -> StepResult:
     """`run_kernel_step` for a `when:` column: only the rows `mask` selects take the masked value.
 
@@ -417,20 +433,34 @@ def run_kernel_step_masked(
     categorical, text_redact, bucket_perturb, date_shift) that equals the oracle's run on the
     selected subset plus its write-back, row by row, because each row's output depends only on
     that row's value and the config. Unselected rows, nulls included, keep their source value.
+
+    For the two position-keyed operators (seeded categorical, non-deterministic REUSE faker over
+    a string source) `selected = flatnonzero(mask)` is the one array that is both the format-error
+    rebase and the gate positions (C8-iii-d-2): the key of selected local row `i` is
+    `row_offset + selected[i]`, that row's full-table number, so a selected row's draw equals the
+    d-1 full-frame oracle's. `pool`, `job_seed` and the filtered `missing_mask` are threaded only
+    for the faker; every value-keyed call passes `gate_positions=selected` harmlessly (its kernels
+    ignore it). `missing_mask` is the batch's full missing mask, filtered to the subset here so the
+    kernel sees the selected rows' missingness.
     """
     plain = source.combine_chunks() if isinstance(source, pa.ChunkedArray) else source
     if not (pc.sum(mask).as_py() or 0):
         return StepResult(plain, False)
+    selected = np.flatnonzero(mask.to_numpy(zero_copy_only=False))
     result = run_kernel_step(
         params,
         pc.filter(plain, mask),
         mask_key=mask_key,
         native_threads=native_threads,
         index_kernel=index_kernel,
+        pool=pool,
+        row_offset=row_offset,
+        job_seed=job_seed,
+        missing_mask=pc.filter(missing_mask, mask) if missing_mask is not None else None,
+        gate_positions=selected,
     )
     positions = result.format_error_positions
     if positions:
         # The kernel numbered its errors within the selected subset; callers need chunk positions.
-        selected = np.flatnonzero(mask.to_numpy(zero_copy_only=False))
         positions = tuple(int(selected[p]) for p in positions)
     return StepResult(pc.replace_with_mask(plain, mask, result.out), result.ran, positions)
