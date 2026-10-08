@@ -13,7 +13,11 @@ import re
 from collections.abc import Callable, Iterable, Iterator
 from typing import Any, NewType, TypeVar
 
-from decoy_engine.fileaccess._types import FileAccessDenied, FileAccessReadError
+from decoy_engine.fileaccess._types import (
+    FileAccessDenied,
+    FileAccessReadError,
+    FileAccessUnavailable,
+)
 
 EncodedKey = NewType("EncodedKey", str)
 
@@ -146,7 +150,9 @@ def guarded(display: str, strict: bool, fn: Callable[..., T], *args: Any, **kwar
     resurfaced: Exception | None = None
     try:
         return fn(*args, **kwargs)
-    except (FileAccessDenied, FileAccessReadError, StopIteration):
+    except (FileAccessDenied, FileAccessReadError, FileAccessUnavailable, StopIteration):
+        # FileAccessUnavailable is only raised at the policy/open and txn layers today, never by a
+        # library read/write of an open handle; passing it through is defensive, not load-bearing.
         raise
     except Exception as exc:
         resurfaced = _resurface(exc)

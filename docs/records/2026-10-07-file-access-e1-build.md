@@ -347,3 +347,8 @@ scratch strace binary since the devbox has none):
 | `mypy src` (3.10 `.venv`) | 5 pre-existing errors in native modules (`_operator_step.py`, `_faker_null_mask.py`, `_shadow_operators.py`: `decoy_engine_native` attr-defined), unrelated to the changed files; the 3.10 venv lacks the native companion. The three changed files are clean |
 | `tests/fileaccess` + `tests/sentry` (3.11) | 3159 passed, 1 skipped, 0 failed (after the two AT-X4 test corrections). strace selftests PASS with the scratch binary (no environmental strace skips this run) |
 | `scripts/test_flight.py` (check) | 53/53 invariant checks, 5/5 fingerprints match golden |
+
+## dennis gate on the rev 3.3 build (2026-10-08): GO
+dennis reviewed the full X1-X4 build at 50cdb7e2: 0 BLOCKER/HIGH/MEDIUM, 2 LOW (both folded below). It verified X1-X4 at the root, confirmed the two AT-X4 test corrections are non-weakening, ran its own sentinel/descriptor-path adversarial probe, and re-ran fileaccess+sentry+parity (3159 + 251 + 109 + 633) green with a real strace binary.
+- LOW 1 folded: `guarded`'s passthrough tuple now includes `FileAccessUnavailable` (defensive; it is only raised at the policy/open/txn layers today).
+- LOW 2 folded: `yaml_safe_load`'s docstring now states the strict path replaces a YAML error with a locator-free `FileAccessReadError`.

@@ -29,8 +29,9 @@ def json_load(handle: FileHandle) -> Any:
 
 
 def yaml_safe_load(handle: FileHandle) -> Any:
-    """Parse as UTF-8 text from a named file object, so a YAML error names the file as it
-    always did (the display, under a strict policy)."""
+    """Parse YAML from an open text handle. Under the ambient policy a YAML error names the file
+    as it always did; under a strict policy `guarded` replaces it with a locator-free
+    `FileAccessReadError`."""
     with handle.open_text() as fh:
         return guarded(handle.display, _strict(handle), yaml.safe_load, fh)
 
