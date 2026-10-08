@@ -16,6 +16,7 @@ import pytest
 
 from decoy_engine.execution._chunked_profile import arrow_column_profile, walk_one_table
 from decoy_engine.execution._errors import ExecutionError
+from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.profile._types import ColumnProfile
 from tests.native._chunked_entry_support import TABLE, make_config, passthrough, redact
 from tests.native._rev9_support import run_entry, run_public
@@ -102,8 +103,12 @@ def test_type_catalogue_carried_passthrough_is_yielded_exactly(
 def test_type_catalogue_read_column_matches_the_oracle(name: str, null: bool) -> None:
     arr = _column(name, null)
     chunks = _chunks(arr)
-    cols = [{**redact("s"), "when": "x.notnull()"}]
+    # A grammar predicate that reads the column. Its outcome over the 108 type/null pairs
+    # matches the old `x.notnull()` (same successes, same refusals by class); a compile
+    # rejection here would make the comparison below vacuous, so it is excluded explicitly.
+    cols = [{**redact("s"), "when": "x != 'q'"}]
     refusal = _public_outcome(make_config(cols), chunks)
+    assert not isinstance(refusal, PlanCompileError), repr(refusal)
     if refusal is None:
         out, _, _ = run_entry(make_config(cols), chunks)
         expected = run_public(make_config(cols), chunks)

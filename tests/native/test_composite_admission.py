@@ -303,7 +303,7 @@ def _stored_index_configs() -> dict[str, list[dict[str, Any]]]:
     return {
         "direct": [redact("s"), redact("id")],
         "passthrough_direct": [redact("s"), passthrough("id")],
-        "when_reference": [{**redact("s"), "when": "id.notnull()"}],
+        "when_reference": [{**redact("s"), "when": "id != 'q'"}],
         "group_by_reference": [
             redact("s"),
             passthrough("id"),
@@ -613,16 +613,24 @@ def test_rebound_registry_output_equals_the_public_oracle(monkeypatch: pytest.Mo
 # Test 21: an unparsable `when:` keeps passthrough exact
 # ---------------------------------------------------------------------------
 
-_UNPARSABLE = "r != b'zz'"
 
+def _when_config(read: str, extra: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    """`r` gated by a grammar predicate that selects every row and reads the column `read`.
 
-def _when_config(extra: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    The old bytes comparison selected every row and made every passthrough column a read column
+    by being unparsable. A grammar predicate reads only the columns it names, so the test
+    names the one it needs; the conservative reads-unknown path keeps its direct coverage in
+    `test_reads_unknown_keeps_candidates_and_writes_unknown_empties_them`."""
     return make_config(
-        [{**redact("r"), "when": _UNPARSABLE}, *(extra or [])], global_settings=_WARN
+        [{**redact("r"), "when": f"r != 'zz' and {read}"}, *(extra or [])], global_settings=_WARN
     )
 
 
-def test_unparsable_when_keeps_a_big_int_passthrough_exact() -> None:
+_READ_BIG = "big != 5"
+_READ_T = "t != 'zz'"
+
+
+def test_a_read_when_column_keeps_a_big_int_passthrough_exact() -> None:
     from tests.native._rev9_support import run_entry, run_public
 
     big = 2**53 + 1
@@ -635,7 +643,7 @@ def test_unparsable_when_keeps_a_big_int_passthrough_exact() -> None:
         )
         for _ in range(2)
     ]
-    out, sink, _ev = run_entry(_when_config(), chunks)
+    out, sink, _ev = run_entry(_when_config(_READ_BIG), chunks)
     for got, src in zip(out, chunks, strict=True):
         assert got.schema.field("big").equals(src.schema.field("big"), check_metadata=True)
         assert got.column("big").to_pylist() == [big, None, 3]
@@ -643,12 +651,14 @@ def test_unparsable_when_keeps_a_big_int_passthrough_exact() -> None:
         ["big"]
     ] * 2
     # The unchanged public oracle rounds it through float64; only characterized here.
-    public = run_public(_when_config(), chunks)
+    public = run_public(_when_config(_READ_BIG), chunks)
     assert public[0].schema.field("big").type == pa.float64()
     assert public[0].column("big").to_pylist()[0] == float(2**53)
+    # Every row is selected, as the replaced bytes comparison selected every row.
+    assert [o.column("r").to_pylist() for o in out] == [["REDACTED"] * 3] * 2
 
 
-def test_unparsable_when_still_raises_for_an_unrepresentable_value() -> None:
+def test_a_read_when_column_still_raises_for_an_unrepresentable_value() -> None:
     from tests.native._rev9_support import BY_NAME, run_public
 
     t64 = BY_NAME["time64ns_unaligned"]
@@ -657,7 +667,7 @@ def test_unparsable_when_still_raises_for_an_unrepresentable_value() -> None:
         pa.table({"r": pa.array(["a", "b", "c"]), "t": t64.bad}),
     ]
     gen = run_mask_chunked(
-        _when_config(),
+        _when_config(_READ_T),
         chunks,
         table=TABLE,
         engine_version=ENGINE_VERSION,
@@ -668,12 +678,12 @@ def test_unparsable_when_still_raises_for_an_unrepresentable_value() -> None:
         next(gen)
     assert getattr(ours.value, "code", None) == "chunked_passthrough_value_unrepresentable"
     with pytest.raises(pa.ArrowInvalid):
-        run_public(_when_config(), chunks)
+        run_public(_when_config(_READ_T), chunks)
 
 
-def test_unparsable_when_does_not_refuse_an_unrelated_stored_index() -> None:
+def test_a_when_does_not_refuse_an_unrelated_stored_index() -> None:
     config = make_config(
-        [{**redact("s"), "when": "s != b'zz'"}, truncate("t")], global_settings=_WARN
+        [{**redact("s"), "when": "s != 'zz'"}, truncate("t")], global_settings=_WARN
     )
     for entry_point in (run_mask_chunked, run_mask_pipeline_chunked):
         list(
@@ -687,22 +697,31 @@ def test_unparsable_when_does_not_refuse_an_unrelated_stored_index() -> None:
         )
 
 
-def test_unparsable_when_naming_a_named_stored_index_runs_on_the_reconstructed_index() -> None:
+def test_an_unparsable_when_naming_a_named_stored_index_is_rejected_at_compile() -> None:
+    """The old raw predicate skipped the stored-index refusal because the closed parser could
+    not read its references, and then ran on the reconstructed index. Compile now rejects the
+    predicate first. A parsable `when` naming the index is refused instead (the `when_reference`
+    case of `test_a_configured_stored_index_column_is_refused_before_any_chunk`)."""
     config = make_config(
         [{**redact("s"), "when": "id != b'zz'"}, truncate("t")], global_settings=_WARN
     )
-    kwargs: dict[str, Any] = {
-        "table": TABLE,
-        "engine_version": ENGINE_VERSION,
-        "key_provider": key_provider(),
-    }
-    ours = list(run_mask_chunked(config, _indexed(), **kwargs))
-    oracle = list(run_mask_pipeline_chunked(config, _indexed(), **kwargs))
-    assert all("id" not in o.column_names for o in ours)
-    assert [o.column("s").to_pylist() for o in ours] == [o.column("s").to_pylist() for o in oracle]
+    for entry_point in (run_mask_chunked, run_mask_pipeline_chunked):
+        with pytest.raises(PlanCompileError) as info:
+            list(
+                entry_point(
+                    config,
+                    _indexed(),
+                    table=TABLE,
+                    engine_version=ENGINE_VERSION,
+                    key_provider=key_provider(),
+                )
+            )
+        assert info.value.code == "when_outside_closed_grammar"
 
 
-def test_unparsable_when_naming_an_unnamed_stored_index_keeps_the_typed_error() -> None:
+def test_a_when_naming_an_unnamed_stored_index_is_rejected_at_compile() -> None:
+    """A dunder identifier is outside the grammar, so the typed `when_expression_error` the old
+    raw predicate reached at evaluation is now the compile rejection."""
     df = pd.DataFrame({"s": ["a", "b"], "t": ["abcdef", "ghijkl"]})
     df.index = pd.Index(["i1", "i2"])
     table = pa.Table.from_pandas(df)
@@ -712,7 +731,7 @@ def test_unparsable_when_naming_an_unnamed_stored_index_keeps_the_typed_error() 
         global_settings=_WARN,
     )
     for entry_point in (run_mask_chunked, run_mask_pipeline_chunked):
-        with pytest.raises(Exception) as info:
+        with pytest.raises(PlanCompileError) as info:
             list(
                 entry_point(
                     config,
@@ -722,7 +741,7 @@ def test_unparsable_when_naming_an_unnamed_stored_index_keeps_the_typed_error() 
                     key_provider=key_provider(),
                 )
             )
-        assert getattr(info.value, "code", None) == "when_expression_error"
+        assert info.value.code == "when_outside_closed_grammar"
 
 
 # ---------------------------------------------------------------------------
@@ -843,7 +862,8 @@ def test_a_rebound_composite_name_is_reported_with_the_scalar_route() -> None:
 # Test 24: access-flag cross-product and fail-closed restoration
 # ---------------------------------------------------------------------------
 
-_BAD_WHEN = "first_name != b'zz'"
+_BAD_WHEN = "first_name != b'zz'"  # a raw seed that skipped compile; helper-level tests only
+_SELECT_ALL = "first_name != 'zz'"
 
 
 def _flags(entry: dict[str, Any]) -> tuple[bool, bool]:
@@ -914,10 +934,11 @@ def test_reads_unknown_keeps_candidates_and_writes_unknown_empties_them() -> Non
 
 
 @pytest.mark.parametrize("row_errors", [False, True], ids=["normal", "row_error"])
-def test_a_composite_with_an_unparsable_when_still_generates_every_output(
+def test_a_composite_with_a_when_still_generates_every_output(
     row_errors: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    entry = {**_entry("first_name", "composite_name_email", "redact"), "when": _BAD_WHEN}
+    # Every row is selected (no value equals 'zz'), as the old bytes comparison selected every row.
+    entry = {**_entry("first_name", "composite_name_email", "redact"), "when": _SELECT_ALL}
     columns: list[dict[str, Any]] = [entry]
     data = {c: [f"SECRET-{c}-{i}" for i in range(N)] for c in ("first_name", "last_name", "email")}
     if row_errors:

@@ -1,12 +1,15 @@
 """MG-3 / M3 (2026-05-31): security cells for `when:` numexpr scope clamp.
 
-Mirrors the Dennis C1 patch tests on `_transforms.py`: the same
-scope-clamp pattern (engine='numexpr', local_dict={}, global_dict={})
-protects `when:` from `@var`-style scope walks reaching module-top
-imports.
+Mirrors the Dennis C1 patch tests on `_transforms.py`. A hostile predicate is now stopped
+twice: the closed-grammar backstop in `_eval_predicate` rejects it before pandas sees it
+(the tests below), and the scope clamp (engine='numexpr', local_dict={}, global_dict={}) still
+applies to every accepted predicate (`test_the_eval_scope_clamps_hold_for_an_accepted_predicate`
+in `tests/unit/execution/test_c8_iii_c_boundaries.py`).
 """
 
 from __future__ import annotations
+
+from collections.abc import Iterator
 
 import pandas as pd
 import pytest
@@ -35,6 +38,15 @@ class _Ctx:
     pass
 
 
+@pytest.fixture(autouse=True)
+def _pandas_eval_is_never_reached(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[object]]:
+    """A rejected predicate must not reach `DataFrame.eval` at all."""
+    calls: list[object] = []
+    monkeypatch.setattr(pd.DataFrame, "eval", lambda *a, **k: calls.append(a))
+    yield calls
+    assert calls == []
+
+
 class TestNumexprScopeClamp:
     def test_when_at_var_scope_walk_blocked(self):
         # The numexpr engine plus empty local_dict/global_dict blocks
@@ -49,7 +61,7 @@ class TestNumexprScopeClamp:
                 _seed("@pd.compat.os.system('echo x') > 0"),
                 _Ctx(),
             )
-        assert exc.value.code == "when_expression_error"
+        assert exc.value.code == "when_outside_closed_grammar"
 
     def test_when_unknown_name_raises_not_evaluated_via_python(self):
         # An unknown name in a numexpr expression must raise rather
@@ -64,7 +76,7 @@ class TestNumexprScopeClamp:
                 _seed("unknown_module.attr == 1"),
                 _Ctx(),
             )
-        assert exc.value.code == "when_expression_error"
+        assert exc.value.code == "when_outside_closed_grammar"
 
     def test_when_dunder_attribute_access_blocked(self):
         # Dunder access in pandas eval is filtered by parser; under
@@ -79,7 +91,7 @@ class TestNumexprScopeClamp:
                 _seed("n.__class__ == 1"),
                 _Ctx(),
             )
-        assert exc.value.code == "when_expression_error"
+        assert exc.value.code == "when_outside_closed_grammar"
 
     def test_when_import_statement_blocked(self):
         # Statement-level constructs are syntax errors in numexpr.
@@ -92,4 +104,4 @@ class TestNumexprScopeClamp:
                 _seed("import os"),
                 _Ctx(),
             )
-        assert exc.value.code == "when_expression_error"
+        assert exc.value.code == "when_outside_closed_grammar"

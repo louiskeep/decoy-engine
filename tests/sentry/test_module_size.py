@@ -83,7 +83,7 @@ ALLOWLIST: dict[str, int] = {
     # compile-check ownership table; split into per-strategy check modules once the check set stabilises.
     "src/decoy_engine/plan/_checks.py": 783,
     # statistical-column check threading; same per-strategy-check decomposition target as _checks.py.
-    "src/decoy_engine/plan/_compile.py": 682,
+    "src/decoy_engine/plan/_compile.py": 645,
     # safety invariants documented in docstrings are part of the fix; extract the emission builders into _mem_telemetry_emit.py.
     "src/decoy_engine/execution/_mem_telemetry.py": 762,
     # chunk-parity invariant text and admission gate calls; dense exception.
@@ -94,7 +94,7 @@ ALLOWLIST: dict[str, int] = {
     # scale-aware chunked-FK dtype family and rootness check; split the FK helpers.
     "src/decoy_engine/execution/_chunked_fk.py": 970,
     # fail-closed output projection and corpus pinning on the mask route; split the FK-resolution helpers.
-    "src/decoy_engine/execution/_pandas_adapter.py": 681,
+    "src/decoy_engine/execution/_pandas_adapter.py": 686,
     # routing dispatch; logic already lives in the _transforms_* siblings, dense reviewed exception.
     "src/decoy_engine/execution/_pipeline.py": 684,
     # resident Arrow type resolution; move it into its own module with the next operator gate.

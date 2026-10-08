@@ -54,7 +54,7 @@ class PipelineConfig(BaseModel):
     at the choke-point.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     version: Literal[1]
     # FC-1 (2026-06-02): top-level `mode` discriminator dropped. Per-table

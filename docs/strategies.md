@@ -1037,8 +1037,12 @@ columns:
     strategy: passthrough
 ```
 
-The predicate is checked against a closed grammar when the config loads, so a
-bad one fails at validation and not mid-run:
+The predicate is checked against a closed grammar for every caller, so a bad one fails
+before any row is masked and not mid-run. The same check runs when a config is loaded through
+`PipelineConfig`, when a raw config dict is compiled (`compile_plan`, `run_config_only_checks`,
+`run_pipeline` and the chunked entry points), when a stored plan is loaded (`plan_from_yaml`)
+and before a compiled `Plan` is executed. A `when:` that is not a string is refused with the
+same error code and is never silently dropped. The accepted forms are:
 
 - A comparison of one column and one literal, in either order: `==`, `!=`, `<`,
   `<=`, `>`, `>=`. Example: `age >= 18`, `'DE' == country`.
@@ -1049,10 +1053,17 @@ bad one fails at validation and not mid-run:
   strings in single or double quotes. A string holds no backslash, no quote
   character and no control character.
 
-Everything else is refused with the error code `when_outside_closed_grammar`:
-arithmetic, function and method calls, attributes, subscripts, `@` references,
-comparing two columns, chained comparisons, `None`, empty lists and bare
-references. There is no null check in the grammar. A name that pandas would not
+Everything else is refused with the error code `when_outside_closed_grammar`. Error messages
+name the position and the construct, never the predicate text, because a predicate can embed
+data values. What is refused: arithmetic, function and method calls, attributes,
+subscripts, `@` references, comparing two columns, chained comparisons, `None`, empty
+lists, bare references, bytes and f-string literals, backtick-quoted names and
+names with characters other than ASCII letters, digits and `_`. There is no null
+check in the grammar. `x >= ''` (string) and `x < 0 or x >= 0` (numeric) select the
+non-null rows. Their negations select the null rows only on numpy-backed columns; on a
+pandas nullable dtype (`string`, `Int64`, `Float64`, including Parquet written by pandas)
+the negation selects no rows, so there is no way to gate on "is null" there (see the
+CHANGELOG migration table). A name that pandas would not
 read as a column is reserved and refused as a reference: the numexpr function
 names (`sin`, `abs`, `where` and the rest), the pandas eval names (`inf`, `nan`,
 `index`, `columns`, `Timestamp`, `datetime`, `list`, `tuple`) and the Python

@@ -24,26 +24,38 @@ _CASES = {
 }
 
 
+@pytest.mark.parametrize("case", _CASES)
+def test_nfkc_spelled_predicate_resolves_to_the_real_column_name(case: str) -> None:
+    """Helper level: the read-set scan sees the name pandas resolves, so a spelled predicate
+    that reached the oracle without compile could never leave its column unmasked."""
+    from decoy_engine.execution._chunked_carry import read_set
+    from decoy_engine.execution._column_access import predicate_names
+
+    expr, name = _CASES[case]
+    assert name in (predicate_names(expr) or set())
+    cols = [{**redact("s"), "when": expr}]
+    assert read_set(cols, [name, "other"], get_default_registry()) == frozenset({name})
+
+
 @pytest.mark.parametrize("configured", [False, True], ids=["unconfigured", "configured"])
 @pytest.mark.parametrize("case", _CASES)
-def test_nfkc_spelled_predicate_reads_the_column_like_the_oracle(
-    case: str, configured: bool
-) -> None:
+def test_nfkc_spelled_predicate_is_rejected_at_compile(case: str, configured: bool) -> None:
+    """The closed grammar's identifiers are ASCII, so no NFKC spelling reaches evaluation."""
+    from decoy_engine.plan._errors import PlanCompileError
+
     expr, name = _CASES[case]
     cols: list[dict[str, Any]] = [{**redact("s"), "when": expr}]
     if configured:
         cols.append(passthrough(name))
-    chunks = [
-        pa.table({"s": ["alice", "bob", "carol"], name: pa.array(v, pa.int64())})
-        for v in ([1, 5, 9], [9, 1, 5], [2, 6, 3])
-    ]
-    expected = run_public(make_config(cols), chunks)
-    out, sink, _ = run_entry(make_config(cols), chunks)
-    for got, want in zip(out, expected, strict=True):
-        assert got.column("s").to_pylist() == want.column("s").to_pylist()
-        assert same_column(got.column(name), want.column(name))
-    listed = [r.quality_metrics["chunked_route"]["pandas_read_passthrough"] for r in sink]
-    assert listed == [[name]] * 3
+    chunks = [pa.table({"s": ["alice", "bob"], name: pa.array([1, 5], pa.int64())})]
+    for call in (
+        lambda: run_entry(make_config(cols), chunks),
+        lambda: run_public(make_config(cols), chunks),
+    ):
+        with pytest.raises(PlanCompileError) as info:
+            call()
+        assert info.value.code == "when_outside_closed_grammar"
+        assert info.value.path == "tables.t.columns.s.when"
 
 
 @pytest.mark.parametrize("configured", [False, True], ids=["unconfigured", "configured"])

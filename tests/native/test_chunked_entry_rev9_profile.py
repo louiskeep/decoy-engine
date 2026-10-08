@@ -227,7 +227,7 @@ def test_carried_fk_key_is_yielded_exactly(
 def test_read_fk_key_keeps_the_refusal(kind: pa.DataType, monkeypatch: pytest.MonkeyPatch) -> None:
     seen = _guard_spy(monkeypatch)
     with pytest.raises(ExecutionError) as info:
-        _run(run_mask_chunked, _fk_config(when="id.notnull()"), [_chunk(kind)])
+        _run(run_mask_chunked, _fk_config(when="id != 0"), [_chunk(kind)])
     assert info.value.code == FK_KEY_DTYPE_UNSUPPORTED_CODE
     assert seen == [{"id"}]
 

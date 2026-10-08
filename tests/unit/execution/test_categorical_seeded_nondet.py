@@ -407,7 +407,7 @@ class TestHandlerFrameOrdinal:
         ]
         cfg, _ = mt.build_job(tmp_path, {"t": (cols, table)})
         # `when` is not part of the validated config schema; it is set on the compiled dict.
-        cfg["tables"][0]["columns"][0]["when"] = "keep"
+        cfg["tables"][0]["columns"][0]["when"] = "keep == True"
         a = run_pipeline(cfg, sources={"t": table}, **mt.kw(auto_chunk=False))
         b = run_pipeline(cfg, sources={"t": table}, **mt.kw(auto_chunk=False))
         assert a.outputs["t"].column("v").to_pylist() == b.outputs["t"].column("v").to_pylist()

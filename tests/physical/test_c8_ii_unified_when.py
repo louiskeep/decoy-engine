@@ -344,9 +344,19 @@ def test_4_a_reference_not_in_the_source_declines_and_raises_the_oracles_error(
 
 
 @pytest.mark.parametrize("expr", ["s.notnull()", "s == c"])
-def test_4_a_predicate_outside_the_closed_grammar_declines(tmp_path: Path, expr: str) -> None:
+def test_4_a_predicate_outside_the_closed_grammar_is_rejected_at_compile(
+    tmp_path: Path, expr: str
+) -> None:
+    """Compile rejects it before either lane runs. The admission-level decline (the lane's
+    `when_columns_admitted` is False for such an entry) is asserted directly in
+    `tests/unit/execution/test_c8_iii_c_boundaries.py`."""
+    from decoy_engine.plan._errors import PlanCompileError
+
     case = Case(tmp_path, source(), [target("redact"), PASS_S], mutate=with_when({"c": expr}))
-    declined(case)
+    for lane in (False, True):
+        with pytest.raises(PlanCompileError) as info:
+            case.run(lane=lane)
+        assert info.value.code == "when_outside_closed_grammar"
 
 
 ALIAS = "BACKTICK_QUOTED_STRING_a_b"

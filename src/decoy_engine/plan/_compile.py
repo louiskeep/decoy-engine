@@ -78,8 +78,8 @@ from decoy_engine.plan._checks_group_key import check_group_key_refs
 from decoy_engine.plan._checks_grouped_series import check_grouped_series_refs
 from decoy_engine.plan._checks_top_code import check_top_code_config
 from decoy_engine.plan._checks_truncate import check_truncate_config
+from decoy_engine.plan._checks_when import check_when_grammar, check_when_with_coherent_with
 from decoy_engine.plan._checks_windowed_date import check_windowed_date_refs
-from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.plan._generation import build_generation_plan, read_and_pin_snapshots
 from decoy_engine.plan._graph import _build_namespaces, _build_relationships
 
@@ -260,7 +260,8 @@ def compile_plan(
     # ill-defined (composite generators write the bundle, not the
     # column), so the operator should see the typed when_with_coherent_
     # with_unsupported error rather than a composite-wiring follow-on.
-    _check_when_with_coherent_with(config)
+    check_when_with_coherent_with(config)
+    check_when_grammar(config)
     # Row 8 (S8): composite wiring. Structural (config + registry), so it runs
     # in both --no-profile and full modes, like row 9.
     composite_wiring_consistent(config, namespace_registry)
@@ -484,7 +485,8 @@ def run_config_only_checks(config: dict[str, Any]) -> tuple[str, ...]:
     )
 
     check_unknown_provider(config)
-    _check_when_with_coherent_with(config)
+    check_when_with_coherent_with(config)
+    check_when_grammar(config)
     deterministic_namespace_completeness(config)
     check_non_poolable_provider_with_pool_backend(config)
     # DPS Scope B (guide 4.7/5): same read-verify-validate order as above.
@@ -577,45 +579,6 @@ def run_config_only_checks(config: dict[str, Any]) -> tuple[str, ...]:
         # Row 26 (DE-03 sibling): faker-without-provider rejection.
         "faker_requires_provider",
     )
-
-
-def _check_when_with_coherent_with(config: dict[str, Any]) -> None:
-    """MG-3 / M3 (2026-05-31): reject `when` + `coherent_with` combo
-    at compile time with a typed error code.
-
-    The composite generator writes the bundle, not the column. A
-    per-column row gate on a coherent_with column is ill-defined:
-    skipping the row on one column but not its siblings would
-    desynchronize the bundle. The operator sees the typed error and
-    can either drop `when` or move the column off the coherent set.
-    """
-    tables = config.get("tables", []) or []
-    for table in tables:
-        table_name = table.get("name", "?") if isinstance(table, dict) else "?"
-        columns = (table or {}).get("columns", []) if isinstance(table, dict) else []
-        for col in columns or []:
-            if not isinstance(col, dict):
-                continue
-            col_name = col.get("name", "?")
-            when = col.get("when")
-            coherent_with = col.get("coherent_with") or []
-            if (
-                isinstance(when, str)
-                and when.strip()
-                and isinstance(coherent_with, (list, tuple))
-                and len(coherent_with) > 0
-            ):
-                raise PlanCompileError(
-                    code="when_with_coherent_with_unsupported",
-                    path=f"tables.{table_name}.columns.{col_name}.when",
-                    message=(
-                        f"Column {table_name}.{col_name}: `when:` is not "
-                        "supported on columns participating in "
-                        "`coherent_with`; the composite generator writes "
-                        "the bundle, not the column. Drop `when:` here or "
-                        "move the column off the coherent set."
-                    ),
-                )
 
 
 # MED-1 (gate remediation): advisory-only global_settings keys stripped

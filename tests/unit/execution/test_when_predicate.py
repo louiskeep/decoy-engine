@@ -150,7 +150,23 @@ class TestErrorHandling:
         assert exc.value.code == "when_expression_error"
         assert exc.value.strategy == "redact"
 
-    def test_when_non_bool_series_raises_when_expression_not_boolean(self):
+    def test_when_non_bool_series_raises_when_expression_not_boolean(self, monkeypatch):
+        # The grammar cannot produce a non-boolean result, so the branch is reached by injecting
+        # one for an accepted predicate.
+        df = pd.DataFrame({"v": ["a", "b"], "n": [1, 2]})
+        monkeypatch.setattr(pd.DataFrame, "eval", lambda *a, **k: pd.Series([2, 3]))
+        with pytest.raises(StrategyError) as exc:
+            run_with_when_gate(
+                RedactHandler(),
+                df,
+                "v",
+                _seed(when="n > 0"),
+                _FakeCtx(),
+            )
+        assert exc.value.code == "when_expression_not_boolean"
+        assert exc.value.strategy == "redact"
+
+    def test_when_arithmetic_is_rejected_by_the_grammar_backstop(self):
         df = pd.DataFrame({"v": ["a", "b"], "n": [1, 2]})
         with pytest.raises(StrategyError) as exc:
             run_with_when_gate(
@@ -160,7 +176,7 @@ class TestErrorHandling:
                 _seed(when="n + 1"),
                 _FakeCtx(),
             )
-        assert exc.value.code == "when_expression_not_boolean"
+        assert exc.value.code == "when_outside_closed_grammar"
         assert exc.value.strategy == "redact"
 
     def test_when_gate_accepts_nullable_boolean_mask(self):

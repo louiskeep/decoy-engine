@@ -66,7 +66,7 @@ class ColumnConfig(BaseModel):
     declares only the strategy + name.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     name: str
     strategy: str
@@ -191,7 +191,7 @@ class GenerateColumnConfig(BaseModel):
     ``extra="forbid"`` -- flagged for the gate.
     """
 
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="allow", hide_input_in_errors=True)
 
     name: str
     # The closed set of generators v2 supports. Reading B: this mirrors V1
@@ -328,7 +328,7 @@ class TableConfig(BaseModel):
     unchanged when no generation fields are set.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     name: str
     columns: list[ColumnConfig] = Field(default_factory=list)

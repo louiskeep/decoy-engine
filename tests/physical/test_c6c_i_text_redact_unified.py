@@ -244,13 +244,15 @@ def test_a_non_string_source_declines_the_lane_and_equals_the_oracle(
     _assert_declined_and_equal(off, on)
 
 
-def test_an_unadmitted_when_predicate_declines_the_lane_and_equals_the_oracle(
-    tmp_path: Path,
-) -> None:
-    # The column alone is admitted; a chained comparison is outside the closed grammar.
-    source = _source(CORPUS)
-    off, on = _run_both(tmp_path, source, [tr_col("s"), _PASS], when="0 < p < 3")
-    _assert_declined_and_equal(off, on)
+def test_a_chained_comparison_when_predicate_is_rejected_at_compile(tmp_path: Path) -> None:
+    # The column alone is admitted; a chained comparison is outside the closed grammar, so
+    # compile rejects it before either lane setting runs, instead of declining the lane.
+    from decoy_engine.plan._errors import PlanCompileError
+
+    with pytest.raises(PlanCompileError) as info:
+        _run_both(tmp_path, _source(CORPUS), [tr_col("s"), _PASS], when="0 < p < 3")
+    assert info.value.code == "when_outside_closed_grammar"
+    assert info.value.path == "tables.t.columns.s.when"
 
 
 # ---------------------------------------------------------------------------

@@ -19,6 +19,9 @@ import pyarrow.parquet as pq
 import pytest
 
 from decoy_engine.execution import run_pipeline
+from decoy_engine.execution.native._when_admission import when_native_rejection
+from decoy_engine.plan._errors import PlanCompileError
+from decoy_engine.providers_v2 import get_default_registry
 from tests.native._chunked_entry_support import (
     ENGINE_VERSION,
     NEEDS_COMPANION,
@@ -133,14 +136,15 @@ def test_a_numeric_reference_with_unstable_chunks_stays_full_frame(tmp_path: Pat
 
 
 @pytest.mark.parametrize("expr", ["p.notnull()", "p == s", "p.isna() == False"])
-def test_a_raw_dict_predicate_outside_the_grammar_stays_full_frame(
+def test_a_raw_dict_predicate_outside_the_grammar_is_rejected_at_compile(
     expr: str, tmp_path: Path
 ) -> None:
     cfg = _config([{**redact("s"), "when": expr}, passthrough("p")], tmp_path, _source())
-    auto = _auto(cfg, _source())
-    assert auto.quality_metrics["auto_chunk"]["mode"] == "full_frame"
-    assert "when_predicate_not_chunk_stable" in auto.quality_metrics["auto_chunk"]["reason"]
-    _equal_outputs(auto, _full(cfg, _source()))
+    with pytest.raises(PlanCompileError) as info:
+        _auto(cfg, _source())
+    assert info.value.code == "when_outside_closed_grammar"
+    assert info.value.path == f"tables.{TABLE}.columns.s.when"
+    assert expr not in str(info.value)
 
 
 def test_a_predicate_reading_an_earlier_masked_column_stays_full_frame(tmp_path: Path) -> None:
@@ -153,14 +157,26 @@ def test_a_predicate_reading_an_earlier_masked_column_stays_full_frame(tmp_path:
 
 
 def test_one_declined_when_column_keeps_the_whole_table_full_frame(tmp_path: Path) -> None:
+    # `p` runs before `s` (column order), so `s`'s predicate reads a masked column and
+    # declines; `p`'s own predicate is admitted. One declined column keeps the whole table
+    # full-frame.
     cfg = _config(
         [
             {**redact("s"), "when": "p == 'x'"},
-            {**truncate("p"), "when": "p.notnull()"},
+            {**truncate("p"), "when": "p == 'x'"},
         ],
         tmp_path,
         _source(),
     )
+    # The premise: one column is admitted and the other is declined, by grammar predicates.
+    entries = cfg["tables"][0]["columns"]
+    schema = pa.schema([("s", pa.string()), ("p", pa.string()), ("n", pa.int64())])
+    registry = get_default_registry()
+    assert (
+        when_native_rejection("s", entries, registry, table=TABLE, schema=schema)
+        == "when_predicate_reads_masked_column:s:p"
+    )
+    assert when_native_rejection("p", entries, registry, table=TABLE, schema=schema) is None
     auto = _auto(cfg, _source())
     assert auto.quality_metrics["auto_chunk"]["mode"] == "full_frame"
     _equal_outputs(auto, _full(cfg, _source()))
@@ -187,17 +203,19 @@ def test_a_split_job_routes_an_admitted_when_table_chunked_and_the_other_full_fr
         {
             "r": pa.array([f"b{i}" for i in range(a_rows)]),
             "g": pa.array(["x" if i % 2 else "y" for i in range(a_rows)]),
+            "n": pa.array([None if i % 4 == 0 else i % 3 == 0 for i in range(a_rows)], pa.bool_()),
         }
     )
     cfg, sources = mt.build_job(
         tmp_path,
         {
             "tbl_a": ([{**redact("r"), "when": "g == 'x'"}, passthrough("g")], a_table),
-            "tbl_b": ([redact("r"), passthrough("g")], b_table),
+            "tbl_b": ([redact("r"), passthrough("g"), passthrough("n")], b_table),
         },
     )
-    # A raw-dict predicate outside the grammar is not validated: table B keeps full-frame.
-    cfg["tables"][1]["columns"][0]["when"] = "g.notnull()"
+    # A bool-with-nulls reference is object in some chunks and bool in others, so it is not
+    # chunk-stable: table B keeps full-frame.
+    cfg["tables"][1]["columns"][0]["when"] = "n == True"
     calls = mt.spy_split(monkeypatch)
     got = run_pipeline(cfg, sources=sources, **mt.kw())
     off = run_pipeline(cfg, sources=sources, **mt.kw(**mt.off_kw()))
