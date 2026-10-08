@@ -1,4 +1,4 @@
-Status: record (WIP: build stopped at the usage limit, mutation incomplete; not ready to merge)
+Status: record (build complete; awaiting the review gates and Cam's merge call)
 
 Plan: `docs/plans/2026-10-07-c8-iii-b-numeric-refs.md` (rev 3).
 
@@ -53,6 +53,10 @@ Finished:
 - Testflight (check mode): 53/53 invariant checks passed, FINGERPRINTS 5/5 match golden.
 - ruff check and format: clean. mypy on changed files: no errors in them (5 pyarrow-stub errors in untouched files, 3.10 venv).
 
-Not finished:
-- Mutation: a manual mutant harness (mutmut is not installed; scratch script, not committed) over `_stable_when_reference` and the `all(...)` / refs-guard lines had 24 mutants planned (null-count comparison, int/bool branches, each allowed type dropped, time/duration/decimal/dictionary/nested/binary/null added, `all` to `any`, dropped guards). Only the first 4 ran before the stop: all 4 (null-count mutants) KILLED. Kill rate on the 4 run is 4/4; the other 20 were not run, so no overall score.
-- The full suite was run before the pin fix; only the two affected files were re-run after it.
+Mutation (manual harness, since mutmut is not installed; scratch script, not committed). 24 mutants over `_stable_when_reference` and the `all(...)` line, each run against the new file plus the old pins through `~/bin/pytest-one`:
+- null-count comparison (4), int/bool branch (4), each allowed type dropped (6), time, duration, decimal, dictionary, nested, binary and null types added (7), reference-not-in-schema check ignored (1): all 22 KILLED.
+- `all` to `any`: SURVIVED at first. That exposed a missing test (one unstable reference beside a stable one). Added `test_one_unstable_reference_declines_even_beside_a_stable_one`; the mutant is now KILLED.
+- Dropping the `refs and` guard: SURVIVES, and is equivalent. A natively admitted `when:` column has a parsed predicate (rule 3) and the closed grammar needs a column in every comparison, so `refs` is never empty on this path.
+- Score: 23 of 24 killed, 1 equivalent survivor (23/23 on non-equivalent mutants).
+
+The cloud-source failure (`test_profile_gcs_source_via_mocked_client`) fails identically on main 4a08f570 in the same venv (`ModuleNotFoundError: No module named 'google'`, from a `git archive` export), so it is an environment gap and not this change.
