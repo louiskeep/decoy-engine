@@ -203,7 +203,7 @@ def test_a_split_job_routes_an_admitted_when_table_chunked_and_the_other_full_fr
         {
             "r": pa.array([f"b{i}" for i in range(a_rows)]),
             "g": pa.array(["x" if i % 2 else "y" for i in range(a_rows)]),
-            "n": pa.array(list(range(a_rows)), pa.int64()),
+            "n": pa.array([None if i % 4 == 0 else i % 3 == 0 for i in range(a_rows)], pa.bool_()),
         }
     )
     cfg, sources = mt.build_job(
@@ -213,8 +213,9 @@ def test_a_split_job_routes_an_admitted_when_table_chunked_and_the_other_full_fr
             "tbl_b": ([redact("r"), passthrough("g"), passthrough("n")], b_table),
         },
     )
-    # A numeric reference is not chunk-stable: table B keeps full-frame.
-    cfg["tables"][1]["columns"][0]["when"] = "n > 3"
+    # A bool-with-nulls reference is object in some chunks and bool in others, so it is not
+    # chunk-stable: table B keeps full-frame.
+    cfg["tables"][1]["columns"][0]["when"] = "n == True"
     calls = mt.spy_split(monkeypatch)
     got = run_pipeline(cfg, sources=sources, **mt.kw())
     off = run_pipeline(cfg, sources=sources, **mt.kw(**mt.off_kw()))
