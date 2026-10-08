@@ -1,4 +1,4 @@
-Status: plan (rev 3.2 for E1: rev 3.1 plus the 2026-10-07 delta below; BUILD-READY per Codex delta gate)
+Status: plan (rev 3.3 for E1: rev 3.2 plus the 2026-10-08 strict-error-boundary delta below; pending Codex plan gate on the delta)
 
 # PLAN: Close the host-file read/write class at the engine's open calls (engine + platform)
 
@@ -950,6 +950,50 @@ E1 rebases onto engine main as it stands after Phase C slices #200-#221. A Codex
 7. **Release baseline** (LOW). `pyproject.toml` declares 0.7.0, `decoy-engine-native/pyproject.toml` declares 0.1.0, and a local `v0.8.0rc1` tag exists. 0.9.0 remains the planned version, and the paired native artifact is recorded when released. The chunked entry anchor is now `execution/_chunked.py:368` (not ~358). **Tagging or publishing 0.9.0 is an outward action that needs Cam's explicit go.**
 
 No other changed filesystem sites were found in DuckDB, reference tables, model packs, vault or native Rust code, and no new production basetemp surface.
+
+### Rev 3.3 delta for E1 (2026-10-08, Opus; escalation after repeated gate failures on one defect class)
+
+The E1 build has now failed review on the same defect class three times: third-party error text, chains or secret material escaping under a strict policy (dennis round 1 H1/H3, dennis round 2 M-1, Codex final round 1 findings 3 to 6). Each fix closed one site and left the next. Per the escalation rule, the design is corrected here before any further code. The Codex final round 1 also found two confinement holes (findings 1 and 2). This delta supersedes D5's "originated inside a file adapter" scoping and adds three requirements with the same force as D1 to D10.
+
+**X1. The strict error boundary (replaces per-adapter scrubbing as the guarantee).**
+- **One owner.** `fileaccess.strict_boundary(position)` is a context manager in `fileaccess/_errors.py`. Under a strict (non-ambient) policy, it wraps one whole policy-bearing OPERATION, from the first open through every downstream step that consumes the authorized content (read, decode, parse, convert, execute, fetch). Ending at acquisition is not enough. Under `LocalFileAccess` it is a no-op, so CLI behavior and text are unchanged.
+- **What may leave it:**
+  - (a) `FileAccessDenied`, `FileAccessUnavailable` and `FileAccessReadError`, unchanged;
+  - (b) an allowlisted resource failure, rebuilt as a FRESH exception of a fixed type with a FIXED message from a closed table. The types are `MemoryError`, `pyarrow.ArrowMemoryError`, `duckdb.OutOfMemoryException`, and `OSError` with errno `ENOMEM`/`ENOSPC`/`EDQUOT` (errno kept, no filename). Each fixed message satisfies `is_memory_failure` (or the disk-full classifier) by construction. A text-matched shape, such as the Arrow `Wrapping ... failed` and OpenSSL markers, is recognized only to choose which fixed message to use. NO original text survives;
+  - (c) every other exception, which becomes `FileAccessReadError(position)`.
+- **No chain or context survives.** The replacement is raised AFTER the `except` block exits, so `__cause__`, `__context__` and `__suppress_context__` are clean. `traceback.format_exception` of the result renders no original text, and no attribute (`.object`, `.args`, `.filename`) of the original is reachable from it.
+- **Outer wrappers must not undo it.** Under a strict policy, any engine `except Exception` that wraps a call reaching a boundary re-raises the classes in (a) and (b) unchanged; it does not rewrap them into `ValueError`, `PlanCompileError` or similar. Applies to `reference_tables/_loader.py:107`, `transforms/_codeset_loader.py:429`, and every site the inventory below finds.
+- **Inventory first.** The builder lists every policy-bearing operation (every registry entry and every adapter call site), names its completion point, and places one boundary around acquisition through completion. Known sites:
+  - keyprovider read plus `_decode_secret_material` (hex and base64);
+  - `data_discovery` execute plus fetch;
+  - the statistical snapshot parse (`generation/statistical/_spec.py:164`, `plan/_generation.py:141`);
+  - reference-table and corpus loaders;
+  - YAML, JSON and Parquet adapters;
+  - the out-of-core stager.
+
+  The inventory goes in the build record. A sentry asserts that every adapter call in `src/` sits lexically inside a `strict_boundary` or inside a function the inventory names as boundary-wrapped by its caller.
+- **The per-adapter `guarded` stays** as an inner layer, but it is no longer the guarantee.
+
+**X2. Opaque scratch identifiers (confinement for config-named scratch).** Every engine scratch path derived from a config value (table, column or edge name) uses an opaque per-run identifier instead:
+- `t0000`, `t0001`, ... from the table order;
+- `e0000`, ... for edges.
+
+These are mapped in memory and never built from the name. This covers `out_of_core/_runner.py` (`joins/`, `relations/`, `staged/`), `out_of_core/_relation.py` relation filenames, the stream driver, and any other site the inventory finds. Every scratch path is built beneath the engine's own `mkdtemp` descriptor, and the registry classifies these sites as engine-generated only after this change.
+
+**X3. Shipped-corpus registry.**
+- `load_corpus(name, ...)` resolves a name to a file ONLY when `name` is a key of `_SHIPPED_CORPORA`, through a registry-owned constant path, and checks membership before any filesystem call.
+- Any other name, including absolute paths, `..`, separators and stems of real files, raises the existing unknown-corpus error with no filesystem access.
+- A customer corpus requires `path=` and policy authorization.
+- The same rule applies to every other public loader that accepts a "shipped" name (the builder lists them).
+
+**Acceptance tests (added to the E1 set; written first, red on head `cce9eb68`):**
+- **AT-X1a (sentinel, per inventoried site).** Under a strict policy, plant a distinct sentinel in authorized content: a cell, a secret file (including valid UTF-8 with a non-ASCII char and a bad hex/base64 body), malformed JSON or YAML, a SQL cast failure, and a YAML tag carrying an OpenSSL marker string. For each, assert the sentinel is absent from `str(exc)`, from `traceback.format_exception(exc)`, from a `logging` handler's output with `exc_info=True`, and from every attribute reachable by walking `__cause__`/`__context__` (both must be `None`).
+- **AT-X1b (classification survives).** Inject `MemoryError`, `ArrowMemoryError`, `duckdb.OutOfMemoryException`, ENOMEM, ENOSPC, EDQUOT, and the Arrow `Wrapping <cell> failed` shape at each inventoried site, including through the outer loaders. The error that reaches the engine's caller keeps the fixed class, and `is_memory_failure` (or the disk classifier) is true. The #219 OOM tests pass under a strict policy.
+- **AT-X1c (ambient unchanged).** The same inputs under `LocalFileAccess` produce today's errors and text.
+- **AT-X2.** Table names `/abs`, `../up`, `a/b`, `.`, `..` and a 300-character unicode name, through both out-of-core drivers under a strict policy. No filesystem call targets a path outside the engine scratch root (strace detector plus an intercepted-mkdir probe). Output equals the same job with plain names.
+- **AT-X3.** `load_corpus` with an absolute stem of a real file, `../x`, `a/b`, or a shipped name with a suffix makes zero filesystem calls (detector) and raises unknown-corpus. Shipped names still load.
+
+**Process.** This delta goes through the Codex plan gate. dennis and Codex then gate the built result. Findings 1 to 6 from Codex final round 1 are the acceptance criteria. The record maps each to its test.
 
 ### Slice E1: engine `fileaccess` (decoy-engine `feat/file-access-policy`, ships as 0.9.0)
 
