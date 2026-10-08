@@ -174,6 +174,9 @@ class Case:
     selection: str = "free"  # strict | none | all | error | free
     kinds: tuple[str, ...] = ("resident", "lazy")
     in_grammar: bool = True
+    # A pandas-origin table keeps its schema metadata, so the run restores nullable dtypes.
+    table: pa.Table | None = None
+    dtypes: tuple[tuple[str, str], ...] = ()
 
 
 def _cases() -> dict[str, Case]:
@@ -187,12 +190,24 @@ def _cases() -> dict[str, Case]:
     nullish_f = _col([None if 7 <= i < 14 else 0.5 * (i % 4) for i in range(N)], pa.float64())
     pd_frame = pd.DataFrame(
         {
+            "s": TARGET,
             "i": pd.array(list(range(N)), dtype="Int64"),
+            "u": pd.array(list(range(N)), dtype="UInt64"),
             "b": pd.array([i % 3 == 0 for i in range(N)], dtype="boolean"),
             "f": pd.array([None if i % 6 == 0 else i * 0.5 for i in range(N)], dtype="Float64"),
         }
     )
     pdt = pa.Table.from_pandas(pd_frame, preserve_index=False)
+
+    def nullable(col: str, pred: str, dtype: str) -> Case:
+        return Case(
+            {col: pdt.column(col)},
+            pred,
+            "strict",
+            table=pdt.select(["s", col]),
+            dtypes=((col, dtype),),
+        )
+
     cases: dict[str, Case] = {
         "int64_eq_above_2_53": Case({"n": ints}, f"n == {_BIG + 1}", "strict"),
         "int64_ne_above_2_53": Case({"n": ints}, f"n != {_BIG + 1}", "strict"),
@@ -252,9 +267,10 @@ def _cases() -> dict[str, Case]:
         "int8": Case({"r": _col([i % 8 for i in range(N)], pa.int8())}, "r > 3", "strict"),
         "int16": Case({"r": _col([i % 8 for i in range(N)], pa.int16())}, "r > 3", "strict"),
         "uint8": Case({"r": _col([i % 8 for i in range(N)], pa.uint8())}, "r > 3", "strict"),
-        "nullable_Int64": Case({"i": pdt.column("i")}, "i > 3", "strict"),
-        "nullable_boolean": Case({"b": pdt.column("b")}, "b == True", "strict"),
-        "nullable_Float64": Case({"f": pdt.column("f")}, "f > 3.0", "strict"),
+        "nullable_Int64": nullable("i", "i > 3", "Int64"),
+        "nullable_UInt64": nullable("u", "u > 3", "UInt64"),
+        "nullable_boolean": nullable("b", "b == True", "boolean"),
+        "nullable_Float64": nullable("f", "f > 3.0", "Float64"),
         "all_null_chunk_timestamp": Case({"ts": nullish_ts}, "ts >= '2020-01-03'", "strict"),
         "all_null_chunk_float": Case({"f": nullish_f}, "f != 0.5", "strict"),
     }
@@ -273,10 +289,15 @@ def test_a_relaxed_reference_auto_chunks_and_equals_the_whole_frame(
     case = _CASES[name]
     if kind not in case.kinds:
         pytest.skip("date64 is stored as date32 in Parquet, so the lazy leg is the date32 case")
-    table = _table(case.refs)
+    table = case.table if case.table is not None else _table(case.refs)
     cfg, source, oracle = _setup(
         tmp_path, _cols(case.refs, case.predicate), table, kind, row_group_size=9
     )
+    if case.dtypes:
+        from decoy_engine.execution._fk_keys import to_pandas_fk_safe
+
+        frame = to_pandas_fk_safe(oracle, ())
+        assert tuple((c, str(frame[c].dtype)) for c, _ in case.dtypes) == case.dtypes
     mask = _assert_chunked_equals_full(cfg, source, oracle, chunk, grammar=case.in_grammar)
     if case.selection == "error":
         assert mask is None

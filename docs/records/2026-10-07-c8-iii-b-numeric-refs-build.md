@@ -60,3 +60,9 @@ Mutation (manual harness, since mutmut is not installed; scratch script, not com
 - Score: 23 of 24 killed, 1 equivalent survivor (23/23 on non-equivalent mutants).
 
 The cloud-source failure (`test_profile_gcs_source_via_mocked_client`) fails identically on main 4a08f570 in the same venv (`ModuleNotFoundError: No module named 'google'`, from a `git archive` export), so it is an environment gap and not this change.
+
+## Codex final review: LOW closed
+
+The nullable-metadata fixtures (`Int64`, `boolean`, `Float64`) rebuilt arrays without the pandas schema metadata, so they did not exercise the nullable-dtype path. Now each such `Case` carries the pandas-origin table itself (metadata intact, resident and Parquet-lazy), a `UInt64` case was added, and the test asserts that `to_pandas_fk_safe` of the source gives `Int64`, `UInt64`, `boolean` and `Float64`. The output-contract assertions are unchanged and every case passes; no implementation change.
+
+Re-run: new file plus `tests/sentry` 2655 passed, 9 skipped (`~/bin/pytest-one`, 3.11); ruff format and check clean; `ci-mirror` (clean CI-pinned venv, ENGINE_DIR set to this worktree, changed test files plus `tests/sentry`): 2761 passed, 13 skipped, PASS.
