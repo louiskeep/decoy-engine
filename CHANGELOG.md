@@ -24,6 +24,7 @@ A format that has a date directive is accepted: `%Y`, `%d/%m/%Y`, `%Y-%m-%dT%H:%
 still write midnight, zero or nothing, because the strategy perturbs the calendar date. An unknown
 directive such as `%Q` now fails up front as a coded error instead of a bare `ValueError` during
 the run. Leaving `date_format` unset still autodetects.
+
 ### Changed (`when:` runs natively for text_redact, bucket_perturb and date_shift, 2026-10-07)
 
 A `text_redact`, `bucket_perturb` or `date_shift` column with a `when:` predicate now runs on the

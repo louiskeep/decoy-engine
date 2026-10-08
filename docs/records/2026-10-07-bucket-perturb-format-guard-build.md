@@ -42,7 +42,7 @@ Searched `tests/`, `scripts/`, `testflight/`, `docs/` for bucket_perturb configs
 | `tests/sentry/test_physical_seam_disconnection.py` | three files added to the permitted non-physical edits (`_strategies/_bucket_perturb.py`, `_strategies/_nested.py`, `out_of_core/_mask_group_c.py`) with a reason | the seam sentry lists every execution file changed against main | none |
 | `tests/sentry/test_module_size.py` | `_compile.py` census 703 to 682 | comment-only trims in `_compile.py` paid for the registration; the file is now below the 700 max and is an ordinary dense entry at its exact LOC | none |
 
-No planned or existing assertion was weakened. No existing test other than the five above changed.
+No planned or existing assertion was weakened. No existing test other than those in the table above changed.
 
 ## Tests first
 
@@ -81,8 +81,9 @@ C8-iii-a pinned `mixed` and `ISO8601` as accepted formats whose output is the fo
 - The undetectable-format passthrough (plan 2e) is unchanged and tracked on the roadmap.
 - Platform save-time validation is excluded by the plan.
 
-## Where work stopped (post-merge verification incomplete)
+## Final verification on the merged head (56cd82c1)
 
-The merge of main and the C8-iii-a migration are committed (`76774a32`). Done on the merged head: ruff check, ruff format and mypy clean; the migrated C8-iii-a tests and the native-gate tests pass (343 passed); `tests/sentry` passes on 3.10 (2455 passed, 1 skipped).
-
-Not run on the merged head, because the usage limit ended the session: `tests/sentry` on 3.11, the full 3.11 suite (unit, native, physical, parity, integration, perf) with `-rfE`, and the testflight check. Run those before merging. The pre-merge head (`c4c8c294`) had the full suite and testflight green.
+- **Sentries** (`tests/sentry`, 3.11): 2455 passed, 1 skipped.
+- **Full suite** (`tests`, 3.11, `-rfE`): 25594 passed, 1 failed, 172 skipped, 59 xfailed. The failure is `test_v2_cloud_sources.py::...test_profile_gcs_source_via_mocked_client` (`No module named 'google'`). It fails identically on main 4a08f570 in the same venv, an environment gap.
+- **Testflight** (check mode): 53/53 invariants, 5/5 fingerprints match the golden.
+- **dennis gate:** GO (1 MEDIUM, this record section; 2 LOW, CHANGELOG spacing and the platform roadmap flip at merge).
