@@ -195,25 +195,21 @@ Judgment calls added by the remediation:
 - Library warnings are no longer suppressed under a strict policy (L2). None of the library calls in
   scope emits a warning that names a path; this is not verified for every library version.
 
-## Where remediation stopped (usage limit)
+## Final verification (head 807ccd88, code last changed in 48647012)
 
-All thirteen findings are fixed and committed (the series after `1405151b`, last code commit
-`48647012`). Verification done on the tree before the final handler follow-up, or partial:
+| Check | Result |
+|---|---|
+| `tests` (full), 3.11 | 1 failed, 25436 passed, 172 skipped, 21 deselected, 59 xfailed |
+| `tests/sentry` + `tests/fileaccess`, 3.10 | 2916 passed, 1 skipped |
+| `tests/sentry` + `tests/fileaccess` + `tests/native/test_column_access_surfaces.py`, 3.11 | 3101 passed, 1 skipped |
+| `ruff check`, `ruff format --check`, `mypy src` (3.10 venv) | clean |
+| `scripts/test_flight.py` (check only) | 53/53 invariants, 5/5 fingerprints match golden |
 
-- Lint, format and `mypy src` clean on the final tree (3.10 venv).
-- Narrow 3.11 runs of `tests/fileaccess`, `tests/sentry` and the touched unit/property files passed on
-  the commits before the follow-up (last: 2998 passed). One full `tests` run on 3.11 before the
-  follow-up: 2 failed, 25434 passed; the failures were the pinned `_dispatch_mask_node` call
-  inventory (fixed by moving `at_position` into the handlers) and the pre-existing missing
-  `google` module.
-- `test_char_vault_in_place.py` passes on the untouched base (4 passed).
-
-Not done: the final full `tests` run on 3.11 and the 3.10/3.11 `tests/sentry` + `tests/fileaccess`
-runs on the head commit, and `scripts/test_flight.py` after the follow-up. A full 3.11 run was in
-flight when the limit hit; its output is in the scratch directory and was not read. The first thing
-to do on resume is those three runs and then a re-read of the pinned-inventory test
-(`tests/native/test_column_access_surfaces.py`) and `tests/sentry/test_module_size.py`, which the
-follow-up could affect.
+The one failure is `tests/unit/test_v2_cloud_sources.py::TestCloudSourceEndToEnd::test_profile_gcs_source_via_mocked_client`
+(`No module named 'google'`, the native venv lacks the GCS extra); it is the same failure as before this work and
+touches no changed code. The pinned dispatch inventory and the module-size census pass. The
+`test_char_vault_in_place.py` characterization passes on the untouched base. The first full run after the
+remediation was interrupted by a usage limit and discarded; the table above is a clean rerun.
 
 ## Not verified
 
