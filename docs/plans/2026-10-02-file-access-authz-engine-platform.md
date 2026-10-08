@@ -1,4 +1,4 @@
-Status: plan (rev 3.3 for E1: rev 3.2 plus the 2026-10-08 strict-error-boundary delta below; pending Codex plan gate on the delta)
+Status: plan (rev 3.3 for E1: rev 3.2 plus the 2026-10-08 D5-scoped delta below; pending Codex plan gate on the delta)
 
 # PLAN: Close the host-file read/write class at the engine's open calls (engine + platform)
 
@@ -951,49 +951,65 @@ E1 rebases onto engine main as it stands after Phase C slices #200-#221. A Codex
 
 No other changed filesystem sites were found in DuckDB, reference tables, model packs, vault or native Rust code, and no new production basetemp surface.
 
-### Rev 3.3 delta for E1 (2026-10-08, Opus; escalation after repeated gate failures on one defect class)
+### Rev 3.3 delta for E1 (2026-10-08; scope set by Cam: "Plan D5 as written")
 
-The E1 build has now failed review on the same defect class three times: third-party error text, chains or secret material escaping under a strict policy (dennis round 1 H1/H3, dennis round 2 M-1, Codex final round 1 findings 3 to 6). Each fix closed one site and left the next. Per the escalation rule, the design is corrected here before any further code. The Codex final round 1 also found two confinement holes (findings 1 and 2). This delta supersedes D5's "originated inside a file adapter" scoping and adds three requirements with the same force as D1 to D10.
+The Codex final review at `cce9eb68` was NO-GO with 4 HIGH and 2 MEDIUM findings. A first draft of this delta (rev 3.3 draft, `96879c29`) proposed a general information-flow sanitizer. Its Codex plan gate showed that design would need a prototype-proven sanitizer, wrapped lazy objects and a diagnostic inventory. Cam then fixed the scope (2026-10-08): **D5 as written.**
+- File locators, denied-file content and secret material never cross.
+- Text derived from a file the principal is allowed to read MAY appear in that principal's errors, as D5 already states ("Content-derived messages ... may appear only for files the principal was allowed to read").
+- Cell values in engine logs are the separate log-hygiene program scheduled after Phase F, not E1.
 
-**X1. The strict error boundary (replaces per-adapter scrubbing as the guarantee).**
-- **One owner.** `fileaccess.strict_boundary(position)` is a context manager in `fileaccess/_errors.py`. Under a strict (non-ambient) policy, it wraps one whole policy-bearing OPERATION, from the first open through every downstream step that consumes the authorized content (read, decode, parse, convert, execute, fetch). Ending at acquisition is not enough. Under `LocalFileAccess` it is a no-op, so CLI behavior and text are unchanged.
-- **What may leave it:**
-  - (a) `FileAccessDenied`, `FileAccessUnavailable` and `FileAccessReadError`, unchanged;
-  - (b) an allowlisted resource failure, rebuilt as a FRESH exception of a fixed type with a FIXED message from a closed table. The types are `MemoryError`, `pyarrow.ArrowMemoryError`, `duckdb.OutOfMemoryException`, and `OSError` with errno `ENOMEM`/`ENOSPC`/`EDQUOT` (errno kept, no filename). Each fixed message satisfies `is_memory_failure` (or the disk-full classifier) by construction. A text-matched shape, such as the Arrow `Wrapping ... failed` and OpenSSL markers, is recognized only to choose which fixed message to use. NO original text survives;
-  - (c) every other exception, which becomes `FileAccessReadError(position)`.
-- **No chain or context survives.** The replacement is raised AFTER the `except` block exits, so `__cause__`, `__context__` and `__suppress_context__` are clean. `traceback.format_exception` of the result renders no original text, and no attribute (`.object`, `.args`, `.filename`) of the original is reachable from it.
-- **Outer wrappers must not undo it.** Under a strict policy, any engine `except Exception` that wraps a call reaching a boundary re-raises the classes in (a) and (b) unchanged; it does not rewrap them into `ValueError`, `PlanCompileError` or similar. Applies to `reference_tables/_loader.py:107`, `transforms/_codeset_loader.py:429`, and every site the inventory below finds.
-- **Inventory first.** The builder lists every policy-bearing operation (every registry entry and every adapter call site), names its completion point, and places one boundary around acquisition through completion. Known sites:
-  - keyprovider read plus `_decode_secret_material` (hex and base64);
-  - `data_discovery` execute plus fetch;
-  - the statistical snapshot parse (`generation/statistical/_spec.py:164`, `plan/_generation.py:141`);
-  - reference-table and corpus loaders;
-  - YAML, JSON and Parquet adapters;
-  - the out-of-core stager.
+Within that scope, E1 adds four requirements with the same force as D1 to D10.
 
-  The inventory goes in the build record. A sentry asserts that every adapter call in `src/` sits lexically inside a `strict_boundary` or inside a function the inventory names as boundary-wrapped by its caller.
-- **The per-adapter `guarded` stays** as an inner layer, but it is no longer the guarantee.
+**X1. Secret material never survives in an error (Codex final finding 3).**
+- Under a strict policy, `keyprovider` reads AND decodes a secret in one function: UTF-8, hex, base64 and length checks.
+- On any failure it records a fixed reason code, lets the `except` block exit, then raises a fresh `MaskSecretError` built only from `display` and that code. The exception is constructed outside any handler, so `__cause__` and `__context__` are `None`, and no attribute of a decode exception (`.object`, `.args`) is reachable.
+- Not a context manager: a plain function with a flag, as `profile/_fixed_width_reader.py` does, because a context manager re-enters the original exception (Codex delta round 1).
+- Ambient behavior is unchanged.
 
-**X2. Opaque scratch identifiers (confinement for config-named scratch).** Every engine scratch path derived from a config value (table, column or edge name) uses an opaque per-run identifier instead:
-- `t0000`, `t0001`, ... from the table order;
-- `e0000`, ... for edges.
+**X2. Locators never cross, including on authorized files (Codex final findings 4 and 5, locator part; D5).**
+- Under a strict policy, every engine message or exception that would name a path names `display` (the encoded field key) instead.
+- Applies to:
+  - the snapshot parse sites (`generation/statistical/_spec.py:164`, `plan/_generation.py:141`);
+  - `data_discovery` execute and fetch errors (the DuckDB text may name the scanned file);
+  - the unknown-corpus message (X4);
+  - every site the builder's grep for path interpolation in strict-reachable code finds. The list goes in the record.
+- Third-party text from an authorized file's CONTENT is allowed by D5. Only path and locator substrings are replaced, using the existing `display` substitution, applied to the message and to any rendered chain.
+- The M-1 text-matched passthrough keeps #219's recognition predicates EXACTLY. Nothing is broadened; the single-token Arrow `Wrapping` shape stays distinct from whitespace-bearing malformed-data shapes. The message gets path substitution, not content removal.
 
-These are mapped in memory and never built from the name. This covers `out_of_core/_runner.py` (`joins/`, `relations/`, `staged/`), `out_of_core/_relation.py` relation filenames, the stream driver, and any other site the inventory finds. Every scratch path is built beneath the engine's own `mkdtemp` descriptor, and the registry classifies these sites as engine-generated only after this change.
+**X3. Classification survives outer wrappers (Codex final finding 6).**
+- Under a strict policy, any engine `except Exception` that wraps a call into a file adapter re-raises these classes unchanged instead of rewrapping them: `FileAccessDenied`, `FileAccessUnavailable`, `FileAccessReadError`, `MemoryError` (including `ArrowMemoryError`), `duckdb.OutOfMemoryException`, and `OSError` ENOMEM/ENOSPC/EDQUOT.
+- Applies to `reference_tables/_loader.py:107`, `transforms/_codeset_loader.py:429`, and every site the builder's inventory finds. The list goes in the record.
 
-**X3. Shipped-corpus registry.**
-- `load_corpus(name, ...)` resolves a name to a file ONLY when `name` is a key of `_SHIPPED_CORPORA`, through a registry-owned constant path, and checks membership before any filesystem call.
-- Any other name, including absolute paths, `..`, separators and stems of real files, raises the existing unknown-corpus error with no filesystem access.
-- A customer corpus requires `path=` and policy authorization.
-- The same rule applies to every other public loader that accepts a "shipped" name (the builder lists them).
+**X4. Config-derived scratch names and shipped-name resolvers (Codex final findings 1 and 2; Codex delta round 1 finding 6).**
+- **Opaque scratch identifiers.** Every engine scratch path derived from a config value (table, column, edge or relation name) uses an opaque per-run identifier (`t0000`, `e0000`, ...), mapped in memory and never built from the name, beneath the engine's own `mkdtemp` descriptor.
+  - Covers `out_of_core/_runner.py` (`joins/`, `relations/`, `staged/`), `out_of_core/_relation.py` relation filenames, the stream driver, `execution/native/_pool_quality.py:244`'s column-derived spool, and any other site the inventory finds.
+  - The registry classifies these as engine-generated only after the change.
+- **Shipped names.** `load_corpus`, `load_corpus_provenance` and every other loader that accepts a shipped name (including warm-cache paths) resolve a name ONLY if it is a registry key, through a registry-owned constant path. Membership is checked before any filesystem call.
+  - Any other name raises the unknown-corpus error with a fixed message that does not echo the rejected name or a constructed path.
+  - A customer corpus requires `path=` and policy authorization.
+  - Reference tables' existing membership-first resolution and their authorized `customer:` route are preserved.
 
-**Acceptance tests (added to the E1 set; written first, red on head `cce9eb68`):**
-- **AT-X1a (sentinel, per inventoried site).** Under a strict policy, plant a distinct sentinel in authorized content: a cell, a secret file (including valid UTF-8 with a non-ASCII char and a bad hex/base64 body), malformed JSON or YAML, a SQL cast failure, and a YAML tag carrying an OpenSSL marker string. For each, assert the sentinel is absent from `str(exc)`, from `traceback.format_exception(exc)`, from a `logging` handler's output with `exc_info=True`, and from every attribute reachable by walking `__cause__`/`__context__` (both must be `None`).
-- **AT-X1b (classification survives).** Inject `MemoryError`, `ArrowMemoryError`, `duckdb.OutOfMemoryException`, ENOMEM, ENOSPC, EDQUOT, and the Arrow `Wrapping <cell> failed` shape at each inventoried site, including through the outer loaders. The error that reaches the engine's caller keeps the fixed class, and `is_memory_failure` (or the disk classifier) is true. The #219 OOM tests pass under a strict policy.
-- **AT-X1c (ambient unchanged).** The same inputs under `LocalFileAccess` produce today's errors and text.
-- **AT-X2.** Table names `/abs`, `../up`, `a/b`, `.`, `..` and a 300-character unicode name, through both out-of-core drivers under a strict policy. No filesystem call targets a path outside the engine scratch root (strace detector plus an intercepted-mkdir probe). Output equals the same job with plain names.
-- **AT-X3.** `load_corpus` with an absolute stem of a real file, `../x`, `a/b`, or a shipped name with a suffix makes zero filesystem calls (detector) and raises unknown-corpus. Shipped names still load.
+**Acceptance tests.** Each defect test records fail-before on `cce9eb68`. Compatibility controls must pass before and after.
+- **AT-X1:**
+  - a strict secret holding valid UTF-8 with a non-ASCII char;
+  - a bad hex body;
+  - a bad base64 body;
+  - an invalid UTF-8 body.
 
-**Process.** This delta goes through the Codex plan gate. dennis and Codex then gate the built result. Findings 1 to 6 from Codex final round 1 are the acceptance criteria. The record maps each to its test.
+  For each, the sentinel is absent from `str(exc)`, `traceback.format_exception(exc)`, a logging handler's output with `exc_info=True`, `exc.__notes__` (absent), and `exc.args`. `__cause__` and `__context__` are `None`. The same inputs under `LocalFileAccess` keep today's behavior (compatibility control).
+- **AT-X2:** a path sentinel (a directory component named `LOCATOR_SENTINEL`) for each of:
+  - a malformed snapshot JSON;
+  - a `data_discovery` SQL error over an authorized Parquet;
+  - an unknown corpus;
+  - each inventoried site.
+
+  The locator sentinel is absent from message, traceback and log output. Authorized cell content may appear (documented, not asserted absent).
+- **AT-X3:** inject each resource class at the adapter under each inventoried outer wrapper. The class reaching the caller is unchanged and `is_memory_failure` is true. Negative control: a whitespace-bearing malformed-data Arrow shape stays NOT a memory failure. Check the strict in-process isolated-run outcome end to end (`oom_killed` vs `crashed`, and the envelope code), not only the predicate.
+- **AT-X4:**
+  - **Scratch confinement.** Table, column and edge names `/abs`, `../up`, `a/b`, `.`, `..` and a 300-character unicode name, through both out-of-core drivers, including two relations sharing one parent (confinement plus non-collision). No operation-attributable filesystem call targets a path outside the scratch root (detector plus an intercepted-mkdir probe). Output equals the plain-names job after mapping the logical names.
+  - **Shipped-name resolution.** Each shipped-name resolver given an absolute real-file stem, `../x`, `a/b`, or a shipped name with a suffix makes zero filesystem calls and raises unknown-corpus without echoing the name. Shipped names still load.
+
+**Process.** This delta goes through the Codex plan gate. The build then goes through dennis and Codex final. The record maps Codex final findings 1 to 6 to these tests. Finding 5 (YAML tag content in an authorized file) is resolved by the D5 scope: content may appear, locators may not.
 
 ### Slice E1: engine `fileaccess` (decoy-engine `feat/file-access-policy`, ships as 0.9.0)
 
