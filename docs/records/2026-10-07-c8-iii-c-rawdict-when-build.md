@@ -51,6 +51,103 @@ Dispositions as the plan defines them: (a) rewrite to a grammar predicate, (b) t
 Every disposition (a) rewrite records, in section 4 once built, the selection, route, read set and dtype it preserved on its fixture and what asserts it. Disposition (b) tests keep the old test name, or a name that says "rejected", and assert the typed code. No test is deleted.
 
 
+## 2. What was built
+
+- **Compile check.** `check_when_grammar` in the new `plan/_checks_when.py`, called next to `check_when_with_coherent_with` at both sites (`compile_plan` after the `no_profile` fork and `run_config_only_checks`). It raises `PlanCompileError(when_outside_closed_grammar)` with path `tables.<t>.columns.<c>.when` and a message built from the parser's reason, never the predicate. A non-string, non-None `when` is rejected with the same code; blank or whitespace-only means no gate. Nested children are not walked: `_nested.py:190` builds the child seed with `when=None`, so a `when` key in a child's `strategy_config` is inert provider config.
+- **Plan level.** `validate_envelope_when` and `validate_plan_when` in `expressions/_when_parser.py` parse every `ColumnSeed.when` in the envelope (FK-resolved and composite nodes, tables with no supplied source). `ValidationError(when_outside_closed_grammar)` names table and column and sets `path`. Called at the start of `PandasExecutionAdapter.run` (which `run_single` delegates to) and `run_sequential`, in `generate_tables` right after the `Plan` type check, and in `_plan_from_dict` on the rebuilt envelope.
+- **Backstop.** `_eval_predicate` calls `_require_closed_grammar` before `pdf.eval`, using `parse_when_cached` (an `lru_cache` over `parse_when`; only successes are cached). A failure raises `StrategyError(when_outside_closed_grammar)`. Non-string input goes through the uncached `parse_when`, which rejects it.
+- **Message hygiene.** The two evaluator messages name the column only. `parse_when` no longer keeps the Lark cause: `_reject` takes no cause and every raise in the `except` chain is `from None`. The pandas boundary raises `from None` and logs only the exception class name at debug level (`%`-style args, so the log-interpolation sentry holds). The `numexpr_required` branch keeps `from exc` (an `ImportError` carries no predicate).
+- **Docs.** CHANGELOG "Breaking (pre-GA)" entry with a migration table; `docs/strategies.md` `when:` section says the grammar applies to every caller, lists the newly named refusals and points at the table.
+
+### Other Plan-taking entry points the builder checked
+
+| Entry | Result |
+|---|---|
+| `PandasExecutionAdapter.run`, `run_single`, `run_sequential` | Guarded (`run_single` through `run`). |
+| `generate_tables(plan)` | Guarded. |
+| `plan_from_yaml` and the dict loader `_plan_from_dict` | Guarded at load. |
+| `run_fk_out_of_core` (`out_of_core/_runner.py`) | Not guarded. `check_out_of_core_compatibility` already rejects any effective `when` (`out_of_core_when_predicate_unsupported`) before work starts, and `_runner.py` is a legacy over-max module that may not grow. |
+| `physical` coordinator, shadow snapshot, `execution/native/_plan.py`, `capacity.py`, `_chunked_oracle.py` | Each calls `compile_plan` on the config first, so the compile check covers them. |
+| `run_pipeline`, `run_mask_chunked`, `run_mask_pipeline_chunked`, `run_native_or_oracle_chunked` (including zero-chunk input) | Reach `compile_plan`; tested to raise `PlanCompileError`. |
+
+## 3. Red-before proof
+
+The new section 3 tests (`tests/unit/plan/test_c8_iii_c_when_compile.py`, `tests/unit/execution/test_c8_iii_c_plan_when.py`, `tests/unit/execution/test_c8_iii_c_boundaries.py`, support module `_c8_iii_c_support.py`) were written and committed first (`09c16112`). They were run against a whole exported old tree, because `pyproject.toml` sets `pythonpath = ["src"]` and a worktree overlay would import the new source:
+
+```
+git archive 4a08f570 | tar -x -C <scratch>/c8iiic-old     # then the four test files copied in
+~/bin/pytest-one <py3.11> <the three test files>           # run with cwd = the old tree
+```
+
+A one-off check confirmed `decoy_engine.__file__` resolved inside the old tree. First attempt: 111 failed, 23 passed, and a fixture bug (an unmade directory) made 14 of the failures fail for the wrong reason. After the fix, plus a stricter type assertion in the no-render test (one case passed vacuously because an `ImportError` is not an assertion error): **112 failed, 22 passed on the old tree; 134 passed on the new code.** The failures are the intended ones: `DID NOT RAISE PlanCompileError` (56), `DID NOT RAISE ValidationError` (11), `ImportError: validate_plan_when` (11), not raising the expected `StrategyError` or any exception at the boundaries (21), the sentinel found in `str(exc)`, the traceback or logging output (rest). The 22 that pass on the old tree are the guards for behavior that must not change: blank and padded predicates compile, a grammar predicate is not newly rejected, a grammar plan round-trips, admission verdicts (3(b)), the eval-scope clamps, the non-boolean branch, and `numexpr_required`.
+
+## 4. Test changes
+
+Prediction check: after the source change the affected files ran again. 79 tests failed. All 78 of them were in the predicted Appendix A set; the 79th, `test_g4_adapter_run_call_inventory_is_pinned`, pins the call set of `PandasExecutionAdapter.run` and gained `validate_plan_when`. No Appendix B (helper-only) test failed.
+
+**Vacuous passes found.** 109 Appendix A tests passed after the change without any edit, because both sides of their comparison now raise the same `PlanCompileError`: the 108 `test_type_catalogue_read_column_matches_the_oracle` cases and `test_predicate_the_tokenizer_rejects_reads_every_passthrough_column`. They were migrated like the failing ones. The catalogue test now also asserts the public outcome is not a `PlanCompileError`.
+
+### Final dispositions (where they differ from section 1)
+
+| Inventory row | Final |
+|---|---|
+| 1 auto-route x3 | (b) as planned. |
+| 2 split job | (a) as planned: table B gets an int column `n` and `n > 3`. |
+| 3 one declined column | (a) as planned, with a premise assertion that `when_native_rejection` returns `when_predicate_reads_masked_column:s:p` for `s` and `None` for `p`. |
+| 4 declines x4 | Split as planned: admission half unchanged (renamed `..._declines_admission`), end-to-end half is `..._is_rejected_by_both_entry_points`. |
+| 5 evidence `when_veto` | (a) as planned: `truncate(t)` gated by `r == 'x'`, reason `when_predicate_reads_masked_column:t:r`. |
+| 6 catalogue x108 | (a), `x != 'q'`. Probe over all 108 pairs gave the same public-oracle outcome table as `x.notnull()` (108 succeed, 26 refusals by class). Selection on null rows differs, which no assertion reads. |
+| 7 nfkc x10 | (b), plus a new helper-level `test_nfkc_spelled_predicate_resolves_to_the_real_column_name` (`predicate_names` and `read_set`, (c)). |
+| 8 rev9 profile x2 | (a), `id != 0`. |
+| 9 and 11 rev9 read | Backtick, unicode-name and tokenizer cases are (b), each with its read-set claim left in the helper tests that already call `read_set`. `x > 4` cases unchanged. |
+| 10 rev9 read refusal | (a), `x != 'q'` and `a != 'q' and b != 'q'`. Two tests (`test_masked_column_conversion_failure_is_not_wrapped`, `test_strategy_handler_failure_is_the_same_object`) relied on the out-of-grammar predicate to force the oracle leg; they now add `force_oracle("c")` and a `c` column, so the oracle leg still runs and the conversion or handler failure is still the one asserted. `x + 0 > 1` became `x > 1`. The nested and profile-order tests with `tags.notnull()` and `t.notnull()` passed unmodified (the profile walk fails before compile) and were moved to grammar predicates so they no longer depend on that ordering. |
+| 13 composite generates every output | (a), `first_name != 'zz'` (selects every row, as the bytes form did). |
+| 14 big int and unrepresentable value | (a): `r != 'zz' and big != 5` (every row selected; the public oracle still returns float64) and `r != 'zz' and t != 'zz'`. The reads-unknown path is covered by the helper tests that stay unchanged. |
+| 15 stored index | Unrelated index: (a) `s != 'zz'`. Named index: (b), not (a). A parsable predicate naming the index is refused (the closed parser sees the reference), whereas the old unparsable one slipped past that refusal; the grammar form is covered by the existing `when_reference` refusal cases, which now use `id != 'q'`. Unnamed `__index_level_0__`: (b). |
+| 16 unconfigured passthrough read | (a) for `when_bare` with `x != 'q'` plus `force_oracle("c")` (reason `forced_reason("c")`); (b) for the backtick and NFKC spellings. |
+| 17, 18 unified lane | (b). |
+| 19 security x4 | (b), plus an autouse fixture asserting `DataFrame.eval` is never called. |
+| 20 gate mutation kills, `test_when_predicate` | `n + 1` -> `test_..._outside_grammar_attributes_strategy` (b); the not-boolean branch moves to an injected non-boolean on an accepted predicate; the two clamp tests now assert `local_dict`, `global_dict` and `engine` on the recorded `DataFrame.eval` call, and `@` references get a rejection test. |
+| 21 bucket_perturb auto route | (a): the shared helper uses `date_format="mixed"` (native still declines) and `d > '2000' and d < '2030'` (same selection as the chained form). |
+| 22 categorical seeded | (a), `keep == True` (a bool column, same selection). |
+
+Nothing was deleted. No assertion was dropped, loosened or narrowed. The test counts in the changed files are equal or higher except where a parametrized e2e test became a rejection test plus a helper test.
+
+## 5. Quality gates
+
+- **Lint.** `ruff check`, `ruff format --check` clean on every changed Python file. `mypy` on the seven changed source files reports nothing in them; five pre-existing `Module has no attribute` errors for pyarrow compute functions appear in three untouched files in the default venv.
+- **Sentries** (rerun after the commits; the seam sentry diffs committed HEAD): `tests/sentry` 2455 passed, 1 skipped, including the module-size census at exact LOC and the log-interpolation sentry. The census moved `_compile.py` 703 -> 666 and `_pandas_adapter.py` 681 -> 686.
+- **Full suite, Python 3.11, `-rfE`:** baseline at `4a08f570` 25368 passed, 1 failed (the known `test_profile_gcs_source_via_mocked_client`, `No module named 'google'`); final run is in section 6.
+- **Testflight, check mode** (`scripts/test_flight.py`, run under the shared lock): exit 0, 53 of 53 invariant checks passed, strategy coverage guard passed, **`FINGERPRINTS: 5/5 match golden`**. No fingerprint moved.
+
+## 6. Mutation (hand harness, mutmut is not installed)
+
+A scratch export of HEAD is mutated one site at a time and the targeted tests run through `~/bin/pytest-one` (the three new files, `test_when_gate_mutation_kills.py`, `test_when_predicate.py`, `test_when_eval_scope.py`, `test_c8_i_when_grammar.py`, `test_serialize.py`; `-x`). 38 mutants: 13 on `check_when_grammar` and its two call sites, 9 on `validate_envelope_when` and `validate_plan_when`, 4 on the guard call sites, 10 on the backstop, 2 on `parse_when`'s chain suppression.
+
+**36 killed, 2 survived, 38 total (94.7%; 36 of 36 on mutants that change behavior).** The first pass left four survivors; each exposed a test gap and was fixed before the final pass: falsy non-strings (`0`, `False`, `[]`, `{}`) were not tested; the malformed table and column skips were not tested; a non-string value to the backstop was not tested; the compile message was not asserted to carry the parser's reason; the plan-level error path was not asserted.
+
+| Survivor | Why it is accepted |
+|---|---|
+| G3, `parse_when(when.strip())` -> `parse_when(when)` | Equivalent: `parse_when` strips its own input. |
+| P2, drop `from None` on the `except lark.exceptions.LarkError` branch | Unreachable by input. Every parse failure the LALR parser produces is an `UnexpectedInput` (handled by the branch above it); the generic `LarkError` branch only covers a grammar or internal error. |
+
+Mutants killed first time include every guard removal (compile x2, adapter `run`, `run_sequential`, `generate_tables`, deserialization, backstop), every wrong code, path and strategy, every predicate-echo and every chain-kept variant.
+
+## 7. Deviations from the plan
+
+1. **`_check_when_grammar` lives in `plan/_checks_when.py`, named `check_when_grammar`, not in `plan/_compile.py`.** `_compile.py` was 703 lines, a legacy over-max entry that the module-size sentry lets only shrink. The old `_check_when_with_coherent_with` moved with it (renamed `check_when_with_coherent_with`, body unchanged), so `_compile.py` shrank to 666 while keeping the "next to" relationship. The census entry follows.
+2. **`parse_when`: the bare `raise` for a non-reject `VisitError` became `raise _reject("the predicate does not parse") from None`.** A transformer failure carries its own message, which can quote the text. Not named in the plan; same hygiene rule.
+3. **Two helpers the plan did not name:** `parse_when_cached` (the cache) and `validate_envelope_when` (the envelope walk, so deserialization can validate before the `Plan` exists). `validate_plan_when` is a thin wrapper.
+4. **Plan-level error text.** The plan says "naming table and column only"; the error also sets `path` to `tables.<t>.columns.<c>.when` and carries no parser reason.
+5. **Three inventory dispositions changed during migration** (rows 14, 15 named index and 16); see section 4.
+6. **`run_fk_out_of_core` is unguarded** for the reason in section 2.
+
+## 8. Unresolved
+
+- The `when:` null-test gap (no general null predicate in the grammar) is unchanged and tracked separately for Cam, per plan section 2f.
+- The out-of-scope items in plan section 2f (`_transforms._eval_clamped`, simplifying `_column_access.predicate_names`) are not done and should go on the roadmap.
+- The dennis check the plan asks for (record against diff) has not run; this record is its input.
+
 ### Appendix A: tests where an out-of-grammar `when` reached compile or the gate (expected to fail after the change)
 
 - `tests/native/test_c8_i_when_auto_route.py` (5 cases)
