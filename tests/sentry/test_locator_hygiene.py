@@ -92,8 +92,12 @@ PATH_NAMES = frozenset(
 _BASENAME_ATTRS = frozenset({"name", "stem", "suffix"})
 
 _LEVELS = frozenset({"debug", "info", "warning", "warn", "error", "exception", "critical", "log"})
-# Calls that return a display-safe value: the locator never survives them.
-_SAFE_CALLS = frozenset({"shown", "redact_locators", "encode_field_key", "position_key", "scrub"})
+# Calls that return a display-safe value: the locator never survives them. `member_display` is the
+# model-pack reader's own display helper (it wraps `fileaccess.shown`), so a reader may interpolate
+# `_packio.member_display(pack_dir)` directly.
+_SAFE_CALLS = frozenset(
+    {"shown", "redact_locators", "encode_field_key", "position_key", "scrub", "member_display"}
+)
 # Keywords of a raised error whose value is a human message (never the structured position field
 # `path=`/`code=` of a PlanCompileError, which carries a config position, not a locator).
 _MESSAGE_KEYWORDS = frozenset({"message", "msg"})
@@ -319,6 +323,7 @@ _M = "m.py"
         ("def f():\n    raise E(f'at {handle.display}')\n", {}),
         ("def f():\n    raise E(f'at {fileaccess.shown(path, key)}')\n", {}),
         ("def f():\n    raise E(f'at {redact_locators(text, pairs)}')\n", {}),
+        ("def f():\n    raise E(f'in {_packio.member_display(pack_dir)}')\n", {}),
         # A basename (`.name`/`.stem`/`.suffix`) is a component, not the location.
         ("def f():\n    raise E(f'failed on {path.name}')\n", {}),
         ("def f():\n    _log.warning('bad %s', file_path.stem)\n", {}),
