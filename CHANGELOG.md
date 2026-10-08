@@ -36,6 +36,45 @@ stays NaN (whole-frame writes null), and `large_string` and `date64` keep their 
 (whole-frame writes `string` and `date32`). A reference that is an integer or bool with nulls, has no null-count
 statistic, or is a dictionary, decimal, nested, time or duration column still runs whole-frame,
 and the target must still be a string. An explicit chunked run is unchanged.
+### Breaking (pre-GA): every `when:` predicate must be in the closed grammar, 2026-10-07
+
+A `when:` outside the closed grammar was already refused when a config loaded through
+`PipelineConfig`. A config that reached the engine as a raw dict, a hand-built or deserialized
+`Plan`, or a direct engine call skipped that check, and its predicate ran through pandas
+`DataFrame.eval`. All of those callers now meet the same rule.
+
+- `compile_plan` and `run_config_only_checks` raise `PlanCompileError` with code
+  `when_outside_closed_grammar` and path `tables.<table>.columns.<column>.when`. The same code
+  covers a `when` that is not a string; the old behavior dropped it and ran the column ungated.
+  A blank or whitespace-only string still means no gate.
+- A compiled `Plan` is checked again before any handler, provider or sink runs:
+  `PandasExecutionAdapter.run`, `run_single` and `run_sequential`, `generate_tables`, and
+  `plan_from_yaml` (so a stored plan fails when it loads). The error is
+  `ValidationError` with the same code, naming the table and column. A bad predicate on a later
+  table can no longer surface after an earlier table was written.
+- `_eval_predicate` checks the grammar before it calls pandas, for callers that never had a
+  `Plan`, and raises `StrategyError` with the same code.
+- Error messages and exception chains no longer carry the predicate. A predicate can embed data
+  values (`ssn == '123-45-6789'`), and pandas and Lark errors quote it, so the evaluator's two
+  messages, `parse_when` and the pandas boundary now name the column and strategy only, and
+  tracebacks show no cause.
+
+Migration from the pandas forms that used to work:
+
+| Was | Use | Note |
+|---|---|---|
+| `x.notnull()` | `x >= ''` on a string column, `x < 0 or x >= 0` on a numeric column | The grammar has no general null test. These select the same rows only in those two domains. |
+| `x.isna()` | `not (x >= '')` on a string column, `not (x < 0 or x >= 0)` on a numeric column | Same limit. |
+| `x.isin(['a', 'b'])` | `x in ['a', 'b']` | |
+| `x.between(1, 5)` | `x >= 1 and x <= 5` | |
+| `0 < p < 3` | `p > 0 and p < 3` | Chained comparisons are refused. |
+| `~(x == 1)`, `a & b`, `a \| b` | `not (x == 1)`, `a and b`, `a or b` | |
+| `flag` (a bare boolean column) | `flag == True` | |
+| `age > 17 + 1` | `age > 18` | Fold the arithmetic into the literal. |
+| `s == b'x'`, `s == f'{y}'` | `s == 'x'` | Bytes and f-string literals are refused. The bytes form never equals a string, so the two are not the same predicate. |
+| `` `my col` > 4 `` | rename the column to `my_col`, then `my_col > 4` | Names are ASCII letters, digits and `_`. |
+| `a != b` (two columns) | no equivalent | Compare each column with a literal, or drop the gate. |
+| `s.str.startswith('A')`, `len(s) > 3`, `@limit` | no equivalent | Enumerate the values with `in [...]`, or drop the gate. |
 
 ### Changed (`when:` runs natively for text_redact, bucket_perturb and date_shift, 2026-10-07)
 
