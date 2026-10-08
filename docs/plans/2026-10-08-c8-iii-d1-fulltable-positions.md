@@ -1,4 +1,4 @@
-Status: plan (rev 2)
+Status: plan (rev 2, BUILD-READY: Codex plan gate GO in round 2)
 
 Rules consulted: 00-universal, development-loop, risk-and-exceptions, feature-dev, testing, code-review.
 
@@ -103,3 +103,4 @@ Rollback: revert the merge commit.
   - nested children must not consume outer `gate_positions`; dispatch clears it; test 1b (finding 1);
   - the invariance property holds only where the unfiltered result exists; windowed_date null-anchor split, test 1a (finding 2);
   - positions convert to Python `int` before `encode_int`/`to_bytes`; byte encoding pinned against base (finding 3).
+- **Codex plan gate, round 2: GO** (high confidence). All three round-1 findings closed; no new defect. Build-ready.
