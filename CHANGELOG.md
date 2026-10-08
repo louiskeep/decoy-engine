@@ -75,6 +75,20 @@ Migration from the pandas forms that used to work:
 | `` `my col` > 4 `` | rename the column to `my_col`, then `my_col > 4` | Names are ASCII letters, digits and `_`. |
 | `a != b` (two columns) | no equivalent | Compare each column with a literal, or drop the gate. |
 | `s.str.startswith('A')`, `len(s) > 3`, `@limit` | no equivalent | Enumerate the values with `in [...]`, or drop the gate. |
+### Changed (positional `categorical` and REUSE `faker` under `when:` run natively, 2026-10-08)
+
+A non-deterministic `categorical` or a non-deterministic REUSE `faker` under `when:`, over a
+string source with string predicate references, now runs on the native routes (unified full-frame
+and native chunked) instead of the pandas oracle. The output is unchanged: every covered column is
+byte-identical to the d-1 oracle, because the native routes key each selected row on the same
+full-table position. Two shapes still run on the oracle: `windowed_date` under `when:` (no native
+kernel yet), and a numeric-source faker under `when:`. The unified route falls back to the
+full-frame oracle (same bytes) for a numeric-source faker or a non-string predicate reference; the
+chunked route rejects a non-string target or reference with
+`chunked_categorical_nondeterministic_when_not_supported` /
+`chunked_faker_nondeterministic_when_not_supported`, because its per-chunk predicate evaluation
+could otherwise select different rows than the whole frame. Columns with no `when:` are unchanged.
+
 ### Changed (pre-GA output: positional draws under `when:` key on the full-table row, 2026-10-08)
 
 A `when:` predicate on a non-deterministic `categorical`, a REUSE `faker`, or a `windowed_date`
@@ -84,8 +98,9 @@ changing the predicate (or adding rows elsewhere) no longer shifts the output of
 values did not change. This is a pre-GA output change for these three strategies under `when:`;
 columns with no `when:` are byte-identical to before. Nested children (keyed on the leaf position)
 and the order-dependent stream strategies (`shuffle`, Faker UNIQUE/MATCH/SCALE, `joint_mask`) are
-unchanged. The native, unified and chunked routes still send these gated columns to the oracle;
-running them natively under `when:` is a later change (C8-iii-d-2).
+unchanged. (C8-iii-d-2 then moved the string-source `categorical` and REUSE `faker` cases onto the
+native routes with identical bytes; see the entry above. `windowed_date` under `when:` still runs
+on the oracle.)
 
 ### Changed (`when:` runs natively for text_redact, bucket_perturb and date_shift, 2026-10-07)
 
