@@ -156,7 +156,12 @@ def test_pandas_gated_subset_threads_ctx():
     h = _RecordingPandasHandler()
     run_with_when_gate(h, df, "v", seed, ctx)
     assert h.got is not None
-    assert h.got[3] is ctx
+    # C8-iii-d: the gated handler gets a copy carrying the selected rows' full-table positions;
+    # the sinks stay shared, so the ctx is threaded through without the caller's own being changed.
+    got_ctx = h.got[3]
+    assert got_ctx is not ctx
+    assert got_ctx.gate_positions.tolist() == [1, 2]
+    assert got_ctx.row_errors is ctx.row_errors
 
 
 # ── strategy attribution on every typed error ─────────────────────────
@@ -307,12 +312,18 @@ def test_gate_hands_selected_positions_to_a_column_with_exact_values():
     assert ctx.gate_positions is None
 
 
-def test_gate_keeps_the_callers_context_for_other_columns():
+def test_gate_copies_context_per_column_and_leaves_the_caller_untouched():
     df = pd.DataFrame({"v": [1.0, 2.0, 3.0, 4.0], "flag": [0, 1, 0, 1]})
     ctx = _real_ctx(exact_int_sources=_exact_sources())
     h = _RecordingPandasHandler()
     run_with_when_gate(h, df, "flag", _seed(when="flag == 1"), ctx)
-    assert h.got[3] is ctx
+    # C8-iii-d: every gated column now gets a copy carrying its full-table positions, and the
+    # caller's own context is left untouched (its gate_positions stays None).
+    got_ctx = h.got[3]
+    assert got_ctx is not ctx
+    assert got_ctx.gate_positions.tolist() == [1, 3]
+    assert got_ctx.row_errors is ctx.row_errors
+    assert ctx.gate_positions is None
 
 
 def test_gate_positions_ignore_a_missing_value_in_a_nullable_boolean_mask():

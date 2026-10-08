@@ -365,6 +365,11 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         "src/decoy_engine/execution/_positional_keys.py",
         "src/decoy_engine/execution/_strategies/_faker.py",
         "src/decoy_engine/execution/_strategies/_faker_positional.py",
+        # C8-iii-d: positional draws under `when:` key on the full-table row. The nested handler
+        # clears the outer gate positions for its child; windowed_date takes explicit positions.
+        # Both import nothing from execution.physical.
+        "src/decoy_engine/execution/_strategies/_nested.py",
+        "src/decoy_engine/execution/_strategies/_windowed_date.py",
         # C5b-i: the `mask.faker_nondeterministic` draw site and its provider, placed in the
         # gen_pool siblings because the capped protocol/provider modules cannot grow. Neither
         # imports `execution.physical`. The shared reference index kernel derives its HKDF key

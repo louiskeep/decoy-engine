@@ -9,7 +9,7 @@ The canonical bytes then equal those of the same value in a null-free int64 colu
 
 from __future__ import annotations
 
-import dataclasses
+import copy
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
 
@@ -101,7 +101,12 @@ def gated_context(
     its full-table row, so every gated call carries the positions (C8-iii-d). A deterministic
     exact-integer Faker column also reads them, through `sampling_source`. The sinks stay shared.
     """
-    return dataclasses.replace(ctx, gate_positions=positions)
+    # A shallow copy with gate_positions set: the gated handler sees the positions, the caller's
+    # own context is untouched after it returns. `object.__setattr__` because StrategyContext is
+    # frozen (the same pattern nested dispatch uses); copy.copy keeps the sinks shared, as before.
+    gated = copy.copy(ctx)
+    object.__setattr__(gated, "gate_positions", positions)
+    return gated
 
 
 def sampling_source(
