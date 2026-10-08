@@ -444,4 +444,13 @@ dennis gated the escalation GO but found that the sentry's "non-recurring" guara
 
 Planted fixture now also carries the trainer `pack_dir` shape and the laundered-helper shape; `test_the_detector` covers the recursion (flagged) and a display passed to the same helper (not flagged). Real tree: three findings, all waived (keyprovider ambient-only x2; `_build_file_source` non-string config; `_fixed_width_reader` display-holding `path`).
 
-Re-verification (head after these commits): `tests/fileaccess` + `tests/sentry` on 3.11 and 3.10 with a real strace, model-pack unit + snapshot tests, `ruff`/`mypy` on changed files, and `scripts/test_flight.py` check — results recorded at the end of this section once the shared test lock cleared.
+Re-verification (head `5285928a`):
+
+| Check | Result |
+|---|---|
+| `tests/fileaccess` + `tests/sentry`, 3.11, real strace | 3204 passed, 2 skipped |
+| `tests/fileaccess` + `tests/sentry`, 3.10 (CI mirror), real strace | 3204 passed, 2 skipped |
+| `tests/sentry/test_locator_hygiene.py` (direct) | 31 passed; three real-tree findings, all waived; no stale waiver |
+| `ruff check` / `ruff format --check` / `mypy` (changed files) | clean |
+
+The 2 skips are the native-companion test and the trainer `load_pack` test (import-gated on the `[ml]` extra, absent in every local venv and CI lane). The model-pack unit tests skip without ML; the name-hint snapshot baselines (133 passed) and `scripts/test_flight.py` (53/53 invariant checks, 5/5 fingerprints) were green earlier this session and are untouched by this round, which only changes how a diagnostic names the pack directory (display vs raw), not pack output, baselines or acceptance behaviour.
