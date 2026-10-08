@@ -385,6 +385,19 @@ class TestHandlerFrameOrdinal:
         for i in (0, 2, 5):
             assert got[i] == src[i]
 
+    def test_when_gate_composes_with_a_nonzero_row_offset(self) -> None:
+        # row_offset + gate_positions: a chunk starting at global row 4, gate selects local rows
+        # {0,2}, so full-table rows 4 and 6. Values equal KAT_UNIFORM_NS at 4 and 6.
+        df = pd.DataFrame({"col": ["a", "b", "c", "d"], "keep": [1, 0, 1, 0]})
+        plan = _seed({"categories": CATS}, when="keep == 1")
+        out, _ = run_with_when_gate(
+            CategoricalStrategyHandler(), df, "col", plan, _Ctx(row_offset=4)
+        )
+        got = out["col"].tolist()
+        assert got[0] == CATS[KAT_UNIFORM_NS[4]]
+        assert got[2] == CATS[KAT_UNIFORM_NS[6]]
+        assert [got[1], got[3]] == ["b", "d"]
+
     def test_when_gate_with_nulls_in_the_matched_subset(self) -> None:
         # Selected rows {0,1,3}; row 1 is null and stays null. Keys are full-table rows 0 and 3.
         df = pd.DataFrame({"col": ["a", None, "c", "d"], "keep": [1, 1, 0, 1]})
