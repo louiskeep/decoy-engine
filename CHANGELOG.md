@@ -24,6 +24,18 @@ A format that has a date directive is accepted: `%Y`, `%d/%m/%Y`, `%Y-%m-%dT%H:%
 still write midnight, zero or nothing, because the strategy perturbs the calendar date. An unknown
 directive such as `%Q` now fails up front as a coded error instead of a bare `ValueError` during
 the run. Leaving `date_format` unset still autodetects.
+### Changed (auto-chunk keeps a `when:` table chunked for more reference types, 2026-10-07)
+
+A large job whose `when:` predicate reads float, timestamp, date32, date64 or large string
+columns now auto-chunks instead of running whole-frame, as does one that reads an integer or
+bool column with a known zero null count (Parquet footer or resident table). The `when`
+selection and every masked column equal the whole-frame run. Passthrough columns, including the
+columns the predicate reads, follow the auto-chunk output contract and equal the source column
+exactly, so these jobs now show its visible differences from a whole-frame run: a NaN float
+stays NaN (whole-frame writes null), and `large_string` and `date64` keep their type
+(whole-frame writes `string` and `date32`). A reference that is an integer or bool with nulls, has no null-count
+statistic, or is a dictionary, decimal, nested, time or duration column still runs whole-frame,
+and the target must still be a string. An explicit chunked run is unchanged.
 
 ### Changed (`when:` runs natively for text_redact, bucket_perturb and date_shift, 2026-10-07)
 

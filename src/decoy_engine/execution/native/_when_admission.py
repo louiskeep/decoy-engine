@@ -188,6 +188,28 @@ def admitted_when_columns(
     )
 
 
+def _stable_when_reference(field: pa.Field, facts: Any) -> bool:
+    """Whether the per-chunk pandas conversion of this reference has one dtype in every chunk.
+
+    Measured under `to_pandas_fk_safe`: string, float, timestamp, date32 and date64 keep one
+    dtype whether or not a chunk holds nulls. An integer or bool widens (to float64, to
+    object) only in a chunk that holds a null, so it qualifies only when the whole column is
+    KNOWN to have none; an unknown count (`None`) never qualifies. time32, time64 and
+    duration are left out because their eval comparisons raise or coerce differently.
+    """
+    typ = field.type
+    if pa.types.is_integer(typ) or pa.types.is_boolean(typ):
+        return facts.null_count(field.name) == 0
+    return bool(
+        pa.types.is_string(typ)
+        or pa.types.is_large_string(typ)
+        or pa.types.is_floating(typ)
+        or pa.types.is_timestamp(typ)
+        or pa.types.is_date32(typ)
+        or pa.types.is_date64(typ)
+    )
+
+
 def planner_relaxed_when_columns(
     config: Mapping[str, Any],
     registry: Any,
@@ -196,26 +218,31 @@ def planner_relaxed_when_columns(
     source_facts: dict[str, Any],
 ) -> frozenset[str]:
     """The `when:` columns the auto-chunk planner may chunk: admitted natively (rules 1, 3 and 4)
-    with the target and EVERY referenced column `string` in `schema`.
+    with a `string` target and every referenced column of a type whose per-chunk conversion
+    is stable (`_stable_when_reference`).
 
-    Auto-chunking must equal the WHOLE-FRAME run, not only the chunked oracle, and a numeric
-    reference can widen int64 to float64 in some chunks and not others, so per-chunk and
-    whole-frame masks can differ above 2**53. String references have one representation.
-    A static classification (no loaded source) has no schema and relaxes nothing.
+    Auto-chunking must equal the WHOLE-FRAME run, not only the chunked oracle. A reference
+    whose pandas dtype changes with the nulls a chunk happens to hold (int64 to float64) can
+    select differently per chunk than on the whole frame above 2**53, so those need a known
+    zero null count. A static classification (no loaded source) has no schema and relaxes
+    nothing.
     """
     from decoy_engine.execution._chunked_input import facts_for
 
     src = (source_tables or {}).get(table)
     if src is None:
         return frozenset()
-    schema = facts_for(source_facts, src, table).schema
+    facts = facts_for(source_facts, src, table)
+    schema = facts.schema
     entries = table_column_entries(config, table)
     relaxed: set[str] = set()
     for name in admitted_when_columns(config, registry, table=table, schema=schema):
         entry = next(e for e in entries if e.get("name") == name)
         ast = parsed_when(entry)
         refs = () if ast is None else when_column_refs(ast)
-        if refs and all(r in schema.names and schema.field(r).type == pa.string() for r in refs):
+        if refs and all(
+            r in schema.names and _stable_when_reference(schema.field(r), facts) for r in refs
+        ):
             relaxed.add(name)
     return frozenset(relaxed)
 

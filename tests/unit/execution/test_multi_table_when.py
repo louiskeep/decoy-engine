@@ -56,7 +56,9 @@ def _sized(n: int) -> Case:
 
 
 def _when_case() -> Case:
-    table = pa.table({"val": pa.array([f"v{i}" for i in range(N)]), "amount": pa.array(range(N))})
+    # A bool with nulls changes pandas dtype per chunk, so the table is still declined.
+    flags = pa.array([None if i % 4 == 0 else i % 3 == 0 for i in range(N)], pa.bool_())
+    table = pa.table({"val": pa.array([f"v{i}" for i in range(N)]), "amount": flags})
     return Case(
         [support.redact_col("val"), support.pass_col("amount")],
         table,
@@ -70,7 +72,7 @@ def _inject_when(cfg: dict[str, Any], column: str) -> None:
         if table["name"] == "tbl":
             for col in table["columns"]:
                 if col["name"] == column:
-                    col["when"] = "amount > 30"
+                    col["when"] = "amount == True"
 
 
 def _composite_case() -> Case:

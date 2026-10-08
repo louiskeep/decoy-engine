@@ -884,7 +884,10 @@ class TestChunkStateGates:
         df = pd.DataFrame(
             {
                 "val": [f"v{i}" for i in range(_ROWS)],
-                "amount": list(range(_ROWS)),
+                # A bool with nulls changes pandas dtype per chunk, so it is still declined.
+                "amount": pd.array(
+                    [None if i % 4 == 0 else i % 3 == 0 for i in range(_ROWS)], dtype="object"
+                ),
             }
         )
         df.to_csv(tmp_path / "in.csv", index=False)
@@ -895,8 +898,11 @@ class TestChunkStateGates:
                 {"name": "amount", "strategy": "passthrough"},
             ],
         )
-        cfg["tables"][0]["columns"][0]["when"] = "amount > 30"
-        return cfg, {"accounts": pa.Table.from_pandas(df, preserve_index=False)}
+        cfg["tables"][0]["columns"][0]["when"] = "amount == True"
+        table = pa.Table.from_pandas(df, preserve_index=False).set_column(
+            1, "amount", pa.array(df["amount"].tolist(), pa.bool_())
+        )
+        return cfg, {"accounts": table}
 
     def test_when_bearing_column_stays_full_frame(self, tmp_path, monkeypatch):
         """A `when` predicate is evaluated per frame; per-chunk evaluation

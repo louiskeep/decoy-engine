@@ -2,9 +2,10 @@
 
 `auto_chunk` is a transparent optimization: a job that auto-chunks must equal the forced
 whole-frame run. The planner therefore relaxes its blanket `when` rejection only for a
-column the native route admits whose predicate reads string columns only, and keeps it for
-everything else, including Codex's integer counterexample (a numeric reference can widen
-int64 to float64 in some chunks and not others).
+column the native route admits whose predicate reads chunk-stable columns only, and keeps it
+for everything else, including Codex's integer counterexample (a numeric reference can widen
+int64 to float64 in some chunks and not others). C8-iii-b widened the stable set; its own
+tests are in test_c8_iii_b_numeric_refs.py.
 """
 
 from __future__ import annotations
@@ -114,14 +115,21 @@ def test_the_integer_redact_counterexample_stays_full_frame_and_succeeds(tmp_pat
     _equal_outputs(auto, _full(cfg, source))
 
 
-def test_a_numeric_reference_stays_full_frame(tmp_path: Path) -> None:
+def test_a_numeric_reference_with_unstable_chunks_stays_full_frame(tmp_path: Path) -> None:
     """The native route admits a numeric reference on the explicit chunked entry, but the
-    planner needs auto-chunk to equal the whole frame, and int64 can widen per chunk."""
-    cfg = _config([{**redact("s"), "when": "n > 3"}, passthrough("n")], tmp_path, _source())
-    auto = _auto(cfg, _source())
+    planner needs auto-chunk to equal the whole frame. A bool with nulls is object in some
+    chunks and bool in others, so it stays whole-frame (a null-free int now auto-chunks)."""
+    source = pa.table(
+        {
+            "s": pa.array(_S),
+            "n": pa.array([None if i % 4 == 0 else i % 3 == 0 for i in range(_ROWS)], pa.bool_()),
+        }
+    )
+    cfg = _config([{**redact("s"), "when": "n == True"}, passthrough("n")], tmp_path, source)
+    auto = _auto(cfg, source)
     assert auto.quality_metrics["auto_chunk"]["mode"] == "full_frame"
     assert "when_predicate_not_chunk_stable" in auto.quality_metrics["auto_chunk"]["reason"]
-    _equal_outputs(auto, _full(cfg, _source()))
+    _equal_outputs(auto, _full(cfg, source))
 
 
 @pytest.mark.parametrize("expr", ["p.notnull()", "p == s", "p.isna() == False"])

@@ -396,7 +396,7 @@ def _whole_column_state_rejections(
     - `when`: predicates evaluate against the frame they are handed, so a
       per-chunk frame is a different evaluation scope than the whole
       frame. Only a `relaxed_when` column (natively admitted, every
-      referenced column a string) is exempt; raw dicts are not re-validated.
+      referenced column of a chunk-stable type) is exempt; raw dicts are not re-validated.
     """
     reasons: list[str] = []
     when_cols: list[str] = []
