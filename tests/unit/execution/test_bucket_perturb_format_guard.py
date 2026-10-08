@@ -215,6 +215,9 @@ class _SpySink:
 
     def write_batches(self, table: str, batches: Any, *, schema: pa.Schema) -> None:
         self.writes.append(table)
+        # A real sink drains the stream; the runner builds parent relations from it.
+        for _ in batches:
+            pass
 
     def commit(self) -> None:
         self.committed = True
