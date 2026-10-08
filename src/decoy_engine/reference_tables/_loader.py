@@ -138,8 +138,11 @@ def load_table(
     return ReferenceTable(arrow_table, name=name)
 
 
-def _check_version(name: str, table: Any, path: str) -> None:
-    """Emit a WARNING when file version metadata does not match expected."""
+def _check_version(name: str, table: Any, shown: str) -> None:
+    """Emit a WARNING when file version metadata does not match expected.
+
+    `shown` is the display the caller already resolved (the path under the ambient CLI, the
+    config position otherwise), so these diagnostics never carry a raw locator."""
     expected = _SHIPPED_VERSIONS.get(name)
     if expected is None:
         return  # Unknown table name: no version expectation, skip check.
@@ -151,7 +154,7 @@ def _check_version(name: str, table: Any, path: str) -> None:
             "reference table %r at %s has no decoy_table_version metadata "
             "(expected %r). Continuing with loaded data.",
             name,
-            path,
+            shown,
             expected,
         )
         return
@@ -166,5 +169,5 @@ def _check_version(name: str, table: Any, path: str) -> None:
             name,
             actual,
             expected,
-            path,
+            shown,
         )

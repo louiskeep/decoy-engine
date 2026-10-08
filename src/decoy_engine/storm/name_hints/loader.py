@@ -137,7 +137,8 @@ def _load_terms(handle: DirHandle, target: Path) -> dict[str, list[str]]:
     for fname in files:
         if not isinstance(fname, str):
             raise NameHintLoaderError(
-                f"{manifest_display} `files:` entry must be a string, got {fname!r}."
+                f"{manifest_display} has a `files:` entry that is not a string "
+                f"({type(fname).__name__})."
             )
         file_display = _child_display(target, fname)
         if not _is_file(handle, fname):
