@@ -501,7 +501,8 @@ _DECLINES: dict[str, tuple[pa.Table, list[dict[str, Any]], Callable[..., None] |
     "faker_provider_outside_allowlist": (str_source(30), [nd_faker(provider="person_email")], None),
     "faker_no_pool_size": (str_source(30), [nd_faker(pool_size=None)], None),
     "faker_unique": (str_source(30), [nd_faker(cardinality_mode="unique")], None),
-    "faker_when": (str_source(30), [nd_faker()], _when),
+    # `faker_when` / `cat_when` moved out of the decline set in C8-iii-d-2: a string-reference
+    # `when:` now runs natively (see tests/physical/test_c8_iii_d2_unified_positional_when.py).
     "faker_vault": (str_source(30), [nd_faker(vault=True)], None),
     "faker_timestamp_source": (_timestamps(), [nd_faker()], None),
     "faker_large_string_source": (_typed(pa.large_string()), [nd_faker()], None),
@@ -519,7 +520,6 @@ _DECLINES: dict[str, tuple[pa.Table, list[dict[str, Any]], Callable[..., None] |
     ),
     "cat_no_namespace": (str_source(30), [cat_col(namespace=None)], None),
     "cat_numeric_categories": (str_source(30), [cat_col(categories=[1, 2, 3])], None),
-    "cat_when": (str_source(30), [cat_col()], _when),
     "cat_vault": (str_source(30), [cat_col(vault=True)], None),
     "cat_int_source": (_typed(pa.int64()), [cat_col()], None),
     "cat_large_string_source": (_typed(pa.large_string()), [cat_col()], None),
@@ -839,7 +839,6 @@ _CAT_CLAUSES: dict[str, Callable[[Path], tuple[Case, dict[str, Any] | None]]] = 
         ),
         None,
     ),
-    "when": lambda p: (_cat_case(p, cat_col(), mutate=_when), None),
     "vault": lambda p: (_cat_case(p, cat_col(vault=True)), None),
     "int_source": lambda p: (_cat_case(p, cat_col(), source=_typed(pa.int64())), None),
     "large_string_source": lambda p: (
@@ -861,6 +860,16 @@ def test_8_the_categorical_predicate_trusts_the_slice_not_the_config(tmp_path: P
     assert _bindable(_CAT_PRED, case, replace={"deterministic": True}) is False
 
 
+@pytest.mark.parametrize("predicate", [_CAT_PRED, _FAKER_PRED])
+def test_8_a_when_predicate_no_longer_blocks_the_binding_predicate(
+    tmp_path: Path, predicate: str
+) -> None:
+    # C8-iii-d-2: the binding predicate drops its `when:` refusal; `when_columns_admitted` is the
+    # gate that decides whether a positional+`when:` column runs natively.
+    make = nd_faker if predicate == _FAKER_PRED else cat_col
+    assert _bindable(predicate, _cat_case(tmp_path, make(), mutate=_when)) is True
+
+
 def test_8_the_positional_faker_predicate_holds_for_the_admitted_shape(tmp_path: Path) -> None:
     for index, namespace in enumerate(("ns_faker", None, "")):
         case = _cat_case(_fresh(tmp_path, f"n{index}"), nd_faker(namespace=namespace))
@@ -874,7 +883,6 @@ _FAKER_CLAUSES: dict[str, Callable[[Path], tuple[Case, dict[str, Any] | None]]] 
     "slice_not_reuse": lambda p: (_cat_case(p, nd_faker()), {"cardinality_mode": "unique"}),
     "no_pool_size": lambda p: (_cat_case(p, nd_faker(pool_size=None)), None),
     "provider_outside_allowlist": lambda p: (_cat_case(p, nd_faker(provider="person_email")), None),
-    "when": lambda p: (_cat_case(p, nd_faker(), mutate=_when), None),
     "vault": lambda p: (_cat_case(p, nd_faker(vault=True)), None),
     "timestamp_source": lambda p: (_cat_case(p, nd_faker(), source=_timestamps()), None),
 }
@@ -918,13 +926,16 @@ def test_8_the_fk_exclusion_holds_on_the_multi_table_binding_path(
 
 
 @pytest.mark.parametrize("variant", ["faker", "categorical"])
-def test_8_the_when_exclusion_holds_on_the_binding_path(tmp_path: Path, variant: str) -> None:
+def test_8_a_string_reference_when_binds_on_the_binding_path(tmp_path: Path, variant: str) -> None:
+    # C8-iii-d-2: `when:` no longer blocks binding; `_when` uses the string self-reference
+    # `c == 'src_1'`, which `when_native_rejection` admits, so the node binds and carries it.
     make = nd_faker if variant == "faker" else cat_col
     case = Case(tmp_path, str_source(10), [make()], mutate=_when)
     plan = compile_physical_plan(_inputs(case))
     strategy = "faker" if variant == "faker" else "categorical"
     nodes = [n for t in plan.tables for n in t.nodes if n.strategy == strategy]
-    assert nodes and all(n.execution is None for n in nodes)
+    assert nodes and all(n.execution is not None for n in nodes)
+    assert all(n.execution.when_expression == "c == 'src_1'" for n in nodes)
 
 
 @pytest.mark.parametrize("variant", ["faker", "categorical"])
