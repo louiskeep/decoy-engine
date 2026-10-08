@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from decoy_engine.fileaccess._entry import current
+from decoy_engine.fileaccess._entry import current, is_ambient
+from decoy_engine.fileaccess._errors import encode_field_key, passes_by_type, resurface_scrubbed
 from decoy_engine.fileaccess._types import FileRequest, FileRole
 
 
@@ -26,3 +27,30 @@ def read_text(role: FileRole, locator: str, field_key: str, encoding: str = "utf
             return stream.read()
     finally:
         handle.close()
+
+
+def shown(locator: str, field_key: str) -> str:
+    """What an engine message may call a file: the locator under the ambient CLI policy (so
+    CLI text is unchanged), the encoded config position under any other."""
+    return locator if is_ambient() else encode_field_key(field_key)
+
+
+def keeps_class(exc: BaseException) -> bool:
+    """True when a handler that translates, stores or swallows an exception raised from a file
+    call must re-raise it unchanged under a strict policy: a policy decision, a typed read
+    error, and the failures callers classify by type or by the memory predicate (memory, a
+    full disk or quota). Always False under the ambient policy, whose handlers keep today's
+    behavior."""
+    if is_ambient():
+        return False
+    if isinstance(exc, Exception) and passes_by_type(exc):
+        return True
+    from decoy_engine.fileaccess._types import (
+        FileAccessDenied,
+        FileAccessReadError,
+        FileAccessUnavailable,
+    )
+
+    if isinstance(exc, (FileAccessDenied, FileAccessReadError, FileAccessUnavailable)):
+        return True
+    return isinstance(exc, Exception) and resurface_scrubbed(exc) is not None

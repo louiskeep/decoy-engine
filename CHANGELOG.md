@@ -59,6 +59,28 @@ published with one rename instead of being written in place. Under a policy othe
 one, `run_pipeline_isolated` (when it would spawn a child or is given a `staging_dir` or `output_dir`)
 and `run_fk_out_of_core` with a caller-named `temp_dir` raise `FileAccessUnavailable` before any I/O.
 
+### Changed (strict error boundary and scratch names, 0.9.0 pending, 2026-10-08)
+
+- A shipped corpus name resolves only if it is a registry key, through a registry-owned path,
+  before any file-system call. Any other name (`../x`, an absolute stem, `icd10.parquet`) raises
+  `code_set_corpus_not_found` with one fixed message that echoes neither the name nor a path. Before,
+  the name was joined onto the corpora directory, so an absolute stem could load an arbitrary
+  Parquet file as a "shipped" corpus.
+- Under a policy other than the ambient one, no engine error or log line names a file locator or the
+  descriptor path (`/proc/self/fd/<n>`) a library was handed: snapshot, corpus, model-pack,
+  name-hint, discovery, lockfile, custom-provider and quarantine diagnostics name the config position
+  instead. A secret file that fails to decode, validate or parse raises a fresh error built from the
+  config position, with no cause or context, even when the caller is already handling another error.
+  Text from the content of a file the principal may read can still appear.
+- Under such a policy every handler that translates, stores or swallows a file error re-raises the
+  policy errors, `MemoryError` (including Arrow's), DuckDB's out-of-memory error, `ENOMEM`, `ENOSPC`
+  and `EDQUOT` unchanged, so OOM classification and disk-quota handling still see them.
+- Scratch files the engine derives from a table, column or edge name (the out-of-core `joins/`,
+  `relations/` and `staged/` trees and relation files, the native pool-quality spool, the isolated
+  route's input copies) are now named by opaque per-run ids. A name holding `/` or `..`, or an absolute
+  name, can no longer place a scratch file outside the scratch directory. Output table files are
+  unchanged.
+
 ### Fixed (deterministic Faker over integer columns with nulls, 2026-10-07)
 
 A deterministic `faker` column over an integer column that holds at least one null no longer

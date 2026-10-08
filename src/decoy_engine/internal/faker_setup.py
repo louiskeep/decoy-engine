@@ -227,15 +227,16 @@ def load_custom_providers(
     request = FileRequest(
         FileRole.CUSTOM_PROVIDER_ROOT, "read_dir", str(custom_dir), "custom_providers"
     )
+    shown_dir = fileaccess.shown(str(custom_dir), "custom_providers")
 
     try:
         status = policy.stat(request)
     except (FileNotFoundError, NotADirectoryError):
-        _log.debug("custom_providers: directory %s does not exist; skipping", custom_dir)
+        _log.debug("custom_providers: directory %s does not exist; skipping", shown_dir)
         return {}
 
     if not stat.S_ISDIR(status.st_mode):
-        _log.warning("custom_providers: %s exists but is not a directory; skipping", custom_dir)
+        _log.warning("custom_providers: %s exists but is not a directory; skipping", shown_dir)
         return {}
 
     loaded: dict[str, list[str]] = {}
@@ -287,6 +288,8 @@ def _load_txt(directory: DirHandle, name: str) -> list[str]:
         lines = _read_child(directory, name).splitlines()
         return [line.strip() for line in lines if line.strip() and not line.strip().startswith("#")]
     except Exception as exc:
+        if fileaccess.keeps_class(exc):
+            raise
         _log.warning("custom_providers: failed to read %s: %s", name, exc)
         return []
 
@@ -304,6 +307,8 @@ def _load_json(directory: DirHandle, name: str) -> list[str]:
             return []
         return [str(v) for v in raw if v is not None]
     except Exception as exc:
+        if fileaccess.keeps_class(exc):
+            raise
         _log.warning("custom_providers: failed to parse %s: %s", name, exc)
         return []
 

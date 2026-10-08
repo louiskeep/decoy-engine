@@ -77,6 +77,7 @@ from typing import Any
 
 import pyarrow as pa
 
+from decoy_engine import fileaccess
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._pipeline import classify_table_kinds
 from decoy_engine.execution._pipeline_route_exec import (
@@ -275,6 +276,8 @@ def estimate_job_capacity(
     try:
         profile = profile_source(config, seed=job_seed)
     except (pa.lib.ArrowException, OSError, ValueError) as exc:
+        if fileaccess.keeps_class(exc):
+            raise
         # A present-but-corrupt/wrong-format source (or one that became
         # unreadable between the CLI's own file check and now) fails HERE, in
         # the profile read. Re-raise as a typed, expected condition so the

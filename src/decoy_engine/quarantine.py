@@ -547,9 +547,10 @@ def guard_quarantine_not_aliasing_committed_table(
         committed = Path(os.path.abspath(resolver(table)))
         if committed == target:
             raise ValueError(
-                f"quarantine.output_path {output_path!r} aliases the output "
+                f"quarantine.output_path {fileaccess.shown(output_path, 'quarantine.output_path')!r}"
+                f" aliases the output "
                 f"artifact this run just committed for table {table!r} "
-                f"({committed}); refusing to overwrite a masked table with "
+                f"({fileaccess.shown(str(committed), 'targets.path')}); refusing to overwrite a masked table with "
                 "the raw-PII quarantine sidecar. Point quarantine.output_path "
                 "at a different file."
             )

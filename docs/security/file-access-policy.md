@@ -85,6 +85,25 @@ filename), so OOM classification and disk-quota handling still see them.
 `fileaccess.scrub(exc)` turns any exception chain that holds a denial into a fresh one with nothing
 attached, for use at a process or API boundary.
 
+## What an error may and may not contain
+
+Never: a file locator (the config value, an absolute path, a basename), the descriptor path a
+library was handed (`/proc/self/fd/<n>`), the content of a file the policy denied, or secret
+material. Allowed: text derived from the content of a file the principal was allowed to read (a
+parse error quoting a cell, say). Cell values in logs are a separate program.
+
+- Engine messages name a file by `display`, the encoded config position, wherever a strict policy
+  is installed (`fileaccess.shown`). Third-party text that names the file it was handed goes
+  through `fileaccess.redact_locators`.
+- A mask secret read and decoded under a strict policy is one function; a failure is a fixed
+  reason code, and the error is built after the handler closes and re-raised with its cause and
+  context cleared, so a decode error holding the file never rides along, even when the caller was
+  already handling one.
+- Translating, typed, stored-error and fallback handlers re-raise what callers classify by
+  type (`fileaccess.keeps_class`): the policy errors, memory failures and `ENOSPC`/`EDQUOT`.
+- Scratch paths built from a table, column or edge name use opaque per-run ids. A shipped name
+  (corpus, reference table) resolves only through its registry, before any file-system call.
+
 ## What changes for the CLI
 
 Exactly two behavior changes, both listed in the CHANGELOG:

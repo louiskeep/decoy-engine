@@ -74,6 +74,8 @@ def _load_from(folder: DirHandle) -> list[Disguise]:
             )
             continue
         except OSError as exc:
+            if fileaccess.keeps_class(exc):
+                raise
             _log.error(
                 "load_disguises: could not read %s: %s",
                 path.name,

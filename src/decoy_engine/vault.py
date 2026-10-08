@@ -438,6 +438,8 @@ def load_vault(
     try:
         blob = handle.read_all()
     except OSError as exc:
+        if fileaccess.keeps_class(exc):
+            raise
         raise VaultError(
             code="vault_unreadable",
             message=f"vault file {shown!r} could not be read: {exc}",

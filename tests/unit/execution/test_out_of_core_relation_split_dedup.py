@@ -25,7 +25,7 @@ from decoy_engine.execution.out_of_core._duckdb import connect_duckdb
 from decoy_engine.execution.out_of_core._join import _sql_string
 from decoy_engine.execution.out_of_core._relation import (
     _build_relation,
-    _column_tuple_slug,
+    _edge_stem,
     _relation_staging_batches,
     _staging_schema,
     build_parent_key_relation,
@@ -129,11 +129,11 @@ def _operator_names(explain_json: str) -> list[str]:
 def _expected_paths(temp_dir: Path, edge: RelationshipEdge) -> tuple[Path, Path, Path]:
     """The staged/winners/output paths `_build_relation` derives internally,
     recomputed here (same formula) so tests can assert on them directly."""
-    slug = _column_tuple_slug(edge.parent_columns)
+    stem = _edge_stem(edge)
     duckdb_dir = temp_dir / "duckdb"
-    staged = duckdb_dir / f"{edge.parent_table}_{slug}_key_staged.parquet"
-    winners = duckdb_dir / f"{edge.parent_table}_{slug}_key_winners.parquet"
-    out = temp_dir / f"{edge.parent_table}_{slug}_key_relation.parquet"
+    staged = duckdb_dir / f"{stem}_key_staged.parquet"
+    winners = duckdb_dir / f"{stem}_key_winners.parquet"
+    out = temp_dir / f"{stem}_key_relation.parquet"
     return staged, winners, out
 
 

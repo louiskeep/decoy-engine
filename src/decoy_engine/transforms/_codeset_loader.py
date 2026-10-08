@@ -38,6 +38,29 @@ _CODESETS_DIR = Path(__file__).parent.parent / "codesets"
 # registry (HC-1 slice 1 item 5; transforms/_codeset_provenance.py).
 _SHIPPED_CORPORA = frozenset(CODESET_REGISTRY)
 
+# A shipped name resolves ONLY through this table, to a constant path: membership is checked
+# before any file-system call, so a name like "../x" or an absolute stem never reaches one.
+_SHIPPED_PATHS: dict[str, Path] = {n: _CODESETS_DIR / f"{n}.parquet" for n in _SHIPPED_CORPORA}
+
+
+def _where(path: Path | str | None) -> str:
+    """How a diagnostic names a corpus file: the path under the ambient CLI policy, the config
+    position under any other (a locator never crosses)."""
+    return fileaccess.shown(str(path), "code_set.corpus_source")
+
+
+def _unknown_shipped_corpus() -> PlanCompileError:
+    """The one message for a name that is not a registry key; it echoes neither the name nor a
+    path."""
+    return PlanCompileError(
+        code="code_set_corpus_not_found",
+        path="provider_config.code_set",
+        message=(
+            "shipped corpus name is not one of the registered corpora. "
+            f"Available: {sorted(_SHIPPED_CORPORA)}."
+        ),
+    )
+
 
 @dataclass(frozen=True)
 class _CorpusRecord:
@@ -180,13 +203,15 @@ def _resolve_read_path(name: str, path: Path | None) -> Path:
     memoized.
     """
     if path is None:
-        shipped = _CODESETS_DIR / f"{name}.parquet"
+        if not isinstance(name, str) or name not in _SHIPPED_PATHS:
+            raise _unknown_shipped_corpus()
+        shipped = _SHIPPED_PATHS[name]
         if not shipped.exists():
             raise PlanCompileError(
                 code="code_set_corpus_not_found",
                 path="provider_config.code_set",
                 message=(
-                    f"shipped corpus {name!r} not found at {shipped}. "
+                    "a registered shipped corpus file is missing from this installation. "
                     f"Available: {sorted(_SHIPPED_CORPORA)}."
                 ),
             )
@@ -233,7 +258,9 @@ def _get_corpus_record(
     """
     resolved = _resolve_read_path(name, path)
     if is_shipped:
-        resolved_str = str(resolved.resolve())
+        # A registry-resolved corpus keys on its name (no file-system call); an explicit path
+        # (an internal caller's override) keeps the resolved-path key.
+        resolved_str = name if path is None else str(resolved.resolve())
         cached = _shipped_cache.get(resolved_str)
         if cached is not None:
             record = cached
@@ -261,6 +288,8 @@ def _get_corpus_record(
                 message=f"customer corpus at {handle.display} became unavailable after the existence check.",
             ) from exc
         except OSError as exc:
+            if fileaccess.keeps_class(exc):
+                raise
             raise PlanCompileError(
                 code="code_set_corpus_read_error",
                 path="provider_config.corpus_source",
@@ -307,7 +336,7 @@ def _check_source_version_pin(
         return
     actual = record.provenance.source_version if record.provenance else ""
     if actual != expected_source_version:
-        at = f" at {path}" if path is not None else ""
+        at = f" at {_where(path)}" if path is not None else ""
         raise PlanCompileError(
             code="code_set_corpus_version_mismatch",
             path="provider_config.corpus_source_version",
@@ -334,12 +363,13 @@ def _check_corpus_schema(tbl: pa.Table, path: Path) -> None:
     column are deferred to HC-1 slice 2, when the real full corpora (each
     with its own per-system format conventions) land.
     """
+    where = _where(path)
     if "code" not in tbl.schema.names:
         raise PlanCompileError(
             code="code_set_corpus_missing_code_column",
             path="provider_config.corpus_source",
             message=(
-                f"corpus at {path} is missing required 'code' column. "
+                f"corpus at {where} is missing required 'code' column. "
                 f"Customer corpora must have a 'code' (string) column. "
                 f"Available columns: {tbl.schema.names}"
             ),
@@ -349,7 +379,7 @@ def _check_corpus_schema(tbl: pa.Table, path: Path) -> None:
         raise PlanCompileError(
             code="code_set_corpus_empty",
             path="provider_config.corpus_source",
-            message=f"corpus at {path} has 0 rows. Corpus must be non-empty.",
+            message=f"corpus at {where} has 0 rows. Corpus must be non-empty.",
         )
 
     code_col = tbl.column("code")
@@ -358,7 +388,7 @@ def _check_corpus_schema(tbl: pa.Table, path: Path) -> None:
             code="code_set_corpus_null_code",
             path="provider_config.corpus_source",
             message=(
-                f"corpus at {path} has {code_col.null_count} null value(s) in the "
+                f"corpus at {where} has {code_col.null_count} null value(s) in the "
                 "'code' column. Every row must carry a code."
             ),
         )
@@ -374,7 +404,7 @@ def _check_corpus_schema(tbl: pa.Table, path: Path) -> None:
             code="code_set_corpus_empty_code",
             path="provider_config.corpus_source",
             message=(
-                f"corpus at {path} has {empty} empty-string value(s) in the 'code' "
+                f"corpus at {where} has {empty} empty-string value(s) in the 'code' "
                 "column. Every code must be a non-empty string."
             ),
         )
@@ -385,7 +415,7 @@ def _check_corpus_schema(tbl: pa.Table, path: Path) -> None:
             code="code_set_corpus_duplicate_codes",
             path="provider_config.corpus_source",
             message=(
-                f"corpus at {path} has {duplicates} duplicate code value(s). code_set "
+                f"corpus at {where} has {duplicates} duplicate code value(s). code_set "
                 "requires unique codes: HMAC-keyed candidate selection assumes a 1:1 "
                 "code -> row mapping, and a duplicate makes selection ambiguous."
             ),
@@ -399,7 +429,7 @@ def _check_corpus_schema(tbl: pa.Table, path: Path) -> None:
                 code="code_set_corpus_incoherent_chapter",
                 path="provider_config.corpus_source",
                 message=(
-                    f"corpus at {path} has {incoherent} row(s) with a null/empty "
+                    f"corpus at {where} has {incoherent} row(s) with a null/empty "
                     "'chapter' value. A corpus that has a 'chapter' column must "
                     "populate it for every row (chapter_preserve assumes full coverage)."
                 ),
@@ -427,6 +457,8 @@ def _read_corpus_record(
         except FileAccessDenied:
             raise
         except Exception as exc:
+            if fileaccess.keeps_class(exc):
+                raise
             raise PlanCompileError(
                 code="code_set_corpus_read_error",
                 path="provider_config.corpus_source",
@@ -470,13 +502,14 @@ def _validate_provenance(
     stamp it, the stamp must be complete -- a half-filled provenance block
     is worse than none, since it looks authoritative but is not.
     """
+    where = _where(path)
     if provenance is None:
         if is_shipped:
             raise PlanCompileError(
                 code="code_set_corpus_missing_provenance",
                 path="provider_config.code_set",
                 message=(
-                    f"shipped corpus {name!r} at {path} has no provenance metadata "
+                    f"shipped corpus {name!r} at {where} has no provenance metadata "
                     "(source, source_version, effective_date, license). This is a "
                     "packaging defect, not a customer-corpus configuration issue."
                 ),
@@ -486,7 +519,7 @@ def _validate_provenance(
             "(source, source_version, effective_date, license). Provenance is "
             "optional for customer corpora but recommended for audit evidence.",
             name,
-            path,
+            where,
         )
         return
 
@@ -508,7 +541,7 @@ def _validate_provenance(
                 code="code_set_corpus_provenance_identity_mismatch",
                 path="provider_config.code_set",
                 message=(
-                    f"shipped corpus {name!r} at {path} carries provenance "
+                    f"shipped corpus {name!r} at {where} carries provenance "
                     f"for a different corpus ({provenance.corpus!r}). This "
                     "looks like a packaging or metadata swap; the embedded "
                     "provenance.corpus must match the requested corpus name."
@@ -529,7 +562,7 @@ def _validate_provenance(
                     code="code_set_corpus_provenance_malformed_stamp",
                     path="provider_config.code_set",
                     message=(
-                        f"shipped corpus {name!r} at {path} has a malformed "
+                        f"shipped corpus {name!r} at {where} has a malformed "
                         f"provenance stamp ({'; '.join(stamp_defects)}). A "
                         "shipped corpus is a build artifact: is_seed and the "
                         "metadata format version must be explicit and current "
@@ -542,7 +575,7 @@ def _validate_provenance(
             code="code_set_corpus_missing_provenance",
             path="provider_config.code_set",
             message=(
-                f"shipped corpus {name!r} at {path} has incomplete provenance "
+                f"shipped corpus {name!r} at {where} has incomplete provenance "
                 f"metadata (missing: {', '.join(missing)})."
             ),
         )
@@ -550,7 +583,7 @@ def _validate_provenance(
         code="code_set_corpus_missing_provenance",
         path="provider_config.corpus_source",
         message=(
-            f"customer corpus {name!r} at {path} has partial provenance metadata "
+            f"customer corpus {name!r} at {where} has partial provenance metadata "
             f"(missing: {', '.join(missing)}). Either remove the partial stamp or "
             "complete it; a half-filled provenance block is not surfaced as evidence."
         ),

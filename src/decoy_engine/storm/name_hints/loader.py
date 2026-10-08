@@ -74,7 +74,9 @@ def load_name_hint_terms(
         handle = policy.open_dir(
             FileRequest(FileRole.MODEL_PACK_ROOT, "read_dir", str(directory), "storm.name_hints")
         )
-        target = directory
+        # Diagnostics name the directory by path under the ambient CLI policy and by config
+        # position under any other.
+        target = directory if fileaccess.is_ambient(policy) else Path("storm.name_hints")
     try:
         return _load_terms(handle, target)
     finally:

@@ -529,16 +529,18 @@ def assert_lock_matches_installed(lock_path: str | Path | None = None) -> None:
         with lock_file.open_binary() as handle:
             lock = toml_reader.load(handle)
     except (OSError, ValueError) as exc:
+        if fileaccess.keeps_class(exc):
+            raise
         raise ProvenanceError(
             code="dp_lock_parse_error",
-            message=f"could not read/parse lockfile {str(path)!r}: {exc}",
+            message=f"could not read/parse lockfile {fileaccess.shown(str(path), 'dp.lock_path')!r}: {exc}",
         ) from exc
 
     packages = lock.get("package")
     if not isinstance(packages, list):
         raise ProvenanceError(
             code="dp_lock_parse_error",
-            message=f"lockfile {str(path)!r} has no [[package]] array",
+            message=f"lockfile {fileaccess.shown(str(path), 'dp.lock_path')!r} has no [[package]] array",
         )
 
     # canonical name -> set of versions active in THIS environment.

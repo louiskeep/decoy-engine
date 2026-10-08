@@ -53,6 +53,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from decoy_engine import fileaccess
 from decoy_engine.determinism import derive
 from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.plan._errors import PlanCompileError
@@ -182,6 +183,7 @@ def validate_joint_mask_config(
             ),
         )
 
+    shown_ref = fileaccess.shown(ref_name, fileaccess.position_key("joint_mask.reference"))
     try:
         tbl = load_table(ref_name)
     except FileNotFoundError:
@@ -189,7 +191,7 @@ def validate_joint_mask_config(
             code="joint_mask_reference_not_found",
             path="joint_masks.reference",
             message=(
-                f"reference table {ref_name!r} not found. "
+                f"reference table {shown_ref!r} not found. "
                 f"Known shipped tables: {sorted(_KNOWN_TABLES)}. "
                 f"To use a customer-provided table, set reference: customer:/path/to/file.parquet."
             ),
@@ -198,7 +200,7 @@ def validate_joint_mask_config(
         raise PlanCompileError(
             code="joint_mask_reference_invalid",
             path="joint_masks.reference",
-            message=f"reference table {ref_name!r} failed to load: {exc}",
+            message=f"reference table {shown_ref!r} failed to load: {exc}",
         )
 
     ref_cols = set(tbl.column_names) - {"id"}

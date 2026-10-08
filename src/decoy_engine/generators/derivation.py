@@ -77,6 +77,13 @@ _EXCLUDED_FROM_FINGERPRINT = frozenset(
 _SNAPSHOT_FILE_KEY = "snapshot_file"
 
 
+_UNREADABLE = (
+    "strategy_config_fingerprint: snapshot_file {!r} is missing or unreadable ({}); cannot "
+    "derive a stable content-based seed. Fix the path or file rather than falling back "
+    "to the path string (which would silently change synthetic output)."
+)
+
+
 def _snapshot_content_digest(path: str, field_key: str = "snapshot_file") -> str:
     """SHA-256 hex of a snapshot file's raw bytes, for use in the fingerprint.
 
@@ -85,15 +92,21 @@ def _snapshot_content_digest(path: str, field_key: str = "snapshot_file") -> str
     or unreadable rather than silently falling back to the path string,
     which would reintroduce the path-coupling bug.
     """
+    key = fileaccess.position_key(field_key)
+    shown = fileaccess.shown(path, key)
+    failure: str | None = None
     try:
-        data = fileaccess.read_all(FileRole.SNAPSHOT, path, fileaccess.position_key(field_key))
+        data = fileaccess.read_all(FileRole.SNAPSHOT, path, key)
     except OSError as exc:
-        raise RuntimeError(
-            f"strategy_config_fingerprint: snapshot_file {path!r} is missing or "
-            f"unreadable ({type(exc).__name__}: {exc}); cannot derive a stable "
-            f"content-based seed. Fix the path or file rather than falling back "
-            f"to the path string (which would silently change synthetic output)."
-        ) from exc
+        if fileaccess.keeps_class(exc):
+            raise
+        if fileaccess.is_ambient():
+            raise RuntimeError(_UNREADABLE.format(shown, f"{type(exc).__name__}: {exc}")) from exc
+        failure = f"{type(exc).__name__}: {fileaccess.redact_locators(str(exc), [(path, shown)])}"
+    if failure is not None:
+        # Strict: raised after the handler closes, so the library error is neither cause nor
+        # context (its text can name the file).
+        raise RuntimeError(_UNREADABLE.format(shown, failure))
     return "sha256:" + hashlib.sha256(data).hexdigest()
 
 

@@ -212,7 +212,7 @@ def run_fk_out_of_core(
         # the first's. Same shape as the full-frame sink, so a multi-table
         # job's evidence list matches the pandas oracle's shape byte-for-byte.
         code_set_corpora: dict[tuple[str, str], dict[str, Any]] = {}
-        for table_name in _table_order(plan, relationship_graph, sources):
+        for index, table_name in enumerate(_table_order(plan, relationship_graph, sources)):
             if table_name not in sources:
                 continue
             table_incoming_edges = tuple(incoming[table_name])
@@ -235,9 +235,9 @@ def run_fk_out_of_core(
                 "incoming_edges": table_incoming_edges,
                 "outgoing_edges": table_outgoing_edges,
                 "parent_relations": parent_relations,
-                "temp_dir": root / "joins" / table_name,
-                "relation_dir": root / "relations" / table_name,
-                "staging_path": root / "staged" / table_name / "masked_keys.parquet",
+                "temp_dir": root / "joins" / f"t{index:04d}",
+                "relation_dir": root / "relations" / f"t{index:04d}",
+                "staging_path": root / "staged" / f"t{index:04d}" / "masked_keys.parquet",
                 "memory_limit": memory_limit,
                 "batch_rows": batch_rows,
                 "budget_bytes": budget_bytes,

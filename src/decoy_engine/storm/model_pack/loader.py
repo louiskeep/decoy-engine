@@ -126,6 +126,13 @@ class ModelPackLoader:
         self._handle: DirHandle | None = None if isinstance(pack_dir, (str, Path)) else pack_dir
         self._policy = fileaccess.capture(file_access) if self._handle is None else None
         self._pack_dir = pack_dir if self._handle is None else self._handle.display
+        # What a message or log line calls the pack: its path for the ambient CLI policy, its
+        # config position for any other (a locator never crosses).
+        self._label = (
+            self._handle.display
+            if self._handle is not None
+            else (str(pack_dir) if fileaccess.is_ambient(self._policy) else "storm.model_pack")
+        )
         self._trusted = trusted
 
     def _open_dir(self) -> DirHandle:
@@ -207,6 +214,8 @@ class ModelPackLoader:
             _log.warning("Model pack unavailable; falling back to regex baseline: %s", exc)
             return None
         except Exception as exc:
+            if fileaccess.keeps_class(exc):
+                raise
             _log.warning(
                 "Unexpected error loading model pack; falling back to regex baseline: %s", exc
             )
@@ -218,14 +227,14 @@ class ModelPackLoader:
         data = self._read_member("manifest.json")
         if data is None:
             raise ModelPackLoadError(
-                f"Missing manifest.json in {self._pack_dir}. "
+                f"Missing manifest.json in {self._label}. "
                 "The pack directory must contain manifest.json and model.joblib."
             )
         try:
             raw = json.loads(data.decode("utf-8"))
             return ModelPackManifest.from_dict(raw)
         except (json.JSONDecodeError, TypeError, KeyError) as exc:
-            raise ModelPackLoadError(f"Corrupt manifest.json in {self._pack_dir}: {exc}") from exc
+            raise ModelPackLoadError(f"Corrupt manifest.json in {self._label}: {exc}") from exc
 
     def _check_format(self, manifest: ModelPackManifest) -> None:
         if manifest.format_version != PACK_FORMAT:
@@ -249,11 +258,11 @@ class ModelPackLoader:
         except FileAccessDenied:
             raise
         except OSError as exc:
-            raise ModelPackLoadError(
-                f"Cannot read model.joblib in {self._pack_dir}: {exc}"
-            ) from exc
+            if fileaccess.keeps_class(exc):
+                raise
+            raise ModelPackLoadError(f"Cannot read model.joblib in {self._label}: {exc}") from exc
         if weights is None:
-            raise ModelPackLoadError(f"Missing model.joblib in {self._pack_dir}.")
+            raise ModelPackLoadError(f"Missing model.joblib in {self._label}.")
         return weights
 
     def _check_sha256(self, model_bytes: bytes, manifest: ModelPackManifest) -> None:
@@ -330,17 +339,17 @@ class ModelPackLoader:
             # A key is configured: enforce the signature regardless of trust.
             if not signed:
                 raise ModelPackLoadError(
-                    f"Pack {self._pack_dir} is unsigned (manifest_hmac is empty) "
+                    f"Pack {self._label} is unsigned (manifest_hmac is empty) "
                     "but DECOY_PACK_SIGNING_KEY is configured. "
                     "Sign the pack with sign_manifest() before deploying."
                 )
             if not verify_manifest(manifest, key):
                 raise ModelPackLoadError(
-                    f"Pack {self._pack_dir} signature verification FAILED. "
+                    f"Pack {self._label} signature verification FAILED. "
                     "The manifest may have been tampered with. "
                     "Re-sign with the current key or investigate the discrepancy."
                 )
-            _log.debug("Pack %s signature verified (ML3.2).", self._pack_dir)
+            _log.debug("Pack %s signature verified (ML3.2).", self._label)
             return
 
         # No key configured.
@@ -358,10 +367,10 @@ class ModelPackLoader:
                 _log.error(
                     "SECURITY: refusing to deserialise untrusted model pack %s "
                     "without a verified signature (DE-04).",
-                    self._pack_dir,
+                    self._label,
                 )
             raise ModelPackLoadError(
-                f"Refusing to load pack {self._pack_dir}: {reason}, but no "
+                f"Refusing to load pack {self._label}: {reason}, but no "
                 "DECOY_PACK_SIGNING_KEY is configured to verify it (DE-04). "
                 "Sign the pack (sign_manifest / sign_pack) and set "
                 "DECOY_PACK_SIGNING_KEY to the key derived from the instance "
@@ -373,14 +382,14 @@ class ModelPackLoader:
             _log.warning(
                 "Pack %s has a manifest_hmac signature but DECOY_PACK_SIGNING_KEY "
                 "is not configured; signature verification skipped.",
-                self._pack_dir,
+                self._label,
             )
         else:
             _log.warning(
                 "Pack %s is unsigned (manifest_hmac empty) and no "
                 "DECOY_PACK_SIGNING_KEY is configured. "
                 "Provenance cannot be verified (ML3.2).",
-                self._pack_dir,
+                self._label,
             )
 
     def _deserialise(self, model_bytes: bytes) -> dict[str, Any]:

@@ -200,16 +200,41 @@ def run_discovery_sql(
                 handle = source
             handles[name] = handle
 
+        strict = not fileaccess.is_ambient()
+        pairs = [(h.library_path(), h.display) for h in handles.values()] + [
+            (src, handles[n].display) for n, src in tables.items() if isinstance(src, str)
+        ]
+        failure: duckdb.Error | None = None
+        cols: list[str] = []
+        raw: list[Any] = []
         with untrusted_session(handles) as con:
             try:
                 rel = con.execute(sql)
             except duckdb.Error as exc:
-                raise DiscoverySqlError(f"SQL execution failed: {exc}") from exc
-
-            cols = [d[0] for d in rel.description]
-            # fetchmany pulls at most row_limit rows; we don't materialize
-            # everything in case the user wrote `SELECT * FROM huge`.
-            raw = rel.fetchmany(row_limit)
+                if not strict:
+                    raise DiscoverySqlError(f"SQL execution failed: {exc}") from exc
+                if fileaccess.keeps_class(exc):
+                    raise
+                failure = exc
+            else:
+                cols = [d[0] for d in rel.description]
+                # fetchmany pulls at most row_limit rows; we don't materialize
+                # everything in case the user wrote `SELECT * FROM huge`.
+                if not strict:
+                    raw = rel.fetchmany(row_limit)
+                else:
+                    try:
+                        raw = rel.fetchmany(row_limit)
+                    except duckdb.Error as exc:
+                        if fileaccess.keeps_class(exc):
+                            raise
+                        failure = exc
+            if failure is not None:
+                # Raised after the handlers close: no library error is the cause or context,
+                # and the library's text names the descriptor path, not the file.
+                text = fileaccess.redact_locators(str(failure), pairs)
+                failure = None
+                raise DiscoverySqlError(f"SQL execution failed: {text}") from None
             rows = [
                 {col: _coerce(value) for col, value in zip(cols, row, strict=False)} for row in raw
             ]

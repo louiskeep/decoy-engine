@@ -553,7 +553,11 @@ def _target_device(directory: Path, field_key: str) -> int | None:
             ).st_dev
         except (FileNotFoundError, NotADirectoryError):
             continue
-        except (OSError, FileAccessDenied):
+        except (OSError, FileAccessDenied) as exc:
+            # A refusal is advisory here (the conservative answer is used); a resource
+            # failure is not, and keeps its class.
+            if not isinstance(exc, FileAccessDenied) and fileaccess.keeps_class(exc):
+                raise
             return None
     return None
 

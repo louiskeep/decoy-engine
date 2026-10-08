@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from decoy_engine.fileaccess import FileRole, Root, RootedFileAccess
+from tests.fileaccess.x_support import xworld  # noqa: F401 - registers the fixture
 
 READ_ROLES = frozenset(
     {

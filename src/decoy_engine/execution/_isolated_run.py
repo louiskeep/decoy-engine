@@ -393,8 +393,8 @@ def _write_payload(
     sources_dir = work_root / "sources"
     sources_dir.mkdir(parents=True, exist_ok=True)
     sources_manifest: dict[str, str] = {}
-    for name, table in (sources or {}).items():
-        dest = sources_dir / f"{name}.parquet"
+    for index, (name, table) in enumerate((sources or {}).items()):
+        dest = sources_dir / f"s{index:04d}.parquet"  # opaque: a name can hold "/" or ".."
         pq.write_table(table, dest)  # type: ignore[no-untyped-call, unused-ignore]
         sources_manifest[name] = str(dest)
 

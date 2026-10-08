@@ -105,6 +105,8 @@ def load_table(
         except (FileAccessDenied, FileAccessReadError):
             raise
         except Exception as exc:
+            if fileaccess.keeps_class(exc):
+                raise
             raise ValueError(f"failed to read Parquet at {handle.display}: {exc}") from exc
     finally:
         handle.close()

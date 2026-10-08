@@ -71,7 +71,21 @@ def scrub(exc: BaseException) -> BaseException:
     return exc
 
 
-def _passes_by_type(exc: Exception) -> bool:
+def redact_locators(text: str, pairs: Iterable[tuple[str, str]]) -> str:
+    """`text` with each locator replaced by the display name given for it.
+
+    For third-party text that names the file it was handed: under a strict policy that is the
+    descriptor path (`/proc/self/fd/<n>`) as well as the original locator. Longest first, so a
+    locator that contains another is replaced whole. Where locator and display are equal (the
+    ambient policy) nothing changes."""
+    out = text
+    for locator, display in sorted(pairs, key=lambda p: len(p[0]), reverse=True):
+        if locator and locator != display:
+            out = out.replace(locator, display)
+    return out
+
+
+def passes_by_type(exc: Exception) -> bool:
     """Failures the caller classifies by TYPE keep their class under a strict policy: memory
     pressure, and a full disk or quota. Masking them as a read failure would break OOM
     handling and disk-quota reporting."""
@@ -84,18 +98,10 @@ def _passes_by_type(exc: Exception) -> bool:
     return isinstance(exc, duckdb.OutOfMemoryException)
 
 
-def _resurface(exc: Exception) -> Exception | None:
-    """The exception to raise for a failure the caller must still classify, or None when it
-    is an ordinary library failure (a read error).
-
-    By-type failures keep their object, except a resource `OSError`, rebuilt without the
-    filename the library puts there. A failure the engine recognises only by its TEXT (Arrow's
-    `Wrapping <cell> failed`, OpenSSL's context copy) is rebuilt as the same type around the
-    scrubbed text, because that text can carry a cell value."""
-    if isinstance(exc, OSError) and exc.errno in _RESOURCE_ERRNOS:
-        return type(exc)(exc.errno, os.strerror(exc.errno or 0))
-    if _passes_by_type(exc):
-        return exc
+def resurface_scrubbed(exc: Exception) -> Exception | None:
+    """A failure the engine recognises only by its TEXT (Arrow's `Wrapping <cell> failed`,
+    OpenSSL's context copy), rebuilt as the same type around the scrubbed text; None when `exc`
+    is not such a failure or cannot be rebuilt so that the predicate still matches."""
     from decoy_engine.execution._isolated_common import is_memory_failure, scrub_error_text
 
     if not is_memory_failure(exc):
@@ -105,6 +111,20 @@ def _resurface(exc: Exception) -> Exception | None:
     except Exception:
         return None
     return rebuilt if is_memory_failure(rebuilt) else None
+
+
+def _resurface(exc: Exception) -> Exception | None:
+    """The exception to raise for a failure the caller must still classify, or None when it
+    is an ordinary library failure (a read error).
+
+    By-type failures keep their object, except a resource `OSError`, rebuilt without the
+    filename the library puts there. Text-recognised failures go through `resurface_scrubbed`
+    because that text can carry a cell value."""
+    if isinstance(exc, OSError) and exc.errno in _RESOURCE_ERRNOS:
+        return type(exc)(exc.errno, os.strerror(exc.errno or 0))
+    if passes_by_type(exc):
+        return exc
+    return resurface_scrubbed(exc)
 
 
 def guarded(display: str, strict: bool, fn: Callable[..., T], *args: Any, **kwargs: Any) -> T:
