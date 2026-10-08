@@ -170,3 +170,22 @@ def test_a_table_or_column_without_a_name_is_reported_with_a_placeholder() -> No
     with pytest.raises(PlanCompileError) as info:
         check_when_grammar({"tables": [{"columns": [{"when": "s.x"}]}]})
     assert info.value.path == "tables.?.columns.?.when"
+
+
+@pytest.mark.parametrize(
+    ("predicate", "reason"),
+    [
+        ("x.notnull()", "unexpected input at position"),
+        ("index > 1", "reserved"),
+        ("a > 1" + " and a > 1" * 40, "more than"),
+    ],
+    ids=["position", "reserved_name", "too_many_comparisons"],
+)
+def test_the_message_carries_the_parsers_reason(
+    job: tuple[dict[str, Any], Any], predicate: str, reason: str
+) -> None:
+    config, _profile = job
+    with pytest.raises(PlanCompileError) as info:
+        run_config_only_checks(sup.with_when(config, "t", "s", predicate))
+    assert "outside the closed grammar" in info.value.message
+    assert reason in info.value.message
