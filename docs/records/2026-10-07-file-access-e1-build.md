@@ -235,6 +235,15 @@ touches no changed code. The pinned dispatch inventory and the module-size censu
 `test_char_vault_in_place.py` characterization passes on the untouched base. The first full run after the
 remediation was interrupted by a usage limit and discarded; the table above is a clean rerun.
 
+## Verification after round 2
+
+After the round 2 commits: `ruff check`, `ruff format --check` and `mypy src` clean (3.10 venv);
+`tests/fileaccess` + `tests/sentry` pass on 3.10 and on 3.11 (2923 passed, 1 skipped each, `STRACE` set to
+the scratch binary); the out-of-core, code_set and fileaccess files together on 3.11 passed (3717 passed
+plus the seam-permit failure that the last commit fixed); `scripts/test_flight.py` check mode 5/5
+fingerprints match golden. The full `tests` run was not repeated after round 2 (last full run: 1 failed,
+25436 passed; the failure is the missing `google` module).
+
 ## Not verified
 
 - The platform half (P1): `forbid_ambient()` wiring, `PrincipalFileAccess`, the platform sentries.
