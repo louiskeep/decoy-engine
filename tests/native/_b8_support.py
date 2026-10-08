@@ -111,11 +111,10 @@ def _ipc(table: pa.Table) -> bytes:
 
 
 def identical(a: pa.Table, b: pa.Table) -> bool:
-    """`Table.equals(check_metadata=True)`. A column holding NaN is never `equals` to
-    itself in Arrow, so when that fails the schemas must still be equal with metadata and
-    the serialized streams byte-identical; nothing looser is accepted."""
-    if a.equals(b, check_metadata=True):
-        return True
+    """Literal serialization identity: equal schema (with metadata) AND byte-identical IPC
+    streams. This is stricter than `Table.equals(check_metadata=True)`, which is
+    metadata-inclusive value equality, not a byte guarantee. It also handles a NaN column
+    (never `equals` to itself in Arrow) correctly, since NaN's IPC bytes still match."""
     return bool(a.schema.equals(b.schema, check_metadata=True) and _ipc(a) == _ipc(b))
 
 
