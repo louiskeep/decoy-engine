@@ -1,4 +1,4 @@
-Status: plan (rev 3.3 for E1: rev 3.2 plus the 2026-10-08 D5-scoped delta below; pending Codex plan gate on the delta)
+Status: plan (rev 3.3 for E1: rev 3.2 plus the 2026-10-08 D5-scoped delta below; BUILD-READY, Codex delta plan gate GO in round 3)
 
 # PLAN: Close the host-file read/write class at the engine's open calls (engine + platform)
 
@@ -1040,7 +1040,9 @@ Within that scope, E1 adds four requirements with the same force as D1 to D10.
 - AT-X2's library-locator capture with positive controls;
 - pool-spool execution proof.
 
-**Process.** This delta goes through the Codex plan gate. The build then goes through dennis and Codex final. The record maps Codex final findings 1 to 6 to these tests. Finding 5 (YAML tag content in an authorized file) is resolved by the D5 scope: content may appear, locators may not.
+**Codex plan gate on the delta, round 3: GO** (high confidence). It probed X1's catch-clear-reraise both normally and inside an active caller handler.
+
+**Process.** This delta went through the Codex plan gate. The build then goes through dennis and Codex final. The record maps Codex final findings 1 to 6 to these tests. Finding 5 (YAML tag content in an authorized file) is resolved by the D5 scope: content may appear, locators may not.
 
 ### Slice E1: engine `fileaccess` (decoy-engine `feat/file-access-policy`, ships as 0.9.0)
 
