@@ -352,3 +352,80 @@ scratch strace binary since the devbox has none):
 dennis reviewed the full X1-X4 build at 50cdb7e2: 0 BLOCKER/HIGH/MEDIUM, 2 LOW (both folded below). It verified X1-X4 at the root, confirmed the two AT-X4 test corrections are non-weakening, ran its own sentinel/descriptor-path adversarial probe, and re-ran fileaccess+sentry+parity (3159 + 251 + 109 + 633) green with a real strace binary.
 - LOW 1 folded: `guarded`'s passthrough tuple now includes `FileAccessUnavailable` (defensive; it is only raised at the policy/open/txn layers today).
 - LOW 2 folded: `yaml_safe_load`'s docstring now states the strict path replaces a YAML error with a locator-free `FileAccessReadError`.
+
+## Codex final round 2: three further leak sites + a completeness sentry (2026-10-08)
+
+Codex's final review found the same defect class (a strict-policy error leaking a file locator or
+losing a resource class) at three sites a gate cycle after the X2/X3 work. Cam authorised fixing
+the three AND adding a completeness sentry so the class cannot recur (the escalation after the
+class resurfaced across three cycles). Tests-first; each leak was shown on the current tree first,
+then fixed, then shown gone. Commits `83a5b880` (the three sites) and `1bef55c2` (the sentry) on
+`feat/file-access-policy`.
+
+### The three sites
+
+| Site | Leak on the current tree | Root cause | Fix | Tests |
+|---|---|---|---|---|
+| `reference_tables/_loader.py:87` + `transforms/joint_mask.validate_joint_mask_config` | `load_table('/abs/<sentinel>/ref')` under strict raised `FileNotFoundError: no shipped reference table '/abs/<sentinel>/ref'`; `validate_joint_mask_config` with a bare-path `reference:` re-raised a `PlanCompileError` whose `__context__` still held that `FileNotFoundError` | the rejection echoed the rejected lookup key (which a caller can pass as a path), and the validator's `raise ... except FileNotFoundError:` attached the rejected error as context | under a strict policy the rejection uses a fixed message with no name (X4); `validate_joint_mask_config` raises both `PlanCompileError`s through `_raise_without_chain` (catch, null `__cause__`/`__context__`, bare re-raise, mirroring keyprovider's `raise_clean`) so the traceback carries no locator (X2) | `test_x2_locators.py::test_load_table_rejects_a_path_passed_as_a_name_without_a_locator`, `::test_joint_mask_bare_path_reference_chain_names_no_locator` (asserts `__context__ is None`) |
+| `storm/name_hints/loader.py` (`_is_file` ~93, the listed-file message ~128) | an authorized manifest listing an absolute outside-root file raised `NameHintLoaderError: ... lists '/abs/<sentinel>.yaml' but /abs/<sentinel>.yaml does not exist` and the strict denial was gone | `_is_file` swallowed `FileAccessDenied` into "absent", then the message built `target / fname`, where an absolute `fname` replaces the display prefix and surfaces the full path | a strict handle preserves the denial (re-raise `FileAccessDenied`, no existence oracle); every child-file diagnostic is built by `_child_display(target, name)` from the capability display and the bare basename, never `target / fname`; the non-string `files:` entry message no longer echoes the value | `test_x2_locators.py::test_name_hint_absolute_listed_file_preserves_denial_and_names_no_path`; the existing strict `test_name_hint_diagnostics_name_no_locator` now asserts a preserved `FileAccessDenied` for the absent/unlisted cases |
+| `storm/model_pack/provenance.py:162` | injecting `OSError(ENOMEM/ENOSPC/EDQUOT)` at `_packio.read_member` produced a plain `ValueError` (errno dropped, ENOMEM no longer `is_memory_failure`); a malformed manifest named `pack_dir` | the `except (OSError, ...)` translated every failure, losing the resource class, and interpolated `pack_dir` | X3: `if fileaccess.keeps_class(exc): raise` before translating, so denial / memory / ENOSPC / EDQUOT / ENOMEM / read-error keep class and errno; X2: the message and the missing-manifest `FileNotFoundError` filename name the config position via `fileaccess.shown` under a strict policy | `test_x3_classification.py` matrix with the `sign_pack` site added (`enomem`/`enospc`/`edquot` keep class+errno, `is_memory_failure` correct); `test_x2_locators.py::test_sign_pack_malformed_manifest_names_no_locator` |
+
+Before/after evidence was captured with a scratch probe under a `RootedFileAccess` over a
+sentinel-bearing tree: all three leaked the full path (and provenance lost the errno/OOM class)
+on the pre-fix tree, and none does after.
+
+### The completeness sentry
+
+`tests/sentry/test_locator_hygiene.py` is a ratchet, built on the `test_log_interpolation.py`
+convention (stdlib `ast`, a reason-carrying registry, a parametrized detector table).
+
+- **Scope.** The strict-reachable modules: those that name the file-access policy (`fileaccess`,
+  `FileAccess`/`FileHandle`/`DirHandle`/`OutputDir`/`OutputTxn`/`FileRequest`/`file_access=`). That
+  is 72 of the 511 engine modules; it is the surface a strict policy actually reaches and keeps the
+  sentry precise (the all-modules scope would add ~24 CLI/config path diagnostics that the ambient
+  CLI shows on purpose).
+- **Rule.** Every `raise` and every logger call in those modules is scanned. When its message
+  interpolates a local whose name is in `PATH_NAMES` (the plan's enumerated list: `path`,
+  `pack_dir`, `manifest_path`, `file_path`, `directory`, `lock`, `target`, `locator`, `fname`,
+  `pack_root`, plus near-spellings), the site must render a display-derived value instead
+  (`display`/`shown`/`*_display`/`*_shown`, a `.display`/`.shown` attribute, or a
+  `fileaccess.shown`/`redact_locators`/`encode_field_key`/`position_key`/`scrub` call) or carry a
+  `WAIVERS` entry with a reason. An unwaived path-interpolating diagnostic fails the test. The
+  `message=`/`msg=` keyword of a raised error is scanned; the `path=`/`code=` structured fields of
+  `PlanCompileError` are not (they are config positions, not locators).
+- **Proof.** `test_the_detector` is a positive/negative table (the name-hint and model-pack leak
+  shapes, a direct path interpolation, `%`/`.format`/concat/method forms, the getLogger receiver,
+  counts and qualnames flagged; `shown`, `*_display`, `.display`, the sanitizing calls, a
+  `.name`/`.stem` basename, a `PlanCompileError` position field, and a generic identifier not
+  flagged). `test_the_detector_flags_a_planted_fixture_module` scans
+  `tests/sentry/fa_fixtures/locator_leak.py`, which reproduces the three leak shapes next to
+  display-safe companions, and asserts the three are flagged and the companions are not.
+- **Real tree.** Two findings, both waived with reasons: `keyprovider.resolve_mask_secret_ref`
+  (`path`, 2: the ambient-only branch; the strict read returns via `_strict_secret_from_file`, X1)
+  and `profile/_readers._build_file_source` (`path`, 1: a malformed non-string `path` config
+  field, not a locator). The sentry also surfaced two name-hygiene follow-ups, folded here:
+  `_check_version` took a param named `path` that held the resolved display (renamed `shown`), and
+  the name-hint non-string-entry message echoed its value (removed).
+
+**Known limits (also in the sentry docstring).**
+1. It is a name heuristic, like the log sentry: a locator in a variable that is not in `PATH_NAMES`
+   is not seen. Generic identifiers (`name`, `root`, `src`) are left out on purpose, because they
+   name a table/column/distribution far more often than a file and would need a dozen tautological
+   waivers (noisy and vacuous). The one locator-as-lookup-key site (reference_tables' `name`) stays
+   covered by its own AT-X2/AT-X4 test and the strict fixed-message rule, not by this sentry.
+2. A basename (`.name`/`.stem`/`.suffix`) is treated as not-a-locator, matching the existing
+   engine disclosure (disguises and faker log `path.name`) and the AT-X2 tests, which pass with a
+   basename present.
+3. A waived site, keyed by (module, function, variable) with a count, can regress within its
+   waiver; each waiver carries a reason justifying why its interpolation is safe. Scope is the
+   modules that name the policy, not the full transitive call graph.
+
+### Verification (head `1bef55c2`)
+
+| Check | Result |
+|---|---|
+| `tests/fileaccess` + `tests/sentry`, 3.11 (native venv), real strace | 3198 passed, 1 skipped |
+| `tests/fileaccess` + `tests/sentry`, 3.10 (CI mirror), real strace | 3198 passed, 1 skipped |
+| `ruff check` / `ruff format --check` (changed files) | clean |
+| `mypy` (changed src files, 3.10) | clean |
+| `scripts/test_flight.py` (check) | 53/53 invariant checks, 5/5 fingerprints match golden |

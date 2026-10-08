@@ -1,5 +1,7 @@
 Status: plan (rev 3.3 for E1: rev 3.2 plus the 2026-10-08 D5-scoped delta below; BUILD-READY, Codex delta plan gate GO in round 3)
 
+Rules consulted: 00-universal, development-loop, feature-dev, testing (for the 2026-10-08 X5 completeness-sentry escalation note below).
+
 # PLAN: Close the host-file read/write class at the engine's open calls (engine + platform)
 
 Status: plan, rev 3.1 (Opus, 2026-10-02). Build-ready pending owner acknowledgement (Codex PLAN gate
@@ -1043,6 +1045,10 @@ Within that scope, E1 adds four requirements with the same force as D1 to D10.
 **Codex plan gate on the delta, round 3: GO** (high confidence). It probed X1's catch-clear-reraise both normally and inside an active caller handler.
 
 **Process.** This delta went through the Codex plan gate. The build then goes through dennis and Codex final. The record maps Codex final findings 1 to 6 to these tests. Finding 5 (YAML tag content in an authorized file) is resolved by the D5 scope: content may appear, locators may not.
+
+**X5. Completeness sentry for the locator-leak class (Codex final round 2; 2026-10-08).** The same defect class (a strict-policy error leaking a locator or losing a resource class) surfaced at a new site each gate cycle, so Cam authorised closing the three then-remaining sites AND a structural sentry so it cannot recur.
+- Sites closed: `reference_tables/_loader.py:87` + the `validate_joint_mask_config` chain (X4 fixed message + X2 chain clear); `storm/name_hints/loader.py` (`_is_file` preserves a strict denial; child diagnostics use the capability display, never `target / fname`); `storm/model_pack/provenance.py:162` (X3 `keeps_class` before translating + X2 `shown`).
+- Sentry: `tests/sentry/test_locator_hygiene.py` statically scans the strict-reachable modules (those naming the policy) and fails any `raise` or logger call whose message interpolates a path-bearing local (the enumerated `PATH_NAMES`) unless the value is display-derived or carries a reasoned waiver. Proven by a planted fixture and an inline detector table; the real tree has two waived findings. **Mechanism and its known limits** (name heuristic, so generic identifiers like `name`/`root` are out of scope and covered by their own tests; a `.name`/`.stem` basename is not treated as a locator; a waived site can regress within its waiver) are documented in the build record's "Codex final round 2" section.
 
 ### Slice E1: engine `fileaccess` (decoy-engine `feat/file-access-policy`, ships as 0.9.0)
 
