@@ -181,9 +181,9 @@ def parse_when(expr: str) -> WhenExpr:
     """Parse `expr` into a frozen AST, or raise `ValidationError(code="when_outside_closed_grammar")`.
 
     The message names the position and the construct, never the expression text, and no
-    exception chain is kept: Lark's diagnostics quote the offending text, so every raise below
-    is `from None`. A caller that logs the error, with its traceback, never logs a predicate
-    that may embed data values.
+    exception chain or context is kept: Lark's diagnostics quote the offending text, so the
+    error is raised after the handlers exit. A caller that logs the error, with its traceback,
+    never logs a predicate that may embed data values.
     """
     if not isinstance(expr, str):
         raise _reject("the predicate must be a string")
@@ -197,6 +197,8 @@ def parse_when(expr: str) -> WhenExpr:
         raise _reject(f"the predicate is longer than {_MAX_EXPR_LENGTH} characters")
     if text.count("(") > _MAX_NESTING_DEPTH:
         raise _reject(f"more than {_MAX_NESTING_DEPTH} parentheses")
+    # The reason is chosen inside the handlers but raised after they exit: raising inside an
+    # `except` would leave the Lark error on `__context__`, and its message quotes the text.
     try:
         tree = _PARSER.parse(text)
         built: WhenExpr = _Build().transform(tree)
@@ -204,18 +206,15 @@ def parse_when(expr: str) -> WhenExpr:
         return built
     except lark.exceptions.VisitError as exc:
         orig = exc.orig_exc
-        if isinstance(orig, _RejectError):
-            raise _reject(str(orig)) from None
         # Any other transformer failure carries its own message, which can quote the text.
-        raise _reject("the predicate does not parse") from None
+        reason = str(orig) if isinstance(orig, _RejectError) else "the predicate does not parse"
     except lark.exceptions.UnexpectedInput as exc:
-        raise _reject(
-            f"unexpected input at position {getattr(exc, 'pos_in_stream', '?')}"
-        ) from None
+        reason = f"unexpected input at position {getattr(exc, 'pos_in_stream', '?')}"
     except lark.exceptions.LarkError:
-        raise _reject("the predicate does not parse") from None
+        reason = "the predicate does not parse"
     except RecursionError:
-        raise _reject("the predicate is nested too deeply") from None
+        reason = "the predicate is nested too deeply"
+    raise _reject(reason)
 
 
 @lru_cache(maxsize=1024)
@@ -246,13 +245,15 @@ def validate_envelope_when(envelope: Any) -> None:
                     parse_when_cached(when)
                 else:
                     parse_when(when)
+                continue
             except ValidationError:
-                raise ValidationError(
-                    f"the when predicate of table {table!r} column {column!r} is outside the "
-                    "closed grammar",
-                    path=f"tables.{table}.columns.{column}.when",
-                    code=WHEN_OUTSIDE_GRAMMAR_CODE,
-                ) from None
+                pass
+            raise ValidationError(
+                f"the when predicate of table {table!r} column {column!r} is outside the "
+                "closed grammar",
+                path=f"tables.{table}.columns.{column}.when",
+                code=WHEN_OUTSIDE_GRAMMAR_CODE,
+            )
 
 
 def validate_plan_when(plan: Any) -> None:

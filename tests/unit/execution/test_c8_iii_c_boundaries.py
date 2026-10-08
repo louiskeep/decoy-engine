@@ -289,7 +289,7 @@ def test_parse_when_names_the_position_and_attaches_no_lark_cause() -> None:
     for text in ("x.notnull()", "`oops", "s ==", "x" + " and x > 1" * 40):
         exc = _raise_from(lambda t=text: parse_when(t))
         assert exc.__cause__ is None
-        assert exc.__suppress_context__ is True
+        assert exc.__context__ is None
 
 
 def _validated_config_with_when(predicate: str) -> dict[str, Any]:
@@ -513,3 +513,49 @@ def test_the_negated_form_selects_the_null_row_on_numpy_dtypes() -> None:
         False,
         True,
     ]
+
+
+# --- no exception context either -------------------------------------------------
+
+
+def _assert_no_context(exc: BaseException) -> None:
+    """`from None` hides the context from tracebacks but keeps `__context__` on the object, so a
+    handler that walks it would still reach the pandas or Lark error that quotes the text."""
+    assert exc.__cause__ is None, repr(exc.__cause__)
+    assert exc.__context__ is None, repr(exc.__context__)
+
+
+@pytest.mark.parametrize(
+    "text", [LEAKY, f"`{S}", f"s == f'{S}'", "x" + " and x > 1" * 40, "index > 1", "s =="]
+)
+def test_parse_when_leaves_no_exception_context(text: str) -> None:
+    from decoy_engine.expressions._when_parser import parse_when
+
+    _assert_no_context(_raise_from(lambda: parse_when(text)))
+
+
+def test_the_backstop_leaves_no_exception_context() -> None:
+    _assert_no_context(_raise_from(lambda: _eval_predicate(_frame(), LEAKY, "redact", column="s")))
+
+
+def test_the_pandas_boundary_leaves_no_exception_context() -> None:
+    exc = _raise_from(
+        lambda: _eval_predicate(_datetime_frame(), f"x < '{S}'", "redact", column="s")
+    )
+    assert isinstance(exc, StrategyError) and exc.code == "when_expression_error"
+    _assert_no_context(exc)
+
+
+def test_the_compile_check_leaves_no_exception_context(tmp_path: Path) -> None:
+    exc = _raise_from(lambda: _via_config_only(LEAKY, tmp_path))
+    assert isinstance(exc, PlanCompileError)
+    _assert_no_context(exc)
+
+
+def test_plan_level_validation_leaves_no_exception_context(tmp_path: Path) -> None:
+    from decoy_engine.expressions._when_parser import validate_plan_when
+
+    job = sup.two_table_job(tmp_path)
+    exc = _raise_from(lambda: validate_plan_when(sup.plan_with_when(job.plan, "a", "s", LEAKY)))
+    assert isinstance(exc, ValidationError)
+    _assert_no_context(exc)

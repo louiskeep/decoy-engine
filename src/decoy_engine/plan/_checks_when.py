@@ -89,12 +89,15 @@ def check_when_grammar(config: dict[str, Any]) -> None:
                 continue
             try:
                 parse_when(when.strip())
+                continue
             except ValidationError as exc:
-                raise PlanCompileError(
-                    code=WHEN_OUTSIDE_GRAMMAR_CODE,
-                    path=path,
-                    message=(
-                        f"Column {table_name}.{col_name}: {exc.raw_message}. See the "
-                        "`when:` section of docs/strategies.md for the accepted forms."
-                    ),
-                ) from None
+                reason = exc.raw_message
+            # Raised outside the handler so `__context__` stays empty.
+            raise PlanCompileError(
+                code=WHEN_OUTSIDE_GRAMMAR_CODE,
+                path=path,
+                message=(
+                    f"Column {table_name}.{col_name}: {reason}. See the "
+                    "`when:` section of docs/strategies.md for the accepted forms."
+                ),
+            )

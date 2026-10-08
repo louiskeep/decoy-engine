@@ -97,12 +97,15 @@ def _require_closed_grammar(expression: object, strategy: str, column: str | Non
             parse_when_cached(expression)
         else:
             parse_when(expression)  # type: ignore[arg-type]
+        return
     except ValidationError:
-        raise StrategyError(
-            code=WHEN_OUTSIDE_GRAMMAR_CODE,
-            strategy=strategy,
-            message=f"when expression on column {column!r} is outside the closed grammar",
-        ) from None
+        pass
+    # Raised outside the handler so `__context__` stays empty.
+    raise StrategyError(
+        code=WHEN_OUTSIDE_GRAMMAR_CODE,
+        strategy=strategy,
+        message=f"when expression on column {column!r} is outside the closed grammar",
+    )
 
 
 def _eval_predicate(
@@ -129,6 +132,7 @@ def _eval_predicate(
     the expression: a predicate can embed literal data values.
     """
     _require_closed_grammar(expression, strategy, column)
+    failed = False
     try:
         # Audit L1 (2026-06-12): same fallback surfacing as
         # execution/_transforms._eval_clamped -- pandas silently drops
@@ -159,15 +163,17 @@ def _eval_predicate(
             message=("when: requires numexpr; install with: pip install numexpr"),
         ) from exc
     except Exception as exc:
-        # pandas' own errors quote the predicate (a bad datetime literal, an undefined name),
-        # so the chain is cut here; only the class name is kept, at debug level, to tell
-        # failures apart.
+        # pandas' own errors quote the predicate (a bad datetime literal, an undefined name).
+        # Only the class name is kept, at debug level, to tell failures apart; the error itself
+        # is raised below, outside the handler, so it carries no cause and no context.
         _log.debug(
             "when predicate on column %r (strategy %s): evaluation failed (%s)",
             column,
             strategy,
             type(exc).__name__,
         )
+        failed = True
+    if failed:
         raise StrategyError(
             code="when_expression_error",
             strategy=strategy,
@@ -175,7 +181,7 @@ def _eval_predicate(
                 f"when expression on column {column!r} failed to evaluate; "
                 "check column names + comparison syntax"
             ),
-        ) from None
+        )
 
     # QA-3 F4 (2026-05-31): accept pandas nullable BooleanDtype too.
     # The pre-fix check `mask.dtype != bool` rejected `pd.BooleanDtype()`
