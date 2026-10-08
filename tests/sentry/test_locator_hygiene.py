@@ -8,22 +8,39 @@ non-recurring: it is a ratchet over the strict-reachable modules.
 
 Mechanism. A module is strict-reachable when it names the file-access policy (imports
 ``fileaccess`` or uses ``FileAccess``/``FileHandle``/``DirHandle``/``OutputDir``/``OutputTxn``/
-``FileRequest``/``file_access=``). In those modules every ``raise`` and every logger call is
-scanned: when its message interpolates a local whose name is a known path- or locator-bearing
-one (``path``, ``pack_dir``, ``manifest_path``, ``file_path``, ``target``, ``fname``,
-``locator``, ... -- the names the real leak sites used), the site must either render a
-display-derived value instead (``display``/``shown``/``*_display``/``*_shown``, a ``.display``
-attribute, or a ``fileaccess.shown``/``redact_locators`` call) or carry a waiver in
-``WAIVERS`` with a reason. An unwaived path-interpolating diagnostic fails the test.
+``FileRequest``/``file_access=``) OR imports a capability-reader helper that opens files through
+the policy on a caller's behalf without the caller naming the policy itself (``_packio``;
+``fileaccess._read`` importers already carry the ``fileaccess`` name). That second clause is load
+bearing: pre-fix ``storm/model_pack/provenance.py`` read packs through ``_packio`` without the
+word ``fileaccess``, so a name-only scope would have SKIPPED it, and the class could recur in a
+reader module unseen. In those modules every ``raise`` and every logger call is scanned: when its
+message interpolates a local whose name is a known path- or locator-bearing one (``path``,
+``pack_dir``, ``manifest_path``, ``file_path``, ``target``, ``fname``, ``locator``, ... -- the
+names the real leak sites used), the site must either render a display-derived value instead
+(``display``/``shown``/``*_display``/``*_shown``, a ``.display`` attribute, or a
+``fileaccess.shown``/``redact_locators`` call) or carry a waiver in ``WAIVERS`` with a reason. An
+unwaived path-interpolating diagnostic fails the test. A path routed through an unrecognized
+helper call (``_render_path(path)``, ``str(path).strip()``) stays visible: the scan recurses into
+every non-sanitizing call's arguments and receiver, preferring a false positive (one waiver) to a
+miss, since this is a security ratchet.
 
 Known limits (documented in the E1 build record):
   - It is a name heuristic, like the log-interpolation sentry. A locator held in a variable
     that is NOT in ``PATH_NAMES`` is not seen; the set is kept current from the real leak sites.
+    Generic identifiers (``name``, ``root``, ``src``) are left out on purpose (overloaded with
+    table/column/distribution names); the one locator-as-lookup-key site (reference_tables'
+    ``name``) is covered by its own AT-X2/AT-X4 test and the strict fixed-message rule.
   - A waived site, keyed by (module, function, variable) with a count, may still regress within
     its waiver, so each waiver carries a reason that justifies why its interpolation is safe
-    (an ambient-only branch, a non-path config field, a column or env-var name).
-  - Scope is the modules that name the policy, not the full transitive call graph; this is the
-    surface a strict policy actually reaches and keeps the sentry precise (72 modules, not 511).
+    (an ambient-only branch, a non-path config field, or a local named ``path`` that in fact
+    holds ``handle.display``).
+  - Scope is the modules that name the policy or import ``_packio``, not the full transitive call
+    graph; this is the surface a strict policy reaches and keeps the sentry precise.
+  - A basename (``.name``/``.stem``/``.suffix``) is treated as not a locator, matching the engine's
+    existing disclosure (disguises and faker log ``path.name``) and the AT-X2 tests.
+  - Compile-time plan metadata is out of the model: ``plan/_serialize.py`` echoes an embedded
+    ``source_path`` in serialized plan JSON, but that is an in-memory plan object, not a live file
+    operation under a policy, so it is outside the D5 live-locator class this sentry guards.
 """
 
 from __future__ import annotations
@@ -81,6 +98,12 @@ _SAFE_CALLS = frozenset({"shown", "redact_locators", "encode_field_key", "positi
 # `path=`/`code=` of a PlanCompileError, which carries a config position, not a locator).
 _MESSAGE_KEYWORDS = frozenset({"message", "msg"})
 
+# A module is strict-reachable when it names the policy OR imports a capability-reader helper
+# that opens files through the policy on a caller's behalf without the caller naming the policy
+# itself. The second group matters: pre-fix `provenance.py` read packs via `_packio` and would
+# have been SKIPPED, so the ratchet must follow the helper, not only the word "fileaccess".
+# `fileaccess._read` importers already carry the "fileaccess" marker, so `_packio` is the one that
+# adds coverage today (its importers: trainer.py, provenance.py).
 _POLICY_MARKERS = (
     "fileaccess",
     "FileAccess",
@@ -90,6 +113,8 @@ _POLICY_MARKERS = (
     "OutputTxn",
     "FileRequest",
     "file_access",
+    "_packio",
+    "fileaccess._read",
 )
 
 # (module path relative to decoy_engine, qualified function, variable) -> (count, reason).
@@ -102,6 +127,12 @@ WAIVERS: dict[tuple[str, str, str], tuple[int, str]] = {
     ("profile/_readers.py", "_build_file_source", "path"): (
         1,
         "reports a malformed non-string `path` config field (repr of a non-str), not a locator",
+    ),
+    ("profile/_fixed_width_reader.py", "_resolve_layout", "path"): (
+        1,
+        "the `path` parameter holds handle.display (read_fixed_width reassigns path = "
+        "handle.display before the call); _render_path only escapes control chars, it does not "
+        "reveal a location",
     ),
 }
 
@@ -152,17 +183,13 @@ def _exposed_paths(value: ast.expr) -> list[str]:
         func = value.func
         called = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
         if called in _SAFE_CALLS:
-            return []  # the locator is replaced by a display here
-        if (isinstance(func, ast.Name) and func.id in {"str", "repr", "format"}) or (
-            isinstance(func, ast.Attribute) and func.attr in {"format", "join"}
-        ):
-            children = [*value.args, *(k.value for k in value.keywords)]
-        elif isinstance(func, ast.Attribute):
-            # A method on a path value (`str(path).strip()`) still exposes it.
-            root = _root_name(func.value)
-            if root is not None:
-                return [root] if root in PATH_NAMES and not _is_display(root) else []
-            return _exposed_paths(func.value)
+            return []  # a display/redaction call replaces the locator
+        # Any other call: recurse into its arguments and, for a method, its receiver. A path
+        # laundered through an unrecognized helper (`_render_path(path)`, `str(path).strip()`)
+        # stays visible. A security ratchet prefers a false positive (one waiver) to a miss.
+        children = [*value.args, *(k.value for k in value.keywords)]
+        if isinstance(func, ast.Attribute):
+            children.append(func.value)
     return [hit for child in children for hit in _exposed_paths(child)]
 
 
@@ -271,6 +298,12 @@ _M = "m.py"
         ("def f():\n    raise E('{}'.format(file_path))\n", {(_M, "f", "file_path"): 1}),
         ("def f():\n    raise E('x ' + str(path))\n", {(_M, "f", "path"): 1}),
         ("def f():\n    raise E(str(path).strip())\n", {(_M, "f", "path"): 1}),
+        # LOW-1: a path laundered through an unrecognized helper call is still seen.
+        ("def f():\n    raise E(f'{_render_path(path)}')\n", {(_M, "f", "path"): 1}),
+        ("def f():\n    raise E(f'{wrap(file_path)}')\n", {(_M, "f", "file_path"): 1}),
+        # ... but a display passed to that same helper is not.
+        ("def f():\n    raise E(f'{_render_path(handle.display)}')\n", {}),
+        ("def f():\n    raise E(f'{_render_path(shown)}')\n", {}),
         (
             "def f():\n    raise PlanCompileError(path='a.b', message=f'bad {directory}')\n",
             {(_M, "f", "directory"): 1},
@@ -312,5 +345,15 @@ def test_the_detector_flags_a_planted_fixture_module() -> None:
     assert ("open_path_leak", "path") in bad
     assert ("name_hint_leak", "file_path") in bad
     assert ("model_pack_leak", "pack_dir") in bad
+    assert ("trainer_pack_leak", "pack_dir") in bad  # the _packio-reader shape (MEDIUM-1)
+    assert ("wrapped_path_leak", "path") in bad  # laundered through a helper call (LOW-1)
     # the display-safe and basename companions raise nothing the sentry sees
     assert not any(fn.endswith("_safe") for (fn, _var) in bad), bad
+
+
+def test_scope_follows_the_capability_reader_helper() -> None:
+    """A module that reads through the `_packio` capability helper is strict-reachable even when
+    it never names the policy (the pre-fix provenance/trainer hole, MEDIUM-1)."""
+    assert _strict_reachable("from decoy_engine.storm.model_pack import _packio\n")
+    assert _strict_reachable("from decoy_engine import fileaccess\n")
+    assert not _strict_reachable("import json\n\ndef f():\n    raise ValueError('x')\n")

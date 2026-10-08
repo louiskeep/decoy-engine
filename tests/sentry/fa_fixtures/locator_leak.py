@@ -38,3 +38,26 @@ def model_pack_leak(pack_dir, exc):  # noqa
 
 def model_pack_safe(shown, exc):  # noqa
     raise ValueError(f"sign_pack: cannot read manifest in {shown}: {exc}")
+
+
+# Shape 4: storm/model_pack/trainer.py load_pack naming pack_dir (reached only because the module
+# imports the _packio capability-reader helper, not because it names the policy).
+def trainer_pack_leak(pack_dir):  # noqa
+    raise FileNotFoundError(f"Missing manifest.json in {pack_dir}")
+
+
+def trainer_pack_safe(shown):  # noqa
+    raise FileNotFoundError(f"Missing manifest.json in {shown}")
+
+
+# Shape 5: a path laundered through an unrecognized helper call stays visible (LOW-1).
+def wrapped_path_leak(path):  # noqa
+    raise ValueError(f"bad fixed-width file: {_render_path(path)}")
+
+
+def wrapped_path_safe(handle):  # noqa
+    raise ValueError(f"bad fixed-width file: {_render_path(handle.display)}")
+
+
+def _render_path(p):  # noqa
+    return p
