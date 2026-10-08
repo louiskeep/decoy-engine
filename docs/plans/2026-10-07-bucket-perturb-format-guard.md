@@ -107,3 +107,4 @@ Rollback: revert the merge commit.
   - `%X` (locale time) was missing from TIME/OTHER, which rejected `%Y-%m-%d %X`, a format that works on main;
   - the out-of-core runner validated table by table, so a valid first table reached the sink before a later table's bad format was caught. It now preflights every bucket_perturb node before any table (`preflight_group_c`), with a later-table zero-write test;
   - the docs paragraph moved from date_shift to bucket_perturb.
+- **Codex final gate, round 2: GO** (high confidence). All round-1 findings closed; a reconstructed 29-format corpus matches pre-guard main output; 24 later-table probes rejected before scratch or sink writes.
