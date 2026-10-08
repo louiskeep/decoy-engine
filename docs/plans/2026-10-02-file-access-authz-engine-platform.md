@@ -962,7 +962,9 @@ Within that scope, E1 adds four requirements with the same force as D1 to D10.
 
 **X1. Secret material never survives in an error (Codex final finding 3).**
 - Under a strict policy, `keyprovider` reads AND decodes a secret in one function: UTF-8, hex, base64 and length checks.
-- On any failure it records a fixed reason code, lets the `except` block exit, then raises a fresh `MaskSecretError` built only from `display` and that code. The exception is constructed outside any handler, so `__cause__` and `__context__` are `None`, and no attribute of a decode exception (`.object`, `.args`) is reachable.
+- On a decode or format failure it records a fixed reason code, lets the `except` block exit, then raises a fresh `MaskSecretError` built only from `display` and that code.
+- **Clearing inherited context (round 2 fix).** The function may be called while the caller is handling another exception, which would otherwise become `__context__`. So the raise is wrapped: catch the fresh `MaskSecretError`, set `__cause__ = None`, `__context__ = None` and `__suppress_context__ = True`, then bare `raise`. No attribute of any decode exception (`.object`, `.args`) is reachable through either chain link, whether the call is normal or made inside an active handler.
+- **Classification preserved.** Policy exceptions and the resource classes in X3 are NOT converted to `MaskSecretError`; they propagate per X3.
 - Not a context manager: a plain function with a flag, as `profile/_fixed_width_reader.py` does, because a context manager re-enters the original exception (Codex delta round 1).
 - Ambient behavior is unchanged.
 
@@ -976,9 +978,19 @@ Within that scope, E1 adds four requirements with the same force as D1 to D10.
 - Third-party text from an authorized file's CONTENT is allowed by D5. Only path and locator substrings are replaced, using the existing `display` substitution, applied to the message and to any rendered chain.
 - The M-1 text-matched passthrough keeps #219's recognition predicates EXACTLY. Nothing is broadened; the single-token Arrow `Wrapping` shape stays distinct from whitespace-bearing malformed-data shapes. The message gets path substitution, not content removal.
 
-**X3. Classification survives outer wrappers (Codex final finding 6).**
-- Under a strict policy, any engine `except Exception` that wraps a call into a file adapter re-raises these classes unchanged instead of rewrapping them: `FileAccessDenied`, `FileAccessUnavailable`, `FileAccessReadError`, `MemoryError` (including `ArrowMemoryError`), `duckdb.OutOfMemoryException`, and `OSError` ENOMEM/ENOSPC/EDQUOT.
-- Applies to `reference_tables/_loader.py:107`, `transforms/_codeset_loader.py:429`, and every site the builder's inventory finds. The list goes in the record.
+**X3. Classification survives every translating handler (Codex final finding 6; delta round 2 fix).**
+- **What to inventory.** Under a strict policy, the builder lists every engine handler that translates, stores or swallows an exception raised from a file-adapter call. That covers broad `except Exception`, typed handlers (`except OSError`, `except ValueError`, ...), stored-error paths and fallback handlers. Known examples:
+  - `reference_tables/_loader.py:107`;
+  - `transforms/_codeset_loader.py:429`;
+  - `generation/statistical/_spec.py` `_load_snapshot` (catches `OSError`, so an ENOMEM becomes `StatisticalSpecError`);
+  - `plan/_generation.read_and_pin_snapshots` (stores `OSError` as a snapshot failure).
+- **What each one preserves.** Each one re-raises these unchanged, with locator hygiene (X2) applied:
+  - `FileAccessDenied`, `FileAccessUnavailable`, `FileAccessReadError`;
+  - `MemoryError` (including `ArrowMemoryError`) and `duckdb.OutOfMemoryException`;
+  - `OSError` with errno ENOMEM, ENOSPC or EDQUOT, keeping the class and errno;
+  - any exception the existing `is_memory_failure` predicate recognizes.
+- **No change to recognition.** `is_memory_failure` is not changed. ENOSPC and EDQUOT keep their class and errno but are NOT memory failures.
+- The inventory goes in the record.
 
 **X4. Config-derived scratch names and shipped-name resolvers (Codex final findings 1 and 2; Codex delta round 1 finding 6).**
 - **Opaque scratch identifiers.** Every engine scratch path derived from a config value (table, column, edge or relation name) uses an opaque per-run identifier (`t0000`, `e0000`, ...), mapped in memory and never built from the name, beneath the engine's own `mkdtemp` descriptor.
@@ -991,23 +1003,42 @@ Within that scope, E1 adds four requirements with the same force as D1 to D10.
 
 **Acceptance tests.** Each defect test records fail-before on `cce9eb68`. Compatibility controls must pass before and after.
 - **AT-X1:**
+  - each case below is run both normally and inside a caller's active handler for a secret-bearing `UnicodeDecodeError`. `.object` must be unreachable through `__cause__` and `__context__` at every link;
+  - a policy denial and an injected `MemoryError` during the secret read keep their class;
   - a strict secret holding valid UTF-8 with a non-ASCII char;
   - a bad hex body;
   - a bad base64 body;
   - an invalid UTF-8 body.
 
   For each, the sentinel is absent from `str(exc)`, `traceback.format_exception(exc)`, a logging handler's output with `exc_info=True`, `exc.__notes__` (absent), and `exc.args`. `__cause__` and `__context__` are `None`. The same inputs under `LocalFileAccess` keep today's behavior (compatibility control).
-- **AT-X2:** a path sentinel (a directory component named `LOCATOR_SENTINEL`) for each of:
-  - a malformed snapshot JSON;
-  - a `data_discovery` SQL error over an authorized Parquet;
-  - an unknown corpus;
-  - each inventoried site.
+- **AT-X2 (locators).** The test captures the locator ACTUALLY handed to each library: under a strict policy that is `FdHandle.library_path()`, i.e. `/proc/self/fd/<n>`, as well as the original path, which contains a `LOCATOR_SENTINEL` directory component. Neither, in any rendered form, may appear in the message, the traceback or log output. Sites:
+  - malformed snapshot JSON, plus snapshot size and schema errors;
+  - `data_discovery` with controlled failures at execute time AND at fetch time;
+  - unknown corpus, plus corpus schema, version and provenance diagnostics;
+  - model-pack and name-hint diagnostics;
+  - every other inventoried site.
 
-  The locator sentinel is absent from message, traceback and log output. Authorized cell content may appear (documented, not asserted absent).
-- **AT-X3:** inject each resource class at the adapter under each inventoried outer wrapper. The class reaching the caller is unchanged and `is_memory_failure` is true. Negative control: a whitespace-bearing malformed-data Arrow shape stays NOT a memory failure. Check the strict in-process isolated-run outcome end to end (`oom_killed` vs `crashed`, and the envelope code), not only the predicate.
+  Each site has a positive control proving that the UNSANITIZED diagnostic contains the descriptor path or locator. Authorized cell content may appear; that is documented, not asserted absent.
+- **AT-X3 (classification matrix).** Inject each shape at the adapter under every inventoried handler (X3), and check it through the strict in-process isolated-run outcome and its envelope code. Expected results:
+
+  | Injected shape | Class and errno kept | `is_memory_failure` | Isolated outcome |
+  |---|---|---|---|
+  | `MemoryError`, `ArrowMemoryError`, `duckdb.OutOfMemoryException`, `OSError(ENOMEM)` | yes | True | `oom_killed` path as today |
+  | Single-token Arrow `Wrapping <x> failed`, both OpenSSL markers | yes, recognized | True | as today |
+  | `OSError(ENOSPC)`, `OSError(EDQUOT)` | yes, errno kept | False | as today (not OOM) |
+  | Whitespace-bearing Arrow `Wrapping ... failed` (negative control) | no | False | `crashed` or read error, as today |
+
 - **AT-X4:**
+  - **Native pool spool.** It is exercised directly, with a test proving the site actually executed.
   - **Scratch confinement.** Table, column and edge names `/abs`, `../up`, `a/b`, `.`, `..` and a 300-character unicode name, through both out-of-core drivers, including two relations sharing one parent (confinement plus non-collision). No operation-attributable filesystem call targets a path outside the scratch root (detector plus an intercepted-mkdir probe). Output equals the plain-names job after mapping the logical names.
   - **Shipped-name resolution.** Each shipped-name resolver given an absolute real-file stem, `../x`, `a/b`, or a shipped name with a suffix makes zero filesystem calls and raises unknown-corpus without echoing the name. Shipped names still load.
+
+**Codex plan gate on the delta, round 2: REVISE** (2 HIGH, 2 MEDIUM). Folded:
+- X1's inherited-context clearing, with policy and resource classes preserved;
+- X3's full handler inventory, including typed and stored-error handlers, with recognition unchanged;
+- AT-X3's classification matrix (disk is not OOM);
+- AT-X2's library-locator capture with positive controls;
+- pool-spool execution proof.
 
 **Process.** This delta goes through the Codex plan gate. The build then goes through dennis and Codex final. The record maps Codex final findings 1 to 6 to these tests. Finding 5 (YAML tag content in an authorized file) is resolved by the D5 scope: content may appear, locators may not.
 
