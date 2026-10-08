@@ -151,32 +151,9 @@ def declines() -> dict[str, tuple[list[dict[str, Any]], str]]:
             [ds_col("v", group_by="k"), passthrough("k"), passthrough("p")],
             "date_shift",
         ),
-        "positional_categorical": (
-            [
-                {
-                    "name": "v",
-                    "strategy": "categorical",
-                    "namespace": "ns_c",
-                    "provider_config": {"categories": ["a", "b"]},
-                },
-                passthrough("k"),
-                passthrough("p"),
-            ],
-            "text_redact",
-        ),
-        "positional_faker": (
-            [
-                {
-                    "name": "v",
-                    "strategy": "faker",
-                    "provider": "person_first_name",
-                    "pool_size": 40,
-                },
-                passthrough("k"),
-                passthrough("p"),
-            ],
-            "text_redact",
-        ),
+        # C8-iii-d-2: a positional categorical / REUSE faker under `when:` with a string reference
+        # now runs natively (byte-identical to the oracle), so they are no longer declines. Positive
+        # coverage: tests/native/test_c8_iii_d2_native_positional_when.py and the unified counterpart.
         "deterministic_faker": (
             [
                 {

@@ -250,12 +250,15 @@ def test_faker_column_absent_from_source_declines_without_crashing(tmp_path: Pat
     assert node.execution is None
 
 
-def test_faker_when_gated_column_is_unbound(tmp_path: Path) -> None:
-    """`ColumnConfig` has no `when` field (`extra="forbid"`), so a validated
-    config can never carry one -- but `compile_plan`/`_seed_envelope.py` read
-    it straight off the raw dict, so a hand-mutated post-dump config still
-    exercises the guard for real, matching the native route's
-    when-honoring contract."""
+def test_deterministic_faker_when_binds_but_the_table_still_declines(tmp_path: Path) -> None:
+    """C8-iii-d-2: the binding predicate no longer refuses a `when:` (the positional variant
+    needs it relaxed, and the two share `_faker_pool_bindable`), so a deterministic faker under
+    `when:` now BINDS. The unified lane is still gated by `when_columns_admitted`, which declines
+    it (faker is not a value-keyed admitted strategy and this is not the positional variant), so
+    the table runs on the oracle unchanged. `ColumnConfig` forbids `when`, so the raw-dict mutate
+    exercises the engine's own read path, as `compile_plan`/`_seed_envelope.py` do."""
+    from decoy_engine.execution._unified_slice_when import when_columns_admitted
+
     source = pa.table({"c": pa.array(["a", "b", "c"], type=pa.string())})
     path = _write(tmp_path, source, "t")
     config = PipelineConfig.model_validate(
@@ -273,7 +276,13 @@ def test_faker_when_gated_column_is_unbound(tmp_path: Path) -> None:
     inputs = capture_physical_plan_inputs(config, {"t": source}, engine_version=_ENGINE_VERSION)
     plan = compile_physical_plan(inputs)
     node = plan.tables[0].nodes[0]
-    assert node.execution is None
+    assert node.execution is not None
+    assert node.execution.when_expression == "c == 'a'"
+    # The controlling gate still declines the table, so the deterministic faker runs on the oracle.
+    assert (
+        when_columns_admitted(config["tables"][0]["columns"], source, inputs.registry, table="t")
+        is False
+    )
 
 
 def test_faker_vault_column_is_unbound(tmp_path: Path) -> None:
