@@ -240,9 +240,10 @@ def _veto_case(
         )
     if case == "when_veto":
         config = make_config([redact("r"), truncate("t"), passthrough("p")])
-        # Outside the closed `when` grammar, so the native route declines it.
-        config["tables"][0]["columns"][0]["when"] = "p + 0 > 2"
-        return config, ["r", "t", "p"], {}, "when_predicate_outside_native_subset:r", arrow
+        # A grammar predicate the native route still declines: `t` reads `r`, which the
+        # earlier node masks, so the oracle's masked value is what the predicate sees.
+        config["tables"][0]["columns"][1]["when"] = "r == 'x'"
+        return config, ["r", "t", "p"], {}, "when_predicate_reads_masked_column:t:r", arrow
     if case == "adapter_veto":
         return (
             make_config([redact("r"), truncate("t"), passthrough("p")]),

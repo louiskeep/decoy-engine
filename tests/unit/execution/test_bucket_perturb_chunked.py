@@ -127,10 +127,11 @@ def _when_bearing_bucket_perturb_cfg(tmp_path: Path) -> dict:
     # `when` is not a validated PipelineConfig field (schema-validated configs
     # cannot carry it today), so it is stamped onto the dict AFTER validation,
     # mirroring test_code_set_chunked.py's `_when_bearing_code_set_cfg`.
-    # The column alone is admitted; a chained comparison is outside the closed grammar, so the
-    # chunked gate still rejects it.
-    cfg = _config(tmp_path, [_bucket_perturb_col("d")])
-    cfg["tables"][0]["columns"][0]["when"] = "'2000' < d < '2030'"
+    # A grammar predicate with the same selection as the chained comparison it replaces. The
+    # special `mixed` format keeps the native route declining the column, so the chunked gate
+    # still rejects it (an explicit format plus a grammar predicate is admitted since C8-iii-a).
+    cfg = _config(tmp_path, [_bucket_perturb_col("d", date_format="mixed")])
+    cfg["tables"][0]["columns"][0]["when"] = "d > '2000' and d < '2030'"
     return cfg
 
 

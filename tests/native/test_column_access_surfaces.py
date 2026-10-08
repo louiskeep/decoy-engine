@@ -267,6 +267,7 @@ _PINNED_RUN_CALLS = frozenset(
         "top_code_columns",
         "tuple",
         "use_collector",
+        "validate_plan_when",
         "warnings.extend",
     }
 )

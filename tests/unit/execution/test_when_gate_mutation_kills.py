@@ -170,11 +170,22 @@ def test_pandas_expression_error_attributes_strategy():
     assert exc.value.strategy == "redact"
 
 
-def test_pandas_not_boolean_attributes_strategy():
+def test_pandas_not_boolean_attributes_strategy(monkeypatch):
+    # An accepted predicate whose evaluation yields a non-boolean Series: the grammar cannot
+    # produce one, so the branch is reached by injecting the result.
+    df = pd.DataFrame({"v": ["a", "b"], "n": [1, 2]})
+    monkeypatch.setattr(pd.DataFrame, "eval", lambda *a, **k: pd.Series([2, 3]))
+    with pytest.raises(StrategyError) as exc:
+        run_with_when_gate(RedactHandler(), df, "v", _seed(when="n > 0"), _Ctx())
+    assert exc.value.code == "when_expression_not_boolean"
+    assert exc.value.strategy == "redact"
+
+
+def test_pandas_outside_grammar_attributes_strategy():
     df = pd.DataFrame({"v": ["a", "b"], "n": [1, 2]})
     with pytest.raises(StrategyError) as exc:
         run_with_when_gate(RedactHandler(), df, "v", _seed(when="n + 1"), _Ctx())
-    assert exc.value.code == "when_expression_not_boolean"
+    assert exc.value.code == "when_outside_closed_grammar"
     assert exc.value.strategy == "redact"
 
 
@@ -196,25 +207,50 @@ def test_missing_numexpr_raises_numexpr_required(monkeypatch):
 # ── numexpr scope clamp: empty local/global dicts block @var walks ────
 
 
-def test_local_dict_clamp_blocks_at_local_scope_walk():
-    """`@strategy` names a local of `_eval_predicate`; the empty local_dict
-    must keep it undefined (expression error), never resolve it. If the
-    clamp were dropped (local_dict=None) it would resolve to the strategy
-    string and surface as a not-boolean scalar instead."""
-    df = pd.DataFrame({"v": ["a", "b"]})
-    with pytest.raises(StrategyError) as exc:
-        run_with_when_gate(RedactHandler(), df, "v", _seed(when="@strategy == 'redact'"), _Ctx())
-    assert exc.value.code == "when_expression_error"
+def _eval_kwargs(monkeypatch):
+    """The keyword arguments `DataFrame.eval` receives from the gate, recorded by a spy."""
+    seen = []
+    real = pd.DataFrame.eval
+
+    def spy(self, expr, **kwargs):
+        seen.append(kwargs)
+        return real(self, expr, **kwargs)
+
+    monkeypatch.setattr(pd.DataFrame, "eval", spy)
+    return seen
 
 
-def test_global_dict_clamp_blocks_at_global_scope_walk():
-    """`@TYPE_CHECKING` names a module global of `_when_gate`; the empty
-    global_dict must keep it undefined. Dropping the clamp (global_dict=None)
-    would resolve it to a bool scalar (not-boolean code instead)."""
+def test_local_dict_clamp_is_pinned_on_an_accepted_predicate(monkeypatch):
+    """`@strategy` names a local of `_eval_predicate`. The empty local_dict is what keeps such a
+    name undefined; a dropped clamp (local_dict=None) would let it resolve. The `@` form itself
+    is now rejected by the grammar before pandas, so the clamp is asserted on the call."""
+    seen = _eval_kwargs(monkeypatch)
+    df = pd.DataFrame({"v": ["a", "b"]})
+    run_with_when_gate(RedactHandler(), df, "v", _seed(when="v == 'a'"), _Ctx())
+    assert seen and all(kw["local_dict"] == {} for kw in seen)
+    assert all(kw["local_dict"] is not None for kw in seen)
+
+
+def test_global_dict_clamp_is_pinned_on_an_accepted_predicate(monkeypatch):
+    """`@TYPE_CHECKING` names a module global of `_when_gate`. The empty global_dict keeps it
+    undefined; a dropped clamp (global_dict=None) would resolve it."""
+    seen = _eval_kwargs(monkeypatch)
+    df = pd.DataFrame({"v": ["a", "b"]})
+    run_with_when_gate(RedactHandler(), df, "v", _seed(when="v == 'a'"), _Ctx())
+    assert seen and all(kw["global_dict"] == {} for kw in seen)
+    assert all(kw["global_dict"] is not None for kw in seen)
+    assert all(kw["engine"] == "numexpr" for kw in seen)
+
+
+@pytest.mark.parametrize("hostile", ["@strategy == 'redact'", "@TYPE_CHECKING"])
+def test_at_references_are_rejected_before_pandas_evaluates_them(hostile, monkeypatch):
+    calls = []
+    monkeypatch.setattr(pd.DataFrame, "eval", lambda *a, **k: calls.append(a))
     df = pd.DataFrame({"v": ["a", "b"]})
     with pytest.raises(StrategyError) as exc:
-        run_with_when_gate(RedactHandler(), df, "v", _seed(when="@TYPE_CHECKING"), _Ctx())
-    assert exc.value.code == "when_expression_error"
+        run_with_when_gate(RedactHandler(), df, "v", _seed(when=hostile), _Ctx())
+    assert exc.value.code == "when_outside_closed_grammar"
+    assert calls == []
 
 
 # ── mask/subset selection by predicate ────────────────────────────────

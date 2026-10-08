@@ -80,7 +80,6 @@ from decoy_engine.plan._checks_top_code import check_top_code_config
 from decoy_engine.plan._checks_truncate import check_truncate_config
 from decoy_engine.plan._checks_when import check_when_grammar, check_when_with_coherent_with
 from decoy_engine.plan._checks_windowed_date import check_windowed_date_refs
-from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.plan._generation import build_generation_plan, read_and_pin_snapshots
 from decoy_engine.plan._graph import _build_namespaces, _build_relationships
 

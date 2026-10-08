@@ -173,13 +173,27 @@ def test_a_large_string_target_declines() -> None:
 
 
 @pytest.mark.parametrize("expr", ["p.notnull()", "p == u", "len(p) == 1", "p + 'a' == 'xa'"])
-def test_a_raw_predicate_outside_the_grammar_declines_and_equals_today(expr: str) -> None:
+def test_a_raw_predicate_outside_the_grammar_declines_admission(expr: str) -> None:
+    """The admission verdict for a seed that skipped compile (a hand-built `ColumnSeed`)."""
     config = make_config([_when(redact("s"), expr), passthrough("p")])
     entries = config["tables"][0]["columns"]
     assert when_native_rejection("s", entries, REG, table=TABLE, schema=_SCHEMA) == (
         "when_predicate_outside_native_subset:s"
     )
-    _declined_equals_today(config, "when_predicate_outside_native_subset:s")
+
+
+@pytest.mark.parametrize("expr", ["p.notnull()", "p == u", "len(p) == 1", "p + 'a' == 'xa'"])
+def test_a_raw_predicate_outside_the_grammar_is_rejected_by_both_entry_points(expr: str) -> None:
+    """End to end the same config no longer reaches the oracle leg: compile rejects it."""
+    from decoy_engine.plan._errors import PlanCompileError
+
+    config = make_config([_when(redact("s"), expr), passthrough("p")])
+    chunks = chunk_by_sizes(source_table(), [4, 4, 3])
+    for call in (lambda: run_native(config, chunks), lambda: run_public_oracle(config, chunks)):
+        with pytest.raises(PlanCompileError) as info:
+            call()
+        assert info.value.code == "when_outside_closed_grammar"
+        assert info.value.path == f"tables.{TABLE}.columns.s.when"
 
 
 # ---------------------------------------------------------------------------

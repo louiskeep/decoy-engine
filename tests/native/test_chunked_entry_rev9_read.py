@@ -19,10 +19,13 @@ from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._pandas_adapter import PandasExecutionAdapter
 from decoy_engine.execution._strategies._redact import RedactHandler
 from decoy_engine.execution.native._chunked_entry import aggregate_chunked_route_evidence
+from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.providers_v2 import get_default_registry
 from tests.native._chunked_entry_support import (
     ENGINE_VERSION,
+    FORCE_ORACLE_VALUE,
     TABLE,
+    force_oracle,
     hash_col,
     key_provider,
     make_config,
@@ -84,6 +87,11 @@ _INTS = [pa.array([1, 5, 9]), pa.array([9, 1, 5]), pa.array([2, 6, 3])]
 _CASES = {
     "unconfigured": ("x", "x > 4", False),
     "configured": ("x", "x > 4", True),
+}
+
+# Backtick quoting is outside the closed grammar: compile rejects it, so it never reaches the
+# read-set scan end to end. The scan itself is covered by `test_read_set_scans_predicates`.
+_BACKTICK_CASES = {
     "backtick": ("x", "`x` > 4", False),
     "backtick_configured": ("x", "`x` > 4", True),
     "needs_backticks": ("my col", "`my col` > 4", False),
@@ -107,11 +115,7 @@ def test_predicate_read_column_matches_the_public_oracle(
             out, sink, ev = run_entry(config, chunks)
     else:
         out, sink, ev = run_entry(config, chunks)
-    if "`" in expr:
-        # Backtick quoting is outside the closed `when` grammar: the oracle leg runs it.
-        assert ev[0].native_admitted is False
-        assert (ev[0].reroute_reason or "").startswith("when_predicate_outside_native_subset:s")
-    elif forced:
+    if forced:
         assert ev[0].native_admitted is False
         assert ev[0].reroute_reason == "crypto_extension_unavailable"
     else:
@@ -123,6 +127,21 @@ def test_predicate_read_column_matches_the_public_oracle(
         assert same_column(got.column(name), want.column(name))
     assert _read_lists(sink) == [[name]] * 3
     assert aggregate_chunked_route_evidence(sink)["pandas_read_passthrough"] == [name]
+
+
+@pytest.mark.parametrize("case", _BACKTICK_CASES)
+def test_backtick_predicate_is_rejected_at_compile(case: str) -> None:
+    name, expr, configured = _BACKTICK_CASES[case]
+    base = [_when("s", expr)] + ([passthrough(name)] if configured else [])
+    chunks = [_chunk(**{name: arr}) for arr in _INTS]
+    for call in (
+        lambda: run_entry(make_config(base), chunks),
+        lambda: run_public(make_config(base), chunks),
+    ):
+        with pytest.raises(PlanCompileError) as info:
+            call()
+        assert info.value.code == "when_outside_closed_grammar"
+        assert info.value.path == f"tables.{TABLE}.columns.s.when"
 
 
 def _dict(values: list[Any]) -> pa.Array:
@@ -138,43 +157,15 @@ _UNICODE = {
 
 @pytest.mark.parametrize("configured", [True, False], ids=["configured", "unconfigured"])
 @pytest.mark.parametrize("name", list(_UNICODE))
-def test_unicode_predicate_names_are_read(name: str, configured: bool) -> None:
-    # A later chunk holds a dictionary pandas refuses. A missed read would carry the column,
-    # complete, and differ from the public oracle, which raises there.
+def test_unicode_predicate_names_are_rejected_at_compile(name: str, configured: bool) -> None:
+    """ASCII-only identifiers: a non-ASCII column name cannot be referenced by a `when`.
+    The read-set scan still resolves such names (`test_read_set_scans_predicates`), which keeps
+    a seed that skipped compile from leaving its column unmasked."""
     expr, good, bad = _UNICODE[name]
     cols = [_when("s", expr)] + ([passthrough(name)] if configured else [])
     config = make_config(cols)
     chunks = [_chunk(**{name: good}), _chunk(**{name: bad})]
-    oracle_exc = _public_error(config, chunks)
-    sink: list[Any] = []
-    gen = run_mask_chunked(
-        config,
-        chunks,
-        table=TABLE,
-        engine_version=ENGINE_VERSION,
-        key_provider=key_provider(),
-        chunk_result_sink=sink,
-    )
-    assert next(gen).column("s").num_chunks >= 1
-    with pytest.raises(ExecutionError) as info:
-        next(gen)
-    _expect_coded(info, name, 1)
-    _same_exc(info.value.__cause__, oracle_exc)
-    assert len(sink) == 1 and _read_lists(sink) == [[name]]
-
-
-def test_predicate_the_tokenizer_rejects_reads_every_passthrough_column() -> None:
-    cols = [_when("s", "`unterminated"), passthrough("x")]
-    chunks = [_chunk(x=arr, y=arr) for arr in _INTS]
-    config = make_config(cols)
-    try:
-        run_public(config, chunks)
-    except Exception as exc:  # the pandas evaluation of the broken predicate
-        oracle_error = type(exc)
-    else:  # pragma: no cover - the predicate cannot evaluate
-        oracle_error = None
-    sink: list[Any] = []
-    try:
+    with pytest.raises(PlanCompileError) as info:
         list(
             run_mask_chunked(
                 config,
@@ -182,11 +173,30 @@ def test_predicate_the_tokenizer_rejects_reads_every_passthrough_column() -> Non
                 table=TABLE,
                 engine_version=ENGINE_VERSION,
                 key_provider=key_provider(),
-                chunk_result_sink=sink,
             )
         )
-    except Exception as exc:
-        assert type(exc) is oracle_error
+    assert info.value.code == "when_outside_closed_grammar"
+    with pytest.raises(PlanCompileError):
+        run_public(config, chunks)
+
+
+def test_predicate_the_tokenizer_rejects_is_rejected_at_compile_and_reads_every_column() -> None:
+    cols = [_when("s", "`unterminated"), passthrough("x")]
+    chunks = [_chunk(x=arr, y=arr) for arr in _INTS]
+    config = make_config(cols)
+    with pytest.raises(PlanCompileError) as info:
+        run_public(config, chunks)
+    assert info.value.code == "when_outside_closed_grammar"
+    with pytest.raises(PlanCompileError):
+        list(
+            run_mask_chunked(
+                config,
+                chunks,
+                table=TABLE,
+                engine_version=ENGINE_VERSION,
+                key_provider=key_provider(),
+            )
+        )
     from decoy_engine.execution._chunked_carry import read_set
 
     assert read_set([_when("s", "`unterminated")], ["x", "y"], REG) == frozenset({"x", "y"})
@@ -220,7 +230,7 @@ def test_aggregate_rejects_differing_read_lists() -> None:
 
 
 def _read_cfg(*read: str, configured: bool) -> dict[str, Any]:
-    expr = " and ".join(f"{c}.notnull()" for c in read)
+    expr = " and ".join(f"{c} != 'q'" for c in read)
     return make_config([_when("s", expr)] + ([passthrough(c) for c in read] if configured else []))
 
 
@@ -242,7 +252,7 @@ def test_refused_value_in_chunk_two_is_coded(
     )
     if forced:
         config = make_config(
-            [_when("s", "x.notnull()"), hash_col("h")] + ([passthrough("x")] if configured else [])
+            [_when("s", "x != 'q'"), hash_col("h")] + ([passthrough("x")] if configured else [])
         )
         chunks = [t.append_column("h", pa.array(["p", "q", "r"])) for t in chunks]
         monkeypatch.setitem(__import__("sys").modules, "decoy_engine_native", None)
@@ -629,16 +639,17 @@ def test_read_set_is_empty_without_passthrough_columns() -> None:
 
 
 def _read_x_config(*extra: dict[str, Any]) -> dict[str, Any]:
-    return make_config([_when("s", "x.notnull()"), *extra, passthrough("x")])
+    return make_config([_when("s", "x != 'q'"), *extra, passthrough("x")])
 
 
 def test_masked_column_conversion_failure_is_not_wrapped() -> None:
-    # `x + 0` keeps the predicate outside the closed grammar, so the oracle leg runs the table.
-    config = make_config([truncate("m"), _when("s", "x + 0 > 1"), passthrough("x")])
+    # The forced-oracle column keeps the table on the oracle leg, where the conversion runs.
+    config = make_config([truncate("m"), _when("s", "x > 1"), passthrough("x"), force_oracle("c")])
     ints = pa.array([1, 2, 3])
+    forced = pa.array([FORCE_ORACLE_VALUE] * 3)
     chunks = [
-        _chunk(m=_T64.good, x=ints),
-        _chunk(m=_T64.bad, x=ints),
+        _chunk(m=_T64.good, x=ints, c=forced),
+        _chunk(m=_T64.bad, x=ints, c=forced),
     ]
     oracle_exc = _public_error(config, chunks)
     gen = run_mask_chunked(
@@ -658,9 +669,10 @@ def test_strategy_handler_failure_is_the_same_object(monkeypatch: pytest.MonkeyP
         raise boom
 
     monkeypatch.setattr(RedactHandler, "run", run)
-    chunks = [_chunk(x=pa.array([1, 2, 3]))]
+    # The forced-oracle column sends the table through the pandas handlers.
+    chunks = [_chunk(x=pa.array([1, 2, 3]), c=pa.array([FORCE_ORACLE_VALUE] * 3))]
     gen = run_mask_chunked(
-        _read_x_config(),
+        _read_x_config(force_oracle("c")),
         chunks,
         table=TABLE,
         engine_version=ENGINE_VERSION,
@@ -741,7 +753,7 @@ def test_stock_adapter_subclass_is_not_wrapped_either() -> None:
 @pytest.mark.parametrize("name", ["list_int", "struct", "map"])
 def test_read_nested_passthrough_is_coded_at_chunk_zero(name: str) -> None:
     shape = BY_NAME[name]
-    config = make_config([_when("s", "tags.notnull()"), passthrough("tags")])
+    config = make_config([_when("s", "tags != 'q'"), passthrough("tags")])
     chunks = [_chunk(tags=shape.good) for _ in range(2)]
     oracle_exc = _public_error(config, chunks)
     assert isinstance(oracle_exc, TypeError)
@@ -774,7 +786,7 @@ def test_masked_profile_failure_next_to_a_valid_read_column_is_not_wrapped() -> 
 
 def test_identical_profile_failures_are_attributed_in_source_order() -> None:
     # masked `m` and read passthrough `t` both fail the same way in the profile walk.
-    config = make_config([redact("m"), _when("s", "t.notnull()"), passthrough("t")])
+    config = make_config([redact("m"), _when("s", "t != 'q'"), passthrough("t")])
     masked_first = [pa.table({"s": _S, "m": _LIST, "t": _LIST})]
     with pytest.raises(TypeError) as info:
         run_mask_chunked(

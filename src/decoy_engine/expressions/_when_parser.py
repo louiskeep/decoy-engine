@@ -209,7 +209,9 @@ def parse_when(expr: str) -> WhenExpr:
         # Any other transformer failure carries its own message, which can quote the text.
         raise _reject("the predicate does not parse") from None
     except lark.exceptions.UnexpectedInput as exc:
-        raise _reject(f"unexpected input at position {getattr(exc, 'pos_in_stream', '?')}") from None
+        raise _reject(
+            f"unexpected input at position {getattr(exc, 'pos_in_stream', '?')}"
+        ) from None
     except lark.exceptions.LarkError:
         raise _reject("the predicate does not parse") from None
     except RecursionError:

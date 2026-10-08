@@ -112,7 +112,7 @@ def test_chunked_config_entrypoints_raise_plan_compile_error(entry: Any, predica
 
 @pytest.mark.parametrize("entry", CHUNKED_ENTRIES, ids=CHUNKED_IDS)
 def test_chunked_config_entrypoints_reject_before_reading_any_chunk(entry: Any) -> None:
-    with pytest.raises(Exception) as info:  # noqa: PT011 -- the class is asserted below
+    with pytest.raises(Exception) as info:
         _chunked(entry, [], BAD)
     assert isinstance(info.value, PlanCompileError), repr(info.value)
     assert info.value.code == CODE
@@ -212,7 +212,7 @@ def _datetime_frame() -> pd.DataFrame:
 
 
 def _raise_from(call: Any) -> BaseException:
-    with pytest.raises(BaseException) as info:  # noqa: PT011 -- asserted by the callers
+    with pytest.raises(BaseException) as info:
         call()
     return info.value
 
@@ -239,7 +239,11 @@ def test_expression_error_through_the_gate_carries_no_predicate_text() -> None:
     )
     exc = _raise_from(
         lambda: run_with_when_gate(
-            RedactHandler(), _datetime_frame(), "s", seed, SimpleNamespace(row_errors=[])  # type: ignore[arg-type]
+            RedactHandler(),
+            _datetime_frame(),
+            "s",
+            seed,
+            SimpleNamespace(row_errors=[]),  # type: ignore[arg-type]
         )
     )
     assert isinstance(exc, StrategyError) and exc.code == "when_expression_error"

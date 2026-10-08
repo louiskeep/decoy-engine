@@ -335,7 +335,9 @@ def test_validate_plan_when_reaches_a_table_absent_from_the_sources(tmp_path: Pa
     _assert_typed(info.value, table="ghost")
 
 
-@pytest.mark.parametrize("value", [None, "x > 1", "s == 'q' or x in [1, 2]"], ids=["none", "g1", "g2"])
+@pytest.mark.parametrize(
+    "value", [None, "x > 1", "s == 'q' or x in [1, 2]"], ids=["none", "g1", "g2"]
+)
 def test_validate_plan_when_accepts_the_grammar_and_none(tmp_path: Path, value: Any) -> None:
     from decoy_engine.expressions._when_parser import validate_plan_when
 
@@ -343,7 +345,9 @@ def test_validate_plan_when_accepts_the_grammar_and_none(tmp_path: Path, value: 
     validate_plan_when(sup.plan_with_when(job.plan, "a", "s", value))
 
 
-@pytest.mark.parametrize("value", [5, True, ["x > 1"], "   ", ""], ids=["int", "bool", "list", "ws", "empty"])
+@pytest.mark.parametrize(
+    "value", [5, True, ["x > 1"], "   ", ""], ids=["int", "bool", "list", "ws", "empty"]
+)
 def test_validate_plan_when_rejects_a_non_grammar_scalar(tmp_path: Path, value: Any) -> None:
     from decoy_engine.expressions._when_parser import validate_plan_when
 

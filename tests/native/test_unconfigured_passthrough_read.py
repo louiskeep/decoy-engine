@@ -20,9 +20,12 @@ from decoy_engine.providers_v2 import get_default_registry
 from tests.native._b8_support import assert_same_as_oracle, run_pair
 from tests.native._chunked_entry_support import (
     ENGINE_VERSION,
+    FORCE_ORACLE_VALUE,
     NEEDS_COMPANION,
     TABLE,
     faker_col,
+    force_oracle,
+    forced_reason,
     hash_col,
     key_provider,
     make_config,
@@ -97,27 +100,57 @@ def _when(name: str, expr: str) -> dict[str, Any]:
 
 
 def _reader_cases() -> dict[str, tuple[list[dict[str, Any]], str, str]]:
-    """name -> (columns, the passthrough column read, expected reroute reason prefix)."""
+    """name -> (columns, the passthrough column read, expected reroute reason prefix).
+
+    The predicate is a grammar form, which the native route would admit, so the forced-oracle
+    column `c` keeps the table on the oracle leg, where the genuine-reader behavior lives."""
     return {
-        "when_bare": ([_when("s", "x.notnull()")], "x", "when_predicate_outside_native_subset:s"),
-        "when_backtick": (
-            [_when("s", "`x`.notnull()")],
+        "when_bare": (
+            [_when("s", "x != 'q'"), force_oracle("c")],
             "x",
-            "when_predicate_outside_native_subset:s",
-        ),
-        "when_nfkc": (
-            [_when("s", "\uff58.notnull()")],
-            "x",
-            "when_predicate_outside_native_subset:s",
+            forced_reason("c"),
         ),
     }
 
 
+# Backtick and NFKC spellings are outside the closed grammar: compile rejects them, so they
+# never reach the read-set scan end to end (the scan is covered by the helper-level tests).
+_REJECTED_PREDICATES = {
+    "when_backtick": "`x`.notnull()",
+    "when_nfkc": "\uff58.notnull()",
+}
+
+
+@pytest.mark.parametrize("configured", [False, True], ids=["unconfigured", "configured"])
+@pytest.mark.parametrize("case", sorted(_REJECTED_PREDICATES))
+def test_an_out_of_grammar_reader_is_rejected_at_compile(case: str, configured: bool) -> None:
+    from decoy_engine.plan._errors import PlanCompileError
+
+    columns = [_when("s", _REJECTED_PREDICATES[case])] + ([passthrough("x")] if configured else [])
+    chunks = _read_chunks("x")
+    for call in (
+        lambda: list(
+            run_mask_chunked(
+                make_config(columns, global_settings=_WARN),
+                chunks,
+                table=TABLE,
+                engine_version=ENGINE_VERSION,
+                key_provider=key_provider(),
+            )
+        ),
+        lambda: run_public(make_config(columns, global_settings=_WARN), chunks),
+    ):
+        with pytest.raises(PlanCompileError) as info:
+            call()
+        assert info.value.code == "when_outside_closed_grammar"
+
+
 def _read_chunks(name: str) -> list[pa.Table]:
+    forced = pa.array([FORCE_ORACLE_VALUE] * 3)
     return [
-        pa.table({"s": _S, name: _T64.good}),
-        pa.table({"s": _S, name: _T64.bad}),
-        pa.table({"s": _S, name: _T64.good}),
+        pa.table({"s": _S, name: _T64.good, "c": forced}),
+        pa.table({"s": _S, name: _T64.bad, "c": forced}),
+        pa.table({"s": _S, name: _T64.good, "c": forced}),
     ]
 
 
