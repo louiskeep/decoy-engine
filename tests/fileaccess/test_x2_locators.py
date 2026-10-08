@@ -401,17 +401,21 @@ def test_lockfile_diagnostics_name_no_locator(xworld: XWorld) -> None:
     from decoy_engine.quality.dp_provenance import ProvenanceError, assert_lock_matches_installed
 
     lock = xworld.sub / "uv.lock"
+    # Both ambient positive controls run before any strict scope: installing a strict policy
+    # latches the process one-way, so a later ambient call is refused (FileAccessUnavailable).
     lock.write_text("not = [valid")
     with pytest.raises(ProvenanceError) as control:
         assert_lock_matches_installed(lock)
     assert LOCATOR_SENTINEL in str(control.value)
-    with fileaccess.scope(xworld.policy), pytest.raises(ProvenanceError) as info:
-        assert_lock_matches_installed(lock)
-    assert_no_locator(xworld, rendered(info.value))
     lock.write_text("version = 1\n")
     with pytest.raises(ProvenanceError) as control2:
         assert_lock_matches_installed(lock)
     assert LOCATOR_SENTINEL in str(control2.value)
+    lock.write_text("not = [valid")
+    with fileaccess.scope(xworld.policy), pytest.raises(ProvenanceError) as info:
+        assert_lock_matches_installed(lock)
+    assert_no_locator(xworld, rendered(info.value))
+    lock.write_text("version = 1\n")
     with fileaccess.scope(xworld.policy), pytest.raises(ProvenanceError) as info2:
         assert_lock_matches_installed(lock)
     assert_no_locator(xworld, rendered(info2.value))
