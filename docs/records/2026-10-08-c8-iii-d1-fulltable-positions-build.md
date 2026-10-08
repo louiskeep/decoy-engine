@@ -31,3 +31,8 @@ Section 2d: a `when:`-selected row's output equals that row's output in an ungat
 
 ## Out of scope (d-2, deferred)
 Lifting the chunked rejections and native/unified declines so positional strategies run natively under `when:`, reusing this slice's keying as the parity target.
+
+## Gates complete (2026-10-08)
+- Codex plan GO (round 2), dennis GO (2 LOW doc, fixed), Codex final GO (high confidence), ci-mirror PASS.
+- Full 3.11 suite 25373 passed (only the pre-existing GCS `google` env failure); testflight 5/5.
+Merge-ready locally; held on push per Cam.
