@@ -178,8 +178,6 @@ def test_1_native_chunked_is_byte_identical_to_the_d1_oracle(
 # 1a. Reference chunk-stability (Codex round 1 HIGH).
 # ---------------------------------------------------------------------------
 
-_NULLABLE_INT = pa.array([9007122807240193, 9007122807240192, None], pa.int64())
-
 
 def _int_ref_source(n: int) -> pa.Table:
     # A nullable int64 sibling whose per-chunk float widening can select different rows.
