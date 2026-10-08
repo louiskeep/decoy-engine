@@ -920,7 +920,9 @@ class TestOffsetsAndFrames:
         # The last representable ordinal is accepted.
         assert len(_run(["x"], ctx=_ctx(row_offset=2**64 - 1))) == 1
 
-    def test_when_gate_keys_by_match_ordinal_and_leaves_unmatched_rows_alone(self) -> None:
+    def test_when_gate_keys_by_full_table_row_and_leaves_unmatched_rows_alone(self) -> None:
+        # C8-iii-d: a selected row keys on its full-table row, so rows {1,3,4} draw at ordinals
+        # {1,3,4} (their ungated values), not the match ordinals {0,1,2}.
         df = pd.DataFrame(
             {"col": [f"v{i}" for i in range(6)], "keep": [0, 1, 0, 1, 1, 0]},
         )
@@ -928,7 +930,7 @@ class TestOffsetsAndFrames:
         out, _ = run_with_when_gate(FakerStrategyHandler(), df, "col", seed, _ctx())
         got = out["col"].tolist()
         pool = _pool(_seed())
-        exp = _expected(pool, _default_ns("t", "col"), range(3))
+        exp = _expected(pool, _default_ns("t", "col"), [1, 3, 4])
         assert [got[1], got[3], got[4]] == exp
         assert [got[i] for i in (0, 2, 5)] == ["v0", "v2", "v5"]
 

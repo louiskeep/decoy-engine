@@ -193,7 +193,10 @@ class CategoricalStrategyHandler:
             None
             if plan.deterministic
             else row_positions(
-                ctx.row_offset, len(source), ctx.gate_positions, code=_POSITION_DOMAIN_CODE
+                ctx.row_offset,
+                len(source),
+                getattr(ctx, "gate_positions", None),
+                code=_POSITION_DOMAIN_CODE,
             )
         )
         out: list[object] = []
