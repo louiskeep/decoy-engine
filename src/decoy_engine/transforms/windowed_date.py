@@ -42,6 +42,7 @@ Validation timing:
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -184,6 +185,7 @@ def apply_windowed_date(
     seed: bytes,
     namespace: str,
     row_offset: int = 0,
+    positions: Sequence[int] | None = None,
 ) -> list[str]:
     """Generate one date per row within the configured window around the anchor.
 
@@ -213,9 +215,15 @@ def apply_windowed_date(
     anchor_series = df[config.anchor]
     result: list[str] = []
 
-    for i, raw_anchor in enumerate(anchor_series, start=row_offset):
+    # C8-iii-d: `positions` gives each row its full-table row number under a `when:` gate, so a
+    # selected row seeds the same as in an ungated run. Without it, rows are contiguous from
+    # `row_offset`, byte-identical to the previous `enumerate(..., start=row_offset)`.
+    row_numbers: Sequence[int] = (
+        positions if positions is not None else range(row_offset, row_offset + len(anchor_series))
+    )
+    for i, raw_anchor in zip(row_numbers, anchor_series, strict=True):
         anchor_ts = pd.Timestamp(raw_anchor)
-        row_seed_int = int.from_bytes(derive(seed, namespace, i.to_bytes(8, "big"))[:8], "big")
+        row_seed_int = int.from_bytes(derive(seed, namespace, int(i).to_bytes(8, "big"))[:8], "big")
         row_rng = np.random.default_rng(row_seed_int)
         offset = _sample_offset(row_rng, config.min_days, config.max_days, config.distribution)
         out_ts = anchor_ts + pd.Timedelta(days=offset)

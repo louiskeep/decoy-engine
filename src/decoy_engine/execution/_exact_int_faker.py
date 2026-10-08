@@ -95,14 +95,12 @@ def selected_positions(mask: pd.Series[Any]) -> np.ndarray[Any, Any]:
 def gated_context(
     ctx: StrategyContext, column: str, positions: np.ndarray[Any, Any]
 ) -> StrategyContext:
-    """A one-call copy of `ctx` that carries the gate's positions, when the handler needs them.
+    """A one-call copy of `ctx` carrying the gate's full-table row positions.
 
-    Only a column with exact Arrow values reads positions, so every other column keeps the
-    caller's own context object. The sinks stay shared with the original.
+    A positional strategy (categorical, REUSE Faker, windowed_date) keys each selected row on
+    its full-table row, so every gated call carries the positions (C8-iii-d). A deterministic
+    exact-integer Faker column also reads them, through `sampling_source`. The sinks stay shared.
     """
-    sources = getattr(ctx, "exact_int_sources", None)
-    if not sources or (ctx.current_table, column) not in sources:
-        return ctx
     return dataclasses.replace(ctx, gate_positions=positions)
 
 

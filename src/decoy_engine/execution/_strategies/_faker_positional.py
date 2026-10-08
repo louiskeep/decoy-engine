@@ -64,13 +64,21 @@ def resolve_selection_namespace(ctx: Any, column: str, namespace: str | None) ->
 
 
 def positional_pool_indices(
-    n: int, *, row_offset: int, job_seed: bytes, namespace: str, pool_size: int
+    n: int,
+    *,
+    row_offset: int,
+    job_seed: bytes,
+    namespace: str,
+    pool_size: int,
+    gate_positions: np.ndarray[Any, Any] | None = None,
 ) -> np.ndarray[Any, Any]:
-    """One pool index per ordinal `row_offset .. row_offset + n - 1`, in one batch call.
+    """One pool index per full-table row, in one batch call.
 
-    Uses the compiled `derive_index_batch` when the native companion is present and the
-    byte-identical reference otherwise, as `PoolSampler` does."""
-    keys = positional_key_array(row_offset, n, code=_DOMAIN_CODE)
+    Without a `when:` gate the rows are `row_offset .. row_offset + n - 1`; under a gate they are
+    the selected rows' full-table positions (C8-iii-d). Uses the compiled `derive_index_batch`
+    when the native companion is present and the byte-identical reference otherwise, as
+    `PoolSampler` does."""
+    keys = positional_key_array(row_offset, n, code=_DOMAIN_CODE, gate_positions=gate_positions)
     kernel = _compiled_index_kernel() or _reference_index_kernel()
     idx: pa.Array = kernel.derive_index_batch(
         keys, mask_key=job_seed, namespace=namespace, pool_size=pool_size
