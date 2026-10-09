@@ -327,6 +327,26 @@ wrapper-layer ledger is unaffected). A v6 vault cannot be unmasked under v7.
   single-table job whose source is `string`, with no `when:`, vault or FK relationship, and the
   values equal the pandas run. A zero-row table reports `arrow_python` evidence there, as an idle
   chunked column does.
+  Deterministic Faker (and the `allow_collisions: true` alias) over a `bool`, signed-integer or
+  unsigned-integer source joined the native routes on 2026-10-09 (slice C5c-ii), output
+  byte-identical to the pandas oracle. The draw keys from the source value, so the chunked route
+  admits a column only from a producer that guarantees the stream schema (resident slices or
+  fixed-schema reconstructed batches) and whose schema metadata is in a closed allowlist (metadata
+  absent, or plain pyarrow `b"pandas"` metadata with an identity column mapping whose per-column
+  `pandas_type` and `numpy_type` both match the physical type); any other metadata shape, and any
+  ordinary table iterable, declines to the oracle with `faker_conversion_schema_not_guaranteed` or
+  `faker_conversion_metadata_not_allowlisted`, output unchanged. The unified full-frame route admits
+  the same families for a single-table job whose pandas round trip is value-identical, including a
+  pandas nullable `Int64`/`UInt64` column that the conservative chunked allowlist still declines
+  (an intentional, safe route-dependent asymmetry). Float and temporal sources stay on the oracle.
+  Under ROUTE-OUTPUT-CONTRACT an admitted column whose output is empty or entirely null is now
+  Arrow `string` on every route (option A), where pandas inferred `double` for empty and `null` for
+  all-null before; the string-output provider makes `string` the honest type and value-bearing
+  output was already `string`. Only the empty/all-null case changes, and only for a newly admitted
+  column. The full-frame and unified routes carry pandas string metadata on that column; the chunked
+  route carries none, the same metadata difference the other pinned strategies record here. A custom
+  provider registered under the configured name whose pool holds non-string values fails closed with
+  `faker_provider_output_not_string` before any chunk is written, as for the position-keyed variant.
   `ColumnConfig` gained an optional `when: str` field (2026-10-06, slice C8-i), additive. It accepts
   a closed grammar only (a comparison of one column and one literal, `in` and `not in` over a
   literal list, `and`, `or`, `not` and parentheses), validated when the config loads with the

@@ -29,7 +29,16 @@ from typing import Any, Final
 
 import pyarrow as pa
 
-from decoy_engine.execution._operator_registry import DETERMINISTIC_FAKER_SOURCE_TYPES
+from decoy_engine.execution._operator_registry import (
+    DETERMINISTIC_FAKER_SOURCE_TYPES,
+    OPERATORS,
+)
+
+# The string-output provider allowlist (the frozen C1 recipe). A deterministic Faker over a
+# numeric source draws through the string pool, so the admitted set is bounded to these
+# providers, whose output is string by construction; `_resolve_admitted_pools` still validates
+# the actual pool values (M7). This mirrors the position-keyed variant's allowlist.
+_FAKER_PROVIDER_ALLOWLIST = OPERATORS["faker"].provider_allowlist or frozenset()
 
 __all__ = [
     "DETERMINISTIC_FAKER_SOURCE_TYPES",
@@ -37,6 +46,7 @@ __all__ = [
     "SCHEMA_NOT_GUARANTEED",
     "C5cIiAdmissionContext",
     "classify_deterministic_nonstring_faker",
+    "faker_provider_allowlisted",
     "is_effective_deterministic_faker",
     "is_effective_deterministic_faker_column",
     "metadata_shape_admits",
@@ -68,13 +78,24 @@ def is_effective_deterministic_faker_column(
     config: Mapping[str, Any], table: str, column: str
 ) -> bool:
     """`is_effective_deterministic_faker` for `column` of `table` in a whole job config."""
+    col = _column_entry(config, table, column)
+    return col is not None and is_effective_deterministic_faker(col)
+
+
+def _column_entry(config: Mapping[str, Any], table: str, column: str) -> Mapping[str, Any] | None:
     for table_cfg in config.get("tables") or ():
         if not isinstance(table_cfg, Mapping) or table_cfg.get("name") != table:
             continue
         for col in table_cfg.get("columns") or ():
             if isinstance(col, Mapping) and col.get("name") == column:
-                return is_effective_deterministic_faker(col)
-    return False
+                return col
+    return None
+
+
+def faker_provider_allowlisted(config: Mapping[str, Any], table: str, column: str) -> bool:
+    """True when `column`'s configured faker provider is in the string-output allowlist."""
+    col = _column_entry(config, table, column)
+    return col is not None and col.get("provider") in _FAKER_PROVIDER_ALLOWLIST
 
 
 # The NEW deterministic-Faker source families this slice opens (bool, signed and unsigned
@@ -277,6 +298,7 @@ def classify_deterministic_nonstring_faker(
     *,
     source_type: pa.DataType,
     admission: C5cIiAdmissionContext | None,
+    provider_allowlisted: bool,
 ) -> str | None:
     """Decide C5c-ii native admission for one effective-deterministic Faker column over a
     non-string source. Returns `None` to admit, else a coded decline reason.
@@ -288,8 +310,9 @@ def classify_deterministic_nonstring_faker(
     an identity on the source value: a chunked stream guarantee, and the closed metadata-shape
     allowlist over the guaranteed schema. The string-output provider / pool check is the shared
     `_resolve_admitted_pools` validator, not repeated here."""
-    if source_type not in DETERMINISTIC_FAKER_SOURCE_TYPES:
-        # float / temporal / decimal / ... keep the existing non-string decline reason.
+    if source_type not in DETERMINISTIC_FAKER_SOURCE_TYPES or not provider_allowlisted:
+        # float / temporal / decimal / ... and any non-allowlisted (non-string-output) provider
+        # keep the existing non-string decline reason, so they run the oracle unchanged.
         return f"faker_source_type_not_string:{column}:{source_type}"
     if admission is None:
         return f"{SCHEMA_NOT_GUARANTEED}:{column}"

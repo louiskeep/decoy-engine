@@ -257,7 +257,7 @@ def test_non_string_faker_source_reroutes_whole_table_to_oracle() -> None:
     evidence = sink[0]
     assert evidence.native_admitted is False
     assert evidence.reroute_reason is not None
-    assert evidence.reroute_reason.startswith("faker_source_type_not_string:FIRST:")
+    assert evidence.reroute_reason.startswith("faker_conversion_schema_not_guaranteed:FIRST")
     assert all(r.route == "oracle" for r in evidence.node_routes)
     assert evidence.compiled_kernel_executed is False
 
@@ -918,7 +918,7 @@ def test_faker_source_type_reject_reroutes_whole_table_including_hash_column() -
     evidence = sink[0]
     assert evidence.native_admitted is False
     assert evidence.reroute_reason is not None
-    assert evidence.reroute_reason.startswith("faker_source_type_not_string:FIRST:")
+    assert evidence.reroute_reason.startswith("faker_conversion_schema_not_guaranteed:FIRST")
     routed = {r.column: r.route for r in evidence.node_routes}
     assert routed == {"FIRST": "oracle", "SSN": "oracle"}
     assert evidence.compiled_kernel_executed is False
@@ -955,7 +955,7 @@ def test_faker_source_type_reject_still_reroutes_when_a_kernel_column_precedes_i
     evidence = sink[0]
     assert evidence.native_admitted is False
     assert evidence.reroute_reason is not None
-    assert evidence.reroute_reason.startswith("faker_source_type_not_string:FIRST:")
+    assert evidence.reroute_reason.startswith("faker_conversion_schema_not_guaranteed:FIRST")
     assert {r.column: r.route for r in evidence.node_routes} == {"A": "oracle", "FIRST": "oracle"}
 
 
@@ -1645,4 +1645,6 @@ def test_dictionary_encoded_faker_source_is_rejected_not_silently_decoded() -> N
     evidence = sink[0]
     assert evidence.native_admitted is False
     assert evidence.reroute_reason is not None
+    # A dictionary source is outside the deterministic bool/int/uint families, so it keeps the
+    # out-of-family decline reason rather than the stream-guarantee one.
     assert evidence.reroute_reason.startswith("faker_source_type_not_string:FIRST:")

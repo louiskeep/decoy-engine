@@ -27,10 +27,16 @@ from typing import Any
 
 import pyarrow as pa
 
+from decoy_engine.execution._operator_registry import OPERATORS
 from decoy_engine.execution.native._faker_deterministic_admission import (
     DETERMINISTIC_FAKER_SOURCE_TYPES,
     is_effective_deterministic_faker,
 )
+
+# The string-output provider allowlist: only these providers draw guaranteed-string values, so
+# only they are pinned (a non-string-output provider like person_dob over an int source must keep
+# its own output type). Mirrors the admission classifier's allowlist.
+_FAKER_PROVIDER_ALLOWLIST = OPERATORS["faker"].provider_allowlist or frozenset()
 
 __all__ = [
     "deterministic_faker_pin_columns",
@@ -87,6 +93,8 @@ def deterministic_faker_pin_columns(
             continue
         if _has_when(col) or not is_effective_deterministic_faker(col):
             continue
+        if col.get("provider") not in _FAKER_PROVIDER_ALLOWLIST:
+            continue
         if source_schema.field(name).type in DETERMINISTIC_FAKER_SOURCE_TYPES:
             pinned.add(name)
     return frozenset(pinned)
@@ -112,6 +120,8 @@ def deterministic_faker_pin_columns_from_plan(
         if name not in source_names or name in fk_children:
             continue
         if seed.strategy != "faker" or not seed.deterministic or seed.when:
+            continue
+        if seed.provider not in _FAKER_PROVIDER_ALLOWLIST:
             continue
         if source_schema.field(name).type in DETERMINISTIC_FAKER_SOURCE_TYPES:
             pinned.add(name)

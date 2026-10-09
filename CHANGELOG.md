@@ -9,6 +9,30 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Changed (deterministic Faker over numeric sources on the native routes, 2026-10-09)
+
+Deterministic Faker (and the `allow_collisions: true` alias) over a `bool`, signed-integer or
+unsigned-integer source now runs the native routes, output byte-identical to the pandas oracle.
+The draw keys from the source value, so admission is conservative: on the chunked route a column
+admits only from a stream whose schema is guaranteed (resident slices or fixed-schema reconstructed
+batches) and whose schema metadata is in a closed allowlist (metadata absent, or plain pyarrow
+`b"pandas"` metadata with an identity column mapping whose per-column `pandas_type` and `numpy_type`
+match the physical type). Any other shape, and any ordinary table iterable, declines to the oracle
+with `faker_conversion_schema_not_guaranteed` or `faker_conversion_metadata_not_allowlisted`, so the
+output is unchanged there. The unified full-frame route admits the same families for a single-table
+job whose pandas round trip is value-identical (including a pandas nullable `Int64`/`UInt64` column),
+which the conservative chunked allowlist still declines; the asymmetry is intentional and safe.
+Float and temporal sources are not admitted (deterministic keying cannot encode a float, and the
+Arrow `-2**63` timestamp sentinel is a pandas `NaT` hazard).
+
+Pre-GA output-type change (option A): an admitted deterministic-Faker column over bool/int/uint
+whose output is empty or entirely null is now Arrow `string` on every route, where pandas inferred
+`double` (empty) or `null` (all-null) before. The string-output provider makes `string` the honest
+type, and value-bearing output was already `string`. Only the empty/all-null case changes, and only
+for a column that newly admits; every other column is unchanged. Under ROUTE-OUTPUT-CONTRACT the
+full-frame and unified routes carry pandas string metadata on that column while the chunked route
+carries none, as for the other pinned strategies.
+
 ### Changed (internal: faster text_redact on ASCII-dominant free text, 2026-10-09)
 
 The native `text_redact` operator now runs its eight lookaround-free detectors (email, us_phone,

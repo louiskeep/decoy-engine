@@ -63,6 +63,7 @@ from decoy_engine.execution.native._crypto_ext import (
 from decoy_engine.execution.native._faker_deterministic_admission import (
     C5cIiAdmissionContext,
     classify_deterministic_nonstring_faker,
+    faker_provider_allowlisted,
     is_effective_deterministic_faker_column,
 )
 from decoy_engine.execution.native._faker_positional_admission import chunked_positional_column
@@ -459,7 +460,10 @@ def plan_native_route(
                     # schema's metadata is in the closed allowlist (so the oracle's pandas
                     # conversion is a provable identity on that value). Everything else declines.
                     reason = classify_deterministic_nonstring_faker(
-                        node.column, source_type=ftype, admission=c5c_ii_admission
+                        node.column,
+                        source_type=ftype,
+                        admission=c5c_ii_admission,
+                        provider_allowlisted=faker_provider_allowlisted(config, table, node.column),
                     )
                     if reason is None:
                         admitted = True
