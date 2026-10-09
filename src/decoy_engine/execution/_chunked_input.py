@@ -49,10 +49,12 @@ __all__ = [
     "REASON_RESIDENT_SOURCE",
     "InputChunks",
     "SourceFacts",
+    "_FixedSchemaChunks",
     "capture_source_facts",
     "complete_source_facts",
     "facts_for",
     "facts_match",
+    "fixed_schema_chunks_from_resident",
     "input_modes",
     "lazy_stream_candidates",
     "null_count_gap_reason",
@@ -278,6 +280,71 @@ def _guarded(
         owner.close()
 
 
+class _FixedSchemaChunks:
+    """A chunk producer whose every emitted table carries `source_schema` metadata-inclusive.
+
+    C5c-ii: the chunked route may accelerate deterministic Faker over bool/int/uint only when the
+    per-chunk pandas conversion the oracle performs is a provable identity on the source values,
+    which requires the schema (including the raw `b"pandas"` metadata) the dispatcher and oracle
+    actually receive to be fixed and known up front. An arbitrary `Iterable[pa.Table]` gives no
+    such guarantee; only the two internal factories below do, and recognition is by this concrete
+    type, never a duck-typed `.schema` attribute or a caller-set flag.
+
+    The invariant for every emitted table `t` is
+    ``t.schema.equals(source_schema, check_metadata=True)``. Resident slices preserve the resident
+    schema; reconstructed batches are built through `pa.Table.from_batches(..., schema=captured)`
+    (see `rechunk`), so both hold it by construction. `close()` forwards to the underlying stream
+    so it does not interrupt `InputChunks.close()` or `_guarded` cleanup."""
+
+    __slots__ = ("_close", "_make", "_source_schema")
+
+    def __init__(
+        self,
+        source_schema: pa.Schema,
+        make: Any,
+        close: Any = None,
+    ) -> None:
+        # Private: build through `fixed_schema_chunks_from_resident` or the reconstructed-batch
+        # factory only. `make` is a zero-arg callable returning the chunk iterator.
+        self._source_schema = source_schema
+        self._make = make
+        self._close = close
+
+    @property
+    def source_schema(self) -> pa.Schema:
+        return self._source_schema
+
+    def __iter__(self) -> Iterator[pa.Table]:
+        return self._make()
+
+    def close(self) -> None:
+        if self._close is not None:
+            self._close()
+
+
+def fixed_schema_chunks_from_resident(source: pa.Table, chunk_size_rows: int) -> _FixedSchemaChunks:
+    """Resident-slice producer: every chunk is a `source.slice`, so it carries `source.schema`
+    metadata-inclusive. Re-iterable; the slices are recomputed on each pass."""
+
+    def make() -> Iterator[pa.Table]:
+        return _slices(source, chunk_size_rows)
+
+    return _FixedSchemaChunks(source.schema, make)
+
+
+def _single_use(iterator: Iterator[pa.Table]) -> Any:
+    """A zero-arg `make` that hands out `iterator` once (a reconstructed-batch stream is a
+    one-shot reader); a second pass yields nothing rather than re-reading an exhausted handle."""
+    state: list[Iterator[pa.Table] | None] = [iterator]
+
+    def make() -> Iterator[pa.Table]:
+        it = state[0]
+        state[0] = None
+        return it if it is not None else iter(())
+
+    return make
+
+
 class InputChunks:
     """One routed table's input: its first chunk, the full chunk stream, the evidence block
     and an idempotent `close()` that releases the source handle."""
@@ -285,7 +352,7 @@ class InputChunks:
     def __init__(
         self,
         first: pa.Table,
-        chunks: Iterator[pa.Table],
+        chunks: Iterable[pa.Table],
         block: dict[str, Any],
         owner: OpenedLazyBatches | None,
     ) -> None:
@@ -340,9 +407,15 @@ def _open_lazy(
         "source_row_groups": opened.row_groups,
         "source_max_row_group_rows": opened.max_row_group_rows,
     }
+    # `rechunk` builds every table through `pa.Table.from_batches(..., schema=opened.schema)`,
+    # so the stream's tables carry `opened.schema` metadata-inclusive: wrap it as the C5c-ii
+    # producer so the chunked route can prove the schema the oracle will convert per chunk.
+    stream_close = getattr(stream, "close", None)
     if first is None:
-        return InputChunks(opened.schema.empty_table(), iter(()), block, opened)
-    return InputChunks(first, _chain(first, stream), block, opened)
+        empty = _FixedSchemaChunks(opened.schema, _single_use(iter(())), close=stream_close)
+        return InputChunks(opened.schema.empty_table(), empty, block, opened)
+    producer = _FixedSchemaChunks(opened.schema, _single_use(_chain(first, stream)), stream_close)
+    return InputChunks(first, producer, block, opened)
 
 
 def open_input(
@@ -369,7 +442,10 @@ def open_input(
         )
     block = resident_block(REASON_RESIDENT_SOURCE)
     return InputChunks(
-        source.slice(0, chunk_size_rows), _slices(source, chunk_size_rows), block, None
+        source.slice(0, chunk_size_rows),
+        fixed_schema_chunks_from_resident(source, chunk_size_rows),
+        block,
+        None,
     )
 
 

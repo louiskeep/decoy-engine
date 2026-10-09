@@ -120,9 +120,15 @@ def test_cell_matches_record_and_differences_are_guarantee_3(
 
     string_output_x = role in matrix.STRING_OUTPUT_ROLES
     faker_x = role == "faker"
-    # Guarantee 3 (b)'s one route-dependent cell: native Faker over an all-null string source.
+    # Guarantee 3 (b)'s route-dependent cells: an all-null Faker source outputs `string` on the
+    # dispatcher lane while today's lane leaves `null`. For a string source only the native leg
+    # pins (C5b-i); C5c-ii pins a bool/int/uint source on BOTH dispatcher legs, so `bool` (the
+    # only all-null numeric faker cell -- int/uint are non-nullable in this matrix) is pinned on
+    # the oracle route too.
     faker_native_all_null = (
-        faker_x and route == "native" and nulls == "all" and typ in ("string", "large_string")
+        faker_x
+        and nulls == "all"
+        and ((route == "native" and typ in ("string", "large_string")) or typ == "bool")
     )
     for name in disp.column_names:
         if name in STRING_OUTPUT_COLUMNS or (name == "x" and string_output_x):

@@ -345,6 +345,9 @@ class TestDirectChunkedEntryPointsReject:
                 self.inner = inner
                 self.slices = 0
                 self.num_rows = inner.num_rows
+                # Reading the schema is not slicing (the fixed-schema producer captures it up
+                # front); the transform rejection must still fire before any `slice` call.
+                self.schema = inner.schema
 
             def slice(self, *a, **k):
                 self.slices += 1

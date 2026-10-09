@@ -264,7 +264,9 @@ def _run_dispatcher(
     chunks = list(
         _chunked_entry.run_mask_chunked(
             config,
-            _slices(source, chunk_size_rows),
+            # The C5c-ii producer: resident slices carry the resident schema metadata-inclusive,
+            # which the chunked route needs to admit deterministic Faker over bool/int/uint.
+            _chunked_input.fixed_schema_chunks_from_resident(source, chunk_size_rows),
             table=table,
             engine_version=engine_version,
             registry=registry,

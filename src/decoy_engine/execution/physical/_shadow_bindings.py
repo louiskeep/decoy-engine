@@ -25,7 +25,11 @@ from typing import TYPE_CHECKING, Any, Final
 import pyarrow as pa
 
 from decoy_engine.execution._adapter import provider_config_to_dict
-from decoy_engine.execution._operator_registry import OPERATORS, POSITIONAL_FAKER_SOURCE_TYPES
+from decoy_engine.execution._operator_registry import (
+    DETERMINISTIC_FAKER_SOURCE_TYPES,
+    OPERATORS,
+    POSITIONAL_FAKER_SOURCE_TYPES,
+)
 from decoy_engine.execution.native._capabilities import capabilities_for
 from decoy_engine.execution.native._categorical_prepared import (
     prepare_categorical,
@@ -314,7 +318,14 @@ def execution_binding_for_slice_node(
         if not isinstance(provider, str) or not provider:
             return None  # pragma: no cover - faker always compiles a provider
         if not positional and not _faker_pool_bindable(
-            plan_slice=plan_slice, table=table, column=column, inputs=inputs
+            plan_slice=plan_slice,
+            table=table,
+            column=column,
+            inputs=inputs,
+            # C5c-ii: the DETERMINISTIC variant keys from the source value, so it binds over
+            # bool/int/uint beside string (the round-trip gate proved the pandas conversion is
+            # value-identical). Float/temporal stay out: `_canonicalize_source` cannot key them.
+            extra_source_types=DETERMINISTIC_FAKER_SOURCE_TYPES,
         ):
             # Any miss in the shared slice-domain predicate (§3.2) leaves the node unbound.
             return None

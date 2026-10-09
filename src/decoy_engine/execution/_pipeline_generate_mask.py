@@ -279,6 +279,9 @@ def run_generate_and_mask_steps(
                 unconfigured_column_policy=unconfigured_column_policy,
                 generate_output_tables=generate_output_tables,
                 key_provider=key_provider,
+                # Full-frame route: pin an admitted deterministic-Faker column's degenerate
+                # output to `string` (C5c-ii option A). The chunked legs pin their own way.
+                pin_degenerate_faker=True,
             )
             # Adapters echo every source frame in `outputs` (generate-kind
             # entries in `merged_sources` come back round-tripped through the

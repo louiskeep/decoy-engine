@@ -35,7 +35,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import TYPE_CHECKING, Any, Final
+from typing import TYPE_CHECKING, Any, Final, cast
 
 from decoy_engine.errors import DecoyError
 from decoy_engine.execution import _unified_slice_admission as _admission
@@ -288,12 +288,18 @@ def _execute_admitted(
         # Source-shaped output reconstruction (see `reconstruct_source_shaped_output`).
         # The clock stays here so `boundary_conversion_ms` still covers it.
         bridge_t0 = time.perf_counter()
+        from decoy_engine.execution._faker_degenerate_pin import deterministic_faker_pin_columns
+
+        # `candidate.source` is the resident `pa.Table`; the `is not` identity check above
+        # narrows its static type to a union for the rest of the function, so cast it back.
+        source_schema = cast("pa.Table", candidate.source).schema
         outputs = reconstruct_source_shaped_output(
             table=candidate.table,
             frame=candidate.source_frame,
             masked_table=shadow_result.outputs[candidate.table],
             nodes=physical_table.nodes,
             when_selected=when.selected,
+            degenerate_pin=deterministic_faker_pin_columns(config, candidate.table, source_schema),
         )
         boundary_conversion_ms = (
             candidate.boundary_conversion_ms + (time.perf_counter() - bridge_t0) * 1000.0

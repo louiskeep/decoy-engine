@@ -27,6 +27,7 @@ import pyarrow as pa
 
 __all__ = [
     "ARROW_PYTHON",
+    "DETERMINISTIC_FAKER_SOURCE_TYPES",
     "OPERATORS",
     "PANDAS_ORACLE",
     "POSITIONAL_FAKER_SOURCE_TYPES",
@@ -71,6 +72,10 @@ class OperatorSpec:
     # The wider source-type domain of the position-keyed variant, which reads only its source's
     # null mask. `None` means the variant has no domain of its own.
     positional_resident_types: frozenset[pa.DataType] | None = None
+    # The source-type domain of the DETERMINISTIC variant, which keys from the source VALUE
+    # (C5c-ii: string plus bool/int/uint). `None` means the operator has no deterministic domain
+    # of its own, so the plain `unified_resident_types` applies.
+    deterministic_resident_types: frozenset[pa.DataType] | None = None
     # Diagnostic obligations the unified-slice coordinator actually ROUTES for this
     # operator. A coordinator policy, not a capability fact: an operator whose
     # capabilities declare any diagnostic outside this set declines the unified slice.
@@ -94,6 +99,24 @@ POSITIONAL_FAKER_SOURCE_TYPES: Final = frozenset(
         pa.bool_(),
         pa.float32(),
         pa.float64(),
+    }
+)
+
+# C5c-ii: the DETERMINISTIC-Faker source families. bool/signed int/unsigned int only: the draw
+# keys from the source VALUE through `_canonicalize_source`, which hard-errors on float and has no
+# proven temporal sentinel path yet, so float and temporal are NOT admitted (unlike the
+# position-keyed variant, which reads only the null mask and so admits float).
+DETERMINISTIC_FAKER_SOURCE_TYPES: Final = frozenset(
+    {
+        pa.int8(),
+        pa.int16(),
+        pa.int32(),
+        pa.int64(),
+        pa.uint8(),
+        pa.uint16(),
+        pa.uint32(),
+        pa.uint64(),
+        pa.bool_(),
     }
 )
 
@@ -159,6 +182,7 @@ _SPECS = (
         unified_resident_types=_STRING_ONLY,
         full_frame_assembly="tokenizing",
         positional_resident_types=_STRING_ONLY | POSITIONAL_FAKER_SOURCE_TYPES,
+        deterministic_resident_types=_STRING_ONLY | DETERMINISTIC_FAKER_SOURCE_TYPES,
         # The frozen C1 recipe's providers (FIRST=person_first_name, LAST/MAIDEN=
         # person_last_name). Every other pool_native provider is out of scope and is
         # rejected with a coded reason rather than silently admitted.

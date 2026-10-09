@@ -39,6 +39,12 @@ _POSITIONAL_RESIDENT_TYPES: dict[str, frozenset[pa.DataType]] = {
     if spec.positional_resident_types is not None
 }
 
+_DETERMINISTIC_RESIDENT_TYPES: dict[str, frozenset[pa.DataType]] = {
+    spec.strategy: spec.deterministic_resident_types
+    for spec in OPERATORS.values()
+    if spec.deterministic_resident_types is not None
+}
+
 
 def positional_resident_types(strategy: str, params: Any) -> frozenset[pa.DataType] | None:
     """The wider domain of a bound position-keyed node, or `None` for any other node. The
@@ -46,6 +52,16 @@ def positional_resident_types(strategy: str, params: Any) -> frozenset[pa.DataTy
     if getattr(params, "positional", False):
         return _POSITIONAL_RESIDENT_TYPES.get(strategy)
     return None
+
+
+def deterministic_resident_types(strategy: str, params: Any) -> frozenset[pa.DataType] | None:
+    """The wider domain of a bound DETERMINISTIC (non-positional) Faker node (C5c-ii: string plus
+    bool/int/uint), or `None` for a positional node or any strategy with no deterministic domain.
+    The deterministic variant keys from the source VALUE, so it admits only the families
+    `_canonicalize_source` keys without loss (no float, no temporal)."""
+    if getattr(params, "positional", False):
+        return None
+    return _DETERMINISTIC_RESIDENT_TYPES.get(strategy)
 
 
 def _group_key_sibling_admitted(

@@ -51,6 +51,7 @@ from decoy_engine.execution.native._chunk_masking import (
     _mask_chunk_native,
     _resolve_faker_pools,
     pool_values_are_strings,
+    reject_nonstring_deterministic_pools,
     reject_nonstring_positional_pools,
 )
 from decoy_engine.execution.native._chunk_schema import cast_null_columns, validated_rest
@@ -422,6 +423,11 @@ def _run_chunked(
     """Preflight, route choice and the two chunk loops behind both public entry
     points. `enforce_schema_rule=False` is the legacy `run_native_or_oracle_chunked`
     contract: each route yields what it produces, with no type normalization."""
+    from decoy_engine.execution._chunked_input import _FixedSchemaChunks
+
+    # C5c-ii: capture the producer's guaranteed schema BEFORE preflight turns `chunks` into a
+    # wrapped iterator. An arbitrary iterable carries no guarantee and admits no C5c-ii column.
+    captured_schema = chunks.source_schema if isinstance(chunks, _FixedSchemaChunks) else None
     state = _chunked_oracle._oracle_preflight(
         config,
         chunks,
@@ -442,12 +448,24 @@ def _run_chunked(
         return iter(())
 
     reject_nonstring_positional_pools(state, table=table)
+    reject_nonstring_deterministic_pools(state, config=config, table=table)
     # One drift contract for both routes: each chunk is validated against the
     # first chunk's schema and passed on unchanged. Validation never casts, so the
     # oracle route's adapter runs its own ingest guards on the chunk exactly as the
     # source produced it (and so does the public oracle); the native route runs
     # the same guards itself, then casts null-typed columns for its kernels.
     state.chunk_iter = validated_rest(state.first, state.chunk_iter, table=table)
+    # The guarantee holds only if the producer's schema matches the actual first chunk
+    # metadata-inclusive; a failed match cannot admit C5c-ii (never inferred from `state.first`).
+    c5c_ii_admission = None
+    if captured_schema is not None and state.first.schema.equals(
+        captured_schema, check_metadata=True
+    ):
+        from decoy_engine.execution.native._faker_deterministic_admission import (
+            C5cIiAdmissionContext,
+        )
+
+        c5c_ii_admission = C5cIiAdmissionContext(source_schema=captured_schema)
     preflight = plan_native_route(
         config,
         state.profile,
@@ -457,6 +475,7 @@ def _run_chunked(
         adapter=adapter,
         unconfigured_policy=state.projection_policy if enforce_schema_rule else None,
         registry=state.registry,
+        c5c_ii_admission=c5c_ii_admission,
     )
     decision = preflight.evidence
     if decision.native_admitted and enforce_schema_rule:

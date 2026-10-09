@@ -44,6 +44,7 @@ from decoy_engine.execution._adapter import (
 )
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._exact_int_faker import register_exact_int_sources
+from decoy_engine.execution._faker_degenerate_pin import apply_degenerate_faker_pin
 from decoy_engine.execution._fk_keys import (
     fk_all_null_array,
     fk_columns_for_table,
@@ -184,8 +185,12 @@ class PandasExecutionAdapter:
         key_provider: KeyProvider | None = None,
         row_offset: int = 0,
         code_set_records: Mapping[tuple[str, str], object] | None = None,
+        pin_degenerate_faker: bool = False,
     ) -> ExecutionResult:
-        """Mask every table in `sources`; inputs must already be transformed (a Plan has none)."""
+        """Mask every table in `sources`; inputs must already be transformed (a Plan has none).
+
+        `pin_degenerate_faker` (C5c-ii, full-frame callers only): see
+        `apply_degenerate_faker_pin`."""
         # Every seed's `when`, before a handler, provider or sink runs: a bad predicate on a
         # later table would otherwise surface after earlier output was written.
         validate_plan_when(plan)
@@ -333,7 +338,13 @@ class PandasExecutionAdapter:
                 )
 
         t1 = time.perf_counter()
-        outputs = {t: pa.Table.from_pandas(f, preserve_index=False) for t, f in frames.items()}
+        outputs = apply_degenerate_faker_pin(
+            {t: pa.Table.from_pandas(f, preserve_index=False) for t, f in frames.items()},
+            plan,
+            sources,
+            relationship_graph=relationship_graph,
+            enabled=pin_degenerate_faker,
+        )
         conversion_ms += (time.perf_counter() - t1) * 1000.0
 
         return ExecutionResult(

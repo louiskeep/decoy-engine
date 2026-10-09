@@ -40,6 +40,7 @@ if TYPE_CHECKING:
 
 
 NONSTRING_POOL_CODE = "chunked_faker_nondeterministic_pool_not_string"
+DETERMINISTIC_NONSTRING_POOL_CODE = "chunked_faker_deterministic_pool_not_string"
 
 
 def _mask_chunk_native(
@@ -258,6 +259,48 @@ def reject_nonstring_positional_pools(state: Any, *, table: str) -> None:
                     "a string output type on every chunk, which would change this column's type "
                     "relative to the whole-frame run. Disable auto-chunking for this job or "
                     "register the provider under a different name."
+                ),
+            )
+
+
+def reject_nonstring_deterministic_pools(state: Any, *, config: dict[str, Any], table: str) -> None:
+    """Fail closed when an admitted deterministic-Faker pin column's pool holds non-string values.
+
+    The C5c-ii analogue of `reject_nonstring_positional_pools`. An admitted deterministic-Faker
+    column over a bool/int/uint source pins its output type to `string` on every chunk (so the
+    native leg and the degenerate oracle leg agree). A provider registered under an allowlisted
+    name that returns another type would otherwise silently change the column's type relative to
+    the whole-frame run, which keeps the natural type for value-bearing output. Runs eagerly on
+    both chunked legs, before any masking or write, whether or not the table is native-admitted, so
+    an arbitrary iterable cannot slip past the config-name pin; pools are cached in
+    `state.pool_cache`.
+
+    Raises:
+        ExecutionError: ``code='chunked_faker_deterministic_pool_not_string'``.
+    """
+    from decoy_engine.execution._faker_degenerate_pin import deterministic_faker_pin_columns
+
+    pin = deterministic_faker_pin_columns(config, table, state.first.schema)
+    if not pin:
+        return
+    envelope = state.plan.seed_envelope
+    table_seed = next((ts for (name, ts) in envelope.per_table if name == table), None)
+    if table_seed is None:  # pragma: no cover - a validated mask table always has a seed envelope
+        return
+    seeds = {n: s for n, s in table_seed.per_column if n in pin and s.strategy == "faker"}
+    pools = _resolve_faker_pools(
+        seeds, job_seed=envelope.job_seed, pool_cache=state.pool_cache, registry=state.registry
+    )
+    for column, pool in pools.items():
+        if not pool_values_are_strings(pool):
+            raise ExecutionError(
+                code=DETERMINISTIC_NONSTRING_POOL_CODE,
+                message=(
+                    f"column {column!r}: provider {seeds[column].provider!r} returns non-string "
+                    "values, but an admitted deterministic faker column over a bool/int/uint "
+                    "source pins its output type to string on every chunk, which would change "
+                    "this column's type relative to the whole-frame run. Register the provider "
+                    "under a different name or disable auto-chunking for this job."
                 ),
             )
 

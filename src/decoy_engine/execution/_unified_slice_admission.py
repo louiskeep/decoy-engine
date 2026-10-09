@@ -56,6 +56,7 @@ from decoy_engine.execution._operator_registry import OPERATORS
 from decoy_engine.execution._unified_slice_resident_types import (
     _ADMITTED_RESIDENT_TYPES,
     _group_key_sibling_admitted,
+    deterministic_resident_types,
     positional_resident_types,
 )
 from decoy_engine.execution._unified_slice_when import when_columns_admitted
@@ -510,6 +511,11 @@ def resident_contract_admission(
         # is not in any strategy's admitted domain, so it declines here rather
         # than being treated as compatible with whatever the strategy expects.
         domain = positional_resident_types(node.strategy, binding.params)
+        if domain is None:
+            # C5c-ii: a deterministic (non-positional) Faker node keys from the source value, so
+            # it admits bool/int/uint beside string; the `cheap_admission` round-trip guard above
+            # already declined any column whose pandas conversion is not value-identical.
+            domain = deterministic_resident_types(node.strategy, binding.params)
         if domain is None:
             domain = _ADMITTED_RESIDENT_TYPES.get(node.strategy, frozenset())
         if resident_type not in domain:
