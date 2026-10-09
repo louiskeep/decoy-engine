@@ -465,3 +465,17 @@ Replace the existing “Conversion-free allowlist controls” bullet and qualify
    Split the existing C5c-i deterministic-numeric decline expectation at `tests/native/test_c5c_i_chunked_positional.py:259`: the trusted allowlisted case now admits; the ordinary-iterable case continues to decline. Do not blanket-flip every direct chunked call to admission.
 
    Kill mutations that remove the producer-guarantee requirement, infer it from chunk 1, ignore schema-level metadata or `numpy_type`, accept unknown metadata shapes, lose the guarantee during priming/chaining, omit metadata-inclusive schema equality, or allow guarantee absence to disable the Option A pin. Preserve existing physical-drift and stored-index error tests unchanged.
+
+### §10 clarifications (dennis gate, 2 LOW, folded)
+
+- **OOC / arbitrary-iterable chunked adapter stays unaccelerated (intentional).** The out-of-core
+  `NativeOrOracleChunkedAdapter.run` (`execution/physical/drivers/_chunked.py:121`) forwards an
+  arbitrary `Iterable[pa.Table]` to `run_mask_chunked`; it is NOT a producer-wrap site. That is
+  correct: no stream guarantee -> C5c-ii declines up-front -> oracle. A builder must NOT wrap it to
+  force admission; it is out of this slice's bounded scope.
+- **Route-dependent admission for nullable Int64/UInt64 (intentional, cross-ref §4.2).** A pandas
+  nullable `Int64`/`UInt64` column round-trips exactly, so §4.2 ADMITS it on the unified full-frame
+  route, but §10's conservative chunked allowlist DECLINES it (it is an extension metadata shape).
+  So the same column accelerates when the job is small (unified) and declines to the oracle when
+  large (chunked). This asymmetry is intentional and safe (§10: "some declined shapes may be safe;
+  proving additional shapes is outside this slice"), not a §10 bug.
