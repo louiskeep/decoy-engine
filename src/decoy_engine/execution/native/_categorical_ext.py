@@ -154,6 +154,7 @@ def native_categorical_positional(
     namespace: str,
     index_kernel: IndexDerivationKernel,
     native_threads: int | None = None,
+    gate_positions: np.ndarray | None = None,
 ) -> pa.Array:
     """Seeded non-deterministic selection, keyed by global row position.
 
@@ -162,11 +163,20 @@ def native_categorical_positional(
     `derive_index(mask_key, namespace, encode_int(row_offset + i), pool_size)`. The key
     column is a dense `uint64` (the offset domain is `[0, 2**64-1]`, which int64 cannot
     hold) with no nulls, so nulls are restored from the SOURCE and still consume their
-    position, exactly as the oracle's `enumerate` does."""
+    position, exactly as the oracle's `enumerate` does.
+
+    Under a `when:` gate the masked step hands only the selected subset and its full-table
+    positions as `gate_positions` (C8-iii-d-2), so the key of local row `i` is
+    `row_offset + gate_positions[i]` -- that row's full-table number, equal to the d-1 oracle's."""
     if mask_key is None:  # pragma: no cover - require_mask_key never returns None
         raise AssertionError("positional categorical reached with mask_key=None")
     col = array.combine_chunks() if isinstance(array, pa.ChunkedArray) else array
-    keys = positional_key_array(row_offset, len(col), code="categorical_position_out_of_domain")
+    keys = positional_key_array(
+        row_offset,
+        len(col),
+        code="categorical_position_out_of_domain",
+        gate_positions=gate_positions,
+    )
     pool_size = len(categories) if cdf is None else _WEIGHTED_CDF_RES
     idx = index_kernel.derive_index_batch(
         keys,

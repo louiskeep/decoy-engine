@@ -1086,7 +1086,18 @@ decimal, nested, time or duration column keeps the table whole-frame.
 Both native routes run `when:` for `hash`, `redact`, `truncate`, deterministic
 `categorical`, `text_redact` (no NER), `bucket_perturb` and `date_shift` columns over a
 string source: chunked execution and the unified full-frame route (a single-table
-whole-frame job). `bucket_perturb` and `date_shift` need an explicit strftime
+whole-frame job). A non-deterministic (seeded) `categorical` and a non-deterministic REUSE
+`faker` under `when:` also run on both native routes, over a string source with string
+predicate references, with output byte-identical to the pandas oracle (each selected row
+keys on its full-table position). Two shapes still run on the oracle: a `windowed_date`
+column under `when:`, and a numeric-source faker under `when:`. On the unified route a
+numeric-source faker or a non-string predicate reference simply declines to the full-frame
+oracle (same output); on the chunked route a positional `categorical`/`faker` whose target
+or any reference is not a string is rejected with
+`chunked_categorical_nondeterministic_when_not_supported` /
+`chunked_faker_nondeterministic_when_not_supported`, because the per-chunk predicate
+evaluation could otherwise select different rows than the whole frame. `bucket_perturb` and
+`date_shift` need an explicit strftime
 `date_format`, and `date_shift` needs no `group_by`. A `date_shift` value that fails to
 parse in a selected row is a `format_error` row error; an unselected row keeps its value
 and never errors. The predicate may

@@ -158,8 +158,13 @@ def _faker_pool_bindable(
     frozen C1 allowlist, a resident string/large_string source (or one of
     `extra_source_types`), and no FK participation for `table`. The allowlist is the one the
     chunked route's `real_type_rejection` reads, so the two routes cannot disagree on it.
+
+    A `when:` predicate no longer refuses here (C8-iii-d-2): the per-column gate
+    `when_native_rejection`, fronted by `when_columns_admitted`, is the one verdict that
+    admits a positional+`when:` column on the unified route, so a non-admissible predicate
+    declines the whole table to the full-frame oracle instead of binding a node that cannot run.
     """
-    if plan_slice.when or plan_slice.vault:
+    if plan_slice.vault:
         return False
     provider = plan_slice.provider
     if not isinstance(provider, str) or not provider:
@@ -183,11 +188,15 @@ def positional_categorical_bindable(
 ) -> bool:
     """Whether a seeded non-deterministic categorical may bind natively: the config passes
     stage A (namespace, explicit all-string categories, buildable CDF, no `from_profile`),
-    there is no `when:` gate or vault, the resident source is `string`, and the table is in
+    there is no vault, the resident source is `string`, and the table is in
     no FK relationship. Decided here, at the binding boundary, because the compiler binds
     every table of a multi-table shadow run without the single-table admission in front of it.
+
+    A `when:` predicate no longer refuses here (C8-iii-d-2): `when_native_rejection`, fronted by
+    `when_columns_admitted`, is the one verdict that admits a positional+`when:` column, so a
+    non-admissible predicate declines the whole table to the full-frame oracle.
     """
-    if plan_slice.deterministic or plan_slice.when or plan_slice.vault:
+    if plan_slice.deterministic or plan_slice.vault:
         return False
     artifact, _reason = prepare_positional_categorical(
         column,

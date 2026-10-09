@@ -507,13 +507,25 @@ def test_a_deterministic_faker_with_the_override_keeps_its_downgrade() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_a_positional_faker_with_when_gets_the_new_exact_code() -> None:
-    assert _code([nd_faker(when="p > 1"), passthrough("p")]) == WHEN_CODE
+# C8-iii-d-2: a closed-grammar `when:` is no longer vetoed at config time (it runs natively, or
+# the per-chunk guard rejects a non-string target/reference at runtime); only a predicate OUTSIDE
+# the closed grammar, whose references cannot be checked, is still refused at config time.
+_OUTSIDE_GRAMMAR = "p + 1 > 2"
+
+
+def test_a_positional_faker_with_an_outside_grammar_when_is_rejected_at_config() -> None:
+    assert _code([nd_faker(when=_OUTSIDE_GRAMMAR), passthrough("p")]) == WHEN_CODE
+
+
+def test_a_positional_faker_with_a_closed_grammar_when_is_not_vetoed_at_config() -> None:
+    # The config veto no longer fires; a numeric reference declines later, via the per-chunk guard
+    # (covered in tests/native/test_c8_iii_d2_native_positional_when.py).
+    assert _code([nd_faker(when="p > 1"), passthrough("p")]) is None
 
 
 def test_the_when_rejection_names_the_column_and_path() -> None:
     with pytest.raises(PlanCompileError) as info:
-        _check([nd_faker(name="tier", when="p > 1"), passthrough("p")])
+        _check([nd_faker(name="tier", when=_OUTSIDE_GRAMMAR), passthrough("p")])
     assert info.value.code == WHEN_CODE
     assert info.value.path == f"tables.{TABLE}.columns"
     assert "tier" in info.value.message
@@ -532,7 +544,7 @@ def test_the_when_rejection_fires_before_any_chunk_on_both_entries(entry: str) -
     with pytest.raises(PlanCompileError) as info:
         list(
             run(
-                make_config([nd_faker(when="p > 1"), passthrough("p")]),
+                make_config([nd_faker(when=_OUTSIDE_GRAMMAR), passthrough("p")]),
                 stream(),
                 table=TABLE,
                 engine_version=ENGINE_VERSION,

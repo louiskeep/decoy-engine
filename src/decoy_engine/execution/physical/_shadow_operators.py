@@ -327,6 +327,14 @@ def run_operator(
                 mask_key=ctx.mask_key,
                 native_threads=ctx.native_threads,
                 index_kernel=index_kernel,
+                pool=pool,
+                row_offset=row_offset,
+                job_seed=job_seed,
+                missing_mask=(
+                    faker_missing_mask(source_slice, column)
+                    if positional_faker and source_slice is not None and column is not None
+                    else None
+                ),
             )
         else:
             result = run_kernel_step(

@@ -121,6 +121,10 @@ def when_native_rejection(
     `schema` is the first chunk's (or the planner's source) schema; None means the target
     type is unknown, which declines.
     """
+    from decoy_engine.execution.native._categorical_positional import positional_config_of_entry
+    from decoy_engine.execution.native._faker_positional_admission import (
+        positional_faker_config_of_entry,
+    )
     from decoy_engine.execution.native._plan import _column_rejection
 
     if registry is None:
@@ -130,7 +134,14 @@ def when_native_rejection(
     entry = next((e for e in entries if e.get("name") == column), None)
     if entry is None or not has_when(entry):
         return f"{NOT_NATIVE_CODE}:{column}"
-    if (
+    # The two position-keyed draws are admitted by their own config classification, not the
+    # value-keyed membership + `_column_rejection` gate (which legitimately declines a
+    # non-deterministic categorical). Both routes read this one verdict (C8-iii-d-2).
+    positional = (
+        positional_config_of_entry(dict(entry)) is not None
+        or positional_faker_config_of_entry(entry) is not None
+    )
+    if not positional and (
         entry.get("strategy") not in ADMITTED_WHEN_STRATEGIES
         or _column_rejection(dict(entry), registry, table=table, profile=None) is not None
     ):
@@ -141,6 +152,14 @@ def when_native_rejection(
     if ast is None:
         return f"{OUTSIDE_SUBSET_CODE}:{column}"
     refs = when_column_refs(ast)
+    if positional:
+        # Every predicate reference must be a chunk-stable `string`: the chunked native leg
+        # evaluates the predicate per chunk, where a numeric reference can widen and select
+        # different rows than the whole frame. The unified route reuses this verdict, so a
+        # numeric reference there falls to the full-frame oracle (= d-1), never natively.
+        for ref in refs:
+            if ref not in schema.names or schema.field(ref).type != pa.string():
+                return f"{NOT_NATIVE_CODE}:{column}"
     written = _earlier_writes(column, entries, registry)
     if written is None:
         return f"{READS_MASKED_CODE}:{column}:{refs[0]}"

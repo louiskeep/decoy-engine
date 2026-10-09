@@ -91,15 +91,20 @@ WHEN_CODE = "chunked_categorical_nondeterministic_when_not_supported"
 
 
 def reject_nondeterministic_when(table_cfg: dict[str, Any], *, table: str) -> None:
-    """Reject a seeded non-deterministic categorical that also carries a `when:` predicate.
+    """Reject a config-complete seeded categorical whose `when:` predicate is outside the
+    closed grammar (C8-iii-d-2).
 
-    `when` hands the handler only the matching rows, so the oracle enumerates the filtered
-    subset, not each row's physical position, and a chunk's global offset cannot reproduce
-    that. Columns that already fail the config veto keep its code instead.
+    A positional draw under a closed-grammar predicate IS reproducible: d-1 keys each selected
+    row on its full-table position, and the chunked oracle leg composes the same positions, so
+    a config-complete positional+`when:` column with a parseable predicate runs (string target
+    and references are enforced per chunk by `_chunked_when_guard`, where schemas exist). A
+    predicate outside the grammar cannot be checked for reference stability, so it is refused
+    here. Columns that already fail the config veto keep its code instead.
 
     Raises:
         PlanCompileError: ``code='chunked_categorical_nondeterministic_when_not_supported'``.
     """
+    from decoy_engine.execution._chunked_when_guard import closed_grammar_when
     from decoy_engine.execution.native._categorical_positional import positional_config_of_entry
 
     cols = sorted(
@@ -109,6 +114,7 @@ def reject_nondeterministic_when(table_cfg: dict[str, Any], *, table: str) -> No
         and isinstance(c.get("when"), str)
         and c["when"].strip()
         and positional_config_of_entry(c) is not None
+        and not closed_grammar_when(c["when"])
     )
     if not cols:
         return
@@ -117,8 +123,8 @@ def reject_nondeterministic_when(table_cfg: dict[str, Any], *, table: str) -> No
         path=f"tables.{table}.columns",
         message=(
             f"column(s) {', '.join(cols)} combine a non-deterministic categorical with a "
-            "'when:' predicate, which is not supported on the chunked route: `when` passes "
-            "only matching rows to the handler, so the oracle enumerates the filtered subset "
-            "0..matches-1, not each row's physical position."
+            "'when:' predicate outside the closed grammar, which the chunked route cannot run: "
+            "a predicate it cannot parse cannot be checked for chunk-stable (string) references, "
+            "so reproducing the whole-frame selection per chunk is not guaranteed."
         ),
     )

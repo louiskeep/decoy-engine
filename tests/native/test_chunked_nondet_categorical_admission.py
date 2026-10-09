@@ -395,15 +395,29 @@ def test_the_unified_binding_admits_the_seeded_categorical_as_the_positional_var
 # ---------------------------------------------------------------------------
 
 
+# C8-iii-d-2: a closed-grammar `when:` is no longer vetoed at config time (it runs natively, or
+# the per-chunk guard rejects a non-string target/reference at runtime); only a predicate OUTSIDE
+# the closed grammar, whose references cannot be checked, is still refused at config time. The
+# arithmetic `p + 1 > 2` is outside the grammar.
+_OUTSIDE_GRAMMAR = "p + 1 > 2"
+
+
 @pytest.mark.parametrize("weighted", [False, True], ids=["uniform", "weighted"])
-def test_a_seeded_categorical_with_when_gets_the_new_exact_code(weighted: bool) -> None:
-    col = _nd(weighted, when="p > 1")
-    assert _code([col, passthrough("p")]) == WHEN_CODE
+def test_a_seeded_categorical_with_an_outside_grammar_when_is_rejected_at_config(
+    weighted: bool,
+) -> None:
+    assert _code([_nd(weighted, when=_OUTSIDE_GRAMMAR), passthrough("p")]) == WHEN_CODE
+
+
+def test_a_seeded_categorical_with_a_closed_grammar_when_is_not_vetoed_at_config() -> None:
+    # The config veto no longer fires; a numeric reference declines later, via the per-chunk guard
+    # (covered in tests/native/test_c8_iii_d2_native_positional_when.py).
+    assert _code([_nd(when="p > 1"), passthrough("p")]) is None
 
 
 def test_the_when_rejection_names_the_column_and_path() -> None:
     with pytest.raises(PlanCompileError) as info:
-        _check([_nd(name="tier", when="p > 1"), passthrough("p")])
+        _check([_nd(name="tier", when=_OUTSIDE_GRAMMAR), passthrough("p")])
     assert info.value.code == WHEN_CODE
     assert info.value.path == f"tables.{TABLE}.columns"
     assert "tier" in info.value.message
@@ -422,7 +436,7 @@ def test_the_when_rejection_fires_before_any_chunk_on_both_entries(entry: str) -
     with pytest.raises(PlanCompileError) as info:
         list(
             run(
-                make_config([_nd(when="p > 1"), passthrough("p")]),
+                make_config([_nd(when=_OUTSIDE_GRAMMAR), passthrough("p")]),
                 stream(),
                 table=TABLE,
                 engine_version=ENGINE_VERSION,
@@ -645,10 +659,11 @@ def test_the_entry_adapter_admits_only_the_seeded_categorical_strategy() -> None
 def test_the_when_gate_ignores_a_non_categorical_column_with_categorical_looking_config() -> None:
     from decoy_engine.execution._chunked_categorical import reject_nondeterministic_when
 
-    table_cfg = {"columns": [_entry(strategy="redact", when="p > 1")]}
-    reject_nondeterministic_when(table_cfg, table=TABLE)  # no raise
+    table_cfg = {"columns": [_entry(strategy="redact", when="p + 1 > 2")]}
+    reject_nondeterministic_when(table_cfg, table=TABLE)  # no raise (not a positional categorical)
     with pytest.raises(PlanCompileError) as info:
-        reject_nondeterministic_when({"columns": [_entry(when="p > 1")]}, table=TABLE)
+        # Outside the closed grammar, so the config veto still fires for a positional categorical.
+        reject_nondeterministic_when({"columns": [_entry(when="p + 1 > 2")]}, table=TABLE)
     assert info.value.code == WHEN_CODE
 
 

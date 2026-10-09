@@ -156,6 +156,10 @@ def _mask_chunk_native(
                 mask_key=mask_key,
                 native_threads=native_threads,
                 index_kernel=index_kernel,
+                pool=pool_by_column[name] if isinstance(params, FakerParams) else None,
+                row_offset=row_offset,
+                job_seed=job_seed,
+                missing_mask=(faker_missing or {}).get(name),
             )
         else:
             result = run_kernel_step(
