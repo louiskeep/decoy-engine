@@ -286,22 +286,22 @@ def _assert_det_pool_error(exc: BaseException) -> None:
     assert "f" in message and "person_first_name" in message
 
 
-def _run_int_override(chunks: Any) -> BaseException:
+def _run_int_override(chunks: Any, columns: list[dict[str, Any]] | None = None) -> BaseException:
+    cols = columns if columns is not None else [faker_col("f"), passthrough("p")]
     writes: list[Any] = []
     with pytest.raises(Exception) as info:
-        writes.append(
-            list(
-                run_mask_chunked(
-                    make_config([faker_col("f"), passthrough("p")], global_settings=GS),
-                    chunks,
-                    table=TABLE,
-                    engine_version=ENGINE_VERSION,
-                    key_provider=key_provider(),
-                    registry=_int_override(),
-                )
-            )
-        )
-    assert not writes, "no chunk may be written"
+        # Consume chunk-by-chunk: a chunk yielded BEFORE the guard raises would be captured here,
+        # so the "no write" assertion actually tests fail-before-output, not just the final list.
+        for chunk in run_mask_chunked(
+            make_config(cols, global_settings=GS),
+            chunks,
+            table=TABLE,
+            engine_version=ENGINE_VERSION,
+            key_provider=key_provider(),
+            registry=_int_override(),
+        ):
+            writes.append(chunk)
+    assert not writes, "no chunk may be written before the guard fails closed"
     return info.value
 
 
@@ -316,6 +316,9 @@ def test_det_override_ordinary_iterable_fails_closed() -> None:
     _assert_det_pool_error(_run_int_override(split(_INT_SOURCE, 2)))
 
 
-def test_det_override_whole_table_fails_closed_with_a_sibling_column() -> None:
-    # A sibling passthrough does not rescue the job; the whole table fails closed.
-    _assert_det_pool_error(_run_int_override(split(_INT_SOURCE, 3)))
+def test_det_override_fails_closed_even_when_a_sibling_downgrades_the_table() -> None:
+    # A force-oracle sibling would downgrade the whole table, and a trusted producer is the admit
+    # path; the guard still fails closed before that path is taken, writing nothing.
+    producer = fixed_schema_chunks_from_resident(with_force(_INT_SOURCE), 3)
+    cols = [faker_col("f"), passthrough("p"), force_oracle(FORCE)]
+    _assert_det_pool_error(_run_int_override(producer, cols))

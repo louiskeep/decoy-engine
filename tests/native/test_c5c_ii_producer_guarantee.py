@@ -19,6 +19,7 @@ from decoy_engine.execution._chunked_input import (
     _FixedSchemaChunks,
     _single_use,
     fixed_schema_chunks_from_resident,
+    rechunk,
 )
 from decoy_engine.execution.native import _chunked_entry
 from tests.native._b8_support import FORCE, Run, identical, run_one, with_force
@@ -72,10 +73,9 @@ def test_reconstructed_batch_producer_guarantees_the_complete_schema() -> None:
     plain = pa.table(
         {"f": pa.array([1, 2, 3, 4, 5], pa.int64()), "p": pa.array(range(5), pa.int64())}
     )
-    reconstructed = (
-        pa.Table.from_batches([batch], schema=captured)
-        for batch in plain.to_batches(max_chunksize=2)
-    )
+    # Build the stream through the production `rechunk` (the real reconstructed-batch path), so a
+    # regression in it fails this test rather than a reconstruction reimplemented in the test.
+    reconstructed = rechunk(plain.to_batches(max_chunksize=2), captured, 2)
     producer = _FixedSchemaChunks(captured, _single_use(reconstructed))
     assert producer.source_schema.equals(captured, check_metadata=True)
     chunks = list(producer)
