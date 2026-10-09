@@ -1,6 +1,7 @@
 # C6c-ii: a Rust span-detection kernel for text_redact
 
-Status: plan (rev 3, folds Codex plan-gate rounds 1-2). Phase C, Rust-engine program.
+Status: plan (rev 4, BUILD-READY: Codex round 3 = correctness GO, sole residual §7.7 perf-gate
+wording folded here). Phase C, Rust-engine program.
 Branch `feat/c6c-ii-text-redact-rust` off engine main `90e36c38`.
 Supersedes the C6c-ii sketch in `docs/plans/2026-10-06-c6c-i-text-redact-arrow.md`.
 
@@ -250,16 +251,37 @@ on eligible cells. The three fallback modes (4.6) + a catalog-skew case each com
 oracle. Mutation targets: routing predicate, candidate advancement, tie order, offset counts,
 label mapping, empty-selection, catalog-version check.
 
-**7.7 Perf (performance.md; committed fixture, representative + default workload, enforceable
-floor).** Commit `scripts/bench_text_redact.py` with (a) a representative clinical-notes corpus
-(ASCII-dominant, a realistic small fraction non-ASCII) and (b) an all-detector default config,
-plus a reported ASCII-cell hit rate. Baseline is section 1. Report min/median and spread (not
-mean-only) after a warmup, on the same host/release build, with peak RSS. **Enforceable floor:
-no end-to-end regression vs the C6c-i Python path on ANY workload, including an all-ineligible
-corpus (where routing overhead must be negligible).** Target (aspirational, reported honestly):
-a material end-to-end speedup on the representative corpus (the 8/11 detectors moved on eligible
-cells); scanner-only and end-to-end reported separately. Fallback is detected by execution
-assertion (7.6), never timing.
+**7.7 Perf (performance.md; executable comparison rule, finite workload matrix, RSS budget).**
+Commit `scripts/bench_text_redact.py` with a FIXED, enumerated workload matrix and a paired
+baseline/new comparison with a stated pass/fail rule and an RSS budget (round-2 #4, round-3 #5).
+
+Required workload matrix (each row = a committed fixture with pinned row count and cell-length
+distribution):
+- **R-representative:** a clinical-notes corpus, ASCII-dominant with a realistic small non-ASCII
+  fraction, default all-11-detector config. 1,000,000 rows, note-length distribution documented
+  in the fixture.
+- **R-all-ineligible:** every cell routes to Python (each has a non-ASCII char or a `0x1c-0x1f`),
+  default config. 1,000,000 rows. Exercises worst-case routing overhead.
+- **R-python-only-selection:** `detectors` set to only the three lookaround ids (the kernel runs
+  zero supported detectors, but routing + the empty Rust call still execute). 1,000,000 rows.
+- **R-short-no-match:** short no-PII cells (e.g. 1-20 chars), default config. 1,000,000 rows.
+  Exercises per-cell fixed overhead.
+
+Comparison rule (executable): for each matrix row, measure the C6c-i Python path and the rev-3
+path on the IDENTICAL fixture, same host, release build, one warmup pass, >=7 repetitions;
+record min/median and the min-max spread (never mean-only). Pass/fail per row:
+- **Latency floor (enforced, every row):** `median_new <= 1.05 * median_baseline`
+  (no more than 5% end-to-end regression, covering R-all-ineligible, R-python-only, and
+  R-short-no-match where there is little or no Rust work to offset routing cost).
+- **Peak-RSS budget (enforced, every row):** `peak_rss_new <= 1.20 * peak_rss_baseline`.
+- **Speedup target (reported, not a hard gate):** R-representative median_new is expected
+  materially below baseline (the 8/11 detectors moved on eligible cells); the achieved factor,
+  the measured ASCII-cell hit rate, and scanner-only vs end-to-end are recorded in the build
+  record. No arbitrary multiplier is required to pass; the latency floor + RSS budget are the
+  gates, and R-representative must not regress either.
+Fallback is detected by execution assertion (7.6), never by timing. A loose `@pytest.mark.perf`
+check encodes the R-representative latency floor so a silent drop back to the Python path on the
+default workload is caught in CI.
 
 ## 8. Risks
 
