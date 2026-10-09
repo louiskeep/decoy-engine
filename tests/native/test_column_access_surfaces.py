@@ -252,7 +252,7 @@ _PINNED_RUN_CALLS = frozenset(
         "key_error_rows.setdefault",
         "order_work",
         "pa.Table.from_pandas",
-        "pin_frame_outputs",
+        "apply_degenerate_faker_pin",
         "parent_cols.get",
         "parent_cols.setdefault",
         "register_exact_int_sources",
