@@ -573,11 +573,9 @@ _DECLINE_CASES: dict[str, tuple[pa.Table, list[dict[str, Any]], Callable[..., No
         [faker_column()],
         None,
     ),
-    "int64_source": (
-        pa.table({"c": pa.array(list(range(40)), type=pa.int64())}),
-        [faker_column()],
-        None,
-    ),
+    # C5c-ii: a deterministic Faker over int/uint/bool now ADMITS on the unified route (see
+    # test_c5c_i_unified_positional). Float is covered there too (it declines by raising the same
+    # float-canonicalization error on both lanes, so it is not a clean-decline matrix case).
 }
 
 

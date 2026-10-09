@@ -290,6 +290,9 @@ class ExecutionAdapter(Protocol):
         # `_chunked_code_set.py`). None (default) leaves the field empty,
         # unchanged for every pre-existing caller.
         code_set_records: Mapping[tuple[str, str], object] | None = None,
+        # C5c-ii: full-frame callers pin an admitted deterministic-Faker column's degenerate
+        # output to `string`. Default False keeps every pre-existing caller unchanged.
+        pin_degenerate_faker: bool = False,
     ) -> ExecutionResult: ...
 
     def supports_strategy(self, strategy_name: str) -> bool: ...

@@ -16,7 +16,7 @@
     ],
     [
      "x",
-     "null",
+     "string",
      true,
      false
     ]
@@ -40,7 +40,7 @@
     ],
     [
      "x",
-     "null",
+     "string",
      true,
      false
     ]
@@ -64,7 +64,7 @@
     ],
     [
      "x",
-     "null",
+     "string",
      true,
      false
     ]

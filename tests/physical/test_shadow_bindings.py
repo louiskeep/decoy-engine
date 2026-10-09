@@ -363,8 +363,18 @@ def test_faker_provider_outside_c1_allowlist_is_unbound(tmp_path: Path) -> None:
     assert node.execution is None
 
 
-def test_faker_non_string_source_is_unbound(tmp_path: Path) -> None:
+def test_faker_deterministic_int_source_binds(tmp_path: Path) -> None:
+    # C5c-ii: a deterministic allowlisted Faker over a bool/int/uint source keys from the source
+    # value, so it now binds natively (it declined before this slice).
     source = pa.table({"c": pa.array([1, 2, 3], type=pa.int64())})
+    plan = _plan_for(tmp_path, source, [_faker_column()])
+    node = plan.tables[0].nodes[0]
+    assert node.execution is not None
+
+
+def test_faker_float_source_is_unbound(tmp_path: Path) -> None:
+    # Float stays unbound: `_canonicalize_source` cannot key a float deterministically.
+    source = pa.table({"c": pa.array([1.0, 2.0, 3.0], type=pa.float64())})
     plan = _plan_for(tmp_path, source, [_faker_column()])
     node = plan.tables[0].nodes[0]
     assert node.execution is None

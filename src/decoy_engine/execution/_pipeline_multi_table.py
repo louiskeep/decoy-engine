@@ -366,6 +366,8 @@ def run_multi_table_split(
             unconfigured_column_policy=unconfigured_column_policy,
             generate_output_tables=generate_output_tables,
             key_provider=key_provider,
+            # Whole-frame group: pin degenerate deterministic-Faker output (C5c-ii option A).
+            pin_degenerate_faker=True,
         )
         group_outputs = dict(group.outputs)
         group_metrics = dict(group.quality_metrics)

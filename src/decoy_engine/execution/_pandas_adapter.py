@@ -184,8 +184,15 @@ class PandasExecutionAdapter:
         key_provider: KeyProvider | None = None,
         row_offset: int = 0,
         code_set_records: Mapping[tuple[str, str], object] | None = None,
+        pin_degenerate_faker: bool = False,
     ) -> ExecutionResult:
-        """Mask every table in `sources`; inputs must already be transformed (a Plan has none)."""
+        """Mask every table in `sources`; inputs must already be transformed (a Plan has none).
+
+        `pin_degenerate_faker` (C5c-ii, full-frame callers only) pins an admitted
+        deterministic-Faker column's empty/all-null output to `string`. The chunked legs leave it
+        off: the dispatcher pins through `_chunked_schema_rule`'s `string_columns`, and the legacy
+        kill-switch lane keeps the oracle's own inferred type (a pandas round trip there would
+        otherwise re-introduce schema metadata the chunked contract strips)."""
         # Every seed's `when`, before a handler, provider or sink runs: a bad predicate on a
         # later table would otherwise surface after earlier output was written.
         validate_plan_when(plan)
@@ -333,12 +340,16 @@ class PandasExecutionAdapter:
                 )
 
         t1 = time.perf_counter()
-        from decoy_engine.execution._faker_degenerate_pin import pin_frame_outputs
+        outputs = {t: pa.Table.from_pandas(f, preserve_index=False) for t, f in frames.items()}
+        if pin_degenerate_faker:
+            from decoy_engine.execution._faker_degenerate_pin import pin_frame_outputs
 
-        # C5c-ii option A: an all-null/empty admitted deterministic-Faker column over bool/int/uint
-        # is `string`, not pandas' inferred null/double, matching the native routes.
-        raw = {t: pa.Table.from_pandas(f, preserve_index=False) for t, f in frames.items()}
-        outputs = pin_frame_outputs(raw, plan, sources, relationship_graph=relationship_graph)
+            # C5c-ii option A: an all-null/empty admitted deterministic-Faker column over
+            # bool/int/uint is `string`, not pandas' inferred null/double, matching the native
+            # routes. Full-frame callers only (see the signature note).
+            outputs = pin_frame_outputs(
+                outputs, plan, sources, relationship_graph=relationship_graph
+            )
         conversion_ms += (time.perf_counter() - t1) * 1000.0
 
         return ExecutionResult(

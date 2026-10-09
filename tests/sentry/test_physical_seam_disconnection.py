@@ -349,6 +349,15 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         # Parent-level module that imports nothing from `execution.physical`.
         "src/decoy_engine/execution/_exact_int_faker.py",
         "src/decoy_engine/execution/native/_determinism_protocol.py",
+        # C5c-ii (deterministic Faker over bool/int/uint on the native routes, 2026-10-09): the
+        # closed metadata-shape admission classifier (`native/_faker_deterministic_admission.py`,
+        # new) and the degenerate output-type pin shared by the chunked and from_pandas routes
+        # (`_faker_degenerate_pin.py`, new). Both are leaf modules importing only the operator
+        # registry and the classifier; neither imports `execution.physical`. The dispatch,
+        # chunked-input, schema-rule, registry, resident-type, unified and oracle modules that
+        # read them are already permitted above.
+        "src/decoy_engine/execution/native/_faker_deterministic_admission.py",
+        "src/decoy_engine/execution/_faker_degenerate_pin.py",
         # Slice C1b-i (seeded non-deterministic categorical, 2026-10-04): the oracle
         # strategy now draws through `derive_index` keyed by the handler-frame ordinal,
         # and the draw-site provider registry, the capability row and the out-of-core
