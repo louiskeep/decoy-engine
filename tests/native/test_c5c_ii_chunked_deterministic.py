@@ -19,6 +19,7 @@ import pytest
 
 from decoy_engine import run_mask_chunked
 from decoy_engine.execution._chunked_input import fixed_schema_chunks_from_resident
+from decoy_engine.execution._faker_degenerate_pin import pin_degenerate_to_string
 from decoy_engine.execution.native import _chunked_entry
 from decoy_engine.providers_v2 import get_default_registry
 from tests.native._b8_support import (
@@ -170,16 +171,37 @@ def test_degenerate_all_null_pins_to_string(typ: pa.DataType) -> None:
 
 
 @NEEDS_COMPANION
-def test_degenerate_empty_leading_and_interior_chunk_pins_to_string() -> None:
-    source = int_table(pa.int64(), typed_array(pa.int64(), nulls=True))
+@pytest.mark.parametrize(
+    ("values", "size", "degenerate_idx"),
+    [
+        ([None, None, 1, 2, 3, 4], 2, 0),
+        ([1, 2, None, None, 3, 4], 2, 1),
+        ([1, 2, 3, 4, None, None], 2, 2),
+    ],
+    ids=["leading", "interior", "trailing"],
+)
+def test_degenerate_all_null_chunk_by_position_pins_to_string(
+    values: list[Any], size: int, degenerate_idx: int
+) -> None:
+    source = int_table(pa.int64(), pa.array(values, pa.int64()))
     cols = [faker_col("f"), passthrough("p")]
-    # A chunk size equal to the row count leaves a single chunk; a size that over-divides makes an
-    # empty trailing slice. Place an all-null block in the interior via a null-heavy source.
     with poisoned_chunked_oracle():
-        native = run_trusted(make_config(cols, global_settings=GS), source, 4)
-    forced = forced_oracle(cols, source, 4)
-    assert_same_as_oracle(native, forced)
+        native = run_trusted(make_config(cols, global_settings=GS), source, size)
+    forced = forced_oracle(cols, source, size)
+    assert native.ev[0].native_admitted is True
+    # The targeted chunk really is entirely null; the pin still applies, and the other chunks
+    # carry values. Assert the actual chunk shape, not just that the run stayed native.
+    degenerate = native.out[degenerate_idx]
+    assert degenerate.num_rows == size
+    assert degenerate.column("f").null_count == degenerate.num_rows
     assert all(o.schema.field("f").type == pa.string() for o in native.out)
+    assert_same_as_oracle(native, forced)
+    # ROUTE-OUTPUT-CONTRACT: the chunked leg carries no `b"pandas"` schema metadata; the full-frame
+    # pin stamps the pandas string shape. The two route schemas must NOT be equal metadata-inclusive.
+    assert b"pandas" not in (degenerate.schema.metadata or {})
+    full_frame = pin_degenerate_to_string(pandas_table(pa.int64(), [None] * size), frozenset({"f"}))
+    assert full_frame.schema.metadata is not None and b"pandas" in full_frame.schema.metadata
+    assert not degenerate.schema.equals(full_frame.schema, check_metadata=True)
 
 
 # ---------------------------------------------------------------------------

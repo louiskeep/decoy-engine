@@ -17,6 +17,7 @@ import pytest
 
 from decoy_engine.execution._chunked_input import (
     _FixedSchemaChunks,
+    _single_use,
     fixed_schema_chunks_from_resident,
 )
 from decoy_engine.execution.native import _chunked_entry
@@ -60,6 +61,29 @@ def test_resident_producer_guarantees_the_complete_schema() -> None:
     assert sum(c.num_rows for c in chunks) == 5
     for chunk in chunks:
         assert chunk.schema.equals(source.schema, check_metadata=True)
+
+
+def test_reconstructed_batch_producer_guarantees_the_complete_schema() -> None:
+    # §10: a reconstructed-batch stream (built through `pa.Table.from_batches(..., schema=captured)`)
+    # must carry the captured schema metadata-inclusive on every chunk, like the resident factory,
+    # even when the incoming batches drift (here, no metadata of their own). This is the producer
+    # half of the drift guarantee the ordinary-iterable decline tests exercise from the outside.
+    captured = _meta_table([1, 2, 3, 4, 5], pa.int64(), field_meta=True).schema
+    plain = pa.table(
+        {"f": pa.array([1, 2, 3, 4, 5], pa.int64()), "p": pa.array(range(5), pa.int64())}
+    )
+    reconstructed = (
+        pa.Table.from_batches([batch], schema=captured)
+        for batch in plain.to_batches(max_chunksize=2)
+    )
+    producer = _FixedSchemaChunks(captured, _single_use(reconstructed))
+    assert producer.source_schema.equals(captured, check_metadata=True)
+    chunks = list(producer)
+    assert sum(c.num_rows for c in chunks) == 5
+    for chunk in chunks:
+        assert chunk.schema.equals(captured, check_metadata=True)
+    # A reconstructed-batch stream is one-shot: a second pass yields nothing, never a re-read.
+    assert list(producer) == []
 
 
 def test_resident_producer_is_reiterable() -> None:
