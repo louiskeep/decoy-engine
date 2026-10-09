@@ -51,6 +51,7 @@ from decoy_engine.execution.native._chunk_masking import (
     _mask_chunk_native,
     _resolve_faker_pools,
     pool_values_are_strings,
+    reject_nonstring_deterministic_pools,
     reject_nonstring_positional_pools,
 )
 from decoy_engine.execution.native._chunk_schema import cast_null_columns, validated_rest
@@ -447,6 +448,7 @@ def _run_chunked(
         return iter(())
 
     reject_nonstring_positional_pools(state, table=table)
+    reject_nonstring_deterministic_pools(state, config=config, table=table)
     # One drift contract for both routes: each chunk is validated against the
     # first chunk's schema and passed on unchanged. Validation never casts, so the
     # oracle route's adapter runs its own ingest guards on the chunk exactly as the
