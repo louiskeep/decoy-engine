@@ -545,9 +545,8 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         # bucket_perturb date_format guard: the oracle handler and the nested handler validate the
         # format before any early return, and the out-of-core kernel validates before its autodetect
         # check. All three call the shared rule in `transforms/bucket_perturb.py` and import nothing
-        # from `execution.physical`.
+        # from `execution.physical`. (`_strategies/_nested.py` is permitted above.)
         "src/decoy_engine/execution/_strategies/_bucket_perturb.py",
-        "src/decoy_engine/execution/_strategies/_nested.py",
         "src/decoy_engine/execution/out_of_core/_mask_group_c.py",
     }
     unexpected = [
