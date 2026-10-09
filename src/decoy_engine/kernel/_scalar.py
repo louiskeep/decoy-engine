@@ -29,7 +29,19 @@ def _is_missing(value: Any) -> bool:
     try:
         return bool(value != value)
     except Exception:
-        return False
+        # `value != value` did not yield a plain bool. The reachable case is
+        # pandas `pd.NA`, whose `!=` returns `pd.NA` and whose `bool()` raises:
+        # the shipped fpe strategy treats it as missing (`source.isna()`), and on
+        # the raw-list path it would otherwise reach the cipher as `str(pd.NA) ==
+        # "<NA>"` and diverge (C6a Step 0, plan §3b). Defer to pandas.isna, which
+        # is the repo's own correct missing-value predicate, imported lazily so
+        # the Arrow hot path (None / float NaN, both handled above) never pays it.
+        try:
+            import pandas as pd
+
+            return bool(pd.isna(value))
+        except Exception:
+            return False
 
 
 def _array_to_pylist(values: pa.Array | pa.ChunkedArray | list[Any]) -> list[Any]:
