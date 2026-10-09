@@ -152,10 +152,47 @@ def test_4_positional_faker_over_a_declined_family_declines(tmp_path: Path, kind
     _assert_declines_with_the_oracle_output(Case(tmp_path, one_col(_DECLINED[kind]), [nd_faker()]))
 
 
-@pytest.mark.parametrize("typ", [pa.int64(), pa.uint8(), pa.bool_(), pa.float64()], ids=type_id)
-def test_4_deterministic_faker_over_a_non_string_source_declines(
+@NEEDS_COMPANION
+@pytest.mark.parametrize("typ", [*SIGNED, *UNSIGNED, pa.bool_()], ids=type_id)
+def test_4_deterministic_faker_over_bool_int_uint_now_admits(
     tmp_path: Path, typ: pa.DataType
 ) -> None:
+    # C5c-ii: the deterministic variant keys from the source value, so the unified route admits
+    # bool/int/uint (the round-trip gate having proved the pandas conversion is value-identical).
+    case = Case(tmp_path, one_col(typed_array(typ, nulls=False)), [nd_faker(deterministic=True)])
+    leaf = parity(case, batch=5)
+    assert node_evidence(leaf, FAKER_OP)["compiled_kernel_executed"] is True
+
+
+@NEEDS_COMPANION
+@pytest.mark.parametrize(
+    "pandas_dtype, typ", [("Int64", pa.int64()), ("UInt64", pa.uint64())], ids=["Int64", "UInt64"]
+)
+def test_4_deterministic_faker_over_nullable_integer_admits(
+    tmp_path: Path, pandas_dtype: str, typ: pa.DataType
+) -> None:
+    # A pandas nullable Int64/UInt64 round-trips exactly, so the unified route admits it even
+    # though the conservative chunked allowlist declines the same column (intentional asymmetry).
+    series = pd.Series(pd.array([1, None, 3, 4, None, 6, 7, 8, 9], dtype=pandas_dtype))
+    table = one_col(pa.array(series, type=typ), meta=pandas_meta(series))
+    case = Case(tmp_path, table, [nd_faker(deterministic=True)])
+    parity(case, batch=4)
+
+
+@NEEDS_COMPANION
+@pytest.mark.parametrize("shape", ["all_null", "empty"])
+def test_4_deterministic_degenerate_output_pins_to_string(tmp_path: Path, shape: str) -> None:
+    array = pa.nulls(9, pa.int64()) if shape == "all_null" else pa.array([], pa.int64())
+    case = Case(tmp_path, one_col(array), [nd_faker(deterministic=True)])
+    off = case.run(lane=False)
+    on = case.run(lane=True)
+    assert on.outputs["t"].column("c").type == pa.string()
+    assert on.outputs["t"].equals(off.outputs["t"], check_metadata=True)
+
+
+@pytest.mark.parametrize("typ", [pa.float64(), pa.float32()], ids=type_id)
+def test_4_deterministic_faker_over_float_still_declines(tmp_path: Path, typ: pa.DataType) -> None:
+    # Float is NOT a deterministic target family (`_canonicalize_source` hard-errors on float).
     case = Case(tmp_path, one_col(typed_array(typ, nulls=False)), [nd_faker(deterministic=True)])
     _assert_declines_with_the_oracle_output(case)
 
