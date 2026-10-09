@@ -467,3 +467,73 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(text_redact_class_members, m)?)?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn index_of(id: &str) -> usize {
+        SUPPORTED_IDS.iter().position(|s| *s == id).unwrap()
+    }
+
+    #[test]
+    fn eligibility_marks_the_boundary() {
+        assert!(is_eligible("plain 123-45-6789 a@b.com"));
+        assert!(is_eligible(""));
+        assert!(!is_eligible("café"));
+        for sep in ['\u{1c}', '\u{1d}', '\u{1e}', '\u{1f}'] {
+            assert!(!is_eligible(&format!("a{sep}b")));
+        }
+        // The code points bracketing 0x1c-0x1f stay eligible.
+        assert!(is_eligible("a\u{1b}b"));
+        assert!(is_eligible("a b"));
+    }
+
+    #[test]
+    fn validators_match_the_reference_vectors() {
+        assert!(luhn_valid("0000000000000"));
+        assert!(luhn_valid("4111 1111 1111 1111"));
+        assert!(!luhn_valid("000000000000")); // 12 digits < 13
+        assert!(!luhn_valid("4111111111111112"));
+        assert!(npi_valid("1234567893"));
+        assert!(npi_valid("123-456-7893"));
+        assert!(!npi_valid("1234567890"));
+        assert!(ipv4_valid("001.002.003.004"));
+        assert!(!ipv4_valid("256.1.1.1"));
+        assert!(!ipv4_valid("1.2.3"));
+        assert!(iban_valid("GB82WEST12345698765432"));
+        assert!(iban_valid("GB82 WEST 1234 5698 7654 32"));
+        assert!(!iban_valid("ZZ00INVALID1234567890"));
+        assert!(!iban_valid("GB00WEST12345698765432"));
+        assert!(!icd10_valid("F00"));
+        assert!(icd10_valid("F01"));
+        assert!(icd10_valid("D89"));
+        assert!(!icd10_valid("D90"));
+        assert!(icd10_valid("A00!!!!"));
+    }
+
+    #[test]
+    fn candidates_find_each_detector_in_order_with_scalar_offsets() {
+        let text = "mail a@b.com ip 10.0.0.1 ok";
+        let all: Vec<usize> = (0..SUPPORTED_IDS.len()).collect();
+        let got = candidates_for_cell(text, &all);
+        assert!(got.contains(&(index_of("email") as u32, 5, 12)));
+        assert!(got.contains(&(index_of("ipv4") as u32, 16, 24)));
+    }
+
+    #[test]
+    fn a_rejected_validator_match_does_not_halt_finditer() {
+        // Two ipv4-shaped tokens; the first fails the octet range, the second passes. finditer
+        // advances past the rejected one, so the valid second match is still found.
+        let text = "999.1.1.1 then 10.0.0.1";
+        let got = candidates_for_cell(text, &[index_of("ipv4")]);
+        assert_eq!(got, vec![(index_of("ipv4") as u32, 15, 23)]);
+    }
+
+    #[test]
+    fn requested_subset_runs_only_those_detectors() {
+        let text = "a@b.com 10.0.0.1";
+        let got = candidates_for_cell(text, &[index_of("ipv4")]);
+        assert_eq!(got, vec![(index_of("ipv4") as u32, 8, 16)]);
+    }
+}

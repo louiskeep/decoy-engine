@@ -319,6 +319,13 @@ jobs:
       # harness.py) is companion-guarded the same way, so it belongs in this job too.
       - name: Physical shadow corpus + unified-slice hash equivalence (companion-present case)
         run: pytest tests/physical/test_shadow_corpus.py tests/physical/test_shadow_chunked.py tests/physical/test_shadow_coordinator.py tests/physical/test_unified_slice_parity.py tests/physical/test_unified_slice_admission.py tests/physical/test_unified_slice_input_formats.py tests/physical/test_bench_unified_slice_harness_smoke.py tests/physical/test_bench_compare_harness.py -v --tb=short
+      # C6c-ii: the text_redact Rust span kernel. Every kernel-dependent case (routing-predicate
+      # parity, the raw-candidate + merged differential, validator KATs, class-level ASCII
+      # equivalence, the execution assertion that Rust actually ran, catalog agreement) skips
+      # without the companion, so this is the one job that exercises them. The perf sentinel runs
+      # here too via `-m perf`.
+      - name: text_redact Rust span kernel (companion-present case)
+        run: pytest tests/native/test_c6c_ii_text_redact_rust.py -m "perf or not perf" -v --tb=short
 
   # companion-fuzz-sanitizer: the KeyedDerivationKernel is the one security-sensitive native
   # unit, so it gets fuzz + sanitizer evidence beyond the KAT/proptest/clippy gates above. A

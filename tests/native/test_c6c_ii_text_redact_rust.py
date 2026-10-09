@@ -12,13 +12,16 @@ from __future__ import annotations
 
 import random
 import re
+import statistics
 import sys
+import time
 import types
 from typing import Any
 
 import pyarrow as pa
 import pytest
 
+from decoy_engine.execution.native import _kernels_scalar
 from decoy_engine.execution.native._kernels_scalar import native_text_redact
 from decoy_engine.execution.native._text_redact_kernel import (
     CATALOG_LABELS,
@@ -521,6 +524,44 @@ def test_requested_rust_ids_filters_dedupes_and_expands_none() -> None:
     assert requested_rust_ids(["ssn", "email", "us_zip", "ipv4"]) == ["email", "ipv4"]
     assert requested_rust_ids(["email", "email", "ssn"]) == ["email"]
     assert requested_rust_ids(["no_such"]) == []
+
+
+@pytest.mark.perf
+@NEEDS_TR_KERNEL
+def test_representative_workload_uses_the_rust_path_not_a_silent_python_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Loose CI guard (plan 7.7): on an ASCII-dominant representative workload the native path must
+    be materially faster than a forced-Python run. A silent drop back to Python gives ratio ~1.0
+    and fails this, well below the measured 2.1x so it is not flaky."""
+    rng = random.Random(7)
+    pii = ["a@b.com", "(555) 123-4567", "123-45-6789", "4111 1111 1111 1111", "10.0.0.1", "E11.9"]
+    fillers = ["patient", "seen", "today", "note", "with", "on", "and", "stable", "visit"]
+    cells = [
+        " ".join(
+            rng.choice(pii if rng.random() < 0.2 else fillers) for _ in range(rng.randint(3, 30))
+        )
+        for _ in range(15_000)
+    ]
+    arr = pa.array(cells, pa.string())
+
+    def median(reps: int = 5) -> float:
+        native_text_redact(arr, detectors=None, token="[R]", label_token=False)  # warmup
+        samples = []
+        for _ in range(reps):
+            t = time.perf_counter()
+            native_text_redact(arr, detectors=None, token="[R]", label_token=False)
+            samples.append(time.perf_counter() - t)
+        return statistics.median(samples)
+
+    new = median()
+    with monkeypatch.context() as mp:
+        mp.setattr(_kernels_scalar, "load_text_redact_kernel", lambda: None)
+        base = median()
+    assert new <= 0.9 * base, (
+        f"native text_redact path not materially faster ({new:.3f}s vs forced-Python {base:.3f}s); "
+        "has it silently dropped back to the Python path on the default ASCII-dominant workload?"
+    )
 
 
 def test_corpus_round_trips_identically_on_whichever_path_is_active() -> None:
