@@ -544,6 +544,12 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         # `native_text_redact`, which calls the oracle's `iter_spans` and `_splice`. It imports
         # nothing from `execution.physical`, and the import-direction sweeps above still apply.
         "src/decoy_engine/execution/native/_kernels_scalar.py",
+        # C6c-ii (text_redact Rust span kernel): `_kernels_scalar.native_text_redact` now routes
+        # the eight lookaround-free detectors into the compiled companion on ASCII-safe cells via
+        # the new `_text_redact_kernel.py` (the catalog, loader and `merge_text_redact_spans`). The
+        # new module imports only `storm.detectors` and stdlib -- nothing from `execution.physical`
+        # -- so every import-direction sweep and the fresh-import probe above stay green.
+        "src/decoy_engine/execution/native/_text_redact_kernel.py",
         # FPE reference kernel: `_crypto_reference.py` keeps an empty string as missing data like
         # the strategy does. It imports nothing from `execution.physical`.
         "src/decoy_engine/execution/native/_crypto_reference.py",

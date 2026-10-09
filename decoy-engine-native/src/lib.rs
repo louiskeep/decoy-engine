@@ -24,6 +24,10 @@ pub mod batch;
 pub mod canonicalize;
 pub mod derive;
 pub mod ffi_import;
+// C6c-ii: the text_redact span kernel. Its pure detector/validator/predicate core builds without
+// PyO3 (so cargo tests exercise it directly); only the `#[pyfunction]` wrappers and `register` are
+// gated behind the PyO3 boundary feature, like `arrow_ffi`.
+pub mod text_redact;
 pub mod threads;
 
 /// The ABI tag the core's loader checks on every load (`load_compiled_crypto_kernel`).
@@ -48,5 +52,6 @@ fn abi_version() -> &'static str {
 fn _kernel(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(abi_version, m)?)?;
     arrow_ffi::register(m)?;
+    text_redact::register(m)?;
     Ok(())
 }

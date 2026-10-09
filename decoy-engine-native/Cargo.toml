@@ -41,6 +41,10 @@ hkdf = "0.13.0"
 hmac = "0.13.0"
 pyo3 = { version = "0.29", features = ["extension-module"], optional = true }
 rayon = "1.10.0"
+# C6c-ii text_redact span kernel: the eight lookaround-free detectors run as linear-time
+# `regex` crate scans with Unicode disabled on the relevant classes (`(?-u)` / `(?i-u)`),
+# valid because the kernel only runs on the ASCII-safe domain (plan 2.1). No `fancy-regex`.
+regex = "1"
 serde = { version = "1.0.229", features = ["derive"] }
 sha2 = "0.11.0"
 unicode-normalization = "0.1.25"
