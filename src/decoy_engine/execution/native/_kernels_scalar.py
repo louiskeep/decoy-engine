@@ -49,6 +49,11 @@ import pyarrow as pa
 
 from decoy_engine.execution._errors import StrategyError
 from decoy_engine.execution._strategies._text_redact import _splice
+from decoy_engine.execution.native._text_redact_kernel import (
+    load_text_redact_kernel,
+    merge_text_redact_spans,
+    requested_rust_ids,
+)
 from decoy_engine.kernel import passthrough_array, redact_array, truncate_array
 from decoy_engine.storm.detectors import iter_spans
 
@@ -120,6 +125,11 @@ def native_truncate(
     return truncate_array(array, length=length, keep=keep, mask_char=mask_char)
 
 
+# Cells per kernel call: bounds the resident candidate-list memory independent of column size.
+# Large enough that per-call overhead is negligible against the per-cell scan cost.
+_TEXT_REDACT_KERNEL_BATCH = 65_536
+
+
 def native_text_redact(
     array: pa.Array | pa.ChunkedArray,
     *,
@@ -129,23 +139,56 @@ def native_text_redact(
 ) -> pa.Array:
     """Replace PII spans in every non-null cell; nulls stay null.
 
-    Runs the oracle's own `iter_spans` and `_splice` per cell, so span detection and splicing
-    have one implementation and a detector change cannot make the routes disagree. The
-    empty-means-all rule is the resolver's: `detectors` arrives normalized, and an empty tuple
-    here runs zero detectors, as `iter_spans([])` does. Output is `pa.string()`; each route's
-    assembly decides the type of an empty or all-null column.
+    C6c-ii routes the eight lookaround-free detectors into the compiled companion for cells in the
+    ASCII-safe domain and keeps the Python path for every other cell and the three lookaround
+    detectors (`_text_redact_kernel`), so the spliced output is byte-identical to the oracle's
+    `iter_spans` + `_splice` always. With no companion (or an older/catalog-skewed one) the loader
+    returns `None` and the whole column runs the literal Python path, unchanged from C6c-i.
+
+    Splicing has one implementation (`_splice`) and the empty-means-all rule is the resolver's: an
+    empty tuple here runs zero detectors, as `iter_spans([])` does. Output is `pa.string()`; each
+    route's assembly decides the type of an empty or all-null column.
     """
     detector_ids = list(detectors) if detectors is not None else None
-    out: list[str | None] = []
-    for text in array.to_pylist():
-        if text is None:
-            out.append(None)
-            continue
-        if not isinstance(text, str):
-            text = str(text)
-        spans = iter_spans(text, detector_ids, extra_spans=None)
-        out.append(text if not spans else _splice(text, spans, token, label_token))
-    return pa.array(out, type=pa.string())
+    # C6c-i's stringification contract: a null stays null, every other cell is a string the kernel
+    # and the splice both read, so their offsets land in the same text.
+    texts: list[str | None] = [
+        None if v is None else (v if isinstance(v, str) else str(v)) for v in array.to_pylist()
+    ]
+
+    kernel = load_text_redact_kernel()
+    if kernel is None:
+        out: list[str | None] = []
+        for text in texts:
+            if text is None:
+                out.append(None)
+                continue
+            spans = iter_spans(text, detector_ids, extra_spans=None)
+            out.append(text if not spans else _splice(text, spans, token, label_token))
+        return pa.array(out, type=pa.string())
+
+    from decoy_engine.execution.native._text_redact_kernel import CATALOG_VERSION
+
+    rust_ids = requested_rust_ids(detector_ids)
+    # Call the kernel in fixed sub-batches so only one batch of candidate lists is resident at
+    # once, not the whole column's. The full-frame route hands this the entire column (text_redact
+    # is admitted there, not only chunked), so an unbatched call grows peak RSS with row count and
+    # breaks the C6c-ii RSS budget on large text columns; per-cell results are unchanged.
+    routed: list[str | None] = []
+    for base in range(0, len(texts), _TEXT_REDACT_KERNEL_BATCH):
+        batch = texts[base : base + _TEXT_REDACT_KERNEL_BATCH]
+        per_cell = kernel.text_redact_candidates(batch, rust_ids, CATALOG_VERSION)
+        for text, cands in zip(batch, per_cell, strict=True):
+            if text is None:
+                routed.append(None)
+                continue
+            if cands is None:
+                # Ineligible cell: the full Python path, byte-identical to the oracle.
+                spans = iter_spans(text, detector_ids, extra_spans=None)
+            else:
+                spans = merge_text_redact_spans(text, detector_ids, rust_candidates=cands)
+            routed.append(text if not spans else _splice(text, spans, token, label_token))
+    return pa.array(routed, type=pa.string())
 
 
 __all__ = ["native_passthrough", "native_redact", "native_text_redact", "native_truncate"]

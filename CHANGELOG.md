@@ -9,6 +9,18 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Changed (internal: faster text_redact on ASCII-dominant free text, 2026-10-09)
+
+The native `text_redact` operator now runs its eight lookaround-free detectors (email, us_phone,
+pan, iban, ipv4, icd10, npi, url) in the compiled companion for cells in the ASCII-safe domain
+(every code point below 0x80 and none in 0x1c-0x1f), where the engines' character-class semantics
+provably coincide. The three lookaround detectors (ssn, us_zip, street_address) and every cell
+outside that domain (non-ASCII, a 0x1c-0x1f separator, a lone surrogate, a non-string) stay on the
+Python path, so output is byte-identical to before on every input. With no companion, or an older
+or catalog-skewed one, the whole column runs the Python path unchanged. This is an internal
+throughput change for large ASCII-dominant free-text columns; configuration, output and the golden
+snapshots are unchanged.
+
 ### Fixed (bucket_perturb date_format that destroyed dates, 2026-10-07)
 
 A `bucket_perturb` column whose `date_format` has no date directive, such as `ISO8601`,
