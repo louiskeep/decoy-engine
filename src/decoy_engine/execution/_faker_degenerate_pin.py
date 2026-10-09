@@ -150,6 +150,25 @@ def pin_frame_outputs(
     }
 
 
+def apply_degenerate_faker_pin(
+    outputs: Mapping[str, pa.Table],
+    plan: Any,
+    sources: Mapping[str, pa.Table],
+    *,
+    relationship_graph: Any = None,
+    enabled: bool,
+) -> dict[str, pa.Table]:
+    """Full-frame route hook for C5c-ii option A. When `enabled`, pin each admitted
+    deterministic-Faker column's empty/all-null output to Arrow `string`, matching the native
+    routes; otherwise return `outputs` unchanged. Full-frame callers only: the chunked legs pin
+    through `_chunked_schema_rule`'s `string_columns`, and the legacy kill-switch lane keeps the
+    oracle's own inferred type (a pandas round trip there would re-introduce schema metadata the
+    chunked contract strips)."""
+    if not enabled:
+        return dict(outputs)
+    return pin_frame_outputs(outputs, plan, sources, relationship_graph=relationship_graph)
+
+
 def _patched_pandas_metadata(
     metadata: Mapping[bytes, bytes] | None, names: set[str]
 ) -> dict[bytes, bytes] | None:

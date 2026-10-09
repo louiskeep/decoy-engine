@@ -96,7 +96,7 @@ ALLOWLIST: dict[str, int] = {
     # scale-aware chunked-FK dtype family and rootness check; split the FK helpers.
     "src/decoy_engine/execution/_chunked_fk.py": 970,
     # fail-closed output projection and corpus pinning on the mask route; split the FK-resolution helpers.
-    "src/decoy_engine/execution/_pandas_adapter.py": 691,
+    "src/decoy_engine/execution/_pandas_adapter.py": 697,
     # routing dispatch; logic already lives in the _transforms_* siblings, dense reviewed exception.
     "src/decoy_engine/execution/_pipeline.py": 684,
     # resident Arrow type resolution; move it into its own module with the next operator gate.

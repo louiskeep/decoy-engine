@@ -354,6 +354,8 @@ def test_each_dispatched_table_gets_its_own_source_and_the_job_arguments(
         "unconfigured_column_policy": "error",
         "generate_output_tables": frozenset({"gen"}),
         "key_provider": "key",
+        # C5c-ii: the whole-frame group pins degenerate deterministic-Faker output.
+        "pin_degenerate_faker": True,
     }
 
 

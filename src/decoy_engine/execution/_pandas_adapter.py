@@ -44,6 +44,7 @@ from decoy_engine.execution._adapter import (
 )
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._exact_int_faker import register_exact_int_sources
+from decoy_engine.execution._faker_degenerate_pin import apply_degenerate_faker_pin
 from decoy_engine.execution._fk_keys import (
     fk_all_null_array,
     fk_columns_for_table,
@@ -188,11 +189,8 @@ class PandasExecutionAdapter:
     ) -> ExecutionResult:
         """Mask every table in `sources`; inputs must already be transformed (a Plan has none).
 
-        `pin_degenerate_faker` (C5c-ii, full-frame callers only) pins an admitted
-        deterministic-Faker column's empty/all-null output to `string`. The chunked legs leave it
-        off: the dispatcher pins through `_chunked_schema_rule`'s `string_columns`, and the legacy
-        kill-switch lane keeps the oracle's own inferred type (a pandas round trip there would
-        otherwise re-introduce schema metadata the chunked contract strips)."""
+        `pin_degenerate_faker` (C5c-ii, full-frame callers only): see
+        `apply_degenerate_faker_pin`."""
         # Every seed's `when`, before a handler, provider or sink runs: a bad predicate on a
         # later table would otherwise surface after earlier output was written.
         validate_plan_when(plan)
@@ -340,16 +338,13 @@ class PandasExecutionAdapter:
                 )
 
         t1 = time.perf_counter()
-        outputs = {t: pa.Table.from_pandas(f, preserve_index=False) for t, f in frames.items()}
-        if pin_degenerate_faker:
-            from decoy_engine.execution._faker_degenerate_pin import pin_frame_outputs
-
-            # C5c-ii option A: an all-null/empty admitted deterministic-Faker column over
-            # bool/int/uint is `string`, not pandas' inferred null/double, matching the native
-            # routes. Full-frame callers only (see the signature note).
-            outputs = pin_frame_outputs(
-                outputs, plan, sources, relationship_graph=relationship_graph
-            )
+        outputs = apply_degenerate_faker_pin(
+            {t: pa.Table.from_pandas(f, preserve_index=False) for t, f in frames.items()},
+            plan,
+            sources,
+            relationship_graph=relationship_graph,
+            enabled=pin_degenerate_faker,
+        )
         conversion_ms += (time.perf_counter() - t1) * 1000.0
 
         return ExecutionResult(
