@@ -299,9 +299,7 @@ def _execute_admitted(
             masked_table=shadow_result.outputs[candidate.table],
             nodes=physical_table.nodes,
             when_selected=when.selected,
-            degenerate_pin=deterministic_faker_pin_columns(
-                config, candidate.table, source_schema
-            ),
+            degenerate_pin=deterministic_faker_pin_columns(config, candidate.table, source_schema),
         )
         boundary_conversion_ms = (
             candidate.boundary_conversion_ms + (time.perf_counter() - bridge_t0) * 1000.0
