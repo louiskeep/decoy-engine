@@ -39,6 +39,7 @@ from decoy_engine.execution.native._faker_deterministic_admission import (
 _FAKER_PROVIDER_ALLOWLIST = OPERATORS["faker"].provider_allowlist or frozenset()
 
 __all__ = [
+    "apply_degenerate_faker_pin",
     "deterministic_faker_pin_columns",
     "deterministic_faker_pin_columns_from_plan",
     "pin_degenerate_to_string",
