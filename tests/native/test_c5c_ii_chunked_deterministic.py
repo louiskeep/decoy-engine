@@ -20,6 +20,7 @@ import pytest
 from decoy_engine import run_mask_chunked
 from decoy_engine.execution._chunked_input import fixed_schema_chunks_from_resident
 from decoy_engine.execution.native import _chunked_entry
+from decoy_engine.providers_v2 import get_default_registry
 from tests.native._b8_support import (
     FORCE,
     Run,
@@ -214,3 +215,85 @@ def test_3_nullable_extension_metadata_declines_on_the_chunked_route() -> None:
     frame = pd.DataFrame({"f": pd.array([1, 2, 3, 4, 5, 6], dtype="Int64"), "p": list(range(6))})
     source = pa.Table.from_pandas(frame, preserve_index=False)
     _declines_to_oracle(source, "faker_conversion_metadata_not_allowlisted:f")
+
+
+# ---------------------------------------------------------------------------
+# An allowlisted provider name overridden to return non-string pool values fails closed on
+# every chunked path (Codex final gate HIGH-1). The degenerate pin casts the column to `string`
+# by the provider-name allowlist, so without a pool guard a non-string override would silently
+# stringify value-bearing output on the chunked/oracle leg and for an ordinary iterable, diverging
+# from the whole-frame run, which keeps the natural type. `reject_nonstring_deterministic_pools`
+# resolves the pin-eligible pools eagerly on both legs and fails closed before any write.
+# ---------------------------------------------------------------------------
+
+DET_POOL_CODE = "chunked_faker_deterministic_pool_not_string"
+_INT_SOURCE = int_table(pa.int64(), pa.array([1, 2, 3, 4, 5, 6], pa.int64()))
+
+
+class _IntAdapter:
+    """A poolable adapter whose pool values are integers, not strings."""
+
+    backend_type = "test_int"
+    backend_version = "1"
+
+    def __init__(self, provider: str) -> None:
+        self._provider = provider
+
+    def generate(self, provider: str, *, spec: Any, source_value: bytes | None = None) -> Any:
+        return 7
+
+    def generate_batch(self, provider: str, *, spec: Any, count: int) -> list[int]:
+        return list(range(100, 100 + count))
+
+    def capability_matrix(self, provider: str) -> Any:
+        return get_default_registry().get_capabilities(self._provider)
+
+
+def _int_override() -> Any:
+    default = get_default_registry()
+    return default.override(
+        "person_first_name",
+        _IntAdapter("person_first_name"),
+        default.get_capabilities("person_first_name"),
+    )
+
+
+def _assert_det_pool_error(exc: BaseException) -> None:
+    assert getattr(exc, "code", None) == DET_POOL_CODE, exc
+    message = str(exc)
+    assert "f" in message and "person_first_name" in message
+
+
+def _run_int_override(chunks: Any) -> BaseException:
+    writes: list[Any] = []
+    with pytest.raises(Exception) as info:
+        writes.append(
+            list(
+                run_mask_chunked(
+                    make_config([faker_col("f"), passthrough("p")], global_settings=GS),
+                    chunks,
+                    table=TABLE,
+                    engine_version=ENGINE_VERSION,
+                    key_provider=key_provider(),
+                    registry=_int_override(),
+                )
+            )
+        )
+    assert not writes, "no chunk may be written"
+    return info.value
+
+
+def test_det_override_trusted_producer_fails_closed() -> None:
+    # The admit path (a trusted resident-slice producer) must fail closed, not stringify.
+    _assert_det_pool_error(_run_int_override(fixed_schema_chunks_from_resident(_INT_SOURCE, 2)))
+
+
+def test_det_override_ordinary_iterable_fails_closed() -> None:
+    # The pin set is config-derived, so an ordinary list (which would otherwise decline to the
+    # oracle) still reaches the guard and fails closed rather than silently stringifying.
+    _assert_det_pool_error(_run_int_override(split(_INT_SOURCE, 2)))
+
+
+def test_det_override_whole_table_fails_closed_with_a_sibling_column() -> None:
+    # A sibling passthrough does not rescue the job; the whole table fails closed.
+    _assert_det_pool_error(_run_int_override(split(_INT_SOURCE, 3)))
