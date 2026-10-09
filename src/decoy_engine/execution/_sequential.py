@@ -384,6 +384,15 @@ def run_sequential(
                 conversion_ms += (time.perf_counter() - t0) * 1000.0
                 frames[table] = df
                 register_exact_int_sources(ctx, table, src, df, nodes_by_table.get(table, ()))
+                # C5c-ii: capture the degenerate-Faker pin set from the SOURCE schema before
+                # `del src` drops it; applied to this table's output after from_pandas below.
+                from decoy_engine.execution._faker_degenerate_pin import (
+                    deterministic_faker_pin_columns_from_plan,
+                )
+
+                faker_pin = deterministic_faker_pin_columns_from_plan(
+                    plan, table, src.schema, relationship_graph=graph
+                )
                 del src
 
                 # Snapshot this table's parent-key columns pre-mask, for its outgoing
@@ -468,7 +477,11 @@ def run_sequential(
                         )
 
                 t1 = time.perf_counter()
-                out = pa.Table.from_pandas(frames[table], preserve_index=False)
+                from decoy_engine.execution._faker_degenerate_pin import pin_degenerate_to_string
+
+                out = pin_degenerate_to_string(
+                    pa.Table.from_pandas(frames[table], preserve_index=False), faker_pin
+                )
                 conversion_ms += (time.perf_counter() - t1) * 1000.0
 
                 # DE-03: fail-closed output projection before this table is

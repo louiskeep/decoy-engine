@@ -251,10 +251,16 @@ def build_schema_rule(
     written = handler_written_columns(
         [c for c in table_cfg.get("columns") or [] if isinstance(c, dict)], registry
     )
+    from decoy_engine.execution._faker_degenerate_pin import deterministic_faker_pin_columns
+
     strings = frozenset(n for n, c in configured.items() if _string_output_is_fixed(c))
     strings |= categorical_columns
     strings |= text_redact_pinned_columns(configured)
     strings |= faker_positional_pinned_columns(configured)
+    # C5c-ii: an admitted deterministic-Faker column over bool/int/uint pins its degenerate
+    # output to `string` on both chunked legs, so the native leg (always `string`) and the
+    # chunked oracle leg (pandas `null`/`double` for an all-null/empty chunk) agree.
+    strings |= deterministic_faker_pin_columns(config, table, first.schema)
     strings |= date_shift_pinned_columns(configured, first.schema, table=table)
     strings |= when_pinned_columns(config, first.schema, table=table, registry=registry)
     strings |= group_key_pinned_columns(configured, first.schema, table=table, written=written)

@@ -256,10 +256,18 @@ def test_4_positional_faker_over_a_declined_family_runs_the_oracle_leg(kind: str
 
 
 @pytest.mark.parametrize("typ", [pa.int64(), pa.uint8(), pa.bool_(), pa.float64()], ids=type_id)
-def test_4_deterministic_faker_over_a_non_string_source_still_declines(typ: pa.DataType) -> None:
+def test_4_deterministic_faker_over_an_ordinary_iterable_still_declines(typ: pa.DataType) -> None:
+    # C5c-ii opened bool/int/uint to deterministic Faker, but only from a producer that guarantees
+    # the stream schema. An ordinary list carries no guarantee, so it declines up-front; float is
+    # still an out-of-family decline. The trusted-producer admit case lives in the C5c-ii suite.
     table = int_table(typ, typed_array(typ, nulls=False))
     cols = [nd_faker(deterministic=True, namespace="ns_det"), passthrough("p")]
-    assert_declines_with_the_oracle_outcome(cols, table, "faker_source_type_not_string:f:")
+    reason = (
+        "faker_source_type_not_string:f:"
+        if typ == pa.float64()
+        else "faker_conversion_schema_not_guaranteed:f"
+    )
+    assert_declines_with_the_oracle_outcome(cols, table, reason)
 
 
 def test_4_the_admitted_set_is_exactly_the_planned_families() -> None:

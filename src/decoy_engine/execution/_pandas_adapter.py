@@ -333,7 +333,12 @@ class PandasExecutionAdapter:
                 )
 
         t1 = time.perf_counter()
-        outputs = {t: pa.Table.from_pandas(f, preserve_index=False) for t, f in frames.items()}
+        from decoy_engine.execution._faker_degenerate_pin import pin_frame_outputs
+
+        # C5c-ii option A: an all-null/empty admitted deterministic-Faker column over bool/int/uint
+        # is `string`, not pandas' inferred null/double, matching the native routes.
+        raw = {t: pa.Table.from_pandas(f, preserve_index=False) for t, f in frames.items()}
+        outputs = pin_frame_outputs(raw, plan, sources, relationship_graph=relationship_graph)
         conversion_ms += (time.perf_counter() - t1) * 1000.0
 
         return ExecutionResult(

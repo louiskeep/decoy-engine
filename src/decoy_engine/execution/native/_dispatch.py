@@ -60,6 +60,11 @@ from decoy_engine.execution.native._crypto_ext import (
     CryptoExtensionUnavailableError,
     load_compiled_crypto_kernel,
 )
+from decoy_engine.execution.native._faker_deterministic_admission import (
+    C5cIiAdmissionContext,
+    classify_deterministic_nonstring_faker,
+    is_effective_deterministic_faker_column,
+)
 from decoy_engine.execution.native._faker_positional_admission import chunked_positional_column
 from decoy_engine.execution.native._group_key_ext import (
     RawHexDerivationKernel,
@@ -338,6 +343,7 @@ def plan_native_route(
     adapter: Any = None,
     unconfigured_policy: Literal["warn", "error"] | None = None,
     registry: Any,
+    c5c_ii_admission: C5cIiAdmissionContext | None = None,
 ) -> NativePreflight:
     """The full PREFLIGHT decision for `table`: config/profile admission, then
     (when `first_schema` is given) the actual first-chunk coverage + faker
@@ -445,7 +451,22 @@ def plan_native_route(
                     config, table, node.strategy, node.column
                 ):
                     admitted = ftype in POSITIONAL_FAKER_SOURCE_TYPES
-                if not admitted:
+                if not admitted and is_effective_deterministic_faker_column(
+                    config, table, node.column
+                ):
+                    # C5c-ii: deterministic Faker over bool/int/uint keys from the source value,
+                    # so it admits only when the chunked stream guarantees the schema AND the
+                    # schema's metadata is in the closed allowlist (so the oracle's pandas
+                    # conversion is a provable identity on that value). Everything else declines.
+                    reason = classify_deterministic_nonstring_faker(
+                        node.column, source_type=ftype, admission=c5c_ii_admission
+                    )
+                    if reason is None:
+                        admitted = True
+                    else:
+                        decision = _downgrade_to_oracle(decision, reason)
+                        break
+                elif not admitted:
                     decision = _downgrade_to_oracle(
                         decision, f"faker_source_type_not_string:{node.column}:{ftype}"
                     )

@@ -23,33 +23,63 @@ a decline, never a raised error.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any, Final
 
 import pyarrow as pa
 
+from decoy_engine.execution._operator_registry import DETERMINISTIC_FAKER_SOURCE_TYPES
+
 __all__ = [
     "DETERMINISTIC_FAKER_SOURCE_TYPES",
+    "METADATA_NOT_ALLOWLISTED",
     "SCHEMA_NOT_GUARANTEED",
+    "C5cIiAdmissionContext",
+    "classify_deterministic_nonstring_faker",
+    "is_effective_deterministic_faker",
+    "is_effective_deterministic_faker_column",
     "metadata_shape_admits",
 ]
 
-# The NEW deterministic-Faker source families this slice opens: bool, signed and unsigned
-# integers. NOT float (``_canonicalize_source`` hard-errors on float) and NOT temporal
-# (Arrow -2**63 -> pandas NaT sentinel hazard, deferred). Explicit instances, not a
-# predicate: admission compares exact datatypes, per C5c-i precedent.
-DETERMINISTIC_FAKER_SOURCE_TYPES: Final = frozenset(
-    {
-        pa.int8(),
-        pa.int16(),
-        pa.int32(),
-        pa.int64(),
-        pa.uint8(),
-        pa.uint16(),
-        pa.uint32(),
-        pa.uint64(),
-        pa.bool_(),
-    }
-)
+
+@dataclass(frozen=True)
+class C5cIiAdmissionContext:
+    """The chunked stream guarantee threaded into `plan_native_route` for C5c-ii.
+
+    Present only when the input was a `_FixedSchemaChunks` producer AND the eager preflight's
+    first chunk matched its captured schema metadata-inclusive, so `source_schema` is the schema
+    the oracle will convert on every chunk. Absent (`None`) for every other caller, which cannot
+    obtain C5c-ii admission."""
+
+    source_schema: pa.Schema
+
+
+def is_effective_deterministic_faker(col_entry: Mapping[str, Any]) -> bool:
+    """True for a faker column on the deterministic draw path: `deterministic: true` or the
+    `allow_collisions: true` alias (which `_seed_envelope` compiles to deterministic REUSE).
+    Mutually exclusive with `is_positional_faker_entry` (non-deterministic reuse)."""
+    return col_entry.get("strategy") == "faker" and bool(
+        col_entry.get("deterministic") or col_entry.get("allow_collisions")
+    )
+
+
+def is_effective_deterministic_faker_column(
+    config: Mapping[str, Any], table: str, column: str
+) -> bool:
+    """`is_effective_deterministic_faker` for `column` of `table` in a whole job config."""
+    for table_cfg in config.get("tables") or ():
+        if not isinstance(table_cfg, Mapping) or table_cfg.get("name") != table:
+            continue
+        for col in table_cfg.get("columns") or ():
+            if isinstance(col, Mapping) and col.get("name") == column:
+                return is_effective_deterministic_faker(col)
+    return False
+
+
+# The NEW deterministic-Faker source families this slice opens (bool, signed and unsigned
+# integers; NOT float or temporal) live in the operator registry as the single source of truth and
+# are re-exported here for the admission callers.
 
 # Coded decline reason: the chunked stream carried no producer guarantee, so the schema the
 # oracle will actually convert per chunk cannot be proven equal to the admission schema.
@@ -240,3 +270,34 @@ def metadata_shape_admits(schema: pa.Schema, *, column: str, ordinal: int) -> bo
     # The target itself must be an admitted physical family (the table also lists float/string
     # for companions, so the per-entry check above does not by itself bound the target).
     return schema.field(ordinal).type in DETERMINISTIC_FAKER_SOURCE_TYPES
+
+
+def classify_deterministic_nonstring_faker(
+    column: str,
+    *,
+    source_type: pa.DataType,
+    admission: C5cIiAdmissionContext | None,
+) -> str | None:
+    """Decide C5c-ii native admission for one effective-deterministic Faker column over a
+    non-string source. Returns `None` to admit, else a coded decline reason.
+
+    The caller has already established the column is an effective-deterministic Faker whose
+    first-chunk source type is not string, that this node samples the original column (stock
+    adapter, scalar Faker writer, no earlier writer) and that `source_type` is the first chunk's
+    physical type. This gate adds the two conditions that prove the oracle's pandas conversion is
+    an identity on the source value: a chunked stream guarantee, and the closed metadata-shape
+    allowlist over the guaranteed schema. The string-output provider / pool check is the shared
+    `_resolve_admitted_pools` validator, not repeated here."""
+    if source_type not in DETERMINISTIC_FAKER_SOURCE_TYPES:
+        # float / temporal / decimal / ... keep the existing non-string decline reason.
+        return f"faker_source_type_not_string:{column}:{source_type}"
+    if admission is None:
+        return f"{SCHEMA_NOT_GUARANTEED}:{column}"
+    schema = admission.source_schema
+    names = schema.names
+    if column not in names or names.count(column) != 1:
+        return f"{METADATA_NOT_ALLOWLISTED}:{column}"
+    ordinal = names.index(column)
+    if not metadata_shape_admits(schema, column=column, ordinal=ordinal):
+        return f"{METADATA_NOT_ALLOWLISTED}:{column}"
+    return None

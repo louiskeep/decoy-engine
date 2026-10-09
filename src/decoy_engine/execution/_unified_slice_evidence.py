@@ -181,6 +181,7 @@ def reconstruct_source_shaped_output(
     masked_table: pa.Table,
     nodes: Iterable[PhysicalNode],
     when_selected: Mapping[str, np.ndarray[Any, np.dtype[np.bool_]]] | None = None,
+    degenerate_pin: frozenset[str] = frozenset(),
 ) -> dict[str, pa.Table]:
     # CHANGE 2 (hardened D9 fix): SOURCE-SHAPED reconstruction, not a round-
     # trip of the coordinator's own metadata-free output. `candidate.
@@ -221,5 +222,11 @@ def reconstruct_source_shaped_output(
             _write_back_when(frame, column, masked_col, _when_mask_of(node, when_selected))
             continue
         frame[column] = masked_col.to_pandas() if empty else masked_col.to_pylist()
-    outputs = {table: pa.Table.from_pandas(frame, preserve_index=False)}
-    return outputs
+    from decoy_engine.execution._faker_degenerate_pin import pin_degenerate_to_string
+
+    # C5c-ii option A: an all-null/empty admitted deterministic-Faker column over bool/int/uint is
+    # `string` here too, matching the full-frame oracle so the flag-on/flag-off D9 parity holds.
+    out = pin_degenerate_to_string(
+        pa.Table.from_pandas(frame, preserve_index=False), degenerate_pin
+    )
+    return {table: out}
