@@ -12,6 +12,7 @@ the CDF, or the key order fails here instead of being recomputed by the code und
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import Any
 
@@ -57,16 +58,16 @@ KAT_BUCKETS_NS = [50862, 705795, 680373, 622207, 733696, 472172, 22976, 460237]
 KAT_WEIGHTED_INDEX = [0, 1, 1, 1, 1, 0, 0, 0]
 
 
+@dataclass(frozen=True)
 class _Ctx:
-    job_seed = MK
-    mask_key = MK
-    row_offset = 0
-
-    def __init__(self, mask_key: bytes = MK, row_offset: int = 0) -> None:
-        self.mask_key = mask_key
-        self.row_offset = row_offset
-        self.row_errors: list[Any] = []
-        self.current_table = "t"
+    # A frozen dataclass so the `when` gate's `gated_context` (copy.copy + object.__setattr__) works on it,
+    # the same shape a real StrategyContext has for the fields these tests touch.
+    mask_key: bytes = MK
+    row_offset: int = 0
+    job_seed: bytes = MK
+    current_table: str = "t"
+    gate_positions: Any = None
+    row_errors: list[Any] = field(default_factory=list)
 
 
 def _seed(
@@ -344,7 +345,10 @@ class TestNestedWholeFrame:
 
 
 class TestHandlerFrameOrdinal:
-    def test_when_gate_keys_by_match_ordinal_and_is_reproducible(self) -> None:
+    def test_when_gate_keys_by_full_table_row_and_is_reproducible(self) -> None:
+        # C8-iii-d: a `when:`-selected row keys on its full-table row, so its value equals the
+        # same row's value in an ungated run (not the match ordinal). KAT_UNIFORM_NS[p] is the
+        # ungated value at row p.
         def go() -> pd.DataFrame:
             df = pd.DataFrame({"col": [f"v{i}" for i in range(6)], "keep": [0, 1, 0, 1, 1, 0]})
             plan = _seed({"categories": CATS}, when="keep == 1")
@@ -353,13 +357,49 @@ class TestHandlerFrameOrdinal:
 
         out = go()
         assert out.equals(go())
-        # Rows {1,3,4} are keyed as ordinals {0,1,2}; unmatched rows are untouched.
-        assert out["col"].tolist()[1] == CATS[KAT_UNIFORM_NS[0]]
-        assert out["col"].tolist()[3] == CATS[KAT_UNIFORM_NS[1]]
-        assert out["col"].tolist()[4] == CATS[KAT_UNIFORM_NS[2]]
+        # Rows {1,3,4} are keyed on their full-table rows {1,3,4}; unmatched rows are untouched.
+        assert out["col"].tolist()[1] == CATS[KAT_UNIFORM_NS[1]]
+        assert out["col"].tolist()[3] == CATS[KAT_UNIFORM_NS[3]]
+        assert out["col"].tolist()[4] == CATS[KAT_UNIFORM_NS[4]]
         assert [out["col"].tolist()[i] for i in (0, 2, 5)] == ["v0", "v2", "v5"]
 
+    def test_when_gate_selected_rows_equal_the_ungated_run(self) -> None:
+        # The core C8-iii-d invariance property, asserted directly against an ungated baseline.
+        src = [f"v{i}" for i in range(6)]
+        base_df = pd.DataFrame({"col": list(src)})
+        base, _ = CategoricalStrategyHandler().run(
+            base_df, "col", _seed({"categories": CATS}), _Ctx()
+        )
+        baseline = base["col"].tolist()
+        df = pd.DataFrame({"col": list(src), "keep": [0, 1, 0, 1, 1, 0]})
+        gated, _ = run_with_when_gate(
+            CategoricalStrategyHandler(),
+            df,
+            "col",
+            _seed({"categories": CATS}, when="keep == 1"),
+            _Ctx(),
+        )
+        got = gated["col"].tolist()
+        for i in (1, 3, 4):
+            assert got[i] == baseline[i]
+        for i in (0, 2, 5):
+            assert got[i] == src[i]
+
+    def test_when_gate_composes_with_a_nonzero_row_offset(self) -> None:
+        # row_offset + gate_positions: a chunk starting at global row 4, gate selects local rows
+        # {0,2}, so full-table rows 4 and 6. Values equal KAT_UNIFORM_NS at 4 and 6.
+        df = pd.DataFrame({"col": ["a", "b", "c", "d"], "keep": [1, 0, 1, 0]})
+        plan = _seed({"categories": CATS}, when="keep == 1")
+        out, _ = run_with_when_gate(
+            CategoricalStrategyHandler(), df, "col", plan, _Ctx(row_offset=4)
+        )
+        got = out["col"].tolist()
+        assert got[0] == CATS[KAT_UNIFORM_NS[4]]
+        assert got[2] == CATS[KAT_UNIFORM_NS[6]]
+        assert [got[1], got[3]] == ["b", "d"]
+
     def test_when_gate_with_nulls_in_the_matched_subset(self) -> None:
+        # Selected rows {0,1,3}; row 1 is null and stays null. Keys are full-table rows 0 and 3.
         df = pd.DataFrame({"col": ["a", None, "c", "d"], "keep": [1, 1, 0, 1]})
         plan = _seed({"categories": CATS}, when="keep == 1")
         out, _ = run_with_when_gate(CategoricalStrategyHandler(), df, "col", plan, _Ctx())
@@ -367,7 +407,7 @@ class TestHandlerFrameOrdinal:
         assert got[0] == CATS[KAT_UNIFORM_NS[0]]
         assert got[1] is None
         assert got[2] == "c"
-        assert got[3] == CATS[KAT_UNIFORM_NS[2]]
+        assert got[3] == CATS[KAT_UNIFORM_NS[3]]
 
     def test_orphan_remap_frame_keys_by_synthetic_frame_ordinal(self) -> None:
         pseed = _seed({"categories": CATS})

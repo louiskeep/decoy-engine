@@ -422,6 +422,11 @@ class NestedStrategyHandler:
         # that predate this field and do not define it.
         prior_outer_column = getattr(ctx, "nested_outer_column", "")
         object.__setattr__(ctx, "nested_outer_column", column)
+        # C8-iii-d: a positional child keys on its leaf ordinal, not the outer row. The outer
+        # gate's `gate_positions` must not reach the child, or it would miskey (or fail the
+        # length check) against the flattened leaves. Clear it for the child, restore after.
+        prior_gate_positions = getattr(ctx, "gate_positions", None)
+        object.__setattr__(ctx, "gate_positions", None)
         # `getattr` (like `nested_outer_column` above) tolerates a minimal ctx
         # double -- the perf/preview harness's `_FakeCtx` has no `row_errors`. Such
         # a ctx cannot collect child errors, so there is nothing to remap; a real
@@ -432,6 +437,7 @@ class NestedStrategyHandler:
             temp_df, child_warnings = child_handler.run(temp_df, temp_col, child_seed, ctx)
         finally:
             object.__setattr__(ctx, "nested_outer_column", prior_outer_column)
+            object.__setattr__(ctx, "gate_positions", prior_gate_positions)
         # Remap any RowError the child recorded from the flattened-leaf position
         # back to the real (outer row, outer column). The child ran on the
         # synthetic `_nested_leaves` column, so it recorded row_index = leaf

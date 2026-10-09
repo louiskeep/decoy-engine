@@ -9,7 +9,7 @@ The canonical bytes then equal those of the same value in a null-free int64 colu
 
 from __future__ import annotations
 
-import dataclasses
+import copy
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
 
@@ -95,15 +95,18 @@ def selected_positions(mask: pd.Series[Any]) -> np.ndarray[Any, Any]:
 def gated_context(
     ctx: StrategyContext, column: str, positions: np.ndarray[Any, Any]
 ) -> StrategyContext:
-    """A one-call copy of `ctx` that carries the gate's positions, when the handler needs them.
+    """A one-call copy of `ctx` carrying the gate's full-table row positions.
 
-    Only a column with exact Arrow values reads positions, so every other column keeps the
-    caller's own context object. The sinks stay shared with the original.
+    A positional strategy (categorical, REUSE Faker, windowed_date) keys each selected row on
+    its full-table row, so every gated call carries the positions (C8-iii-d). A deterministic
+    exact-integer Faker column also reads them, through `sampling_source`. The sinks stay shared.
     """
-    sources = getattr(ctx, "exact_int_sources", None)
-    if not sources or (ctx.current_table, column) not in sources:
-        return ctx
-    return dataclasses.replace(ctx, gate_positions=positions)
+    # A shallow copy with gate_positions set: the gated handler sees the positions, the caller's
+    # own context is untouched after it returns. `object.__setattr__` because StrategyContext is
+    # frozen (the same pattern nested dispatch uses); copy.copy keeps the sinks shared, as before.
+    gated = copy.copy(ctx)
+    object.__setattr__(gated, "gate_positions", positions)
+    return gated
 
 
 def sampling_source(

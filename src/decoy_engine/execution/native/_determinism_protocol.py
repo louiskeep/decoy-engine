@@ -636,7 +636,7 @@ DRAW_SITES: tuple[DrawSite, ...] = (
     DrawSite(
         draw_site_id="mask.faker",
         family="source_keyed_hmac",
-        call_site="execution/_strategies/_faker.py:119",
+        call_site="execution/_strategies/_faker.py:120",
         entropy_root="mask_key",
         seed_derivation=(
             "PoolSampler.sample(..., seed=ctx.mask_key) -> per-row "

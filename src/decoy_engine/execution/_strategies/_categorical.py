@@ -52,6 +52,7 @@ import pandas as pd
 from decoy_engine.determinism import derive_index
 from decoy_engine.execution._adapter import StrategyContext, provider_config_to_dict
 from decoy_engine.execution._errors import StrategyError
+from decoy_engine.execution._positional_keys import row_positions
 from decoy_engine.generation.pool._canonicalize import _canonicalize_source
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.kernel import encode_int
@@ -60,6 +61,8 @@ from decoy_engine.plan._types import ColumnSeed
 # Resolution for the deterministic-weighted CDF. 1_000_000 supports
 # weights down to 1e-6 with the precision the CDF rounding allows.
 _WEIGHTED_CDF_RES = 1_000_000
+
+_POSITION_DOMAIN_CODE = "categorical_position_out_of_domain"
 
 
 def _build_cdf(weights: list[float]) -> list[int]:
@@ -182,15 +185,28 @@ class CategoricalStrategyHandler:
                 message=f"column {column!r} uses {mode} categorical but has no namespace.",
             )
         cdf = _build_cdf(weights) if weights is not None else None
-        # Deterministic keys on the canonical source value; non-deterministic keys on
-        # the row ordinal in the frame this handler received.
-        row_offset = 0 if plan.deterministic else ctx.row_offset
+        # Deterministic keys on the canonical source value; non-deterministic keys on the
+        # full-table row number, so a `when:`-selected row draws the same as in an ungated run
+        # (C8-iii-d). `row_positions` is the single owner of that numbering; convert each scalar
+        # to a Python int because `encode_int` needs int operations a numpy uint64 lacks.
+        positions = (
+            None
+            if plan.deterministic
+            else row_positions(
+                ctx.row_offset,
+                len(source),
+                getattr(ctx, "gate_positions", None),
+                code=_POSITION_DOMAIN_CODE,
+            )
+        )
         out: list[object] = []
         for i, value in enumerate(source):
             if na_mask[i]:
                 out.append(None)
                 continue
-            key = _canonicalize_source(value) if plan.deterministic else encode_int(row_offset + i)
+            key = (
+                _canonicalize_source(value) if plan.deterministic else encode_int(int(positions[i]))  # type: ignore[index]
+            )
             if cdf is None:
                 # Uniform path -- V1 byte identity for the deterministic mode.
                 out.append(

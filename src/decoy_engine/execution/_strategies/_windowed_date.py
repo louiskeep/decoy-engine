@@ -30,6 +30,7 @@ from __future__ import annotations
 import pandas as pd
 
 from decoy_engine.execution._adapter import StrategyContext, provider_config_to_dict
+from decoy_engine.execution._positional_keys import row_positions
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.plan._types import ColumnSeed
 from decoy_engine.transforms.windowed_date import WindowedDateConfig, apply_windowed_date
@@ -56,13 +57,27 @@ class WindowedDateStrategyHandler:
         cfg_dict = provider_config_to_dict(plan.provider_config)
         config = WindowedDateConfig.from_dict(cfg_dict)
         namespace = f"windowed_date/{column}"
-        # Phase 4 slice 1 (DGRN): `ctx.row_offset` is the durable global row
-        # number of this call's first row (0 on every full-frame / non-chunked
-        # call, the default). Forwarding it here is what makes a chunked call
-        # enumerate from the row's true position instead of restarting at 0
-        # each chunk.
+        # Phase 4 slice 1 (DGRN): `ctx.row_offset` is the durable global row number of this
+        # call's first row (0 on every full-frame / non-chunked call). C8-iii-d: under a `when:`
+        # gate the rows are not contiguous, so pass each row's full-table position as a Python
+        # int (windowed_date serializes the position with `.to_bytes`). No gate keeps the
+        # contiguous `row_offset` form, byte-unchanged.
+        positions = [
+            int(p)
+            for p in row_positions(
+                ctx.row_offset,
+                len(df),
+                ctx.gate_positions,
+                code="windowed_date_position_out_of_domain",
+            )
+        ]
         date_list = apply_windowed_date(
-            config, df, seed=ctx.mask_key, namespace=namespace, row_offset=ctx.row_offset
+            config,
+            df,
+            seed=ctx.mask_key,
+            namespace=namespace,
+            row_offset=ctx.row_offset,
+            positions=positions,
         )
         df[column] = date_list
         return df, []

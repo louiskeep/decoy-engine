@@ -365,6 +365,11 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         "src/decoy_engine/execution/_positional_keys.py",
         "src/decoy_engine/execution/_strategies/_faker.py",
         "src/decoy_engine/execution/_strategies/_faker_positional.py",
+        # C8-iii-d: positional draws under `when:` key on the full-table row. The nested handler
+        # clears the outer gate positions for its child; windowed_date takes explicit positions.
+        # Both import nothing from execution.physical.
+        "src/decoy_engine/execution/_strategies/_nested.py",
+        "src/decoy_engine/execution/_strategies/_windowed_date.py",
         # C5b-i: the `mask.faker_nondeterministic` draw site and its provider, placed in the
         # gen_pool siblings because the capped protocol/provider modules cannot grow. Neither
         # imports `execution.physical`. The shared reference index kernel derives its HKDF key
@@ -520,6 +525,9 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         # the output-type rule and `_chunk_masking.py`. Neither imports `execution.physical`.
         "src/decoy_engine/execution/_chunked_categorical.py",
         "src/decoy_engine/execution/native/_categorical_prepared.py",
+        # C8-iii-d: a comment-only refresh of the windowed_date + when chunked-decline rationale
+        # (the oracle now keys on full-table rows). No code change; imports no execution.physical.
+        "src/decoy_engine/execution/_chunked_dgrn.py",
         # C3 (group_key on the chunked route): the oracle gate's docstring (`_chunked_group_key.py`),
         # the raw-hex operator's `derive_calls` spy and empty short-circuit
         # (`_group_key_kernel.py`) and the new config-level admission gate
@@ -537,9 +545,8 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         # bucket_perturb date_format guard: the oracle handler and the nested handler validate the
         # format before any early return, and the out-of-core kernel validates before its autodetect
         # check. All three call the shared rule in `transforms/bucket_perturb.py` and import nothing
-        # from `execution.physical`.
+        # from `execution.physical`. (`_strategies/_nested.py` is permitted above.)
         "src/decoy_engine/execution/_strategies/_bucket_perturb.py",
-        "src/decoy_engine/execution/_strategies/_nested.py",
         "src/decoy_engine/execution/out_of_core/_mask_group_c.py",
     }
     unexpected = [

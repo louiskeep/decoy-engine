@@ -657,3 +657,52 @@ class TestMixedStrategyFixture:
             )
         ).combine_chunks()
         assert chunked.to_pylist() == full.to_pylist()
+
+
+class TestC8IiiDFullTablePositions:
+    """C8-iii-d: a `when:`-selected row seeds windowed_date on its full-table row.
+
+    Tested at the transform level: `apply_windowed_date(positions=[...])` returns, for each
+    selected row, exactly what the ungated full-frame run returns at that row.
+    """
+
+    def test_positions_select_full_table_rows(self) -> None:
+        cfg = WindowedDateConfig.from_dict(
+            {"anchor": "start_date", "min_days": -10, "max_days": 40, "distribution": "uniform"}
+        )
+        seed = (0xABCD).to_bytes(8, "big")
+        ns = "windowed_date/end_date"
+        full = _anchor_frame(20)
+        full_result = apply_windowed_date(cfg, full, seed=seed, namespace=ns)
+
+        rows = [1, 4, 7, 19]
+        sub = full.iloc[rows].reset_index(drop=True)
+        sub_result = apply_windowed_date(cfg, sub, seed=seed, namespace=ns, positions=rows)
+        assert sub_result == [full_result[r] for r in rows]
+
+    def test_null_anchor_split(self) -> None:
+        # A full run with a null anchor raises; a gate that excludes the null row succeeds and
+        # matches the full-frame result at the surviving rows.
+        cfg = WindowedDateConfig.from_dict({"anchor": "start_date", "max_days": 5})
+        seed = (0x1234).to_bytes(8, "big")
+        ns = "windowed_date/end_date"
+        base = _anchor_frame(6)
+        valid_rows = [0, 1, 3, 4, 5]
+        valid_result = apply_windowed_date(
+            cfg,
+            base.iloc[valid_rows].reset_index(drop=True),
+            seed=seed,
+            namespace=ns,
+            positions=valid_rows,
+        )
+
+        with_null = base.copy()
+        with_null.loc[2, "start_date"] = None
+        with pytest.raises(ValueError):
+            apply_windowed_date(cfg, with_null, seed=seed, namespace=ns)
+
+        surviving = with_null.iloc[valid_rows].reset_index(drop=True)
+        survived_result = apply_windowed_date(
+            cfg, surviving, seed=seed, namespace=ns, positions=valid_rows
+        )
+        assert survived_result == valid_result

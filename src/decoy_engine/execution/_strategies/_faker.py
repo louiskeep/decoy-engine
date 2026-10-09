@@ -105,6 +105,7 @@ class FakerStrategyHandler:
                 job_seed=ctx.job_seed,
                 namespace=selection_namespace,
                 pool_size=pool.size,
+                gate_positions=getattr(ctx, "gate_positions", None),
             )
             chosen = pool.values[idx]
             df[column] = [None if na_mask[i] else chosen[i] for i in range(n)]
