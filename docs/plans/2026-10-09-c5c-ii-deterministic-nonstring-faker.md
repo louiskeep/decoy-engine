@@ -1,6 +1,6 @@
 # C5c-ii: deterministic Faker over non-string sources on the native routes
 
-Status: plan (rev 2, folds Codex plan-gate round 1). Phase C, Rust-engine program.
+Status: plan (rev 3, folds Codex plan-gate round 2). Phase C, Rust-engine program.
 Branch `feat/c5c-ii-deterministic-nonstring-faker` off engine main `69a7741f`.
 Follows C5c-i (#220, positional Faker over non-string) and C5c-a (#221, oracle
 sampling-boundary fix for deterministic Faker over nullable ints).
@@ -8,13 +8,23 @@ sampling-boundary fix for deterministic Faker over nullable ints).
 Rules consulted: 00-universal, risk-and-exceptions, development-loop, feature-dev, testing,
 architecture, api-and-compatibility, performance, documentation.
 
-Rev 2 (Codex round 1, REVISE, option A upheld): drop tz-timestamps (sentinel hazard, H3); the
-pin classifier uses config AND the Arrow source schema, not config alone (H1); the degenerate
-string retype is applied as a scoped step AFTER `pa.Table.from_pandas`, which otherwise erases it
-(H2); chunked admission is defined against the oracle's effective sampling input, not a type-family
-copy of the unified guard (H4); determinism is effective (includes the `allow_collisions` alias,
-M6); real pool-content validation for the new pinned set (M7); the nullable-int matrix and the
-acceptance contract are made exact (M5, M8).
+Rev 2 (Codex round 1) folded H1/H2/H3/M5/M6/M7 and most of M8. Rev 3 (Codex round 2, REVISE,
+option A upheld; Cam 2026-10-09 "push conservative rev-3") resolves the two remaining HIGHs, both
+on the chunked-route admission, by making admission CONSERVATIVE and UP-FRONT:
+- **r2-H1 (metadata-driven keys):** config + an Arrow field cannot prove the oracle and the kernel
+  derive the same draw key, because pandas/extension metadata reconstructs different values (an
+  `int64` tagged `bool[pyarrow]` -> bools; `Float64` -> floats). Rev 3 replaces "decline
+  key-changing conversions" with a CONVERSION-FREE ALLOWLIST: admit only a plain physical
+  int/uint/bool field with no reconstructing metadata (plus the C5c-a exact-integer null case);
+  decline everything else to the oracle.
+- **r2-H2 (per-chunk route commitment):** the dispatcher picks one route before yielding any chunk,
+  so "decline a later chunk" is not expressible. Rev 3 decides admission ONCE from the column's
+  fixed stream field, before any chunk, so there is no later-chunk transition.
+- **r2-M3:** the string pin fires only on a genuinely degenerate output (`null_count == num_rows`
+  or empty) AND excludes `when:`-bearing columns, scoped to the effective Faker work node.
+- **r2-M4:** the C5c-i decline assertions that now flip to admit are enumerated; evidence is
+  compared semantically with the expected native-vs-oracle activation difference asserted
+  separately, not by literal whole-evidence equality.
 
 ## 1. Why / scope
 
@@ -66,17 +76,29 @@ The admitted datatype families are listed as explicit Arrow datatype instances i
 
 ## 4. Routes
 
-### 4.1 Chunked native (admit against the oracle's effective sampling input, H4)
+### 4.1 Chunked native — conversion-free up-front allowlist (resolves r2-H1 + r2-H2)
 
-C5c-a supplies exact Arrow integers to the sampler ONLY when the frame column widened to `float64`
-around nulls; other metadata-driven conversions (e.g. a `StringDtype`-tagged int column) remain
-authoritative oracle behavior and would change the derived keys (probe: raw `int64 [1,2]` keys
-`[807,524]` vs the `StringDtype`-reconstructed `["1","2"]` keys `[682,377]`). So chunked admission
-is defined against the **oracle's effective per-chunk sampling input**: admit only when the
-compiled kernel's key for each cell equals the oracle's key, which holds for the C5c-a exact-integer
-exception and plain null-free int/uint/bool, and decline any conversion that changes canonical keys
-or missingness. The check reads raw per-chunk metadata BEFORE normalization, on every chunk
-(including later ones), not a copy of the unified round-trip guard.
+Admission is decided ONCE from the column's stream field, before any chunk is yielded (the
+dispatcher commits to a route up-front; there is no later-chunk decline, r2-H2). A deterministic
+Faker column is chunk-admissible iff its field is CONVERSION-FREE, meaning the oracle's per-chunk
+`to_pandas` sampling input is provably the identical physical value the native kernel reads:
+
+- physical Arrow type is a plain `bool`, `int8..int64`, or `uint8..uint64`, AND
+- the field carries NO reconstructing metadata: no Arrow extension type, and no pandas field
+  metadata (`b'pandas'`) that declares a different logical dtype (no `bool[pyarrow]`, `Float64`,
+  `Int64`/`UInt64` extension, `StringDtype`, category, etc.). A plain physical int/uint/bool with
+  absent or physically-matching pandas metadata is admitted; anything else is NOT.
+
+The one allowed conversion is the C5c-a case: an integer column with nulls that pandas widens to
+`float64`, where C5c-a already supplies the exact integers to BOTH the oracle sampler and the
+kernel, so keys match. That case is detectable up-front (int physical type, `null_count > 0`).
+
+Everything outside this allowlist (any extension/reconstructing metadata, any non-admitted family)
+DECLINES to the oracle, unchanged from today. The allowlist is conservative by construction: an
+unknown or mismatched metadata shape declines rather than guessing key-equivalence (probe r2-H1:
+`int64` tagged `bool[pyarrow]` gives native keys `[194,193]` vs oracle `[388,388]` — exactly the
+kind of column this allowlist refuses). If the stream cannot guarantee one fixed field for the
+column across chunks, the column declines (no mixed-metadata stream reaches the kernel).
 
 ### 4.2 Unified full-frame (keep the guard; exact nullable-int matrix, M5)
 
@@ -92,13 +114,21 @@ The pin cannot be set only in assembly: the unified reconstruction does
 `frame[col] = masked_col.to_pylist()` then `pa.Table.from_pandas(frame)`
 (`_unified_slice_evidence.py:214-217`), and `from_pandas` infers `null`/`double` from the Python
 objects, erasing an Arrow `string` pin (probe-confirmed). So the degenerate retype is a scoped step
-applied AFTER `from_pandas`, re-casting exactly the admitted-classifier columns whose output came
-back `null`/non-`string` to `string`, at all three from_pandas sites:
-`_unified_slice_evidence.py:217`, `_pandas_adapter.py:336`, `_sequential.py:471`. Plus the two
-`_chunked_schema_rule` string-pin sites for the chunked legs, and the oracle degenerate pin so the
-chunked oracle leg matches native. The working frame's dtype during execution is NOT changed (only
-the final output construction), so other readers are untouched. Matching pandas-string metadata is
-defined for the retyped columns.
+applied AFTER `from_pandas`, at all three from_pandas sites (`_unified_slice_evidence.py:217`,
+`_pandas_adapter.py:336`, `_sequential.py:471`), plus the two `_chunked_schema_rule` string-pin
+sites and the oracle degenerate pin so the chunked oracle leg matches native.
+
+**The retype fires only on a genuinely degenerate output (r2-M3):** a column is retyped to `string`
+iff it is an admitted deterministic-Faker column AND its output `null_count == num_rows` (all-null)
+or the table is empty, AND it is NOT `when:`-bearing (a `when:` predicate can leave value-bearing
+cells, so such a column is never pinned — probe r2-M3: a zero-selected `when:` over int `[7,8]`
+must stay `[7,8]`, not `["7","8"]`). Pin membership is the effective Faker work node, excluding
+FK-resolution overrides or other writers whose output the Faker pool does not guarantee. The
+source-schema facts the classifier needs are captured BEFORE sequential execution deletes `src`.
+A cast alone does not fix pandas metadata (probe: empty keeps `pandas_type: float64`, all-null
+keeps `pandas_type: empty`), so the retype explicitly sets the string pandas metadata for exactly
+the retyped columns and leaves unrelated metadata untouched. The working frame's dtype during
+execution is NOT changed (only final output construction), so other readers are untouched.
 
 ### 4.4 What does NOT change (C5c-a lesson)
 
@@ -145,15 +175,29 @@ roadmap row.
 - **Key/boundary:** compiled == reference selection at integer boundaries incl. values `> 2**53`
   and unsigned `> 2**63`; the H4 key-equivalence declines (StringDtype-tagged int) decline.
 - **Cross-route:** expected route differences pinned per ROUTE-OUTPUT-CONTRACT, not asserted equal
-  whole-table. **Regressions:** C5c-i and C5c-a outcomes byte-identical. **Mutation** on the
-  classifier (determinism alias, source-family, pool validation), the pin-set membership, and the
+  whole-table.
+- **Regressions with explicit exceptions (r2-M4):** C5c-i POSITIONAL outputs and C5c-a deterministic
+  DRAW VALUES stay byte-identical. The C5c-i assertions that a deterministic numeric column DECLINES
+  now flip to admit and are enumerated and updated (`tests/native/test_c5c_i_chunked_positional.py:259`,
+  `tests/physical/test_c5c_i_unified_positional.py:156`); the excluded-family / string-source /
+  positional / `when:` decline controls are preserved. Evidence is compared SEMANTICALLY (values,
+  warnings, row errors, schema/metadata), with the expected native-vs-oracle backend/activation
+  difference asserted separately, not by literal whole-evidence equality.
+- **Conversion-free allowlist controls (r2-H1):** a plain int/uint/bool admits and activates native;
+  a column tagged `bool[pyarrow]`, `Float64`/`Int64` extension, `StringDtype`, category, or any
+  non-physically-matching pandas metadata DECLINES to the oracle (each a pinned case). The C5c-a
+  null-int float64-widen case admits.
+- **Mutation** on the classifier (determinism alias, source-family, the conversion-free metadata
+  check), the pin-set membership (degenerate `null_count==num_rows` + `when:` exclusion), and the
   degenerate retype at each from_pandas site.
 
-## 8. Open points for the Codex plan gate (round 2)
+## 8. Open points for the Codex plan gate (round 3)
 
-- Confirm the post-`from_pandas` retype is the right mechanism at all three sites vs carrying an
-  authoritative dtype into reconstruction (the empty-table path already carries one via
-  `_assemble_column`; is the all-null-in-nonempty-table case covered by the same seam?).
-- Confirm the chunked effective-sampling-input admission (H4) is checkable from per-chunk metadata
-  alone, without materializing the oracle's conversion.
-- Confirm bool/int/uint is the right rev-2 scope and timestamps are cleanly deferred.
+- Confirm the conversion-free allowlist (§4.1) is decidable from the column's stream field alone
+  and that a plain physical int/uint/bool with absent-or-physically-matching pandas metadata is the
+  complete safe set (plus the C5c-a null-int widen case); i.e. nothing outside it can make the
+  oracle and the kernel disagree on a key.
+- Confirm the up-front single-route decision fully retires the later-chunk-decline problem (r2-H2),
+  given the stream carries one fixed field per column.
+- Confirm the degenerate-only + `when:`-excluded pin (§4.3) plus the explicit pandas-metadata set
+  is complete, and that the retype touches only genuinely all-null/empty admitted columns.
