@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import random
 import resource
 import statistics
@@ -39,7 +40,15 @@ import subprocess
 import sys
 import time
 
-import pyarrow as pa
+# Run from the repo tree even under a venv whose editable `decoy_engine` points at
+# another checkout (the companion venv's `.pth` targets the main checkout, not this
+# worktree). Without this a standalone `python scripts/bench_text_redact.py` imports
+# the wrong `decoy_engine`; under pytest the pyproject pythonpath already handles it.
+_REPO_SRC = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src")
+if os.path.isdir(_REPO_SRC) and _REPO_SRC not in sys.path:
+    sys.path.insert(0, _REPO_SRC)
+
+import pyarrow as pa  # noqa: E402 -- after the sys.path shim above
 
 LATENCY_FLOOR = 1.05
 RSS_BUDGET = 1.20

@@ -95,30 +95,47 @@ baseline (C6c-i Python path) vs new (rev-3) in isolated subprocesses. Latency fl
 median_new <= 1.05 x median_baseline and peak-RSS budget peak_rss_new <= 1.20 x peak_rss_baseline
 are enforced every row; the R-representative speedup is reported, not gated.
 
-Measured on the dev box (2026-10-09) at 100,000 rows per matrix row, 7 reps + 1 warmup. The
-committed script defaults to the plan's 1,000,000 rows; the ratios are scale-stable and the
-absolute times extrapolate linearly (the pandas path is ~32k rows/s single-thread), so a 1M
-R-representative run is ~95s baseline / ~45s new.
+Measured at the plan's pinned 1,000,000 rows per matrix row (3 reps + 1 warmup, orchestrator
+re-measurement 2026-10-09), after the RSS fix below. A 100,000-row x 7-reps run was the first
+pass; the 1M run is the acceptance measurement per plan 7.7.
 
 ```
 row                base med(s)  new med(s)  speedup  lat<=1.05  rss<=1.20   hit%
-R-representative        9.4734      4.5024    2.10x         OK         OK  95.0%
-R-all-ineligible        9.8416      9.7017    1.01x         OK         OK   0.0%
-R-python-only           2.9726      3.0593    0.97x         OK         OK  95.0%
-R-short-no-match        0.3796      0.3130    1.21x         OK         OK 100.0%
+R-representative       95.5917     45.6602    2.09x         OK         OK  95.0%
+R-all-ineligible       98.9710     99.1146    1.00x         OK         OK   0.0%
+R-python-only          29.9176     31.3911    0.95x         OK         OK  95.0%
+R-short-no-match        3.8389      3.2329    1.19x         OK         OK 100.0%
 ```
 
-- Speedup (reported): R-representative is 2.10x faster at a 95% ASCII-cell hit rate (the eight
-  detectors move off the Python per-cell loop for 95% of cells). R-short-no-match is 1.21x.
-- Latency floor (gated, every row): the worst row is R-python-only at new/base = 1.029 (<= 1.05);
-  its ~3% cost is the empty Rust call plus the merge on cells where the kernel runs zero supported
-  detectors. R-all-ineligible is 0.986 (routing overhead is noise against the Python work). All
-  rows pass.
+- Speedup (reported): R-representative is 2.09x faster at a 95% ASCII-cell hit rate.
+- Latency floor (gated, every row): worst is R-python-only at new/base = 1.049 (<= 1.05); its cost
+  is the empty Rust call plus the merge on cells where the kernel runs zero supported detectors.
+  All rows pass.
 - Peak-RSS budget (gated, every row): all rows within 1.20x of baseline.
+
+**RSS regression found at 1M and fixed (orchestrator, 2026-10-09).** The first 1M run FAILED the
+RSS budget on R-representative and R-short-no-match (both 1.283x > 1.20x). Root cause: the wrapper
+called `kernel.text_redact_candidates(texts, ...)` on the whole column at once and held every
+cell's candidate list resident. text_redact is admitted on the unified full-frame route (not only
+the chunked route), so production can hand it a whole large column, and the overshoot scaled with
+rows (100k was within budget, 1M was not). Fix: `native_text_redact` now calls the kernel in
+fixed sub-batches of `_TEXT_REDACT_KERNEL_BATCH = 65_536` cells, so only one batch of candidate
+lists is resident. Per-cell results are unchanged (the 178-test suite incl. the raw-candidate
+differential re-passed byte-identical); the 1M re-run above is within budget on every row.
+
 - Fallback is detected by execution assertion (test 7.6), never by timing. A `@pytest.mark.perf`
-  test (`test_representative_workload_uses_the_rust_path...`) asserts the native path is materially
-  faster than a forced-Python run on a representative fixture, so a silent drop back to Python on
-  the default workload fails in CI.
+  test asserts the native path is materially faster than a forced-Python run, so a silent drop
+  back to Python on the default workload fails in CI.
+
+## Deferred follow-ups (gate LOWs, non-blocking)
+
+- **dennis LOW (perf scale): CLOSED.** The matrix is now measured at the pinned 1,000,000 rows
+  (above), not extrapolated from 100k.
+- **Codex final LOW (u32 offset overflow): deferred, not reachable.** `text_redact.rs` casts match
+  offsets `usize -> u32`; a single cell longer than 2^32 code points would wrap. Not reachable in
+  production: Arrow `string` caps a single value below 2^31 bytes, and a multi-GiB clinical cell
+  does not occur. Pre-GA follow-up: preserve `usize`/`u64` offsets through the candidate vector and
+  the PyO3 conversion. Tracked here and in the roadmap.
 
 Mutation coverage (targets from plan 7.6), by the tests that kill each class:
 - routing predicate: `test_the_ascii_safe_predicate_marks_the_boundary`,

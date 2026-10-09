@@ -125,6 +125,11 @@ def native_truncate(
     return truncate_array(array, length=length, keep=keep, mask_char=mask_char)
 
 
+# Cells per kernel call: bounds the resident candidate-list memory independent of column size.
+# Large enough that per-call overhead is negligible against the per-cell scan cost.
+_TEXT_REDACT_KERNEL_BATCH = 65_536
+
+
 def native_text_redact(
     array: pa.Array | pa.ChunkedArray,
     *,
@@ -165,18 +170,24 @@ def native_text_redact(
     from decoy_engine.execution.native._text_redact_kernel import CATALOG_VERSION
 
     rust_ids = requested_rust_ids(detector_ids)
-    per_cell = kernel.text_redact_candidates(texts, rust_ids, CATALOG_VERSION)
+    # Call the kernel in fixed sub-batches so only one batch of candidate lists is resident at
+    # once, not the whole column's. The full-frame route hands this the entire column (text_redact
+    # is admitted there, not only chunked), so an unbatched call grows peak RSS with row count and
+    # breaks the C6c-ii RSS budget on large text columns; per-cell results are unchanged.
     routed: list[str | None] = []
-    for text, cands in zip(texts, per_cell, strict=True):
-        if text is None:
-            routed.append(None)
-            continue
-        if cands is None:
-            # Ineligible cell: the full Python path, byte-identical to the oracle.
-            spans = iter_spans(text, detector_ids, extra_spans=None)
-        else:
-            spans = merge_text_redact_spans(text, detector_ids, rust_candidates=cands)
-        routed.append(text if not spans else _splice(text, spans, token, label_token))
+    for base in range(0, len(texts), _TEXT_REDACT_KERNEL_BATCH):
+        batch = texts[base : base + _TEXT_REDACT_KERNEL_BATCH]
+        per_cell = kernel.text_redact_candidates(batch, rust_ids, CATALOG_VERSION)
+        for text, cands in zip(batch, per_cell, strict=True):
+            if text is None:
+                routed.append(None)
+                continue
+            if cands is None:
+                # Ineligible cell: the full Python path, byte-identical to the oracle.
+                spans = iter_spans(text, detector_ids, extra_spans=None)
+            else:
+                spans = merge_text_redact_spans(text, detector_ids, rust_candidates=cands)
+            routed.append(text if not spans else _splice(text, spans, token, label_token))
     return pa.array(routed, type=pa.string())
 
 
