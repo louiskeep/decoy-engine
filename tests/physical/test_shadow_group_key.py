@@ -669,7 +669,7 @@ def test_per_operator_gate_hash_stays_native_when_only_raw_hex_missing(
     monkeypatch.setattr(
         adm,
         "native_kernel_availability",
-        lambda: KernelAvailability(crypto=True, index=True, raw_hex=False),
+        lambda: KernelAvailability(crypto=True, index=True, raw_hex=False, fpe=True),
     )
 
     # Separate dirs: `_run_both` writes a read-only fixture, so the two runs

@@ -305,14 +305,14 @@ def test_admitted_set_is_exactly_the_native_kernels_a_bare_config_accepts() -> N
     # The drift sentry the plan's Failure-modes section names: run every
     # live mask strategy through native_route_eligibility with a config
     # each gate has no objection to and an admitted input type, then assert
-    # the ACCEPTED set is exactly the four strategies with a compiled
-    # native kernel this phase. A bare capability check (row-local, static
-    # output type) admits several strategies with no kernel behind them yet
-    # (fpe, date_shift, bucket_perturb, group_key, code_set, text_mask,
-    # categorical, text_redact, geo_generalize, bucketize); this is the test
-    # that would have caught that widening, and fails again the day a new
-    # strategy gains kernel-friendly capabilities without a kernel landing
-    # for it, or a kernel is pulled without eligibility catching up.
+    # the ACCEPTED set is exactly the strategies with a compiled native
+    # kernel this coarse config/capability query admits. A bare capability
+    # check (row-local, static output type) still admits several strategies
+    # with no kernel behind them yet (date_shift, bucket_perturb, group_key,
+    # code_set, text_mask, categorical, geo_generalize, bucketize); this is
+    # the test that would have caught that widening, and fails again the day
+    # a new strategy gains kernel-friendly capabilities without a kernel
+    # landing for it, or a kernel is pulled without eligibility catching up.
     profile = _profile("c", "int64")
     accepted: set[str] = set()
     for strategy in SCALAR_HANDLERS:
@@ -322,8 +322,10 @@ def test_admitted_set_is_exactly_the_native_kernels_a_bare_config_accepts() -> N
         result = native_route_eligibility(_config(col), table="t", profile=profile)
         if result.accepted:
             accepted.add(strategy)
-    # text_redact joined in C6c-i: its plain config needs no field this bare column omits.
-    assert accepted == {"passthrough", "redact", "truncate", "hash", "text_redact"}
+    # text_redact joined in C6c-i and fpe in C6a: like text_redact, fpe's source-type gate lives
+    # on the production routes, not in this coarse config/capability query, so a bare fpe config
+    # over any source is accepted here (a non-string source still declines in production).
+    assert accepted == {"passthrough", "redact", "truncate", "hash", "text_redact", "fpe"}
 
 
 # ---------------------------------------------------------------------------

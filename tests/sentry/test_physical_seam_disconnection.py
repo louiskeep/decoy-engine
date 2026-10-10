@@ -562,6 +562,16 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         # FPE reference kernel: `_crypto_reference.py` keeps an empty string as missing data like
         # the strategy does. It imports nothing from `execution.physical`.
         "src/decoy_engine/execution/native/_crypto_reference.py",
+        # C6a (FPE on the native routes): the crypto-contract + FF1 loader + companion probe +
+        # the route-shared kill/warnings adapter. `_crypto_ext.py` gains the abi-3 tag and the
+        # FPE_KAT; `_fpe_ext.py` loads the compiled FF1 kernel and guards a None namespace;
+        # `_companion_status.py` adds the fpe KernelAvailability field + probe; `_fpe_route.py`
+        # is new (the fail-closed StrategyError + Python residual-risk warnings both routes share).
+        # None imports `execution.physical`; the import-direction sweeps above still apply.
+        "src/decoy_engine/execution/native/_crypto_ext.py",
+        "src/decoy_engine/execution/native/_fpe_ext.py",
+        "src/decoy_engine/execution/native/_companion_status.py",
+        "src/decoy_engine/execution/native/_fpe_route.py",
         # bucket_perturb date_format guard: the oracle handler and the nested handler validate the
         # format before any early return, and the out-of-core kernel validates before its autodetect
         # check. All three call the shared rule in `transforms/bucket_perturb.py` and import nothing

@@ -160,6 +160,7 @@ STRATEGY_FIXTURES: dict[str, tuple[list[dict[str, Any]], dict[str, pa.Array]]] =
 NATIVE_KEYS = frozenset(
     {
         "hash",
+        "fpe",
         "redact",
         "truncate",
         "text_redact",
@@ -174,6 +175,7 @@ NATIVE_KEYS = frozenset(
 NEEDS_COMPANION_KEYS = frozenset(
     {
         "hash",
+        "fpe",
         "faker:deterministic_native",
         "categorical:deterministic",
         "bucket_perturb:explicit_format",
@@ -187,6 +189,7 @@ NEEDS_COMPANION_KEYS = frozenset(
 STRING_OUTPUT_KEYS = frozenset(
     {
         "hash",
+        "fpe",
         "redact",
         "truncate",
         "text_redact",
@@ -198,6 +201,7 @@ STRING_OUTPUT_KEYS = frozenset(
 # Planned backend of the column under test.
 PLANNED_BACKEND: dict[str, str] = {
     "hash": "rust_companion",
+    "fpe": "rust_companion",
     "redact": "arrow_python",
     "truncate": "arrow_python",
     "text_redact": "arrow_python",
@@ -213,7 +217,6 @@ PLANNED_BACKEND: dict[str, str] = {
 }
 # B1's refusal reason (prefix) for the keys the native route does not run, as observed on main.
 REFUSAL: dict[str, str] = {
-    "fpe": "fallback_policy_not_native:val",
     "text_mask": "fallback_policy_not_native:val",
     "bucketize": "fallback_policy_not_native:val",
     "top_code": "fallback_policy_not_native:val",

@@ -195,20 +195,20 @@ def test_compiled_kernel_executed_flag_proves_the_compiled_kernel_ran() -> None:
 
 def test_non_admitted_column_reroutes_the_whole_table_not_just_that_column() -> None:
     config = _all_admitted_config()
+    # A deterministic categorical with NUMERIC categories is never native-admissible (the native
+    # categorical domain is all-string categories), so it reroutes the whole table to the oracle.
     config["tables"][0]["columns"].append(
         {
-            "name": "fpe_col",
-            "strategy": "fpe",
+            "name": "force_col",
+            "strategy": "categorical",
             "deterministic": True,
-            "namespace": "ns_fpe",
-            "provider_config": {"charset": "digits"},
+            "namespace": "force/force_col",
+            "provider_config": {"categories": [1, 2, 3]},
         }
     )
     source = _all_admitted_source().append_column(
-        # 6+ digits: clears the FF1 minimum admissible domain for radix 10
-        # (radix**length >= 1,000,000 needs length >= 6).
-        "fpe_col",
-        pa.array(["123456", "678905", "000015", "111112"]),
+        "force_col",
+        pa.array(["1", "2", "3", "1"]),
     )
     sink: list[NativeRouteEvidence] = []
     list(
@@ -223,7 +223,7 @@ def test_non_admitted_column_reroutes_the_whole_table_not_just_that_column() -> 
     )
     evidence = sink[0]
     assert evidence.native_admitted is False
-    assert "fallback_policy_not_native:fpe_col" in evidence.reroute_reason
+    assert "fallback_policy_not_native:force_col" in evidence.reroute_reason
     # Whole-table: every scalar column (including the admitted ones) is
     # tagged "oracle", never a per-column mix, and no kernel ran.
     assert evidence.node_routes != ()
