@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import functools
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pyarrow as pa
@@ -25,6 +26,7 @@ import pytest
 
 from decoy_engine.execution import run_pipeline
 from decoy_engine.execution._errors import StrategyError
+from decoy_engine.execution._strategies._fpe import FpeStrategyHandler
 from decoy_engine.execution._unified_slice import QUALITY_METRICS_KEY
 from decoy_engine.execution.native._companion_status import (
     KernelAvailability,
@@ -33,7 +35,13 @@ from decoy_engine.execution.native._companion_status import (
 from decoy_engine.execution.native._crypto_ext import FpeConfig
 from decoy_engine.execution.native._crypto_reference import reference_fpe
 from decoy_engine.execution.native._fpe_ext import native_fpe
+from decoy_engine.execution.physical._compiler import compile_physical_plan
+from decoy_engine.execution.physical._shadow_context import ShadowContext
+from decoy_engine.execution.physical._shadow_coordinator import ShadowCoordinator
+from decoy_engine.execution.physical._shadow_snapshot import capture_shadow_snapshot
+from decoy_engine.execution.physical._snapshot import capture_physical_plan_inputs
 from decoy_engine.keyprovider import SecretKeyProvider
+from decoy_engine.plan._types import ColumnSeed
 from tests.physical import _shadow_helpers
 from tests.physical._shadow_helpers import (
     ENGINE_VERSION,
@@ -255,6 +263,129 @@ def test_fail_closed_parity(
         _run(config, path, flag=True)
     assert type(on_exc.value) is type(off_exc.value)
     assert on_exc.value.code == off_exc.value.code == expected_code
+
+
+# ── Native PRE-FALLBACK fail-closed: the coordinator's own StrategyError (MEDIUM-2) ──
+# The flag-on tests above only observe the exception AFTER the unified slice's generic boundary
+# reroutes to the oracle, so they pass even if the native adapter's error mapping is wrong. These
+# drive the coordinator directly (no run_pipeline, no reroute) and assert the native exception
+# itself, against the SHIPPED handler, so the native first-failure selection + code mapping are
+# actually exercised.
+
+
+def _coordinator_fail_closed(
+    tmp_path: Path, columns: list[dict[str, Any]], source: pa.Table, *, batch_rows: int
+) -> StrategyError:
+    """Run the shadow coordinator directly over `source` and return the StrategyError it raises
+    BEFORE any oracle fallback, or fail if it does not raise."""
+    path = write_read_only_fixture(tmp_path, source, "fpe")
+    config = build_config(tmp_path, "t", path, columns)
+    inputs = capture_physical_plan_inputs(config, {"t": source}, engine_version=ENGINE_VERSION)
+    plan = compile_physical_plan(inputs)
+    ctx = ShadowContext.from_key_provider(
+        plan=inputs.plan, key_provider=_kp(), batch_size_rows=batch_rows
+    )
+    snapshot = capture_shadow_snapshot({"t": source})
+    with pytest.raises(StrategyError) as exc:
+        ShadowCoordinator(ctx=ctx, registry=inputs.registry).run(plan, snapshot)
+    return exc.value
+
+
+def _handler_error(values: list[Any], pc: dict[str, Any]) -> StrategyError:
+    """The StrategyError the SHIPPED `FpeStrategyHandler` raises for the same column (the §3d
+    grading oracle for the route exception)."""
+    import pandas as pd
+
+    seed = ColumnSeed(
+        namespace=_NS,
+        strategy="fpe",
+        provider=None,
+        backend_type="faker",
+        backend_version="v",
+        cardinality_mode="reuse",
+        provider_config=tuple(sorted({"charset": "digits", **pc}.items())),
+    )
+    ctx = SimpleNamespace(
+        mask_key=_MASK_KEY, row_errors=[], group_anchor_snapshots={}, current_table="t"
+    )
+    with pytest.raises(StrategyError) as exc:
+        FpeStrategyHandler().run(
+            pd.DataFrame({"c": pd.Series(values, dtype=object)}),
+            "c",
+            seed,
+            ctx,  # type: ignore[arg-type]
+        )
+    return exc.value
+
+
+@_NEEDS_COMPANION
+@pytest.mark.parametrize(
+    "pc, values, expected_code",
+    [
+        ({"preserve_separators": False}, ["12ab34", "999999999"], "fpe_unencryptable_value"),
+        ({}, ["123", "456"], "fpe_unencryptable_domain"),
+        ({}, ["1" * 300, "123456789"], "fpe_unencryptable_length"),
+        # mixed codes across rows: the FIRST failing row (domain@0) wins, not the later value@1.
+        ({"preserve_separators": False}, ["123", "12ab34"], "fpe_unencryptable_domain"),
+    ],
+    ids=["value", "domain", "length", "mixed_first_failure"],
+)
+def test_native_coordinator_exception_is_pre_fallback(
+    tmp_path: Path, pc: dict[str, Any], values: list[Any], expected_code: str
+) -> None:
+    source = pa.table({"c": pa.array(values, type=pa.string())})
+    native = _coordinator_fail_closed(tmp_path, [_fpe_column(**pc)], source, batch_rows=50_000)
+    handler = _handler_error(values, pc)
+    assert type(native) is type(handler) is StrategyError
+    assert native.code == handler.code == expected_code
+
+
+@_NEEDS_COMPANION
+def test_native_coordinator_first_failure_across_batches(tmp_path: Path) -> None:
+    """With one row per batch, the first batch carrying a failure decides the code: row 1 (domain)
+    precedes row 3 (value), so the coordinator raises domain, matching the handler."""
+    values = ["123456789", "123", "987654321", "12ab34"]
+    source = pa.table({"c": pa.array(values, type=pa.string())})
+    native = _coordinator_fail_closed(
+        tmp_path, [_fpe_column(preserve_separators=False)], source, batch_rows=1
+    )
+    handler = _handler_error(values, {"preserve_separators": False})
+    assert native.code == handler.code == "fpe_unencryptable_domain"
+
+
+@_NEEDS_COMPANION
+@pytest.mark.parametrize("mutation", ["wrong_code", "wrong_first_row"])
+def test_pre_fallback_assertion_kills_error_mapping_mutations(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mutation: str
+) -> None:
+    """Mutation-kill proof for MEDIUM-2: a wrong-code or wrong-first-row `fpe_fail_closed_error`
+    changes the coordinator's PRE-FALLBACK exception, so the direct assertion above would fail.
+    The public flag-on/flag-off tests cannot see this (the oracle fallback supplies the right
+    error); these drive the coordinator directly and prove the mutation is observable."""
+    from decoy_engine.execution.physical import _shadow_operators
+
+    def _mutant(errors: tuple[Any, ...], column: str) -> StrategyError:
+        if mutation == "wrong_code":
+            return StrategyError(code="fpe_wrong_code_mutant", strategy="fpe", message="x")
+        # wrong_first_row: pick the LAST error instead of the first-by-index.
+        last = max(errors, key=lambda e: e.row_index)
+        return StrategyError(code=last.code, strategy="fpe", message="x")
+
+    monkeypatch.setattr(_shadow_operators, "fpe_fail_closed_error", _mutant)
+    # domain@0 then value@1: the correct first-failure code is domain; the mutations yield a
+    # different code, which the direct coordinator exception now carries.
+    values = ["123", "12ab34"]
+    source = pa.table({"c": pa.array(values, type=pa.string())})
+    native = _coordinator_fail_closed(
+        tmp_path, [_fpe_column(preserve_separators=False)], source, batch_rows=50_000
+    )
+    handler = _handler_error(values, {"preserve_separators": False})
+    assert handler.code == "fpe_unencryptable_domain"
+    # The mutation is observable pre-fallback: the native code no longer equals the handler's.
+    assert native.code != handler.code
+    assert native.code == (
+        "fpe_wrong_code_mutant" if mutation == "wrong_code" else "fpe_unencryptable_value"
+    )
 
 
 # ── Unified-slice ExecutionResult boundary (flag-off vs flag-on) ──
