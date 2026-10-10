@@ -9,6 +9,18 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Fixed (chunked native route reports fail-closed errors and warnings in work order, 2026-10-10)
+
+The chunked native masking loop now visits plan-node columns in canonical work order (the
+`_runner.order_work` order the pandas oracle uses, which for a native-admitted table is the sorted
+column name) instead of source-schema order. Two effects are now byte-identical to the oracle when
+schema order and work order differ: a fail-closed strategy (a `text_mask` sub-floor span with no
+policy, or an `fpe` per-row failure) raises for the same first column the oracle names, and the
+per-chunk operator warnings (`fpe` residual-risk and `text_mask` sub-floor) are emitted as one
+work-ordered stream ahead of the projection warnings, rather than grouped by strategy after them.
+The output table keeps source-schema column order unchanged; only the raise and warning order
+moved. This also corrects the same latent ordering divergence on the `fpe` native route.
+
 ### Changed (text_mask admitted to the native routes as ARROW_PYTHON, 2026-10-10)
 
 A `text_mask` column now runs on the chunked and unified native routes as an `ARROW_PYTHON`

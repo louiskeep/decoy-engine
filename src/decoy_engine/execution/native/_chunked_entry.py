@@ -288,8 +288,7 @@ def _native_route(
             elapsed_s: dict[str, float] = {}
             kernel_idle: set[str] = set()
             format_errors: dict[str, tuple[int, ...]] = {}
-            fpe_warnings: list[Any] = []
-            text_mask_warnings: list[Any] = []
+            operator_warnings: list[Any] = []
             masked = _mask_chunk_native(
                 chunk,
                 col_seed_by_name=col_seed_by_name,
@@ -305,25 +304,24 @@ def _native_route(
                 kernel_idle=kernel_idle,
                 row_offset=row_offset,
                 format_errors=format_errors,
-                fpe_warnings=fpe_warnings,
-                text_mask_warnings=text_mask_warnings,
+                operator_warnings=operator_warnings,
                 raw_chunk=raw_chunk,
                 raw_hex_kernel=raw_hex_kernel,
                 job_seed=plan.seed_envelope.job_seed,
                 when_masks=when.for_chunk(raw_chunk, i),
                 faker_missing=faker_nulls.for_chunk(raw_chunk, i),
+                table=table,
             )
             # The one enforcement point: the same call the stock adapter makes, so the
             # warning (and, if a table were ever admitted under `error`, the refusal)
-            # cannot drift from the oracle route's. fpe's residual warnings (C6a §3e) and
-            # text_mask's sub-floor warnings (C6b-i) ride the same channel, each at the oracle's
-            # per-chunk scope.
+            # cannot drift from the oracle route's. The operator warnings (fpe residual, C6a §3e;
+            # text_mask sub-floor, C6b-i) are already in work order and ride FIRST, with the
+            # projection warnings LAST, which is the oracle route's order.
             warnings = (
+                *operator_warnings,
                 *enforce_output_projection(
                     table, masked.column_names, plan, state.projection_policy
                 ),
-                *fpe_warnings,
-                *text_mask_warnings,
             )
             row_errors = format_error_records(table, format_errors)
             if row_errors:

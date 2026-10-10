@@ -400,3 +400,105 @@ def test_one_million_row_table_stays_native_arrow_python() -> None:
     values = [CORPUS[i % len(CORPUS)] for i in range(n)]
     run = run_one(make_config([tm_col(), passthrough("p")]), split(source(values), 200_000))
     _assert_native_arrow_python(run)
+
+
+# ---------------------------------------------------------------------------
+# 9. Chunked work-order parity (C6b-i remediation, M1/M2). The chunked native route
+#    used to raise fail-closed errors and assemble warnings in source-SCHEMA order; the
+#    oracle uses canonical WORK order (`_runner.order_work`, sorted column name for a
+#    native-admitted table). These regressions pin both legs to the same order so the
+#    FIRST reported error and the warning sequence match the oracle exactly.
+# ---------------------------------------------------------------------------
+
+
+def _fpe_col(name: str, **pc: Any) -> dict[str, Any]:
+    return {
+        "name": name,
+        "strategy": "fpe",
+        "namespace": f"ns.{name}",
+        "provider_config": {"charset": "digits", **pc},
+    }
+
+
+def _two_col(a: list[str | None], z: list[str | None]) -> pa.Table:
+    # Schema order z,a (reversed vs work order a,z): the pre-fix schema-order iteration would
+    # visit z first, the oracle visits a first, so the column a fix is observable.
+    return pa.table({"z": pa.array(z, pa.string()), "a": pa.array(a, pa.string())})
+
+
+def test_reversed_columns_two_text_mask_fail_closed_raise_identical_full_error() -> None:
+    # z,a both default text_mask, both carry a sub-floor us_zip that fails closed with no policy.
+    # The native leg used to iterate source-schema order (z first) and name column z; the oracle
+    # names column a (work order). The fix iterates work order on both legs, so the FULL
+    # StrategyError matches: type, code, strategy AND message (column name included).
+    config = make_config([tm_col("z"), tm_col("a")])
+    chunks = [_two_col(["home zip 12345 here"], ["home zip 12345 here"])]
+    native_exc = _native_raises(config, chunks)
+    oracle_exc = _oracle_raises(config, chunks)
+    assert type(native_exc) is type(oracle_exc) is StrategyError
+    assert native_exc.code == oracle_exc.code == "fpe_unencryptable_domain"
+    assert native_exc.strategy == oracle_exc.strategy == "text_mask"
+    assert native_exc.message == oracle_exc.message
+    assert "column 'a'" in native_exc.message  # the oracle's first-in-work-order column
+
+
+@NEEDS_COMPANION
+def test_reversed_columns_two_fpe_fail_closed_raise_identical_full_error() -> None:
+    # The same reversed-column case for two fpe columns, proving the fix is general (work-order
+    # iteration), not a text_mask special case. "123" is below the FF1 domain floor on both.
+    config = make_config([_fpe_col("z"), _fpe_col("a")])
+    chunks = [_two_col(["123"], ["123"])]
+    native_exc = _native_raises(config, chunks)
+    oracle_exc = _oracle_raises(config, chunks)
+    assert type(native_exc) is type(oracle_exc) is StrategyError
+    assert native_exc.code == oracle_exc.code == "fpe_unencryptable_domain"
+    assert native_exc.strategy == oracle_exc.strategy == "fpe"
+    # The ordering property this fix governs: both legs name the SAME first-in-work-order column
+    # (a), not z. The fpe route's fail-closed message WORDING differs from the oracle's by a
+    # pre-existing gap outside this chunked-ordering remediation, so this pins the column, not the
+    # full message text (unlike the text_mask case, which shares one error-builder).
+    assert "column 'a'" in native_exc.message
+    assert "column 'a'" in oracle_exc.message
+
+
+@NEEDS_COMPANION
+def test_mixed_text_mask_and_fpe_warnings_are_in_work_order() -> None:
+    # a=text_mask (sub-floor redact -> one sub-floor warning) and z=fpe (out-of-charset prefix kept
+    # -> one residual warning). The oracle emits the warnings in work order a,z; the native leg
+    # used to group them (fpe then text_mask), reversing the pair. assert_same_as_oracle compares
+    # each chunk's warning tuple in order.
+    columns = [
+        tm_col("a", sub_floor_span="redact", unmatched_span_policy="passthrough"),
+        _fpe_col("z", preserve_separators=True),
+    ]
+    chunks = [
+        pa.table(
+            {
+                "a": pa.array(["home zip 12345 here"], pa.string()),
+                "z": pa.array(["M000001"], pa.string()),
+            }
+        )
+    ]
+    native, forced = run_pair(columns, chunks)
+    assert_same_as_oracle(native, forced)
+    codes = [w.code for r in native.sink for w in r.warnings]
+    assert codes == ["text_mask_sub_floor_span_handled", "fpe_partial_plaintext_disclosure"]
+
+
+def test_text_mask_operator_warning_precedes_projection_warning() -> None:
+    # a=text_mask (sub-floor redact -> operator warning) beside u, an unconfigured column carried
+    # under the warn policy (-> one projection warning). The oracle emits the operator warning
+    # FIRST and the projection warning LAST; the native leg used to emit projection first.
+    columns = [tm_col("a", sub_floor_span="redact", unmatched_span_policy="passthrough")]
+    chunks = [
+        pa.table(
+            {
+                "a": pa.array(["home zip 12345 here", "zip 67890 too"], pa.string()),
+                "u": pa.array(["carry0", "carry1"], pa.string()),
+            }
+        )
+    ]
+    native, forced = run_pair(columns, chunks)
+    assert_same_as_oracle(native, forced)
+    codes = [w.code for r in native.sink for w in r.warnings]
+    assert codes == ["text_mask_sub_floor_span_handled", "undeclared_output_columns"]

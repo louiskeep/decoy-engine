@@ -20,6 +20,7 @@ import pyarrow as pa
 
 from decoy_engine.execution._adapter import provider_config_to_dict
 from decoy_engine.execution._errors import ExecutionError
+from decoy_engine.execution._runner import work_order_key
 from decoy_engine.execution.native._fpe_route import (
     fpe_config_from_params,
     fpe_fail_closed_error,
@@ -67,13 +68,13 @@ def _mask_chunk_native(
     kernel_idle: set[str] | None = None,
     row_offset: int = 0,
     format_errors: dict[str, tuple[int, ...]] | None = None,
-    fpe_warnings: list[Any] | None = None,
-    text_mask_warnings: list[Any] | None = None,
+    operator_warnings: list[Any] | None = None,
     raw_chunk: pa.Table | None = None,
     raw_hex_kernel: RawHexDerivationKernel | None = None,
     job_seed: bytes | None = None,
     when_masks: Mapping[str, pa.Array] | None = None,
     faker_missing: Mapping[str, pa.Array] | None = None,
+    table: str = "",
 ) -> pa.Table:
     """Mask one chunk column-by-column through the admitted native kernels.
 
@@ -112,16 +113,17 @@ def _mask_chunk_native(
     column that has such positions with no `format_errors` to carry them raises: dropping them
     would let the raw value reach the output with the job succeeding.
 
-    `fpe_warnings`, when given, receives each fpe column's residual-risk warnings, computed in
-    Python from this chunk's ORIGINAL (pre-mask) values at the oracle's per-chunk scope (C6a plan
-    §3e); the caller rides them on the chunk's `ExecutionResult.warnings`. An fpe column that
-    produces a per-row failure raises the fail-closed `StrategyError` here instead.
-
-    `text_mask_warnings`, when given, receives each text_mask column's one aggregate sub-floor
-    warning for THIS chunk (built by the handler outside `mask_cell`, so from the masking the
-    kernel actually did), at the oracle's per-chunk scope (C6b-i); the caller rides them on the
-    chunk's `ExecutionResult.warnings`, never on the output. A text_mask column with a fail-closed
-    span raises its `StrategyError` inside `native_text_mask` before reaching here.
+    `operator_warnings`, when given, receives every operator warning for THIS chunk as ONE ordered
+    stream, interleaved by node in canonical work order (not grouped by strategy): each fpe column's
+    residual-risk warnings (computed in Python from the chunk's ORIGINAL pre-mask values at the
+    oracle's per-chunk scope, C6a plan §3e) and each text_mask column's one aggregate sub-floor
+    warning (built by the handler outside `mask_cell`, so from the masking the kernel actually did,
+    at the oracle's per-chunk scope, C6b-i). The caller rides them on the chunk's
+    `ExecutionResult.warnings` ahead of the projection warnings, never on the output, which is the
+    oracle's order (operator/node warnings first, projection warnings last). An fpe column that
+    produces a per-row failure raises the fail-closed `StrategyError` here; a text_mask column with a
+    fail-closed span raises its `StrategyError` inside `native_text_mask` before reaching here. Both
+    raises happen in work-order iteration, so the first failing column matches the oracle's.
 
     `raw_chunk` is the chunk as the source produced it, before null-typed columns were cast to
     the first chunk's types; only a group_key column reads it (for its sibling), every other
@@ -145,12 +147,21 @@ def _mask_chunk_native(
     `string`); an all-null non-empty one does run it.
     """
     arrays: dict[str, pa.Array] = {}
+    # Columns with no plan node carry unchanged (unconfigured) or drop (stored_index); neither
+    # raises nor warns, so their visit order is immaterial and they stay out of the work loop.
     for name in chunk.schema.names:
-        if name in stored_index:
-            continue
-        if name in unconfigured:
+        if name not in stored_index and name in unconfigured:
             arrays[name] = chunk.column(name)
-            continue
+    # The plan-node columns are visited in canonical WORK ORDER (`_runner.work_order_key`), not
+    # source-schema order, so a fail-closed strategy raises for the SAME column the oracle would
+    # (the oracle processes nodes in `order_work` order) and the per-column operator warnings are
+    # produced in that order. A native-admitted table has no FK edges and only scalar nodes, so the
+    # key reduces to the sorted column name (mirrors `_chunked_row_errors`). The returned table is
+    # rebuilt in source-schema order below, so this never changes the output's column order.
+    configured = [
+        name for name in chunk.schema.names if name not in stored_index and name not in unconfigured
+    ]
+    for name in sorted(configured, key=lambda n: work_order_key(table, (n,))):
         strategy = col_seed_by_name[name].strategy
         params = (params_by_column or {}).get(name)
         if params is None:  # pragma: no cover - admission implies parameters for every column
@@ -202,8 +213,8 @@ def _mask_chunk_native(
             # native_text_mask always returns pa.string() (the schema rule pins the column), so no
             # degenerate type reconciliation is needed (unlike fpe/bucket_perturb). Only the one
             # per-chunk sub-floor warning rides out, at the oracle's per-chunk scope.
-            if text_mask_warnings is not None and result.text_mask_notices:
-                text_mask_warnings.append(
+            if operator_warnings is not None and result.text_mask_notices:
+                operator_warnings.append(
                     text_mask_sub_floor_warning(
                         result.text_mask_notices,
                         policy=params.sub_floor_span_policy,
@@ -216,8 +227,8 @@ def _mask_chunk_native(
                 # same as the oracle's StrategyError during this chunk; raise before the warning,
                 # the offset advance, the sink append or the yield (C6a plan §3d).
                 raise fpe_fail_closed_error(result.fpe_errors, name)
-            if fpe_warnings is not None:
-                fpe_warnings.extend(
+            if operator_warnings is not None:
+                operator_warnings.extend(
                     fpe_residual_warnings(
                         source, config=fpe_config_from_params(params), column=name
                     )
@@ -261,7 +272,9 @@ def _mask_chunk_native(
         evidence.kernel_elapsed_s[strategy] = evidence.kernel_elapsed_s.get(strategy, 0.0) + elapsed
         if column_elapsed_s is not None:
             column_elapsed_s[name] = elapsed
-    return pa.table(arrays)
+    # Output column order is source-schema order (stored_index dropped), independent of the
+    # work-order visit above: only the raise/warning order moves to work order, never the shape.
+    return pa.table({name: arrays[name] for name in chunk.schema.names if name not in stored_index})
 
 
 def pool_values_are_strings(pool: ValuePool) -> bool:
