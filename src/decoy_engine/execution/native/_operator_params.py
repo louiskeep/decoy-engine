@@ -80,14 +80,14 @@ class TextMaskParams:
     # reproduces the handler per cell (ner declines to the oracle at admission, so it is absent
     # here). `None` detectors runs every span detector; the empty-list-means-all rule is applied
     # once, by the resolver. `per_detector_strategy` is the sorted items of the override map
-    # (rebuilt into a dict before the per-cell call). `min_days`/`max_days` are `None` when the
-    # config omits them, so the per-span date_shift keeps its own defaults, as the handler does.
+    # (rebuilt into a dict before the per-cell call). `date_shift_bounds` carries exactly the
+    # `min_days`/`max_days` keys the config PRESENTS (value included even when null), mirroring the
+    # handler's `if key in cfg` so an absent bound defaults and a present-null bound passes through.
     detectors: tuple[str, ...] | None
     per_detector_strategy: tuple[tuple[str, str], ...]
     unmatched_span_policy: str
     token: str
-    min_days: int | None
-    max_days: int | None
+    date_shift_bounds: tuple[tuple[str, int | None], ...]
     sub_floor_span_policy: str | None
     # The target column name, used for the fail-closed `StrategyError` context and the
     # per-column sub-floor warning, exactly as the handler frames them.
@@ -232,8 +232,8 @@ def resolve_operator_params(
         # Mirrors `TextMaskHandler.run`'s cfg reading: detectors normalize as text_redact's do
         # (empty list / non-list means every detector), the token and unmatched policy coerce to
         # str with the shipped defaults, the per-detector overrides pass through unchanged, and
-        # `min_days`/`max_days` stay absent when unset so the per-span date_shift uses its own
-        # defaults. `ner` never reaches here (it declines to the oracle at admission, 3c).
+        # `date_shift_bounds` captures exactly the min_days/max_days keys the config PRESENTS
+        # (handler's `if key in cfg`). `ner` never reaches here (declines to the oracle, 3c).
         raw = cfg.get("detectors")
         detectors = tuple(str(d) for d in raw) or None if isinstance(raw, (list, tuple)) else None
         per = dict(cfg.get("per_detector_strategy") or {})
@@ -243,8 +243,7 @@ def resolve_operator_params(
             per_detector_strategy=tuple(per.items()),
             unmatched_span_policy=str(cfg.get("unmatched_span_policy", "redact")),
             token=str(cfg.get("token", _DEFAULT_TOKEN)),
-            min_days=cfg.get("min_days"),
-            max_days=cfg.get("max_days"),
+            date_shift_bounds=tuple((k, cfg[k]) for k in ("min_days", "max_days") if k in cfg),
             sub_floor_span_policy=str(sub_floor) if sub_floor is not None else None,
             column=target,
         )

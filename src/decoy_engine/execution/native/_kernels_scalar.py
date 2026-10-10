@@ -204,8 +204,7 @@ def native_text_mask(
     per_detector_strategy: Mapping[str, str] | None,
     unmatched_span_policy: str,
     token: str,
-    min_days: int | None,
-    max_days: int | None,
+    date_shift_bounds: tuple[tuple[str, int | None], ...],
     sub_floor_span_policy: str | None,
 ) -> tuple[pa.Array, dict[str, int]]:
     """Mask PII spans in every non-null cell, reproducing `TextMaskHandler.run` per cell.
@@ -229,11 +228,10 @@ def native_text_mask(
             "resolve a concrete mask key (the job seed when no secret) before dispatch."
         )
     strategy_map = dict(per_detector_strategy) if per_detector_strategy else None
-    extra: dict[str, Any] = {}
-    if min_days is not None:
-        extra["min_days"] = min_days
-    if max_days is not None:
-        extra["max_days"] = max_days
+    # Mirror the handler's `for key in ("min_days","max_days"): if key in cfg` exactly: a bound
+    # that is PRESENT-but-null passes through (so the per-span date_shift crashes identically to
+    # the oracle) rather than silently defaulting when the key is absent (literal flag-on/off parity).
+    extra: dict[str, Any] = dict(date_shift_bounds)
     detector_ids = list(detectors) if detectors is not None else None
     sub_floor_notices: dict[str, int] = {}
     out: list[Any] = []

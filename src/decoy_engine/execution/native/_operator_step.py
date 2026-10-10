@@ -322,8 +322,7 @@ def run_kernel_step(
             per_detector_strategy=dict(params.per_detector_strategy),
             unmatched_span_policy=params.unmatched_span_policy,
             token=params.token,
-            min_days=params.min_days,
-            max_days=params.max_days,
+            date_shift_bounds=params.date_shift_bounds,
             sub_floor_span_policy=params.sub_floor_span_policy,
         )
         return StepResult(out, None, text_mask_notices=notices)

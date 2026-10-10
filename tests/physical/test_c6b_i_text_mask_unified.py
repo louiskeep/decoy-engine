@@ -30,6 +30,7 @@ from decoy_engine.execution.native._chunked_evidence import (
 )
 from decoy_engine.execution.native._companion_status import KernelAvailability
 from decoy_engine.execution.native._operator_config_rejections import text_mask_config_rejection
+from decoy_engine.execution.native._operator_params import TextMaskParams, resolve_operator_params
 from decoy_engine.execution.physical._compiler import compile_physical_plan
 from decoy_engine.execution.physical._shadow_context import ShadowContext
 from decoy_engine.execution.physical._shadow_coordinator import ShadowCoordinator
@@ -360,8 +361,13 @@ def test_a_non_string_source_declines_the_lane(tmp_path: Path, typ: pa.DataType)
     source = pa.table({"s": pa.array(values, typ), "p": pa.array(range(4), pa.int64())})
     path = write_read_only_fixture(tmp_path, source, "tm")
     cfg = build_config(tmp_path, "t", path, [tm_col("s"), _PASS])
+    off = _run_flagged(cfg, path, flag=False)
     on = _run_flagged(cfg, path, flag=True)
+    # The non-string source is unsupported on the native lane, so the whole table declines to the
+    # pandas oracle: no unified quality metrics AND the flag-on output is byte-identical to the
+    # flag-off oracle (schema + values + b"pandas" metadata), i.e. the decline perturbs nothing.
     assert QUALITY_METRICS_KEY not in on.quality_metrics
+    assert on.outputs["t"].equals(off.outputs["t"], check_metadata=True)
 
 
 # ---------------------------------------------------------------------------
@@ -373,6 +379,23 @@ def test_a_non_string_source_declines_the_lane(tmp_path: Path, typ: pa.DataType)
 def test_ner_config_declines_native(name: str) -> None:
     cfg, code = EXCLUDED_CONFIGS[name]
     assert text_mask_config_rejection("s", cfg) == f"{code}:s"
+
+
+def test_date_shift_bounds_mirror_the_handlers_present_keys() -> None:
+    # dennis LOW-1: the native params must distinguish an ABSENT min_days/max_days (the per-span
+    # date_shift keeps its own default) from a PRESENT-but-null one (passed through, so date_shift
+    # crashes identically to the oracle's `if key in cfg`), not collapse both to a default.
+    def bounds(cfg: dict[str, Any]) -> tuple[tuple[str, int | None], ...]:
+        params = resolve_operator_params(
+            "text_mask", target="s", provider_config=cfg, namespace=None
+        )
+        assert isinstance(params, TextMaskParams)
+        return params.date_shift_bounds
+
+    assert bounds({}) == ()
+    assert bounds({"min_days": 1, "max_days": 30}) == (("min_days", 1), ("max_days", 30))
+    assert bounds({"min_days": None}) == (("min_days", None),)
+    assert bounds({"max_days": 7}) == (("max_days", 7),)
 
 
 def test_token_and_detectors_do_not_decline_unlike_text_redact() -> None:
