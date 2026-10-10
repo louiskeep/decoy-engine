@@ -463,7 +463,7 @@ def test_fallback_companion_absent_runs_full_python() -> None:
 def test_fallback_symbol_absent_runs_full_python() -> None:
     # An older companion with the ABI but no span symbol: the loader must return None.
     with pytest.MonkeyPatch.context() as mp:
-        _install_fake_kernel(mp, abi_version=lambda: "decoy-native-abi-2")
+        _install_fake_kernel(mp, abi_version=lambda: "decoy-native-abi-3")
         assert load_text_redact_kernel() is None
         got = _native(list(ELIGIBLE_TEXTS), detectors=None, token="T", label_token=False)
     assert got == oracle_text_redact(list(ELIGIBLE_TEXTS), detectors=None, token="T")
