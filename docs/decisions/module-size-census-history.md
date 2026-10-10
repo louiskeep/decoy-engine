@@ -422,9 +422,10 @@ docstring on `PandasExecutionAdapter.run`. No logic added.
 ## `src/decoy_engine/execution/_pipeline.py` (census 684 at move time; entry deleted by R3)
 
 R3 (2026-10-10): the resolve and route phases moved into `_pipeline_context.py`
-(`build_run_context`, `decide_route`) and the bounded routes dispatch through
-`_pipeline_route_dispatch.py`, taking the file from 684 to 457 LOC. At or under GOAL the
-entry is deleted, as the paragraph below describes for the earlier crossing.
+(`build_run_context`, `decide_route`), the bounded routes dispatch through
+`_pipeline_route_dispatch.py`, and the full_frame route (the old inline `with publish:`
+tail) moved into `_pipeline_full_frame.py`, taking the file from 684 to 306 LOC. At or
+under GOAL the entry is deleted, as the paragraph below describes for the earlier crossing.
 
 
 gen-5a-faker dennis re-gate (2026-09-17): `_pipeline.py` carried an
