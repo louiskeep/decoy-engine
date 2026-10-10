@@ -676,3 +676,10 @@ Task 5.2 FF1 (2026-09-12): 657 -> 722 for the sub_floor_span redact|synthetic
 policy (deterministic valid-format synthetic PAN/NPI with checksum recompute)
 and the FF1-keyed span path. The `_text_mask_sub_floor.py` decomposition above
 is the standing target when this module is next touched.
+
+## `src/decoy_engine/execution/_unified_slice.py` (census 605 at move time; entry deleted by R3)
+
+R3 (2026-10-10): the `locals()` forwarding (`run_from_pipeline_locals`, its two name tables and the
+import-time `_assert_forwarding_covers_signature`) was deleted when `maybe_run_unified_slice` began
+taking the typed run context and routing decision, taking the file from 605 to 469 LOC. At or under
+GOAL the entry is deleted.

@@ -17,14 +17,12 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
-from decoy_engine.execution import _pipeline_finalize, _pipeline_generate_mask
+from decoy_engine.execution import _pipeline_finalize, _pipeline_generate_mask, _unified_slice
 from decoy_engine.execution import _pipeline_route_exec as _route_exec
 from decoy_engine.execution import _pipeline_sources as _psrc
 from decoy_engine.execution._adapter import ExecutionResult
-from decoy_engine.execution._pipeline_context import unified_slice_locals
 from decoy_engine.execution._stitch import stitch_generate_mask_outputs
 from decoy_engine.execution._transforms_admission import stamp_out_of_core_declined
-from decoy_engine.execution._unified_slice import run_from_pipeline_locals
 from decoy_engine.generation.pool import PoolCache
 
 if TYPE_CHECKING:
@@ -48,8 +46,8 @@ def run_full_frame_route(ctx: PipelineRunContext, decision: RouteDecision) -> Ex
     caller_sources = {k: v for k, v in resident_sources.items() if k in ctx.caller_sources}
 
     pool_cache = PoolCache()
-    unified_slice_result = run_from_pipeline_locals(  # Task 4.5, see its docstring
-        unified_slice_locals(ctx, decision, caller_sources, pool_cache)
+    unified_slice_result = _unified_slice.maybe_run_unified_slice(  # Task 4.5
+        ctx=ctx, decision=decision, caller_sources=caller_sources, pool_cache=pool_cache
     )
     if unified_slice_result is not None:
         return unified_slice_result

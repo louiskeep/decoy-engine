@@ -25,17 +25,17 @@ this module's own size under the ~600-LOC orchestration cap (CLAUDE.md "Engineer
 practices"); this module owns D6/D7/D8's execution + activation + exception-boundary concerns
 and the one `run_pipeline` call site.
 
-CHANGE 4 (Codex determination, module-size ratchet remediation): `run_from_pipeline_locals` --
-not `maybe_run_unified_slice` itself -- is `_pipeline.py`'s actual call site now, so that
-module's own 645-LOC ceiling (`tests/sentry/test_module_size.py`) does not have to carry this
-lane's ~30-keyword argument block. See `run_from_pipeline_locals`'s docstring.
+The full_frame executor (`_pipeline_full_frame.run_full_frame_route`) is the one caller. It
+passes the typed `PipelineRunContext` and `RouteDecision` to `maybe_run_unified_slice`; the
+`locals()` forwarding that used to stand in for a typed carrier is gone, and its import-time
+signature-drift check is replaced by `tests/unit/execution/test_pipeline_run_context_boundary.py`.
 """
 
 from __future__ import annotations
 
 import logging
 import time
-from typing import TYPE_CHECKING, Any, Final, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from decoy_engine.errors import DecoyError
 from decoy_engine.execution import _unified_slice_admission as _admission
@@ -44,13 +44,13 @@ from decoy_engine.execution._unified_slice_when import compute_when_masks
 from decoy_engine.generation.pool._events import QualityWarning
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping
+    from collections.abc import Mapping
 
     import pyarrow as pa
 
     from decoy_engine.execution._adapter import ExecutionAdapter, ExecutionResult
+    from decoy_engine.execution._pipeline_context import PipelineRunContext, RouteDecision
     from decoy_engine.execution._planner import ExecutionPlan
-    from decoy_engine.execution._transactional_sink import TransactionalSink
     from decoy_engine.generation.pool import PoolCache
     from decoy_engine.keyprovider import KeyProvider
     from decoy_engine.plan._types import Plan
@@ -62,7 +62,6 @@ if TYPE_CHECKING:
 __all__ = [
     "UnifiedSliceInvariantError",
     "maybe_run_unified_slice",
-    "run_from_pipeline_locals",
 ]
 
 # The one quality_metrics leaf D7's completed-execution evidence lands
@@ -380,49 +379,18 @@ def _execute_admitted(
 
 def maybe_run_unified_slice(
     *,
-    unified_slice_enabled: bool,
-    config: dict[str, Any],
-    plan: Plan,
-    profile: Profile,
-    graph: RelationshipGraph,
-    table_kinds: dict[str, str],
+    ctx: PipelineRunContext,
+    decision: RouteDecision,
     caller_sources: Mapping[str, pa.Table | LazySource],
-    source_loader: Callable[[str], pa.Table] | None,
-    sink: TransactionalSink | None,
-    fidelity_report: bool,
-    post_validation: bool = False,
-    vault_writer: Any,
-    route: str,
-    route_chunked: bool,
-    registry: ProviderRegistry,
-    substrate: str | None,
-    resolved_substrate: str,
-    fpe_chunk_count: int,
-    max_workers: int,
-    fallback_to_pandas: bool,
-    adapter: ExecutionAdapter,
-    auto_chunk: bool,
-    chunk_size_rows: int,
-    auto_chunk_threshold_rows: int,
-    out_of_core_threshold_rows: int,
-    full_frame_reject_rows: int,
-    use_byte_estimate_routing: bool,
-    use_probe_routing: bool,
-    out_of_core_budget_bytes: int | None,
-    out_of_core_reorder_threshold_rows: int | None,
-    execution_mode: str,
-    explain_plan: bool,
-    execution_plan_decision: ExecutionPlan | None,
-    route_reason: str,
-    key_provider: KeyProvider | None,
-    engine_version: str,
     pool_cache: PoolCache,
-    native_threads: int,
 ) -> ExecutionResult | None:
-    """`run_pipeline`'s single call site for the Task 4.5 unified-slice lane.
+    """The full_frame executor's single call site for the Task 4.5 unified-slice lane.
 
     Sits after both routing layers (Layer 1 relationship routing, Layer 2
-    auto-chunk), before `resolve_resident_sources`.
+    auto-chunk), after `resolve_resident_sources`. It takes the typed run context and routing
+    decision instead of a 36-keyword block; `caller_sources` (the executor's post-resolution
+    mapping) and `pool_cache` (the job's one Faker-pool cache) are route-local to the full_frame
+    executor, so they are passed beside the context rather than carried on it.
 
     Returns `None` on absolutely any doubt: the flag is off, the job has no
     mask table, or either admission stage declines. It returns a single
@@ -437,169 +405,65 @@ def maybe_run_unified_slice(
     # imports eagerly, so even a "just import one submodule" reach would
     # pull in the whole seam. Nothing below this line runs for a flag-off
     # caller.
-    has_mask_table = any(kind == "mask" for kind in table_kinds.values())
-    if not (has_mask_table and unified_slice_enabled):
+    if not (ctx.has_mask_table and ctx.unified_slice_enabled):
         return None
 
-    # D1 (Codex final-gate BLOCKER): `resolved_substrate` is `run_pipeline`'s ONE resolution of
-    # the substrate (`_pipeline.py`'s own `resolve_substrate(substrate)`
-    # call), threaded straight through -- never re-read here. A second
+    # D1 (Codex final-gate BLOCKER): `ctx.resolved_substrate` is `run_pipeline`'s ONE resolution
+    # of the substrate, carried on the context -- never re-read here. A second
     # `resolve_substrate(substrate)` call in this module would re-read
     # `DECOY_SUBSTRATE` from the process environment a second time, opening a
     # TOCTOU window where an env change between `run_pipeline`'s resolution
     # and this admission gate could disagree with what was already decided.
     candidate = _admission.cheap_admission(
-        route=route,
-        route_chunked=route_chunked,
-        resolved_substrate=resolved_substrate,
-        sink=sink,
-        source_loader=source_loader,
-        fidelity_report=fidelity_report,
-        post_validation=post_validation,
-        vault_writer=vault_writer,
-        config=config,
-        profile=profile,
-        table_kinds=table_kinds,
+        route=decision.route,
+        route_chunked=decision.route_chunked,
+        resolved_substrate=ctx.resolved_substrate,
+        sink=ctx.sink,
+        source_loader=ctx.source_loader,
+        fidelity_report=ctx.fidelity_report,
+        post_validation=ctx.post_validation,
+        vault_writer=ctx.vault_writer,
+        config=ctx.config,
+        profile=ctx.profile,
+        table_kinds=ctx.table_kinds,
         caller_sources=caller_sources,
-        registry=registry,
+        registry=ctx.registry,
     )
     if candidate is None:
         return None
 
     return _execute_admitted(
         candidate=candidate,
-        config=config,
-        plan=plan,
-        profile=profile,
-        registry=registry,
-        graph=graph,
-        table_kinds=table_kinds,
+        config=ctx.config,
+        plan=ctx.plan,
+        profile=ctx.profile,
+        registry=ctx.registry,
+        graph=ctx.graph,
+        table_kinds=ctx.table_kinds,
         caller_sources=caller_sources,
-        execution_mode=execution_mode,
-        fidelity_report=fidelity_report,
-        vault_writer=vault_writer,
-        auto_chunk=auto_chunk,
-        chunk_size_rows=chunk_size_rows,
-        auto_chunk_threshold_rows=auto_chunk_threshold_rows,
-        out_of_core_threshold_rows=out_of_core_threshold_rows,
-        full_frame_reject_rows=full_frame_reject_rows,
-        use_byte_estimate_routing=use_byte_estimate_routing,
-        use_probe_routing=use_probe_routing,
-        fpe_chunk_count=fpe_chunk_count,
-        max_workers=max_workers,
-        fallback_to_pandas=fallback_to_pandas,
-        adapter=adapter,
-        out_of_core_reorder_threshold_rows=out_of_core_reorder_threshold_rows,
-        out_of_core_budget_bytes=out_of_core_budget_bytes,
-        engine_version=engine_version,
-        key_provider=key_provider,
-        route_reason=route_reason,
-        substrate=substrate,
-        resolved_substrate=resolved_substrate,
-        explain_plan=explain_plan,
-        execution_plan_decision=execution_plan_decision,
+        execution_mode=ctx.execution_mode,
+        fidelity_report=ctx.fidelity_report,
+        vault_writer=ctx.vault_writer,
+        auto_chunk=ctx.auto_chunk,
+        chunk_size_rows=ctx.chunk_size_rows,
+        auto_chunk_threshold_rows=ctx.auto_chunk_threshold_rows,
+        out_of_core_threshold_rows=ctx.out_of_core_threshold_rows,
+        full_frame_reject_rows=ctx.full_frame_reject_rows,
+        use_byte_estimate_routing=ctx.use_byte_estimate_routing,
+        use_probe_routing=ctx.use_probe_routing,
+        fpe_chunk_count=ctx.fpe_chunk_count,
+        max_workers=ctx.max_workers,
+        fallback_to_pandas=ctx.fallback_to_pandas,
+        adapter=ctx.adapter,
+        out_of_core_reorder_threshold_rows=ctx.out_of_core_reorder_threshold_rows,
+        out_of_core_budget_bytes=ctx.out_of_core_budget_bytes,
+        engine_version=ctx.engine_version,
+        key_provider=ctx.key_provider,
+        route_reason=decision.route_reason,
+        substrate=ctx.substrate,
+        resolved_substrate=ctx.resolved_substrate,
+        explain_plan=ctx.explain_plan,
+        execution_plan_decision=decision.execution_plan_decision,
         pool_cache=pool_cache,
-        native_threads=native_threads,
+        native_threads=ctx.native_threads,
     )
-
-
-# CHANGE 4: the two `maybe_run_unified_slice` keyword names whose value
-# lives under a DIFFERENT name in `run_pipeline`'s own locals (both are that
-# function's one-time-resolved value, `resolved_registry` / `resolved_
-# key_provider` -- its own naming convention for them, not this lane's).
-# Every other keyword below is a bare same-name pass-through.
-_PIPELINE_RESOLVED_NAMES: Final[dict[str, str]] = {
-    "registry": "resolved_registry",
-    "key_provider": "resolved_key_provider",
-}
-
-# Every OTHER `maybe_run_unified_slice` keyword: `run_pipeline` binds a
-# local of the identical name by the time it reaches this lane's call site.
-_PIPELINE_LOCAL_KWARGS: Final[tuple[str, ...]] = (
-    "unified_slice_enabled",
-    "adapter",
-    "config",
-    "plan",
-    "profile",
-    "graph",
-    "table_kinds",
-    "caller_sources",
-    "source_loader",
-    "sink",
-    "fidelity_report",
-    "post_validation",
-    "vault_writer",
-    "route",
-    "route_chunked",
-    "substrate",
-    "resolved_substrate",
-    "fpe_chunk_count",
-    "max_workers",
-    "fallback_to_pandas",
-    "auto_chunk",
-    "chunk_size_rows",
-    "auto_chunk_threshold_rows",
-    "out_of_core_threshold_rows",
-    "full_frame_reject_rows",
-    "use_byte_estimate_routing",
-    "use_probe_routing",
-    "out_of_core_budget_bytes",
-    "out_of_core_reorder_threshold_rows",
-    "execution_mode",
-    "explain_plan",
-    "execution_plan_decision",
-    "route_reason",
-    "engine_version",
-    "pool_cache",
-    "native_threads",
-)
-
-
-def run_from_pipeline_locals(local_vars: Mapping[str, Any]) -> ExecutionResult | None:
-    """`_pipeline.py`'s actual call site for this lane (CHANGE 4, Codex
-    determination): that module's module-size sentry allowlist is SHRINK-
-    ONLY (`tests/sentry/test_module_size.py:14`, "update the census only by
-    shrinking, never by raising") and sits just under its 600-LOC sentry cap,
-    so this lane's own ~30-keyword call cannot live there.
-
-    By the time `run_pipeline` reaches its `maybe_run_unified_slice` call it
-    has already bound every fact this lane needs as an ordinary local
-    variable (most under the IDENTICAL name this lane's own keyword uses,
-    the two exceptions named in `_PIPELINE_RESOLVED_NAMES`), so forwarding
-    its own `locals()` verbatim keeps that call site itself to one line
-    instead of the argument block this function now owns.
-
-    The explicit opt-out (`unified_slice_enabled=False`) reads ONLY the stable
-    `unified_slice_enabled` run_pipeline parameter and returns before indexing
-    any other local. So a future rename of one of the forwarded locals can only
-    break the flag-on path (now the default) -- caught loudly by the flag-on
-    test matrix and the import-time `_assert_forwarding_covers_signature` check
-    below -- and never the early opt-out return.
-    """
-    if not local_vars.get("unified_slice_enabled"):
-        return None
-    kwargs: dict[str, Any] = {name: local_vars[name] for name in _PIPELINE_LOCAL_KWARGS}
-    for kwarg_name, local_name in _PIPELINE_RESOLVED_NAMES.items():
-        kwargs[kwarg_name] = local_vars[local_name]
-    return maybe_run_unified_slice(**kwargs)
-
-
-def _assert_forwarding_covers_signature() -> None:
-    """Fail at IMPORT if the `locals()` forwarding drifts from
-    `maybe_run_unified_slice`'s own parameters. The forwarding is invisible to
-    mypy (a `Mapping[str, Any]`), so this runtime coverage check is the
-    lightweight stand-in for a typed carrier: a renamed, added, or removed
-    keyword that the forwarding lists no longer reflect is a bug that must fail
-    now, at import, not silently mis-forward at runtime."""
-    import inspect
-
-    params = set(inspect.signature(maybe_run_unified_slice).parameters)
-    forwarded = set(_PIPELINE_LOCAL_KWARGS) | set(_PIPELINE_RESOLVED_NAMES)
-    if params != forwarded:
-        raise AssertionError(
-            "unified-slice pipeline forwarding drifted from maybe_run_unified_slice's "
-            f"signature: missing={sorted(params - forwarded)}, extra={sorted(forwarded - params)}"
-        )
-
-
-_assert_forwarding_covers_signature()
