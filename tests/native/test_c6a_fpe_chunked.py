@@ -212,6 +212,64 @@ def test_fail_closed_picks_the_first_failing_rows_code() -> None:
     assert native_exc.code == oracle_exc.code == "fpe_unencryptable_domain"
 
 
+# An oversized custom charset (65 printable-ASCII symbols, radix 65 > FF1_MAX_RADIX 64) builds no
+# FF1 cipher. It is a valid compile-time config (unique, printable ASCII, >= 2 symbols), so it
+# reaches production and must keep the oracle's pinned validation order per value (C6a plan §3d,
+# MEDIUM-1): an out-of-charset value fails `fpe_unencryptable_value` (never reaching the radix
+# guard), an in-charset value fails `fpe_unencryptable_length`.
+_OVERSIZED_CHARSET = "".join(chr(i) for i in range(33, 98))
+
+
+@_NEEDS_COMPANION
+@pytest.mark.parametrize("preserve", [True, False], ids=["preserve", "no_sep"])
+@pytest.mark.parametrize("forward", [True, False], ids=["encrypt", "decrypt"])
+def test_oversized_charset_per_value_code_matches_reference(preserve: bool, forward: bool) -> None:
+    """Kernel-level differential over an oversized alphabet: per-row codes match the reference
+    exactly for both preserve modes and both directions (mixed value/length rows)."""
+    assert len(_OVERSIZED_CHARSET) == 65
+    cfg = FpeConfig(charset=_OVERSIZED_CHARSET, preserve_separators=preserve)
+    # row 0/3 out of charset -> value; row 1/2 fully in charset -> length (radix guard).
+    values = ["☃", "!!!!!!", "ABCDEF", "☃☃"]
+    arr = pa.array(values, type=pa.string())
+    kernel = native_fpe(
+        arr, mask_key=_MASK_KEY, namespace=_NS, tweak_column="c", config=cfg, forward=forward
+    )
+    ref = (reference_fpe().encrypt_batch if forward else reference_fpe().decrypt_batch)(
+        arr, mask_key=_MASK_KEY, namespace=_NS, tweak_column="c", config=cfg
+    )
+    assert [(e.row_index, e.code) for e in kernel.errors] == [
+        (e.row_index, e.code) for e in ref.errors
+    ]
+    assert [(e.row_index, e.code) for e in kernel.errors] == [
+        (0, "fpe_unencryptable_value"),
+        (1, "fpe_unencryptable_length"),
+        (2, "fpe_unencryptable_length"),
+        (3, "fpe_unencryptable_value"),
+    ]
+
+
+@_NEEDS_COMPANION
+@pytest.mark.parametrize(
+    "values, expected_code",
+    [
+        # first failing row is out of charset -> value (never reaches the radix guard)
+        (["☃", "!!!!!!"], "fpe_unencryptable_value"),
+        # first failing row is fully in charset -> length (radix guard), matching the oracle
+        (["!!!!!!", "☃"], "fpe_unencryptable_length"),
+    ],
+    ids=["value_first", "length_first"],
+)
+def test_oversized_charset_route_first_failure_matches_oracle(
+    values: list[Any], expected_code: str
+) -> None:
+    config = make_config([fpe_col(charset=_OVERSIZED_CHARSET)])
+    chunks = [pa.table({"c": _col(values)})]
+    native_exc = _native_raises(config, chunks)
+    oracle_exc = _oracle_raises(config, chunks)
+    assert type(native_exc) is type(oracle_exc)
+    assert native_exc.code == oracle_exc.code == expected_code
+
+
 @_NEEDS_COMPANION
 def test_fail_closed_first_failure_in_later_chunk() -> None:
     """A bad value in the SECOND chunk kills with that value's code, matching the oracle's

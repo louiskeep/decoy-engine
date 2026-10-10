@@ -173,7 +173,7 @@ struct ResolvedConfig<'a> {
 /// validation order 1-6, returning the output string or the row status code of the first violation.
 fn permute(
     cfg: &ResolvedConfig<'_>,
-    ff1: &FF1<Aes256>,
+    ff1: Option<&FF1<Aes256>>,
     tweak: &[u8],
     s: &[char],
     forward: bool,
@@ -213,6 +213,13 @@ fn permute(
         }
     }
     let input = FlexibleNumeralString::from(numerals);
+    // The radix-bound check above returns `fpe_unencryptable_length` for a radix outside [2, 64],
+    // which is the only reason the cipher is not built (`ff1` is `None`), so this is reached only
+    // with a valid radix and `ff1` present; the `None` arm is a defensive backstop that keeps the
+    // same length code rather than panicking on an unwrap.
+    let Some(ff1) = ff1 else {
+        return Err(CODE_UNENCRYPTABLE_LENGTH);
+    };
     let result = if forward {
         ff1.encrypt(tweak, &input)
     } else {
@@ -238,7 +245,7 @@ fn permute(
 /// luhn mode permutes the body and appends the recomputed check digit; otherwise permutes whole.
 fn fpe_pure_value(
     cfg: &ResolvedConfig<'_>,
-    ff1: &FF1<Aes256>,
+    ff1: Option<&FF1<Aes256>>,
     tweak: &[u8],
     s: &[char],
     forward: bool,
@@ -261,7 +268,7 @@ fn fpe_pure_value(
 /// the non-preserve branch fails closed on any out-of-charset character.
 fn fpe_one(
     cfg: &ResolvedConfig<'_>,
-    ff1: &FF1<Aes256>,
+    ff1: Option<&FF1<Aes256>>,
     tweak: &[u8],
     value: &str,
     forward: bool,
@@ -323,7 +330,7 @@ fn row_ranges(len: usize, threads: usize) -> Vec<(usize, usize)> {
 /// (-> Some(output)), or a per-row failure (-> None plus a recorded error), in row order.
 fn fill_range(
     cfg: &ResolvedConfig<'_>,
-    ff1: &FF1<Aes256>,
+    ff1: Option<&FF1<Aes256>>,
     tweak: &[u8],
     array: &StringArray,
     forward: bool,
@@ -412,8 +419,10 @@ pub fn fpe_transform_array(
 
     // The FF1 instance is reused across every row. `FF1::new` only fails for a radix outside
     // [2, 2^16]; the deployed profile caps at 64 and Python rejects a degenerate (<2) charset, so
-    // a radix in range always constructs. A radix above 64 is caught per-row as
-    // `fpe_unencryptable_length` (matching `_permute`), so build the cipher only when in range.
+    // a radix in range always constructs. A radix above 64 leaves the cipher unbuilt (`None`); the
+    // per-row path still runs `fpe_one` first (so an out-of-charset value fails with
+    // `fpe_unencryptable_value`, like `_fpe_value`), and only a value that reaches `_permute`'s
+    // radix guard gets `fpe_unencryptable_length` -- the pinned order, plan §3d.
     let ff1 = if (FF1_MIN_RADIX..=FF1_MAX_RADIX).contains(&radix) {
         FF1::<Aes256>::new(&key, radix).ok()
     } else {
@@ -426,7 +435,7 @@ pub fn fpe_transform_array(
     let per_range: Vec<(Vec<Option<String>>, Vec<FpeRowError>)> = if ranges.len() <= 1 {
         ranges
             .into_iter()
-            .map(|(lo, hi)| run_one_range(&cfg, ff1.as_ref(), tweak, string_array, forward, lo, hi))
+            .map(|(lo, hi)| fill_range(&cfg, ff1.as_ref(), tweak, string_array, forward, lo, hi))
             .collect()
     } else {
         use rayon::prelude::*;
@@ -435,7 +444,7 @@ pub fn fpe_transform_array(
             ranges
                 .into_par_iter()
                 .map(|(lo, hi)| {
-                    run_one_range(&cfg, ff1.as_ref(), tweak, string_array, forward, lo, hi)
+                    fill_range(&cfg, ff1.as_ref(), tweak, string_array, forward, lo, hi)
                 })
                 .collect()
         })
@@ -451,42 +460,6 @@ pub fn fpe_transform_array(
         values: StringArray::from(values),
         errors,
     })
-}
-
-/// A range's rows, with a radix-out-of-range column short-circuiting every non-empty row to the
-/// `fpe_unencryptable_length` code (the cipher could not be built; `_permute`'s radix guard).
-fn run_one_range(
-    cfg: &ResolvedConfig<'_>,
-    ff1: Option<&FF1<Aes256>>,
-    tweak: &[u8],
-    array: &StringArray,
-    forward: bool,
-    lo: usize,
-    hi: usize,
-) -> (Vec<Option<String>>, Vec<FpeRowError>) {
-    match ff1 {
-        Some(ff1) => fill_range(cfg, ff1, tweak, array, forward, lo, hi),
-        None => {
-            let mut out = Vec::with_capacity(hi - lo);
-            let mut errors = Vec::new();
-            for i in lo..hi {
-                if array.is_null(i) {
-                    out.push(None);
-                    continue;
-                }
-                if array.value(i).is_empty() {
-                    out.push(Some(String::new()));
-                    continue;
-                }
-                out.push(None);
-                errors.push(FpeRowError {
-                    row_index: i,
-                    code: CODE_UNENCRYPTABLE_LENGTH,
-                });
-            }
-            (out, errors)
-        }
-    }
 }
 
 #[cfg(test)]
@@ -585,6 +558,44 @@ mod tests {
             fpe_transform_array(&array, Some(&key), "ns", b"", &ds, false, false, true, 1).unwrap();
         assert!(out.values.is_null(0));
         assert_eq!(out.errors[0].code, CODE_UNENCRYPTABLE_VALUE);
+    }
+
+    #[test]
+    fn oversized_charset_keeps_validation_order() {
+        // A 65-symbol printable-ASCII charset (radix 65 > FF1_MAX_RADIX 64) builds no cipher.
+        // The per-value charset check still runs first (plan §3d pinned order), so an
+        // out-of-charset value fails `fpe_unencryptable_value` while an in-charset value reaches
+        // `_permute`'s radix guard and fails `fpe_unencryptable_length` -- matching the oracle.
+        let big: Vec<char> = (33u8..98u8).map(|b| b as char).collect();
+        assert_eq!(big.len(), 65);
+        let key = key32();
+        // "☃" is not in the ASCII charset -> value; "!!!!!!" is all in-charset -> length.
+        let array = StringArray::from(vec![Some("☃"), Some("!!!!!!")]);
+        for preserve in [true, false] {
+            let out = fpe_transform_array(
+                &array,
+                Some(&key),
+                "ns",
+                b"",
+                &big,
+                preserve,
+                false,
+                true,
+                1,
+            )
+            .unwrap();
+            assert_eq!(out.errors.len(), 2, "preserve={preserve}");
+            assert_eq!(out.errors[0].row_index, 0);
+            assert_eq!(
+                out.errors[0].code, CODE_UNENCRYPTABLE_VALUE,
+                "preserve={preserve}"
+            );
+            assert_eq!(out.errors[1].row_index, 1);
+            assert_eq!(
+                out.errors[1].code, CODE_UNENCRYPTABLE_LENGTH,
+                "preserve={preserve}"
+            );
+        }
     }
 
     #[test]
