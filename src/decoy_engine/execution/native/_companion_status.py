@@ -30,7 +30,6 @@ from typing import Literal, TypeAlias
 import pyarrow as pa
 
 from decoy_engine.errors import DecoyError
-
 from decoy_engine.transforms.fpe import FF1_TWEAK_SCOPE_COLUMN, build_ff1_tweak
 
 from ._crypto_ext import _EXPECTED_ABI_VERSION, FPE_KAT, HASH_KAT
