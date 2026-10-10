@@ -227,7 +227,7 @@ def native_fpe(
     array: pa.Array | pa.ChunkedArray,
     *,
     mask_key: bytes | None,
-    namespace: str,
+    namespace: str | None,
     tweak_column: str,
     config: FpeConfig,
     forward: bool = True,
@@ -238,7 +238,19 @@ def native_fpe(
     Mirrors `native_keyed_hash`'s shape (load the compiled kernel, forward the call); this module
     never falls back to the reference kernel. `tweak_column` is the FF1 tweak identity (the target
     column name, or the join group when set). The result carries the output array and the ordered
-    per-row errors; the fail-closed `StrategyError` kill is applied by the route adapter, not here."""
+    per-row errors; the fail-closed `StrategyError` kill is applied by the route adapter, not here.
+
+    A `None` namespace fails closed the way the oracle handler does (`fpe_requires_namespace`),
+    checked here before the compiled kernel is loaded so the failure never depends on whether the
+    companion is installed -- the same guard `native_keyed_hash` applies for `hash`."""
+    if namespace is None:
+        from decoy_engine.execution._errors import StrategyError
+
+        raise StrategyError(
+            code="fpe_requires_namespace",
+            strategy="fpe",
+            message="the fpe strategy requires a namespace; got None.",
+        )
     kernel = load_compiled_fpe_kernel()
     return kernel.run(  # type: ignore[attr-defined]
         array,

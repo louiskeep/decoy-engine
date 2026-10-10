@@ -44,7 +44,7 @@ ARROW_PYTHON: Final = "arrow_python"
 PANDAS_ORACLE: Final = "pandas_oracle"
 
 Shape = Literal["kernel", "pool"]
-RequiredKernel = Literal["crypto", "index", "raw_hex"]
+RequiredKernel = Literal["crypto", "index", "raw_hex", "fpe"]
 AssemblyShape = Literal["tokenizing", "null_on_empty", "type_preserving"]
 
 
@@ -230,6 +230,31 @@ _SPECS = (
         unified_resident_types=_STRING_ONLY,
         full_frame_assembly="tokenizing",
         routed_diagnostics=frozenset({"reduce_row_error:format_error"}),
+    ),
+    OperatorSpec(
+        strategy="fpe",
+        operator_id="native_fpe",
+        shape="kernel",
+        planned_backend=RUST_COMPANION,
+        required_kernel="fpe",
+        # The compiled FF1 kernel runs over the source column, so its "the compiled kernel
+        # ran" claim is observed (like hash), never inferred.
+        positive_kernel_evidence=True,
+        unified_resident_types=_STRING_ONLY,
+        # The handler assigns a fresh Python list (`df[column] = out`), so an empty column
+        # rounds through pandas as float64, an all-null one as null, an all-empty one as string
+        # -- exactly the tokenizing reconciliation (C6a plan §3i). fpe stays OUT of the chunked
+        # string-pinning set; its degenerate chunk types are reconciled in `_chunk_masking`.
+        full_frame_assembly="tokenizing",
+        # fpe emits two residual-risk warnings (Python-computed, transported on
+        # `ExecutionResult.warnings`, never on the output); the fail-closed kill is a
+        # `StrategyError`, not a routed RowError, so it carries no row-error obligation.
+        routed_diagnostics=frozenset(
+            {
+                "reduce_warning:fpe_join_group_active",
+                "reduce_warning:fpe_partial_plaintext_disclosure",
+            }
+        ),
     ),
 )
 

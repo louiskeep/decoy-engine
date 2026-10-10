@@ -67,6 +67,7 @@ from decoy_engine.execution.native._faker_deterministic_admission import (
     is_effective_deterministic_faker_column,
 )
 from decoy_engine.execution.native._faker_positional_admission import chunked_positional_column
+from decoy_engine.execution.native._fpe_ext import load_compiled_fpe_kernel
 from decoy_engine.execution.native._group_key_ext import (
     RawHexDerivationKernel,
     load_compiled_raw_hex_kernel,
@@ -490,6 +491,14 @@ def plan_native_route(
             load_compiled_crypto_kernel()
         except CryptoExtensionUnavailableError:
             decision = _downgrade_to_oracle(decision, "crypto_extension_unavailable")
+
+    if decision.native_admitted and any(n.strategy == "fpe" for n in decision.node_routes):
+        # fpe loads its own compiled FF1 kernel inside the per-chunk call, so a missing or
+        # ABI-incompatible companion must downgrade the WHOLE table here (never half-native).
+        try:
+            load_compiled_fpe_kernel()
+        except CryptoExtensionUnavailableError:
+            decision = _downgrade_to_oracle(decision, "fpe_extension_unavailable")
 
     index_kernel: IndexDerivationKernel | None = None
     if decision.native_admitted and any(

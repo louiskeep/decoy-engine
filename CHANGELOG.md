@@ -9,6 +9,21 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Changed (format-preserving encryption on the native routes, 2026-10-10)
+
+An `fpe` column now runs on the chunked and unified native routes through a compiled Rust FF1
+kernel, instead of falling to the pandas oracle. Output, per-row errors, the fail-closed kill,
+the residual-risk warnings and the route metrics are identical to the oracle: the kernel is
+byte-matched to `transforms/_ff1.py`, the first per-row failure raises the same `StrategyError`
+code the shipped handler raises, and the two residual-risk warnings
+(`fpe_partial_plaintext_disclosure`, `fpe_join_group_active`) stay computed in Python at the
+oracle's invocation scope and ride `ExecutionResult.warnings`, never the output, so determinism
+fingerprints do not move. Checksum modes (`checksum` set) stay on the Python path by design and
+decline to the oracle with a coded reason; a missing or ABI-incompatible companion declines the
+whole table. A non-string, dictionary-encoded or `large_string` source declines to the oracle.
+The companion ABI moved to `decoy-native-abi-3` (the FF1 entry point), and
+`native_companion_status()` / `KernelAvailability` now also probe the FPE kernel.
+
 ### Changed (deterministic Faker over numeric sources on the native routes, 2026-10-09)
 
 Deterministic Faker (and the `allow_collisions: true` alias) over a `bool`, signed-integer or

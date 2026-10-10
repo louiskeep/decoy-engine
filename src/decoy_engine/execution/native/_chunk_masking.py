@@ -20,10 +20,16 @@ import pyarrow as pa
 
 from decoy_engine.execution._adapter import provider_config_to_dict
 from decoy_engine.execution._errors import ExecutionError
+from decoy_engine.execution.native._fpe_route import (
+    fpe_config_from_params,
+    fpe_fail_closed_error,
+    fpe_residual_warnings,
+)
 from decoy_engine.execution.native._operator_params import (
     BucketPerturbParams,
     CategoricalParams,
     FakerParams,
+    FpeParams,
     GroupKeyParams,
     OperatorParams,
     is_positional_faker_seed,
@@ -59,6 +65,7 @@ def _mask_chunk_native(
     kernel_idle: set[str] | None = None,
     row_offset: int = 0,
     format_errors: dict[str, tuple[int, ...]] | None = None,
+    fpe_warnings: list[Any] | None = None,
     raw_chunk: pa.Table | None = None,
     raw_hex_kernel: RawHexDerivationKernel | None = None,
     job_seed: bytes | None = None,
@@ -101,6 +108,11 @@ def _mask_chunk_native(
     chunk and never adds the chunk's global offset, so these are not rebased either. A date_shift
     column that has such positions with no `format_errors` to carry them raises: dropping them
     would let the raw value reach the output with the job succeeding.
+
+    `fpe_warnings`, when given, receives each fpe column's residual-risk warnings, computed in
+    Python from this chunk's ORIGINAL (pre-mask) values at the oracle's per-chunk scope (C6a plan
+    §3e); the caller rides them on the chunk's `ExecutionResult.warnings`. An fpe column that
+    produces a per-row failure raises the fail-closed `StrategyError` here instead.
 
     `raw_chunk` is the chunk as the source produced it, before null-typed columns were cast to
     the first chunk's types; only a group_key column reads it (for its sibling), every other
@@ -177,6 +189,26 @@ def _mask_chunk_native(
                 missing_mask=(faker_missing or {}).get(name),
             )
         out = result.out
+        if isinstance(params, FpeParams):
+            if result.fpe_errors:
+                # fpe fail-closed KILLS on the first bad value (unlike date_shift's survive), the
+                # same as the oracle's StrategyError during this chunk; raise before the warning,
+                # the offset advance, the sink append or the yield (C6a plan §3d).
+                raise fpe_fail_closed_error(result.fpe_errors, name)
+            if fpe_warnings is not None:
+                fpe_warnings.extend(
+                    fpe_residual_warnings(
+                        source, config=fpe_config_from_params(params), column=name
+                    )
+                )
+            # The handler assigns a fresh list, so the oracle's per-chunk type is zero-row ->
+            # double, all-null -> null, all-empty/normal -> string (C6a plan §3i); fpe stays out
+            # of the string-pin set and reconciles here, like bucket_perturb (which, unlike fpe,
+            # maps a zero-row chunk to null, not double).
+            if len(out) == 0:
+                out = pa.array([], type=pa.float64())
+            elif out.null_count == len(out):
+                out = pa.nulls(len(out))
         # The kernel always returns `pa.string()`, but the oracle chunked route gives Arrow `null`
         # for a zero-row or all-null bucket_perturb chunk (promotable when the chunks are joined)
         # and `string` for any chunk holding a value, an all-unparseable one included.

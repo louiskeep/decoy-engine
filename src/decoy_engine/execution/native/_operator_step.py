@@ -26,6 +26,8 @@ from decoy_engine.execution.native._categorical_ext import (
     native_categorical_positional,
 )
 from decoy_engine.execution.native._date_shift_ext import native_date_shift
+from decoy_engine.execution.native._fpe_ext import native_fpe
+from decoy_engine.execution.native._fpe_route import fpe_config_from_params
 from decoy_engine.execution.native._group_key_kernel import native_group_key
 from decoy_engine.execution.native._kernels_keyed import native_keyed_hash
 from decoy_engine.execution.native._kernels_scalar import (
@@ -38,6 +40,7 @@ from decoy_engine.execution.native._operator_params import (
     BucketPerturbParams,
     CategoricalParams,
     FakerParams,
+    FpeParams,
     GroupKeyParams,
     HashParams,
     OperatorParams,
@@ -49,6 +52,7 @@ from decoy_engine.execution.native._operator_params import (
 from decoy_engine.generation.pool import GenerationError
 
 if TYPE_CHECKING:
+    from decoy_engine.execution.native._crypto_ext import FpeRowError
     from decoy_engine.execution.native._group_key_ext import RawHexDerivationKernel
     from decoy_engine.execution.native._index_ext import IndexDerivationKernel
     from decoy_engine.generation.pool import ValuePool
@@ -237,6 +241,10 @@ class StepResult:
     ran: bool | None
     # Batch-local positions of non-null date_shift values that did not parse.
     format_error_positions: tuple[int, ...] = ()
+    # The compiled FF1 kernel's per-row failures, DISTINCT from `format_error_positions`:
+    # date_shift survives-and-reports a format error, fpe fail-closed KILLS on the first one
+    # (C6a plan §3d). Each route maps a non-empty set to a `StrategyError` via `_fpe_route`.
+    fpe_errors: tuple[FpeRowError, ...] = ()
 
 
 def _index_kernel_for(
@@ -307,6 +315,20 @@ def run_kernel_step(
             native_threads=native_threads,
         )
         return StepResult(out, True)
+    if isinstance(params, FpeParams):
+        # native_fpe loads its own compiled FF1 kernel (fail-closed), like native_keyed_hash;
+        # a successful call IS the compiled kernel. The per-row errors ride the StepResult's own
+        # fpe channel, and each route maps a non-empty set to the fail-closed StrategyError kill.
+        result = native_fpe(
+            source,
+            mask_key=mask_key,
+            namespace=params.namespace,
+            tweak_column=params.tweak_column,
+            config=fpe_config_from_params(params),
+            forward=True,
+            native_threads=native_threads,
+        )
+        return StepResult(result.values, True, fpe_errors=result.errors)
     if isinstance(params, FakerParams) and params.positional:
         if pool is None or job_seed is None or params.selection_namespace is None:
             # The unified route never builds positional params, and the chunked adapter passes

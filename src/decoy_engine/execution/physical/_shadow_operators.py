@@ -24,11 +24,13 @@ from decoy_engine.execution._row_errors import RowError
 from decoy_engine.execution.native._crypto_ext import CryptoExtensionUnavailableError
 from decoy_engine.execution.native._date_shift_ext import FORMAT_ERROR_REASON
 from decoy_engine.execution.native._faker_null_mask import faker_missing_mask
+from decoy_engine.execution.native._fpe_route import fpe_fail_closed_error
 from decoy_engine.execution.native._operator_params import (
     BucketPerturbParams,
     CategoricalParams,
     DateShiftParams,
     FakerParams,
+    FpeParams,
     GroupKeyParams,
     HashParams,
     OperatorParams,
@@ -64,6 +66,7 @@ _REDACT: Final = OPERATORS["redact"].operator_id
 _TRUNCATE: Final = OPERATORS["truncate"].operator_id
 _TEXT_REDACT: Final = OPERATORS["text_redact"].operator_id
 _KEYED_HASH: Final = OPERATORS["hash"].operator_id
+_FPE: Final = OPERATORS["fpe"].operator_id
 _FAKER_SELECT: Final = OPERATORS["faker"].operator_id
 _CATEGORICAL: Final = OPERATORS["categorical"].operator_id
 _BUCKET_PERTURB: Final = OPERATORS["bucket_perturb"].operator_id
@@ -147,6 +150,7 @@ class OperatorCallEvidence:
 _COMPANION_UNAVAILABLE_DETAIL: Final = {
     _KEYED_HASH: "compiled hash companion unavailable",
     _GROUP_KEY: "compiled raw-hex companion unavailable",
+    _FPE: "compiled fpe companion unavailable",
 }
 
 
@@ -183,6 +187,11 @@ def _bound_params(
             raise AssertionError("hash node reached run_operator with no KeyBinding")
         if not isinstance(params, HashParams):  # pragma: no cover - C0 binds it with the key
             raise AssertionError("hash node reached run_operator with no resolved params")
+    elif operator_id == _FPE:
+        if binding.key_binding is None:  # pragma: no cover - C0 always binds this for fpe
+            raise AssertionError("fpe node reached run_operator with no KeyBinding")
+        if not isinstance(params, FpeParams):  # pragma: no cover - C0 binds it with the key
+            raise AssertionError("fpe node reached run_operator with no resolved params")
     elif operator_id == _FAKER_SELECT:
         if binding.key_binding is None or binding.pool_binding is None:
             # pragma: no cover - C0 always binds both together for faker
@@ -362,6 +371,12 @@ def run_operator(
             code=NATIVE_COMPANION_UNAVAILABLE,
             detail=f"operator={binding.operator_id!r}: {detail}",
         ) from exc
+    if result.fpe_errors:
+        # fpe fail-closed KILLS on the first per-row failure (C6a §3d). The raised StrategyError
+        # propagates out of the coordinator; the unified slice's generic exception boundary
+        # reroutes to the full-frame oracle, which runs the shipped handler and raises the
+        # canonical StrategyError (class + code), so exception parity holds by construction.
+        raise fpe_fail_closed_error(result.fpe_errors, column or "?")
     # Any compiled batch wins: the evidence object lives across all of a node's batches.
     if result.ran:
         evidence.compiled_kernel_executed = True

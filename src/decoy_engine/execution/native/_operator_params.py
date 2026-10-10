@@ -33,6 +33,7 @@ __all__ = [
     "CategoricalParams",
     "DateShiftParams",
     "FakerParams",
+    "FpeParams",
     "GroupKeyParams",
     "HashParams",
     "OperatorParams",
@@ -118,6 +119,25 @@ class DateShiftParams:
     namespace: str | None
 
 
+@dataclass(frozen=True)
+class FpeParams:
+    # The key derives one FF1 key per (mask_key, namespace); a None namespace fails closed at
+    # the kernel the way the oracle handler does (`fpe_requires_namespace`).
+    namespace: str | None
+    # The deployable-profile config, resolved exactly as `FpeConfig.from_mapping` / the handler:
+    # a named preset or a literal charset, the separator / luhn flags, and the checksum / join
+    # group. A column with `checksum` set never reaches here (it declines to the oracle at
+    # admission, C6a plan §3g), but the field is carried so the resolver stays a pure copy.
+    charset: str
+    preserve_separators: bool
+    validate_luhn: bool
+    checksum: str | None
+    join_group: str | None
+    # The target column name, framed into the per-column FF1 tweak (the join group replaces it
+    # when set, so grouped columns share ciphertext).
+    tweak_column: str
+
+
 OperatorParams = (
     PassthroughParams
     | RedactParams
@@ -125,6 +145,7 @@ OperatorParams = (
     | TextRedactParams
     | HashParams
     | FakerParams
+    | FpeParams
     | CategoricalParams
     | BucketPerturbParams
     | GroupKeyParams
@@ -187,6 +208,17 @@ def resolve_operator_params(
         )
     if strategy == "hash":
         return HashParams(namespace, cfg.get("truncate"))
+    if strategy == "fpe":
+        # The same defaults `FpeConfig.from_mapping` / the shipped handler read.
+        return FpeParams(
+            namespace=namespace,
+            charset=cfg.get("charset", "digits"),
+            preserve_separators=bool(cfg.get("preserve_separators", True)),
+            validate_luhn=bool(cfg.get("validate_luhn", False)),
+            checksum=cfg.get("checksum") or None,
+            join_group=cfg.get("fpe_join_group") or None,
+            tweak_column=target,
+        )
     if strategy == "faker":
         return FakerParams(namespace)
     if strategy == "categorical":

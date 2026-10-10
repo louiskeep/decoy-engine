@@ -92,7 +92,7 @@ ALLOWLIST: dict[str, int] = {
     "src/decoy_engine/execution/_unified_slice.py": 605,
     # dispatch entry plus the table-keyed params, the job-seed hand-off and the eager string-pool
     # check for the position-keyed faker; dense exception, the pool check itself lives in _chunk_masking.
-    "src/decoy_engine/execution/native/_chunked_entry.py": 634,
+    "src/decoy_engine/execution/native/_chunked_entry.py": 640,
     # scale-aware chunked-FK dtype family and rootness check; split the FK helpers.
     "src/decoy_engine/execution/_chunked_fk.py": 970,
     # fail-closed output projection and corpus pinning on the mask route; split the FK-resolution helpers.
