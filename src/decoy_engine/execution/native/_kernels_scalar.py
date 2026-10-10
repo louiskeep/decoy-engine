@@ -43,12 +43,15 @@ pinned divergences and the batch-schema-stability test.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 import pyarrow as pa
 
+from decoy_engine.errors import FpeUnencryptableError
 from decoy_engine.execution._errors import StrategyError
 from decoy_engine.execution._strategies._text_redact import _splice
+from decoy_engine.execution.native._text_mask_route import text_mask_fail_closed_error
 from decoy_engine.execution.native._text_redact_kernel import (
     load_text_redact_kernel,
     merge_text_redact_spans,
@@ -56,6 +59,7 @@ from decoy_engine.execution.native._text_redact_kernel import (
 )
 from decoy_engine.kernel import passthrough_array, redact_array, truncate_array
 from decoy_engine.storm.detectors import iter_spans
+from decoy_engine.transforms.text_mask import mask_cell
 
 
 def native_passthrough(array: pa.Array | pa.ChunkedArray) -> pa.Array:
@@ -191,4 +195,77 @@ def native_text_redact(
     return pa.array(routed, type=pa.string())
 
 
-__all__ = ["native_passthrough", "native_redact", "native_text_redact", "native_truncate"]
+def native_text_mask(
+    array: pa.Array | pa.ChunkedArray,
+    *,
+    mask_key: bytes | None,
+    column: str,
+    detectors: tuple[str, ...] | None,
+    per_detector_strategy: Mapping[str, str] | None,
+    unmatched_span_policy: str,
+    token: str,
+    min_days: int | None,
+    max_days: int | None,
+    sub_floor_span_policy: str | None,
+) -> tuple[pa.Array, dict[str, int]]:
+    """Mask PII spans in every non-null cell, reproducing `TextMaskHandler.run` per cell.
+
+    text_mask is KEYED and handler-rich, so this is not a bare `mask_cell` loop: it resolves and
+    passes `mask_key` (text_mask keys its fpe/faker/date_shift spans off it), threads ONE
+    `sub_floor_notices` dict across the whole call exactly as the handler does, and reproduces the
+    handler's `except FpeUnencryptableError` branch so a fail-closed span raises the identical
+    `StrategyError(code='fpe_unencryptable_domain', strategy='text_mask')`. It returns that notices
+    dict beside the output so the route transports the handler's one aggregate sub-floor warning
+    (built OUTSIDE `mask_cell`); the warning never rides the output.
+
+    Output is `pa.string()` on every batch (nulls stay null), like `native_text_redact`; each
+    route's assembly decides an empty or all-null column's type. The source is string-only by
+    admission, so the `str()` coercion is the handler's own null-safe identity for strings. `ner`
+    declines to the oracle at admission (3c), so this reproduces only the non-NER handler path.
+    """
+    if mask_key is None:  # pragma: no cover - the routes always thread the resolved mask key
+        raise AssertionError(
+            "native_text_mask reached with mask_key=None; text_mask is keyed and the routes "
+            "resolve a concrete mask key (the job seed when no secret) before dispatch."
+        )
+    strategy_map = dict(per_detector_strategy) if per_detector_strategy else None
+    extra: dict[str, Any] = {}
+    if min_days is not None:
+        extra["min_days"] = min_days
+    if max_days is not None:
+        extra["max_days"] = max_days
+    detector_ids = list(detectors) if detectors is not None else None
+    sub_floor_notices: dict[str, int] = {}
+    out: list[Any] = []
+    try:
+        for value in array.to_pylist():
+            if value is None:
+                out.append(None)
+                continue
+            text = value if isinstance(value, str) else str(value)
+            out.append(
+                mask_cell(
+                    text,
+                    mask_key,
+                    detector_ids=detector_ids,
+                    extra_spans=None,
+                    strategy_map=strategy_map,
+                    unmatched_span_policy=unmatched_span_policy,
+                    token=token,
+                    cfg=extra or None,
+                    sub_floor_span_policy=sub_floor_span_policy,
+                    sub_floor_notices=sub_floor_notices,
+                )
+            )
+    except FpeUnencryptableError as exc:
+        raise text_mask_fail_closed_error(exc, column) from exc
+    return pa.array(out, type=pa.string()), sub_floor_notices
+
+
+__all__ = [
+    "native_passthrough",
+    "native_redact",
+    "native_text_mask",
+    "native_text_redact",
+    "native_truncate",
+]

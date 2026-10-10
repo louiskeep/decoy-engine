@@ -62,7 +62,7 @@ _NINE_STRATEGIES = frozenset(
 
 
 def test_operator_ids_and_constants() -> None:
-    assert _NINE_IDS | {"native_text_redact"} == admission.ALLOWED_OPERATOR_IDS
+    assert _NINE_IDS | {"native_text_redact", "native_text_mask"} == admission.ALLOWED_OPERATOR_IDS
     assert type(admission.ALLOWED_OPERATOR_IDS) is frozenset
     assert admission.HASH_OPERATOR_ID == "native_keyed_hash"
     assert admission.CATEGORICAL_OPERATOR_ID == "native_categorical"
@@ -84,6 +84,7 @@ def test_backend_by_operator_id() -> None:
         "native_redact": "arrow_python",
         "native_truncate": "arrow_python",
         "native_text_redact": "arrow_python",
+        "native_text_mask": "arrow_python",
         "native_passthrough": "arrow_python",
     }
     assert isinstance(admission.BACKEND_BY_OPERATOR_ID, MappingProxyType)
@@ -119,7 +120,8 @@ def test_companion_dependent_and_required_kernel() -> None:
 
 def test_routed_diagnostic_obligations_date_shift_and_fpe() -> None:
     # date_shift routes its format_error row errors; fpe routes its two Python-computed
-    # residual-risk warnings (the fail-closed kill is a StrategyError, not a routed RowError).
+    # residual-risk warnings; text_mask routes its one aggregate sub-floor warning (C6b-i). Each
+    # fail-closed kill is a StrategyError, not a routed RowError.
     assert {
         "native_date_shift": frozenset({"reduce_row_error:format_error"}),
         "native_fpe": frozenset(
@@ -128,6 +130,7 @@ def test_routed_diagnostic_obligations_date_shift_and_fpe() -> None:
                 "reduce_warning:fpe_partial_plaintext_disclosure",
             }
         ),
+        "native_text_mask": frozenset({"reduce_warning:text_mask_sub_floor_span_handled"}),
     } == admission._ROUTED_DIAGNOSTIC_OBLIGATIONS
     assert type(admission._ROUTED_DIAGNOSTIC_OBLIGATIONS) is dict
     assert type(admission._ROUTED_DIAGNOSTIC_OBLIGATIONS["native_date_shift"]) is frozenset
@@ -142,7 +145,7 @@ def test_positive_kernel_evidence_operator_ids() -> None:
 
 
 def test_slice_strategies_and_operator_id_by_strategy() -> None:
-    assert _NINE_STRATEGIES | {"text_redact"} == bindings.SLICE_STRATEGIES
+    assert _NINE_STRATEGIES | {"text_redact", "text_mask"} == bindings.SLICE_STRATEGIES
     assert type(bindings.SLICE_STRATEGIES) is frozenset
     assert bindings.OPERATOR_ID_BY_STRATEGY == {
         "passthrough": "native_passthrough",
@@ -156,6 +159,7 @@ def test_slice_strategies_and_operator_id_by_strategy() -> None:
         "group_key": "native_group_key",
         "date_shift": "native_date_shift",
         "text_redact": "native_text_redact",
+        "text_mask": "native_text_mask",
     }
     assert type(bindings.OPERATOR_ID_BY_STRATEGY) is dict
 
@@ -172,6 +176,7 @@ def test_admitted_resident_types_has_nine_keys_and_no_group_key() -> None:
         "date_shift": frozenset({pa.string()}),
         "faker": frozenset({pa.string()}),
         "text_redact": frozenset({pa.string()}),
+        "text_mask": frozenset({pa.string()}),
     } == _ADMITTED_RESIDENT_TYPES
     assert "group_key" not in _ADMITTED_RESIDENT_TYPES
     assert type(_ADMITTED_RESIDENT_TYPES) is dict
@@ -192,6 +197,7 @@ def test_native_strategy_sets() -> None:
                 "group_key",
                 "date_shift",
                 "text_redact",
+                "text_mask",
             }
         )
         == NATIVE_KERNEL_STRATEGIES
@@ -228,7 +234,7 @@ def test_assembly_strategy_sets() -> None:
         )
         == _TOKENIZING_STRATEGIES
     )
-    assert frozenset({"bucket_perturb", "text_redact"}) == _NULL_ON_EMPTY_STRATEGIES
+    assert frozenset({"bucket_perturb", "text_redact", "text_mask"}) == _NULL_ON_EMPTY_STRATEGIES
     assert type(_TOKENIZING_STRATEGIES) is frozenset
     assert type(_NULL_ON_EMPTY_STRATEGIES) is frozenset
 

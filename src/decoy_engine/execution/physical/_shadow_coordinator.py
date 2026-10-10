@@ -79,6 +79,7 @@ from decoy_engine.execution.physical._shadow_assembly import (
     batch_when_mask,
     fpe_node_warnings,
     rebase_row_errors,
+    text_mask_node_warnings,
 )
 from decoy_engine.execution.physical._shadow_context import ShadowContext
 from decoy_engine.execution.physical._shadow_diff_codes import (
@@ -347,6 +348,10 @@ class ShadowCoordinator:
                     # and writes to `column`; every other operator reads `column`.
                     input_column = binding.group_key_sibling or column
                     parts: list[pa.Array] = []
+                    # One text_mask sub-floor accumulator per node: run_operator merges each
+                    # batch's counts, and the warning is built once after the loop at the oracle's
+                    # whole-column scope (C6b-i). Empty for every other operator.
+                    node_text_mask_notices: dict[str, int] = {}
                     # `_batches` slices in order from 0, so the running row count is
                     # each batch's table-global start offset.
                     row_offset = 0
@@ -383,6 +388,7 @@ class ShadowCoordinator:
                                     when_masks, node.node_id, row_offset, batch.num_rows
                                 ),
                                 source_slice=batch.select([column]),
+                                text_mask_notices=node_text_mask_notices,
                             )
                         parts.append(out)
                         row_errors.extend(rebase_row_errors(table.table, batch_errors, row_offset))
@@ -404,6 +410,9 @@ class ShadowCoordinator:
 
                     columns[column] = assemble_column(node.strategy, parts)
                     warnings.extend(fpe_node_warnings(binding, source, column))
+                    warnings.extend(
+                        text_mask_node_warnings(binding, node_text_mask_notices, column)
+                    )
 
             if columns:
                 # Assemble in SOURCE-SCHEMA order -- the pandas full-frame

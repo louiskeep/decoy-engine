@@ -46,6 +46,7 @@ from decoy_engine.execution.native._operator_params import (
     OperatorParams,
     PassthroughParams,
     RedactParams,
+    TextMaskParams,
     TextRedactParams,
     TruncateParams,
     is_positional_faker_seed,
@@ -238,7 +239,12 @@ def positional_faker_bindable(
 def _key_binding(key_source: str | None, params: OperatorParams) -> KeyBinding | None:
     """The non-secret key reference of a keyed operator. Its namespace is read from the
     resolved parameters, so the binding and the operator cannot disagree on it."""
-    if isinstance(params, (PassthroughParams, RedactParams, TruncateParams, TextRedactParams)):
+    if isinstance(
+        params, (PassthroughParams, RedactParams, TruncateParams, TextRedactParams, TextMaskParams)
+    ):
+        # text_mask is keyed on the mask key, but like text_redact its binding carries no
+        # namespace-scoped KeyBinding (the mask key flows from the runtime context, and text_mask
+        # keys its spans off the matched value, not a column namespace).
         return None
     if key_source is None or params.namespace is None:
         return None  # pragma: no cover - the per-operator guards leave neither unset

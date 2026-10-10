@@ -107,6 +107,31 @@ def text_redact_pinned_columns(configured: dict[str, dict[str, Any]]) -> frozens
     return frozenset(pinned)
 
 
+def text_mask_pinned_columns(configured: dict[str, dict[str, Any]]) -> frozenset[str]:
+    """The text_mask columns whose output is pinned to `string`.
+
+    One classifier for both schema-rule construction sites, config only. text_mask output is
+    always strings or nulls (the handler assigns a fresh object column), so pandas' empty ->
+    float64 and all-null -> null are inference artifacts the pin removes. The pin follows the same
+    predicate admission uses (only truthy `ner` declines), so a column that masks on the oracle
+    under `ner` is never retyped; it applies on both legs, so a string-source native column and a
+    large_string-source oracle column agree on `string`. A `when:` column is excluded (text_mask
+    with `when:` declines to the oracle on the chunked route)."""
+    from decoy_engine.execution.native._operator_config_rejections import (
+        text_mask_config_rejection,
+    )
+
+    pinned: set[str] = set()
+    for name, col in configured.items():
+        if col.get("strategy") != "text_mask" or _has_when(col):
+            continue
+        provider_config = col.get("provider_config")
+        cfg = provider_config if isinstance(provider_config, dict) else {}
+        if text_mask_config_rejection(name, cfg) is None:
+            pinned.add(name)
+    return frozenset(pinned)
+
+
 def faker_positional_pinned_columns(configured: dict[str, dict[str, Any]]) -> frozenset[str]:
     """The position-keyed faker columns whose output is pinned to `string`.
 
@@ -256,6 +281,7 @@ def build_schema_rule(
     strings = frozenset(n for n, c in configured.items() if _string_output_is_fixed(c))
     strings |= categorical_columns
     strings |= text_redact_pinned_columns(configured)
+    strings |= text_mask_pinned_columns(configured)
     strings |= faker_positional_pinned_columns(configured)
     # C5c-ii: an admitted deterministic-Faker column over bool/int/uint pins its degenerate
     # output to `string` on both chunked legs, so the native leg (always `string`) and the

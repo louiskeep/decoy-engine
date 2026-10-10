@@ -32,9 +32,11 @@ from decoy_engine.execution.native._operator_params import (
     FpeParams,
     GroupKeyParams,
     OperatorParams,
+    TextMaskParams,
     is_positional_faker_seed,
 )
 from decoy_engine.execution.native._operator_step import run_kernel_step, run_kernel_step_masked
+from decoy_engine.execution.native._text_mask_route import text_mask_sub_floor_warning
 from decoy_engine.generation.pool import PoolBuilder, PoolCache, ValuePool
 from decoy_engine.generation.pool._identity import resolve_faker_pool_identity
 from decoy_engine.providers_v2 import get_default_registry
@@ -66,6 +68,7 @@ def _mask_chunk_native(
     row_offset: int = 0,
     format_errors: dict[str, tuple[int, ...]] | None = None,
     fpe_warnings: list[Any] | None = None,
+    text_mask_warnings: list[Any] | None = None,
     raw_chunk: pa.Table | None = None,
     raw_hex_kernel: RawHexDerivationKernel | None = None,
     job_seed: bytes | None = None,
@@ -113,6 +116,12 @@ def _mask_chunk_native(
     Python from this chunk's ORIGINAL (pre-mask) values at the oracle's per-chunk scope (C6a plan
     §3e); the caller rides them on the chunk's `ExecutionResult.warnings`. An fpe column that
     produces a per-row failure raises the fail-closed `StrategyError` here instead.
+
+    `text_mask_warnings`, when given, receives each text_mask column's one aggregate sub-floor
+    warning for THIS chunk (built by the handler outside `mask_cell`, so from the masking the
+    kernel actually did), at the oracle's per-chunk scope (C6b-i); the caller rides them on the
+    chunk's `ExecutionResult.warnings`, never on the output. A text_mask column with a fail-closed
+    span raises its `StrategyError` inside `native_text_mask` before reaching here.
 
     `raw_chunk` is the chunk as the source produced it, before null-typed columns were cast to
     the first chunk's types; only a group_key column reads it (for its sibling), every other
@@ -189,6 +198,18 @@ def _mask_chunk_native(
                 missing_mask=(faker_missing or {}).get(name),
             )
         out = result.out
+        if isinstance(params, TextMaskParams):
+            # native_text_mask always returns pa.string() (the schema rule pins the column), so no
+            # degenerate type reconciliation is needed (unlike fpe/bucket_perturb). Only the one
+            # per-chunk sub-floor warning rides out, at the oracle's per-chunk scope.
+            if text_mask_warnings is not None and result.text_mask_notices:
+                text_mask_warnings.append(
+                    text_mask_sub_floor_warning(
+                        result.text_mask_notices,
+                        policy=params.sub_floor_span_policy,
+                        column=name,
+                    )
+                )
         if isinstance(params, FpeParams):
             if result.fpe_errors:
                 # fpe fail-closed KILLS on the first bad value (unlike date_shift's survive), the

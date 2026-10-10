@@ -34,6 +34,7 @@ import pyarrow as pa
 from decoy_engine.execution import _chunked, _chunked_oracle
 from decoy_engine.execution import _chunked_bucket_perturb as bucket_perturb_gate
 from decoy_engine.execution import _chunked_dgrn as dgrn
+from decoy_engine.execution import _chunked_text_mask as text_mask_gate
 from decoy_engine.execution._adapter import ExecutionResult
 from decoy_engine.execution._chunked import _chain_first
 from decoy_engine.execution._errors import ExecutionError
@@ -74,7 +75,7 @@ from decoy_engine.execution.native._dispatch import (
     plan_native_route,
 )
 from decoy_engine.execution.native._faker_null_mask import plan_faker_null_masks
-from decoy_engine.execution.native._operator_params import resolve_params_by_column
+from decoy_engine.execution.native._operator_params import TextMaskParams, resolve_params_by_column
 from decoy_engine.execution.native._when_mask import plan_when_masks
 from decoy_engine.generation.pool import PoolCache, ValuePool
 from decoy_engine.instrumentation.timing import StrategyTimingRecord
@@ -255,6 +256,12 @@ def _native_route(
     # The oracle's own predicate function decides each `when:` column's rows (see `_when_mask`).
     when = plan_when_masks(col_seed_by_name, state, table=table)
     faker_nulls = plan_faker_null_masks(col_seed_by_name, state, table=table)
+    # The native text_mask columns, so the per-chunk source-dtype guard below matches the oracle
+    # leg's (`_chunked_oracle`): a later null-typed or non-string chunk is rejected, not cast
+    # (C6b-i 3d). A large_string/numeric first chunk already declined to the oracle at admission.
+    native_text_mask_cols = [
+        n for n, p in params_by_column.items() if isinstance(p, TextMaskParams)
+    ]
 
     def _guard(raw: pa.Table) -> pa.Table:
         # The oracle route re-checks this on every chunk before masking; without it a
@@ -263,6 +270,10 @@ def _native_route(
         if state.bucket_perturb_cols:
             bucket_perturb_gate.reject_unsafe_bucket_perturb_chunk_schema(
                 raw.schema, state.bucket_perturb_cols, table=table
+            )
+        if native_text_mask_cols:
+            text_mask_gate.reject_unsafe_text_mask_chunk_schema(
+                raw.schema, native_text_mask_cols, table=table
             )
         run_chunk_ingest_guards(plan, {table: raw}, state.registry, state.graph)
         return cast_null_columns(first.schema, raw)
@@ -278,6 +289,7 @@ def _native_route(
             kernel_idle: set[str] = set()
             format_errors: dict[str, tuple[int, ...]] = {}
             fpe_warnings: list[Any] = []
+            text_mask_warnings: list[Any] = []
             masked = _mask_chunk_native(
                 chunk,
                 col_seed_by_name=col_seed_by_name,
@@ -294,6 +306,7 @@ def _native_route(
                 row_offset=row_offset,
                 format_errors=format_errors,
                 fpe_warnings=fpe_warnings,
+                text_mask_warnings=text_mask_warnings,
                 raw_chunk=raw_chunk,
                 raw_hex_kernel=raw_hex_kernel,
                 job_seed=plan.seed_envelope.job_seed,
@@ -302,13 +315,15 @@ def _native_route(
             )
             # The one enforcement point: the same call the stock adapter makes, so the
             # warning (and, if a table were ever admitted under `error`, the refusal)
-            # cannot drift from the oracle route's. fpe's Python-computed residual warnings
-            # (C6a §3e) ride the same channel, at the oracle's per-chunk scope.
+            # cannot drift from the oracle route's. fpe's residual warnings (C6a §3e) and
+            # text_mask's sub-floor warnings (C6b-i) ride the same channel, each at the oracle's
+            # per-chunk scope.
             warnings = (
                 *enforce_output_projection(
                     table, masked.column_names, plan, state.projection_policy
                 ),
                 *fpe_warnings,
+                *text_mask_warnings,
             )
             row_errors = format_error_records(table, format_errors)
             if row_errors:

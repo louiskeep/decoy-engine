@@ -9,6 +9,26 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Changed (text_mask admitted to the native routes as ARROW_PYTHON, 2026-10-10)
+
+A `text_mask` column now runs on the chunked and unified native routes as an `ARROW_PYTHON`
+operator, so it no longer forces its whole table onto the pandas oracle; the siblings stay native.
+The native wrapper reproduces the shipped `TextMaskHandler` per cell (no Rust kernel; the Rust
+deterministic-span kernel is C6b-ii), so output, warnings and errors are byte-identical to the
+oracle: it keys its fpe/faker/date_shift spans off the resolved mask key, the handler's one
+aggregate `text_mask_sub_floor_span_handled` warning is built outside the per-cell mask and rides
+`ExecutionResult.warnings` (per column on the unified route, per chunk on the chunked route) and
+never the output, and a fail-closed sub-floor span (an fpe span below the FF1 domain floor, or a
+failed checksum, with no `sub_floor_span` policy) raises the same `StrategyError(code=
+"fpe_unencryptable_domain", strategy="text_mask")` the handler raises. Per-cell throughput is
+unchanged; the win is the table no longer leaving the native route. Only a truthy `ner` config
+declines to the oracle (it loads a spaCy model); a non-string token and a non-list `detectors`
+are normalized exactly as the oracle does and stay native. On the chunked route the output is
+pinned to `pa.string()` on every chunk; a `large_string` source declines to the oracle (and is
+masked there), a numeric or dictionary source keeps the existing
+`chunked_text_mask_source_dtype_unsupported` rejection, and a later null-typed chunk is rejected,
+not cast. `text_mask` with a `when:` predicate stays on the oracle on both routes, as before.
+
 ### Changed (format-preserving encryption on the native routes, 2026-10-10)
 
 An `fpe` column now runs on the chunked and unified native routes through a compiled Rust FF1

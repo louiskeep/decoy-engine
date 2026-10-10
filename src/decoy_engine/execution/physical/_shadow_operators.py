@@ -36,6 +36,7 @@ from decoy_engine.execution.native._operator_params import (
     OperatorParams,
     PassthroughParams,
     RedactParams,
+    TextMaskParams,
     TextRedactParams,
     TruncateParams,
 )
@@ -65,6 +66,7 @@ _PASSTHROUGH: Final = OPERATORS["passthrough"].operator_id
 _REDACT: Final = OPERATORS["redact"].operator_id
 _TRUNCATE: Final = OPERATORS["truncate"].operator_id
 _TEXT_REDACT: Final = OPERATORS["text_redact"].operator_id
+_TEXT_MASK: Final = OPERATORS["text_mask"].operator_id
 _KEYED_HASH: Final = OPERATORS["hash"].operator_id
 _FPE: Final = OPERATORS["fpe"].operator_id
 _FAKER_SELECT: Final = OPERATORS["faker"].operator_id
@@ -154,11 +156,16 @@ _COMPANION_UNAVAILABLE_DETAIL: Final = {
 }
 
 
+# The operators whose binding carries no KeyBinding/PoolBinding: `_bound_params` validates only
+# the params shape. text_mask is keyed on the mask key, but like text_redact its binding needs no
+# namespace-scoped KeyBinding (the mask key flows from `ctx.mask_key` at dispatch, and text_mask
+# keys its spans off the matched value, not a column namespace), so it binds the same way.
 _UNKEYED_PARAMS: Final = {
     _PASSTHROUGH: PassthroughParams,
     _REDACT: RedactParams,
     _TRUNCATE: TruncateParams,
     _TEXT_REDACT: TextRedactParams,
+    _TEXT_MASK: TextMaskParams,
 }
 
 
@@ -280,6 +287,7 @@ def run_operator(
     row_offset: int = 0,
     when_mask: pa.Array | None = None,
     source_slice: pa.Table | None = None,
+    text_mask_notices: dict[str, int] | None = None,
 ) -> tuple[pa.Array, tuple[RowError, ...]]:
     """Dispatch one batch to `binding`'s bound operator, directly. Raises a
     coded `ShadowDifference(native_companion_unavailable)` -- never falls
@@ -371,6 +379,13 @@ def run_operator(
             code=NATIVE_COMPANION_UNAVAILABLE,
             detail=f"operator={binding.operator_id!r}: {detail}",
         ) from exc
+    if text_mask_notices is not None and result.text_mask_notices:
+        # Accumulate this batch's sub-floor counts into the caller's per-node dict so the
+        # coordinator builds ONE warning per column after the batch loop, matching the oracle's
+        # whole-column scope (C6b-i). text_mask raises its own fail-closed StrategyError inside
+        # the kernel, so there is no fpe-style error set to map here.
+        for detector_id, count in result.text_mask_notices.items():
+            text_mask_notices[detector_id] = text_mask_notices.get(detector_id, 0) + count
     if result.fpe_errors:
         # fpe fail-closed KILLS on the first per-row failure (C6a §3d). The raised StrategyError
         # propagates out of the coordinator; the unified slice's generic exception boundary

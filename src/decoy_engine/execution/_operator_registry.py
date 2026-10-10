@@ -163,6 +163,23 @@ _SPECS = (
         full_frame_assembly="null_on_empty",
     ),
     OperatorSpec(
+        strategy="text_mask",
+        operator_id="native_text_mask",
+        shape="kernel",
+        planned_backend=ARROW_PYTHON,
+        required_kernel=None,
+        positive_kernel_evidence=False,
+        unified_resident_types=_STRING_ONLY,
+        # The handler assigns a fresh object column, so an empty or all-null result is Arrow
+        # null on the full-frame route (same as text_redact); the chunked route pins string.
+        full_frame_assembly="null_on_empty",
+        # text_mask's handler builds one aggregate sub-floor warning per column, outside
+        # `mask_cell` (Python-computed, transported on `ExecutionResult.warnings`, never on the
+        # output). Declared here together with the capability warning so unified admission
+        # routes it instead of declining (C6b-i).
+        routed_diagnostics=frozenset({"reduce_warning:text_mask_sub_floor_span_handled"}),
+    ),
+    OperatorSpec(
         strategy="hash",
         operator_id="native_keyed_hash",
         shape="kernel",
