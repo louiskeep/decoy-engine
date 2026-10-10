@@ -322,10 +322,19 @@ def test_admitted_set_is_exactly_the_native_kernels_a_bare_config_accepts() -> N
         result = native_route_eligibility(_config(col), table="t", profile=profile)
         if result.accepted:
             accepted.add(strategy)
-    # text_redact joined in C6c-i and fpe in C6a: like text_redact, fpe's source-type gate lives
-    # on the production routes, not in this coarse config/capability query, so a bare fpe config
-    # over any source is accepted here (a non-string source still declines in production).
-    assert accepted == {"passthrough", "redact", "truncate", "hash", "text_redact", "fpe"}
+    # text_redact joined in C6c-i, fpe in C6a, text_mask in C6b-i: like text_redact, each one's
+    # source-type gate lives on the production routes, not in this coarse config/capability query,
+    # so a bare config over any source is accepted here (a non-string source still declines in
+    # production).
+    assert accepted == {
+        "passthrough",
+        "redact",
+        "truncate",
+        "hash",
+        "text_redact",
+        "fpe",
+        "text_mask",
+    }
 
 
 # ---------------------------------------------------------------------------

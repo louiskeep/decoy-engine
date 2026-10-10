@@ -18,13 +18,22 @@ import pyarrow as pa
 from decoy_engine.execution._operator_registry import OPERATORS
 from decoy_engine.execution._row_errors import RowError, RowErrorRecord
 from decoy_engine.execution.native._fpe_route import fpe_config_from_params, fpe_residual_warnings
-from decoy_engine.execution.native._operator_params import FpeParams
+from decoy_engine.execution.native._operator_params import FpeParams, TextMaskParams
+from decoy_engine.execution.native._text_mask_route import text_mask_sub_floor_warning
 
 if TYPE_CHECKING:
     from decoy_engine.execution.physical._plan import ExecutionBinding
+    from decoy_engine.execution.physical._shadow_operators import OperatorCallEvidence
     from decoy_engine.generation.pool._events import QualityWarning
 
-__all__ = ["assemble_column", "batch_when_mask", "fpe_node_warnings", "rebase_row_errors"]
+__all__ = [
+    "assemble_column",
+    "batch_when_mask",
+    "fpe_node_warnings",
+    "per_node_warnings",
+    "rebase_row_errors",
+    "text_mask_node_warnings",
+]
 
 # Tokenizing strategies build a fresh column: empty -> float64, all-null -> null,
 # else -> string (passthrough is separate). bucket_perturb differs ONLY on empty
@@ -101,6 +110,36 @@ def fpe_node_warnings(
             source.column(column), config=fpe_config_from_params(params), column=column
         )
     )
+
+
+def text_mask_node_warnings(
+    binding: ExecutionBinding, notices: Mapping[str, int], column: str
+) -> list[QualityWarning]:
+    """A text_mask node's one aggregate sub-floor warning, built from `notices` accumulated across
+    this column's batches (the unified route's oracle invocation scope is the whole column, C6b-i);
+    `[]` for any other operator or when no sub-floor span was handled. The counts come from the
+    masking the kernel actually did (transported on `StepResult`), not recomputed, and the warning
+    never rides the output, so the fingerprint is unchanged."""
+    if not isinstance(binding.params, TextMaskParams) or not notices:
+        return []
+    return [
+        text_mask_sub_floor_warning(
+            notices, policy=binding.params.sub_floor_span_policy, column=column
+        )
+    ]
+
+
+def per_node_warnings(
+    binding: ExecutionBinding, source: pa.Table, column: str, evidence: OperatorCallEvidence
+) -> list[QualityWarning]:
+    """Every Python-computed warning a node contributes after its batch loop: fpe's residual-risk
+    warnings (from the whole source column) and text_mask's one aggregate sub-floor warning (from
+    the counts accumulated on `evidence`). One call keeps the coordinator's per-node epilogue a
+    single line; both sources ride `ExecutionResult.warnings`, never the output."""
+    return [
+        *fpe_node_warnings(binding, source, column),
+        *text_mask_node_warnings(binding, evidence.text_mask_sub_floor_notices, column),
+    ]
 
 
 def batch_when_mask(

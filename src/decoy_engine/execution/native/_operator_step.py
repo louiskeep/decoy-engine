@@ -33,6 +33,7 @@ from decoy_engine.execution.native._kernels_keyed import native_keyed_hash
 from decoy_engine.execution.native._kernels_scalar import (
     native_passthrough,
     native_redact,
+    native_text_mask,
     native_text_redact,
     native_truncate,
 )
@@ -46,6 +47,7 @@ from decoy_engine.execution.native._operator_params import (
     OperatorParams,
     PassthroughParams,
     RedactParams,
+    TextMaskParams,
     TextRedactParams,
     TruncateParams,
 )
@@ -241,6 +243,10 @@ class StepResult:
     ran: bool | None
     # Batch-local positions of non-null date_shift values that did not parse.
     format_error_positions: tuple[int, ...] = ()
+    # text_mask's per-detector sub-floor counts for THIS batch/chunk, built by the handler
+    # OUTSIDE `mask_cell`. The unified route sums them across a column's batches into one warning;
+    # the chunked route builds one warning per chunk. `None` for every other operator.
+    text_mask_notices: dict[str, int] | None = None
     # The compiled FF1 kernel's per-row failures, DISTINCT from `format_error_positions`:
     # date_shift survives-and-reports a format error, fpe fail-closed KILLS on the first one
     # (C6a plan §3d). Each route maps a non-empty set to a `StrategyError` via `_fpe_route`.
@@ -304,6 +310,22 @@ def run_kernel_step(
             label_token=params.label_token,
         )
         return StepResult(out, None)
+    if isinstance(params, TextMaskParams):
+        # text_mask runs the shipped handler per cell on the ARROW_PYTHON path (no Rust kernel;
+        # ran=None, like text_redact). `native_text_mask` reproduces the handler: it threads the
+        # mask key, builds the sub-floor notices, and raises the fail-closed StrategyError itself.
+        out, notices = native_text_mask(
+            source,
+            mask_key=mask_key,
+            column=params.column,
+            detectors=params.detectors,
+            per_detector_strategy=dict(params.per_detector_strategy),
+            unmatched_span_policy=params.unmatched_span_policy,
+            token=params.token,
+            date_shift_bounds=params.date_shift_bounds,
+            sub_floor_span_policy=params.sub_floor_span_policy,
+        )
+        return StepResult(out, None, text_mask_notices=notices)
     if isinstance(params, HashParams):
         # native_keyed_hash never falls back to the pure-Python reference
         # (see _kernels_keyed.py); a successful call IS the compiled kernel.

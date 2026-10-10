@@ -164,6 +164,7 @@ NATIVE_KEYS = frozenset(
         "redact",
         "truncate",
         "text_redact",
+        "text_mask",
         "passthrough",
         "faker:deterministic_native",
         "categorical:deterministic",
@@ -193,6 +194,7 @@ STRING_OUTPUT_KEYS = frozenset(
         "redact",
         "truncate",
         "text_redact",
+        "text_mask",
         "categorical:deterministic",
         "date_shift:explicit_format",
         "group_key",
@@ -205,6 +207,7 @@ PLANNED_BACKEND: dict[str, str] = {
     "redact": "arrow_python",
     "truncate": "arrow_python",
     "text_redact": "arrow_python",
+    "text_mask": "arrow_python",
     "passthrough": "arrow_python",
     "faker:deterministic_native": "rust_pool_select",
     "categorical:deterministic": "rust_companion",
@@ -217,7 +220,6 @@ PLANNED_BACKEND: dict[str, str] = {
 }
 # B1's refusal reason (prefix) for the keys the native route does not run, as observed on main.
 REFUSAL: dict[str, str] = {
-    "text_mask": "fallback_policy_not_native:val",
     "bucketize": "fallback_policy_not_native:val",
     "top_code": "fallback_policy_not_native:val",
     "windowed_date": "fallback_policy_not_native:val",

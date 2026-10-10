@@ -77,7 +77,7 @@ from decoy_engine.execution.physical._plan import ExecutionBinding, PhysicalPlan
 from decoy_engine.execution.physical._shadow_assembly import (
     assemble_column,
     batch_when_mask,
-    fpe_node_warnings,
+    per_node_warnings,
     rebase_row_errors,
 )
 from decoy_engine.execution.physical._shadow_context import ShadowContext
@@ -403,7 +403,7 @@ class ShadowCoordinator:
                         )
 
                     columns[column] = assemble_column(node.strategy, parts)
-                    warnings.extend(fpe_node_warnings(binding, source, column))
+                    warnings.extend(per_node_warnings(binding, source, column, evidence))
 
             if columns:
                 # Assemble in SOURCE-SCHEMA order -- the pandas full-frame

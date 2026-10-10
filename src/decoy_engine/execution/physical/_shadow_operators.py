@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Final
 
 import pyarrow as pa
@@ -36,6 +36,7 @@ from decoy_engine.execution.native._operator_params import (
     OperatorParams,
     PassthroughParams,
     RedactParams,
+    TextMaskParams,
     TextRedactParams,
     TruncateParams,
 )
@@ -65,6 +66,7 @@ _PASSTHROUGH: Final = OPERATORS["passthrough"].operator_id
 _REDACT: Final = OPERATORS["redact"].operator_id
 _TRUNCATE: Final = OPERATORS["truncate"].operator_id
 _TEXT_REDACT: Final = OPERATORS["text_redact"].operator_id
+_TEXT_MASK: Final = OPERATORS["text_mask"].operator_id
 _KEYED_HASH: Final = OPERATORS["hash"].operator_id
 _FPE: Final = OPERATORS["fpe"].operator_id
 _FAKER_SELECT: Final = OPERATORS["faker"].operator_id
@@ -143,6 +145,10 @@ class OperatorCallEvidence:
     # Rows a `when:` mask selected, summed per batch. `None` for a node with no mask, so only
     # a masked node can be exempt from the positive-kernel check when it selected nothing.
     rows_selected: int | None = None
+    # text_mask's per-detector sub-floor counts, summed across the node's batches, so the
+    # coordinator builds ONE warning per column after the loop (the oracle's whole-column scope,
+    # C6b-i). Empty for every other operator; not published in the route-evidence dict.
+    text_mask_sub_floor_notices: dict[str, int] = field(default_factory=dict)
 
 
 # The two operators whose kernel loads a companion of its own inside the call; the loader's
@@ -154,11 +160,16 @@ _COMPANION_UNAVAILABLE_DETAIL: Final = {
 }
 
 
+# The operators whose binding carries no KeyBinding/PoolBinding: `_bound_params` validates only
+# the params shape. text_mask is keyed on the mask key, but like text_redact its binding needs no
+# namespace-scoped KeyBinding (the mask key flows from `ctx.mask_key` at dispatch, and text_mask
+# keys its spans off the matched value, not a column namespace), so it binds the same way.
 _UNKEYED_PARAMS: Final = {
     _PASSTHROUGH: PassthroughParams,
     _REDACT: RedactParams,
     _TRUNCATE: TruncateParams,
     _TEXT_REDACT: TextRedactParams,
+    _TEXT_MASK: TextMaskParams,
 }
 
 
@@ -371,6 +382,14 @@ def run_operator(
             code=NATIVE_COMPANION_UNAVAILABLE,
             detail=f"operator={binding.operator_id!r}: {detail}",
         ) from exc
+    if result.text_mask_notices:
+        # Accumulate this batch's sub-floor counts onto the node's evidence so the coordinator
+        # builds ONE warning per column after the batch loop, matching the oracle's whole-column
+        # scope (C6b-i). text_mask raises its own fail-closed StrategyError inside the kernel, so
+        # there is no fpe-style error set to map here.
+        notices = evidence.text_mask_sub_floor_notices
+        for detector_id, count in result.text_mask_notices.items():
+            notices[detector_id] = notices.get(detector_id, 0) + count
     if result.fpe_errors:
         # fpe fail-closed KILLS on the first per-row failure (C6a §3d). The raised StrategyError
         # propagates out of the coordinator; the unified slice's generic exception boundary

@@ -104,6 +104,9 @@ def test_warning_codes_match_handler_return_surface() -> None:
         "nested_cell_json_parse_error",
         "nested_jsonpath_path_overlap",
     }
+    # text_mask's handler returns one aggregate sub-floor warning (C6b-i declares it so the
+    # routed-diagnostic gate admits text_mask on the unified route).
+    assert capabilities_for("text_mask").warning_codes == ("text_mask_sub_floor_span_handled",)
 
 
 def test_faker_is_the_sole_pool_quality_obligation() -> None:

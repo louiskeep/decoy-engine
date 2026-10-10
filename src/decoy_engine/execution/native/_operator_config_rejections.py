@@ -285,6 +285,21 @@ def text_redact_config_rejection(name: str, provider_config: Mapping[str, Any]) 
     return None
 
 
+def text_mask_config_rejection(name: str, provider_config: Mapping[str, Any]) -> str | None:
+    """The coded reason a `text_mask` column cannot run natively, or None.
+
+    The native ARROW_PYTHON wrapper runs the FULL shipped handler per cell, including the faker,
+    date_shift, fpe and sub-floor span branches, so the only config that declines is a TRUTHY
+    `ner`: only the `ner` branch loads a spaCy model and supplies `extra_spans`, which the native
+    wrapper does not reproduce (C6b-ii territory). Unlike text_redact, a non-string token or a
+    malformed `detectors` does NOT decline here: text_mask normalizes a non-list `detectors` to
+    "all detectors" and `str()`-coerces the token, the same as the oracle, so admitting them keeps
+    byte parity. Both config dispatchers call this ONE predicate."""
+    if provider_config.get("ner"):
+        return f"text_mask_ner_not_native:{name}"
+    return None
+
+
 __all__ = [
     "bucket_perturb_config_rejection",
     "categorical_config_rejection",
@@ -292,5 +307,6 @@ __all__ = [
     "group_key_config_rejection",
     "group_key_sibling_type_admitted",
     "is_deterministic_categorical",
+    "text_mask_config_rejection",
     "text_redact_config_rejection",
 ]

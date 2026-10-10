@@ -248,9 +248,11 @@ def test_a_kernel_failure_on_the_second_dispatched_table_stops_everything_after_
 
 
 def _failing_text_mask(monkeypatch: pytest.MonkeyPatch, columns: set[str]) -> None:
-    """Make the `text_mask` handler fail for the named columns on every route. text_mask has
-    no native operator, so every route reaches this handler."""
+    """Make `text_mask` fail for the named columns on every route. The oracle route reaches the
+    handler; since C6b-i text_mask also runs native (string source), the native routes reach
+    `native_text_mask` instead, so both are patched to raise the same coded error."""
     from decoy_engine.execution._strategies import SCALAR_HANDLERS
+    from decoy_engine.execution.native import _operator_step
 
     handler = SCALAR_HANDLERS["text_mask"]
     real = handler.run
@@ -261,6 +263,15 @@ def _failing_text_mask(monkeypatch: pytest.MonkeyPatch, columns: set[str]) -> No
         return real(df, column, plan, ctx)
 
     monkeypatch.setattr(handler, "run", run)
+
+    real_native = _operator_step.native_text_mask
+
+    def native(array: Any, *, column: str, **kw: Any) -> Any:
+        if column in columns:
+            raise ExecutionError(code=f"boom_{column}", message=f"injected on {column}")
+        return real_native(array, column=column, **kw)
+
+    monkeypatch.setattr(_operator_step, "native_text_mask", native)
 
 
 def _text_table(column: str, n: int) -> mt.TableSpec:

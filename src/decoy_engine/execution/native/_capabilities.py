@@ -209,6 +209,7 @@ _MASK: dict[str, _Ortho] = {
         False,
         False,
         True,
+        warning_codes=("text_mask_sub_floor_span_handled",),
         notes="Per-span source-keyed dispatch; Phase 5 (NER) held.",
     ),
     "categorical": _Ortho(
