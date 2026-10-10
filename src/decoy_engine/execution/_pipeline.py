@@ -75,27 +75,22 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import pyarrow as pa
 
+from decoy_engine.execution import _pipeline_context as _ctx
 from decoy_engine.execution import (
-    _pipeline_auto_chunk,
     _pipeline_finalize,
     _pipeline_generate_mask,
-    _pipeline_routing,
 )
+from decoy_engine.execution import _pipeline_route_dispatch as _dispatch
 from decoy_engine.execution import _pipeline_route_exec as _route_exec
 from decoy_engine.execution import _pipeline_sources as _psrc
 from decoy_engine.execution._adapter import ExecutionResult
-from decoy_engine.execution._chunked_output_sink import OutputPublish
+from decoy_engine.execution._pipeline_context import classify_table_kinds
 from decoy_engine.execution._planner import (
     FULL_FRAME_REJECT_ROWS_DEFAULT,
     OUT_OF_CORE_THRESHOLD_ROWS_DEFAULT,
 )
 from decoy_engine.execution._stitch import stitch_generate_mask_outputs
-from decoy_engine.execution._transforms_admission import (
-    out_of_core_declined,
-    routing_profile,
-    stamp_out_of_core_declined,
-)
-from decoy_engine.execution._transforms_gate import reject_any_per_table_transforms
+from decoy_engine.execution._transforms_admission import stamp_out_of_core_declined
 from decoy_engine.execution._transforms_prepare import prepare_transform_sources
 from decoy_engine.execution._unified_slice import run_from_pipeline_locals
 from decoy_engine.generation.pool import PoolCache
@@ -121,30 +116,6 @@ __all__ = ["classify_table_kinds", "run_pipeline"]
 # override them with box+schema-calibrated values.
 _OUT_OF_CORE_THRESHOLD_DEFAULT = OUT_OF_CORE_THRESHOLD_ROWS_DEFAULT
 _FULL_FRAME_REJECT_DEFAULT = FULL_FRAME_REJECT_ROWS_DEFAULT
-
-
-def classify_table_kinds(config: dict[str, Any]) -> dict[str, str]:
-    """Return `{table_name: "mask" | "generate"}` for every table in the config.
-
-    Per-table kind is inferred from `columns` (mask) vs `generate_columns`
-    (generate) presence on each TableConfig. The schema already enforces
-    XOR at validation time (`_per_table_kind_consistency` + `TableConfig`
-    invariants), so a config that reaches this helper has at most one
-    populated per table. Tables with neither are classified as mask
-    (defensive default; the schema rejects them upstream).
-    """
-    out: dict[str, str] = {}
-    for table in config.get("tables") or []:
-        if not isinstance(table, dict):
-            continue
-        name = table.get("name")
-        if not isinstance(name, str):
-            continue
-        if table.get("generate_columns"):
-            out[name] = "generate"
-        else:
-            out[name] = "mask"
-    return out
 
 
 def run_pipeline(
@@ -293,314 +264,115 @@ def run_pipeline(
     oracle call to the SAME registry snapshot as its own coordinator-side call.
     `None` (every real caller) resolves against the live registry.
     """
-    from decoy_engine.execution._output_projection import resolve_unconfigured_column_policy
-    from decoy_engine.execution._substrate import (
-        require_bool,
-        require_positive_int,
-        resolve_substrate,
-        select_execution_adapter,
-    )
-    from decoy_engine.execution.out_of_core._route_policy import resolve_reorder_threshold_rows
-    from decoy_engine.plan import compile_plan
-    from decoy_engine.profile import profile_source
-    from decoy_engine.providers_v2 import get_default_registry
-    from decoy_engine.relationships import (
-        RelationshipGraph,
-        build_namespace_registry,
-        build_relationship_graph,
-        check_orphan_fk_policy_completeness,
-    )
-
-    # Adapter selection runs up front, before any profiling or plan
-    # compilation, so an invalid substrate or count knob fails at submit
-    # time with a typed error instead of after the expensive stages.
-    # Construction is cheap and side-effect free for both adapters, so
-    # pure-generate jobs (which never use it) lose nothing.
-    resolved_substrate = resolve_substrate(substrate)
-    adapter = select_execution_adapter(
-        substrate=resolved_substrate,
+    ctx = _ctx.build_run_context(
+        config,
+        sources,
+        engine_version=engine_version,
+        registry=registry,
+        derive_key=derive_key,
+        instance_default_locale=instance_default_locale,
+        vault_writer=vault_writer,
+        fidelity_report=fidelity_report,
+        post_validation=post_validation,
+        post_validation_skip=post_validation_skip,
+        post_validation_sample_size=post_validation_sample_size,
+        post_validation_enforce=post_validation_enforce,
+        now_iso=now_iso,
+        execution_mode=execution_mode,
+        sink=sink,
+        source_loader=source_loader,
+        substrate=substrate,
         fpe_chunk_count=fpe_chunk_count,
         max_workers=max_workers,
         fallback_to_pandas=fallback_to_pandas,
-    )
-    # Auto-chunk knobs share the substrate knobs' fail-early contract.
-    require_bool("auto_chunk", auto_chunk)
-    require_positive_int("chunk_size_rows", chunk_size_rows)
-    require_positive_int("auto_chunk_threshold_rows", auto_chunk_threshold_rows)
-    _pipeline_auto_chunk.require_lane_knobs(native_threads, chunked_dispatcher_enabled)
-    publish = OutputPublish(sink, stream_chunked_output, post_validation)  # B6a; validates the knob
-    require_bool("multi_table_dispatch_enabled", multi_table_dispatch_enabled)
-    # SC2 out-of-core routing thresholds share the same fail-early contract.
-    require_positive_int("out_of_core_threshold_rows", out_of_core_threshold_rows)
-    require_positive_int("full_frame_reject_rows", full_frame_reject_rows)
-    if out_of_core_budget_bytes is not None:
-        require_positive_int("out_of_core_budget_bytes", out_of_core_budget_bytes)
-    require_bool("use_byte_estimate_routing", use_byte_estimate_routing)
-    require_bool("use_probe_routing", use_probe_routing)
-    require_bool("unified_slice_enabled", unified_slice_enabled)
-    # A1 post-validation knobs share the substrate knobs' fail-early contract.
-    require_bool("post_validation", post_validation)
-    require_bool("post_validation_enforce", post_validation_enforce)
-    require_positive_int("post_validation_sample_size", post_validation_sample_size)
-    resolve_reorder_threshold_rows(out_of_core_reorder_threshold_rows)
-    if execution_mode == "out_of_core":
-        # Config-only, so nothing is profiled or read before the refusal.
-        reject_any_per_table_transforms(config, route="execution_mode='out_of_core'")
-
-    # None-normalize the skip list here (a mutable [] default would be shared
-    # across calls); the unified-slice `locals()` forwarding reads the bound
-    # `post_validation` name directly.
-    post_validation_skip = list(post_validation_skip) if post_validation_skip else []
-
-    resolved_registry = registry if registry is not None else get_default_registry()
-    caller_sources: dict[str, pa.Table | LazySource] = dict(sources) if sources else {}
-
-    table_kinds = classify_table_kinds(config)
-    has_mask_table = any(kind == "mask" for kind in table_kinds.values())
-    has_generate_table = any(kind == "generate" for kind in table_kinds.values())
-
-    # DE-03: resolve the output-projection policy once; generate-kind tables ride
-    # through the mask adapter as echoed sources and are exempt (declared by their
-    # generate config, not the mask plan). Threaded into every emission route.
-    projection_policy = resolve_unconfigured_column_policy(config)
-    generate_output_tables = frozenset(
-        name for name, kind in table_kinds.items() if kind == "generate"
-    )
-
-    # F5 (2026-06-26): route the profile-path seed through the canonical
-    # int normalizer so a bool/float seed is rejected here, BEFORE
-    # profile_source seeds its RNG, rather than being silently coerced
-    # (`seed: true` -> random.Random(True) == Random(1)) and only caught
-    # later by compile_plan. Defaults absent seed to 0, matching the
-    # compiler so the profile and mask paths stay in lockstep.
-    from decoy_engine.plan._seed import _normalize_job_seed_int
-
-    job_seed = _normalize_job_seed_int(config)
-
-    profile = profile_source(config, seed=job_seed)
-
-    plan = compile_plan(config, profile, decoy_engine_version=engine_version)
-
-    # DE-02 fail-closed gate: resolve the keyed-mask secret ONCE, before any table
-    # / quarantine / vault / manifest is written. Pre-GA a keyed plan with no
-    # secret falls back to job_seed (byte-identical); at GA it hard-errors
-    # (KeyedStrategyRequiresSecret). The secret is a reference in config
-    # (`global_settings.mask_secret_ref`, env:/file:), never serialized raw, and a
-    # programmatic `key_provider` wins over the ref. The resolved provider threads
-    # into every execution route; None means "no secret -> job_seed".
-    from decoy_engine.keyprovider import mask_key_from_provider, resolve_key_provider
-
-    resolved_key_provider = resolve_key_provider(
-        plan=plan,
-        key_provider=key_provider,
-        mask_secret_ref=(config.get("global_settings") or {}).get("mask_secret_ref"),
-    )
-    # DE-02 (Codex BLOCKER 5 / item 6a): the token vault holds reversible plaintext
-    # PII and must be encrypted under the SAME resolved mask key as the masking
-    # run. Fail closed (shared guard) if a caller-supplied vault writer is keyed
-    # differently, or is not the standard VaultWriter contract.
-    if vault_writer is not None:
-        from decoy_engine.vault import assert_vault_writer_keyed
-
-        assert_vault_writer_keyed(
-            vault_writer,
-            mask_key_from_provider(resolved_key_provider, plan.seed_envelope.job_seed),
-        )
-
-    ns_registry = build_namespace_registry(config, profile)
-    if profile.relationships:
-        lookup = check_orphan_fk_policy_completeness(config, profile.relationships)
-        graph = build_relationship_graph(
-            profile.relationships,
-            namespace_registry=ns_registry,
-            orphan_policy_lookup=lookup,
-        )
-    else:
-        graph = RelationshipGraph(edges=(), ordering=())
-
-    # Routing layer 1 (S2 + SC2): relationship-bearing pure-mask jobs take a
-    # bounded-memory route (out-of-core when large + compatible, else
-    # sequential); a large FK job no bounded route can take is rejected before
-    # read. This is an early return / a fail-closed raise. The SC2 admission +
-    # size signals are inert (False/None/None/True) off the relationship+mask
-    # shape, so non-FK jobs keep the pre-SC2 routing. The size signal now comes
-    # from the (SC7a bounded) profile metadata, so the gates fire on the lazy
-    # `source_loader` path too (SC7b, closing the F2 reject-before-read hole).
-    # Resident transform-bearing tables are transformed once, here, so routing prices
-    # the data that will run; the raw tables are no longer referenced from `caller_sources`.
-    prepared = prepare_transform_sources(
-        config,
-        caller_sources,
-        profile=profile,
-        graph=graph,
-        execution_mode=execution_mode,
-        has_generate_table=has_generate_table,
-        has_mask_table=has_mask_table,
-        validators=(config.get("validators") or []),
-        fidelity_report=fidelity_report,
-        vault_writer=vault_writer,
-        post_validation=post_validation,
-        resolved_substrate=resolved_substrate,
-    )
-    caller_sources = prepared.sources
-    route, route_reason = _pipeline_routing.resolve_execution_route(
-        routing_profile(profile, caller_sources, prepared.prepared),
-        plan=plan,
-        registry=resolved_registry,
-        graph=graph,
-        caller_sources=caller_sources,
-        table_kinds=table_kinds,
-        has_mask_table=has_mask_table,
-        has_generate_table=has_generate_table,
-        validators=(config.get("validators") or []),
-        fidelity_report=fidelity_report,
-        post_validation=post_validation,
-        vault_writer=vault_writer,
-        execution_mode=execution_mode,
-        resolved_substrate=resolved_substrate,
+        explain_plan=explain_plan,
+        auto_chunk=auto_chunk,
+        chunk_size_rows=chunk_size_rows,
+        auto_chunk_threshold_rows=auto_chunk_threshold_rows,
+        native_threads=native_threads,
+        chunked_dispatcher_enabled=chunked_dispatcher_enabled,
+        stream_chunked_output=stream_chunked_output,
+        multi_table_dispatch_enabled=multi_table_dispatch_enabled,
         out_of_core_threshold_rows=out_of_core_threshold_rows,
         full_frame_reject_rows=full_frame_reject_rows,
         out_of_core_budget_bytes=out_of_core_budget_bytes,
         use_byte_estimate_routing=use_byte_estimate_routing,
         use_probe_routing=use_probe_routing,
-        config=config,
-        engine_version=engine_version,
-        prepared_tables=prepared.prepared,
+        key_provider=key_provider,
+        out_of_core_reorder_threshold_rows=out_of_core_reorder_threshold_rows,
+        unified_slice_enabled=unified_slice_enabled,
+        provider_snapshot=_provider_snapshot,
+        prepare_sources=prepare_transform_sources,
     )
+    decision = _ctx.decide_route(ctx)
 
-    # Routing layer 2 (S3 auto-chunk) classification, computed before the layer-1 early
-    # return so `explain_plan` surfaces it on every route, relationship jobs included.
-    # `keep_lazy` is the B6b footer snapshot of lazy candidates; see `_pipeline_routing`.
-    execution_plan_decision, route_chunked, keep_lazy = _pipeline_routing.decide_chunk_route(
-        config,
-        plan=plan,
-        registry=resolved_registry,
-        graph=graph,
-        substrate=resolved_substrate,
-        caller_sources=caller_sources,
-        auto_chunk_threshold_rows=auto_chunk_threshold_rows,
-        explain_plan=explain_plan,
-        auto_chunk=auto_chunk,
-        has_mask_table=has_mask_table,
-        table_kinds=table_kinds,
-        prepared_tables=prepared.prepared,
-    )
-
-    ooc_declined = out_of_core_declined(
-        config,
-        plan=plan,
-        registry=resolved_registry,
-        graph=graph,
-        profile=profile,
-        table_kinds=table_kinds,
-        execution_mode=execution_mode,
-    )
-    if has_mask_table and route == "sequential":
-        loader = _psrc.resolve_sequential_loader(
-            source_loader, caller_sources, config=config, prepared=prepared.prepared
-        )
-        sequential_result = _route_exec.run_sequential_route(
-            plan=plan,
-            loader=loader,
-            registry=resolved_registry,
-            graph=graph,
-            namespace_registry=ns_registry,
-            sink=sink,
-            quarantine_config=config.get("quarantine"),
-            route_reason=route_reason,
-            source_loader=source_loader,
-            sources_resident=bool(caller_sources),
-            fpe_chunk_count=fpe_chunk_count,
-            table_kinds=table_kinds,
-            explain_plan=explain_plan,
-            execution_plan_decision=execution_plan_decision,
-            unconfigured_column_policy=projection_policy,
-            key_provider=resolved_key_provider,
-        )
-        stamp_out_of_core_declined(sequential_result.quality_metrics, ooc_declined)
-        return sequential_result
-
-    # SC2 out-of-core route (same shape as sequential); caller_sources feeds
-    # the runner directly -- TB-1: a LazySource streams natively here, no materialization.
-    if has_mask_table and route == "out_of_core":
-        return _route_exec.run_out_of_core_route(
-            plan=plan,
-            sources=caller_sources,
-            registry=resolved_registry,
-            graph=graph,
-            sink=sink,
-            route_reason=route_reason,
-            table_kinds=table_kinds,
-            source_loader=source_loader,
-            sources_resident=bool(caller_sources),
-            budget_bytes=out_of_core_budget_bytes,
-            explain_plan=explain_plan,
-            execution_plan_decision=execution_plan_decision,
-            unconfigured_column_policy=projection_policy,
-            key_provider=resolved_key_provider,
-            out_of_core_reorder_threshold_rows=out_of_core_reorder_threshold_rows,
-        )
+    # Layer-1 dispatch: every route is an executor over the same (ctx, decision).
+    if ctx.has_mask_table and decision.route == "sequential":
+        return _dispatch.execute_sequential_route(ctx, decision)
+    if ctx.has_mask_table and decision.route == "out_of_core":
+        return _dispatch.execute_out_of_core_route(ctx, decision)
 
     # TB-1: only full_frame / auto-chunk below needs every source resident, and a loader-backed
     # job diverted here must still get its mask tables through the loader. A lazy route or
     # split candidate stays lazy (`keep_lazy`); the unified slice sees the rest as tables.
     resident_sources = _psrc.resolve_resident_sources(
-        caller_sources,
-        source_loader=source_loader,
-        required_tables=[name for name, kind in table_kinds.items() if kind == "mask"],
-        config=config,
-        prepared=prepared.prepared,
-        keep_lazy=keep_lazy,
+        ctx.caller_sources,
+        source_loader=ctx.source_loader,
+        required_tables=[name for name, kind in ctx.table_kinds.items() if kind == "mask"],
+        config=ctx.config,
+        prepared=ctx.prepared.prepared,
+        keep_lazy=decision.keep_lazy,
     )
-    caller_sources = {k: v for k, v in resident_sources.items() if k in caller_sources}
+    caller_sources = {k: v for k, v in resident_sources.items() if k in ctx.caller_sources}
 
-    # One pool cache per job, shared by the unified lane and the full-frame oracle,
-    # so a Faker pool's provider code runs at most once even if the lane reroutes.
     pool_cache = PoolCache()
-    unified_slice_result = run_from_pipeline_locals(locals())  # Task 4.5, see its docstring
+    unified_slice_result = run_from_pipeline_locals(  # Task 4.5, see its docstring
+        _ctx.unified_slice_locals(ctx, decision, caller_sources, pool_cache)
+    )
     if unified_slice_result is not None:
         return unified_slice_result
 
+    publish = ctx.publish
     with publish:
         # Steps 1-2 (generate-kind tables, then mask-kind tables) live in
         # `_pipeline_generate_mask.run_generate_and_mask_steps` (LOC ceiling).
         step = _pipeline_generate_mask.run_generate_and_mask_steps(
-            has_generate_table=has_generate_table,
-            has_mask_table=has_mask_table,
-            plan=plan,
-            derive_key=derive_key,
-            instance_default_locale=instance_default_locale,
-            provider_snapshot=_provider_snapshot,
+            has_generate_table=ctx.has_generate_table,
+            has_mask_table=ctx.has_mask_table,
+            plan=ctx.plan,
+            derive_key=ctx.derive_key,
+            instance_default_locale=ctx.instance_default_locale,
+            provider_snapshot=ctx.provider_snapshot,
             resident_sources=resident_sources,
             caller_sources=caller_sources,
-            keep_lazy=keep_lazy,
-            route_chunked=route_chunked,
-            table_kinds=table_kinds,
-            config=config,
-            engine_version=engine_version,
-            registry=resolved_registry,
-            adapter=adapter,
-            vault_writer=vault_writer,
-            chunk_size_rows=chunk_size_rows,
-            native_threads=native_threads,
+            keep_lazy=decision.keep_lazy,
+            route_chunked=decision.route_chunked,
+            table_kinds=ctx.table_kinds,
+            config=ctx.config,
+            engine_version=ctx.engine_version,
+            registry=ctx.registry,
+            adapter=ctx.adapter,
+            vault_writer=ctx.vault_writer,
+            chunk_size_rows=ctx.chunk_size_rows,
+            native_threads=ctx.native_threads,
             pool_cache=pool_cache,
-            chunked_dispatcher_enabled=chunked_dispatcher_enabled,
-            multi_table_dispatch_enabled=multi_table_dispatch_enabled,
-            key_provider=resolved_key_provider,
-            graph=graph,
-            namespace_registry=ns_registry,
-            unconfigured_column_policy=projection_policy,
-            generate_output_tables=generate_output_tables,
-            substrate=substrate,
-            resolved_substrate=resolved_substrate,
-            fpe_chunk_count=fpe_chunk_count,
-            max_workers=max_workers,
-            fallback_to_pandas=fallback_to_pandas,
-            auto_chunk=auto_chunk,
-            auto_chunk_threshold_rows=auto_chunk_threshold_rows,
-            execution_plan_decision=execution_plan_decision,
-            fidelity_report=fidelity_report,
-            now_iso=now_iso,
+            chunked_dispatcher_enabled=ctx.chunked_dispatcher_enabled,
+            multi_table_dispatch_enabled=ctx.multi_table_dispatch_enabled,
+            key_provider=ctx.key_provider,
+            graph=ctx.graph,
+            namespace_registry=ctx.namespace_registry,
+            unconfigured_column_policy=ctx.projection_policy,
+            generate_output_tables=ctx.generate_output_tables,
+            substrate=ctx.substrate,
+            resolved_substrate=ctx.resolved_substrate,
+            fpe_chunk_count=ctx.fpe_chunk_count,
+            max_workers=ctx.max_workers,
+            fallback_to_pandas=ctx.fallback_to_pandas,
+            auto_chunk=ctx.auto_chunk,
+            auto_chunk_threshold_rows=ctx.auto_chunk_threshold_rows,
+            execution_plan_decision=decision.execution_plan_decision,
+            fidelity_report=ctx.fidelity_report,
+            now_iso=ctx.now_iso,
             publish=publish,
         )
         # Step 3: stitch the outputs together via the shared helper both this
@@ -621,7 +393,8 @@ def run_pipeline(
         # Explain surfacing: stamp the static job-level classification (computed once
         # above); a multi-table split is in auto_chunk.tables, not here. Default-off
         # flag; default runs stamp nothing here.
-        if explain_plan and execution_plan_decision is not None:
+        execution_plan_decision = decision.execution_plan_decision
+        if ctx.explain_plan and execution_plan_decision is not None:
             quality_metrics["execution_plan"] = {
                 "mode": execution_plan_decision.mode,
                 "reason": execution_plan_decision.reason,
@@ -634,23 +407,23 @@ def run_pipeline(
         # `quality_metrics` in place and returns the (possibly quarantine-filtered) outputs.
         outputs, quarantine_removed = _pipeline_finalize.finalize_validators_and_quarantine(
             outputs,
-            config=config,
+            config=ctx.config,
             caller_sources=step.sources,
             mask_row_errors=step.mask_row_errors,
             quality_metrics=quality_metrics,
         )
 
         # S2: full-frame execution telemetry (the sequential route returned
-        # early above with its own telemetry).
+        # early with its own telemetry).
         quality_metrics["execution"] = _route_exec.execution_telemetry(
             route="full_frame",
-            route_reason=route_reason,
+            route_reason=decision.route_reason,
             sink=publish.active_sink,
             source_loader=None,
             sources_resident=True,
             inputs_streamed=step.inputs_streamed,
         )
-        stamp_out_of_core_declined(quality_metrics, ooc_declined)
+        stamp_out_of_core_declined(quality_metrics, decision.ooc_declined)
 
         result = ExecutionResult(
             outputs=outputs,
@@ -658,7 +431,7 @@ def run_pipeline(
             boundary_conversion_ms=step.mask_conversion_ms,
             warnings=step.mask_warnings,
             quality_metrics=quality_metrics,
-            table_kinds=table_kinds,
+            table_kinds=ctx.table_kinds,
             row_errors=step.mask_row_errors,
         )
 
@@ -668,17 +441,17 @@ def run_pipeline(
         # Default-OFF returns before touching the result (byte-identical).
         _pipeline_finalize.compute_post_validation(
             result,
-            plan=plan,
+            plan=ctx.plan,
             sources=step.sources,
             quarantine_row_mask=quarantine_removed,
-            profile=profile,
-            registry=resolved_registry,
-            relationship_graph=graph,
-            namespace_registry=ns_registry,
-            post_validation=post_validation,
-            post_validation_skip=post_validation_skip,
-            post_validation_sample_size=post_validation_sample_size,
-            post_validation_enforce=post_validation_enforce,
+            profile=ctx.profile,
+            registry=ctx.registry,
+            relationship_graph=ctx.graph,
+            namespace_registry=ctx.namespace_registry,
+            post_validation=ctx.post_validation,
+            post_validation_skip=ctx.post_validation_skip,
+            post_validation_sample_size=ctx.post_validation_sample_size,
+            post_validation_enforce=ctx.post_validation_enforce,
         )
         publish.commit()  # B6a: the run's last action; inert unless this run streamed
         return result

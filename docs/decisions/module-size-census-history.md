@@ -419,7 +419,13 @@ decomposition target stands.
 Engine-owned transforms: +1 LOC (675 -> 676), the prepared-input contract
 docstring on `PandasExecutionAdapter.run`. No logic added.
 
-## `src/decoy_engine/execution/_pipeline.py` (census 684 at move time)
+## `src/decoy_engine/execution/_pipeline.py` (census 684 at move time; entry deleted by R3)
+
+R3 (2026-10-10): the resolve and route phases moved into `_pipeline_context.py`
+(`build_run_context`, `decide_route`) and the bounded routes dispatch through
+`_pipeline_route_dispatch.py`, taking the file from 684 to 457 LOC. At or under GOAL the
+entry is deleted, as the paragraph below describes for the earlier crossing.
+
 
 gen-5a-faker dennis re-gate (2026-09-17): `_pipeline.py` carried an
 allowlist entry through DE-03 / DE-02 / Task 4.5 (routing-dispatch
