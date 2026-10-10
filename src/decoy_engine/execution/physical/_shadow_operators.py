@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Final
 
 import pyarrow as pa
@@ -145,6 +145,10 @@ class OperatorCallEvidence:
     # Rows a `when:` mask selected, summed per batch. `None` for a node with no mask, so only
     # a masked node can be exempt from the positive-kernel check when it selected nothing.
     rows_selected: int | None = None
+    # text_mask's per-detector sub-floor counts, summed across the node's batches, so the
+    # coordinator builds ONE warning per column after the loop (the oracle's whole-column scope,
+    # C6b-i). Empty for every other operator; not published in the route-evidence dict.
+    text_mask_sub_floor_notices: dict[str, int] = field(default_factory=dict)
 
 
 # The two operators whose kernel loads a companion of its own inside the call; the loader's
@@ -287,7 +291,6 @@ def run_operator(
     row_offset: int = 0,
     when_mask: pa.Array | None = None,
     source_slice: pa.Table | None = None,
-    text_mask_notices: dict[str, int] | None = None,
 ) -> tuple[pa.Array, tuple[RowError, ...]]:
     """Dispatch one batch to `binding`'s bound operator, directly. Raises a
     coded `ShadowDifference(native_companion_unavailable)` -- never falls
@@ -379,13 +382,14 @@ def run_operator(
             code=NATIVE_COMPANION_UNAVAILABLE,
             detail=f"operator={binding.operator_id!r}: {detail}",
         ) from exc
-    if text_mask_notices is not None and result.text_mask_notices:
-        # Accumulate this batch's sub-floor counts into the caller's per-node dict so the
-        # coordinator builds ONE warning per column after the batch loop, matching the oracle's
-        # whole-column scope (C6b-i). text_mask raises its own fail-closed StrategyError inside
-        # the kernel, so there is no fpe-style error set to map here.
+    if result.text_mask_notices:
+        # Accumulate this batch's sub-floor counts onto the node's evidence so the coordinator
+        # builds ONE warning per column after the batch loop, matching the oracle's whole-column
+        # scope (C6b-i). text_mask raises its own fail-closed StrategyError inside the kernel, so
+        # there is no fpe-style error set to map here.
+        notices = evidence.text_mask_sub_floor_notices
         for detector_id, count in result.text_mask_notices.items():
-            text_mask_notices[detector_id] = text_mask_notices.get(detector_id, 0) + count
+            notices[detector_id] = notices.get(detector_id, 0) + count
     if result.fpe_errors:
         # fpe fail-closed KILLS on the first per-row failure (C6a §3d). The raised StrategyError
         # propagates out of the coordinator; the unified slice's generic exception boundary

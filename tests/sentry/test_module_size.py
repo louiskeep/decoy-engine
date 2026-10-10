@@ -90,9 +90,6 @@ ALLOWLIST: dict[str, int] = {
     "src/decoy_engine/execution/_chunked.py": 626,
     # shadow coordinator + source-shaped reconstruction; split the admitted-execution half.
     "src/decoy_engine/execution/_unified_slice.py": 605,
-    # unified per-node loop plus the C6a fpe / C6b-i text_mask warning transport; split the
-    # dispatch branches (synthesis/mixed/OOC) out when next touched.
-    "src/decoy_engine/execution/physical/_shadow_coordinator.py": 608,
     # dispatch entry plus the table-keyed params, the job-seed hand-off and the eager string-pool
     # check for the position-keyed faker; dense exception, the pool check itself lives in _chunk_masking.
     "src/decoy_engine/execution/native/_chunked_entry.py": 655,

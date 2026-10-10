@@ -23,12 +23,14 @@ from decoy_engine.execution.native._text_mask_route import text_mask_sub_floor_w
 
 if TYPE_CHECKING:
     from decoy_engine.execution.physical._plan import ExecutionBinding
+    from decoy_engine.execution.physical._shadow_operators import OperatorCallEvidence
     from decoy_engine.generation.pool._events import QualityWarning
 
 __all__ = [
     "assemble_column",
     "batch_when_mask",
     "fpe_node_warnings",
+    "per_node_warnings",
     "rebase_row_errors",
     "text_mask_node_warnings",
 ]
@@ -124,6 +126,19 @@ def text_mask_node_warnings(
         text_mask_sub_floor_warning(
             notices, policy=binding.params.sub_floor_span_policy, column=column
         )
+    ]
+
+
+def per_node_warnings(
+    binding: ExecutionBinding, source: pa.Table, column: str, evidence: OperatorCallEvidence
+) -> list[QualityWarning]:
+    """Every Python-computed warning a node contributes after its batch loop: fpe's residual-risk
+    warnings (from the whole source column) and text_mask's one aggregate sub-floor warning (from
+    the counts accumulated on `evidence`). One call keeps the coordinator's per-node epilogue a
+    single line; both sources ride `ExecutionResult.warnings`, never the output."""
+    return [
+        *fpe_node_warnings(binding, source, column),
+        *text_mask_node_warnings(binding, evidence.text_mask_sub_floor_notices, column),
     ]
 
 
