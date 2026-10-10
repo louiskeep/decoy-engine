@@ -9,6 +9,18 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Changed (text_mask reuses one thread-local Faker for span synthesis, 2026-10-10)
+
+`text_mask` synthetic spans (the `faker` strategy) now draw from a single thread-local `Faker`
+instance, re-seeded per span, instead of constructing a fresh `Faker()` on every span. Output is
+byte-identical: `seed_instance` resets the generator before each draw, so a reused instance
+reproduces a fresh one char-for-char across every reachable method (`name`, `first_name`,
+`last_name`, `address`, `city`) and the `name()` fallback. Constructing the instance was the
+dominant per-span cost (roughly 8-10x the reused draw), so the faker path and the realistic mixed
+masking cell get materially faster with no change to masked values, keying, or raw-value isolation.
+The instance is thread-local so concurrent caller threads never share a generator across a
+reseed-then-draw sequence.
+
 ### Fixed (chunked native route reports fail-closed errors and warnings in work order, 2026-10-10)
 
 The chunked native masking loop now visits plan-node columns in canonical work order (the
