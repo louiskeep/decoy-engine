@@ -111,11 +111,10 @@ import logging
 from datetime import datetime, timedelta
 from typing import Any
 
-from faker import Faker
-
 from decoy_engine.determinism import derive
 from decoy_engine.errors import FpeChecksumError, FpeUnencryptableError
 from decoy_engine.storm.detectors import Span, iter_spans
+from decoy_engine.transforms._faker_span import shared_faker
 from decoy_engine.transforms.date_shift import _COMMON_FORMATS
 from decoy_engine.transforms.fpe import (
     _CHARSETS,
@@ -477,12 +476,13 @@ def _mask_faker(matched_text: str, span_key: bytes, detector_id: str) -> str:
     big-endian unsigned int) so the same real value always maps to the same
     synthetic value; seed_instance makes the Faker call reproducible.
 
-    Raw-value isolation: ``matched_text`` is consumed only to derive
-    ``span_key``; the Faker call uses only the derived integer seed.
+    Raw-value isolation: ``matched_text`` is consumed only to derive ``span_key``;
+    the Faker call uses only the derived integer seed. The reused thread-local
+    ``shared_faker`` is reseeded per span (byte-identical; seed_instance resets).
     """
     method_name = _FAKER_METHOD.get(detector_id, "name")
     seed = int.from_bytes(span_key[:4], "big")
-    fake = Faker()
+    fake = shared_faker()
     fake.seed_instance(seed)
     method = getattr(fake, method_name, None)
     if callable(method):
