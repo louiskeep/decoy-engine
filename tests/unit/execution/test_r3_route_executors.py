@@ -193,3 +193,131 @@ def test_sequential_executor_forwards_every_context_field(
     assert kw["sources_resident"] is True and kw["source_loader"] is None
     assert kw["quarantine_config"] is None
     assert callable(kw["loader"]) and kw["sink"] is None
+
+
+# ---------------------------------------------------------------------------
+# full_frame executor
+# ---------------------------------------------------------------------------
+
+FULL_FRAME_CASES = [
+    "ff_legacy_single",
+    "ff_generate_mask",
+    "ff_multi_table",
+    "ff_multi_table_split",
+    "ff_quarantine_format_error",
+    "ff_fidelity",
+    "ff_post_validation",
+    "ff_explain_plan",
+    "ff_auto_chunk_oracle_lane",
+    "ff_auto_chunk_dispatcher_lane",
+    "ff_unified_admitted",
+    "ff_unified_flag_off",
+    "ff_fk_transforms_declined_byte_routing",
+]
+# Not re-executable on the same context (the patched failure only lives for the first run, or
+# the sink has already committed), so witness only; their parity is the baseline comparison.
+FULL_FRAME_WITNESS_ONLY = ["ff_unified_fallback", "ff_streamed_sink", "ff_resident_sink_untouched"]
+
+
+class FullFrameWitness:
+    def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from decoy_engine.execution import _pipeline_full_frame as ff
+
+        self.calls: list[tuple[Any, Any]] = []
+        self.real = ff.run_full_frame_route
+
+        def wrapped(ctx: Any, decision: Any) -> Any:
+            self.calls.append((ctx, decision))
+            return self.real(ctx, decision)
+
+        monkeypatch.setattr(ff, "run_full_frame_route", wrapped)
+
+
+@pytest.mark.parametrize("name", FULL_FRAME_CASES)
+def test_full_frame_dispatch_witness_and_parity(
+    name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    witness = FullFrameWitness(monkeypatch)
+    seq_or_ooc = Witness(monkeypatch)
+    got = sc.success_snapshot(name, tmp_path)
+    assert seq_or_ooc.calls == []  # no bounded executor ran
+    assert len(witness.calls) == 1
+    ctx, decision = witness.calls[0]
+    assert isinstance(ctx, ctxmod.PipelineRunContext)
+    assert isinstance(decision, ctxmod.RouteDecision) and decision.route == "full_frame"
+    assert got == _BASELINE[name]
+    with sc.without_companion():
+        again = witness.real(ctx, decision)
+    projected = sc._relocate(sc.snapshot(sc.Run(again)), tmp_path)
+    for key in ("tables", "warnings", "row_errors", "table_kinds", "execution", "execution_plan"):
+        assert projected[key] == _BASELINE[name][key], key
+    assert projected["quality_metrics"] == _BASELINE[name]["quality_metrics"]
+
+
+@pytest.mark.parametrize("name", FULL_FRAME_WITNESS_ONLY)
+def test_full_frame_witness_only_cases(
+    name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    witness = FullFrameWitness(monkeypatch)
+    got = sc.success_snapshot(name, tmp_path)
+    assert len(witness.calls) == 1 and witness.calls[0][1].route == "full_frame"
+    assert got == _BASELINE[name]
+
+
+@pytest.mark.parametrize("name", [*SEQUENTIAL_CASES[:2], *OUT_OF_CORE_CASES[:2]])
+def test_bounded_routes_never_reach_the_full_frame_executor(
+    name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    witness = FullFrameWitness(monkeypatch)
+    sc.success_snapshot(name, tmp_path)
+    assert witness.calls == []
+
+
+def _count_calls(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
+    """Counts of the two pieces of full_frame-only state: resident-source resolution and the
+    job's PoolCache."""
+    from decoy_engine.execution import _pipeline_full_frame as ff
+    from decoy_engine.execution import _pipeline_sources as psrc
+
+    counts = {"resolve_resident_sources": 0, "PoolCache": 0}
+    real_resolve, real_cache = psrc.resolve_resident_sources, ff.PoolCache
+
+    def resolve(*a: Any, **k: Any) -> Any:
+        counts["resolve_resident_sources"] += 1
+        return real_resolve(*a, **k)
+
+    def cache(*a: Any, **k: Any) -> Any:
+        counts["PoolCache"] += 1
+        return real_cache(*a, **k)
+
+    monkeypatch.setattr(psrc, "resolve_resident_sources", resolve)
+    monkeypatch.setattr(ff, "PoolCache", cache)
+    return counts
+
+
+@pytest.mark.parametrize(
+    "name", ["seq_fk", "seq_fk_loader", "ooc_fk_forced", "ooc_fk_lazy_sources_sink"]
+)
+def test_bounded_routes_build_no_full_frame_state(
+    name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    counts = _count_calls(monkeypatch)
+    sc.success_snapshot(name, tmp_path)
+    assert counts == {"resolve_resident_sources": 0, "PoolCache": 0}
+
+
+def test_a_rejected_job_builds_no_full_frame_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    counts = _count_calls(monkeypatch)
+    sc.failure_snapshot("f_reject_before_read", tmp_path)
+    assert counts == {"resolve_resident_sources": 0, "PoolCache": 0}
+
+
+@pytest.mark.parametrize("name", ["ff_legacy_single", "ff_generate_mask", "ff_unified_admitted"])
+def test_full_frame_builds_its_state_exactly_once(
+    name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    counts = _count_calls(monkeypatch)
+    sc.success_snapshot(name, tmp_path)
+    assert counts == {"resolve_resident_sources": 1, "PoolCache": 1}

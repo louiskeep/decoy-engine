@@ -71,6 +71,7 @@ GUARDED_MODULES: tuple[str, ...] = (
     # executor modules, so neither may import `execution.physical`.
     "execution/_pipeline_context.py",
     "execution/_pipeline_route_dispatch.py",
+    "execution/_pipeline_full_frame.py",
     # B2 (auto-chunk on the chunked dispatcher): a routing executor, so it must
     # not import `execution.physical` either.
     "execution/_pipeline_auto_chunk.py",
@@ -281,6 +282,9 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         # sweeps above cover them (GUARDED_MODULES).
         "src/decoy_engine/execution/_pipeline_context.py",
         "src/decoy_engine/execution/_pipeline_route_dispatch.py",
+        # R3: the full_frame executor (the old inline tail of `run_pipeline`) in its own module.
+        # It reaches the unified-slice lane through `_unified_slice`, never `execution.physical`.
+        "src/decoy_engine/execution/_pipeline_full_frame.py",
         "src/decoy_engine/execution/_sequential.py",
         "src/decoy_engine/execution/_transforms.py",
         "src/decoy_engine/execution/_transforms_admission.py",
