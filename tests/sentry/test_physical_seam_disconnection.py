@@ -67,6 +67,11 @@ GUARDED_MODULES: tuple[str, ...] = (
     "execution/_pipeline_routing_signals.py",
     "execution/_pipeline_chunk_route.py",
     "execution/_pipeline_route_exec.py",
+    # R3: the resolve/route context and the layer-1 route dispatch adapters. Routing and
+    # executor modules, so neither may import `execution.physical`.
+    "execution/_pipeline_context.py",
+    "execution/_pipeline_route_dispatch.py",
+    "execution/_pipeline_full_frame.py",
     # B2 (auto-chunk on the chunked dispatcher): a routing executor, so it must
     # not import `execution.physical` either.
     "execution/_pipeline_auto_chunk.py",
@@ -269,6 +274,17 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         "src/decoy_engine/execution/_pipeline_routing.py",
         "src/decoy_engine/execution/_pipeline_routing_signals.py",
         "src/decoy_engine/execution/_pipeline_sources.py",
+        # R3 (run context + route executors, 2026-10-10): `run_pipeline`'s resolve and route
+        # phases move into the new `_pipeline_context.py` (a frozen `PipelineRunContext` and
+        # `RouteDecision`) and the two bounded layer-1 routes get context-driven entry points in
+        # `_pipeline_route_dispatch.py`. Behavior-preserving extraction; both are parent-level
+        # execution modules that import nothing from `execution.physical`, and the import-direction
+        # sweeps above cover them (GUARDED_MODULES).
+        "src/decoy_engine/execution/_pipeline_context.py",
+        "src/decoy_engine/execution/_pipeline_route_dispatch.py",
+        # R3: the full_frame executor (the old inline tail of `run_pipeline`) in its own module.
+        # It reaches the unified-slice lane through `_unified_slice`, never `execution.physical`.
+        "src/decoy_engine/execution/_pipeline_full_frame.py",
         "src/decoy_engine/execution/_sequential.py",
         "src/decoy_engine/execution/_transforms.py",
         "src/decoy_engine/execution/_transforms_admission.py",

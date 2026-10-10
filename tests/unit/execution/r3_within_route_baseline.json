@@ -1,0 +1,6429 @@
+{
+ "ff_auto_chunk_dispatcher_lane": {
+  "execution": {
+   "eviction": "none",
+   "execution_mode": "full_frame",
+   "loaded_fully_in_memory": true,
+   "outputs_streamed": false,
+   "route_reason": "no_relationships"
+  },
+  "execution_extra_keys": [],
+  "execution_plan": null,
+  "fidelity_reports": null,
+  "quality_metrics": {
+   "auto_chunk": {
+    "chunk_count": 3,
+    "chunk_size_rows": 8,
+    "input": {
+     "mode": "resident",
+     "reason": "resident_source"
+    },
+    "lane": "dispatcher",
+    "lane_reason": null,
+    "mode": "chunked",
+    "native_threads": 1,
+    "output": {
+     "mode": "resident",
+     "reason": "no_sink"
+    },
+    "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 20 rows, at or above the auto-chunk threshold (10), with chunk-stable dtypes.",
+    "source_rows": 20,
+    "threshold_rows": 10
+   },
+   "chunked_route": {
+    "columns": [
+     {
+      "calls": 3,
+      "column": "p",
+      "executed_backend": "arrow_python",
+      "planned_backend": "arrow_python",
+      "strategy": "passthrough"
+     },
+     {
+      "calls": 3,
+      "column": "r",
+      "executed_backend": "arrow_python",
+      "planned_backend": "arrow_python",
+      "strategy": "redact"
+     },
+     {
+      "calls": 3,
+      "column": "tr",
+      "executed_backend": "arrow_python",
+      "planned_backend": "arrow_python",
+      "strategy": "truncate"
+     }
+    ],
+    "native_admitted": true,
+    "pandas_read_passthrough": [],
+    "reroute_reason": null,
+    "table": "t"
+   },
+   "execution": {
+    "eviction": "none",
+    "execution_mode": "full_frame",
+    "loaded_fully_in_memory": true,
+    "outputs_streamed": false,
+    "route_reason": "no_relationships"
+   }
+  },
+  "row_errors": [],
+  "table_kinds": {
+   "t": "mask"
+  },
+  "tables": {
+   "t": {
+    "metadata": {},
+    "rows": {
+     "p": [
+      "x0",
+      "x1",
+      "x2",
+      "x3",
+      "x4",
+      "x5",
+      "x6",
+      "x7",
+      "x8",
+      "x9",
+      "x10",
+      "x11",
+      "x12",
+      "x13",
+      "x14",
+      "x15",
+      "x16",
+      "x17",
+      "x18",
+      "x19"
+     ],
+     "r": [
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED"
+     ],
+     "tr": [
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc"
+     ]
+    },
+    "schema": [
+     [
+      "p",
+      "string",
+      true
+     ],
+     [
+      "r",
+      "string",
+      true
+     ],
+     [
+      "tr",
+      "string",
+      true
+     ]
+    ]
+   }
+  },
+  "volatile_structure": {
+   "boundary_conversion_ms": "float",
+   "timing_count_positive": true,
+   "timings": "tuple"
+  },
+  "warnings": []
+ },
+ "ff_auto_chunk_oracle_lane": {
+  "execution": {
+   "eviction": "none",
+   "execution_mode": "full_frame",
+   "loaded_fully_in_memory": true,
+   "outputs_streamed": false,
+   "route_reason": "no_relationships"
+  },
+  "execution_extra_keys": [],
+  "execution_plan": {
+   "mode": "chunked",
+   "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 20 rows, at or above the auto-chunk threshold (10), with chunk-stable dtypes.",
+   "rejections": {}
+  },
+  "fidelity_reports": null,
+  "quality_metrics": {
+   "auto_chunk": {
+    "chunk_count": 3,
+    "chunk_size_rows": 8,
+    "input": {
+     "mode": "resident",
+     "reason": "resident_source"
+    },
+    "lane": "legacy_oracle",
+    "lane_reason": "dispatcher_disabled",
+    "mode": "chunked",
+    "native_threads": 1,
+    "output": {
+     "mode": "resident",
+     "reason": "no_sink"
+    },
+    "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 20 rows, at or above the auto-chunk threshold (10), with chunk-stable dtypes.",
+    "source_rows": 20,
+    "threshold_rows": 10
+   },
+   "chunked_route": {
+    "columns": [
+     {
+      "calls": 3,
+      "column": "p",
+      "executed_backend": "pandas_oracle",
+      "planned_backend": "arrow_python",
+      "strategy": "passthrough"
+     },
+     {
+      "calls": 3,
+      "column": "r",
+      "executed_backend": "pandas_oracle",
+      "planned_backend": "arrow_python",
+      "strategy": "redact"
+     },
+     {
+      "calls": 3,
+      "column": "tr",
+      "executed_backend": "pandas_oracle",
+      "planned_backend": "arrow_python",
+      "strategy": "truncate"
+     },
+     {
+      "calls": 3,
+      "column": "h",
+      "executed_backend": "pandas_oracle",
+      "planned_backend": "rust_companion",
+      "strategy": "hash"
+     }
+    ],
+    "native_admitted": false,
+    "pandas_read_passthrough": [
+     "p"
+    ],
+    "reroute_reason": "dispatcher_disabled",
+    "table": "t"
+   },
+   "execution": {
+    "eviction": "none",
+    "execution_mode": "full_frame",
+    "loaded_fully_in_memory": true,
+    "outputs_streamed": false,
+    "route_reason": "no_relationships"
+   },
+   "execution_plan": {
+    "mode": "chunked",
+    "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 20 rows, at or above the auto-chunk threshold (10), with chunk-stable dtypes.",
+    "rejections": {}
+   }
+  },
+  "row_errors": [],
+  "table_kinds": {
+   "t": "mask"
+  },
+  "tables": {
+   "t": {
+    "metadata": {
+     "pandas": {
+      "attributes": {},
+      "column_indexes": [],
+      "columns": [
+       {
+        "field_name": "p",
+        "metadata": null,
+        "name": "p",
+        "numpy_type": "object",
+        "pandas_type": "unicode"
+       },
+       {
+        "field_name": "r",
+        "metadata": null,
+        "name": "r",
+        "numpy_type": "object",
+        "pandas_type": "unicode"
+       },
+       {
+        "field_name": "tr",
+        "metadata": null,
+        "name": "tr",
+        "numpy_type": "object",
+        "pandas_type": "unicode"
+       },
+       {
+        "field_name": "h",
+        "metadata": null,
+        "name": "h",
+        "numpy_type": "object",
+        "pandas_type": "unicode"
+       }
+      ],
+      "index_columns": []
+     }
+    },
+    "rows": {
+     "h": [
+      "a85cb4d6c3035f60c17576ad5d2037b42f5fb919461a663f8a5e0a64b2e0d06f",
+      "2bed1087ed5359fd1710ace0529c87a39d425640e30bd8c9f9eac0a9d9a6feb0",
+      "6a7b2a6f30e86c21c555f958f0fcae6ba41973bb110f82fbbaec4a550e2112ce",
+      "767183b247ca10d8aae2bc4fdce270fec259fb275ab56b4487f6af906eefbe00",
+      "6a820a77edbd6da8c77e484b84257deb03b40adf8c8237d162a7f4283e8a2147",
+      "d5d22ed62ef5c100ab0acc7a4e94a2ffedf1acf247f9a3a4fcbc1c4a1f60177d",
+      "386f9e5ca06d8a0126803cffb1df8ea55666b92ee630b6983a2cb2820657d32c",
+      "7190c1b6456b434702d44702ffa72d036a852f7eb0a9d1f79bbd599ded2173f8",
+      "48bf0b980ab488471146ce2718ba3535288de0d195d3b19111d2063fe21c835a",
+      "1827f494595df7f93f8797f26b07eb1dfedbbc45dd76b483eeef19c203cee794",
+      "099b6465cc0a2f65b2274cf3b3708ae8fdc3a4955f7c43872152752a953f6fdc",
+      "b34f3e6f3e6946bd5958fef3bc27ef051038e48f58df6c9276065f4cb1aa7a98",
+      "71faacf664df77e2d7ad15c6b94c63b26180b866559cf0cf20b4e2f1739894d9",
+      "b72c786ada4f983513dbf9e6147acadea381397231bd069335014dc38230e84a",
+      "e08be2f3608088958602866aea462c8a51aad74a83dc774433dd03542ab5c1a8",
+      "ceaab8ae47b42db5a63d05d5903aea44647b916296160c6bfb8f6ec40035c4c7",
+      "16f3cd3382d225438181b3a20bbf4088a3559f7daedccb6c2fc36a0c68f28f47",
+      "248c0337acc2b6ac0ba04c7918f89c84b8d8eeff291c580dbc19c61cb2eddd68",
+      "0ff20c80d6b7468ed846feea7a685457e4af56f64717ea0f91fd2a6661eefd1b",
+      "d7972fcba6145b5ec4727cbc49967a43f665dd5400e6aa80f5a8c8bf81347810"
+     ],
+     "p": [
+      "x0",
+      "x1",
+      "x2",
+      "x3",
+      "x4",
+      "x5",
+      "x6",
+      "x7",
+      "x8",
+      "x9",
+      "x10",
+      "x11",
+      "x12",
+      "x13",
+      "x14",
+      "x15",
+      "x16",
+      "x17",
+      "x18",
+      "x19"
+     ],
+     "r": [
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED"
+     ],
+     "tr": [
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc"
+     ]
+    },
+    "schema": [
+     [
+      "p",
+      "string",
+      true
+     ],
+     [
+      "r",
+      "string",
+      true
+     ],
+     [
+      "tr",
+      "string",
+      true
+     ],
+     [
+      "h",
+      "string",
+      true
+     ]
+    ]
+   }
+  },
+  "volatile_structure": {
+   "boundary_conversion_ms": "float",
+   "timing_count_positive": true,
+   "timings": "tuple"
+  },
+  "warnings": []
+ },
+ "ff_explain_plan": {
+  "execution": {
+   "eviction": "none",
+   "execution_mode": "full_frame",
+   "loaded_fully_in_memory": true,
+   "outputs_streamed": false,
+   "route_reason": "no_relationships"
+  },
+  "execution_extra_keys": [],
+  "execution_plan": {
+   "mode": "pandas_fallback",
+   "reason": "no faster execution mode admitted this job; pandas is the universal fallback.",
+   "rejections": {
+    "chunked": "source holds 20 rows, below the auto-chunk threshold (100000); full-frame is cheaper than streaming at this size",
+    "out_of_core_relationship": "no FK relationship edges; relationship routes do not apply.",
+    "sequential_relationship": "no FK relationship edges; relationship routes do not apply."
+   }
+  },
+  "fidelity_reports": null,
+  "quality_metrics": {
+   "execution": {
+    "eviction": "none",
+    "execution_mode": "full_frame",
+    "loaded_fully_in_memory": true,
+    "outputs_streamed": false,
+    "route_reason": "no_relationships"
+   },
+   "execution_plan": {
+    "mode": "pandas_fallback",
+    "reason": "no faster execution mode admitted this job; pandas is the universal fallback.",
+    "rejections": {
+     "chunked": "source holds 20 rows, below the auto-chunk threshold (100000); full-frame is cheaper than streaming at this size",
+     "out_of_core_relationship": "no FK relationship edges; relationship routes do not apply.",
+     "sequential_relationship": "no FK relationship edges; relationship routes do not apply."
+    }
+   }
+  },
+  "row_errors": [],
+  "table_kinds": {
+   "t": "mask"
+  },
+  "tables": {
+   "t": {
+    "metadata": {
+     "pandas": {
+      "attributes": {},
+      "column_indexes": [],
+      "columns": [
+       {
+        "field_name": "p",
+        "metadata": null,
+        "name": "p",
+        "numpy_type": "object",
+        "pandas_type": "unicode"
+       },
+       {
+        "field_name": "r",
+        "metadata": null,
+        "name": "r",
+        "numpy_type": "object",
+        "pandas_type": "unicode"
+       },
+       {
+        "field_name": "tr",
+        "metadata": null,
+        "name": "tr",
+        "numpy_type": "object",
+        "pandas_type": "unicode"
+       },
+       {
+        "field_name": "h",
+        "metadata": null,
+        "name": "h",
+        "numpy_type": "object",
+        "pandas_type": "unicode"
+       }
+      ],
+      "index_columns": []
+     }
+    },
+    "rows": {
+     "h": [
+      "a85cb4d6c3035f60c17576ad5d2037b42f5fb919461a663f8a5e0a64b2e0d06f",
+      "2bed1087ed5359fd1710ace0529c87a39d425640e30bd8c9f9eac0a9d9a6feb0",
+      "6a7b2a6f30e86c21c555f958f0fcae6ba41973bb110f82fbbaec4a550e2112ce",
+      "767183b247ca10d8aae2bc4fdce270fec259fb275ab56b4487f6af906eefbe00",
+      "6a820a77edbd6da8c77e484b84257deb03b40adf8c8237d162a7f4283e8a2147",
+      "d5d22ed62ef5c100ab0acc7a4e94a2ffedf1acf247f9a3a4fcbc1c4a1f60177d",
+      "386f9e5ca06d8a0126803cffb1df8ea55666b92ee630b6983a2cb2820657d32c",
+      "7190c1b6456b434702d44702ffa72d036a852f7eb0a9d1f79bbd599ded2173f8",
+      "48bf0b980ab488471146ce2718ba3535288de0d195d3b19111d2063fe21c835a",
+      "1827f494595df7f93f8797f26b07eb1dfedbbc45dd76b483eeef19c203cee794",
+      "099b6465cc0a2f65b2274cf3b3708ae8fdc3a4955f7c43872152752a953f6fdc",
+      "b34f3e6f3e6946bd5958fef3bc27ef051038e48f58df6c9276065f4cb1aa7a98",
+      "71faacf664df77e2d7ad15c6b94c63b26180b866559cf0cf20b4e2f1739894d9",
+      "b72c786ada4f983513dbf9e6147acadea381397231bd069335014dc38230e84a",
+      "e08be2f3608088958602866aea462c8a51aad74a83dc774433dd03542ab5c1a8",
+      "ceaab8ae47b42db5a63d05d5903aea44647b916296160c6bfb8f6ec40035c4c7",
+      "16f3cd3382d225438181b3a20bbf4088a3559f7daedccb6c2fc36a0c68f28f47",
+      "248c0337acc2b6ac0ba04c7918f89c84b8d8eeff291c580dbc19c61cb2eddd68",
+      "0ff20c80d6b7468ed846feea7a685457e4af56f64717ea0f91fd2a6661eefd1b",
+      "d7972fcba6145b5ec4727cbc49967a43f665dd5400e6aa80f5a8c8bf81347810"
+     ],
+     "p": [
+      "x0",
+      "x1",
+      "x2",
+      "x3",
+      "x4",
+      "x5",
+      "x6",
+      "x7",
+      "x8",
+      "x9",
+      "x10",
+      "x11",
+      "x12",
+      "x13",
+      "x14",
+      "x15",
+      "x16",
+      "x17",
+      "x18",
+      "x19"
+     ],
+     "r": [
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED"
+     ],
+     "tr": [
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc"
+     ]
+    },
+    "schema": [
+     [
+      "p",
+      "string",
+      true
+     ],
+     [
+      "r",
+      "string",
+      true
+     ],
+     [
+      "tr",
+      "string",
+      true
+     ],
+     [
+      "h",
+      "string",
+      true
+     ]
+    ]
+   }
+  },
+  "volatile_structure": {
+   "boundary_conversion_ms": "float",
+   "timing_count_positive": true,
+   "timings": "tuple"
+  },
+  "warnings": []
+ },
+ "ff_fidelity": {
+  "execution": {
+   "eviction": "none",
+   "execution_mode": "full_frame",
+   "loaded_fully_in_memory": true,
+   "outputs_streamed": false,
+   "route_reason": "no_relationships"
+  },
+  "execution_extra_keys": [],
+  "execution_plan": null,
+  "fidelity_reports": {
+   "t": {
+    "diagnostic": {
+     "checks": [
+      {
+       "added_columns": [],
+       "check": "column_survival",
+       "missing_columns": [],
+       "passed": true
+      },
+      {
+       "check": "row_count",
+       "expect_parity": true,
+       "output_rows": 20,
+       "passed": true,
+       "source_rows": 20
+      },
+      {
+       "check": "kind_drift",
+       "drifted": [],
+       "passed": true
+      },
+      {
+       "check": "null_drift",
+       "drifted": [],
+       "passed": true,
+       "threshold_pp": 10.0
+      }
+     ],
+     "passed": true,
+     "schema_version": "quality-diagnostic/v1"
+    },
+    "generated_at": "2026-10-10T00:00:00+00:00",
+    "grade": "F",
+    "job_id": null,
+    "marginal": {
+     "columns": [
+      {
+       "column": "h",
+       "comparable": true,
+       "extra_metrics": {
+        "chi_cramers_v": {
+         "comparable": false,
+         "method": "chi_square_common_partition_cramers_v",
+         "reason": "insufficient_identifiable_support",
+         "value": null
+        }
+       },
+       "method": "tvd",
+       "similarity": 0.0
+      },
+      {
+       "column": "p",
+       "comparable": true,
+       "extra_metrics": {
+        "chi_cramers_v": {
+         "chi2_statistic": 0.0,
+         "comparable": true,
+         "cramers_v": 0.0,
+         "method": "chi_square_common_partition_cramers_v",
+         "value": 1.0
+        }
+       },
+       "method": "tvd",
+       "similarity": 1.0
+      },
+      {
+       "column": "r",
+       "comparable": true,
+       "extra_metrics": {
+        "chi_cramers_v": {
+         "comparable": false,
+         "method": "chi_square_common_partition_cramers_v",
+         "reason": "insufficient_identifiable_support",
+         "value": null
+        }
+       },
+       "method": "tvd",
+       "similarity": 0.0
+      },
+      {
+       "column": "tr",
+       "comparable": true,
+       "extra_metrics": {
+        "chi_cramers_v": {
+         "comparable": false,
+         "method": "chi_square_common_partition_cramers_v",
+         "reason": "insufficient_identifiable_support",
+         "value": null
+        }
+       },
+       "method": "tvd",
+       "similarity": 0.0
+      }
+     ],
+     "score": 0.25
+    },
+    "omissions": [],
+    "output": {
+     "fingerprint": null,
+     "kind": "frame",
+     "row_count": 20
+    },
+    "overall_score": 0.25,
+    "pairwise": {
+     "joints": [],
+     "score": null
+    },
+    "sample_size": null,
+    "sampled": false,
+    "schema_version": "quality-report/v1",
+    "shape_fidelity": {
+     "marginal": {
+      "columns": [
+       {
+        "column": "h",
+        "comparable": true,
+        "method": "freq_vector_sorted_tvd",
+        "shape_similarity": 1.0
+       },
+       {
+        "column": "p",
+        "comparable": true,
+        "method": "freq_vector_sorted_tvd",
+        "shape_similarity": 1.0
+       },
+       {
+        "column": "r",
+        "comparable": true,
+        "method": "freq_vector_sorted_tvd",
+        "shape_similarity": 0.05
+       },
+       {
+        "column": "tr",
+        "comparable": true,
+        "method": "freq_vector_sorted_tvd",
+        "shape_similarity": 0.05
+       }
+      ],
+      "shape_score": 0.525
+     },
+     "overall_shape_score": 0.525,
+     "pairwise": {
+      "joints": [],
+      "shape_score": null
+     },
+     "schema_version": "quality-shape-fidelity/v1"
+    },
+    "source": {
+     "fingerprint": null,
+     "kind": "frame",
+     "row_count": 20
+    },
+    "warnings": []
+   }
+  },
+  "quality_metrics": {
+   "execution": {
+    "eviction": "none",
+    "execution_mode": "full_frame",
+    "loaded_fully_in_memory": true,
+    "outputs_streamed": false,
+    "route_reason": "no_relationships"
+   },
+   "fidelity_reports": {
+    "t": {
+     "diagnostic": {
+      "checks": [
+       {
+        "added_columns": [],
+        "check": "column_survival",
+        "missing_columns": [],
+        "passed": true
+       },
+       {
+        "check": "row_count",
+        "expect_parity": true,
+        "output_rows": 20,
+        "passed": true,
+        "source_rows": 20
+       },
+       {
+        "check": "kind_drift",
+        "drifted": [],
+        "passed": true
+       },
+       {
+        "check": "null_drift",
+        "drifted": [],
+        "passed": true,
+        "threshold_pp": 10.0
+       }
+      ],
+      "passed": true,
+      "schema_version": "quality-diagnostic/v1"
+     },
+     "generated_at": "2026-10-10T00:00:00+00:00",
+     "grade": "F",
+     "job_id": null,
+     "marginal": {
+      "columns": [
+       {
+        "column": "h",
+        "comparable": true,
+        "extra_metrics": {
+         "chi_cramers_v": {
+          "comparable": false,
+          "method": "chi_square_common_partition_cramers_v",
+          "reason": "insufficient_identifiable_support",
+          "value": null
+         }
+        },
+        "method": "tvd",
+        "similarity": 0.0
+       },
+       {
+        "column": "p",
+        "comparable": true,
+        "extra_metrics": {
+         "chi_cramers_v": {
+          "chi2_statistic": 0.0,
+          "comparable": true,
+          "cramers_v": 0.0,
+          "method": "chi_square_common_partition_cramers_v",
+          "value": 1.0
+         }
+        },
+        "method": "tvd",
+        "similarity": 1.0
+       },
+       {
+        "column": "r",
+        "comparable": true,
+        "extra_metrics": {
+         "chi_cramers_v": {
+          "comparable": false,
+          "method": "chi_square_common_partition_cramers_v",
+          "reason": "insufficient_identifiable_support",
+          "value": null
+         }
+        },
+        "method": "tvd",
+        "similarity": 0.0
+       },
+       {
+        "column": "tr",
+        "comparable": true,
+        "extra_metrics": {
+         "chi_cramers_v": {
+          "comparable": false,
+          "method": "chi_square_common_partition_cramers_v",
+          "reason": "insufficient_identifiable_support",
+          "value": null
+         }
+        },
+        "method": "tvd",
+        "similarity": 0.0
+       }
+      ],
+      "score": 0.25
+     },
+     "omissions": [],
+     "output": {
+      "fingerprint": null,
+      "kind": "frame",
+      "row_count": 20
+     },
+     "overall_score": 0.25,
+     "pairwise": {
+      "joints": [],
+      "score": null
+     },
+     "sample_size": null,
+     "sampled": false,
+     "schema_version": "quality-report/v1",
+     "shape_fidelity": {
+      "marginal": {
+       "columns": [
+        {
+         "column": "h",
+         "comparable": true,
+         "method": "freq_vector_sorted_tvd",
+         "shape_similarity": 1.0
+        },
+        {
+         "column": "p",
+         "comparable": true,
+         "method": "freq_vector_sorted_tvd",
+         "shape_similarity": 1.0
+        },
+        {
+         "column": "r",
+         "comparable": true,
+         "method": "freq_vector_sorted_tvd",
+         "shape_similarity": 0.05
+        },
+        {
+         "column": "tr",
+         "comparable": true,
+         "method": "freq_vector_sorted_tvd",
+         "shape_similarity": 0.05
+        }
+       ],
+       "shape_score": 0.525
+      },
+      "overall_shape_score": 0.525,
+      "pairwise": {
+       "joints": [],
+       "shape_score": null
+      },
+      "schema_version": "quality-shape-fidelity/v1"
+     },
+     "source": {
+      "fingerprint": null,
+      "kind": "frame",
+      "row_count": 20
+     },
+     "warnings": []
+    }
+   }
+  },
+  "row_errors": [],
+  "table_kinds": {
+   "t": "mask"
+  },
+  "tables": {
+   "t": {
+    "metadata": {
+     "pandas": {
+      "attributes": {},
+      "column_indexes": [],
+      "columns": [
+       {
+        "field_name": "p",
+        "metadata": null,
+        "name": "p",
+        "numpy_type": "object",
+        "pandas_type": "unicode"
+       },
+       {
+        "field_name": "r",
+        "metadata": null,
+        "name": "r",
+        "numpy_type": "object",
+        "pandas_type": "unicode"
+       },
+       {
+        "field_name": "tr",
+        "metadata": null,
+        "name": "tr",
+        "numpy_type": "object",
+        "pandas_type": "unicode"
+       },
+       {
+        "field_name": "h",
+        "metadata": null,
+        "name": "h",
+        "numpy_type": "object",
+        "pandas_type": "unicode"
+       }
+      ],
+      "index_columns": []
+     }
+    },
+    "rows": {
+     "h": [
+      "a85cb4d6c3035f60c17576ad5d2037b42f5fb919461a663f8a5e0a64b2e0d06f",
+      "2bed1087ed5359fd1710ace0529c87a39d425640e30bd8c9f9eac0a9d9a6feb0",
+      "6a7b2a6f30e86c21c555f958f0fcae6ba41973bb110f82fbbaec4a550e2112ce",
+      "767183b247ca10d8aae2bc4fdce270fec259fb275ab56b4487f6af906eefbe00",
+      "6a820a77edbd6da8c77e484b84257deb03b40adf8c8237d162a7f4283e8a2147",
+      "d5d22ed62ef5c100ab0acc7a4e94a2ffedf1acf247f9a3a4fcbc1c4a1f60177d",
+      "386f9e5ca06d8a0126803cffb1df8ea55666b92ee630b6983a2cb2820657d32c",
+      "7190c1b6456b434702d44702ffa72d036a852f7eb0a9d1f79bbd599ded2173f8",
+      "48bf0b980ab488471146ce2718ba3535288de0d195d3b19111d2063fe21c835a",
+      "1827f494595df7f93f8797f26b07eb1dfedbbc45dd76b483eeef19c203cee794",
+      "099b6465cc0a2f65b2274cf3b3708ae8fdc3a4955f7c43872152752a953f6fdc",
+      "b34f3e6f3e6946bd5958fef3bc27ef051038e48f58df6c9276065f4cb1aa7a98",
+      "71faacf664df77e2d7ad15c6b94c63b26180b866559cf0cf20b4e2f1739894d9",
+      "b72c786ada4f983513dbf9e6147acadea381397231bd069335014dc38230e84a",
+      "e08be2f3608088958602866aea462c8a51aad74a83dc774433dd03542ab5c1a8",
+      "ceaab8ae47b42db5a63d05d5903aea44647b916296160c6bfb8f6ec40035c4c7",
+      "16f3cd3382d225438181b3a20bbf4088a3559f7daedccb6c2fc36a0c68f28f47",
+      "248c0337acc2b6ac0ba04c7918f89c84b8d8eeff291c580dbc19c61cb2eddd68",
+      "0ff20c80d6b7468ed846feea7a685457e4af56f64717ea0f91fd2a6661eefd1b",
+      "d7972fcba6145b5ec4727cbc49967a43f665dd5400e6aa80f5a8c8bf81347810"
+     ],
+     "p": [
+      "x0",
+      "x1",
+      "x2",
+      "x3",
+      "x4",
+      "x5",
+      "x6",
+      "x7",
+      "x8",
+      "x9",
+      "x10",
+      "x11",
+      "x12",
+      "x13",
+      "x14",
+      "x15",
+      "x16",
+      "x17",
+      "x18",
+      "x19"
+     ],
+     "r": [
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED"
+     ],
+     "tr": [
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc"
+     ]
+    },
+    "schema": [
+     [
+      "p",
+      "string",
+      true
+     ],
+     [
+      "r",
+      "string",
+      true
+     ],
+     [
+      "tr",
+      "string",
+      true
+     ],
+     [
+      "h",
+      "string",
+      true
+     ]
+    ]
+   }
+  },
+  "volatile_structure": {
+   "boundary_conversion_ms": "float",
+   "timing_count_positive": true,
+   "timings": "tuple"
+  },
+  "warnings": []
+ },
+ "ff_fk_transforms_declined_byte_routing": {
+  "execution": {
+   "eviction": "none",
+   "execution_mode": "full_frame",
+   "loaded_fully_in_memory": true,
+   "outputs_streamed": false,
+   "route_reason": "byte_estimate_full_frame_fits"
+  },
+  "execution_extra_keys": [
+   "out_of_core_declined"
+  ],
+  "execution_plan": null,
+  "fidelity_reports": null,
+  "quality_metrics": {
+   "execution": {
+    "eviction": "none",
+    "execution_mode": "full_frame",
+    "loaded_fully_in_memory": true,
+    "out_of_core_declined": "per_table_transforms_present",
+    "outputs_streamed": false,
+    "route_reason": "byte_estimate_full_frame_fits"
+   }
+  },
+  "row_errors": [],
+  "table_kinds": {
+   "child": "mask",
+   "parent": "mask"
+  },
+  "tables": {
+   "child": {
+    "metadata": {
+     "pandas": {
+      "attributes": {},
+      "column_indexes": [],
+      "columns": [
+       {
+        "field_name": "cid",
+        "metadata": null,
+        "name": "cid",
+        "numpy_type": "object",
+        "pandas_type": "unicode"
+       },
+       {
+        "field_name": "parent_id",
+        "metadata": null,
+        "name": "parent_id",
+        "numpy_type": "object",
+        "pandas_type": "unicode"
+       }
+      ],
+      "index_columns": []
+     }
+    },
+    "rows": {
+     "cid": [
+      "a108ea5a5efb141eb5f5577f7d20e6fe755d0c7b0fdf521df43e10ba83c2dce3",
+      "04666901f45aadaaeda6cb07d997c198dfd42e0f4181f4cfe321290ce44f9849",
+      "4794072f578c2c9d61afb88aa4db316e73269b3a87d67834d0c4c2eda7261ad6",
+      "01dc45f031647e8ddc469e71de3fa81442491c1d5fcdd14d2ae49382142d78f6",
+      "882ed437ecd16c222b65a713d54935661036e90e6c1100bf6323b52fed36388e",
+      "0fda9934cc1dac918d38210988ad6ec87a227998d8c0df7bc69133e59634bd87",
+      "051de4773a172e720770eee3f9d5edd6bd28697ee430592f0e1db315a6862ef1",
+      "872fececd4ec4d9a44c1f4093b1d6bbf4e607a0b72b0bb1e2700ec693feeee23",
+      "f08743ad72b86e9c444b82ab46d709dac8cbacfd2f4d123cb8d1c4d503757708",
+      "765c2b6b75047fdde13406d686937264a437c031583fc9c0e0f330f868123445",
+      "8caf47790bbd5f4439f75471ecc8612f5e1b7a87c01764e397467403d85682c4",
+      "1c06661bc8a919f149bc84948639369777d095ad5597950564271df965307812",
+      "926c54ee672acc6479bebe09b54c0d4e735c13753c7c83042bb3f95ddbe63afe",
+      "0739b2b538fbf98ed77e0701d3394e1f51baef5dcfa73a97d390f3eecae355fa",
+      "e9a84c3c38da76c18d1f990550797e7955b9c4c7b9dc7c52728d5b4b18cac613",
+      "c25342821780c4f5ae5f0eb0640fc4b96ea22bbf064276e9f9a4bdf614da1616",
+      "1065c644c6608203058307fa12f8addf79871291803ae0ccce0f86d5c9542d9d",
+      "b648ec92b6b300af8bb09acec9aeac74cc754f7f5f4375b16b5e439863405751",
+      "d6913e198ce95733ee11aa6bb6cb65d22302d15ac85d6f7f9a5c0068b9909d7d",
+      "83a7de2894765753ffbd1043945dc3c15eb48f7da6067dfd6a92929caacbb2a7"
+     ],
+     "parent_id": [
+      "3c7f55c37d46c625e54885aa483df9bf876a559a575bc636937e8a79c1b4c55c",
+      "f19b0b0c28742a065bb6832ae3bda27cdbc447464dd5274ae4b10bed036f77a9",
+      "90755b71998b7017af4526591589b9b6347d89edb2276dbf08c2b6dc105fb1ac",
+      "5b69f0bb5e201004c2d50f9fbb34ce03222c4b7d1a3cb0ffc1771a3ab8859927",
+      "5c1dd82cd954cfd786ef098cd9f4cd34e6bfe6d608a274718a2502d765107252",
+      "1c0c64fdd3c898b8f133241fdb89040f97d430e904a12f7921da9c5ad8333ba5",
+      "c5e7cfe1f66211817ec236d75b6d9d0db2a11c0e48839223ddcabad25d1f4857",
+      "ad9f1131de1d79472e0ff564befa037a8fd59de54104a65bbd3f3568b3da9f7b",
+      "6add5038892e86fe86eab2b425802974ea6e4474fc0ebc04ad3bf2a06ce35977",
+      "241287e7232415b3948e18c3386e3c86dd0212ef0c63f23b0593e703a44c64c2",
+      "a1a000f35335f5c173151ebfcc2ae98ab784a56a0fada0e21ba8a1c3222cf65b",
+      "b5c45ce929607b415fec10cf0f546630f67184ca06cc9b2b6243df0e7c4145fa",
+      "c25616a9edcbe28bc7660865f2c446142ba34c0fdb914c687c20b64a2cf81ca2",
+      "af933f0a578045aeffd56e552d2b13b22169f235d03fe32a361c2cc53802e073",
+      "f3ab0c23ae11c83bc49de51d375dfece587b4d0a067ce51cf1ac908b803fd62c",
+      "d213c71039bbc024984d30bf106bfe4c8f31103680f226726b70530f47159f2e",
+      "aa4340289db5e55f51080b45cb8fd7783c2b38a9c62628571f93874f05cee299",
+      "7010784072be45ed57420283bf04a16f1384201b9e2387ae793fe64a04207cf2",
+      "381a4b3808669a59410f35d215a6c436b0d9bfd52a79143dca5da401396a7346",
+      "ab7f1e8c81c8f5936cfc3e4d299e56cf2f8e19d34f10b56f6d607c8a72fe0879"
+     ]
+    },
+    "schema": [
+     [
+      "cid",
+      "string",
+      true
+     ],
+     [
+      "parent_id",
+      "string",
+      true
+     ]
+    ]
+   },
+   "parent": {
+    "metadata": {
+     "pandas": {
+      "attributes": {},
+      "column_indexes": [],
+      "columns": [
+       {
+        "field_name": "id",
+        "metadata": null,
+        "name": "id",
+        "numpy_type": "object",
+        "pandas_type": "unicode"
+       },
+       {
+        "field_name": "note",
+        "metadata": null,
+        "name": "note",
+        "numpy_type": "object",
+        "pandas_type": "unicode"
+       }
+      ],
+      "index_columns": []
+     }
+    },
+    "rows": {
+     "id": [
+      "3c7f55c37d46c625e54885aa483df9bf876a559a575bc636937e8a79c1b4c55c",
+      "f19b0b0c28742a065bb6832ae3bda27cdbc447464dd5274ae4b10bed036f77a9",
+      "90755b71998b7017af4526591589b9b6347d89edb2276dbf08c2b6dc105fb1ac",
+      "5b69f0bb5e201004c2d50f9fbb34ce03222c4b7d1a3cb0ffc1771a3ab8859927",
+      "5c1dd82cd954cfd786ef098cd9f4cd34e6bfe6d608a274718a2502d765107252",
+      "1c0c64fdd3c898b8f133241fdb89040f97d430e904a12f7921da9c5ad8333ba5",
+      "c5e7cfe1f66211817ec236d75b6d9d0db2a11c0e48839223ddcabad25d1f4857",
+      "ad9f1131de1d79472e0ff564befa037a8fd59de54104a65bbd3f3568b3da9f7b",
+      "6add5038892e86fe86eab2b425802974ea6e4474fc0ebc04ad3bf2a06ce35977",
+      "241287e7232415b3948e18c3386e3c86dd0212ef0c63f23b0593e703a44c64c2",
+      "a1a000f35335f5c173151ebfcc2ae98ab784a56a0fada0e21ba8a1c3222cf65b",
+      "b5c45ce929607b415fec10cf0f546630f67184ca06cc9b2b6243df0e7c4145fa",
+      "c25616a9edcbe28bc7660865f2c446142ba34c0fdb914c687c20b64a2cf81ca2",
+      "af933f0a578045aeffd56e552d2b13b22169f235d03fe32a361c2cc53802e073",
+      "f3ab0c23ae11c83bc49de51d375dfece587b4d0a067ce51cf1ac908b803fd62c",
+      "d213c71039bbc024984d30bf106bfe4c8f31103680f226726b70530f47159f2e",
+      "aa4340289db5e55f51080b45cb8fd7783c2b38a9c62628571f93874f05cee299",
+      "7010784072be45ed57420283bf04a16f1384201b9e2387ae793fe64a04207cf2",
+      "381a4b3808669a59410f35d215a6c436b0d9bfd52a79143dca5da401396a7346",
+      "ab7f1e8c81c8f5936cfc3e4d299e56cf2f8e19d34f10b56f6d607c8a72fe0879"
+     ],
+     "note": [
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED"
+     ]
+    },
+    "schema": [
+     [
+      "id",
+      "string",
+      true
+     ],
+     [
+      "note",
+      "string",
+      true
+     ]
+    ]
+   }
+  },
+  "volatile_structure": {
+   "boundary_conversion_ms": "float",
+   "timing_count_positive": true,
+   "timings": "tuple"
+  },
+  "warnings": []
+ },
+ "ff_generate_mask": {
+  "execution": {
+   "eviction": "none",
+   "execution_mode": "full_frame",
+   "loaded_fully_in_memory": true,
+   "outputs_streamed": false,
+   "route_reason": "generate_plus_mask"
+  },
+  "execution_extra_keys": [],
+  "execution_plan": null,
+  "fidelity_reports": null,
+  "quality_metrics": {
+   "execution": {
+    "eviction": "none",
+    "execution_mode": "full_frame",
+    "loaded_fully_in_memory": true,
+    "outputs_streamed": false,
+    "route_reason": "generate_plus_mask"
+   }
+  },
+  "row_errors": [],
+  "table_kinds": {
+   "child": "mask",
+   "extra": "generate",
+   "parent": "mask"
+  },
+  "tables": {
+   "child": {
+    "metadata": {
+     "pandas": {
+      "attributes": {},
+      "column_indexes": [],
+      "columns": [
+       {
+        "field_name": "cid",
+        "metadata": null,
+        "name": "cid",
+        "numpy_type": "object",
+        "pandas_type": "unicode"
+       },
+       {
+        "field_name": "parent_id",
+        "metadata": null,
+        "name": "parent_id",
+        "numpy_type": "object",
+        "pandas_type": "unicode"
+       }
+      ],
+      "index_columns": []
+     }
+    },
+    "rows": {
+     "cid": [
+      "c0",
+      "c1",
+      "c2",
+      "c3",
+      "c4",
+      "c5",
+      "c6",
+      "c7",
+      "c8",
+      "c9",
+      "c10",
+      "c11",
+      "c12",
+      "c13",
+      "c14",
+      "c15",
+      "c16",
+      "c17",
+      "c18",
+      "c19"
+     ],
+     "parent_id": [
+      "3c7f55c37d46c625e54885aa483df9bf876a559a575bc636937e8a79c1b4c55c",
+      "f19b0b0c28742a065bb6832ae3bda27cdbc447464dd5274ae4b10bed036f77a9",
+      "90755b71998b7017af4526591589b9b6347d89edb2276dbf08c2b6dc105fb1ac",
+      "5b69f0bb5e201004c2d50f9fbb34ce03222c4b7d1a3cb0ffc1771a3ab8859927",
+      "5c1dd82cd954cfd786ef098cd9f4cd34e6bfe6d608a274718a2502d765107252",
+      "1c0c64fdd3c898b8f133241fdb89040f97d430e904a12f7921da9c5ad8333ba5",
+      "c5e7cfe1f66211817ec236d75b6d9d0db2a11c0e48839223ddcabad25d1f4857",
+      "ad9f1131de1d79472e0ff564befa037a8fd59de54104a65bbd3f3568b3da9f7b",
+      "6add5038892e86fe86eab2b425802974ea6e4474fc0ebc04ad3bf2a06ce35977",
+      "241287e7232415b3948e18c3386e3c86dd0212ef0c63f23b0593e703a44c64c2",
+      "a1a000f35335f5c173151ebfcc2ae98ab784a56a0fada0e21ba8a1c3222cf65b",
+      "b5c45ce929607b415fec10cf0f546630f67184ca06cc9b2b6243df0e7c4145fa",
+      "c25616a9edcbe28bc7660865f2c446142ba34c0fdb914c687c20b64a2cf81ca2",
+      "af933f0a578045aeffd56e552d2b13b22169f235d03fe32a361c2cc53802e073",
+      "f3ab0c23ae11c83bc49de51d375dfece587b4d0a067ce51cf1ac908b803fd62c",
+      "d213c71039bbc024984d30bf106bfe4c8f31103680f226726b70530f47159f2e",
+      "aa4340289db5e55f51080b45cb8fd7783c2b38a9c62628571f93874f05cee299",
+      "7010784072be45ed57420283bf04a16f1384201b9e2387ae793fe64a04207cf2",
+      "381a4b3808669a59410f35d215a6c436b0d9bfd52a79143dca5da401396a7346",
+      "ab7f1e8c81c8f5936cfc3e4d299e56cf2f8e19d34f10b56f6d607c8a72fe0879"
+     ]
+    },
+    "schema": [
+     [
+      "cid",
+      "string",
+      true
+     ],
+     [
+      "parent_id",
+      "string",
+      true
+     ]
+    ]
+   },
+   "extra": {
+    "metadata": {
+     "pandas": {
+      "attributes": {},
+      "column_indexes": [],
+      "columns": [
+       {
+        "field_name": "seq",
+        "metadata": null,
+        "name": "seq",
+        "numpy_type": "object",
+        "pandas_type": "unicode"
+       }
+      ],
+      "index_columns": []
+     }
+    },
+    "rows": {
+     "seq": [
+      "1",
+      "2",
+      "3"
+     ]
+    },
+    "schema": [
+     [
+      "seq",
+      "string",
+      true
+     ]
+    ]
+   },
+   "parent": {
+    "metadata": {
+     "pandas": {
+      "attributes": {},
+      "column_indexes": [],
+      "columns": [
+       {
+        "field_name": "id",
+        "metadata": null,
+        "name": "id",
+        "numpy_type": "object",
+        "pandas_type": "unicode"
+       },
+       {
+        "field_name": "note",
+        "metadata": null,
+        "name": "note",
+        "numpy_type": "object",
+        "pandas_type": "unicode"
+       }
+      ],
+      "index_columns": []
+     }
+    },
+    "rows": {
+     "id": [
+      "3c7f55c37d46c625e54885aa483df9bf876a559a575bc636937e8a79c1b4c55c",
+      "f19b0b0c28742a065bb6832ae3bda27cdbc447464dd5274ae4b10bed036f77a9",
+      "90755b71998b7017af4526591589b9b6347d89edb2276dbf08c2b6dc105fb1ac",
+      "5b69f0bb5e201004c2d50f9fbb34ce03222c4b7d1a3cb0ffc1771a3ab8859927",
+      "5c1dd82cd954cfd786ef098cd9f4cd34e6bfe6d608a274718a2502d765107252",
+      "1c0c64fdd3c898b8f133241fdb89040f97d430e904a12f7921da9c5ad8333ba5",
+      "c5e7cfe1f66211817ec236d75b6d9d0db2a11c0e48839223ddcabad25d1f4857",
+      "ad9f1131de1d79472e0ff564befa037a8fd59de54104a65bbd3f3568b3da9f7b",
+      "6add5038892e86fe86eab2b425802974ea6e4474fc0ebc04ad3bf2a06ce35977",
+      "241287e7232415b3948e18c3386e3c86dd0212ef0c63f23b0593e703a44c64c2",
+      "a1a000f35335f5c173151ebfcc2ae98ab784a56a0fada0e21ba8a1c3222cf65b",
+      "b5c45ce929607b415fec10cf0f546630f67184ca06cc9b2b6243df0e7c4145fa",
+      "c25616a9edcbe28bc7660865f2c446142ba34c0fdb914c687c20b64a2cf81ca2",
+      "af933f0a578045aeffd56e552d2b13b22169f235d03fe32a361c2cc53802e073",
+      "f3ab0c23ae11c83bc49de51d375dfece587b4d0a067ce51cf1ac908b803fd62c",
+      "d213c71039bbc024984d30bf106bfe4c8f31103680f226726b70530f47159f2e",
+      "aa4340289db5e55f51080b45cb8fd7783c2b38a9c62628571f93874f05cee299",
+      "7010784072be45ed57420283bf04a16f1384201b9e2387ae793fe64a04207cf2",
+      "381a4b3808669a59410f35d215a6c436b0d9bfd52a79143dca5da401396a7346",
+      "ab7f1e8c81c8f5936cfc3e4d299e56cf2f8e19d34f10b56f6d607c8a72fe0879"
+     ],
+     "note": [
+      "secret0",
+      "secret1",
+      "secret2",
+      "secret3",
+      "secret4",
+      "secret5",
+      "secret6",
+      "secret7",
+      "secret8",
+      "secret9",
+      "secret10",
+      "secret11",
+      "secret12",
+      "secret13",
+      "secret14",
+      "secret15",
+      "secret16",
+      "secret17",
+      "secret18",
+      "secret19"
+     ]
+    },
+    "schema": [
+     [
+      "id",
+      "string",
+      true
+     ],
+     [
+      "note",
+      "string",
+      true
+     ]
+    ]
+   }
+  },
+  "volatile_structure": {
+   "boundary_conversion_ms": "float",
+   "timing_count_positive": true,
+   "timings": "tuple"
+  },
+  "warnings": [
+   "QualityWarning(code='undeclared_output_columns', provider='output_projection', column=None, detail={'table': 'parent', 'undeclared_columns': ['note']})",
+   "QualityWarning(code='undeclared_output_columns', provider='output_projection', column=None, detail={'table': 'child', 'undeclared_columns': ['cid']})"
+  ]
+ },
+ "ff_legacy_single": {
+  "execution": {
+   "eviction": "none",
+   "execution_mode": "full_frame",
+   "loaded_fully_in_memory": true,
+   "outputs_streamed": false,
+   "route_reason": "no_relationships"
+  },
+  "execution_extra_keys": [],
+  "execution_plan": null,
+  "fidelity_reports": null,
+  "quality_metrics": {
+   "execution": {
+    "eviction": "none",
+    "execution_mode": "full_frame",
+    "loaded_fully_in_memory": true,
+    "outputs_streamed": false,
+    "route_reason": "no_relationships"
+   }
+  },
+  "row_errors": [],
+  "table_kinds": {
+   "t": "mask"
+  },
+  "tables": {
+   "t": {
+    "metadata": {
+     "pandas": {
+      "attributes": {},
+      "column_indexes": [],
+      "columns": [
+       {
+        "field_name": "p",
+        "metadata": null,
+        "name": "p",
+        "numpy_type": "object",
+        "pandas_type": "unicode"
+       },
+       {
+        "field_name": "r",
+        "metadata": null,
+        "name": "r",
+        "numpy_type": "object",
+        "pandas_type": "unicode"
+       },
+       {
+        "field_name": "tr",
+        "metadata": null,
+        "name": "tr",
+        "numpy_type": "object",
+        "pandas_type": "unicode"
+       },
+       {
+        "field_name": "h",
+        "metadata": null,
+        "name": "h",
+        "numpy_type": "object",
+        "pandas_type": "unicode"
+       }
+      ],
+      "index_columns": []
+     }
+    },
+    "rows": {
+     "h": [
+      "a85cb4d6c3035f60c17576ad5d2037b42f5fb919461a663f8a5e0a64b2e0d06f",
+      "2bed1087ed5359fd1710ace0529c87a39d425640e30bd8c9f9eac0a9d9a6feb0",
+      "6a7b2a6f30e86c21c555f958f0fcae6ba41973bb110f82fbbaec4a550e2112ce",
+      "767183b247ca10d8aae2bc4fdce270fec259fb275ab56b4487f6af906eefbe00",
+      "6a820a77edbd6da8c77e484b84257deb03b40adf8c8237d162a7f4283e8a2147",
+      "d5d22ed62ef5c100ab0acc7a4e94a2ffedf1acf247f9a3a4fcbc1c4a1f60177d",
+      "386f9e5ca06d8a0126803cffb1df8ea55666b92ee630b6983a2cb2820657d32c",
+      "7190c1b6456b434702d44702ffa72d036a852f7eb0a9d1f79bbd599ded2173f8",
+      "48bf0b980ab488471146ce2718ba3535288de0d195d3b19111d2063fe21c835a",
+      "1827f494595df7f93f8797f26b07eb1dfedbbc45dd76b483eeef19c203cee794",
+      "099b6465cc0a2f65b2274cf3b3708ae8fdc3a4955f7c43872152752a953f6fdc",
+      "b34f3e6f3e6946bd5958fef3bc27ef051038e48f58df6c9276065f4cb1aa7a98",
+      "71faacf664df77e2d7ad15c6b94c63b26180b866559cf0cf20b4e2f1739894d9",
+      "b72c786ada4f983513dbf9e6147acadea381397231bd069335014dc38230e84a",
+      "e08be2f3608088958602866aea462c8a51aad74a83dc774433dd03542ab5c1a8",
+      "ceaab8ae47b42db5a63d05d5903aea44647b916296160c6bfb8f6ec40035c4c7",
+      "16f3cd3382d225438181b3a20bbf4088a3559f7daedccb6c2fc36a0c68f28f47",
+      "248c0337acc2b6ac0ba04c7918f89c84b8d8eeff291c580dbc19c61cb2eddd68",
+      "0ff20c80d6b7468ed846feea7a685457e4af56f64717ea0f91fd2a6661eefd1b",
+      "d7972fcba6145b5ec4727cbc49967a43f665dd5400e6aa80f5a8c8bf81347810"
+     ],
+     "p": [
+      "x0",
+      "x1",
+      "x2",
+      "x3",
+      "x4",
+      "x5",
+      "x6",
+      "x7",
+      "x8",
+      "x9",
+      "x10",
+      "x11",
+      "x12",
+      "x13",
+      "x14",
+      "x15",
+      "x16",
+      "x17",
+      "x18",
+      "x19"
+     ],
+     "r": [
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED"
+     ],
+     "tr": [
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc"
+     ]
+    },
+    "schema": [
+     [
+      "p",
+      "string",
+      true
+     ],
+     [
+      "r",
+      "string",
+      true
+     ],
+     [
+      "tr",
+      "string",
+      true
+     ],
+     [
+      "h",
+      "string",
+      true
+     ]
+    ]
+   }
+  },
+  "volatile_structure": {
+   "boundary_conversion_ms": "float",
+   "timing_count_positive": true,
+   "timings": "tuple"
+  },
+  "warnings": []
+ },
+ "ff_multi_table": {
+  "execution": {
+   "eviction": "none",
+   "execution_mode": "full_frame",
+   "loaded_fully_in_memory": true,
+   "outputs_streamed": false,
+   "route_reason": "no_relationships"
+  },
+  "execution_extra_keys": [],
+  "execution_plan": null,
+  "fidelity_reports": null,
+  "quality_metrics": {
+   "execution": {
+    "eviction": "none",
+    "execution_mode": "full_frame",
+    "loaded_fully_in_memory": true,
+    "outputs_streamed": false,
+    "route_reason": "no_relationships"
+   }
+  },
+  "row_errors": [],
+  "table_kinds": {
+   "a": "mask",
+   "b": "mask"
+  },
+  "tables": {
+   "a": {
+    "metadata": {
+     "pandas": {
+      "attributes": {},
+      "column_indexes": [],
+      "columns": [
+       {
+        "field_name": "k",
+        "metadata": null,
+        "name": "k",
+        "numpy_type": "object",
+        "pandas_type": "unicode"
+       },
+       {
+        "field_name": "v",
+        "metadata": null,
+        "name": "v",
+        "numpy_type": "int64",
+        "pandas_type": "int64"
+       }
+      ],
+      "index_columns": []
+     }
+    },
+    "rows": {
+     "k": [
+      "09fefee4648ea7f65c2f115eb18b0fab0c5951c60dcf0e79d05cbd19cd0e0e90",
+      "4e227c1370754571f59ffdbac63a911bce9d7dd13c68ae0b5f1f585f7c3f6e93",
+      "34ff3b583db0b4b2ee670f99e77259426b1ad89cb0c1b9b1a7b6399e722fb1a0",
+      "ed6890f46f001a1b6908ed4cdf8277aebba5bf0a5c812a92e9192049ef0a40a4",
+      "340dda192310fb9092bb9b19af1e47ee2783133e6c7eb640e3fcf5e6a70a8144",
+      "a23bafc096263a2ce6e41cbbd90f417b723f6cee0f4695d675e22f127a87f44e",
+      "f80e05b48d3ca71bb32821dc102a3001b1a8e869885ef2ce6a7b4eb770d954c4",
+      "0eaf253327f3b0478f7fcdeae585dcc2825ab99c5ac05e5cb92c7454551e1d71",
+      "443709c580592288aa46de4f06954eff45ecce65814078bcf326f1c3e9e57f8e",
+      "9580b11e49d5721d22e6e1be9692de04a6a10fe65ea7157ba4650328b3a4970a",
+      "0279c07a94c2fee2df684e1df3a7f5c8da70bc756b602868dd77a76374c11dd5",
+      "a307426921c4e38e0fa3d182f59708476729e0e7d03fa9098d2cf07954f3dfde",
+      "ac59f3b19d54f9a4de169b0ab8c957853e848226e3dce3ecf48d7fab1a30f378",
+      "9b1609b430f791f100ab82481e34f0da5d50cda71ad00dc4e18bc161e3c09033",
+      "6f8d0f292afcdd8c29d3bddd40ee42fcdbb8a38de30a46bf1f9877e5f77f4cb3",
+      "8d002ba14e6c957b065ad68b2351c88a9e79dc032ca8e83d785dc4a11e485e7a",
+      "e6294cf44462a5886362ef08086566201e8c8ddcf8bf762eb80194a2d7613bad",
+      "05fac7cb05b4aa3859d614bddaaf18892804637bf88d5133b90b61e7d7458cb0",
+      "8507756cf9663274fe3c3825813bd297601100d4532c9909ab83379bd29ed75b",
+      "16f100ccdbfdd3f6bc44cc262bb6800bebfe8a95d53cc937833319f8c6883b90"
+     ],
+     "v": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19
+     ]
+    },
+    "schema": [
+     [
+      "k",
+      "string",
+      true
+     ],
+     [
+      "v",
+      "int64",
+      true
+     ]
+    ]
+   },
+   "b": {
+    "metadata": {
+     "pandas": {
+      "attributes": {},
+      "column_indexes": [],
+      "columns": [
+       {
+        "field_name": "k",
+        "metadata": null,
+        "name": "k",
+        "numpy_type": "object",
+        "pandas_type": "unicode"
+       },
+       {
+        "field_name": "w",
+        "metadata": null,
+        "name": "w",
+        "numpy_type": "int64",
+        "pandas_type": "int64"
+       }
+      ],
+      "index_columns": []
+     }
+    },
+    "rows": {
+     "k": [
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED"
+     ],
+     "w": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19
+     ]
+    },
+    "schema": [
+     [
+      "k",
+      "string",
+      true
+     ],
+     [
+      "w",
+      "int64",
+      true
+     ]
+    ]
+   }
+  },
+  "volatile_structure": {
+   "boundary_conversion_ms": "float",
+   "timing_count_positive": true,
+   "timings": "tuple"
+  },
+  "warnings": []
+ },
+ "ff_multi_table_split": {
+  "execution": {
+   "eviction": "none",
+   "execution_mode": "full_frame",
+   "loaded_fully_in_memory": true,
+   "outputs_streamed": false,
+   "route_reason": "no_relationships"
+  },
+  "execution_extra_keys": [],
+  "execution_plan": null,
+  "fidelity_reports": null,
+  "quality_metrics": {
+   "auto_chunk": {
+    "chunk_count": null,
+    "chunk_size_rows": 8,
+    "lane": "dispatcher",
+    "lane_reason": null,
+    "mode": "chunked",
+    "native_threads": 1,
+    "reason": "multi_table_split: 2 of 2 mask tables dispatched (a, b)",
+    "source_rows": null,
+    "tables": [
+     {
+      "chunk_count": 3,
+      "dispatched": true,
+      "input": {
+       "mode": "resident",
+       "reason": "resident_source"
+      },
+      "lane": "dispatcher",
+      "lane_reason": null,
+      "native_threads": 1,
+      "output": {
+       "mode": "resident",
+       "reason": "no_sink"
+      },
+      "reason": "single mask table 'a' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 20 rows, at or above the auto-chunk threshold (10), with chunk-stable dtypes.",
+      "source_rows": 20,
+      "table": "a"
+     },
+     {
+      "chunk_count": 3,
+      "dispatched": true,
+      "input": {
+       "mode": "resident",
+       "reason": "resident_source"
+      },
+      "lane": "dispatcher",
+      "lane_reason": null,
+      "native_threads": 1,
+      "output": {
+       "mode": "resident",
+       "reason": "no_sink"
+      },
+      "reason": "single mask table 'b' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 20 rows, at or above the auto-chunk threshold (10), with chunk-stable dtypes.",
+      "source_rows": 20,
+      "table": "b"
+     }
+    ],
+    "threshold_rows": 10
+   },
+   "chunked_route_by_table": {
+    "a": {
+     "columns": [
+      {
+       "calls": 3,
+       "column": "k",
+       "executed_backend": "pandas_oracle",
+       "planned_backend": "rust_companion",
+       "strategy": "hash"
+      },
+      {
+       "calls": 3,
+       "column": "v",
+       "executed_backend": "pandas_oracle",
+       "planned_backend": "arrow_python",
+       "strategy": "passthrough"
+      }
+     ],
+     "native_admitted": false,
+     "pandas_read_passthrough": [],
+     "reroute_reason": "crypto_extension_unavailable",
+     "table": "a"
+    },
+    "b": {
+     "columns": [
+      {
+       "calls": 3,
+       "column": "k",
+       "executed_backend": "arrow_python",
+       "planned_backend": "arrow_python",
+       "strategy": "redact"
+      },
+      {
+       "calls": 3,
+       "column": "w",
+       "executed_backend": "arrow_python",
+       "planned_backend": "arrow_python",
+       "strategy": "passthrough"
+      }
+     ],
+     "native_admitted": true,
+     "pandas_read_passthrough": [],
+     "reroute_reason": null,
+     "table": "b"
+    }
+   },
+   "execution": {
+    "eviction": "none",
+    "execution_mode": "full_frame",
+    "loaded_fully_in_memory": true,
+    "outputs_streamed": false,
+    "route_reason": "no_relationships"
+   }
+  },
+  "row_errors": [],
+  "table_kinds": {
+   "a": "mask",
+   "b": "mask"
+  },
+  "tables": {
+   "a": {
+    "metadata": {},
+    "rows": {
+     "k": [
+      "09fefee4648ea7f65c2f115eb18b0fab0c5951c60dcf0e79d05cbd19cd0e0e90",
+      "4e227c1370754571f59ffdbac63a911bce9d7dd13c68ae0b5f1f585f7c3f6e93",
+      "34ff3b583db0b4b2ee670f99e77259426b1ad89cb0c1b9b1a7b6399e722fb1a0",
+      "ed6890f46f001a1b6908ed4cdf8277aebba5bf0a5c812a92e9192049ef0a40a4",
+      "340dda192310fb9092bb9b19af1e47ee2783133e6c7eb640e3fcf5e6a70a8144",
+      "a23bafc096263a2ce6e41cbbd90f417b723f6cee0f4695d675e22f127a87f44e",
+      "f80e05b48d3ca71bb32821dc102a3001b1a8e869885ef2ce6a7b4eb770d954c4",
+      "0eaf253327f3b0478f7fcdeae585dcc2825ab99c5ac05e5cb92c7454551e1d71",
+      "443709c580592288aa46de4f06954eff45ecce65814078bcf326f1c3e9e57f8e",
+      "9580b11e49d5721d22e6e1be9692de04a6a10fe65ea7157ba4650328b3a4970a",
+      "0279c07a94c2fee2df684e1df3a7f5c8da70bc756b602868dd77a76374c11dd5",
+      "a307426921c4e38e0fa3d182f59708476729e0e7d03fa9098d2cf07954f3dfde",
+      "ac59f3b19d54f9a4de169b0ab8c957853e848226e3dce3ecf48d7fab1a30f378",
+      "9b1609b430f791f100ab82481e34f0da5d50cda71ad00dc4e18bc161e3c09033",
+      "6f8d0f292afcdd8c29d3bddd40ee42fcdbb8a38de30a46bf1f9877e5f77f4cb3",
+      "8d002ba14e6c957b065ad68b2351c88a9e79dc032ca8e83d785dc4a11e485e7a",
+      "e6294cf44462a5886362ef08086566201e8c8ddcf8bf762eb80194a2d7613bad",
+      "05fac7cb05b4aa3859d614bddaaf18892804637bf88d5133b90b61e7d7458cb0",
+      "8507756cf9663274fe3c3825813bd297601100d4532c9909ab83379bd29ed75b",
+      "16f100ccdbfdd3f6bc44cc262bb6800bebfe8a95d53cc937833319f8c6883b90"
+     ],
+     "v": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19
+     ]
+    },
+    "schema": [
+     [
+      "k",
+      "string",
+      true
+     ],
+     [
+      "v",
+      "int64",
+      true
+     ]
+    ]
+   },
+   "b": {
+    "metadata": {},
+    "rows": {
+     "k": [
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED"
+     ],
+     "w": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19
+     ]
+    },
+    "schema": [
+     [
+      "k",
+      "string",
+      true
+     ],
+     [
+      "w",
+      "int64",
+      true
+     ]
+    ]
+   }
+  },
+  "volatile_structure": {
+   "boundary_conversion_ms": "float",
+   "timing_count_positive": true,
+   "timings": "tuple"
+  },
+  "warnings": []
+ },
+ "ff_post_validation": {
+  "execution": {
+   "eviction": "none",
+   "execution_mode": "full_frame",
+   "loaded_fully_in_memory": true,
+   "outputs_streamed": false,
+   "route_reason": "no_relationships"
+  },
+  "execution_extra_keys": [],
+  "execution_plan": null,
+  "fidelity_reports": null,
+  "quality_metrics": {
+   "execution": {
+    "eviction": "none",
+    "execution_mode": "full_frame",
+    "loaded_fully_in_memory": true,
+    "outputs_streamed": false,
+    "route_reason": "no_relationships"
+   },
+   "failed_checks": [],
+   "post_validation_enforce": false,
+   "quality_summary": {
+    "composite_coherence": {},
+    "distinct_counts": {
+     "t.h": {
+      "output_distinct": 20,
+      "source_distinct": 20
+     },
+     "t.p": {
+      "output_distinct": 20,
+      "source_distinct": 20
+     },
+     "t.r": {
+      "output_distinct": 1,
+      "source_distinct": 20
+     },
+     "t.tr": {
+      "output_distinct": 1,
+      "source_distinct": 20
+     }
+    },
+    "duplicate_counts": {},
+    "failed_checks": [],
+    "fk_validity": {},
+    "null_counts": {
+     "t.h": {
+      "output_nulls": 0,
+      "source_nulls": 0
+     },
+     "t.p": {
+      "output_nulls": 0,
+      "source_nulls": 0
+     },
+     "t.r": {
+      "output_nulls": 0,
+      "source_nulls": 0
+     },
+     "t.tr": {
+      "output_nulls": 0,
+      "source_nulls": 0
+     }
+    },
+    "quality_warnings": [],
+    "sampled_values": {
+     "t.h": [
+      "a85cb4d6c3035f60c17576ad5d2037b42f5fb919461a663f8a5e0a64b2e0d06f",
+      "2bed1087ed5359fd1710ace0529c87a39d425640e30bd8c9f9eac0a9d9a6feb0",
+      "6a7b2a6f30e86c21c555f958f0fcae6ba41973bb110f82fbbaec4a550e2112ce",
+      "767183b247ca10d8aae2bc4fdce270fec259fb275ab56b4487f6af906eefbe00",
+      "6a820a77edbd6da8c77e484b84257deb03b40adf8c8237d162a7f4283e8a2147",
+      "d5d22ed62ef5c100ab0acc7a4e94a2ffedf1acf247f9a3a4fcbc1c4a1f60177d",
+      "386f9e5ca06d8a0126803cffb1df8ea55666b92ee630b6983a2cb2820657d32c",
+      "7190c1b6456b434702d44702ffa72d036a852f7eb0a9d1f79bbd599ded2173f8",
+      "48bf0b980ab488471146ce2718ba3535288de0d195d3b19111d2063fe21c835a",
+      "1827f494595df7f93f8797f26b07eb1dfedbbc45dd76b483eeef19c203cee794",
+      "099b6465cc0a2f65b2274cf3b3708ae8fdc3a4955f7c43872152752a953f6fdc",
+      "b34f3e6f3e6946bd5958fef3bc27ef051038e48f58df6c9276065f4cb1aa7a98",
+      "71faacf664df77e2d7ad15c6b94c63b26180b866559cf0cf20b4e2f1739894d9",
+      "b72c786ada4f983513dbf9e6147acadea381397231bd069335014dc38230e84a",
+      "e08be2f3608088958602866aea462c8a51aad74a83dc774433dd03542ab5c1a8",
+      "ceaab8ae47b42db5a63d05d5903aea44647b916296160c6bfb8f6ec40035c4c7",
+      "16f3cd3382d225438181b3a20bbf4088a3559f7daedccb6c2fc36a0c68f28f47",
+      "248c0337acc2b6ac0ba04c7918f89c84b8d8eeff291c580dbc19c61cb2eddd68",
+      "0ff20c80d6b7468ed846feea7a685457e4af56f64717ea0f91fd2a6661eefd1b",
+      "d7972fcba6145b5ec4727cbc49967a43f665dd5400e6aa80f5a8c8bf81347810"
+     ],
+     "t.r": [
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED"
+     ],
+     "t.tr": [
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc"
+     ]
+    },
+    "timing_per_phase": {
+     "post_validation_phase_ms": {
+      "__volatile__": "float"
+     }
+    }
+   }
+  },
+  "row_errors": [],
+  "table_kinds": {
+   "t": "mask"
+  },
+  "tables": {
+   "t": {
+    "metadata": {
+     "pandas": {
+      "attributes": {},
+      "column_indexes": [],
+      "columns": [
+       {
+        "field_name": "p",
+        "metadata": null,
+        "name": "p",
+        "numpy_type": "object",
+        "pandas_type": "unicode"
+       },
+       {
+        "field_name": "r",
+        "metadata": null,
+        "name": "r",
+        "numpy_type": "object",
+        "pandas_type": "unicode"
+       },
+       {
+        "field_name": "tr",
+        "metadata": null,
+        "name": "tr",
+        "numpy_type": "object",
+        "pandas_type": "unicode"
+       },
+       {
+        "field_name": "h",
+        "metadata": null,
+        "name": "h",
+        "numpy_type": "object",
+        "pandas_type": "unicode"
+       }
+      ],
+      "index_columns": []
+     }
+    },
+    "rows": {
+     "h": [
+      "a85cb4d6c3035f60c17576ad5d2037b42f5fb919461a663f8a5e0a64b2e0d06f",
+      "2bed1087ed5359fd1710ace0529c87a39d425640e30bd8c9f9eac0a9d9a6feb0",
+      "6a7b2a6f30e86c21c555f958f0fcae6ba41973bb110f82fbbaec4a550e2112ce",
+      "767183b247ca10d8aae2bc4fdce270fec259fb275ab56b4487f6af906eefbe00",
+      "6a820a77edbd6da8c77e484b84257deb03b40adf8c8237d162a7f4283e8a2147",
+      "d5d22ed62ef5c100ab0acc7a4e94a2ffedf1acf247f9a3a4fcbc1c4a1f60177d",
+      "386f9e5ca06d8a0126803cffb1df8ea55666b92ee630b6983a2cb2820657d32c",
+      "7190c1b6456b434702d44702ffa72d036a852f7eb0a9d1f79bbd599ded2173f8",
+      "48bf0b980ab488471146ce2718ba3535288de0d195d3b19111d2063fe21c835a",
+      "1827f494595df7f93f8797f26b07eb1dfedbbc45dd76b483eeef19c203cee794",
+      "099b6465cc0a2f65b2274cf3b3708ae8fdc3a4955f7c43872152752a953f6fdc",
+      "b34f3e6f3e6946bd5958fef3bc27ef051038e48f58df6c9276065f4cb1aa7a98",
+      "71faacf664df77e2d7ad15c6b94c63b26180b866559cf0cf20b4e2f1739894d9",
+      "b72c786ada4f983513dbf9e6147acadea381397231bd069335014dc38230e84a",
+      "e08be2f3608088958602866aea462c8a51aad74a83dc774433dd03542ab5c1a8",
+      "ceaab8ae47b42db5a63d05d5903aea44647b916296160c6bfb8f6ec40035c4c7",
+      "16f3cd3382d225438181b3a20bbf4088a3559f7daedccb6c2fc36a0c68f28f47",
+      "248c0337acc2b6ac0ba04c7918f89c84b8d8eeff291c580dbc19c61cb2eddd68",
+      "0ff20c80d6b7468ed846feea7a685457e4af56f64717ea0f91fd2a6661eefd1b",
+      "d7972fcba6145b5ec4727cbc49967a43f665dd5400e6aa80f5a8c8bf81347810"
+     ],
+     "p": [
+      "x0",
+      "x1",
+      "x2",
+      "x3",
+      "x4",
+      "x5",
+      "x6",
+      "x7",
+      "x8",
+      "x9",
+      "x10",
+      "x11",
+      "x12",
+      "x13",
+      "x14",
+      "x15",
+      "x16",
+      "x17",
+      "x18",
+      "x19"
+     ],
+     "r": [
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED"
+     ],
+     "tr": [
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc"
+     ]
+    },
+    "schema": [
+     [
+      "p",
+      "string",
+      true
+     ],
+     [
+      "r",
+      "string",
+      true
+     ],
+     [
+      "tr",
+      "string",
+      true
+     ],
+     [
+      "h",
+      "string",
+      true
+     ]
+    ]
+   }
+  },
+  "volatile_structure": {
+   "boundary_conversion_ms": "float",
+   "timing_count_positive": true,
+   "timings": "tuple"
+  },
+  "warnings": []
+ },
+ "ff_quarantine_format_error": {
+  "execution": {
+   "eviction": "none",
+   "execution_mode": "full_frame",
+   "loaded_fully_in_memory": true,
+   "outputs_streamed": false,
+   "route_reason": "no_relationships"
+  },
+  "execution_extra_keys": [],
+  "execution_plan": null,
+  "fidelity_reports": null,
+  "files": {
+   "quarantine.jsonl": "{\"d\": \"not-a-date\", \"k\": 7, \"_quarantine_trigger\": \"format_error\", \"_quarantine_reason\": \"value is not a parseable date under date_shift\", \"_source_table\": \"t\"}\n"
+  },
+  "quality_metrics": {
+   "execution": {
+    "eviction": "none",
+    "execution_mode": "full_frame",
+    "loaded_fully_in_memory": true,
+    "outputs_streamed": false,
+    "route_reason": "no_relationships"
+   },
+   "quarantine": {
+    "counts_by_trigger": {
+     "format_error": 1
+    },
+    "enabled": true,
+    "output_path": "<TMP>/quarantine.jsonl",
+    "total_quarantined": 1
+   },
+   "row_errors": {
+    "t.d[format_error]": 1
+   }
+  },
+  "row_errors": [
+   "RowErrorRecord(table='t', column='d', row_index=7, trigger='format_error', reason='value is not a parseable date under date_shift')"
+  ],
+  "table_kinds": {
+   "t": "mask"
+  },
+  "tables": {
+   "t": {
+    "metadata": {
+     "pandas": {
+      "attributes": {},
+      "column_indexes": [],
+      "columns": [
+       {
+        "field_name": "d",
+        "metadata": null,
+        "name": "d",
+        "numpy_type": "object",
+        "pandas_type": "unicode"
+       },
+       {
+        "field_name": "k",
+        "metadata": null,
+        "name": "k",
+        "numpy_type": "int64",
+        "pandas_type": "int64"
+       }
+      ],
+      "index_columns": []
+     }
+    },
+    "rows": {
+     "d": [
+      "2020-01-01",
+      "2020-01-04",
+      "2019-12-31",
+      "2020-01-05",
+      "2020-01-02",
+      "2020-01-06",
+      "2020-01-05",
+      "2020-01-10",
+      "2020-01-12",
+      "2020-01-10",
+      "2020-01-12",
+      "2020-01-11",
+      "2020-01-11",
+      "2020-01-18",
+      "2020-01-15",
+      "2020-01-14",
+      "2020-01-17",
+      "2020-01-22",
+      "2020-01-21"
+     ],
+     "k": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19
+     ]
+    },
+    "schema": [
+     [
+      "d",
+      "string",
+      true
+     ],
+     [
+      "k",
+      "int64",
+      true
+     ]
+    ]
+   }
+  },
+  "volatile_structure": {
+   "boundary_conversion_ms": "float",
+   "timing_count_positive": true,
+   "timings": "tuple"
+  },
+  "warnings": []
+ },
+ "ff_resident_sink_untouched": {
+  "execution": {
+   "eviction": "none",
+   "execution_mode": "full_frame",
+   "loaded_fully_in_memory": true,
+   "outputs_streamed": false,
+   "route_reason": "no_relationships"
+  },
+  "execution_extra_keys": [],
+  "execution_plan": null,
+  "fidelity_reports": null,
+  "quality_metrics": {
+   "execution": {
+    "eviction": "none",
+    "execution_mode": "full_frame",
+    "loaded_fully_in_memory": true,
+    "outputs_streamed": false,
+    "route_reason": "no_relationships"
+   }
+  },
+  "row_errors": [],
+  "sink_tables": {},
+  "table_kinds": {
+   "t": "mask"
+  },
+  "tables": {
+   "t": {
+    "metadata": {
+     "pandas": {
+      "attributes": {},
+      "column_indexes": [],
+      "columns": [
+       {
+        "field_name": "p",
+        "metadata": null,
+        "name": "p",
+        "numpy_type": "object",
+        "pandas_type": "unicode"
+       },
+       {
+        "field_name": "r",
+        "metadata": null,
+        "name": "r",
+        "numpy_type": "object",
+        "pandas_type": "unicode"
+       },
+       {
+        "field_name": "tr",
+        "metadata": null,
+        "name": "tr",
+        "numpy_type": "object",
+        "pandas_type": "unicode"
+       },
+       {
+        "field_name": "h",
+        "metadata": null,
+        "name": "h",
+        "numpy_type": "object",
+        "pandas_type": "unicode"
+       }
+      ],
+      "index_columns": []
+     }
+    },
+    "rows": {
+     "h": [
+      "a85cb4d6c3035f60c17576ad5d2037b42f5fb919461a663f8a5e0a64b2e0d06f",
+      "2bed1087ed5359fd1710ace0529c87a39d425640e30bd8c9f9eac0a9d9a6feb0",
+      "6a7b2a6f30e86c21c555f958f0fcae6ba41973bb110f82fbbaec4a550e2112ce",
+      "767183b247ca10d8aae2bc4fdce270fec259fb275ab56b4487f6af906eefbe00",
+      "6a820a77edbd6da8c77e484b84257deb03b40adf8c8237d162a7f4283e8a2147",
+      "d5d22ed62ef5c100ab0acc7a4e94a2ffedf1acf247f9a3a4fcbc1c4a1f60177d",
+      "386f9e5ca06d8a0126803cffb1df8ea55666b92ee630b6983a2cb2820657d32c",
+      "7190c1b6456b434702d44702ffa72d036a852f7eb0a9d1f79bbd599ded2173f8",
+      "48bf0b980ab488471146ce2718ba3535288de0d195d3b19111d2063fe21c835a",
+      "1827f494595df7f93f8797f26b07eb1dfedbbc45dd76b483eeef19c203cee794",
+      "099b6465cc0a2f65b2274cf3b3708ae8fdc3a4955f7c43872152752a953f6fdc",
+      "b34f3e6f3e6946bd5958fef3bc27ef051038e48f58df6c9276065f4cb1aa7a98",
+      "71faacf664df77e2d7ad15c6b94c63b26180b866559cf0cf20b4e2f1739894d9",
+      "b72c786ada4f983513dbf9e6147acadea381397231bd069335014dc38230e84a",
+      "e08be2f3608088958602866aea462c8a51aad74a83dc774433dd03542ab5c1a8",
+      "ceaab8ae47b42db5a63d05d5903aea44647b916296160c6bfb8f6ec40035c4c7",
+      "16f3cd3382d225438181b3a20bbf4088a3559f7daedccb6c2fc36a0c68f28f47",
+      "248c0337acc2b6ac0ba04c7918f89c84b8d8eeff291c580dbc19c61cb2eddd68",
+      "0ff20c80d6b7468ed846feea7a685457e4af56f64717ea0f91fd2a6661eefd1b",
+      "d7972fcba6145b5ec4727cbc49967a43f665dd5400e6aa80f5a8c8bf81347810"
+     ],
+     "p": [
+      "x0",
+      "x1",
+      "x2",
+      "x3",
+      "x4",
+      "x5",
+      "x6",
+      "x7",
+      "x8",
+      "x9",
+      "x10",
+      "x11",
+      "x12",
+      "x13",
+      "x14",
+      "x15",
+      "x16",
+      "x17",
+      "x18",
+      "x19"
+     ],
+     "r": [
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED"
+     ],
+     "tr": [
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc"
+     ]
+    },
+    "schema": [
+     [
+      "p",
+      "string",
+      true
+     ],
+     [
+      "r",
+      "string",
+      true
+     ],
+     [
+      "tr",
+      "string",
+      true
+     ],
+     [
+      "h",
+      "string",
+      true
+     ]
+    ]
+   }
+  },
+  "volatile_structure": {
+   "boundary_conversion_ms": "float",
+   "timing_count_positive": true,
+   "timings": "tuple"
+  },
+  "warnings": []
+ },
+ "ff_streamed_sink": {
+  "execution": {
+   "eviction": "none",
+   "execution_mode": "full_frame",
+   "loaded_fully_in_memory": true,
+   "outputs_streamed": true,
+   "route_reason": "no_relationships"
+  },
+  "execution_extra_keys": [],
+  "execution_plan": null,
+  "fidelity_reports": null,
+  "quality_metrics": {
+   "auto_chunk": {
+    "chunk_count": 3,
+    "chunk_size_rows": 8,
+    "input": {
+     "mode": "resident",
+     "reason": "resident_source"
+    },
+    "lane": "dispatcher",
+    "lane_reason": null,
+    "mode": "chunked",
+    "native_threads": 1,
+    "output": {
+     "byte_cut_row_groups": 0,
+     "held_back_chunks": 0,
+     "mode": "streamed",
+     "reason": "eligible",
+     "row_groups": 1,
+     "spilled_chunks": 0
+    },
+    "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 20 rows, at or above the auto-chunk threshold (10), with chunk-stable dtypes.",
+    "source_rows": 20,
+    "threshold_rows": 10
+   },
+   "chunked_route": {
+    "columns": [
+     {
+      "calls": 3,
+      "column": "p",
+      "executed_backend": "pandas_oracle",
+      "planned_backend": "arrow_python",
+      "strategy": "passthrough"
+     },
+     {
+      "calls": 3,
+      "column": "r",
+      "executed_backend": "pandas_oracle",
+      "planned_backend": "arrow_python",
+      "strategy": "redact"
+     },
+     {
+      "calls": 3,
+      "column": "tr",
+      "executed_backend": "pandas_oracle",
+      "planned_backend": "arrow_python",
+      "strategy": "truncate"
+     },
+     {
+      "calls": 3,
+      "column": "h",
+      "executed_backend": "pandas_oracle",
+      "planned_backend": "rust_companion",
+      "strategy": "hash"
+     }
+    ],
+    "native_admitted": false,
+    "pandas_read_passthrough": [],
+    "reroute_reason": "crypto_extension_unavailable",
+    "table": "t"
+   },
+   "execution": {
+    "eviction": "none",
+    "execution_mode": "full_frame",
+    "loaded_fully_in_memory": true,
+    "outputs_streamed": true,
+    "route_reason": "no_relationships"
+   }
+  },
+  "row_errors": [],
+  "sink_tables": {
+   "t": {
+    "metadata": {},
+    "rows": {
+     "h": [
+      "a85cb4d6c3035f60c17576ad5d2037b42f5fb919461a663f8a5e0a64b2e0d06f",
+      "2bed1087ed5359fd1710ace0529c87a39d425640e30bd8c9f9eac0a9d9a6feb0",
+      "6a7b2a6f30e86c21c555f958f0fcae6ba41973bb110f82fbbaec4a550e2112ce",
+      "767183b247ca10d8aae2bc4fdce270fec259fb275ab56b4487f6af906eefbe00",
+      "6a820a77edbd6da8c77e484b84257deb03b40adf8c8237d162a7f4283e8a2147",
+      "d5d22ed62ef5c100ab0acc7a4e94a2ffedf1acf247f9a3a4fcbc1c4a1f60177d",
+      "386f9e5ca06d8a0126803cffb1df8ea55666b92ee630b6983a2cb2820657d32c",
+      "7190c1b6456b434702d44702ffa72d036a852f7eb0a9d1f79bbd599ded2173f8",
+      "48bf0b980ab488471146ce2718ba3535288de0d195d3b19111d2063fe21c835a",
+      "1827f494595df7f93f8797f26b07eb1dfedbbc45dd76b483eeef19c203cee794",
+      "099b6465cc0a2f65b2274cf3b3708ae8fdc3a4955f7c43872152752a953f6fdc",
+      "b34f3e6f3e6946bd5958fef3bc27ef051038e48f58df6c9276065f4cb1aa7a98",
+      "71faacf664df77e2d7ad15c6b94c63b26180b866559cf0cf20b4e2f1739894d9",
+      "b72c786ada4f983513dbf9e6147acadea381397231bd069335014dc38230e84a",
+      "e08be2f3608088958602866aea462c8a51aad74a83dc774433dd03542ab5c1a8",
+      "ceaab8ae47b42db5a63d05d5903aea44647b916296160c6bfb8f6ec40035c4c7",
+      "16f3cd3382d225438181b3a20bbf4088a3559f7daedccb6c2fc36a0c68f28f47",
+      "248c0337acc2b6ac0ba04c7918f89c84b8d8eeff291c580dbc19c61cb2eddd68",
+      "0ff20c80d6b7468ed846feea7a685457e4af56f64717ea0f91fd2a6661eefd1b",
+      "d7972fcba6145b5ec4727cbc49967a43f665dd5400e6aa80f5a8c8bf81347810"
+     ],
+     "p": [
+      "x0",
+      "x1",
+      "x2",
+      "x3",
+      "x4",
+      "x5",
+      "x6",
+      "x7",
+      "x8",
+      "x9",
+      "x10",
+      "x11",
+      "x12",
+      "x13",
+      "x14",
+      "x15",
+      "x16",
+      "x17",
+      "x18",
+      "x19"
+     ],
+     "r": [
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED"
+     ],
+     "tr": [
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc"
+     ]
+    },
+    "schema": [
+     [
+      "p",
+      "string",
+      true
+     ],
+     [
+      "r",
+      "string",
+      true
+     ],
+     [
+      "tr",
+      "string",
+      true
+     ],
+     [
+      "h",
+      "string",
+      true
+     ]
+    ]
+   }
+  },
+  "table_kinds": {
+   "t": "mask"
+  },
+  "tables": {},
+  "volatile_structure": {
+   "boundary_conversion_ms": "float",
+   "timing_count_positive": true,
+   "timings": "tuple"
+  },
+  "warnings": []
+ },
+ "ff_streamed_sink_native_lane": {
+  "execution": {
+   "eviction": "none",
+   "execution_mode": "full_frame",
+   "loaded_fully_in_memory": true,
+   "outputs_streamed": true,
+   "route_reason": "no_relationships"
+  },
+  "execution_extra_keys": [],
+  "execution_plan": null,
+  "fidelity_reports": null,
+  "quality_metrics": {
+   "auto_chunk": {
+    "chunk_count": 3,
+    "chunk_size_rows": 8,
+    "input": {
+     "mode": "resident",
+     "reason": "resident_source"
+    },
+    "lane": "dispatcher",
+    "lane_reason": null,
+    "mode": "chunked",
+    "native_threads": 1,
+    "output": {
+     "byte_cut_row_groups": 0,
+     "held_back_chunks": 0,
+     "mode": "streamed",
+     "reason": "eligible",
+     "row_groups": 1,
+     "spilled_chunks": 0
+    },
+    "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 20 rows, at or above the auto-chunk threshold (10), with chunk-stable dtypes.",
+    "source_rows": 20,
+    "threshold_rows": 10
+   },
+   "chunked_route": {
+    "columns": [
+     {
+      "calls": 3,
+      "column": "p",
+      "executed_backend": "arrow_python",
+      "planned_backend": "arrow_python",
+      "strategy": "passthrough"
+     },
+     {
+      "calls": 3,
+      "column": "r",
+      "executed_backend": "arrow_python",
+      "planned_backend": "arrow_python",
+      "strategy": "redact"
+     },
+     {
+      "calls": 3,
+      "column": "tr",
+      "executed_backend": "arrow_python",
+      "planned_backend": "arrow_python",
+      "strategy": "truncate"
+     }
+    ],
+    "native_admitted": true,
+    "pandas_read_passthrough": [],
+    "reroute_reason": null,
+    "table": "t"
+   },
+   "execution": {
+    "eviction": "none",
+    "execution_mode": "full_frame",
+    "loaded_fully_in_memory": true,
+    "outputs_streamed": true,
+    "route_reason": "no_relationships"
+   }
+  },
+  "row_errors": [],
+  "sink_tables": {
+   "t": {
+    "metadata": {},
+    "rows": {
+     "p": [
+      "x0",
+      "x1",
+      "x2",
+      "x3",
+      "x4",
+      "x5",
+      "x6",
+      "x7",
+      "x8",
+      "x9",
+      "x10",
+      "x11",
+      "x12",
+      "x13",
+      "x14",
+      "x15",
+      "x16",
+      "x17",
+      "x18",
+      "x19"
+     ],
+     "r": [
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED"
+     ],
+     "tr": [
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc"
+     ]
+    },
+    "schema": [
+     [
+      "p",
+      "string",
+      true
+     ],
+     [
+      "r",
+      "string",
+      true
+     ],
+     [
+      "tr",
+      "string",
+      true
+     ]
+    ]
+   }
+  },
+  "table_kinds": {
+   "t": "mask"
+  },
+  "tables": {},
+  "volatile_structure": {
+   "boundary_conversion_ms": "float",
+   "timing_count_positive": true,
+   "timings": "tuple"
+  },
+  "warnings": []
+ },
+ "ff_unified_admitted": {
+  "execution": {
+   "eviction": "none",
+   "execution_mode": "full_frame",
+   "loaded_fully_in_memory": true,
+   "outputs_streamed": false,
+   "route_reason": "no_relationships"
+  },
+  "execution_extra_keys": [],
+  "execution_plan": null,
+  "fidelity_reports": null,
+  "quality_metrics": {
+   "execution": {
+    "eviction": "none",
+    "execution_mode": "full_frame",
+    "loaded_fully_in_memory": true,
+    "outputs_streamed": false,
+    "route_reason": "no_relationships"
+   },
+   "unified_slice_activation": {
+    "activated": true,
+    "activation_hash": {
+     "__volatile__": "str"
+    },
+    "nodes": {
+     "t:p:scalar:passthrough": {
+      "calls": 1,
+      "compiled_kernel_executed": false,
+      "executed": true,
+      "executed_backend": "arrow_python",
+      "operator": "native_passthrough",
+      "planned_backend": "arrow_python"
+     },
+     "t:r:scalar:redact": {
+      "calls": 1,
+      "compiled_kernel_executed": false,
+      "executed": true,
+      "executed_backend": "arrow_python",
+      "operator": "native_redact",
+      "planned_backend": "arrow_python"
+     },
+     "t:tr:scalar:truncate": {
+      "calls": 1,
+      "compiled_kernel_executed": false,
+      "executed": true,
+      "executed_backend": "arrow_python",
+      "operator": "native_truncate",
+      "planned_backend": "arrow_python"
+     }
+    },
+    "plan_hash": {
+     "__volatile__": "str"
+    },
+    "table": "t"
+   }
+  },
+  "row_errors": [],
+  "table_kinds": {
+   "t": "mask"
+  },
+  "tables": {
+   "t": {
+    "metadata": {
+     "pandas": {
+      "attributes": {},
+      "column_indexes": [],
+      "columns": [
+       {
+        "field_name": "p",
+        "metadata": null,
+        "name": "p",
+        "numpy_type": "object",
+        "pandas_type": "unicode"
+       },
+       {
+        "field_name": "r",
+        "metadata": null,
+        "name": "r",
+        "numpy_type": "object",
+        "pandas_type": "unicode"
+       },
+       {
+        "field_name": "tr",
+        "metadata": null,
+        "name": "tr",
+        "numpy_type": "object",
+        "pandas_type": "unicode"
+       }
+      ],
+      "index_columns": []
+     }
+    },
+    "rows": {
+     "p": [
+      "x0",
+      "x1",
+      "x2",
+      "x3",
+      "x4",
+      "x5",
+      "x6",
+      "x7",
+      "x8",
+      "x9",
+      "x10",
+      "x11",
+      "x12",
+      "x13",
+      "x14",
+      "x15",
+      "x16",
+      "x17",
+      "x18",
+      "x19"
+     ],
+     "r": [
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED"
+     ],
+     "tr": [
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc"
+     ]
+    },
+    "schema": [
+     [
+      "p",
+      "string",
+      true
+     ],
+     [
+      "r",
+      "string",
+      true
+     ],
+     [
+      "tr",
+      "string",
+      true
+     ]
+    ]
+   }
+  },
+  "volatile_structure": {
+   "boundary_conversion_ms": "float",
+   "timing_count_positive": true,
+   "timings": "tuple"
+  },
+  "warnings": []
+ },
+ "ff_unified_fallback": {
+  "execution": {
+   "eviction": "none",
+   "execution_mode": "full_frame",
+   "loaded_fully_in_memory": true,
+   "outputs_streamed": false,
+   "route_reason": "no_relationships"
+  },
+  "execution_extra_keys": [],
+  "execution_plan": null,
+  "fidelity_reports": null,
+  "quality_metrics": {
+   "execution": {
+    "eviction": "none",
+    "execution_mode": "full_frame",
+    "loaded_fully_in_memory": true,
+    "outputs_streamed": false,
+    "route_reason": "no_relationships"
+   }
+  },
+  "row_errors": [],
+  "table_kinds": {
+   "t": "mask"
+  },
+  "tables": {
+   "t": {
+    "metadata": {
+     "pandas": {
+      "attributes": {},
+      "column_indexes": [],
+      "columns": [
+       {
+        "field_name": "p",
+        "metadata": null,
+        "name": "p",
+        "numpy_type": "object",
+        "pandas_type": "unicode"
+       },
+       {
+        "field_name": "r",
+        "metadata": null,
+        "name": "r",
+        "numpy_type": "object",
+        "pandas_type": "unicode"
+       },
+       {
+        "field_name": "tr",
+        "metadata": null,
+        "name": "tr",
+        "numpy_type": "object",
+        "pandas_type": "unicode"
+       }
+      ],
+      "index_columns": []
+     }
+    },
+    "rows": {
+     "p": [
+      "x0",
+      "x1",
+      "x2",
+      "x3",
+      "x4",
+      "x5",
+      "x6",
+      "x7",
+      "x8",
+      "x9",
+      "x10",
+      "x11",
+      "x12",
+      "x13",
+      "x14",
+      "x15",
+      "x16",
+      "x17",
+      "x18",
+      "x19"
+     ],
+     "r": [
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED"
+     ],
+     "tr": [
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc"
+     ]
+    },
+    "schema": [
+     [
+      "p",
+      "string",
+      true
+     ],
+     [
+      "r",
+      "string",
+      true
+     ],
+     [
+      "tr",
+      "string",
+      true
+     ]
+    ]
+   }
+  },
+  "volatile_structure": {
+   "boundary_conversion_ms": "float",
+   "timing_count_positive": true,
+   "timings": "tuple"
+  },
+  "warnings": []
+ },
+ "ff_unified_flag_off": {
+  "execution": {
+   "eviction": "none",
+   "execution_mode": "full_frame",
+   "loaded_fully_in_memory": true,
+   "outputs_streamed": false,
+   "route_reason": "no_relationships"
+  },
+  "execution_extra_keys": [],
+  "execution_plan": null,
+  "fidelity_reports": null,
+  "quality_metrics": {
+   "execution": {
+    "eviction": "none",
+    "execution_mode": "full_frame",
+    "loaded_fully_in_memory": true,
+    "outputs_streamed": false,
+    "route_reason": "no_relationships"
+   }
+  },
+  "row_errors": [],
+  "table_kinds": {
+   "t": "mask"
+  },
+  "tables": {
+   "t": {
+    "metadata": {
+     "pandas": {
+      "attributes": {},
+      "column_indexes": [],
+      "columns": [
+       {
+        "field_name": "p",
+        "metadata": null,
+        "name": "p",
+        "numpy_type": "object",
+        "pandas_type": "unicode"
+       },
+       {
+        "field_name": "r",
+        "metadata": null,
+        "name": "r",
+        "numpy_type": "object",
+        "pandas_type": "unicode"
+       },
+       {
+        "field_name": "tr",
+        "metadata": null,
+        "name": "tr",
+        "numpy_type": "object",
+        "pandas_type": "unicode"
+       }
+      ],
+      "index_columns": []
+     }
+    },
+    "rows": {
+     "p": [
+      "x0",
+      "x1",
+      "x2",
+      "x3",
+      "x4",
+      "x5",
+      "x6",
+      "x7",
+      "x8",
+      "x9",
+      "x10",
+      "x11",
+      "x12",
+      "x13",
+      "x14",
+      "x15",
+      "x16",
+      "x17",
+      "x18",
+      "x19"
+     ],
+     "r": [
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED"
+     ],
+     "tr": [
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc",
+      "abc"
+     ]
+    },
+    "schema": [
+     [
+      "p",
+      "string",
+      true
+     ],
+     [
+      "r",
+      "string",
+      true
+     ],
+     [
+      "tr",
+      "string",
+      true
+     ]
+    ]
+   }
+  },
+  "volatile_structure": {
+   "boundary_conversion_ms": "float",
+   "timing_count_positive": true,
+   "timings": "tuple"
+  },
+  "warnings": []
+ },
+ "ooc_fk_auto": {
+  "execution": {
+   "eviction": "per_table",
+   "execution_mode": "out_of_core",
+   "loaded_fully_in_memory": true,
+   "outputs_streamed": false,
+   "route_reason": "out_of_core_large_fk"
+  },
+  "execution_extra_keys": [],
+  "execution_plan": {
+   "mode": "pandas_fallback",
+   "reason": "job has FK relationship edges (relationship-route candidate); the live relationship route is chosen by run_pipeline's decide_execution_route (sequential / out-of-core / full-frame), not by this planner.",
+   "rejections": {
+    "chunked": "chunked execution masks one table per run; job declares 2 mask tables (child, parent); chunked_relationships_unsupported: configs with FK relationships cannot run chunked (resolving a child key reads the whole parent frame)",
+    "out_of_core_relationship": "DEFERRED to the live router: job has FK relationship edges (relationship-route candidate); the sequential-vs-out-of-core-vs-full-frame decision is made by run_pipeline's decide_execution_route from job size + out-of-core compatibility, not by this planner (PLANNER_ROUTING_ENABLED stays False).",
+    "sequential_relationship": "DEFERRED to the live router: job has FK relationship edges (relationship-route candidate); the sequential-vs-out-of-core-vs-full-frame decision is made by run_pipeline's decide_execution_route from job size + out-of-core compatibility, not by this planner (PLANNER_ROUTING_ENABLED stays False)."
+   }
+  },
+  "fidelity_reports": null,
+  "quality_metrics": {
+   "execution": {
+    "eviction": "per_table",
+    "execution_mode": "out_of_core",
+    "loaded_fully_in_memory": true,
+    "outputs_streamed": false,
+    "route_reason": "out_of_core_large_fk"
+   },
+   "execution_plan": {
+    "mode": "pandas_fallback",
+    "reason": "job has FK relationship edges (relationship-route candidate); the live relationship route is chosen by run_pipeline's decide_execution_route (sequential / out-of-core / full-frame), not by this planner.",
+    "rejections": {
+     "chunked": "chunked execution masks one table per run; job declares 2 mask tables (child, parent); chunked_relationships_unsupported: configs with FK relationships cannot run chunked (resolving a child key reads the whole parent frame)",
+     "out_of_core_relationship": "DEFERRED to the live router: job has FK relationship edges (relationship-route candidate); the sequential-vs-out-of-core-vs-full-frame decision is made by run_pipeline's decide_execution_route from job size + out-of-core compatibility, not by this planner (PLANNER_ROUTING_ENABLED stays False).",
+     "sequential_relationship": "DEFERRED to the live router: job has FK relationship edges (relationship-route candidate); the sequential-vs-out-of-core-vs-full-frame decision is made by run_pipeline's decide_execution_route from job size + out-of-core compatibility, not by this planner (PLANNER_ROUTING_ENABLED stays False)."
+    }
+   },
+   "residency": {
+    "caller_managed": true,
+    "shapes": [
+     "a resident pa.Table source",
+     "no sink (the whole output is held resident)"
+    ]
+   }
+  },
+  "row_errors": [],
+  "table_kinds": {
+   "child": "mask",
+   "parent": "mask"
+  },
+  "tables": {
+   "child": {
+    "metadata": {},
+    "rows": {
+     "cid": [
+      "a108ea5a5efb141eb5f5577f7d20e6fe755d0c7b0fdf521df43e10ba83c2dce3",
+      "04666901f45aadaaeda6cb07d997c198dfd42e0f4181f4cfe321290ce44f9849",
+      "4794072f578c2c9d61afb88aa4db316e73269b3a87d67834d0c4c2eda7261ad6",
+      "01dc45f031647e8ddc469e71de3fa81442491c1d5fcdd14d2ae49382142d78f6",
+      "882ed437ecd16c222b65a713d54935661036e90e6c1100bf6323b52fed36388e",
+      "0fda9934cc1dac918d38210988ad6ec87a227998d8c0df7bc69133e59634bd87",
+      "051de4773a172e720770eee3f9d5edd6bd28697ee430592f0e1db315a6862ef1",
+      "872fececd4ec4d9a44c1f4093b1d6bbf4e607a0b72b0bb1e2700ec693feeee23",
+      "f08743ad72b86e9c444b82ab46d709dac8cbacfd2f4d123cb8d1c4d503757708",
+      "765c2b6b75047fdde13406d686937264a437c031583fc9c0e0f330f868123445",
+      "8caf47790bbd5f4439f75471ecc8612f5e1b7a87c01764e397467403d85682c4",
+      "1c06661bc8a919f149bc84948639369777d095ad5597950564271df965307812",
+      "926c54ee672acc6479bebe09b54c0d4e735c13753c7c83042bb3f95ddbe63afe",
+      "0739b2b538fbf98ed77e0701d3394e1f51baef5dcfa73a97d390f3eecae355fa",
+      "e9a84c3c38da76c18d1f990550797e7955b9c4c7b9dc7c52728d5b4b18cac613",
+      "c25342821780c4f5ae5f0eb0640fc4b96ea22bbf064276e9f9a4bdf614da1616",
+      "1065c644c6608203058307fa12f8addf79871291803ae0ccce0f86d5c9542d9d",
+      "b648ec92b6b300af8bb09acec9aeac74cc754f7f5f4375b16b5e439863405751",
+      "d6913e198ce95733ee11aa6bb6cb65d22302d15ac85d6f7f9a5c0068b9909d7d",
+      "83a7de2894765753ffbd1043945dc3c15eb48f7da6067dfd6a92929caacbb2a7"
+     ],
+     "parent_id": [
+      "3c7f55c37d46c625e54885aa483df9bf876a559a575bc636937e8a79c1b4c55c",
+      "f19b0b0c28742a065bb6832ae3bda27cdbc447464dd5274ae4b10bed036f77a9",
+      "90755b71998b7017af4526591589b9b6347d89edb2276dbf08c2b6dc105fb1ac",
+      "5b69f0bb5e201004c2d50f9fbb34ce03222c4b7d1a3cb0ffc1771a3ab8859927",
+      "5c1dd82cd954cfd786ef098cd9f4cd34e6bfe6d608a274718a2502d765107252",
+      "1c0c64fdd3c898b8f133241fdb89040f97d430e904a12f7921da9c5ad8333ba5",
+      "c5e7cfe1f66211817ec236d75b6d9d0db2a11c0e48839223ddcabad25d1f4857",
+      "ad9f1131de1d79472e0ff564befa037a8fd59de54104a65bbd3f3568b3da9f7b",
+      "6add5038892e86fe86eab2b425802974ea6e4474fc0ebc04ad3bf2a06ce35977",
+      "241287e7232415b3948e18c3386e3c86dd0212ef0c63f23b0593e703a44c64c2",
+      "a1a000f35335f5c173151ebfcc2ae98ab784a56a0fada0e21ba8a1c3222cf65b",
+      "b5c45ce929607b415fec10cf0f546630f67184ca06cc9b2b6243df0e7c4145fa",
+      "c25616a9edcbe28bc7660865f2c446142ba34c0fdb914c687c20b64a2cf81ca2",
+      "af933f0a578045aeffd56e552d2b13b22169f235d03fe32a361c2cc53802e073",
+      "f3ab0c23ae11c83bc49de51d375dfece587b4d0a067ce51cf1ac908b803fd62c",
+      "d213c71039bbc024984d30bf106bfe4c8f31103680f226726b70530f47159f2e",
+      "aa4340289db5e55f51080b45cb8fd7783c2b38a9c62628571f93874f05cee299",
+      "7010784072be45ed57420283bf04a16f1384201b9e2387ae793fe64a04207cf2",
+      "381a4b3808669a59410f35d215a6c436b0d9bfd52a79143dca5da401396a7346",
+      "ab7f1e8c81c8f5936cfc3e4d299e56cf2f8e19d34f10b56f6d607c8a72fe0879"
+     ]
+    },
+    "schema": [
+     [
+      "cid",
+      "string",
+      true
+     ],
+     [
+      "parent_id",
+      "string",
+      true
+     ]
+    ]
+   },
+   "parent": {
+    "metadata": {},
+    "rows": {
+     "id": [
+      "3c7f55c37d46c625e54885aa483df9bf876a559a575bc636937e8a79c1b4c55c",
+      "f19b0b0c28742a065bb6832ae3bda27cdbc447464dd5274ae4b10bed036f77a9",
+      "90755b71998b7017af4526591589b9b6347d89edb2276dbf08c2b6dc105fb1ac",
+      "5b69f0bb5e201004c2d50f9fbb34ce03222c4b7d1a3cb0ffc1771a3ab8859927",
+      "5c1dd82cd954cfd786ef098cd9f4cd34e6bfe6d608a274718a2502d765107252",
+      "1c0c64fdd3c898b8f133241fdb89040f97d430e904a12f7921da9c5ad8333ba5",
+      "c5e7cfe1f66211817ec236d75b6d9d0db2a11c0e48839223ddcabad25d1f4857",
+      "ad9f1131de1d79472e0ff564befa037a8fd59de54104a65bbd3f3568b3da9f7b",
+      "6add5038892e86fe86eab2b425802974ea6e4474fc0ebc04ad3bf2a06ce35977",
+      "241287e7232415b3948e18c3386e3c86dd0212ef0c63f23b0593e703a44c64c2",
+      "a1a000f35335f5c173151ebfcc2ae98ab784a56a0fada0e21ba8a1c3222cf65b",
+      "b5c45ce929607b415fec10cf0f546630f67184ca06cc9b2b6243df0e7c4145fa",
+      "c25616a9edcbe28bc7660865f2c446142ba34c0fdb914c687c20b64a2cf81ca2",
+      "af933f0a578045aeffd56e552d2b13b22169f235d03fe32a361c2cc53802e073",
+      "f3ab0c23ae11c83bc49de51d375dfece587b4d0a067ce51cf1ac908b803fd62c",
+      "d213c71039bbc024984d30bf106bfe4c8f31103680f226726b70530f47159f2e",
+      "aa4340289db5e55f51080b45cb8fd7783c2b38a9c62628571f93874f05cee299",
+      "7010784072be45ed57420283bf04a16f1384201b9e2387ae793fe64a04207cf2",
+      "381a4b3808669a59410f35d215a6c436b0d9bfd52a79143dca5da401396a7346",
+      "ab7f1e8c81c8f5936cfc3e4d299e56cf2f8e19d34f10b56f6d607c8a72fe0879"
+     ],
+     "note": [
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED"
+     ]
+    },
+    "schema": [
+     [
+      "id",
+      "string",
+      true
+     ],
+     [
+      "note",
+      "string",
+      true
+     ]
+    ]
+   }
+  },
+  "volatile_structure": {
+   "boundary_conversion_ms": "float",
+   "timing_count_positive": false,
+   "timings": "tuple"
+  },
+  "warnings": [
+   "QualityWarning(code='out_of_core_caller_managed_residency', provider='', column=None, detail={'shapes': ['a resident pa.Table source', 'no sink (the whole output is held resident)'], 'message': \"out-of-core residency bound not guaranteed for this call: a resident pa.Table source; no sink (the whole output is held resident). Engine-controlled peak residency is bounded with respect to table row cardinality only when every source is a LazySource and the sink consumes write_batches incrementally without retaining the stream (e.g. ParquetTransactionalSink). To run bounded, pass a LazySource per table plus such a sink; or force execution_mode='full_frame' to run resident at your own memory risk.\"})"
+  ]
+ },
+ "ooc_fk_budget_bytes": {
+  "execution": {
+   "eviction": "per_table",
+   "execution_mode": "out_of_core",
+   "loaded_fully_in_memory": true,
+   "outputs_streamed": false,
+   "route_reason": "override_out_of_core"
+  },
+  "execution_extra_keys": [],
+  "execution_plan": null,
+  "fidelity_reports": null,
+  "quality_metrics": {
+   "execution": {
+    "eviction": "per_table",
+    "execution_mode": "out_of_core",
+    "loaded_fully_in_memory": true,
+    "outputs_streamed": false,
+    "route_reason": "override_out_of_core"
+   },
+   "residency": {
+    "caller_managed": true,
+    "shapes": [
+     "a resident pa.Table source",
+     "no sink (the whole output is held resident)"
+    ]
+   }
+  },
+  "row_errors": [],
+  "table_kinds": {
+   "child": "mask",
+   "parent": "mask"
+  },
+  "tables": {
+   "child": {
+    "metadata": {},
+    "rows": {
+     "cid": [
+      "a108ea5a5efb141eb5f5577f7d20e6fe755d0c7b0fdf521df43e10ba83c2dce3",
+      "04666901f45aadaaeda6cb07d997c198dfd42e0f4181f4cfe321290ce44f9849",
+      "4794072f578c2c9d61afb88aa4db316e73269b3a87d67834d0c4c2eda7261ad6",
+      "01dc45f031647e8ddc469e71de3fa81442491c1d5fcdd14d2ae49382142d78f6",
+      "882ed437ecd16c222b65a713d54935661036e90e6c1100bf6323b52fed36388e",
+      "0fda9934cc1dac918d38210988ad6ec87a227998d8c0df7bc69133e59634bd87",
+      "051de4773a172e720770eee3f9d5edd6bd28697ee430592f0e1db315a6862ef1",
+      "872fececd4ec4d9a44c1f4093b1d6bbf4e607a0b72b0bb1e2700ec693feeee23",
+      "f08743ad72b86e9c444b82ab46d709dac8cbacfd2f4d123cb8d1c4d503757708",
+      "765c2b6b75047fdde13406d686937264a437c031583fc9c0e0f330f868123445",
+      "8caf47790bbd5f4439f75471ecc8612f5e1b7a87c01764e397467403d85682c4",
+      "1c06661bc8a919f149bc84948639369777d095ad5597950564271df965307812",
+      "926c54ee672acc6479bebe09b54c0d4e735c13753c7c83042bb3f95ddbe63afe",
+      "0739b2b538fbf98ed77e0701d3394e1f51baef5dcfa73a97d390f3eecae355fa",
+      "e9a84c3c38da76c18d1f990550797e7955b9c4c7b9dc7c52728d5b4b18cac613",
+      "c25342821780c4f5ae5f0eb0640fc4b96ea22bbf064276e9f9a4bdf614da1616",
+      "1065c644c6608203058307fa12f8addf79871291803ae0ccce0f86d5c9542d9d",
+      "b648ec92b6b300af8bb09acec9aeac74cc754f7f5f4375b16b5e439863405751",
+      "d6913e198ce95733ee11aa6bb6cb65d22302d15ac85d6f7f9a5c0068b9909d7d",
+      "83a7de2894765753ffbd1043945dc3c15eb48f7da6067dfd6a92929caacbb2a7"
+     ],
+     "parent_id": [
+      "3c7f55c37d46c625e54885aa483df9bf876a559a575bc636937e8a79c1b4c55c",
+      "f19b0b0c28742a065bb6832ae3bda27cdbc447464dd5274ae4b10bed036f77a9",
+      "90755b71998b7017af4526591589b9b6347d89edb2276dbf08c2b6dc105fb1ac",
+      "5b69f0bb5e201004c2d50f9fbb34ce03222c4b7d1a3cb0ffc1771a3ab8859927",
+      "5c1dd82cd954cfd786ef098cd9f4cd34e6bfe6d608a274718a2502d765107252",
+      "1c0c64fdd3c898b8f133241fdb89040f97d430e904a12f7921da9c5ad8333ba5",
+      "c5e7cfe1f66211817ec236d75b6d9d0db2a11c0e48839223ddcabad25d1f4857",
+      "ad9f1131de1d79472e0ff564befa037a8fd59de54104a65bbd3f3568b3da9f7b",
+      "6add5038892e86fe86eab2b425802974ea6e4474fc0ebc04ad3bf2a06ce35977",
+      "241287e7232415b3948e18c3386e3c86dd0212ef0c63f23b0593e703a44c64c2",
+      "a1a000f35335f5c173151ebfcc2ae98ab784a56a0fada0e21ba8a1c3222cf65b",
+      "b5c45ce929607b415fec10cf0f546630f67184ca06cc9b2b6243df0e7c4145fa",
+      "c25616a9edcbe28bc7660865f2c446142ba34c0fdb914c687c20b64a2cf81ca2",
+      "af933f0a578045aeffd56e552d2b13b22169f235d03fe32a361c2cc53802e073",
+      "f3ab0c23ae11c83bc49de51d375dfece587b4d0a067ce51cf1ac908b803fd62c",
+      "d213c71039bbc024984d30bf106bfe4c8f31103680f226726b70530f47159f2e",
+      "aa4340289db5e55f51080b45cb8fd7783c2b38a9c62628571f93874f05cee299",
+      "7010784072be45ed57420283bf04a16f1384201b9e2387ae793fe64a04207cf2",
+      "381a4b3808669a59410f35d215a6c436b0d9bfd52a79143dca5da401396a7346",
+      "ab7f1e8c81c8f5936cfc3e4d299e56cf2f8e19d34f10b56f6d607c8a72fe0879"
+     ]
+    },
+    "schema": [
+     [
+      "cid",
+      "string",
+      true
+     ],
+     [
+      "parent_id",
+      "string",
+      true
+     ]
+    ]
+   },
+   "parent": {
+    "metadata": {},
+    "rows": {
+     "id": [
+      "3c7f55c37d46c625e54885aa483df9bf876a559a575bc636937e8a79c1b4c55c",
+      "f19b0b0c28742a065bb6832ae3bda27cdbc447464dd5274ae4b10bed036f77a9",
+      "90755b71998b7017af4526591589b9b6347d89edb2276dbf08c2b6dc105fb1ac",
+      "5b69f0bb5e201004c2d50f9fbb34ce03222c4b7d1a3cb0ffc1771a3ab8859927",
+      "5c1dd82cd954cfd786ef098cd9f4cd34e6bfe6d608a274718a2502d765107252",
+      "1c0c64fdd3c898b8f133241fdb89040f97d430e904a12f7921da9c5ad8333ba5",
+      "c5e7cfe1f66211817ec236d75b6d9d0db2a11c0e48839223ddcabad25d1f4857",
+      "ad9f1131de1d79472e0ff564befa037a8fd59de54104a65bbd3f3568b3da9f7b",
+      "6add5038892e86fe86eab2b425802974ea6e4474fc0ebc04ad3bf2a06ce35977",
+      "241287e7232415b3948e18c3386e3c86dd0212ef0c63f23b0593e703a44c64c2",
+      "a1a000f35335f5c173151ebfcc2ae98ab784a56a0fada0e21ba8a1c3222cf65b",
+      "b5c45ce929607b415fec10cf0f546630f67184ca06cc9b2b6243df0e7c4145fa",
+      "c25616a9edcbe28bc7660865f2c446142ba34c0fdb914c687c20b64a2cf81ca2",
+      "af933f0a578045aeffd56e552d2b13b22169f235d03fe32a361c2cc53802e073",
+      "f3ab0c23ae11c83bc49de51d375dfece587b4d0a067ce51cf1ac908b803fd62c",
+      "d213c71039bbc024984d30bf106bfe4c8f31103680f226726b70530f47159f2e",
+      "aa4340289db5e55f51080b45cb8fd7783c2b38a9c62628571f93874f05cee299",
+      "7010784072be45ed57420283bf04a16f1384201b9e2387ae793fe64a04207cf2",
+      "381a4b3808669a59410f35d215a6c436b0d9bfd52a79143dca5da401396a7346",
+      "ab7f1e8c81c8f5936cfc3e4d299e56cf2f8e19d34f10b56f6d607c8a72fe0879"
+     ],
+     "note": [
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED"
+     ]
+    },
+    "schema": [
+     [
+      "id",
+      "string",
+      true
+     ],
+     [
+      "note",
+      "string",
+      true
+     ]
+    ]
+   }
+  },
+  "volatile_structure": {
+   "boundary_conversion_ms": "float",
+   "timing_count_positive": false,
+   "timings": "tuple"
+  },
+  "warnings": [
+   "QualityWarning(code='out_of_core_caller_managed_residency', provider='', column=None, detail={'shapes': ['a resident pa.Table source', 'no sink (the whole output is held resident)'], 'message': \"out-of-core residency bound not guaranteed for this call: a resident pa.Table source; no sink (the whole output is held resident). Engine-controlled peak residency is bounded with respect to table row cardinality only when every source is a LazySource and the sink consumes write_batches incrementally without retaining the stream (e.g. ParquetTransactionalSink). To run bounded, pass a LazySource per table plus such a sink; or force execution_mode='full_frame' to run resident at your own memory risk.\"})"
+  ]
+ },
+ "ooc_fk_forced": {
+  "execution": {
+   "eviction": "per_table",
+   "execution_mode": "out_of_core",
+   "loaded_fully_in_memory": true,
+   "outputs_streamed": false,
+   "route_reason": "override_out_of_core"
+  },
+  "execution_extra_keys": [],
+  "execution_plan": null,
+  "fidelity_reports": null,
+  "quality_metrics": {
+   "execution": {
+    "eviction": "per_table",
+    "execution_mode": "out_of_core",
+    "loaded_fully_in_memory": true,
+    "outputs_streamed": false,
+    "route_reason": "override_out_of_core"
+   },
+   "residency": {
+    "caller_managed": true,
+    "shapes": [
+     "a resident pa.Table source",
+     "no sink (the whole output is held resident)"
+    ]
+   }
+  },
+  "row_errors": [],
+  "table_kinds": {
+   "child": "mask",
+   "parent": "mask"
+  },
+  "tables": {
+   "child": {
+    "metadata": {},
+    "rows": {
+     "cid": [
+      "a108ea5a5efb141eb5f5577f7d20e6fe755d0c7b0fdf521df43e10ba83c2dce3",
+      "04666901f45aadaaeda6cb07d997c198dfd42e0f4181f4cfe321290ce44f9849",
+      "4794072f578c2c9d61afb88aa4db316e73269b3a87d67834d0c4c2eda7261ad6",
+      "01dc45f031647e8ddc469e71de3fa81442491c1d5fcdd14d2ae49382142d78f6",
+      "882ed437ecd16c222b65a713d54935661036e90e6c1100bf6323b52fed36388e",
+      "0fda9934cc1dac918d38210988ad6ec87a227998d8c0df7bc69133e59634bd87",
+      "051de4773a172e720770eee3f9d5edd6bd28697ee430592f0e1db315a6862ef1",
+      "872fececd4ec4d9a44c1f4093b1d6bbf4e607a0b72b0bb1e2700ec693feeee23",
+      "f08743ad72b86e9c444b82ab46d709dac8cbacfd2f4d123cb8d1c4d503757708",
+      "765c2b6b75047fdde13406d686937264a437c031583fc9c0e0f330f868123445",
+      "8caf47790bbd5f4439f75471ecc8612f5e1b7a87c01764e397467403d85682c4",
+      "1c06661bc8a919f149bc84948639369777d095ad5597950564271df965307812",
+      "926c54ee672acc6479bebe09b54c0d4e735c13753c7c83042bb3f95ddbe63afe",
+      "0739b2b538fbf98ed77e0701d3394e1f51baef5dcfa73a97d390f3eecae355fa",
+      "e9a84c3c38da76c18d1f990550797e7955b9c4c7b9dc7c52728d5b4b18cac613",
+      "c25342821780c4f5ae5f0eb0640fc4b96ea22bbf064276e9f9a4bdf614da1616",
+      "1065c644c6608203058307fa12f8addf79871291803ae0ccce0f86d5c9542d9d",
+      "b648ec92b6b300af8bb09acec9aeac74cc754f7f5f4375b16b5e439863405751",
+      "d6913e198ce95733ee11aa6bb6cb65d22302d15ac85d6f7f9a5c0068b9909d7d",
+      "83a7de2894765753ffbd1043945dc3c15eb48f7da6067dfd6a92929caacbb2a7"
+     ],
+     "parent_id": [
+      "3c7f55c37d46c625e54885aa483df9bf876a559a575bc636937e8a79c1b4c55c",
+      "f19b0b0c28742a065bb6832ae3bda27cdbc447464dd5274ae4b10bed036f77a9",
+      "90755b71998b7017af4526591589b9b6347d89edb2276dbf08c2b6dc105fb1ac",
+      "5b69f0bb5e201004c2d50f9fbb34ce03222c4b7d1a3cb0ffc1771a3ab8859927",
+      "5c1dd82cd954cfd786ef098cd9f4cd34e6bfe6d608a274718a2502d765107252",
+      "1c0c64fdd3c898b8f133241fdb89040f97d430e904a12f7921da9c5ad8333ba5",
+      "c5e7cfe1f66211817ec236d75b6d9d0db2a11c0e48839223ddcabad25d1f4857",
+      "ad9f1131de1d79472e0ff564befa037a8fd59de54104a65bbd3f3568b3da9f7b",
+      "6add5038892e86fe86eab2b425802974ea6e4474fc0ebc04ad3bf2a06ce35977",
+      "241287e7232415b3948e18c3386e3c86dd0212ef0c63f23b0593e703a44c64c2",
+      "a1a000f35335f5c173151ebfcc2ae98ab784a56a0fada0e21ba8a1c3222cf65b",
+      "b5c45ce929607b415fec10cf0f546630f67184ca06cc9b2b6243df0e7c4145fa",
+      "c25616a9edcbe28bc7660865f2c446142ba34c0fdb914c687c20b64a2cf81ca2",
+      "af933f0a578045aeffd56e552d2b13b22169f235d03fe32a361c2cc53802e073",
+      "f3ab0c23ae11c83bc49de51d375dfece587b4d0a067ce51cf1ac908b803fd62c",
+      "d213c71039bbc024984d30bf106bfe4c8f31103680f226726b70530f47159f2e",
+      "aa4340289db5e55f51080b45cb8fd7783c2b38a9c62628571f93874f05cee299",
+      "7010784072be45ed57420283bf04a16f1384201b9e2387ae793fe64a04207cf2",
+      "381a4b3808669a59410f35d215a6c436b0d9bfd52a79143dca5da401396a7346",
+      "ab7f1e8c81c8f5936cfc3e4d299e56cf2f8e19d34f10b56f6d607c8a72fe0879"
+     ]
+    },
+    "schema": [
+     [
+      "cid",
+      "string",
+      true
+     ],
+     [
+      "parent_id",
+      "string",
+      true
+     ]
+    ]
+   },
+   "parent": {
+    "metadata": {},
+    "rows": {
+     "id": [
+      "3c7f55c37d46c625e54885aa483df9bf876a559a575bc636937e8a79c1b4c55c",
+      "f19b0b0c28742a065bb6832ae3bda27cdbc447464dd5274ae4b10bed036f77a9",
+      "90755b71998b7017af4526591589b9b6347d89edb2276dbf08c2b6dc105fb1ac",
+      "5b69f0bb5e201004c2d50f9fbb34ce03222c4b7d1a3cb0ffc1771a3ab8859927",
+      "5c1dd82cd954cfd786ef098cd9f4cd34e6bfe6d608a274718a2502d765107252",
+      "1c0c64fdd3c898b8f133241fdb89040f97d430e904a12f7921da9c5ad8333ba5",
+      "c5e7cfe1f66211817ec236d75b6d9d0db2a11c0e48839223ddcabad25d1f4857",
+      "ad9f1131de1d79472e0ff564befa037a8fd59de54104a65bbd3f3568b3da9f7b",
+      "6add5038892e86fe86eab2b425802974ea6e4474fc0ebc04ad3bf2a06ce35977",
+      "241287e7232415b3948e18c3386e3c86dd0212ef0c63f23b0593e703a44c64c2",
+      "a1a000f35335f5c173151ebfcc2ae98ab784a56a0fada0e21ba8a1c3222cf65b",
+      "b5c45ce929607b415fec10cf0f546630f67184ca06cc9b2b6243df0e7c4145fa",
+      "c25616a9edcbe28bc7660865f2c446142ba34c0fdb914c687c20b64a2cf81ca2",
+      "af933f0a578045aeffd56e552d2b13b22169f235d03fe32a361c2cc53802e073",
+      "f3ab0c23ae11c83bc49de51d375dfece587b4d0a067ce51cf1ac908b803fd62c",
+      "d213c71039bbc024984d30bf106bfe4c8f31103680f226726b70530f47159f2e",
+      "aa4340289db5e55f51080b45cb8fd7783c2b38a9c62628571f93874f05cee299",
+      "7010784072be45ed57420283bf04a16f1384201b9e2387ae793fe64a04207cf2",
+      "381a4b3808669a59410f35d215a6c436b0d9bfd52a79143dca5da401396a7346",
+      "ab7f1e8c81c8f5936cfc3e4d299e56cf2f8e19d34f10b56f6d607c8a72fe0879"
+     ],
+     "note": [
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED"
+     ]
+    },
+    "schema": [
+     [
+      "id",
+      "string",
+      true
+     ],
+     [
+      "note",
+      "string",
+      true
+     ]
+    ]
+   }
+  },
+  "volatile_structure": {
+   "boundary_conversion_ms": "float",
+   "timing_count_positive": false,
+   "timings": "tuple"
+  },
+  "warnings": [
+   "QualityWarning(code='out_of_core_caller_managed_residency', provider='', column=None, detail={'shapes': ['a resident pa.Table source', 'no sink (the whole output is held resident)'], 'message': \"out-of-core residency bound not guaranteed for this call: a resident pa.Table source; no sink (the whole output is held resident). Engine-controlled peak residency is bounded with respect to table row cardinality only when every source is a LazySource and the sink consumes write_batches incrementally without retaining the stream (e.g. ParquetTransactionalSink). To run bounded, pass a LazySource per table plus such a sink; or force execution_mode='full_frame' to run resident at your own memory risk.\"})"
+  ]
+ },
+ "ooc_fk_forced_loader": {
+  "execution": {
+   "eviction": "per_table",
+   "execution_mode": "out_of_core",
+   "loaded_fully_in_memory": false,
+   "outputs_streamed": false,
+   "route_reason": "override_out_of_core"
+  },
+  "execution_extra_keys": [],
+  "execution_plan": null,
+  "fidelity_reports": null,
+  "quality_metrics": {
+   "execution": {
+    "eviction": "per_table",
+    "execution_mode": "out_of_core",
+    "loaded_fully_in_memory": false,
+    "outputs_streamed": false,
+    "route_reason": "override_out_of_core"
+   },
+   "residency": {
+    "caller_managed": true,
+    "shapes": [
+     "no sink (the whole output is held resident)",
+     "a source_loader (returns an unbounded resident table)"
+    ]
+   }
+  },
+  "row_errors": [],
+  "table_kinds": {
+   "child": "mask",
+   "parent": "mask"
+  },
+  "tables": {
+   "child": {
+    "metadata": {},
+    "rows": {
+     "cid": [
+      "a108ea5a5efb141eb5f5577f7d20e6fe755d0c7b0fdf521df43e10ba83c2dce3",
+      "04666901f45aadaaeda6cb07d997c198dfd42e0f4181f4cfe321290ce44f9849",
+      "4794072f578c2c9d61afb88aa4db316e73269b3a87d67834d0c4c2eda7261ad6",
+      "01dc45f031647e8ddc469e71de3fa81442491c1d5fcdd14d2ae49382142d78f6",
+      "882ed437ecd16c222b65a713d54935661036e90e6c1100bf6323b52fed36388e",
+      "0fda9934cc1dac918d38210988ad6ec87a227998d8c0df7bc69133e59634bd87",
+      "051de4773a172e720770eee3f9d5edd6bd28697ee430592f0e1db315a6862ef1",
+      "872fececd4ec4d9a44c1f4093b1d6bbf4e607a0b72b0bb1e2700ec693feeee23",
+      "f08743ad72b86e9c444b82ab46d709dac8cbacfd2f4d123cb8d1c4d503757708",
+      "765c2b6b75047fdde13406d686937264a437c031583fc9c0e0f330f868123445",
+      "8caf47790bbd5f4439f75471ecc8612f5e1b7a87c01764e397467403d85682c4",
+      "1c06661bc8a919f149bc84948639369777d095ad5597950564271df965307812",
+      "926c54ee672acc6479bebe09b54c0d4e735c13753c7c83042bb3f95ddbe63afe",
+      "0739b2b538fbf98ed77e0701d3394e1f51baef5dcfa73a97d390f3eecae355fa",
+      "e9a84c3c38da76c18d1f990550797e7955b9c4c7b9dc7c52728d5b4b18cac613",
+      "c25342821780c4f5ae5f0eb0640fc4b96ea22bbf064276e9f9a4bdf614da1616",
+      "1065c644c6608203058307fa12f8addf79871291803ae0ccce0f86d5c9542d9d",
+      "b648ec92b6b300af8bb09acec9aeac74cc754f7f5f4375b16b5e439863405751",
+      "d6913e198ce95733ee11aa6bb6cb65d22302d15ac85d6f7f9a5c0068b9909d7d",
+      "83a7de2894765753ffbd1043945dc3c15eb48f7da6067dfd6a92929caacbb2a7"
+     ],
+     "parent_id": [
+      "3c7f55c37d46c625e54885aa483df9bf876a559a575bc636937e8a79c1b4c55c",
+      "f19b0b0c28742a065bb6832ae3bda27cdbc447464dd5274ae4b10bed036f77a9",
+      "90755b71998b7017af4526591589b9b6347d89edb2276dbf08c2b6dc105fb1ac",
+      "5b69f0bb5e201004c2d50f9fbb34ce03222c4b7d1a3cb0ffc1771a3ab8859927",
+      "5c1dd82cd954cfd786ef098cd9f4cd34e6bfe6d608a274718a2502d765107252",
+      "1c0c64fdd3c898b8f133241fdb89040f97d430e904a12f7921da9c5ad8333ba5",
+      "c5e7cfe1f66211817ec236d75b6d9d0db2a11c0e48839223ddcabad25d1f4857",
+      "ad9f1131de1d79472e0ff564befa037a8fd59de54104a65bbd3f3568b3da9f7b",
+      "6add5038892e86fe86eab2b425802974ea6e4474fc0ebc04ad3bf2a06ce35977",
+      "241287e7232415b3948e18c3386e3c86dd0212ef0c63f23b0593e703a44c64c2",
+      "a1a000f35335f5c173151ebfcc2ae98ab784a56a0fada0e21ba8a1c3222cf65b",
+      "b5c45ce929607b415fec10cf0f546630f67184ca06cc9b2b6243df0e7c4145fa",
+      "c25616a9edcbe28bc7660865f2c446142ba34c0fdb914c687c20b64a2cf81ca2",
+      "af933f0a578045aeffd56e552d2b13b22169f235d03fe32a361c2cc53802e073",
+      "f3ab0c23ae11c83bc49de51d375dfece587b4d0a067ce51cf1ac908b803fd62c",
+      "d213c71039bbc024984d30bf106bfe4c8f31103680f226726b70530f47159f2e",
+      "aa4340289db5e55f51080b45cb8fd7783c2b38a9c62628571f93874f05cee299",
+      "7010784072be45ed57420283bf04a16f1384201b9e2387ae793fe64a04207cf2",
+      "381a4b3808669a59410f35d215a6c436b0d9bfd52a79143dca5da401396a7346",
+      "ab7f1e8c81c8f5936cfc3e4d299e56cf2f8e19d34f10b56f6d607c8a72fe0879"
+     ]
+    },
+    "schema": [
+     [
+      "cid",
+      "string",
+      true
+     ],
+     [
+      "parent_id",
+      "string",
+      true
+     ]
+    ]
+   },
+   "parent": {
+    "metadata": {},
+    "rows": {
+     "id": [
+      "3c7f55c37d46c625e54885aa483df9bf876a559a575bc636937e8a79c1b4c55c",
+      "f19b0b0c28742a065bb6832ae3bda27cdbc447464dd5274ae4b10bed036f77a9",
+      "90755b71998b7017af4526591589b9b6347d89edb2276dbf08c2b6dc105fb1ac",
+      "5b69f0bb5e201004c2d50f9fbb34ce03222c4b7d1a3cb0ffc1771a3ab8859927",
+      "5c1dd82cd954cfd786ef098cd9f4cd34e6bfe6d608a274718a2502d765107252",
+      "1c0c64fdd3c898b8f133241fdb89040f97d430e904a12f7921da9c5ad8333ba5",
+      "c5e7cfe1f66211817ec236d75b6d9d0db2a11c0e48839223ddcabad25d1f4857",
+      "ad9f1131de1d79472e0ff564befa037a8fd59de54104a65bbd3f3568b3da9f7b",
+      "6add5038892e86fe86eab2b425802974ea6e4474fc0ebc04ad3bf2a06ce35977",
+      "241287e7232415b3948e18c3386e3c86dd0212ef0c63f23b0593e703a44c64c2",
+      "a1a000f35335f5c173151ebfcc2ae98ab784a56a0fada0e21ba8a1c3222cf65b",
+      "b5c45ce929607b415fec10cf0f546630f67184ca06cc9b2b6243df0e7c4145fa",
+      "c25616a9edcbe28bc7660865f2c446142ba34c0fdb914c687c20b64a2cf81ca2",
+      "af933f0a578045aeffd56e552d2b13b22169f235d03fe32a361c2cc53802e073",
+      "f3ab0c23ae11c83bc49de51d375dfece587b4d0a067ce51cf1ac908b803fd62c",
+      "d213c71039bbc024984d30bf106bfe4c8f31103680f226726b70530f47159f2e",
+      "aa4340289db5e55f51080b45cb8fd7783c2b38a9c62628571f93874f05cee299",
+      "7010784072be45ed57420283bf04a16f1384201b9e2387ae793fe64a04207cf2",
+      "381a4b3808669a59410f35d215a6c436b0d9bfd52a79143dca5da401396a7346",
+      "ab7f1e8c81c8f5936cfc3e4d299e56cf2f8e19d34f10b56f6d607c8a72fe0879"
+     ],
+     "note": [
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED"
+     ]
+    },
+    "schema": [
+     [
+      "id",
+      "string",
+      true
+     ],
+     [
+      "note",
+      "string",
+      true
+     ]
+    ]
+   }
+  },
+  "volatile_structure": {
+   "boundary_conversion_ms": "float",
+   "timing_count_positive": false,
+   "timings": "tuple"
+  },
+  "warnings": [
+   "QualityWarning(code='out_of_core_caller_managed_residency', provider='', column=None, detail={'shapes': ['no sink (the whole output is held resident)', 'a source_loader (returns an unbounded resident table)'], 'message': \"out-of-core residency bound not guaranteed for this call: no sink (the whole output is held resident); a source_loader (returns an unbounded resident table). Engine-controlled peak residency is bounded with respect to table row cardinality only when every source is a LazySource and the sink consumes write_batches incrementally without retaining the stream (e.g. ParquetTransactionalSink). To run bounded, pass a LazySource per table plus such a sink; or force execution_mode='full_frame' to run resident at your own memory risk.\"})"
+  ]
+ },
+ "ooc_fk_forced_sink": {
+  "execution": {
+   "eviction": "per_table",
+   "execution_mode": "out_of_core",
+   "loaded_fully_in_memory": true,
+   "outputs_streamed": true,
+   "route_reason": "override_out_of_core"
+  },
+  "execution_extra_keys": [],
+  "execution_plan": null,
+  "fidelity_reports": null,
+  "quality_metrics": {
+   "execution": {
+    "eviction": "per_table",
+    "execution_mode": "out_of_core",
+    "loaded_fully_in_memory": true,
+    "outputs_streamed": true,
+    "route_reason": "override_out_of_core"
+   },
+   "residency": {
+    "caller_managed": true,
+    "shapes": [
+     "a resident pa.Table source"
+    ]
+   }
+  },
+  "row_errors": [],
+  "sink_tables": {
+   "child": {
+    "metadata": {},
+    "rows": {
+     "cid": [
+      "a108ea5a5efb141eb5f5577f7d20e6fe755d0c7b0fdf521df43e10ba83c2dce3",
+      "04666901f45aadaaeda6cb07d997c198dfd42e0f4181f4cfe321290ce44f9849",
+      "4794072f578c2c9d61afb88aa4db316e73269b3a87d67834d0c4c2eda7261ad6",
+      "01dc45f031647e8ddc469e71de3fa81442491c1d5fcdd14d2ae49382142d78f6",
+      "882ed437ecd16c222b65a713d54935661036e90e6c1100bf6323b52fed36388e",
+      "0fda9934cc1dac918d38210988ad6ec87a227998d8c0df7bc69133e59634bd87",
+      "051de4773a172e720770eee3f9d5edd6bd28697ee430592f0e1db315a6862ef1",
+      "872fececd4ec4d9a44c1f4093b1d6bbf4e607a0b72b0bb1e2700ec693feeee23",
+      "f08743ad72b86e9c444b82ab46d709dac8cbacfd2f4d123cb8d1c4d503757708",
+      "765c2b6b75047fdde13406d686937264a437c031583fc9c0e0f330f868123445",
+      "8caf47790bbd5f4439f75471ecc8612f5e1b7a87c01764e397467403d85682c4",
+      "1c06661bc8a919f149bc84948639369777d095ad5597950564271df965307812",
+      "926c54ee672acc6479bebe09b54c0d4e735c13753c7c83042bb3f95ddbe63afe",
+      "0739b2b538fbf98ed77e0701d3394e1f51baef5dcfa73a97d390f3eecae355fa",
+      "e9a84c3c38da76c18d1f990550797e7955b9c4c7b9dc7c52728d5b4b18cac613",
+      "c25342821780c4f5ae5f0eb0640fc4b96ea22bbf064276e9f9a4bdf614da1616",
+      "1065c644c6608203058307fa12f8addf79871291803ae0ccce0f86d5c9542d9d",
+      "b648ec92b6b300af8bb09acec9aeac74cc754f7f5f4375b16b5e439863405751",
+      "d6913e198ce95733ee11aa6bb6cb65d22302d15ac85d6f7f9a5c0068b9909d7d",
+      "83a7de2894765753ffbd1043945dc3c15eb48f7da6067dfd6a92929caacbb2a7"
+     ],
+     "parent_id": [
+      "3c7f55c37d46c625e54885aa483df9bf876a559a575bc636937e8a79c1b4c55c",
+      "f19b0b0c28742a065bb6832ae3bda27cdbc447464dd5274ae4b10bed036f77a9",
+      "90755b71998b7017af4526591589b9b6347d89edb2276dbf08c2b6dc105fb1ac",
+      "5b69f0bb5e201004c2d50f9fbb34ce03222c4b7d1a3cb0ffc1771a3ab8859927",
+      "5c1dd82cd954cfd786ef098cd9f4cd34e6bfe6d608a274718a2502d765107252",
+      "1c0c64fdd3c898b8f133241fdb89040f97d430e904a12f7921da9c5ad8333ba5",
+      "c5e7cfe1f66211817ec236d75b6d9d0db2a11c0e48839223ddcabad25d1f4857",
+      "ad9f1131de1d79472e0ff564befa037a8fd59de54104a65bbd3f3568b3da9f7b",
+      "6add5038892e86fe86eab2b425802974ea6e4474fc0ebc04ad3bf2a06ce35977",
+      "241287e7232415b3948e18c3386e3c86dd0212ef0c63f23b0593e703a44c64c2",
+      "a1a000f35335f5c173151ebfcc2ae98ab784a56a0fada0e21ba8a1c3222cf65b",
+      "b5c45ce929607b415fec10cf0f546630f67184ca06cc9b2b6243df0e7c4145fa",
+      "c25616a9edcbe28bc7660865f2c446142ba34c0fdb914c687c20b64a2cf81ca2",
+      "af933f0a578045aeffd56e552d2b13b22169f235d03fe32a361c2cc53802e073",
+      "f3ab0c23ae11c83bc49de51d375dfece587b4d0a067ce51cf1ac908b803fd62c",
+      "d213c71039bbc024984d30bf106bfe4c8f31103680f226726b70530f47159f2e",
+      "aa4340289db5e55f51080b45cb8fd7783c2b38a9c62628571f93874f05cee299",
+      "7010784072be45ed57420283bf04a16f1384201b9e2387ae793fe64a04207cf2",
+      "381a4b3808669a59410f35d215a6c436b0d9bfd52a79143dca5da401396a7346",
+      "ab7f1e8c81c8f5936cfc3e4d299e56cf2f8e19d34f10b56f6d607c8a72fe0879"
+     ]
+    },
+    "schema": [
+     [
+      "cid",
+      "string",
+      true
+     ],
+     [
+      "parent_id",
+      "string",
+      true
+     ]
+    ]
+   },
+   "parent": {
+    "metadata": {},
+    "rows": {
+     "id": [
+      "3c7f55c37d46c625e54885aa483df9bf876a559a575bc636937e8a79c1b4c55c",
+      "f19b0b0c28742a065bb6832ae3bda27cdbc447464dd5274ae4b10bed036f77a9",
+      "90755b71998b7017af4526591589b9b6347d89edb2276dbf08c2b6dc105fb1ac",
+      "5b69f0bb5e201004c2d50f9fbb34ce03222c4b7d1a3cb0ffc1771a3ab8859927",
+      "5c1dd82cd954cfd786ef098cd9f4cd34e6bfe6d608a274718a2502d765107252",
+      "1c0c64fdd3c898b8f133241fdb89040f97d430e904a12f7921da9c5ad8333ba5",
+      "c5e7cfe1f66211817ec236d75b6d9d0db2a11c0e48839223ddcabad25d1f4857",
+      "ad9f1131de1d79472e0ff564befa037a8fd59de54104a65bbd3f3568b3da9f7b",
+      "6add5038892e86fe86eab2b425802974ea6e4474fc0ebc04ad3bf2a06ce35977",
+      "241287e7232415b3948e18c3386e3c86dd0212ef0c63f23b0593e703a44c64c2",
+      "a1a000f35335f5c173151ebfcc2ae98ab784a56a0fada0e21ba8a1c3222cf65b",
+      "b5c45ce929607b415fec10cf0f546630f67184ca06cc9b2b6243df0e7c4145fa",
+      "c25616a9edcbe28bc7660865f2c446142ba34c0fdb914c687c20b64a2cf81ca2",
+      "af933f0a578045aeffd56e552d2b13b22169f235d03fe32a361c2cc53802e073",
+      "f3ab0c23ae11c83bc49de51d375dfece587b4d0a067ce51cf1ac908b803fd62c",
+      "d213c71039bbc024984d30bf106bfe4c8f31103680f226726b70530f47159f2e",
+      "aa4340289db5e55f51080b45cb8fd7783c2b38a9c62628571f93874f05cee299",
+      "7010784072be45ed57420283bf04a16f1384201b9e2387ae793fe64a04207cf2",
+      "381a4b3808669a59410f35d215a6c436b0d9bfd52a79143dca5da401396a7346",
+      "ab7f1e8c81c8f5936cfc3e4d299e56cf2f8e19d34f10b56f6d607c8a72fe0879"
+     ],
+     "note": [
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED"
+     ]
+    },
+    "schema": [
+     [
+      "id",
+      "string",
+      true
+     ],
+     [
+      "note",
+      "string",
+      true
+     ]
+    ]
+   }
+  },
+  "table_kinds": {
+   "child": "mask",
+   "parent": "mask"
+  },
+  "tables": {},
+  "volatile_structure": {
+   "boundary_conversion_ms": "float",
+   "timing_count_positive": false,
+   "timings": "tuple"
+  },
+  "warnings": [
+   "QualityWarning(code='out_of_core_caller_managed_residency', provider='', column=None, detail={'shapes': ['a resident pa.Table source'], 'message': \"out-of-core residency bound not guaranteed for this call: a resident pa.Table source. Engine-controlled peak residency is bounded with respect to table row cardinality only when every source is a LazySource and the sink consumes write_batches incrementally without retaining the stream (e.g. ParquetTransactionalSink). To run bounded, pass a LazySource per table plus such a sink; or force execution_mode='full_frame' to run resident at your own memory risk.\"})"
+  ]
+ },
+ "ooc_fk_lazy_sources_sink": {
+  "execution": {
+   "eviction": "per_table",
+   "execution_mode": "out_of_core",
+   "loaded_fully_in_memory": true,
+   "outputs_streamed": true,
+   "route_reason": "override_out_of_core"
+  },
+  "execution_extra_keys": [],
+  "execution_plan": null,
+  "fidelity_reports": null,
+  "quality_metrics": {
+   "execution": {
+    "eviction": "per_table",
+    "execution_mode": "out_of_core",
+    "loaded_fully_in_memory": true,
+    "outputs_streamed": true,
+    "route_reason": "override_out_of_core"
+   }
+  },
+  "row_errors": [],
+  "sink_tables": {
+   "child": {
+    "metadata": {},
+    "rows": {
+     "cid": [
+      "a108ea5a5efb141eb5f5577f7d20e6fe755d0c7b0fdf521df43e10ba83c2dce3",
+      "04666901f45aadaaeda6cb07d997c198dfd42e0f4181f4cfe321290ce44f9849",
+      "4794072f578c2c9d61afb88aa4db316e73269b3a87d67834d0c4c2eda7261ad6",
+      "01dc45f031647e8ddc469e71de3fa81442491c1d5fcdd14d2ae49382142d78f6",
+      "882ed437ecd16c222b65a713d54935661036e90e6c1100bf6323b52fed36388e",
+      "0fda9934cc1dac918d38210988ad6ec87a227998d8c0df7bc69133e59634bd87",
+      "051de4773a172e720770eee3f9d5edd6bd28697ee430592f0e1db315a6862ef1",
+      "872fececd4ec4d9a44c1f4093b1d6bbf4e607a0b72b0bb1e2700ec693feeee23",
+      "f08743ad72b86e9c444b82ab46d709dac8cbacfd2f4d123cb8d1c4d503757708",
+      "765c2b6b75047fdde13406d686937264a437c031583fc9c0e0f330f868123445",
+      "8caf47790bbd5f4439f75471ecc8612f5e1b7a87c01764e397467403d85682c4",
+      "1c06661bc8a919f149bc84948639369777d095ad5597950564271df965307812",
+      "926c54ee672acc6479bebe09b54c0d4e735c13753c7c83042bb3f95ddbe63afe",
+      "0739b2b538fbf98ed77e0701d3394e1f51baef5dcfa73a97d390f3eecae355fa",
+      "e9a84c3c38da76c18d1f990550797e7955b9c4c7b9dc7c52728d5b4b18cac613",
+      "c25342821780c4f5ae5f0eb0640fc4b96ea22bbf064276e9f9a4bdf614da1616",
+      "1065c644c6608203058307fa12f8addf79871291803ae0ccce0f86d5c9542d9d",
+      "b648ec92b6b300af8bb09acec9aeac74cc754f7f5f4375b16b5e439863405751",
+      "d6913e198ce95733ee11aa6bb6cb65d22302d15ac85d6f7f9a5c0068b9909d7d",
+      "83a7de2894765753ffbd1043945dc3c15eb48f7da6067dfd6a92929caacbb2a7"
+     ],
+     "parent_id": [
+      "3c7f55c37d46c625e54885aa483df9bf876a559a575bc636937e8a79c1b4c55c",
+      "f19b0b0c28742a065bb6832ae3bda27cdbc447464dd5274ae4b10bed036f77a9",
+      "90755b71998b7017af4526591589b9b6347d89edb2276dbf08c2b6dc105fb1ac",
+      "5b69f0bb5e201004c2d50f9fbb34ce03222c4b7d1a3cb0ffc1771a3ab8859927",
+      "5c1dd82cd954cfd786ef098cd9f4cd34e6bfe6d608a274718a2502d765107252",
+      "1c0c64fdd3c898b8f133241fdb89040f97d430e904a12f7921da9c5ad8333ba5",
+      "c5e7cfe1f66211817ec236d75b6d9d0db2a11c0e48839223ddcabad25d1f4857",
+      "ad9f1131de1d79472e0ff564befa037a8fd59de54104a65bbd3f3568b3da9f7b",
+      "6add5038892e86fe86eab2b425802974ea6e4474fc0ebc04ad3bf2a06ce35977",
+      "241287e7232415b3948e18c3386e3c86dd0212ef0c63f23b0593e703a44c64c2",
+      "a1a000f35335f5c173151ebfcc2ae98ab784a56a0fada0e21ba8a1c3222cf65b",
+      "b5c45ce929607b415fec10cf0f546630f67184ca06cc9b2b6243df0e7c4145fa",
+      "c25616a9edcbe28bc7660865f2c446142ba34c0fdb914c687c20b64a2cf81ca2",
+      "af933f0a578045aeffd56e552d2b13b22169f235d03fe32a361c2cc53802e073",
+      "f3ab0c23ae11c83bc49de51d375dfece587b4d0a067ce51cf1ac908b803fd62c",
+      "d213c71039bbc024984d30bf106bfe4c8f31103680f226726b70530f47159f2e",
+      "aa4340289db5e55f51080b45cb8fd7783c2b38a9c62628571f93874f05cee299",
+      "7010784072be45ed57420283bf04a16f1384201b9e2387ae793fe64a04207cf2",
+      "381a4b3808669a59410f35d215a6c436b0d9bfd52a79143dca5da401396a7346",
+      "ab7f1e8c81c8f5936cfc3e4d299e56cf2f8e19d34f10b56f6d607c8a72fe0879"
+     ]
+    },
+    "schema": [
+     [
+      "cid",
+      "string",
+      true
+     ],
+     [
+      "parent_id",
+      "string",
+      true
+     ]
+    ]
+   },
+   "parent": {
+    "metadata": {},
+    "rows": {
+     "id": [
+      "3c7f55c37d46c625e54885aa483df9bf876a559a575bc636937e8a79c1b4c55c",
+      "f19b0b0c28742a065bb6832ae3bda27cdbc447464dd5274ae4b10bed036f77a9",
+      "90755b71998b7017af4526591589b9b6347d89edb2276dbf08c2b6dc105fb1ac",
+      "5b69f0bb5e201004c2d50f9fbb34ce03222c4b7d1a3cb0ffc1771a3ab8859927",
+      "5c1dd82cd954cfd786ef098cd9f4cd34e6bfe6d608a274718a2502d765107252",
+      "1c0c64fdd3c898b8f133241fdb89040f97d430e904a12f7921da9c5ad8333ba5",
+      "c5e7cfe1f66211817ec236d75b6d9d0db2a11c0e48839223ddcabad25d1f4857",
+      "ad9f1131de1d79472e0ff564befa037a8fd59de54104a65bbd3f3568b3da9f7b",
+      "6add5038892e86fe86eab2b425802974ea6e4474fc0ebc04ad3bf2a06ce35977",
+      "241287e7232415b3948e18c3386e3c86dd0212ef0c63f23b0593e703a44c64c2",
+      "a1a000f35335f5c173151ebfcc2ae98ab784a56a0fada0e21ba8a1c3222cf65b",
+      "b5c45ce929607b415fec10cf0f546630f67184ca06cc9b2b6243df0e7c4145fa",
+      "c25616a9edcbe28bc7660865f2c446142ba34c0fdb914c687c20b64a2cf81ca2",
+      "af933f0a578045aeffd56e552d2b13b22169f235d03fe32a361c2cc53802e073",
+      "f3ab0c23ae11c83bc49de51d375dfece587b4d0a067ce51cf1ac908b803fd62c",
+      "d213c71039bbc024984d30bf106bfe4c8f31103680f226726b70530f47159f2e",
+      "aa4340289db5e55f51080b45cb8fd7783c2b38a9c62628571f93874f05cee299",
+      "7010784072be45ed57420283bf04a16f1384201b9e2387ae793fe64a04207cf2",
+      "381a4b3808669a59410f35d215a6c436b0d9bfd52a79143dca5da401396a7346",
+      "ab7f1e8c81c8f5936cfc3e4d299e56cf2f8e19d34f10b56f6d607c8a72fe0879"
+     ],
+     "note": [
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED"
+     ]
+    },
+    "schema": [
+     [
+      "id",
+      "string",
+      true
+     ],
+     [
+      "note",
+      "string",
+      true
+     ]
+    ]
+   }
+  },
+  "table_kinds": {
+   "child": "mask",
+   "parent": "mask"
+  },
+  "tables": {},
+  "volatile_structure": {
+   "boundary_conversion_ms": "float",
+   "timing_count_positive": false,
+   "timings": "tuple"
+  },
+  "warnings": []
+ },
+ "ooc_fk_orphans_remap": {
+  "execution": {
+   "eviction": "per_table",
+   "execution_mode": "out_of_core",
+   "loaded_fully_in_memory": true,
+   "outputs_streamed": false,
+   "route_reason": "override_out_of_core"
+  },
+  "execution_extra_keys": [],
+  "execution_plan": null,
+  "fidelity_reports": null,
+  "quality_metrics": {
+   "execution": {
+    "eviction": "per_table",
+    "execution_mode": "out_of_core",
+    "loaded_fully_in_memory": true,
+    "outputs_streamed": false,
+    "route_reason": "override_out_of_core"
+   },
+   "residency": {
+    "caller_managed": true,
+    "shapes": [
+     "a resident pa.Table source",
+     "no sink (the whole output is held resident)"
+    ]
+   }
+  },
+  "row_errors": [],
+  "table_kinds": {
+   "child": "mask",
+   "parent": "mask"
+  },
+  "tables": {
+   "child": {
+    "metadata": {},
+    "rows": {
+     "cid": [
+      "a108ea5a5efb141eb5f5577f7d20e6fe755d0c7b0fdf521df43e10ba83c2dce3",
+      "04666901f45aadaaeda6cb07d997c198dfd42e0f4181f4cfe321290ce44f9849",
+      "4794072f578c2c9d61afb88aa4db316e73269b3a87d67834d0c4c2eda7261ad6",
+      "01dc45f031647e8ddc469e71de3fa81442491c1d5fcdd14d2ae49382142d78f6",
+      "882ed437ecd16c222b65a713d54935661036e90e6c1100bf6323b52fed36388e",
+      "0fda9934cc1dac918d38210988ad6ec87a227998d8c0df7bc69133e59634bd87",
+      "051de4773a172e720770eee3f9d5edd6bd28697ee430592f0e1db315a6862ef1",
+      "872fececd4ec4d9a44c1f4093b1d6bbf4e607a0b72b0bb1e2700ec693feeee23",
+      "f08743ad72b86e9c444b82ab46d709dac8cbacfd2f4d123cb8d1c4d503757708",
+      "765c2b6b75047fdde13406d686937264a437c031583fc9c0e0f330f868123445",
+      "8caf47790bbd5f4439f75471ecc8612f5e1b7a87c01764e397467403d85682c4",
+      "1c06661bc8a919f149bc84948639369777d095ad5597950564271df965307812",
+      "926c54ee672acc6479bebe09b54c0d4e735c13753c7c83042bb3f95ddbe63afe",
+      "0739b2b538fbf98ed77e0701d3394e1f51baef5dcfa73a97d390f3eecae355fa",
+      "e9a84c3c38da76c18d1f990550797e7955b9c4c7b9dc7c52728d5b4b18cac613",
+      "c25342821780c4f5ae5f0eb0640fc4b96ea22bbf064276e9f9a4bdf614da1616",
+      "1065c644c6608203058307fa12f8addf79871291803ae0ccce0f86d5c9542d9d",
+      "b648ec92b6b300af8bb09acec9aeac74cc754f7f5f4375b16b5e439863405751",
+      "d6913e198ce95733ee11aa6bb6cb65d22302d15ac85d6f7f9a5c0068b9909d7d",
+      "83a7de2894765753ffbd1043945dc3c15eb48f7da6067dfd6a92929caacbb2a7"
+     ],
+     "parent_id": [
+      "19d7b6d6da6adc3e6e64b978db419de2a456dd657893ea8090da3d1361d16b92",
+      "f19b0b0c28742a065bb6832ae3bda27cdbc447464dd5274ae4b10bed036f77a9",
+      "90755b71998b7017af4526591589b9b6347d89edb2276dbf08c2b6dc105fb1ac",
+      "5b69f0bb5e201004c2d50f9fbb34ce03222c4b7d1a3cb0ffc1771a3ab8859927",
+      "5c1dd82cd954cfd786ef098cd9f4cd34e6bfe6d608a274718a2502d765107252",
+      "6c32ccee806a394ca524df4bbcd88d7246f8d7efbdc08a1f7af2aa59ba8eab18",
+      "c5e7cfe1f66211817ec236d75b6d9d0db2a11c0e48839223ddcabad25d1f4857",
+      "ad9f1131de1d79472e0ff564befa037a8fd59de54104a65bbd3f3568b3da9f7b",
+      "6add5038892e86fe86eab2b425802974ea6e4474fc0ebc04ad3bf2a06ce35977",
+      "241287e7232415b3948e18c3386e3c86dd0212ef0c63f23b0593e703a44c64c2",
+      "d66255ac13f643996634be6c4e992e4a7b04ff9f84d9dae4748771b93a808d88",
+      "b5c45ce929607b415fec10cf0f546630f67184ca06cc9b2b6243df0e7c4145fa",
+      "c25616a9edcbe28bc7660865f2c446142ba34c0fdb914c687c20b64a2cf81ca2",
+      "af933f0a578045aeffd56e552d2b13b22169f235d03fe32a361c2cc53802e073",
+      "f3ab0c23ae11c83bc49de51d375dfece587b4d0a067ce51cf1ac908b803fd62c",
+      "e59efb4f90a06fceea61c4b2d733d576a635077598c54551e243b5cedfde9201",
+      "aa4340289db5e55f51080b45cb8fd7783c2b38a9c62628571f93874f05cee299",
+      "7010784072be45ed57420283bf04a16f1384201b9e2387ae793fe64a04207cf2",
+      "381a4b3808669a59410f35d215a6c436b0d9bfd52a79143dca5da401396a7346",
+      "ab7f1e8c81c8f5936cfc3e4d299e56cf2f8e19d34f10b56f6d607c8a72fe0879"
+     ]
+    },
+    "schema": [
+     [
+      "cid",
+      "string",
+      true
+     ],
+     [
+      "parent_id",
+      "string",
+      true
+     ]
+    ]
+   },
+   "parent": {
+    "metadata": {},
+    "rows": {
+     "id": [
+      "3c7f55c37d46c625e54885aa483df9bf876a559a575bc636937e8a79c1b4c55c",
+      "f19b0b0c28742a065bb6832ae3bda27cdbc447464dd5274ae4b10bed036f77a9",
+      "90755b71998b7017af4526591589b9b6347d89edb2276dbf08c2b6dc105fb1ac",
+      "5b69f0bb5e201004c2d50f9fbb34ce03222c4b7d1a3cb0ffc1771a3ab8859927",
+      "5c1dd82cd954cfd786ef098cd9f4cd34e6bfe6d608a274718a2502d765107252",
+      "1c0c64fdd3c898b8f133241fdb89040f97d430e904a12f7921da9c5ad8333ba5",
+      "c5e7cfe1f66211817ec236d75b6d9d0db2a11c0e48839223ddcabad25d1f4857",
+      "ad9f1131de1d79472e0ff564befa037a8fd59de54104a65bbd3f3568b3da9f7b",
+      "6add5038892e86fe86eab2b425802974ea6e4474fc0ebc04ad3bf2a06ce35977",
+      "241287e7232415b3948e18c3386e3c86dd0212ef0c63f23b0593e703a44c64c2",
+      "a1a000f35335f5c173151ebfcc2ae98ab784a56a0fada0e21ba8a1c3222cf65b",
+      "b5c45ce929607b415fec10cf0f546630f67184ca06cc9b2b6243df0e7c4145fa",
+      "c25616a9edcbe28bc7660865f2c446142ba34c0fdb914c687c20b64a2cf81ca2",
+      "af933f0a578045aeffd56e552d2b13b22169f235d03fe32a361c2cc53802e073",
+      "f3ab0c23ae11c83bc49de51d375dfece587b4d0a067ce51cf1ac908b803fd62c",
+      "d213c71039bbc024984d30bf106bfe4c8f31103680f226726b70530f47159f2e",
+      "aa4340289db5e55f51080b45cb8fd7783c2b38a9c62628571f93874f05cee299",
+      "7010784072be45ed57420283bf04a16f1384201b9e2387ae793fe64a04207cf2",
+      "381a4b3808669a59410f35d215a6c436b0d9bfd52a79143dca5da401396a7346",
+      "ab7f1e8c81c8f5936cfc3e4d299e56cf2f8e19d34f10b56f6d607c8a72fe0879"
+     ],
+     "note": [
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED"
+     ]
+    },
+    "schema": [
+     [
+      "id",
+      "string",
+      true
+     ],
+     [
+      "note",
+      "string",
+      true
+     ]
+    ]
+   }
+  },
+  "volatile_structure": {
+   "boundary_conversion_ms": "float",
+   "timing_count_positive": false,
+   "timings": "tuple"
+  },
+  "warnings": [
+   "QualityWarning(code='out_of_core_caller_managed_residency', provider='', column=None, detail={'shapes': ['a resident pa.Table source', 'no sink (the whole output is held resident)'], 'message': \"out-of-core residency bound not guaranteed for this call: a resident pa.Table source; no sink (the whole output is held resident). Engine-controlled peak residency is bounded with respect to table row cardinality only when every source is a LazySource and the sink consumes write_batches incrementally without retaining the stream (e.g. ParquetTransactionalSink). To run bounded, pass a LazySource per table plus such a sink; or force execution_mode='full_frame' to run resident at your own memory risk.\"})"
+  ]
+ },
+ "ooc_fk_orphans_warn_sink": {
+  "execution": {
+   "eviction": "per_table",
+   "execution_mode": "out_of_core",
+   "loaded_fully_in_memory": true,
+   "outputs_streamed": true,
+   "route_reason": "override_out_of_core"
+  },
+  "execution_extra_keys": [],
+  "execution_plan": null,
+  "fidelity_reports": null,
+  "quality_metrics": {
+   "execution": {
+    "eviction": "per_table",
+    "execution_mode": "out_of_core",
+    "loaded_fully_in_memory": true,
+    "outputs_streamed": true,
+    "route_reason": "override_out_of_core"
+   },
+   "residency": {
+    "caller_managed": true,
+    "shapes": [
+     "a resident pa.Table source"
+    ]
+   }
+  },
+  "row_errors": [],
+  "sink_tables": {
+   "child": {
+    "metadata": {},
+    "rows": {
+     "cid": [
+      "a108ea5a5efb141eb5f5577f7d20e6fe755d0c7b0fdf521df43e10ba83c2dce3",
+      "04666901f45aadaaeda6cb07d997c198dfd42e0f4181f4cfe321290ce44f9849",
+      "4794072f578c2c9d61afb88aa4db316e73269b3a87d67834d0c4c2eda7261ad6",
+      "01dc45f031647e8ddc469e71de3fa81442491c1d5fcdd14d2ae49382142d78f6",
+      "882ed437ecd16c222b65a713d54935661036e90e6c1100bf6323b52fed36388e",
+      "0fda9934cc1dac918d38210988ad6ec87a227998d8c0df7bc69133e59634bd87",
+      "051de4773a172e720770eee3f9d5edd6bd28697ee430592f0e1db315a6862ef1",
+      "872fececd4ec4d9a44c1f4093b1d6bbf4e607a0b72b0bb1e2700ec693feeee23",
+      "f08743ad72b86e9c444b82ab46d709dac8cbacfd2f4d123cb8d1c4d503757708",
+      "765c2b6b75047fdde13406d686937264a437c031583fc9c0e0f330f868123445",
+      "8caf47790bbd5f4439f75471ecc8612f5e1b7a87c01764e397467403d85682c4",
+      "1c06661bc8a919f149bc84948639369777d095ad5597950564271df965307812",
+      "926c54ee672acc6479bebe09b54c0d4e735c13753c7c83042bb3f95ddbe63afe",
+      "0739b2b538fbf98ed77e0701d3394e1f51baef5dcfa73a97d390f3eecae355fa",
+      "e9a84c3c38da76c18d1f990550797e7955b9c4c7b9dc7c52728d5b4b18cac613",
+      "c25342821780c4f5ae5f0eb0640fc4b96ea22bbf064276e9f9a4bdf614da1616",
+      "1065c644c6608203058307fa12f8addf79871291803ae0ccce0f86d5c9542d9d",
+      "b648ec92b6b300af8bb09acec9aeac74cc754f7f5f4375b16b5e439863405751",
+      "d6913e198ce95733ee11aa6bb6cb65d22302d15ac85d6f7f9a5c0068b9909d7d",
+      "83a7de2894765753ffbd1043945dc3c15eb48f7da6067dfd6a92929caacbb2a7"
+     ],
+     "parent_id": [
+      "zz0",
+      "f19b0b0c28742a065bb6832ae3bda27cdbc447464dd5274ae4b10bed036f77a9",
+      "90755b71998b7017af4526591589b9b6347d89edb2276dbf08c2b6dc105fb1ac",
+      "5b69f0bb5e201004c2d50f9fbb34ce03222c4b7d1a3cb0ffc1771a3ab8859927",
+      "5c1dd82cd954cfd786ef098cd9f4cd34e6bfe6d608a274718a2502d765107252",
+      "zz5",
+      "c5e7cfe1f66211817ec236d75b6d9d0db2a11c0e48839223ddcabad25d1f4857",
+      "ad9f1131de1d79472e0ff564befa037a8fd59de54104a65bbd3f3568b3da9f7b",
+      "6add5038892e86fe86eab2b425802974ea6e4474fc0ebc04ad3bf2a06ce35977",
+      "241287e7232415b3948e18c3386e3c86dd0212ef0c63f23b0593e703a44c64c2",
+      "zz10",
+      "b5c45ce929607b415fec10cf0f546630f67184ca06cc9b2b6243df0e7c4145fa",
+      "c25616a9edcbe28bc7660865f2c446142ba34c0fdb914c687c20b64a2cf81ca2",
+      "af933f0a578045aeffd56e552d2b13b22169f235d03fe32a361c2cc53802e073",
+      "f3ab0c23ae11c83bc49de51d375dfece587b4d0a067ce51cf1ac908b803fd62c",
+      "zz15",
+      "aa4340289db5e55f51080b45cb8fd7783c2b38a9c62628571f93874f05cee299",
+      "7010784072be45ed57420283bf04a16f1384201b9e2387ae793fe64a04207cf2",
+      "381a4b3808669a59410f35d215a6c436b0d9bfd52a79143dca5da401396a7346",
+      "ab7f1e8c81c8f5936cfc3e4d299e56cf2f8e19d34f10b56f6d607c8a72fe0879"
+     ]
+    },
+    "schema": [
+     [
+      "cid",
+      "string",
+      true
+     ],
+     [
+      "parent_id",
+      "string",
+      true
+     ]
+    ]
+   },
+   "parent": {
+    "metadata": {},
+    "rows": {
+     "id": [
+      "3c7f55c37d46c625e54885aa483df9bf876a559a575bc636937e8a79c1b4c55c",
+      "f19b0b0c28742a065bb6832ae3bda27cdbc447464dd5274ae4b10bed036f77a9",
+      "90755b71998b7017af4526591589b9b6347d89edb2276dbf08c2b6dc105fb1ac",
+      "5b69f0bb5e201004c2d50f9fbb34ce03222c4b7d1a3cb0ffc1771a3ab8859927",
+      "5c1dd82cd954cfd786ef098cd9f4cd34e6bfe6d608a274718a2502d765107252",
+      "1c0c64fdd3c898b8f133241fdb89040f97d430e904a12f7921da9c5ad8333ba5",
+      "c5e7cfe1f66211817ec236d75b6d9d0db2a11c0e48839223ddcabad25d1f4857",
+      "ad9f1131de1d79472e0ff564befa037a8fd59de54104a65bbd3f3568b3da9f7b",
+      "6add5038892e86fe86eab2b425802974ea6e4474fc0ebc04ad3bf2a06ce35977",
+      "241287e7232415b3948e18c3386e3c86dd0212ef0c63f23b0593e703a44c64c2",
+      "a1a000f35335f5c173151ebfcc2ae98ab784a56a0fada0e21ba8a1c3222cf65b",
+      "b5c45ce929607b415fec10cf0f546630f67184ca06cc9b2b6243df0e7c4145fa",
+      "c25616a9edcbe28bc7660865f2c446142ba34c0fdb914c687c20b64a2cf81ca2",
+      "af933f0a578045aeffd56e552d2b13b22169f235d03fe32a361c2cc53802e073",
+      "f3ab0c23ae11c83bc49de51d375dfece587b4d0a067ce51cf1ac908b803fd62c",
+      "d213c71039bbc024984d30bf106bfe4c8f31103680f226726b70530f47159f2e",
+      "aa4340289db5e55f51080b45cb8fd7783c2b38a9c62628571f93874f05cee299",
+      "7010784072be45ed57420283bf04a16f1384201b9e2387ae793fe64a04207cf2",
+      "381a4b3808669a59410f35d215a6c436b0d9bfd52a79143dca5da401396a7346",
+      "ab7f1e8c81c8f5936cfc3e4d299e56cf2f8e19d34f10b56f6d607c8a72fe0879"
+     ],
+     "note": [
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED"
+     ]
+    },
+    "schema": [
+     [
+      "id",
+      "string",
+      true
+     ],
+     [
+      "note",
+      "string",
+      true
+     ]
+    ]
+   }
+  },
+  "table_kinds": {
+   "child": "mask",
+   "parent": "mask"
+  },
+  "tables": {},
+  "volatile_structure": {
+   "boundary_conversion_ms": "float",
+   "timing_count_positive": false,
+   "timings": "tuple"
+  },
+  "warnings": [
+   "QualityWarning(code='orphan_fk', provider='ns', column='parent_id', detail={'parent_table': 'parent', 'parent_columns': ['id'], 'child_table': 'child', 'child_columns': ['parent_id'], 'orphan_rows': 4})",
+   "QualityWarning(code='out_of_core_caller_managed_residency', provider='', column=None, detail={'shapes': ['a resident pa.Table source'], 'message': \"out-of-core residency bound not guaranteed for this call: a resident pa.Table source. Engine-controlled peak residency is bounded with respect to table row cardinality only when every source is a LazySource and the sink consumes write_batches incrementally without retaining the stream (e.g. ParquetTransactionalSink). To run bounded, pass a LazySource per table plus such a sink; or force execution_mode='full_frame' to run resident at your own memory risk.\"})"
+  ]
+ },
+ "seq_fk": {
+  "execution": {
+   "eviction": "per_table",
+   "execution_mode": "sequential",
+   "loaded_fully_in_memory": true,
+   "outputs_streamed": false,
+   "route_reason": "pure_mask_fk"
+  },
+  "execution_extra_keys": [],
+  "execution_plan": null,
+  "fidelity_reports": null,
+  "quality_metrics": {
+   "execution": {
+    "eviction": "per_table",
+    "execution_mode": "sequential",
+    "loaded_fully_in_memory": true,
+    "outputs_streamed": false,
+    "route_reason": "pure_mask_fk"
+   }
+  },
+  "row_errors": [],
+  "table_kinds": {
+   "child": "mask",
+   "parent": "mask"
+  },
+  "tables": {
+   "child": {
+    "metadata": {
+     "pandas": {
+      "attributes": {},
+      "column_indexes": [],
+      "columns": [
+       {
+        "field_name": "cid",
+        "metadata": null,
+        "name": "cid",
+        "numpy_type": "object",
+        "pandas_type": "unicode"
+       },
+       {
+        "field_name": "parent_id",
+        "metadata": null,
+        "name": "parent_id",
+        "numpy_type": "object",
+        "pandas_type": "unicode"
+       }
+      ],
+      "index_columns": []
+     }
+    },
+    "rows": {
+     "cid": [
+      "a108ea5a5efb141eb5f5577f7d20e6fe755d0c7b0fdf521df43e10ba83c2dce3",
+      "04666901f45aadaaeda6cb07d997c198dfd42e0f4181f4cfe321290ce44f9849",
+      "4794072f578c2c9d61afb88aa4db316e73269b3a87d67834d0c4c2eda7261ad6",
+      "01dc45f031647e8ddc469e71de3fa81442491c1d5fcdd14d2ae49382142d78f6",
+      "882ed437ecd16c222b65a713d54935661036e90e6c1100bf6323b52fed36388e",
+      "0fda9934cc1dac918d38210988ad6ec87a227998d8c0df7bc69133e59634bd87",
+      "051de4773a172e720770eee3f9d5edd6bd28697ee430592f0e1db315a6862ef1",
+      "872fececd4ec4d9a44c1f4093b1d6bbf4e607a0b72b0bb1e2700ec693feeee23",
+      "f08743ad72b86e9c444b82ab46d709dac8cbacfd2f4d123cb8d1c4d503757708",
+      "765c2b6b75047fdde13406d686937264a437c031583fc9c0e0f330f868123445",
+      "8caf47790bbd5f4439f75471ecc8612f5e1b7a87c01764e397467403d85682c4",
+      "1c06661bc8a919f149bc84948639369777d095ad5597950564271df965307812",
+      "926c54ee672acc6479bebe09b54c0d4e735c13753c7c83042bb3f95ddbe63afe",
+      "0739b2b538fbf98ed77e0701d3394e1f51baef5dcfa73a97d390f3eecae355fa",
+      "e9a84c3c38da76c18d1f990550797e7955b9c4c7b9dc7c52728d5b4b18cac613",
+      "c25342821780c4f5ae5f0eb0640fc4b96ea22bbf064276e9f9a4bdf614da1616",
+      "1065c644c6608203058307fa12f8addf79871291803ae0ccce0f86d5c9542d9d",
+      "b648ec92b6b300af8bb09acec9aeac74cc754f7f5f4375b16b5e439863405751",
+      "d6913e198ce95733ee11aa6bb6cb65d22302d15ac85d6f7f9a5c0068b9909d7d",
+      "83a7de2894765753ffbd1043945dc3c15eb48f7da6067dfd6a92929caacbb2a7"
+     ],
+     "parent_id": [
+      "3c7f55c37d46c625e54885aa483df9bf876a559a575bc636937e8a79c1b4c55c",
+      "f19b0b0c28742a065bb6832ae3bda27cdbc447464dd5274ae4b10bed036f77a9",
+      "90755b71998b7017af4526591589b9b6347d89edb2276dbf08c2b6dc105fb1ac",
+      "5b69f0bb5e201004c2d50f9fbb34ce03222c4b7d1a3cb0ffc1771a3ab8859927",
+      "5c1dd82cd954cfd786ef098cd9f4cd34e6bfe6d608a274718a2502d765107252",
+      "1c0c64fdd3c898b8f133241fdb89040f97d430e904a12f7921da9c5ad8333ba5",
+      "c5e7cfe1f66211817ec236d75b6d9d0db2a11c0e48839223ddcabad25d1f4857",
+      "ad9f1131de1d79472e0ff564befa037a8fd59de54104a65bbd3f3568b3da9f7b",
+      "6add5038892e86fe86eab2b425802974ea6e4474fc0ebc04ad3bf2a06ce35977",
+      "241287e7232415b3948e18c3386e3c86dd0212ef0c63f23b0593e703a44c64c2",
+      "a1a000f35335f5c173151ebfcc2ae98ab784a56a0fada0e21ba8a1c3222cf65b",
+      "b5c45ce929607b415fec10cf0f546630f67184ca06cc9b2b6243df0e7c4145fa",
+      "c25616a9edcbe28bc7660865f2c446142ba34c0fdb914c687c20b64a2cf81ca2",
+      "af933f0a578045aeffd56e552d2b13b22169f235d03fe32a361c2cc53802e073",
+      "f3ab0c23ae11c83bc49de51d375dfece587b4d0a067ce51cf1ac908b803fd62c",
+      "d213c71039bbc024984d30bf106bfe4c8f31103680f226726b70530f47159f2e",
+      "aa4340289db5e55f51080b45cb8fd7783c2b38a9c62628571f93874f05cee299",
+      "7010784072be45ed57420283bf04a16f1384201b9e2387ae793fe64a04207cf2",
+      "381a4b3808669a59410f35d215a6c436b0d9bfd52a79143dca5da401396a7346",
+      "ab7f1e8c81c8f5936cfc3e4d299e56cf2f8e19d34f10b56f6d607c8a72fe0879"
+     ]
+    },
+    "schema": [
+     [
+      "cid",
+      "string",
+      true
+     ],
+     [
+      "parent_id",
+      "string",
+      true
+     ]
+    ]
+   },
+   "parent": {
+    "metadata": {
+     "pandas": {
+      "attributes": {},
+      "column_indexes": [],
+      "columns": [
+       {
+        "field_name": "id",
+        "metadata": null,
+        "name": "id",
+        "numpy_type": "object",
+        "pandas_type": "unicode"
+       },
+       {
+        "field_name": "note",
+        "metadata": null,
+        "name": "note",
+        "numpy_type": "object",
+        "pandas_type": "unicode"
+       }
+      ],
+      "index_columns": []
+     }
+    },
+    "rows": {
+     "id": [
+      "3c7f55c37d46c625e54885aa483df9bf876a559a575bc636937e8a79c1b4c55c",
+      "f19b0b0c28742a065bb6832ae3bda27cdbc447464dd5274ae4b10bed036f77a9",
+      "90755b71998b7017af4526591589b9b6347d89edb2276dbf08c2b6dc105fb1ac",
+      "5b69f0bb5e201004c2d50f9fbb34ce03222c4b7d1a3cb0ffc1771a3ab8859927",
+      "5c1dd82cd954cfd786ef098cd9f4cd34e6bfe6d608a274718a2502d765107252",
+      "1c0c64fdd3c898b8f133241fdb89040f97d430e904a12f7921da9c5ad8333ba5",
+      "c5e7cfe1f66211817ec236d75b6d9d0db2a11c0e48839223ddcabad25d1f4857",
+      "ad9f1131de1d79472e0ff564befa037a8fd59de54104a65bbd3f3568b3da9f7b",
+      "6add5038892e86fe86eab2b425802974ea6e4474fc0ebc04ad3bf2a06ce35977",
+      "241287e7232415b3948e18c3386e3c86dd0212ef0c63f23b0593e703a44c64c2",
+      "a1a000f35335f5c173151ebfcc2ae98ab784a56a0fada0e21ba8a1c3222cf65b",
+      "b5c45ce929607b415fec10cf0f546630f67184ca06cc9b2b6243df0e7c4145fa",
+      "c25616a9edcbe28bc7660865f2c446142ba34c0fdb914c687c20b64a2cf81ca2",
+      "af933f0a578045aeffd56e552d2b13b22169f235d03fe32a361c2cc53802e073",
+      "f3ab0c23ae11c83bc49de51d375dfece587b4d0a067ce51cf1ac908b803fd62c",
+      "d213c71039bbc024984d30bf106bfe4c8f31103680f226726b70530f47159f2e",
+      "aa4340289db5e55f51080b45cb8fd7783c2b38a9c62628571f93874f05cee299",
+      "7010784072be45ed57420283bf04a16f1384201b9e2387ae793fe64a04207cf2",
+      "381a4b3808669a59410f35d215a6c436b0d9bfd52a79143dca5da401396a7346",
+      "ab7f1e8c81c8f5936cfc3e4d299e56cf2f8e19d34f10b56f6d607c8a72fe0879"
+     ],
+     "note": [
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED"
+     ]
+    },
+    "schema": [
+     [
+      "id",
+      "string",
+      true
+     ],
+     [
+      "note",
+      "string",
+      true
+     ]
+    ]
+   }
+  },
+  "volatile_structure": {
+   "boundary_conversion_ms": "float",
+   "timing_count_positive": true,
+   "timings": "tuple"
+  },
+  "warnings": []
+ },
+ "seq_fk_explain": {
+  "execution": {
+   "eviction": "per_table",
+   "execution_mode": "sequential",
+   "loaded_fully_in_memory": true,
+   "outputs_streamed": false,
+   "route_reason": "pure_mask_fk"
+  },
+  "execution_extra_keys": [],
+  "execution_plan": {
+   "mode": "pandas_fallback",
+   "reason": "job has FK relationship edges (relationship-route candidate); the live relationship route is chosen by run_pipeline's decide_execution_route (sequential / out-of-core / full-frame), not by this planner.",
+   "rejections": {
+    "chunked": "chunked execution masks one table per run; job declares 2 mask tables (child, parent); chunked_relationships_unsupported: configs with FK relationships cannot run chunked (resolving a child key reads the whole parent frame)",
+    "out_of_core_relationship": "DEFERRED to the live router: job has FK relationship edges (relationship-route candidate); the sequential-vs-out-of-core-vs-full-frame decision is made by run_pipeline's decide_execution_route from job size + out-of-core compatibility, not by this planner (PLANNER_ROUTING_ENABLED stays False).",
+    "sequential_relationship": "DEFERRED to the live router: job has FK relationship edges (relationship-route candidate); the sequential-vs-out-of-core-vs-full-frame decision is made by run_pipeline's decide_execution_route from job size + out-of-core compatibility, not by this planner (PLANNER_ROUTING_ENABLED stays False)."
+   }
+  },
+  "fidelity_reports": null,
+  "quality_metrics": {
+   "execution": {
+    "eviction": "per_table",
+    "execution_mode": "sequential",
+    "loaded_fully_in_memory": true,
+    "outputs_streamed": false,
+    "route_reason": "pure_mask_fk"
+   },
+   "execution_plan": {
+    "mode": "pandas_fallback",
+    "reason": "job has FK relationship edges (relationship-route candidate); the live relationship route is chosen by run_pipeline's decide_execution_route (sequential / out-of-core / full-frame), not by this planner.",
+    "rejections": {
+     "chunked": "chunked execution masks one table per run; job declares 2 mask tables (child, parent); chunked_relationships_unsupported: configs with FK relationships cannot run chunked (resolving a child key reads the whole parent frame)",
+     "out_of_core_relationship": "DEFERRED to the live router: job has FK relationship edges (relationship-route candidate); the sequential-vs-out-of-core-vs-full-frame decision is made by run_pipeline's decide_execution_route from job size + out-of-core compatibility, not by this planner (PLANNER_ROUTING_ENABLED stays False).",
+     "sequential_relationship": "DEFERRED to the live router: job has FK relationship edges (relationship-route candidate); the sequential-vs-out-of-core-vs-full-frame decision is made by run_pipeline's decide_execution_route from job size + out-of-core compatibility, not by this planner (PLANNER_ROUTING_ENABLED stays False)."
+    }
+   }
+  },
+  "row_errors": [],
+  "table_kinds": {
+   "child": "mask",
+   "parent": "mask"
+  },
+  "tables": {
+   "child": {
+    "metadata": {
+     "pandas": {
+      "attributes": {},
+      "column_indexes": [],
+      "columns": [
+       {
+        "field_name": "cid",
+        "metadata": null,
+        "name": "cid",
+        "numpy_type": "object",
+        "pandas_type": "unicode"
+       },
+       {
+        "field_name": "parent_id",
+        "metadata": null,
+        "name": "parent_id",
+        "numpy_type": "object",
+        "pandas_type": "unicode"
+       }
+      ],
+      "index_columns": []
+     }
+    },
+    "rows": {
+     "cid": [
+      "a108ea5a5efb141eb5f5577f7d20e6fe755d0c7b0fdf521df43e10ba83c2dce3",
+      "04666901f45aadaaeda6cb07d997c198dfd42e0f4181f4cfe321290ce44f9849",
+      "4794072f578c2c9d61afb88aa4db316e73269b3a87d67834d0c4c2eda7261ad6",
+      "01dc45f031647e8ddc469e71de3fa81442491c1d5fcdd14d2ae49382142d78f6",
+      "882ed437ecd16c222b65a713d54935661036e90e6c1100bf6323b52fed36388e",
+      "0fda9934cc1dac918d38210988ad6ec87a227998d8c0df7bc69133e59634bd87",
+      "051de4773a172e720770eee3f9d5edd6bd28697ee430592f0e1db315a6862ef1",
+      "872fececd4ec4d9a44c1f4093b1d6bbf4e607a0b72b0bb1e2700ec693feeee23",
+      "f08743ad72b86e9c444b82ab46d709dac8cbacfd2f4d123cb8d1c4d503757708",
+      "765c2b6b75047fdde13406d686937264a437c031583fc9c0e0f330f868123445",
+      "8caf47790bbd5f4439f75471ecc8612f5e1b7a87c01764e397467403d85682c4",
+      "1c06661bc8a919f149bc84948639369777d095ad5597950564271df965307812",
+      "926c54ee672acc6479bebe09b54c0d4e735c13753c7c83042bb3f95ddbe63afe",
+      "0739b2b538fbf98ed77e0701d3394e1f51baef5dcfa73a97d390f3eecae355fa",
+      "e9a84c3c38da76c18d1f990550797e7955b9c4c7b9dc7c52728d5b4b18cac613",
+      "c25342821780c4f5ae5f0eb0640fc4b96ea22bbf064276e9f9a4bdf614da1616",
+      "1065c644c6608203058307fa12f8addf79871291803ae0ccce0f86d5c9542d9d",
+      "b648ec92b6b300af8bb09acec9aeac74cc754f7f5f4375b16b5e439863405751",
+      "d6913e198ce95733ee11aa6bb6cb65d22302d15ac85d6f7f9a5c0068b9909d7d",
+      "83a7de2894765753ffbd1043945dc3c15eb48f7da6067dfd6a92929caacbb2a7"
+     ],
+     "parent_id": [
+      "3c7f55c37d46c625e54885aa483df9bf876a559a575bc636937e8a79c1b4c55c",
+      "f19b0b0c28742a065bb6832ae3bda27cdbc447464dd5274ae4b10bed036f77a9",
+      "90755b71998b7017af4526591589b9b6347d89edb2276dbf08c2b6dc105fb1ac",
+      "5b69f0bb5e201004c2d50f9fbb34ce03222c4b7d1a3cb0ffc1771a3ab8859927",
+      "5c1dd82cd954cfd786ef098cd9f4cd34e6bfe6d608a274718a2502d765107252",
+      "1c0c64fdd3c898b8f133241fdb89040f97d430e904a12f7921da9c5ad8333ba5",
+      "c5e7cfe1f66211817ec236d75b6d9d0db2a11c0e48839223ddcabad25d1f4857",
+      "ad9f1131de1d79472e0ff564befa037a8fd59de54104a65bbd3f3568b3da9f7b",
+      "6add5038892e86fe86eab2b425802974ea6e4474fc0ebc04ad3bf2a06ce35977",
+      "241287e7232415b3948e18c3386e3c86dd0212ef0c63f23b0593e703a44c64c2",
+      "a1a000f35335f5c173151ebfcc2ae98ab784a56a0fada0e21ba8a1c3222cf65b",
+      "b5c45ce929607b415fec10cf0f546630f67184ca06cc9b2b6243df0e7c4145fa",
+      "c25616a9edcbe28bc7660865f2c446142ba34c0fdb914c687c20b64a2cf81ca2",
+      "af933f0a578045aeffd56e552d2b13b22169f235d03fe32a361c2cc53802e073",
+      "f3ab0c23ae11c83bc49de51d375dfece587b4d0a067ce51cf1ac908b803fd62c",
+      "d213c71039bbc024984d30bf106bfe4c8f31103680f226726b70530f47159f2e",
+      "aa4340289db5e55f51080b45cb8fd7783c2b38a9c62628571f93874f05cee299",
+      "7010784072be45ed57420283bf04a16f1384201b9e2387ae793fe64a04207cf2",
+      "381a4b3808669a59410f35d215a6c436b0d9bfd52a79143dca5da401396a7346",
+      "ab7f1e8c81c8f5936cfc3e4d299e56cf2f8e19d34f10b56f6d607c8a72fe0879"
+     ]
+    },
+    "schema": [
+     [
+      "cid",
+      "string",
+      true
+     ],
+     [
+      "parent_id",
+      "string",
+      true
+     ]
+    ]
+   },
+   "parent": {
+    "metadata": {
+     "pandas": {
+      "attributes": {},
+      "column_indexes": [],
+      "columns": [
+       {
+        "field_name": "id",
+        "metadata": null,
+        "name": "id",
+        "numpy_type": "object",
+        "pandas_type": "unicode"
+       },
+       {
+        "field_name": "note",
+        "metadata": null,
+        "name": "note",
+        "numpy_type": "object",
+        "pandas_type": "unicode"
+       }
+      ],
+      "index_columns": []
+     }
+    },
+    "rows": {
+     "id": [
+      "3c7f55c37d46c625e54885aa483df9bf876a559a575bc636937e8a79c1b4c55c",
+      "f19b0b0c28742a065bb6832ae3bda27cdbc447464dd5274ae4b10bed036f77a9",
+      "90755b71998b7017af4526591589b9b6347d89edb2276dbf08c2b6dc105fb1ac",
+      "5b69f0bb5e201004c2d50f9fbb34ce03222c4b7d1a3cb0ffc1771a3ab8859927",
+      "5c1dd82cd954cfd786ef098cd9f4cd34e6bfe6d608a274718a2502d765107252",
+      "1c0c64fdd3c898b8f133241fdb89040f97d430e904a12f7921da9c5ad8333ba5",
+      "c5e7cfe1f66211817ec236d75b6d9d0db2a11c0e48839223ddcabad25d1f4857",
+      "ad9f1131de1d79472e0ff564befa037a8fd59de54104a65bbd3f3568b3da9f7b",
+      "6add5038892e86fe86eab2b425802974ea6e4474fc0ebc04ad3bf2a06ce35977",
+      "241287e7232415b3948e18c3386e3c86dd0212ef0c63f23b0593e703a44c64c2",
+      "a1a000f35335f5c173151ebfcc2ae98ab784a56a0fada0e21ba8a1c3222cf65b",
+      "b5c45ce929607b415fec10cf0f546630f67184ca06cc9b2b6243df0e7c4145fa",
+      "c25616a9edcbe28bc7660865f2c446142ba34c0fdb914c687c20b64a2cf81ca2",
+      "af933f0a578045aeffd56e552d2b13b22169f235d03fe32a361c2cc53802e073",
+      "f3ab0c23ae11c83bc49de51d375dfece587b4d0a067ce51cf1ac908b803fd62c",
+      "d213c71039bbc024984d30bf106bfe4c8f31103680f226726b70530f47159f2e",
+      "aa4340289db5e55f51080b45cb8fd7783c2b38a9c62628571f93874f05cee299",
+      "7010784072be45ed57420283bf04a16f1384201b9e2387ae793fe64a04207cf2",
+      "381a4b3808669a59410f35d215a6c436b0d9bfd52a79143dca5da401396a7346",
+      "ab7f1e8c81c8f5936cfc3e4d299e56cf2f8e19d34f10b56f6d607c8a72fe0879"
+     ],
+     "note": [
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED"
+     ]
+    },
+    "schema": [
+     [
+      "id",
+      "string",
+      true
+     ],
+     [
+      "note",
+      "string",
+      true
+     ]
+    ]
+   }
+  },
+  "volatile_structure": {
+   "boundary_conversion_ms": "float",
+   "timing_count_positive": true,
+   "timings": "tuple"
+  },
+  "warnings": []
+ },
+ "seq_fk_loader": {
+  "execution": {
+   "eviction": "per_table",
+   "execution_mode": "sequential",
+   "loaded_fully_in_memory": false,
+   "outputs_streamed": false,
+   "route_reason": "pure_mask_fk"
+  },
+  "execution_extra_keys": [],
+  "execution_plan": null,
+  "fidelity_reports": null,
+  "quality_metrics": {
+   "execution": {
+    "eviction": "per_table",
+    "execution_mode": "sequential",
+    "loaded_fully_in_memory": false,
+    "outputs_streamed": false,
+    "route_reason": "pure_mask_fk"
+   }
+  },
+  "row_errors": [],
+  "table_kinds": {
+   "child": "mask",
+   "parent": "mask"
+  },
+  "tables": {
+   "child": {
+    "metadata": {
+     "pandas": {
+      "attributes": {},
+      "column_indexes": [],
+      "columns": [
+       {
+        "field_name": "cid",
+        "metadata": null,
+        "name": "cid",
+        "numpy_type": "object",
+        "pandas_type": "unicode"
+       },
+       {
+        "field_name": "parent_id",
+        "metadata": null,
+        "name": "parent_id",
+        "numpy_type": "object",
+        "pandas_type": "unicode"
+       }
+      ],
+      "index_columns": []
+     }
+    },
+    "rows": {
+     "cid": [
+      "a108ea5a5efb141eb5f5577f7d20e6fe755d0c7b0fdf521df43e10ba83c2dce3",
+      "04666901f45aadaaeda6cb07d997c198dfd42e0f4181f4cfe321290ce44f9849",
+      "4794072f578c2c9d61afb88aa4db316e73269b3a87d67834d0c4c2eda7261ad6",
+      "01dc45f031647e8ddc469e71de3fa81442491c1d5fcdd14d2ae49382142d78f6",
+      "882ed437ecd16c222b65a713d54935661036e90e6c1100bf6323b52fed36388e",
+      "0fda9934cc1dac918d38210988ad6ec87a227998d8c0df7bc69133e59634bd87",
+      "051de4773a172e720770eee3f9d5edd6bd28697ee430592f0e1db315a6862ef1",
+      "872fececd4ec4d9a44c1f4093b1d6bbf4e607a0b72b0bb1e2700ec693feeee23",
+      "f08743ad72b86e9c444b82ab46d709dac8cbacfd2f4d123cb8d1c4d503757708",
+      "765c2b6b75047fdde13406d686937264a437c031583fc9c0e0f330f868123445",
+      "8caf47790bbd5f4439f75471ecc8612f5e1b7a87c01764e397467403d85682c4",
+      "1c06661bc8a919f149bc84948639369777d095ad5597950564271df965307812",
+      "926c54ee672acc6479bebe09b54c0d4e735c13753c7c83042bb3f95ddbe63afe",
+      "0739b2b538fbf98ed77e0701d3394e1f51baef5dcfa73a97d390f3eecae355fa",
+      "e9a84c3c38da76c18d1f990550797e7955b9c4c7b9dc7c52728d5b4b18cac613",
+      "c25342821780c4f5ae5f0eb0640fc4b96ea22bbf064276e9f9a4bdf614da1616",
+      "1065c644c6608203058307fa12f8addf79871291803ae0ccce0f86d5c9542d9d",
+      "b648ec92b6b300af8bb09acec9aeac74cc754f7f5f4375b16b5e439863405751",
+      "d6913e198ce95733ee11aa6bb6cb65d22302d15ac85d6f7f9a5c0068b9909d7d",
+      "83a7de2894765753ffbd1043945dc3c15eb48f7da6067dfd6a92929caacbb2a7"
+     ],
+     "parent_id": [
+      "3c7f55c37d46c625e54885aa483df9bf876a559a575bc636937e8a79c1b4c55c",
+      "f19b0b0c28742a065bb6832ae3bda27cdbc447464dd5274ae4b10bed036f77a9",
+      "90755b71998b7017af4526591589b9b6347d89edb2276dbf08c2b6dc105fb1ac",
+      "5b69f0bb5e201004c2d50f9fbb34ce03222c4b7d1a3cb0ffc1771a3ab8859927",
+      "5c1dd82cd954cfd786ef098cd9f4cd34e6bfe6d608a274718a2502d765107252",
+      "1c0c64fdd3c898b8f133241fdb89040f97d430e904a12f7921da9c5ad8333ba5",
+      "c5e7cfe1f66211817ec236d75b6d9d0db2a11c0e48839223ddcabad25d1f4857",
+      "ad9f1131de1d79472e0ff564befa037a8fd59de54104a65bbd3f3568b3da9f7b",
+      "6add5038892e86fe86eab2b425802974ea6e4474fc0ebc04ad3bf2a06ce35977",
+      "241287e7232415b3948e18c3386e3c86dd0212ef0c63f23b0593e703a44c64c2",
+      "a1a000f35335f5c173151ebfcc2ae98ab784a56a0fada0e21ba8a1c3222cf65b",
+      "b5c45ce929607b415fec10cf0f546630f67184ca06cc9b2b6243df0e7c4145fa",
+      "c25616a9edcbe28bc7660865f2c446142ba34c0fdb914c687c20b64a2cf81ca2",
+      "af933f0a578045aeffd56e552d2b13b22169f235d03fe32a361c2cc53802e073",
+      "f3ab0c23ae11c83bc49de51d375dfece587b4d0a067ce51cf1ac908b803fd62c",
+      "d213c71039bbc024984d30bf106bfe4c8f31103680f226726b70530f47159f2e",
+      "aa4340289db5e55f51080b45cb8fd7783c2b38a9c62628571f93874f05cee299",
+      "7010784072be45ed57420283bf04a16f1384201b9e2387ae793fe64a04207cf2",
+      "381a4b3808669a59410f35d215a6c436b0d9bfd52a79143dca5da401396a7346",
+      "ab7f1e8c81c8f5936cfc3e4d299e56cf2f8e19d34f10b56f6d607c8a72fe0879"
+     ]
+    },
+    "schema": [
+     [
+      "cid",
+      "string",
+      true
+     ],
+     [
+      "parent_id",
+      "string",
+      true
+     ]
+    ]
+   },
+   "parent": {
+    "metadata": {
+     "pandas": {
+      "attributes": {},
+      "column_indexes": [],
+      "columns": [
+       {
+        "field_name": "id",
+        "metadata": null,
+        "name": "id",
+        "numpy_type": "object",
+        "pandas_type": "unicode"
+       },
+       {
+        "field_name": "note",
+        "metadata": null,
+        "name": "note",
+        "numpy_type": "object",
+        "pandas_type": "unicode"
+       }
+      ],
+      "index_columns": []
+     }
+    },
+    "rows": {
+     "id": [
+      "3c7f55c37d46c625e54885aa483df9bf876a559a575bc636937e8a79c1b4c55c",
+      "f19b0b0c28742a065bb6832ae3bda27cdbc447464dd5274ae4b10bed036f77a9",
+      "90755b71998b7017af4526591589b9b6347d89edb2276dbf08c2b6dc105fb1ac",
+      "5b69f0bb5e201004c2d50f9fbb34ce03222c4b7d1a3cb0ffc1771a3ab8859927",
+      "5c1dd82cd954cfd786ef098cd9f4cd34e6bfe6d608a274718a2502d765107252",
+      "1c0c64fdd3c898b8f133241fdb89040f97d430e904a12f7921da9c5ad8333ba5",
+      "c5e7cfe1f66211817ec236d75b6d9d0db2a11c0e48839223ddcabad25d1f4857",
+      "ad9f1131de1d79472e0ff564befa037a8fd59de54104a65bbd3f3568b3da9f7b",
+      "6add5038892e86fe86eab2b425802974ea6e4474fc0ebc04ad3bf2a06ce35977",
+      "241287e7232415b3948e18c3386e3c86dd0212ef0c63f23b0593e703a44c64c2",
+      "a1a000f35335f5c173151ebfcc2ae98ab784a56a0fada0e21ba8a1c3222cf65b",
+      "b5c45ce929607b415fec10cf0f546630f67184ca06cc9b2b6243df0e7c4145fa",
+      "c25616a9edcbe28bc7660865f2c446142ba34c0fdb914c687c20b64a2cf81ca2",
+      "af933f0a578045aeffd56e552d2b13b22169f235d03fe32a361c2cc53802e073",
+      "f3ab0c23ae11c83bc49de51d375dfece587b4d0a067ce51cf1ac908b803fd62c",
+      "d213c71039bbc024984d30bf106bfe4c8f31103680f226726b70530f47159f2e",
+      "aa4340289db5e55f51080b45cb8fd7783c2b38a9c62628571f93874f05cee299",
+      "7010784072be45ed57420283bf04a16f1384201b9e2387ae793fe64a04207cf2",
+      "381a4b3808669a59410f35d215a6c436b0d9bfd52a79143dca5da401396a7346",
+      "ab7f1e8c81c8f5936cfc3e4d299e56cf2f8e19d34f10b56f6d607c8a72fe0879"
+     ],
+     "note": [
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED"
+     ]
+    },
+    "schema": [
+     [
+      "id",
+      "string",
+      true
+     ],
+     [
+      "note",
+      "string",
+      true
+     ]
+    ]
+   }
+  },
+  "volatile_structure": {
+   "boundary_conversion_ms": "float",
+   "timing_count_positive": true,
+   "timings": "tuple"
+  },
+  "warnings": []
+ },
+ "seq_fk_orphans_remap": {
+  "execution": {
+   "eviction": "per_table",
+   "execution_mode": "sequential",
+   "loaded_fully_in_memory": true,
+   "outputs_streamed": false,
+   "route_reason": "pure_mask_fk"
+  },
+  "execution_extra_keys": [],
+  "execution_plan": null,
+  "fidelity_reports": null,
+  "quality_metrics": {
+   "execution": {
+    "eviction": "per_table",
+    "execution_mode": "sequential",
+    "loaded_fully_in_memory": true,
+    "outputs_streamed": false,
+    "route_reason": "pure_mask_fk"
+   }
+  },
+  "row_errors": [],
+  "table_kinds": {
+   "child": "mask",
+   "parent": "mask"
+  },
+  "tables": {
+   "child": {
+    "metadata": {
+     "pandas": {
+      "attributes": {},
+      "column_indexes": [],
+      "columns": [
+       {
+        "field_name": "cid",
+        "metadata": null,
+        "name": "cid",
+        "numpy_type": "object",
+        "pandas_type": "unicode"
+       },
+       {
+        "field_name": "parent_id",
+        "metadata": null,
+        "name": "parent_id",
+        "numpy_type": "object",
+        "pandas_type": "unicode"
+       }
+      ],
+      "index_columns": []
+     }
+    },
+    "rows": {
+     "cid": [
+      "a108ea5a5efb141eb5f5577f7d20e6fe755d0c7b0fdf521df43e10ba83c2dce3",
+      "04666901f45aadaaeda6cb07d997c198dfd42e0f4181f4cfe321290ce44f9849",
+      "4794072f578c2c9d61afb88aa4db316e73269b3a87d67834d0c4c2eda7261ad6",
+      "01dc45f031647e8ddc469e71de3fa81442491c1d5fcdd14d2ae49382142d78f6",
+      "882ed437ecd16c222b65a713d54935661036e90e6c1100bf6323b52fed36388e",
+      "0fda9934cc1dac918d38210988ad6ec87a227998d8c0df7bc69133e59634bd87",
+      "051de4773a172e720770eee3f9d5edd6bd28697ee430592f0e1db315a6862ef1",
+      "872fececd4ec4d9a44c1f4093b1d6bbf4e607a0b72b0bb1e2700ec693feeee23",
+      "f08743ad72b86e9c444b82ab46d709dac8cbacfd2f4d123cb8d1c4d503757708",
+      "765c2b6b75047fdde13406d686937264a437c031583fc9c0e0f330f868123445",
+      "8caf47790bbd5f4439f75471ecc8612f5e1b7a87c01764e397467403d85682c4",
+      "1c06661bc8a919f149bc84948639369777d095ad5597950564271df965307812",
+      "926c54ee672acc6479bebe09b54c0d4e735c13753c7c83042bb3f95ddbe63afe",
+      "0739b2b538fbf98ed77e0701d3394e1f51baef5dcfa73a97d390f3eecae355fa",
+      "e9a84c3c38da76c18d1f990550797e7955b9c4c7b9dc7c52728d5b4b18cac613",
+      "c25342821780c4f5ae5f0eb0640fc4b96ea22bbf064276e9f9a4bdf614da1616",
+      "1065c644c6608203058307fa12f8addf79871291803ae0ccce0f86d5c9542d9d",
+      "b648ec92b6b300af8bb09acec9aeac74cc754f7f5f4375b16b5e439863405751",
+      "d6913e198ce95733ee11aa6bb6cb65d22302d15ac85d6f7f9a5c0068b9909d7d",
+      "83a7de2894765753ffbd1043945dc3c15eb48f7da6067dfd6a92929caacbb2a7"
+     ],
+     "parent_id": [
+      "19d7b6d6da6adc3e6e64b978db419de2a456dd657893ea8090da3d1361d16b92",
+      "f19b0b0c28742a065bb6832ae3bda27cdbc447464dd5274ae4b10bed036f77a9",
+      "90755b71998b7017af4526591589b9b6347d89edb2276dbf08c2b6dc105fb1ac",
+      "5b69f0bb5e201004c2d50f9fbb34ce03222c4b7d1a3cb0ffc1771a3ab8859927",
+      "5c1dd82cd954cfd786ef098cd9f4cd34e6bfe6d608a274718a2502d765107252",
+      "6c32ccee806a394ca524df4bbcd88d7246f8d7efbdc08a1f7af2aa59ba8eab18",
+      "c5e7cfe1f66211817ec236d75b6d9d0db2a11c0e48839223ddcabad25d1f4857",
+      "ad9f1131de1d79472e0ff564befa037a8fd59de54104a65bbd3f3568b3da9f7b",
+      "6add5038892e86fe86eab2b425802974ea6e4474fc0ebc04ad3bf2a06ce35977",
+      "241287e7232415b3948e18c3386e3c86dd0212ef0c63f23b0593e703a44c64c2",
+      "d66255ac13f643996634be6c4e992e4a7b04ff9f84d9dae4748771b93a808d88",
+      "b5c45ce929607b415fec10cf0f546630f67184ca06cc9b2b6243df0e7c4145fa",
+      "c25616a9edcbe28bc7660865f2c446142ba34c0fdb914c687c20b64a2cf81ca2",
+      "af933f0a578045aeffd56e552d2b13b22169f235d03fe32a361c2cc53802e073",
+      "f3ab0c23ae11c83bc49de51d375dfece587b4d0a067ce51cf1ac908b803fd62c",
+      "e59efb4f90a06fceea61c4b2d733d576a635077598c54551e243b5cedfde9201",
+      "aa4340289db5e55f51080b45cb8fd7783c2b38a9c62628571f93874f05cee299",
+      "7010784072be45ed57420283bf04a16f1384201b9e2387ae793fe64a04207cf2",
+      "381a4b3808669a59410f35d215a6c436b0d9bfd52a79143dca5da401396a7346",
+      "ab7f1e8c81c8f5936cfc3e4d299e56cf2f8e19d34f10b56f6d607c8a72fe0879"
+     ]
+    },
+    "schema": [
+     [
+      "cid",
+      "string",
+      true
+     ],
+     [
+      "parent_id",
+      "string",
+      true
+     ]
+    ]
+   },
+   "parent": {
+    "metadata": {
+     "pandas": {
+      "attributes": {},
+      "column_indexes": [],
+      "columns": [
+       {
+        "field_name": "id",
+        "metadata": null,
+        "name": "id",
+        "numpy_type": "object",
+        "pandas_type": "unicode"
+       },
+       {
+        "field_name": "note",
+        "metadata": null,
+        "name": "note",
+        "numpy_type": "object",
+        "pandas_type": "unicode"
+       }
+      ],
+      "index_columns": []
+     }
+    },
+    "rows": {
+     "id": [
+      "3c7f55c37d46c625e54885aa483df9bf876a559a575bc636937e8a79c1b4c55c",
+      "f19b0b0c28742a065bb6832ae3bda27cdbc447464dd5274ae4b10bed036f77a9",
+      "90755b71998b7017af4526591589b9b6347d89edb2276dbf08c2b6dc105fb1ac",
+      "5b69f0bb5e201004c2d50f9fbb34ce03222c4b7d1a3cb0ffc1771a3ab8859927",
+      "5c1dd82cd954cfd786ef098cd9f4cd34e6bfe6d608a274718a2502d765107252",
+      "1c0c64fdd3c898b8f133241fdb89040f97d430e904a12f7921da9c5ad8333ba5",
+      "c5e7cfe1f66211817ec236d75b6d9d0db2a11c0e48839223ddcabad25d1f4857",
+      "ad9f1131de1d79472e0ff564befa037a8fd59de54104a65bbd3f3568b3da9f7b",
+      "6add5038892e86fe86eab2b425802974ea6e4474fc0ebc04ad3bf2a06ce35977",
+      "241287e7232415b3948e18c3386e3c86dd0212ef0c63f23b0593e703a44c64c2",
+      "a1a000f35335f5c173151ebfcc2ae98ab784a56a0fada0e21ba8a1c3222cf65b",
+      "b5c45ce929607b415fec10cf0f546630f67184ca06cc9b2b6243df0e7c4145fa",
+      "c25616a9edcbe28bc7660865f2c446142ba34c0fdb914c687c20b64a2cf81ca2",
+      "af933f0a578045aeffd56e552d2b13b22169f235d03fe32a361c2cc53802e073",
+      "f3ab0c23ae11c83bc49de51d375dfece587b4d0a067ce51cf1ac908b803fd62c",
+      "d213c71039bbc024984d30bf106bfe4c8f31103680f226726b70530f47159f2e",
+      "aa4340289db5e55f51080b45cb8fd7783c2b38a9c62628571f93874f05cee299",
+      "7010784072be45ed57420283bf04a16f1384201b9e2387ae793fe64a04207cf2",
+      "381a4b3808669a59410f35d215a6c436b0d9bfd52a79143dca5da401396a7346",
+      "ab7f1e8c81c8f5936cfc3e4d299e56cf2f8e19d34f10b56f6d607c8a72fe0879"
+     ],
+     "note": [
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED"
+     ]
+    },
+    "schema": [
+     [
+      "id",
+      "string",
+      true
+     ],
+     [
+      "note",
+      "string",
+      true
+     ]
+    ]
+   }
+  },
+  "volatile_structure": {
+   "boundary_conversion_ms": "float",
+   "timing_count_positive": true,
+   "timings": "tuple"
+  },
+  "warnings": []
+ },
+ "seq_fk_orphans_warn": {
+  "execution": {
+   "eviction": "per_table",
+   "execution_mode": "sequential",
+   "loaded_fully_in_memory": true,
+   "outputs_streamed": false,
+   "route_reason": "pure_mask_fk"
+  },
+  "execution_extra_keys": [],
+  "execution_plan": null,
+  "fidelity_reports": null,
+  "quality_metrics": {
+   "execution": {
+    "eviction": "per_table",
+    "execution_mode": "sequential",
+    "loaded_fully_in_memory": true,
+    "outputs_streamed": false,
+    "route_reason": "pure_mask_fk"
+   }
+  },
+  "row_errors": [],
+  "table_kinds": {
+   "child": "mask",
+   "parent": "mask"
+  },
+  "tables": {
+   "child": {
+    "metadata": {
+     "pandas": {
+      "attributes": {},
+      "column_indexes": [],
+      "columns": [
+       {
+        "field_name": "cid",
+        "metadata": null,
+        "name": "cid",
+        "numpy_type": "object",
+        "pandas_type": "unicode"
+       },
+       {
+        "field_name": "parent_id",
+        "metadata": null,
+        "name": "parent_id",
+        "numpy_type": "object",
+        "pandas_type": "unicode"
+       }
+      ],
+      "index_columns": []
+     }
+    },
+    "rows": {
+     "cid": [
+      "a108ea5a5efb141eb5f5577f7d20e6fe755d0c7b0fdf521df43e10ba83c2dce3",
+      "04666901f45aadaaeda6cb07d997c198dfd42e0f4181f4cfe321290ce44f9849",
+      "4794072f578c2c9d61afb88aa4db316e73269b3a87d67834d0c4c2eda7261ad6",
+      "01dc45f031647e8ddc469e71de3fa81442491c1d5fcdd14d2ae49382142d78f6",
+      "882ed437ecd16c222b65a713d54935661036e90e6c1100bf6323b52fed36388e",
+      "0fda9934cc1dac918d38210988ad6ec87a227998d8c0df7bc69133e59634bd87",
+      "051de4773a172e720770eee3f9d5edd6bd28697ee430592f0e1db315a6862ef1",
+      "872fececd4ec4d9a44c1f4093b1d6bbf4e607a0b72b0bb1e2700ec693feeee23",
+      "f08743ad72b86e9c444b82ab46d709dac8cbacfd2f4d123cb8d1c4d503757708",
+      "765c2b6b75047fdde13406d686937264a437c031583fc9c0e0f330f868123445",
+      "8caf47790bbd5f4439f75471ecc8612f5e1b7a87c01764e397467403d85682c4",
+      "1c06661bc8a919f149bc84948639369777d095ad5597950564271df965307812",
+      "926c54ee672acc6479bebe09b54c0d4e735c13753c7c83042bb3f95ddbe63afe",
+      "0739b2b538fbf98ed77e0701d3394e1f51baef5dcfa73a97d390f3eecae355fa",
+      "e9a84c3c38da76c18d1f990550797e7955b9c4c7b9dc7c52728d5b4b18cac613",
+      "c25342821780c4f5ae5f0eb0640fc4b96ea22bbf064276e9f9a4bdf614da1616",
+      "1065c644c6608203058307fa12f8addf79871291803ae0ccce0f86d5c9542d9d",
+      "b648ec92b6b300af8bb09acec9aeac74cc754f7f5f4375b16b5e439863405751",
+      "d6913e198ce95733ee11aa6bb6cb65d22302d15ac85d6f7f9a5c0068b9909d7d",
+      "83a7de2894765753ffbd1043945dc3c15eb48f7da6067dfd6a92929caacbb2a7"
+     ],
+     "parent_id": [
+      "zz0",
+      "f19b0b0c28742a065bb6832ae3bda27cdbc447464dd5274ae4b10bed036f77a9",
+      "90755b71998b7017af4526591589b9b6347d89edb2276dbf08c2b6dc105fb1ac",
+      "5b69f0bb5e201004c2d50f9fbb34ce03222c4b7d1a3cb0ffc1771a3ab8859927",
+      "5c1dd82cd954cfd786ef098cd9f4cd34e6bfe6d608a274718a2502d765107252",
+      "zz5",
+      "c5e7cfe1f66211817ec236d75b6d9d0db2a11c0e48839223ddcabad25d1f4857",
+      "ad9f1131de1d79472e0ff564befa037a8fd59de54104a65bbd3f3568b3da9f7b",
+      "6add5038892e86fe86eab2b425802974ea6e4474fc0ebc04ad3bf2a06ce35977",
+      "241287e7232415b3948e18c3386e3c86dd0212ef0c63f23b0593e703a44c64c2",
+      "zz10",
+      "b5c45ce929607b415fec10cf0f546630f67184ca06cc9b2b6243df0e7c4145fa",
+      "c25616a9edcbe28bc7660865f2c446142ba34c0fdb914c687c20b64a2cf81ca2",
+      "af933f0a578045aeffd56e552d2b13b22169f235d03fe32a361c2cc53802e073",
+      "f3ab0c23ae11c83bc49de51d375dfece587b4d0a067ce51cf1ac908b803fd62c",
+      "zz15",
+      "aa4340289db5e55f51080b45cb8fd7783c2b38a9c62628571f93874f05cee299",
+      "7010784072be45ed57420283bf04a16f1384201b9e2387ae793fe64a04207cf2",
+      "381a4b3808669a59410f35d215a6c436b0d9bfd52a79143dca5da401396a7346",
+      "ab7f1e8c81c8f5936cfc3e4d299e56cf2f8e19d34f10b56f6d607c8a72fe0879"
+     ]
+    },
+    "schema": [
+     [
+      "cid",
+      "string",
+      true
+     ],
+     [
+      "parent_id",
+      "string",
+      true
+     ]
+    ]
+   },
+   "parent": {
+    "metadata": {
+     "pandas": {
+      "attributes": {},
+      "column_indexes": [],
+      "columns": [
+       {
+        "field_name": "id",
+        "metadata": null,
+        "name": "id",
+        "numpy_type": "object",
+        "pandas_type": "unicode"
+       },
+       {
+        "field_name": "note",
+        "metadata": null,
+        "name": "note",
+        "numpy_type": "object",
+        "pandas_type": "unicode"
+       }
+      ],
+      "index_columns": []
+     }
+    },
+    "rows": {
+     "id": [
+      "3c7f55c37d46c625e54885aa483df9bf876a559a575bc636937e8a79c1b4c55c",
+      "f19b0b0c28742a065bb6832ae3bda27cdbc447464dd5274ae4b10bed036f77a9",
+      "90755b71998b7017af4526591589b9b6347d89edb2276dbf08c2b6dc105fb1ac",
+      "5b69f0bb5e201004c2d50f9fbb34ce03222c4b7d1a3cb0ffc1771a3ab8859927",
+      "5c1dd82cd954cfd786ef098cd9f4cd34e6bfe6d608a274718a2502d765107252",
+      "1c0c64fdd3c898b8f133241fdb89040f97d430e904a12f7921da9c5ad8333ba5",
+      "c5e7cfe1f66211817ec236d75b6d9d0db2a11c0e48839223ddcabad25d1f4857",
+      "ad9f1131de1d79472e0ff564befa037a8fd59de54104a65bbd3f3568b3da9f7b",
+      "6add5038892e86fe86eab2b425802974ea6e4474fc0ebc04ad3bf2a06ce35977",
+      "241287e7232415b3948e18c3386e3c86dd0212ef0c63f23b0593e703a44c64c2",
+      "a1a000f35335f5c173151ebfcc2ae98ab784a56a0fada0e21ba8a1c3222cf65b",
+      "b5c45ce929607b415fec10cf0f546630f67184ca06cc9b2b6243df0e7c4145fa",
+      "c25616a9edcbe28bc7660865f2c446142ba34c0fdb914c687c20b64a2cf81ca2",
+      "af933f0a578045aeffd56e552d2b13b22169f235d03fe32a361c2cc53802e073",
+      "f3ab0c23ae11c83bc49de51d375dfece587b4d0a067ce51cf1ac908b803fd62c",
+      "d213c71039bbc024984d30bf106bfe4c8f31103680f226726b70530f47159f2e",
+      "aa4340289db5e55f51080b45cb8fd7783c2b38a9c62628571f93874f05cee299",
+      "7010784072be45ed57420283bf04a16f1384201b9e2387ae793fe64a04207cf2",
+      "381a4b3808669a59410f35d215a6c436b0d9bfd52a79143dca5da401396a7346",
+      "ab7f1e8c81c8f5936cfc3e4d299e56cf2f8e19d34f10b56f6d607c8a72fe0879"
+     ],
+     "note": [
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED"
+     ]
+    },
+    "schema": [
+     [
+      "id",
+      "string",
+      true
+     ],
+     [
+      "note",
+      "string",
+      true
+     ]
+    ]
+   }
+  },
+  "volatile_structure": {
+   "boundary_conversion_ms": "float",
+   "timing_count_positive": true,
+   "timings": "tuple"
+  },
+  "warnings": [
+   "QualityWarning(code='orphan_fk', provider='ns', column='parent_id', detail={'parent_table': 'parent', 'parent_columns': ['id'], 'child_table': 'child', 'child_columns': ['parent_id'], 'orphan_rows': 4})"
+  ]
+ },
+ "seq_fk_sink": {
+  "execution": {
+   "eviction": "per_table",
+   "execution_mode": "sequential",
+   "loaded_fully_in_memory": true,
+   "outputs_streamed": true,
+   "route_reason": "pure_mask_fk"
+  },
+  "execution_extra_keys": [],
+  "execution_plan": null,
+  "fidelity_reports": null,
+  "quality_metrics": {
+   "execution": {
+    "eviction": "per_table",
+    "execution_mode": "sequential",
+    "loaded_fully_in_memory": true,
+    "outputs_streamed": true,
+    "route_reason": "pure_mask_fk"
+   }
+  },
+  "row_errors": [],
+  "sink_tables": {
+   "child": {
+    "metadata": {
+     "pandas": {
+      "attributes": {},
+      "column_indexes": [],
+      "columns": [
+       {
+        "field_name": "cid",
+        "metadata": null,
+        "name": "cid",
+        "numpy_type": "object",
+        "pandas_type": "unicode"
+       },
+       {
+        "field_name": "parent_id",
+        "metadata": null,
+        "name": "parent_id",
+        "numpy_type": "object",
+        "pandas_type": "unicode"
+       }
+      ],
+      "index_columns": []
+     }
+    },
+    "rows": {
+     "cid": [
+      "a108ea5a5efb141eb5f5577f7d20e6fe755d0c7b0fdf521df43e10ba83c2dce3",
+      "04666901f45aadaaeda6cb07d997c198dfd42e0f4181f4cfe321290ce44f9849",
+      "4794072f578c2c9d61afb88aa4db316e73269b3a87d67834d0c4c2eda7261ad6",
+      "01dc45f031647e8ddc469e71de3fa81442491c1d5fcdd14d2ae49382142d78f6",
+      "882ed437ecd16c222b65a713d54935661036e90e6c1100bf6323b52fed36388e",
+      "0fda9934cc1dac918d38210988ad6ec87a227998d8c0df7bc69133e59634bd87",
+      "051de4773a172e720770eee3f9d5edd6bd28697ee430592f0e1db315a6862ef1",
+      "872fececd4ec4d9a44c1f4093b1d6bbf4e607a0b72b0bb1e2700ec693feeee23",
+      "f08743ad72b86e9c444b82ab46d709dac8cbacfd2f4d123cb8d1c4d503757708",
+      "765c2b6b75047fdde13406d686937264a437c031583fc9c0e0f330f868123445",
+      "8caf47790bbd5f4439f75471ecc8612f5e1b7a87c01764e397467403d85682c4",
+      "1c06661bc8a919f149bc84948639369777d095ad5597950564271df965307812",
+      "926c54ee672acc6479bebe09b54c0d4e735c13753c7c83042bb3f95ddbe63afe",
+      "0739b2b538fbf98ed77e0701d3394e1f51baef5dcfa73a97d390f3eecae355fa",
+      "e9a84c3c38da76c18d1f990550797e7955b9c4c7b9dc7c52728d5b4b18cac613",
+      "c25342821780c4f5ae5f0eb0640fc4b96ea22bbf064276e9f9a4bdf614da1616",
+      "1065c644c6608203058307fa12f8addf79871291803ae0ccce0f86d5c9542d9d",
+      "b648ec92b6b300af8bb09acec9aeac74cc754f7f5f4375b16b5e439863405751",
+      "d6913e198ce95733ee11aa6bb6cb65d22302d15ac85d6f7f9a5c0068b9909d7d",
+      "83a7de2894765753ffbd1043945dc3c15eb48f7da6067dfd6a92929caacbb2a7"
+     ],
+     "parent_id": [
+      "3c7f55c37d46c625e54885aa483df9bf876a559a575bc636937e8a79c1b4c55c",
+      "f19b0b0c28742a065bb6832ae3bda27cdbc447464dd5274ae4b10bed036f77a9",
+      "90755b71998b7017af4526591589b9b6347d89edb2276dbf08c2b6dc105fb1ac",
+      "5b69f0bb5e201004c2d50f9fbb34ce03222c4b7d1a3cb0ffc1771a3ab8859927",
+      "5c1dd82cd954cfd786ef098cd9f4cd34e6bfe6d608a274718a2502d765107252",
+      "1c0c64fdd3c898b8f133241fdb89040f97d430e904a12f7921da9c5ad8333ba5",
+      "c5e7cfe1f66211817ec236d75b6d9d0db2a11c0e48839223ddcabad25d1f4857",
+      "ad9f1131de1d79472e0ff564befa037a8fd59de54104a65bbd3f3568b3da9f7b",
+      "6add5038892e86fe86eab2b425802974ea6e4474fc0ebc04ad3bf2a06ce35977",
+      "241287e7232415b3948e18c3386e3c86dd0212ef0c63f23b0593e703a44c64c2",
+      "a1a000f35335f5c173151ebfcc2ae98ab784a56a0fada0e21ba8a1c3222cf65b",
+      "b5c45ce929607b415fec10cf0f546630f67184ca06cc9b2b6243df0e7c4145fa",
+      "c25616a9edcbe28bc7660865f2c446142ba34c0fdb914c687c20b64a2cf81ca2",
+      "af933f0a578045aeffd56e552d2b13b22169f235d03fe32a361c2cc53802e073",
+      "f3ab0c23ae11c83bc49de51d375dfece587b4d0a067ce51cf1ac908b803fd62c",
+      "d213c71039bbc024984d30bf106bfe4c8f31103680f226726b70530f47159f2e",
+      "aa4340289db5e55f51080b45cb8fd7783c2b38a9c62628571f93874f05cee299",
+      "7010784072be45ed57420283bf04a16f1384201b9e2387ae793fe64a04207cf2",
+      "381a4b3808669a59410f35d215a6c436b0d9bfd52a79143dca5da401396a7346",
+      "ab7f1e8c81c8f5936cfc3e4d299e56cf2f8e19d34f10b56f6d607c8a72fe0879"
+     ]
+    },
+    "schema": [
+     [
+      "cid",
+      "string",
+      true
+     ],
+     [
+      "parent_id",
+      "string",
+      true
+     ]
+    ]
+   },
+   "parent": {
+    "metadata": {
+     "pandas": {
+      "attributes": {},
+      "column_indexes": [],
+      "columns": [
+       {
+        "field_name": "id",
+        "metadata": null,
+        "name": "id",
+        "numpy_type": "object",
+        "pandas_type": "unicode"
+       },
+       {
+        "field_name": "note",
+        "metadata": null,
+        "name": "note",
+        "numpy_type": "object",
+        "pandas_type": "unicode"
+       }
+      ],
+      "index_columns": []
+     }
+    },
+    "rows": {
+     "id": [
+      "3c7f55c37d46c625e54885aa483df9bf876a559a575bc636937e8a79c1b4c55c",
+      "f19b0b0c28742a065bb6832ae3bda27cdbc447464dd5274ae4b10bed036f77a9",
+      "90755b71998b7017af4526591589b9b6347d89edb2276dbf08c2b6dc105fb1ac",
+      "5b69f0bb5e201004c2d50f9fbb34ce03222c4b7d1a3cb0ffc1771a3ab8859927",
+      "5c1dd82cd954cfd786ef098cd9f4cd34e6bfe6d608a274718a2502d765107252",
+      "1c0c64fdd3c898b8f133241fdb89040f97d430e904a12f7921da9c5ad8333ba5",
+      "c5e7cfe1f66211817ec236d75b6d9d0db2a11c0e48839223ddcabad25d1f4857",
+      "ad9f1131de1d79472e0ff564befa037a8fd59de54104a65bbd3f3568b3da9f7b",
+      "6add5038892e86fe86eab2b425802974ea6e4474fc0ebc04ad3bf2a06ce35977",
+      "241287e7232415b3948e18c3386e3c86dd0212ef0c63f23b0593e703a44c64c2",
+      "a1a000f35335f5c173151ebfcc2ae98ab784a56a0fada0e21ba8a1c3222cf65b",
+      "b5c45ce929607b415fec10cf0f546630f67184ca06cc9b2b6243df0e7c4145fa",
+      "c25616a9edcbe28bc7660865f2c446142ba34c0fdb914c687c20b64a2cf81ca2",
+      "af933f0a578045aeffd56e552d2b13b22169f235d03fe32a361c2cc53802e073",
+      "f3ab0c23ae11c83bc49de51d375dfece587b4d0a067ce51cf1ac908b803fd62c",
+      "d213c71039bbc024984d30bf106bfe4c8f31103680f226726b70530f47159f2e",
+      "aa4340289db5e55f51080b45cb8fd7783c2b38a9c62628571f93874f05cee299",
+      "7010784072be45ed57420283bf04a16f1384201b9e2387ae793fe64a04207cf2",
+      "381a4b3808669a59410f35d215a6c436b0d9bfd52a79143dca5da401396a7346",
+      "ab7f1e8c81c8f5936cfc3e4d299e56cf2f8e19d34f10b56f6d607c8a72fe0879"
+     ],
+     "note": [
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED"
+     ]
+    },
+    "schema": [
+     [
+      "id",
+      "string",
+      true
+     ],
+     [
+      "note",
+      "string",
+      true
+     ]
+    ]
+   }
+  },
+  "table_kinds": {
+   "child": "mask",
+   "parent": "mask"
+  },
+  "tables": {},
+  "volatile_structure": {
+   "boundary_conversion_ms": "float",
+   "timing_count_positive": true,
+   "timings": "tuple"
+  },
+  "warnings": []
+ },
+ "seq_fk_transforms_declined": {
+  "execution": {
+   "eviction": "per_table",
+   "execution_mode": "sequential",
+   "loaded_fully_in_memory": true,
+   "outputs_streamed": false,
+   "route_reason": "pure_mask_fk"
+  },
+  "execution_extra_keys": [
+   "out_of_core_declined"
+  ],
+  "execution_plan": null,
+  "fidelity_reports": null,
+  "quality_metrics": {
+   "execution": {
+    "eviction": "per_table",
+    "execution_mode": "sequential",
+    "loaded_fully_in_memory": true,
+    "out_of_core_declined": "per_table_transforms_present",
+    "outputs_streamed": false,
+    "route_reason": "pure_mask_fk"
+   }
+  },
+  "row_errors": [],
+  "table_kinds": {
+   "child": "mask",
+   "parent": "mask"
+  },
+  "tables": {
+   "child": {
+    "metadata": {
+     "pandas": {
+      "attributes": {},
+      "column_indexes": [],
+      "columns": [
+       {
+        "field_name": "cid",
+        "metadata": null,
+        "name": "cid",
+        "numpy_type": "object",
+        "pandas_type": "unicode"
+       },
+       {
+        "field_name": "parent_id",
+        "metadata": null,
+        "name": "parent_id",
+        "numpy_type": "object",
+        "pandas_type": "unicode"
+       }
+      ],
+      "index_columns": []
+     }
+    },
+    "rows": {
+     "cid": [
+      "a108ea5a5efb141eb5f5577f7d20e6fe755d0c7b0fdf521df43e10ba83c2dce3",
+      "04666901f45aadaaeda6cb07d997c198dfd42e0f4181f4cfe321290ce44f9849",
+      "4794072f578c2c9d61afb88aa4db316e73269b3a87d67834d0c4c2eda7261ad6",
+      "01dc45f031647e8ddc469e71de3fa81442491c1d5fcdd14d2ae49382142d78f6",
+      "882ed437ecd16c222b65a713d54935661036e90e6c1100bf6323b52fed36388e",
+      "0fda9934cc1dac918d38210988ad6ec87a227998d8c0df7bc69133e59634bd87",
+      "051de4773a172e720770eee3f9d5edd6bd28697ee430592f0e1db315a6862ef1",
+      "872fececd4ec4d9a44c1f4093b1d6bbf4e607a0b72b0bb1e2700ec693feeee23",
+      "f08743ad72b86e9c444b82ab46d709dac8cbacfd2f4d123cb8d1c4d503757708",
+      "765c2b6b75047fdde13406d686937264a437c031583fc9c0e0f330f868123445",
+      "8caf47790bbd5f4439f75471ecc8612f5e1b7a87c01764e397467403d85682c4",
+      "1c06661bc8a919f149bc84948639369777d095ad5597950564271df965307812",
+      "926c54ee672acc6479bebe09b54c0d4e735c13753c7c83042bb3f95ddbe63afe",
+      "0739b2b538fbf98ed77e0701d3394e1f51baef5dcfa73a97d390f3eecae355fa",
+      "e9a84c3c38da76c18d1f990550797e7955b9c4c7b9dc7c52728d5b4b18cac613",
+      "c25342821780c4f5ae5f0eb0640fc4b96ea22bbf064276e9f9a4bdf614da1616",
+      "1065c644c6608203058307fa12f8addf79871291803ae0ccce0f86d5c9542d9d",
+      "b648ec92b6b300af8bb09acec9aeac74cc754f7f5f4375b16b5e439863405751",
+      "d6913e198ce95733ee11aa6bb6cb65d22302d15ac85d6f7f9a5c0068b9909d7d",
+      "83a7de2894765753ffbd1043945dc3c15eb48f7da6067dfd6a92929caacbb2a7"
+     ],
+     "parent_id": [
+      "3c7f55c37d46c625e54885aa483df9bf876a559a575bc636937e8a79c1b4c55c",
+      "f19b0b0c28742a065bb6832ae3bda27cdbc447464dd5274ae4b10bed036f77a9",
+      "90755b71998b7017af4526591589b9b6347d89edb2276dbf08c2b6dc105fb1ac",
+      "5b69f0bb5e201004c2d50f9fbb34ce03222c4b7d1a3cb0ffc1771a3ab8859927",
+      "5c1dd82cd954cfd786ef098cd9f4cd34e6bfe6d608a274718a2502d765107252",
+      "1c0c64fdd3c898b8f133241fdb89040f97d430e904a12f7921da9c5ad8333ba5",
+      "c5e7cfe1f66211817ec236d75b6d9d0db2a11c0e48839223ddcabad25d1f4857",
+      "ad9f1131de1d79472e0ff564befa037a8fd59de54104a65bbd3f3568b3da9f7b",
+      "6add5038892e86fe86eab2b425802974ea6e4474fc0ebc04ad3bf2a06ce35977",
+      "241287e7232415b3948e18c3386e3c86dd0212ef0c63f23b0593e703a44c64c2",
+      "a1a000f35335f5c173151ebfcc2ae98ab784a56a0fada0e21ba8a1c3222cf65b",
+      "b5c45ce929607b415fec10cf0f546630f67184ca06cc9b2b6243df0e7c4145fa",
+      "c25616a9edcbe28bc7660865f2c446142ba34c0fdb914c687c20b64a2cf81ca2",
+      "af933f0a578045aeffd56e552d2b13b22169f235d03fe32a361c2cc53802e073",
+      "f3ab0c23ae11c83bc49de51d375dfece587b4d0a067ce51cf1ac908b803fd62c",
+      "d213c71039bbc024984d30bf106bfe4c8f31103680f226726b70530f47159f2e",
+      "aa4340289db5e55f51080b45cb8fd7783c2b38a9c62628571f93874f05cee299",
+      "7010784072be45ed57420283bf04a16f1384201b9e2387ae793fe64a04207cf2",
+      "381a4b3808669a59410f35d215a6c436b0d9bfd52a79143dca5da401396a7346",
+      "ab7f1e8c81c8f5936cfc3e4d299e56cf2f8e19d34f10b56f6d607c8a72fe0879"
+     ]
+    },
+    "schema": [
+     [
+      "cid",
+      "string",
+      true
+     ],
+     [
+      "parent_id",
+      "string",
+      true
+     ]
+    ]
+   },
+   "parent": {
+    "metadata": {
+     "pandas": {
+      "attributes": {},
+      "column_indexes": [],
+      "columns": [
+       {
+        "field_name": "id",
+        "metadata": null,
+        "name": "id",
+        "numpy_type": "object",
+        "pandas_type": "unicode"
+       },
+       {
+        "field_name": "note",
+        "metadata": null,
+        "name": "note",
+        "numpy_type": "object",
+        "pandas_type": "unicode"
+       }
+      ],
+      "index_columns": []
+     }
+    },
+    "rows": {
+     "id": [
+      "3c7f55c37d46c625e54885aa483df9bf876a559a575bc636937e8a79c1b4c55c",
+      "f19b0b0c28742a065bb6832ae3bda27cdbc447464dd5274ae4b10bed036f77a9",
+      "90755b71998b7017af4526591589b9b6347d89edb2276dbf08c2b6dc105fb1ac",
+      "5b69f0bb5e201004c2d50f9fbb34ce03222c4b7d1a3cb0ffc1771a3ab8859927",
+      "5c1dd82cd954cfd786ef098cd9f4cd34e6bfe6d608a274718a2502d765107252",
+      "1c0c64fdd3c898b8f133241fdb89040f97d430e904a12f7921da9c5ad8333ba5",
+      "c5e7cfe1f66211817ec236d75b6d9d0db2a11c0e48839223ddcabad25d1f4857",
+      "ad9f1131de1d79472e0ff564befa037a8fd59de54104a65bbd3f3568b3da9f7b",
+      "6add5038892e86fe86eab2b425802974ea6e4474fc0ebc04ad3bf2a06ce35977",
+      "241287e7232415b3948e18c3386e3c86dd0212ef0c63f23b0593e703a44c64c2",
+      "a1a000f35335f5c173151ebfcc2ae98ab784a56a0fada0e21ba8a1c3222cf65b",
+      "b5c45ce929607b415fec10cf0f546630f67184ca06cc9b2b6243df0e7c4145fa",
+      "c25616a9edcbe28bc7660865f2c446142ba34c0fdb914c687c20b64a2cf81ca2",
+      "af933f0a578045aeffd56e552d2b13b22169f235d03fe32a361c2cc53802e073",
+      "f3ab0c23ae11c83bc49de51d375dfece587b4d0a067ce51cf1ac908b803fd62c",
+      "d213c71039bbc024984d30bf106bfe4c8f31103680f226726b70530f47159f2e",
+      "aa4340289db5e55f51080b45cb8fd7783c2b38a9c62628571f93874f05cee299",
+      "7010784072be45ed57420283bf04a16f1384201b9e2387ae793fe64a04207cf2",
+      "381a4b3808669a59410f35d215a6c436b0d9bfd52a79143dca5da401396a7346",
+      "ab7f1e8c81c8f5936cfc3e4d299e56cf2f8e19d34f10b56f6d607c8a72fe0879"
+     ],
+     "note": [
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED",
+      "REDACTED"
+     ]
+    },
+    "schema": [
+     [
+      "id",
+      "string",
+      true
+     ],
+     [
+      "note",
+      "string",
+      true
+     ]
+    ]
+   }
+  },
+  "volatile_structure": {
+   "boundary_conversion_ms": "float",
+   "timing_count_positive": true,
+   "timings": "tuple"
+  },
+  "warnings": []
+ }
+}

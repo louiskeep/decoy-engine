@@ -419,7 +419,14 @@ decomposition target stands.
 Engine-owned transforms: +1 LOC (675 -> 676), the prepared-input contract
 docstring on `PandasExecutionAdapter.run`. No logic added.
 
-## `src/decoy_engine/execution/_pipeline.py` (census 684 at move time)
+## `src/decoy_engine/execution/_pipeline.py` (census 684 at move time; entry deleted by R3)
+
+R3 (2026-10-10): the resolve and route phases moved into `_pipeline_context.py`
+(`build_run_context`, `decide_route`), the bounded routes dispatch through
+`_pipeline_route_dispatch.py`, and the full_frame route (the old inline `with publish:`
+tail) moved into `_pipeline_full_frame.py`, taking the file from 684 to 306 LOC. At or
+under GOAL the entry is deleted, as the paragraph below describes for the earlier crossing.
+
 
 gen-5a-faker dennis re-gate (2026-09-17): `_pipeline.py` carried an
 allowlist entry through DE-03 / DE-02 / Task 4.5 (routing-dispatch
@@ -670,3 +677,10 @@ Task 5.2 FF1 (2026-09-12): 657 -> 722 for the sub_floor_span redact|synthetic
 policy (deterministic valid-format synthetic PAN/NPI with checksum recompute)
 and the FF1-keyed span path. The `_text_mask_sub_floor.py` decomposition above
 is the standing target when this module is next touched.
+
+## `src/decoy_engine/execution/_unified_slice.py` (census 605 at move time; entry deleted by R3)
+
+R3 (2026-10-10): the `locals()` forwarding (`run_from_pipeline_locals`, its two name tables and the
+import-time `_assert_forwarding_covers_signature`) was deleted when `maybe_run_unified_slice` began
+taking the typed run context and routing decision, taking the file from 605 to 469 LOC. At or under
+GOAL the entry is deleted.

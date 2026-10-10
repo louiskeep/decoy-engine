@@ -25,8 +25,9 @@ def test_module_sizes_hold_their_bars() -> None:
     assert size_sentry._loc(EXEC / NEW) <= 600
     assert f"src/decoy_engine/execution/{NEW}" not in size_sentry.ALLOWLIST
     assert size_sentry._loc(EXEC / "_planner.py") <= 600
-    assert size_sentry.ALLOWLIST["src/decoy_engine/execution/_pipeline.py"] == 684
-    assert size_sentry._loc(EXEC / "_pipeline.py") == 684
+    # R3 (run-context refactor) restructured _pipeline.py; the B2/B6a/B6b no-net-change pin is superseded by the census sentry.
+    assert "src/decoy_engine/execution/_pipeline.py" not in size_sentry.ALLOWLIST
+    assert size_sentry._loc(EXEC / "_pipeline.py") == 306
 
 
 def test_the_new_module_is_guarded_by_the_seam_disconnection_sentry() -> None:

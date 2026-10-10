@@ -88,8 +88,6 @@ ALLOWLIST: dict[str, int] = {
     "src/decoy_engine/execution/_mem_telemetry.py": 762,
     # chunk-parity invariant text and admission gate calls; dense exception.
     "src/decoy_engine/execution/_chunked.py": 626,
-    # shadow coordinator + source-shaped reconstruction; split the admitted-execution half.
-    "src/decoy_engine/execution/_unified_slice.py": 605,
     # dispatch entry plus the table-keyed params, the job-seed hand-off and the eager string-pool
     # check for the position-keyed faker; dense exception, the pool check itself lives in _chunk_masking.
     "src/decoy_engine/execution/native/_chunked_entry.py": 653,
@@ -97,8 +95,6 @@ ALLOWLIST: dict[str, int] = {
     "src/decoy_engine/execution/_chunked_fk.py": 970,
     # fail-closed output projection and corpus pinning on the mask route; split the FK-resolution helpers.
     "src/decoy_engine/execution/_pandas_adapter.py": 697,
-    # routing dispatch; logic already lives in the _transforms_* siblings, dense reviewed exception.
-    "src/decoy_engine/execution/_pipeline.py": 684,
     # resident Arrow type resolution; move it into its own module with the next operator gate.
     "src/decoy_engine/execution/native/_requirements.py": 647,
     # sequential FK route threading; split the per-table mask/quarantine loop.
