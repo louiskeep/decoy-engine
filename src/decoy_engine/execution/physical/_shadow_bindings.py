@@ -306,6 +306,12 @@ def execution_binding_for_slice_node(
             # route too (native_keyed_hash's own guard); a namespace-less
             # hash column never reaches here as a "native"-admitted node.
             return None
+    elif strategy == "fpe":
+        # fpe is mask-keyed and namespaced; a checksum mode declines to the oracle (C6a §3g),
+        # so leaving the node unbound here is what sends a checksum column (and a namespace-less
+        # one, which the oracle raises `fpe_requires_namespace` for) to the full-frame oracle.
+        if caps.key_source is None or namespace is None or cfg.get("checksum"):
+            return None
     elif strategy == "faker":
         # JC-5 already guarantees deterministic + reuse + a namespace + a resolved pool_size;
         # the position-keyed variant needs no configured namespace (it defaults per column).

@@ -29,6 +29,7 @@ def test_backend_map_values_use_the_chunked_vocabulary() -> None:
 def test_backend_map_pins_each_operator() -> None:
     assert dict(admission.BACKEND_BY_OPERATOR_ID) == {
         "native_keyed_hash": RUST_COMPANION,
+        "native_fpe": RUST_COMPANION,
         "native_categorical": RUST_COMPANION,
         "native_bucket_perturb": RUST_COMPANION,
         "native_date_shift": RUST_COMPANION,

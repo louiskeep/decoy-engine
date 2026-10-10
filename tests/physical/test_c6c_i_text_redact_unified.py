@@ -125,7 +125,7 @@ def test_a_text_redact_only_table_runs_with_the_compiled_companion_absent(
     monkeypatch.setattr(
         _unified_slice_admission,
         "native_kernel_availability",
-        lambda: KernelAvailability(crypto=False, index=False, raw_hex=False),
+        lambda: KernelAvailability(crypto=False, index=False, raw_hex=False, fpe=False),
     )
     table = pa.table({"s": pa.array(CORPUS, pa.string())})
     nodes = lane_nodes(tmp_path, table, [tr_col("s")], monkeypatch)

@@ -88,6 +88,54 @@ def _good_derive_hex_raw_batch() -> Callable[..., pa.Array]:
     return _fn
 
 
+def _good_fpe_transform_batch() -> Callable[..., object]:
+    """A reference-backed `fpe_transform_batch`: the C6a probe runs one FPE_KAT vector through
+    it, so the fake reproduces the real FF1 output via the shipped value primitive."""
+    from decoy_engine.determinism import derive
+    from decoy_engine.errors import FpeUnencryptableError
+    from decoy_engine.execution._strategies._fpe import (
+        FF1_KEY_LABEL,
+        strategy_code_for_unencryptable,
+    )
+    from decoy_engine.kernel._scalar import _array_to_pylist, _is_missing
+    from decoy_engine.transforms.fpe import fpe_decrypt_value, fpe_encrypt_value
+
+    def _fn(
+        array: pa.Array,
+        *,
+        mask_key: bytes,
+        namespace: str,
+        tweak: bytes,
+        charset: str,
+        preserve_separators: bool,
+        validate_luhn: bool,
+        forward: bool,
+        native_threads: object = None,
+    ) -> tuple[pa.Array, list[tuple[int, str]]]:
+        key = derive(mask_key, namespace, FF1_KEY_LABEL)
+        transform = fpe_encrypt_value if forward else fpe_decrypt_value
+        out: list[object] = []
+        errors: list[tuple[int, str]] = []
+        for i, value in enumerate(_array_to_pylist(array)):
+            if _is_missing(value):
+                out.append(None)
+                continue
+            text = str(value)
+            if text == "":
+                out.append("")
+                continue
+            try:
+                out.append(
+                    transform(text, key, charset, tweak, preserve_separators, validate_luhn, None)
+                )
+            except FpeUnencryptableError as exc:
+                out.append(None)
+                errors.append((i, strategy_code_for_unencryptable(exc)))
+        return pa.array(out, type=pa.string()), errors
+
+    return _fn
+
+
 def _install_fake_kernel(
     monkeypatch: pytest.MonkeyPatch,
     *,
@@ -96,6 +144,7 @@ def _install_fake_kernel(
     derive_batch: Callable[..., pa.Array] | object | None = None,
     derive_index_batch: Callable[..., pa.Array] | object | None = None,
     derive_hex_raw_batch: Callable[..., pa.Array] | object | None = None,
+    fpe_transform_batch: Callable[..., object] | object | None = None,
 ) -> None:
     """Inject a stand-in `decoy_engine_native._kernel` via `sys.modules`.
 
@@ -123,6 +172,10 @@ def _install_fake_kernel(
     if derive_hex_raw_batch is not _NO_ENTRY_POINT:
         fake_kernel.derive_hex_raw_batch = (  # type: ignore[attr-defined]
             derive_hex_raw_batch or _good_derive_hex_raw_batch()
+        )
+    if fpe_transform_batch is not _NO_ENTRY_POINT:
+        fake_kernel.fpe_transform_batch = (  # type: ignore[attr-defined]
+            fpe_transform_batch or _good_fpe_transform_batch()
         )
     fake_pkg = types.ModuleType("decoy_engine_native")
     fake_pkg._kernel = fake_kernel  # type: ignore[attr-defined]
@@ -283,6 +336,20 @@ def test_load_error_when_derive_hex_raw_batch_entry_point_missing(
     # valid abi-2 build for the hash/index routes, but incomplete. The hash and
     # index KATs pass, but the overall status must still be not-ok.
     _install_fake_kernel(monkeypatch, derive_hex_raw_batch=_NO_ENTRY_POINT)
+    status = native_companion_status()
+    assert status.present is True
+    assert status.ok is False
+    assert status.reason == "load-error"
+    assert status.abi_actual == _EXPECTED_ABI_VERSION
+    assert isinstance(status.cause, AttributeError)
+
+
+def test_load_error_when_fpe_transform_batch_entry_point_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A companion built before the FF1 kernel existed (abi-2): the hash/index/raw-hex KATs
+    # pass, but the FPE kernel is missing, so the overall status must still be not-ok (C6a).
+    _install_fake_kernel(monkeypatch, fpe_transform_batch=_NO_ENTRY_POINT)
     status = native_companion_status()
     assert status.present is True
     assert status.ok is False

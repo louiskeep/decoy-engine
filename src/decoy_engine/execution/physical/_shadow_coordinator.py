@@ -52,9 +52,8 @@ path slice 5a uses, reuses THIS class's own per-node loop for the mask half
 stitches the two outputs via the shared `execution._stitch` helper. A shape
 that dispatch does not admit (a generate->mask FK coupling, an OOC mask
 driver, ...) declines coded rather than silently masking only part of the
-job -- see `_shadow_mixed.py` for the full contract.
-
-Task 4.6 slice 6 (the LAST masking slice) wraps `FullFrameAdapter` via `_shadow_full_frame.py`.
+job -- see `_shadow_mixed.py` for the full contract. Task 4.6 slice 6 (the LAST
+masking slice) wraps `FullFrameAdapter` via `_shadow_full_frame.py`.
 """
 
 from __future__ import annotations
@@ -78,6 +77,7 @@ from decoy_engine.execution.physical._plan import ExecutionBinding, PhysicalPlan
 from decoy_engine.execution.physical._shadow_assembly import (
     assemble_column,
     batch_when_mask,
+    fpe_node_warnings,
     rebase_row_errors,
 )
 from decoy_engine.execution.physical._shadow_context import ShadowContext
@@ -403,6 +403,7 @@ class ShadowCoordinator:
                         )
 
                     columns[column] = assemble_column(node.strategy, parts)
+                    warnings.extend(fpe_node_warnings(binding, source, column))
 
             if columns:
                 # Assemble in SOURCE-SCHEMA order -- the pandas full-frame

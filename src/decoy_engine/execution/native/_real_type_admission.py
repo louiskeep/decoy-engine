@@ -58,8 +58,24 @@ C1_PROVIDER_ALLOWLIST: Final[frozenset[str]] = OPERATORS["faker"].provider_allow
 # chunked route keeps its own source-type gates with coded reasons (the unified domain for
 # these four happens to be `{string}` too, but the two routes are gated separately).
 _STRING_SOURCE_STRATEGIES: Final = frozenset(
-    {"categorical", "bucket_perturb", "date_shift", "text_redact"}
+    {"categorical", "bucket_perturb", "date_shift", "text_redact", "fpe"}
 )
+
+
+def _fpe_checksum_decline(config: dict[str, Any], table: str, column: str) -> str | None:
+    """The coded reason an fpe column declines to the oracle for a configured `checksum` mode,
+    or None. Checksum modes stay on the Python path (C6a plan §3g): the compiled FF1 kernel has
+    no checksum path, so a column with `checksum` set runs the whole table on the oracle."""
+    for table_cfg in config.get("tables") or ():
+        if not isinstance(table_cfg, dict) or table_cfg.get("name") != table:
+            continue
+        for col in table_cfg.get("columns") or ():
+            if not isinstance(col, dict) or col.get("name") != column:
+                continue
+            pc = col.get("provider_config")
+            if isinstance(pc, dict) and pc.get("checksum"):
+                return f"fpe_checksum_not_native:{column}"
+    return None
 
 
 def _providers(config: dict[str, Any], table: str) -> dict[str, Any]:
@@ -129,6 +145,12 @@ def real_type_rejection(
     providers = _providers(config, table)
     group_by_of = group_by_columns(config, table)
     for node in node_routes:
+        if node.strategy == "fpe":
+            # A checksum mode declines before the string-source check below runs, so a checksum
+            # column over a non-string source still reports the checksum reason (both decline).
+            checksum_reason = _fpe_checksum_decline(config, table, node.column)
+            if checksum_reason is not None:
+                return checksum_reason
         if node.strategy == "hash":
             reason = hash_config_rejection(node.column, table, profile, resident_sources=resident)
             if reason is not None:

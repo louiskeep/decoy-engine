@@ -31,7 +31,11 @@ from __future__ import annotations
 
 import sys
 
-_EXPECTED_ABI_VERSION = "decoy-native-abi-2"
+# Must track `decoy_engine.execution.native._crypto_ext._EXPECTED_ABI_VERSION`. This literal is
+# duplicated (not imported) because the wheel-smoke env installs only the companion wheel, not the
+# core. `tests/native/test_parity_smoke_abi_sync.py` fails in the core-present regression gate if the
+# two ever drift, so bump BOTH when the ABI changes.
+_EXPECTED_ABI_VERSION = "decoy-native-abi-3"
 _MASK_KEY = bytes(range(32))
 
 _HASH_EXPECTED = [

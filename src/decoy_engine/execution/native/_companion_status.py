@@ -30,8 +30,9 @@ from typing import Literal, TypeAlias
 import pyarrow as pa
 
 from decoy_engine.errors import DecoyError
+from decoy_engine.transforms.fpe import FF1_TWEAK_SCOPE_COLUMN, build_ff1_tweak
 
-from ._crypto_ext import _EXPECTED_ABI_VERSION, HASH_KAT
+from ._crypto_ext import _EXPECTED_ABI_VERSION, FPE_KAT, HASH_KAT
 from ._group_key_ext import RAW_HEX_KAT
 from ._index_ext import INDEX_KAT
 
@@ -218,6 +219,48 @@ def _probe_raw_hex_kat(kernel: object, abi_actual: str) -> tuple[Reason, BaseExc
     )
 
 
+def _probe_fpe_kat(kernel: object, abi_actual: str) -> tuple[Reason, BaseException] | None:
+    """Run `FPE_KAT[0]` through `kernel.fpe_transform_batch`, mirroring
+    `load_compiled_fpe_kernel`'s load-time FF1 self-test exactly (same vector, same
+    tweak framing, same Arrow-type-and-value check). A companion built before the FF1
+    kernel existed (abi-2) lacks `fpe_transform_batch` entirely, caught here as a
+    `load-error`; a built-but-wrong kernel reproduces the wrong ciphertext and is
+    classified `kat-corrupt`, so the overall probe never reports `present-ok` for it."""
+    probe = FPE_KAT[0]
+    charset, preserve_sep, validate_luhn, _checksum = probe.config._resolve()
+    tweak = build_ff1_tweak(FF1_TWEAK_SCOPE_COLUMN, probe.tweak_column)
+    try:
+        fpe_fn = kernel.fpe_transform_batch  # type: ignore[attr-defined]
+        out, errors = fpe_fn(
+            pa.array([probe.plaintext], type=pa.string()),
+            mask_key=probe.mask_key,
+            namespace=probe.namespace,
+            tweak=tweak,
+            charset=charset,
+            preserve_separators=preserve_sep,
+            validate_luhn=validate_luhn,
+            forward=True,
+            native_threads=1,
+        )
+    except Exception as exc:
+        return "load-error", exc
+    reproduces = (
+        isinstance(out, pa.Array)
+        and out.type == pa.string()
+        and out.to_pylist() == [probe.ciphertext]
+        and len(errors) == 0
+    )
+    if reproduces:
+        return None
+    return "kat-corrupt", NativeCompanionCheckError(
+        "the decoy-engine-native companion's fpe_transform_batch reproduced the "
+        "wrong value for the pinned FPE_KAT known-answer vector",
+        reason="kat-corrupt",
+        abi_expected=_EXPECTED_ABI_VERSION,
+        abi_actual=abi_actual,
+    )
+
+
 def _absent_status(exc: ModuleNotFoundError | None) -> NativeCompanionStatus:
     cause: BaseException = exc or NativeCompanionCheckError(
         "the decoy-engine-native companion is not installed (no 'native' extra "
@@ -252,9 +295,9 @@ def _load_error_status(exc: BaseException) -> NativeCompanionStatus:
 def native_companion_status() -> NativeCompanionStatus:
     """Probe the optional `decoy-engine-native` companion; never raises.
 
-    Drives the same staged check the three private loaders perform -- import,
-    ABI-tag compare, known-answer self-test -- for the crypto, index, AND
-    raw-hex kernels, so a partially-capable companion (only some kernels
+    Drives the same staged check the private loaders perform -- import,
+    ABI-tag compare, known-answer self-test -- for the crypto, index, raw-hex
+    AND fpe kernels, so a partially-capable companion (only some kernels
     actually work) is reported `ok=False`, never `present-ok`. Every failure stage
     populates `cause`: a real loader exception is preserved as caught; a
     stage with no natural exception (absent, ABI mismatch, a self-test that
@@ -317,6 +360,7 @@ def native_companion_status() -> NativeCompanionStatus:
         _probe_hash_kat(kernel, reported_abi),
         _probe_index_kat(kernel, reported_abi),
         _probe_raw_hex_kat(kernel, reported_abi),
+        _probe_fpe_kat(kernel, reported_abi),
     ):
         if outcome is not None:
             kat_reason, kat_cause = outcome
@@ -352,12 +396,13 @@ class KernelAvailability:
     on an otherwise-valid abi-2 build) has `crypto`/`index` True but `raw_hex`
     False -- so a hash-only or categorical/bucket_perturb table keeps native
     acceleration while only group_key declines to the oracle. `native_companion_
-    status().ok` is the AND of all three (fully-capable); this is the per-kernel
+    status().ok` is the AND of all four (fully-capable); this is the per-kernel
     breakdown a per-operator gate needs instead."""
 
     crypto: bool
     index: bool
     raw_hex: bool
+    fpe: bool
 
 
 def native_kernel_availability() -> KernelAvailability:
@@ -370,20 +415,21 @@ def native_kernel_availability() -> KernelAvailability:
     try:
         spec = importlib.util.find_spec("decoy_engine_native")
     except Exception:
-        return KernelAvailability(crypto=False, index=False, raw_hex=False)
+        return KernelAvailability(crypto=False, index=False, raw_hex=False, fpe=False)
     if spec is None:
-        return KernelAvailability(crypto=False, index=False, raw_hex=False)
+        return KernelAvailability(crypto=False, index=False, raw_hex=False, fpe=False)
     try:
         kernel = importlib.import_module("decoy_engine_native._kernel")
         reported_abi = kernel.abi_version()
     except Exception:
-        return KernelAvailability(crypto=False, index=False, raw_hex=False)
+        return KernelAvailability(crypto=False, index=False, raw_hex=False, fpe=False)
     if reported_abi != _EXPECTED_ABI_VERSION:
-        return KernelAvailability(crypto=False, index=False, raw_hex=False)
+        return KernelAvailability(crypto=False, index=False, raw_hex=False, fpe=False)
     return KernelAvailability(
         crypto=_probe_hash_kat(kernel, reported_abi) is None,
         index=_probe_index_kat(kernel, reported_abi) is None,
         raw_hex=_probe_raw_hex_kat(kernel, reported_abi) is None,
+        fpe=_probe_fpe_kat(kernel, reported_abi) is None,
     )
 
 

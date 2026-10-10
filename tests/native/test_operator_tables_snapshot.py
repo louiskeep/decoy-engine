@@ -29,12 +29,15 @@ from decoy_engine.execution.physical._shadow_assembly import (
     _TOKENIZING_STRATEGIES,
 )
 
+# The non-text_redact operator ids. Grew by native_fpe (C6a); still the set every table
+# below is built from, with native_text_redact folded in per test as before.
 _NINE_IDS = frozenset(
     {
         "native_passthrough",
         "native_redact",
         "native_truncate",
         "native_keyed_hash",
+        "native_fpe",
         "native_categorical",
         "native_bucket_perturb",
         "native_group_key",
@@ -48,6 +51,7 @@ _NINE_STRATEGIES = frozenset(
         "redact",
         "truncate",
         "hash",
+        "fpe",
         "faker",
         "categorical",
         "bucket_perturb",
@@ -71,6 +75,7 @@ def test_operator_ids_and_constants() -> None:
 def test_backend_by_operator_id() -> None:
     assert dict(admission.BACKEND_BY_OPERATOR_ID) == {
         "native_keyed_hash": "rust_companion",
+        "native_fpe": "rust_companion",
         "native_categorical": "rust_companion",
         "native_bucket_perturb": "rust_companion",
         "native_date_shift": "rust_companion",
@@ -89,6 +94,7 @@ def test_companion_dependent_and_required_kernel() -> None:
         frozenset(
             {
                 "native_keyed_hash",
+                "native_fpe",
                 "native_categorical",
                 "native_bucket_perturb",
                 "native_group_key",
@@ -101,6 +107,7 @@ def test_companion_dependent_and_required_kernel() -> None:
     assert type(admission._COMPANION_DEPENDENT_OPERATOR_IDS) is frozenset
     assert admission._OPERATOR_REQUIRED_KERNEL == {
         "native_keyed_hash": "crypto",
+        "native_fpe": "fpe",
         "native_categorical": "index",
         "native_bucket_perturb": "index",
         "native_group_key": "raw_hex",
@@ -110,9 +117,17 @@ def test_companion_dependent_and_required_kernel() -> None:
     assert type(admission._OPERATOR_REQUIRED_KERNEL) is dict
 
 
-def test_routed_diagnostic_obligations_is_sparse_date_shift_only() -> None:
+def test_routed_diagnostic_obligations_date_shift_and_fpe() -> None:
+    # date_shift routes its format_error row errors; fpe routes its two Python-computed
+    # residual-risk warnings (the fail-closed kill is a StrategyError, not a routed RowError).
     assert {
-        "native_date_shift": frozenset({"reduce_row_error:format_error"})
+        "native_date_shift": frozenset({"reduce_row_error:format_error"}),
+        "native_fpe": frozenset(
+            {
+                "reduce_warning:fpe_join_group_active",
+                "reduce_warning:fpe_partial_plaintext_disclosure",
+            }
+        ),
     } == admission._ROUTED_DIAGNOSTIC_OBLIGATIONS
     assert type(admission._ROUTED_DIAGNOSTIC_OBLIGATIONS) is dict
     assert type(admission._ROUTED_DIAGNOSTIC_OBLIGATIONS["native_date_shift"]) is frozenset
@@ -120,7 +135,7 @@ def test_routed_diagnostic_obligations_is_sparse_date_shift_only() -> None:
 
 def test_positive_kernel_evidence_operator_ids() -> None:
     assert (
-        frozenset({"native_keyed_hash", "native_faker_select"})
+        frozenset({"native_keyed_hash", "native_fpe", "native_faker_select"})
         == evidence._POSITIVE_KERNEL_EVIDENCE_OPERATOR_IDS
     )
     assert type(evidence._POSITIVE_KERNEL_EVIDENCE_OPERATOR_IDS) is frozenset
@@ -134,6 +149,7 @@ def test_slice_strategies_and_operator_id_by_strategy() -> None:
         "redact": "native_redact",
         "truncate": "native_truncate",
         "hash": "native_keyed_hash",
+        "fpe": "native_fpe",
         "faker": "native_faker_select",
         "categorical": "native_categorical",
         "bucket_perturb": "native_bucket_perturb",
@@ -150,6 +166,7 @@ def test_admitted_resident_types_has_nine_keys_and_no_group_key() -> None:
         "redact": frozenset({pa.string()}),
         "truncate": frozenset({pa.string()}),
         "hash": frozenset({pa.string(), pa.int64()}),
+        "fpe": frozenset({pa.string()}),
         "categorical": frozenset({pa.string()}),
         "bucket_perturb": frozenset({pa.string()}),
         "date_shift": frozenset({pa.string()}),
@@ -169,6 +186,7 @@ def test_native_strategy_sets() -> None:
                 "redact",
                 "truncate",
                 "hash",
+                "fpe",
                 "categorical",
                 "bucket_perturb",
                 "group_key",
@@ -181,12 +199,13 @@ def test_native_strategy_sets() -> None:
     assert frozenset({"faker"}) == NATIVE_POOL_STRATEGIES
     assert type(NATIVE_KERNEL_STRATEGIES) is frozenset
     assert type(NATIVE_POOL_STRATEGIES) is frozenset
+    # fpe loads its own compiled kernel, not the index kernel, so it is not here.
     assert (
         frozenset({"faker", "categorical", "bucket_perturb", "date_shift"})
         == _INDEX_KERNEL_STRATEGIES
     )
     assert (
-        frozenset({"hash", "categorical", "bucket_perturb", "date_shift", "group_key"})
+        frozenset({"hash", "fpe", "categorical", "bucket_perturb", "date_shift", "group_key"})
         == _COMPANION_STRATEGIES
     )
     assert type(_INDEX_KERNEL_STRATEGIES) is frozenset
@@ -195,7 +214,18 @@ def test_native_strategy_sets() -> None:
 
 def test_assembly_strategy_sets() -> None:
     assert (
-        frozenset({"redact", "truncate", "hash", "faker", "categorical", "group_key", "date_shift"})
+        frozenset(
+            {
+                "redact",
+                "truncate",
+                "hash",
+                "fpe",
+                "faker",
+                "categorical",
+                "group_key",
+                "date_shift",
+            }
+        )
         == _TOKENIZING_STRATEGIES
     )
     assert frozenset({"bucket_perturb", "text_redact"}) == _NULL_ON_EMPTY_STRATEGIES

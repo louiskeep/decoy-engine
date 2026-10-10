@@ -617,7 +617,7 @@ def test_10_declines_when_the_index_kernel_is_unavailable(
     monkeypatch.setattr(
         _unified_slice_admission,
         "native_kernel_availability",
-        lambda: KernelAvailability(crypto=True, index=False, raw_hex=True),
+        lambda: KernelAvailability(crypto=True, index=False, raw_hex=True, fpe=True),
     )
     on = case.run(lane=True)
     assert QUALITY_METRICS_KEY not in on.quality_metrics
@@ -1096,7 +1096,7 @@ def test_15_all_kernels_unavailable_declines_faker_to_the_oracle(
     monkeypatch.setattr(
         _unified_slice_admission,
         "native_kernel_availability",
-        lambda: KernelAvailability(crypto=False, index=False, raw_hex=False),
+        lambda: KernelAvailability(crypto=False, index=False, raw_hex=False, fpe=False),
     )
     on = case.run(lane=True)
     assert QUALITY_METRICS_KEY not in on.quality_metrics

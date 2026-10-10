@@ -355,7 +355,7 @@ def _require_mask_key(mask_key: bytes | None, kernel: str) -> bytes:
 # CryptoExtensionUnavailableError rather than run a binary whose framing this core
 # did not pin. Whether to fall back to the reference kernel is the caller's
 # preflight decision, not this loader's.
-_EXPECTED_ABI_VERSION = "decoy-native-abi-2"
+_EXPECTED_ABI_VERSION = "decoy-native-abi-3"
 
 
 def _translate_compiled_kernel_error(exc: ValueError) -> Exception:

@@ -252,6 +252,12 @@ jobs:
       - name: cargo clippy (deny warnings)
         working-directory: decoy-engine-native
         run: cargo clippy --all-targets -- -D warnings
+      # cargo test runs the PyO3-free KAT + proptest gates (kat_fpe.rs = the C6a FF1
+      # crate<->oracle parity gate across every radix 2..=64; kat_derive.rs; the lib unit tests).
+      # Without this the crate-parity gate was manual-only.
+      - name: cargo test (KAT + proptest gates)
+        working-directory: decoy-engine-native
+        run: cargo test --no-default-features
 
   # core-companion-present: the core's own test suite, run WITH the compiled
   # companion installed. Same-platform build only (the cross-compiled
@@ -326,6 +332,11 @@ jobs:
       # here too via `-m perf`.
       - name: text_redact Rust span kernel (companion-present case)
         run: pytest tests/native/test_c6c_ii_text_redact_rust.py -m "perf or not perf" -v --tb=short
+      # C6a: native FPE (FF1) on both routes. The byte-match parity, fail-closed kill,
+      # degenerate-schema, warnings-parity and admission-matrix proofs are all companion-gated
+      # (skipif no companion), so this is the one job that runs them.
+      - name: native FPE (FF1) on both routes (companion-present case)
+        run: pytest tests/native/test_c6a_fpe_chunked.py tests/native/test_fpe_ext_loader.py tests/physical/test_shadow_fpe.py -v --tb=short
 
   # companion-fuzz-sanitizer: the KeyedDerivationKernel is the one security-sensitive native
   # unit, so it gets fuzz + sanitizer evidence beyond the KAT/proptest/clippy gates above. A

@@ -277,6 +277,7 @@ def _native_route(
             elapsed_s: dict[str, float] = {}
             kernel_idle: set[str] = set()
             format_errors: dict[str, tuple[int, ...]] = {}
+            fpe_warnings: list[Any] = []
             masked = _mask_chunk_native(
                 chunk,
                 col_seed_by_name=col_seed_by_name,
@@ -292,6 +293,7 @@ def _native_route(
                 kernel_idle=kernel_idle,
                 row_offset=row_offset,
                 format_errors=format_errors,
+                fpe_warnings=fpe_warnings,
                 raw_chunk=raw_chunk,
                 raw_hex_kernel=raw_hex_kernel,
                 job_seed=plan.seed_envelope.job_seed,
@@ -300,9 +302,13 @@ def _native_route(
             )
             # The one enforcement point: the same call the stock adapter makes, so the
             # warning (and, if a table were ever admitted under `error`, the refusal)
-            # cannot drift from the oracle route's.
-            warnings = tuple(
-                enforce_output_projection(table, masked.column_names, plan, state.projection_policy)
+            # cannot drift from the oracle route's. fpe's Python-computed residual warnings
+            # (C6a §3e) ride the same channel, at the oracle's per-chunk scope.
+            warnings = (
+                *enforce_output_projection(
+                    table, masked.column_names, plan, state.projection_policy
+                ),
+                *fpe_warnings,
             )
             row_errors = format_error_records(table, format_errors)
             if row_errors:

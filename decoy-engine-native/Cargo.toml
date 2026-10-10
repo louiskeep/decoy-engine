@@ -36,7 +36,12 @@ arrow-array = { version = "59.2.0", features = ["ffi", "force_validate"] }
 arrow-buffer = "59.2.0"
 arrow-data = { version = "59.2.0", features = ["ffi", "force_validate"] }
 arrow-schema = { version = "59.2.0", features = ["ffi"] }
+# C6a FPE native kernel: NIST SP 800-38G FF1 via the `fpe` crate (the raw Feistel,
+# byte-matched to the Python oracle `transforms/_ff1.py` by the kat_fpe.rs parity gate)
+# over AES-256 from the audited `aes` crate. No hand-rolled cipher. See src/fpe.rs.
+aes = "0.9.3"
 chrono = "0.4.45"
+fpe = "0.7.0"
 hkdf = "0.13.0"
 hmac = "0.13.0"
 pyo3 = { version = "0.29", features = ["extension-module"], optional = true }
@@ -50,5 +55,10 @@ sha2 = "0.11.0"
 unicode-normalization = "0.1.25"
 
 [dev-dependencies]
+# num-bigint + libm back the FF1 crate-parity gate (tests/kat_fpe.rs): an exact
+# big-integer recomputation of the NIST `b` byte-count, compared against the `fpe`
+# crate's libm floating-point `calculate_b`, over every radix 2..=64 (plan §3a).
+libm = "0.2"
+num-bigint = "0.4"
 proptest = "1.11.0"
 serde_json = "1.0.151"

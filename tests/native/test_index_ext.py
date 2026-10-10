@@ -191,7 +191,7 @@ def test_missing_derive_index_batch_symbol_fails_at_the_missing_symbol_stage(
     `derive_index_batch` attribute at all. This must fail BEFORE the self-test runs,
     with a message naming the missing symbol -- not the self-test-failure message a
     later branch would raise for a present-but-wrong entry point."""
-    _install_fake_kernel(monkeypatch, abi="decoy-native-abi-2", derive_index_batch=None)
+    _install_fake_kernel(monkeypatch, abi="decoy-native-abi-3", derive_index_batch=None)
     with pytest.raises(CryptoExtensionUnavailableError) as exc_info:
         load_compiled_index_kernel()
     message = str(exc_info.value)
@@ -210,7 +210,7 @@ def test_present_but_wrong_values_fails_at_the_self_test_stage(
     def _wrong(values: pa.Array, **kwargs: object) -> pa.Array:
         return pa.array([0] * len(values), type=pa.uint64())
 
-    _install_fake_kernel(monkeypatch, abi="decoy-native-abi-2", derive_index_batch=_wrong)
+    _install_fake_kernel(monkeypatch, abi="decoy-native-abi-3", derive_index_batch=_wrong)
     with pytest.raises(CryptoExtensionUnavailableError) as exc_info:
         load_compiled_index_kernel()
     message = str(exc_info.value)
@@ -229,7 +229,7 @@ def test_present_but_raising_fails_at_the_self_test_stage(
     def _raises(values: pa.Array, **kwargs: object) -> pa.Array:
         raise RuntimeError("simulated companion failure")
 
-    _install_fake_kernel(monkeypatch, abi="decoy-native-abi-2", derive_index_batch=_raises)
+    _install_fake_kernel(monkeypatch, abi="decoy-native-abi-3", derive_index_batch=_raises)
     with pytest.raises(CryptoExtensionUnavailableError) as exc_info:
         load_compiled_index_kernel()
     message = str(exc_info.value)
@@ -246,7 +246,7 @@ def test_present_but_wrong_arrow_type_fails_the_self_test(
     def _wrong_type(values: pa.Array, **kwargs: object) -> pa.Array:
         return pa.array(list(INDEX_KAT.expected), type=pa.int64())
 
-    _install_fake_kernel(monkeypatch, abi="decoy-native-abi-2", derive_index_batch=_wrong_type)
+    _install_fake_kernel(monkeypatch, abi="decoy-native-abi-3", derive_index_batch=_wrong_type)
     with pytest.raises(CryptoExtensionUnavailableError) as exc_info:
         load_compiled_index_kernel()
     assert "self-test" in str(exc_info.value)
@@ -258,7 +258,7 @@ def test_matching_abi_and_kat_returns_a_working_kernel(monkeypatch: pytest.Monke
     def _recording(values: pa.Array, **kwargs: object) -> pa.Array:
         return reference.derive_index_batch(values, **kwargs)  # type: ignore[arg-type]
 
-    _install_fake_kernel(monkeypatch, abi="decoy-native-abi-2", derive_index_batch=_recording)
+    _install_fake_kernel(monkeypatch, abi="decoy-native-abi-3", derive_index_batch=_recording)
     kernel = load_compiled_index_kernel()
     out = kernel.derive_index_batch(
         pa.array(["alice", "bob"], type=pa.string()),

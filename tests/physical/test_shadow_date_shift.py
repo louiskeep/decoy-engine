@@ -722,7 +722,7 @@ def test_index_kernel_absent_declines_to_oracle(
     monkeypatch.setattr(
         admission,
         "native_kernel_availability",
-        lambda: KernelAvailability(crypto=True, index=False, raw_hex=True),
+        lambda: KernelAvailability(crypto=True, index=False, raw_hex=True, fpe=True),
     )
     source = pa.table({"c": pa.array(["2024-01-01", None, "2023-06-30"], type=pa.string())})
     path = write_read_only_fixture(tmp_path, source, "ds")

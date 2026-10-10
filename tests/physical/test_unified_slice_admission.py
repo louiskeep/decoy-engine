@@ -751,7 +751,7 @@ def test_faker_declines_when_the_index_kernel_is_missing(
     monkeypatch.setattr(
         _unified_slice_admission,
         "native_kernel_availability",
-        lambda: KernelAvailability(crypto=True, index=False, raw_hex=True),
+        lambda: KernelAvailability(crypto=True, index=False, raw_hex=True, fpe=True),
     )
     assert _resident_contract(physical_plan, plan, source, registry=registry) is None
 

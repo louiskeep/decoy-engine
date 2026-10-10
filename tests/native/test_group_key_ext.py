@@ -157,7 +157,7 @@ def test_missing_symbol_fails_at_the_missing_symbol_stage(monkeypatch: pytest.Mo
     """An abi-2 companion that predates the raw-hex kernel has no
     `derive_hex_raw_batch`. This must fail with the distinct missing-symbol
     message, before the self-test could run."""
-    _install_fake_kernel(monkeypatch, abi="decoy-native-abi-2", derive_hex_raw_batch=None)
+    _install_fake_kernel(monkeypatch, abi="decoy-native-abi-3", derive_hex_raw_batch=None)
     with pytest.raises(CryptoExtensionUnavailableError) as exc_info:
         load_compiled_raw_hex_kernel()
     message = str(exc_info.value)
@@ -169,7 +169,7 @@ def test_present_but_wrong_values_fails_at_the_self_test(monkeypatch: pytest.Mon
     def _wrong(values: pa.Array, **kwargs: object) -> pa.Array:
         return pa.array(["deadbeef"] * len(values), type=pa.string())
 
-    _install_fake_kernel(monkeypatch, abi="decoy-native-abi-2", derive_hex_raw_batch=_wrong)
+    _install_fake_kernel(monkeypatch, abi="decoy-native-abi-3", derive_hex_raw_batch=_wrong)
     with pytest.raises(CryptoExtensionUnavailableError) as exc_info:
         load_compiled_raw_hex_kernel()
     message = str(exc_info.value)
@@ -181,7 +181,7 @@ def test_present_but_raising_fails_at_the_self_test(monkeypatch: pytest.MonkeyPa
     def _raises(values: pa.Array, **kwargs: object) -> pa.Array:
         raise RuntimeError("simulated companion failure")
 
-    _install_fake_kernel(monkeypatch, abi="decoy-native-abi-2", derive_hex_raw_batch=_raises)
+    _install_fake_kernel(monkeypatch, abi="decoy-native-abi-3", derive_hex_raw_batch=_raises)
     with pytest.raises(CryptoExtensionUnavailableError) as exc_info:
         load_compiled_raw_hex_kernel()
     assert "self-test" in str(exc_info.value)
@@ -192,7 +192,7 @@ def test_present_but_wrong_arrow_type_fails_the_self_test(monkeypatch: pytest.Mo
         # Right values, wrong Arrow type (large_string) -- must not slip past.
         return pa.array(list(RAW_HEX_KAT.expected), type=pa.large_string())
 
-    _install_fake_kernel(monkeypatch, abi="decoy-native-abi-2", derive_hex_raw_batch=_wrong_type)
+    _install_fake_kernel(monkeypatch, abi="decoy-native-abi-3", derive_hex_raw_batch=_wrong_type)
     with pytest.raises(CryptoExtensionUnavailableError) as exc_info:
         load_compiled_raw_hex_kernel()
     assert "self-test" in str(exc_info.value)
@@ -204,7 +204,7 @@ def test_matching_abi_and_kat_returns_a_working_kernel(monkeypatch: pytest.Monke
     def _recording(values: pa.Array, **kwargs: object) -> pa.Array:
         return reference.derive_hex_raw_batch(values, **kwargs)  # type: ignore[arg-type]
 
-    _install_fake_kernel(monkeypatch, abi="decoy-native-abi-2", derive_hex_raw_batch=_recording)
+    _install_fake_kernel(monkeypatch, abi="decoy-native-abi-3", derive_hex_raw_batch=_recording)
     kernel = load_compiled_raw_hex_kernel()
     out = kernel.derive_hex_raw_batch(
         pa.array(["alice", "bob"], type=pa.string()),
@@ -222,7 +222,7 @@ def test_wrapper_requires_mask_key_before_kernel_call(monkeypatch: pytest.Monkey
     def _never(values: pa.Array, **kwargs: object) -> pa.Array:  # pragma: no cover
         raise AssertionError("kernel must not be called when mask_key is missing")
 
-    _install_fake_kernel(monkeypatch, abi="decoy-native-abi-2", derive_hex_raw_batch=_recording_kat)
+    _install_fake_kernel(monkeypatch, abi="decoy-native-abi-3", derive_hex_raw_batch=_recording_kat)
     kernel = load_compiled_raw_hex_kernel()
     kernel._derive_hex_raw_batch_fn = _never  # type: ignore[attr-defined]
     with pytest.raises(MaskKeyRequiredError):
