@@ -24,6 +24,10 @@ pub mod batch;
 pub mod canonicalize;
 pub mod derive;
 pub mod ffi_import;
+// C6a: the NIST SP 800-38G FF1 format-preserving-encryption kernel. Its pure core (the deployable
+// wrapper over the `fpe` crate's FF1 + AES-256) builds without PyO3 so cargo tests exercise it
+// directly; the `#[pyfunction]` boundary lives in `arrow_ffi` behind the extension-module feature.
+pub mod fpe;
 // C6c-ii: the text_redact span kernel. Its pure detector/validator/predicate core builds without
 // PyO3 (so cargo tests exercise it directly); only the `#[pyfunction]` wrappers and `register` are
 // gated behind the PyO3 boundary feature, like `arrow_ffi`.
@@ -35,11 +39,10 @@ pub mod threads;
 /// A mismatch or absence is treated as an incompatible extension: the core reroutes to the
 /// pandas oracle rather than running against a stale binary.
 #[cfg(feature = "extension-module")]
-// abi-2 (was abi-1): the keyed-derivation contract now REQUIRES the `native_threads`
-// keyword on `derive_batch` (the core's wrapper always passes it, Task 1.6). A pre-1.3
-// abi-1 binary lacks the parameter, so the loader must reject it at load-time by tag
-// rather than let it crash on the first hash call.
-const ABI_VERSION: &str = "decoy-native-abi-2";
+// abi-3 (was abi-2): C6a adds the `fpe_transform_batch` FF1 entry point. A pre-C6a abi-2
+// binary lacks it, so the core's `load_compiled_fpe_kernel` must reject it at load by tag
+// rather than crash on the first fpe call. abi-2 added `native_threads` on `derive_batch`.
+const ABI_VERSION: &str = "decoy-native-abi-3";
 
 #[cfg(feature = "extension-module")]
 #[pyfunction]

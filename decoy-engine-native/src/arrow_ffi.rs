@@ -21,10 +21,12 @@ use arrow_array::ffi::{to_ffi, FFI_ArrowArray, FFI_ArrowSchema};
 use arrow_array::{Array, ArrayRef, StringArray, UInt64Array};
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyCapsule, PyCapsuleMethods, PyInt, PyTuple};
+use pyo3::types::{PyCapsule, PyCapsuleMethods, PyInt, PyList, PyTuple};
 
 use crate::batch::PoolSize;
 use crate::ffi_import::{import_ffi, KernelError};
+use crate::fpe::FpeKernelError;
+use crate::threads::NativeThreadBudget;
 
 const ARROW_SCHEMA_CAPSULE_NAME: &CStr = c"arrow_schema";
 const ARROW_ARRAY_CAPSULE_NAME: &CStr = c"arrow_array";
@@ -487,9 +489,127 @@ fn derive_hex_raw_batch(
     }
 }
 
+/// Map an FPE kernel error to a coded `ValueError`. Every variant is a plain `ValueError` (no
+/// `TypeError` case), redacted by construction: the detail carries only type names, byte lengths,
+/// or fixed strings, never row content or key bytes. The engine-side loader/wrapper maps the coded
+/// error onto its own exception classes (`MaskKeyRequiredError` / `DeterminismError`).
+fn fpe_to_py_err(err: FpeKernelError) -> PyErr {
+    PyValueError::new_err(format!("{}: {}", err.code(), err.detail()))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn fpe_transform_batch_checked(
+    py: Python<'_>,
+    values: &Bound<'_, PyAny>,
+    mask_key: Option<&[u8]>,
+    namespace: &str,
+    tweak: &[u8],
+    charset: &[char],
+    preserve_separators: bool,
+    validate_luhn: bool,
+    forward: bool,
+    native_threads: Option<i64>,
+) -> PyResult<Py<PyAny>> {
+    if mask_key.map(|k| k.is_empty()).unwrap_or(true) {
+        return Err(fpe_to_py_err(FpeKernelError::MaskKeyRequired));
+    }
+    let host_available = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1);
+    let budget = NativeThreadBudget::resolve(native_threads, host_available)
+        .map_err(|e| PyValueError::new_err(format!("{}: {}", e.code, e.detail)))?;
+    let threads = budget.threads();
+
+    // Import + validate the Arrow array with the GIL held, then run the PyO3-free FPE kernel with
+    // the GIL released (matching derive_batch), then reacquire to export.
+    let array = import_array(values).map_err(to_py_err)?;
+    let result = py
+        .detach(|| {
+            crate::fpe::fpe_transform_array(
+                array.as_ref(),
+                mask_key,
+                namespace,
+                tweak,
+                charset,
+                preserve_separators,
+                validate_luhn,
+                forward,
+                threads,
+            )
+        })
+        .map_err(fpe_to_py_err)?;
+
+    let out_array = export_string_array(py, &result.values).map_err(|e| {
+        PyValueError::new_err(format!("failed to export the fpe output array: {e}"))
+    })?;
+    let errors = PyList::empty(py);
+    for e in &result.errors {
+        errors.append((e.row_index, e.code))?;
+    }
+    let tuple = PyTuple::new(py, [out_array.into_bound(py).into_any(), errors.into_any()])?;
+    Ok(tuple.into_any().unbind())
+}
+
+/// `fpe_transform_batch(values, *, mask_key, namespace, tweak, charset, preserve_separators,
+/// validate_luhn, forward, native_threads=None) -> (pa.Array, list[(row_index, code)])`
+///
+/// NIST SP 800-38G FF1 over AES-256 (C6a). `charset` is the resolved numeral alphabet (Python
+/// resolves and config-validates it first); `tweak` is the engine tweak framing built in Python by
+/// `transforms.fpe.build_ff1_tweak`. The FF1 key is derived from `(mask_key, namespace)` here.
+/// Returns the output `pa.string()` array (null in -> null out; empty "" preserved; a per-row
+/// failure -> null) and the ordered per-row `(row_index, code)` errors. A missing/empty `mask_key`
+/// raises `mask_key_required` before any row; checksum modes never reach here (declined to the
+/// oracle in Python, plan §3g).
+#[pyfunction]
+#[pyo3(signature = (
+    values, *, mask_key, namespace, tweak, charset, preserve_separators, validate_luhn, forward,
+    native_threads=None
+))]
+#[allow(clippy::too_many_arguments)]
+fn fpe_transform_batch(
+    py: Python<'_>,
+    values: &Bound<'_, PyAny>,
+    mask_key: Option<Vec<u8>>,
+    namespace: String,
+    tweak: Vec<u8>,
+    charset: String,
+    preserve_separators: bool,
+    validate_luhn: bool,
+    forward: bool,
+    native_threads: Option<i64>,
+) -> PyResult<Py<PyAny>> {
+    if mask_key.as_deref().map(|k| k.is_empty()).unwrap_or(true) {
+        return Err(fpe_to_py_err(FpeKernelError::MaskKeyRequired));
+    }
+    let charset_chars: Vec<char> = charset.chars().collect();
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        fpe_transform_batch_checked(
+            py,
+            values,
+            mask_key.as_deref(),
+            &namespace,
+            &tweak,
+            &charset_chars,
+            preserve_separators,
+            validate_luhn,
+            forward,
+            native_threads,
+        )
+    }));
+    match outcome {
+        Ok(result) => result,
+        Err(_panic) => Err(PyValueError::new_err(
+            "internal_panic: the native fpe kernel hit an unexpected internal error and stopped \
+             before producing output"
+                .to_string(),
+        )),
+    }
+}
+
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(derive_batch, m)?)?;
     m.add_function(wrap_pyfunction!(derive_index_batch, m)?)?;
     m.add_function(wrap_pyfunction!(derive_hex_raw_batch, m)?)?;
+    m.add_function(wrap_pyfunction!(fpe_transform_batch, m)?)?;
     Ok(())
 }
