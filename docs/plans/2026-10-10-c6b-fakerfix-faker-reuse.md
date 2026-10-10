@@ -1,4 +1,4 @@
-Status: plan (rev 1, pending Codex plan gate)
+Status: plan (rev 2, pending Codex plan re-gate)
 
 Rules consulted: 00-universal, development-loop, risk-and-exceptions, feature-dev, testing, documentation; engine CLAUDE.md "use established methodology" (Faker is the established library; reuse is its documented performance pattern).
 
@@ -15,34 +15,43 @@ Program: `docs/plans/2026-09-30-rust-engine-program.md`, Phase C (text_mask trac
 
 ## 2. Established facts (2026-10-10; file:line)
 - `_mask_faker` (`transforms/text_mask.py:473-494`): `method_name = _FAKER_METHOD.get(detector_id, "name")`; `seed = int.from_bytes(span_key[:4], "big")`; `fake = Faker(); fake.seed_instance(seed)`; `method = getattr(fake, method_name, None)`; if callable, `return str(method())` else (or on any `Exception`) `return str(fake.name())`. `from faker import Faker` at `:114`.
-- Called only from `_mask_span` (`:569`) for faker-strategy spans, inside the per-cell `mask_cell` splice loop (`:606+`), which runs per cell over a Python list (ARROW_PYTHON: `native_text_mask` iterates `array.to_pylist()`; the oracle `TextMaskHandler.run` iterates per cell). Column-level parallelism (`native_threads`) can run different columns on different threads, so the reused instance must not be shared across threads.
-- Faker semantics (established library, pinned `faker==40.23.0`, see [[decoy-faker-lock-regression]]): `seed_instance(seed)` reseeds the instance's `Generator` Mersenne Twister, which every provider draws from; output after `seed_instance` is fully determined by (seed, the method call sequence), independent of any prior instance state. A default `Faker()` (no locale arg) and a reused default `Faker()` share the identical provider set + locale, so reseed-then-draw is byte-identical. This is Faker's own documented reuse pattern.
+- Called only from `_mask_span` (`:569`) for faker-strategy spans, inside the per-cell `mask_cell` splice loop (`:606+`), which runs per cell over a Python list (ARROW_PYTHON: `native_text_mask` iterates `array.to_pylist()`; the oracle `TextMaskHandler.run` iterates per cell). **Thread model (corrected rev 2, Codex LOW-4):** both native routes process their Python per-cell work SEQUENTIALLY; `native_threads` reaches the compiled kernels, NOT this Python loop. So ordinary same-thread calls cannot interleave inside the synchronous seed->draw sequence, and reseed-per-span already makes successive spans/cells/columns independent. Thread-local is therefore defense-in-depth for the case of concurrent CALLER threads (the engine invoked from multiple threads), not a within-route need; the GIL alone would NOT protect a module-global instance across the whole seed->draw sequence, so TLS (not a module global) is still the right isolation.
+- **Module size (Codex MEDIUM-1):** `transforms/text_mask.py` is 722 LOC, recorded as legacy over-max in `tests/sentry/test_module_size.py:121` ("over-max legacy files may only SHRINK"). `Faker` the class is imported/used ONLY in `_mask_faker` (`from faker import Faker` at `:114`; `Faker()` at `:485`); every other "faker" token is a string/comment/the strategy name/the `_FAKER_METHOD` map. So moving the reuse helper to a NEW module lets text_mask.py NET-SHRINK (drop one import, swap one call), which the ratchet requires.
+- `_FAKER_METHOD` maps to exactly these Faker methods (Codex-confirmed the parity-sensitive set): `name`, `first_name`, `last_name`, `address`, `city`; unmapped detectors default to `name`. All inspected call chains use static provider data + the instance PRNG, with no `.unique`, persistent cursor, or history-dependent generator; the ordered-dict key cache consumes no randomness; variable template draw counts are harmless after per-span reseed.
+- Faker semantics (established library, pinned `faker==40.23.0`, see [[decoy-faker-lock-regression]]): `seed_instance(seed)` reseeds the instance's `Generator` Mersenne Twister, which the providers draw from; for the five methods above, output after `seed_instance` is fully determined by (seed, the method call sequence), independent of prior instance state (Codex verified 3,030 mixed-history + 505 fallback + 720 threaded probes, no counterexample). This is narrower than "reseed resets ALL provider state" (Faker docs guarantee seeded reproducibility, not a universal reset) but it covers every method this code reaches; the exhaustive byte-parity test (4.1) is the binding proof, and ANY mismatch STOPS the slice.
 - Measurement harness + numbers: session scratchpad `text_mask_timing.py` (886us fresh vs 93us reused; 57.9% of the realistic-mix cell).
 
 ## 3. Decisions / method
-3a. Add a module-level thread-local holder and a `_shared_faker()` accessor in `transforms/text_mask.py`:
+3a. **New module `src/decoy_engine/transforms/_faker_span.py`** (small, well under cap, no census entry) holds the thread-local holder + accessor, so `text_mask.py` does not grow:
 ```
+import threading
+from faker import Faker
 _FAKER_TLS = threading.local()
-def _shared_faker() -> Faker:
+def shared_faker() -> Faker:
+    """One default-locale Faker per THREAD, reused across spans; callers reseed per span.
+    Reuse is byte-identical to a fresh Faker() because seed_instance resets the generator
+    before every draw (see the C6b-fakerfix plan). Thread-local so concurrent caller threads
+    never share a generator across a reseed->draw sequence."""
     fake = getattr(_FAKER_TLS, "instance", None)
     if fake is None:
-        fake = Faker()              # default locale, identical to the old per-span Faker()
+        fake = Faker()              # default locale/providers, identical to the old per-span Faker()
         _FAKER_TLS.instance = fake
     return fake
 ```
-3b. In `_mask_faker`, replace `fake = Faker()` with `fake = _shared_faker()`; keep `fake.seed_instance(seed)` and everything after IDENTICAL (same method lookup, same `try/except Exception -> fake.name()` fallback). Because `seed_instance` precedes every draw, reuse is byte-identical to fresh construction, including the fallback path (a failed `method()` advances the generator identically under the same seed, so the subsequent `fake.name()` is identical).
-3c. Thread-local (not module-global) so concurrent columns on different `native_threads` threads never share a generator mid-reseed; within a thread the instance is reused across all spans/cells/columns. No API/signature change; no change to callers.
-3d. No change to seeds, mappings, fallbacks, keying, or raw-value isolation. Comment updated to explain the reuse + reseed-per-span invariant (why, not what).
+3b. In `text_mask.py`: DROP `from faker import Faker` (`:114`, unused elsewhere - 2a); ADD `from decoy_engine.transforms._faker_span import shared_faker`; in `_mask_faker` replace `fake = Faker()` with `fake = shared_faker()`. Keep `fake.seed_instance(seed)` and everything after IDENTICAL (same `getattr` method lookup, the callable check, the `str(method())` exception boundary, and the `fake.name()` fallback - all unchanged). Net LOC change in text_mask.py is <= 0; **ratchet its census entry (`test_module_size.py:121`) down to the new exact count**, and include `tests/sentry/test_module_size.py` in acceptance (4.8).
+3c. Byte-identity holds because `seed_instance(seed)` precedes every draw, so reuse reproduces fresh construction for all five reachable methods (2a), INCLUDING the fallback: a failed `method()` consumes a seed-determined number of draws identically under the same seed, so the subsequent `fake.name()` is identical whether the instance is fresh or reused.
+3d. Thread-local (not module-global): defense-in-depth for concurrent caller threads (2a thread model); within a thread the instance is reused across all spans/cells/columns. No API/signature change; no change to `_mask_span`/`mask_cell`/callers. No change to seeds, `_FAKER_METHOD`, fallbacks, keying, or raw-value isolation. The `_mask_faker` docstring gains one line on the reuse + reseed-per-span invariant (why).
 
 ## 4. Acceptance tests (written first; byte-parity is the contract, never weakened)
-1. **Exhaustive byte-parity vs a fresh-per-span reference.** A test-local reference reproduces the PRE-FIX body (`Faker(); seed_instance(seed); method()/name()`). For every `detector_id` in `_FAKER_METHOD` plus an unmapped id (-> `name`), across many span texts and the full seed space sampled widely (incl. seed 0 and 0xffffffff boundaries), assert production `_mask_faker` (reused) == the fresh reference, char-for-char.
-2. **Fallback-path parity.** A detector mapped to a method that raises / is unavailable falls back to `fake.name()` byte-identically under reuse (monkeypatch a mapped method to raise; compare reused vs fresh reference).
-3. **Reseed isolation / order independence.** Masking span B after span A on the SAME reused instance yields the identical result as masking B first (same span_key -> same output regardless of intervening draws), proving `seed_instance` isolates.
-4. **Thread safety.** Run `_mask_faker` for a fixed set of (span_key, detector_id) concurrently across several threads; every result equals the single-threaded reference (no cross-thread generator bleed changes output).
-5. **Golden snapshots unchanged.** The committed text_mask goldens that exercise faker spans (person_name/address, default and per-detector faker overrides) are byte-identical before/after; `tests/native/test_c6b_i_text_mask_*` parity matrices stay green (native == oracle, since both call the same `mask_cell`).
-6. **Testflight fingerprints** unchanged (faker-bearing fixtures): STOP if any moves.
-7. **Throughput (informational, not a hard gate):** record faker-span ns/cell and realistic-mix ns/cell before vs after with the measurement harness, to confirm the ~8-10x faker-path / ~2x mix win and to feed the Cam Rust-decision. No perf budget assertion added (avoids a flaky gate).
-8. ruff + mypy clean; module-size census (file stays well under cap); no new log lines (raw-value isolation unchanged).
+Test 1 is the BINDING proof (Codex MEDIUM-2: goldens/testflight do NOT exercise this function directly - both native routes and the oracle call the same `mask_cell`, so native==oracle stays green while a shared bug hides; the committed Faker KATs pin only first_name/name/city, and testflight's text-mask fixture uses us_phone with no faker override). The fresh-per-span reference must faithfully reproduce the PRE-FIX body: `Faker()` per call, `seed_instance(seed)`, the `getattr` lookup, the callable check, the `str(method())` exception boundary, and the `fake.name()` fallback WITHOUT reseeding.
+1. **Exhaustive byte-parity vs a fresh-per-span reference.** For every method in the reachable set (`name, first_name, last_name, address, city`) via its detector_id, PLUS an unmapped id (-> `name`), across many span texts and widely-sampled seeds (incl. 0 and 0xffffffff), assert production `_mask_faker` (reused) == the fresh reference char-for-char. Explicitly include **address and last_name** literal cases (the existing KATs miss them) and at least one **cell-level faker OVERRIDE** case (a detector whose default is non-faker, routed to faker via `per_detector_strategy`) end-to-end through `mask_cell`.
+2. **Fallback-path parity with a seed-dependent failure stub.** The stub must consume a SEED-DEPENDENT number of draws BEFORE raising (not an immediate raise - an immediate raise would pass even if the fix erroneously reseeded before fallback). Cover THREE distinct cases separately: method raises mid-draw, method unavailable (absent attr), attr present but non-callable. Apply the monkeypatch IDENTICALLY to both the fresh reference and the cached instance (patch before the cached method is bound, else an already-bound cached method escapes the patch and yields a false pass). Assert reused == fresh reference in every case.
+3. **Reseed isolation / order independence.** Masking span B after span A on the SAME reused instance yields the identical result as masking B first (same span_key -> same output regardless of intervening draws).
+4. **Thread safety with forced overlap.** Run `_mask_faker` for a fixed (span_key, detector_id) set concurrently across several threads with a barrier that forces the draws to OVERLAP AFTER each thread has reseeded (not serial); assert (a) every result equals the single-threaded fresh reference, and (b) the threads hold DISTINCT `Faker` instances (assert `shared_faker()` identity differs across simultaneously-live threads). Also assert **same-thread REUSE**: two calls on one thread return the SAME instance object - so a fresh-per-call implementation CANNOT satisfy the suite.
+5. **Golden snapshots + route parity (regression breadth, not direct proof).** The committed text_mask goldens stay byte-identical, and BOTH route suites stay green: `tests/native/test_c6b_i_text_mask_*` (chunked) AND `tests/physical/test_c6b_i_text_mask_*` (unified). Note explicitly these prove native==oracle and no cross-regression, NOT span-faker correctness (test 1 does that).
+6. **Testflight** unchanged, described as broad regression coverage (its fixtures do not select a faker override, so it is not direct evidence): STOP if any fingerprint moves.
+7. **Throughput (informational, not a gate):** record faker-span ns/cell and realistic-mix ns/cell before vs after with the measurement harness (confirm the ~8-10x faker-path / ~2x mix win; feeds the Cam Rust-decision). No perf budget assertion (avoids a flaky gate).
+8. **Module-size sentry:** `tests/sentry/test_module_size.py` green with text_mask.py's census ratcheted to its new (lower) count and no census entry needed for the small new `_faker_span.py`; ruff + mypy clean; no new log lines (raw-value isolation unchanged).
 
 ## 5. Failure modes
 | Risk | Closed by |
@@ -51,10 +60,14 @@ def _shared_faker() -> Faker:
 | Fallback path (method raises) diverges | 3b identical post-seed body + test 2 |
 | Cross-thread generator race under native_threads | 3c thread-local + test 4 |
 | Intervening spans leak state into a later span | 3b reseed-per-span + test 3 |
-| A Faker-version provider-state quirk (fresh vs reused) | pinned faker 40.23.0 + test 1 exhaustive + test 5 goldens; if any mismatch appears, STOP (do not ship) |
+| A Faker-version provider-state quirk (fresh vs reused) | pinned faker 40.23.0 + test 1 exhaustive over all reachable methods incl. address/last_name + goldens; if any mismatch appears, STOP (do not ship) |
+| Module-size ratchet violated | 3a new module (text_mask.py net-shrinks) + 3b census ratchet + test 8 |
+| Evidence that can't see the change (native==oracle, unrelated fingerprints) | test 1 fresh-reference byte-parity is the binding proof; 4.5/4.6 reframed as regression breadth only |
+| A fresh-per-call impl silently passes | test 4 same-thread instance-identity reuse assertion |
 | Scope creep into pooled-Faker / Rust | 1 scope fence; Rust is the separate C6b-ii Cam decision |
 
-Rollback: revert the one-function change; `_mask_faker` returns to per-span construction.
+Rollback: revert; `_mask_faker` returns to per-span construction and the new module is removed.
 
 ## 6. Review log
-- rev 1 (DRAFT): Opus-authored from the 2026-10-10 text_mask throughput measurement (faker construction = 58% of the realistic mix; reuse ~8-10x, byte-identical). Pending Codex plan gate.
+- rev 1 (DRAFT): Opus-authored from the 2026-10-10 text_mask throughput measurement (faker construction = 58% of the realistic mix; reuse ~8-10x, byte-identical).
+- **Codex plan gate round 1: REVISE** (design CONFIRMED correct - 3,030+505+720 probes, no byte-identity counterexample; 3 MEDIUM build-readiness + 1 LOW). rev 2 folds: MEDIUM-1 module-size ratchet (text_mask.py is 722 over-max) -> helper moves to a new `_faker_span.py`, text_mask.py net-shrinks + census ratchet (3a/3b, test 8); MEDIUM-2 evidence mismatch (goldens/testflight/KATs don't exercise span-faker; both routes call one `mask_cell`) -> test 1 is the binding fresh-reference proof with address/last_name + a cell-level override, both route suites named (tests/native + tests/physical), testflight/goldens reframed as regression breadth (4.1/4.5/4.6); MEDIUM-3 test teeth -> seed-dependent failure stub + 3 fallback cases + identical patch to fresh/cached + forced-overlap threading + distinct-instance + same-thread-reuse assertions (4.2/4.4); LOW-4 corrected thread model (native_threads -> compiled kernels, routes are sequential Python; TLS is defense-in-depth for concurrent callers) (2a/3d). Reachable method set pinned to name/first_name/last_name/address/city + unmapped->name. Pending Codex plan re-gate.
