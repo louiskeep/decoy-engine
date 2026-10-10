@@ -124,7 +124,11 @@ def test_byte_parity_address_and_last_name_literals():
         for span_key in _span_keys():
             reused = _mask_faker("x", span_key, detector_id)
             assert reused == _fresh_reference(span_key, detector_id)
-            assert reused != ""  # these methods always synthesize a value
+            # Prove the method is actually exercised, not the name() fallback: for the
+            # same seed, address()/last_name() produce a different string than name()
+            # (dennis LOW-1 - stronger than a mere non-empty guard).
+            name_fallback = _fresh_reference(span_key, "__unmapped_to_name__")
+            assert reused not in ("", name_fallback)
 
 
 def test_byte_parity_cell_level_faker_override_end_to_end():
