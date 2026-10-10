@@ -1,0 +1,475 @@
+{
+ "f_ff_post_validation_failure_resident": {
+  "exception": {
+   "code": null,
+   "message": "injected: post validation",
+   "module": "builtins",
+   "type": "RuntimeError"
+  },
+  "published_files": [],
+  "sink_calls": [],
+  "sink_dir_exists": false,
+  "source_loader_calls": null
+ },
+ "f_ff_resident_sink_untouched": {
+  "exception": null,
+  "published_files": [],
+  "sink_calls": [],
+  "sink_dir_exists": false,
+  "source_loader_calls": null
+ },
+ "f_ff_streamed_post_validation_failure": {
+  "exception": {
+   "code": null,
+   "message": "injected: post validation",
+   "module": "builtins",
+   "type": "RuntimeError"
+  },
+  "published_files": [],
+  "sink_calls": [
+   "write_batches:t",
+   "abort"
+  ],
+  "sink_dir_exists": false,
+  "source_loader_calls": null
+ },
+ "f_ff_streamed_success": {
+  "exception": null,
+  "published_files": [
+   "t.parquet"
+  ],
+  "sink_calls": [
+   "write_batches:t",
+   "commit"
+  ],
+  "sink_dir_exists": true,
+  "source_loader_calls": null
+ },
+ "f_ff_streamed_write_failure": {
+  "exception": {
+   "code": null,
+   "message": "injected sink failure on t",
+   "module": "builtins",
+   "type": "OSError"
+  },
+  "published_files": [],
+  "sink_calls": [
+   "write_batches:t",
+   "abort"
+  ],
+  "sink_dir_exists": false,
+  "source_loader_calls": null
+ },
+ "f_forced_ooc_incompatible": {
+  "exception": {
+   "code": null,
+   "message": "execution_mode='out_of_core' requested but the job is not out-of-core-eligible (generate_plus_mask).",
+   "module": "decoy_engine.errors",
+   "type": "ConfigError"
+  },
+  "published_files": [],
+  "sink_calls": [],
+  "sink_dir_exists": false,
+  "source_loader_calls": null
+ },
+ "f_invalid_substrate_before_profile": {
+  "exception": {
+   "code": "invalid_substrate",
+   "message": "substrate override must be one of ('pandas',); got 'not-a-substrate'.",
+   "module": "decoy_engine.execution._errors",
+   "type": "ExecutionError"
+  },
+  "published_files": [],
+  "sink_calls": null,
+  "sink_dir_exists": null,
+  "source_loader_calls": null
+ },
+ "f_knob_precedence": {
+  "auto_chunk_type": {
+   "code": "invalid_execution_knob",
+   "message": "auto_chunk must be a bool; got 'yes'.",
+   "module": "decoy_engine.execution._errors",
+   "type": "ExecutionError"
+  },
+  "budget": {
+   "code": "invalid_execution_knob",
+   "message": "out_of_core_budget_bytes must be a positive int; got 0.",
+   "module": "decoy_engine.execution._errors",
+   "type": "ExecutionError"
+  },
+  "byte_flag": {
+   "code": "invalid_execution_knob",
+   "message": "use_byte_estimate_routing must be a bool; got 1.",
+   "module": "decoy_engine.execution._errors",
+   "type": "ExecutionError"
+  },
+  "chunk_then_threshold": {
+   "code": "invalid_execution_knob",
+   "message": "chunk_size_rows must be a positive int; got -1.",
+   "module": "decoy_engine.execution._errors",
+   "type": "ExecutionError"
+  },
+  "multi_table_flag": {
+   "code": "invalid_execution_knob",
+   "message": "multi_table_dispatch_enabled must be a bool; got 1.",
+   "module": "decoy_engine.execution._errors",
+   "type": "ExecutionError"
+  },
+  "native_threads": {
+   "code": "invalid_execution_knob",
+   "message": "native_threads must be a positive int; got 0.",
+   "module": "decoy_engine.execution._errors",
+   "type": "ExecutionError"
+  },
+  "ooc_threshold": {
+   "code": "invalid_execution_knob",
+   "message": "out_of_core_threshold_rows must be a positive int; got 0.",
+   "module": "decoy_engine.execution._errors",
+   "type": "ExecutionError"
+  },
+  "pair:auto_chunk+chunk_size_rows": {
+   "code": "invalid_execution_knob",
+   "message": "auto_chunk must be a bool; got 1.",
+   "module": "decoy_engine.execution._errors",
+   "type": "ExecutionError"
+  },
+  "pair:auto_chunk_threshold_rows+native_threads": {
+   "code": "invalid_execution_knob",
+   "message": "auto_chunk_threshold_rows must be a positive int; got 0.",
+   "module": "decoy_engine.execution._errors",
+   "type": "ExecutionError"
+  },
+  "pair:chunk_size_rows+auto_chunk_threshold_rows": {
+   "code": "invalid_execution_knob",
+   "message": "chunk_size_rows must be a positive int; got 0.",
+   "module": "decoy_engine.execution._errors",
+   "type": "ExecutionError"
+  },
+  "pair:chunked_dispatcher_enabled+stream_chunked_output": {
+   "code": "invalid_execution_knob",
+   "message": "chunked_dispatcher_enabled must be a bool; got 1.",
+   "module": "decoy_engine.execution._errors",
+   "type": "ExecutionError"
+  },
+  "pair:fpe_chunk_count+max_workers": {
+   "code": "invalid_execution_knob",
+   "message": "fpe_chunk_count must be a positive int; got 0.",
+   "module": "decoy_engine.execution._errors",
+   "type": "ExecutionError"
+  },
+  "pair:full_frame_reject_rows+out_of_core_budget_bytes": {
+   "code": "invalid_execution_knob",
+   "message": "full_frame_reject_rows must be a positive int; got 0.",
+   "module": "decoy_engine.execution._errors",
+   "type": "ExecutionError"
+  },
+  "pair:max_workers+auto_chunk": {
+   "code": "invalid_execution_knob",
+   "message": "max_workers must be a positive int; got 0.",
+   "module": "decoy_engine.execution._errors",
+   "type": "ExecutionError"
+  },
+  "pair:multi_table_dispatch_enabled+out_of_core_threshold_rows": {
+   "code": "invalid_execution_knob",
+   "message": "multi_table_dispatch_enabled must be a bool; got 1.",
+   "module": "decoy_engine.execution._errors",
+   "type": "ExecutionError"
+  },
+  "pair:native_threads+chunked_dispatcher_enabled": {
+   "code": "invalid_execution_knob",
+   "message": "native_threads must be a positive int; got 0.",
+   "module": "decoy_engine.execution._errors",
+   "type": "ExecutionError"
+  },
+  "pair:out_of_core_budget_bytes+use_byte_estimate_routing": {
+   "code": "invalid_execution_knob",
+   "message": "out_of_core_budget_bytes must be a positive int; got 0.",
+   "module": "decoy_engine.execution._errors",
+   "type": "ExecutionError"
+  },
+  "pair:out_of_core_threshold_rows+full_frame_reject_rows": {
+   "code": "invalid_execution_knob",
+   "message": "out_of_core_threshold_rows must be a positive int; got 0.",
+   "module": "decoy_engine.execution._errors",
+   "type": "ExecutionError"
+  },
+  "pair:post_validation+post_validation_enforce": {
+   "code": "invalid_execution_knob",
+   "message": "post_validation must be a bool; got 1.",
+   "module": "decoy_engine.execution._errors",
+   "type": "ExecutionError"
+  },
+  "pair:post_validation_enforce+post_validation_sample_size": {
+   "code": "invalid_execution_knob",
+   "message": "post_validation_enforce must be a bool; got 1.",
+   "module": "decoy_engine.execution._errors",
+   "type": "ExecutionError"
+  },
+  "pair:post_validation_sample_size+out_of_core_reorder_threshold_rows": {
+   "code": "invalid_execution_knob",
+   "message": "post_validation_sample_size must be a positive int; got 0.",
+   "module": "decoy_engine.execution._errors",
+   "type": "ExecutionError"
+  },
+  "pair:stream_chunked_output+multi_table_dispatch_enabled": {
+   "code": "invalid_execution_knob",
+   "message": "stream_chunked_output must be a bool; got 1.",
+   "module": "decoy_engine.execution._errors",
+   "type": "ExecutionError"
+  },
+  "pair:substrate+fpe_chunk_count": {
+   "code": "invalid_substrate",
+   "message": "substrate override must be one of ('pandas',); got 'zzz'.",
+   "module": "decoy_engine.execution._errors",
+   "type": "ExecutionError"
+  },
+  "pair:unified_slice_enabled+post_validation": {
+   "code": "invalid_execution_knob",
+   "message": "unified_slice_enabled must be a bool; got 1.",
+   "module": "decoy_engine.execution._errors",
+   "type": "ExecutionError"
+  },
+  "pair:use_byte_estimate_routing+use_probe_routing": {
+   "code": "invalid_execution_knob",
+   "message": "use_byte_estimate_routing must be a bool; got 1.",
+   "module": "decoy_engine.execution._errors",
+   "type": "ExecutionError"
+  },
+  "pair:use_probe_routing+unified_slice_enabled": {
+   "code": "invalid_execution_knob",
+   "message": "use_probe_routing must be a bool; got 1.",
+   "module": "decoy_engine.execution._errors",
+   "type": "ExecutionError"
+  },
+  "post_validation_flag": {
+   "code": "invalid_execution_knob",
+   "message": "post_validation must be a bool; got 1.",
+   "module": "decoy_engine.execution._errors",
+   "type": "ExecutionError"
+  },
+  "post_validation_sample": {
+   "code": "invalid_execution_knob",
+   "message": "post_validation_sample_size must be a positive int; got 0.",
+   "module": "decoy_engine.execution._errors",
+   "type": "ExecutionError"
+  },
+  "probe_flag": {
+   "code": "invalid_execution_knob",
+   "message": "use_probe_routing must be a bool; got 1.",
+   "module": "decoy_engine.execution._errors",
+   "type": "ExecutionError"
+  },
+  "reject_rows": {
+   "code": "invalid_execution_knob",
+   "message": "full_frame_reject_rows must be a positive int; got 0.",
+   "module": "decoy_engine.execution._errors",
+   "type": "ExecutionError"
+  },
+  "reorder_threshold": {
+   "code": "out_of_core_reorder_threshold_invalid",
+   "message": "out_of_core_reorder_threshold_rows must be >= 0, got -5.",
+   "module": "decoy_engine.execution._errors",
+   "type": "ExecutionError"
+  },
+  "stream_flag": {
+   "code": "invalid_execution_knob",
+   "message": "stream_chunked_output must be a bool; got 1.",
+   "module": "decoy_engine.execution._errors",
+   "type": "ExecutionError"
+  },
+  "stream_then_substrate": {
+   "code": "invalid_substrate",
+   "message": "substrate override must be one of ('pandas',); got 'zzz'.",
+   "module": "decoy_engine.execution._errors",
+   "type": "ExecutionError"
+  },
+  "substrate_then_chunk": {
+   "code": "invalid_substrate",
+   "message": "substrate override must be one of ('pandas',); got 'zzz'.",
+   "module": "decoy_engine.execution._errors",
+   "type": "ExecutionError"
+  },
+  "unified_flag": {
+   "code": "invalid_execution_knob",
+   "message": "unified_slice_enabled must be a bool; got 1.",
+   "module": "decoy_engine.execution._errors",
+   "type": "ExecutionError"
+  }
+ },
+ "f_lazy_not_materialized_on_reject": {
+  "exception": {
+   "code": "fk_full_frame_oom_risk_rejected",
+   "message": "FK job rejected before read: largest mask table has 20 rows, at or above the full-frame reject threshold (10); full-frame FK masking at this scale would risk an out-of-memory kill. No bounded route applies -- the job is not out-of-core-eligible (not a pure-mask FK recipe) and not sequential-eligible (generate_plus_mask). Reduce the job size, make it out-of-core-eligible (supported strategies + an acyclic single-parent FK graph), or force execution_mode='full_frame' to override at your own memory risk.",
+   "module": "decoy_engine.execution._errors",
+   "type": "ExecutionError"
+  },
+  "published_files": [],
+  "sink_calls": [],
+  "sink_dir_exists": false,
+  "source_loader_calls": null
+ },
+ "f_ooc_orphan_fail": {
+  "exception": {
+   "code": "orphan_fk_violation",
+   "message": "4 orphan FK row(s) found for child.('parent_id',).",
+   "module": "decoy_engine.execution._errors",
+   "type": "ExecutionError"
+  },
+  "published_files": [],
+  "sink_calls": [
+   "write_batches:parent",
+   "abort"
+  ],
+  "sink_dir_exists": false,
+  "source_loader_calls": null
+ },
+ "f_ooc_sink_success": {
+  "exception": null,
+  "published_files": [
+   "child.parquet",
+   "parent.parquet"
+  ],
+  "sink_calls": [
+   "write_batches:parent",
+   "write_batches:child",
+   "commit"
+  ],
+  "sink_dir_exists": true,
+  "source_loader_calls": null
+ },
+ "f_ooc_sink_write_failure": {
+  "exception": {
+   "code": null,
+   "message": "injected sink failure on child",
+   "module": "builtins",
+   "type": "OSError"
+  },
+  "published_files": [],
+  "sink_calls": [
+   "write_batches:parent",
+   "write_batches:child",
+   "abort"
+  ],
+  "sink_dir_exists": false,
+  "source_loader_calls": null
+ },
+ "f_reject_before_read": {
+  "exception": {
+   "code": "fk_full_frame_oom_risk_rejected",
+   "message": "FK job rejected before read: largest mask table has 20 rows, at or above the full-frame reject threshold (10); full-frame FK masking at this scale would risk an out-of-memory kill. No bounded route applies -- the job is not out-of-core-eligible (not a pure-mask FK recipe) and not sequential-eligible (generate_plus_mask). Reduce the job size, make it out-of-core-eligible (supported strategies + an acyclic single-parent FK graph), or force execution_mode='full_frame' to override at your own memory risk.",
+   "module": "decoy_engine.execution._errors",
+   "type": "ExecutionError"
+  },
+  "published_files": [],
+  "sink_calls": [],
+  "sink_dir_exists": false,
+  "source_loader_calls": []
+ },
+ "f_row_error_fails_closed": {
+  "exception": {
+   "code": null,
+   "message": "row-error framework: 1 row(s) failed strategy execution and are not covered by an enabled quarantine trigger. Counts by (table, column, trigger): t.d [format_error]: 1. Enable quarantine with trigger(s) ['format_error'] to route failing rows to a separate output instead of failing the job.",
+   "module": "decoy_engine.errors",
+   "type": "RowErrorsFailedError"
+  },
+  "published_files": [],
+  "record_count": 1,
+  "sink_calls": [],
+  "sink_dir_exists": false,
+  "source_loader_calls": null
+ },
+ "f_row_error_fails_closed_streamed": {
+  "exception": {
+   "code": null,
+   "message": "row-error framework: 1 row(s) failed strategy execution and are not covered by an enabled quarantine trigger. Counts by (table, column, trigger): t.d [format_error]: 1. Enable quarantine with trigger(s) ['format_error'] to route failing rows to a separate output instead of failing the job.",
+   "module": "decoy_engine.errors",
+   "type": "RowErrorsFailedError"
+  },
+  "published_files": [],
+  "record_count": 1,
+  "sink_calls": [
+   "abort"
+  ],
+  "sink_dir_exists": false,
+  "source_loader_calls": null
+ },
+ "f_seq_orphan_fail": {
+  "exception": {
+   "code": "orphan_fk_violation",
+   "message": "4 orphan row(s) in child.('parent_id',) reference no parent key in parent.('id',) (orphan_policy=fail).",
+   "module": "decoy_engine.execution._errors",
+   "type": "ExecutionError"
+  },
+  "published_files": [],
+  "sink_calls": [
+   "write:parent",
+   "abort"
+  ],
+  "sink_dir_exists": false,
+  "source_loader_calls": null
+ },
+ "f_seq_sink_success": {
+  "exception": null,
+  "published_files": [
+   "child.parquet",
+   "parent.parquet"
+  ],
+  "sink_calls": [
+   "write:parent",
+   "write:child",
+   "commit"
+  ],
+  "sink_dir_exists": true,
+  "source_loader_calls": null
+ },
+ "f_seq_sink_write_failure": {
+  "exception": {
+   "code": null,
+   "message": "injected sink failure on child",
+   "module": "builtins",
+   "type": "OSError"
+  },
+  "published_files": [],
+  "sink_calls": [
+   "write:parent",
+   "write:child",
+   "abort"
+  ],
+  "sink_dir_exists": false,
+  "source_loader_calls": null
+ },
+ "f_unified_fallback_miss": {
+  "completed": true,
+  "exception": null,
+  "published_files": [],
+  "sink_calls": null,
+  "sink_dir_exists": null,
+  "source_loader_calls": null,
+  "unified_slice_activation_stamped": false
+ },
+ "f_unified_invariant_failure": {
+  "exception": {
+   "code": "unified_slice_invariant_violation",
+   "message": "unified slice: coded shadow difference 'cell-value-diff' on an admitted table 't'; this indicates an admission-predicate gap, not a normal execution outcome.",
+   "module": "decoy_engine.execution._unified_slice",
+   "type": "UnifiedSliceInvariantError"
+  },
+  "published_files": [],
+  "sink_calls": null,
+  "sink_dir_exists": null,
+  "source_loader_calls": null
+ },
+ "f_unified_provider_failure": {
+  "exception": {
+   "code": null,
+   "message": "injected provider failure",
+   "module": "builtins",
+   "type": "ValueError"
+  },
+  "is_original": true,
+  "published_files": [],
+  "sink_calls": null,
+  "sink_dir_exists": null,
+  "source_loader_calls": null
+ }
+}
