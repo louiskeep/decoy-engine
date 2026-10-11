@@ -39,6 +39,7 @@ from decoy_engine.execution.out_of_core._mask_group_c import (
 from decoy_engine.kernel import hash_array, passthrough_array, redact_array, truncate_array
 
 if TYPE_CHECKING:
+    from decoy_engine.execution.out_of_core._hash_run import TableHashPlan
     from decoy_engine.plan._types import ColumnSeed, Plan, TableSeed
     from decoy_engine.transforms._codeset_loader import _CorpusRecord
 
@@ -294,6 +295,7 @@ def mask_batch(
     mask_key: bytes | None = None,
     code_set_corpus_records: dict[str, _CorpusRecord] | None = None,
     sub_floor_totals: dict[str, dict[str, int]] | None = None,
+    hash_plan: TableHashPlan | None = None,
 ) -> pa.RecordBatch:
     """Mask one RecordBatch's non-FK columns per the plan.
 
@@ -320,6 +322,9 @@ def mask_batch(
     above, but here the whole point is cross-BATCH aggregation -- the runner
     creates ONE dict per table, passes it to every `mask_batch` call for that
     table, and emits the aggregate warning once the whole stream is consumed.
+
+    `hash_plan` carries the table's per-column hash decisions (resolved once before
+    the first batch); `None` leaves every hash column on the Python kernel unrecorded.
     """
     seed = table_seed(plan, table_name)
     if seed is None:
@@ -331,6 +336,8 @@ def mask_batch(
     for column, column_seed in seed.per_column:
         if column in skip_columns:
             continue
+        if hash_plan is not None and column_seed.strategy == "hash":
+            hash_plan.note_batch(column, batch)
         idx = batch.schema.get_field_index(column)
         if idx < 0:
             continue

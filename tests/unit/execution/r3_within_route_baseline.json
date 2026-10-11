@@ -3709,6 +3709,22 @@
      "sequential_relationship": "DEFERRED to the live router: job has FK relationship edges (relationship-route candidate); the sequential-vs-out-of-core-vs-full-frame decision is made by run_pipeline's decide_execution_route from job size + out-of-core compatibility, not by this planner (PLANNER_ROUTING_ENABLED stays False)."
     }
    },
+   "out_of_core_hash": [
+    {
+     "column": "id",
+     "executed_backend": "python_scalar",
+     "path": "mask_batch",
+     "reason": "native_hash_routing_pending",
+     "table": "parent"
+    },
+    {
+     "column": "cid",
+     "executed_backend": "python_scalar",
+     "path": "mask_batch",
+     "reason": "native_hash_routing_pending",
+     "table": "child"
+    }
+   ],
    "residency": {
     "caller_managed": true,
     "shapes": [
@@ -3874,6 +3890,22 @@
     "outputs_streamed": false,
     "route_reason": "override_out_of_core"
    },
+   "out_of_core_hash": [
+    {
+     "column": "id",
+     "executed_backend": "python_scalar",
+     "path": "mask_batch",
+     "reason": "native_hash_routing_pending",
+     "table": "parent"
+    },
+    {
+     "column": "cid",
+     "executed_backend": "python_scalar",
+     "path": "mask_batch",
+     "reason": "native_hash_routing_pending",
+     "table": "child"
+    }
+   ],
    "residency": {
     "caller_managed": true,
     "shapes": [
@@ -4039,6 +4071,22 @@
     "outputs_streamed": false,
     "route_reason": "override_out_of_core"
    },
+   "out_of_core_hash": [
+    {
+     "column": "id",
+     "executed_backend": "python_scalar",
+     "path": "mask_batch",
+     "reason": "native_hash_routing_pending",
+     "table": "parent"
+    },
+    {
+     "column": "cid",
+     "executed_backend": "python_scalar",
+     "path": "mask_batch",
+     "reason": "native_hash_routing_pending",
+     "table": "child"
+    }
+   ],
    "residency": {
     "caller_managed": true,
     "shapes": [
@@ -4204,6 +4252,22 @@
     "outputs_streamed": false,
     "route_reason": "override_out_of_core"
    },
+   "out_of_core_hash": [
+    {
+     "column": "id",
+     "executed_backend": "python_scalar",
+     "path": "mask_batch",
+     "reason": "native_hash_routing_pending",
+     "table": "parent"
+    },
+    {
+     "column": "cid",
+     "executed_backend": "python_scalar",
+     "path": "mask_batch",
+     "reason": "native_hash_routing_pending",
+     "table": "child"
+    }
+   ],
    "residency": {
     "caller_managed": true,
     "shapes": [
@@ -4369,6 +4433,22 @@
     "outputs_streamed": true,
     "route_reason": "override_out_of_core"
    },
+   "out_of_core_hash": [
+    {
+     "column": "id",
+     "executed_backend": "python_scalar",
+     "path": "mask_batch",
+     "reason": "native_hash_routing_pending",
+     "table": "parent"
+    },
+    {
+     "column": "cid",
+     "executed_backend": "python_scalar",
+     "path": "mask_batch",
+     "reason": "native_hash_routing_pending",
+     "table": "child"
+    }
+   ],
    "residency": {
     "caller_managed": true,
     "shapes": [
@@ -4533,7 +4613,23 @@
     "loaded_fully_in_memory": true,
     "outputs_streamed": true,
     "route_reason": "override_out_of_core"
-   }
+   },
+   "out_of_core_hash": [
+    {
+     "column": "id",
+     "executed_backend": "python_scalar",
+     "path": "mask_batch",
+     "reason": "native_hash_routing_pending",
+     "table": "parent"
+    },
+    {
+     "column": "cid",
+     "executed_backend": "python_scalar",
+     "path": "mask_batch",
+     "reason": "native_hash_routing_pending",
+     "table": "child"
+    }
+   ]
   },
   "row_errors": [],
   "sink_tables": {
@@ -4691,6 +4787,29 @@
     "outputs_streamed": false,
     "route_reason": "override_out_of_core"
    },
+   "out_of_core_hash": [
+    {
+     "column": "id",
+     "executed_backend": "python_scalar",
+     "path": "mask_batch",
+     "reason": "native_hash_routing_pending",
+     "table": "parent"
+    },
+    {
+     "column": "cid",
+     "executed_backend": "python_scalar",
+     "path": "mask_batch",
+     "reason": "native_hash_routing_pending",
+     "table": "child"
+    },
+    {
+     "column": "parent_id",
+     "executed_backend": "python_scalar",
+     "path": "fk_remap",
+     "reason": "fk_key_hash_remap_native_deferred:batch_join",
+     "table": "child"
+    }
+   ],
    "residency": {
     "caller_managed": true,
     "shapes": [
@@ -4856,6 +4975,22 @@
     "outputs_streamed": true,
     "route_reason": "override_out_of_core"
    },
+   "out_of_core_hash": [
+    {
+     "column": "id",
+     "executed_backend": "python_scalar",
+     "path": "mask_batch",
+     "reason": "native_hash_routing_pending",
+     "table": "parent"
+    },
+    {
+     "column": "cid",
+     "executed_backend": "python_scalar",
+     "path": "mask_batch",
+     "reason": "native_hash_routing_pending",
+     "table": "child"
+    }
+   ],
    "residency": {
     "caller_managed": true,
     "shapes": [

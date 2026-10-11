@@ -12,12 +12,17 @@ one accepted divergence and lives in its own characterization test.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import pyarrow as pa
+import pyarrow.parquet as pq
 
+from decoy_engine.execution import ParquetTransactionalSink
 from decoy_engine.execution.out_of_core import run_fk_out_of_core
+from decoy_engine.execution.out_of_core._source import LazySource
 from decoy_engine.plan._types import ColumnSeed, SeedEnvelope, TableSeed
 from decoy_engine.providers_v2 import get_default_registry
 from decoy_engine.relationships._graph import OrphanPolicy, RelationshipEdge, RelationshipGraph
@@ -81,53 +86,118 @@ def column_seed(
     )
 
 
-def make_plan(per_column: tuple[tuple[str, ColumnSeed], ...], table: str = TABLE) -> Any:
-    """Plan for the table under test plus a one-edge child, since the route needs an edge."""
-    passthrough = column_seed("passthrough", namespace=None)
-    envelope = SeedEnvelope(
-        job_seed=JOB_SEED,
-        per_table=(
-            (table, TableSeed(per_column=(("pk", passthrough), *per_column), per_group=())),
-            ("child", TableSeed(per_column=(("fk", passthrough),), per_group=())),
-        ),
-    )
-    return SimpleNamespace(seed_envelope=envelope)
+_PASSTHROUGH = column_seed("passthrough", namespace=None)
+HK_NS = "ns_hk"
 
 
-def _graph(table: str) -> RelationshipGraph:
-    edge = RelationshipEdge(
-        parent_table=table,
-        parent_columns=("pk",),
-        child_table="child",
-        child_columns=("fk",),
-        namespace="ns_edge",
-        orphan_policy=OrphanPolicy.PRESERVE,
-    )
-    return RelationshipGraph(edges=(edge,), ordering=())
+@dataclass(frozen=True)
+class ChainRun:
+    """One finished chain run: the caller-visible result plus every output table."""
+
+    result: Any
+    tables: dict[str, pa.Table]
 
 
-def with_edge_columns(table: pa.Table) -> tuple[pa.Table, pa.Table]:
-    """Add the `pk` key to the table under test and build its one-row-per-key child."""
-    n = table.num_rows
-    parent = table.append_column("pk", pa.array(range(n), pa.int64()))
-    child = pa.table({"fk": pa.array(range(n), pa.int64())})
-    return parent, child
-
-
-def run_single_table(
-    table: pa.Table,
-    per_column: tuple[tuple[str, ColumnSeed], ...],
-    **run_kwargs: Any,
+def _edge(
+    parent: str,
+    parent_col: str,
+    child: str,
+    child_col: str,
+    namespace: str,
+    policy: OrphanPolicy = OrphanPolicy.PRESERVE,
 ) -> Any:
-    """Run the out-of-core route over `table` (as the parent of one trivial edge)."""
-    parent, child = with_edge_columns(table)
-    return run_fk_out_of_core(
-        make_plan(per_column),
-        {TABLE: parent, "child": child},
+    return RelationshipEdge(
+        parent_table=parent,
+        parent_columns=(parent_col,),
+        child_table=child,
+        child_columns=(child_col,),
+        namespace=namespace,
+        orphan_policy=policy,
+    )
+
+
+def chain_sources(payload: pa.Table) -> dict[str, pa.Table]:
+    """`up.pk -> t.fk` and `t.hk -> child.ck`: `t` carries the payload under test.
+
+    `t` is both an FK child (so either driver can serve it) and a parent-key owner
+    (`hk` is a hash parent key, so the parent-key path is exercised too).
+    """
+    n = payload.num_rows
+    keys = [f"k{i}" for i in range(n)]
+    ints = pa.array(range(n), pa.int64())
+    return {
+        "up": pa.table({"pk": ints}),
+        "t": payload.append_column("fk", ints).append_column("hk", pa.array(keys, pa.string())),
+        "child": pa.table({"ck": pa.array(keys, pa.string())}),
+    }
+
+
+def chain_plan(payload_seeds: tuple[tuple[str, ColumnSeed], ...]) -> Any:
+    hk = column_seed(namespace=HK_NS)
+    tables = (
+        ("up", TableSeed(per_column=(("pk", _PASSTHROUGH),), per_group=())),
+        (
+            "t",
+            TableSeed(per_column=(*payload_seeds, ("hk", hk), ("fk", _PASSTHROUGH)), per_group=()),
+        ),
+        ("child", TableSeed(per_column=(("ck", hk),), per_group=())),
+    )
+    return SimpleNamespace(seed_envelope=SeedEnvelope(job_seed=JOB_SEED, per_table=tables))
+
+
+def chain_graph(hk_policy: OrphanPolicy = OrphanPolicy.PRESERVE) -> RelationshipGraph:
+    return RelationshipGraph(
+        edges=(
+            _edge("up", "pk", "t", "fk", "ns_up"),
+            _edge("t", "hk", "child", "ck", HK_NS, hk_policy),
+        ),
+        ordering=(),
+    )
+
+
+def run_chain(
+    payload: pa.Table,
+    payload_seeds: tuple[tuple[str, ColumnSeed], ...],
+    *,
+    out_dir: Path | None = None,
+    reorder: bool = False,
+    lazy_dir: Path | None = None,
+    sources: dict[str, Any] | None = None,
+    hk_policy: OrphanPolicy = OrphanPolicy.PRESERVE,
+    **run_kwargs: Any,
+) -> ChainRun:
+    """Run the chain through `run_fk_out_of_core`.
+
+    `out_dir` selects the sink path (outputs are read back from the committed
+    parquet); `reorder` forces the reorder driver (`stream_table`) for every table
+    with an incoming edge, which needs the sink; `lazy_dir` serves the sources from
+    parquet files through `LazySource`.
+    """
+    if reorder:
+        assert out_dir is not None, "the reorder driver is sink-only"
+        run_kwargs.update(
+            budget_bytes=1 << 30,
+            temp_disk_budget_bytes=200 << 30,
+            out_of_core_reorder_threshold_rows=0,
+        )
+    srcs: dict[str, Any] = sources if sources is not None else chain_sources(payload)
+    if lazy_dir is not None:
+        for name, tbl in list(srcs.items()):
+            if isinstance(tbl, pa.Table):
+                path = lazy_dir / f"{name}.parquet"
+                pq.write_table(tbl, path)
+                srcs[name] = LazySource(path)
+    result = run_fk_out_of_core(
+        chain_plan(payload_seeds),
+        srcs,
         registry=get_default_registry(),
-        relationship_graph=_graph(TABLE),
+        relationship_graph=chain_graph(hk_policy),
+        sink=ParquetTransactionalSink(out_dir) if out_dir is not None else None,
         **run_kwargs,
     )
+    if out_dir is None:
+        return ChainRun(result, dict(result.outputs))
+    return ChainRun(result, {n: pq.read_table(out_dir / f"{n}.parquet") for n in srcs})
 
 
 def hash_seeds(names: list[str]) -> tuple[tuple[str, ColumnSeed], ...]:
@@ -302,5 +372,17 @@ EXPECTED_TOKENS: dict[str, list[str | None]] = {
         "f4609be91e812f63eb27370ce4ecc703b2cb0090ce132f0824cc5f5efbe123f8",
         "0c254acf7a4712c4fe180590c0f8ff9367f0fb289db87864bd7524b0722dfcc4",
         "24a55c13ca1a0a6a6e04184550b1a9290951df3892e847cff538c2752a813739",
+    ],
+    "hk": [
+        "5cc208926b17470aaf133d87f5b3af1c38b90c6e4aaae396b61969cd62909ce9",
+        "eedfb57fc97e727bb0ff15de30b22b8b97836cc956caf2285b08189af83c579e",
+        "2c5d8af9502e6a0b12de7283a4836cb8875f80cd6b98232e5800cad7a1aa20a9",
+        "68485de0002838444384621dd2b2729265fee33fbd36b13085830e1633796bbc",
+        "1a9b944edfc336b5ccfb3a1b3474726bda314e84232538d80b23e2c6d3e7e922",
+        "915a48cc432aff85a4acf21a45216daa4151b153b655bb7192a61abdf0fd1603",
+        "fc5edce975fd14130ec3c1ee3c1f2f929780ba28fd905b7eab5114a6f039f710",
+        "c26c20f2c3f71b0d0d81b7ebf92b47339b870119c702dbb1aeaa59e3dce6397e",
+        "d7f24e7086dfa1e76922af0a835341aed4a5ddd9cc6cb096738b25f098d802ea",
+        "153a98c6e601cba1e32c9939c31e661adf7d7c83459564983e1ce21f809a4974",
     ],
 }
