@@ -31,6 +31,7 @@ __all__ = [
     "OPERATORS",
     "PANDAS_ORACLE",
     "POSITIONAL_FAKER_SOURCE_TYPES",
+    "PYTHON_SCALAR",
     "RUST_COMPANION",
     "RUST_POOL_SELECT",
     "OperatorSpec",
@@ -42,6 +43,9 @@ RUST_COMPANION: Final = "rust_companion"
 RUST_POOL_SELECT: Final = "rust_pool_select"
 ARROW_PYTHON: Final = "arrow_python"
 PANDAS_ORACLE: Final = "pandas_oracle"
+# The out-of-core route's per-value Python kernels (`kernel/_scalar`): neither the pandas oracle nor
+# an Arrow-Python kernel, so its hash loop must not borrow either label in caller-visible evidence.
+PYTHON_SCALAR: Final = "python_scalar"
 
 Shape = Literal["kernel", "pool"]
 RequiredKernel = Literal["crypto", "index", "raw_hex", "fpe"]

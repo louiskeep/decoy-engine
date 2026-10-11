@@ -601,6 +601,15 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         # from `execution.physical`. (`_strategies/_nested.py` is permitted above.)
         "src/decoy_engine/execution/_strategies/_bucket_perturb.py",
         "src/decoy_engine/execution/out_of_core/_mask_group_c.py",
+        # D1a (out-of-core hash on the compiled companion): `_hash_native.py` (eligibility + the
+        # kernel call) and `_hash_run.py` (per-column decision + disposition) are new, and
+        # `_mask.py` / `_stream_driver.py` thread the per-table plan into `mask_batch`. They import
+        # the keyed-derivation loader, the operator registry and `_mask`; nothing from
+        # `execution.physical`, so the import-direction sweeps and fresh-import probe stay green.
+        "src/decoy_engine/execution/out_of_core/_hash_native.py",
+        "src/decoy_engine/execution/out_of_core/_hash_run.py",
+        "src/decoy_engine/execution/out_of_core/_mask.py",
+        "src/decoy_engine/execution/out_of_core/_stream_driver.py",
     }
     unexpected = [
         name

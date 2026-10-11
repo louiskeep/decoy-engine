@@ -173,6 +173,20 @@ for the crypto-crown-jewel mutation ledger (superseding the retired
 Feistel-era `transforms_fpe.md` ledger for `_ff1.py` itself -- `fpe.py`'s own
 wrapper-layer ledger is unaffected). A v6 vault cannot be unmasked under v7.
 
+**Known nuance: text normalization differs by compute path.** The determinism
+guarantee holds within one hash compute path, not necessarily across the two.
+Before hashing, text is normalized with Unicode NFC, and the compiled companion
+(Rust) and the pure-Python path can carry different Unicode versions. For a value
+containing a codepoint assigned in a Unicode version newer than the running
+Python's, the companion and Python paths can derive different tokens; the
+companion result is canonical. This is not a derivation change (`derive` is
+unchanged), so it is not gated by `SEED_PROTOCOL_VERSION`. Plain text is
+identical on both paths. The practical risk is join-stability for such rare text
+when a dataset is masked partly on a Python-only install and partly on a
+companion-present one. Documented for users in `docs/strategies.md` (hash). To
+remove the difference entirely, align the Python runtime's Unicode version with
+the companion's.
+
 ### 3.4 The public API + CLI contract
 
 - **Python:** the symbols re-exported from `decoy_engine/__init__.py` and

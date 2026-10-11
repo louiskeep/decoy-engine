@@ -51,6 +51,19 @@ processes. Nulls are preserved. Needs a namespace.
 Use it for opaque identifiers (SSN, MRN, account number) that must remain
 join-stable but not human-readable.
 
+Text normalization and the compute path. Before hashing, text is normalized
+with Unicode NFC so that two encodings of the same characters hash alike. The
+token is byte-stable for a given value within one compute path. The compiled
+companion (Rust) and the pure-Python path can ship different Unicode versions,
+so for text that contains a codepoint assigned in a Unicode version newer than
+the running Python's, the two paths can produce different tokens for the same
+value. The companion result is the canonical one. Plain text (ASCII, common
+scripts, older emoji) hashes identically on both paths. A dataset masked
+entirely on one path is internally consistent; if you first mask on a
+Python-only install and later mask new rows on a companion-present install (or
+the reverse), those rare values can fail to join across the two runs. To keep
+such values join-stable, mask the related data on the same path.
+
 ### fpe
 
 Format-preserving encryption: the output keeps the input's shape (a 9-digit

@@ -74,6 +74,7 @@ from decoy_engine.execution.out_of_core._emit import (
     empty_output_table,
     reconcile_batch,
 )
+from decoy_engine.execution.out_of_core._hash_run import OocHashRun
 from decoy_engine.execution.out_of_core._join import orphan_fk_error, orphan_fk_warning
 from decoy_engine.execution.out_of_core._mask import mask_batch, table_seed
 from decoy_engine.execution.out_of_core._mask_group_c import text_mask_sub_floor_warning
@@ -140,6 +141,7 @@ def stream_table(
     unconfigured_column_policy: UnconfiguredColumnPolicy | None = None,
     mask_key: bytes | None = None,
     code_set_corpora: dict[tuple[str, str], dict[str, Any]] | None = None,
+    hash_run: OocHashRun | None = None,
 ) -> None:
     """Rewrite one table via the three-phase sequential reorder driver.
 
@@ -177,6 +179,10 @@ def stream_table(
         batch_rows = _join_ooc._JOIN_BATCH_ROWS
     source_schema = raw.schema
     skip_columns = frozenset(col for edge in incoming_edges for col in edge.child_columns)
+    # Hash columns are decided once here, before any row is read (a column never changes backend).
+    hash_plan = (hash_run or OocHashRun()).prepare_table(
+        plan, table_name, source_schema, skip_columns, incoming_edges, site="stream_join"
+    )
     # A masked (non-FK) column's per-batch inferred type can vary (e.g. redact
     # infers null on an all-null batch, the replacement scalar's type on any
     # other), which the resident path's own narrowing handles later -- but the
@@ -338,6 +344,7 @@ def stream_table(
                 mask_key=mask_key,
                 code_set_corpus_records=code_set_corpus_records,
                 sub_floor_totals=text_mask_sub_floor_totals,
+                hash_plan=hash_plan,
             )
             for col in payload_masked_observed:
                 idx = masked_batch.schema.get_field_index(col)

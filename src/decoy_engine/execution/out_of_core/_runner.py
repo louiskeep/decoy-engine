@@ -40,7 +40,7 @@ from __future__ import annotations
 import os
 import shutil
 import tempfile
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -66,6 +66,7 @@ from decoy_engine.execution.out_of_core._emit import (
     emit_to_sink,
     empty_output_table,
 )
+from decoy_engine.execution.out_of_core._hash_run import OocHashRun
 from decoy_engine.execution.out_of_core._join import orphan_fk_error, orphan_fk_warning
 from decoy_engine.execution.out_of_core._mask import (
     mask_batch,
@@ -84,14 +85,12 @@ from decoy_engine.execution.out_of_core._route_policy import (
 )
 from decoy_engine.execution.out_of_core._source import LazySource
 from decoy_engine.execution.out_of_core._stream_driver import stream_table
+from decoy_engine.execution.out_of_core._stream_driver_support import (
+    _code_set_records_and_evidence_for_table,
+)
 from decoy_engine.keyprovider import require_mask_key
 from decoy_engine.plan._types import ColumnSeed
 from decoy_engine.relationships._graph import OrphanPolicy
-from decoy_engine.transforms.code_set import (
-    CodeSetConfig,
-    describe_loaded_corpus,
-    resolve_corpus_record,
-)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -104,7 +103,6 @@ if TYPE_CHECKING:
     from decoy_engine.providers_v2 import ProviderRegistry
     from decoy_engine.relationships import RelationshipGraph
     from decoy_engine.relationships._graph import RelationshipEdge
-    from decoy_engine.transforms._codeset_loader import _CorpusRecord
 
     # One source per table: a resident Arrow table (back-compat) or a
     # path-backed lazy reader (the bounded-residency capability path).
@@ -215,6 +213,7 @@ def run_fk_out_of_core(
         # the first's. Same shape as the full-frame sink, so a multi-table
         # job's evidence list matches the pandas oracle's shape byte-for-byte.
         code_set_corpora: dict[tuple[str, str], dict[str, Any]] = {}
+        hash_run = OocHashRun()
         for table_name in _table_order(plan, relationship_graph, sources):
             if table_name not in sources:
                 continue
@@ -250,6 +249,7 @@ def run_fk_out_of_core(
                 "unconfigured_column_policy": unconfigured_column_policy,
                 "mask_key": mask_key,
                 "code_set_corpora": code_set_corpora,
+                "hash_run": hash_run,
             }
             # `reorder_caps is not None` (not `route.use_reorder`) is the branch
             # condition so this narrows for mypy directly, matching `RouteDecision`'s
@@ -268,9 +268,10 @@ def run_fk_out_of_core(
                 # footprint peaks with each table's relation/join staging, and
                 # a walk here costs a handful of stats, not a watcher thread.
                 check_temp_disk_budget(root, max_bytes=temp_disk_budget_bytes)
-        quality_metrics: dict[str, Any] = (
-            {"code_set_corpora": list(code_set_corpora.values())} if code_set_corpora else {}
-        )
+        quality_metrics: dict[str, Any] = {
+            **({"code_set_corpora": list(code_set_corpora.values())} if code_set_corpora else {}),
+            **hash_run.metrics(),
+        }
         if sink is not None:
             sink.commit()
             committed = True
@@ -319,6 +320,7 @@ def _stream_table(
     unconfigured_column_policy: UnconfiguredColumnPolicy | None = None,
     mask_key: bytes | None = None,
     code_set_corpora: dict[tuple[str, str], dict[str, Any]] | None = None,
+    hash_run: OocHashRun | None = None,
 ) -> None:
     """Rewrite pass for one table: mask + join per batch, then emit.
 
@@ -347,6 +349,10 @@ def _stream_table(
         batch_rows = _join_ooc._JOIN_BATCH_ROWS
     source_schema = raw.schema
     skip_columns = frozenset(col for edge in incoming_edges for col in edge.child_columns)
+    # Hash columns are decided once here, before any row is read (a column never changes backend).
+    hash_plan = (hash_run or OocHashRun()).prepare_table(
+        plan, table_name, source_schema, skip_columns, incoming_edges, site="batch_join"
+    )
     code_set_corpus_records, table_code_set_evidence = _code_set_records_and_evidence_for_table(
         plan, table_name, source_schema.names, skip_columns=skip_columns
     )
@@ -433,6 +439,7 @@ def _stream_table(
                     mask_key=mask_key,
                     code_set_corpus_records=code_set_corpus_records,
                     sub_floor_totals=text_mask_sub_floor_totals,
+                    hash_plan=hash_plan,
                 )
                 for join_idx, joiner in enumerate(joiners):
                     # key_source pins every join to the immutable raw batch:
@@ -621,47 +628,6 @@ def _fixed_output_schema(
         else:
             fields.append(field)
     return pa.schema(fields, metadata=source_schema.metadata)
-
-
-def _code_set_records_and_evidence_for_table(
-    plan: Plan,
-    table_name: str,
-    column_names: Sequence[str],
-    *,
-    skip_columns: frozenset[str],
-) -> tuple[dict[str, _CorpusRecord], dict[tuple[str, str], dict[str, Any]]]:
-    """code_set corpus record + provenance evidence for one table.
-
-    Mirrors `CodeSetHandler.run`'s once-per-(table, column) stamp (counts +
-    identifiers only, no raw codes) so the out-of-core route surfaces the same
-    `code_set_corpora` block the pandas/sequential routes merge into
-    quality_metrics. Keyed by (table, column) -- two tables may bind a
-    same-named code_set column to different corpora -- and each evidence dict
-    carries its own table/column identity, since the flattened metrics list
-    discards the sink's keys. Restricted to columns present in this table's
-    schema and not consumed as an FK child. Returns CANDIDATE evidence (keyed on
-    schema presence, not observed masking); `_stream_table` withholds the stamp
-    for a column that masks nothing. The pinned `_CorpusRecord` is resolved ONCE
-    and returned alongside its evidence, then threaded into every `mask_batch`
-    call, so a mid-stream corpus swap cannot make masking and evidence disagree.
-    """
-    seed = table_seed(plan, table_name)
-    if seed is None:
-        return {}, {}
-    names = frozenset(column_names)
-    records: dict[str, _CorpusRecord] = {}
-    corpora: dict[tuple[str, str], dict[str, Any]] = {}
-    for column, column_seed in seed.per_column:
-        if column_seed.strategy != "code_set":
-            continue
-        if column not in names or column in skip_columns:
-            continue
-        code_cfg = CodeSetConfig.from_dict(provider_config_to_dict(column_seed.provider_config))
-        record = resolve_corpus_record(code_cfg)
-        records[column] = record
-        evidence = describe_loaded_corpus(code_cfg, record=record)
-        corpora[(table_name, column)] = {**evidence, "table": table_name, "column": column}
-    return records, corpora
 
 
 def _remap_values(
