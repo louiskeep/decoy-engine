@@ -46,20 +46,39 @@ import pyarrow as pa
 import pytest
 
 from decoy_engine.execution.native._crypto_ext import CryptoExtensionUnavailableError
-from decoy_engine.execution.out_of_core import _hash_run, _mask, _runner, _stream_driver
+from decoy_engine.execution.out_of_core import (
+    _categorical_native,
+    _hash_run,
+    _mask,
+    _runner,
+    _stream_driver,
+)
 from tests.parity._strict_compare import _cell_token
 
-ENTRYPOINTS = ("hash_array", "redact_array", "truncate_array", "passthrough_array")
+ENTRYPOINTS = (
+    "hash_array",
+    "redact_array",
+    "truncate_array",
+    "passthrough_array",
+    "categorical_array",
+)
 # Native entrypoints, spied only where `_mask` binds them. `native_hash_array` is the compiled
 # hash dispatch; it is a physical entrypoint of the LOGICAL `hash_array` mask.
 NATIVE_ENTRYPOINTS = ("native_hash_array",)
-_LOGICAL = {"native_hash_array": "hash_array"}
+# The categorical adapter is spied too, but its native provenance comes from the compiled
+# operator it calls (`_categorical_native.native_categorical`), not from the adapter's return:
+# the adapter also answers an empty or all-null slice with no kernel call, and that answer must
+# not read as a native execution.
+CATEGORICAL_ADAPTER = "native_categorical_array"
+_LOGICAL = {"native_hash_array": "hash_array", CATEGORICAL_ADAPTER: "categorical_array"}
 # Every module that binds `mask_batch` by name (the drivers import it directly).
 _BATCH_BINDINGS = (_mask, _runner, _stream_driver)
 
 NATIVE = "native"
 LEGACY = "legacy"
 UNKNOWN = "unknown"
+# An adapter call that made no compiled-kernel call (empty or all-null slice).
+IDLE = "native_idle"
 
 
 def force_companion_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -172,8 +191,15 @@ class KernelWitness:
 
     def _spy(self, entrypoint: str, dispatch: Callable[..., Any]) -> Callable[..., Any]:
         def spy(values: Any, *args: Any, **kwargs: Any) -> Any:
+            attempts = self.native_attempts
             result = dispatch(values, *args, **kwargs)
             backend = self._provenance.get(id(result), (UNKNOWN, None))[0]
+            if (
+                entrypoint == CATEGORICAL_ADAPTER
+                and backend == UNKNOWN
+                and self.native_attempts == attempts
+            ):
+                backend = IDLE
             call = self._calls.get(self._table) if self._table is not None else None
             self.observations.append(
                 Observation(
@@ -234,6 +260,14 @@ class KernelWitness:
                 if hasattr(_mask, name):
                     backend_fn = overrides.get(name) or self.native(getattr(_mask, name))
                     mp.setattr(_mask, name, self._spy(name, backend_fn))
+            if hasattr(_mask, CATEGORICAL_ADAPTER):
+                mp.setattr(
+                    _categorical_native,
+                    "native_categorical",
+                    self.native(_categorical_native.native_categorical),
+                )
+                adapter = overrides.get(CATEGORICAL_ADAPTER) or getattr(_mask, CATEGORICAL_ADAPTER)
+                mp.setattr(_mask, CATEGORICAL_ADAPTER, self._spy(CATEGORICAL_ADAPTER, adapter))
             mp.setattr(_mask, "mask_column", self._column_spy(_mask.mask_column))
             # Wrap what each binding holds NOW, so a test double installed before `observe`
             # sits inside the spy and its substitution is what gets recorded.
@@ -295,7 +329,9 @@ class KernelWitness:
         for e in expected:
             obs = self._matched(e, sources)
             backends = {o.backend for o in obs}
-            if backends != {NATIVE}:
+            # An idle adapter call (empty or all-null slice) is part of a native column, but a
+            # column whose every call was idle proves nothing, so one real kernel result is required.
+            if NATIVE not in backends or not backends <= {NATIVE, IDLE}:
                 raise AssertionError(f"{e}: backends observed {sorted(backends)}, want native")
             self._assert_inserted(e, obs)
             produced = _tokens([o.result for o in obs])

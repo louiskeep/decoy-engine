@@ -25,7 +25,9 @@ from typing import TYPE_CHECKING, Any
 import pyarrow as pa
 
 from decoy_engine.execution._adapter import provider_config_to_dict
+from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._operator_registry import PYTHON_SCALAR, RUST_COMPANION
+from decoy_engine.execution.native._categorical_ext import native_categorical
 from decoy_engine.execution.native._categorical_prepared import (
     PreparedCategorical,
     prepare_categorical,
@@ -38,9 +40,8 @@ if TYPE_CHECKING:
 
 REASON_UNAVAILABLE = "index_extension_unavailable"
 REASON_NOT_STRING = "categorical_source_not_string"
-REASON_NOT_ROUTED = "categorical_native_not_routed"
 _NO_BACKEND_RAN = "none"
-_REASON_NO_ROWS = "no_rows_categorized"
+_REASON_NO_NATIVE_CALLS = "no_native_kernel_calls"
 
 
 @dataclass(frozen=True)
@@ -101,7 +102,7 @@ class CategoricalColumnDecision:
 
     def entry(self) -> dict[str, Any]:
         ran = self.native_calls > 0 if self.native else self.rows > 0
-        reason = self.reason or (None if ran else _REASON_NO_ROWS)
+        reason = self.reason or (None if ran else _REASON_NO_NATIVE_CALLS)
         entry: dict[str, Any] = {
             "table": self.table,
             "column": self.column,
@@ -111,6 +112,14 @@ class CategoricalColumnDecision:
         if reason is not None:
             entry["reason"] = reason
         return entry
+
+
+@dataclass(frozen=True)
+class NativeCategorical:
+    """What `mask_column` needs to run one categorical column on the compiled operator."""
+
+    bound: BoundIndexKernel
+    decision: CategoricalColumnDecision
 
 
 class TableCategoricalPlan:
@@ -126,11 +135,39 @@ class TableCategoricalPlan:
     def decisions(self) -> Mapping[str, CategoricalColumnDecision]:
         return self._decisions
 
-    def gate(self, column: str, batch: pa.RecordBatch) -> None:
-        """Account one streamed batch against `column`'s decision."""
+    def gate(self, column: str, batch: pa.RecordBatch) -> NativeCategorical | None:
+        """The native handle for `column` in `batch`, or None when it stays on Python.
+
+        A native column is held to its pinned source type: a batch that lacks it or carries
+        another type aborts the run, so a column never changes path mid-stream."""
         decision = self._decisions.get(column)
-        if decision is not None and batch.schema.get_field_index(column) >= 0:
+        if decision is None:
+            return None
+        idx = batch.schema.get_field_index(column)
+        if decision.native:
+            if idx < 0:
+                raise ExecutionError(
+                    code="out_of_core_categorical_column_missing",
+                    message=(
+                        f"categorical column {column!r} of table {decision.table!r} is missing "
+                        "from a streamed batch; the run is aborted rather than skipping it."
+                    ),
+                )
+            if batch.schema.field(idx).type != decision.pinned_type:
+                raise ExecutionError(
+                    code="out_of_core_categorical_source_type_drift",
+                    message=(
+                        f"categorical column {column!r} of table {decision.table!r} was pinned "
+                        f"as {decision.pinned_type} but a batch carries "
+                        f"{batch.schema.field(idx).type}; the run is aborted rather than "
+                        "changing path mid-column."
+                    ),
+                )
+        if idx >= 0:
             decision.rows += batch.num_rows
+        if decision.native and self._bound is not None:
+            return NativeCategorical(self._bound, decision)
+        return None
 
 
 def decide_table(
@@ -142,17 +179,54 @@ def decide_table(
     """Decide every categorical column of one table, before its first batch is read."""
     decisions: dict[str, CategoricalColumnDecision] = {}
     for column, seed in seeds.items():
-        input_type = schema.field(column).type
         prepared: PreparedCategorical | None = None
         reason: str | None = REASON_UNAVAILABLE
         if bound is not None:
             prepared, reason = decline_reason(column, schema, seed)
-        if prepared is not None:
-            reason = REASON_NOT_ROUTED
         decisions[column] = CategoricalColumnDecision(
-            table_name, column, PYTHON_SCALAR, reason, input_type, prepared
+            table_name,
+            column,
+            RUST_COMPANION if prepared is not None else PYTHON_SCALAR,
+            reason,
+            schema.field(column).type,
+            prepared,
         )
     return TableCategoricalPlan(decisions, bound)
+
+
+def native_categorical_array(
+    values: pa.Array | pa.ChunkedArray,
+    *,
+    native: NativeCategorical,
+    mask_key: bytes,
+    namespace: str,
+) -> pa.Array:
+    """Remap one column slice with the compiled operator.
+
+    There is no fallback: a kernel fault propagates and aborts the run, so a column never
+    ends up half native and half Python. `native_categorical` derives its indices
+    unconditionally, so an empty or entirely null slice is answered here without a kernel
+    call; its result is the null-typed array the Python loop yields for the same slice, and
+    it adds nothing to the column's call count."""
+    n = len(values)
+    if n == 0 or values.null_count == n:
+        return pa.nulls(n)
+    prepared = native.decision.prepared
+    if prepared is None:  # pragma: no cover - a native decision always carries its artifact
+        raise ExecutionError(
+            code="out_of_core_categorical_unprepared",
+            message="a native categorical column reached the kernel without a prepared pool.",
+        )
+    native.decision.native_calls += 1
+    return native_categorical(
+        values,
+        categories=prepared.categories,
+        cdf=prepared.cdf,
+        mask_key=mask_key,
+        namespace=namespace,
+        index_kernel=native.bound.kernel,
+        native_threads=native.bound.native_threads,
+    )
 
 
 __all__ = [
@@ -160,7 +234,9 @@ __all__ = [
     "REASON_UNAVAILABLE",
     "BoundIndexKernel",
     "CategoricalColumnDecision",
+    "NativeCategorical",
     "TableCategoricalPlan",
     "decide_table",
     "decline_reason",
+    "native_categorical_array",
 ]

@@ -34,6 +34,7 @@ from decoy_engine.execution.native._crypto_ext import (
 from decoy_engine.execution.native._index_ext import load_compiled_index_kernel
 from decoy_engine.execution.out_of_core._categorical_native import (
     BoundIndexKernel,
+    NativeCategorical,
     TableCategoricalPlan,
     decide_table,
 )
@@ -103,6 +104,10 @@ class TableHashPlan:
     @property
     def decisions(self) -> Mapping[str, HashColumnDecision]:
         return self._decisions
+
+    def categorical_for(self, column: str, batch: pa.RecordBatch) -> NativeCategorical | None:
+        """The native handle for categorical `column` in `batch`, or None (see `gate`)."""
+        return self.categorical.gate(column, batch) if self.categorical is not None else None
 
     def kernel_for(self, column: str, batch: pa.RecordBatch) -> BoundHashKernel | None:
         """The native kernel for `column` in `batch`, or None when it stays on Python.

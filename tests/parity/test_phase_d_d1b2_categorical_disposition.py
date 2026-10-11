@@ -18,7 +18,7 @@ from typing import Any
 import pyarrow as pa
 import pytest
 
-from decoy_engine.execution._operator_registry import PYTHON_SCALAR
+from decoy_engine.execution._operator_registry import PYTHON_SCALAR, RUST_COMPANION
 from decoy_engine.execution._pipeline import run_pipeline
 from decoy_engine.execution.out_of_core._hash_run import OocHashRun
 from tests.parity._d1a_hash_data import chain_plan, column_seed, run_chain
@@ -68,6 +68,19 @@ def test_companion_absent_declines_every_column_with_the_reason(
     for entry in entries.values():
         assert entry["executed_backend"] == PYTHON_SCALAR
         assert entry["reason"] == UNAVAILABLE
+        assert entry["path"] == "mask_batch"
+
+
+@pytest.mark.parametrize("mode", MODES)
+def test_eligible_columns_report_the_companion_with_no_reason(
+    mode: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    install_index_companion(monkeypatch)
+    entries = by_column(run_chain(_PAYLOAD, _SEEDS, **mode_kwargs(mode, tmp_path)))
+    assert set(entries) == {("t", "a"), ("t", "b")}
+    for entry in entries.values():
+        assert entry["executed_backend"] == RUST_COMPANION
+        assert "reason" not in entry
         assert entry["path"] == "mask_batch"
 
 
@@ -194,6 +207,24 @@ def test_disposition_is_visible_through_run_pipeline_when_declined(
     assert set(entries) == {("parent", "note")}
     assert {(e["executed_backend"], e["reason"]) for e in entries.values()} == {
         (PYTHON_SCALAR, UNAVAILABLE)
+    }
+
+
+def test_zero_row_table_reports_no_kernel_executed(monkeypatch: pytest.MonkeyPatch) -> None:
+    state = install_index_companion(monkeypatch)
+    entries = by_column(run_chain(_PAYLOAD.slice(0, 0), _SEEDS))
+    assert {e["executed_backend"] for e in entries.values()} == {"none"}
+    assert {e["reason"] for e in entries.values()} == {"no_native_kernel_calls"}
+    assert state["kernel"].calls == 0
+
+
+def test_a_declined_zero_row_table_keeps_its_decline_reason(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    force_companion_unavailable(monkeypatch)
+    entries = by_column(run_chain(_PAYLOAD.slice(0, 0), _SEEDS))
+    assert {(e["executed_backend"], e["reason"]) for e in entries.values()} == {
+        ("none", UNAVAILABLE)
     }
 
 
