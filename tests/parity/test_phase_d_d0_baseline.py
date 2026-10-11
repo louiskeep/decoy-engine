@@ -188,10 +188,31 @@ def _tokens(values: Sequence[object]) -> list[tuple[object, ...]]:
     return [_cell_token(v) for v in values]
 
 
+# Every field on every fixture, both routes, probed at 49b88677: nullable, no
+# field-level metadata. Pinned exactly so a change inside a "known gap"
+# dimension (field_metadata / schema_structure) is still caught.
+_FIELD_NULLABLE = True
+_FIELD_METADATA = None
+
+
+def _expected_fields(schema: str) -> list[tuple[str, str, bool, dict[bytes, bytes] | None]]:
+    """`name:type,...` literal -> exact (name, type, nullable, metadata) pins."""
+    pairs = (part.split(":") for part in schema.split(","))
+    return [(n, t, _FIELD_NULLABLE, _FIELD_METADATA) for n, t in pairs]
+
+
 def _assert_table(
     actual: pa.Table, schema: str, meta: list[bytes], cells: Mapping[str, Sequence[object]]
 ) -> None:
-    assert sc.schema_signature(actual) == schema
+    """Exact per-executor pin: field name/type/nullability/metadata, the exact
+    schema-level key set, and cells.
+
+    The VALUE of the schema-level `pandas` key varies across pandas versions and
+    is the one permitted variation: only its presence is pinned. Any other
+    schema-level key, and any field-level metadata, fails.
+    """
+    got = [(f.name, str(f.type), f.nullable, f.metadata) for f in actual.schema]
+    assert got == _expected_fields(schema)
     assert sc.metadata_keys(actual) == meta
     assert actual.column_names == list(cells)
     for name, want in cells.items():
@@ -268,3 +289,67 @@ def test_dtype_reject_is_the_single_sanctioned_ooc_rejection() -> None:
         _run_ooc(plan, sources, graph)
     assert type(ooc_exc.value) is ExecutionError
     assert ooc_exc.value.code == "out_of_core_fk_key_dtype_unsupported"
+
+
+# --- Negative controls: the baseline pin bites on a mutated copy of real output.
+# The real route is never touched; each mutation is applied to an in-memory copy.
+
+
+def _real_ooc_parent() -> pa.Table:
+    case = _SUCCESS_CASES[0]  # D0-ok-hash
+    plan, sources, graph = case.build()
+    return _run_ooc(plan, sources, graph).outputs["parent"]
+
+
+def _pin_ooc_parent(table: pa.Table) -> None:
+    want = _SUCCESS_CASES[0].parent
+    _assert_table(table, want.ooc_schema, _OOC_META, want.ooc_cells)
+
+
+def _with_schema(table: pa.Table, schema: pa.Schema) -> pa.Table:
+    return pa.Table.from_arrays(table.columns, schema=schema)
+
+
+def test_baseline_pin_accepts_the_real_output() -> None:
+    _pin_ooc_parent(_real_ooc_parent())
+
+
+def test_baseline_pin_fails_on_added_field_metadata() -> None:
+    real = _real_ooc_parent()
+    field = real.schema.field("pk").with_metadata({b"unit": b"cm"})
+    mutated = _with_schema(real, real.schema.set(0, field))
+    with pytest.raises(AssertionError):
+        _pin_ooc_parent(mutated)
+
+
+def test_baseline_pin_fails_on_flipped_nullability() -> None:
+    real = _real_ooc_parent()
+    field = real.schema.field("payload").with_nullable(False)
+    mutated = _with_schema(real, real.schema.set(1, field))
+    with pytest.raises(AssertionError):
+        _pin_ooc_parent(mutated)
+
+
+def test_baseline_pin_fails_on_unexpected_schema_metadata_key() -> None:
+    mutated = _real_ooc_parent().replace_schema_metadata({b"unexpected": b"x"})
+    with pytest.raises(AssertionError):
+        _pin_ooc_parent(mutated)
+
+
+def test_baseline_pin_fails_on_pandas_key_added_to_ooc() -> None:
+    mutated = _real_ooc_parent().replace_schema_metadata({b"pandas": b"{}"})
+    with pytest.raises(AssertionError):
+        _pin_ooc_parent(mutated)
+
+
+def test_baseline_pin_tolerates_a_changed_pandas_key_value_on_the_oracle() -> None:
+    # The pandas key's bytes differ across pandas versions: intentionally not pinned.
+    case = _SUCCESS_CASES[0]
+    plan, sources, graph = case.build()
+    real = _run_oracle(plan, sources, graph).outputs["parent"]
+    mutated = real.replace_schema_metadata({b"pandas": b'{"other": "version"}'})
+    _assert_table(mutated, case.parent.oracle_schema, _ORACLE_META, case.parent.oracle_cells)
+    # ...but a second schema-level key alongside it is not.
+    extra = real.replace_schema_metadata({b"pandas": b"{}", b"extra": b"1"})
+    with pytest.raises(AssertionError):
+        _assert_table(extra, case.parent.oracle_schema, _ORACLE_META, case.parent.oracle_cells)
