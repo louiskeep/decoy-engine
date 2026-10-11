@@ -187,6 +187,13 @@ companion-present one. Documented for users in `docs/strategies.md` (hash). To
 remove the difference entirely, align the Python runtime's Unicode version with
 the companion's.
 
+The same nuance applies to deterministic `categorical`: the keyed index derives
+from the NFC-normalized source value, so for source text with a codepoint newer
+than the running Python's Unicode version the companion and Python paths can
+select different categories. The companion selection is canonical, and the
+out-of-core route only runs a string source on the companion (documented in
+`docs/strategies.md`, categorical).
+
 ### 3.4 The public API + CLI contract
 
 - **Python:** the symbols re-exported from `decoy_engine/__init__.py` and

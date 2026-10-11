@@ -229,6 +229,19 @@ modes. Nulls are preserved.
 Use it to remap a low-cardinality field (status, region, plan type) onto a
 controlled vocabulary.
 
+Text normalization and the compute path. In deterministic mode the category is
+chosen from a keyed index over the source value after Unicode NFC
+normalization, so two encodings of the same characters select the same
+category. The compiled companion (Rust) and the pure-Python path can ship
+different Unicode versions, so for source text containing a codepoint assigned
+in a Unicode version newer than the running Python's, the two paths can select
+different categories for the same value. The companion result is the canonical
+one. Plain text (ASCII, common scripts, older emoji) selects identically on both
+paths. Only a string source column runs on the companion; a date, decimal,
+timestamp or other non-string source always takes the Python path and reports
+that in the job's `out_of_core_categorical` disposition. As with hash, masking
+the related data on one path keeps such rare values join-stable.
+
 ### shuffle
 
 Permutes the non-null values within a column, preserving the multiset and the
