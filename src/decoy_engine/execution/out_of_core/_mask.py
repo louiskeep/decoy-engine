@@ -24,6 +24,7 @@ import pyarrow as pa
 
 from decoy_engine.execution._adapter import provider_config_to_dict
 from decoy_engine.execution._errors import ExecutionError, StrategyError
+from decoy_engine.execution.out_of_core._hash_native import BoundHashKernel, native_hash_array
 from decoy_engine.execution.out_of_core._mask_group_b import (
     GROUP_B_STRATEGIES,
     categorical_array,
@@ -103,6 +104,7 @@ def mask_column(
     column: str | None = None,
     corpus_record: _CorpusRecord | None = None,
     sub_floor_notices: dict[str, int] | None = None,
+    hash_kernel: BoundHashKernel | None = None,
 ) -> pa.Array:
     """Apply one admitted strategy to one column (or column slice).
 
@@ -123,6 +125,9 @@ def mask_column(
     MEDIUM-1) is forwarded to the `text_mask` Group (c) kernel only -- see
     `_mask_group_c._text_mask_array`'s docstring. Every other strategy
     ignores both.
+
+    `hash_kernel` is set only by `mask_batch`, for a hash column its table plan decided
+    to run on the compiled companion. The FK remap sites never pass it and keep the Python hash.
     """
     job_seed = mask_key
     cfg = provider_config_to_dict(seed.provider_config)
@@ -167,6 +172,14 @@ def mask_column(
             )
         raw_truncate = cfg.get("truncate")
         truncate = raw_truncate if isinstance(raw_truncate, int) and raw_truncate > 0 else None
+        if hash_kernel is not None:
+            return native_hash_array(
+                values,
+                bound=hash_kernel,
+                mask_key=job_seed,
+                namespace=seed.namespace,
+                truncate=truncate,
+            )
         return hash_array(values, seed=job_seed, namespace=seed.namespace, truncate=truncate)
     raise ExecutionError(
         code="out_of_core_strategy_unsupported",
@@ -336,8 +349,11 @@ def mask_batch(
     for column, column_seed in seed.per_column:
         if column in skip_columns:
             continue
-        if hash_plan is not None and column_seed.strategy == "hash":
-            hash_plan.note_batch(column, batch)
+        hash_kernel = (
+            hash_plan.kernel_for(column, batch)
+            if hash_plan is not None and column_seed.strategy == "hash"
+            else None
+        )
         idx = batch.schema.get_field_index(column)
         if idx < 0:
             continue
@@ -353,6 +369,7 @@ def mask_batch(
             column=column,
             corpus_record=records.get(column),
             sub_floor_notices=notices,
+            hash_kernel=hash_kernel,
         )
         arrays[idx] = masked
         # Same field semantics as Table.set_column with a bare name: the field

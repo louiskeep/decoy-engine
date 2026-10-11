@@ -29,7 +29,7 @@ import pytest
 
 from decoy_engine.execution._errors import ExecutionError
 from tests.parity import _strict_compare as sc
-from tests.parity._kernel_witness import ExpectedMask, KernelWitness
+from tests.parity._kernel_witness import ExpectedMask, KernelWitness, force_companion_unavailable
 from tests.parity._strict_compare import _cell_token
 from tests.parity.test_out_of_core_fk_parity import (
     OrphanPolicy,
@@ -235,7 +235,12 @@ def test_success_case_strict_baseline(case: Case) -> None:
 
 
 @pytest.mark.parametrize("case", _SUCCESS_CASES, ids=_IDS)
-def test_success_case_native_witness_negative_baseline(case: Case) -> None:
+def test_success_case_native_witness_negative_baseline(
+    case: Case, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # D1a routes admitted hash columns native when the companion is present; this control
+    # pins the legacy path, so it hides the companion rather than depend on the box.
+    force_companion_unavailable(monkeypatch)
     plan, sources, graph = case.build()
     witness = KernelWitness()
     # Spies are scoped to the OOC call only; the oracle runs outside the block.

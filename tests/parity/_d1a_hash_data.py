@@ -19,10 +19,12 @@ from typing import Any
 
 import pyarrow as pa
 import pyarrow.parquet as pq
+import pytest
 
 from decoy_engine.execution import ParquetTransactionalSink
-from decoy_engine.execution.out_of_core import run_fk_out_of_core
+from decoy_engine.execution.out_of_core import _hash_run, run_fk_out_of_core
 from decoy_engine.execution.out_of_core._source import LazySource
+from decoy_engine.kernel import hash_array
 from decoy_engine.plan._types import ColumnSeed, SeedEnvelope, TableSeed
 from decoy_engine.providers_v2 import get_default_registry
 from decoy_engine.relationships._graph import OrphanPolicy, RelationshipEdge, RelationshipGraph
@@ -160,6 +162,7 @@ def run_chain(
     payload_seeds: tuple[tuple[str, ColumnSeed], ...],
     *,
     out_dir: Path | None = None,
+    sink: Any | None = None,
     reorder: bool = False,
     lazy_dir: Path | None = None,
     sources: dict[str, Any] | None = None,
@@ -169,7 +172,7 @@ def run_chain(
     """Run the chain through `run_fk_out_of_core`.
 
     `out_dir` selects the sink path (outputs are read back from the committed
-    parquet); `reorder` forces the reorder driver (`stream_table`) for every table
+    parquet); `sink` substitutes a recording sink writing to `out_dir`; `reorder` forces the reorder driver (`stream_table`) for every table
     with an incoming edge, which needs the sink; `lazy_dir` serves the sources from
     parquet files through `LazySource`.
     """
@@ -192,7 +195,7 @@ def run_chain(
         srcs,
         registry=get_default_registry(),
         relationship_graph=chain_graph(hk_policy),
-        sink=ParquetTransactionalSink(out_dir) if out_dir is not None else None,
+        sink=sink or (ParquetTransactionalSink(out_dir) if out_dir is not None else None),
         **run_kwargs,
     )
     if out_dir is None:
@@ -202,6 +205,46 @@ def run_chain(
 
 def hash_seeds(names: list[str]) -> tuple[tuple[str, ColumnSeed], ...]:
     return tuple((n, column_seed()) for n in names)
+
+
+class PythonReferenceKernel:
+    """A stand-in for the compiled companion kernel, computed with the Python hash.
+
+    Lets the routing machinery (decision, pinning, abort, disposition) be tested on a box
+    without the companion; the real kernel is exercised by the companion-present suites.
+    `fail_on_call` makes the Nth `derive_batch` raise, to model a mid-run kernel fault."""
+
+    def __init__(self, fail_on_call: int | None = None) -> None:
+        self.calls = 0
+        self.fail_on_call = fail_on_call
+
+    def derive_batch(
+        self,
+        values: Any,
+        *,
+        mask_key: bytes,
+        namespace: str,
+        truncate: int | None,
+        native_threads: int | None = None,
+    ) -> pa.Array:
+        self.calls += 1
+        if self.calls == self.fail_on_call:
+            raise RuntimeError("injected kernel fault")
+        return hash_array(values, seed=mask_key, namespace=namespace, truncate=truncate)
+
+
+def install_companion(
+    monkeypatch: pytest.MonkeyPatch, kernel: PythonReferenceKernel | None = None
+) -> dict[str, Any]:
+    """Make the route's one-time companion load return `kernel`; counts the loads."""
+    state: dict[str, Any] = {"loads": 0, "kernel": kernel or PythonReferenceKernel()}
+
+    def load() -> PythonReferenceKernel:
+        state["loads"] += 1
+        return state["kernel"]  # type: ignore[no-any-return]
+
+    monkeypatch.setattr(_hash_run, "load_compiled_crypto_kernel", load)
+    return state
 
 
 EXPECTED_TOKENS: dict[str, list[str | None]] = {

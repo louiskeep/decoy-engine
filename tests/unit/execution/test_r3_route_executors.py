@@ -123,7 +123,10 @@ def test_full_frame_jobs_reach_no_bounded_executor(
 def _assert_direct_call_matches_baseline(
     executor: Any, ctx: Any, decision: Any, name: str, tmp_path: Path
 ) -> None:
-    again = executor(ctx, decision)
+    # The baseline was recorded without the companion (`sc.success_snapshot` hides it); a
+    # re-execution on a box that has it would report the native hash disposition instead.
+    with sc.without_companion():
+        again = executor(ctx, decision)
     expected = _BASELINE[name]
     projected = sc._relocate(sc.snapshot(sc.Run(again)), tmp_path)
     for key in ("tables", "warnings", "row_errors", "table_kinds", "execution", "execution_plan"):

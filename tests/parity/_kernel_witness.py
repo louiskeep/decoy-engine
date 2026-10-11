@@ -45,7 +45,8 @@ from typing import Any
 import pyarrow as pa
 import pytest
 
-from decoy_engine.execution.out_of_core import _mask, _runner, _stream_driver
+from decoy_engine.execution.native._crypto_ext import CryptoExtensionUnavailableError
+from decoy_engine.execution.out_of_core import _hash_run, _mask, _runner, _stream_driver
 from tests.parity._strict_compare import _cell_token
 
 ENTRYPOINTS = ("hash_array", "redact_array", "truncate_array", "passthrough_array")
@@ -59,6 +60,18 @@ _BATCH_BINDINGS = (_mask, _runner, _stream_driver)
 NATIVE = "native"
 LEGACY = "legacy"
 UNKNOWN = "unknown"
+
+
+def force_companion_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make the out-of-core route's one-time companion load fail, as on a box without it.
+
+    The legacy-only controls need this to hold on a machine that HAS the companion: without
+    it the admitted hash columns run native and the legacy-only claim is false by design."""
+
+    def unavailable() -> None:
+        raise CryptoExtensionUnavailableError("companion hidden for a legacy-path-only control")
+
+    monkeypatch.setattr(_hash_run, "load_compiled_crypto_kernel", unavailable)
 
 
 @dataclass(frozen=True)
@@ -232,7 +245,14 @@ class KernelWitness:
         """Observations of the expected entrypoint, required to cover exactly the
         expected source column. Fails on zero observations (missing observation)
         and on inputs that do not add up to that column (misattribution)."""
-        obs = [o for o in self.observations if o.logical == expected.entrypoint]
+        # An observation made inside `mask_batch` knows its table and column; one made elsewhere
+        # (the whole-table zero-row path) does not, and is matched by its values alone.
+        obs = [
+            o
+            for o in self.observations
+            if o.logical == expected.entrypoint
+            and (o.table is None or (o.table, o.column) == (expected.table, expected.column))
+        ]
         if not obs:
             raise AssertionError(
                 f"no {expected.entrypoint} observation for "
