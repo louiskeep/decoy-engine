@@ -63,15 +63,17 @@ UNKNOWN = "unknown"
 
 
 def force_companion_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Make the out-of-core route's one-time companion load fail, as on a box without it.
+    """Make the out-of-core route's one-time companion loads fail, as on a box without it.
 
     The legacy-only controls need this to hold on a machine that HAS the companion: without
-    it the admitted hash columns run native and the legacy-only claim is false by design."""
+    it the admitted hash and categorical columns run native and the legacy-only claim is
+    false by design."""
 
     def unavailable() -> None:
         raise CryptoExtensionUnavailableError("companion hidden for a legacy-path-only control")
 
     monkeypatch.setattr(_hash_run, "load_compiled_crypto_kernel", unavailable)
+    monkeypatch.setattr(_hash_run, "load_compiled_index_kernel", unavailable)
 
 
 @dataclass(frozen=True)

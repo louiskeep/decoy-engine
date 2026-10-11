@@ -354,6 +354,9 @@ def mask_batch(
             if hash_plan is not None and column_seed.strategy == "hash"
             else None
         )
+        if hash_plan is not None and hash_plan.categorical is not None:
+            if column_seed.strategy == "categorical":
+                hash_plan.categorical.gate(column, batch)
         idx = batch.schema.get_field_index(column)
         if idx < 0:
             continue
