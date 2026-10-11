@@ -71,3 +71,20 @@ The value-level parity above covers in-memory `outputs`. The platform's evidence
 **Disposition (S13 M1): ACCEPT and document** (Dennis-confirmed Session 52; final PO sign-off on the readiness report). Rationale (the load-bearing framing is WITHIN-substrate reproducibility, not substrate count): the evidence manifest's `outputs[].hash` is the tamper-evident byte-hash of the file THIS run produced, not a cross-substrate logical-equality digest, and the R3 contract has no cross-run/cross-substrate invariance clause. Within-substrate reproducibility holds (each writer is deterministic for a given input). The S13 polars default was later reverted, so the shipped masking substrate is pandas again: every production manifest is pandas-written. The cross-substrate byte drift described here is now moot: the polars masking adapter was removed (2026-09-21), so `"polars"` raises `invalid_substrate` and no substrate but pandas can write a manifest. The drift is bounded to parquet/IPC (CSV has no Arrow-type encoding); logical data is identical in all cases, only Arrow type width differs. Normalize-at-write in `write_target_polars` is a correct V2+ hardening, not a ship gate.
 
 This disposition is recorded in the S13 release-readiness report's known-limitations section (the canonical ship-decision home); this doc is the accepted-differences cross-reference.
+
+## Phase D / D0 strict baseline (OOC FK chain vs pandas oracle)
+
+The value-normalized FK harness folds the differences below away. D0 pins them at the strict level on the parent to child single edge, with the exact current delta as a literal in `test_phase_d_d0_baseline.py`. Nothing here is fixed by D0. Each gap needs its own resolve-or-accept decision before it can be closed; the IDs are the handles for those items (not yet entered in the roadmap).
+
+| Gap | Strict delta today (oracle vs OOC) | Pinned by |
+|---|---|---|
+| D0-G1 schema metadata | Oracle output schemas carry the `pandas` metadata key; OOC outputs carry none. Every other dimension agrees on the plain success fixtures. | `D0-ok-hash`, `-redact`, `-truncate`, `-passthrough` |
+| D0-G2 NaN vs null | A preserved float NaN parent key stays NaN in OOC and is null in the oracle (`[None, 1.0, 2.0]` vs `[nan, 1.0, 2.0]`). The child FK column agrees. | `D0-nan-preserve` |
+| D0-G3 empty child schema | A 0-row child: oracle `fk:int64,payload:null`, OOC `fk:null,payload:string`. | `D0-empty` |
+| D0-G4 all-null FK schema | An all-null child FK: oracle `fk:int64`, OOC `fk:null`. Values are all null in both. | `D0-allnull` |
+
+Agreement that D0 freezes (so a kernel slice that narrows a type breaks it): on admitted, successful single-edge chains int64 and float64 FK keys do not diverge at the output; both routes emit `int64` for an int parent with an int or float child (`D0-width-agree`).
+
+Rejections: where the oracle raises, OOC raises the same `ExecutionError.code` (`orphan_fk_violation`, `D0-orphan-fail`). The one sanctioned oracle-success, OOC-reject case is `out_of_core_fk_key_dtype_unsupported` for an int parent with a decimal child under PRESERVE (`D0-dtype-reject`).
+
+Witness: the chain's masked parent column is produced entirely by the legacy kernels (pyarrow fast path or the Python reference); no native FK-payload entrypoint exists yet. `_kernel_witness.py` asserts that today and exposes `assert_native_ran` for a later slice to flip.
