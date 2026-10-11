@@ -241,7 +241,7 @@ def install_companion(
 
     def load() -> PythonReferenceKernel:
         state["loads"] += 1
-        return state["kernel"]  # type: ignore[no-any-return]
+        return state["kernel"]
 
     monkeypatch.setattr(_hash_run, "load_compiled_crypto_kernel", load)
     return state
