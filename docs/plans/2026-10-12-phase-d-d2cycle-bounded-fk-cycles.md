@@ -1,6 +1,6 @@
 # Phase D / D2-cycle: cross-table FK cycles native on the bounded (SEQ) route
 
-Status: plan (rev 4, pre-gate). rev 1 NO-GO (wrong re-derivation premise); rev 2 NO-GO
+Status: plan (rev 4.1, GATE GO - ready to build). rev 1 NO-GO (wrong re-derivation premise); rev 2 NO-GO
 (transform semantics + memory); rev 3 NO-GO (2 HIGH: the gate again VALIDATED the
 effective-map core, canonicalization, inheritance, and confirmed transforms resolved +
 projected reads buildable, but found two NEW holes). rev 4 narrows per the gate's own
