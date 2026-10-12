@@ -427,17 +427,19 @@ def test_extension_absent_reroutes_whole_table_and_still_matches_oracle(
 def test_mixed_admitted_and_non_admitted_columns_stays_fully_on_oracle() -> None:
     # The T6 end-to-end route-proof: every admitted column here (3 hash, 3
     # passthrough, 2 redact, 3 truncate) has a compiled kernel on its own, but
-    # `extra_redact` (text_mask) does not -- so the whole table, including
-    # its otherwise-admitted columns, reroutes. Proving that boundary end to
-    # end needs all three legs together: every node tagged oracle, the
-    # compiled kernel NEVER ran (not merely "the job succeeded" -- Decision
-    # 10's trap), and the output still matches the oracle exactly.
+    # `extra_bucketize` (bucketize) has no native operator at all -- so the
+    # whole table, including its otherwise-admitted columns, reroutes. Proving
+    # that boundary end to end needs all three legs together: every node tagged
+    # oracle, the compiled kernel NEVER ran (not merely "the job succeeded" --
+    # Decision 10's trap), and the output still matches the oracle exactly.
+    # (bucketize replaced text_mask here once C6b-i admitted text_mask to the
+    # native route; bucketize is the durable no-kernel chunk-safe stand-in.)
     columns = [
         *_COLUMNS,
-        {"name": "extra_redact", "strategy": "text_mask", "namespace": "extra_redact_ns"},
+        {"name": "extra_bucketize", "strategy": "bucketize", "provider_config": {"width": 10}},
     ]
     source = _build_source(13).append_column(
-        "extra_redact", pa.array([f"contact me at u{i}@x.com" for i in range(13)])
+        "extra_bucketize", pa.array([i * 7 for i in range(13)], type=pa.int64())
     )
     config = _build_config(source, key="mixed_non_admitted", columns=columns)
     oracle = _run_oracle(config, source)
