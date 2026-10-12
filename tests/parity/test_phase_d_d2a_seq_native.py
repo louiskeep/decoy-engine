@@ -377,7 +377,7 @@ def test_remap_declines_a_mixed_type_orphan_batch_with_a_reason() -> None:
     run = SeqNativeRun()
     run._bound = _sequential_native.BoundHashKernel(MarkingKernel())  # type: ignore[arg-type]
     run._loaded = True
-    run._decisions[("t", "hk")] = _sequential_native.ColumnDecision(
+    run._remap_decisions[("t", "hk")] = _sequential_native.ColumnDecision(
         "t", "hk", "rust_companion", None, pa.string()
     )
     mixed = pd.Series(["a", 7], dtype="object")

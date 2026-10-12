@@ -159,6 +159,7 @@ from decoy_engine.execution._runner import (
     top_code_columns,
 )
 from decoy_engine.execution._sequential_native import SeqNativeRun
+from decoy_engine.execution._sequential_preflight import check_composite_fk_chain
 from decoy_engine.execution._transactional_sink import (
     TransactionalSink,
     _CallableSinkAdapter,
@@ -283,6 +284,7 @@ def run_sequential(
     for node in ordered:
         nodes_by_table.setdefault(node.table, []).append(node)
 
+    check_composite_fk_chain(ordered, graph)  # D2b: before any table loads
     table_order = table_topo_order(plan, graph)
 
     # HC-3a: per-table date_shift group_by anchor columns (Codex R1 P1 #1/#2).

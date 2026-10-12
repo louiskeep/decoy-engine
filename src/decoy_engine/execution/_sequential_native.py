@@ -16,8 +16,15 @@ Three FK paths stay distinct, because only one of them calls the kernel at the s
    parent it came from.
 3. REMAP: an orphan key is minted by running the PARENT's handler again (`make_remap_fn`).
    That call is admitted on its own, from the type of the orphan keys it actually holds, and
-   only when the parent column itself took the native path, so one column never mixes two
+   only when the parent column's REMAP decision is native, so one column never mixes two
    Unicode normalizations.
+
+A column has up to two decisions, because it can play two roles. The execution decision covers
+hashing the column's own rows and exists only for a column that is not an FK child (a child
+inherits). The REMAP decision covers re-deriving orphan keys for a child edge and exists for
+every column that is the parent key of some edge, including a chain's middle column that is
+also an FK child. Both come from the same pinned type and the same admission predicate, so a
+middle column mints its orphans on the kernel without ever being rehashed as a matched child.
 
 Boundary with pandas. The kernel is Arrow in, Arrow out; the handler holds a pandas column.
 Input is rebuilt as an Arrow array of the column's PINNED source type (read from the Arrow
@@ -158,6 +165,8 @@ class SeqNativeRun:
         self._loaded = False
         self._bound: BoundHashKernel | None = None
         self._decisions: dict[tuple[str, str], ColumnDecision] = {}
+        self._remap_decisions: dict[tuple[str, str], ColumnDecision] = {}
+        self._inherited_columns: set[tuple[str, str]] = set()
         self._remap: dict[tuple[str, str], RemapRecord] = {}
         self._inherited: list[dict[str, Any]] = []
         self._in_remap = 0
@@ -171,24 +180,37 @@ class SeqNativeRun:
                 self._bound = None
         return self._bound
 
+    def _decide(self, table: str, column: str, input_type: pa.DataType) -> ColumnDecision:
+        bound = self._kernel()
+        reason = decline_reason(column, input_type) if bound is not None else REASON_UNAVAILABLE
+        native = bound is not None and reason is None
+        return ColumnDecision(
+            table, column, RUST_COMPANION if native else PYTHON_SCALAR, reason, input_type
+        )
+
     def prepare_table(
         self, plan: Plan, table: str, source_schema: pa.Schema, graph: RelationshipGraph
     ) -> None:
-        """Decide every scalar hash column of `table` and record its inherited FK children."""
+        """Decide every hash column of `table` and record its inherited FK children.
+
+        A column gets an execution decision unless it is an FK child, and a REMAP decision
+        when some edge uses it as a parent key. A column that is both gets only the REMAP one."""
         columns = _table_columns(plan, table)
         fk_children = {c for e in graph.edges if e.child_table == table for c in e.child_columns}
+        parent_keys = {c for e in graph.edges if e.parent_table == table for c in e.parent_columns}
         for column, seed in columns.items():
-            if seed.strategy != "hash" or column in fk_children:
+            if seed.strategy != "hash" or source_schema.get_field_index(column) < 0:
                 continue
-            if source_schema.get_field_index(column) < 0:
-                continue
-            input_type = source_schema.field(column).type
-            bound = self._kernel()
-            reason = decline_reason(column, input_type) if bound is not None else REASON_UNAVAILABLE
-            native = bound is not None and reason is None
-            self._decisions[(table, column)] = ColumnDecision(
-                table, column, RUST_COMPANION if native else PYTHON_SCALAR, reason, input_type
-            )
+            is_child = column in fk_children
+            if is_child:
+                self._inherited_columns.add((table, column))
+            if is_child and column not in parent_keys:
+                continue  # inherits, and no edge re-derives it: nothing to decide
+            decision = self._decide(table, column, source_schema.field(column).type)
+            if not is_child:
+                self._decisions[(table, column)] = decision
+            if column in parent_keys:
+                self._remap_decisions[(table, column)] = decision
         for edge in graph.edges:
             if edge.child_table != table:
                 continue
@@ -198,6 +220,13 @@ class SeqNativeRun:
                 if parent_seed is None or parent_seed.strategy != "hash":
                     continue
                 parent = self._decisions.get((edge.parent_table, pcol))
+                parent_backend = (
+                    parent.backend
+                    if parent is not None
+                    else INHERITED
+                    if (edge.parent_table, pcol) in self._inherited_columns
+                    else None
+                )
                 self._inherited.append(
                     {
                         "table": table,
@@ -205,7 +234,7 @@ class SeqNativeRun:
                         "path": PATH_INHERITED,
                         "executed_backend": INHERITED,
                         "parent": f"{edge.parent_table}.{pcol}",
-                        "parent_backend": parent.backend if parent is not None else None,
+                        "parent_backend": parent_backend,
                     }
                 )
 
@@ -279,7 +308,7 @@ class SeqNativeRun:
     ) -> list[Any] | None:
         record = self._remap.setdefault((table, column), RemapRecord(table, column))
         rows = len(series)
-        parent = self._decisions.get((table, column))
+        parent = self._remap_decisions.get((table, column))
         if parent is None or not parent.native or self._bound is None:
             record.python_rows += rows
             record.reasons.append(f"{REASON_REMAP_PARENT_PYTHON}:{column}")
