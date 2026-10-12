@@ -238,6 +238,7 @@ _PINNED_RUN_CALLS = frozenset(
         "TimingCollector",
         "build_work_list",
         "ctx.code_set_corpora_metrics",
+        "ctx.date_preserve_metrics",
         "date_shift_group_columns",
         "dict",
         "drain_row_errors",
