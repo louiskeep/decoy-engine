@@ -14,10 +14,17 @@ root-cause fixes - this is the "narrow further (more declines)" path Cam authori
 - HIGH-2: the combined-memory formula omitted `quarantine_entries` (whole masked rows),
   cross-table error caches, and the shared `PoolCache`. rev 4 prices them and declines
   quarantine-producing orphan policies on cyclic tables so retained state stays narrow.
-Branches off main; rebases onto post-D2b main before build. Cam 2026-10-12: keep in v1
-and ATTEMPT it; narrow further or defer to V2 if too hard. DECISION RULE: if rev 4 also
-NO-GOs on a genuinely new deeper hole, defer D2-cycle to V2, record where it stopped,
-and continue other Phase D work (do not grind further rounds).
+rev 4.1 (GO) folds the round-4 gate's 3 MED + 1 LOW build obligations as hard
+constraints: (MED) price PoolCache/code_set/per-cell error caches/transition overlap or
+decline - governing rule "price every live allocation or decline"; (MED) quarantine is
+JOB-level (enabled+triggers) so decline the whole cyclic route when quarantine triggers
+are on, FAIL is an allowed abort; (MED) eligibility checked against EVERY actual key
+writer (joint_mask etc.) with a DEFAULT-DENY five-strategy allowlist; (LOW) build the
+map in source order, execute standalone producer keys from originals (consumer map is
+for FK consumers only). Branches off main; rebases onto post-D2b main before build. Cam
+2026-10-12: keep in v1 and ATTEMPT it. STATUS: round-4 Codex plan gate GO ("no new HIGH
+soundness hole; admitted set useful and sound"); ready to build once D2b main CI is
+green and the branch rebases onto post-D2b main.
 
 Rules consulted: 00-universal.md, risk-and-exceptions.md, development-loop.md,
 architecture.md, reuse-first.md, testing.md, documentation.md,
@@ -59,27 +66,34 @@ component only when ALL of:
   NOTE `order_work`'s edges are FK/composite edges, NOT arbitrary strategy sibling
   reads, so work-acyclicity is NECESSARY but NOT SUFFICIENT (rev-3 HIGH-1) - the
   producer-eligibility condition below is what closes the sibling-read gap.
-- every FK KEY column in the component is produced by a PURE VALUE-FUNCTION strategy:
-  its emitted value is a function of the key's own source VALUE alone, so a key-only
-  projection reproduces it exactly (rev-3 HIGH-1). This ADMITS hash / passthrough /
-  redact / truncate / FPE and the like; it DECLINES (config-detectable by strategy type
-  + its declared inputs): `derived`/expression strategies that read payload siblings
-  (`_derived.py:62` evaluates against full row context, missing from a key-only read),
-  any POSITIONAL / row-index-dependent strategy (a last-wins value map loses distinct
-  per-row outputs when duplicate source keys map to different positions), and
-  `when:`-conditional KEYS (predicate-dependent output). The allowlist is on the
-  PRODUCER; the CONSUMER (matched-child inheritance) stays strategy-agnostic - it copies
-  whatever effective value the producer emitted.
+- every FK KEY column in the component is produced by a PURE VALUE-FUNCTION strategy,
+  and this is checked against EVERY ACTUAL WRITER of that key column, not only the
+  strategy on the key's own declaration (rev-4 MED): a payload `joint_mask` or other
+  multi-column writer can overwrite a key column it lists (`joint_mask.py:255`), so a
+  nominally-passthrough key could be rewritten by a context-dependent handler. The
+  allowlist is EXPLICIT and DEFAULT-DENY: ADMIT exactly hash / passthrough / redact /
+  truncate / FPE (read-only probes confirmed these five have no hidden sibling/
+  positional dependency, full-column == projected-column incl duplicates). DECLINE
+  everything else (config-detectable by strategy type + declared outputs): `derived`/
+  expression strategies that read payload siblings (`_derived.py:62`), any POSITIONAL /
+  row-index strategy, `when:`-conditional KEYS, any overlapping/multi-column writer
+  touching a cyclic key, and Faker/categorical (eligibility is config-dependent, not
+  name-based) - no "and the like" default-admit. The allowlist is on the PRODUCER; the
+  CONSUMER (matched-child inheritance) stays strategy-agnostic.
 - NO cyclic table carries a table-level TRANSFORM (filter / sort / dedup / derived
   column, `_transforms_table.py`). Config-only detection over the whole nonempty
   `transforms` declaration (rev-2 HIGH-1, gate-confirmed sound): a transform can
   drop/reorder/dedup rows based on PAYLOAD columns, which a narrow key-only pass would
   not reproduce (a projected post-transform contract is the later, bigger alternative).
-- NO cyclic table uses an orphan/error policy that QUARANTINES whole rows (rev-3
-  HIGH-2): quarantine entries hold full masked rows incl payload and accumulate across
-  tables (`quarantine.py:184`, `_sequential.py:503`), defeating the narrow-state bound.
-  Admit orphan policies that stay narrow (preserve / remap / warn); decline fail/
-  quarantine on cyclic tables. Config-detectable from the orphan/error policy.
+- the JOB does not enable row-error QUARANTINE (rev-3 HIGH-2 + rev-4 MED). Quarantine is
+  a JOB-level control (`enabled` + `triggers`, `config/_validators.py:78`), NOT just an
+  orphan-policy setting: payload errors and cascades populate quarantine under PRESERVE/
+  REMAP/WARN too, and the entries hold whole masked rows incl payload that accumulate
+  across ALL tables (`quarantine.py:184`, `_sequential.py:503`). So decline the cyclic
+  route whenever the job enables any row-error quarantine trigger (config-only,
+  conservative, covers surrounding acyclic tables too) - this is what makes omitting
+  `quarantine_entries` from the memory formula valid job-wide. Orphan `FAIL` raises
+  directly (`_fk_resolve.py:121`): it is an ABORT, not accumulation, so it is allowed.
 - the COMBINED memory estimate fits (see the memory contract); else decline.
 Native-vs-Python stays the usual per-column type decision and is a speedup only (a
 Python-fallback producer still emits a correct effective map). Also decline OOC cyclic
@@ -119,13 +133,18 @@ When routing detects a cyclic FK component (needs a real detector, see Routing):
    its strategy (native where admitted), and record the EFFECTIVE source->masked map:
    the actual emitted value per source key (token / raw-if-when-off /
    preserved-raw-orphan), with errored-parent rows excluded into the cascade cache and
-   duplicate source keys resolved last-wins. Because admission restricts producers to
-   PURE VALUE-FUNCTION strategies, the key-only read carries every input the producer
-   needs (no payload sibling, no row position), and last-wins over duplicate source keys
-   is LOSSLESS (equal source value => equal emitted value, so no distinct parent-row
-   output is dropped) - that is exactly what `_parent_map` produces on the full frame,
-   reproduced on narrow columns. A child key column that depends on an already-computed
-   parent map consumes it in order.
+   duplicate source keys resolved last-wins. Build the map in SOURCE ORDER so last-wins
+   matches the oracle's retained mapping. The effective map reproduces the oracle's
+   CONSUMER map (what a matched child inherits); it is NOT used to restore a standalone
+   producer key column's own per-row output (rev-4 LOW): distinct source values can
+   normalize to the same FK key (e.g. truncate `[-0.0, 0.0]` emits `["-0.0","0.0"]` but
+   both normalize to key `0`, `_fk_keys.py:90`), so in pass 2 a STANDALONE producer key
+   is EXECUTED from its original values at its normal work position - the consumer map
+   feeds FK consumers only. Because admission restricts producers to pure value-function
+   strategies, the key-only read in pass 1 carries every input the producer needs (no
+   payload sibling, no row position), so the consumer map it builds equals what
+   `_parent_map` produces on the full frame. A child key column that depends on an
+   already-computed parent map consumes it in order.
 2. **Pass 2 - mask each cyclic table.** Load each table, mask its payload columns
    normally (D2a/D2b per-column decisions), and resolve its FK child keys by INHERITING
    from the pass-1 effective maps via `resolve_fk_keys` (map lookup + the unchanged
@@ -142,15 +161,27 @@ outgoing children consuming it. Peak at any point =
   pass-1 key work (rev-3 HIGH-2; `_sequential.py:301` consumer bookkeeping adapts); PLUS
 - (the component's retained narrow key maps/error caches); PLUS
 - (the cross-table error state `all_row_errors` + `key_error_rows`, `_sequential.py:443`
-  - narrow, keyed by errored rows); PLUS
-- (the shared strategy `PoolCache`, which survives table eviction, `_sequential.py:308`
-  - bounded by distinct values seen); PLUS
-- (the current table's working set: load + pandas conversion + output overlap),
+  - keyed by errored CELLS, worst-case every row across many columns, so priced from the
+  error-trigger config, NOT assumed negligible, rev-4 MED); PLUS
+- (the shared strategy `PoolCache`, `_sequential.py:308`, which holds generated POOLS
+  not a source-value-keyed map - entries can be tuple-valued bundles and its own byte
+  estimator caps string accounting, `pool/_cache.py:69`, `pool/_value_pool.py:63`; AND
+  `code_set` pins whole corpus records outside PoolCache, `_strategies/_code_set.py:179`)
+  - these are NOT bounded by source cardinality, so price them from their config or
+  DECLINE those configurations (rev-4 MED); PLUS
+- (the current table's working set: load + pandas conversion + the table-transition
+  OVERLAP - eviction deletes `frames[table]` but local `df`/`out` references persist,
+  `_sequential.py:518`, so release them explicitly before the next load or price the
+  overlap, rev-4 MED), plus narrow-pass scratch + warnings/metrics,
 under lazy inputs + a draining sink. `quarantine_entries` (whole masked rows incl
-payload, `quarantine.py:184`) is NOT in this formula because the admission gate declines
-quarantine-producing policies on cyclic tables (above) - so retained state stays narrow
-by construction. The plan defines explicit RELEASE points (drop a map once its last
-cross-pass/child consumer finishes) and a COMBINED-budget admission check that reserves
+payload, `quarantine.py:184`) is NOT in this formula ONLY because the admission gate
+declines any job that enables row-error quarantine triggers (above) - so retained state
+stays narrow by construction. GOVERNING RULE (rev-4): PRICE EVERY LIVE ALLOCATION OR
+DECLINE - the bullet list is the known set, not an exhaustive guarantee; any resident or
+phase-local allocation whose bound is unavailable makes the job decline. The plan
+defines explicit RELEASE points (drop a map/error-map pair only after its last consumer
+across pass-1 work, pass-2 work, AND outgoing children - `_sequential.py:301` table-only
+consumer sets need this adaptation) and a COMBINED-budget admission check that reserves
 all the resident terms above and rejects when the estimate exceeds budget, with an
 explicit decline when any term's bound is unavailable (decline, do not assume it fits).
 The win is jobs whose AGGREGATE frames exceed RAM while this combined live state fits; a
@@ -184,8 +215,9 @@ independent cycle rejection and the self-edge exclusion.
 combined live state (retained parent maps + error caches + component narrow maps +
 cross-table error state + PoolCache + the current table's working set), checked against
 budget at admission. Non-admitted cycles (`when:`-conditional-key / non-pure-value
--function-producer e.g. derived-sibling-read or positional / inherited-key-dependency /
-oversized-single-table / transform-bearing-cyclic-table / quarantine-producing-policy /
+-function-producer e.g. derived-sibling-read or positional / overlapping-multi-column
+-key-writer / Faker-categorical-key / inherited-key-dependency / oversized-single-table /
+transform-bearing-cyclic-table / quarantine-triggers-enabled / payload-state-over-budget /
 work-node-cyclic / combined-budget-over) and OOC cyclic jobs decline with a clear coded
 reason. Acyclic masking and full-frame unchanged.
 
@@ -222,9 +254,17 @@ change to full-frame, `_fk_resolve` precedence, or acyclic routing.
 - **Canonicalization:** a boolean parent `True` matched by an integer child `1`
   inherits the parent's effective token (map lookup), byte-identical to full-frame;
   numeric normalization + duplicate-normalized-key last-wins covered.
-- **Orphan/cascade/policy:** preserve/remap/warn/fail + errored-parent cascade through
-  a cyclic edge, resolved from the pass-1 effective maps + error cache, identical to
-  full-frame.
+- **Orphan/cascade/policy:** preserve/remap/warn + errored-parent cascade through a
+  cyclic edge, resolved from the pass-1 effective maps + error cache, identical to
+  full-frame. Orphan `FAIL` RAISES (abort, no commit), identical to full-frame - it is
+  allowed because it does not accumulate (rev-4 MED). A job that enables row-error
+  QUARANTINE triggers DECLINES the cyclic route (not a successful case), per the
+  admission gate.
+- **Standalone producer vs consumer map (rev-4 LOW):** a producer key with distinct
+  source values that normalize to the same FK key (e.g. truncate `[-0.0, 0.0]`) emits
+  its own per-row values in pass 2 (executed from originals, byte-identical to
+  full-frame), while the matched child inherits the last-wins consumer value - assert
+  both, proving the consumer map is not used to restore the producer column.
 - **Memory:** a cyclic job whose AGGREGATE frames exceed a set budget but whose
   COMBINED live state (all retained parent maps + error caches + component narrow maps +
   cross-table error state + PoolCache + the current table's working set) fits runs on
@@ -233,18 +273,24 @@ change to full-frame, `_fk_resolve` precedence, or acyclic routing.
   whose COMBINED estimate exceeds budget declines even though no single table is
   oversized (rev-2 HIGH-2); an admitted run asserts each parent map is RELEASED only
   after its last consumer ACROSS BOTH PASSES AND outgoing children (peak stays bounded,
-  not monotonically growing, rev-3 HIGH-2). **Quarantine:** a multi-table job with a
-  wide-payload quarantine policy on a cyclic table DECLINES (it would accumulate whole
-  masked rows across tables, rev-3 HIGH-2) - proving the bound is not fooled by
-  releasing maps alone.
+  not monotonically growing, rev-3 HIGH-2). **Quarantine:** a multi-table job that
+  enables row-error quarantine triggers DECLINES the cyclic route (it would accumulate
+  whole masked rows across tables, rev-3 HIGH-2). **Payload-strategy state:** a job whose
+  cyclic payload columns use a large `PoolCache`/`code_set` whose retained state exceeds
+  budget DECLINES (priced, not assumed cheap, rev-4 MED); an error-heavy config whose
+  per-cell error caches exceed budget DECLINES.
 - **Declines (fail closed, coded, no data in the message):** a `when:`-conditional
   KEY cycle; a non-pure-value-function PRODUCER cycle (derived/sibling-reading, and
-  positional/row-index - rev-3 HIGH-1, config-detectable by strategy type + inputs); an
-  inherited-key-dependency cycle the pass can't resolve; a cyclic table carrying a
-  table-level TRANSFORM (filter/sort/dedup/derived - rev-2 HIGH-1); a cyclic table with
-  a quarantine-producing orphan/error policy (rev-3 HIGH-2); a component whose WORK-NODE
-  dependency graph cycles (not just the table graph); an OOC cyclic job (unchanged).
-  Each decline is detectable at config/route time without inspecting row data.
+  positional/row-index - rev-3 HIGH-1, config-detectable by strategy type + inputs); a
+  cyclic key column written by an OVERLAPPING/MULTI-COLUMN writer, e.g. a payload
+  `joint_mask` that lists it (rev-4 MED - eligibility checked against every actual
+  writer, not just the key's own declared strategy); a Faker/categorical cyclic key
+  (default-deny, config-dependent); an inherited-key-dependency cycle the pass can't
+  resolve; a cyclic table carrying a table-level TRANSFORM (filter/sort/dedup/derived -
+  rev-2 HIGH-1); a job that enables row-error QUARANTINE triggers (rev-3 HIGH-2 +
+  rev-4 MED, job-wide); a component whose WORK-NODE dependency graph cycles (not just the
+  table graph); an OOC cyclic job (unchanged). Each decline is detectable at config/route
+  time without inspecting row data.
 - **Routing:** an incoming acyclic parent + a cyclic component + an outgoing acyclic
   child + a disconnected acyclic table all in one job order and mask correctly;
   self-reference still routes as today (not treated as a table cycle).
