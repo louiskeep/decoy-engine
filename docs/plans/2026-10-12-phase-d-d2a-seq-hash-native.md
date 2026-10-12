@@ -1,7 +1,8 @@
 # Phase D / D2a: SEQ-route parity contract + hash on the compiled kernel
 
-Status: plan (rev 2, pre-gate). rev 1 NO-GO (4 HIGH/1 MEDIUM, no blocker); rev 2
-folds all five, grounded on Codex-verified SEQ routing/conversion probes.
+Status: plan (rev 2, plan-gate GO); built on `feat/phase-d-d2a-seq-hash-native`, pending the
+quality gate. rev 1 NO-GO (4 HIGH/1 MEDIUM, no blocker); rev 2 folds all five, grounded on
+Codex-verified SEQ routing/conversion probes.
 
 Rules consulted: 00-universal.md, risk-and-exceptions.md, development-loop.md,
 architecture.md, reuse-first.md, testing.md, documentation.md,

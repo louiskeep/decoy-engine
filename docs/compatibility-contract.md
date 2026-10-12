@@ -187,6 +187,21 @@ companion-present one. Documented for users in `docs/strategies.md` (hash). To
 remove the difference entirely, align the Python runtime's Unicode version with
 the companion's.
 
+The sequential FK route (`run_sequential`, the bounded route for relationship-bearing
+jobs) also hashes on the companion when it is installed. It uses the same kernel as the
+out-of-core route, so the same admitted input types (utf8, large_utf8, bool, the eight
+integer widths) and the same accepted Unicode nuance above apply, and its output is
+byte-identical to the Python handler otherwise. Admission sits behind the existing ingest
+guards: an integer hash column that holds a null is still rejected with
+`null_bearing_int_unsupported`, for parent and payload columns alike. A matched child key
+inherits the parent's masked value and never calls the kernel. REMAP orphan keys are minted
+on the companion only when their parent column ran there, so a column never mixes the two
+Unicode versions. `ExecutionResult.quality_metrics["sequential_hash"]` records the backend
+per column (`scalar`, `fk_inherited`, `fk_remap`) with a value-free reason when a column
+stays on Python. A native fault aborts the run and is never retried in Python; whether the
+tables written before it are discarded depends on the sink (a `TransactionalSink` aborts, a
+plain callable has already delivered them).
+
 The same nuance applies to deterministic `categorical`: the keyed index derives
 from the NFC-normalized source value, so for source text with a codepoint newer
 than the running Python's Unicode version the companion and Python paths can
