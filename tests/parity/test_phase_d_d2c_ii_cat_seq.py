@@ -218,13 +218,17 @@ def test_a_non_namespaced_column_stays_python_and_the_handler_raises(
     assert kernel.calls == []
 
 
-def test_a_non_deterministic_column_is_masked_by_python_position_keys() -> None:
+def test_a_non_deterministic_column_is_masked_by_python_position_keys(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    kernel = install_cat(monkeypatch, CatMarkingKernel())
     shape = payload_shape({"nd": (strs(SRC), cat_seed(deterministic=False))})
     result = run_seq(shape)
     assert result.outputs["P"].equals(run_full(shape).outputs["P"])
     assert result.quality_metrics[SEQ_CATEGORICAL_DISPOSITION_KEY][0]["reason"] == (
         "categorical_not_deterministic:nd"
     )
+    assert kernel.calls == []
 
 
 def test_companion_absent_runs_the_python_handler_with_a_reason(
