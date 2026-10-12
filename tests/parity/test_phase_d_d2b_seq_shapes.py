@@ -19,11 +19,11 @@ import pytest
 from decoy_engine.execution import PandasExecutionAdapter, _sequential, _sequential_native
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._runner import build_work_list
-from decoy_engine.execution._sequential_native import SEQ_HASH_DISPOSITION_KEY, SeqNativeRun
-from decoy_engine.execution._sequential_preflight import (
+from decoy_engine.execution._sequential_composite_chain import (
     COMPOSITE_CHAIN_CODE,
-    check_composite_fk_chain,
+    composite_chain_offender,
 )
+from decoy_engine.execution._sequential_native import SEQ_HASH_DISPOSITION_KEY, SeqNativeRun
 from decoy_engine.relationships._graph import OrphanPolicy
 from tests.parity import _d2b_shapes as s
 from tests.parity._d2a_seq_data import RecordingSink, table_digest
@@ -387,51 +387,79 @@ def test_composite_root_with_a_nullable_integer_member_is_still_rejected(
     assert exc.value.code == "null_bearing_int_unsupported"
 
 
-# Composite multi-hop chain: declined up front.
+# Composite multi-hop chain: a genuine orphan on a REMAP hop is declined, matched keys run.
 
 
-def test_composite_chain_with_remap_is_declined_before_any_table_loads(
+def _orphan_at_c(shape: s.Shape, key: str = "zz") -> s.Shape:
+    src = dict(shape.sources)
+    src["C"] = pa.table({"k": s.strs(["a", "b", key]), "j": s.strs(["x", "y", key])})
+    return s.Shape(shape.plan, shape.graph, src)
+
+
+def test_matched_only_remap_composite_chain_runs_with_native_tuples(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    kernel = install(monkeypatch, MarkingKernel())
-    asked: list[str] = []
     shape = s.composite_chain_shape(REMAP)
+    expected = _expected(shape)
+    kernel = install(monkeypatch, MarkingKernel())
+    python_rows = spy_python_hash(monkeypatch)
+    result = s.run_seq(shape)
+    assert _emitted(result) == expected
+    # Only the root's two key columns hash; B and C inherit the tuples without a kernel call.
+    assert [c.rows for c in kernel.calls] == [2, 2]
+    assert python_rows == []
+    for table in ("B", "C"):
+        assert all(v.startswith(MARK) for v in result.outputs[table].column("k").to_pylist())
+
+
+def test_an_orphan_on_the_first_composite_hop_still_remaps(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    shape = s.composite_chain_shape(REMAP)
+    src = dict(shape.sources)
+    src["B"] = pa.table({"k": s.strs(["a", "b", "zz"]), "j": s.strs(["x", "y", "zz"])})
+    shape = s.Shape(shape.plan, shape.graph, src)
+    expected = _expected(shape)
+    install(monkeypatch, MarkingKernel())
+    assert _emitted(s.run_seq(shape)) == expected
+
+
+def test_composite_chain_orphan_under_remap_is_declined_with_the_clean_code(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    install(monkeypatch, MarkingKernel())
     sink = RecordingSink()
-
-    def loader(name: str) -> pa.Table:
-        asked.append(name)
-        return shape.sources[name]
-
+    shape = _orphan_at_c(s.composite_chain_shape(REMAP))
     with pytest.raises(ExecutionError) as exc:
-        PandasExecutionAdapter().run_sequential(
-            shape.plan,
-            loader,
-            registry=s.REGISTRY,
-            relationship_graph=shape.graph,
-            namespace_registry=s.NAMESPACES,
-            sink=sink,  # type: ignore[arg-type]
-        )
+        s.run_seq(shape, sink=sink)
     assert exc.value.code == COMPOSITE_CHAIN_CODE == "sequential_composite_fk_chain_unsupported"
-    assert asked == []
-    assert kernel.calls == []
-    assert (sink.staged, sink.committed, sink.commits) == ({}, {}, 0)
+    # Earlier tables were staged, and the abort discards them.
+    assert (sink.commits, sink.aborts, sink.committed) == (0, 1, {})
 
 
 def test_composite_chain_decline_names_identifiers_and_no_data(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     install(monkeypatch, MarkingKernel())
-    shape = s.composite_chain_shape(REMAP)
-    sources = {
-        t: pa.table({"k": s.strs(["CELLVALUE1", "CELLVALUE2"]), "j": s.strs(["x", "y"])})
-        for t in "ABC"
-    }
+    shape = _orphan_at_c(s.composite_chain_shape(REMAP), key="CELLVALUE1")
     with pytest.raises(ExecutionError) as exc:
-        s.run_seq(s.Shape(shape.plan, shape.graph, sources))
+        s.run_seq(shape)
     text = str(exc.value) + exc.value.message
     assert "'C'" in text and "'B'" in text and "'k'" in text and "'j'" in text
     assert "CELLVALUE" not in text and "orphan_remap_parent_missing" not in text
-    assert exc.value.__cause__ is None  # a fixed code, not a wrapped internal exception
+    assert exc.value.__cause__ is None and exc.value.__suppress_context__
+
+
+def test_an_unrelated_missing_parent_error_is_not_translated() -> None:
+    """The wrapper only rewrites the error when the failing edge is a composite chain."""
+    from decoy_engine.execution._sequential_composite_chain import decline_composite_chain
+
+    shape = s.chain_shape(REMAP)
+    raw = ExecutionError(code="orphan_remap_parent_missing", message="raw")
+    with pytest.raises(ExecutionError) as exc:
+        with decline_composite_chain(build_work_list(shape.plan, s.REGISTRY), shape.graph, "C"):
+            raise raw
+    assert exc.value is raw
 
 
 @pytest.mark.parametrize(
@@ -447,9 +475,9 @@ def test_composite_chain_decline_names_identifiers_and_no_data(
 )
 def test_composite_chain_predicate_is_member_based(shape_builder: Callable[[], s.Shape]) -> None:
     shape = shape_builder()
-    with pytest.raises(ExecutionError) as exc:
-        check_composite_fk_chain(build_work_list(shape.plan, s.REGISTRY), shape.graph)
-    assert exc.value.code == COMPOSITE_CHAIN_CODE
+    found = composite_chain_offender(build_work_list(shape.plan, s.REGISTRY), shape.graph)
+    assert found is not None
+    assert found[0].child_table == "C"
 
 
 def _overlapping_chain(parent_cols: tuple[str, ...], child_cols: tuple[str, ...]) -> s.Shape:
@@ -471,17 +499,16 @@ def _overlapping_chain(parent_cols: tuple[str, ...], child_cols: tuple[str, ...]
     return s.Shape(plan, g, {})
 
 
-def test_partially_overlapping_group_is_declined_when_a_member_is_a_parent_key() -> None:
+def test_partially_overlapping_group_is_an_offender_when_a_member_is_a_parent_key() -> None:
     shape = _overlapping_chain(("k", "m"), ("k", "m"))
-    with pytest.raises(ExecutionError) as exc:
-        check_composite_fk_chain(build_work_list(shape.plan, s.REGISTRY), shape.graph)
-    assert exc.value.code == COMPOSITE_CHAIN_CODE
-    assert "'k'" in exc.value.message
+    found = composite_chain_offender(build_work_list(shape.plan, s.REGISTRY), shape.graph)
+    assert found is not None
+    assert found[1] == ["k"]
 
 
-def test_a_scalar_parent_key_on_a_table_with_a_group_is_not_declined() -> None:
+def test_a_scalar_parent_key_on_a_table_with_a_group_is_not_an_offender() -> None:
     shape = _overlapping_chain(("m",), ("m",))
-    check_composite_fk_chain(build_work_list(shape.plan, s.REGISTRY), shape.graph)
+    assert composite_chain_offender(build_work_list(shape.plan, s.REGISTRY), shape.graph) is None
 
 
 @pytest.mark.parametrize("policy", [OrphanPolicy.PRESERVE, OrphanPolicy.WARN])
@@ -560,9 +587,9 @@ def test_new_logic_stays_out_of_the_two_capped_modules() -> None:
         with open(module.__file__, encoding="utf-8") as fh:
             return sum(1 for _ in fh)
 
-    from decoy_engine.execution import _pandas_adapter, _sequential_preflight
+    from decoy_engine.execution import _pandas_adapter, _sequential_composite_chain
 
     assert loc(_sequential_native) <= 600
-    assert loc(_sequential_preflight) <= 600
+    assert loc(_sequential_composite_chain) <= 600
     assert loc(_sequential) <= 700
     assert loc(_pandas_adapter) <= 700

@@ -79,7 +79,7 @@ def hide_companion(monkeypatch: pytest.MonkeyPatch) -> None:
 def spy_python_hash(monkeypatch: pytest.MonkeyPatch) -> list[int]:
     """Row counts of every call that reaches the Python hash handler's kernel."""
     rows: list[int] = []
-    real = _hash.hash_array
+    real = hash_array
 
     def spy(values: Any, **kwargs: Any) -> Any:
         rows.append(len(values))

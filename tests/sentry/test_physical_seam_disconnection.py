@@ -630,10 +630,10 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         # creates and reports them. They reuse the out-of-core hash entry points and import
         # nothing from `execution.physical`.
         # D2b: `_sequential_native.py` gains a REMAP-only decision for parent keys, and the new
-        # `_sequential_preflight.py` declines a composite foreign-key chain under REMAP before
-        # any table loads; `_sequential.py` makes the one call. Neither imports `execution.physical`.
+        # `_sequential_composite_chain.py` turns a REMAP orphan on a composite foreign-key chain into a
+        # coded decline; `_sequential.py` wraps the node dispatch with it. Neither imports `execution.physical`.
         "src/decoy_engine/execution/_sequential_native.py",
-        "src/decoy_engine/execution/_sequential_preflight.py",
+        "src/decoy_engine/execution/_sequential_composite_chain.py",
         "src/decoy_engine/execution/_strategies/_hash.py",
     }
     unexpected = [
