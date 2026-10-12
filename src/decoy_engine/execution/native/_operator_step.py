@@ -267,6 +267,12 @@ def _preserved_mask(
     return preserve.mask(array.to_pandas())
 
 
+def _preserved_kwargs(preserved: np.ndarray[Any, Any] | None) -> dict[str, Any]:
+    """The kernel-wrapper keyword for a sentinel mask; nothing at all for an unset column, so an
+    unconfigured call has the exact arguments it had before D1c."""
+    return {} if preserved is None else {"preserved": preserved}
+
+
 def _count(preserved: np.ndarray[Any, Any] | None) -> int:
     return int(preserved.sum()) if preserved is not None else 0
 
@@ -443,7 +449,7 @@ def run_kernel_step(
             index_kernel=_index_kernel_for(params, index_kernel),
             native_threads=native_threads,
             derive_calls=derive_calls,
-            preserved=preserved,
+            **_preserved_kwargs(preserved),
         )
         return StepResult(out, sum(derive_calls) > 0, preserved_rows=_count(preserved))
     if isinstance(params, GroupKeyParams):
@@ -471,7 +477,7 @@ def run_kernel_step(
         index_kernel=_index_kernel_for(params, index_kernel),
         native_threads=native_threads,
         derive_calls=derive_calls,
-        preserved=preserved,
+        **_preserved_kwargs(preserved),
     )
     return StepResult(out, sum(derive_calls) > 0, positions, preserved_rows=_count(preserved))
 
