@@ -608,6 +608,12 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         # `execution.physical`, so the import-direction sweeps and fresh-import probe stay green.
         "src/decoy_engine/execution/out_of_core/_hash_native.py",
         "src/decoy_engine/execution/out_of_core/_hash_run.py",
+        # D1b-ii (out-of-core categorical on the compiled index kernel): `_categorical_native.py`
+        # (per-column decision, the native call and its disposition) is new; `_hash_run.py` carries
+        # its per-table plan beside the hash plan and `_mask.py` dispatches it. They import the
+        # existing `native_categorical` operator, the index-kernel loader and the operator
+        # registry; nothing from `execution.physical`.
+        "src/decoy_engine/execution/out_of_core/_categorical_native.py",
         "src/decoy_engine/execution/out_of_core/_mask.py",
         "src/decoy_engine/execution/out_of_core/_stream_driver.py",
     }
