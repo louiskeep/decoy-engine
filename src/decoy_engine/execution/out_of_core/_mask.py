@@ -368,6 +368,8 @@ def mask_batch(
             if hash_plan is not None and column_seed.strategy == "categorical"
             else None
         )
+        if hash_plan is not None and column_seed.strategy == "bucket_perturb":
+            hash_plan.bucket_for(column, batch)
         idx = batch.schema.get_field_index(column)
         if idx < 0:
             continue

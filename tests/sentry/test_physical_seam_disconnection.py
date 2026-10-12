@@ -614,6 +614,13 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         # existing `native_categorical` operator, the index-kernel loader and the operator
         # registry; nothing from `execution.physical`.
         "src/decoy_engine/execution/out_of_core/_categorical_native.py",
+        # D1b-i (out-of-core bucket_perturb on the compiled index kernel): `_bucket_native.py`
+        # (per-column decision, the native call and its disposition) is new; `_hash_run.py` carries
+        # its per-table plan, `_mask.py` threads it and `_mask_group_c.py` branches to it after the
+        # existing validation. They import the shared `bucket_perturb_config_rejection` resolver,
+        # the existing `native_bucket_perturb` operator and the operator registry (which gains the
+        # `python_pandas` label); nothing from `execution.physical`.
+        "src/decoy_engine/execution/out_of_core/_bucket_native.py",
         "src/decoy_engine/execution/out_of_core/_mask.py",
         "src/decoy_engine/execution/out_of_core/_stream_driver.py",
     }

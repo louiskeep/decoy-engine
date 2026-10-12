@@ -31,6 +31,7 @@ __all__ = [
     "OPERATORS",
     "PANDAS_ORACLE",
     "POSITIONAL_FAKER_SOURCE_TYPES",
+    "PYTHON_PANDAS",
     "PYTHON_SCALAR",
     "RUST_COMPANION",
     "RUST_POOL_SELECT",
@@ -46,6 +47,9 @@ PANDAS_ORACLE: Final = "pandas_oracle"
 # The out-of-core route's per-value Python kernels (`kernel/_scalar`): neither the pandas oracle nor
 # an Arrow-Python kernel, so its hash loop must not borrow either label in caller-visible evidence.
 PYTHON_SCALAR: Final = "python_scalar"
+# The out-of-core route's declined bucket_perturb path: `apply_bucket_perturb` over a pandas Series.
+# Not the whole-frame pandas oracle route, and not a per-value scalar loop either.
+PYTHON_PANDAS: Final = "python_pandas"
 
 Shape = Literal["kernel", "pool"]
 RequiredKernel = Literal["crypto", "index", "raw_hex", "fpe"]
