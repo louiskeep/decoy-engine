@@ -1,204 +1,250 @@
 # Phase D / D1c: date sentinel-preserve
 
-Status: plan (rev 1, pre-gate)
+Status: plan (rev 2, pre-gate). rev 1 was NO-GO at the Codex plan gate (6 HIGH, 1
+MEDIUM); this rev folds all seven at root, grounded on verified code behavior and
+runtime probes (pandas 2.3.3 / pyarrow 26.0.0 in the abi-3 venv).
 
 Rules consulted: 00-universal.md, risk-and-exceptions.md, development-loop.md,
 architecture.md, reuse-first.md, testing.md, documentation.md,
-autonomous-operation.md (overnight loop). Engine: CLAUDE.md (established
-methodology, module sizing, log hygiene), compatibility-contract.md (additive
-parameter rule 461).
+autonomous-operation.md. Engine: CLAUDE.md (established methodology, module
+sizing, log hygiene), compatibility-contract.md (additive-parameter rule 461).
 
 Risk: R2. Additive config that changes masking output for opted-in values and
-touches an RI invariant (date_shift can be an FK key). Plan on disk + independent
-plan review + Codex plan gate required before build; observable behavior, failure
-modes, and acceptance tests defined here before implementation.
+interacts with an FK/RI invariant (date_shift can be an FK key). Plan on disk +
+independent plan review + Codex plan gate before build; observable behavior,
+failure modes, and acceptance tests defined here first.
 
 ## FRAME
 
-**Problem.** The date operators `bucket_perturb` and `date_shift` perturb every
-parseable in-range date. Datasets use far-future or placeholder dates as
-sentinels ("never expires" = `9999-12-31`, "unknown" = `2299-01-01`), and
-downstream logic tests `date = <sentinel>`. Today an out-of-pandas-range sentinel
-(`9999-12-31`) survives only incidentally (it fails to parse, so the existing
-unparseable passthrough keeps it), while an in-range sentinel (`2299-01-01`) is
-silently perturbed and the `= sentinel` check breaks after masking.
+**Problem.** `bucket_perturb` and `date_shift` perturb every parseable in-range
+date. Datasets use fixed sentinel dates as markers ("never expires" =
+`9999-12-31`, "unknown" = `2099-01-01`), and downstream logic tests
+`date = <sentinel>`. Today an out-of-pandas-range sentinel (`9999-12-31`) survives
+only incidentally (it coerces to NaT, so the unparseable passthrough keeps it),
+while an in-range sentinel (`2099-01-01`) is silently perturbed and the
+`= sentinel` check breaks after masking.
 
-**Definition of done.** A user can list exact date literals per field; a row
-whose date equals a listed literal is emitted unchanged by `bucket_perturb` and
-`date_shift` on every route that runs the operator. Unset config means no
-behavior change. The preservation is explicit, format-independent, and FK/RI-safe
-(a preserved value maps to itself on parent and child).
+**Definition of done.** A user lists exact date literals per field; a row whose
+date equals a listed literal is emitted unchanged by `bucket_perturb` and
+`date_shift` on every route the operator runs on. Unset config means byte-identical
+output to today. Preservation is explicit, deterministic, and FK/RI-safe.
 
-**Boundaries.** Date operators only (`bucket_perturb`, `date_shift`). Exact match
-only, date granularity (Cam 2026-10-11): no ranges, no "before/after", no
-wildcards. Not a detection feature; the user supplies the literals (the
-`storm/sentinels.py` vocabulary is a documentation suggestion, not a default).
+**Boundaries.** Date operators only. Exact match, date granularity (Cam
+2026-10-11): no ranges, no before/after, no wildcards. Not detection; the user
+supplies the literals. Primary supported source type is string-typed date columns
+(the common case; the only type bucket_perturb's native route admits). Typed date
+sources (numpy `datetime64`, Arrow `date32`/timestamp) are supported with the
+output rule in the match/output section; the byte-identical promise applies to
+string sources (typed sources have no original string to be identical to).
 
-**Reuse check.** Both operators already restore the source value for null and
-unparseable rows (oracle and native). D1c is a new member of that existing
-passthrough set, not a new mechanism. No new Rust and no ABI change: the carve-out
-is Python-only, applied as an extension of the existing exclusion mask on each
-route, leaving the shared Rust kernels and the pandas oracle reference transform
-untouched. This mirrors D1a/D1b-i (leave `hash_array` / `native_bucket_perturb`
+**Reuse check.** Both operators already restore the source for null and
+unparseable rows. D1c is a new member of that passthrough set. No new Rust, no ABI
+change: the carve-out is Python-only and applied as a PRE-compute input exclusion
+on each route (not a post-compute restore), so preserved rows take the existing
+identity path and never reach the kernel's derivation, range guard, or date
+arithmetic. Mirrors D1a/D1b-i (leave the shared operator and the oracle transform
 untouched; decide and carve out in the route wrapper).
 
 ## Pinned guarantee and non-goals
 
 **Guarantee.** When `preserve_values` is set on a `bucket_perturb` or `date_shift`
-field, every source row whose value matches one of the listed literals (match rule
-below) is emitted byte-identical to its source on all routes the operator runs on;
-all other rows mask exactly as they do today. When `preserve_values` is unset or
-empty, output is byte-identical to today on all routes (proven by the existing
-baselines). For an FK key column (date_shift only), preservation holds equally on
-the parent and child so referential integrity is kept.
+field, every source row whose date matches a listed literal (match rule below) is
+emitted unchanged (string source: byte-identical to the source string; typed
+source: the source date rendered to the operator's string output), on all routes
+the operator runs on; all other rows mask exactly as today. When unset/empty,
+output is byte-identical to today on all routes. For an FK key, the preserved value
+flows to the child through the existing parent-map/REMAP mechanism, so referential
+integrity is retained by the same construction that gives it for masked keys.
 
-**Non-goals.** No range/pattern matching. No new detection or auto-sentinel
-defaults. No change to any operator other than the two date operators. No change
-to which routes an operator runs on (date_shift stays off the out-of-core route).
-No change to the config-validation precedence or the native-admission rules beyond
-adding the `preserve_values` decision. 100M/200M proofs stay in D4c.
+**Non-goals.** No range/pattern matching. No detection or auto-sentinel defaults.
+No change to any other operator. No change to which routes an operator runs on
+(date_shift stays off the out-of-core route). No new fix for the pre-existing
+typed-out-of-range ArrowTypeError (see "Known pre-existing bug"); D1c neither
+causes nor is required to fix it, and its preserved rows render to string so they
+do not trip it. 100M/200M proofs stay in D4c.
 
-## Established solutions
+## Match rule and output (the design-critical contract)
 
-- **Existing passthrough precedent (the pattern D1c follows).** Oracle
-  `date_shift` builds `unusable = null | parse_failed` and restores
-  `out[i] = col.iloc[i]` for those positions (`execution/_strategies/_date_shift.py`
-  ~157, 216-217); oracle `bucket_perturb` `continue`s past null/parse-failed
-  (`transforms/bucket_perturb.py` 166-174). Native kernels start `out` from the
-  original and overwrite only valid positions (`native/_bucket_perturb_ext.py`
-  227-248; `native/_date_shift_ext.py` 164-191). D1c adds the sentinel-match
-  positions to that exclusion set at each site.
-- **Additive-config rule.** compatibility-contract.md:461 ("new parameters are
-  keyword-only with defaults that preserve existing behavior") governs the config
-  shape: `preserve_values` absent = today's behavior.
-- **Per-column decision shape.** D1a/D1b-i `out_of_core/_hash_native.py` /
-  `_bucket_native.py` give the established per-column disposition + evidence shape
-  the OOC carve-out reuses.
-- **No hand-rolled parsing.** Date parsing stays on pandas `to_datetime` with the
-  operator's existing `date_format`, as the operators already do.
+**Config.** `provider_config["preserve_values"]`: a list of date literals. Each
+literal is validated as an ISO-8601 calendar date via `datetime.date.fromisoformat`
+(covers years 0001-9999, so out-of-nanosecond-range sentinels are valid; rejects
+`not-a-date`, `NaT`, empty/whitespace, `2020-02-30`). The list is de-duplicated;
+empty == unset (no behavior change, byte-identical output). Free-form
+`provider_config`, no `ColumnConfig` schema change.
 
-## Match rule (specified; the design-critical part)
+**One match function, full calendar range, no pandas NaT involved.** A source row
+is preserved iff its source date equals a configured literal, compared at
+date granularity:
+- **String source:** parse the source cell with the operator's `date_format` using
+  Python `datetime.datetime.strptime` (full range, so `9999-12-31` parses where
+  `pd.to_datetime` would give NaT); a cell that fails strptime is not preserved
+  (and keeps masking/passthrough exactly as today). Compare the parsed `date()` to
+  the literal. Because D1c needs a deterministic format, `preserve_values` on a
+  string source REQUIRES an explicit `date_format` (config error if absent); this
+  is already true for bucket_perturb and is a new, fail-closed requirement for
+  date_shift when the feature is used.
+- **Typed date source** (`datetime64`, Arrow `date32`/timestamp): compare the
+  source value's calendar date directly to the literal (no reparse). For a
+  timezone-aware source, compare on the local wall-clock date (documented).
 
-A source row is preserved iff EITHER holds:
-1. its raw source value rendered as the string it is keyed/compared on equals a
-   configured literal exactly (covers out-of-range literals that parse to NaT,
-   e.g. `9999-12-31`, and string-typed sources), OR
-2. its parsed date value is valid and equals the parsed configured literal
-   (covers in-range literals under a non-ISO `date_format`, e.g. source
-   `31/12/2299` with literal `2299-12-31`).
+This single rule replaces rev 1's raw-string-OR-parsed-date union. It is
+format-independent in the sense that matters (the literal is always ISO; the source
+is parsed by its own `date_format`), handles in-range and out-of-range uniformly,
+and never depends on NaT equality. A match outcome never diverges from the
+operator's own treatment: an out-of-range date the operator would pass through as
+unparseable is instead passed through as an explicit preserve (same output); an
+in-range match is preserved instead of perturbed.
 
-Rationale: the union mirrors the existing null|parse_failed union and is robust to
-both the out-of-range (NaT, where equality comparison fails) and the
-format-variant cases. Literals are parsed once per run (ISO-8601 date-only for the
-parse arm; invalid literals are a config error, see failure modes). Comparison is
-date-granular (normalized to midnight); a time-of-day in the source is not part of
-the match (date-only per Cam).
+**Output for a preserved row (the output column is always a strftime string).**
+- String source: emit the original source string unchanged (byte-identical).
+- Typed source: emit the source date formatted with the operator's `date_format`
+  via Python `strftime` (full range: `date(9999,12,31).strftime(...)` works), so
+  the output column stays a homogeneous string column. Never restore a raw
+  `datetime.date`/`Timestamp` object into the string column (that is the HIGH-4 /
+  ArrowTypeError trap).
 
-Config shape: `provider_config["preserve_values"]`, a list of non-empty strings
-(free-form `provider_config`, no `ColumnConfig` schema change). Validated as a
-list of strings, each parseable as an ISO date OR retained as a raw-literal-only
-match; duplicates de-duplicated; empty list == unset.
+## How the carve-out attaches per route (Python-only, pre-compute)
 
-## Observable behavior and failure modes
+The preserve positions are computed from the ORIGINAL input (after the operator's
+own format detection runs against the full original column, so excluding rows does
+not change the detected format), then those positions are removed from the input
+handed to the compute and their rendered output scattered back:
 
-- Unset / empty `preserve_values`: output unchanged on all routes (baseline-proven).
-- Set, row matches: source emitted unchanged, no offset derived, no format-error
-  recorded for that row (it is excluded from the format-error channel exactly as a
-  null is).
-- Set, row does not match: masked exactly as today.
-- date_shift FK key with asymmetric `preserve_values` across the parent/child edge:
-  compile-reject with `date_shift_preserve_values_fk_asymmetric` and a message
-  naming both columns. Fail closed: silent RI breakage is worse than a config
-  error. (bucket_perturb cannot be an FK key, so no symmetry check applies.)
-- Malformed config (not a list, non-string entries, a literal that is neither a
-  valid ISO date nor intended as a raw literal): `bucket_perturb_invalid_config` /
-  the date_shift config error, raised identically on native and oracle, no sink
-  commit.
-- Native routes: `preserve_values` is admitted (taught via the Python wrapper
-  carve-out, kernel untouched); it does NOT force a decline to oracle. Add the
-  key to `native/_operator_config_rejections.py` only to validate shape, not to
-  reject.
-- Log hygiene: no date value, cell, or literal appears in any log line or reason
-  code; reasons carry the operator, column, and outcome only.
+1. **Oracle handlers.** Union the preserve mask into the existing
+   `unusable`/skip set BEFORE derivation and BEFORE the format-error accounting,
+   in `_strategies/_date_shift.py` (~157, 216-227) and `transforms/bucket_perturb.py`
+   (166-178). A preserved row skips derivation and is written as its rendered
+   string; it is excluded from the format-error channel (same as a null).
+2. **Native-chunked / native full-frame.** In the Python wrapper around the kernel
+   call (`native/_operator_step.py` ~418/443, with reconciliation in
+   `native/_chunk_masking.py` 244-268), filter preserved rows OUT of the array
+   passed to the kernel, run the kernel on the remainder, and scatter the rendered
+   strings back at the preserved positions; subtract them from the format-error
+   set. The kernel returns `pa.string()`, so the scattered strings keep the column
+   homogeneous. Kernel and ABI untouched. This covers BOTH the shared full-frame
+   operator path and the chunked path (not only `_chunk_masking`).
+3. **Out-of-core (bucket_perturb only; date_shift is not on OOC, confirmed
+   `out_of_core/_compat.py:70,288`).** In `out_of_core/_bucket_native.py`
+   `native_bucket_perturb_array` and oracle `_mask_group_c._bucket_perturb_array`,
+   compute the preserve mask first and apply the range guard
+   (`out_of_core_bucket_perturb_date_out_of_native_range`) ONLY to non-preserved
+   rows, so a preserved sentinel near the 1677/2262 bound does not abort the run
+   (rev-1 HIGH-1). Then filter/scatter as in (2).
 
-## Implementation approach (per route, Python-only carve-out)
+Boundary sentinels therefore never reach the kernel, so the native date_shift
+`OverflowError` at the 2262 boundary (`_date_shift_ext.py:184`) and the OOC range
+guard both apply only to non-preserved rows, exactly as today.
 
-1. **Config + validation.** Read `preserve_values` in the oracle config readers
-   (`transforms/bucket_perturb.py validate_bucket_perturb_config`,
-   `transforms/date_shift.py validate_rule`) and in the native param resolution
-   (`native/_operator_params.py` BucketPerturbParams / DateShiftParams). One shared
-   helper `resolve_preserve_values(provider_config, date_format) -> PreserveSet`
-   parses literals once and exposes `mask(source_array) -> bool-mask` (raw-string
-   ∪ parsed-date). One place for the fact (house style).
-2. **Oracle carve-out.** In each handler, union the preserve-mask into the existing
-   `unusable`/skip mask before derivation and before the format-error accounting.
-3. **Native-chunked carve-out.** In the route wrapper (`native/_operator_step.py`
-   around the `native_bucket_perturb` / `native_date_shift` calls, or
-   `native/_chunk_masking.py` reconciliation), after the kernel returns, restore
-   source at preserve-mask positions and subtract them from the format-error set.
-   Kernel and ABI untouched.
-4. **Out-of-core carve-out (bucket_perturb only).** In
-   `out_of_core/_bucket_native.py native_bucket_perturb_array` and the oracle
-   `_mask_group_c._bucket_perturb_array`, apply the same preserve-mask restore.
-   date_shift is not on OOC, so nothing to do there.
-5. **FK symmetry check (date_shift).** New `plan/_checks_date_shift.py` rule
-   `check_date_shift_preserve_values_fk_symmetry`, mirroring the existing
-   `check_date_shift_group_by_refs` / group_by-on-FK pattern; compares the
-   `preserve_values` set on both ends of each relationship edge a date_shift column
-   participates in.
+## FK / RI contract (route-by-route; rev-1 premise was wrong)
+
+Verified: the chunked FK self-mask gate admits ONLY `hash`
+(`_chunked_fk.py:444`), so a date_shift (or bucket_perturb) FK key never
+self-masks on the chunked route; such a table runs full-frame/sequential. There,
+the PARENT key column owns the transform: a normal child row gets the parent's
+masked output via the source->masked parent map, and an orphan child is remapped by
+re-invoking the PARENT's handler with the parent's config (`_strategies/_orphan.py`
+12-16, 118-147; REMAP calls the parent handler at ~144). The child never runs its
+own date config.
+
+**Design:** preservation on an FK key is PARENT-OWNED. `preserve_values` is honored
+on the parent key column; it then flows to every child (normal rows inherit the
+preserved parent output; orphan rows re-run the parent handler, which preserves
+identically) so RI holds by the same construction that gives it for masked keys. A
+`preserve_values` set on a child FK key that is remapped from a parent is rejected
+at plan-compile (`date_preserve_values_on_remapped_child_fk_unsupported`, naming
+the parent column to configure instead) to avoid a silent no-op. No symmetry check
+(rev-1's idea): symmetry is neither necessary nor the RI mechanism; inheritance is.
+REMAP does not create a missing parent, so D1c changes nothing about pre-existing
+orphans; the guarantee is retained RI, not orphan repair. bucket_perturb as an FK
+key is rejected on the chunked route (`_chunked_bucket_perturb.py` ~265, a
+chunked-route gate, not a global ban) and otherwise parent-owned on
+full-frame/sequential, covered by the same rule.
+
+## Config validation (active paths; rev-1 named the legacy validator)
+
+Verified: date_shift's `transforms/date_shift.py::validate_rule` is legacy and
+never called by the active `DateShiftStrategyHandler.run`; date_shift has no
+`preflight`, so a zero-row `when:` gate skips all config checks. bucket_perturb
+validates at two config-time slots that fire independent of rows: the plan-compile
+check `plan/_checks_bucket_perturb.py::check_bucket_perturb_config` and the handler
+`preflight -> validate_bucket_perturb_config` (invoked even under a zero-row
+`when:` gate, `_when_gate.py:240-242`).
+
+**Design:** validate `preserve_values` at CONFIG time on both operators so a
+zero-row/zero-match job still rejects bad config, identically on oracle and native,
+with no sink commit:
+- bucket_perturb: extend `validate_bucket_perturb_config` (hit via the existing
+  `preflight` and the plan-compile check). Error `bucket_perturb_invalid_config`.
+- date_shift: add a plan-compile check in `plan/_checks_date_shift.py`
+  (`check_date_preserve_values`, raising `PlanCompileError`), since there is no
+  active handler-level config validator; this fires regardless of selected rows.
+  Add the string-source `date_format` requirement check here too.
+- The native param resolution (`native/_operator_params.py`) reads
+  `preserve_values` but does not own validation; the admission resolver
+  (`native/_operator_config_rejections.py`) is updated only to accept the key
+  (admit, not decline), so native does not reroute eligible columns to oracle.
+Preserve the OOC compatibility -> config-preflight -> seam ordering
+(`out_of_core/_runner.py:183`), the D1b-i lesson.
+
+## Known pre-existing bug (separate finding, not D1c's to fix)
+
+Independently of D1c, an Arrow/extension date source (`date32`/`datetime64[s]`)
+holding an out-of-nanosecond-range date (year > 2262) already crashes both date
+operators today: the existing passthrough restores a `datetime.date` object into
+the strftime-string output column, and `pa.Table.from_pandas` at
+`_pandas_adapter.py:342` raises `ArrowTypeError`. Record as a separate engine bug.
+D1c's output rule (render preserved values to string) means a preserved such row no
+longer trips it, but D1c does not undertake to fix the non-preserved case.
 
 ## Acceptance tests (authored before impl; no later contributor weakens these)
 
-- **Unset == baseline:** every existing bucket_perturb/date_shift parity test
-  passes unchanged; a dedicated test asserts unset `preserve_values` yields a
-  byte-identical digest to the no-config run on all routes.
-- **In-range sentinel preserved:** `2299-01-01` (in pandas range) is perturbed
-  without the config and preserved with it, on oracle, native-chunked, and (bucket
-  only) OOC; FK-chain variant proves parent and child both preserve.
-- **Out-of-range sentinel preserved explicitly:** `9999-12-31` preserved with the
-  config via the raw-string arm (not merely incidentally via NaT), and the
-  disposition/witness shows it took the preserve path.
-- **Format-variant match:** source `31/12/2299` with `date_format=%d/%m/%Y` and
-  literal `2299-12-31` is preserved (parsed-date arm).
-- **Non-match unaffected:** a near-but-unequal date (`2299-01-02`) still masks.
-- **No format-error for a preserved row:** a preserved value that would otherwise
-  be a format error is not recorded as one.
-- **FK symmetry:** asymmetric `preserve_values` on a date_shift FK edge is
-  compile-rejected with the dedicated code; symmetric config passes and preserves
-  on both ends.
-- **Config errors:** malformed `preserve_values` raises the operator config error
+- **Unset/empty == baseline:** every existing bucket_perturb/date_shift parity test
+  passes; a dedicated test asserts unset AND present-but-matching-nothing
+  `preserve_values` both yield a byte-identical whole-output digest to the
+  no-config run, on every route.
+- **In-range sentinel** (`2099-01-01`, verified in-range): perturbed without
+  config, preserved with it, on oracle, native-chunked, native full-frame, and
+  (bucket only) OOC resident / sink-batch / sink-reorder.
+- **Out-of-range sentinel** (`9999-12-31`): preserved explicitly via the strptime
+  full-range match, and an aggregate preserved-row count on the disposition proves
+  the preserve branch fired (distinguishing explicit preservation from the
+  incidental NaT passthrough), without logging the literal.
+- **Format-variant** (source `31/12/2099`, `date_format=%d/%m/%Y`, literal
+  `2099-01-01`): preserved; and a typed `date32` source holding `9999-12-31`
+  preserved with homogeneous string output (no ArrowTypeError).
+- **Non-match unaffected** (`2099-01-02`): still masks.
+- **Selective error suppression:** a preserved invalid/out-of-range value beside a
+  genuinely malformed value proves the malformed one still records its format error
+  while the preserved one does not.
+- **FK:** a date_shift FK chain with `preserve_values` on the PARENT preserves the
+  value on parent and child (normal and orphan/REMAP rows); `preserve_values` on a
+  remapped child FK key is compile-rejected with the dedicated code; a
+  bucket_perturb FK key on full-frame with parent preservation behaves the same.
+- **date_shift error-position rebasing** after filtering preserved rows and under a
+  `when:` selection: format-error row indices still point at the right rows.
+- **Config errors:** malformed `preserve_values`, and a string source with
+  `preserve_values` but no `date_format`, raise at config time (zero-row too),
   identically native and oracle, with no sink commit.
-- **Cross-route digest parity:** with the config set, oracle vs native-chunked vs
-  OOC produce byte-identical output on a mixed sentinel/non-sentinel column (strict
-  D0 parity contract + witness).
-- **Log hygiene sentry:** no literal/date/cell text in logs or reason codes for the
-  preserve path.
+- **Cross-route digest parity:** with config set, oracle vs native-chunked vs
+  native full-frame vs OOC byte-identical on a mixed sentinel/non-sentinel column
+  (strict D0 parity contract + witness).
+- **Log-hygiene sentry:** no literal/date/cell text in any log line or reason code.
 
 ## Design notes
 
-New structure: one `PreserveSet` resolver (shared by oracle + native + OOC; one
-place per fact), one new plan-check module function (mirrors the existing
-`_checks_date_shift.py` pattern), and one new provider_config key. No new module,
-abstraction, or route. House style: typed `PreserveSet` over passing raw lists
-around; single-purpose `mask()`; no flag arguments; comments explain why
-(the raw-string ∪ parsed-date union handles NaT and format variants). Applies to
-the touched code only.
+New structure: one shared `PreserveSet` resolver (literal validation + the
+per-source-type match + the rendered-output; one place per fact, consumed by
+oracle, native, and OOC), one new plan-check function in `_checks_date_shift.py`
+(mirrors `check_date_shift_group_by_refs`), one extension to
+`validate_bucket_perturb_config`, and one new provider_config key. No new module,
+route, or abstraction. House style: typed `PreserveSet` over passing raw lists;
+single-purpose functions; no flag arguments; comments explain why (full-range
+Python parsing avoids the pandas NaT trap; render-to-string avoids the mixed-column
+ArrowType trap). Applies to touched code only.
 
 ## Docs to update
 
 `docs/strategies.md` (date_shift ~130, bucket_perturb ~143 passthrough notes;
-clarify the `9999-12-31` note at ~213 to the explicit guarantee),
-`docs/compatibility-contract.md` (bucket_perturb/date_shift route entries 287-304;
-the additive-param rule already covers it). Generated references
-(capability-matrix, proof manifest, mutation ledgers) regenerate, not hand-edited.
-
-## Open question for the gate (not a blocker)
-
-Match rule arm 1 keys on "the string the operator compares on". For a typed
-date/datetime source column (date_shift), there is no raw user string; the arm-1
-comparison is against the ISO rendering of the source date. The plan treats a
-typed-source column as arm-2-only (parsed-date equality), and arm 1 applies only to
-string-typed sources. Codex plan gate: confirm this split is complete and that a
-typed-source out-of-range sentinel (if representable) is handled or explicitly out
-of scope (a date outside the pandas range cannot be held in a datetime64 column at
-all, so it can only arrive as a string, where arm 1 covers it).
+make the `9999-12-31` note at ~213 the explicit guarantee), and
+`docs/compatibility-contract.md` (bucket_perturb/date_shift entries 287-304; the
+additive-param rule 461 already governs). Generated references regenerate.
