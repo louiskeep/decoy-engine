@@ -25,8 +25,10 @@ from tests.parity._d1b2_categorical_data import (
     install_index_companion,
 )
 from tests.parity._kernel_witness import (
+    CATEGORICAL_ADAPTER,
     IDLE,
     NATIVE,
+    UNKNOWN,
     ExpectedMask,
     KernelWitness,
     force_companion_unavailable,
@@ -150,6 +152,39 @@ def test_an_idle_batch_does_not_overwrite_a_native_execution(
     assert backends == {NATIVE, IDLE}
     witness.assert_native_ran(chain_sources(payload), run.tables, _EXPECTED)
     assert witness.native_attempts == 1
+
+
+@pytest.mark.parametrize("mode", _MODES)
+def test_a_populated_python_batch_cannot_launder_as_idle(
+    mode: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Codex final-gate HIGH: a mixed column (one native batch + one POPULATED batch answered
+    # with no native call) must NOT pass as native-consumed. IDLE is the verified empty/all-null
+    # short-circuit only; a populated no-native result is UNKNOWN and fails the whole-column proof.
+    install_index_companion(monkeypatch)
+    hide_hash_companion(monkeypatch)
+    payload = pa.table({"a": pa.array(["w", "x", "y", "z"], pa.string())})
+    real_adapter = _mask.native_categorical_array
+    seen = {"populated": 0}
+
+    def laundering_adapter(values: Any, *args: Any, **kwargs: Any) -> pa.Array:
+        col = values.combine_chunks() if isinstance(values, pa.ChunkedArray) else values
+        populated = len(col) > 0 and col.null_count < len(col)
+        if populated:
+            seen["populated"] += 1
+            if seen["populated"] >= 2:
+                # A populated batch answered WITHOUT a native call (the laundering path).
+                return pa.array(["w"] * len(col), pa.string())
+        return real_adapter(values, *args, **kwargs)
+
+    witness = KernelWitness()
+    with witness.observe(dispatch={CATEGORICAL_ADAPTER: laundering_adapter}):
+        run = run_chain(payload, _SEEDS, batch_rows=2, **mode_kwargs(mode, tmp_path))
+    sources = chain_sources(payload)
+    backends = {o.backend for o in witness.observations if (o.table, o.column) == ("t", "a")}
+    assert NATIVE in backends and UNKNOWN in backends and IDLE not in backends
+    with pytest.raises(AssertionError, match="want native"):
+        witness.assert_native_ran(sources, run.tables, _EXPECTED)
 
 
 @pytest.mark.parametrize("mode", _MODES)

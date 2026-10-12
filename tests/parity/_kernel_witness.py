@@ -81,6 +81,21 @@ UNKNOWN = "unknown"
 IDLE = "native_idle"
 
 
+def _empty_or_all_null(arr: Any) -> bool:
+    """True only for a genuinely EMPTY or entirely-NULL slice.
+
+    IDLE evidence (a categorical-adapter call that made no compiled-kernel call) is
+    legitimate ONLY for the empty/all-null short-circuit. A populated slice that produced
+    a result with no native call is UNKNOWN, never IDLE, so a mixed native/Python column
+    cannot launder a Python batch into native-consumed evidence."""
+    if isinstance(arr, pa.ChunkedArray):
+        arr = arr.combine_chunks()
+    if isinstance(arr, pa.Array):
+        return len(arr) == 0 or arr.null_count == len(arr)
+    seq = list(arr) if arr is not None else []
+    return len(seq) == 0 or all(v is None for v in seq)
+
+
 def force_companion_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
     """Make the out-of-core route's one-time companion loads fail, as on a box without it.
 
@@ -198,7 +213,12 @@ class KernelWitness:
                 entrypoint == CATEGORICAL_ADAPTER
                 and backend == UNKNOWN
                 and self.native_attempts == attempts
+                and _empty_or_all_null(values)
+                and _empty_or_all_null(result)
             ):
+                # IDLE is the verified empty/all-null short-circuit only: input empty or
+                # all-null AND an all-null result. A populated unknown result stays UNKNOWN
+                # (which fails `assert_native_ran`), so a Python batch cannot read as IDLE.
                 backend = IDLE
             call = self._calls.get(self._table) if self._table is not None else None
             self.observations.append(
