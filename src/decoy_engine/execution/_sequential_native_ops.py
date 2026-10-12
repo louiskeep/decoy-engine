@@ -34,8 +34,15 @@ import pyarrow as pa
 
 from decoy_engine.execution._adapter import provider_config_to_dict
 from decoy_engine.execution._errors import ExecutionError
+from decoy_engine.execution.native._categorical_ext import native_categorical
 from decoy_engine.execution.native._crypto_ext import FpeConfig, FpeConfigError
 from decoy_engine.execution.native._fpe_route import fpe_fail_closed_error, fpe_residual_warnings
+from decoy_engine.execution.out_of_core._categorical_native import (
+    BoundIndexKernel,
+)
+from decoy_engine.execution.out_of_core._categorical_native import (
+    decline_reason as categorical_decline_reason,
+)
 from decoy_engine.execution.out_of_core._hash_native import (
     BoundHashKernel,
     decline_reason,
@@ -48,8 +55,10 @@ if TYPE_CHECKING:
 
 HASH = "hash"
 FPE = "fpe"
+CATEGORICAL = "categorical"
 SEQ_HASH_DISPOSITION_KEY = "sequential_hash"
 SEQ_FPE_DISPOSITION_KEY = "sequential_fpe"
+SEQ_CATEGORICAL_DISPOSITION_KEY = "sequential_categorical"
 
 
 @dataclass(frozen=True)
@@ -84,6 +93,17 @@ class FpeCall:
     mask_key: bytes
     config: FpeConfig
     tweak_column: str
+
+
+@dataclass(frozen=True)
+class CategoricalCall:
+    """The resolved deterministic pool the handler already built: string categories and the
+    weight CDF (None = uniform). `admit` returns a reason only, so these travel here."""
+
+    namespace: str
+    mask_key: bytes
+    categories: tuple[str, ...]
+    cdf: tuple[int, ...] | None
 
 
 @dataclass(frozen=True)
@@ -156,6 +176,46 @@ def _fpe_warn(values: list[Any], call: FpeCall, column: str) -> tuple[QualityWar
     return fpe_residual_warnings(values, config=call.config, column=column)
 
 
+def _categorical_admit(column: str, input_type: pa.DataType, seed: ColumnSeed) -> str | None:
+    """Why a categorical column stays on Python, or None.
+
+    A thin adapter over the out-of-core admission (`decline_reason`, reused unchanged): a
+    one-field schema stands in for the table, so the same predicate that gates the chunked and
+    out-of-core routes gates this one. Only the deterministic, namespaced, string-category,
+    exact-`string`-source subset with a buildable CDF is admitted; a non-deterministic config
+    declines, so the positional kernel is never used here."""
+    _prepared, reason = categorical_decline_reason(
+        column, pa.schema([pa.field(column, input_type)]), seed
+    )
+    return reason
+
+
+def _categorical_apply(
+    bound: BoundIndexKernel, values: pa.Array, call: CategoricalCall
+) -> NativeResult:
+    return NativeResult(
+        native_categorical(
+            values,
+            categories=call.categories,
+            cdf=call.cdf,
+            mask_key=call.mask_key,
+            namespace=call.namespace,
+            index_kernel=bound.kernel,
+            native_threads=bound.native_threads,
+        )
+    )
+
+
+def categorical_op(load_kernel: Callable[[int | None], Any]) -> NativeOp:
+    return NativeOp(
+        CATEGORICAL,
+        SEQ_CATEGORICAL_DISPOSITION_KEY,
+        load_kernel,
+        _categorical_admit,
+        _categorical_apply,
+    )
+
+
 def hash_op(load_kernel: Callable[[int | None], Any]) -> NativeOp:
     return NativeOp(HASH, SEQ_HASH_DISPOSITION_KEY, load_kernel, _hash_admit, _hash_apply)
 
@@ -173,15 +233,19 @@ def fpe_op(load_kernel: Callable[[int | None], Any]) -> NativeOp:
 
 
 __all__ = [
+    "CATEGORICAL",
     "FPE",
     "HASH",
+    "SEQ_CATEGORICAL_DISPOSITION_KEY",
     "SEQ_FPE_DISPOSITION_KEY",
     "SEQ_HASH_DISPOSITION_KEY",
     "BoundFpeKernel",
+    "CategoricalCall",
     "FpeCall",
     "HashCall",
     "NativeOp",
     "NativeResult",
+    "categorical_op",
     "fpe_op",
     "hash_op",
 ]

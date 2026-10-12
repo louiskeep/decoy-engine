@@ -66,13 +66,16 @@ from decoy_engine.execution._adapter import pandas_column_to_kernel_input
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._operator_registry import PYTHON_SCALAR, RUST_COMPANION
 from decoy_engine.execution._sequential_native_ops import (
+    CATEGORICAL,
     FPE,
     HASH,
     SEQ_FPE_DISPOSITION_KEY,
     SEQ_HASH_DISPOSITION_KEY,
     BoundFpeKernel,
+    CategoricalCall,
     HashCall,
     NativeOp,
+    categorical_op,
     fpe_op,
     hash_op,
 )
@@ -81,6 +84,8 @@ from decoy_engine.execution.native._crypto_ext import (
     load_compiled_crypto_kernel,
 )
 from decoy_engine.execution.native._fpe_ext import load_compiled_fpe_kernel
+from decoy_engine.execution.native._index_ext import load_compiled_index_kernel
+from decoy_engine.execution.out_of_core._categorical_native import BoundIndexKernel
 from decoy_engine.execution.out_of_core._hash_native import (
     REASON_UNAVAILABLE,
     BoundHashKernel,
@@ -183,7 +188,15 @@ def _load_fpe(native_threads: int | None) -> BoundFpeKernel:
     return BoundFpeKernel(load_compiled_fpe_kernel(), native_threads)
 
 
-_OPS: dict[str, NativeOp] = {HASH: hash_op(_load_hash), FPE: fpe_op(_load_fpe)}
+def _load_categorical(native_threads: int | None) -> BoundIndexKernel:
+    return BoundIndexKernel(load_compiled_index_kernel(), native_threads)
+
+
+_OPS: dict[str, NativeOp] = {
+    HASH: hash_op(_load_hash),
+    FPE: fpe_op(_load_fpe),
+    CATEGORICAL: categorical_op(_load_categorical),
+}
 
 
 class SeqNativeRun:
@@ -315,6 +328,29 @@ class SeqNativeRun:
             )
         return self.native_column(ctx, df, column, HASH, HashCall(namespace, mask_key, truncate))
 
+    def categorical_column(
+        self,
+        ctx: StrategyContext,
+        df: pd.DataFrame,
+        column: str,
+        *,
+        namespace: str,
+        mask_key: bytes,
+        categories: list[Any],
+        cdf: list[int] | None,
+    ) -> list[Any] | None:
+        """The tokens for `df[column]`, positionally, or None when the Python handler runs.
+
+        The handler's own resolved pool (categories, and the CDF when weighted) is the call
+        payload; admission already proved the pool is all-string and the CDF buildable."""
+        call = CategoricalCall(
+            namespace,
+            mask_key,
+            tuple(categories),
+            None if cdf is None else tuple(cdf),
+        )
+        return self.native_column(ctx, df, column, CATEGORICAL, call)
+
     def native_column(
         self, ctx: StrategyContext, df: pd.DataFrame, column: str, strategy: str, call: Any
     ) -> list[Any] | None:
@@ -403,20 +439,20 @@ class SeqNativeRun:
         return out.to_pylist()
 
     def metrics(self) -> dict[str, Any]:
-        """The `quality_metrics` fragment: per-strategy keys (`sequential_hash`, `sequential_fpe`).
-        A key holds one disposition entry per recorded decision for that strategy - scalar, REMAP
-        and inherited alike - whatever the backend; read `executed_backend` on an entry to see
-        whether it ran native, in Python, or was inherited. A key is absent only when the strategy
-        recorded no decision at all (e.g. no column used it)."""
+        """The `quality_metrics` fragment: one key per registered strategy (`sequential_hash`,
+        `sequential_fpe`, `sequential_categorical`). A key holds one disposition entry per
+        recorded decision for that strategy - scalar for every strategy, plus REMAP and
+        inherited for hash - whatever the backend; read `executed_backend` on an entry to see
+        whether it ran native, in Python, or was inherited. A key is absent only when the
+        strategy recorded no decision at all (e.g. no column used it)."""
         metrics: dict[str, Any] = {}
-        entries = [d.entry() for d in self._decisions.values() if d.strategy == HASH]
-        entries.extend(r.entry() for r in self._remap.values())
-        entries.extend(self._inherited)
-        if entries:
-            metrics[SEQ_HASH_DISPOSITION_KEY] = entries
-        fpe_entries = [d.entry() for d in self._decisions.values() if d.strategy == FPE]
-        if fpe_entries:
-            metrics[SEQ_FPE_DISPOSITION_KEY] = fpe_entries
+        for op in _OPS.values():
+            entries = [d.entry() for d in self._decisions.values() if d.strategy == op.strategy]
+            if op.strategy == HASH:
+                entries.extend(r.entry() for r in self._remap.values())
+                entries.extend(self._inherited)
+            if entries:
+                metrics[op.disposition_key] = entries
         return metrics
 
 
