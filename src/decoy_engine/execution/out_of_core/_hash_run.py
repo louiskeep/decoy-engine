@@ -1,12 +1,13 @@
 """Per-run, per-column native disposition for the out-of-core route.
 
 The route masks `hash` columns in `mask_batch` (payload and parent-key columns
-alike), and deterministic `categorical` columns the same way. This module owns two
+alike), and deterministic `categorical` and `bucket_perturb` columns the same way. This module owns two
 things that must not live in the drivers: the decision of which backend computes each
 such column, and the caller-visible record of that decision
 (`ExecutionResult.quality_metrics[HASH_DISPOSITION_KEY]` for hash,
-`[CATEGORICAL_DISPOSITION_KEY]` for categorical). The categorical decision itself lives
-in `_categorical_native`; this class loads its kernel once and carries its per-table plan
+`[CATEGORICAL_DISPOSITION_KEY]` for categorical, `[BUCKET_DISPOSITION_KEY]` for
+bucket_perturb). The categorical and bucket decisions live in `_categorical_native` and
+`_bucket_native`; this class loads the index kernel once and carries their per-table plans
 beside the hash plan so the drivers thread one object.
 
 A column is decided ONCE per table, before its first batch, from the companion
@@ -32,6 +33,11 @@ from decoy_engine.execution.native._crypto_ext import (
     load_compiled_crypto_kernel,
 )
 from decoy_engine.execution.native._index_ext import load_compiled_index_kernel
+from decoy_engine.execution.out_of_core._bucket_native import (
+    NativeBucket,
+    TableBucketPlan,
+)
+from decoy_engine.execution.out_of_core._bucket_native import decide_table as decide_bucket_table
 from decoy_engine.execution.out_of_core._categorical_native import (
     BoundIndexKernel,
     NativeCategorical,
@@ -52,6 +58,7 @@ if TYPE_CHECKING:
 
 HASH_DISPOSITION_KEY = "out_of_core_hash"
 CATEGORICAL_DISPOSITION_KEY = "out_of_core_categorical"
+BUCKET_DISPOSITION_KEY = "out_of_core_bucket_perturb"
 REMAP_DEFERRED = "fk_key_hash_remap_native_deferred"
 _NO_KERNEL_RAN = "none"
 _REASON_NO_ROWS = "no_rows_hashed"
@@ -96,10 +103,12 @@ class TableHashPlan:
         decisions: Mapping[str, HashColumnDecision],
         bound: BoundHashKernel | None,
         categorical: TableCategoricalPlan | None = None,
+        bucket: TableBucketPlan | None = None,
     ) -> None:
         self._decisions = dict(decisions)
         self._bound = bound
         self.categorical = categorical
+        self.bucket = bucket
 
     @property
     def decisions(self) -> Mapping[str, HashColumnDecision]:
@@ -108,6 +117,10 @@ class TableHashPlan:
     def categorical_for(self, column: str, batch: pa.RecordBatch) -> NativeCategorical | None:
         """The native handle for categorical `column` in `batch`, or None (see `gate`)."""
         return self.categorical.gate(column, batch) if self.categorical is not None else None
+
+    def bucket_for(self, column: str, batch: pa.RecordBatch) -> NativeBucket | None:
+        """The native handle for bucket_perturb `column` in `batch`, or None (see `gate`)."""
+        return self.bucket.gate(column, batch) if self.bucket is not None else None
 
     def kernel_for(self, column: str, batch: pa.RecordBatch) -> BoundHashKernel | None:
         """The native kernel for `column` in `batch`, or None when it stays on Python.
@@ -224,7 +237,24 @@ class OocHashRun:
             if categorical_seeds
             else None
         )
-        table_plan = TableHashPlan(decisions, self._bound, categorical)
+        bucket_seeds = {
+            column: column_seed
+            for column, column_seed in (seed.per_column if seed is not None else ())
+            if column_seed.strategy == "bucket_perturb"
+            and column not in skip_columns
+            and source_schema.get_field_index(column) >= 0
+        }
+        bucket = (
+            decide_bucket_table(
+                table_name,
+                source_schema,
+                bucket_seeds,
+                self._index_kernel() if bucket_seeds else None,
+            )
+            if bucket_seeds
+            else None
+        )
+        table_plan = TableHashPlan(decisions, self._bound, categorical, bucket)
         self._plans.append(table_plan)
         self._remap.extend(_remap_entries(plan, table_name, incoming_edges, site))
         return table_plan
@@ -239,9 +269,16 @@ class OocHashRun:
             if p.categorical is not None
             for d in p.categorical.decisions.values()
         ]
+        bucket = [
+            d.entry()
+            for p in self._plans
+            if p.bucket is not None
+            for d in p.bucket.decisions.values()
+        ]
         return {
             **({HASH_DISPOSITION_KEY: entries} if entries else {}),
             **({CATEGORICAL_DISPOSITION_KEY: categorical} if categorical else {}),
+            **({BUCKET_DISPOSITION_KEY: bucket} if bucket else {}),
         }
 
 
@@ -272,6 +309,7 @@ def _remap_entries(
 
 
 __all__ = [
+    "BUCKET_DISPOSITION_KEY",
     "CATEGORICAL_DISPOSITION_KEY",
     "HASH_DISPOSITION_KEY",
     "REMAP_DEFERRED",
