@@ -81,6 +81,7 @@ from decoy_engine.errors import FpeUnencryptableError
 from decoy_engine.execution._adapter import provider_config_to_dict
 from decoy_engine.execution._errors import ExecutionError, StrategyError
 from decoy_engine.execution._strategies._code_set import _PER_VALUE_CODE_SET_ERRORS
+from decoy_engine.execution.out_of_core._bucket_native import native_bucket_perturb_array
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.kernel._scalar import _array_to_pylist, _is_missing
 from decoy_engine.plan._errors import PlanCompileError
@@ -95,6 +96,7 @@ from decoy_engine.transforms.text_mask import mask_cell
 if TYPE_CHECKING:
     import pandas as pd
 
+    from decoy_engine.execution.out_of_core._bucket_native import NativeBucket
     from decoy_engine.plan._types import ColumnSeed
     from decoy_engine.transforms._codeset_loader import _CorpusRecord
 
@@ -141,6 +143,7 @@ def group_c_array(
     cfg: dict[str, Any],
     corpus_record: _CorpusRecord | None = None,
     sub_floor_notices: dict[str, int] | None = None,
+    bucket_native: NativeBucket | None = None,
 ) -> pa.Array:
     """Dispatch one admitted Group (c) strategy to its per-value kernel.
 
@@ -148,7 +151,9 @@ def group_c_array(
     remediation) is forwarded only to the `code_set` kernel -- see
     `_code_set_array`'s docstring. `sub_floor_notices` (round-2 MEDIUM-1) is
     forwarded only to the `text_mask` kernel -- see `_text_mask_array`'s
-    docstring. Every other Group (c) kernel ignores both.
+    docstring. Every other Group (c) kernel ignores both. `bucket_native` is set only by
+    `mask_batch`, for a bucket_perturb column its table plan decided to run on the compiled
+    index kernel.
     """
     if seed.strategy == "text_mask":
         return _text_mask_array(
@@ -168,7 +173,9 @@ def group_c_array(
             corpus_record=corpus_record,
         )
     if seed.strategy == "bucket_perturb":
-        return _bucket_perturb_array(values, job_seed=job_seed, namespace=seed.namespace, cfg=cfg)
+        return _bucket_perturb_array(
+            values, job_seed=job_seed, namespace=seed.namespace, cfg=cfg, native=bucket_native
+        )
     raise ExecutionError(
         code="out_of_core_strategy_unsupported",
         message=f"strategy {seed.strategy!r} is not a Group (c) out-of-core kernel.",
@@ -398,6 +405,7 @@ def _bucket_perturb_array(
     job_seed: bytes,
     namespace: str | None,
     cfg: dict[str, Any],
+    native: NativeBucket | None = None,
 ) -> pa.Array:
     """Snap each date to a deterministic in-bucket position, oracle-identical.
 
@@ -408,6 +416,10 @@ def _bucket_perturb_array(
     whole-column format detection and the per-batch result equals the whole-column
     result for the same rows. Null / unparseable values pass through unchanged (no
     quarantine channel needed).
+
+    `native`, when the table plan admitted the column, computes through the compiled index kernel
+    instead. The namespace, bucket and format checks above run first either way, so a config that
+    errors on the Python path errors identically here and never reaches the kernel.
     """
     if namespace is None:
         raise StrategyError(
@@ -432,6 +444,15 @@ def _bucket_perturb_array(
             "(gate should reject); whole-column format detection does not chunk.",
         )
 
+    if native is not None:
+        return native_bucket_perturb_array(
+            values,
+            native=native,
+            mask_key=job_seed,
+            namespace=namespace,
+            bucket=bucket,
+            date_format=date_format,
+        )
     series = _to_series(values)
     perturbed = apply_bucket_perturb(
         series,

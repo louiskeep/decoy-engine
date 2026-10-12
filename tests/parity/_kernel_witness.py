@@ -42,14 +42,17 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any
 
+import pandas as pd
 import pyarrow as pa
 import pytest
 
 from decoy_engine.execution.native._crypto_ext import CryptoExtensionUnavailableError
 from decoy_engine.execution.out_of_core import (
+    _bucket_native,
     _categorical_native,
     _hash_run,
     _mask,
+    _mask_group_c,
     _runner,
     _stream_driver,
 )
@@ -70,7 +73,17 @@ NATIVE_ENTRYPOINTS = ("native_hash_array",)
 # the adapter also answers an empty or all-null slice with no kernel call, and that answer must
 # not read as a native execution.
 CATEGORICAL_ADAPTER = "native_categorical_array"
-_LOGICAL = {"native_hash_array": "hash_array", CATEGORICAL_ADAPTER: "categorical_array"}
+# The bucket_perturb seam binds its adapter in `_mask_group_c`, and its declined path calls
+# `apply_bucket_perturb` there. The adapter is native only when the compiled operator it calls
+# made an index-kernel call (`derive_calls`), so a zero-call batch is never a native result.
+BUCKET_ADAPTER = "native_bucket_perturb_array"
+BUCKET_LEGACY = "apply_bucket_perturb"
+_LOGICAL = {
+    "native_hash_array": "hash_array",
+    CATEGORICAL_ADAPTER: "categorical_array",
+    BUCKET_ADAPTER: "bucket_perturb_array",
+    BUCKET_LEGACY: "bucket_perturb_array",
+}
 # Every module that binds `mask_batch` by name (the drivers import it directly).
 _BATCH_BINDINGS = (_mask, _runner, _stream_driver)
 
@@ -94,6 +107,27 @@ def _empty_or_all_null(arr: Any) -> bool:
         return len(arr) == 0 or arr.null_count == len(arr)
     seq = list(arr) if arr is not None else []
     return len(seq) == 0 or all(v is None for v in seq)
+
+
+def bucket_verified_idle(values: Any, result: Any, date_format: str | None) -> bool:
+    """True only for a bucket_perturb slice with provably nothing to perturb.
+
+    A zero-compiled-call batch is part of a native column ONLY when it is independently
+    verified: empty, all-null, or present but unparseable under the pinned format, with the
+    output equal to the input. A populated slice that holds a parseable date and produced a
+    result with no compiled call is UNKNOWN, never idle, so a Python batch cannot be laundered
+    into native-consumed evidence. Zero calls proves native did not run, not that it was
+    unnecessary."""
+    src, out = _combine(values), _combine(result)
+    if len(src) == 0 or src.null_count == len(src):
+        return len(out) == len(src) and out.null_count == len(out)
+    if date_format is None or src.type != pa.string():
+        return False
+    parsed = pd.to_datetime(src.to_pandas(), format=date_format, errors="coerce")
+    present = ~src.is_null().to_pandas()
+    if bool((parsed.notna() & present).any()):
+        return False
+    return _tokens([src]) == _tokens([out])
 
 
 def force_companion_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -204,6 +238,47 @@ class KernelWitness:
 
         return self._tag(NATIVE, attempted)
 
+    def native_if_called(self, fn: Callable[..., Any]) -> Callable[..., Any]:
+        """Wrap a compiled operator that reports its kernel calls through `derive_calls`.
+
+        A result is tagged native, and an attempt counted, only when at least one compiled call
+        ran; a fault counts as an attempt. A zero-call result stays untagged (unknown) until
+        the adapter spy can verify it as idle."""
+
+        def attempted(*args: Any, **kwargs: Any) -> Any:
+            try:
+                result = fn(*args, **kwargs)
+            except BaseException:
+                self.native_attempts += 1
+                raise
+            calls = kwargs.get("derive_calls")
+            if calls is not None and sum(calls) > 0:
+                self.native_attempts += 1
+                self._provenance[id(result)] = (NATIVE, result)
+            return result
+
+        return attempted
+
+    def _bucket_legacy_spy(self, real: Callable[..., Any]) -> Callable[..., Any]:
+        def spy(series: Any, *args: Any, **kwargs: Any) -> Any:
+            result = real(series, *args, **kwargs)
+            call = self._calls.get(self._table) if self._table is not None else None
+            values = pa.array(series.tolist(), pa.string())
+            self.observations.append(
+                Observation(
+                    BUCKET_LEGACY,
+                    values,
+                    pa.array(result.tolist(), pa.string()),
+                    LEGACY,
+                    self._table,
+                    self._column,
+                    call,
+                )
+            )
+            return result
+
+        return spy
+
     def _spy(self, entrypoint: str, dispatch: Callable[..., Any]) -> Callable[..., Any]:
         def spy(values: Any, *args: Any, **kwargs: Any) -> Any:
             attempts = self.native_attempts
@@ -219,6 +294,12 @@ class KernelWitness:
                 # IDLE is the verified empty/all-null short-circuit only: input empty or
                 # all-null AND an all-null result. A populated unknown result stays UNKNOWN
                 # (which fails `assert_native_ran`), so a Python batch cannot read as IDLE.
+                backend = IDLE
+            if (
+                entrypoint == BUCKET_ADAPTER
+                and backend == UNKNOWN
+                and bucket_verified_idle(values, result, kwargs.get("date_format"))
+            ):
                 backend = IDLE
             call = self._calls.get(self._table) if self._table is not None else None
             self.observations.append(
@@ -288,6 +369,19 @@ class KernelWitness:
                 )
                 adapter = overrides.get(CATEGORICAL_ADAPTER) or getattr(_mask, CATEGORICAL_ADAPTER)
                 mp.setattr(_mask, CATEGORICAL_ADAPTER, self._spy(CATEGORICAL_ADAPTER, adapter))
+            if hasattr(_mask_group_c, BUCKET_ADAPTER):
+                mp.setattr(
+                    _bucket_native,
+                    "native_bucket_perturb",
+                    self.native_if_called(_bucket_native.native_bucket_perturb),
+                )
+                bucket = overrides.get(BUCKET_ADAPTER) or getattr(_mask_group_c, BUCKET_ADAPTER)
+                mp.setattr(_mask_group_c, BUCKET_ADAPTER, self._spy(BUCKET_ADAPTER, bucket))
+                mp.setattr(
+                    _mask_group_c,
+                    BUCKET_LEGACY,
+                    self._bucket_legacy_spy(_mask_group_c.apply_bucket_perturb),
+                )
             mp.setattr(_mask, "mask_column", self._column_spy(_mask.mask_column))
             # Wrap what each binding holds NOW, so a test double installed before `observe`
             # sits inside the spy and its substitution is what gets recorded.

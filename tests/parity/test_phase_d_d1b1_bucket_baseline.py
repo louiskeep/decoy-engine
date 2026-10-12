@@ -32,6 +32,7 @@ from tests.parity._d1b1_bucket_data import (
     shape_payload,
 )
 from tests.parity._d1b1_bucket_expected import EXPECTED, EXPECTED_TYPES
+from tests.parity._kernel_witness import force_companion_unavailable
 from tests.parity.test_phase_d_d1a_hash_baseline import mode_kwargs
 
 _MODES = ["resident", "sink-batch", "sink-reorder"]
@@ -125,9 +126,11 @@ def test_tz_directive_format_keeps_its_python_output(mode: str, tmp_path: Path) 
 
 @pytest.mark.parametrize("batch_rows", [None, 2])
 def test_dates_within_one_bucket_of_the_pandas_range_bounds_mask_on_python(
-    batch_rows: int | None,
+    batch_rows: int | None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The Python path has the full calendar range; the native route fails closed here instead."""
+    """The Python path has the full calendar range; the native route fails closed here instead
+    (see the native suite), so this pin hides the companion to stay on the Python path."""
+    force_companion_unavailable(monkeypatch)
     seeds = (("b_boundary", bucket_seed("week", "%Y-%m-%d %H:%M:%S")),)
     run = run_chain(pa.table({"b_boundary": boundary_column()}), seeds, batch_rows=batch_rows)
     _check(run.tables, ["b_boundary"])

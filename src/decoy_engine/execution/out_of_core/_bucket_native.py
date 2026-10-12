@@ -27,11 +27,13 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+import pandas as pd
 import pyarrow as pa
 
 from decoy_engine.execution._adapter import provider_config_to_dict
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._operator_registry import PYTHON_PANDAS, RUST_COMPANION
+from decoy_engine.execution.native._bucket_perturb_ext import native_bucket_perturb
 from decoy_engine.execution.native._operator_config_rejections import (
     bucket_perturb_config_rejection,
 )
@@ -43,6 +45,7 @@ if TYPE_CHECKING:
 REASON_UNAVAILABLE = "index_extension_unavailable"
 REASON_NOT_STRING = "bucket_perturb_source_not_string"
 REASON_CONFIG_DECLINED = "bucket_perturb_config_declined"
+REASON_OUT_OF_NATIVE_RANGE = "out_of_core_bucket_perturb_date_out_of_native_range"
 _NO_BACKEND_RAN = "none"
 _REASON_NO_NATIVE_CALLS = "no_native_kernel_calls"
 
@@ -174,18 +177,94 @@ def decide_table(
             else REASON_UNAVAILABLE
         )
         decisions[column] = BucketColumnDecision(
-            table_name, column, PYTHON_PANDAS, reason, schema.field(column).type
+            table_name,
+            column,
+            RUST_COMPANION if reason is None else PYTHON_PANDAS,
+            reason,
+            schema.field(column).type,
         )
     return TableBucketPlan(decisions, bound)
+
+
+# The widest span a bucket can reach from a date, in days, plus the day `normalize()` can drop.
+# A date within this distance of a pandas Timestamp bound can step outside it during the native
+# operator's bucket arithmetic, which pandas then wraps silently instead of raising.
+_BUCKET_REACH_DAYS = {"week": 7 + 1, "month": 31 + 1, "quarter": 92 + 1}
+
+
+def _guard_native_range(values: pa.Array, bucket: str, date_format: str, column: str) -> None:
+    """Fail closed when any parseable date lies within one bucket of the pandas Timestamp range.
+
+    `native_bucket_perturb` does its bucket arithmetic on pandas Timestamps (1677-09-21 to
+    2262-04-11). Near either bound that arithmetic wraps to a wrong date with no exception, so
+    the result must never be consumed. A date outside the range at all parses to NaT on both
+    paths and passes through unchanged, so it needs no guard; the Python path covers the whole
+    calendar range for the columns this refuses."""
+    series = values.to_pandas()
+    if pd.api.types.is_extension_array_dtype(series.dtype):
+        series = series.astype(object)
+    parsed = pd.to_datetime(series, format=date_format, errors="coerce")
+    earliest, latest = parsed.min(), parsed.max()
+    if pd.isna(earliest):
+        return
+    reach = pd.Timedelta(days=_BUCKET_REACH_DAYS[bucket])
+    if earliest < pd.Timestamp.min + reach or latest > pd.Timestamp.max - reach:
+        raise ExecutionError(
+            code=REASON_OUT_OF_NATIVE_RANGE,
+            message=(
+                f"bucket_perturb column {column!r} holds a date within one {bucket} of the range "
+                "the native operator can compute (1677-09-21 to 2262-04-11); the run is aborted "
+                "rather than consuming a possibly wrapped result. Run without the compiled "
+                "companion to mask the full calendar range."
+            ),
+        )
+
+
+def native_bucket_perturb_array(
+    values: pa.Array | pa.ChunkedArray,
+    *,
+    native: NativeBucket,
+    mask_key: bytes,
+    namespace: str,
+    bucket: str,
+    date_format: str,
+) -> pa.Array:
+    """Perturb one column slice with the compiled operator.
+
+    There is no fallback: a kernel fault or an out-of-range date propagates and aborts the run,
+    so a column never ends up half native and half Python. An empty or entirely null slice is
+    answered here without a kernel call, as the null-typed array the pandas path yields for it;
+    an all-unparseable slice passes its text through and stays a string array."""
+    column = native.decision.column
+    n = len(values)
+    if n == 0 or values.null_count == n:
+        return pa.nulls(n)
+    array = values.combine_chunks() if isinstance(values, pa.ChunkedArray) else values
+    _guard_native_range(array, bucket, date_format, column)
+    derive_calls: list[int] = []
+    out = native_bucket_perturb(
+        array,
+        bucket=bucket,
+        date_format=date_format,
+        mask_key=mask_key,
+        namespace=namespace,
+        index_kernel=native.bound.kernel,
+        native_threads=native.bound.native_threads,
+        derive_calls=derive_calls,
+    )
+    native.decision.native_calls += sum(derive_calls)
+    return out
 
 
 __all__ = [
     "REASON_CONFIG_DECLINED",
     "REASON_NOT_STRING",
+    "REASON_OUT_OF_NATIVE_RANGE",
     "REASON_UNAVAILABLE",
     "BucketColumnDecision",
     "NativeBucket",
     "TableBucketPlan",
     "decide_table",
     "decline_reason",
+    "native_bucket_perturb_array",
 ]

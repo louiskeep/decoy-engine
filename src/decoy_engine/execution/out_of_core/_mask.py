@@ -41,6 +41,7 @@ from decoy_engine.execution.out_of_core._mask_group_c import (
 from decoy_engine.kernel import hash_array, passthrough_array, redact_array, truncate_array
 
 if TYPE_CHECKING:
+    from decoy_engine.execution.out_of_core._bucket_native import NativeBucket
     from decoy_engine.execution.out_of_core._categorical_native import NativeCategorical
     from decoy_engine.execution.out_of_core._hash_run import TableHashPlan
     from decoy_engine.plan._types import ColumnSeed, Plan, TableSeed
@@ -108,6 +109,7 @@ def mask_column(
     sub_floor_notices: dict[str, int] | None = None,
     hash_kernel: BoundHashKernel | None = None,
     categorical_native: NativeCategorical | None = None,
+    bucket_native: NativeBucket | None = None,
 ) -> pa.Array:
     """Apply one admitted strategy to one column (or column slice).
 
@@ -132,7 +134,8 @@ def mask_column(
     `hash_kernel` is set only by `mask_batch`, for a hash column its table plan decided
     to run on the compiled companion. The FK remap sites never pass it and keep the Python hash.
     `categorical_native` is its categorical counterpart; `categorical_array` stays the reference
-    and the path every declined column takes.
+    and the path every declined column takes. `bucket_native` is the bucket_perturb counterpart,
+    taken inside the Group (c) seam once its own validation has run.
     """
     job_seed = mask_key
     cfg = provider_config_to_dict(seed.provider_config)
@@ -163,6 +166,7 @@ def mask_column(
             cfg=cfg,
             corpus_record=corpus_record,
             sub_floor_notices=sub_floor_notices,
+            bucket_native=bucket_native,
         )
     if seed.strategy == "passthrough":
         return passthrough_array(values)
@@ -368,8 +372,11 @@ def mask_batch(
             if hash_plan is not None and column_seed.strategy == "categorical"
             else None
         )
-        if hash_plan is not None and column_seed.strategy == "bucket_perturb":
+        bucket_native = (
             hash_plan.bucket_for(column, batch)
+            if hash_plan is not None and column_seed.strategy == "bucket_perturb"
+            else None
+        )
         idx = batch.schema.get_field_index(column)
         if idx < 0:
             continue
@@ -387,6 +394,7 @@ def mask_batch(
             sub_floor_notices=notices,
             hash_kernel=hash_kernel,
             categorical_native=categorical_native,
+            bucket_native=bucket_native,
         )
         arrays[idx] = masked
         # Same field semantics as Table.set_column with a bare name: the field

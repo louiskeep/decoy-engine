@@ -215,3 +215,26 @@ def test_an_abi_incompatible_companion_declines_with_the_unavailable_reason(
     assert {(e["executed_backend"], e["reason"]) for e in entries.values()} == {
         (PYTHON_PANDAS, UNAVAILABLE)
     }
+
+
+@pytest.mark.parametrize("mode", MODES)
+def test_eligible_columns_report_the_companion_with_no_reason(
+    mode: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    install_index_companion(monkeypatch)
+    entries = by_column(run_chain(_PAYLOAD, _SEEDS, **mode_kwargs(mode, tmp_path)))
+    assert set(entries) == {("t", "a"), ("t", "b")}
+    for entry in entries.values():
+        assert entry["executed_backend"] == RUST_COMPANION
+        assert "reason" not in entry
+        assert entry["path"] == "mask_batch"
+
+
+def test_disposition_is_visible_through_run_pipeline_when_native(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    install_index_companion(monkeypatch)
+    entries = _entries_through_run_pipeline(tmp_path)
+    assert {(e["executed_backend"], e.get("reason")) for e in entries.values()} == {
+        (RUST_COMPANION, None)
+    }
