@@ -1,6 +1,26 @@
 # Phase D / D2-cycle: cross-table FK cycles native on the bounded (SEQ) route
 
-Status: plan (rev 5, re-scoped after the Codex FINAL-gate NO-GO - re-gating the delta before rebuild).
+Status: DEFERRED TO V2 (2026-10-12, Cam's pre-authorized "defer if too hard" rule, invoked by the
+rev-5 Codex plan-gate NO-GO). The memory-bound defect class defeated FOUR iterations (plan rev-3 HIGH-2,
+rev-4 MED, implementation 4 BLOCKERs, rev-5 narrowing NO-GO). STOP POINT: the rev-5 narrowing closed
+BLOCKER-1 (composite-FK writer closure), BLOCKER-3/4 (nested/pool payloads on CYCLIC tables), and the
+BLOCKER-2 hashed-bool output-width case, but a NEW BLOCKER remained: the pool/corpus/NER/variable-width
+strategy-state exclusion is COMPONENT-LOCAL while the memory bound needs to be JOB-WIDE - a pool payload on
+a DISCONNECTED acyclic table (person_email pool_size=1e8 builds an 800MB pool before the cache cap), a
+spaCy NER pipeline (text_redact/text_mask), or variable-width passthrough/FPE/truncate-with-mask_char
+ANYWHERE in the job still allocates unbounded state the bound does not cover. V2 PATH (Codex-validated,
+so V2 RESUMES not restarts): define ONE job-wide, default-deny MEMORY-ELIGIBILITY rule covering every
+executed strategy + dispatch dependency across incoming/outgoing/disconnected tables - admit only configs
+with explicit bounds for input, output, scratch, AND retained strategy state; decline everything else
+before execution. Codex confirmed a useful non-empty subset exists (fixed-width inputs, bounded scalar
+outputs, pure key writers, lazy sources, draining sink) with NO parity defect. VALIDATED + REUSABLE for V2:
+the two-pass column-order effective-map core (byte-parity proven by dennis + Codex), the composite-FK-writer
+decline, the transitive nested-strategy resolution (`nested_recursive_nested_rejected` already rejects deep
+nesting), the whole-job output-width accounting. BRANCH feat/phase-d-d2cycle-bounded-fk-cycles is PARKED
+(build commit d3526f90 + plan rev5 7b0c6c2b) - NOT merged, NOT deleted; resume here for V2. See
+decoy-platform/docs/backlog/v2-candidate-plan.md.
+
+[SUPERSEDED] rev 5, re-scoped after the Codex FINAL-gate NO-GO - re-gating the delta before rebuild).
 rev 4.1 built (commits f41603f9/baa3c77c/671cb251) + dennis-APPROVED + remediated (d3526f90), but the
 Codex FINAL gate returned NO-GO with 4 BLOCKERs - all at the ADMISSION BOUNDARY, the core two-pass
 parity is validated. (1) pass 1 silently skipped an incoming COMPOSITE-FK writer of a cyclic key ->
