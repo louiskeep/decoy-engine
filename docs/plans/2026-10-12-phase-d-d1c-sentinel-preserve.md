@@ -1,9 +1,14 @@
 # Phase D / D1c: date sentinel-preserve
 
-Status: plan (rev 3, pre-gate). rev 1 NO-GO (6 HIGH/1 MEDIUM), rev 2 NO-GO (4
-HIGH/2 MEDIUM/1 LOW). rev 3 folds the rev-2 findings by NARROWING the supported
-surface (fail closed on the hard tail) rather than adding machinery, grounded on
-Codex-verified code behavior and runtime probes (pandas 2.3.3 / pyarrow 26.0.0).
+Status: plan (rev 4, pre-gate). rev 1 NO-GO (6 HIGH/1 MEDIUM), rev 2 NO-GO (4
+HIGH/2 MEDIUM/1 LOW), rev 3 NO-GO (1 HIGH/2 MEDIUM; core design confirmed sound).
+rev 4 folds the final three: compile-reject `preserve_values` + `group_by`
+(the group-anchor snapshot index conflict); reject `%Z` and make pandas the
+authoritative parser (drop the universal-equivalence claim); and a precise
+scalar-only, single-edge, non-composite, non-same-table FK boundary. Plus the LOW
+refinements (date-granular typed rendering, one shared matching pass, a
+value-and-mixture-dependent pre-existing-bug characterization). Grounded on
+Codex-verified behavior + probes (pandas 2.3.3 / pyarrow 26.0.0).
 
 Rules consulted: 00-universal.md, risk-and-exceptions.md, development-loop.md,
 architecture.md, reuse-first.md, testing.md, documentation.md,
@@ -35,10 +40,17 @@ on. Unset config = byte-identical output to today.
   format exists. Unset/empty `preserve_values` retains today's behavior exactly,
   including bucket_perturb/date_shift autodetection.
 - Supported `date_format` domain under preservation is restricted to formats whose
-  parse agrees between pandas and Python `datetime` (see match rule): reject
-  sub-second directives (`%f`), and the pandas-special `date_format` values
-  (`ISO8601`, `mixed`) when `preserve_values` is set. These never describe a
-  date-only sentinel and are the source of parser divergence.
+  parse agrees between pandas and Python `datetime`, OR where pandas is authoritative
+  (see match rule): reject sub-second directives (`%f`), timezone-name directives
+  (`%Z`, which pandas parses but Python `strptime` rejects, so the full-range
+  fallback cannot match it), and the pandas-special `date_format` values (`ISO8601`,
+  `mixed`) when `preserve_values` is set. None describe a date-only sentinel.
+- `preserve_values` combined with date_shift `group_by` is compile-REJECTED
+  (`date_preserve_values_with_group_by_unsupported`). The group-anchor path requires
+  the anchor snapshot index to equal the column index (`_date_shift.py:128`), which
+  the physical row exclusion below breaks; group_by is itself an FK-restricted,
+  narrower feature, so combining it with preservation is a tail refused fail-closed
+  (v2). Preservation without group_by (the common payload case) is fully supported.
 - FK: preservation is supported on PAYLOAD date columns and on a date key in a
   SINGLE-HOP parent->child relationship. A date key in a multi-hop FK chain
   (A->B->C) or a multi-parent shared child, with `preserve_values` set on any key
@@ -96,19 +108,27 @@ calendar date, then test date-granular membership in the literal set:
   source value's calendar date directly to the literal set (no reparse). Timezone
   aware: compare on the local wall-clock date (documented).
 
-This removes rev-2's parser-equivalence overclaim: the supported-format restriction
-makes the two parsers agree on the supported domain, and the only place a full-range
-parser is used is where pandas already gives NaT (so the operator would have passed
-the row through regardless; D1c makes it an explicit preserve with identical
-output).
+**Pandas is authoritative whenever it succeeds** (no universal parser-equivalence
+claim, which is false in general: e.g. `%Y-%W-%w` `2020-00-1` gives pandas
+`2020-01-01` vs Python `2019-12-30`, and `%Z` pandas-parses but strptime rejects).
+The algorithm never diverges from how a row otherwise masks because in range it
+uses the operator's own pandas parse; the Python `strptime` fallback runs ONLY on a
+pandas-NaT cell (which the operator would pass through regardless), and its supported
+domain is bounded by the format restriction above (no `%f`/`%Z`/pandas-special), so
+the one case it must get right (a date-only out-of-range sentinel like `9999-12-31`)
+parses deterministically. An out-of-range value under a rejected format is simply
+not matchable and stays today's behavior; this is why `%Z` is rejected under
+preservation.
 
 **Output for a preserved row (output column is always a strftime string).** A
 rendering format always exists (required above):
 - String source: emit the original source string unchanged (byte-identical).
-- Typed source: emit the source date rendered with the field `date_format` via
-  Python `strftime` (full range; `date(9999,12,31).strftime(...)` works), keeping
-  the column homogeneous string. Never restore a raw `date`/`Timestamp` object into
-  the string column (the HIGH-4 / ArrowType trap).
+- Typed source: extract the source value's calendar `date` (time-of-day and
+  timezone dropped, consistent with the date-granular match), then render it with
+  the field `date_format` via Python `strftime` (full range;
+  `date(9999,12,31).strftime(...)` works), keeping the column homogeneous string.
+  Never restore a raw `date`/`Timestamp` object into the string column (the HIGH-4 /
+  ArrowType trap).
 
 ## Per-route carve-out (physical exclusion on EVERY route, pre-compute)
 
@@ -185,9 +205,24 @@ parent). Multi-hop chains and multi-parent shared children with preservation on 
 key in the component are compile-rejected
 (`date_preserve_values_unsupported_fk_shape`) because per-hop orphan REMAP would
 need preservation on each intermediate handler; refused fail-closed, recorded as v2.
-Graph cycles already fail compilation. bucket_perturb as an FK key is rejected on
+
+**Precise unsupported boundary (rev-3 MEDIUM-3 fix).** The relationship graph nodes
+are whole column-tuples (`relationships/_graph.py:264`), so a scalar-vs-composite
+check cannot rely on table-level or tuple-identity reasoning alone. Define a scalar
+FK participation as a `(table, column)` pair and inspect RESOLVED relationship
+participation: a date column carrying `preserve_values` is supported only when it
+participates in exactly one parent->child edge as a SCALAR endpoint on both ends,
+the parent and child tables differ (no same-table `T.parent_date -> T.child_date`
+edge), and the column does not also participate in any COMPOSITE endpoint. Reject
+with `date_preserve_values_unsupported_fk_shape` when the column appears in: a
+composite key endpoint, both a scalar and a composite endpoint (overlap), a
+same-table edge, more than one edge (chain or multi-parent), or any cycle. This is
+stricter than "not a chain"; it refuses composite and same-table participation
+explicitly rather than letting a tuple-node check see two composite hops sharing a
+date column as independent single-hops. bucket_perturb as an FK key is rejected on
 the chunked route (existing) and otherwise parent-owned on full-frame under the same
-single-hop rule. Payload date columns (the common case) have no FK interaction.
+single-hop scalar rule. Payload date columns (the common case) have no FK
+interaction and are always supported.
 
 ## Pre-existing bug (separate finding, dtype-specific; rev-2 LOW-7)
 
@@ -195,9 +230,12 @@ Independently of D1c, a date source whose object form holds a non-null value pan
 cannot represent in ns (Arrow `date32`/timestamp, or a tz-naive `datetime64[s]`,
 holding year > 2262) crashes both operators today: the existing passthrough restores
 a `date`/`Timestamp` object into the strftime-string column and
-`pa.Table.from_pandas` (`_pandas_adapter.py:342`) raises `ArrowTypeError`. Record as
-a dtype-specific engine bug (Arrow date/timestamp extension AND wide-unit numpy
-datetime, not a blanket `datetime64[s]` claim). D1c's render-to-string means a
+`pa.Table.from_pandas` (`_pandas_adapter.py:342`) raises `ArrowTypeError`. The
+trigger depends on the VALUES and the resulting mixed output column (a non-null
+typed object sitting among strftime strings), not dtype alone: an all-out-of-range
+Arrow-date column can convert cleanly, and wide-unit numpy datetimes differed
+between the two operators in probing. Record as a value-and-mixture-dependent engine
+bug with an exact reproducer, separate from D1c. D1c's render-to-string means a
 PRESERVED such row no longer trips it; D1c does not fix the non-preserved case.
 
 ## Acceptance tests (authored before impl; not weakened later)
@@ -220,15 +258,23 @@ PRESERVED such row no longer trips it; D1c does not fix the non-preserved case.
   every route; a malformed value beside a preserved value still records its format
   error while the preserved one does not; preserved rows never enter
   derivation/guard/arithmetic (spy/assert).
-- **FK:** single-hop parent `preserve_values` preserves on parent and child (normal
-  and orphan/REMAP); child-key `preserve_values` compile-rejected; a multi-hop chain
-  and a multi-parent shared child with preservation compile-rejected with the
-  dedicated code.
+- **FK:** single-hop scalar parent `preserve_values` preserves on parent and child
+  (normal and orphan/REMAP); child-key `preserve_values` compile-rejected; a
+  multi-hop chain, a multi-parent shared child, a COMPOSITE-key endpoint, a
+  scalar+composite overlap, and a same-table `parent_date -> child_date` edge each
+  compile-rejected with `date_preserve_values_unsupported_fk_shape`; two independent
+  safe scalar keys are NOT falsely rejected.
 - **date_shift error-position rebasing** after excluding preserved rows and under a
-  `when:` selection.
+  `when:` selection. **`group_by` + preserve_values** compile-rejected
+  (`date_preserve_values_with_group_by_unsupported`); a mixed preserved/ordinary
+  batch WITHOUT group_by preserves correctly (the common path).
+- **Parser domain:** the `%Y-%W-%w` and `%Z` counterexamples are covered - an
+  in-range row still matches via the pandas-authoritative path; a `%Z` or `%f`
+  format under preservation is a config error, not a silent mismatch.
 - **Config errors:** malformed literal; `preserve_values` without `date_format`; an
-  unsupported format (`%f`, `ISO8601`, `mixed`) under preservation. All raise at
-  config time (zero-row too), identically native+oracle, no sink commit.
+  unsupported format (`%f`, `%Z`, `ISO8601`, `mixed`) under preservation; and
+  `group_by` + preserve_values. All raise at config time (zero-row too), identically
+  native+oracle, no sink commit.
 - **Counter aggregation** across batches, `when:`, and REMAP; the counter never
   credits compiled execution when no kernel ran, carries no values, and is
   absent/zero-compatible when unset.
@@ -245,8 +291,9 @@ bucket plan-compile check and preflight; one provider_config key. No new module,
 route, or abstraction. House style: typed `PreserveSet`; single-purpose functions;
 no flag arguments; comments explain why (format-domain restriction makes parsers
 agree; render-to-string avoids the mixed-column trap; single-hop-only refuses the
-chain tail fail-closed). Resolve literals once; parse each cell once per batch.
-Applies to touched code only.
+chain tail fail-closed). Resolve literals once per run; `PreserveSet.mask()` is ONE
+shared matching pass per batch (pandas parse, then a single strptime fallback only on
+pandas-NaT cells), not a parse-per-literal. Applies to touched code only.
 
 ## Docs to update
 
