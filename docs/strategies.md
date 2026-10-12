@@ -76,6 +76,15 @@ an undefined-security domain. See
 [docs/security/de-01-ff1-adoption.md](security/de-01-ff1-adoption.md) for the
 conformance claim, key/tweak model, and known leakage.
 
+Compute path. On the out-of-core and native-chunked routes, and on the bounded
+sequential (FK) route when the companion is installed, an `fpe` PAYLOAD column
+on a string source with a supported config runs on the compiled kernel; the
+output is byte-identical to the Python handler (FPE does not NFC-normalize, so
+there is no Unicode-version nuance). A column with a checksum scheme, a
+non-string type, no namespace, or an invalid charset stays on the Python
+handler, as does an `fpe` column used as a foreign key. The job's
+`sequential_fpe` disposition says which columns ran where.
+
 - `charset`: a named set (for example `digits`) or an explicit character set.
   A degenerate (< 2 char) set degrades to passthrough.
 - `preserve_separators`: keep non-charset separators in place (default true).
