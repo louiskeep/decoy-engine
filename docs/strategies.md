@@ -210,8 +210,8 @@ ASCII formats never differ. And the companion computes buckets on pandas Timesta
 (1677-09-21 to 2262-04-11): a date that parses but sits within one bucket of either
 bound fails the job with `out_of_core_bucket_perturb_date_out_of_native_range`
 rather than risk a wrapped date. Dates outside the range entirely (such as
-`9999-12-31`) pass through unchanged on both paths. Run without the companion to mask
-the full calendar range.
+`9999-12-31`) pass through unchanged on both paths. Run without the companion to
+perturb parseable dates near these bounds.
 
 ### bucketize
 
