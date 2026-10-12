@@ -539,7 +539,10 @@ def run_sequential(
         # this job (built once above), so `ctx.code_set_corpora` accumulates
         # identically whether the job runs table-at-a-time (here) or
         # full-frame.
-        quality_metrics: dict[str, Any] = ctx.code_set_corpora_metrics()  # HC-1 evidence
+        quality_metrics: dict[str, Any] = {
+            **ctx.code_set_corpora_metrics(),  # HC-1 evidence
+            **ctx.date_preserve_metrics(),  # D1c: {} unless a column opted in
+        }
         if all_row_errors:
             row_error_counts: dict[str, int] = {}
             for rec in all_row_errors:

@@ -149,6 +149,9 @@ class OperatorCallEvidence:
     # coordinator builds ONE warning per column after the loop (the oracle's whole-column scope,
     # C6b-i). Empty for every other operator; not published in the route-evidence dict.
     text_mask_sub_floor_notices: dict[str, int] = field(default_factory=dict)
+    # D1c: sentinel rows a `preserve_values` node passed through, summed across its batches.
+    # `None` for a node that did not opt in, so the published evidence gains no key for it.
+    preserved_rows: int | None = None
 
 
 # The two operators whose kernel loads a companion of its own inside the call; the loader's
@@ -396,6 +399,8 @@ def run_operator(
         # reroutes to the full-frame oracle, which runs the shipped handler and raises the
         # canonical StrategyError (class + code), so exception parity holds by construction.
         raise fpe_fail_closed_error(result.fpe_errors, column or "?")
+    if getattr(binding.params, "preserve", None) is not None:
+        evidence.preserved_rows = (evidence.preserved_rows or 0) + result.preserved_rows
     # Any compiled batch wins: the evidence object lives across all of a node's batches.
     if result.ran:
         evidence.compiled_kernel_executed = True

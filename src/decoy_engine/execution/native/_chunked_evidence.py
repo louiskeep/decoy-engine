@@ -139,6 +139,7 @@ def chunk_route_evidence(
     elapsed_ms: Mapping[str, float],
     pandas_read_passthrough: Iterable[str] = (),
     kernel_idle_columns: Iterable[str] = (),
+    preserved_rows: Mapping[str, int] | None = None,
 ) -> dict[str, Any]:
     """One chunk's evidence: every column called once, with its own elapsed time.
 
@@ -149,8 +150,12 @@ def chunk_route_evidence(
 
     `kernel_idle_columns` lists the admitted columns that ran no compiled kernel on this chunk
     (a bucket_perturb or date_shift chunk with no parseable row, an empty group_key chunk). They ran Arrow passthrough work in Python,
-    so they report `arrow_python` rather than the planned companion backend."""
+    so they report `arrow_python` rather than the planned companion backend.
+
+    `preserved_rows` maps each column that opted into D1c `preserve_values` to the rows it passed
+    through this chunk. Only those columns carry the key, so an unset config adds nothing."""
     idle = frozenset(kernel_idle_columns)
+    kept = preserved_rows or {}
     return {
         "table": table,
         "native_admitted": native_admitted,
@@ -166,6 +171,7 @@ def chunk_route_evidence(
                 ),
                 "calls": 1,
                 "elapsed_ms": float(elapsed_ms.get(c.column, 0.0)),
+                **({"preserved_rows": kept[c.column]} if c.column in kept else {}),
             }
             for c in columns
         ],
@@ -210,6 +216,8 @@ def aggregate_chunked_route_evidence(results: Iterable[Any]) -> dict[str, Any]:
             else:
                 acc["calls"] += col["calls"]
                 acc["elapsed_ms"] += col["elapsed_ms"]
+                if "preserved_rows" in col:
+                    acc["preserved_rows"] = acc.get("preserved_rows", 0) + col["preserved_rows"]
                 merge_executed_backend(acc, col)
     if head is None:
         return {

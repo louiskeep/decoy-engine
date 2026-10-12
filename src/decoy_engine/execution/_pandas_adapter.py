@@ -352,7 +352,7 @@ class PandasExecutionAdapter:
             timings=tuple(collector.records),
             boundary_conversion_ms=conversion_ms,
             warnings=tuple(warnings),
-            quality_metrics=ctx.code_set_corpora_metrics(),  # HC-1: {} if no code_set column
+            quality_metrics={**ctx.code_set_corpora_metrics(), **ctx.date_preserve_metrics()},
             row_errors=tuple(row_error_records),
         )
 

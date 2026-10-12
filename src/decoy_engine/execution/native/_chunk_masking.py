@@ -75,6 +75,7 @@ def _mask_chunk_native(
     when_masks: Mapping[str, pa.Array] | None = None,
     faker_missing: Mapping[str, pa.Array] | None = None,
     table: str = "",
+    preserved_rows: dict[str, int] | None = None,
 ) -> pa.Table:
     """Mask one chunk column-by-column through the admitted native kernels.
 
@@ -140,6 +141,9 @@ def _mask_chunk_native(
 
     `faker_missing` holds each positional Faker column's missing mask for this chunk, taken from
     the oracle's conversion of the raw chunk (see `_faker_null_mask`).
+
+    `preserved_rows`, when given, receives the sentinel rows each D1c `preserve_values` column
+    passed through this chunk (a count per opted-in column, no values).
 
     `row_offset` is the global position of the chunk's first row; only the seeded
     non-deterministic categorical and the position-keyed faker key on it (the faker also on
@@ -209,6 +213,8 @@ def _mask_chunk_native(
                 missing_mask=(faker_missing or {}).get(name),
             )
         out = result.out
+        if preserved_rows is not None and getattr(params, "preserve", None) is not None:
+            preserved_rows[name] = result.preserved_rows
         if isinstance(params, TextMaskParams):
             # native_text_mask always returns pa.string() (the schema rule pins the column), so no
             # degenerate type reconciliation is needed (unlike fpe/bucket_perturb). Only the one
