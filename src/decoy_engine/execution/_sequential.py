@@ -141,7 +141,6 @@ import pyarrow as pa
 
 from decoy_engine.errors import RowErrorsFailedError
 from decoy_engine.execution._adapter import ExecutionResult, StrategyContext
-from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._exact_int_faker import register_exact_int_sources, release_table
 from decoy_engine.execution._fk_keys import fk_columns_for_table, to_pandas_fk_safe
 from decoy_engine.execution._guards import reject_null_bearing_int
@@ -159,6 +158,14 @@ from decoy_engine.execution._runner import (
     top_code_columns,
 )
 from decoy_engine.execution._sequential_composite_chain import decline_composite_chain
+from decoy_engine.execution._sequential_cycle import (
+    map_still_needed,
+    release_parent_maps,
+    run_cycle_pass1,
+    sequential_table_order,
+    table_topo_order,
+)
+from decoy_engine.execution._sequential_cycle_admit import CycleContext, require_cycle_admitted
 from decoy_engine.execution._sequential_native import SeqNativeRun
 from decoy_engine.execution._transactional_sink import (
     TransactionalSink,
@@ -219,6 +226,7 @@ def run_sequential(
     quarantine_config: dict[str, Any] | None = None,
     unconfigured_column_policy: UnconfiguredColumnPolicy | None = None,
     key_provider: KeyProvider | None = None,
+    cycle_context: CycleContext | None = None,
 ) -> ExecutionResult:
     """Mask an FK-related job table by table in FK-topological order.
 
@@ -259,6 +267,11 @@ def run_sequential(
     published on any exception, including a commit failure. See the module
     docstring's "Quarantine sidecar shares the sink's commit-or-discard fate"
     section.
+
+    Cross-table FK cycles (D2-cycle): an admitted cyclic component is masked in two passes, a
+    key-columns-only pass that leaves each parent's effective key map cached, then this loop;
+    `cycle_context` carries the sizes, budget and column reader the gate needs, and a cycle the
+    gate declines raises a coded `ExecutionError`. See `_sequential_cycle`.
     """
     q_cfg: dict[str, Any] = quarantine_config or {}
     q_enabled = bool(q_cfg.get("enabled", False))
@@ -278,13 +291,22 @@ def run_sequential(
     counts_by_trigger: dict[str, int] = {}
 
     graph = relationship_graph
+    cache = pool_cache if pool_cache is not None else PoolCache()
+    table_order, cycles = sequential_table_order(plan, graph)
+    require_cycle_admitted(
+        plan,
+        graph,
+        registry,
+        cycle_context,
+        quarantine_config=q_cfg,
+        pool_capacity_bytes=cache.stats().bytes_capacity,
+    )
+    cycle_starts = {comp[0]: comp for comp in cycles}
     ordered = order_work(build_work_list(plan, registry), graph)
     node_by_key: dict[_NodeKey, WorkNode] = {n.key: n for n in ordered}
     nodes_by_table: dict[str, list[WorkNode]] = {}
     for node in ordered:
         nodes_by_table.setdefault(node.table, []).append(node)
-
-    table_order = table_topo_order(plan, graph)
 
     # HC-3a: per-table date_shift group_by anchor columns (Codex R1 P1 #1/#2).
     # Unioned into each table's FK-safe column set at load (lossless int+null)
@@ -306,7 +328,6 @@ def run_sequential(
         ck = (edge.parent_table, edge.parent_columns)
         remaining_child_consumers.setdefault(ck, set()).add(edge.child_table)
 
-    cache = pool_cache if pool_cache is not None else PoolCache()
     # D2a: per-run hash decisions, kept for the whole run so REMAP on a child table still sees
     # its parent's decision after the parent frame is evicted.
     native_run = SeqNativeRun()
@@ -371,6 +392,22 @@ def run_sequential(
     try:
         with use_collector(collector):
             for table in table_order:
+                if table in cycle_starts and cycle_context is not None:
+                    run_cycle_pass1(
+                        adapter,
+                        plan,
+                        graph,
+                        cycle_starts[table],
+                        ctx=cycle_context,
+                        ordered=ordered,
+                        node_by_key=node_by_key,
+                        registry=registry,
+                        namespace_registry=namespace_registry,
+                        pool_cache=cache,
+                        mask_key=ctx.mask_key,
+                        parent_map_cache=parent_map_cache,
+                        errored_keys_cache=errored_keys_cache,
+                    )
                 src = source_loader(table)
                 # Same guard as run(), table-local (FK children exempt via graph).
                 reject_null_bearing_int(plan, {table: src}, registry, graph)
@@ -474,7 +511,9 @@ def run_sequential(
                 # key_error_rows/errored_keys_cache here excludes any row-errored
                 # parent-key row from the map and records it for child cascade.
                 for edge in graph.edges:
-                    if edge.parent_table == table:
+                    if edge.parent_table == table and map_still_needed(
+                        edge.parent_table, edge.parent_columns, remaining_child_consumers
+                    ):
                         adapter._parent_map(
                             edge,
                             frames,
@@ -527,17 +566,12 @@ def run_sequential(
                 for snap_key in [k for k in ctx.group_anchor_snapshots if k[0] == table]:
                     del ctx.group_anchor_snapshots[snap_key]
                 release_table(ctx.exact_int_sources, table)
+                # `df` and `out` would otherwise outlive the table into the next load.
+                del df, out
 
-                # Release any parent map whose every child consumer is now done.
-                for edge in graph.edges:
-                    if edge.child_table == table:
-                        ck = (edge.parent_table, edge.parent_columns)
-                        consumers = remaining_child_consumers.get(ck)
-                        if consumers is not None:
-                            consumers.discard(table)
-                            if not consumers:
-                                parent_map_cache.pop(ck, None)
-                                errored_keys_cache.pop(ck, None)
+                release_parent_maps(
+                    graph, table, remaining_child_consumers, parent_map_cache, errored_keys_cache
+                )
 
         # Finalize row-error evidence AFTER every table has masked and BEFORE
         # commit, still inside this try so a failure here also triggers
@@ -552,6 +586,8 @@ def run_sequential(
             **ctx.date_preserve_metrics(),  # D1c: {} unless a column opted in
             **native_run.metrics(),  # D2a: {} unless the plan hashes a column
         }
+        if cycles:
+            quality_metrics["sequential_cycle"] = {"components": [list(c) for c in cycles]}
         if all_row_errors:
             row_error_counts: dict[str, int] = {}
             for rec in all_row_errors:
@@ -628,50 +664,5 @@ def run_sequential(
     )
 
 
-def table_topo_order(plan: Plan, graph: RelationshipGraph) -> list[str]:
-    """FK-topological order over TABLES (every parent before its children), stable
-    to the plan's table order where the graph leaves a choice. Raises on a cycle.
-    Sequential eviction relies on a parent being fully masked, and its key map
-    built, before any child table is loaded."""
-    order_seed: list[str] = []
-    seen: set[str] = set()
-    for name, _ in plan.seed_envelope.per_table:
-        if name not in seen:
-            seen.add(name)
-            order_seed.append(name)
-    for edge in graph.edges:
-        for tbl in (edge.parent_table, edge.child_table):
-            if tbl not in seen:
-                seen.add(tbl)
-                order_seed.append(tbl)
-
-    position = {t: i for i, t in enumerate(order_seed)}
-    children: dict[str, set[str]] = {t: set() for t in order_seed}
-    indegree: dict[str, int] = dict.fromkeys(order_seed, 0)
-    for edge in graph.edges:
-        if edge.parent_table == edge.child_table:
-            continue  # self-FK masks within one table; no table-level ordering
-        if edge.child_table not in children[edge.parent_table]:
-            children[edge.parent_table].add(edge.child_table)
-            indegree[edge.child_table] += 1
-
-    ready = [t for t in order_seed if indegree[t] == 0]
-    result: list[str] = []
-    while ready:
-        ready.sort(key=position.__getitem__)
-        current = ready.pop(0)
-        result.append(current)
-        for child in sorted(children[current], key=position.__getitem__):
-            indegree[child] -= 1
-            if indegree[child] == 0:
-                ready.append(child)
-
-    if len(result) != len(order_seed):
-        raise ExecutionError(
-            code="relationship_cycle",
-            message=(
-                "FK relationship graph has a cycle across tables; cannot order "
-                "tables for sequential masking."
-            ),
-        )
-    return result
+# Re-exported: `table_topo_order` now lives with the cycle-aware order in `_sequential_cycle`.
+__all__ = ["run_sequential", "table_topo_order"]

@@ -34,6 +34,7 @@ from decoy_engine.execution._sequential import run_sequential
 if TYPE_CHECKING:
     from decoy_engine.execution._output_projection import UnconfiguredColumnPolicy
     from decoy_engine.execution._planner import ExecutionPlan
+    from decoy_engine.execution._sequential_cycle_admit import CycleContext
     from decoy_engine.execution._transactional_sink import TransactionalSink
     from decoy_engine.keyprovider import KeyProvider
     from decoy_engine.plan._types import Plan
@@ -127,6 +128,7 @@ def run_sequential_route(
     execution_plan_decision: ExecutionPlan | None = None,
     unconfigured_column_policy: UnconfiguredColumnPolicy | None = None,
     key_provider: KeyProvider | None = None,
+    cycle_context: CycleContext | None = None,
 ) -> ExecutionResult:
     """Execute the sequential route and package it as a full `ExecutionResult`.
 
@@ -162,6 +164,7 @@ def run_sequential_route(
         quarantine_config=quarantine_config,
         unconfigured_column_policy=unconfigured_column_policy,
         key_provider=key_provider,
+        cycle_context=cycle_context,
     )
     seq_quality_metrics = dict(seq_result.quality_metrics)
     seq_quality_metrics["execution"] = execution_telemetry(

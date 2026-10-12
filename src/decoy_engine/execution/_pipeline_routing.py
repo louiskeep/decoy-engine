@@ -148,25 +148,9 @@ def _has_cross_table_fk_cycle(graph: RelationshipGraph) -> bool:
     within one table and are not a table-level cycle (S2 remediation guide
     r3 section 6).
     """
-    from collections import defaultdict
+    from decoy_engine.execution._sequential_cycle import fk_components
 
-    succ: dict[str, set[str]] = defaultdict(set)
-    for edge in graph.edges:
-        if edge.parent_table != edge.child_table:
-            succ[edge.parent_table].add(edge.child_table)
-    WHITE, GRAY, BLACK = 0, 1, 2
-    color: dict[str, int] = {}
-
-    def visit(node: str) -> bool:
-        color[node] = GRAY
-        for nxt in succ.get(node, ()):  # DFS back-edge = cycle
-            c = color.get(nxt, WHITE)
-            if c == GRAY or (c == WHITE and visit(nxt)):
-                return True
-        color[node] = BLACK
-        return False
-
-    return any(color.get(n, WHITE) == WHITE and visit(n) for n in list(succ))
+    return bool(fk_components(graph))
 
 
 def _sequential_eligible(
@@ -229,7 +213,7 @@ def _sequential_eligible(
 
 
 def reject_explicit_sequential(
-    eligible: bool, route_reason: str, cyclic: bool, has_mask_table: bool
+    eligible: bool, route_reason: str, cyclic: bool, has_mask_table: bool, code: str | None = None
 ) -> None:
     """The fail-closed checks behind an explicit `execution_mode="sequential"`."""
     if not eligible:
@@ -242,6 +226,7 @@ def reject_explicit_sequential(
             "execution_mode='sequential' requested but the FK graph has a "
             "cross-table cycle, which the sequential path cannot order; "
             "use execution_mode='full_frame' or 'auto'."
+            + (f" Decline reason: {code}." if code else "")
         )
     if not has_mask_table:
         # Without a mask-kind table the sequential branch in run_pipeline would
@@ -295,6 +280,8 @@ def decide_execution_route(
     use_probe_routing: bool = True,
     probe_recovers_full_frame: bool | None = None,
     lazy_transform_bearing: bool = False,
+    cycle_admitted: bool = False,
+    cycle_decline_code: str | None = None,
 ) -> tuple[str, str]:
     """Decide `(route, route_reason)` -- `"out_of_core"`, `"sequential"`, or
     `"full_frame"` -- or RAISE a fail-closed reject-before-read.
@@ -374,6 +361,12 @@ def decide_execution_route(
     self-referencing table (one table, not a cross-table cycle) is NOT
     flagged and still routes normally.
 
+    D2-cycle: `cycle_admitted` is the cycle gate's verdict
+    (`_sequential_cycle_admit.route_cycle_decline`). An admitted cycle takes the
+    sequential route like an acyclic job, except the row-count path keeps a small
+    cycle on full-frame and diverts it only where it would be rejected. Out-of-core
+    never takes a cycle. `cycle_decline_code` names why a declined cycle cannot.
+
     `resolved_substrate` disqualifies sequential eligibility when it is
     not `"pandas"` (see `_sequential_eligible`'s docstring): pandas is the only
     masking substrate, so any other resolved value routes to full_frame
@@ -409,6 +402,7 @@ def decide_execution_route(
         resolved_substrate=resolved_substrate,
     )
     cyclic = _has_cross_table_fk_cycle(graph)
+    blocked = cyclic and not cycle_admitted  # a cycle the sequential route cannot take
     has_relationships = bool(profile.relationships)
     rows = largest_table_rows if largest_table_rows is not None else 0
     # Out-of-core is only auto-selected for the pure-mask FK shape (a strict
@@ -453,7 +447,9 @@ def decide_execution_route(
         return "out_of_core", "override_out_of_core"
 
     if execution_mode == "sequential":
-        reject_explicit_sequential(eligible, route_reason, cyclic, has_mask_table)
+        reject_explicit_sequential(
+            eligible, route_reason, blocked, has_mask_table, cycle_decline_code
+        )
         return "sequential", route_reason
 
     if lazy_transform_bearing and has_relationships and has_mask_table:
@@ -461,7 +457,7 @@ def decide_execution_route(
         # probed before it is read, so full-frame is never admitted for it under
         # `auto`, whatever the byte-estimate flag says (generate+mask included).
         # Out-of-core declines transforms.
-        return lazy_transform_route(eligible, route_reason, cyclic)
+        return lazy_transform_route(eligible, route_reason, blocked)
 
     # "auto"
     # B1b (§13): flag-gated byte-estimate admission, scoped to
@@ -503,7 +499,7 @@ def decide_execution_route(
         # there.
         if eligible and not cyclic and out_of_core_compatible:
             return "out_of_core", "byte_estimate_bounded_out_of_core"
-        if eligible and not cyclic:
+        if eligible and not blocked:
             return "sequential", route_reason
         # Irreducible reject class (§13): no bounded route applies (a
         # cross-table FK cycle, or a job disqualified from sequential for
@@ -534,6 +530,8 @@ def decide_execution_route(
         return "out_of_core", "out_of_core_large_fk"
     if eligible and not cyclic:
         return "sequential", route_reason
+    if eligible and cycle_admitted and has_relationships and rows >= full_frame_reject_rows:
+        return "sequential", route_reason  # too large for full-frame: bounded, not rejected
     # Full-frame-bound: no relationships, a cyclic FK graph (eligible), or a
     # relationship job disqualified from sequential. A cyclic pure-mask job
     # keeps its historical `cross_table_cycle` reason.

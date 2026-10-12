@@ -42,7 +42,7 @@ import pyarrow.parquet as pq
 from decoy_engine.profile._fixed_width_reader import read_fixed_width
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Iterator
+    from collections.abc import Iterable, Iterator, Sequence
 
 # How many lines to sample when estimating a CSV's mean row width. Bounded so
 # the estimate stays cheap even on a large object (local read, or one ranged
@@ -270,6 +270,10 @@ class LazySource:
     def to_table(self) -> pa.Table:
         """Read the whole file into memory. Fallback for small jobs only."""
         return pq.read_table(self.path)
+
+    def read_columns(self, columns: Sequence[str]) -> pa.Table:
+        """Read only `columns` (Parquet column projection), never the other column chunks."""
+        return pq.read_table(self.path, columns=list(columns))
 
 
 @dataclass(frozen=True)

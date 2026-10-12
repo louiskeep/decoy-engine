@@ -539,7 +539,11 @@ def resolve_execution_route(
     `out_of_core._spill_estimate`'s module docstring.
     """
     from decoy_engine.execution._pipeline_routing import decide_execution_route
+    from decoy_engine.execution._sequential_cycle_admit import route_cycle_decline
 
+    decline = route_cycle_decline(
+        plan, graph, registry, config, caller_sources, out_of_core_budget_bytes
+    )
     ooc_ok, ooc_code, rows, rows_exact = out_of_core_routing_signals(
         profile,
         plan=plan,
@@ -584,6 +588,8 @@ def resolve_execution_route(
         use_probe_routing=use_probe_routing,
         probe_recovers_full_frame=probe,
         lazy_transform_bearing=lazy,
+        cycle_admitted=decline is None,
+        cycle_decline_code=decline.code if decline else None,
     )
     if route == "out_of_core":
         # OOC-D advisory disk preflight (warns only, never rejects/reroutes):

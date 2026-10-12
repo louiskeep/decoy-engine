@@ -15,6 +15,8 @@ from typing import TYPE_CHECKING
 
 from decoy_engine.execution import _pipeline_route_exec as _route_exec
 from decoy_engine.execution import _pipeline_sources as _psrc
+from decoy_engine.execution._sequential_cycle import fk_components
+from decoy_engine.execution._sequential_cycle_admit import cycle_context_from_run
 from decoy_engine.execution._transforms_admission import stamp_out_of_core_declined
 
 if TYPE_CHECKING:
@@ -28,6 +30,13 @@ def execute_sequential_route(ctx: PipelineRunContext, decision: RouteDecision) -
     """Run the sequential route; the out-of-core decline (if any) is stamped on its result."""
     loader = _psrc.resolve_sequential_loader(
         ctx.source_loader, ctx.caller_sources, config=ctx.config, prepared=ctx.prepared.prepared
+    )
+    cycle_context = (
+        cycle_context_from_run(
+            ctx.plan, ctx.graph, ctx.config, ctx.caller_sources, ctx.out_of_core_budget_bytes
+        )
+        if fk_components(ctx.graph)
+        else None
     )
     sequential_result = _route_exec.run_sequential_route(
         plan=ctx.plan,
@@ -46,6 +55,7 @@ def execute_sequential_route(ctx: PipelineRunContext, decision: RouteDecision) -
         execution_plan_decision=decision.execution_plan_decision,
         unconfigured_column_policy=ctx.projection_policy,
         key_provider=ctx.key_provider,
+        cycle_context=cycle_context,
     )
     stamp_out_of_core_declined(sequential_result.quality_metrics, decision.ooc_declined)
     return sequential_result
