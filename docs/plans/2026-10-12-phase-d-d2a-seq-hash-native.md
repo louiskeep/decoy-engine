@@ -1,169 +1,207 @@
 # Phase D / D2a: SEQ-route parity contract + hash on the compiled kernel
 
-Status: plan (rev 1, pre-gate).
+Status: plan (rev 2, pre-gate). rev 1 NO-GO (4 HIGH/1 MEDIUM, no blocker); rev 2
+folds all five, grounded on Codex-verified SEQ routing/conversion probes.
 
 Rules consulted: 00-universal.md, risk-and-exceptions.md, development-loop.md,
 architecture.md, reuse-first.md, testing.md, documentation.md,
-autonomous-operation.md. Engine CLAUDE.md (established methodology, 600/700 LOC
-module cap, log hygiene, snapshot-before-extraction), compatibility-contract.md.
+autonomous-operation.md. Engine CLAUDE.md (established methodology, 600/700 LOC cap,
+log hygiene, snapshot-before-extraction), compatibility-contract.md.
 
 Risk: R2. Moves masking compute on a bounded FK route to a compiled kernel with a
-byte-parity promise and an RI invariant. Plan on disk + independent plan review +
-Codex plan gate before build; observable behavior, failure modes, and acceptance
-tests defined here first.
+byte-parity promise and an RI invariant. Plan + independent review + Codex plan gate
+before build.
 
 ## FRAME
 
-**Problem.** The sequential (SEQ) FK route masks entirely in Python today: per
-table, `_sequential.py::run_sequential` (`:367` loop) calls
-`PandasExecutionAdapter._dispatch_mask_node` (`_pandas_adapter.py:359`), whose
-scalar branch (`:414-433`) runs each operator's pandas handler
-(`_strategies/_<op>.py`). SEQ is the bounded route that carries every FK job too
-big for full-frame and declined or unsupported by the out-of-core (OOC) route, so
-its masking is a pure-Python bottleneck for exactly the large relational jobs Phase
-D targets. No SEQ operator is native today.
+**Problem.** The sequential (SEQ) FK route masks entirely in Python: `run_sequential`
+(`_sequential.py:367` loop) calls `PandasExecutionAdapter._dispatch_mask_node`
+(`_pandas_adapter.py:359`), which routes FK children to `_resolve_fk_node:387` and
+scalar/payload columns to a pandas handler (`_strategies/_<op>.py`). SEQ is the
+bounded route carrying every FK job too big for full-frame and declined by OOC, so
+its Python masking is the bottleneck for large relational jobs. No SEQ operator is
+native today.
 
-**Definition of done (D2a).** Two things, staged:
-1. A SEQ per-executor PARITY CONTRACT + native-execution WITNESS (the D0-analogue
-   for SEQ), so any SEQ native kernel is graded against strict parity and proven
-   consumed. SEQ already has an ordered + schema `Table.equals` parity test
-   (`tests/unit/execution/test_sequential_eviction.py:62`) but WITHOUT metadata
-   checking; this extends it to the strict contract (schema incl. field metadata +
-   nullability, row/col order, null-vs-NaN) that D0 pinned for OOC.
-2. The `hash` operator (payload AND FK-key hash columns) masks on the compiled
-   companion kernel on the SEQ route for parity-eligible admitted Arrow types,
-   reusing the D1a kernel; every other column and every non-eligible hash column
-   keeps the Python handler with a caller-visible declined-with-reason, no silent
-   fallback.
+**Definition of done (D2a), staged, test-only foundation FIRST.**
+1. **(lands first, test-only)** A strict SEQ parity contract + a SEQ-specific
+   native-execution witness (the D0-analogue). Extend
+   `tests/unit/execution/test_sequential_eviction.py:62`'s `Table.equals` parity to
+   the strict D0 comparator (schema incl. field metadata + nullability, row/col
+   order, null-vs-NaN), with per-dimension controls and a frozen SEQ-FK-chain
+   baseline. Freeze pre-change SEQ behavior (including the edge cases below) BEFORE
+   any handler change.
+2. The `hash` operator masks on the compiled companion kernel on the SEQ route for
+   admitted Arrow types, reusing the D1a kernel, byte-identical to the Python hash
+   handler except the pre-accepted NFC divergence, declined-with-reason + no silent
+   fallback, qualified by SEQ's existing ingest guards (below).
 
-**Boundaries / non-goals.** Only the SEQ route and only the `hash` operator (the
-other operators are D2b/D2c). SEQ's bounded table-at-a-time pandas ORCHESTRATION is
-RETAINED and is explicitly not a violation (program §5: `to_pandas_fk_safe` ingest,
-the `frames` hold, `pa.Table.from_pandas` out all stay); making SEQ fully
-Arrow-native is out of Phase D. No route-decision change. No new FK shape admitted
-(multi-parent/diamond is D2b; composite-scalar-child stays rejected). No OOC or
-full-frame change.
+**Boundaries / non-goals.** Only the SEQ route, only `hash`. SEQ's bounded
+table-at-a-time pandas ORCHESTRATION is retained (program §5). No route-decision
+change, no new FK shape (multi-parent/diamond = D2b; composite-scalar-child stays
+rejected), no OOC/full-frame change, no removal or weakening of any existing SEQ
+guard, no change to `resolve_fk_keys` precedence or the orphan/REMAP cascade.
 
-**Reuse.** The compiled hash kernel and the per-column decision already exist from
-D1a: `out_of_core/_hash_native.py` (`native_hash_array`, `decline_reason`,
-`BoundHashKernel`) over `execution/native/_crypto_ext.KeyedDerivationKernel.derive_batch`
-and the admitted-type set `is_admitted_native_hash_type`
-(`native/_requirements.py:110`). D2a reuses these unchanged; it adds only the SEQ
-seam that calls them and the SEQ parity/witness infra. The accepted NFC
-Unicode-version divergence from D1a carries over verbatim (same kernel), already
+**Reuse.** The compiled hash kernel + per-column decision exist from D1a
+(`out_of_core/_hash_native.py`: `native_hash_array`, `decline_reason`,
+`BoundHashKernel`; admitted set `native/_requirements.py:is_admitted_native_hash_type:110`).
+Reused unchanged. Accepted NFC divergence carries over (same kernel), already
 documented.
 
-## Pinned guarantee and non-goals
+## FK execution model on SEQ (rev-1 HIGH-1: three distinct paths, not one)
 
-**Guarantee.** On the SEQ route, a `hash` column whose source Arrow type is in the
-D1a admitted set is masked by the compiled kernel and is byte-identical to the
-current Python hash handler except the pre-accepted NFC divergence; a non-admitted
-type, or any other operator, keeps the Python handler and is reported declined with
-a value-free reason on the caller-visible disposition. Output for every other
-column and every non-hash run is byte-identical to today (proven by the extended
-SEQ parity test). A hash FK key preserves RI: parent and child derive the same
-masked value because they run the same kernel on the same source value (the
-existing SEQ parent-map / `resolve_fk_keys` path is unchanged).
+Verified: a matched FK child does NOT re-derive its hash; it INHERITS the parent's
+masked value from `parent_map` (`_fk_resolve.py:87`). REMAP reaches the parent hash
+handler through a SEPARATE direct `handler.run(...)` at `_orphan.py:144`, not the
+scalar seam. So "native hash on an FK key" means native on the PARENT key column;
+the three paths are distinct and the guarantee/witness must treat them separately:
 
-**Non-goals.** No silent fallback (a kernel fault or type drift aborts the run with
-no commit, as D1a). No change to `resolve_fk_keys` precedence, the orphan/REMAP
-cascade, eviction, or the sink. No new dispatch behavior for non-hash operators.
+1. **Native parent/payload derivation** — a payload hash column, or an FK PARENT key
+   column, is masked by the kernel at the scalar/handler seam. This is where the
+   native kernel call happens. The parent_map is built pairing the source snapshot
+   with the masked frame (`_pandas_adapter.py:635`); native parent hashing preserves
+   that mapping as long as output assignment preserves row alignment (see conversion
+   contract).
+2. **Matched-child inheritance** — a matched child FK key takes the parent's already
+   masked value via `resolve_fk_keys`; NO kernel call, NO re-derivation. The
+   disposition reports these as INHERITED (with parent provenance), never as native
+   kernel executions. `resolve_fk_keys` is unchanged.
+3. **REMAP (orphan) derivation** — an orphan child key is minted by re-running the
+   PARENT's handler via `make_remap_fn` (`_orphan.py:144`); this path is admitted for
+   native SEPARATELY and the native decision is threaded into that `handler.run`
+   call, with a REMAP input-type check. If not natively admitted there, it stays
+   Python (declined-with-reason).
 
-## Established solutions
+Decision transport: the per-table native decision for a column is threaded to the
+scalar handler (via `run_with_when_gate`) AND to the REMAP `handler.run`, carrying
+the parent decision's lifetime past the parent frame's eviction. The when-gate path
+(`_when_gate.py`) passes the decision through explicitly.
 
-- Native-OOC mechanism (D1a, proven + merged): per-column decision pinned at
-  table-prep, compiled kernel loaded once and threaded, declined-with-reason on the
-  caller-visible disposition, insertion-boundary witness, abort-on-drift/fault with
-  no commit. D2a ports this mechanism to the SEQ seam; it does not invent a new one.
-- Strict parity contract (D0, `docs/plans/2026-10-11-phase-d-d0-parity-contract-witness.md`):
-  the exact per-field comparator D2a's SEQ parity test adopts.
-- `cryptography`/HKDF-SHA256 keyed hash via the existing kernel; no new crypto.
+## pandas <-> Arrow conversion contract (rev-1 HIGH-2)
 
-## Design notes (module placement is load-bearing)
+SEQ handlers take/emit a pandas column; the kernel is Arrow in/out. The conversion
+is specified, not "convert back":
+- **Input:** reconstruct an Arrow array of the column's PINNED source type (captured
+  at prep), not via pandas type inference. Inference is lossy here: it turns
+  `large_string` -> `string` and an all-null string/bool column -> `null`, which a
+  naive source-type-drift check would wrongly reject. Validation distinguishes these
+  EXPECTED pandas representation changes from ACTUAL drift.
+- **Output:** POSITIONAL assignment matching the existing handler's dtype behavior
+  (today `_hash.py:59` assigns `masked.to_pylist()`). Index-aligned assignment is
+  WRONG: a frame indexed `[1,3]` (a noncontiguous `when` selection,
+  `_when_gate.py:250`) would misplace tokens and null the rest (probe-confirmed).
+  Empty output must match the handler's dtype (list-assignment yields Arrow `double`
+  today vs Series `null`) - the contract pins the handler-equivalent result.
+- Codex's typed-conversion probes matched the kernel values for admitted inputs; the
+  risk is purely the unqualified conversion, which this contract removes.
 
-`_pandas_adapter.py` is 697 LOC and `_sequential.py` 669 LOC against a 700 hard cap
-(engine CLAUDE.md; `tests/sentry/test_module_size.py`). D2a must NOT inflate either.
-The SEQ native decision + the Arrow boundary + the witness-observable seam go in a
-NEW module `execution/_sequential_native.py` (mirroring `out_of_core/_hash_native.py`):
-it exposes a `seq_hash_array(column, decision, ...) -> masked` that converts the
-handler's pandas column to Arrow, calls the shared `native_hash_array`, and converts
-back, plus the per-column `decline_reason` (delegating to the D1a resolver) and the
-disposition entry. The scalar seam calls into it for `hash` only; all other
-strategies are untouched.
+## Admission qualified by existing SEQ guards (rev-1 MEDIUM-5)
 
-Seam choice: the native-or-Python decision is made ONCE per table at prep (which
-hash columns are admitted), not per row, and consulted at the scalar branch. To
-avoid changing `_dispatch_mask_node`'s pinned call inventory destructively, the hash
-handler (`_strategies/_hash.py::run`) gains an optional pre-resolved native decision
-(threaded from the SEQ executor), exactly as D1c threaded `native`/`preserve`
-through the Group-(c) seam without disturbing unrelated dispatch. House style: typed
-decision object over a flag argument; one place for the admitted-type fact (reuse
-D1a's); comments explain why (Arrow boundary needed because SEQ handlers are pandas).
+The guarantee is NOT "any admitted Arrow type." SEQ runs `reject_null_bearing_int`
+before conversion (`_guards.py:59`), rejecting null-bearing integer hash columns
+(including parent/payload keys); only FK children are exempt. D2a does NOT remove or
+weaken this guard: a parent/payload nullable-integer hash column keeps its current
+rejection (frozen + tested), and native admission applies only to inputs that clear
+the existing ingest guards. Nullable child inheritance is tested separately.
+
+## Witness: a SEQ-specific consumption proof (rev-1 HIGH-3)
+
+The OOC witness requires identical Arrow buffer addresses (`_kernel_witness.py:181`);
+that CANNOT hold on SEQ, which rebuilds output via `pa.Table.from_pandas`
+(`_sequential.py:482`) giving new buffers (probe-confirmed). Replacing identity with
+plain value-equality would let the prohibited equal-Python substitution pass. So
+D2a defines a SEQ-specific proof:
+- Trace the native result through the conversion + positional assignment to the
+  emitted column, and check emitted VALUES + SCHEMA independently.
+- A CAUSAL control: a test-only native stand-in produces a DISTINGUISHABLE output
+  (not equal to the Python result); the witness must see that distinguishable output
+  in the emitted table, proving the native result is what was consumed. A
+  discarded-native + equal-Python substitution then fails the proof.
+- Cover conditional (`when`) stitching and the inherited-FK-value case explicitly
+  (an inherited child is proven inherited, not native).
+
+## Atomicity scoped to the sink (rev-1 HIGH-4)
+
+SEQ's abort guarantee depends on the sink. A genuine TRANSACTIONAL sink stages tables
+during the loop and commits once (`_sequential.py:561`), aborting on a precommit
+fault - there D2a's "a kernel fault aborts with nothing committed" holds and is
+tested (fault after an earlier staged write). A CALLABLE sink has no-op commit/abort
+(`_sequential.py:340`); earlier tables are already delivered
+(`test_sequential_eviction.py:122`), so a later fault leaves them externally visible.
+D2a does NOT change this; it documents callable partial-delivery and scopes the
+atomicity claim to transactional sinks. "No half-native" is defined SEPARATELY from
+transaction atomicity: it means no Python retry after a native selection for a column
+(a native fault propagates, it does not silently fall back to Python mid-column).
 
 ## Observable behavior and failure modes
 
-- Admitted hash column on SEQ: masked natively, byte-identical to the Python handler
-  (modulo accepted NFC), disposition shows the native backend.
-- Non-admitted-type hash column / companion absent: Python handler, disposition
-  shows declined-with-reason (value-free: strategy, column, Arrow type only).
-- Any non-hash operator: unchanged Python handler, no disposition entry.
-- Type drift on a pinned native column, or a mid-run kernel fault: abort the run,
-  sink aborts, nothing committed (never half-native), as D1a.
-- Hash FK key: native on both parent and child; RI holds by the shared-kernel
-  determinism; the existing parent-map / `resolve_fk_keys` / REMAP path is unchanged
-  and still drives child inheritance.
+- Admitted payload/parent hash column clearing the ingest guards: native, byte-
+  identical to the Python handler (modulo accepted NFC); disposition = native.
+- Matched FK child: inherits the parent's masked value; disposition = inherited (not
+  native). Orphan/REMAP: native if separately admitted, else declined Python.
+- Non-admitted type, companion absent, or guard-rejected (e.g. parent nullable int):
+  Python handler / existing rejection, disposition = declined-with-reason
+  (value-free: strategy, column, Arrow type).
+- Any non-hash operator: unchanged.
+- Native fault / source-type drift on a pinned column: propagates; with a
+  transactional sink the run aborts with nothing committed; never a silent Python
+  retry.
 - Log hygiene: no cell/key/value in logs or reason codes.
 
-## Acceptance tests (authored before impl; not weakened later)
+## Design notes (module placement)
 
-- **SEQ parity contract (D0-analogue):** extend `test_sequential_eviction.py`'s
-  `Table.equals` parity to the strict comparator (schema + field metadata +
-  nullability, row/col order, null-vs-NaN) with per-dimension controls; a frozen
-  baseline over a SEQ FK chain. This is the test-only foundation and lands first
-  (red-before-green where meaningful).
-- **SEQ native witness:** a SEQ-bound witness (the OOC `_kernel_witness.py` spies OOC
-  modules only; build the SEQ analogue spying the SEQ seam + an insertion check at
-  the `pa.Table.from_pandas` boundary `_sequential.py:482`) proving the native hash
-  result is the array the masked table carries; a discarded-native + equal-Python
-  substitution fails; a declined column witnesses Python-only.
-- **Parity:** native vs Python hash on SEQ byte-identical (admitted types: utf8,
-  large_utf8, bool, int/uint widths) across batch/table shapes; non-admitted type
-  declines and matches the Python handler.
+`_pandas_adapter.py` ~697 LOC and `_sequential.py` ~669 against the 700 hard cap, so
+the native decision + conversion + disposition go in a NEW module
+`execution/_sequential_native.py` (mirroring `out_of_core/_hash_native.py`); the
+scalar handler, the when-gate, and the REMAP call thread a typed decision object
+into it. No destructive change to `_dispatch_mask_node`'s pinned inventory; if a new
+dispatch call is unavoidable, declare it in the G3 pin. House style: typed decision
+over a flag; one place for the admitted-type fact (reuse D1a's); comments explain why
+(Arrow boundary; inherited vs native; sink-scoped atomicity). G4 pins full-frame
+`.run`, not `run_sequential`; neither pin is weakened.
+
+## Acceptance tests (authored before impl; test-only foundation lands first)
+
+- **SEQ strict parity contract** (lands first, test-only): extend
+  `test_sequential_eviction.py` to the D0 comparator (schema + field metadata +
+  nullability, order, null-vs-NaN) with per-dimension controls + a frozen SEQ-FK
+  baseline; includes the conversion edge cases below as pre-change freezes.
+- **Conversion edge cases** (strict parity, each byte-identical to today's handler):
+  empty input, all-null string/bool, non-default/noncontiguous index (a `when`
+  selection like `[1,3]`), zero matches, `large_string`, integer-width boundaries.
+- **SEQ native witness:** the value/schema + causal-distinguishable-output proof
+  above; discarded-native/equal-Python substitution fails; declined column witnesses
+  Python-only; inherited FK child witnesses inherited (not native).
+- **Parity:** native vs Python hash on SEQ byte-identical for admitted types that
+  clear the ingest guards (utf8/large_utf8/bool/int+uint widths), across shapes.
+- **FK three paths:** native parent key + inherited matched child + REMAP orphan
+  (native-admitted and declined variants); RI holds parent+child vs the full-frame
+  oracle; parent_map keying still correct after native parent hashing.
+- **Guards frozen:** a parent/payload nullable-integer hash column still rejected
+  with the existing code (unchanged); nullable child inheritance works.
+- **Atomicity:** transactional sink - fault after an earlier staged write aborts with
+  nothing committed; callable sink - partial-delivery documented behavior preserved.
 - **Unset/non-eligible byte-identity:** a SEQ run with no admitted hash column is
-  byte-identical to today (whole-table digest); a run with hash present but companion
-  absent is byte-identical to the Python handler.
-- **FK:** a hash FK key on SEQ preserves RI parent+child (normal + orphan/REMAP);
-  compare against the full-frame oracle.
-- **Abort:** type drift and a mid-run kernel fault abort with no sink commit.
-- **G3 dispatch pin:** if the scalar seam gains a call, update
-  `test_column_access_surfaces.py` `_PINNED_DISPATCH_CALLS` (G3) and/or
-  `_PINNED_RUN_CALLS` (G4) to declare it; the threading approach aims to avoid a new
-  dispatch call, but the pin is checked either way.
-- **Module size:** `_pandas_adapter.py` and `_sequential.py` stay under 700 (census
-  if a touched file crosses 600); the new `_sequential_native.py` under 600.
-- **NFC accepted divergence:** carried over from D1a (same kernel), re-asserted on
-  the SEQ route with the crate-version guard.
-- **Perf gate:** SEQ hash native p50 below the Python handler on a 5M-row
-  single-table-plus-FK workload, within the route's memory envelope; byte-identical
-  digest. (Predeclared; run on a companion box.)
+  byte-identical (whole-table digest) to today; companion absent matches Python.
+- **Module size** under caps; new module under 600. **G3/G4 pins** updated if a call
+  is added. **NFC** divergence re-asserted (D1a kernel) with the crate-version guard.
+- **Perf gate** (predeclared, companion box): SEQ hash native p50 below the Python
+  handler on a 5M-row FK workload within the route's memory envelope; identical
+  digest.
 
 ## Known context for the gate
 
-- The governing Phase D program plan (`docs/plans/2026-10-10-phase-d-fk-routes-program.md`,
-  the §4 shape x route matrix and §7 slice order) is NOT on main; it lives on the
-  unmerged `feat/phase-d-fk-routes` branch (e2401aad, Codex-approved). This plan
-  cites its D2a scope but stands on its own. FLAG: the program plan should land on
-  main; a planner/Cam should confirm its intended landing. D2a does not depend on it
-  being merged.
-- SEQ `_fk_resolve.resolve_fk_keys` is shared by SEQ and full-frame only; D2a must
-  not alter it.
-- `D2b` (multi-parent/diamond, self-FK drain-fold, OOC-declined strategies) and
-  `D2c` (remaining operators + platform sequential activation, gated after A3) are
-  separate later slices.
+- The governing Phase D program plan (`...2026-10-10-phase-d-fk-routes-program.md`,
+  §4 shape x route matrix, §7 slice order) is NOT on main; it lives on the unmerged
+  `feat/phase-d-fk-routes` (e2401aad, Codex-approved). This plan cites D2a scope but
+  stands alone. FLAG for a planner/Cam: land the program plan on main. Not a
+  dependency for D2a.
+- `resolve_fk_keys` is shared by SEQ + full-frame; unchanged here. D2b (multi-parent/
+  diamond, self-FK drain-fold, OOC-declined strategies) and D2c (remaining operators
+  + platform, gated after A3) are later slices.
 
 ## Docs to update
 
-`docs/compatibility-contract.md` (SEQ route now runs hash natively, same admitted
-set + accepted NFC as D1a), CODEMAP if the new module warrants a pointer,
-`docs/strategies.md` only if a user-visible behavior note is needed (none expected;
-output is byte-identical modulo the already-documented NFC note).
+`docs/compatibility-contract.md` (SEQ runs hash natively, same admitted set + accepted
+NFC + the guard qualification), CODEMAP pointer for the new module, `docs/strategies.md`
+only if a user-visible note is needed (none expected; output byte-identical modulo
+the documented NFC note).
