@@ -306,7 +306,12 @@ one. Plain text (ASCII, common scripts, older emoji) selects identically on both
 paths. Only a string source column runs on the companion; a date, decimal,
 timestamp or other non-string source always takes the Python path and reports
 that in the job's `out_of_core_categorical` disposition. As with hash, masking
-the related data on one path keeps such rare values join-stable.
+the related data on one path keeps such rare values join-stable. The bounded
+sequential (FK) route also runs a deterministic string-source `categorical`
+PAYLOAD column on the companion when it is installed (slice D2c-ii), with the
+same normalization nuance; a non-deterministic / non-string / unbuildable-CDF
+config declines to Python, as does a `categorical` column used as a foreign key.
+The job's `sequential_categorical` disposition says which columns ran where.
 
 ### shuffle
 
