@@ -217,6 +217,7 @@ rather than risk a wrapped date. Dates outside the range entirely (such as
 `9999-12-31`) pass through unchanged on both paths. Run without the companion to
 perturb parseable dates near these bounds.
 
+(sentinel-dates-preserve-values)=
 #### Sentinel dates (preserve_values)
 
 `date_shift` and `bucket_perturb` accept `preserve_values`, a list of exact ISO
