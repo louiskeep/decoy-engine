@@ -5156,7 +5156,31 @@
     "loaded_fully_in_memory": true,
     "outputs_streamed": false,
     "route_reason": "pure_mask_fk"
-   }
+   },
+   "sequential_hash": [
+    {
+     "column": "id",
+     "executed_backend": "python_scalar",
+     "path": "scalar",
+     "reason": "crypto_extension_unavailable",
+     "table": "parent"
+    },
+    {
+     "column": "cid",
+     "executed_backend": "python_scalar",
+     "path": "scalar",
+     "reason": "crypto_extension_unavailable",
+     "table": "child"
+    },
+    {
+     "column": "parent_id",
+     "executed_backend": "inherited",
+     "parent": "parent.id",
+     "parent_backend": "python_scalar",
+     "path": "fk_inherited",
+     "table": "child"
+    }
+   ]
   },
   "row_errors": [],
   "table_kinds": {
@@ -5373,7 +5397,31 @@
      "out_of_core_relationship": "DEFERRED to the live router: job has FK relationship edges (relationship-route candidate); the sequential-vs-out-of-core-vs-full-frame decision is made by run_pipeline's decide_execution_route from job size + out-of-core compatibility, not by this planner (PLANNER_ROUTING_ENABLED stays False).",
      "sequential_relationship": "DEFERRED to the live router: job has FK relationship edges (relationship-route candidate); the sequential-vs-out-of-core-vs-full-frame decision is made by run_pipeline's decide_execution_route from job size + out-of-core compatibility, not by this planner (PLANNER_ROUTING_ENABLED stays False)."
     }
-   }
+   },
+   "sequential_hash": [
+    {
+     "column": "id",
+     "executed_backend": "python_scalar",
+     "path": "scalar",
+     "reason": "crypto_extension_unavailable",
+     "table": "parent"
+    },
+    {
+     "column": "cid",
+     "executed_backend": "python_scalar",
+     "path": "scalar",
+     "reason": "crypto_extension_unavailable",
+     "table": "child"
+    },
+    {
+     "column": "parent_id",
+     "executed_backend": "inherited",
+     "parent": "parent.id",
+     "parent_backend": "python_scalar",
+     "path": "fk_inherited",
+     "table": "child"
+    }
+   ]
   },
   "row_errors": [],
   "table_kinds": {
@@ -5573,7 +5621,31 @@
     "loaded_fully_in_memory": false,
     "outputs_streamed": false,
     "route_reason": "pure_mask_fk"
-   }
+   },
+   "sequential_hash": [
+    {
+     "column": "id",
+     "executed_backend": "python_scalar",
+     "path": "scalar",
+     "reason": "crypto_extension_unavailable",
+     "table": "parent"
+    },
+    {
+     "column": "cid",
+     "executed_backend": "python_scalar",
+     "path": "scalar",
+     "reason": "crypto_extension_unavailable",
+     "table": "child"
+    },
+    {
+     "column": "parent_id",
+     "executed_backend": "inherited",
+     "parent": "parent.id",
+     "parent_backend": "python_scalar",
+     "path": "fk_inherited",
+     "table": "child"
+    }
+   ]
   },
   "row_errors": [],
   "table_kinds": {
@@ -5773,7 +5845,38 @@
     "loaded_fully_in_memory": true,
     "outputs_streamed": false,
     "route_reason": "pure_mask_fk"
-   }
+   },
+   "sequential_hash": [
+    {
+     "column": "id",
+     "executed_backend": "python_scalar",
+     "path": "scalar",
+     "reason": "crypto_extension_unavailable",
+     "table": "parent"
+    },
+    {
+     "column": "cid",
+     "executed_backend": "python_scalar",
+     "path": "scalar",
+     "reason": "crypto_extension_unavailable",
+     "table": "child"
+    },
+    {
+     "column": "id",
+     "executed_backend": "python_scalar",
+     "path": "fk_remap",
+     "reason": "hash_remap_parent_stays_python:id",
+     "table": "parent"
+    },
+    {
+     "column": "parent_id",
+     "executed_backend": "inherited",
+     "parent": "parent.id",
+     "parent_backend": "python_scalar",
+     "path": "fk_inherited",
+     "table": "child"
+    }
+   ]
   },
   "row_errors": [],
   "table_kinds": {
@@ -5973,7 +6076,31 @@
     "loaded_fully_in_memory": true,
     "outputs_streamed": false,
     "route_reason": "pure_mask_fk"
-   }
+   },
+   "sequential_hash": [
+    {
+     "column": "id",
+     "executed_backend": "python_scalar",
+     "path": "scalar",
+     "reason": "crypto_extension_unavailable",
+     "table": "parent"
+    },
+    {
+     "column": "cid",
+     "executed_backend": "python_scalar",
+     "path": "scalar",
+     "reason": "crypto_extension_unavailable",
+     "table": "child"
+    },
+    {
+     "column": "parent_id",
+     "executed_backend": "inherited",
+     "parent": "parent.id",
+     "parent_backend": "python_scalar",
+     "path": "fk_inherited",
+     "table": "child"
+    }
+   ]
   },
   "row_errors": [],
   "table_kinds": {
@@ -6175,7 +6302,31 @@
     "loaded_fully_in_memory": true,
     "outputs_streamed": true,
     "route_reason": "pure_mask_fk"
-   }
+   },
+   "sequential_hash": [
+    {
+     "column": "id",
+     "executed_backend": "python_scalar",
+     "path": "scalar",
+     "reason": "crypto_extension_unavailable",
+     "table": "parent"
+    },
+    {
+     "column": "cid",
+     "executed_backend": "python_scalar",
+     "path": "scalar",
+     "reason": "crypto_extension_unavailable",
+     "table": "child"
+    },
+    {
+     "column": "parent_id",
+     "executed_backend": "inherited",
+     "parent": "parent.id",
+     "parent_backend": "python_scalar",
+     "path": "fk_inherited",
+     "table": "child"
+    }
+   ]
   },
   "row_errors": [],
   "sink_tables": {
@@ -6379,7 +6530,31 @@
     "out_of_core_declined": "per_table_transforms_present",
     "outputs_streamed": false,
     "route_reason": "pure_mask_fk"
-   }
+   },
+   "sequential_hash": [
+    {
+     "column": "id",
+     "executed_backend": "python_scalar",
+     "path": "scalar",
+     "reason": "crypto_extension_unavailable",
+     "table": "parent"
+    },
+    {
+     "column": "cid",
+     "executed_backend": "python_scalar",
+     "path": "scalar",
+     "reason": "crypto_extension_unavailable",
+     "table": "child"
+    },
+    {
+     "column": "parent_id",
+     "executed_backend": "inherited",
+     "parent": "parent.id",
+     "parent_backend": "python_scalar",
+     "path": "fk_inherited",
+     "table": "child"
+    }
+   ]
   },
   "row_errors": [],
   "table_kinds": {

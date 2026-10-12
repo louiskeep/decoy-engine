@@ -49,6 +49,21 @@ class HashStrategyHandler:
         raw_truncate = cfg.get("truncate")
         truncate = raw_truncate if isinstance(raw_truncate, int) and raw_truncate > 0 else None
 
+        # getattr: handlers are also driven with hand-built contexts that predate this field.
+        seq = getattr(ctx, "seq_native", None)
+        if seq is not None:
+            tokens = seq.hash_column(
+                ctx,
+                df,
+                column,
+                namespace=plan.namespace,
+                mask_key=ctx.mask_key,
+                truncate=truncate,
+            )
+            if tokens is not None:
+                df[column] = tokens
+                return df, []
+
         masked = hash_array(
             pandas_column_to_kernel_input(df[column]),
             seed=ctx.mask_key,

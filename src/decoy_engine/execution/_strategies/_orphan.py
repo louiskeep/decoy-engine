@@ -62,6 +62,7 @@ inline NOTE at the precedence-1 branch below.
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from typing import TYPE_CHECKING
 
 import pandas as pd
@@ -140,8 +141,13 @@ def make_remap_fn(
             # this closure can run interleaved mid-dispatch of the CHILD table.
             prior_table = ctx.current_table
             object.__setattr__(ctx, "current_table", ptable)
+            # D2a: on the sequential route this call is REMAP minting, decided on its own
+            # from the orphan keys' type; nullcontext elsewhere.
+            seq_native = getattr(ctx, "seq_native", None)
+            scope = seq_native.remap_scope() if seq_native is not None else nullcontext()
             try:
-                tmp, _ = handler.run(tmp, pcol, pnode.plan_slice, ctx)
+                with scope:
+                    tmp, _ = handler.run(tmp, pcol, pnode.plan_slice, ctx)
             finally:
                 object.__setattr__(ctx, "current_table", prior_table)
             masked_cols.append(list(tmp[pcol]))
