@@ -142,6 +142,11 @@ def assemble_node_evidence(
                 planned, native_admitted=True, kernel_idle=kernel_idle
             ),
             "calls": evidence.batches_run,
+            **(
+                {"preserved_rows": evidence.preserved_rows}
+                if evidence.preserved_rows is not None
+                else {}
+            ),
         }
     return node_evidence
 

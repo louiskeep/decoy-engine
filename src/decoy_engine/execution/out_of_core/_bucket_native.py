@@ -37,6 +37,7 @@ from decoy_engine.execution.native._bucket_perturb_ext import native_bucket_pert
 from decoy_engine.execution.native._operator_config_rejections import (
     bucket_perturb_config_rejection,
 )
+from decoy_engine.transforms.date_preserve import PreserveSet, preserve_set_from_config
 
 if TYPE_CHECKING:
     from decoy_engine.execution.out_of_core._categorical_native import BoundIndexKernel
@@ -87,6 +88,10 @@ class BucketColumnDecision:
     pinned_type: pa.DataType
     rows: int = 0
     native_calls: int = 0
+    # D1c: the column opted into `preserve_values`, so its entry also reports how many sentinel
+    # rows it passed through. Absent from the entry otherwise.
+    counts_preserved: bool = False
+    preserved_rows: int = 0
 
     @property
     def native(self) -> bool:
@@ -103,14 +108,19 @@ class BucketColumnDecision:
         }
         if reason is not None:
             entry["reason"] = reason
+        if self.counts_preserved:
+            entry["preserved_rows"] = self.preserved_rows
         return entry
 
 
 @dataclass(frozen=True)
 class NativeBucket:
-    """What the masking seam needs to run one bucket_perturb column on the compiled operator."""
+    """What the masking seam needs for one bucket_perturb column.
 
-    bound: BoundIndexKernel
+    `bound` is the compiled index kernel, or None for a column that stays on Python but still
+    reports its D1c sentinel count through `decision`."""
+
+    bound: BoundIndexKernel | None
     decision: BucketColumnDecision
 
 
@@ -159,7 +169,19 @@ class TableBucketPlan:
             decision.rows += batch.num_rows
         if decision.native and self._bound is not None:
             return NativeBucket(self._bound, decision)
+        if decision.counts_preserved:
+            return NativeBucket(None, decision)
         return None
+
+
+def _has_preserve_values(seed: ColumnSeed) -> bool:
+    """Whether the column configures a valid, non-empty `preserve_values`.
+
+    An invalid one does not count: it raises at the masking seam, so the column never runs."""
+    try:
+        return preserve_set_from_config(provider_config_to_dict(seed.provider_config)) is not None
+    except ValueError:
+        return False
 
 
 def decide_table(
@@ -182,6 +204,7 @@ def decide_table(
             RUST_COMPANION if reason is None else PYTHON_PANDAS,
             reason,
             schema.field(column).type,
+            counts_preserved=_has_preserve_values(seed),
         )
     return TableBucketPlan(decisions, bound)
 
@@ -228,19 +251,33 @@ def native_bucket_perturb_array(
     namespace: str,
     bucket: str,
     date_format: str,
+    preserve: PreserveSet | None = None,
 ) -> pa.Array:
     """Perturb one column slice with the compiled operator.
 
     There is no fallback: a kernel fault or an out-of-range date propagates and aborts the run,
     so a column never ends up half native and half Python. An empty or entirely null slice is
     answered here without a kernel call, as the null-typed array the pandas path yields for it;
-    an all-unparseable slice passes its text through and stays a string array."""
+    an all-unparseable slice passes its text through and stays a string array.
+
+    With `preserve`, the sentinel rows are found first and the range guard sees only the rest, so
+    a sentinel next to the pandas bounds does not abort the run; those rows then bypass the
+    kernel entirely."""
+    bound = native.bound
+    if bound is None:  # pragma: no cover - the seam routes a Python column elsewhere
+        raise AssertionError("native_bucket_perturb_array called for a column without a kernel.")
     column = native.decision.column
     n = len(values)
     if n == 0 or values.null_count == n:
         return pa.nulls(n)
     array = values.combine_chunks() if isinstance(values, pa.ChunkedArray) else values
-    _guard_native_range(array, bucket, date_format, column)
+    preserved = preserve.mask(array.to_pandas()) if preserve is not None else None
+    if preserved is not None and preserved.any():
+        native.decision.preserved_rows += int(preserved.sum())
+        guarded = array.filter(pa.array(~preserved))
+    else:
+        guarded = array
+    _guard_native_range(guarded, bucket, date_format, column)
     derive_calls: list[int] = []
     out = native_bucket_perturb(
         array,
@@ -248,9 +285,10 @@ def native_bucket_perturb_array(
         date_format=date_format,
         mask_key=mask_key,
         namespace=namespace,
-        index_kernel=native.bound.kernel,
-        native_threads=native.bound.native_threads,
+        index_kernel=bound.kernel,
+        native_threads=bound.native_threads,
         derive_calls=derive_calls,
+        preserved=preserved,
     )
     native.decision.native_calls += sum(derive_calls)
     return out

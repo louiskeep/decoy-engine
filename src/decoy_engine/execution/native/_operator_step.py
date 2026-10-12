@@ -58,6 +58,7 @@ if TYPE_CHECKING:
     from decoy_engine.execution.native._group_key_ext import RawHexDerivationKernel
     from decoy_engine.execution.native._index_ext import IndexDerivationKernel
     from decoy_engine.generation.pool import ValuePool
+    from decoy_engine.transforms.date_preserve import PreserveSet
 
 __all__ = [
     "StepResult",
@@ -251,6 +252,29 @@ class StepResult:
     # date_shift survives-and-reports a format error, fpe fail-closed KILLS on the first one
     # (C6a plan §3d). Each route maps a non-empty set to a `StrategyError` via `_fpe_route`.
     fpe_errors: tuple[FpeRowError, ...] = ()
+    # D1c: rows this batch emitted unchanged because they matched `preserve_values` (a count,
+    # never a value). Zero for every column that does not opt in.
+    preserved_rows: int = 0
+
+
+def _preserved_mask(
+    preserve: PreserveSet | None, source: pa.Array | pa.ChunkedArray
+) -> np.ndarray[Any, Any] | None:
+    """The sentinel rows of a string `source`, or None when the column has no `preserve_values`."""
+    if preserve is None:
+        return None
+    array = source.combine_chunks() if isinstance(source, pa.ChunkedArray) else source
+    return preserve.mask(array.to_pandas())
+
+
+def _preserved_kwargs(preserved: np.ndarray[Any, Any] | None) -> dict[str, Any]:
+    """The kernel-wrapper keyword for a sentinel mask; nothing at all for an unset column, so an
+    unconfigured call has the exact arguments it had before D1c."""
+    return {} if preserved is None else {"preserved": preserved}
+
+
+def _count(preserved: np.ndarray[Any, Any] | None) -> int:
+    return int(preserved.sum()) if preserved is not None else 0
 
 
 def _index_kernel_for(
@@ -415,6 +439,7 @@ def run_kernel_step(
         return StepResult(out, True)
     derive_calls: list[int] = []
     if isinstance(params, BucketPerturbParams):
+        preserved = _preserved_mask(params.preserve, source)
         out = native_bucket_perturb(
             source,
             bucket=params.bucket,
@@ -424,8 +449,9 @@ def run_kernel_step(
             index_kernel=_index_kernel_for(params, index_kernel),
             native_threads=native_threads,
             derive_calls=derive_calls,
+            **_preserved_kwargs(preserved),
         )
-        return StepResult(out, sum(derive_calls) > 0)
+        return StepResult(out, sum(derive_calls) > 0, preserved_rows=_count(preserved))
     if isinstance(params, GroupKeyParams):
         if sibling is None:  # pragma: no cover - the caller slices the sibling for group_key
             raise AssertionError("GroupKeyParams reached the kernel step with no sibling.")
@@ -440,6 +466,7 @@ def run_kernel_step(
             derive_calls=derive_calls,
         )
         return StepResult(out, sum(derive_calls) > 0)
+    preserved = _preserved_mask(params.preserve, source)
     out, positions = native_date_shift(
         source,
         min_days=params.min_days,
@@ -450,8 +477,9 @@ def run_kernel_step(
         index_kernel=_index_kernel_for(params, index_kernel),
         native_threads=native_threads,
         derive_calls=derive_calls,
+        **_preserved_kwargs(preserved),
     )
-    return StepResult(out, sum(derive_calls) > 0, positions)
+    return StepResult(out, sum(derive_calls) > 0, positions, preserved_rows=_count(preserved))
 
 
 def run_kernel_step_masked(
@@ -507,4 +535,9 @@ def run_kernel_step_masked(
     if positions:
         # The kernel numbered its errors within the selected subset; callers need chunk positions.
         positions = tuple(int(selected[p]) for p in positions)
-    return StepResult(pc.replace_with_mask(plain, mask, result.out), result.ran, positions)
+    return StepResult(
+        pc.replace_with_mask(plain, mask, result.out),
+        result.ran,
+        positions,
+        preserved_rows=result.preserved_rows,
+    )

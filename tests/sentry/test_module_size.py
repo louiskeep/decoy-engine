@@ -83,14 +83,14 @@ ALLOWLIST: dict[str, int] = {
     # compile-check ownership table; split into per-strategy check modules once the check set stabilises.
     "src/decoy_engine/plan/_checks.py": 783,
     # statistical-column check threading; same per-strategy-check decomposition target as _checks.py.
-    "src/decoy_engine/plan/_compile.py": 645,
+    "src/decoy_engine/plan/_compile.py": 652,
     # safety invariants documented in docstrings are part of the fix; extract the emission builders into _mem_telemetry_emit.py.
     "src/decoy_engine/execution/_mem_telemetry.py": 762,
     # chunk-parity invariant text and admission gate calls; dense exception.
     "src/decoy_engine/execution/_chunked.py": 626,
     # dispatch entry plus the table-keyed params, the job-seed hand-off and the eager string-pool
     # check for the position-keyed faker; dense exception, the pool check itself lives in _chunk_masking.
-    "src/decoy_engine/execution/native/_chunked_entry.py": 653,
+    "src/decoy_engine/execution/native/_chunked_entry.py": 665,
     # scale-aware chunked-FK dtype family and rootness check; split the FK helpers.
     "src/decoy_engine/execution/_chunked_fk.py": 970,
     # fail-closed output projection and corpus pinning on the mask route; split the FK-resolution helpers.
@@ -98,7 +98,7 @@ ALLOWLIST: dict[str, int] = {
     # resident Arrow type resolution; move it into its own module with the next operator gate.
     "src/decoy_engine/execution/native/_requirements.py": 647,
     # sequential FK route threading; split the per-table mask/quarantine loop.
-    "src/decoy_engine/execution/_sequential.py": 665,
+    "src/decoy_engine/execution/_sequential.py": 668,
     # transactional publish hardening and row mask; split the publish cluster.
     "src/decoy_engine/quarantine.py": 645,
     # code_set provenance and FF1 notice plumbing through the streaming runner.

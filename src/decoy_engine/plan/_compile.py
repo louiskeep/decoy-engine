@@ -64,7 +64,10 @@ from decoy_engine.plan._checks import (
 from decoy_engine.plan._checks_bucket_perturb import check_bucket_perturb_config
 from decoy_engine.plan._checks_bucketize import check_bucketize_config
 from decoy_engine.plan._checks_categorical import check_categorical_categories
-from decoy_engine.plan._checks_date_shift import check_date_shift_group_by_refs
+from decoy_engine.plan._checks_date_shift import (
+    check_date_preserve_values,
+    check_date_shift_group_by_refs,
+)
 from decoy_engine.plan._checks_derived_aggregate import check_derived_aggregate_refs
 from decoy_engine.plan._checks_dp import (
     check_dp_generate_contract,
@@ -215,6 +218,9 @@ def compile_plan(
     # (entity-anchor) column is missing. Config-only; both branches +
     # run_config_only_checks.
     check_date_shift_group_by_refs(config)
+    # D1c: preserve_values on date_shift / bucket_perturb (literals, format, group_by, FK
+    # shape). Config-only; runs inside the date_shift_group_by_refs slot.
+    check_date_preserve_values(config)
     # Row 21 (SP-46, 2026-06-29): validate fpe_join_group declarations and emit
     # compile-time manifest warnings for every active group. Config-only; runs
     # in both branches and in run_config_only_checks.
@@ -526,6 +532,7 @@ def run_config_only_checks(config: dict[str, Any]) -> tuple[str, ...]:
     # Row 27 (HC-3a): reject date_shift columns with a missing group_by
     # (entity-anchor) column ref. Config-only.
     check_date_shift_group_by_refs(config)
+    check_date_preserve_values(config)
     # Row 21 (SP-46 / fpe_join_group): validate fpe_join_group declarations.
     # Warnings are discarded here (config-only callers do not build a Plan).
     check_fpe_join_groups(config)

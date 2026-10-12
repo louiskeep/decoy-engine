@@ -99,6 +99,7 @@ def bucket_perturb_config_rejection(
     # kernel module stays off the planning boundary's module-load path.
     from decoy_engine.execution.native._bucket_perturb_ext import has_timezone_directive
     from decoy_engine.transforms.bucket_perturb import bucket_perturb_date_format_problem
+    from decoy_engine.transforms.date_preserve import preserve_config_problem
 
     if has_timezone_directive(date_format):
         return f"bucket_perturb_timezone_directive:{name}"
@@ -110,6 +111,10 @@ def bucket_perturb_config_rejection(
     # implies native rejection; the declines above stay native-only.
     if bucket_perturb_date_format_problem(date_format) is not None:
         return f"bucket_perturb_date_format_unsupported:{name}"
+    # An invalid `preserve_values` declines so the oracle raises its coded config error; a valid
+    # one is admitted (the wrapper carves the sentinel rows out around the kernel).
+    if preserve_config_problem(provider_config) is not None:
+        return f"bucket_perturb_preserve_values_invalid:{name}"
     # With neither a profile nor a resident source, the input type is
     # unknowable; defer to the unified-slice resident-type gate (matches
     # hash). A RESOLVED non-string type is rejected here, early.
@@ -174,6 +179,10 @@ def date_shift_config_rejection(
 
     if has_timezone_directive(date_format):
         return f"date_shift_timezone_directive:{name}"
+    from decoy_engine.transforms.date_preserve import preserve_config_problem
+
+    if preserve_config_problem(provider_config) is not None:
+        return f"date_shift_preserve_values_invalid:{name}"
     for key in ("min_days", "max_days"):
         reason = _date_shift_bound_rejection(name, key, provider_config.get(key, _ABSENT))
         if reason is not None:

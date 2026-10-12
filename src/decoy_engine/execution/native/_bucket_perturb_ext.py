@@ -37,11 +37,12 @@ so a malformed compiled kernel fails HERE, coded and fail-closed.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pandas as pd
 import pyarrow as pa
+import pyarrow.compute as pc
 
 from decoy_engine.generation.pool import GenerationError
 
@@ -186,6 +187,7 @@ def native_bucket_perturb(
     index_kernel: IndexDerivationKernel,
     native_threads: int | None = None,
     derive_calls: list[int] | None = None,
+    preserved: np.ndarray[Any, Any] | None = None,
 ) -> pa.Array:
     """Perturb a `pa.string()` date column onto the native lane (full-frame or one chunk).
 
@@ -202,6 +204,11 @@ def native_bucket_perturb(
     calls this invocation made (zero for an empty, all-null or all-unparseable
     input). The chunked route reads it so its evidence only claims a compiled
     kernel when one ran.
+
+    `preserved`, when given, is a boolean mask over `array` of sentinel rows (D1c). Those rows are
+    filtered out before anything is parsed or derived, so they never reach the kernel or the
+    bucket arithmetic, and their source text is put back untouched. An all-preserved input makes
+    no kernel call.
     """
     if mask_key is None:  # pragma: no cover - require_mask_key never returns None
         raise AssertionError(
@@ -209,6 +216,19 @@ def native_bucket_perturb(
             "resolves a concrete key before the native route dispatches."
         )
     col = array.combine_chunks() if isinstance(array, pa.ChunkedArray) else array
+    if preserved is not None and preserved.any():
+        rest = pa.array(~preserved)
+        computed = native_bucket_perturb(
+            col.filter(rest),
+            bucket=bucket,
+            date_format=date_format,
+            mask_key=mask_key,
+            namespace=namespace,
+            index_kernel=index_kernel,
+            native_threads=native_threads,
+            derive_calls=derive_calls,
+        )
+        return pc.replace_with_mask(col.cast(pa.string()), rest, computed)
 
     # Reproduce the oracle's own series preparation (`apply_bucket_perturb`): an
     # extension-dtype column is coerced to object first, then parsed with the

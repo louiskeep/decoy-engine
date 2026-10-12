@@ -143,6 +143,7 @@ def _oracle_route(
                 columns=columns,
                 elapsed_ms=elapsed,
                 pandas_read_passthrough=read_passthrough,
+                preserved_rows=_oracle_preserved_rows(result.quality_metrics),
             )
             chunk_result_sink.append(
                 dataclasses.replace(
@@ -164,6 +165,11 @@ def _oracle_route(
     )
 
 
+def _oracle_preserved_rows(quality_metrics: dict[str, Any]) -> dict[str, int]:
+    """The oracle leg's D1c sentinel counts per column, from the handlers' own metrics."""
+    return {e["column"]: e["preserved_rows"] for e in quality_metrics.get("date_preserve", ())}
+
+
 def _native_chunk_result(
     *,
     table: str,
@@ -175,6 +181,7 @@ def _native_chunk_result(
     read_passthrough: tuple[str, ...],
     kernel_idle: set[str],
     row_errors: tuple[Any, ...],
+    preserved_rows: dict[str, int],
 ) -> ExecutionResult:
     elapsed_ms = {col: s * 1000.0 for col, s in elapsed_s.items()}
     return ExecutionResult(
@@ -199,6 +206,7 @@ def _native_chunk_result(
                 elapsed_ms=elapsed_ms,
                 pandas_read_passthrough=read_passthrough,
                 kernel_idle_columns=kernel_idle,
+                preserved_rows=preserved_rows,
             )
         },
         row_errors=row_errors,
@@ -289,6 +297,7 @@ def _native_route(
             kernel_idle: set[str] = set()
             format_errors: dict[str, tuple[int, ...]] = {}
             operator_warnings: list[Any] = []
+            preserved_rows: dict[str, int] = {}
             masked = _mask_chunk_native(
                 chunk,
                 col_seed_by_name=col_seed_by_name,
@@ -311,6 +320,7 @@ def _native_route(
                 when_masks=when.for_chunk(raw_chunk, i),
                 faker_missing=faker_nulls.for_chunk(raw_chunk, i),
                 table=table,
+                preserved_rows=preserved_rows,
             )
             # The one enforcement point: the same call the stock adapter makes, so the
             # warning (and, if a table were ever admitted under `error`, the refusal)
@@ -341,6 +351,7 @@ def _native_route(
                             read_passthrough=read_passthrough,
                             kernel_idle=kernel_idle,
                             row_errors=row_errors,
+                            preserved_rows=preserved_rows,
                         )
                     )
                 raise RowErrorsFailedError(row_errors)
@@ -361,6 +372,7 @@ def _native_route(
                         read_passthrough=read_passthrough,
                         kernel_idle=kernel_idle,
                         row_errors=(),
+                        preserved_rows=preserved_rows,
                     )
                 )
             row_offset = dgrn.advance_row_offset(row_offset, chunk)

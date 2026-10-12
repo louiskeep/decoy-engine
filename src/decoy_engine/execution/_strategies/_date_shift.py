@@ -58,6 +58,8 @@ offset, same as an ungrouped column).
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 import pandas as pd
 
@@ -68,6 +70,7 @@ from decoy_engine.execution._row_errors import RowError
 from decoy_engine.generation.pool._canonicalize import _canonicalize_source
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.plan._types import ColumnSeed
+from decoy_engine.transforms.date_preserve import preserve_set_from_config
 from decoy_engine.transforms.date_shift import _detect_format
 
 
@@ -100,6 +103,24 @@ class DateShiftStrategyHandler:
         if min_days > max_days:
             min_days, max_days = max_days, min_days
         range_size = max_days - min_days + 1
+        try:
+            preserve = preserve_set_from_config(cfg)
+        except ValueError as exc:
+            raise StrategyError(
+                code="date_shift_invalid_config",
+                strategy="date_shift",
+                message=f"date_shift column {column!r}: {exc}",
+            ) from exc
+        if preserve is not None and cfg.get("group_by"):
+            raise StrategyError(
+                code="date_preserve_values_with_group_by_unsupported",
+                strategy="date_shift",
+                message=(
+                    f"date_shift column {column!r} sets both preserve_values and group_by. "
+                    "The entity anchor must row-align with the frame being shifted, which "
+                    "excluding sentinel rows breaks. Remove one of the two."
+                ),
+            )
 
         col = df[column]
         if pd.api.types.is_extension_array_dtype(col.dtype):
@@ -153,69 +174,31 @@ class DateShiftStrategyHandler:
             if pd.api.types.is_extension_array_dtype(anchor_col.dtype):
                 anchor_col = anchor_col.astype(object)
 
-        parsed = pd.to_datetime(col, format=fmt, errors="coerce")
-        unusable = parsed.isna().to_numpy()  # null source OR unparseable date
-        source_null = col.isna().to_numpy()
-
-        # Canonical anchor bytes for usable rows only, in row order, so the
-        # batched derivation sees the same sources the old per-row loop did.
-        # `list(col)` (not `col.iloc[i]`) keeps the iteration scalars the old
-        # loop used, e.g. a Python int rather than numpy.int64 for numeric dtypes.
-        values = list(col)
-        usable_idx = np.flatnonzero(~unusable)
-        sources: list[bytes] = []
-        for i in usable_idx:
-            value = values[i]
-            if anchor_col is not None:
-                group_value = anchor_col.iloc[i]
-                if pd.isna(group_value):
-                    # Null group value: self-anchor on this row's own date
-                    # value instead (see module docstring's null policy).
-                    anchor = value
-                else:
-                    # Normalize a numpy scalar (e.g. `numpy.bool_`/`numpy.int64`
-                    # from a null-free numpy-backed chunk) to its Python
-                    # equivalent, so the canonical digest input is identical
-                    # whether the anchor column materialized as a numpy dtype or
-                    # a Python-scalar object/extension dtype. Without this the
-                    # SAME anchor value hashes differently across a chunk
-                    # boundary -- null-free numpy chunk vs nullable full frame
-                    # (`numpy.bool_(True)` -> b"True" vs `True` -> b"\x01") --
-                    # breaking the deterministic parity guarantee (Codex R3 P1).
-                    # Python scalars have no `.item()` and pass
-                    # through unchanged.
-                    anchor = group_value.item() if hasattr(group_value, "item") else group_value
-            else:
-                anchor = value
-            sources.append(_canonicalize_source(anchor))
-
-        # One keyed context per column: the HKDF key and the HMAC prefix are
-        # constant across rows, so only the per-row finish remains.
-        shifts = [0] * len(values)
-        if sources:
-            digests = DeriveContext.for_column(ctx.mask_key, plan.namespace).derive_sources(
-                plan.namespace, sources
+        preserved = preserve.mask(col) if preserve is not None else None
+        if preserve is None or preserved is None or not preserved.any():
+            out, error_rows = _shift_rows(
+                col, fmt, anchor_col, ctx, plan.namespace, min_days, range_size
             )
-            for i, d in zip(usable_idx, digests, strict=True):
-                shifts[i] = min_days + (int.from_bytes(d[:8], "big") % range_size)
-
-        shifted = parsed + pd.to_timedelta(shifts, unit="D")
-        formatted = shifted.dt.strftime(fmt) if fmt else shifted.astype(str)
-
-        # Sprint 2 honesty pack (D7): split `unusable` into source-null (keep
-        # original, no error -- unchanged behavior) vs non-null-unparseable
-        # (a per-row format error; the original value is still LEFT in the
-        # frame per trap T4, the pipeline-level rule guarantees it never
-        # reaches the main output).
-        #
-        # Assemble as a Python list: pandas infers the column dtype from the
-        # exact scalar objects, so unusable cells must be the very objects
-        # `col.iloc[i]` returns (a boxed or np.where'd source changes the
-        # dtype of all-null float32/float16, None, NaT and NA-only columns).
-        out = formatted.to_numpy(dtype=object).tolist()
-        for i in np.flatnonzero(unusable):
-            out[i] = col.iloc[i]
-        for i in np.flatnonzero(unusable & ~source_null):
+        else:
+            # Sentinel rows never reach parsing, derivation or the whole-column strftime: the
+            # operator runs on the remainder alone and the sentinel text is scattered back.
+            rest = np.flatnonzero(~preserved)
+            cells: list[Any] = [None] * len(col)
+            error_rows = np.empty(0, dtype=np.intp)
+            if rest.size:
+                sub_out, sub_errors = _shift_rows(
+                    col.iloc[rest], fmt, None, ctx, plan.namespace, min_days, range_size
+                )
+                for position, value in zip(rest, sub_out, strict=True):
+                    cells[position] = value
+                error_rows = rest[sub_errors]
+            for position, text in zip(
+                np.flatnonzero(preserved), preserve.render(col, preserved), strict=True
+            ):
+                cells[position] = text
+            out = cells
+            ctx.record_date_preserved(column, int(preserved.sum()))
+        for i in error_rows:
             ctx.row_errors.append(
                 RowError(
                     column=column,
@@ -226,3 +209,81 @@ class DateShiftStrategyHandler:
             )
         df[column] = out
         return df, []
+
+
+def _shift_rows(
+    col: pd.Series,
+    fmt: str | None,
+    anchor_col: pd.Series | None,
+    ctx: StrategyContext,
+    namespace: str,
+    min_days: int,
+    range_size: int,
+) -> tuple[list[Any], np.ndarray[Any, Any]]:
+    """Shift every parseable date of ``col``; return ``(cells, format_error_positions)``.
+
+    Positions are within ``col``, so a caller that passed a subset rebases them.
+    """
+    parsed = pd.to_datetime(col, format=fmt, errors="coerce")
+    unusable = parsed.isna().to_numpy()  # null source OR unparseable date
+    source_null = col.isna().to_numpy()
+
+    # Canonical anchor bytes for usable rows only, in row order, so the
+    # batched derivation sees the same sources the old per-row loop did.
+    # `list(col)` (not `col.iloc[i]`) keeps the iteration scalars the old
+    # loop used, e.g. a Python int rather than numpy.int64 for numeric dtypes.
+    values = list(col)
+    usable_idx = np.flatnonzero(~unusable)
+    sources: list[bytes] = []
+    for i in usable_idx:
+        value = values[i]
+        if anchor_col is not None:
+            group_value = anchor_col.iloc[i]
+            if pd.isna(group_value):
+                # Null group value: self-anchor on this row's own date
+                # value instead (see module docstring's null policy).
+                anchor = value
+            else:
+                # Normalize a numpy scalar (e.g. `numpy.bool_`/`numpy.int64`
+                # from a null-free numpy-backed chunk) to its Python
+                # equivalent, so the canonical digest input is identical
+                # whether the anchor column materialized as a numpy dtype or
+                # a Python-scalar object/extension dtype. Without this the
+                # SAME anchor value hashes differently across a chunk
+                # boundary -- null-free numpy chunk vs nullable full frame
+                # (`numpy.bool_(True)` -> b"True" vs `True` -> b"\x01") --
+                # breaking the deterministic parity guarantee (Codex R3 P1).
+                # Python scalars have no `.item()` and pass
+                # through unchanged.
+                anchor = group_value.item() if hasattr(group_value, "item") else group_value
+        else:
+            anchor = value
+        sources.append(_canonicalize_source(anchor))
+
+    # One keyed context per column: the HKDF key and the HMAC prefix are
+    # constant across rows, so only the per-row finish remains.
+    shifts = [0] * len(values)
+    if sources:
+        digests = DeriveContext.for_column(ctx.mask_key, namespace).derive_sources(
+            namespace, sources
+        )
+        for i, d in zip(usable_idx, digests, strict=True):
+            shifts[i] = min_days + (int.from_bytes(d[:8], "big") % range_size)
+
+    shifted = parsed + pd.to_timedelta(shifts, unit="D")
+    formatted = shifted.dt.strftime(fmt) if fmt else shifted.astype(str)
+
+    # Sprint 2 honesty pack (D7): split `unusable` into source-null (keep
+    # original, no error -- unchanged behavior) vs non-null-unparseable
+    # (a per-row format error; the original value is still LEFT in the
+    # frame per trap T4, the pipeline-level rule guarantees it never
+    # reaches the main output).
+    #
+    # Assemble as a Python list: pandas infers the column dtype from the
+    # exact scalar objects, so unusable cells must be the very objects
+    # `col.iloc[i]` returns (a boxed or np.where'd source changes the
+    # dtype of all-null float32/float16, None, NaT and NA-only columns).
+    out = formatted.to_numpy(dtype=object).tolist()
+    for i in np.flatnonzero(unusable):
+        out[i] = col.iloc[i]
+    return out, np.flatnonzero(unusable & ~source_null)

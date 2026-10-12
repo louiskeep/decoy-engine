@@ -136,6 +136,10 @@ across runs. Null and unparseable values are left as-is. Needs a namespace.
 - `min_days` / `max_days`: the offset range (defaults -365 and 365). If
   reversed, they are swapped.
 - `date_format`: a strftime format; auto-detected from the column if omitted.
+- `preserve_values`: a list of ISO dates (`YYYY-MM-DD`) that pass through
+  unchanged, for sentinels such as `9999-12-31` ("never expires") that
+  downstream logic tests with `date = <sentinel>`. See
+  [Sentinel dates](#sentinel-dates-preserve-values).
 
 Use it for HIPAA-style date generalization where relative spacing matters but
 the absolute date must move.
@@ -212,6 +216,44 @@ bound fails the job with `out_of_core_bucket_perturb_date_out_of_native_range`
 rather than risk a wrapped date. Dates outside the range entirely (such as
 `9999-12-31`) pass through unchanged on both paths. Run without the companion to
 perturb parseable dates near these bounds.
+
+(sentinel-dates-preserve-values)=
+#### Sentinel dates (preserve_values)
+
+`date_shift` and `bucket_perturb` accept `preserve_values`, a list of exact ISO
+dates. A row whose date equals a listed date is written out unchanged; every
+other row masks as it would without the option. Unset or empty behaves exactly as
+before.
+
+```yaml
+provider_config:
+  date_format: "%Y-%m-%d"
+  preserve_values: ["9999-12-31", "2099-01-01"]
+```
+
+- `date_format` is required when `preserve_values` is set. The sentinel is matched
+  by calendar date, so `01/01/2099` under `%d/%m/%Y` matches `2099-01-01` and a
+  time of day is ignored. `%f`, `%Z`, `ISO8601` and `mixed` are rejected with it.
+- `9999-12-31` is matched explicitly. Without the option it passes through only
+  because pandas cannot represent it and the operator leaves unparseable values
+  alone. A date such as `2099-01-01` is in range, so without the option it is
+  perturbed.
+- A string source is emitted byte for byte. A typed date or timestamp source is
+  rendered from its calendar date with `date_format`, so the output column stays
+  text.
+- It works on every route the operator runs on (pandas, native chunked, native
+  full-frame, and out-of-core for `bucket_perturb`). Preserved rows never reach the
+  keyed derivation, so a sentinel next to the 1677 or 2262 bounds is safe too.
+- The number of preserved rows is reported per column, never the values:
+  `quality_metrics["date_preserve"]` on the pandas routes, `preserved_rows` on the
+  chunked-route and unified-slice column evidence, and on the out-of-core
+  `out_of_core_bucket_perturb` entry.
+- Not supported, and rejected at compile time: `preserve_values` together with
+  `group_by` (`date_preserve_values_with_group_by_unsupported`), and on a key that
+  is part of a composite key, a same-table relationship, a multi-hop chain or a
+  shared child, or on the child side of a relationship
+  (`date_preserve_values_unsupported_fk_shape`). Put it on the parent key of a
+  single-column relationship between two tables; the child inherits it.
 
 ### bucketize
 

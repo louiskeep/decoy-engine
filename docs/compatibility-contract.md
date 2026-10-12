@@ -303,6 +303,12 @@ formats are identical (documented in `docs/strategies.md`, bucket_perturb).
   unparseable value fails closed with `RowErrorsFailedError` on both chunked legs, with
   chunk-local `row_index` records. A non-string source, an autodetected format, `group_by`,
   `when:` and FK-key edges keep their oracle path and codes.
+  Both date operators accept the additive `preserve_values` provider_config key (Phase D / D1c):
+  exact ISO dates emitted unchanged, with an explicit `date_format`. Sentinel rows are removed
+  before compute on every route, so the route choice and the unset output are unchanged. A
+  configured column adds a value-free `preserved_rows` count to its evidence. v1 supports payload
+  columns and the parent key of one single-column, two-table relationship; `group_by` and every
+  other FK shape are rejected at compile time.
   `group_key` joined the native chunked route on 2026-10-05 (slice C3). A column whose
   `group_by` sibling is an unmasked `string`, `int64` or `bool` column (no `when:`, not an FK
   key) is keyed by the compiled raw-hex kernel. Its chunked output type is pinned to `string`

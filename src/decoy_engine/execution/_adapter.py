@@ -204,6 +204,9 @@ class StrategyContext:
     # Positions, in the full frame, of the rows a `when:` gate handed to the handler.
     # None means every row in order. Set only on the per-call copy the gate makes.
     gate_positions: np.ndarray[Any, Any] | None = None
+    # D1c: rows a date operator emitted unchanged because they matched `preserve_values`,
+    # summed per (table, column). A count only, never a value; empty unless a column opts in.
+    date_preserved: dict[tuple[str, str], int] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         # A frozen dataclass forbids attribute assignment; object.__setattr__ is
@@ -223,6 +226,22 @@ class StrategyContext:
         if not self.code_set_corpora:
             return {}
         return {"code_set_corpora": list(self.code_set_corpora.values())}
+
+    def record_date_preserved(self, column: str, count: int) -> None:
+        """Add ``count`` sentinel rows a date operator passed through for ``column``."""
+        key = (self.current_table, self.nested_outer_column or column)
+        self.date_preserved[key] = self.date_preserved.get(key, 0) + count
+
+    def date_preserve_metrics(self) -> dict[str, Any]:
+        """The D1c aggregate preserved-row counts, or {} when no column preserved a row."""
+        if not self.date_preserved:
+            return {}
+        return {
+            "date_preserve": [
+                {"table": table, "column": column, "preserved_rows": count}
+                for (table, column), count in sorted(self.date_preserved.items())
+            ]
+        }
 
 
 class StrategyHandler(Protocol):
