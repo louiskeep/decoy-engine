@@ -1,6 +1,7 @@
 # Phase D / D2c-ii: wire `categorical` into the SEQ-native framework + generalize the disposition
 
-Status: plan (rev 2, pre-gate re-gate). Second slice of D2c's ENGINE half. Builds on D2c-i (engine
+Status: plan (rev 2, GATE GO - ready to build once D2c-i main CI is green; round-2 Codex plan-gate GO,
+all 4 rev-1 findings resolved). Second slice of D2c's ENGINE half. Builds on D2c-i (engine
 #243, the `_sequential_native_ops` descriptor framework + `fpe`). Branches off origin/main (b52fe688,
 includes D2c-i) on feat/phase-d-d2c-ii-seq-index-kernels (worktree phase-d-d2c-ii).
 
@@ -62,8 +63,9 @@ OOC, chunked UNCHANGED.
 - D2c-i's descriptor framework is reused: `categorical` registers a `NativeOp` (`load_kernel` =
   categorical index-kernel loader; `admit(column, input_type, resolved_config)` = the EXISTING
   OOC/chunked categorical admission via a thin schema adapter, carrying resolved categories + CDF;
-  `apply` = call `native_categorical`/`native_categorical_positional`, return `NativeResult(values,
-  errors=())`; `fail_closed=None`; `warn=None`; `disposition_key="sequential_categorical"`).
+  `apply` = call `native_categorical` (deterministic only; the positional kernel is not used because
+  non-deterministic configs decline), return `NativeResult(values, errors=())`; `fail_closed=None`;
+  `warn=None`; `disposition_key="sequential_categorical"`).
 - The compiled kernel + admission exist and are proven on OOC/chunked (D1b-ii; `native/_categorical_ext.py`,
   `out_of_core/_categorical_native.py`). REUSE them; do not re-implement (established-methodology).
 - The `metrics()` generalization is the one framework change: today `SeqNativeRun.metrics()`
@@ -75,19 +77,34 @@ OOC, chunked UNCHANGED.
 
 1. **categorical descriptor.** Add a `categorical_op` factory to `_sequential_native_ops.py` returning
    the `NativeOp` above. The admit is a thin adapter over the existing OOC/chunked categorical
-   admission, taking the resolved seed config and declining (coded) a non-deterministic /
-   non-namespaced / non-string-category / non-string-source / unbuildable-CDF column. `apply` rebuilds
-   the pinned `pa.string()` array and calls the index kernel; a malformed index raises and aborts
-   (no error channel). Register in `_OPS`.
+   admission (construct a one-field schema from `(column, input_type)` and reuse the OOC predicate,
+   `out_of_core/_categorical_native.py:57`), taking the resolved seed config and declining (coded) a
+   non-deterministic / non-namespaced / non-string-category / non-string-source / unbuildable-CDF
+   column (deterministic subset only - a non-deterministic config DECLINES, so the positional kernel
+   path is not used; only `native_categorical`). NOTE `NativeOp.admit` returns `str | None` (a reason),
+   so it does NOT carry the categories/CDF out; the resolved categories + CDF + namespace + mask_key
+   reach `apply` through the PREPARED STATE / call payload (`_sequential_native_ops.py:68`), not admit's
+   return. `from_profile` is already resolved to categories + weights before execution
+   (`_strategies/_categorical.py:23`). `apply` rebuilds the pinned `pa.string()` array and calls
+   `native_categorical`; a malformed index raises before assignment (`native/_categorical_ext.py:99`)
+   and aborts (no error channel). Register in `_OPS`.
 2. **Handler wiring.** `_strategies/_categorical.py` gains the `getattr(ctx,"seq_native")` block (as
    `_hash.py` has): assign native tokens on a non-None return, else fall through to the Python handler.
    categorical has no residual-warning phase (verify), so the simple early-return is correct.
-3. **metrics() generalization (MED-1).** Generalize `SeqNativeRun.metrics()` to build the fragment set
-   from the registered descriptors (each `disposition_key` -> its recorded entries) instead of the
-   hardcoded hash+fpe. hash's REMAP + inherited assembly and the exact `sequential_hash` /
-   `sequential_fpe` fragment contents MUST be byte-identical (surface-pin). Evidence must be accurate
-   for a column that records a decision but makes NO kernel call (e.g. an empty/all-null selection),
-   not just the input row count.
+3. **metrics() generalization (MED-1).** Generalize `SeqNativeRun.metrics()` (`_sequential_native.py:412`)
+   to build the fragment set from the registered descriptors (each `disposition_key` -> its recorded
+   entries): filter scalar decisions per descriptor, append REMAP + inherited entries ONLY for hash,
+   preserve entry order, omit empty fragments. hash's REMAP + inherited assembly and the exact
+   `sequential_hash` / `sequential_fpe` fragment contents MUST be byte-identical (surface-pin), proven
+   by the pins PLUS the unchanged D2a/D2b/D2c-i suites + mixed-order tests (fragment pins ALONE do not
+   prove token parity). Per-strategy loader isolation already exists (`_sequential_native.py:207`).
+   Evidence must reflect ACTUAL kernel calls: empty SEQ input already skips application
+   (`_sequential_native.py:333`) and records a no-call entry; but an ALL-NULL column does NOT auto-skip
+   `native_categorical` (its raw helper calls the kernel unconditionally, `native/_categorical_ext.py:71`;
+   only the OOC path shortcuts it, `out_of_core/_categorical_native.py:211`). So either mirror the OOC
+   all-null shortcut on SEQ (then record a no-call entry) OR let all-null call the kernel and record it
+   as a native call - pick the one that keeps parity simplest, and make the evidence + test assert what
+   ACTUALLY happens, not an assumed skip.
 4. **Key boundary (reuse, confirm) + sink-qualified guarantee (MED-2).** categorical is payload-only,
    so a categorical FK key stays Python via the framework boundary (test it). The no-partial-output
    guarantee is SINK-QUALIFIED: a kernel fault aborts before the table is published; a transactional
