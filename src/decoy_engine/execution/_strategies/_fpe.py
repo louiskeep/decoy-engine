@@ -162,6 +162,23 @@ class FpeStrategyHandler:
             tweak = build_ff1_tweak(FF1_TWEAK_SCOPE_COLUMN, column)
         namespace = plan.namespace
 
+        # getattr: handlers are also driven with hand-built contexts that predate this field.
+        seq = getattr(ctx, "seq_native", None)
+        if seq is not None:
+            # Deferred: `native/_crypto_reference` imports this module, so a top-level import of
+            # the native package here would be circular.
+            from decoy_engine.execution._sequential_native_ops import FPE, FpeCall
+            from decoy_engine.execution.native._crypto_ext import FpeConfig
+
+            call = FpeCall(namespace, ctx.mask_key, FpeConfig.from_mapping(cfg), column)
+            tokens = seq.native_column(ctx, df, column, FPE, call)
+            if tokens is not None:
+                # Unlike hash, the kernel computes no warnings, so the residual-risk pass still
+                # runs here on the original values (the `when` subset, if any).
+                native_warnings = seq.warnings(FPE, df[column].tolist(), call, column)
+                df[column] = tokens
+                return df, native_warnings
+
         # One key per (mask_key, namespace), derived once, not per cell.
         key = derive(ctx.mask_key, namespace, FF1_KEY_LABEL)
 

@@ -289,8 +289,8 @@ def test_a_column_that_stops_converting_to_its_pinned_type_aborts_without_leakin
     None
 ):
     run = SeqNativeRun()
-    run._bound = _sequential_native.BoundHashKernel(MarkingKernel())  # type: ignore[arg-type]
-    run._loaded = True
+    run._bound["hash"] = _sequential_native.BoundHashKernel(MarkingKernel())  # type: ignore[arg-type]
+    run._load_attempted.add("hash")
     from decoy_engine.execution._adapter import StrategyContext
 
     decision = _sequential_native.ColumnDecision("t", "x", "rust_companion", None, pa.int64())
@@ -375,8 +375,8 @@ def test_remap_stays_python_when_the_parent_column_declined(
 
 def test_remap_declines_a_mixed_type_orphan_batch_with_a_reason() -> None:
     run = SeqNativeRun()
-    run._bound = _sequential_native.BoundHashKernel(MarkingKernel())  # type: ignore[arg-type]
-    run._loaded = True
+    run._bound["hash"] = _sequential_native.BoundHashKernel(MarkingKernel())  # type: ignore[arg-type]
+    run._load_attempted.add("hash")
     run._remap_decisions[("t", "hk")] = _sequential_native.ColumnDecision(
         "t", "hk", "rust_companion", None, pa.string()
     )
