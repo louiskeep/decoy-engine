@@ -28,6 +28,7 @@ from tests.parity._d1c_data import (
     ISO,
     JOB_SEED,
     NORMAL,
+    NS,
     OPERATORS,
     OUT_OF_RANGE,
     operator_config,
@@ -315,3 +316,47 @@ def test_date_shift_group_by_with_preserve_values_fails_closed() -> None:
 
 def test_the_default_format_constants_are_the_documented_ones() -> None:
     assert (ISO, DMY) == ("%Y-%m-%d", "%d/%m/%Y")
+
+
+@_BOTH
+def test_a_nested_child_honours_preserve_values(strategy: str) -> None:
+    import json
+    from types import SimpleNamespace
+
+    from decoy_engine.execution import PandasExecutionAdapter
+    from decoy_engine.plan._types import ColumnSeed, SeedEnvelope, TableSeed
+    from decoy_engine.providers_v2 import get_default_registry
+    from decoy_engine.relationships._graph import RelationshipGraph
+    from decoy_engine.relationships._namespace import NamespaceRegistry
+
+    child = operator_config(strategy, preserve_values=[IN_RANGE])
+    seed = ColumnSeed(
+        namespace=NS,
+        strategy="nested",
+        provider=None,
+        backend_type="decoy_native",
+        backend_version="1",
+        cardinality_mode="reuse",
+        deterministic=True,
+        provider_config=tuple(
+            sorted({"target": "$.d", "strategy": strategy, "strategy_config": child}.items())
+        ),
+        coherent_with=(),
+    )
+    cells = [json.dumps({"d": IN_RANGE}), json.dumps({"d": NORMAL[0]})]
+    plan = SimpleNamespace(
+        seed_envelope=SeedEnvelope(
+            job_seed=JOB_SEED,
+            per_table=(("t", TableSeed(per_column=(("j", seed),), per_group=())),),
+        )
+    )
+    result = PandasExecutionAdapter().run_single(
+        plan,
+        pa.table({"j": pa.array(cells, pa.string())}),
+        registry=get_default_registry(),
+        relationship_graph=RelationshipGraph(edges=(), ordering=()),
+        namespace_registry=NamespaceRegistry(bindings=()),
+    )
+    out = [json.loads(c)["d"] for c in result.output.column("j").to_pylist()]
+    assert out[0] == IN_RANGE
+    assert preserved_total(result.quality_metrics, "j") == 1
