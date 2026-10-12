@@ -1,164 +1,161 @@
-# Phase D / D2c-ii: wire `categorical` + `bucket_perturb` into the SEQ-native framework
+# Phase D / D2c-ii: wire `categorical` into the SEQ-native framework + generalize the disposition
 
-Status: plan (rev 1, pre-gate). Second slice of D2c's ENGINE half. Builds on D2c-i (engine #243,
-the strategy-keyed `_sequential_native_ops` descriptor framework + `fpe`). Branches off origin/main
-(b52fe688, includes D2c-i) on feat/phase-d-d2c-ii-seq-index-kernels (worktree phase-d-d2c-ii).
+Status: plan (rev 2, pre-gate re-gate). Second slice of D2c's ENGINE half. Builds on D2c-i (engine
+#243, the `_sequential_native_ops` descriptor framework + `fpe`). Branches off origin/main (b52fe688,
+includes D2c-i) on feat/phase-d-d2c-ii-seq-index-kernels (worktree phase-d-d2c-ii).
+
+rev-2 RESCOPE after the rev-1 Codex plan-gate NO-GO (2 HIGH + 2 MED; descriptor DIRECTION endorsed,
+FK boundary confirmed sufficient, NFC confirmed). rev 1 bundled `categorical` + `bucket_perturb`; the
+gate showed bucket_perturb carries date-operator obligations the raw-kernel call would skip - its
+date-range guard lives in a WRAPPER (`out_of_core/_bucket_native.py:218`), not `native_bucket_perturb`
+(HIGH-1), and D1c's `preserve_values` sentinel-preserve + preserved-row evidence must be honored
+(HIGH-2). Those belong with `date_shift` (which shares `preserve_values`), so rev 2 narrows this slice
+to `categorical` ONLY and moves bucket_perturb + date_shift to D2c-iii (date operators). rev 2 also
+folds the two framework MEDs that any second-descriptor-beyond-fpe hits: `metrics()` is hardcoded to
+hash+fpe and must be generalized to emit per-descriptor disposition (MED-1), and the no-partial-output
+guarantee must be sink-qualified (MED-2).
 
 Rules consulted: 00-universal.md, risk-and-exceptions.md, development-loop.md, architecture.md,
-reuse-first.md, testing.md, documentation.md, autonomous-operation.md. Engine CLAUDE.md
-(established-methodology, module caps, internal boundary), compatibility-contract.md.
+reuse-first.md, testing.md, documentation.md, autonomous-operation.md. Engine CLAUDE.md,
+compatibility-contract.md.
 
-Risk: R2. Moves payload token computation for two more strategies onto compiled kernels on the SEQ
-route, with byte-parity + the accepted NFC divergence. Plan + independent review + Codex plan gate +
-final gate before merge, per the standing Rust rule.
+Risk: R2. Moves categorical payload token computation onto the compiled index kernel on the SEQ route,
+with byte-parity + the accepted NFC divergence, and generalizes the SEQ-native disposition. Plan +
+independent review + Codex plan gate + final gate before merge.
 
 ## FRAME
 
-**Problem.** D2c-i generalized the SEQ-native seam into a strategy-keyed descriptor table and wired
-`fpe`. `categorical` and `bucket_perturb` already run native on the out-of-core and native-chunked
-routes (D1b-ii #238, D1b-i #239) via compiled INDEX kernels, but still run in Python on the bounded
-sequential (SEQ) FK route - they have no descriptor registered. Register them so a SEQ job masks a
-`categorical` or `bucket_perturb` payload column on the same compiled kernel the chunked route uses.
+**Problem.** D2c-i wired `fpe` through the SEQ-native descriptor framework but left `metrics()`
+hardcoded to the hash + fpe fragments. `categorical` already runs native on the OOC/chunked routes
+(D1b-ii #238) via the compiled INDEX kernel but still runs in Python on the bounded sequential (SEQ)
+FK route. Register it, AND generalize the disposition so a descriptor-driven operator actually reports
+its backend (the framework gap every operator past fpe hits).
 
-**Why these two together.** Both are payload-only INDEX-kernel operators with the same shape: a
-deterministic keyed index selects from a prebuilt structure (`native_categorical` /
-`native_bucket_perturb`), the kernel RAISES on an invalid input (GenerationError / AssertionError)
-rather than returning a per-cell error channel, and both carry the same accepted native-vs-Python NFC
-divergence as hash (the keyed index derives from the NFC-normalized source value). They are strictly
-MORE MECHANICAL than fpe: no `fail_closed` error channel (a raise aborts the run like a kernel
-fault), no handler warning pass. Each is one descriptor registration + its config-aware admission.
-`date_shift` (the third index kernel) is a SEPARATE later slice because it carries the OOC-deferred
-whole-column format-detect + per-value format-error row-error semantics that need their own parity
-check; the text operators are later still.
+**Why categorical alone.** It is the clean index-kernel operator: payload-only, deterministic keyed
+index from a prebuilt CDF, the kernel RAISES on a malformed index (no per-cell error channel, so
+`fail_closed=None`), no residual-warning phase (`warn=None`), no `preserve_values` or date-range guard
+(those are date-operator concerns). It carries the accepted NFC divergence (the index derives from the
+NFC-normalized source value), like hash. So categorical is a near-pure descriptor registration, which
+makes it the right operator to carry the one genuine framework change this slice needs - the
+`metrics()` generalization - with no operator-specific complexity confounding it. `bucket_perturb` and
+`date_shift` (D2c-iii) both need the date-range guard and/or the D1c `preserve_values` pass, so they
+are a separate, cohesive date-operator slice.
 
-**Definition of done.** On the SEQ route, a `categorical` or `bucket_perturb` NON-KEY payload column
-whose resolved configuration AND Arrow input type its admission predicate accepts computes its tokens
-on the SAME compiled index kernel the chunked route uses, byte-identical to the Python handler except
-the accepted NFC divergence (both operators carry it). A non-admitted config/type, a missing
-companion, or a kernel fault declines-with-reason to Python or aborts (no silent fallback). The
-operator stays PAYLOAD-only: a `categorical`/`bucket_perturb` column used as an FK key gets no native
-decision and stays Python (the framework's non-hash-key boundary already enforces this; confirm). hash
-and fpe behavior, their disposition, and all D2c-i/D2a/D2b parity are UNCHANGED.
+**Definition of done.** On the SEQ route, a `categorical` NON-KEY payload column whose resolved
+configuration (deterministic + namespaced + string-category config, carrying the resolved categories
+AND CDF - profile-derived weights, with an unbuildable-CDF decline per `out_of_core/_categorical_native.py:57`)
+AND Arrow input type (exactly `pa.string()`) its admission predicate accepts computes its tokens on the
+SAME compiled index kernel the chunked route uses, byte-identical to the Python handler except the
+accepted NFC divergence. A non-admitted config/type, a missing companion, or a kernel fault
+declines-with-reason to Python or aborts. A `categorical` FK key column stays Python (framework
+non-hash-key boundary). `SeqNativeRun.metrics()` now emits a `sequential_categorical` fragment (and is
+generalized so future descriptors emit theirs) while the `sequential_hash` + `sequential_fpe` fragments
+stay byte-identical. hash + fpe behavior and all D2c-i/D2a/D2b parity are UNCHANGED.
 
-**Boundaries / this slice.** SEQ route only. Register `categorical` + `bucket_perturb` descriptors
-ONLY. NO `date_shift` (D2c-iii), NO text ops (D2c-iv), NO pure-Arrow trio, NO faker/group_key/etc.
-(deferred). NO framework changes beyond adding two `_OPS` entries and whatever per-descriptor hook the
-two operators need (if the descriptor contract needs no change, do not change it). NO REMAP
-generalization (both are payload-only; REMAP stays hash-only). NO platform activation (A3 + Cam go).
-Full-frame, OOC, chunked routes UNCHANGED.
+**Boundaries / this slice.** SEQ route only. Register `categorical` ONLY + generalize `metrics()`. NO
+`bucket_perturb`/`date_shift` (D2c-iii), NO text ops (D2c-iv), NO pure-Arrow trio, NO faker/group_key/
+etc. NO REMAP generalization (payload-only; REMAP stays hash-only). NO platform activation. Full-frame,
+OOC, chunked UNCHANGED.
 
 ## Established solutions
 
-- D2c-i's descriptor framework (`_sequential_native_ops.py`: `NativeOp` = load_kernel + config-aware
-  `admit(column, input_type, resolved_config)` + `apply` + optional `fail_closed` + optional `warn` +
-  disposition_key; per-strategy kernel state; `prepare_table` non-hash-key boundary; `native_column`
-  scalar seam) is REUSED UNCHANGED where possible. categorical/bucket_perturb register a descriptor
-  each: `fail_closed=None` (kernel raises -> abort), `warn=None` (no handler warnings - VERIFY in the
-  handlers `_categorical.py`/`_bucket_perturb.py`).
-- The compiled kernels + admission already exist and are proven on OOC/chunked: `categorical` via
-  `native/_categorical_ext.py` (`native_categorical` / `native_categorical_positional`),
-  `bucket_perturb` via `native/_bucket_perturb_ext.py` (`native_bucket_perturb`), both index-kernel
-  (`derive_index_batch`). REUSE each operator's existing config-aware admission predicate (the one the
-  chunked/OOC route uses - likely in `native/_real_type_admission.py` or the operator resolver; the
-  builder locates and reuses it, NOT a new predicate). This slice does NOT re-implement either kernel
-  or its admission (established-methodology).
-- The accepted NFC divergence is already documented for hash + categorical; bucket_perturb carries it
-  too (D1b-i). No NEW semantic difference is introduced.
+- D2c-i's descriptor framework is reused: `categorical` registers a `NativeOp` (`load_kernel` =
+  categorical index-kernel loader; `admit(column, input_type, resolved_config)` = the EXISTING
+  OOC/chunked categorical admission via a thin schema adapter, carrying resolved categories + CDF;
+  `apply` = call `native_categorical`/`native_categorical_positional`, return `NativeResult(values,
+  errors=())`; `fail_closed=None`; `warn=None`; `disposition_key="sequential_categorical"`).
+- The compiled kernel + admission exist and are proven on OOC/chunked (D1b-ii; `native/_categorical_ext.py`,
+  `out_of_core/_categorical_native.py`). REUSE them; do not re-implement (established-methodology).
+- The `metrics()` generalization is the one framework change: today `SeqNativeRun.metrics()`
+  (`_sequential_native.py:405`) emits hash + fpe explicitly; generalize it to iterate the registered
+  descriptors' `disposition_key`s and emit each operator's recorded entries, PRESERVING hash's
+  scalar/REMAP/inherited assembly and the exact existing hash + fpe fragments (pin them).
 
 ## Design
 
-1. **Descriptor registration (per operator).** Add a `categorical_op` and a `bucket_perturb_op`
-   factory to `_sequential_native_ops.py`, each returning a `NativeOp`:
-   - `load_kernel`: the operator's compiled index-kernel loader (reused).
-   - `admit`: the operator's existing config-aware admission (categorical: deterministic + namespaced +
-     string-category config AND a string source; bucket_perturb: explicit `date_format`, no tz
-     directive, admitted date range) - reused from the chunked/OOC path, taking the resolved seed
-     config, declining everything else with its coded reason.
-   - `apply`: rebuild the pinned array, call `native_categorical`/`native_bucket_perturb`, return
-     `NativeResult(values, errors=())`. A kernel raise (GenerationError/AssertionError, e.g.
-     bucket_perturb's date-out-of-native-range) propagates and aborts the run - no error channel.
-   - `fail_closed=None`, `warn=None`, `disposition_key` = `sequential_categorical` /
-     `sequential_bucket_perturb`.
-   Add each to `_OPS`. If the two operators need a param object the way fpe needed `FpeConfig`, build
-   the minimal analogue from the seed; do not over-generalize.
-2. **Handler wiring.** `_strategies/_categorical.py` and `_strategies/_bucket_perturb.py` each gain the
-   `getattr(ctx, "seq_native")` block (as `_hash.py`/`_fpe.py` have): ask `native_column`; assign the
-   tokens on a non-None return; else fall through to the existing Python handler. Since neither has a
-   handler warning phase (verify), a simple early-return-on-native is correct (unlike fpe).
-3. **Key boundary (reuse, confirm).** The framework already gives a non-hash strategy a native decision
-   only when the column is not an FK parent/child key. categorical/bucket_perturb are payload-only, so
-   a key column of either strategy stays Python with no new code. Add a test proving it.
-4. **Per-strategy kernel state + disposition.** Each operator loads its kernel at most once (the
-   framework's per-strategy `_bound`/`_load_attempted`); disposition goes under its own key. hash + fpe
-   fragments unchanged.
+1. **categorical descriptor.** Add a `categorical_op` factory to `_sequential_native_ops.py` returning
+   the `NativeOp` above. The admit is a thin adapter over the existing OOC/chunked categorical
+   admission, taking the resolved seed config and declining (coded) a non-deterministic /
+   non-namespaced / non-string-category / non-string-source / unbuildable-CDF column. `apply` rebuilds
+   the pinned `pa.string()` array and calls the index kernel; a malformed index raises and aborts
+   (no error channel). Register in `_OPS`.
+2. **Handler wiring.** `_strategies/_categorical.py` gains the `getattr(ctx,"seq_native")` block (as
+   `_hash.py` has): assign native tokens on a non-None return, else fall through to the Python handler.
+   categorical has no residual-warning phase (verify), so the simple early-return is correct.
+3. **metrics() generalization (MED-1).** Generalize `SeqNativeRun.metrics()` to build the fragment set
+   from the registered descriptors (each `disposition_key` -> its recorded entries) instead of the
+   hardcoded hash+fpe. hash's REMAP + inherited assembly and the exact `sequential_hash` /
+   `sequential_fpe` fragment contents MUST be byte-identical (surface-pin). Evidence must be accurate
+   for a column that records a decision but makes NO kernel call (e.g. an empty/all-null selection),
+   not just the input row count.
+4. **Key boundary (reuse, confirm) + sink-qualified guarantee (MED-2).** categorical is payload-only,
+   so a categorical FK key stays Python via the framework boundary (test it). The no-partial-output
+   guarantee is SINK-QUALIFIED: a kernel fault aborts before the table is published; a transactional
+   sink commits nothing, a callable sink retains tables already delivered before the failing one
+   (existing `_sequential.py:14` semantics, unchanged). State this precisely; test a later-table fault.
 
 ## Pinned guarantee and non-goals
 
-**Guarantee.** An admitted SEQ `categorical`/`bucket_perturb` NON-KEY payload column masks
-byte-identically to its Python handler except the accepted NFC divergence; a non-admitted config/type
-/ missing companion / kernel fault declines-with-reason or aborts; the computation runs on the
-operator's compiled index kernel (proven by a SEQ marking-witness). A key column of either strategy
-stays Python. hash + fpe tokens, their disposition, REMAP, and every D2c-i/D2a/D2b/full-frame/OOC/
-chunked behavior are UNCHANGED. Strategies with no descriptor run in Python as today.
+**Guarantee.** An admitted SEQ `categorical` NON-KEY payload column masks byte-identically to the
+Python handler except the accepted NFC divergence; a non-admitted config/type / missing companion /
+kernel fault declines-with-reason or aborts; the computation runs on the compiled index kernel (proven
+by the SEQ marking-witness). A categorical FK key stays Python. `metrics()` emits `sequential_categorical`
+and is descriptor-generalized, with hash + fpe fragments byte-identical. On a fault, a transactional
+sink publishes nothing for the failed/later tables; a callable sink keeps tables already delivered. hash
++ fpe + every D2c-i/D2a/D2b/full-frame/OOC/chunked behavior UNCHANGED.
 
-**Non-goals.** NO `date_shift` (D2c-iii - its format-detect + row-error semantics need their own
-slice). NO text ops, pure-Arrow trio, faker/group_key/code_set/etc. NO REMAP generalization. NO
-framework redesign. NO new kernel or admission implementation. NO platform activation. NO change to
-`resolve_fk_keys`, routing, or full-frame/OOC/chunked.
+**Non-goals.** NO bucket_perturb / date_shift (D2c-iii: date-range guard + `preserve_values`). NO text
+ops, pure-Arrow trio, faker/group_key/etc. NO REMAP generalization. NO new kernel/admission impl. NO
+platform activation. NO change to `resolve_fk_keys`, routing, or full-frame/OOC/chunked.
 
 ## Acceptance tests (authored before impl)
 
-- **hash + fpe regression (no observable change):** the full D2a/D2b/D2c-i SEQ suites pass unchanged;
-  the `sequential_hash` and `sequential_fpe` disposition fragments are byte-identical; a mixed
-  hash+fpe+categorical+bucket_perturb table in varied column orders masks all correctly.
-- **parity (per operator):** a SEQ job with a `categorical` (and a `bucket_perturb`) payload column,
-  payload and across an FK edge where the column is NOT a key, masks byte-identical to the Python
-  handler on strict dimensions (`_strict_compare.py`), for every admitted config/type; oracle = the
-  Python handler on the same job. Real compiled-kernel parity suite (abi-3 companion), as D2c-i did.
-- **native witness (per operator):** a SEQ marking stand-in proves the tokens came from the kernel
-  (reuse the `_seq_witness.py` pattern; SEQ rebuilds buffers via `from_pandas`, so buffer-identity is
-  unusable - mark, as D2a/D2c-i did).
-- **config-aware decline (per operator, fail-closed, coded, no value):** categorical - a
-  non-deterministic / non-namespaced / non-string-category / non-string-source column declines to
-  Python; bucket_perturb - no `date_format` / a tz directive / an out-of-native-range date declines or
-  fails closed exactly as the oracle does. Companion-absent declines. Reason codes carry strategy +
-  column + Arrow type only.
-- **kernel fault aborts:** a kernel raise (e.g. bucket_perturb date-out-of-native-range on an admitted
-  config) aborts the run with no partial output (no error channel; raise propagates), matching the
-  Python handler's behavior for the same input.
-- **key column stays Python (per operator):** a `categorical`/`bucket_perturb` column used as an FK
-  key gets no native decision; matched/orphan behavior runs Python; no `sequential_hash`/`sequential_fpe`
-  contamination.
-- **NFC envelope (per operator):** a source value with a post-running-Python-Unicode-version codepoint
-  carries the same accepted native-vs-Python divergence as hash (documented, version-guarded) - assert
-  BOTH operators carry it (bucket_perturb on its string source, categorical on its category source).
-- **descriptor-absent = Python:** an un-wired strategy (e.g. date_shift, text_mask) still runs in
-  Python on SEQ unchanged.
-- **perf gate (per operator):** a sized SEQ workload runs native faster than the Python handler within
-  the memory ceiling, byte-identical digest (mirror `test_d2a_seq_hash_native_perf.py` /
-  `test_d2c_seq_fpe_native_perf.py`).
-- **module caps + boundaries:** `_sequential_native_ops.py` (now growing with two more ops) under 700,
-  census if >600; the SEQ-native + handler modules under caps; `tests/sentry/*` pass; run the FULL
-  sentry/surface-pin tier locally (the native/adapter-touching-slice rule).
+- **hash + fpe regression (byte-identical):** full D2a/D2b/D2c-i SEQ suites pass unchanged; the
+  `sequential_hash` AND `sequential_fpe` disposition fragments are byte-identical through the metrics()
+  generalization (surface-pin); a mixed hash+fpe+categorical table in varied column orders masks all
+  correctly.
+- **categorical parity:** a SEQ job with a `categorical` payload column (payload + across an FK edge
+  where it is NOT a key) masks byte-identical to the Python handler on strict dimensions
+  (`_strict_compare.py`), for every admitted config (incl profile-weighted CDF); oracle = the Python
+  handler. Real compiled-kernel parity suite (abi-3), as D2c-i did.
+- **categorical native witness:** a SEQ marking stand-in proves the tokens came from the kernel.
+- **config-aware decline (coded, no value):** non-deterministic / non-namespaced / non-string-category
+  / non-string-source / unbuildable-CDF declines to Python; companion-absent declines; a kernel fault
+  aborts. Reason codes carry strategy + column + Arrow type only.
+- **categorical key stays Python:** a categorical FK key gets no native decision; matched/orphan runs
+  Python; no `sequential_hash`/`sequential_fpe`/`sequential_categorical` cross-contamination.
+- **NFC envelope:** a category source value with a post-running-Python-Unicode-version codepoint carries
+  the same accepted native-vs-Python divergence as hash (documented, version-guarded).
+- **metrics() generalization (MED-1):** `sequential_categorical` appears with the right entries; a
+  categorical column that records a decision but makes NO kernel call (empty/all-null selection) still
+  produces an accurate evidence entry; `sequential_hash`/`sequential_fpe` fragments byte-identical;
+  hash REMAP/inherited assembly unchanged.
+- **sink-qualified no-partial-output (MED-2):** a categorical kernel fault in a LATER table leaves a
+  transactional sink with nothing committed; a callable sink retains the earlier delivered tables
+  (existing semantics). Assert both.
+- **descriptor-absent = Python:** an un-wired strategy (bucket_perturb, date_shift, text_mask) still
+  runs in Python on SEQ unchanged.
+- **perf gate:** a sized SEQ categorical workload runs native faster than the Python handler within the
+  memory ceiling, byte-identical digest (mirror the D2a/D2c-i perf tests).
+- **module caps + boundaries:** `_sequential_native_ops.py` + `_sequential_native.py` under caps
+  (census if >600); `tests/sentry/*` pass; run the FULL sentry/surface-pin tier locally.
 
 ## Known context for the gate
 
-- The descriptor framework is built + gated (D2c-i); this slice is additive. If the two operators need
-  NO change to the `NativeOp` contract, do not change it - register two entries + two handler blocks.
-  If they DO need a change (e.g. an index-kernel apply signature that differs from fpe's), make the
-  minimal one and note it.
-- Verify each operator's handler has no warning phase (so the simple early-return wiring is correct,
-  unlike fpe's warning-preserving wiring). If one DOES emit warnings, wire it like fpe.
-- Reuse each operator's EXISTING chunked/OOC admission predicate; do not author a new one. categorical
-  and bucket_perturb both already have proven admission (D1b-ii, D1b-i) + real-kernel parity suites to
-  mirror for SEQ.
-- Both carry the accepted NFC divergence (unlike fpe, which is NFC-agnostic) - the acceptance test
-  asserts divergence, not byte-identity, on post-version codepoints.
+- The `metrics()` generalization is the one real framework change (rev-1 called the slice "additive";
+  the gate corrected that - MED-1). Keep it minimal: iterate descriptors, pin hash + fpe fragments
+  byte-identical, accurate no-kernel-call evidence.
+- Reuse the EXISTING categorical admission + kernel (D1b-ii). The admit must carry resolved categories
+  AND the CDF (profile-derived weights), declining an unbuildable CDF (`out_of_core/_categorical_native.py:57`).
+- categorical carries the accepted NFC divergence (assert divergence, not byte-identity, on post-version
+  codepoints).
+- The no-partial-output guarantee is sink-qualified (transactional aborts; callable keeps delivered) -
+  do not overstate it (MED-2).
 - Test env: companion/native tests need the abi-3 venv; confirm the import path resolves to THIS
-  worktree first; run one heavy test process at a time.
+  worktree first; one heavy test process at a time.
 
 ## Docs to update
 
-`docs/compatibility-contract.md` (SEQ `categorical` + `bucket_perturb` native, same NFC envelope),
-`docs/strategies.md` (compute-path note for each), `tests/parity/SEMANTIC_DIFFERENCES.md`, CODEMAP,
-and the platform ROADMAP D row (D2c-ii done, NEXT = D2c-iii date_shift) at DOCUMENT.
+`docs/compatibility-contract.md` (SEQ `categorical` native + the generalized disposition),
+`docs/strategies.md` (categorical compute-path note), `tests/parity/SEMANTIC_DIFFERENCES.md`, CODEMAP,
+and the platform ROADMAP D row (D2c-ii done, NEXT = D2c-iii bucket_perturb + date_shift) at DOCUMENT.
