@@ -220,6 +220,26 @@ full-frame route keeps its raw `orphan_remap_parent_missing`). The other orphan 
 run on that shape. Follow-up: REMAP through a composite chain needs a scalar seed per composite
 member, which the planner does not compile today.
 
+The sequential route also masks an admitted cross-table FK cycle (A references B, B references
+A), which only the full-frame route masked before. The column graph of such a job is acyclic, so
+the route works in column order: a first pass reads only the cyclic key columns and leaves each
+parent's effective source-to-masked key map in memory, then the table-by-table pass masks every
+table from its originals and resolves each FK child from those maps, so a matched child inherits
+the parent's emitted value (a token, a raw value left by a `when:` gate or a preserved orphan)
+and the output equals the full-frame output on every strict dimension. A cyclic job is admitted
+only when every key column uses `hash`, `passthrough`, `redact`, `truncate` or `fpe`, reads no
+other column, has no `when:` and has no other writer; no cyclic table declares transforms; the
+job enables no row-error quarantine trigger; the source can be read by column; and the combined
+live state (parent maps, error caches, key-pass scratch, the largest table twice, and the
+strategy `PoolCache`) fits the memory budget. Anything else is declined with a stable code in
+the `sequential_cycle_*` family (`key_strategy_unsupported`, `key_when_unsupported`,
+`key_overlapping_writer`, `table_transforms`, `quarantine_enabled`, `work_graph_cyclic`,
+`projected_read_unavailable`, `payload_state_unpriced`, `payload_state_over_budget`,
+`budget_exceeded`, `budget_unavailable`) and keeps its previous route: full-frame under `auto`,
+and a `ConfigError` for an explicit `execution_mode="sequential"`. Out-of-core never takes a
+cycle. An orphan under `fail` still aborts the run. Cyclic jobs report
+`quality_metrics["sequential_cycle"]`.
+
 The same nuance applies to deterministic `categorical`: the keyed index derives
 from the NFC-normalized source value, so for source text with a codepoint newer
 than the running Python's Unicode version the companion and Python paths can

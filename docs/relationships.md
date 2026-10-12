@@ -217,12 +217,11 @@ is that an entire row erroring on ANY parent-key column should exclude it from
 ALL parent maps on that table. An audit + fix is needed; see
 `docs/backlog/s2-fk-leak-remediation-r3-guide.md` section 7.
 
-**Cross-table FK cycles support (Cam decision pending).** A mutual cycle
-(A references B, B references A) ran successfully under full-frame before S2.
-`run_pipeline`'s S2 routing now detects such cycles and falls back to full-frame
-automatically (non-regressing via the `execution_mode="auto"` heuristic). However,
-the question of whether cross-table FK cycles should be a *supported* topology
-at all is unresolved: they are neither forbidden by the schema validation layer
-nor embraced by the sequential execution path. Deciding on support/rejection is a
-product call; until then, the auto fallback keeps behavior stable. See
-`docs/backlog/s2-fk-leak-remediation-r3-guide.md` section 6.
+**Cross-table FK cycles.** A mutual cycle (A references B, B references A) runs on the
+sequential route when the cycle gate admits it (D2-cycle; `_sequential_cycle_admit.py`): key
+columns that are pure functions of their own value (`hash`, `passthrough`, `redact`, `truncate`,
+`fpe`), no cyclic-table transforms, no row-error quarantine trigger, a column-readable source, and
+a combined memory estimate that fits. Other cycles keep the earlier behavior: full-frame under
+`auto`, `ConfigError` (naming the `sequential_cycle_*` code) for an explicit
+`execution_mode="sequential"`. See `docs/compatibility-contract.md` and
+`docs/plans/2026-10-12-phase-d-d2cycle-bounded-fk-cycles.md`.

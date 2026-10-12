@@ -25,9 +25,11 @@ from tests.parity import _strict_compare as sc
 from tests.parity._d2a_seq_data import table_digest
 from tests.parity._d2cycle_shapes import (
     chain_cycle_shape,
+    composite_cycle_shape,
     mixed_topology_shape,
     run_full,
     run_seq_cycle,
+    self_ref_in_cycle_shape,
     three_table_cycle_shape,
     two_table_cycle_shape,
 )
@@ -58,6 +60,8 @@ _CASES: list[tuple[str, Callable[[], s.Shape]]] = [
     ("three-remap", lambda: three_table_cycle_shape(REMAP)),
     ("chain-remap", lambda: chain_cycle_shape(REMAP)),
     ("mixed-remap", lambda: mixed_topology_shape(REMAP)),
+    ("composite-remap", lambda: composite_cycle_shape(REMAP)),
+    ("self-ref-remap", lambda: self_ref_in_cycle_shape(REMAP)),
 ]
 _IDS = [c[0] for c in _CASES]
 

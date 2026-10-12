@@ -39,10 +39,12 @@ __all__ = [
     "BIG_BUDGET",
     "Shape",
     "chain_cycle_shape",
+    "composite_cycle_shape",
     "cycle_ctx",
     "mixed_topology_shape",
     "run_full",
     "run_seq_cycle",
+    "self_ref_in_cycle_shape",
     "three_table_cycle_shape",
     "two_table_cycle_shape",
 ]
@@ -260,3 +262,62 @@ def keyed(strategy: str, **config: Any) -> ColumnSeed:
         namespace=None if strategy == "passthrough" else "ns_k",
         provider_config=tuple(config.items()),
     )
+
+
+def composite_cycle_shape(policy: OrphanPolicy = PRESERVE) -> Shape:
+    """A.(k, j) -> B.(m, n) and B.(p, q) -> A.(u, v): composite keys around one cycle.
+
+    The parents are plain scalar producers; each child is a composite FK group."""
+    plan = make_plan(
+        {
+            "A": table_seed({"k": hashed("ns_ak"), "j": hashed("ns_aj")}, {("u", "v"): "ns_ga"}),
+            "B": table_seed({"p": hashed("ns_bp"), "q": hashed("ns_bq")}, {("m", "n"): "ns_gb"}),
+        }
+    )
+    g = graph(
+        edge("A", ("k", "j"), "B", ("m", "n"), "ns_gb", policy),
+        edge("B", ("p", "q"), "A", ("u", "v"), "ns_ga", policy),
+    )
+    return Shape(
+        plan,
+        g,
+        {
+            "A": pa.table(
+                {
+                    "k": strs(["a1", "a2", "a3"]),
+                    "j": strs(["x1", "x2", "x3"]),
+                    "u": strs(["b1", "b2", "bX"]),
+                    "v": strs(["y1", "y2", "y9"]),
+                }
+            ),
+            "B": pa.table(
+                {
+                    "p": strs(["b1", "b2", "b3"]),
+                    "q": strs(["y1", "y2", "y3"]),
+                    "m": strs(["a1", "a2", "aZ"]),
+                    "n": strs(["x1", "x2", "x9"]),
+                }
+            ),
+        },
+    )
+
+
+def self_ref_in_cycle_shape(policy: OrphanPolicy = PRESERVE) -> Shape:
+    """The two-table cycle plus A.mgr -> A.id: a self-reference inside a cyclic component."""
+    base = two_table_cycle_shape(policy)
+    plan = make_plan(
+        {
+            "A": table_seed(
+                {
+                    "id": hashed("ns_ab"),
+                    "back": hashed("ns_ba"),
+                    "mgr": hashed("ns_ab"),
+                    "pay": hashed("ns_pay"),
+                }
+            ),
+            "B": table_seed({"mid": hashed("ns_ba"), "pay2": passthrough()}),
+        }
+    )
+    g = graph(*base.graph.edges, edge("A", "id", "A", "mgr", "ns_ab", policy))
+    a = base.sources["A"].append_column("mgr", strs([None, "a1", "a2", "ghost"]))
+    return Shape(plan, g, {"A": a, "B": base.sources["B"]})

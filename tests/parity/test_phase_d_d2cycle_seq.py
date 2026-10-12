@@ -36,10 +36,12 @@ from tests.parity._d1a_hash_data import column_seed
 from tests.parity._d2a_seq_data import RecordingSink
 from tests.parity._d2cycle_shapes import (
     chain_cycle_shape,
+    composite_cycle_shape,
     cycle_ctx,
     mixed_topology_shape,
     run_full,
     run_seq_cycle,
+    self_ref_in_cycle_shape,
     three_table_cycle_shape,
     two_table_cycle_shape,
 )
@@ -72,6 +74,11 @@ _CASES: list[tuple[str, Callable[[], s.Shape]]] = [
     ("mixed-preserve", lambda: mixed_topology_shape(PRESERVE)),
     ("mixed-remap", lambda: mixed_topology_shape(REMAP)),
     ("mixed-warn", lambda: mixed_topology_shape(WARN)),
+    ("composite-preserve", lambda: composite_cycle_shape(PRESERVE)),
+    ("composite-warn", lambda: composite_cycle_shape(WARN)),
+    ("composite-remap", lambda: composite_cycle_shape(REMAP)),
+    ("self-ref-preserve", lambda: self_ref_in_cycle_shape(PRESERVE)),
+    ("self-ref-remap", lambda: self_ref_in_cycle_shape(REMAP)),
 ]
 _IDS = [c[0] for c in _CASES]
 
@@ -107,11 +114,9 @@ def test_ri_holds_in_both_directions_for_a_matched_cycle() -> None:
         a_id=["a1", "a2", "a3"], b_mid=["a1", "a2", "a3"], a_back=["a1", "a3", "a2"]
     )
     out = run_seq_cycle(shape).outputs
-    a_id, b_mid, a_back = (set(out["A"]["id"].to_pylist()), out["B"]["mid"].to_pylist(), None)
-    a_back_values = out["A"]["back"].to_pylist()
-    assert set(b_mid) <= a_id
-    assert set(a_back_values) <= set(b_mid)
-    assert set(b_mid) == a_id and a_back is None
+    a_id, b_mid, a_back = (out["A"]["id"], out["B"]["mid"], out["A"]["back"])
+    assert set(b_mid.to_pylist()) == set(a_id.to_pylist())
+    assert set(a_back.to_pylist()) <= set(b_mid.to_pylist())
 
 
 def test_the_transactional_sink_gets_every_table_and_one_commit() -> None:
@@ -293,14 +298,12 @@ def test_a_producer_key_is_executed_from_originals_while_the_child_inherits_the_
 
 def test_pass_one_reads_only_the_key_columns_before_any_whole_table_load() -> None:
     shape = mixed_topology_shape()
-    events: list[tuple[str, Any]] = []
     calls: list[tuple[str, tuple[str, ...]]] = []
     ctx = cycle_ctx(shape, calls=calls)
     loads: list[str] = []
     run_seq_cycle(shape, ctx=ctx, loads=loads)
     assert sorted(calls) == [("A", ("back", "id")), ("B", ("mid",))]
     assert sorted(loads) == ["A", "B", "C", "D", "P"]
-    assert events == []
 
 
 def test_the_projected_read_precedes_the_first_cyclic_table_load() -> None:
@@ -454,10 +457,9 @@ def test_self_reference_and_acyclic_shapes_still_run_without_a_context() -> None
             assert sc.compare_strict(oracle[table], result.outputs[table]) == _ALL_TRUE
 
 
-def test_pass_one_row_errors_fail_loud_like_the_oracle(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A key row that errors during pass 1 surfaces as the same fail-loud error."""
-    from decoy_engine.execution._row_errors import RowError
-
+def test_a_row_error_in_the_key_pass_fails_loud(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No admitted producer reports row errors today. If one did, quarantine is off for an
+    admitted job, so the record is uncovered and must raise, as the table loop would."""
     shape = two_table_cycle_shape()
     real = _sequential_cycle.drain_row_errors
 
@@ -474,7 +476,6 @@ def test_pass_one_row_errors_fail_loud_like_the_oracle(monkeypatch: pytest.Monke
         return batch
 
     monkeypatch.setattr(_sequential_cycle, "drain_row_errors", inject)
-    assert RowError  # imported for the record type's module path
     with pytest.raises(RowErrorsFailedError):
         run_seq_cycle(shape)
 
@@ -532,3 +533,16 @@ def test_the_key_pass_mints_remap_orphans_on_the_kernel_like_the_table_pass(
         assert python_rows == []
         assert kernel.calls
         assert any(isinstance(v, str) and v.startswith(MARK) for v in out["A"]["back"].to_pylist())
+
+
+def test_an_empty_cyclic_table_matches_the_oracle() -> None:
+    shape = two_table_cycle_shape(PRESERVE, b_mid=[], a_back=["a1", "aX", "zz", None])
+    _assert_equivalent_empty(shape)
+
+
+def _assert_equivalent_empty(shape: s.Shape) -> None:
+    oracle = run_full(shape).outputs
+    result = run_seq_cycle(shape).outputs
+    assert result["B"].num_rows == 0
+    for table in oracle:
+        assert sc.compare_strict(oracle[table], result[table]) == _ALL_TRUE, table

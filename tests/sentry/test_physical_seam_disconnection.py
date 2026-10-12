@@ -634,6 +634,12 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         # coded decline; `_sequential.py` wraps the node dispatch with it. Neither imports `execution.physical`.
         "src/decoy_engine/execution/_sequential_native.py",
         "src/decoy_engine/execution/_sequential_composite_chain.py",
+        # D2-cycle (cross-table FK cycles on the sequential route): the new `_sequential_cycle.py`
+        # (component detector, cycle-aware table order, key-columns pass) and
+        # `_sequential_cycle_admit.py` (admission gate and memory price) are called from
+        # `_sequential.py` and the routing modules. None imports `execution.physical`.
+        "src/decoy_engine/execution/_sequential_cycle.py",
+        "src/decoy_engine/execution/_sequential_cycle_admit.py",
         "src/decoy_engine/execution/_strategies/_hash.py",
     }
     unexpected = [

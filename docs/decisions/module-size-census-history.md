@@ -684,3 +684,16 @@ R3 (2026-10-10): the `locals()` forwarding (`run_from_pipeline_locals`, its two 
 import-time `_assert_forwarding_covers_signature`) was deleted when `maybe_run_unified_slice` began
 taking the typed run context and routing decision, taking the file from 605 to 469 LOC. At or under
 GOAL the entry is deleted.
+
+## `src/decoy_engine/execution/_sequential.py` (census 677 -> 669, D2-cycle)
+
+D2-cycle (2026-10-12): `table_topo_order` moved to `_sequential_cycle.py` next to the cycle-aware
+order, and the per-table parent-map release loop became `release_parent_maps` there, which paid
+for the cycle admission call, the key-pass call and the explicit `del df, out` in the loop.
+
+## `src/decoy_engine/execution/_pipeline_routing_signals.py` (census 606 at D2-cycle)
+
+D2-cycle (2026-10-12): `resolve_execution_route` computes the cycle gate's verdict
+(`route_cycle_decline`) and hands `cycle_admitted` / `cycle_decline_code` to
+`decide_execution_route`. Decomposition target: move the routing-signal bundle out of the
+cap-bound resolver when the module is next touched.

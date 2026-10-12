@@ -98,7 +98,7 @@ ALLOWLIST: dict[str, int] = {
     # resident Arrow type resolution; move it into its own module with the next operator gate.
     "src/decoy_engine/execution/native/_requirements.py": 647,
     # sequential FK route threading; split the per-table mask/quarantine loop.
-    "src/decoy_engine/execution/_sequential.py": 668,
+    "src/decoy_engine/execution/_sequential.py": 669,
     # cycle-gate verdict threaded into the route decision; split the routing-signal bundle from the cap-bound resolver.
     "src/decoy_engine/execution/_pipeline_routing_signals.py": 606,
     # transactional publish hardening and row mask; split the publish cluster.
