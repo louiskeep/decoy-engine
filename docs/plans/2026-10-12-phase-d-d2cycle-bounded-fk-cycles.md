@@ -1,6 +1,23 @@
 # Phase D / D2-cycle: cross-table FK cycles native on the bounded (SEQ) route
 
-Status: plan (rev 4.1, GATE GO - ready to build). rev 1 NO-GO (wrong re-derivation premise); rev 2 NO-GO
+Status: plan (rev 5, re-scoped after the Codex FINAL-gate NO-GO - re-gating the delta before rebuild).
+rev 4.1 built (commits f41603f9/baa3c77c/671cb251) + dennis-APPROVED + remediated (d3526f90), but the
+Codex FINAL gate returned NO-GO with 4 BLOCKERs - all at the ADMISSION BOUNDARY, the core two-pass
+parity is validated. (1) pass 1 silently skipped an incoming COMPOSITE-FK writer of a cyclic key ->
+raw values / RI divergence on an "admitted" job; (2) memory pricing covered only cyclic-table source
+bytes, ignoring the WHOLE-JOB working set + strategy OUTPUT-WIDTH expansion (a disconnected 1M-row
+hashed bool: priced 758KB, real 68MB under a 67MB budget); (3) `nested(strategy="code_set")` bypassed
+the unpriced decline (only outer strategies enumerated); (4) a faker pool is built to full `pool_size`
+BEFORE the cache cap (person_email pool_size=1e8 admitted at 268MB, builds 800MB). rev 5 RADICALLY
+NARROWS so the bound is trivially defensible (Cam's authorized "narrow further" path): DECLINE
+incoming-composite-FK-writers-of-a-cyclic-key, DECLINE all pool/corpus/generator/nested payload
+strategies on cyclic tables (resolving nested/transitive strategies), and price the WHOLE-JOB
+bounded-width per-table working set from REAL decoded/output sizes (not synthetic arithmetic). The
+admitted set shrinks to hash/passthrough/redact/truncate/fpe-keyed cyclic chains with bounded-width
+payloads that fit memory; everything else keeps running on full-frame. DECISION: this is the memory-bound
+defect class recurring (plan rev-3 HIGH-2, rev-4 MED, now impl) - resolved by declining, not by a cleverer
+pricer; if the rev-5 delta plan-gate finds the narrowing still unsound, defer D2-cycle to V2.
+[HISTORY] rev 1 NO-GO (wrong re-derivation premise); rev 2 NO-GO
 (transform semantics + memory); rev 3 NO-GO (2 HIGH: the gate again VALIDATED the
 effective-map core, canonicalization, inheritance, and confirmed transforms resolved +
 projected reads buildable, but found two NEW holes). rev 4 narrows per the gate's own
@@ -21,10 +38,10 @@ JOB-level (enabled+triggers) so decline the whole cyclic route when quarantine t
 are on, FAIL is an allowed abort; (MED) eligibility checked against EVERY actual key
 writer (joint_mask etc.) with a DEFAULT-DENY five-strategy allowlist; (LOW) build the
 map in source order, execute standalone producer keys from originals (consumer map is
-for FK consumers only). Branches off main; rebases onto post-D2b main before build. Cam
-2026-10-12: keep in v1 and ATTEMPT it. STATUS: round-4 Codex plan gate GO ("no new HIGH
-soundness hole; admitted set useful and sound"); ready to build once D2b main CI is
-green and the branch rebases onto post-D2b main.
+for FK consumers only). Cam 2026-10-12: keep in v1 and ATTEMPT it. STATUS: the branch is
+on post-D2b main (HEAD d3526f90); rev-5 re-scope (above) re-gates the narrowing delta with
+Codex, then the builder remediates the 4 BLOCKERs + the seam-sentry MED on the same branch,
+then dennis + Codex final again before merge.
 
 Rules consulted: 00-universal.md, risk-and-exceptions.md, development-loop.md,
 architecture.md, reuse-first.md, testing.md, documentation.md,
@@ -94,7 +111,28 @@ component only when ALL of:
   conservative, covers surrounding acyclic tables too) - this is what makes omitting
   `quarantine_entries` from the memory formula valid job-wide. Orphan `FAIL` raises
   directly (`_fk_resolve.py:121`): it is an ABORT, not accumulation, so it is allowed.
-- the COMBINED memory estimate fits (see the memory contract); else decline.
+- **EVERY WRITER of a retained cyclic key must be FULLY PROJECTED in pass 1 (rev-5
+  BLOCKER-1).** Pass 1 projects columns from the COMPLETE dependency/writer closure of
+  every retained key, INCLUDING incoming composite-FK groups. A composite-FK group
+  (e.g. `P0.(p,q) -> X.(id,extra)`) writes the cyclic key `X.id` but its node columns
+  extend beyond the internal-cycle projection; if pass 1 skips that writer, the key
+  stays RAW and the cycle inherits raw -> masking + RI divergence from full-frame on an
+  "admitted" job. v1 cut: DECLINE any cyclic component where a retained key is written
+  (wholly or partly) by an incoming composite-FK group that is not fully projectable.
+  NEVER silently skip a writer of a retained key.
+- **NO unbounded/hard-to-price PAYLOAD strategy on ANY cyclic-component table (rev-5
+  BLOCKER-3/4, radical narrowing).** DECLINE a cyclic component when any payload column
+  on its tables uses a pool/corpus/generator-backed or nested strategy -
+  `faker` (`_faker.py:89` builds the WHOLE pool to `pool_size` BEFORE the cache cap
+  applies - a `person_email` `pool_size=1e8` is an 800MB array under a 512MiB "budget"),
+  `code_set` (whole corpus resident), `composite` (config-sized bundle pool outside
+  PoolCache), and ANY `nested(strategy=...)` wrapping one of these. Resolve NESTED /
+  transitive dispatched strategies with the SAME child-resolution semantics as execution
+  (rev-5 BLOCKER-3: `nested(strategy="code_set")` must be rejected, not priced as
+  PoolCache-backed) - inspect the transitive strategy set, not just the outer name.
+  This removes every unbounded-memory payload from the admitted set so the bound is
+  trivially defensible; those configs keep running on full-frame.
+- the WHOLE-JOB COMBINED memory estimate fits (see the memory contract); else decline.
 Native-vs-Python stays the usual per-column type decision and is a speedup only (a
 Python-fallback producer still emits a correct effective map). Also decline OOC cyclic
 jobs. Self-reference is not a table cycle (handled by D2b drain-fold) - out of scope;
@@ -163,22 +201,28 @@ outgoing children consuming it. Peak at any point =
 - (the cross-table error state `all_row_errors` + `key_error_rows`, `_sequential.py:443`
   - keyed by errored CELLS, worst-case every row across many columns, so priced from the
   error-trigger config, NOT assumed negligible, rev-4 MED); PLUS
-- (the shared strategy `PoolCache`, `_sequential.py:308`, which holds generated POOLS
-  not a source-value-keyed map - entries can be tuple-valued bundles and its own byte
-  estimator caps string accounting, `pool/_cache.py:69`, `pool/_value_pool.py:63`; AND
-  `code_set` pins whole corpus records outside PoolCache, `_strategies/_code_set.py:179`)
-  - these are NOT bounded by source cardinality, so price them from their config or
-  DECLINE those configurations (rev-4 MED); PLUS
-- (the current table's working set: load + pandas conversion + the table-transition
-  OVERLAP - eviction deletes `frames[table]` but local `df`/`out` references persist,
-  `_sequential.py:518`, so release them explicitly before the next load or price the
-  overlap, rev-4 MED), plus narrow-pass scratch + warnings/metrics,
-under lazy inputs + a draining sink. `quarantine_entries` (whole masked rows incl
-payload, `quarantine.py:184`) is NOT in this formula ONLY because the admission gate
-declines any job that enables row-error quarantine triggers (above) - so retained state
-stays narrow by construction. GOVERNING RULE (rev-4): PRICE EVERY LIVE ALLOCATION OR
-DECLINE - the bullet list is the known set, not an exhaustive guarantee; any resident or
-phase-local allocation whose bound is unavailable makes the job decline. The plan
+- (the per-table WORKING SET of EVERY table in the JOB, not only the cyclic component -
+  rev-5 BLOCKER-2. The whole job runs one table at a time but each table's masked output
+  Arrow table + live pandas frame + conversion scratch must fit alongside the retained
+  cyclic maps. A DISCONNECTED acyclic table is still part of the job: a 1M-row boolean
+  column hashed produces a ~68MB Arrow table even though the cyclic tables are tiny, so
+  pricing only the cyclic tables' source bytes (the rev-4 bug: 2-3x `table_bytes[cyclic]`)
+  under-prices by orders of magnitude. Price the DECODED input width + the STRATEGY-
+  DEPENDENT OUTPUT WIDTH (a hash/redact of a 1-byte bool emits a wide string; output can
+  be far larger than source) + conversion/scratch overlap + the table-transition overlap
+  (eviction deletes `frames[table]` but local `df`/`out` persist, `_sequential.py:518` -
+  release explicitly or price) + variable-width retained keys, for every table; DECLINE
+  any config whose output/working-set size has no defensible bound),
+under lazy inputs + a draining sink. `quarantine_entries` (whole masked rows,
+`quarantine.py:184`), `PoolCache`/generator pools (`pool/_cache.py:69`, `_faker.py:89`
+builds the full pool BEFORE the cache cap), `code_set` corpora, `composite` bundle pools,
+and `nested(...)` wrapping any of these are NOT in this formula because the admission
+gate DECLINES every job that uses them (above, rev-5 BLOCKER-3/4) - so retained state is
+trivially bounded (narrow key maps + bounded-width per-table working sets). GOVERNING
+RULE (rev-4, reaffirmed rev-5): PRICE EVERY LIVE ALLOCATION OR DECLINE, and price from
+real decoded/output allocation sizes NOT synthetic source-byte arithmetic - the bullet
+list is the known set; any resident or phase-local allocation whose bound is unavailable
+makes the job decline. The plan
 defines explicit RELEASE points (drop a map/error-map pair only after its last consumer
 across pass-1 work, pass-2 work, AND outgoing children - `_sequential.py:301` table-only
 consumer sets need this adaptation) and a COMBINED-budget admission check that reserves
@@ -212,20 +256,25 @@ independent cycle rejection and the self-edge exclusion.
 **Guarantee.** An admitted SEQ cross-table cycle masks byte-identically to full-frame
 (strict dimensions); RI/orphan/cascade/duplicate/policy match full-frame exactly
 (same `resolve_fk_keys` precedence, same effective-map semantics); peak memory is the
-combined live state (retained parent maps + error caches + component narrow maps +
-cross-table error state + PoolCache + the current table's working set), checked against
-budget at admission. Non-admitted cycles (`when:`-conditional-key / non-pure-value
--function-producer e.g. derived-sibling-read or positional / overlapping-multi-column
--key-writer / Faker-categorical-key / inherited-key-dependency / oversized-single-table /
-transform-bearing-cyclic-table / quarantine-triggers-enabled / payload-state-over-budget /
-work-node-cyclic / combined-budget-over) and OOC cyclic jobs decline with a clear coded
-reason. Acyclic masking and full-frame unchanged.
+combined live state (retained narrow key maps + per-cell error caches + the WHOLE-JOB
+per-table bounded-width working set), checked against budget at admission from REAL
+decoded/output allocation sizes. Non-admitted cycles decline with a clear coded reason:
+`when:`-conditional-key / non-pure-value-function-producer (derived-sibling-read,
+positional) / overlapping-multi-column-key-writer / Faker-categorical-key /
+incoming-composite-FK-writer-of-a-cyclic-key (rev-5) / unbounded-payload-strategy on a
+cyclic table (faker/code_set/composite/nested-wrapping-those, rev-5) /
+inherited-key-dependency / oversized-single-table / transform-bearing-cyclic-table /
+quarantine-triggers-enabled / whole-job-working-set-over-budget / work-node-cyclic. OOC
+cyclic jobs decline. Acyclic masking and full-frame unchanged.
 
 **Non-goals.** No re-derivation of matched keys. No fixed-point iteration. No OOC
 cyclic support. No projected post-transform contract for transform-bearing cyclic tables
 (they decline this cut). No support for sibling-reading/positional key PRODUCERS in a
 cycle (they decline; CONSUMER inheritance stays strategy-agnostic). No quarantine-row
-accounting in the bound (quarantine policies decline on cyclic tables instead). No
+accounting in the bound (quarantine jobs decline). No pool/corpus/generator-backed or
+nested payload strategy on a cyclic table, and no PoolCache/code_set/composite pricing
+(those configs decline, rev-5 - the bound covers only narrow key maps + bounded-width
+per-table working sets). No incoming composite-FK writer of a cyclic key (rev-5). No
 change to full-frame, `_fk_resolve` precedence, or acyclic routing.
 
 ## Acceptance tests (authored before impl; include the rev-1 counterexamples)
@@ -275,22 +324,47 @@ change to full-frame, `_fk_resolve` precedence, or acyclic routing.
   after its last consumer ACROSS BOTH PASSES AND outgoing children (peak stays bounded,
   not monotonically growing, rev-3 HIGH-2). **Quarantine:** a multi-table job that
   enables row-error quarantine triggers DECLINES the cyclic route (it would accumulate
-  whole masked rows across tables, rev-3 HIGH-2). **Payload-strategy state:** a job whose
-  cyclic payload columns use a large `PoolCache`/`code_set` whose retained state exceeds
-  budget DECLINES (priced, not assumed cheap, rev-4 MED); an error-heavy config whose
-  per-cell error caches exceed budget DECLINES.
+  whole masked rows across tables, rev-3 HIGH-2). **Payload-strategy state:** a cyclic job
+  with ANY faker/code_set/composite/nested-wrapping-those payload column on a cyclic table
+  DECLINES outright (rev-5 BLOCKER-3/4 - these build unbounded pools/corpora, not priced);
+  an error-heavy config whose per-cell error caches exceed budget DECLINES.
+- **rev-5 BLOCKER reproducers (the Codex final-gate counterexamples) MUST now be handled
+  correctly - these are REQUIRED, with REAL allocation/output sizes not synthetic
+  arithmetic:**
+  - **BLOCKER-1 composite-FK writer (parity/decline):** the job `P0.(p,q)->X.(id,extra)`
+    (incoming COMPOSITE FK writing `X.id`), cycle `X.id->Y.mid->X.back`, hash producers,
+    PRESERVE. Full-frame hashes `X.id`/`Y.mid`/`X.back`. The admitted-today build emitted
+    RAW `"x"` in `Y.mid`/`X.back` (pass 1 skipped the composite writer) - this MUST now
+    either mask byte-identically to full-frame OR DECLINE (v1 cut declines a cyclic key
+    written by a not-fully-projectable incoming composite-FK group). Assert through
+    validated config + compilation + `run_pipeline`, not just a unit stub.
+  - **BLOCKER-2 whole-job working set (decline):** a small admitted cycle PLUS a
+    DISCONNECTED 1M-row boolean column hashed, under a ~67MB budget. The job produces a
+    ~68MB Arrow table for the disconnected column alone; admission MUST DECLINE (the bound
+    prices every table's real output width, not cyclic source bytes). A real
+    allocation/output-size acceptance check, not size arithmetic.
+  - **BLOCKER-3 nested code_set (decline):** a cyclic job with
+    `nested(target="$.c", strategy="code_set", ...)` on a payload column MUST DECLINE
+    (transitive strategy resolution), not run as PoolCache-priced.
+  - **BLOCKER-4 faker pool build (decline):** a `person_email` payload with a large
+    `pool_size` on a cyclic table MUST DECLINE BEFORE the pool is built (the pool is
+    constructed to full size before the cache cap applies); assert the decline fires at
+    admission, before generation.
 - **Declines (fail closed, coded, no data in the message):** a `when:`-conditional
   KEY cycle; a non-pure-value-function PRODUCER cycle (derived/sibling-reading, and
   positional/row-index - rev-3 HIGH-1, config-detectable by strategy type + inputs); a
   cyclic key column written by an OVERLAPPING/MULTI-COLUMN writer, e.g. a payload
   `joint_mask` that lists it (rev-4 MED - eligibility checked against every actual
   writer, not just the key's own declared strategy); a Faker/categorical cyclic key
-  (default-deny, config-dependent); an inherited-key-dependency cycle the pass can't
+  (default-deny, config-dependent); an INCOMING COMPOSITE-FK group writing a cyclic key
+  that is not fully projectable (rev-5 BLOCKER-1); a cyclic table with an unbounded
+  PAYLOAD strategy - faker/code_set/composite/nested-wrapping-those, transitive
+  resolution (rev-5 BLOCKER-3/4); an inherited-key-dependency cycle the pass can't
   resolve; a cyclic table carrying a table-level TRANSFORM (filter/sort/dedup/derived -
   rev-2 HIGH-1); a job that enables row-error QUARANTINE triggers (rev-3 HIGH-2 +
-  rev-4 MED, job-wide); a component whose WORK-NODE dependency graph cycles (not just the
-  table graph); an OOC cyclic job (unchanged). Each decline is detectable at config/route
-  time without inspecting row data.
+  rev-4 MED, job-wide); a whole-job working set over budget (rev-5 BLOCKER-2); a component
+  whose WORK-NODE dependency graph cycles (not just the table graph); an OOC cyclic job
+  (unchanged). Each decline is detectable at config/route time without inspecting row data.
 - **Routing:** an incoming acyclic parent + a cyclic component + an outgoing acyclic
   child + a disconnected acyclic table all in one job order and mask correctly;
   self-reference still routes as today (not treated as a table cycle).
