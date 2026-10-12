@@ -185,6 +185,24 @@ class CategoricalStrategyHandler:
                 message=f"column {column!r} uses {mode} categorical but has no namespace.",
             )
         cdf = _build_cdf(weights) if weights is not None else None
+        # getattr: handlers are also driven with hand-built contexts that predate this field.
+        # Admission accepts only the deterministic subset; a declined column still passes through
+        # so the run counts the rows Python masked. No residual-warning phase exists here, so a
+        # native return is the whole result.
+        seq = getattr(ctx, "seq_native", None)
+        if seq is not None:
+            tokens = seq.categorical_column(
+                ctx,
+                df,
+                column,
+                namespace=plan.namespace,
+                mask_key=ctx.mask_key,
+                categories=categories,
+                cdf=cdf,
+            )
+            if tokens is not None:
+                df[column] = tokens
+                return df, []
         # Deterministic keys on the canonical source value; non-deterministic keys on the
         # full-table row number, so a `when:`-selected row draws the same as in an ungated run
         # (C8-iii-d). `row_positions` is the single owner of that numbering; convert each scalar

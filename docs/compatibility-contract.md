@@ -237,7 +237,15 @@ from the NFC-normalized source value, so for source text with a codepoint newer
 than the running Python's Unicode version the companion and Python paths can
 select different categories. The companion selection is canonical, and the
 out-of-core route only runs a string source on the companion (documented in
-`docs/strategies.md`, categorical).
+`docs/strategies.md`, categorical). Deterministic `categorical` payload columns also
+mask on the companion on the sequential route (slice D2c-ii), through the same
+compiled index kernel, carrying this same accepted NFC nuance; a non-deterministic /
+non-namespaced / non-string-category / non-string-source / unbuildable-CDF column
+declines to Python, and a `categorical` FK key column stays Python (native REMAP is
+hash-only). `quality_metrics["sequential_categorical"]` records the backend per column;
+the SEQ disposition is now emitted per registered strategy (`sequential_hash`,
+`sequential_fpe`, `sequential_categorical`), each key present only when that strategy
+recorded a decision.
 
 `bucket_perturb` carries the same nuance: the within-bucket offset derives from the
 NFC-normalized source value, so a `date_format` with a Unicode literal suffix holding
