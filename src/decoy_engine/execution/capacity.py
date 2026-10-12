@@ -298,6 +298,14 @@ def estimate_job_capacity(
         profile.relationships, namespace_registry=ns_registry, orphan_policy_lookup=orphan_lookup
     )
 
+    # No resident sources here, so only the plan/graph/config checks of the cycle gate apply; the
+    # size checks are the run's. This keeps an admitted large cycle from reading "rejected".
+    from decoy_engine.execution._sequential_cycle_admit import route_cycle_decline
+
+    cycle_decline = route_cycle_decline(
+        plan, graph, registry, config, {}, None, structural_only=True
+    )
+
     out_of_core_compatible, out_of_core_reject_code = out_of_core_admission(
         plan, registry=registry, graph=graph
     )
@@ -326,6 +334,8 @@ def estimate_job_capacity(
             # path needs resident sample data this function never reads.
             use_byte_estimate_routing=False,
             use_probe_routing=False,
+            cycle_admitted=cycle_decline is None,
+            cycle_decline_code=cycle_decline.code if cycle_decline else None,
         )
     except ExecutionError as exc:
         # Only a genuine reject-before-read code folds into NOT_APPLICABLE; any
@@ -385,6 +395,8 @@ def estimate_job_capacity(
                 use_byte_estimate_routing=True,
                 full_frame_fits_estimate=False,
                 use_probe_routing=False,
+                cycle_admitted=cycle_decline is None,
+                cycle_decline_code=cycle_decline.code if cycle_decline else None,
             )
         except ExecutionError as exc:
             # A reject-before-read is the worst case: a real run would raise

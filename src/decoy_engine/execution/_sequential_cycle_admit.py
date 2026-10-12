@@ -59,7 +59,9 @@ PROJECTED_READ = "sequential_cycle_projected_read_unavailable"
 # duplicates included. Everything else is declined.
 KEY_PRODUCER_ALLOWLIST = frozenset({"hash", "passthrough", "redact", "truncate", "fpe"})
 _POOL_STRATEGIES = frozenset({"faker", "nested"})
-_UNPRICED_STRATEGIES = frozenset({"code_set"})
+# `composite` entries build a per-node bundle pool sized by config (up to 2**56 entries) that
+# never goes through the PoolCache, so its bytes have no bound the cache capacity states.
+_UNPRICED_STRATEGIES = frozenset({"code_set", "composite"})
 
 # Upper-bound CPython costs, per live entry. See the module docstring.
 _MAP_ENTRY_BASE, _MAP_ENTRY_PER_COLUMN = 216, 176
@@ -260,10 +262,7 @@ def price_cycle_job(
         for t, cols in cyclic_key_columns(graph, comp).items()
     )
     working = 2 * max(ctx.table_bytes[t] for t in tables)
-    pooled = any(
-        strategy in _POOL_STRATEGIES or strategy == "composite"
-        for strategy, _ in _strategies(plan, registry)
-    )
+    pooled = any(strategy in _POOL_STRATEGIES for strategy, _ in _strategies(plan, registry))
     return CyclePrice(maps, error, narrow, working, pool_capacity_bytes if pooled else 0)
 
 
@@ -275,8 +274,13 @@ def cycle_decline(
     *,
     quarantine_config: Mapping[str, Any] | None = None,
     pool_capacity_bytes: int | None = None,
+    structural_only: bool = False,
 ) -> CycleDecline | None:
-    """None when the graph has no cross-table cycle or every cyclic component is admitted."""
+    """None when the graph has no cross-table cycle or every cyclic component is admitted.
+
+    `structural_only` skips the checks that depend on the sources (the column read and the memory price). The transforms
+    preflight runs before transformed tables exist, so it may reject only what no transform
+    can change; routing re-runs the full gate on the prepared sources."""
     components = fk_components(graph)
     if not components:
         return None
@@ -298,17 +302,20 @@ def cycle_decline(
     )
     if found is not None:
         return found
+    if any(s in _UNPRICED_STRATEGIES for s, _ in _strategies(plan, registry)):
+        return CycleDecline(
+            PAYLOAD_UNPRICED,
+            "a code_set or composite column keeps strategy state outside the bounded PoolCache "
+            "(a whole corpus, or a config-sized bundle pool), so the sequential route cannot "
+            "price the cyclic job.",
+        )
+    if structural_only:
+        return None
     if ctx.projected_loader is None:
         return CycleDecline(
             PROJECTED_READ,
             "the source cannot be read by column, and the sequential route will not read a whole "
             "cyclic table to build the key maps.",
-        )
-    if any(s in _UNPRICED_STRATEGIES for s, _ in _strategies(plan, registry)):
-        return CycleDecline(
-            PAYLOAD_UNPRICED,
-            "a code_set column keeps its whole corpus resident outside any bounded cache, so the "
-            "sequential route cannot price the cyclic job.",
         )
     pool = default_pool_capacity_bytes() if pool_capacity_bytes is None else pool_capacity_bytes
     price = price_cycle_job(plan, graph, registry, ctx, pool_capacity_bytes=pool)
@@ -398,9 +405,20 @@ def cycle_context_from_run(
 
     def read_columns(table: str, columns: Sequence[str]) -> pa.Table:
         source = caller_sources[table]
-        if isinstance(source, LazySource):
-            return source.read_columns(columns)
-        return source.select(list(columns))
+        try:
+            if isinstance(source, LazySource):
+                return source.read_columns(columns)
+            return source.select(list(columns))
+        except (pa.ArrowInvalid, KeyError, ValueError):
+            # pyarrow's own message can quote the file path; name only schema identifiers.
+            raise ExecutionError(
+                code=PROJECTED_READ,
+                message=(
+                    f"table {table!r} has no top-level column among {sorted(columns)!r} that the "
+                    "sequential cycle pass can read by name; a missing or nested key column "
+                    "cannot be projected."
+                ),
+            ) from None
 
     complete = all(t in caller_sources for t in tables)
     return CycleContext(
@@ -419,10 +437,19 @@ def route_cycle_decline(
     config: Mapping[str, Any],
     caller_sources: Mapping[str, pa.Table | LazySource],
     out_of_core_budget_bytes: int | None,
+    *,
+    structural_only: bool = False,
 ) -> CycleDecline | None:
     """`run_pipeline`'s routing-time gate: the decline for this job's cycle, None when admitted
     or when the graph has no cross-table cycle."""
     if not fk_components(graph):
         return None
     ctx = cycle_context_from_run(plan, graph, config, caller_sources, out_of_core_budget_bytes)
-    return cycle_decline(plan, graph, registry, ctx, quarantine_config=config.get("quarantine"))
+    return cycle_decline(
+        plan,
+        graph,
+        registry,
+        ctx,
+        quarantine_config=config.get("quarantine"),
+        structural_only=structural_only,
+    )

@@ -316,3 +316,84 @@ def test_quarantine_triggers_send_the_cycle_back_to_full_frame(tmp_path: Path) -
     with pytest.raises(ConfigError) as caught:
         run_pipeline(config, _tables(config), engine_version="t", execution_mode="sequential")
     assert "sequential_cycle_quarantine_enabled" in str(caught.value)
+
+
+# The transforms preflight and routing agree about a cycle that shares a job with a
+# transform-bearing acyclic table.
+
+
+def _with_transform_table(config: dict[str, Any], tmp_path: Path) -> dict[str, Any]:
+    pq.write_table(
+        pa.table({"x": pa.array([f"x{i}" for i in range(8)], pa.string())}), tmp_path / "d.parquet"
+    )
+    config["sources"]["d"] = {
+        "type": "file",
+        "path": str(tmp_path / "d.parquet"),
+        "format": "parquet",
+    }
+    config["targets"]["d"] = {
+        "type": "file",
+        "path": str(tmp_path / "d.out.parquet"),
+        "format": "parquet",
+    }
+    config["tables"].append(
+        {
+            "name": "d",
+            "transforms": [{"op": "limit", "n": 5}],
+            "columns": [{"name": "x", "strategy": "redact"}],
+        }
+    )
+    return config
+
+
+def test_preflight_and_routing_admit_a_cycle_beside_a_transform_bearing_table(
+    tmp_path: Path,
+) -> None:
+    config = _with_transform_table(_cycle_config(tmp_path), tmp_path)
+    resident = run_pipeline(
+        config, _tables(config), engine_version="t", execution_mode="sequential"
+    )
+    assert resident.quality_metrics["execution"]["execution_mode"] == "sequential"
+    assert resident.outputs["d"].num_rows == 5
+    lazy = {**_tables(config), "d": LazySource(tmp_path / "d.parquet")}
+    auto = run_pipeline(
+        config,
+        lazy,
+        engine_version="t",
+        use_byte_estimate_routing=False,
+        full_frame_reject_rows=1,
+    )
+    assert auto.quality_metrics["execution"]["execution_mode"] == "sequential"
+
+
+def test_preflight_and_routing_both_reject_a_declined_cycle_beside_a_transform_table(
+    tmp_path: Path,
+) -> None:
+    config = _with_transform_table(_cycle_config(tmp_path, strategy="faker"), tmp_path)
+    with pytest.raises(ConfigError) as forced:
+        run_pipeline(config, _tables(config), engine_version="t", execution_mode="sequential")
+    assert "sequential_cycle_key_strategy_unsupported" in str(forced.value)
+    lazy = {**_tables(config), "d": LazySource(tmp_path / "d.parquet")}
+    with pytest.raises(ExecutionError) as auto:
+        run_pipeline(
+            config,
+            lazy,
+            engine_version="t",
+            use_byte_estimate_routing=False,
+            full_frame_reject_rows=1,
+        )
+    assert auto.value.code == "fk_full_frame_oom_risk_rejected"
+
+
+def test_a_key_column_missing_from_the_source_is_a_coded_decline(tmp_path: Path) -> None:
+    config = _cycle_config(tmp_path)
+    pq.write_table(pq.read_table(tmp_path / "a.parquet").drop(["bid"]), tmp_path / "a.parquet")
+    with pytest.raises(ExecutionError) as caught:
+        run_pipeline(
+            config,
+            _lazy(config),
+            engine_version="t",
+            execution_mode="sequential",
+        )
+    assert caught.value.code == "sequential_cycle_projected_read_unavailable"
+    assert str(tmp_path) not in str(caught.value)

@@ -344,6 +344,9 @@ def build_run_context(
         vault_writer=vault_writer,
         post_validation=post_validation,
         resolved_substrate=resolved_substrate,
+        plan=plan,
+        registry=resolved_registry,
+        out_of_core_budget_bytes=out_of_core_budget_bytes,
     )
     return PipelineRunContext(
         config=config,

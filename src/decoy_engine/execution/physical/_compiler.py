@@ -87,7 +87,9 @@ def layer1_route(inputs: PhysicalPlanInputs) -> tuple[str, str]:
     facts = inputs.out_of_core_facts
     vault_writer_sentinel = object() if inputs.vault_writer_present else None
     # The same gate `resolve_execution_route` runs, over the snapshot's captured facts, so the
-    # shadow route and the live one cannot disagree about an admitted cycle.
+    # shadow route and the live one cannot disagree about an admitted cycle. `facts.budget_bytes`
+    # is already resolved; `resolve_budget` on a resolved value returns it unchanged (the floor
+    # only lifts a smaller one), so the gate's second resolution cannot move the verdict.
     decline = route_cycle_decline(
         inputs.plan,
         inputs.graph,

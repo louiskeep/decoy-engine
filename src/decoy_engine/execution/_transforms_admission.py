@@ -73,6 +73,9 @@ def check_rejections_before_preparation(
     vault_writer: Any,
     post_validation: bool,
     resolved_substrate: str,
+    plan: Any = None,
+    registry: Any = None,
+    out_of_core_budget_bytes: int | None = None,
 ) -> None:
     """Raise what routing would raise for this job, from the profile, graph and the
     residency of the sources alone, so a job that is going to be rejected never
@@ -99,12 +102,29 @@ def check_rejections_before_preparation(
         resolved_substrate=resolved_substrate,
     )
     cyclic = _has_cross_table_fk_cycle(graph)
+    decline = None
+    if cyclic and plan is not None:
+        # Same gate as routing, structural checks only: sizes are not final until the
+        # transformed tables exist, and a size decline is routing's to make.
+        from decoy_engine.execution._sequential_cycle_admit import route_cycle_decline
+
+        decline = route_cycle_decline(
+            plan,
+            graph,
+            registry,
+            config,
+            caller_sources,
+            out_of_core_budget_bytes,
+            structural_only=True,
+        )
+    blocked = cyclic and (plan is None or decline is not None)
+    code = decline.code if decline else None
     if execution_mode == "sequential":
-        reject_explicit_sequential(eligible, route_reason, cyclic, has_mask_table)
+        reject_explicit_sequential(eligible, route_reason, blocked, has_mask_table, code)
         return
     lazy = any(not isinstance(caller_sources.get(name), pa.Table) for name in bearing)
     if lazy and profile.relationships and has_mask_table:
-        lazy_transform_route(eligible, route_reason, cyclic)
+        lazy_transform_route(eligible, route_reason, blocked)
 
 
 def decline_out_of_core(

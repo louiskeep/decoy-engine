@@ -299,6 +299,15 @@ def test_code_set_payload_state_is_unpriceable_and_declined() -> None:
     assert _code(shape) == PAYLOAD_UNPRICED
 
 
+def test_a_composite_payload_provider_is_unpriced_and_declined() -> None:
+    """Its bundle pool is sized by config and never goes through the PoolCache."""
+    composite = dataclasses.replace(
+        column_seed("hash", namespace="ns_c"), provider="composite_city_state_zip"
+    )
+    shape = two_table_cycle_shape(extra_a={"city": (composite, pa.array(list("wxyz")))})
+    assert _code(shape) == PAYLOAD_UNPRICED
+
+
 def test_a_large_pool_cache_is_priced_and_over_budget_is_declined() -> None:
     faker = column_seed("faker", namespace="ns_f")
     shape = two_table_cycle_shape(extra_a={"mail": (faker, pa.array(list("wxyz")))})

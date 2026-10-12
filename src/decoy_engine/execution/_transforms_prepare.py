@@ -53,6 +53,9 @@ def prepare_transform_sources(
     vault_writer: Any,
     post_validation: bool,
     resolved_substrate: str,
+    plan: Any = None,
+    registry: Any = None,
+    out_of_core_budget_bytes: int | None = None,
 ) -> PreparedSources:
     """`run_pipeline`'s one call before routing: refuse what routing would refuse from
     the profile, graph and source residency alone (so a rejected run never transforms
@@ -72,6 +75,9 @@ def prepare_transform_sources(
         vault_writer=vault_writer,
         post_validation=post_validation,
         resolved_substrate=resolved_substrate,
+        plan=plan,
+        registry=registry,
+        out_of_core_budget_bytes=out_of_core_budget_bytes,
     )
     return prepare_resident_transforms(config, caller_sources)
 
