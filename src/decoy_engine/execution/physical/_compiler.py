@@ -81,9 +81,21 @@ def layer1_route(inputs: PhysicalPlanInputs) -> tuple[str, str]:
     (reject-before-read) or `ConfigError` (forced-mode failure) it does.
     """
     from decoy_engine.execution._pipeline_routing import decide_execution_route
+    from decoy_engine.execution._sequential_cycle_admit import route_cycle_decline
+    from decoy_engine.execution.physical._inputs import thaw_config
 
     facts = inputs.out_of_core_facts
     vault_writer_sentinel = object() if inputs.vault_writer_present else None
+    # The same gate `resolve_execution_route` runs, over the snapshot's captured facts, so the
+    # shadow route and the live one cannot disagree about an admitted cycle.
+    decline = route_cycle_decline(
+        inputs.plan,
+        inputs.graph,
+        inputs.registry,
+        thaw_config(inputs.config),
+        inputs.caller_sources,
+        facts.budget_bytes,
+    )
     return decide_execution_route(
         inputs.profile,
         has_generate_table=inputs.has_generate_table,
@@ -105,6 +117,8 @@ def layer1_route(inputs: PhysicalPlanInputs) -> tuple[str, str]:
         use_probe_routing=inputs.use_probe_routing,
         probe_recovers_full_frame=facts.probe_recovers_full_frame,
         lazy_transform_bearing=facts.lazy_transform_bearing,
+        cycle_admitted=decline is None,
+        cycle_decline_code=decline.code if decline else None,
     )
 
 

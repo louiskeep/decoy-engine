@@ -518,3 +518,17 @@ def test_a_no_kernel_producer_is_proven_by_parity_not_the_kernel_marker(
     assert all(c.namespace != "ns_k" for c in kernel.calls)
     oracle = run_full(shape).outputs
     assert out["A"]["id"].to_pylist() == oracle["A"]["id"].to_pylist()
+
+
+def test_the_key_pass_mints_remap_orphans_on_the_kernel_like_the_table_pass(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A back-edge child REMAPs against a parent that is masked after it, and an incoming
+    parent's orphan is minted in both passes: neither may fall back to the Python hash."""
+    kernel = install(monkeypatch, MarkingKernel())
+    python_rows = spy_python_hash(monkeypatch)
+    for shape in (two_table_cycle_shape(REMAP), mixed_topology_shape(REMAP)):
+        out = run_seq_cycle(shape).outputs
+        assert python_rows == []
+        assert kernel.calls
+        assert any(isinstance(v, str) and v.startswith(MARK) for v in out["A"]["back"].to_pylist())

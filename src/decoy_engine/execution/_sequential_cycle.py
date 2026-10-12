@@ -32,7 +32,6 @@ from decoy_engine.execution._fk_keys import fk_columns_for_table, to_pandas_fk_s
 from decoy_engine.execution._guards import reject_null_bearing_int
 from decoy_engine.execution._row_errors import drain_row_errors
 from decoy_engine.execution._sequential_composite_chain import decline_composite_chain
-from decoy_engine.execution._sequential_native import SeqNativeRun
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -40,6 +39,7 @@ if TYPE_CHECKING:
     from decoy_engine.execution._pandas_adapter import PandasExecutionAdapter
     from decoy_engine.execution._runner import WorkNode
     from decoy_engine.execution._sequential_cycle_admit import CycleContext
+    from decoy_engine.execution._sequential_native import SeqNativeRun
     from decoy_engine.generation.pool._cache import PoolCache
     from decoy_engine.plan._types import Plan
     from decoy_engine.providers_v2 import ProviderRegistry
@@ -273,6 +273,7 @@ def run_cycle_pass1(
     namespace_registry: NamespaceRegistry,
     pool_cache: PoolCache,
     mask_key: bytes,
+    native_run: SeqNativeRun,
     parent_map_cache: dict[_NodeKey, dict[_KeyTuple, _KeyTuple]],
     errored_keys_cache: dict[_NodeKey, dict[_KeyTuple, str]],
 ) -> None:
@@ -292,7 +293,6 @@ def run_cycle_pass1(
         )
     keys = cyclic_key_columns(graph, component)
     _require_incoming_maps(graph, keys, parent_map_cache)
-    pass_native = SeqNativeRun()
     pass_ctx = StrategyContext(
         registry=registry,
         pool_cache=pool_cache,
@@ -300,7 +300,7 @@ def run_cycle_pass1(
         namespace_registry=namespace_registry,
         job_seed=plan.seed_envelope.job_seed,
         mask_key=mask_key,
-        seq_native=pass_native,
+        seq_native=native_run,
     )
     frames: dict[str, pd.DataFrame] = {}
     snapshots: dict[tuple[str, str], pd.Series] = {}
@@ -309,7 +309,11 @@ def run_cycle_pass1(
         reject_null_bearing_int(plan, {table: narrow}, registry, graph)
         df = to_pandas_fk_safe(narrow, fk_columns_for_table(graph.edges, table))
         frames[table] = df
-        pass_native.prepare_table(plan, table, narrow.schema, graph)
+        # The key pass shares the run's hash decisions. A REMAP orphan minted here must take the
+        # backend pass 2 will take for the same key (an incoming parent's decision already exists),
+        # and a back-edge child REMAPs against a parent masked after it, so the component's key
+        # columns are decided now (see `prepare_table`).
+        native_run.prepare_table(plan, table, narrow.schema, graph, record_inherited=False)
         for edge in graph.edges:
             if edge.parent_table == table:
                 for col in edge.parent_columns:

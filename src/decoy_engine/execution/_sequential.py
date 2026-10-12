@@ -405,6 +405,7 @@ def run_sequential(
                         namespace_registry=namespace_registry,
                         pool_cache=cache,
                         mask_key=ctx.mask_key,
+                        native_run=native_run,
                         parent_map_cache=parent_map_cache,
                         errored_keys_cache=errored_keys_cache,
                     )

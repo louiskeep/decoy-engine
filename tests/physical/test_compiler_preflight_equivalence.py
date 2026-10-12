@@ -185,9 +185,19 @@ def _live_route(inputs: Any) -> tuple[str, str]:
     without going through `_compiler.py` at all.
     """
     from decoy_engine.execution._pipeline_routing import decide_execution_route
+    from decoy_engine.execution._sequential_cycle_admit import route_cycle_decline
+    from decoy_engine.execution.physical._inputs import thaw_config
 
     facts = inputs.out_of_core_facts
     vault_writer_sentinel = object() if inputs.vault_writer_present else None
+    decline = route_cycle_decline(
+        inputs.plan,
+        inputs.graph,
+        inputs.registry,
+        thaw_config(inputs.config),
+        inputs.caller_sources,
+        facts.budget_bytes,
+    )
     return decide_execution_route(
         inputs.profile,
         has_generate_table=inputs.has_generate_table,
@@ -208,6 +218,8 @@ def _live_route(inputs: Any) -> tuple[str, str]:
         full_frame_fits_estimate=facts.full_frame_fits_estimate,
         use_probe_routing=inputs.use_probe_routing,
         probe_recovers_full_frame=facts.probe_recovers_full_frame,
+        cycle_admitted=decline is None,
+        cycle_decline_code=decline.code if decline else None,
     )
 
 
@@ -534,12 +546,90 @@ def test_generate_and_mask_full_frame(tmp_path: Path, monkeypatch: pytest.Monkey
 # ---------------------------------------------------------------------------
 
 
+def _faker_key(name: str) -> dict[str, Any]:
+    return {
+        "name": name,
+        "strategy": "faker",
+        "provider": "person_email",
+        "deterministic": True,
+        "namespace": "n",
+    }
+
+
 def test_reject_before_read_large_fk_no_bounded_route(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A cyclic FK graph (A -> B -> A) is eligible for neither sequential
-    (cyclic) nor out_of_core, and large enough that full_frame rejects
-    before read."""
+    """A cyclic FK graph (A -> B -> A) whose keys the cycle gate declines (faker
+    is not an admitted key producer) is eligible for neither sequential nor
+    out_of_core, and large enough that full_frame rejects before read."""
+    a = pa.table(
+        {
+            "id": pa.array([f"a{i}" for i in range(10)], type=pa.string()),
+            "bid": pa.array([f"b{i}" for i in range(10)], type=pa.string()),
+        }
+    )
+    b = pa.table(
+        {
+            "id": pa.array([f"b{i}" for i in range(10)], type=pa.string()),
+            "aid": pa.array([f"a{i}" for i in range(10)], type=pa.string()),
+        }
+    )
+    a_path = _write(tmp_path, a, "a")
+    b_path = _write(tmp_path, b, "b")
+    config = PipelineConfig.model_validate(
+        {
+            "version": 1,
+            "global_settings": {"seed": 1},
+            "sources": {
+                "a": {"type": "file", "format": "parquet", "path": str(a_path)},
+                "b": {"type": "file", "format": "parquet", "path": str(b_path)},
+            },
+            "targets": {
+                "a": {"type": "file", "format": "parquet", "path": str(tmp_path / "a.out.parquet")},
+                "b": {"type": "file", "format": "parquet", "path": str(tmp_path / "b.out.parquet")},
+            },
+            "tables": [
+                {"name": "a", "columns": [_faker_key("id")]},
+                {"name": "b", "columns": [_faker_key("id")]},
+            ],
+            "relationships": [
+                {
+                    "parent": {"table": "a", "columns": ["id"]},
+                    "children": [{"table": "b", "columns": ["aid"]}],
+                    "orphan_policy": "preserve",
+                    "namespace": "n",
+                },
+                {
+                    "parent": {"table": "b", "columns": ["id"]},
+                    "children": [{"table": "a", "columns": ["bid"]}],
+                    "orphan_policy": "preserve",
+                    "namespace": "n",
+                },
+            ],
+        }
+    ).model_dump()
+    sources = {"a": a, "b": b}
+    kwargs: dict[str, Any] = dict(
+        use_byte_estimate_routing=False, full_frame_reject_rows=5, out_of_core_threshold_rows=5
+    )
+
+    inputs = capture_physical_plan_inputs(config, sources, engine_version="d4-corpus", **kwargs)
+    with pytest.raises(ExecutionError) as compiler_exc:
+        compile_physical_plan(inputs)
+
+    with pytest.raises(ExecutionError) as live_exc:
+        with _patched_dispatch(monkeypatch):
+            run_pipeline(config, sources, engine_version="d4-oracle", **kwargs)
+
+    assert compiler_exc.value.code == live_exc.value.code == "fk_full_frame_oom_risk_rejected"
+
+
+def test_large_admitted_cycle_routes_sequential_instead_of_rejecting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The same cyclic graph with hash keys is admitted by the cycle gate, so the
+    job that full_frame would reject before read runs on the bounded sequential
+    route, and the compiled plan agrees with live dispatch."""
     a = pa.table(
         {
             "id": pa.array([f"a{i}" for i in range(10)], type=pa.string()),
@@ -591,15 +681,8 @@ def test_reject_before_read_large_fk_no_bounded_route(
         use_byte_estimate_routing=False, full_frame_reject_rows=5, out_of_core_threshold_rows=5
     )
 
-    inputs = capture_physical_plan_inputs(config, sources, engine_version="d4-corpus", **kwargs)
-    with pytest.raises(ExecutionError) as compiler_exc:
-        compile_physical_plan(inputs)
-
-    with pytest.raises(ExecutionError) as live_exc:
-        with _patched_dispatch(monkeypatch):
-            run_pipeline(config, sources, engine_version="d4-oracle", **kwargs)
-
-    assert compiler_exc.value.code == live_exc.value.code == "fk_full_frame_oom_risk_rejected"
+    _assert_equivalent(monkeypatch, config, sources, **kwargs)
+    assert live_dispatched_driver(monkeypatch, config, sources, **kwargs) == "sequential"
 
 
 def test_capture_rejects_invalid_execution_knob_before_compilation(
@@ -782,8 +865,68 @@ def test_forced_out_of_core_incompatible_recipe(
 
 
 def test_forced_sequential_cyclic_fk_graph(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A cyclic FK mask graph (A <-> B) IS sequential-eligible but cannot be
-    ordered: reaches the forced-sequential cyclic branch."""
+    """A cyclic FK mask graph (A <-> B) IS sequential-eligible, but its faker keys are
+    not an admitted cycle producer, so the forced-sequential cyclic branch fires."""
+    a = pa.table(
+        {
+            "id": pa.array(["a0", "a1"], type=pa.string()),
+            "bid": pa.array(["b0", "b1"], type=pa.string()),
+        }
+    )
+    b = pa.table(
+        {
+            "id": pa.array(["b0", "b1"], type=pa.string()),
+            "aid": pa.array(["a0", "a1"], type=pa.string()),
+        }
+    )
+    a_path = _write(tmp_path, a, "a")
+    b_path = _write(tmp_path, b, "b")
+    config = PipelineConfig.model_validate(
+        {
+            "version": 1,
+            "global_settings": {"seed": 1},
+            "sources": {
+                "a": {"type": "file", "format": "parquet", "path": str(a_path)},
+                "b": {"type": "file", "format": "parquet", "path": str(b_path)},
+            },
+            "targets": {
+                "a": {"type": "file", "format": "parquet", "path": str(tmp_path / "a.out.parquet")},
+                "b": {"type": "file", "format": "parquet", "path": str(tmp_path / "b.out.parquet")},
+            },
+            "tables": [
+                {"name": "a", "columns": [_faker_key("id")]},
+                {"name": "b", "columns": [_faker_key("id")]},
+            ],
+            "relationships": [
+                {
+                    "parent": {"table": "a", "columns": ["id"]},
+                    "children": [{"table": "b", "columns": ["aid"]}],
+                    "orphan_policy": "preserve",
+                    "namespace": "n",
+                },
+                {
+                    "parent": {"table": "b", "columns": ["id"]},
+                    "children": [{"table": "a", "columns": ["bid"]}],
+                    "orphan_policy": "preserve",
+                    "namespace": "n",
+                },
+            ],
+        }
+    ).model_dump()
+    _assert_forced_mode_equivalent(
+        monkeypatch,
+        config,
+        {"a": a, "b": b},
+        must_contain="cross-table cycle",
+        execution_mode="sequential",
+    )
+
+
+def test_forced_sequential_admitted_cycle_runs_sequential(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The same cycle with hash keys is admitted, so a forced `sequential` request is
+    honored by both the compiled plan and live dispatch."""
     a = pa.table(
         {
             "id": pa.array(["a0", "a1"], type=pa.string()),
@@ -830,13 +973,7 @@ def test_forced_sequential_cyclic_fk_graph(tmp_path: Path, monkeypatch: pytest.M
             ],
         }
     ).model_dump()
-    _assert_forced_mode_equivalent(
-        monkeypatch,
-        config,
-        {"a": a, "b": b},
-        must_contain="cross-table cycle",
-        execution_mode="sequential",
-    )
+    _assert_equivalent(monkeypatch, config, {"a": a, "b": b}, execution_mode="sequential")
 
 
 def test_forced_mode_branch_identities_are_all_named() -> None:

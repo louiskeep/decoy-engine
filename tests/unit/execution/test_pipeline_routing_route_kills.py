@@ -68,11 +68,15 @@ _CONFIG = {"cfg": "value"}
 _OOCRS_TUPLE = (True, "RC", 123, False)  # compatible, reject_code, rows, exact
 
 
-def _wire(monkeypatch: pytest.MonkeyPatch, *, decide_route: str) -> dict[str, _Spy]:
+def _wire(
+    monkeypatch: pytest.MonkeyPatch, *, decide_route: str, cycle_decline: Any = None
+) -> dict[str, _Spy]:
     """Install spies for every resolve_execution_route collaborator and invoke
     it once with canonical inputs. `decide_route` sets the route the (spied)
-    decider returns, which gates the OOC-D disk-preflight call site."""
+    decider returns, which gates the OOC-D disk-preflight call site;
+    `cycle_decline` is what the (spied) D2-cycle gate returns."""
     import decoy_engine.execution._pipeline_routing as routing_mod
+    import decoy_engine.execution._sequential_cycle_admit as cycle_mod
     import decoy_engine.execution.out_of_core._spill_estimate as spill_mod
 
     oocrs = _Spy(ret=_OOCRS_TUPLE)
@@ -80,7 +84,9 @@ def _wire(monkeypatch: pytest.MonkeyPatch, *, decide_route: str) -> dict[str, _S
     rpr = _Spy(ret=False)  # probe_recovers_full_frame
     decide = _Spy(ret=(decide_route, "spy_reason"))
     enforce = _Spy(ret=None)
+    gate = _Spy(ret=cycle_decline)
 
+    monkeypatch.setattr(cycle_mod, "route_cycle_decline", gate)
     monkeypatch.setattr(signals, "out_of_core_routing_signals", oocrs)
     monkeypatch.setattr(signals, "resolve_full_frame_fits_estimate", rffe)
     monkeypatch.setattr(signals, "resolve_probe_recovery", rpr)
@@ -110,7 +116,14 @@ def _wire(monkeypatch: pytest.MonkeyPatch, *, decide_route: str) -> dict[str, _S
         engine_version="v-test",
     )
     assert (route, reason) == (decide_route, "spy_reason")
-    return {"oocrs": oocrs, "rffe": rffe, "rpr": rpr, "decide": decide, "enforce": enforce}
+    return {
+        "oocrs": oocrs,
+        "rffe": rffe,
+        "rpr": rpr,
+        "decide": decide,
+        "enforce": enforce,
+        "gate": gate,
+    }
 
 
 def test_route_forwards_signals_call_profile_and_has_mask_table(
@@ -160,6 +173,32 @@ def test_route_forwards_every_decide_execution_route_argument(
     assert kw.get("resolved_substrate") == "future_substrate"  # #74
     assert kw.get("use_byte_estimate_routing") is False  # #81
     assert kw.get("use_probe_routing") is False  # #83
+
+
+def test_route_forwards_the_cycle_gate_inputs_and_its_verdict(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spies = _wire(monkeypatch, decide_route="sequential")
+    assert spies["gate"].last == (
+        (_PLAN, _GRAPH, _REGISTRY, _CONFIG, _CALLER, 333),
+        {},
+    )
+    kw = spies["decide"].last[1]
+    assert kw.get("cycle_admitted") is True
+    assert kw.get("cycle_decline_code") is None
+
+
+def test_route_hands_a_declined_cycle_to_the_decider_with_its_code(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from decoy_engine.execution._sequential_cycle_admit import CycleDecline
+
+    spies = _wire(
+        monkeypatch, decide_route="full_frame", cycle_decline=CycleDecline("code_x", "message")
+    )
+    kw = spies["decide"].last[1]
+    assert kw.get("cycle_admitted") is False
+    assert kw.get("cycle_decline_code") == "code_x"
 
 
 def test_route_runs_disk_preflight_only_on_out_of_core_with_exact_args(

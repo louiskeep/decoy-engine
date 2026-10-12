@@ -189,12 +189,22 @@ class SeqNativeRun:
         )
 
     def prepare_table(
-        self, plan: Plan, table: str, source_schema: pa.Schema, graph: RelationshipGraph
+        self,
+        plan: Plan,
+        table: str,
+        source_schema: pa.Schema,
+        graph: RelationshipGraph,
+        *,
+        record_inherited: bool = True,
     ) -> None:
         """Decide every hash column of `table` and record its inherited FK children.
 
         A column gets an execution decision unless it is an FK child, and a REMAP decision
-        when some edge uses it as a parent key. A column that is both gets only the REMAP one."""
+        when some edge uses it as a parent key. A column that is both gets only the REMAP one.
+        `record_inherited=False` makes a decisions-only call: a cyclic table's key columns are
+        decided from the key-only read before any table is masked, so a back-edge child can
+        REMAP against a parent that is masked later, and the later full call reports the
+        inherited children once."""
         columns = _table_columns(plan, table)
         fk_children = {c for e in graph.edges if e.child_table == table for c in e.child_columns}
         parent_keys = {c for e in graph.edges if e.parent_table == table for c in e.parent_columns}
@@ -212,7 +222,7 @@ class SeqNativeRun:
             if column in parent_keys:
                 self._remap_decisions[(table, column)] = decision
         for edge in graph.edges:
-            if edge.child_table != table:
+            if edge.child_table != table or not record_inherited:
                 continue
             parent_columns = _table_columns(plan, edge.parent_table)
             for pcol, ccol in zip(edge.parent_columns, edge.child_columns, strict=True):
