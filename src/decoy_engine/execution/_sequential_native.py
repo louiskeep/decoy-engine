@@ -403,7 +403,8 @@ class SeqNativeRun:
         return out.to_pylist()
 
     def metrics(self) -> dict[str, Any]:
-        """The `quality_metrics` fragment: empty when the run hashed nothing."""
+        """The `quality_metrics` fragment: per-strategy keys (`sequential_hash`, `sequential_fpe`),
+        each empty when that strategy masked no column natively on this run."""
         metrics: dict[str, Any] = {}
         entries = [d.entry() for d in self._decisions.values() if d.strategy == HASH]
         entries.extend(r.entry() for r in self._remap.values())
