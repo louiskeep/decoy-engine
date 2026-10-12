@@ -1,4 +1,4 @@
-"""Native routing for the `hash` mask on the sequential (SEQ) FK route.
+"""Native routing for payload masks on the sequential (SEQ) FK route: `hash`, and `fpe`.
 
 `run_sequential` masks one table at a time in pandas. For a hash column whose Arrow type the
 compiled companion canonicalizes identically, the hash handler asks this module for the
@@ -6,6 +6,13 @@ tokens and gets them from the SAME keyed-derivation kernel the out-of-core route
 (`out_of_core/_hash_native.py`: `native_hash_array`, `decline_reason`, reused unchanged), so no
 keyed derivation is re-implemented here. The handler keeps its pandas orchestration; only the
 token computation moves.
+
+The per-strategy parts (kernel load, admission, kernel call, error channel, warnings) are one
+`NativeOp` descriptor each (`_sequential_native_ops.py`), looked up by the column's strategy; a
+strategy with no descriptor runs in Python. Kernel state is kept per strategy. Only hash may be an
+FK key on this route: any other strategy's column that is an FK parent or child key gets no native
+decision, because the orphan REMAP path re-runs the parent handler and is hash-only. The REMAP and
+inherited-child machinery below is therefore hash-specific by design.
 
 Three FK paths stay distinct, because only one of them calls the kernel at the scalar seam:
 
@@ -58,10 +65,22 @@ import pyarrow as pa
 from decoy_engine.execution._adapter import pandas_column_to_kernel_input
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._operator_registry import PYTHON_SCALAR, RUST_COMPANION
+from decoy_engine.execution._sequential_native_ops import (
+    FPE,
+    HASH,
+    SEQ_FPE_DISPOSITION_KEY,
+    SEQ_HASH_DISPOSITION_KEY,
+    BoundFpeKernel,
+    HashCall,
+    NativeOp,
+    fpe_op,
+    hash_op,
+)
 from decoy_engine.execution.native._crypto_ext import (
     CryptoExtensionUnavailableError,
     load_compiled_crypto_kernel,
 )
+from decoy_engine.execution.native._fpe_ext import load_compiled_fpe_kernel
 from decoy_engine.execution.out_of_core._hash_native import (
     REASON_UNAVAILABLE,
     BoundHashKernel,
@@ -71,10 +90,10 @@ from decoy_engine.execution.out_of_core._hash_native import (
 
 if TYPE_CHECKING:
     from decoy_engine.execution._adapter import StrategyContext
+    from decoy_engine.generation.pool._events import QualityWarning
     from decoy_engine.plan._types import ColumnSeed, Plan, TableSeed
     from decoy_engine.relationships._graph import RelationshipGraph
 
-SEQ_HASH_DISPOSITION_KEY = "sequential_hash"
 PATH_SCALAR = "scalar"
 PATH_REMAP = "fk_remap"
 PATH_INHERITED = "fk_inherited"
@@ -89,7 +108,7 @@ _CONVERSION_ERRORS = (pa.ArrowInvalid, pa.ArrowTypeError, pa.ArrowNotImplemented
 
 @dataclass
 class ColumnDecision:
-    """The backend one hash column takes for the whole run, and how many rows it hashed.
+    """The backend one native-capable column takes for the whole run, and how many rows it ran.
 
     `pinned_type` is the Arrow type of the source column, read once at table prep."""
 
@@ -99,6 +118,7 @@ class ColumnDecision:
     reason: str | None
     pinned_type: pa.DataType
     rows: int = 0
+    strategy: str = HASH
 
     @property
     def native(self) -> bool:
@@ -153,17 +173,30 @@ def _table_columns(plan: Plan, table: str) -> dict[str, ColumnSeed]:
     return dict(seed.per_column) if seed is not None else {}
 
 
-class SeqNativeRun:
-    """Run-scoped hash decisions for one `run_sequential` call.
+# Loaders live here, not in the ops module, so each is resolved through this module's globals
+# at call time (a test swaps the companion load by patching the name).
+def _load_hash(native_threads: int | None) -> BoundHashKernel:
+    return BoundHashKernel(load_compiled_crypto_kernel(), native_threads)
 
-    The companion loads at most once, on the first hash column that needs a decision. The
-    decisions outlive the table that made them: REMAP on a later child table reads its
-    parent's decision after the parent frame has been evicted."""
+
+def _load_fpe(native_threads: int | None) -> BoundFpeKernel:
+    return BoundFpeKernel(load_compiled_fpe_kernel(), native_threads)
+
+
+_OPS: dict[str, NativeOp] = {HASH: hash_op(_load_hash), FPE: fpe_op(_load_fpe)}
+
+
+class SeqNativeRun:
+    """Run-scoped native decisions for one `run_sequential` call.
+
+    Each strategy's companion kernel loads at most once, on the first column of that strategy
+    that needs a decision. The decisions outlive the table that made them: REMAP on a later
+    child table reads its parent's decision after the parent frame has been evicted."""
 
     def __init__(self, *, native_threads: int | None = None) -> None:
         self._native_threads = native_threads
-        self._loaded = False
-        self._bound: BoundHashKernel | None = None
+        self._load_attempted: set[str] = set()
+        self._bound: dict[str, Any] = {}
         self._decisions: dict[tuple[str, str], ColumnDecision] = {}
         self._remap_decisions: dict[tuple[str, str], ColumnDecision] = {}
         self._inherited_columns: set[tuple[str, str]] = set()
@@ -171,42 +204,58 @@ class SeqNativeRun:
         self._inherited: list[dict[str, Any]] = []
         self._in_remap = 0
 
-    def _kernel(self) -> BoundHashKernel | None:
-        if not self._loaded:
-            self._loaded = True
+    def _kernel(self, op: NativeOp) -> Any | None:
+        if op.strategy not in self._load_attempted:
+            self._load_attempted.add(op.strategy)
             try:
-                self._bound = BoundHashKernel(load_compiled_crypto_kernel(), self._native_threads)
+                self._bound[op.strategy] = op.load_kernel(self._native_threads)
             except CryptoExtensionUnavailableError:
-                self._bound = None
-        return self._bound
+                pass
+        return self._bound.get(op.strategy)
 
-    def _decide(self, table: str, column: str, input_type: pa.DataType) -> ColumnDecision:
-        bound = self._kernel()
-        reason = decline_reason(column, input_type) if bound is not None else REASON_UNAVAILABLE
+    def _decide(
+        self, op: NativeOp, table: str, column: str, input_type: pa.DataType, seed: ColumnSeed
+    ) -> ColumnDecision:
+        bound = self._kernel(op)
+        reason = op.admit(column, input_type, seed) if bound is not None else REASON_UNAVAILABLE
         native = bound is not None and reason is None
         return ColumnDecision(
-            table, column, RUST_COMPANION if native else PYTHON_SCALAR, reason, input_type
+            table,
+            column,
+            RUST_COMPANION if native else PYTHON_SCALAR,
+            reason,
+            input_type,
+            strategy=op.strategy,
         )
 
     def prepare_table(
         self, plan: Plan, table: str, source_schema: pa.Schema, graph: RelationshipGraph
     ) -> None:
-        """Decide every hash column of `table` and record its inherited FK children.
+        """Decide every native-capable column of `table` and record its inherited FK children.
 
-        A column gets an execution decision unless it is an FK child, and a REMAP decision
-        when some edge uses it as a parent key. A column that is both gets only the REMAP one."""
+        A hash column gets an execution decision unless it is an FK child, and a REMAP decision
+        when some edge uses it as a parent key. A column that is both gets only the REMAP one.
+        Any other native-capable strategy gets an execution decision only when it is no FK key
+        at all, so the hash-only REMAP path never reaches it."""
         columns = _table_columns(plan, table)
         fk_children = {c for e in graph.edges if e.child_table == table for c in e.child_columns}
         parent_keys = {c for e in graph.edges if e.parent_table == table for c in e.parent_columns}
         for column, seed in columns.items():
-            if seed.strategy != "hash" or source_schema.get_field_index(column) < 0:
+            op = _OPS.get(seed.strategy)
+            if op is None or source_schema.get_field_index(column) < 0:
+                continue
+            if op.strategy != HASH:
+                if column not in fk_children and column not in parent_keys:
+                    self._decisions[(table, column)] = self._decide(
+                        op, table, column, source_schema.field(column).type, seed
+                    )
                 continue
             is_child = column in fk_children
             if is_child:
                 self._inherited_columns.add((table, column))
             if is_child and column not in parent_keys:
                 continue  # inherits, and no edge re-derives it: nothing to decide
-            decision = self._decide(table, column, source_schema.field(column).type)
+            decision = self._decide(op, table, column, source_schema.field(column).type, seed)
             if not is_child:
                 self._decisions[(table, column)] = decision
             if column in parent_keys:
@@ -264,18 +313,39 @@ class SeqNativeRun:
             return self._remap_tokens(
                 ctx.current_table, column, df[column], namespace, mask_key, truncate
             )
+        return self.native_column(ctx, df, column, HASH, HashCall(namespace, mask_key, truncate))
+
+    def native_column(
+        self, ctx: StrategyContext, df: pd.DataFrame, column: str, strategy: str, call: Any
+    ) -> list[Any] | None:
+        """The native output for `df[column]`, positionally, or None when the Python handler runs.
+
+        A kernel error channel is checked before any value leaves: a strategy that declares
+        errors raises its coded exception, so the failed table publishes nothing."""
+        if ctx.nested_outer_column or self._in_remap:
+            return None  # a non-hash REMAP call returns to Python before touching hash state
         decision = self._decisions.get((ctx.current_table, column))
-        if decision is None:
+        if decision is None or decision.strategy != strategy:
             return None
         rows = len(df)
         decision.rows += rows
-        if not decision.native or rows == 0 or self._bound is None:
+        bound = self._bound.get(strategy)
+        if not decision.native or rows == 0 or bound is None:
             return None
-        values = self._pinned_array(df[column], decision)
-        out = native_hash_array(
-            values, bound=self._bound, mask_key=mask_key, namespace=namespace, truncate=truncate
-        )
-        return out.to_pylist()
+        op = _OPS[strategy]
+        result = op.apply(bound, self._pinned_array(df[column], decision), call)
+        if result.errors:
+            if op.fail_closed is None:  # pragma: no cover - only a descriptor with errors sets them
+                raise AssertionError(f"{strategy} kernel returned errors with no fail-closed rule")
+            raise op.fail_closed(result.errors, column)
+        return result.values.to_pylist()
+
+    def warnings(
+        self, strategy: str, original: list[Any], call: Any, column: str
+    ) -> list[QualityWarning]:
+        """The handler-side warnings of a natively masked column, from its ORIGINAL values."""
+        warn = _OPS[strategy].warn
+        return list(warn(original, call, column)) if warn is not None else []
 
     @staticmethod
     def _pinned_array(series: pd.Series[Any], decision: ColumnDecision) -> pa.Array:
@@ -288,9 +358,9 @@ class SeqNativeRun:
         # Raised outside the handler: pyarrow's own message quotes the offending cell.
         if failed:
             raise ExecutionError(
-                code="sequential_hash_input_type_drift",
+                code=f"sequential_{decision.strategy}_input_type_drift",
                 message=(
-                    f"hash column {decision.column!r} of table {decision.table!r} was pinned as "
+                    f"{decision.strategy} column {decision.column!r} of table {decision.table!r} was pinned as "
                     f"{decision.pinned_type} but its frame column no longer converts to it; the "
                     "run is aborted rather than changing path mid-column."
                 ),
@@ -309,7 +379,8 @@ class SeqNativeRun:
         record = self._remap.setdefault((table, column), RemapRecord(table, column))
         rows = len(series)
         parent = self._remap_decisions.get((table, column))
-        if parent is None or not parent.native or self._bound is None:
+        bound = self._bound.get(HASH)
+        if parent is None or not parent.native or bound is None:
             record.python_rows += rows
             record.reasons.append(f"{REASON_REMAP_PARENT_PYTHON}:{column}")
             return None
@@ -326,17 +397,27 @@ class SeqNativeRun:
             record.reasons.append(reason or "")
             return None
         out = native_hash_array(
-            values, bound=self._bound, mask_key=mask_key, namespace=namespace, truncate=truncate
+            values, bound=bound, mask_key=mask_key, namespace=namespace, truncate=truncate
         )
         record.native_rows += rows
         return out.to_pylist()
 
     def metrics(self) -> dict[str, Any]:
-        """The `quality_metrics` fragment: empty when the run hashed nothing."""
-        entries = [d.entry() for d in self._decisions.values()]
+        """The `quality_metrics` fragment: per-strategy keys (`sequential_hash`, `sequential_fpe`).
+        A key holds one disposition entry per recorded decision for that strategy - scalar, REMAP
+        and inherited alike - whatever the backend; read `executed_backend` on an entry to see
+        whether it ran native, in Python, or was inherited. A key is absent only when the strategy
+        recorded no decision at all (e.g. no column used it)."""
+        metrics: dict[str, Any] = {}
+        entries = [d.entry() for d in self._decisions.values() if d.strategy == HASH]
         entries.extend(r.entry() for r in self._remap.values())
         entries.extend(self._inherited)
-        return {SEQ_HASH_DISPOSITION_KEY: entries} if entries else {}
+        if entries:
+            metrics[SEQ_HASH_DISPOSITION_KEY] = entries
+        fpe_entries = [d.entry() for d in self._decisions.values() if d.strategy == FPE]
+        if fpe_entries:
+            metrics[SEQ_FPE_DISPOSITION_KEY] = fpe_entries
+        return metrics
 
 
 __all__ = [
@@ -345,6 +426,7 @@ __all__ = [
     "PATH_INHERITED",
     "PATH_REMAP",
     "PATH_SCALAR",
+    "SEQ_FPE_DISPOSITION_KEY",
     "SEQ_HASH_DISPOSITION_KEY",
     "ColumnDecision",
     "RemapRecord",

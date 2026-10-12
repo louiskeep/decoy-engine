@@ -88,3 +88,7 @@ Agreement that D0 freezes (so a kernel slice that narrows a type breaks it): on 
 Rejections: where the oracle raises, OOC raises the same `ExecutionError.code` (`orphan_fk_violation`, `D0-orphan-fail`). The one sanctioned oracle-success, OOC-reject case is `out_of_core_fk_key_dtype_unsupported` for an int parent with a decimal child under PRESERVE (`D0-dtype-reject`).
 
 Witness: the chain's masked parent column is produced entirely by the legacy kernels (pyarrow fast path or the Python reference); no native FK-payload entrypoint exists yet. `_kernel_witness.py` asserts that today and exposes `assert_native_ran` for a later slice to flip.
+
+## Phase D / D2c-i: SEQ `fpe` on the compiled kernel
+
+No difference. An admitted SEQ `fpe` payload column (exact `pa.string()`, no `checksum`, not an FK key) is byte-identical to the Python handler on every strict dimension, including text with composed, decomposed and high-codepoint characters: fpe does not normalize, and both implementations keep out-of-charset characters verbatim. It does NOT carry the hash column's NFC divergence. Security warnings (`fpe_partial_plaintext_disclosure`, `fpe_join_group_active`) are computed by the handler on the original values and match the Python path. Pinned by `test_phase_d_d2c_fpe_real.py` (`test_fpe_is_nfc_agnostic_*`, strict-dimension and warning parity).

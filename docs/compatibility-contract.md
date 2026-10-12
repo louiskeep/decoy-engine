@@ -220,6 +220,18 @@ full-frame route keeps its raw `orphan_remap_parent_missing`). The other orphan 
 run on that shape. Follow-up: REMAP through a composite chain needs a scalar seed per composite
 member, which the planner does not compile today.
 
+`fpe` payload columns also mask on the companion on the sequential route (slice D2c-i),
+through the same compiled kernel the chunked route uses. Unlike hash, FPE does NOT NFC-normalize,
+so its native output is byte-identical to the Python handler with NO Unicode-version nuance. Only
+a NON-KEY `fpe` column runs native: an `fpe` column used as an FK key stays on Python (the native
+REMAP minting path is hash-only). Admission is configuration-aware: a column with any checksum
+scheme, a non-`string` Arrow type, no namespace, or an invalid charset declines to the Python
+handler (which raises its usual coded error). A per-cell encryption error (out-of-charset,
+sub-minimum domain, over-length) fails the run closed before any value is written, so the table
+publishes nothing. The handler's residual-risk warnings (`fpe_partial_plaintext_disclosure`,
+`fpe_join_group_active`) still emit on the native path. `quality_metrics["sequential_fpe"]`
+records the backend per column.
+
 The same nuance applies to deterministic `categorical`: the keyed index derives
 from the NFC-normalized source value, so for source text with a codepoint newer
 than the running Python's Unicode version the companion and Python paths can

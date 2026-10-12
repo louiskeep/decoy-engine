@@ -632,9 +632,15 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         # D2b: `_sequential_native.py` gains a REMAP-only decision for parent keys, and the new
         # `_sequential_composite_chain.py` turns a REMAP orphan on a composite foreign-key chain into a
         # coded decline; `_sequential.py` wraps the node dispatch with it. Neither imports `execution.physical`.
+        # D2c-i: `_sequential_native.py` becomes a strategy-keyed seam over the new
+        # `_sequential_native_ops.py` descriptors (hash, fpe); the fpe handler asks it for
+        # tokens. They reuse the chunked route's fpe kernel and helpers and import nothing from
+        # `execution.physical`.
         "src/decoy_engine/execution/_sequential_native.py",
+        "src/decoy_engine/execution/_sequential_native_ops.py",
         "src/decoy_engine/execution/_sequential_composite_chain.py",
         "src/decoy_engine/execution/_strategies/_hash.py",
+        "src/decoy_engine/execution/_strategies/_fpe.py",
     }
     unexpected = [
         name
