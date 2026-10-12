@@ -17,7 +17,12 @@ import pytest
 
 from decoy_engine.execution import ExecutionError, PandasExecutionAdapter
 from decoy_engine.relationships._graph import OrphanPolicy
+from tests.parity import _strict_compare as sc
 from tests.perf_fixtures.fk_relational import build_fk_relational
+
+# Every dimension of the D0 comparator: schema incl. nullability, field metadata, type width,
+# column and row order, cell values, null versus NaN. `Table.equals` alone ignores metadata.
+_STRICT = dict.fromkeys(sc.DIMENSIONS, True)
 
 
 def _loader(sources: dict[str, pa.Table]):
@@ -60,6 +65,7 @@ def test_byte_parity_with_full_frame(policy):
     assert set(seq.outputs) == set(full.outputs)
     for table in full.outputs:
         assert seq.outputs[table].equals(full.outputs[table]), f"{table} differs"
+        assert sc.compare_strict(full.outputs[table], seq.outputs[table]) == _STRICT, table
     # Warnings (e.g. WARN orphan aggregate) must match too.
     assert {(w.code, w.detail.get("orphan_rows")) for w in seq.warnings} == {
         (w.code, w.detail.get("orphan_rows")) for w in full.warnings
@@ -117,6 +123,7 @@ def test_sink_streams_each_table_and_collect_is_empty():
     )
     for table in full.outputs:
         assert seen[table].equals(full.outputs[table]), f"{table} sink differs"
+        assert sc.compare_strict(full.outputs[table], seen[table]) == _STRICT, table
 
 
 def test_sink_is_non_transactional_on_abort():
