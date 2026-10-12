@@ -1,14 +1,23 @@
 # Phase D / D2-cycle: cross-table FK cycles native on the bounded (SEQ) route
 
-Status: plan (rev 3, pre-gate). rev 1 NO-GO (4 HIGH/1 MED, wrong re-derivation
-premise); rev 2 NO-GO (2 HIGH; the gate VALIDATED the effective-map core and confirmed
-H1/H2/H4/M5 resolved) with two contract gaps. rev 3 folds both and takes the
-simplification the gate surfaced: since rev 2 INHERITS from the map (never re-derives),
-the value-keyed four-strategy allowlist is unnecessary - inheritance works for any key
-strategy; admission is gated on the WORK-NODE dependency graph being acyclic, no table
-transforms on cyclic tables, and a combined-memory budget. Branches off main; rebases
-onto post-D2b main before build. Cam 2026-10-12: keep in v1 and ATTEMPT it; defer to V2
-if it gets too hard.
+Status: plan (rev 4, pre-gate). rev 1 NO-GO (wrong re-derivation premise); rev 2 NO-GO
+(transform semantics + memory); rev 3 NO-GO (2 HIGH: the gate again VALIDATED the
+effective-map core, canonicalization, inheritance, and confirmed transforms resolved +
+projected reads buildable, but found two NEW holes). rev 4 narrows per the gate's own
+root-cause fixes - this is the "narrow further (more declines)" path Cam authorized:
+- HIGH-1: inheritance is strategy-agnostic on the CONSUMER (correct), but PRODUCING the
+  parent's effective output from a key-only read requires the producer be a PURE
+  FUNCTION OF THE KEY VALUE. A `derived` key reading payload siblings, or a positional
+  strategy with duplicate keys, cannot be reproduced narrowly. rev 4 admits only
+  pure-value-function key producers (the allowlist belongs on the PRODUCER, not the
+  consumer); declines derived/sibling/positional/conditional producers.
+- HIGH-2: the combined-memory formula omitted `quarantine_entries` (whole masked rows),
+  cross-table error caches, and the shared `PoolCache`. rev 4 prices them and declines
+  quarantine-producing orphan policies on cyclic tables so retained state stays narrow.
+Branches off main; rebases onto post-D2b main before build. Cam 2026-10-12: keep in v1
+and ATTEMPT it; narrow further or defer to V2 if too hard. DECISION RULE: if rev 4 also
+NO-GOs on a genuinely new deeper hole, defer D2-cycle to V2, record where it stopped,
+and continue other Phase D work (do not grind further rounds).
 
 Rules consulted: 00-universal.md, risk-and-exceptions.md, development-loop.md,
 architecture.md, reuse-first.md, testing.md, documentation.md,
@@ -47,17 +56,35 @@ component only when ALL of:
 - its WORK-NODE dependency graph is acyclic (`order_work`, `_runner.py:233/319`, which
   already orders parents before children and rejects unresolved cycles). Table
   cyclicity does NOT imply column/work acyclicity - decline if the work graph cycles.
+  NOTE `order_work`'s edges are FK/composite edges, NOT arbitrary strategy sibling
+  reads, so work-acyclicity is NECESSARY but NOT SUFFICIENT (rev-3 HIGH-1) - the
+  producer-eligibility condition below is what closes the sibling-read gap.
+- every FK KEY column in the component is produced by a PURE VALUE-FUNCTION strategy:
+  its emitted value is a function of the key's own source VALUE alone, so a key-only
+  projection reproduces it exactly (rev-3 HIGH-1). This ADMITS hash / passthrough /
+  redact / truncate / FPE and the like; it DECLINES (config-detectable by strategy type
+  + its declared inputs): `derived`/expression strategies that read payload siblings
+  (`_derived.py:62` evaluates against full row context, missing from a key-only read),
+  any POSITIONAL / row-index-dependent strategy (a last-wins value map loses distinct
+  per-row outputs when duplicate source keys map to different positions), and
+  `when:`-conditional KEYS (predicate-dependent output). The allowlist is on the
+  PRODUCER; the CONSUMER (matched-child inheritance) stays strategy-agnostic - it copies
+  whatever effective value the producer emitted.
 - NO cyclic table carries a table-level TRANSFORM (filter / sort / dedup / derived
-  column, `_transforms_table.py`). Config-only detection (rev-2 HIGH-1): a transform
-  can drop/reorder/dedup rows based on PAYLOAD columns, which a narrow key-only pass
-  would not reproduce, so a transform-bearing cyclic table declines in this first cut
-  (a projected post-transform contract is the later, bigger alternative).
+  column, `_transforms_table.py`). Config-only detection over the whole nonempty
+  `transforms` declaration (rev-2 HIGH-1, gate-confirmed sound): a transform can
+  drop/reorder/dedup rows based on PAYLOAD columns, which a narrow key-only pass would
+  not reproduce (a projected post-transform contract is the later, bigger alternative).
+- NO cyclic table uses an orphan/error policy that QUARANTINES whole rows (rev-3
+  HIGH-2): quarantine entries hold full masked rows incl payload and accumulate across
+  tables (`quarantine.py:184`, `_sequential.py:503`), defeating the narrow-state bound.
+  Admit orphan policies that stay narrow (preserve / remap / warn); decline fail/
+  quarantine on cyclic tables. Config-detectable from the orphan/error policy.
 - the COMBINED memory estimate fits (see the memory contract); else decline.
-Key strategy is NOT restricted (inheritance copies the parent's effective output for
-ANY strategy; native-vs-Python stays the usual per-column type decision). Also decline
-`when:`-conditional KEY columns in a cycle (their effective output is predicate
--dependent) and OOC cyclic jobs. Self-reference is not a table cycle (handled by D2b
-drain-fold) - out of scope; full-frame unchanged.
+Native-vs-Python stays the usual per-column type decision and is a speedup only (a
+Python-fallback producer still emits a correct effective map). Also decline OOC cyclic
+jobs. Self-reference is not a table cycle (handled by D2b drain-fold) - out of scope;
+full-frame unchanged.
 
 ## Established solutions
 
@@ -73,13 +100,14 @@ drain-fold) - out of scope; full-frame unchanged.
   columns natively (that is the native speedup); the child inheritance is a map lookup
   (no kernel). D2b's kernel seam is reused for the native key masking; D2-cycle adds
   NO matched-key re-derivation (rev-1's mistake).
-- Native vs Python for a parent key column is the usual per-column TYPE decision, via
-  `decline_reason(column, input_type)` (`_sequential_native.py:174`) - the same type
-  predicate D2a/D2b use - NOT a strategy-name allowlist (rev-2 M5). Inheritance is
-  strategy-agnostic (it copies the parent's effective output for any strategy); the type
-  predicate only chooses whether the parent KEY masking runs on the kernel or in Python.
-  A column that declines native still masks correctly in Python and still feeds a
-  correct effective map; native is a speedup, never a correctness gate.
+- Native vs Python for a parent key column is a per-column decision and a SPEEDUP only;
+  a Python-fallback producer still emits a correct effective map. The native path
+  applies to the strategies that have a kernel (hash via `decline_reason(column,
+  input_type)` inside the hash dispatch, `_sequential_native.py:181`, plus the D2b
+  redact/truncate/passthrough handlers); it is NOT a universal native gate for every
+  admitted strategy (rev-3 LOW). The kernel WITNESS is scoped to the columns that
+  actually ran native; an admitted pure-value-function producer with no kernel masks in
+  Python and is proven by the ordinary oracle-parity assertion, not the kernel marker.
 
 ## Design (column-order effective-map, SEQ)
 
@@ -91,31 +119,47 @@ When routing detects a cyclic FK component (needs a real detector, see Routing):
    its strategy (native where admitted), and record the EFFECTIVE source->masked map:
    the actual emitted value per source key (token / raw-if-when-off /
    preserved-raw-orphan), with errored-parent rows excluded into the cascade cache and
-   duplicate source keys resolved last-wins - exactly what `_parent_map` produces, but
-   on narrow columns. A child key column that depends on an already-computed parent map
-   consumes it in order.
+   duplicate source keys resolved last-wins. Because admission restricts producers to
+   PURE VALUE-FUNCTION strategies, the key-only read carries every input the producer
+   needs (no payload sibling, no row position), and last-wins over duplicate source keys
+   is LOSSLESS (equal source value => equal emitted value, so no distinct parent-row
+   output is dropped) - that is exactly what `_parent_map` produces on the full frame,
+   reproduced on narrow columns. A child key column that depends on an already-computed
+   parent map consumes it in order.
 2. **Pass 2 - mask each cyclic table.** Load each table, mask its payload columns
    normally (D2a/D2b per-column decisions), and resolve its FK child keys by INHERITING
    from the pass-1 effective maps via `resolve_fk_keys` (map lookup + the unchanged
    EXCLUDE-then-CASCADE-then-policy precedence, REMAP re-running the parent handler as
    today). Evict each table after masking.
 
-Memory contract (rev-2 HIGH-2 fix - peak over the WHOLE component schedule, not just
-the largest table). Existing SEQ retains a parent's map until ALL its consumers finish
-(`_sequential.py:529`), and the admitted mixed topology includes incoming acyclic
-parents feeding the cycle and outgoing children consuming it. So peak at any point =
-(every live parent map + its error cache that is still retained) + (the component's
-retained narrow key maps/error caches) + (the current table's working set: load +
-pandas conversion + output overlap), under lazy inputs + a draining sink. The plan
-defines explicit map RELEASE points (drop a map once its last consumer finishes) and an
-admission check that rejects when the COMBINED estimate exceeds budget, with an explicit
-policy when an estimate is unavailable (decline, do not assume it fits - schema/config
-prove eligibility, not consumption). The win is jobs whose AGGREGATE frames exceed RAM
-while this combined live state fits; a single oversized cyclic table, or a combined
-estimate over budget, declines. Pass 1 needs a PROJECTED key-columns-only read; the
-current loader reads the whole file (`_pipeline_sources.py:126`, `_readers.py:270`), so
-a real projected read is a PREREQUISITE (build it, or decline until it exists - do not
-read the whole frame and select after, which does not satisfy the bound).
+Memory contract (rev-2 HIGH-2 + rev-3 HIGH-2 fix - peak over the WHOLE component
+schedule, accounting for ALL run-retained state, not just the largest table). Existing
+SEQ retains a parent's map until ALL its consumers finish (`_sequential.py:529`), and
+the admitted mixed topology includes incoming acyclic parents feeding the cycle and
+outgoing children consuming it. Peak at any point =
+- (every live parent map + its error cache still retained), where "retained" means
+  until the LAST consumer across BOTH passes AND outgoing children finishes - not merely
+  pass-1 key work (rev-3 HIGH-2; `_sequential.py:301` consumer bookkeeping adapts); PLUS
+- (the component's retained narrow key maps/error caches); PLUS
+- (the cross-table error state `all_row_errors` + `key_error_rows`, `_sequential.py:443`
+  - narrow, keyed by errored rows); PLUS
+- (the shared strategy `PoolCache`, which survives table eviction, `_sequential.py:308`
+  - bounded by distinct values seen); PLUS
+- (the current table's working set: load + pandas conversion + output overlap),
+under lazy inputs + a draining sink. `quarantine_entries` (whole masked rows incl
+payload, `quarantine.py:184`) is NOT in this formula because the admission gate declines
+quarantine-producing policies on cyclic tables (above) - so retained state stays narrow
+by construction. The plan defines explicit RELEASE points (drop a map once its last
+cross-pass/child consumer finishes) and a COMBINED-budget admission check that reserves
+all the resident terms above and rejects when the estimate exceeds budget, with an
+explicit decline when any term's bound is unavailable (decline, do not assume it fits).
+The win is jobs whose AGGREGATE frames exceed RAM while this combined live state fits; a
+single oversized cyclic table, or a combined estimate over budget, declines. Pass 1
+needs a PROJECTED key-columns-only read; the current loader reads the whole file
+(`_pipeline_sources.py:126`, `_readers.py:270`), but PyArrow `read_table`/
+`ParquetFile.read` expose `columns=` (gate-confirmed), so a real projected read is a
+buildable PREREQUISITE (build it, or decline opaque whole-table loaders - do not read
+the whole frame and select after, which violates the narrow-pass contract).
 
 Canonicalization (rev-1 H1 fix): pass 1 stores the parent's EFFECTIVE OUTPUT keyed by
 the SAME normalized FK key the oracle uses (`_fk_keys.py:75`, which treats `True`==`1`),
@@ -137,31 +181,44 @@ independent cycle rejection and the self-edge exclusion.
 **Guarantee.** An admitted SEQ cross-table cycle masks byte-identically to full-frame
 (strict dimensions); RI/orphan/cascade/duplicate/policy match full-frame exactly
 (same `resolve_fk_keys` precedence, same effective-map semantics); peak memory is the
-combined live state (retained parent maps + error caches + component narrow maps + the
-current table's working set), checked against budget at admission. Non-admitted cycles
-(`when:`-conditional-key / inherited-key-dependency / oversized-single-table /
-transform-bearing-cyclic-table / work-node-cyclic / combined-budget-over) and OOC cyclic
-jobs decline with a clear coded reason. Acyclic masking and full-frame unchanged.
+combined live state (retained parent maps + error caches + component narrow maps +
+cross-table error state + PoolCache + the current table's working set), checked against
+budget at admission. Non-admitted cycles (`when:`-conditional-key / non-pure-value
+-function-producer e.g. derived-sibling-read or positional / inherited-key-dependency /
+oversized-single-table / transform-bearing-cyclic-table / quarantine-producing-policy /
+work-node-cyclic / combined-budget-over) and OOC cyclic jobs decline with a clear coded
+reason. Acyclic masking and full-frame unchanged.
 
 **Non-goals.** No re-derivation of matched keys. No fixed-point iteration. No OOC
 cyclic support. No projected post-transform contract for transform-bearing cyclic tables
-(they decline this cut). No strategy-name admission gate (inheritance is strategy
--agnostic; the type predicate governs only native-vs-Python for the key column). No
+(they decline this cut). No support for sibling-reading/positional key PRODUCERS in a
+cycle (they decline; CONSUMER inheritance stays strategy-agnostic). No quarantine-row
+accounting in the bound (quarantine policies decline on cyclic tables instead). No
 change to full-frame, `_fk_resolve` precedence, or acyclic routing.
 
 ## Acceptance tests (authored before impl; include the rev-1 counterexamples)
 
 - **Parity:** 2-table and 3-table cycles, SEQ byte-identical to full-frame on strict
-  dimensions; RI asserted both directions. Cover a RANGE of key strategies to prove
-  inheritance is strategy-agnostic (hash native, redact/truncate/passthrough, and at
-  least one non-value-keyed strategy that inheritance still copies correctly) - the
-  removed rev-2 allowlist must not reappear as a hidden restriction.
-- **The rev-1 counterexamples MUST pass identically to full-frame:** (a) a hash parent
-  with `when:` false stays RAW and its matched child inherits that RAW value (admitted
-  only if the key is unconditional; if the KEY itself is `when:`-gated it declines -
-  test both); (b) the column chain `A.id->B.mid->A.back` where an orphan preserved at
-  `B.mid` stays raw and `A.back` inherits the raw value (the column-acyclic table cycle
-  supported today) - the effective map carries the preserved-raw value, NOT a re-hash.
+  dimensions; RI asserted both directions. Cover a RANGE of pure-value-function key
+  PRODUCERS (hash native, redact/truncate/passthrough) to prove the producer set is not
+  silently narrower than stated; AND a case where the matched CHILD's own configured
+  strategy differs from the producer's, proving the child INHERITS the producer's
+  effective value rather than running its own strategy (consumer stays
+  strategy-agnostic, rev-3).
+- **The rev-1 counterexamples MUST pass identically to full-frame:** (a) an INCOMING
+  acyclic hash parent with `when:` false stays RAW and its matched child inherits that
+  RAW value (admitted only if the key is unconditional; if the KEY itself is
+  `when:`-gated it declines - test both, per rev-3 LOW); (b) the column chain
+  `A.id->B.mid->A.back` where an orphan preserved at `B.mid` stays raw and `A.back`
+  inherits the raw value (the column-acyclic table cycle supported today) - the
+  effective map carries the preserved-raw value, NOT a re-hash.
+- **The rev-3 counterexample MUST decline (not silently mis-mask):** the cycle
+  `A.id->B.mid->A.back` with `A.id` using a `derived`/expression strategy that reads a
+  payload sibling (e.g. `payload + 100`), no table transforms, work-graph acyclic - all
+  the other admission conditions pass, but a key-only read of `A.id` cannot evaluate the
+  expression, so the component DECLINES on the pure-value-function-producer condition
+  (config-detectable). Also: a positional/row-index producer with duplicate source keys
+  declines (a last-wins map would drop distinct per-row outputs).
 - **Canonicalization:** a boolean parent `True` matched by an integer child `1`
   inherits the parent's effective token (map lookup), byte-identical to full-frame;
   numeric normalization + duplicate-normalized-key last-wins covered.
@@ -170,23 +227,31 @@ change to full-frame, `_fk_resolve` precedence, or acyclic routing.
   full-frame.
 - **Memory:** a cyclic job whose AGGREGATE frames exceed a set budget but whose
   COMBINED live state (all retained parent maps + error caches + component narrow maps +
-  the current table's working set) fits runs on SEQ within the bound; a single oversized
-  cyclic table declines (true memory limit); a mixed topology (incoming acyclic parent +
-  cyclic component + outgoing acyclic child) whose COMBINED estimate exceeds budget
-  declines even though no single table is oversized (rev-2 HIGH-2); an admitted run
-  asserts each parent map is RELEASED after its last consumer (peak stays bounded, not
-  monotonically growing).
+  cross-table error state + PoolCache + the current table's working set) fits runs on
+  SEQ within the bound; a single oversized cyclic table declines (true memory limit); a
+  mixed topology (incoming acyclic parent + cyclic component + outgoing acyclic child)
+  whose COMBINED estimate exceeds budget declines even though no single table is
+  oversized (rev-2 HIGH-2); an admitted run asserts each parent map is RELEASED only
+  after its last consumer ACROSS BOTH PASSES AND outgoing children (peak stays bounded,
+  not monotonically growing, rev-3 HIGH-2). **Quarantine:** a multi-table job with a
+  wide-payload quarantine policy on a cyclic table DECLINES (it would accumulate whole
+  masked rows across tables, rev-3 HIGH-2) - proving the bound is not fooled by
+  releasing maps alone.
 - **Declines (fail closed, coded, no data in the message):** a `when:`-conditional
-  KEY cycle; an inherited-key-dependency cycle the pass can't resolve; a cyclic table
-  carrying a table-level TRANSFORM (filter/sort/dedup/derived - rev-2 HIGH-1,
-  config-only detection); a component whose WORK-NODE dependency graph cycles (not just
-  the table graph); an OOC cyclic job (unchanged). Each decline is detectable at
-  config/route time without inspecting row data.
+  KEY cycle; a non-pure-value-function PRODUCER cycle (derived/sibling-reading, and
+  positional/row-index - rev-3 HIGH-1, config-detectable by strategy type + inputs); an
+  inherited-key-dependency cycle the pass can't resolve; a cyclic table carrying a
+  table-level TRANSFORM (filter/sort/dedup/derived - rev-2 HIGH-1); a cyclic table with
+  a quarantine-producing orphan/error policy (rev-3 HIGH-2); a component whose WORK-NODE
+  dependency graph cycles (not just the table graph); an OOC cyclic job (unchanged).
+  Each decline is detectable at config/route time without inspecting row data.
 - **Routing:** an incoming acyclic parent + a cyclic component + an outgoing acyclic
   child + a disconnected acyclic table all in one job order and mask correctly;
   self-reference still routes as today (not treated as a table cycle).
-- **Witness / native evidence:** the parent key columns' pass-1 masking is proven on
-  the kernel (reuse the D2b marker witness); inheritance is a map lookup (no kernel).
+- **Witness / native evidence:** a KERNEL-backed pass-1 producer (e.g. hash) is proven
+  on the kernel via the D2b marker witness; a no-kernel pure-value-function producer is
+  proven by oracle parity instead (rev-3 LOW - the witness is scoped to columns that ran
+  native, not asserted for every producer); inheritance is a map lookup (no kernel).
 - **Acyclic unchanged:** every existing acyclic + full-frame-cycle test passes;
   full-frame still masks small cycles. **Module size** under caps (new
   `execution/_sequential_cycle.py`); **NFC** re-assert; **perf gate** on a sized cyclic
@@ -195,9 +260,11 @@ change to full-frame, `_fk_resolve` precedence, or acyclic routing.
 ## Known context for the gate
 
 - Revises the program plan's KEEP-CURRENT/V2 cycle disposition to "v1, SEQ bounded,
-  unconditional keys (any strategy), no table transforms on cyclic tables,
-  combined-budget admission, column-order effective-map"; land the program-plan update
-  with this slice.
+  unconditional pure-value-function key producers, no table transforms and no
+  quarantine-producing policies on cyclic tables, full-retained-state combined-budget
+  admission, column-order effective-map"; land the program-plan update with this slice.
+  The admitted set the gate confirmed viable: unconditional, transform-free,
+  non-quarantining hash/passthrough/redact/truncate chains forming table cycles.
 - Depends on D2b; rebase onto post-D2b main before build. D2b provides a native kernel
   SEAM only; D2-cycle adds the component detector, the column-order effective-map pass,
   the projected read (or its prerequisite), and the routing wiring.
