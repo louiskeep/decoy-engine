@@ -1,6 +1,6 @@
 # Phase D / D2c-i: generalize the SEQ-native seam + wire `fpe`
 
-Status: plan (rev 2, pre-gate re-gate). First slice of D2c's ENGINE half (remaining SEQ payload
+Status: plan (rev 2, GATE GO - ready to build; round-2 Codex plan-gate GO, all 4 rev-1 findings closed). First slice of D2c's ENGINE half (remaining SEQ payload
 operators native). D2c's platform-sequential-activation half is PARKED (needs A3 + Cam go).
 Branches off origin/main (f9885434, includes D2a #241 + D2b #242) on
 feat/phase-d-d2c-seq-operators (worktree phase-d-d2c).
@@ -235,14 +235,29 @@ kernel). NO platform sequential activation (A3 + Cam go). NO new FPE implementat
 
 - The generalization is the architecturally significant part; fpe is the first tenant. Keeping
   hash byte-identical through the refactor is the central regression risk - pin it hard.
-- `fpe` is payload-only in the FK graph, so the REMAP path genuinely does not apply; do not
-  generalize REMAP speculatively (YAGNI / no machinery beyond need). When a key-capable native
-  op is added later (the pure-Arrow trio), REMAP generalizes in that slice.
-- Reuse the compiled `fpe` kernel + decline predicate from `native/_fpe_ext.py` /
-  `_fpe_route.py` as-is; do not re-derive FPE. Verify the chunked route's fpe admission predicate
-  is the right one to reuse for SEQ (same pinned-type conversion contract as hash).
-- Carries the standing accepted NFC divergence family; confirm fpe's exact status (carries vs
-  NFC-agnostic) during build and document it.
+- `fpe` CAN be an FK key in the graph (rev-2 HIGH-1), so the payload-only scope is an ENFORCED
+  admission guard, NOT an inherent property: an fpe KEY column gets no native decision and stays
+  Python, and a non-hash strategy entering `_in_remap` returns to Python before touching hash
+  state. Native fpe REMAP is deferred; REMAP machinery stays hash-only (no speculative
+  generalization). Key membership is decidable at `prepare_table` from `graph.edges`
+  (parent_keys / fk_children already computed, `_sequential_native.py:199`).
+- Reuse the compiled `fpe` kernel + its CONFIG-AWARE admission from `native/_fpe_ext.py` /
+  `_fpe_route.py` / `_real_type_admission.py:65` (reject EVERY truthy checksum BEFORE the exact
+  `pa.string()` type check); do not re-derive FPE. FPE param resolution
+  (`_operator_params.py:256`) supplies charset/separator/validate_luhn/checksum/join_group/
+  target-tweak-identity; mask_key + thread budget come from execution context / run state.
+- `fpe_fail_closed_error` is a HELPER that selects the lowest failing row and returns
+  `StrategyError(code=first.code)` (`_fpe_route.py:44`); it is not a literal code. SEQ publishes a
+  table only after masking completes (`_sequential.py:514`), so raising before assignment means
+  no output for the failed table (transactional sink aborts; a callable sink's earlier tables are
+  the existing limitation).
+- fpe is NFC-AGNOSTIC (rev-2 confirmed by probe: native == Python ciphertext + warnings for
+  composed/decomposed + high codepoints); it does NOT carry hash's NFC divergence. The NFC
+  acceptance case should use separator preservation + enough in-charset chars to satisfy the
+  domain floor.
+- The warning pass runs ONCE on original handler-scope values (`_crypto_reference.py:182`); the
+  `when` gate (`_when_gate.py:246`) supplies exactly the selected subset and skips the handler on
+  an empty selection - so warning content/denominator/order match the Python path.
 - Test env: companion/native tests need the abi-3 venv; confirm the import path resolves to THIS
   worktree first; run one heavy test process at a time.
 
