@@ -195,8 +195,11 @@ byte-identical to the Python handler otherwise. Admission sits behind the existi
 guards: an integer hash column that holds a null is still rejected with
 `null_bearing_int_unsupported`, for parent and payload columns alike. A matched child key
 inherits the parent's masked value and never calls the kernel. REMAP orphan keys are minted
-on the companion only when their parent column ran there, so a column never mixes the two
-Unicode versions. `ExecutionResult.quality_metrics["sequential_hash"]` records the backend
+on the companion only when their parent column ran there, and each orphan batch is admitted
+on its own inferred type; so the parent-key derivation is single-normalization, while a native
+parent's orphan batches may split between the companion and Python (a batch that declines).
+Any such split stays within the accepted native-vs-Python NFC envelope and ties no referential
+constraint, because orphan keys reference no parent row. `ExecutionResult.quality_metrics["sequential_hash"]` records the backend
 per column (`scalar`, `fk_inherited`, `fk_remap`) with a value-free reason when a column
 stays on Python. A native fault aborts the run and is never retried in Python; whether the
 tables written before it are discarded depends on the sink (a `TransactionalSink` aborts, a
