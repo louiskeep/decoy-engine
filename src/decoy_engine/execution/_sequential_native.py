@@ -403,8 +403,11 @@ class SeqNativeRun:
         return out.to_pylist()
 
     def metrics(self) -> dict[str, Any]:
-        """The `quality_metrics` fragment: per-strategy keys (`sequential_hash`, `sequential_fpe`),
-        each empty when that strategy masked no column natively on this run."""
+        """The `quality_metrics` fragment: per-strategy keys (`sequential_hash`, `sequential_fpe`).
+        A key holds one disposition entry per recorded decision for that strategy - scalar, REMAP
+        and inherited alike - whatever the backend; read `executed_backend` on an entry to see
+        whether it ran native, in Python, or was inherited. A key is absent only when the strategy
+        recorded no decision at all (e.g. no column used it)."""
         metrics: dict[str, Any] = {}
         entries = [d.entry() for d in self._decisions.values() if d.strategy == HASH]
         entries.extend(r.entry() for r in self._remap.values())
