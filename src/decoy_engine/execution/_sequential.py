@@ -158,6 +158,7 @@ from decoy_engine.execution._runner import (
     order_work,
     top_code_columns,
 )
+from decoy_engine.execution._sequential_native import SeqNativeRun
 from decoy_engine.execution._transactional_sink import (
     TransactionalSink,
     _CallableSinkAdapter,
@@ -305,6 +306,9 @@ def run_sequential(
         remaining_child_consumers.setdefault(ck, set()).add(edge.child_table)
 
     cache = pool_cache if pool_cache is not None else PoolCache()
+    # D2a: per-run hash decisions, kept for the whole run so REMAP on a child table still sees
+    # its parent's decision after the parent frame is evicted.
+    native_run = SeqNativeRun()
     ctx = StrategyContext(
         registry=registry,
         pool_cache=cache,
@@ -312,6 +316,7 @@ def run_sequential(
         namespace_registry=namespace_registry,
         job_seed=plan.seed_envelope.job_seed,
         mask_key=require_mask_key(plan, key_provider),
+        seq_native=native_run,
     )
 
     parent_map_cache: dict[_NodeKey, dict[_KeyTuple, _KeyTuple]] = {}
@@ -384,6 +389,7 @@ def run_sequential(
                 conversion_ms += (time.perf_counter() - t0) * 1000.0
                 frames[table] = df
                 register_exact_int_sources(ctx, table, src, df, nodes_by_table.get(table, ()))
+                native_run.prepare_table(plan, table, src.schema, graph)
                 # C5c-ii: capture the degenerate-Faker pin set from the SOURCE schema before
                 # `del src` drops it; applied to this table's output after from_pandas below.
                 from decoy_engine.execution._faker_degenerate_pin import (
@@ -542,6 +548,7 @@ def run_sequential(
         quality_metrics: dict[str, Any] = {
             **ctx.code_set_corpora_metrics(),  # HC-1 evidence
             **ctx.date_preserve_metrics(),  # D1c: {} unless a column opted in
+            **native_run.metrics(),  # D2a: {} unless the plan hashes a column
         }
         if all_row_errors:
             row_error_counts: dict[str, int] = {}

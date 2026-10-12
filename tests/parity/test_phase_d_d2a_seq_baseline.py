@@ -34,6 +34,7 @@ from tests.parity._d2a_seq_data import (
     typed_columns,
     with_when,
 )
+from tests.parity._seq_witness import hide_companion, spy_python_hash
 
 _COLUMNS = [*typed_columns()[0], "c_trunc", "c_other_ns"]
 _SIGNATURE_T = (
@@ -386,27 +387,15 @@ def test_each_dimension_of_the_comparator_bites_on_a_seq_output(dimension: str) 
     assert sc.compare_strict(_t(), _t()) == _ALL_TRUE
 
 
-# Negative witness baseline: today every hash value on SEQ comes from the Python handler.
-
-
-def _spy_python_hash(monkeypatch: pytest.MonkeyPatch) -> list[int]:
-    from decoy_engine.execution._strategies import _hash
-
-    rows: list[int] = []
-    real = _hash.hash_array
-
-    def spy(values, **kwargs):
-        rows.append(len(values))
-        return real(values, **kwargs)
-
-    monkeypatch.setattr(_hash, "hash_array", spy)
-    return rows
+# Python-only control: with the companion hidden, every hash value on SEQ comes from the Python
+# handler. Stage 1 pinned this before the native route existed; it now needs the explicit hide.
 
 
 def test_every_payload_and_parent_hash_runs_in_the_python_handler(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    rows = _spy_python_hash(monkeypatch)
+    hide_companion(monkeypatch)
+    rows = spy_python_hash(monkeypatch)
     run_seq(payload_table(), payload_seeds())
     # 13 payload columns plus the parent key `hk`; the matched child `ck` is inherited and
     # makes no hash call.
@@ -416,7 +405,8 @@ def test_every_payload_and_parent_hash_runs_in_the_python_handler(
 def test_remap_runs_the_parent_hash_handler_once_for_the_orphans(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    rows = _spy_python_hash(monkeypatch)
+    hide_companion(monkeypatch)
+    rows = spy_python_hash(monkeypatch)
     srcs = sources_with_orphans(payload_table(), ["orph1", "orph2"])
     run_seq(payload_table(), payload_seeds(), policy=OrphanPolicy.REMAP, sources=srcs)
     assert rows == [10] * 14 + [2]

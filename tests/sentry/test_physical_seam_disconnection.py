@@ -623,6 +623,14 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         "src/decoy_engine/execution/out_of_core/_bucket_native.py",
         "src/decoy_engine/execution/out_of_core/_mask.py",
         "src/decoy_engine/execution/out_of_core/_stream_driver.py",
+        # D2a (sequential-route hash on the compiled companion): `_sequential_native.py`
+        # (per-column decision, the pandas-to-Arrow boundary, the native call and its
+        # disposition) is new; the hash handler asks it for tokens, `_orphan.py` marks the REMAP
+        # call, `_adapter.py` carries the run's decisions on the context and `_sequential.py`
+        # creates and reports them. They reuse the out-of-core hash entry points and import
+        # nothing from `execution.physical`.
+        "src/decoy_engine/execution/_sequential_native.py",
+        "src/decoy_engine/execution/_strategies/_hash.py",
     }
     unexpected = [
         name

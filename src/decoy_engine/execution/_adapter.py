@@ -30,6 +30,7 @@ from decoy_engine.instrumentation.timing import StrategyTimingRecord
 
 if TYPE_CHECKING:
     from decoy_engine.execution._output_projection import UnconfiguredColumnPolicy
+    from decoy_engine.execution._sequential_native import SeqNativeRun
     from decoy_engine.generation.pool._cache import PoolCache
     from decoy_engine.keyprovider import KeyProvider
     from decoy_engine.plan._types import ColumnSeed, Plan
@@ -207,6 +208,9 @@ class StrategyContext:
     # D1c: rows a date operator emitted unchanged because they matched `preserve_values`,
     # summed per (table, column). A count only, never a value; empty unless a column opts in.
     date_preserved: dict[tuple[str, str], int] = field(default_factory=dict)
+    # D2a: the sequential route's per-run hash decisions. Set only by `run_sequential`; every
+    # other caller leaves it None, so the hash handler stays the Python path there.
+    seq_native: SeqNativeRun | None = None
 
     def __post_init__(self) -> None:
         # A frozen dataclass forbids attribute assignment; object.__setattr__ is
