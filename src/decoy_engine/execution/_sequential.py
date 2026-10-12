@@ -158,6 +158,7 @@ from decoy_engine.execution._runner import (
     order_work,
     top_code_columns,
 )
+from decoy_engine.execution._sequential_composite_chain import decline_composite_chain
 from decoy_engine.execution._sequential_native import SeqNativeRun
 from decoy_engine.execution._transactional_sink import (
     TransactionalSink,
@@ -419,19 +420,20 @@ def run_sequential(
 
                 table_records_list: list[RowErrorRecord] = []
                 for node in nodes_by_table.get(table, ()):
-                    warnings.extend(
-                        adapter._dispatch_mask_node(
-                            node,
-                            frames,
-                            graph,
-                            source_snapshots,
-                            parent_map_cache,
-                            node_by_key,
-                            ctx,
-                            key_error_rows=key_error_rows,
-                            errored_keys_cache=errored_keys_cache,
+                    with decline_composite_chain(ordered, graph, table):
+                        warnings.extend(
+                            adapter._dispatch_mask_node(
+                                node,
+                                frames,
+                                graph,
+                                source_snapshots,
+                                parent_map_cache,
+                                node_by_key,
+                                ctx,
+                                key_error_rows=key_error_rows,
+                                errored_keys_cache=errored_keys_cache,
+                            )
                         )
-                    )
                     # S2 self-ref FK (round 3): drain + fold per node, BEFORE the
                     # next node in this table dispatches, so an intra-table
                     # FK-child node (a self-referential FK) sees the parent-key

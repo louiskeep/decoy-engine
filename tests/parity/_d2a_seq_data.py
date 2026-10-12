@@ -164,7 +164,7 @@ def run_plain() -> Any:
     src = pa.table({"a": pa.array(["x", "y", None]), "b": pa.array(["abcdef", "gh", None])})
     truncate = column_seed("truncate", namespace=None, provider_config=(("length", 3),))
     table_seed = TableSeed(per_column=(("a", _PASSTHROUGH), ("b", truncate)), per_group=())
-    plan = SimpleNamespace(
+    plan: Any = SimpleNamespace(
         seed_envelope=SeedEnvelope(job_seed=JOB_SEED, per_table=(("t", table_seed),))
     )
     return PandasExecutionAdapter().run_sequential(

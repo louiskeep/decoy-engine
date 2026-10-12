@@ -205,6 +205,21 @@ stays on Python. A native fault aborts the run and is never retried in Python; w
 tables written before it are discarded depends on the sink (a `TransactionalSink` aborts, a
 plain callable has already delivered them).
 
+The same native `hash` covers every acyclic FK shape the sequential route masks: a multi-hop
+chain, a diamond, a child with several parents (first declared parent wins, unchanged),
+self-reference, a junction table, and a single-level composite key. A column that is both a
+child and a parent key (a chain's middle column) mints its orphan keys on the companion
+without ever being rehashed as a matched child. A composite tuple is built from per-member
+tokens, so a tuple that mixes an admitted member with a declined one (for example a string and a
+decimal) is native for the first and Python for the second. A composite foreign key that is
+itself the parent of another composite key (`A.(k,j) -> B.(k,j) -> C.(k,j)`) runs as before
+while every key matches: the tuples inherit the root's tokens. A genuine orphan on a `remap`
+hop of that chain cannot be re-derived on the sequential route, so the run stops with
+`sequential_composite_fk_chain_unsupported`, naming the tables and columns involved (the
+full-frame route keeps its raw `orphan_remap_parent_missing`). The other orphan policies still
+run on that shape. Follow-up: REMAP through a composite chain needs a scalar seed per composite
+member, which the planner does not compile today.
+
 The same nuance applies to deterministic `categorical`: the keyed index derives
 from the NFC-normalized source value, so for source text with a codepoint newer
 than the running Python's Unicode version the companion and Python paths can
