@@ -143,7 +143,8 @@ def make_remap_fn(
             object.__setattr__(ctx, "current_table", ptable)
             # D2a: on the sequential route this call is REMAP minting, decided on its own
             # from the orphan keys' type; nullcontext elsewhere.
-            scope = ctx.seq_native.remap_scope() if ctx.seq_native is not None else nullcontext()
+            seq_native = getattr(ctx, "seq_native", None)
+            scope = seq_native.remap_scope() if seq_native is not None else nullcontext()
             try:
                 with scope:
                     tmp, _ = handler.run(tmp, pcol, pnode.plan_slice, ctx)

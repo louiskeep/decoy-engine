@@ -49,7 +49,8 @@ class HashStrategyHandler:
         raw_truncate = cfg.get("truncate")
         truncate = raw_truncate if isinstance(raw_truncate, int) and raw_truncate > 0 else None
 
-        seq = ctx.seq_native
+        # getattr: handlers are also driven with hand-built contexts that predate this field.
+        seq = getattr(ctx, "seq_native", None)
         if seq is not None:
             tokens = seq.hash_column(
                 ctx,
