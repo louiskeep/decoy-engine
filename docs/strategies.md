@@ -198,6 +198,21 @@ month) while preserving coarse ordering and temporal density. Complementary to
 `date_shift`, which preserves exact cross-record ordering but shifts all dates
 by a bounded amount.
 
+Compute path on large jobs. On the out-of-core route a string date column with an
+explicit tz-free `date_format` runs on the compiled companion when it is installed;
+a non-string source, a `%z`/`%Z` format, or a box without the companion takes the
+Python path, and the job's `out_of_core_bucket_perturb` disposition says which ran
+and why. Output is identical on both paths with two exceptions. The keyed offset
+derives from the Unicode NFC-normalized value, so a `date_format` with a literal
+suffix holding a codepoint newer than the running Python's Unicode version can pick
+a different day on the two paths; the companion result is canonical, and ordinary
+ASCII formats never differ. And the companion computes buckets on pandas Timestamps
+(1677-09-21 to 2262-04-11): a date that parses but sits within one bucket of either
+bound fails the job with `out_of_core_bucket_perturb_date_out_of_native_range`
+rather than risk a wrapped date. Dates outside the range entirely (such as
+`9999-12-31`) pass through unchanged on both paths. Run without the companion to mask
+the full calendar range.
+
 ### bucketize
 
 Rounds numeric values into fixed-width bins. Deterministic by construction

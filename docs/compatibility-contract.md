@@ -194,6 +194,12 @@ select different categories. The companion selection is canonical, and the
 out-of-core route only runs a string source on the companion (documented in
 `docs/strategies.md`, categorical).
 
+`bucket_perturb` carries the same nuance: the within-bucket offset derives from the
+NFC-normalized source value, so a `date_format` with a Unicode literal suffix holding
+a codepoint newer than the running Python's Unicode version can land on a different
+day on the companion and Python paths. The companion result is canonical; ASCII
+formats are identical (documented in `docs/strategies.md`, bucket_perturb).
+
 ### 3.4 The public API + CLI contract
 
 - **Python:** the symbols re-exported from `decoy_engine/__init__.py` and
