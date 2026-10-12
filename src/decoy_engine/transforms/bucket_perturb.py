@@ -40,6 +40,7 @@ import pandas as pd
 
 from decoy_engine.determinism import derive
 from decoy_engine.generation.pool._canonicalize import _canonicalize_source
+from decoy_engine.transforms.date_preserve import preserve_config_problem
 
 _LOG = logging.getLogger(__name__)
 
@@ -222,8 +223,8 @@ def validate_bucket_perturb_config(cfg: dict[str, Any]) -> None:
         cfg: Raw config dict with keys ``bucket`` and optionally ``date_format``.
 
     Raises:
-        ValueError: ``bucket`` is missing or not a supported value, or
-            ``date_format`` cannot write a date back.
+        ValueError: ``bucket`` is missing or not a supported value,
+            ``date_format`` cannot write a date back, or ``preserve_values`` is invalid.
     """
     bucket = cfg.get("bucket")
     if not bucket:
@@ -239,3 +240,6 @@ def validate_bucket_perturb_config(cfg: dict[str, Any]) -> None:
         problem = bucket_perturb_date_format_problem(cfg["date_format"])
         if problem is not None:
             raise ValueError(f"bucket_perturb: {problem}")
+    problem = preserve_config_problem(cfg)
+    if problem is not None:
+        raise ValueError(f"bucket_perturb: {problem}")

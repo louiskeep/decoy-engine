@@ -41,11 +41,12 @@ oracle at admission (`date_shift_config_rejection`).
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pandas as pd
 import pyarrow as pa
+import pyarrow.compute as pc
 
 from decoy_engine.generation.pool import GenerationError
 
@@ -131,6 +132,7 @@ def native_date_shift(
     index_kernel: IndexDerivationKernel,
     native_threads: int | None = None,
     derive_calls: list[int] | None = None,
+    preserved: np.ndarray[Any, Any] | None = None,
 ) -> tuple[pa.Array, tuple[int, ...]]:
     """Shift a `pa.string()` date column on the native lane (full-frame or one chunk).
 
@@ -145,6 +147,11 @@ def native_date_shift(
     calls this invocation made: one when any row parsed, zero for an empty, all-null or
     all-unparseable input. The chunked route reads it so its evidence only claims a
     compiled kernel when one ran.
+
+    `preserved`, when given, is a boolean mask over `array` of sentinel rows (D1c). They are
+    filtered out before parsing, so they never reach the kernel, the date arithmetic or the
+    whole-column strftime, are never format errors, and keep their source text. The returned
+    positions are rebased to `array`.
     """
     if mask_key is None:  # pragma: no cover - require_mask_key never returns None
         raise AssertionError(
@@ -153,6 +160,24 @@ def native_date_shift(
         )
     min_days, range_size = resolve_shift_range(min_days, max_days)
     col = array.combine_chunks() if isinstance(array, pa.ChunkedArray) else array
+    if preserved is not None and preserved.any():
+        rest = pa.array(~preserved)
+        computed, positions = native_date_shift(
+            col.filter(rest),
+            min_days=min_days,
+            max_days=max_days,
+            date_format=date_format,
+            mask_key=mask_key,
+            namespace=namespace,
+            index_kernel=index_kernel,
+            native_threads=native_threads,
+            derive_calls=derive_calls,
+        )
+        kept = np.flatnonzero(~preserved)
+        return (
+            pc.replace_with_mask(col.cast(pa.string()), rest, computed),
+            tuple(int(kept[p]) for p in positions),
+        )
 
     # The oracle's own series preparation: an extension dtype is coerced to
     # object before parsing. `to_pandas()` of a pa.string() column is object

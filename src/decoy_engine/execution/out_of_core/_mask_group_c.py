@@ -91,6 +91,10 @@ from decoy_engine.transforms.bucket_perturb import (
     validate_bucket_perturb_config,
 )
 from decoy_engine.transforms.code_set import CodeSetConfig, apply_code_set
+from decoy_engine.transforms.date_preserve import (
+    apply_excluding_preserved,
+    preserve_set_from_config,
+)
 from decoy_engine.transforms.text_mask import mask_cell
 
 if TYPE_CHECKING:
@@ -444,7 +448,8 @@ def _bucket_perturb_array(
             "(gate should reject); whole-column format detection does not chunk.",
         )
 
-    if native is not None:
+    preserve = preserve_set_from_config(cfg)
+    if native is not None and native.bound is not None:
         return native_bucket_perturb_array(
             values,
             native=native,
@@ -452,15 +457,25 @@ def _bucket_perturb_array(
             namespace=namespace,
             bucket=bucket,
             date_format=date_format,
+            preserve=preserve,
         )
     series = _to_series(values)
-    perturbed = apply_bucket_perturb(
-        series,
-        bucket=bucket,
-        job_seed=job_seed,
-        namespace=namespace,
-        date_format=date_format,
-    )
+
+    def perturb(batch: pd.Series) -> pd.Series:
+        return apply_bucket_perturb(
+            batch,
+            bucket=bucket,
+            job_seed=job_seed,
+            namespace=namespace,
+            date_format=date_format,
+        )
+
+    if preserve is None:
+        perturbed = perturb(series)
+    else:
+        perturbed, preserved = apply_excluding_preserved(series, preserve, perturb)
+        if native is not None:
+            native.decision.preserved_rows += preserved
     return pa.array(perturbed, from_pandas=True)
 
 

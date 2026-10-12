@@ -27,6 +27,7 @@ from decoy_engine.execution._strategies._faker_positional import faker_selection
 from decoy_engine.execution._strategies._text_redact import _DEFAULT_TOKEN
 from decoy_engine.execution.native._categorical_prepared import PreparedCategorical
 from decoy_engine.execution.native._date_shift_ext import DEFAULT_MAX_DAYS, DEFAULT_MIN_DAYS
+from decoy_engine.transforms.date_preserve import PreserveSet, preserve_set_from_config
 
 __all__ = [
     "BucketPerturbParams",
@@ -121,6 +122,8 @@ class BucketPerturbParams:
     bucket: str
     date_format: str
     namespace: str | None
+    # D1c sentinel dates emitted unchanged; None when the column does not opt in.
+    preserve: PreserveSet | None = None
 
 
 @dataclass(frozen=True)
@@ -138,6 +141,7 @@ class DateShiftParams:
     min_days: int
     max_days: int
     namespace: str | None
+    preserve: PreserveSet | None = None
 
 
 @dataclass(frozen=True)
@@ -270,7 +274,13 @@ def resolve_operator_params(
             )
         return CategoricalParams(prepared_categorical, namespace)
     if strategy == "bucket_perturb":
-        return BucketPerturbParams(str(cfg.get("bucket", "month")), cfg["date_format"], namespace)
+        # Admission declined an invalid `preserve_values`, so this only ever sees a valid one.
+        return BucketPerturbParams(
+            str(cfg.get("bucket", "month")),
+            cfg["date_format"],
+            namespace,
+            preserve_set_from_config(cfg),
+        )
     if strategy == "group_key":
         return GroupKeyParams(
             cfg["group_by"],
@@ -285,6 +295,7 @@ def resolve_operator_params(
             cfg.get("min_days", DEFAULT_MIN_DAYS),
             cfg.get("max_days", DEFAULT_MAX_DAYS),
             namespace,
+            preserve_set_from_config(cfg),
         )
     raise AssertionError(f"no native operator parameters for strategy {strategy!r}")
 

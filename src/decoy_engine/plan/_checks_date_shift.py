@@ -5,9 +5,10 @@ ceiling. See the SP-10 comment in tests/sentry/test_module_size.py: the
 _checks.py module decomposes into per-strategy sub-modules as new strategies
 land; this is the HC-3a slice for date_shift.
 
-This module exports exactly one function: ``check_date_shift_group_by_refs``,
-which validates that date_shift columns using ``group_by`` name an existing
-entity column. It is imported by plan/_compile.py alongside the other check
+This module exports ``check_date_shift_group_by_refs``, which validates that
+date_shift columns using ``group_by`` name an existing entity column, and
+``check_date_preserve_values`` (D1c), which validates ``preserve_values`` on both
+date operators. Both are imported by plan/_compile.py alongside the other check
 functions from plan/_checks.py and sibling _checks_*.py modules.
 """
 
@@ -16,6 +17,7 @@ from __future__ import annotations
 from typing import Any
 
 from decoy_engine.plan._errors import PlanCompileError
+from decoy_engine.transforms.date_preserve import has_preserve_values, preserve_config_problem
 
 
 def check_date_shift_group_by_refs(config: dict[str, Any]) -> None:
@@ -210,5 +212,160 @@ def check_date_shift_group_by_refs(config: dict[str, Any]) -> None:
                         "cannot be re-aligned to the pre-mask entity anchor "
                         "without risking wrong offsets. Remove `when` or "
                         "`group_by` from this column."
+                    ),
+                )
+
+
+# ---------------------------------------------------------------------------
+# D1c: preserve_values
+# ---------------------------------------------------------------------------
+
+_PRESERVE_STRATEGIES = ("date_shift", "bucket_perturb")
+_FK_SHAPE_CODE = "date_preserve_values_unsupported_fk_shape"
+
+
+def _preserve_columns(table_entry: dict[str, Any]) -> list[tuple[str, str, dict[str, Any], str]]:
+    """``(column, strategy, config, config_path)`` for each date column that opts in.
+
+    A nested column carries its child strategy's config under ``strategy_config``.
+    """
+    found: list[tuple[str, str, dict[str, Any], str]] = []
+    table_name = table_entry.get("name", "?")
+    for col_entry in table_entry.get("columns") or []:
+        if not isinstance(col_entry, dict):
+            continue
+        name = str(col_entry.get("name", "?"))
+        strategy = col_entry.get("strategy")
+        pc = col_entry.get("provider_config")
+        prefix = f"tables.{table_name}.columns.{name}.provider_config"
+        if strategy == "nested" and isinstance(pc, dict):
+            strategy, pc, prefix = (
+                pc.get("strategy"),
+                pc.get("strategy_config"),
+                (f"{prefix}.strategy_config"),
+            )
+        if strategy in _PRESERVE_STRATEGIES and isinstance(pc, dict) and has_preserve_values(pc):
+            found.append((name, str(strategy), pc, prefix))
+    return found
+
+
+Endpoint = tuple[str, tuple[str, ...]]
+
+
+def _relationship_edges(config: dict[str, Any]) -> list[tuple[Endpoint, Endpoint]]:
+    """Every declared parent -> child edge as ``((table, columns), (table, columns))``."""
+    edges: list[tuple[Endpoint, Endpoint]] = []
+    for rel in config.get("relationships", []) or []:
+        if not isinstance(rel, dict):
+            continue
+        parent = _endpoint(rel.get("parent"))
+        if parent is None:
+            continue
+        for child in rel.get("children") or []:
+            child_end = _endpoint(child)
+            if child_end is not None:
+                edges.append((parent, child_end))
+    return edges
+
+
+def _endpoint(raw: Any) -> Endpoint | None:
+    if not isinstance(raw, dict) or not raw.get("table"):
+        return None
+    cols = tuple(str(c) for c in raw.get("columns") or [] if c)
+    return (str(raw["table"]), cols) if cols else None
+
+
+def _fk_shape_problem(
+    table: str, column: str, edges: list[tuple[Endpoint, Endpoint]]
+) -> str | None:
+    """Why ``(table, column)`` cannot carry ``preserve_values``, or None.
+
+    A scalar FK participation is a ``(table, column)`` pair. Pairs that share an edge form one
+    component, so a column shared by two composite keys cannot look like two independent
+    single-hop edges. Only a component of exactly one scalar parent -> child edge between two
+    different tables is supported, with the column on the PARENT side. Orphan remap re-runs the
+    immediate parent's handler, so preservation survives exactly one hop; every other shape is
+    refused rather than silently breaking referential integrity.
+    """
+    pair = (table, column)
+    component = {pair}
+    grew = True
+    while grew:
+        grew = False
+        for parent, child in edges:
+            ends = {(parent[0], c) for c in parent[1]} | {(child[0], c) for c in child[1]}
+            if ends & component and not ends <= component:
+                component |= ends
+                grew = True
+    touching = [
+        (parent, child)
+        for parent, child in edges
+        if {(parent[0], c) for c in parent[1]} & component
+        or {(child[0], c) for c in child[1]} & component
+    ]
+    if not touching:
+        return None  # a payload column with no FK participation
+    if len(touching) != 1:
+        return "it is part of a multi-hop chain, a shared child or a cycle"
+    parent, child = touching[0]
+    if len(parent[1]) != 1 or len(child[1]) != 1:
+        return "it is part of a composite key"
+    if parent[0] == child[0]:
+        return "its relationship runs between columns of the same table"
+    if pair != (parent[0], parent[1][0]):
+        return (
+            "it is the child side of a relationship; put preserve_values on the parent key, "
+            "which the child inherits"
+        )
+    return None
+
+
+def check_date_preserve_values(config: dict[str, Any]) -> None:
+    """Reject ``preserve_values`` configs the date operators cannot honour (D1c).
+
+    Config-only, so a zero-row table or a ``when:`` that selects nothing still fails here, the
+    same way on the native and oracle routes. Value-free messages throughout.
+
+    Raises:
+        PlanCompileError: ``date_shift_preserve_values_invalid`` (bad literal, missing or
+            unsupported ``date_format``), ``date_preserve_values_with_group_by_unsupported``,
+            or ``date_preserve_values_unsupported_fk_shape``.
+    """
+    edges = _relationship_edges(config)
+    tables = config.get("tables", []) if isinstance(config.get("tables"), list) else []
+    for table_entry in tables:
+        if not isinstance(table_entry, dict):
+            continue
+        table_name = str(table_entry.get("name", "?"))
+        for name, strategy, pc, prefix in _preserve_columns(table_entry):
+            if strategy == "date_shift":
+                problem = preserve_config_problem(pc)
+                if problem is not None:
+                    raise PlanCompileError(
+                        code="date_shift_preserve_values_invalid",
+                        path=f"{prefix}.preserve_values",
+                        message=f"date_shift column {name!r} in table {table_name!r}: {problem}",
+                    )
+                if pc.get("group_by"):
+                    raise PlanCompileError(
+                        code="date_preserve_values_with_group_by_unsupported",
+                        path=f"{prefix}.group_by",
+                        message=(
+                            f"date_shift column {name!r} in table {table_name!r} sets both "
+                            "preserve_values and group_by. The entity anchor must row-align "
+                            "with the frame being shifted, which excluding sentinel rows "
+                            "breaks. Remove one of the two."
+                        ),
+                    )
+            fk_problem = _fk_shape_problem(table_name, name, edges)
+            if fk_problem is not None:
+                raise PlanCompileError(
+                    code=_FK_SHAPE_CODE,
+                    path=f"{prefix}.preserve_values",
+                    message=(
+                        f"{strategy} column {name!r} in table {table_name!r} sets "
+                        f"preserve_values, but {fk_problem}. preserve_values is supported on "
+                        "payload date columns and on the parent key of one single-column "
+                        "relationship between two tables. Remove it from this column."
                     ),
                 )
