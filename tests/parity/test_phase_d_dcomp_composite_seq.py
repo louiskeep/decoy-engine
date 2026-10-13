@@ -366,10 +366,10 @@ def test_c5c_matched_float_beside_an_unrepresentable_integer_orphan_fails_closed
 def test_c5c_ii_a_non_exact_integer_orphan_fails_closed_on_ff_and_seq(
     policy: OrphanPolicy, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # The precision-loss case the magnitude guard alone does not pin: 2**62 + 1 is odd, so it has
-    # no exact float64 value. The orphan is an int64 child component beside a float parent column,
-    # so the resolved column would have to hold both and silently round the orphan. Every route
-    # must refuse. (A guard that only checked magnitude, not representability, would let this round.)
+    # The precision-loss case: 2**62 + 1 is odd, so it has no exact float64 value. The orphan is an
+    # int64 child component beside a float parent column, so the resolved column would have to hold
+    # both and silently round the orphan. Every route must refuse. (Removing or bypassing the
+    # mixed-type rejection would silently round the orphan; this test's raise kills that mutation.)
     def shape() -> s.Shape:
         return d.float_parent_int_child_shape(policy, orphan_int=2**62 + 1)
 
