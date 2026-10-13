@@ -174,8 +174,10 @@ class DateShiftStrategyHandler:
             if pd.api.types.is_extension_array_dtype(anchor_col.dtype):
                 anchor_col = anchor_col.astype(object)
 
+        # group_by is not native, but admission declines it, so the seam books the row and
+        # returns None (reporting the honest python_scalar backend) rather than being gated out.
         seq = getattr(ctx, "seq_native", None)
-        if seq is not None and not group_by:
+        if seq is not None:
             native_out = seq.date_shift_column(
                 ctx,
                 df,

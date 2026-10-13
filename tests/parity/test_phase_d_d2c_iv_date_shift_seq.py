@@ -691,7 +691,7 @@ def test_a_group_by_column_stays_on_python_and_runs_the_snapshot_anchor_path(
     result = run_seq(shape)
     [entry] = _entries(result)
     assert kernel.calls == []
-    assert entry["executed_backend"] != NATIVE
+    assert entry["executed_backend"] == PYTHON  # declined, not "none": the seam books the row
     assert entry["reason"] == "date_shift_group_by_not_native:d"
     assert result.outputs["P"].equals(run_full(shape).outputs["P"])
 
