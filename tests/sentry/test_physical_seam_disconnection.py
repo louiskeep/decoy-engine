@@ -638,6 +638,9 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         # `execution.physical`.
         "src/decoy_engine/execution/_sequential_native.py",
         "src/decoy_engine/execution/_sequential_native_ops.py",
+        # Decision/evidence value types for the SEQ-native seam, split out of `_sequential_native.py`
+        # for module size; no physical I/O.
+        "src/decoy_engine/execution/_sequential_native_decisions.py",
         "src/decoy_engine/execution/_sequential_composite_chain.py",
         "src/decoy_engine/execution/_strategies/_hash.py",
         "src/decoy_engine/execution/_strategies/_fpe.py",
