@@ -95,11 +95,11 @@ class FakerStrategyHandler:
                 namespace=plan.namespace,
             )
             ctx.pool_cache.put(pool)
-        # Only the two native legs are offered: deterministic REUSE and positional REUSE. The
-        # whole-column UNIQUE/MATCH/SCALE modes below never are. A declined column falls through
-        # to the Python assembly with the pool already cached.
+        # Admission, not this call site, decides which legs are native (deterministic REUSE and
+        # positional REUSE). Every column is still offered so a declined one books the rows
+        # Python masks, and falls through to the assembly below with the pool already cached.
         seq = getattr(ctx, "seq_native", None)
-        if seq is not None and (plan.deterministic or positional):
+        if seq is not None:
             picked = seq.faker_column(ctx, df, column, plan, pool)
             if picked is not None:
                 df[column] = picked
