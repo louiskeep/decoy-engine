@@ -580,9 +580,11 @@ def _mixed_shape(order: list[str]) -> Shape:
         ["f", "h", "d", "c", "b"],
     ],
 )
-def test_all_five_native_strategies_mask_correctly_in_any_column_order(
+def test_five_native_strategies_mask_correctly_in_any_column_order(
     order: list[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # Covers hash/fpe/categorical/bucket_perturb/date_shift together; faker, the 6th native
+    # strategy, gets the equivalent mixed-job column-isolation coverage in test_phase_d_faker_seq.
     shape = _mixed_shape(order)
     oracle = run_full(shape).outputs["P"]
     # One index loader serves categorical, bucket_perturb and date_shift, so one reference
@@ -645,7 +647,7 @@ def test_the_date_shift_fragment_keeps_its_literal_shape(monkeypatch: pytest.Mon
 # 12-13. Registry and the absent key.
 
 
-def test_the_registry_holds_the_five_native_strategies() -> None:
+def test_the_registry_holds_the_six_native_strategies() -> None:
     assert set(_sequential_native._OPS) == {
         "hash",
         "fpe",
