@@ -64,7 +64,7 @@ def test_a_declined_orphan_type_is_minted_in_python_not_on_the_kernel(
 ) -> None:
     kernel = MarkingKernel()
     run = _remap_run(kernel)
-    assert run._remap_tokens("t", "k", orphans, "ns", KEY, None) is None
+    assert run._remap_tokens("t", "k", orphans, "hash", HashCall("ns", KEY, None)) is None
     assert kernel.calls == []  # the kernel never saw the batch
     record = run._remap[("t", "k")]
     assert (record.native_rows, record.python_rows) == (0, len(orphans))
@@ -79,10 +79,18 @@ def test_a_declined_orphan_type_is_minted_in_python_not_on_the_kernel(
 def test_remap_counters_accumulate_exactly_over_native_and_python_calls() -> None:
     kernel = MarkingKernel()
     run = _remap_run(kernel)
-    assert run._remap_tokens("t", "k", pd.Series(["a", "b"]), "ns", KEY, None) is not None
-    assert run._remap_tokens("t", "k", pd.Series(["c", "d", "e"]), "ns", KEY, None) is not None
-    assert run._remap_tokens("t", "k", pd.Series([1.5] * 4), "ns", KEY, None) is None
-    assert run._remap_tokens("t", "k", pd.Series([2.5]), "ns", KEY, None) is None
+    assert (
+        run._remap_tokens("t", "k", pd.Series(["a", "b"]), "hash", HashCall("ns", KEY, None))
+        is not None
+    )
+    assert (
+        run._remap_tokens("t", "k", pd.Series(["c", "d", "e"]), "hash", HashCall("ns", KEY, None))
+        is not None
+    )
+    assert (
+        run._remap_tokens("t", "k", pd.Series([1.5] * 4), "hash", HashCall("ns", KEY, None)) is None
+    )
+    assert run._remap_tokens("t", "k", pd.Series([2.5]), "hash", HashCall("ns", KEY, None)) is None
     record = run._remap[("t", "k")]
     assert (record.native_rows, record.python_rows) == (5, 5)
     assert [c.rows for c in kernel.calls] == [2, 3]
@@ -95,7 +103,9 @@ def test_parent_python_remap_counts_every_row_across_calls() -> None:
     run = SeqNativeRun()
     run._remap_decisions[("t", "k")] = ColumnDecision("t", "k", "python_scalar", "r", pa.string())
     for batch in (["a", "b"], ["c", "d", "e"]):
-        assert run._remap_tokens("t", "k", pd.Series(batch), "ns", KEY, None) is None
+        assert (
+            run._remap_tokens("t", "k", pd.Series(batch), "hash", HashCall("ns", KEY, None)) is None
+        )
     record = run._remap[("t", "k")]
     assert (record.native_rows, record.python_rows) == (0, 5)
 

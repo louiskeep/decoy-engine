@@ -8,7 +8,7 @@ and the sequential route (`run_seq`).
 
 Key-column operators here are `hash` unless a case says otherwise. The two row-error shapes use
 `bucketize` and `code_set` on the key columns because those are the only operators that raise a
-per-row error on a text key; they run on Python on a key (the native seam skips non-hash key
+per-row error on a text key; they run on Python on a key (only hash and fpe are native key
 operators), so those shapes assert oracle parity and nothing about native compute.
 """
 

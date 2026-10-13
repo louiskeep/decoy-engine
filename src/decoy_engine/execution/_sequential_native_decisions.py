@@ -73,13 +73,14 @@ class ColumnDecision:
 
 @dataclass
 class RemapRecord:
-    """Orphan rows minted by re-running one parent column's hash, by backend."""
+    """Orphan rows minted by re-running one parent column's key strategy, by backend."""
 
     table: str
     column: str
     native_rows: int = 0
     python_rows: int = 0
     reasons: list[str] = field(default_factory=list)
+    strategy: str = HASH
 
     def entry(self) -> dict[str, Any]:
         if self.native_rows and self.python_rows:

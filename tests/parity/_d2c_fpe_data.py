@@ -106,8 +106,9 @@ def fpe_key_shape(
 ) -> Shape:
     """A.k -> B.k -> C.k with every key an fpe column, one orphan at each hop.
 
-    A.k is a parent key; B.k is both child and parent key (the chain's middle). All three
-    must stay on the Python handler."""
+    A.k is a parent key; B.k is both child and parent key (the chain's middle) and C.k a child.
+    fpe is a native key strategy: A.k derives on the kernel, B.k and C.k inherit, and each
+    orphan is minted by the parent's kernel call."""
     keys_a = ["1000000001", "1000000002"]
     keys_b = [*keys_a, "2000000002"]
     keys_c = [*keys_b, "3000000003"]

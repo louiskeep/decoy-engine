@@ -39,6 +39,7 @@ from tests.parity._d2c_fpe_data import (
     payload_shape,
     warning_view,
 )
+from tests.parity._fpe_key_data import fpe_marked_expected
 from tests.parity._seq_witness import MarkingKernel
 from tests.parity._seq_witness import install as install_hash
 
@@ -300,26 +301,41 @@ def test_a_row_error_under_a_when_subset_still_fails_the_table(
     assert exc.value.code == "fpe_unencryptable_domain"
 
 
-# FK key boundary: an fpe key column stays on Python.
+# FK key: an fpe key column is native (hash and fpe are the injective key strategies).
 
 
 @pytest.mark.parametrize("policy", [OrphanPolicy.PRESERVE, OrphanPolicy.REMAP])
-def test_fpe_key_columns_get_no_native_decision_and_match_the_python_oracle(
+def test_fpe_key_columns_get_a_native_decision_and_match_the_python_oracle(
     policy: OrphanPolicy, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     kernel = install_fpe(monkeypatch, FpeMarkingKernel())
-    install_hash(monkeypatch, MarkingKernel())
+    hash_kernel = install_hash(monkeypatch, MarkingKernel())
     shape = fpe_key_shape(policy)
     result = run_seq(shape)
     oracle = run_full(shape)
     for table in ("A", "B", "C"):
-        assert result.outputs[table].equals(oracle.outputs[table]), table
-        emitted = result.outputs[table].column("k").to_pylist()
-        assert not any(v.startswith(MARK) for v in emitted if v)
-    assert kernel.calls == []
-    # No contamination: the fpe parents add nothing to either disposition fragment.
+        # The oracle's value, with the stand-in's mark on every cell the kernel derived.
+        assert result.outputs[table].to_pydict() == fpe_marked_expected(
+            oracle.outputs[table], shape.sources[table], {"k"}
+        ), table
+    assert hash_kernel.calls == []
+    # A scalar derives A.k; REMAP adds one call per hop's orphan. B.k is a chain middle, so it
+    # is never rederived as a scalar.
+    assert sorted(c.rows for c in kernel.calls) == (
+        [1, 1, 2] if policy is OrphanPolicy.REMAP else [2]
+    )
     assert SEQ_HASH_DISPOSITION_KEY not in result.quality_metrics
-    assert SEQ_FPE_DISPOSITION_KEY not in result.quality_metrics
+    paths = {
+        (e["table"], e["column"], e["path"])
+        for e in result.quality_metrics[SEQ_FPE_DISPOSITION_KEY]
+    }
+    remap = (
+        {("A", "k", "fk_remap"), ("B", "k", "fk_remap")} if policy is OrphanPolicy.REMAP else set()
+    )
+    assert (
+        paths
+        == {("A", "k", "scalar"), ("B", "k", "fk_inherited"), ("C", "k", "fk_inherited")} | remap
+    )
 
 
 def test_an_fpe_key_does_not_disturb_a_native_hash_payload_beside_it(
@@ -329,7 +345,7 @@ def test_an_fpe_key_does_not_disturb_a_native_hash_payload_beside_it(
     install_hash(monkeypatch, MarkingKernel())
     result = run_seq(fpe_key_shape(OrphanPolicy.REMAP, hash_payload=True))
     assert [e["column"] for e in result.quality_metrics[SEQ_HASH_DISPOSITION_KEY]] == ["h"]
-    assert SEQ_FPE_DISPOSITION_KEY not in result.quality_metrics
+    assert {e["column"] for e in result.quality_metrics[SEQ_FPE_DISPOSITION_KEY]} == {"k"}
 
 
 def test_a_non_hash_strategy_inside_a_remap_scope_returns_to_python_untouched() -> None:

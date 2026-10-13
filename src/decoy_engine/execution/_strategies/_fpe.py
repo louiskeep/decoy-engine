@@ -171,7 +171,7 @@ class FpeStrategyHandler:
             from decoy_engine.execution.native._crypto_ext import FpeConfig
 
             call = FpeCall(namespace, ctx.mask_key, FpeConfig.from_mapping(cfg), column)
-            tokens = seq.native_column(ctx, df, column, FPE, call)
+            tokens = seq.key_column(ctx, df, column, FPE, call)
             if tokens is not None:
                 # Unlike hash, the kernel computes no warnings, so the residual-risk pass still
                 # runs here on the original values (the `when` subset, if any).
