@@ -68,6 +68,7 @@ from decoy_engine.execution._operator_registry import PYTHON_SCALAR, RUST_COMPAN
 from decoy_engine.execution._sequential_native_ops import (
     BUCKET_PERTURB,
     CATEGORICAL,
+    DATE_SHIFT,
     FPE,
     HASH,
     SEQ_FPE_DISPOSITION_KEY,
@@ -79,6 +80,8 @@ from decoy_engine.execution._sequential_native_ops import (
     NativeOp,
     bucket_perturb_op,
     categorical_op,
+    date_shift_op,
+    date_shift_row_errors,
     fpe_op,
     hash_op,
 )
@@ -87,6 +90,7 @@ from decoy_engine.execution.native._crypto_ext import (
     CryptoExtensionUnavailableError,
     load_compiled_crypto_kernel,
 )
+from decoy_engine.execution.native._date_shift_ext import native_date_shift
 from decoy_engine.execution.native._fpe_ext import load_compiled_fpe_kernel
 from decoy_engine.execution.native._index_ext import load_compiled_index_kernel
 from decoy_engine.execution.out_of_core._categorical_native import BoundIndexKernel
@@ -113,7 +117,10 @@ REASON_REMAP_PARENT_PYTHON = "hash_remap_parent_stays_python"
 REASON_REMAP_INPUT_NOT_ARROW = "hash_remap_input_not_arrow"
 _NO_KERNEL_RAN = "none"
 _REASON_NO_ROWS = "no_rows_hashed"
-_REASON_NO_BUCKET_CALLS = "no_native_bucket_calls"
+_NO_CALLS_REASON = {
+    BUCKET_PERTURB: "no_native_bucket_calls",
+    DATE_SHIFT: "no_native_date_shift_calls",
+}
 REASON_BUCKET_OUT_OF_RANGE = "sequential_bucket_perturb_date_out_of_native_range"
 _CONVERSION_ERRORS = (pa.ArrowInvalid, pa.ArrowTypeError, pa.ArrowNotImplementedError)
 
@@ -131,9 +138,9 @@ class ColumnDecision:
     pinned_type: pa.DataType
     rows: int = 0
     strategy: str = HASH
-    # bucket_perturb only: evidence comes from the compiled calls the kernel reported, so a
-    # column that parsed nothing never claims a kernel ran; `counts_preserved` is set once the
-    # native path has recorded its sentinel count.
+    # bucket_perturb and date_shift: evidence comes from the compiled calls the kernel reported,
+    # so a column that parsed nothing never claims a kernel ran; `counts_preserved` is set once
+    # the native path has recorded its sentinel count.
     native_calls: int = 0
     counts_preserved: bool = False
     preserved_rows: int = 0
@@ -143,9 +150,11 @@ class ColumnDecision:
         return self.backend == RUST_COMPANION
 
     def entry(self) -> dict[str, Any]:
-        calls_decide = self.strategy == BUCKET_PERTURB and self.native
+        calls_decide = self.strategy in (BUCKET_PERTURB, DATE_SHIFT) and self.native
         ran = self.native_calls > 0 if calls_decide else self.rows > 0
-        none_reason = _REASON_NO_BUCKET_CALLS if calls_decide and self.rows else _REASON_NO_ROWS
+        none_reason = (
+            _NO_CALLS_REASON.get(self.strategy, _REASON_NO_ROWS) if self.rows else _REASON_NO_ROWS
+        )
         reason = self.reason or (None if ran else none_reason)
         entry: dict[str, Any] = {
             "table": self.table,
@@ -195,8 +204,8 @@ def _table_columns(plan: Plan, table: str) -> dict[str, ColumnSeed]:
     return dict(seed.per_column) if seed is not None else {}
 
 
-# Loaders live here, not in the ops module, so each is resolved through this module's globals
-# at call time (a test swaps the companion load by patching the name).
+# Loaders live here, not in the ops module, so each resolves through this module's globals at
+# call time (a test swaps the companion load by patching the name).
 def _load_hash(native_threads: int | None) -> BoundHashKernel:
     return BoundHashKernel(load_compiled_crypto_kernel(), native_threads)
 
@@ -205,19 +214,16 @@ def _load_fpe(native_threads: int | None) -> BoundFpeKernel:
     return BoundFpeKernel(load_compiled_fpe_kernel(), native_threads)
 
 
-def _load_categorical(native_threads: int | None) -> BoundIndexKernel:
-    return BoundIndexKernel(load_compiled_index_kernel(), native_threads)
-
-
-def _load_bucket(native_threads: int | None) -> BoundIndexKernel:
+def _load_index(native_threads: int | None) -> BoundIndexKernel:
     return BoundIndexKernel(load_compiled_index_kernel(), native_threads)
 
 
 _OPS: dict[str, NativeOp] = {
     HASH: hash_op(_load_hash),
     FPE: fpe_op(_load_fpe),
-    CATEGORICAL: categorical_op(_load_categorical),
-    BUCKET_PERTURB: bucket_perturb_op(_load_bucket),
+    CATEGORICAL: categorical_op(_load_index),
+    BUCKET_PERTURB: bucket_perturb_op(_load_index),
+    DATE_SHIFT: date_shift_op(_load_index),
 }
 
 
@@ -390,16 +396,10 @@ class SeqNativeRun:
         Order matters: the sentinel mask comes from the original column first, the range check
         sees only the rows the kernel will see, and the preserved count is recorded once, only
         by the native path, so a declined column's count is left to the Python handler."""
-        if ctx.nested_outer_column or self._in_remap:
+        gate = self._admitted(ctx, column, BUCKET_PERTURB, len(df))
+        if gate is None:
             return None
-        decision = self._decisions.get((ctx.current_table, column))
-        if decision is None or decision.strategy != BUCKET_PERTURB:
-            return None
-        rows = len(df)
-        decision.rows += rows
-        bound = self._bound.get(BUCKET_PERTURB)
-        if not decision.native or rows == 0 or bound is None:
-            return None
+        decision, bound = gate
         if date_format is None:  # pragma: no cover - admission requires an explicit format
             raise AssertionError("bucket_perturb admitted without a date_format.")
         preserved = preserve.mask(df[column]) if preserve is not None else None
@@ -420,6 +420,73 @@ class SeqNativeRun:
             ctx.record_date_preserved(column, count)
         return result.values.to_pylist()
 
+    def _admitted(
+        self, ctx: StrategyContext, column: str, strategy: str, rows: int
+    ) -> tuple[ColumnDecision, Any] | None:
+        """The column's decision and bound kernel when this call may run native, else None.
+
+        A nested child or a REMAP call returns to Python before touching native state; the
+        row count is booked whether or not the column ends up native."""
+        if ctx.nested_outer_column or self._in_remap:
+            return None
+        decision = self._decisions.get((ctx.current_table, column))
+        if decision is None or decision.strategy != strategy:
+            return None
+        decision.rows += rows
+        bound = self._bound.get(strategy)
+        if not decision.native or rows == 0 or bound is None:
+            return None
+        return decision, bound
+
+    def date_shift_column(
+        self,
+        ctx: StrategyContext,
+        df: pd.DataFrame,
+        column: str,
+        *,
+        namespace: str,
+        mask_key: bytes,
+        min_days: int,
+        max_days: int,
+        date_format: str | None,
+        preserve: PreserveSet | None,
+    ) -> list[Any] | None:
+        """The shifted dates for `df[column]`, positionally, or None when Python runs.
+
+        Unparseable cells keep their text and are appended to `ctx.row_errors` as the handler
+        does; the pipeline decides fail versus quarantine. Positions need no rebasing: the
+        kernel rebases past sentinel rows and the `when` gate maps back to table positions."""
+        gate = self._admitted(ctx, column, DATE_SHIFT, len(df))
+        if gate is None:
+            return None
+        decision, bound = gate
+        if date_format is None:  # pragma: no cover - admission requires an explicit format
+            raise AssertionError("date_shift admitted without a date_format.")
+        preserved = preserve.mask(df[column]) if preserve is not None else None
+        array = self._pinned_array(df[column], decision)
+        derive_calls: list[int] = []
+        out, positions = native_date_shift(
+            array,
+            min_days=min_days,
+            max_days=max_days,
+            date_format=date_format,
+            mask_key=mask_key,
+            namespace=namespace,
+            index_kernel=bound.kernel,
+            native_threads=bound.native_threads,
+            derive_calls=derive_calls,
+            preserved=preserved,
+        )
+        decision.native_calls += sum(derive_calls)
+        ctx.row_errors.extend(date_shift_row_errors(column, positions))
+        if preserved is not None:
+            count = int(preserved.sum())
+            decision.counts_preserved = True
+            decision.preserved_rows += count
+            if count:  # the Python handler records a count only when a sentinel matched
+                ctx.record_date_preserved(column, count)
+        return out.to_pylist()
+
     def native_column(
         self, ctx: StrategyContext, df: pd.DataFrame, column: str, strategy: str, call: Any
     ) -> list[Any] | None:
@@ -427,16 +494,10 @@ class SeqNativeRun:
 
         A kernel error channel is checked before any value leaves: a strategy that declares
         errors raises its coded exception, so the failed table publishes nothing."""
-        if ctx.nested_outer_column or self._in_remap:
-            return None  # a non-hash REMAP call returns to Python before touching hash state
-        decision = self._decisions.get((ctx.current_table, column))
-        if decision is None or decision.strategy != strategy:
+        gate = self._admitted(ctx, column, strategy, len(df))
+        if gate is None:
             return None
-        rows = len(df)
-        decision.rows += rows
-        bound = self._bound.get(strategy)
-        if not decision.native or rows == 0 or bound is None:
-            return None
+        decision, bound = gate
         op = _OPS[strategy]
         result = op.apply(bound, self._pinned_array(df[column], decision), call)
         if result.errors:

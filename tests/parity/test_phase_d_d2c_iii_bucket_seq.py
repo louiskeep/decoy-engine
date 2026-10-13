@@ -699,9 +699,15 @@ def test_a_job_without_bucket_perturb_has_no_bucket_disposition_key() -> None:
 # Descriptor registry.
 
 
-def test_the_registry_holds_the_four_native_strategies_and_not_date_shift() -> None:
-    assert set(_sequential_native._OPS) == {"hash", "fpe", "categorical", "bucket_perturb"}
-    assert "date_shift" not in _sequential_native._OPS
+def test_the_registry_holds_the_native_strategies_and_not_text_mask() -> None:
+    assert set(_sequential_native._OPS) == {
+        "hash",
+        "fpe",
+        "categorical",
+        "bucket_perturb",
+        "date_shift",
+    }
+    assert "text_mask" not in _sequential_native._OPS
 
 
 def test_the_generalized_metrics_iterate_the_registered_descriptors() -> None:
