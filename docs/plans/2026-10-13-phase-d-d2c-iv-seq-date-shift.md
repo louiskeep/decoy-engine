@@ -192,10 +192,14 @@ Companion-INDEPENDENT discipline: the `*_seq.py`/`*_gap.py` files MUST pass with
 abi-3 before the PR (Done-when). New helpers `tests/parity/_d2c_date_shift_data.py` parallel
 `_d2c_bucket_data.py`: `DateShiftMarkingKernel` (offset == `max_days`, distinguishable),
 `ReferenceDateShiftKernel` (reproduces the keyed draw), `install_date_shift`/`hide_date_shift`,
-shapes + an `expect_shift` helper. STUDY the existing date_shift row-error + quarantine tests
-(`test_phase_d_d1c_oracle.py`, `test_phase_d_d1c_native.py`, `_d1c_data.py`) and MIRROR their
-quarantine-config + row-error-assertion pattern for the SEQ route. Cross-strategy tests must
-supply stand-ins for the OTHER compiled operators too.
+shapes + an `expect_shift` helper. For the QUARANTINE-config setup that cases 4/9 need, use
+`tests/integration/test_fk_sequential_row_error_leak.py:150-182` as the template (the D1c files
+have row-error assertions but NOT quarantine configuration). `[rev2 — Codex LOW: corrected
+template.]` The existing `run_seq` helper (`_d2b_shapes.py:87-98`) does NOT forward a
+`quarantine_config`; the new date_shift helper (or a `run_seq` extension) must forward one with
+`enabled=True`, `triggers=["format_error"]`, and SEPARATE temporary output paths for the
+native-SEQ and Python-SEQ runs. Cross-strategy tests must supply stand-ins for the OTHER
+compiled operators too.
 
 Comparison rule: for error-bearing cases, compare native-SEQ (`install_date_shift`) to
 PYTHON-SEQ (`hide_date_shift`) under the SAME `run_seq` pipeline — NOT to `run_full`. For
