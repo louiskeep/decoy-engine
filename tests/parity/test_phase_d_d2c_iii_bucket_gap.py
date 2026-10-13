@@ -118,22 +118,39 @@ def test_an_empty_selection_through_the_route_records_the_skip_form(
 @pytest.mark.parametrize(
     ("cell", "expected"),
     [
-        # Pandas min is 1677-09-21 00:12:43.145224193; a month reaches 32 days. The cells sit
-        # one microsecond either side of min + 32d (1677-10-23 00:12:43.145224193).
-        ("1677-10-23 00:12:43.145224", True),
-        ("1677-10-23 00:12:43.145225", False),
-        # Pandas max is 2262-04-11 23:47:16.854775807; max - 32d is 2262-03-10 23:47:16.854775807.
-        ("2262-03-10 23:47:16.854775", False),
-        ("2262-03-10 23:47:16.854776", True),
+        # pandas min is 1677-09-21 00:12:43.145224193; a month reaches 32 days, so the lower
+        # threshold is exactly min + 32d = 1677-10-23 00:12:43.145224193. pandas parses the full
+        # 9-digit nanosecond fraction, so a cell can land exactly on the threshold.
+        ("1677-10-23 00:12:43.145224193", False),  # == threshold -> not exceeded (`<`, not `<=`)
+        ("1677-10-23 00:12:43.145224192", True),  # one ns toward min -> exceeded
+        # pandas max is 2262-04-11 23:47:16.854775807; max - 32d = 2262-03-10 23:47:16.854775807.
+        ("2262-03-10 23:47:16.854775807", False),  # == threshold -> not exceeded (`>`, not `>=`)
+        ("2262-03-10 23:47:16.854775808", True),  # one ns toward max -> exceeded
     ],
 )
-def test_the_month_reach_boundary_is_exact_to_the_microsecond(cell: str, expected: bool) -> None:
-    """Pins `<` / `>` and the 31 + 1 day reach: one step inside is native, one step past is not.
+def test_the_month_reach_boundary_is_exact_to_the_nanosecond(cell: str, expected: bool) -> None:
+    """Pins the strict `<` / `>` (not `<=` / `>=`) at the exact reach threshold.
 
-    A string cell carries at most microseconds while both thresholds end in non-zero
-    nanoseconds, so `value == threshold` cannot occur and `<` vs `<=` is unobservable through
-    this predicate; the microsecond pair is the tightest pin available."""
+    pandas parses the full 9-digit nanosecond fraction, so a cell can equal the threshold
+    exactly, and both thresholds (min + 32d, max - 32d) end in non-zero nanoseconds. At the
+    threshold the predicate must report not-exceeded (strict comparison); one nanosecond further
+    toward the pandas bound must report exceeded. The exact-equality case is the only one that
+    distinguishes `<` from `<=`; a microsecond-truncated cell never reaches it."""
     assert native_range_exceeded(_values(cell), "month", STAMP_US) is expected
+
+
+def test_the_out_of_core_guard_admits_the_exact_threshold_and_aborts_one_ns_past() -> None:
+    """The out-of-core action pins the same strict boundary: a threshold value is admitted, one
+    nanosecond toward the pandas bound aborts. Covers the shared predicate's `<` / `>` through
+    the raising route, not only the sequential decline."""
+    from decoy_engine.execution._errors import ExecutionError
+    from decoy_engine.execution.out_of_core import _bucket_native
+
+    for admitted in ("1677-10-23 00:12:43.145224193", "2262-03-10 23:47:16.854775807"):
+        _bucket_native._guard_native_range(_values(admitted), "month", STAMP_US, "d")
+    for aborts in ("1677-10-23 00:12:43.145224192", "2262-03-10 23:47:16.854775808"):
+        with pytest.raises(ExecutionError):
+            _bucket_native._guard_native_range(_values(aborts), "month", STAMP_US, "d")
 
 
 @pytest.mark.parametrize(
