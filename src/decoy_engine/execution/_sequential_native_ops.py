@@ -35,10 +35,13 @@ import pyarrow as pa
 
 from decoy_engine.execution._adapter import provider_config_to_dict
 from decoy_engine.execution._errors import ExecutionError
+from decoy_engine.execution._row_errors import RowError
 from decoy_engine.execution.native._bucket_perturb_ext import native_bucket_perturb
 from decoy_engine.execution.native._categorical_ext import native_categorical
 from decoy_engine.execution.native._crypto_ext import FpeConfig, FpeConfigError
+from decoy_engine.execution.native._date_shift_ext import FORMAT_ERROR_REASON
 from decoy_engine.execution.native._fpe_route import fpe_fail_closed_error, fpe_residual_warnings
+from decoy_engine.execution.native._operator_config_rejections import date_shift_config_rejection
 from decoy_engine.execution.out_of_core._bucket_native import (
     decline_reason as bucket_decline_reason,
 )
@@ -62,10 +65,12 @@ HASH = "hash"
 FPE = "fpe"
 CATEGORICAL = "categorical"
 BUCKET_PERTURB = "bucket_perturb"
+DATE_SHIFT = "date_shift"
 SEQ_HASH_DISPOSITION_KEY = "sequential_hash"
 SEQ_FPE_DISPOSITION_KEY = "sequential_fpe"
 SEQ_CATEGORICAL_DISPOSITION_KEY = "sequential_categorical"
 SEQ_BUCKET_DISPOSITION_KEY = "sequential_bucket_perturb"
+SEQ_DATE_SHIFT_DISPOSITION_KEY = "sequential_date_shift"
 
 
 @dataclass(frozen=True)
@@ -253,6 +258,49 @@ def _bucket_apply(bound: BoundIndexKernel, values: pa.Array, call: BucketCall) -
     )
 
 
+def _date_shift_admit(column: str, input_type: pa.DataType, seed: ColumnSeed) -> str | None:
+    """Why a date_shift column stays on Python, or None.
+
+    Adapts the route-neutral `date_shift_config_rejection` to the SEQ admit signature: a
+    one-field empty table stands in for the resident source so the type gate resolves the
+    pinned Arrow type, and a config the handler would raise on declines so the handler raises
+    its own coded error on Python."""
+    return date_shift_config_rejection(
+        column,
+        column,
+        None,
+        namespace=seed.namespace,
+        provider_config=provider_config_to_dict(seed.provider_config),
+        resident_sources={column: pa.schema([pa.field(column, input_type)]).empty_table()},
+    )
+
+
+def date_shift_row_errors(column: str, positions: tuple[int, ...]) -> list[RowError]:
+    """One `format_error` RowError per unparseable cell, as the Python handler records them."""
+    return [
+        RowError(
+            column=column, row_index=int(pos), trigger="format_error", reason=FORMAT_ERROR_REASON
+        )
+        for pos in positions
+    ]
+
+
+def _date_shift_apply_unused(bound: Any, values: pa.Array, call: Any) -> NativeResult:
+    # date_shift's kernel returns (values, format_error_positions), not a NativeResult, so
+    # the seam calls it directly; reaching this slot means the routing was bypassed.
+    raise AssertionError("date_shift uses date_shift_column, not apply")
+
+
+def date_shift_op(load_kernel: Callable[[int | None], Any]) -> NativeOp:
+    return NativeOp(
+        DATE_SHIFT,
+        SEQ_DATE_SHIFT_DISPOSITION_KEY,
+        load_kernel,
+        _date_shift_admit,
+        _date_shift_apply_unused,
+    )
+
+
 def bucket_perturb_op(load_kernel: Callable[[int | None], Any]) -> NativeOp:
     return NativeOp(
         BUCKET_PERTURB, SEQ_BUCKET_DISPOSITION_KEY, load_kernel, _bucket_admit, _bucket_apply
@@ -288,10 +336,12 @@ def fpe_op(load_kernel: Callable[[int | None], Any]) -> NativeOp:
 __all__ = [
     "BUCKET_PERTURB",
     "CATEGORICAL",
+    "DATE_SHIFT",
     "FPE",
     "HASH",
     "SEQ_BUCKET_DISPOSITION_KEY",
     "SEQ_CATEGORICAL_DISPOSITION_KEY",
+    "SEQ_DATE_SHIFT_DISPOSITION_KEY",
     "SEQ_FPE_DISPOSITION_KEY",
     "SEQ_HASH_DISPOSITION_KEY",
     "BoundFpeKernel",
@@ -303,6 +353,8 @@ __all__ = [
     "NativeResult",
     "bucket_perturb_op",
     "categorical_op",
+    "date_shift_op",
+    "date_shift_row_errors",
     "fpe_op",
     "hash_op",
 ]

@@ -174,6 +174,25 @@ class DateShiftStrategyHandler:
             if pd.api.types.is_extension_array_dtype(anchor_col.dtype):
                 anchor_col = anchor_col.astype(object)
 
+        # group_by is not native, but admission declines it, so the seam books the row and
+        # returns None (reporting the honest python_scalar backend) rather than being gated out.
+        seq = getattr(ctx, "seq_native", None)
+        if seq is not None:
+            native_out = seq.date_shift_column(
+                ctx,
+                df,
+                column,
+                namespace=plan.namespace,
+                mask_key=ctx.mask_key,
+                min_days=min_days,
+                max_days=max_days,
+                date_format=fmt,
+                preserve=preserve,
+            )
+            if native_out is not None:
+                df[column] = native_out
+                return df, []
+
         preserved = preserve.mask(col) if preserve is not None else None
         if preserve is None or preserved is None or not preserved.any():
             out, error_rows = _shift_rows(
