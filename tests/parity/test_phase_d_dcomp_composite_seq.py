@@ -198,6 +198,9 @@ def test_uncovered_row_error_still_fails_the_run_and_publishes_nothing(
     coverage: str, tmp_path: Path
 ) -> None:
     shape = d.errored_key_shape(d.write_chapter_corpus(tmp_path), ("k", "j"))
+    # order ("k", "j") makes format_error the winning (first-declared) trigger. "winning-trigger-
+    # uncovered" covers ONLY the loser (mask_error): partial coverage that omits the winner still
+    # fails the whole run, it does not silently quarantine on the covered-loser trigger alone.
     quarantine = None if coverage == "quarantine-off" else _quarantine(tmp_path, ["mask_error"])
     sink = RecordingSink()
     with pytest.raises(RowErrorsFailedError) as exc:
@@ -349,7 +352,9 @@ def test_c5c_matched_float_beside_an_unrepresentable_integer_orphan_fails_closed
     code = "out_of_core_fk_key_dtype_unsupported"
     assert ff.code == seq_native.code == seq_python.code == code
     assert ff.message == seq_native.message == seq_python.message
+    # No per-row value reaches the message, in either the decimal or the float-repr form.
     assert str(2**62) not in ff.message
+    assert repr(float(2**62)) not in ff.message
 
 
 def test_c5c_control_a_float_orphan_at_the_exact_bound_is_accepted_and_matches_the_oracle(
