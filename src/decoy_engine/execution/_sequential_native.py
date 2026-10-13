@@ -528,9 +528,9 @@ class SeqNativeRun:
         `sequential_fpe`, `sequential_categorical`). A key holds one disposition entry per
         recorded decision for that strategy - scalar for every strategy, plus REMAP and
         inherited for the key strategies (hash, fpe), plus a reporting-only decline for each
-        FK key column of a strategy that cannot be a native key - whatever the backend; read `executed_backend` on an entry to see
-        whether it ran native, in Python, or was inherited. A key is absent only when the
-        strategy recorded no decision at all (e.g. no column used it)."""
+        FK key column of a strategy that cannot be a native key. Read `executed_backend` on an
+        entry to see whether it ran native, in Python, or was inherited. A key is absent only
+        when the strategy recorded no decision at all (e.g. no column used it)."""
         metrics: dict[str, Any] = {}
         for op in _OPS.values():
             entries = [d.entry() for d in self._decisions.values() if d.strategy == op.strategy]
