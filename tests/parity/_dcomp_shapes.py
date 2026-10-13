@@ -105,6 +105,31 @@ def float_int_orphan_shape(
     )
 
 
+def float_parent_int_child_shape(policy: OrphanPolicy, *, orphan_int: int) -> s.Shape:
+    """P.(k, n FLOAT) -> C.(k, n INT64) with a genuinely non-exact orphan integer.
+
+    The matched child row joins the float parent column; the orphan preserves its own int64
+    `orphan_int`. An odd value past 2**53 has no exact float64 representation, so no single
+    column type holds both the matched float and the preserved int, and lossless typing refuses.
+    Distinct from `float_int_orphan_shape`, whose whole-valued float orphan is exactly
+    representable and so only exercises the magnitude guard, not the precision-loss case."""
+    plan = s.make_plan(
+        {
+            "P": s.table_seed({"k": s.hashed("ns_pk"), "n": s.passthrough()}),
+            "C": s.table_seed({}, {("k", "n"): "ns_cg"}),
+        }
+    )
+    g = s.graph(s.edge("P", ("k", "n"), "C", ("k", "n"), "ns_cg", policy))
+    return s.Shape(
+        plan,
+        g,
+        {
+            "P": pa.table({"k": s.strs(["a", "b"]), "n": pa.array([1.0, 2.0], pa.float64())}),
+            "C": pa.table({"k": s.strs(["a", "z"]), "n": pa.array([1, orphan_int], pa.int64())}),
+        },
+    )
+
+
 def golden_composite_shape(policy: OrphanPolicy, *, orphan: bool = False) -> s.Shape:
     """The `composite_key` golden data with every key column hashed and the child as one group.
 

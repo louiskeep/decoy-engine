@@ -31,6 +31,7 @@ from decoy_engine.execution._sequential_native import SEQ_HASH_DISPOSITION_KEY
 from decoy_engine.relationships._graph import OrphanPolicy
 from tests.parity import _d2b_shapes as s
 from tests.parity import _dcomp_shapes as d
+from tests.parity import _strict_compare as sc
 from tests.parity._d2a_seq_data import RecordingSink
 from tests.parity._seq_witness import MARK, MarkingKernel, hide_companion, install
 
@@ -176,9 +177,12 @@ def test_errored_parent_cascades_under_fail_and_the_first_declared_key_column_na
     assert (cascade.column, cascade.row_index, cascade.trigger) == (order[0], 1, winner)
     assert "cascaded to quarantine" in cascade.reason
 
-    # Surviving rows are the oracle's with the errored parent row and its child removed.
+    # Surviving rows are the oracle's with the errored parent row and its child removed, strict on
+    # all 9 dimensions (schema, metadata and width, not just values).
     for table, keep in (("P", [0, 2, 3]), ("C", [0, 2])):
-        assert seq.outputs[table].to_pydict() == ff.outputs[table].take(keep).to_pydict()
+        assert sc.compare_strict(ff.outputs[table].take(keep), seq.outputs[table]) == d.ALL_TRUE, (
+            table
+        )
     for table, column in (("P", "k"), ("C", "k"), ("P", "j"), ("C", "j")):
         assert not {"bad", "U07.1"} & set(seq.outputs[table].column(column).to_pylist())
 
@@ -338,8 +342,9 @@ def test_c5b_nullable_hashed_integer_component_is_still_rejected_on_ff_and_seq(
 def test_c5c_matched_float_beside_an_unrepresentable_integer_orphan_fails_closed_on_ff_and_seq(
     policy: OrphanPolicy, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # The orphan's whole-valued float folds to an integer past 2**53, and the matched row keeps its
-    # float: no single column type holds both, so every route refuses with the shared code.
+    # The magnitude guard: a whole-valued float orphan past 2**53 folds to an integer the matched
+    # float column cannot absorb, so every route refuses with the shared code. 2**62 is itself
+    # exactly representable, so this pins the magnitude bound; the precision-loss case is below.
     def shape() -> s.Shape:
         return d.float_int_orphan_shape(policy, orphan_n=float(2**62))
 
@@ -355,6 +360,29 @@ def test_c5c_matched_float_beside_an_unrepresentable_integer_orphan_fails_closed
     # No per-row value reaches the message, in either the decimal or the float-repr form.
     assert str(2**62) not in ff.message
     assert repr(float(2**62)) not in ff.message
+
+
+@pytest.mark.parametrize("policy", [PRESERVE, WARN], ids=lambda p: p.name.lower())
+def test_c5c_ii_a_non_exact_integer_orphan_fails_closed_on_ff_and_seq(
+    policy: OrphanPolicy, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The precision-loss case the magnitude guard alone does not pin: 2**62 + 1 is odd, so it has
+    # no exact float64 value. The orphan is an int64 child component beside a float parent column,
+    # so the resolved column would have to hold both and silently round the orphan. Every route
+    # must refuse. (A guard that only checked magnitude, not representability, would let this round.)
+    def shape() -> s.Shape:
+        return d.float_parent_int_child_shape(policy, orphan_int=2**62 + 1)
+
+    ff = _raised(lambda: s.run_full(shape()))
+    install(monkeypatch, MarkingKernel())
+    seq_native = _raised(lambda: s.run_seq(shape()))
+    with monkeypatch.context() as m:
+        hide_companion(m)
+        seq_python = _raised(lambda: s.run_seq(shape()))
+    code = "out_of_core_fk_key_dtype_unsupported"
+    assert ff.code == seq_native.code == seq_python.code == code
+    assert ff.message == seq_native.message == seq_python.message
+    assert str(2**62 + 1) not in ff.message
 
 
 def test_c5c_control_a_float_orphan_at_the_exact_bound_is_accepted_and_matches_the_oracle(
