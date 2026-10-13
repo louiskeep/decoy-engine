@@ -30,13 +30,18 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+import numpy as np
 import pyarrow as pa
 
 from decoy_engine.execution._adapter import provider_config_to_dict
 from decoy_engine.execution._errors import ExecutionError
+from decoy_engine.execution.native._bucket_perturb_ext import native_bucket_perturb
 from decoy_engine.execution.native._categorical_ext import native_categorical
 from decoy_engine.execution.native._crypto_ext import FpeConfig, FpeConfigError
 from decoy_engine.execution.native._fpe_route import fpe_fail_closed_error, fpe_residual_warnings
+from decoy_engine.execution.out_of_core._bucket_native import (
+    decline_reason as bucket_decline_reason,
+)
 from decoy_engine.execution.out_of_core._categorical_native import (
     BoundIndexKernel,
 )
@@ -56,9 +61,11 @@ if TYPE_CHECKING:
 HASH = "hash"
 FPE = "fpe"
 CATEGORICAL = "categorical"
+BUCKET_PERTURB = "bucket_perturb"
 SEQ_HASH_DISPOSITION_KEY = "sequential_hash"
 SEQ_FPE_DISPOSITION_KEY = "sequential_fpe"
 SEQ_CATEGORICAL_DISPOSITION_KEY = "sequential_categorical"
+SEQ_BUCKET_DISPOSITION_KEY = "sequential_bucket_perturb"
 
 
 @dataclass(frozen=True)
@@ -104,6 +111,21 @@ class CategoricalCall:
     mask_key: bytes
     categories: tuple[str, ...]
     cdf: tuple[int, ...] | None
+
+
+@dataclass(frozen=True)
+class BucketCall:
+    """One bucket_perturb column's call: the handler's resolved config, the sentinel mask the
+    seam computed before anything else, and an invocation-local `derive_calls` the kernel
+    appends to so the seam reports what actually ran."""
+
+    namespace: str
+    mask_key: bytes
+    bucket: str
+    date_format: str
+    column: str
+    preserved: np.ndarray[Any, Any] | None
+    derive_calls: list[int]
 
 
 @dataclass(frozen=True)
@@ -206,6 +228,38 @@ def _categorical_apply(
     )
 
 
+def _bucket_admit(column: str, input_type: pa.DataType, seed: ColumnSeed) -> str | None:
+    """Why a bucket_perturb column stays on Python, or None.
+
+    A thin adapter over the out-of-core admission (`decline_reason`, reused unchanged, and
+    through it the route-neutral `bucket_perturb_config_rejection`): a one-field schema stands
+    in for the table. A config the handler would raise on (no namespace, invalid
+    `preserve_values`) also declines, so the handler raises its own coded error on Python."""
+    return bucket_decline_reason(column, column, pa.schema([pa.field(column, input_type)]), seed)
+
+
+def _bucket_apply(bound: BoundIndexKernel, values: pa.Array, call: BucketCall) -> NativeResult:
+    return NativeResult(
+        native_bucket_perturb(
+            values,
+            bucket=call.bucket,
+            date_format=call.date_format,
+            mask_key=call.mask_key,
+            namespace=call.namespace,
+            index_kernel=bound.kernel,
+            native_threads=bound.native_threads,
+            derive_calls=call.derive_calls,
+            preserved=call.preserved,
+        )
+    )
+
+
+def bucket_perturb_op(load_kernel: Callable[[int | None], Any]) -> NativeOp:
+    return NativeOp(
+        BUCKET_PERTURB, SEQ_BUCKET_DISPOSITION_KEY, load_kernel, _bucket_admit, _bucket_apply
+    )
+
+
 def categorical_op(load_kernel: Callable[[int | None], Any]) -> NativeOp:
     return NativeOp(
         CATEGORICAL,
@@ -233,18 +287,22 @@ def fpe_op(load_kernel: Callable[[int | None], Any]) -> NativeOp:
 
 
 __all__ = [
+    "BUCKET_PERTURB",
     "CATEGORICAL",
     "FPE",
     "HASH",
+    "SEQ_BUCKET_DISPOSITION_KEY",
     "SEQ_CATEGORICAL_DISPOSITION_KEY",
     "SEQ_FPE_DISPOSITION_KEY",
     "SEQ_HASH_DISPOSITION_KEY",
     "BoundFpeKernel",
+    "BucketCall",
     "CategoricalCall",
     "FpeCall",
     "HashCall",
     "NativeOp",
     "NativeResult",
+    "bucket_perturb_op",
     "categorical_op",
     "fpe_op",
     "hash_op",

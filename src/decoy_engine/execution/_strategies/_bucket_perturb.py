@@ -88,6 +88,24 @@ class BucketPerturbStrategyHandler:
         namespace = plan.namespace
         bucket, date_format, preserve = _validated_config(plan)
 
+        # Native on the sequential route; None (declined, or no companion) falls through to the
+        # Python path below, which then owns every count it records.
+        seq = getattr(ctx, "seq_native", None)
+        if seq is not None:
+            out = seq.bucket_column(
+                ctx,
+                df,
+                column,
+                namespace=namespace,
+                mask_key=ctx.mask_key,
+                bucket=bucket,
+                date_format=date_format,
+                preserve=preserve,
+            )
+            if out is not None:
+                df[column] = out
+                return df, []
+
         col = df[column]
 
         def perturb(series: pd.Series) -> pd.Series:
