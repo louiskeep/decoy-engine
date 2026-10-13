@@ -78,6 +78,9 @@ from decoy_engine.execution._sequential_native_ops import (
     BUCKET_PERTURB,
     CATEGORICAL,
     DATE_SHIFT,
+    FAKER,
+    FAKER_DETERMINISTIC,
+    FAKER_POSITIONAL,
     FPE,
     HASH,
     SEQ_FPE_DISPOSITION_KEY,
@@ -85,16 +88,20 @@ from decoy_engine.execution._sequential_native_ops import (
     BoundFpeKernel,
     BucketCall,
     CategoricalCall,
+    FakerCall,
     HashCall,
     NativeOp,
     bucket_perturb_op,
     categorical_op,
     date_shift_op,
     date_shift_row_errors,
+    faker_op,
     fpe_op,
     hash_op,
 )
+from decoy_engine.execution._strategies._faker_positional import resolve_selection_namespace
 from decoy_engine.execution.native._bucket_perturb_ext import native_range_exceeded
+from decoy_engine.execution.native._chunk_masking import pool_values_are_strings
 from decoy_engine.execution.native._crypto_ext import (
     CryptoExtensionUnavailableError,
     load_compiled_crypto_kernel,
@@ -110,6 +117,7 @@ from decoy_engine.execution.out_of_core._hash_native import (
 
 if TYPE_CHECKING:
     from decoy_engine.execution._adapter import StrategyContext
+    from decoy_engine.generation.pool import ValuePool
     from decoy_engine.generation.pool._events import QualityWarning
     from decoy_engine.plan._types import ColumnSeed, Plan, TableSeed
     from decoy_engine.relationships._graph import RelationshipGraph
@@ -165,6 +173,7 @@ _OPS: dict[str, NativeOp] = {
     CATEGORICAL: categorical_op(_load_index),
     BUCKET_PERTURB: bucket_perturb_op(_load_index),
     DATE_SHIFT: date_shift_op(_load_index),
+    FAKER: faker_op(_load_index),
 }
 
 
@@ -371,6 +380,38 @@ class SeqNativeRun:
             decision.counts_preserved = True
             decision.preserved_rows += count
             ctx.record_date_preserved(column, count)
+        return result.values.to_pylist()
+
+    def faker_column(
+        self, ctx: StrategyContext, df: pd.DataFrame, column: str, plan: ColumnSeed, pool: ValuePool
+    ) -> list[Any] | None:
+        """The pool picks for `df[column]`, positionally, or None when the Python handler runs.
+
+        The handler built `pool` (and left it in `ctx.pool_cache`), so a decline here is a cache
+        hit for the Python assembly. Admission saw only the seed; whether the BUILT pool holds
+        strings is known now, and a caller-overridden registry binding of an allowlisted name
+        may not, so that is the last decline before the kernel."""
+        gate = self._admitted(ctx, column, FAKER, len(df))
+        if gate is None:
+            return None
+        decision, bound = gate
+        if not pool_values_are_strings(pool):
+            decision.backend = PYTHON_SCALAR
+            decision.reason = f"faker_provider_output_not_string:{column}:{plan.provider}"
+            return None
+        if plan.deterministic:
+            call = FakerCall(FAKER_DETERMINISTIC, pool, str(plan.namespace), ctx.mask_key)
+        else:
+            call = FakerCall(
+                FAKER_POSITIONAL,
+                pool,
+                resolve_selection_namespace(ctx, column, plan.namespace),
+                ctx.job_seed,
+                ctx.row_offset,
+                getattr(ctx, "gate_positions", None),
+            )
+        result = _OPS[FAKER].apply(bound, self._pinned_array(df[column], decision), call)
+        decision.native_calls += 1  # the helpers return no count; each makes one batch call
         return result.values.to_pylist()
 
     def _admitted(

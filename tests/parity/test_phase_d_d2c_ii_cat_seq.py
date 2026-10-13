@@ -498,6 +498,7 @@ def test_an_unwired_strategy_has_no_descriptor_and_runs_in_python(strategy: str)
         "categorical",
         "bucket_perturb",
         "date_shift",
+        "faker",
     }
 
 

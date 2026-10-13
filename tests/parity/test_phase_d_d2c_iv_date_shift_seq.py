@@ -652,6 +652,7 @@ def test_the_registry_holds_the_five_native_strategies() -> None:
         "categorical",
         "bucket_perturb",
         "date_shift",
+        "faker",
     }
 
 

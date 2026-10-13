@@ -208,13 +208,22 @@ def faker_pool_precondition_met(node: Any) -> bool:
     slice_ = node.plan_slice
     if not isinstance(slice_, ColumnSeed):
         return False
-    if not slice_.deterministic:
+    return faker_pool_precondition_met_seed(slice_)
+
+
+def faker_pool_precondition_met_seed(seed: ColumnSeed) -> bool:
+    """The ColumnSeed-level form of `faker_pool_precondition_met`.
+
+    The sequential route admits a column from its bare seed (no WorkNode, so no `plan_slice`),
+    and the chunked route reaches the same predicate through the node wrapper above, so one
+    definition gates both routes."""
+    if not seed.deterministic:
         return False
-    if slice_.cardinality_mode not in _PARTITION_INDEPENDENT_CARDINALITY_MODES:
+    if seed.cardinality_mode not in _PARTITION_INDEPENDENT_CARDINALITY_MODES:
         return False
-    if not slice_.namespace:
+    if not seed.namespace:
         return False
-    return slice_.pool_size is not None
+    return seed.pool_size is not None
 
 
 def native_pool_rejection(node: Any, name: str, strategy: str) -> str | None:
@@ -636,6 +645,7 @@ __all__ = [
     "FallbackPolicy",
     "NodeRequirements",
     "faker_pool_precondition_met",
+    "faker_pool_precondition_met_seed",
     "hash_config_rejection",
     "is_admitted_native_hash_type",
     "native_kernel_rejection",

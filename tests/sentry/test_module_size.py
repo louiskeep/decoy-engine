@@ -95,8 +95,10 @@ ALLOWLIST: dict[str, int] = {
     "src/decoy_engine/execution/_chunked_fk.py": 970,
     # fail-closed output projection and corpus pinning on the mask route; split the FK-resolution helpers.
     "src/decoy_engine/execution/_pandas_adapter.py": 697,
-    # resident Arrow type resolution; move it into its own module with the next operator gate.
-    "src/decoy_engine/execution/native/_requirements.py": 647,
+    # resident Arrow type resolution and the faker seed/node precondition pair (one predicate, two
+    # entry points, so the chunked and sequential routes cannot drift); move the type resolution
+    # into its own module with the next operator gate.
+    "src/decoy_engine/execution/native/_requirements.py": 657,
     # sequential FK route threading; split the per-table mask/quarantine loop.
     "src/decoy_engine/execution/_sequential.py": 677,
     # transactional publish hardening and row mask; split the publish cluster.
