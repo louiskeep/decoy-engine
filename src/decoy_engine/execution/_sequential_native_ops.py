@@ -42,6 +42,15 @@ from decoy_engine.execution.native._crypto_ext import FpeConfig, FpeConfigError
 from decoy_engine.execution.native._date_shift_ext import FORMAT_ERROR_REASON
 from decoy_engine.execution.native._fpe_route import fpe_fail_closed_error, fpe_residual_warnings
 from decoy_engine.execution.native._operator_config_rejections import date_shift_config_rejection
+from decoy_engine.execution.native._operator_step import (
+    sample_faker_array,
+    sample_faker_array_positional,
+)
+from decoy_engine.execution.native._real_type_admission import (
+    C1_PROVIDER_ALLOWLIST,
+    string_source_type_rejection,
+)
+from decoy_engine.execution.native._requirements import faker_pool_precondition_met_seed
 from decoy_engine.execution.out_of_core._bucket_native import (
     decline_reason as bucket_decline_reason,
 )
@@ -58,6 +67,7 @@ from decoy_engine.execution.out_of_core._hash_native import (
 )
 
 if TYPE_CHECKING:
+    from decoy_engine.generation.pool import ValuePool
     from decoy_engine.generation.pool._events import QualityWarning
     from decoy_engine.plan._types import ColumnSeed
 
@@ -66,11 +76,15 @@ FPE = "fpe"
 CATEGORICAL = "categorical"
 BUCKET_PERTURB = "bucket_perturb"
 DATE_SHIFT = "date_shift"
+FAKER = "faker"
 SEQ_HASH_DISPOSITION_KEY = "sequential_hash"
 SEQ_FPE_DISPOSITION_KEY = "sequential_fpe"
 SEQ_CATEGORICAL_DISPOSITION_KEY = "sequential_categorical"
 SEQ_BUCKET_DISPOSITION_KEY = "sequential_bucket_perturb"
 SEQ_DATE_SHIFT_DISPOSITION_KEY = "sequential_date_shift"
+SEQ_FAKER_DISPOSITION_KEY = "sequential_faker"
+FAKER_DETERMINISTIC = "deterministic"
+FAKER_POSITIONAL = "positional"
 
 
 @dataclass(frozen=True)
@@ -133,6 +147,23 @@ class BucketCall:
     date_format: str
     preserved: np.ndarray[Any, Any] | None
     derive_calls: list[int]
+
+
+@dataclass(frozen=True)
+class FakerCall:
+    """One faker column's call: the pool the handler already built (it carries the identity),
+    the leg, and the keying that leg uses. The registry stays out; only the built pool travels.
+
+    `deterministic` keys on the source value under `mask_key` and the configured namespace.
+    `positional` keys on the row's full-table position under `job_seed` and the resolved
+    selection namespace, so `row_offset` and `gate_positions` ride along."""
+
+    leg: str
+    pool: ValuePool
+    namespace: str
+    key: bytes
+    row_offset: int = 0
+    gate_positions: np.ndarray[Any, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -285,6 +316,52 @@ def _date_shift_admit(column: str, input_type: pa.DataType, seed: ColumnSeed) ->
     )
 
 
+def _faker_admit(column: str, input_type: pa.DataType, seed: ColumnSeed) -> str | None:
+    """Why a faker column stays on Python, or None.
+
+    Composed from the predicates the chunked route already gates on: the provider allowlist,
+    the ColumnSeed-level deterministic-REUSE precondition, and the exact-`string` source. The
+    non-deterministic leg is the REUSE mode only; UNIQUE, MATCH and SCALE need whole-column
+    RNG state. A deterministic config the oracle rejects (no namespace) also declines, so the
+    handler raises its own coded error. The built pool's output type is a separate check, made
+    by the seam once the pool exists."""
+    if seed.provider not in C1_PROVIDER_ALLOWLIST:
+        return f"faker_provider_not_native:{column}:{seed.provider}"
+    if seed.deterministic:
+        if not faker_pool_precondition_met_seed(seed):
+            return f"faker_not_deterministic_reuse_variant:{column}"
+    elif seed.cardinality_mode != "reuse":
+        return f"faker_nondeterministic_mode_stays_python:{column}:{seed.cardinality_mode}"
+    return string_source_type_rejection(FAKER, column, pa.schema([pa.field(column, input_type)]))
+
+
+def _faker_apply(bound: BoundIndexKernel, values: pa.Array, call: FakerCall) -> NativeResult:
+    if call.leg == FAKER_DETERMINISTIC:
+        return NativeResult(
+            sample_faker_array(
+                values,
+                pool=call.pool,
+                namespace=call.namespace,
+                mask_key=call.key,
+                index_kernel=bound.kernel,
+                native_threads=bound.native_threads,
+            )
+        )
+    return NativeResult(
+        sample_faker_array_positional(
+            values,
+            pool=call.pool,
+            row_offset=call.row_offset,
+            job_seed=call.key,
+            namespace=call.namespace,
+            index_kernel=bound.kernel,
+            native_threads=bound.native_threads,
+            missing_mask=None,
+            gate_positions=call.gate_positions,
+        )
+    )
+
+
 def date_shift_row_errors(column: str, positions: tuple[int, ...]) -> list[RowError]:
     """One `format_error` RowError per unparseable cell, as the Python handler records them."""
     return [
@@ -315,6 +392,10 @@ def bucket_perturb_op(load_kernel: Callable[[int | None], Any]) -> NativeOp:
     return NativeOp(
         BUCKET_PERTURB, SEQ_BUCKET_DISPOSITION_KEY, load_kernel, _bucket_admit, _bucket_apply
     )
+
+
+def faker_op(load_kernel: Callable[[int | None], Any]) -> NativeOp:
+    return NativeOp(FAKER, SEQ_FAKER_DISPOSITION_KEY, load_kernel, _faker_admit, _faker_apply)
 
 
 def categorical_op(load_kernel: Callable[[int | None], Any]) -> NativeOp:
@@ -355,16 +436,21 @@ __all__ = [
     "BUCKET_PERTURB",
     "CATEGORICAL",
     "DATE_SHIFT",
+    "FAKER",
+    "FAKER_DETERMINISTIC",
+    "FAKER_POSITIONAL",
     "FPE",
     "HASH",
     "SEQ_BUCKET_DISPOSITION_KEY",
     "SEQ_CATEGORICAL_DISPOSITION_KEY",
     "SEQ_DATE_SHIFT_DISPOSITION_KEY",
+    "SEQ_FAKER_DISPOSITION_KEY",
     "SEQ_FPE_DISPOSITION_KEY",
     "SEQ_HASH_DISPOSITION_KEY",
     "BoundFpeKernel",
     "BucketCall",
     "CategoricalCall",
+    "FakerCall",
     "FpeCall",
     "HashCall",
     "NativeOp",
@@ -373,6 +459,7 @@ __all__ = [
     "categorical_op",
     "date_shift_op",
     "date_shift_row_errors",
+    "faker_op",
     "fpe_op",
     "hash_op",
 ]

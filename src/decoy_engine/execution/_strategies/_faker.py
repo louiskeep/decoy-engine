@@ -95,6 +95,15 @@ class FakerStrategyHandler:
                 namespace=plan.namespace,
             )
             ctx.pool_cache.put(pool)
+        # Admission, not this call site, decides which legs are native (deterministic REUSE and
+        # positional REUSE). Every column is still offered so a declined one books the rows
+        # Python masks, and falls through to the assembly below with the pool already cached.
+        seq = getattr(ctx, "seq_native", None)
+        if seq is not None:
+            picked = seq.faker_column(ctx, df, column, plan, pool)
+            if picked is not None:
+                df[column] = picked
+                return df, []
         na_mask = source.isna().to_numpy()
         if positional:
             # Job-seed keyed: non-deterministic mode generates fresh synthetic values and
