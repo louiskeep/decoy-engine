@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import datetime as dt
 import random
+import unicodedata
 from pathlib import Path
 from typing import Any
 
@@ -47,9 +48,15 @@ def _companion_loads() -> bool:
 pytestmark = pytest.mark.skipif(not _companion_loads(), reason="needs the abi-3 companion")
 
 NATIVE = "rust_companion"
-# `e` + U+0301 (decomposed) and the precomposed U+00E9: one string after NFC.
-DECOMPOSED = "é"
+# `e` + U+0301 (decomposed) and the precomposed U+00E9: distinct byte sequences that agree only
+# after NFC. Written as explicit escapes so the source editor cannot silently normalize them to
+# the same literal (which would make the decomposed-vs-precomposed coverage vacuous).
+DECOMPOSED = "é"
 PRECOMPOSED = "é"
+assert DECOMPOSED != PRECOMPOSED, "the two forms must differ in bytes to exercise normalization"
+assert unicodedata.normalize("NFC", DECOMPOSED) == unicodedata.normalize("NFC", PRECOMPOSED), (
+    "the two forms must agree under NFC"
+)
 
 
 @pytest.fixture
