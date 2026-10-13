@@ -66,6 +66,7 @@ from tests.parity._d2c_bucket_data import (
 )
 from tests.parity._d2c_cat_data import SRC, cat_seed, later_table_shape
 from tests.parity._d2c_fpe_data import FpeMarkingKernel, fpe_seed, install_fpe
+from tests.parity._fpe_key_data import assert_keys_declined
 from tests.parity._seq_witness import MarkingKernel
 from tests.parity._seq_witness import install as install_hash
 
@@ -473,7 +474,7 @@ def _bucket_key_shape(policy: OrphanPolicy, *, hash_payload: bool = False) -> Sh
 
 
 @pytest.mark.parametrize("policy", [OrphanPolicy.PRESERVE, OrphanPolicy.REMAP])
-def test_bucket_key_columns_get_no_native_decision_and_match_the_python_oracle(
+def test_bucket_key_columns_stay_python_with_an_explicit_decline_reason(
     policy: OrphanPolicy, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     kernel = install_bucket(monkeypatch, BucketMarkingKernel())
@@ -483,13 +484,14 @@ def test_bucket_key_columns_get_no_native_decision_and_match_the_python_oracle(
     for table in ("A", "B"):
         assert result.outputs[table].equals(oracle.outputs[table]), table
     assert kernel.calls == [] and hash_kernel.calls == []
+    # Stays Python and reports why, instead of staying silent.
     for key in (
         SEQ_HASH_DISPOSITION_KEY,
         SEQ_FPE_DISPOSITION_KEY,
         SEQ_CATEGORICAL_DISPOSITION_KEY,
-        SEQ_BUCKET_DISPOSITION_KEY,
     ):
         assert key not in result.quality_metrics
+    assert_keys_declined(result, shape, "bucket_perturb", SEQ_BUCKET_DISPOSITION_KEY)
 
 
 def test_a_bucket_key_does_not_disturb_a_native_hash_payload_beside_it(
@@ -499,7 +501,9 @@ def test_a_bucket_key_does_not_disturb_a_native_hash_payload_beside_it(
     install_hash(monkeypatch, MarkingKernel())
     result = run_seq(_bucket_key_shape(OrphanPolicy.REMAP, hash_payload=True))
     assert [e["column"] for e in result.quality_metrics[SEQ_HASH_DISPOSITION_KEY]] == ["h"]
-    assert SEQ_BUCKET_DISPOSITION_KEY not in result.quality_metrics
+    assert {e["path"] for e in result.quality_metrics[SEQ_BUCKET_DISPOSITION_KEY]} == {
+        "fk_key_declined"
+    }
 
 
 def test_a_bucket_call_inside_a_remap_scope_returns_to_python_untouched() -> None:

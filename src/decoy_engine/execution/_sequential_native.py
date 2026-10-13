@@ -9,10 +9,13 @@ token computation moves.
 
 The per-strategy parts (kernel load, admission, kernel call, error channel, warnings) are one
 `NativeOp` descriptor each (`_sequential_native_ops.py`), looked up by the column's strategy; a
-strategy with no descriptor runs in Python. Kernel state is kept per strategy. Only hash may be an
-FK key on this route: any other strategy's column that is an FK parent or child key gets no native
-decision, because the orphan REMAP path re-runs the parent handler and is hash-only. The REMAP and
-inherited-child machinery below is therefore hash-specific by design.
+strategy with no descriptor runs in Python. Kernel state is kept per strategy. Only hash and fpe
+may be native FK keys on this route (`_KEY_STRATEGIES`): both are injective, deterministic
+per-value maps whose orphan REMAP minting re-runs the PARENT's handler through the same kernel.
+Any other native-capable strategy's column that is an FK parent or child key stays Python and
+records a reporting-only decline (`REASON_KEY_NOT_INJECTIVE`), because its output is not
+guaranteed to be a unique key. The REMAP and inherited-child machinery below therefore serves
+the key strategies, and each entry is attributed to the parent's strategy.
 
 Three FK paths stay distinct, because only one of them calls the kernel at the scalar seam:
 
@@ -103,8 +106,6 @@ from decoy_engine.execution.out_of_core._categorical_native import BoundIndexKer
 from decoy_engine.execution.out_of_core._hash_native import (
     REASON_UNAVAILABLE,
     BoundHashKernel,
-    decline_reason,
-    native_hash_array,
 )
 
 if TYPE_CHECKING:
@@ -115,11 +116,26 @@ if TYPE_CHECKING:
     from decoy_engine.transforms.date_preserve import PreserveSet
 
 PATH_INHERITED = "fk_inherited"
+PATH_KEY_DECLINED = "fk_key_declined"
 INHERITED = "inherited"
-REASON_REMAP_PARENT_PYTHON = "hash_remap_parent_stays_python"
-REASON_REMAP_INPUT_NOT_ARROW = "hash_remap_input_not_arrow"
+REASON_REMAP_PARENT_PYTHON = "remap_parent_stays_python"
+REASON_REMAP_INPUT_NOT_ARROW = "remap_input_not_arrow"
+REASON_KEY_NOT_INJECTIVE = "sequential_fk_key_injectivity_not_guaranteed"
+# Injective per-value maps: a masked FK key stays unique and joinable. Everything else native
+# is deterministic but may collide, so it is not accelerated as a key.
+_KEY_STRATEGIES = (HASH, FPE)
 REASON_BUCKET_OUT_OF_RANGE = "sequential_bucket_perturb_date_out_of_native_range"
 _CONVERSION_ERRORS = (pa.ArrowInvalid, pa.ArrowTypeError, pa.ArrowNotImplementedError)
+
+
+def _declined_entry(table: str, column: str, reason: str) -> dict[str, Any]:
+    return {
+        "table": table,
+        "column": column,
+        "path": PATH_KEY_DECLINED,
+        "executed_backend": PYTHON_SCALAR,
+        "reason": reason,
+    }
 
 
 def _table_columns(plan: Plan, table: str) -> dict[str, ColumnSeed]:
@@ -167,7 +183,8 @@ class SeqNativeRun:
         self._remap_decisions: dict[tuple[str, str], ColumnDecision] = {}
         self._inherited_columns: set[tuple[str, str]] = set()
         self._remap: dict[tuple[str, str], RemapRecord] = {}
-        self._inherited: list[dict[str, Any]] = []
+        self._inherited: list[tuple[str, dict[str, Any]]] = []
+        self._key_declines: list[tuple[str, dict[str, Any]]] = []
         self._in_remap = 0
 
     def _kernel(self, op: NativeOp) -> Any | None:
@@ -199,10 +216,10 @@ class SeqNativeRun:
     ) -> None:
         """Decide every native-capable column of `table` and record its inherited FK children.
 
-        A hash column gets an execution decision unless it is an FK child, and a REMAP decision
-        when some edge uses it as a parent key. A column that is both gets only the REMAP one.
-        Any other native-capable strategy gets an execution decision only when it is no FK key
-        at all, so the hash-only REMAP path never reaches it."""
+        A key-strategy column (hash, fpe) gets an execution decision unless it is an FK child,
+        and a REMAP decision when some edge uses it as a parent key. A column that is both gets
+        only the REMAP one. Any other native-capable strategy gets an execution decision only
+        when it is no FK key at all; as a key it stays Python with a reporting-only decline."""
         columns = _table_columns(plan, table)
         fk_children = {c for e in graph.edges if e.child_table == table for c in e.child_columns}
         parent_keys = {c for e in graph.edges if e.parent_table == table for c in e.parent_columns}
@@ -210,18 +227,22 @@ class SeqNativeRun:
             op = _OPS.get(seed.strategy)
             if op is None or source_schema.get_field_index(column) < 0:
                 continue
-            if op.strategy != HASH:
+            is_child = column in fk_children
+            input_type = source_schema.field(column).type
+            if op.strategy not in _KEY_STRATEGIES:
                 if column not in fk_children and column not in parent_keys:
                     self._decisions[(table, column)] = self._decide(
-                        op, table, column, source_schema.field(column).type, seed
+                        op, table, column, input_type, seed
                     )
+                else:
+                    reason = f"{REASON_KEY_NOT_INJECTIVE}:{op.strategy}:{column}:{input_type}"
+                    self._key_declines.append((op.strategy, _declined_entry(table, column, reason)))
                 continue
-            is_child = column in fk_children
             if is_child:
                 self._inherited_columns.add((table, column))
             if is_child and column not in parent_keys:
                 continue  # inherits, and no edge re-derives it: nothing to decide
-            decision = self._decide(op, table, column, source_schema.field(column).type, seed)
+            decision = self._decide(op, table, column, input_type, seed)
             if not is_child:
                 self._decisions[(table, column)] = decision
             if column in parent_keys:
@@ -232,7 +253,7 @@ class SeqNativeRun:
             parent_columns = _table_columns(plan, edge.parent_table)
             for pcol, ccol in zip(edge.parent_columns, edge.child_columns, strict=True):
                 parent_seed = parent_columns.get(pcol)
-                if parent_seed is None or parent_seed.strategy != "hash":
+                if parent_seed is None or parent_seed.strategy not in _KEY_STRATEGIES:
                     continue
                 parent = self._decisions.get((edge.parent_table, pcol))
                 parent_backend = (
@@ -242,16 +263,15 @@ class SeqNativeRun:
                     if (edge.parent_table, pcol) in self._inherited_columns
                     else None
                 )
-                self._inherited.append(
-                    {
-                        "table": table,
-                        "column": ccol,
-                        "path": PATH_INHERITED,
-                        "executed_backend": INHERITED,
-                        "parent": f"{edge.parent_table}.{pcol}",
-                        "parent_backend": parent_backend,
-                    }
-                )
+                entry = {
+                    "table": table,
+                    "column": ccol,
+                    "path": PATH_INHERITED,
+                    "executed_backend": INHERITED,
+                    "parent": f"{edge.parent_table}.{pcol}",
+                    "parent_backend": parent_backend,
+                }
+                self._inherited.append((parent_seed.strategy, entry))
 
     @contextmanager
     def remap_scope(self) -> Iterator[None]:
@@ -273,13 +293,21 @@ class SeqNativeRun:
         truncate: int | None,
     ) -> list[Any] | None:
         """The tokens for `df[column]`, positionally, or None when the Python handler runs."""
+        call = HashCall(namespace, mask_key, truncate)
+        return self.key_column(ctx, df, column, HASH, call)
+
+    def key_column(
+        self, ctx: StrategyContext, df: pd.DataFrame, column: str, strategy: str, call: Any
+    ) -> list[Any] | None:
+        """A key-strategy column's output: orphan REMAP minting inside `remap_scope`, else the
+        ordinary native derivation. None when the Python handler runs."""
         if ctx.nested_outer_column:
-            return None  # a nested child hashes synthetic leaves, not a planned column
+            return None  # a nested child masks synthetic leaves, not a planned column
         if self._in_remap:
-            return self._remap_tokens(
-                ctx.current_table, column, df[column], namespace, mask_key, truncate
-            )
-        return self.native_column(ctx, df, column, HASH, HashCall(namespace, mask_key, truncate))
+            # `ctx.current_table` and `column` are the PARENT's here (make_remap_fn), and `call`
+            # was built from the parent column's seed, so the tweak is the parent's.
+            return self._remap_tokens(ctx.current_table, column, df[column], strategy, call)
+        return self.native_column(ctx, df, column, strategy, call)
 
     def categorical_column(
         self,
@@ -459,53 +487,56 @@ class SeqNativeRun:
         return values
 
     def _remap_tokens(
-        self,
-        table: str,
-        column: str,
-        series: pd.Series[Any],
-        namespace: str,
-        mask_key: bytes,
-        truncate: int | None,
+        self, table: str, column: str, series: pd.Series[Any], strategy: str, call: Any
     ) -> list[Any] | None:
-        record = self._remap.setdefault((table, column), RemapRecord(table, column))
+        record = self._remap.setdefault(
+            (table, column), RemapRecord(table, column, strategy=strategy)
+        )
         rows = len(series)
         parent = self._remap_decisions.get((table, column))
-        bound = self._bound.get(HASH)
+        bound = self._bound.get(strategy)
         if parent is None or not parent.native or bound is None:
             record.python_rows += rows
-            record.reasons.append(f"{REASON_REMAP_PARENT_PYTHON}:{column}")
+            record.reasons.append(f"{strategy}_{REASON_REMAP_PARENT_PYTHON}:{column}")
             return None
         values = pandas_column_to_kernel_input(series)
         # The orphan keys are typed by what they are, not by the parent's width: an int8 parent
         # can legitimately be asked to mint a key above 127.
-        reason = (
-            decline_reason(column, values.type)
-            if isinstance(values, pa.Array)
-            else f"{REASON_REMAP_INPUT_NOT_ARROW}:{column}"
-        )
+        op = _OPS[strategy]
+        if not isinstance(values, pa.Array):
+            reason: str | None = f"{strategy}_{REASON_REMAP_INPUT_NOT_ARROW}:{column}"
+        else:
+            if op.remap_input_reason is None:  # pragma: no cover - only key strategies reach here
+                raise AssertionError(f"{strategy} has no REMAP admission rule")
+            reason = op.remap_input_reason(column, values.type)
         if reason is not None or not isinstance(values, pa.Array):
             record.python_rows += rows
             record.reasons.append(reason or "")
             return None
-        out = native_hash_array(
-            values, bound=bound, mask_key=mask_key, namespace=namespace, truncate=truncate
-        )
+        # Checked before any value returns, exactly as the scalar path: a bad orphan key must
+        # fail the table closed here too, not leak a half-minted key.
+        result = op.apply(bound, values, call)
+        if result.errors:
+            if op.fail_closed is None:  # pragma: no cover - only a descriptor with errors sets them
+                raise AssertionError(f"{strategy} kernel returned errors with no fail-closed rule")
+            raise op.fail_closed(result.errors, column)
         record.native_rows += rows
-        return out.to_pylist()
+        return result.values.to_pylist()
 
     def metrics(self) -> dict[str, Any]:
         """The `quality_metrics` fragment: one key per registered strategy (`sequential_hash`,
         `sequential_fpe`, `sequential_categorical`). A key holds one disposition entry per
         recorded decision for that strategy - scalar for every strategy, plus REMAP and
-        inherited for hash - whatever the backend; read `executed_backend` on an entry to see
-        whether it ran native, in Python, or was inherited. A key is absent only when the
-        strategy recorded no decision at all (e.g. no column used it)."""
+        inherited for the key strategies (hash, fpe), plus a reporting-only decline for each
+        FK key column of a strategy that cannot be a native key. Read `executed_backend` on an
+        entry to see whether it ran native, in Python, or was inherited. A key is absent only
+        when the strategy recorded no decision at all (e.g. no column used it)."""
         metrics: dict[str, Any] = {}
         for op in _OPS.values():
             entries = [d.entry() for d in self._decisions.values() if d.strategy == op.strategy]
-            if op.strategy == HASH:
-                entries.extend(r.entry() for r in self._remap.values())
-                entries.extend(self._inherited)
+            entries.extend(r.entry() for r in self._remap.values() if r.strategy == op.strategy)
+            entries.extend(e for strategy, e in self._inherited if strategy == op.strategy)
+            entries.extend(e for strategy, e in self._key_declines if strategy == op.strategy)
             if entries:
                 metrics[op.disposition_key] = entries
         return metrics

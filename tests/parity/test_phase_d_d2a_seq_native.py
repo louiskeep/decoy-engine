@@ -22,6 +22,7 @@ import pytest
 from decoy_engine.execution import PandasExecutionAdapter, _sequential_native
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._sequential_native import SEQ_HASH_DISPOSITION_KEY, SeqNativeRun
+from decoy_engine.execution._sequential_native_ops import HashCall
 from decoy_engine.relationships._graph import OrphanPolicy
 from tests.parity._d1a_hash_data import EXPECTED_TOKENS, chain_sources, column_seed
 from tests.parity._d2a_seq_data import (
@@ -381,7 +382,7 @@ def test_remap_declines_a_mixed_type_orphan_batch_with_a_reason() -> None:
         "t", "hk", "rust_companion", None, pa.string()
     )
     mixed = pd.Series(["a", 7], dtype="object")
-    tokens = run._remap_tokens("t", "hk", mixed, "ns", b"k" * 8, None)
+    tokens = run._remap_tokens("t", "hk", mixed, "hash", HashCall("ns", b"k" * 8, None))
     assert tokens is None
     (entry,) = [r.entry() for r in run._remap.values()]
     assert entry["executed_backend"] == "python_scalar"
@@ -527,10 +528,13 @@ def test_a_plan_without_hash_columns_loads_no_kernel_and_adds_no_metrics(
 
 
 def test_the_sequential_route_reuses_the_out_of_core_kernel_entry_unchanged() -> None:
+    from decoy_engine.execution import _sequential_native_ops
     from decoy_engine.execution.out_of_core import _hash_native
 
-    assert _sequential_native.native_hash_array is _hash_native.native_hash_array
-    assert _sequential_native.decline_reason is _hash_native.decline_reason
+    # The hash descriptor (and so REMAP minting) owns the entry points since the REMAP path
+    # became strategy-parametric.
+    assert _sequential_native_ops.native_hash_array is _hash_native.native_hash_array
+    assert _sequential_native_ops.decline_reason is _hash_native.decline_reason
     assert _sequential_native.BoundHashKernel is _hash_native.BoundHashKernel
 
 

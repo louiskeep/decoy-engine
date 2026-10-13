@@ -117,15 +117,17 @@ def test_a_larger_random_column_matches_the_python_handler(kernel_calls: list[in
 
 
 @pytest.mark.parametrize("policy", [OrphanPolicy.PRESERVE, OrphanPolicy.REMAP])
-def test_fpe_key_columns_match_the_python_oracle_and_never_reach_the_kernel(
+def test_fpe_key_columns_match_the_python_oracle_and_reach_the_real_kernel(
     policy: OrphanPolicy, kernel_calls: list[int]
 ) -> None:
     shape = fpe_key_shape(policy)
     oracle, seq = run_full(shape), run_seq(shape)
     for table in ("A", "B", "C"):
         _assert_strict(oracle.outputs[table], seq.outputs[table])
-    assert kernel_calls == []
-    assert "sequential_fpe" not in seq.quality_metrics
+    # A.k derives once; REMAP adds one native call per hop's orphan. B.k, a chain middle, is
+    # never rederived as a scalar.
+    assert sorted(kernel_calls) == ([1, 1, 2] if policy is OrphanPolicy.REMAP else [2])
+    assert "sequential_fpe" in seq.quality_metrics
 
 
 @pytest.mark.parametrize(

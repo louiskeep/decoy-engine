@@ -32,6 +32,7 @@ from tests.parity._d2c_cat_data import (
     hide_cat,
     payload_shape,
 )
+from tests.parity._fpe_key_data import assert_keys_declined
 
 
 def _companion_loads() -> bool:
@@ -142,7 +143,7 @@ def test_categorical_key_columns_match_the_python_oracle_and_never_reach_the_ker
     for table in ("A", "B", "C"):
         _assert_strict(oracle.outputs[table], seq.outputs[table])
     assert kernel_calls == []
-    assert "sequential_categorical" not in seq.quality_metrics
+    assert_keys_declined(seq, shape, "categorical", "sequential_categorical")
 
 
 def test_a_categorical_payload_beside_a_hash_key_matches_across_an_fk_edge(

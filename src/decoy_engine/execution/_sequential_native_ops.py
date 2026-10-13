@@ -90,6 +90,9 @@ class NativeOp:
     apply: Callable[[Any, pa.Array, Any], NativeResult]
     fail_closed: Callable[[tuple[Any, ...], str], Exception] | None = None
     warn: Callable[[list[Any], Any, str], tuple[QualityWarning, ...]] | None = None
+    # A key-eligible op only: why REMAP-minted orphan keys of this Arrow type cannot take the
+    # kernel (they are typed by what they are, not by the parent column's pinned type).
+    remap_input_reason: Callable[[str, pa.DataType], str | None] | None = None
 
 
 @dataclass(frozen=True)
@@ -172,6 +175,13 @@ def _fpe_admit(column: str, input_type: pa.DataType, seed: ColumnSeed) -> str | 
         FpeConfig.from_mapping(cfg)._resolve()
     except FpeConfigError:
         return f"fpe_config_stays_python:{column}"
+    if input_type != pa.string():
+        return f"fpe_source_type_not_string:{column}:{input_type}"
+    return None
+
+
+def _fpe_remap_input_reason(column: str, input_type: pa.DataType) -> str | None:
+    # The parent's config was admitted at table prep; only the orphan keys' own type is open.
     if input_type != pa.string():
         return f"fpe_source_type_not_string:{column}:{input_type}"
     return None
@@ -318,7 +328,14 @@ def categorical_op(load_kernel: Callable[[int | None], Any]) -> NativeOp:
 
 
 def hash_op(load_kernel: Callable[[int | None], Any]) -> NativeOp:
-    return NativeOp(HASH, SEQ_HASH_DISPOSITION_KEY, load_kernel, _hash_admit, _hash_apply)
+    return NativeOp(
+        HASH,
+        SEQ_HASH_DISPOSITION_KEY,
+        load_kernel,
+        _hash_admit,
+        _hash_apply,
+        remap_input_reason=decline_reason,
+    )
 
 
 def fpe_op(load_kernel: Callable[[int | None], Any]) -> NativeOp:
@@ -330,6 +347,7 @@ def fpe_op(load_kernel: Callable[[int | None], Any]) -> NativeOp:
         _fpe_apply,
         fail_closed=fpe_fail_closed_error,
         warn=_fpe_warn,
+        remap_input_reason=_fpe_remap_input_reason,
     )
 
 
