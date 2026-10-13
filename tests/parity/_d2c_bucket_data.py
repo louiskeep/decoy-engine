@@ -95,9 +95,18 @@ class IndexCall:
 class _RecordingKernel:
     fail_on_call: int | None = None
     calls: list[IndexCall] = field(default_factory=list)
+    threads: list[int | None] = field(default_factory=list)
 
-    def _record(self, values: Any, mask_key: bytes, namespace: str, pool_size: int) -> None:
+    def _record(
+        self,
+        values: Any,
+        mask_key: bytes,
+        namespace: str,
+        pool_size: int,
+        native_threads: int | None = None,
+    ) -> None:
         self.calls.append(IndexCall(len(values), values.type, namespace, pool_size, mask_key))
+        self.threads.append(native_threads)
         if self.fail_on_call == len(self.calls):
             raise RuntimeError("injected kernel fault")
 
@@ -115,7 +124,7 @@ class BucketMarkingKernel(_RecordingKernel):
         pool_size: int,
         native_threads: int | None = None,
     ) -> pa.Array:
-        self._record(values, mask_key, namespace, pool_size)
+        self._record(values, mask_key, namespace, pool_size, native_threads)
         valid = values.is_valid().to_numpy(zero_copy_only=False)
         marker = np.full(len(values), pool_size - 1, dtype=np.uint64)
         return pa.array(marker, mask=~valid, type=pa.uint64())
@@ -135,7 +144,7 @@ class ReferenceBucketKernel(_RecordingKernel):
         pool_size: int,
         native_threads: int | None = None,
     ) -> pa.Array:
-        self._record(values, mask_key, namespace, pool_size)
+        self._record(values, mask_key, namespace, pool_size, native_threads)
         drawn = [
             None
             if v is None

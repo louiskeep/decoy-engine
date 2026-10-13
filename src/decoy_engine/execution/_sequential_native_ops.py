@@ -123,7 +123,6 @@ class BucketCall:
     mask_key: bytes
     bucket: str
     date_format: str
-    column: str
     preserved: np.ndarray[Any, Any] | None
     derive_calls: list[int]
 

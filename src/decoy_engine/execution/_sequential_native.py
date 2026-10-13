@@ -410,7 +410,7 @@ class SeqNativeRun:
             # keeps this route a superset of what the Python path accepts.
             decision.backend, decision.reason = PYTHON_SCALAR, REASON_BUCKET_OUT_OF_RANGE
             return None
-        call = BucketCall(namespace, mask_key, bucket, date_format, column, preserved, [])
+        call = BucketCall(namespace, mask_key, bucket, date_format, preserved, [])
         result = _OPS[BUCKET_PERTURB].apply(bound, array, call)
         decision.native_calls += sum(call.derive_calls)
         if preserved is not None:
