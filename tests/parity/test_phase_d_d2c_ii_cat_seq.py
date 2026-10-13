@@ -485,10 +485,10 @@ def test_nfc_columns_follow_the_native_index_not_byte_identity_on_the_kernel_arg
     assert [c.rows for c in kernel.calls] == [len(NFC)]
 
 
-@pytest.mark.parametrize("strategy", ["bucket_perturb", "date_shift", "text_mask"])
+@pytest.mark.parametrize("strategy", ["date_shift", "text_mask"])
 def test_an_unwired_strategy_has_no_descriptor_and_runs_in_python(strategy: str) -> None:
     assert strategy not in _sequential_native._OPS
-    assert set(_sequential_native._OPS) == {"hash", "fpe", "categorical"}
+    assert set(_sequential_native._OPS) == {"hash", "fpe", "categorical", "bucket_perturb"}
 
 
 def test_weights_reach_the_kernel_as_a_cdf_pool(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -79,6 +79,32 @@ def has_timezone_directive(date_format: str) -> bool:
     return False
 
 
+# The widest span a bucket can reach from a date, in days, plus the day `normalize()` can drop.
+# A date within this distance of a pandas Timestamp bound can step outside it during the native
+# bucket arithmetic, which pandas then wraps silently instead of raising.
+_BUCKET_REACH_DAYS = {_WEEK: 7 + 1, _MONTH: 31 + 1, _QUARTER: 92 + 1}
+
+
+def native_range_exceeded(values: pa.Array, bucket: str, date_format: str) -> bool:
+    """Whether any parseable date lies within one bucket of the pandas Timestamp range.
+
+    The kernel does its bucket arithmetic on pandas Timestamps (1677-09-21 to 2262-04-11); near
+    either bound that arithmetic wraps to a wrong date with no exception, so a result computed
+    from such a column must never be consumed. A date outside the range parses to NaT on both
+    paths and passes through unchanged, so it needs no guard. This is a pure predicate: each
+    route owns what to do about a True (the out-of-core route aborts, the sequential route hands
+    the column to Python, whose `datetime.date` arithmetic covers the whole calendar)."""
+    series = values.to_pandas()
+    if pd.api.types.is_extension_array_dtype(series.dtype):
+        series = series.astype(object)
+    parsed = pd.to_datetime(series, format=date_format, errors="coerce")
+    earliest, latest = parsed.min(), parsed.max()
+    if pd.isna(earliest):
+        return False
+    reach = pd.Timedelta(days=_BUCKET_REACH_DAYS[bucket])
+    return bool(earliest < pd.Timestamp.min + reach or latest > pd.Timestamp.max - reach)
+
+
 def _bucket_start_and_size(
     parsed_valid: pd.DatetimeIndex, bucket: str
 ) -> tuple[pd.DatetimeIndex, np.ndarray]:
@@ -274,4 +300,4 @@ def native_bucket_perturb(
     return pa.array(out, type=pa.string())
 
 
-__all__ = ["has_timezone_directive", "native_bucket_perturb"]
+__all__ = ["has_timezone_directive", "native_bucket_perturb", "native_range_exceeded"]

@@ -27,13 +27,15 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-import pandas as pd
 import pyarrow as pa
 
 from decoy_engine.execution._adapter import provider_config_to_dict
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._operator_registry import PYTHON_PANDAS, RUST_COMPANION
-from decoy_engine.execution.native._bucket_perturb_ext import native_bucket_perturb
+from decoy_engine.execution.native._bucket_perturb_ext import (
+    native_bucket_perturb,
+    native_range_exceeded,
+)
 from decoy_engine.execution.native._operator_config_rejections import (
     bucket_perturb_config_rejection,
 )
@@ -209,29 +211,12 @@ def decide_table(
     return TableBucketPlan(decisions, bound)
 
 
-# The widest span a bucket can reach from a date, in days, plus the day `normalize()` can drop.
-# A date within this distance of a pandas Timestamp bound can step outside it during the native
-# operator's bucket arithmetic, which pandas then wraps silently instead of raising.
-_BUCKET_REACH_DAYS = {"week": 7 + 1, "month": 31 + 1, "quarter": 92 + 1}
-
-
 def _guard_native_range(values: pa.Array, bucket: str, date_format: str, column: str) -> None:
-    """Fail closed when any parseable date lies within one bucket of the pandas Timestamp range.
+    """Fail closed when a parseable date lies within one bucket of the native operator's range.
 
-    `native_bucket_perturb` does its bucket arithmetic on pandas Timestamps (1677-09-21 to
-    2262-04-11). Near either bound that arithmetic wraps to a wrong date with no exception, so
-    the result must never be consumed. A date outside the range at all parses to NaT on both
-    paths and passes through unchanged, so it needs no guard; the Python path covers the whole
-    calendar range for the columns this refuses."""
-    series = values.to_pandas()
-    if pd.api.types.is_extension_array_dtype(series.dtype):
-        series = series.astype(object)
-    parsed = pd.to_datetime(series, format=date_format, errors="coerce")
-    earliest, latest = parsed.min(), parsed.max()
-    if pd.isna(earliest):
-        return
-    reach = pd.Timedelta(days=_BUCKET_REACH_DAYS[bucket])
-    if earliest < pd.Timestamp.min + reach or latest > pd.Timestamp.max - reach:
+    The out-of-core route streams and cannot re-buffer a column for Python, so it aborts where
+    the sequential route declines; the predicate itself is shared (`native_range_exceeded`)."""
+    if native_range_exceeded(values, bucket, date_format):
         raise ExecutionError(
             code=REASON_OUT_OF_NATIVE_RANGE,
             message=(

@@ -66,19 +66,23 @@ from decoy_engine.execution._adapter import pandas_column_to_kernel_input
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._operator_registry import PYTHON_SCALAR, RUST_COMPANION
 from decoy_engine.execution._sequential_native_ops import (
+    BUCKET_PERTURB,
     CATEGORICAL,
     FPE,
     HASH,
     SEQ_FPE_DISPOSITION_KEY,
     SEQ_HASH_DISPOSITION_KEY,
     BoundFpeKernel,
+    BucketCall,
     CategoricalCall,
     HashCall,
     NativeOp,
+    bucket_perturb_op,
     categorical_op,
     fpe_op,
     hash_op,
 )
+from decoy_engine.execution.native._bucket_perturb_ext import native_range_exceeded
 from decoy_engine.execution.native._crypto_ext import (
     CryptoExtensionUnavailableError,
     load_compiled_crypto_kernel,
@@ -98,6 +102,7 @@ if TYPE_CHECKING:
     from decoy_engine.generation.pool._events import QualityWarning
     from decoy_engine.plan._types import ColumnSeed, Plan, TableSeed
     from decoy_engine.relationships._graph import RelationshipGraph
+    from decoy_engine.transforms.date_preserve import PreserveSet
 
 PATH_SCALAR = "scalar"
 PATH_REMAP = "fk_remap"
@@ -108,6 +113,8 @@ REASON_REMAP_PARENT_PYTHON = "hash_remap_parent_stays_python"
 REASON_REMAP_INPUT_NOT_ARROW = "hash_remap_input_not_arrow"
 _NO_KERNEL_RAN = "none"
 _REASON_NO_ROWS = "no_rows_hashed"
+_REASON_NO_BUCKET_CALLS = "no_native_bucket_calls"
+REASON_BUCKET_OUT_OF_RANGE = "sequential_bucket_perturb_date_out_of_native_range"
 _CONVERSION_ERRORS = (pa.ArrowInvalid, pa.ArrowTypeError, pa.ArrowNotImplementedError)
 
 
@@ -124,14 +131,22 @@ class ColumnDecision:
     pinned_type: pa.DataType
     rows: int = 0
     strategy: str = HASH
+    # bucket_perturb only: evidence comes from the compiled calls the kernel reported, so a
+    # column that parsed nothing never claims a kernel ran; `counts_preserved` is set once the
+    # native path has recorded its sentinel count.
+    native_calls: int = 0
+    counts_preserved: bool = False
+    preserved_rows: int = 0
 
     @property
     def native(self) -> bool:
         return self.backend == RUST_COMPANION
 
     def entry(self) -> dict[str, Any]:
-        ran = self.rows > 0
-        reason = self.reason or (None if ran else _REASON_NO_ROWS)
+        calls_decide = self.strategy == BUCKET_PERTURB and self.native
+        ran = self.native_calls > 0 if calls_decide else self.rows > 0
+        none_reason = _REASON_NO_BUCKET_CALLS if calls_decide and self.rows else _REASON_NO_ROWS
+        reason = self.reason or (None if ran else none_reason)
         entry: dict[str, Any] = {
             "table": self.table,
             "column": self.column,
@@ -140,6 +155,8 @@ class ColumnDecision:
         }
         if reason is not None:
             entry["reason"] = reason
+        if self.counts_preserved:
+            entry["preserved_rows"] = self.preserved_rows
         return entry
 
 
@@ -192,10 +209,15 @@ def _load_categorical(native_threads: int | None) -> BoundIndexKernel:
     return BoundIndexKernel(load_compiled_index_kernel(), native_threads)
 
 
+def _load_bucket(native_threads: int | None) -> BoundIndexKernel:
+    return BoundIndexKernel(load_compiled_index_kernel(), native_threads)
+
+
 _OPS: dict[str, NativeOp] = {
     HASH: hash_op(_load_hash),
     FPE: fpe_op(_load_fpe),
     CATEGORICAL: categorical_op(_load_categorical),
+    BUCKET_PERTURB: bucket_perturb_op(_load_bucket),
 }
 
 
@@ -350,6 +372,53 @@ class SeqNativeRun:
             None if cdf is None else tuple(cdf),
         )
         return self.native_column(ctx, df, column, CATEGORICAL, call)
+
+    def bucket_column(
+        self,
+        ctx: StrategyContext,
+        df: pd.DataFrame,
+        column: str,
+        *,
+        namespace: str,
+        mask_key: bytes,
+        bucket: str,
+        date_format: str | None,
+        preserve: PreserveSet | None,
+    ) -> list[Any] | None:
+        """The perturbed dates for `df[column]`, positionally, or None when Python runs.
+
+        Order matters: the sentinel mask comes from the original column first, the range check
+        sees only the rows the kernel will see, and the preserved count is recorded once, only
+        by the native path, so a declined column's count is left to the Python handler."""
+        if ctx.nested_outer_column or self._in_remap:
+            return None
+        decision = self._decisions.get((ctx.current_table, column))
+        if decision is None or decision.strategy != BUCKET_PERTURB:
+            return None
+        rows = len(df)
+        decision.rows += rows
+        bound = self._bound.get(BUCKET_PERTURB)
+        if not decision.native or rows == 0 or bound is None:
+            return None
+        if date_format is None:  # pragma: no cover - admission requires an explicit format
+            raise AssertionError("bucket_perturb admitted without a date_format.")
+        preserved = preserve.mask(df[column]) if preserve is not None else None
+        array = self._pinned_array(df[column], decision)
+        rest = array if preserved is None else array.filter(pa.array(~preserved))
+        if native_range_exceeded(rest, bucket, date_format):
+            # Python's date arithmetic covers the whole calendar; native does not. Declining
+            # keeps this route a superset of what the Python path accepts.
+            decision.backend, decision.reason = PYTHON_SCALAR, REASON_BUCKET_OUT_OF_RANGE
+            return None
+        call = BucketCall(namespace, mask_key, bucket, date_format, preserved, [])
+        result = _OPS[BUCKET_PERTURB].apply(bound, array, call)
+        decision.native_calls += sum(call.derive_calls)
+        if preserved is not None:
+            count = int(preserved.sum())
+            decision.counts_preserved = True
+            decision.preserved_rows += count
+            ctx.record_date_preserved(column, count)
+        return result.values.to_pylist()
 
     def native_column(
         self, ctx: StrategyContext, df: pd.DataFrame, column: str, strategy: str, call: Any
