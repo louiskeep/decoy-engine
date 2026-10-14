@@ -77,6 +77,7 @@ def capture_physical_plan_inputs(
     captures the same routing facts an unspecified `run_pipeline` kwarg would.
     """
     from decoy_engine.execution._pipeline import classify_table_kinds
+    from decoy_engine.execution._pipeline_routing_fk_dtype import fk_out_of_core_dtype_hazard
     from decoy_engine.execution._pipeline_routing_signals import out_of_core_routing_signals
     from decoy_engine.execution._substrate import (
         require_bool,
@@ -230,6 +231,8 @@ def capture_physical_plan_inputs(
         reorder_threshold_rows=resolved_reorder_threshold,
         merge_fan_in=_MERGE_FAN_IN_DEFAULT,
         lazy_transform_bearing=lazy_transform_bearing,
+        fk_ooc_dtype_hazard=out_of_core_compatible
+        and fk_out_of_core_dtype_hazard(plan, graph, caller_sources=caller_sources),
     )
 
     return PhysicalPlanInputs(

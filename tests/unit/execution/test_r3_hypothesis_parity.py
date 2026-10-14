@@ -463,11 +463,22 @@ def _default_fk(tmp: Path) -> Any:
     return run_pipeline(cfg, tables, engine_version="r3-stamp")
 
 
-@pytest.mark.parametrize("job", [_default_single, _default_fk])
-def test_default_runs_stamp_nothing_new(job: Any, tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("job", "route", "own_evidence"),
+    [
+        (_default_single, "full_frame", {"unified_slice_activation"}),
+        # A fitting bounded-eligible FK job takes its bounded route, which stamps its own evidence.
+        (_default_fk, "out_of_core", {"residency", "out_of_core_hash"}),
+    ],
+    ids=["single", "bounded_fk"],
+)
+def test_default_runs_stamp_nothing_new(
+    job: Any, route: str, own_evidence: set[str], tmp_path: Path
+) -> None:
     metrics = job(tmp_path).quality_metrics
     for key in OPT_IN_KEYS:
         assert key not in metrics, key
     assert set(metrics["execution"]) == EXECUTION_KEYS  # no out_of_core_declined etc.
-    # Whatever else is present is the unified lane's own evidence, on its admitted shape only.
-    assert set(metrics) <= {"execution", "unified_slice_activation"}
+    assert metrics["execution"]["execution_mode"] == route
+    # Whatever else is present is the route's own evidence, on its admitted shape only.
+    assert set(metrics) <= {"execution"} | own_evidence

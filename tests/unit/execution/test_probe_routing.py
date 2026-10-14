@@ -92,6 +92,30 @@ def _acyclic_graph() -> RelationshipGraph:
     return RelationshipGraph(edges=(edge,), ordering=())
 
 
+def _cyclic_graph() -> RelationshipGraph:
+    """A cross-table cycle: sequential-eligible by job shape, but no bounded route can
+    order it, so a confirmed fit is what admits full-frame."""
+    edges = (
+        RelationshipEdge(
+            parent_table="a",
+            parent_columns=("id",),
+            child_table="b",
+            child_columns=("ref_a",),
+            namespace="na",
+            orphan_policy=OrphanPolicy.PRESERVE,
+        ),
+        RelationshipEdge(
+            parent_table="b",
+            parent_columns=("id",),
+            child_table="a",
+            child_columns=("ref_b",),
+            namespace="nb",
+            orphan_policy=OrphanPolicy.PRESERVE,
+        ),
+    )
+    return RelationshipGraph(edges=edges, ordering=())
+
+
 # ---------------------------------------------------------------------------
 # `decide_execution_route`, probe param in isolation
 # ---------------------------------------------------------------------------
@@ -125,11 +149,21 @@ class TestDecideExecutionRouteProbeParam:
         assert reason != "probe_recovered_full_frame"
 
     def test_probe_flag_on_and_recovery_confirmed_routes_full_frame(self) -> None:
-        """A CONFIRMED probe recovery wins even over an out_of_core-eligible
-        + compatible job -- the measured fast path beats the bounded
-        default."""
-        route, reason = self._route(use_probe_routing=True, probe_recovers_full_frame=True)
+        """A CONFIRMED probe recovery admits full-frame for a job no bounded route
+        can take (a cross-table cycle)."""
+        route, reason = self._route(
+            graph=_cyclic_graph(),
+            out_of_core_compatible=False,
+            use_probe_routing=True,
+            probe_recovers_full_frame=True,
+        )
         assert (route, reason) == ("full_frame", "probe_recovered_full_frame")
+
+    def test_probe_recovery_does_not_divert_a_bounded_eligible_job(self) -> None:
+        """A measured fit does not pull a bounded-eligible job onto the full-frame
+        oracle: the bounded route is faster per row, so it still wins."""
+        route, reason = self._route(use_probe_routing=True, probe_recovers_full_frame=True)
+        assert (route, reason) == ("out_of_core", "byte_estimate_bounded_out_of_core")
 
     def test_probe_flag_on_but_inconclusive_falls_through_to_bounded(self) -> None:
         route, reason = self._route(use_probe_routing=True, probe_recovers_full_frame=None)
@@ -145,6 +179,8 @@ class TestDecideExecutionRouteProbeParam:
         already confirmed the fit -- the probe is a RECOVERY for cases the
         static estimate DIDN'T confirm, not a veto over one that did)."""
         route, reason = self._route(
+            graph=_cyclic_graph(),
+            out_of_core_compatible=False,
             full_frame_fits_estimate=True,
             use_probe_routing=True,
             probe_recovers_full_frame=False,
@@ -520,6 +556,37 @@ class TestEndToEndWiring:
         monkeypatch.setattr("decoy_engine.execution._probe.probe_peak_bytes", _fake_probe)
         config = _fk_pure_mask_config(tmp_path)
         sources = _fk_sources(config)
+        # A fidelity report needs every output resident, so no bounded route applies
+        # and the recovered fit is what admits full-frame.
+        result = run_pipeline(
+            config,
+            sources,
+            engine_version="0.1.0",
+            use_byte_estimate_routing=True,
+            use_probe_routing=True,
+            out_of_core_budget_bytes=self._TIGHT_BUDGET,
+            fidelity_report=True,
+        )
+        assert result.quality_metrics["execution"]["execution_mode"] == "full_frame"
+        assert result.quality_metrics["execution"]["route_reason"] == "probe_recovered_full_frame"
+
+    def test_probe_recovery_does_not_divert_a_bounded_eligible_job_end_to_end(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def _fake_probe(*args: Any, **kwargs: Any) -> ProbeResult:
+            return ProbeResult(
+                conclusive=True,
+                reason="measured",
+                estimated_peak_bytes=1 * _MB,
+                slope_bytes_per_row=1.0,
+                intercept_bytes=0.0,
+                low_point=ProbePoint(rows=1, peak_bytes=1),
+                high_point=ProbePoint(rows=2, peak_bytes=2),
+            )
+
+        monkeypatch.setattr("decoy_engine.execution._probe.probe_peak_bytes", _fake_probe)
+        config = _fk_pure_mask_config(tmp_path)
+        sources = _fk_sources(config)
         result = run_pipeline(
             config,
             sources,
@@ -528,8 +595,8 @@ class TestEndToEndWiring:
             use_probe_routing=True,
             out_of_core_budget_bytes=self._TIGHT_BUDGET,
         )
-        assert result.quality_metrics["execution"]["execution_mode"] == "full_frame"
-        assert result.quality_metrics["execution"]["route_reason"] == "probe_recovered_full_frame"
+        assert result.quality_metrics["execution"]["execution_mode"] == "sequential"
+        assert result.quality_metrics["execution"]["route_reason"] == "pure_mask_fk"
 
     def test_probe_inconclusive_still_routes_bounded(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -605,6 +672,7 @@ class TestEndToEndWiring:
             use_byte_estimate_routing=True,
             use_probe_routing=True,
             out_of_core_budget_bytes=self._TIGHT_BUDGET,
+            fidelity_report=True,
         )
         assert bounded.quality_metrics["execution"]["execution_mode"] == "sequential"
         assert recovered.quality_metrics["execution"]["execution_mode"] == "full_frame"

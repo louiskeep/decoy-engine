@@ -75,11 +75,12 @@ def test_the_real_gate_declines_an_fpe_parent_key_for_the_out_of_core_route() ->
     )
 
 
-# estimate-FIT -> full_frame; no fit or no price -> the bounded route eligibility picks.
+# A fit no longer pulls a bounded-eligible job onto full_frame: eligibility alone picks the
+# bounded route whether the estimate fits, does not fit, or cannot be priced.
 @pytest.mark.parametrize(
     ("estimate", "expected"),
     [
-        (True, ("full_frame", "byte_estimate_full_frame_fits")),
+        (True, _SEQUENTIAL),
         (False, _SEQUENTIAL),
         # An unpriceable estimate is treated exactly like "does not fit".
         (None, _SEQUENTIAL),
@@ -190,10 +191,10 @@ def _fpe_backends(result: Any) -> dict[tuple[str, str, str], str]:
     }
 
 
-def test_default_routing_runs_a_small_fpe_key_job_full_frame(tmp_path: Path) -> None:
+def test_default_routing_runs_a_small_fpe_key_job_sequential(tmp_path: Path) -> None:
     result = _run(tmp_path)
-    assert _visible(result) == ("full_frame", "byte_estimate_full_frame_fits")
-    assert _fpe_backends(result) == {}  # the full-frame oracle, not the sequential native seam
+    assert _visible(result) == _SEQUENTIAL
+    assert _fpe_backends(result)  # the sequential seam ran, not the full-frame oracle
 
 
 @pytest.mark.parametrize(

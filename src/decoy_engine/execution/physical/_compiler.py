@@ -105,6 +105,7 @@ def layer1_route(inputs: PhysicalPlanInputs) -> tuple[str, str]:
         use_probe_routing=inputs.use_probe_routing,
         probe_recovers_full_frame=facts.probe_recovers_full_frame,
         lazy_transform_bearing=facts.lazy_transform_bearing,
+        fk_ooc_dtype_hazard=facts.fk_ooc_dtype_hazard,
     )
 
 
@@ -182,6 +183,9 @@ def out_of_core_not_ready_reason(inputs: PhysicalPlanInputs) -> str:
     facts = inputs.out_of_core_facts
     if not facts.compatible:
         return facts.reject_code or _reasons.OUT_OF_CORE_NOT_READY_INCOMPATIBLE
+    probe_fits = inputs.use_probe_routing and facts.probe_recovers_full_frame is True
+    if facts.fk_ooc_dtype_hazard and (facts.full_frame_fits_estimate is True or probe_fits):
+        return _reasons.OUT_OF_CORE_NOT_READY_FK_DTYPE_HAZARD
     if facts.largest_table_rows is None:
         return _reasons.OUT_OF_CORE_NOT_READY_NO_SIZE_SIGNAL
     if facts.largest_table_rows < inputs.out_of_core_threshold_rows:

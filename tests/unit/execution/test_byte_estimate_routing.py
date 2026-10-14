@@ -352,9 +352,11 @@ class TestByteEstimateSignalFunction:
 
 class TestFlagOnByteEstimateRouting:
     def test_comfortably_fits_routes_full_frame_even_at_huge_row_count(self) -> None:
-        """A byte estimate that confirms full_frame fits wins outright --
-        even at a row count far above BOTH legacy thresholds, proving the
-        estimator supersedes the row-count gate entirely when in scope."""
+        """A byte estimate that confirms full_frame fits wins outright for a job no
+        bounded route can take (here a cross-table cycle) -- even at a row count far
+        above BOTH legacy thresholds, proving the estimator supersedes the row-count
+        gate entirely when in scope. A bounded-eligible job prefers its bounded route
+        instead (`test_prefer_bounded_fk_routing.py`)."""
         route, reason = decide_execution_route(
             _FakeProfile(relationships=(object(),)),
             has_generate_table=False,
@@ -363,8 +365,8 @@ class TestFlagOnByteEstimateRouting:
             fidelity_report=False,
             vault_writer=None,
             execution_mode="auto",
-            graph=_acyclic_graph(),
-            out_of_core_compatible=True,
+            graph=_cyclic_graph(),
+            out_of_core_compatible=False,
             largest_table_rows=50_000_000,
             out_of_core_threshold_rows=_OUT_OF_CORE_THRESHOLD_DEFAULT,
             full_frame_reject_rows=_FULL_FRAME_REJECT_DEFAULT,
@@ -661,19 +663,18 @@ def _fk_sources(config: dict[str, Any]) -> dict[str, pa.Table]:
 class TestEndToEndWiring:
     def test_default_on_routes_by_bytes(self, tmp_path: Path) -> None:
         # TB-5: byte-estimate routing is the DEFAULT now. This tiny pure-mask FK
-        # job fits comfortably under an explicit 1 GB budget, so the default
-        # path routes it full_frame by the byte estimate (an explicit budget
+        # job fits comfortably under an explicit 1 GB budget (an explicit budget
         # keeps the assertion host-independent -- no reliance on the runner's
-        # own cgroup ceiling).
+        # own cgroup ceiling), but it is bounded-eligible, so it takes its
+        # bounded route rather than the slower full-frame oracle. Faker is not
+        # out-of-core-supported, so that route is sequential.
         config = _fk_pure_mask_config(tmp_path)
         sources = _fk_sources(config)
         result = run_pipeline(
             config, sources, engine_version="0.1.0", out_of_core_budget_bytes=1 * _GB
         )
-        assert result.quality_metrics["execution"]["execution_mode"] == "full_frame"
-        assert (
-            result.quality_metrics["execution"]["route_reason"] == "byte_estimate_full_frame_fits"
-        )
+        assert result.quality_metrics["execution"]["execution_mode"] == "sequential"
+        assert result.quality_metrics["execution"]["route_reason"] == "pure_mask_fk"
 
     def test_rollback_flag_off_matches_pre_b1b_behavior(self, tmp_path: Path) -> None:
         # Rollback: forcing the flag OFF restores the pre-B1b row-count path,
@@ -686,7 +687,9 @@ class TestEndToEndWiring:
         assert result.quality_metrics["execution"]["execution_mode"] == "sequential"
         assert result.quality_metrics["execution"]["route_reason"] == "pure_mask_fk"
 
-    def test_flag_on_with_generous_budget_routes_full_frame(self, tmp_path: Path) -> None:
+    def test_flag_on_with_generous_budget_routes_bounded_for_an_eligible_job(
+        self, tmp_path: Path
+    ) -> None:
         config = _fk_pure_mask_config(tmp_path)
         sources = _fk_sources(config)
         result = run_pipeline(
@@ -695,6 +698,24 @@ class TestEndToEndWiring:
             engine_version="0.1.0",
             use_byte_estimate_routing=True,
             out_of_core_budget_bytes=1 * _GB,
+        )
+        assert result.quality_metrics["execution"]["execution_mode"] == "sequential"
+        assert result.quality_metrics["execution"]["route_reason"] == "pure_mask_fk"
+
+    def test_flag_on_with_generous_budget_routes_full_frame_for_an_ineligible_job(
+        self, tmp_path: Path
+    ) -> None:
+        # A fidelity report needs every output resident, so no bounded route applies
+        # and the confirmed fit is what admits full-frame.
+        config = _fk_pure_mask_config(tmp_path)
+        sources = _fk_sources(config)
+        result = run_pipeline(
+            config,
+            sources,
+            engine_version="0.1.0",
+            use_byte_estimate_routing=True,
+            out_of_core_budget_bytes=1 * _GB,
+            fidelity_report=True,
         )
         assert result.quality_metrics["execution"]["execution_mode"] == "full_frame"
         assert (
@@ -729,35 +750,38 @@ class TestEndToEndWiring:
     def test_end_to_end_output_is_byte_identical_regardless_of_flag(self, tmp_path: Path) -> None:
         """The flag changes ROUTING, never OUTPUT: every route is
         byte-output-neutral versus full_frame by construction (S2). The rollback
-        path (sequential) and the default byte-estimate path (full_frame) must
-        produce identical output."""
+        path (sequential) and the default byte-estimate path (sequential for this
+        eligible job) must produce output identical to an explicit full-frame run."""
         config = _fk_pure_mask_config(tmp_path)
         sources = _fk_sources(config)
         off = run_pipeline(config, sources, engine_version="0.1.0", use_byte_estimate_routing=False)
-        on_full_frame = run_pipeline(
+        on = run_pipeline(
             config,
             sources,
             engine_version="0.1.0",
             out_of_core_budget_bytes=1 * _GB,
         )
+        full_frame = run_pipeline(
+            config, sources, engine_version="0.1.0", execution_mode="full_frame"
+        )
         assert off.quality_metrics["execution"]["execution_mode"] == "sequential"
-        assert on_full_frame.quality_metrics["execution"]["execution_mode"] == "full_frame"
+        assert on.quality_metrics["execution"]["execution_mode"] == "sequential"
+        assert full_frame.quality_metrics["execution"]["execution_mode"] == "full_frame"
         for table in off.outputs:
-            assert off.outputs[table].equals(on_full_frame.outputs[table]), f"{table} differs"
+            assert off.outputs[table].equals(full_frame.outputs[table]), f"{table} differs"
+            assert on.outputs[table].equals(full_frame.outputs[table]), f"{table} differs"
 
     def test_width_change_flips_route_at_a_fixed_budget_and_row_count(self, tmp_path: Path) -> None:
         """§9 acceptance: routing keys off computed BYTES, not row count. Same
         row count and same budget; a WIDER schema (more bytes per row) flips the
-        route from full_frame to a bounded route. This is the width-change proof
-        the redesign's §9 asks for, exercised end-to-end through the default
+        route from full_frame to the reject-before-read. This is the width-change
+        proof the redesign's §9 asks for, exercised end-to-end through the default
         byte-estimate path.
 
-        The parent's key is masked with `faker` (deterministic + shared
-        namespace, so FK joinability is preserved) which is NOT in the
-        out-of-core supported-strategy set -- so the bounded fallback is
-        `sequential` (pandas), keeping the WIDE variant off the DuckDB path and
-        its tight memory_limit; the point under test is the ROUTE the byte
-        estimate picks, not out-of-core execution under a tiny cap."""
+        The job requests a fidelity report, which needs every output resident, so
+        no bounded route applies and the byte estimate is the only thing deciding
+        between full_frame and the reject. (A bounded-eligible job takes its bounded
+        route at any width, so it cannot show the flip.)"""
         # A fixed budget both jobs share; the ONLY thing that differs is schema
         # width (a narrow parent vs. a wide parent), at the same row count. The
         # 512 MB budget sits above the narrow schema's estimate and below the
@@ -821,13 +845,20 @@ class TestEndToEndWiring:
                 ],
             }
             sources = {n: pq.read_table(s["path"]) for n, s in config["sources"].items()}
-            result = run_pipeline(
-                config, sources, engine_version="0.1.0", out_of_core_budget_bytes=budget
-            )
+            try:
+                result = run_pipeline(
+                    config,
+                    sources,
+                    engine_version="0.1.0",
+                    out_of_core_budget_bytes=budget,
+                    fidelity_report=True,
+                )
+            except ExecutionError as exc:
+                return exc.code
             return str(result.quality_metrics["execution"]["execution_mode"])
 
         # Narrow schema fits the 512 MB budget -> full_frame.
         assert _run(0) == "full_frame"
         # Same rows, same budget, WIDER schema (many extra string cols) -> more
-        # bytes -> no longer fits -> a bounded route (never full_frame).
-        assert _run(20) != "full_frame"
+        # bytes -> no longer fits, and no bounded route applies -> rejected.
+        assert _run(20) == "fk_full_frame_oom_risk_rejected"
