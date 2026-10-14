@@ -605,6 +605,11 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         # calls it, and the registry/params/step/admission/schema-rule/chunk modules it reaches
         # are already permitted. The import-direction sweeps and fresh-import probe stay green.
         "src/decoy_engine/execution/native/_text_mask_route.py",
+        # C6b-ii slice b (native text_mask splice): `_text_mask_native_splice.py` is new -- the loader
+        # and planner for the Rust redact/passthrough splice kernel. It imports only `_text_redact_kernel`,
+        # `storm.detectors`, and `transforms._text_mask_splice`/`transforms.text_mask`, nothing from
+        # `execution.physical`; `_kernels_scalar.native_text_mask` (permitted above) calls it.
+        "src/decoy_engine/execution/native/_text_mask_native_splice.py",
         # bucket_perturb date_format guard: the oracle handler and the nested handler validate the
         # format before any early return, and the out-of-core kernel validates before its autodetect
         # check. All three call the shared rule in `transforms/bucket_perturb.py` and import nothing
