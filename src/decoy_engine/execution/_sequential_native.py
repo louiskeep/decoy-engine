@@ -85,12 +85,15 @@ from decoy_engine.execution._sequential_native_ops import (
     HASH,
     SEQ_FPE_DISPOSITION_KEY,
     SEQ_HASH_DISPOSITION_KEY,
+    TEXT_REDACT,
     BoundFpeKernel,
     BucketCall,
     CategoricalCall,
     FakerCall,
     HashCall,
     NativeOp,
+    TextRedactCall,
+    _load_text_redact,
     bucket_perturb_op,
     categorical_op,
     date_shift_op,
@@ -98,6 +101,7 @@ from decoy_engine.execution._sequential_native_ops import (
     faker_op,
     fpe_op,
     hash_op,
+    text_redact_op,
 )
 from decoy_engine.execution._strategies._faker_positional import resolve_selection_namespace
 from decoy_engine.execution.native._bucket_perturb_ext import native_range_exceeded
@@ -174,6 +178,7 @@ _OPS: dict[str, NativeOp] = {
     BUCKET_PERTURB: bucket_perturb_op(_load_index),
     DATE_SHIFT: date_shift_op(_load_index),
     FAKER: faker_op(_load_index),
+    TEXT_REDACT: text_redact_op(_load_text_redact),
 }
 
 
@@ -412,6 +417,29 @@ class SeqNativeRun:
             )
         result = _OPS[FAKER].apply(bound, self._pinned_array(df[column], decision), call)
         decision.native_calls += 1  # the helpers return no count; each makes one batch call
+        return result.values.to_pylist()
+
+    def text_redact_column(
+        self,
+        ctx: StrategyContext,
+        df: pd.DataFrame,
+        column: str,
+        *,
+        detectors: tuple[str, ...] | None,
+        token: str,
+        label_token: bool,
+    ) -> list[Any] | None:
+        """The redacted text for `df[column]`, positionally, or None when Python runs.
+
+        The handler's resolved config is the payload (None detectors = all, never `()`);
+        `native_text_redact` replays lookaround and non-ASCII cells itself, byte for byte."""
+        gate = self._admitted(ctx, column, TEXT_REDACT, len(df))
+        if gate is None:
+            return None
+        decision, bound = gate
+        call = TextRedactCall(detectors, token, label_token)
+        result = _OPS[TEXT_REDACT].apply(bound, self._pinned_array(df[column], decision), call)
+        decision.native_calls += 1  # one batch call; an all-null column still runs it
         return result.values.to_pylist()
 
     def _admitted(

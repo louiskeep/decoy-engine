@@ -124,6 +124,22 @@ class TextRedactHandler:
         else:
             return df, []
 
+        # SEQ seam, after the config early-returns above so those keep their handler behavior.
+        # The RESOLVED detectors go through unchanged: None means all, and () would mean none.
+        seq = getattr(ctx, "seq_native", None)
+        if seq is not None:
+            picked = seq.text_redact_column(
+                ctx,
+                df,
+                column,
+                detectors=None if detector_ids is None else tuple(detector_ids),
+                token=token,
+                label_token=label_token,
+            )
+            if picked is not None:
+                df[column] = pd.Series(picked, index=df.index, dtype=object)
+                return df, []
+
         col = df[column]
         if pd.api.types.is_extension_array_dtype(col.dtype):
             col = col.astype(object)
