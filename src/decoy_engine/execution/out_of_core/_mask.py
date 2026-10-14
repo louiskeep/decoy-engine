@@ -39,6 +39,7 @@ from decoy_engine.execution.out_of_core._mask_group_c import (
     group_c_array,
     group_c_output_type,
 )
+from decoy_engine.execution.out_of_core._text_redact_native import native_text_redact_array
 from decoy_engine.kernel import hash_array, passthrough_array, redact_array, truncate_array
 
 if TYPE_CHECKING:
@@ -46,6 +47,7 @@ if TYPE_CHECKING:
     from decoy_engine.execution.out_of_core._categorical_native import NativeCategorical
     from decoy_engine.execution.out_of_core._fpe_native import NativeFpe
     from decoy_engine.execution.out_of_core._hash_run import TableHashPlan
+    from decoy_engine.execution.out_of_core._text_redact_native import NativeTextRedact
     from decoy_engine.plan._types import ColumnSeed, Plan, TableSeed
     from decoy_engine.transforms._codeset_loader import _CorpusRecord
 
@@ -113,6 +115,7 @@ def mask_column(
     categorical_native: NativeCategorical | None = None,
     bucket_native: NativeBucket | None = None,
     fpe_native: NativeFpe | None = None,
+    text_redact_native: NativeTextRedact | None = None,
 ) -> pa.Array:
     """Apply one admitted strategy to one column (or column slice).
 
@@ -140,6 +143,8 @@ def mask_column(
     and the path every declined column takes. `bucket_native` is the bucket_perturb counterpart,
     taken inside the Group (c) seam once its own validation has run. `fpe_native` is the fpe
     counterpart; `fpe_array` stays the reference and the path every declined column takes.
+    `text_redact_native` is the text_redact counterpart; `text_redact_array` stays the reference
+    and the declined path.
     """
     job_seed = mask_key
     cfg = provider_config_to_dict(seed.provider_config)
@@ -157,6 +162,8 @@ def mask_column(
                 values, job_seed=job_seed, namespace=seed.namespace, column=column, cfg=cfg
             )
         if seed.strategy == "text_redact":
+            if text_redact_native is not None:
+                return native_text_redact_array(values, native=text_redact_native)
             return text_redact_array(values, plan=seed)
         if categorical_native is not None and seed.namespace is not None:
             return native_categorical_array(
@@ -394,6 +401,11 @@ def mask_batch(
             if hash_plan is not None and column_seed.strategy == "fpe"
             else None
         )
+        text_redact_native = (
+            hash_plan.text_redact_for(column, batch)
+            if hash_plan is not None and column_seed.strategy == "text_redact"
+            else None
+        )
         idx = batch.schema.get_field_index(column)
         if idx < 0:
             continue
@@ -413,6 +425,7 @@ def mask_batch(
             categorical_native=categorical_native,
             bucket_native=bucket_native,
             fpe_native=fpe_native,
+            text_redact_native=text_redact_native,
         )
         arrays[idx] = masked
         # Same field semantics as Table.set_column with a bare name: the field

@@ -630,6 +630,12 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         # per-table plan and `_mask.py` dispatches it. They import the existing FF1 kernel
         # loader, `FpeConfig` and `fpe_fail_closed_error`; nothing from `execution.physical`.
         "src/decoy_engine/execution/out_of_core/_fpe_native.py",
+        # OOC text_redact (out-of-core text_redact on the compiled span kernel):
+        # `_text_redact_native.py` (per-column decision, the native call and its disposition) is
+        # new; `_hash_run.py` carries its per-table plan and `_mask.py` dispatches it. They import
+        # the existing `native_text_redact` wrapper and the shared config predicate; nothing from
+        # `execution.physical`.
+        "src/decoy_engine/execution/out_of_core/_text_redact_native.py",
         "src/decoy_engine/execution/out_of_core/_mask.py",
         "src/decoy_engine/execution/out_of_core/_stream_driver.py",
         # D2a (sequential-route hash on the compiled companion): `_sequential_native.py`
