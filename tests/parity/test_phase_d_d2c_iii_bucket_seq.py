@@ -711,6 +711,7 @@ def test_the_registry_holds_the_native_strategies_and_not_text_mask() -> None:
         "bucket_perturb",
         "date_shift",
         "faker",
+        "text_redact",
     }
     assert "text_mask" not in _sequential_native._OPS
 

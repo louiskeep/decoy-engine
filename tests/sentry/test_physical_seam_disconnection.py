@@ -390,6 +390,10 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         "src/decoy_engine/execution/_positional_keys.py",
         "src/decoy_engine/execution/_strategies/_faker.py",
         "src/decoy_engine/execution/_strategies/_faker_positional.py",
+        # text_redact SEQ-native: the oracle handler offers its resolved config to the sequential
+        # seam, like faker and categorical. The SEQ modules were already permitted; nothing here
+        # imports `execution.physical`.
+        "src/decoy_engine/execution/_strategies/_text_redact.py",
         # C8-iii-d: positional draws under `when:` key on the full-table row. The nested handler
         # clears the outer gate positions for its child; windowed_date takes explicit positions.
         # Both import nothing from execution.physical.

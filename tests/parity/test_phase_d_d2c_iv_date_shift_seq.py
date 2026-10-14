@@ -647,7 +647,7 @@ def test_the_date_shift_fragment_keeps_its_literal_shape(monkeypatch: pytest.Mon
 # 12-13. Registry and the absent key.
 
 
-def test_the_registry_holds_the_six_native_strategies() -> None:
+def test_the_registry_holds_the_seven_native_strategies() -> None:
     assert set(_sequential_native._OPS) == {
         "hash",
         "fpe",
@@ -655,6 +655,7 @@ def test_the_registry_holds_the_six_native_strategies() -> None:
         "bucket_perturb",
         "date_shift",
         "faker",
+        "text_redact",
     }
 
 
