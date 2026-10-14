@@ -19,6 +19,7 @@ from decoy_engine.execution._sequential_native_ops import (
     DATE_SHIFT,
     FAKER,
     HASH,
+    TEXT_MASK,
     TEXT_REDACT,
 )
 
@@ -72,7 +73,7 @@ class ColumnDecision:
         }
         if reason is not None:
             entry["reason"] = reason
-        if self.strategy in (FAKER, TEXT_REDACT):
+        if self.strategy in (FAKER, TEXT_REDACT, TEXT_MASK):
             # The numeric count is the evidence that distinguishes an empty table (no call)
             # from an all-null one (one call), which `executed_backend` alone cannot.
             entry["native_calls"] = self.native_calls

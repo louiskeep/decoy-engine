@@ -128,6 +128,27 @@ class TextMaskHandler:
                     ),
                 )
 
+        # SEQ seam, after the NER guard so a NER column keeps its handler behavior. The RESOLVED
+        # detectors go through unchanged: None means all, and () would mean none.
+        seq = getattr(ctx, "seq_native", None)
+        if seq is not None and ner_model is None:
+            picked = seq.text_mask_column(
+                ctx,
+                df,
+                column,
+                mask_key=ctx.mask_key,
+                detectors=None if detector_ids is None else tuple(detector_ids),
+                per_detector_strategy=per_detector or None,
+                unmatched_span_policy=policy,
+                token=token,
+                date_shift_bounds=tuple(extra.items()),
+                sub_floor_span_policy=sub_floor_span_policy,
+            )
+            if picked is not None:
+                values, picked_warnings = picked
+                df[column] = pd.Series(values, index=df.index, dtype=object)
+                return df, picked_warnings
+
         col = df[column]
         if pd.api.types.is_extension_array_dtype(col.dtype):
             col = col.astype(object)

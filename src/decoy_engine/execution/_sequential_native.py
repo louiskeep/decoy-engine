@@ -104,6 +104,11 @@ from decoy_engine.execution._sequential_native_ops import (
     integer_key_representation_lost,
     text_redact_op,
 )
+from decoy_engine.execution._sequential_native_text_mask import (
+    TEXT_MASK,
+    TextMaskCall,
+    text_mask_op,
+)
 from decoy_engine.execution._strategies._faker_positional import resolve_selection_namespace
 from decoy_engine.execution.native._bucket_perturb_ext import native_range_exceeded
 from decoy_engine.execution.native._chunk_masking import pool_values_are_strings
@@ -114,6 +119,7 @@ from decoy_engine.execution.native._crypto_ext import (
 from decoy_engine.execution.native._date_shift_ext import native_date_shift
 from decoy_engine.execution.native._fpe_ext import load_compiled_fpe_kernel
 from decoy_engine.execution.native._index_ext import load_compiled_index_kernel
+from decoy_engine.execution.native._text_mask_route import text_mask_sub_floor_warning
 from decoy_engine.execution.out_of_core._categorical_native import BoundIndexKernel
 from decoy_engine.execution.out_of_core._hash_native import (
     REASON_UNAVAILABLE,
@@ -180,6 +186,7 @@ _OPS: dict[str, NativeOp] = {
     DATE_SHIFT: date_shift_op(_load_index),
     FAKER: faker_op(_load_index),
     TEXT_REDACT: text_redact_op(_load_text_redact),
+    TEXT_MASK: text_mask_op(_load_text_redact),
 }
 
 
@@ -453,6 +460,30 @@ class SeqNativeRun:
         result = _OPS[TEXT_REDACT].apply(bound, self._pinned_array(df[column], decision), call)
         decision.native_calls += 1  # one batch call; an all-null column still runs it
         return result.values.to_pylist()
+
+    def text_mask_column(
+        self, ctx: StrategyContext, df: pd.DataFrame, column: str, **config: Any
+    ) -> tuple[list[Any], list[QualityWarning]] | None:
+        """The masked text and its sub-floor warning for `df[column]`, or None when Python runs.
+
+        `config` is the handler's resolved `TextMaskCall` fields (None detectors = all, never
+        `()`). The warning is built from the counts the one native call returned, not by
+        re-masking."""
+        gate = self._admitted(ctx, column, TEXT_MASK, len(df))
+        if gate is None:
+            return None
+        decision, bound = gate
+        call = TextMaskCall(column, **config)
+        result = _OPS[TEXT_MASK].apply(bound, self._pinned_array(df[column], decision), call)
+        decision.native_calls += 1  # one batch call; an all-null column still runs it
+        warnings = []
+        if result.notices:
+            warnings.append(
+                text_mask_sub_floor_warning(
+                    result.notices, policy=call.sub_floor_span_policy, column=column
+                )
+            )
+        return result.values.to_pylist(), warnings
 
     def _admitted(
         self, ctx: StrategyContext, column: str, strategy: str, rows: int
