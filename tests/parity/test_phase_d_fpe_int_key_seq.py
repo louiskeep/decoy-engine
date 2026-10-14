@@ -29,6 +29,7 @@ from decoy_engine.execution._sequential_native_ops import (
 )
 from decoy_engine.execution.native._crypto_ext import (
     CryptoExtensionUnavailableError,
+    FpeBatchResult,
     FpeConfig,
     load_compiled_crypto_kernel,
 )
@@ -91,12 +92,10 @@ class SpyFpe:
                 kwargs["mask_key"],
             )
         )
-        real = load_compiled_fpe_kernel()
         if self.mode == "capture":
-            return type(real.run(pa.array(["1234567890"]), **kwargs))(
-                values=values, errors=(), warnings=()
-            )
-        result = real.run(values, **kwargs)
+            return FpeBatchResult(values=values, errors=(), warnings=())
+        kernel: Any = load_compiled_fpe_kernel()
+        result = kernel.run(values, **kwargs)
         if self.mode == "tamper":
             marked = [None if v is None else v + TAMPER for v in result.values.to_pylist()]
             return type(result)(
@@ -164,7 +163,7 @@ def assert_native_matches_oracle(mp: pytest.MonkeyPatch, shape: s.Shape) -> tupl
     return native, spy
 
 
-def error_code(exc: DecoyError | ExecutionError) -> str:
+def error_code(exc: Any) -> str:
     return str(exc.code)
 
 
@@ -292,7 +291,7 @@ def test_t3_a_six_digit_key_masks_and_decrypts_back_to_the_integer_text(
     native, spy = assert_native_matches_oracle(monkeypatch, int_shape(keys, [100001]))
     assert spy.count("pid") >= 1
     ciphertext = native.outputs["P"].column("pid")
-    real = load_compiled_fpe_kernel()
+    real: Any = load_compiled_fpe_kernel()
     plain = real.run(
         pa.array(ciphertext.to_pylist(), pa.string()),
         mask_key=spy.calls[0].mask_key,
@@ -407,7 +406,11 @@ def test_t5_names_inherited_parents_nulls_duplicates_and_unsigned_orphans(
     native, spy = assert_native_matches_oracle(monkeypatch, shape)
     assert spy.count("parent_id") >= 2
     big = int_shape(
-        [2**63 + 1, 2**63 + 2], [2**63 + 1, 2**64 - 5, 2**64 - 5], ptype=UINT64, pname="k", cname="k2"
+        [2**63 + 1, 2**63 + 2],
+        [2**63 + 1, 2**64 - 5, 2**64 - 5],
+        ptype=UINT64,
+        pname="k",
+        cname="k2",
     )
     assert_native_matches_oracle(monkeypatch, big)
 
@@ -585,7 +588,9 @@ def test_t8_a_float_widened_key_aborts_as_an_invariant_not_a_silent_coercion(
 ) -> None:
     real = SeqNativeRun.native_column
 
-    def widened(self: SeqNativeRun, ctx: Any, df: Any, column: str, strategy: str, call: Any) -> Any:
+    def widened(
+        self: SeqNativeRun, ctx: Any, df: Any, column: str, strategy: str, call: Any
+    ) -> Any:
         df = df.copy()
         df[column] = df[column].astype("float64")  # what to_pandas_fk_safe exists to prevent
         return real(self, ctx, df, column, strategy, call)

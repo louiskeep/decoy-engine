@@ -268,7 +268,9 @@ def integer_key_representation_lost(strategy: str, pinned: pa.DataType, dtype: A
 
     Checked before the coercive pin, which would turn a float-widened `[123456.0, None]` into
     exact ints and stringify it as `"123456"` where the Python handler writes `"123456.0"`."""
-    return strategy == FPE and pa.types.is_integer(pinned) and not pd.api.types.is_integer_dtype(dtype)
+    return (
+        strategy == FPE and pa.types.is_integer(pinned) and not pd.api.types.is_integer_dtype(dtype)
+    )
 
 
 def _fpe_apply(bound: BoundFpeKernel, values: pa.Array, call: FpeCall) -> NativeResult:

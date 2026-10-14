@@ -556,9 +556,9 @@ def _declines() -> list[tuple[str, s.Shape, str]]:
             "fpe_checksum_not_native:parent_id",
         ),
         (
-            "non-string",
-            _decline_shape({}, [1000000001, 1000000002], 1000000009, pa.int64()),
-            "fpe_source_type_not_string:parent_id:int64",
+            "non-string-non-integer",
+            _decline_shape({}, [1000000001.0, 1000000002.0], 1000000009.0, pa.float64()),
+            "fpe_source_type_not_string:parent_id:double",
         ),
         (
             "large-string",
@@ -604,8 +604,9 @@ def test_without_the_companion_an_fpe_key_runs_python_and_says_so(
 def test_an_orphan_key_of_another_type_is_minted_in_python_with_a_value_free_reason(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The parent is a native string column, but the orphan keys it is asked to mint are ints:
-    the REMAP call is admitted on its own, from the type of the keys it holds."""
+    """The parent is a native string column, but the orphan keys it is asked to mint are floats
+    (an integer orphan is admitted since GAP8): the REMAP call is admitted on its own, from the
+    type of the keys it holds."""
     run = SeqNativeRun()
     kernel = FpeMarkingKernel()
     run._bound["fpe"] = BoundFpeKernel(kernel)
@@ -614,11 +615,11 @@ def test_an_orphan_key_of_another_type_is_minted_in_python_with_a_value_free_rea
         "P", "parent_id", "rust_companion", None, pa.string(), strategy="fpe"
     )
     call = FpeCall("ns_p", b"k" * 8, FpeConfig(), "parent_id")
-    assert run._remap_tokens("P", "parent_id", pd.Series([1000000009]), "fpe", call) is None
+    assert run._remap_tokens("P", "parent_id", pd.Series([1000000009.0]), "fpe", call) is None
     assert kernel.calls == []
     (entry,) = [r.entry() for r in run._remap.values()]
     assert entry["executed_backend"] == "python_scalar"
-    assert entry["reason"] == "fpe_source_type_not_string:parent_id:int64"
+    assert entry["reason"] == "fpe_source_type_not_string:parent_id:double"
     mixed = pd.Series(["1000000009", 7], dtype="object")
     assert run._remap_tokens("P", "parent_id", mixed, "fpe", call) is None
     assert run._remap["P", "parent_id"].reasons[-1] == "fpe_remap_input_not_arrow:parent_id"

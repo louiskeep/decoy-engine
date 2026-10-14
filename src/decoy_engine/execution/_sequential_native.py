@@ -265,7 +265,9 @@ class SeqNativeRun:
                 self._inherited_columns.add((table, column))
             if is_child and column not in parent_keys:
                 continue  # inherits, and no edge re-derives it: nothing to decide
-            is_key = is_child or column in parent_keys
+            # A child that reaches here is also a parent key (a bare child `continue`d above), so
+            # parent-key membership alone separates a key from a payload that shares the strategy.
+            is_key = column in parent_keys
             decision = self._decide(op, table, column, input_type, seed, is_key=is_key)
             if not is_child:
                 self._decisions[(table, column)] = decision
