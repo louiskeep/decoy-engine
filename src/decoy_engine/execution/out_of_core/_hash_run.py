@@ -34,6 +34,7 @@ from decoy_engine.execution.native._crypto_ext import (
 )
 from decoy_engine.execution.native._fpe_ext import load_compiled_fpe_kernel
 from decoy_engine.execution.native._index_ext import load_compiled_index_kernel
+from decoy_engine.execution.native._text_redact_kernel import load_text_redact_kernel
 from decoy_engine.execution.out_of_core._bucket_native import (
     NativeBucket,
     TableBucketPlan,
@@ -57,6 +58,14 @@ from decoy_engine.execution.out_of_core._hash_native import (
     decline_reason,
 )
 from decoy_engine.execution.out_of_core._mask import table_seed
+from decoy_engine.execution.out_of_core._text_redact_native import (
+    BoundTextRedactKernel,
+    NativeTextRedact,
+    TableTextRedactPlan,
+)
+from decoy_engine.execution.out_of_core._text_redact_native import (
+    decide_table as decide_text_redact_table,
+)
 from decoy_engine.relationships._graph import OrphanPolicy
 
 if TYPE_CHECKING:
@@ -67,6 +76,7 @@ HASH_DISPOSITION_KEY = "out_of_core_hash"
 CATEGORICAL_DISPOSITION_KEY = "out_of_core_categorical"
 BUCKET_DISPOSITION_KEY = "out_of_core_bucket_perturb"
 FPE_DISPOSITION_KEY = "out_of_core_fpe"
+TEXT_REDACT_DISPOSITION_KEY = "out_of_core_text_redact"
 REMAP_DEFERRED = "fk_key_hash_remap_native_deferred"
 _NO_KERNEL_RAN = "none"
 _REASON_NO_ROWS = "no_rows_hashed"
@@ -113,12 +123,14 @@ class TableHashPlan:
         categorical: TableCategoricalPlan | None = None,
         bucket: TableBucketPlan | None = None,
         fpe: TableFpePlan | None = None,
+        text_redact: TableTextRedactPlan | None = None,
     ) -> None:
         self._decisions = dict(decisions)
         self._bound = bound
         self.categorical = categorical
         self.bucket = bucket
         self.fpe = fpe
+        self.text_redact = text_redact
 
     @property
     def decisions(self) -> Mapping[str, HashColumnDecision]:
@@ -135,6 +147,10 @@ class TableHashPlan:
     def fpe_for(self, column: str, batch: pa.RecordBatch) -> NativeFpe | None:
         """The native handle for fpe `column` in `batch`, or None (see `gate`)."""
         return self.fpe.gate(column, batch) if self.fpe is not None else None
+
+    def text_redact_for(self, column: str, batch: pa.RecordBatch) -> NativeTextRedact | None:
+        """The native handle for text_redact `column` in `batch`, or None (see `gate`)."""
+        return self.text_redact.gate(column, batch) if self.text_redact is not None else None
 
     def kernel_for(self, column: str, batch: pa.RecordBatch) -> BoundHashKernel | None:
         """The native kernel for `column` in `batch`, or None when it stays on Python.
@@ -185,6 +201,8 @@ class OocHashRun:
         self._index_bound: BoundIndexKernel | None = None
         self._fpe_loaded = False
         self._fpe_bound: BoundFpeKernel | None = None
+        self._text_redact_loaded = False
+        self._text_redact_bound: BoundTextRedactKernel | None = None
         self._plans: list[TableHashPlan] = []
         self._remap: list[dict[str, Any]] = []
 
@@ -216,6 +234,14 @@ class OocHashRun:
             except CryptoExtensionUnavailableError:
                 self._fpe_bound = None
         return self._fpe_bound
+
+    def _text_redact_kernel(self) -> BoundTextRedactKernel | None:
+        """Companion presence for text_redact; the loader returns None, never raises."""
+        if not self._text_redact_loaded:
+            self._text_redact_loaded = True
+            kernel = load_text_redact_kernel()
+            self._text_redact_bound = None if kernel is None else BoundTextRedactKernel(kernel)
+        return self._text_redact_bound
 
     def prepare_table(
         self,
@@ -296,7 +322,24 @@ class OocHashRun:
             if fpe_seeds
             else None
         )
-        table_plan = TableHashPlan(decisions, self._bound, categorical, bucket, fpe)
+        text_redact_seeds = {
+            column: column_seed
+            for column, column_seed in (seed.per_column if seed is not None else ())
+            if column_seed.strategy == "text_redact"
+            and column not in skip_columns
+            and source_schema.get_field_index(column) >= 0
+        }
+        text_redact = (
+            decide_text_redact_table(
+                table_name,
+                source_schema,
+                text_redact_seeds,
+                self._text_redact_kernel() if text_redact_seeds else None,
+            )
+            if text_redact_seeds
+            else None
+        )
+        table_plan = TableHashPlan(decisions, self._bound, categorical, bucket, fpe, text_redact)
         self._plans.append(table_plan)
         self._remap.extend(_remap_entries(plan, table_name, incoming_edges, site))
         return table_plan
@@ -320,11 +363,18 @@ class OocHashRun:
         fpe = [
             d.entry() for p in self._plans if p.fpe is not None for d in p.fpe.decisions.values()
         ]
+        text_redact = [
+            d.entry()
+            for p in self._plans
+            if p.text_redact is not None
+            for d in p.text_redact.decisions.values()
+        ]
         return {
             **({HASH_DISPOSITION_KEY: entries} if entries else {}),
             **({CATEGORICAL_DISPOSITION_KEY: categorical} if categorical else {}),
             **({BUCKET_DISPOSITION_KEY: bucket} if bucket else {}),
             **({FPE_DISPOSITION_KEY: fpe} if fpe else {}),
+            **({TEXT_REDACT_DISPOSITION_KEY: text_redact} if text_redact else {}),
         }
 
 
@@ -360,6 +410,7 @@ __all__ = [
     "FPE_DISPOSITION_KEY",
     "HASH_DISPOSITION_KEY",
     "REMAP_DEFERRED",
+    "TEXT_REDACT_DISPOSITION_KEY",
     "HashColumnDecision",
     "OocHashRun",
     "TableHashPlan",
