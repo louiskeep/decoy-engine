@@ -310,3 +310,20 @@ REALISTIC = [
 def test_common_realistic_sweep_matches_the_oracle(name: str, policy: str) -> None:
     kw = {"detectors": DETECTOR_SELECTIONS[name], "unmatched_span_policy": policy, **_SWEEP}
     assert _native(REALISTIC, **kw) == _oracle(REALISTIC, **kw)
+
+
+@pytest.mark.parametrize("policy", ["redact", "passthrough", "replace_with_token"])
+def test_an_empty_gap_is_never_tokenized(policy: str) -> None:
+    """Two adjacent spans leave an empty gap that must not emit a token under any policy."""
+    from decoy_engine.transforms._text_mask_splice import apply_unmatched, splice_spans
+
+    assert apply_unmatched("", policy, "TOK") == ""
+    spans = [Span("a", 0, 1, "x"), Span("b", 1, 2, "y")]
+    out = splice_spans(
+        "xy",
+        spans,
+        mask_span=lambda s: s.matched_text.upper(),
+        unmatched_span_policy=policy,
+        token="TOK",
+    )
+    assert out == "XY"
