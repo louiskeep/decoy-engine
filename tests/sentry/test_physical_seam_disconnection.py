@@ -394,6 +394,12 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         # seam, like faker and categorical. The SEQ modules were already permitted; nothing here
         # imports `execution.physical`.
         "src/decoy_engine/execution/_strategies/_text_redact.py",
+        # C6b-ii slice a: text_mask joins the SEQ-native seam the same way. The handler offers its
+        # resolved config, and the operator descriptor lives in its own module so
+        # `_sequential_native_ops.py` stays under the size policy. Neither imports
+        # `execution.physical`.
+        "src/decoy_engine/execution/_strategies/_text_mask.py",
+        "src/decoy_engine/execution/_sequential_native_text_mask.py",
         # C8-iii-d: positional draws under `when:` key on the full-table row. The nested handler
         # clears the outer gate positions for its child; windowed_date takes explicit positions.
         # Both import nothing from execution.physical.
