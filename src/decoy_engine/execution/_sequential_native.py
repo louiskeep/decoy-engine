@@ -101,6 +101,7 @@ from decoy_engine.execution._sequential_native_ops import (
     faker_op,
     fpe_op,
     hash_op,
+    integer_key_representation_lost,
     text_redact_op,
 )
 from decoy_engine.execution._strategies._faker_positional import resolve_selection_namespace
@@ -211,10 +212,18 @@ class SeqNativeRun:
         return self._bound.get(op.strategy)
 
     def _decide(
-        self, op: NativeOp, table: str, column: str, input_type: pa.DataType, seed: ColumnSeed
+        self,
+        op: NativeOp,
+        table: str,
+        column: str,
+        input_type: pa.DataType,
+        seed: ColumnSeed,
+        *,
+        is_key: bool = False,
     ) -> ColumnDecision:
         bound = self._kernel(op)
-        reason = op.admit(column, input_type, seed) if bound is not None else REASON_UNAVAILABLE
+        admit = op.key_admit if is_key and op.key_admit is not None else op.admit
+        reason = admit(column, input_type, seed) if bound is not None else REASON_UNAVAILABLE
         native = bound is not None and reason is None
         return ColumnDecision(
             table,
@@ -256,7 +265,10 @@ class SeqNativeRun:
                 self._inherited_columns.add((table, column))
             if is_child and column not in parent_keys:
                 continue  # inherits, and no edge re-derives it: nothing to decide
-            decision = self._decide(op, table, column, input_type, seed)
+            # A child that reaches here is also a parent key (a bare child `continue`d above), so
+            # parent-key membership alone separates a key from a payload that shares the strategy.
+            is_key = column in parent_keys
+            decision = self._decide(op, table, column, input_type, seed, is_key=is_key)
             if not is_child:
                 self._decisions[(table, column)] = decision
             if column in parent_keys:
@@ -521,6 +533,14 @@ class SeqNativeRun:
             return None
         decision, bound = gate
         op = _OPS[strategy]
+        if integer_key_representation_lost(strategy, decision.pinned_type, df[column].dtype):
+            raise ExecutionError(
+                code="sequential_fpe_key_integer_not_preserved",
+                message=(
+                    f"fpe key column {column!r} was admitted as {decision.pinned_type} but its "
+                    "frame column is no longer integer; the run is aborted."
+                ),
+            )
         result = op.apply(bound, self._pinned_array(df[column], decision), call)
         if result.errors:
             if op.fail_closed is None:  # pragma: no cover - only a descriptor with errors sets them

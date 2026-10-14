@@ -101,7 +101,7 @@ ALLOWLIST: dict[str, int] = {
     "src/decoy_engine/execution/native/_requirements.py": 657,
     # SeqNativeRun: one bespoke per-strategy seam method per tenant (7 now) around a shared
     # admit/pin/apply core; cohesive, the descriptors and decision types are already split out.
-    "src/decoy_engine/execution/_sequential_native.py": 625,
+    "src/decoy_engine/execution/_sequential_native.py": 645,
     # sequential FK route threading; split the per-table mask/quarantine loop.
     "src/decoy_engine/execution/_sequential.py": 677,
     # transactional publish hardening and row mask; split the publish cluster.

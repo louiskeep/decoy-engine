@@ -31,7 +31,9 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
+import pandas as pd
 import pyarrow as pa
+import pyarrow.compute as pc
 
 from decoy_engine.execution._adapter import provider_config_to_dict
 from decoy_engine.execution._errors import ExecutionError
@@ -108,12 +110,17 @@ class NativeOp:
     disposition_key: str
     load_kernel: Callable[[int | None], Any]
     admit: Callable[[str, pa.DataType, ColumnSeed], str | None]
+    # A key-eligible op only: the admission used instead of `admit` for a column that is an FK
+    # parent or child key, where the materialized frame is known to keep the type exact.
     apply: Callable[[Any, pa.Array, Any], NativeResult]
     fail_closed: Callable[[tuple[Any, ...], str], Exception] | None = None
     warn: Callable[[list[Any], Any, str], tuple[QualityWarning, ...]] | None = None
     # A key-eligible op only: why REMAP-minted orphan keys of this Arrow type cannot take the
     # kernel (they are typed by what they are, not by the parent column's pinned type).
     remap_input_reason: Callable[[str, pa.DataType], str | None] | None = None
+    # A key-eligible op only: the admission used instead of `admit` for a column that is an FK
+    # parent or child key, where the materialized frame keeps the source type exact.
+    key_admit: Callable[[str, pa.DataType, ColumnSeed], str | None] | None = None
 
 
 @dataclass(frozen=True)
@@ -210,13 +217,8 @@ def _hash_apply(bound: BoundHashKernel, values: pa.Array, call: HashCall) -> Nat
     )
 
 
-def _fpe_admit(column: str, input_type: pa.DataType, seed: ColumnSeed) -> str | None:
-    """Why an fpe column stays on Python, or None.
-
-    A truthy `checksum` is rejected before anything else, as the chunked admission does: the
-    compiled FF1 kernel has no checksum path. A config the handler would raise on (no namespace,
-    a duplicate or degenerate charset) also stays Python so the handler raises it as before.
-    The type check is exact `string`: `large_string` declines."""
+def _fpe_config_reason(column: str, seed: ColumnSeed) -> str | None:
+    # Gate order is part of the contract: checksum, namespace, config, then the source type.
     cfg = provider_config_to_dict(seed.provider_config)
     if cfg.get("checksum"):
         return f"fpe_checksum_not_native:{column}"
@@ -226,19 +228,55 @@ def _fpe_admit(column: str, input_type: pa.DataType, seed: ColumnSeed) -> str | 
         FpeConfig.from_mapping(cfg)._resolve()
     except FpeConfigError:
         return f"fpe_config_stays_python:{column}"
-    if input_type != pa.string():
-        return f"fpe_source_type_not_string:{column}:{input_type}"
     return None
+
+
+def _fpe_admit(column: str, input_type: pa.DataType, seed: ColumnSeed) -> str | None:
+    """Why an fpe column stays on Python, or None.
+
+    A truthy `checksum` is rejected before anything else, as the chunked admission does: the
+    compiled FF1 kernel has no checksum path. A config the handler would raise on (no namespace,
+    a duplicate or degenerate charset) also stays Python so the handler raises it as before.
+    The type check is exact `string`: `large_string` declines."""
+    reason = _fpe_config_reason(column, seed)
+    if reason is None and input_type != pa.string():
+        return f"fpe_source_type_not_string:{column}:{input_type}"
+    return reason
+
+
+def _fpe_key_admit(column: str, input_type: pa.DataType, seed: ColumnSeed) -> str | None:
+    """`_fpe_admit` for an FK key column, which also admits a fixed-width integer source.
+
+    Only a key qualifies: `to_pandas_fk_safe` keeps a key's integers exact, so the native cast
+    and the Python handler's `str(v)` read the same value. An ordinary nullable integer payload
+    is widened to float64 and stays on Python."""
+    reason = _fpe_config_reason(column, seed)
+    if reason is None and input_type != pa.string() and not pa.types.is_integer(input_type):
+        return f"fpe_source_type_not_string:{column}:{input_type}"
+    return reason
 
 
 def _fpe_remap_input_reason(column: str, input_type: pa.DataType) -> str | None:
     # The parent's config was admitted at table prep; only the orphan keys' own type is open.
-    if input_type != pa.string():
+    if input_type != pa.string() and not pa.types.is_integer(input_type):
         return f"fpe_source_type_not_string:{column}:{input_type}"
     return None
 
 
+def integer_key_representation_lost(strategy: str, pinned: pa.DataType, dtype: Any) -> bool:
+    """True when an integer fpe key no longer sits in an integer pandas column.
+
+    Checked before the coercive pin, which would turn a float-widened `[123456.0, None]` into
+    exact ints and stringify it as `"123456"` where the Python handler writes `"123456.0"`."""
+    return (
+        strategy == FPE and pa.types.is_integer(pinned) and not pd.api.types.is_integer_dtype(dtype)
+    )
+
+
 def _fpe_apply(bound: BoundFpeKernel, values: pa.Array, call: FpeCall) -> NativeResult:
+    if pa.types.is_integer(values.type):
+        # Same text the handler's `str(v)` feeds the cipher; the output stays a string column.
+        values = pc.cast(values, pa.string())
     result = bound.kernel.run(
         values,
         mask_key=call.mask_key,
@@ -481,6 +519,7 @@ def fpe_op(load_kernel: Callable[[int | None], Any]) -> NativeOp:
         load_kernel,
         _fpe_admit,
         _fpe_apply,
+        key_admit=_fpe_key_admit,
         fail_closed=fpe_fail_closed_error,
         warn=_fpe_warn,
         remap_input_reason=_fpe_remap_input_reason,
