@@ -1,4 +1,4 @@
-Status: plan (Phase D / OOC fpe native. DRAFT rev 1, pre Codex plan-gate. Wire the existing compiled FF1 kernel onto the out-of-core route.)
+Status: plan (Phase D / OOC fpe native. GATES GREEN: Codex plan-gate GO -> build -> VERIFY green (abi-3 141 / ci-mirror 71) + perf 16.1x on the fpe step -> dennis APPROVE 0/0/0/2LOW -> Codex final GO. Ready to merge; graphify refresh deferred per the keyless blocker.)
 
 # fpe native on the out-of-core route
 
