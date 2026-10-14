@@ -41,7 +41,11 @@ from decoy_engine.execution.native._categorical_ext import native_categorical
 from decoy_engine.execution.native._crypto_ext import FpeConfig, FpeConfigError
 from decoy_engine.execution.native._date_shift_ext import FORMAT_ERROR_REASON
 from decoy_engine.execution.native._fpe_route import fpe_fail_closed_error, fpe_residual_warnings
-from decoy_engine.execution.native._operator_config_rejections import date_shift_config_rejection
+from decoy_engine.execution.native._kernels_scalar import native_text_redact
+from decoy_engine.execution.native._operator_config_rejections import (
+    date_shift_config_rejection,
+    text_redact_config_rejection,
+)
 from decoy_engine.execution.native._operator_step import (
     sample_faker_array,
     sample_faker_array_positional,
@@ -51,6 +55,7 @@ from decoy_engine.execution.native._real_type_admission import (
     string_source_type_rejection,
 )
 from decoy_engine.execution.native._requirements import faker_pool_precondition_met_seed
+from decoy_engine.execution.native._text_redact_kernel import load_text_redact_kernel
 from decoy_engine.execution.out_of_core._bucket_native import (
     decline_reason as bucket_decline_reason,
 )
@@ -77,12 +82,14 @@ CATEGORICAL = "categorical"
 BUCKET_PERTURB = "bucket_perturb"
 DATE_SHIFT = "date_shift"
 FAKER = "faker"
+TEXT_REDACT = "text_redact"
 SEQ_HASH_DISPOSITION_KEY = "sequential_hash"
 SEQ_FPE_DISPOSITION_KEY = "sequential_fpe"
 SEQ_CATEGORICAL_DISPOSITION_KEY = "sequential_categorical"
 SEQ_BUCKET_DISPOSITION_KEY = "sequential_bucket_perturb"
 SEQ_DATE_SHIFT_DISPOSITION_KEY = "sequential_date_shift"
 SEQ_FAKER_DISPOSITION_KEY = "sequential_faker"
+SEQ_TEXT_REDACT_DISPOSITION_KEY = "sequential_text_redact"
 FAKER_DETERMINISTIC = "deterministic"
 FAKER_POSITIONAL = "positional"
 
@@ -164,6 +171,19 @@ class FakerCall:
     key: bytes
     row_offset: int = 0
     gate_positions: np.ndarray[Any, Any] | None = None
+
+
+@dataclass(frozen=True)
+class TextRedactCall:
+    """One text_redact column's call: the handler's RESOLVED config, transported unchanged.
+
+    `detectors=None` means every detector (the handler resolves an empty or absent selection to
+    None), while the kernel reads `()` as ZERO detectors, so None must never be rewritten to
+    `()` on the way through. No kernel travels: `native_text_redact` loads its own."""
+
+    detectors: tuple[str, ...] | None
+    token: str
+    label_token: bool
 
 
 @dataclass(frozen=True)
@@ -362,6 +382,41 @@ def _faker_apply(bound: BoundIndexKernel, values: pa.Array, call: FakerCall) -> 
     )
 
 
+def _load_text_redact(native_threads: int | None) -> Any:
+    """Companion-present gate for text_redact. `load_text_redact_kernel` takes no thread budget
+    and returns None (never raises) when the companion is absent, which `_admitted` reads as
+    "stay Python"."""
+    return load_text_redact_kernel()
+
+
+def _text_redact_admit(column: str, input_type: pa.DataType, seed: ColumnSeed) -> str | None:
+    """Why a text_redact column stays on Python, or None: the route-neutral config predicate
+    (ner, non-string token, malformed detectors), then the exact-`string` source."""
+    return text_redact_config_rejection(
+        column, provider_config_to_dict(seed.provider_config)
+    ) or string_source_type_rejection(
+        TEXT_REDACT, column, pa.schema([pa.field(column, input_type)])
+    )
+
+
+def _text_redact_apply(bound: Any, values: pa.Array, call: TextRedactCall) -> NativeResult:
+    return NativeResult(
+        native_text_redact(
+            values, detectors=call.detectors, token=call.token, label_token=call.label_token
+        )
+    )
+
+
+def text_redact_op(load_kernel: Callable[[int | None], Any]) -> NativeOp:
+    return NativeOp(
+        TEXT_REDACT,
+        SEQ_TEXT_REDACT_DISPOSITION_KEY,
+        load_kernel,
+        _text_redact_admit,
+        _text_redact_apply,
+    )
+
+
 def date_shift_row_errors(column: str, positions: tuple[int, ...]) -> list[RowError]:
     """One `format_error` RowError per unparseable cell, as the Python handler records them."""
     return [
@@ -447,6 +502,8 @@ __all__ = [
     "SEQ_FAKER_DISPOSITION_KEY",
     "SEQ_FPE_DISPOSITION_KEY",
     "SEQ_HASH_DISPOSITION_KEY",
+    "SEQ_TEXT_REDACT_DISPOSITION_KEY",
+    "TEXT_REDACT",
     "BoundFpeKernel",
     "BucketCall",
     "CategoricalCall",
@@ -455,6 +512,7 @@ __all__ = [
     "HashCall",
     "NativeOp",
     "NativeResult",
+    "TextRedactCall",
     "bucket_perturb_op",
     "categorical_op",
     "date_shift_op",
@@ -462,4 +520,5 @@ __all__ = [
     "faker_op",
     "fpe_op",
     "hash_op",
+    "text_redact_op",
 ]

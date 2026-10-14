@@ -14,7 +14,13 @@ from typing import Any
 import pyarrow as pa
 
 from decoy_engine.execution._operator_registry import PYTHON_SCALAR, RUST_COMPANION
-from decoy_engine.execution._sequential_native_ops import BUCKET_PERTURB, DATE_SHIFT, FAKER, HASH
+from decoy_engine.execution._sequential_native_ops import (
+    BUCKET_PERTURB,
+    DATE_SHIFT,
+    FAKER,
+    HASH,
+    TEXT_REDACT,
+)
 
 PATH_SCALAR = "scalar"
 PATH_REMAP = "fk_remap"
@@ -66,7 +72,7 @@ class ColumnDecision:
         }
         if reason is not None:
             entry["reason"] = reason
-        if self.strategy == FAKER:
+        if self.strategy in (FAKER, TEXT_REDACT):
             # The numeric count is the evidence that distinguishes an empty table (no call)
             # from an all-null one (one call), which `executed_backend` alone cannot.
             entry["native_calls"] = self.native_calls
