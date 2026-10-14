@@ -61,7 +61,17 @@ def fk_out_of_core_dtype_hazard(
     from decoy_engine.execution.out_of_core._mask import masked_output_type
     from decoy_engine.relationships._graph import OrphanPolicy
 
+    # A parent key that is also a child key of another edge is a chain-intermediate
+    # key: at run time the upstream join rewrites it to the masked parent value (a
+    # hashed int key becomes a string, etc.), so the downstream out-of-core join is
+    # typed from that rewritten value, not this key's source schema. Typing it from
+    # the source here would miss a reject the oracle completes, so any such edge is a
+    # hazard and diverts to sequential, which carries the propagated type correctly.
+    # Depth-1 star schemas are unaffected: their parent keys are never child keys.
+    child_key_cols = {(e.child_table, c) for e in graph.edges for c in e.child_columns}
     for edge in graph.edges:
+        if any((edge.parent_table, c) in child_key_cols for c in edge.parent_columns):
+            return True
         parent_schema = _schema_of(caller_sources.get(edge.parent_table))
         child_schema = _schema_of(caller_sources.get(edge.child_table))
         if parent_schema is None or child_schema is None:

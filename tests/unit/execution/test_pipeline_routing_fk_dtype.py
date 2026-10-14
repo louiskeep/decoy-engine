@@ -186,6 +186,102 @@ class TestUnknownOrUntypeableIsConservative:
         assert not fk_out_of_core_dtype_hazard(_plan("passthrough"), graph, caller_sources={})
 
 
+class TestChainIntermediateKeyIsFlagged:
+    """A key that is both a child key (upstream edge) and a parent key (downstream
+    edge) is rewritten to the masked parent value by the upstream join, so its
+    runtime type is not its source type. Typing it from the source schema misses an
+    out-of-core reject the oracle completes (the Codex final-gate finding): a hashed
+    int parent key makes the intermediate key a string, and the downstream join then
+    rejects its string/int candidates. Flag any such edge conservatively.
+    """
+
+    @staticmethod
+    def _chain_plan() -> Any:
+        return SimpleNamespace(
+            seed_envelope=SeedEnvelope(
+                job_seed=b"\x01" * 8,
+                per_table=(
+                    ("parent", TableSeed(per_column=(("id", _seed("hash")),), per_group=())),
+                    (
+                        "child",
+                        TableSeed(per_column=(("parent_id", _seed("passthrough")),), per_group=()),
+                    ),
+                    ("grand", TableSeed(per_column=(("ref", _seed("passthrough")),), per_group=())),
+                ),
+            )
+        )
+
+    @staticmethod
+    def _chain_graph() -> RelationshipGraph:
+        upstream = RelationshipEdge(
+            parent_table="parent",
+            parent_columns=("id",),
+            child_table="child",
+            child_columns=("parent_id",),
+            namespace="ns",
+            orphan_policy=OrphanPolicy.FAIL,
+        )
+        downstream = RelationshipEdge(
+            parent_table="child",
+            parent_columns=("parent_id",),
+            child_table="grand",
+            child_columns=("ref",),
+            namespace="ns",
+            orphan_policy=OrphanPolicy.PRESERVE,
+        )
+        return RelationshipGraph(edges=(upstream, downstream), ordering=())
+
+    def test_chain_intermediate_key_is_flagged(self) -> None:
+        # All int keys, parent hashed: the oracle completes, but out-of-core rejects
+        # the string/int middle key. Pre-fix this returned False (a new failing job).
+        sources = {
+            "parent": pa.table({"id": pa.array([1, 2], pa.int64())}),
+            "child": pa.table({"parent_id": pa.array([1, 2], pa.int64())}),
+            "grand": pa.table({"ref": pa.array([1, 2], pa.int64())}),
+        }
+        assert (
+            fk_out_of_core_dtype_hazard(
+                self._chain_plan(), self._chain_graph(), caller_sources=sources
+            )
+            is True
+        )
+
+    def test_a_two_child_star_is_not_over_flagged(self) -> None:
+        # Two children of one parent, distinct key columns: no key is both a parent
+        # and a child key, so the chain guard must not fire. Plain int keys clear.
+        plan = SimpleNamespace(
+            seed_envelope=SeedEnvelope(
+                job_seed=b"\x01" * 8,
+                per_table=(
+                    ("parent", TableSeed(per_column=(("pk", _seed("passthrough")),), per_group=())),
+                ),
+            )
+        )
+        edge_a = RelationshipEdge(
+            parent_table="parent",
+            parent_columns=("pk",),
+            child_table="child_a",
+            child_columns=("fk_a",),
+            namespace="ns",
+            orphan_policy=OrphanPolicy.PRESERVE,
+        )
+        edge_b = RelationshipEdge(
+            parent_table="parent",
+            parent_columns=("pk",),
+            child_table="child_b",
+            child_columns=("fk_b",),
+            namespace="ns",
+            orphan_policy=OrphanPolicy.PRESERVE,
+        )
+        graph = RelationshipGraph(edges=(edge_a, edge_b), ordering=())
+        sources = {
+            "parent": pa.table({"pk": pa.array([1, 2], pa.int64())}),
+            "child_a": pa.table({"fk_a": pa.array([1, 2], pa.int64())}),
+            "child_b": pa.table({"fk_b": pa.array([1, 2], pa.int64())}),
+        }
+        assert fk_out_of_core_dtype_hazard(plan, graph, caller_sources=sources) is False
+
+
 class TestLazySourcesReadTheFooter:
     def test_schema_comes_from_a_lazy_source(self, tmp_path: Path) -> None:
         def write(name: str, table: pa.Table) -> LazySource:

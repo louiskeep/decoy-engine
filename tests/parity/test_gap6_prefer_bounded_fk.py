@@ -496,3 +496,103 @@ class TestT5cNoNewFailingJob:
             "out_of_core",
             "byte_estimate_bounded_out_of_core",
         )
+
+
+def _chain_job(tmp_path: Path) -> tuple[dict[str, Any], dict[str, pa.Table]]:
+    # A 3-table chain whose middle key is both a child key (of parent) and a parent
+    # key (of grand). All keys are plain int64, but parent.id is hashed, so after the
+    # upstream join the middle key child.parent_id holds the hashed STRING value. The
+    # downstream join is then typed from that string against grand's int child key and
+    # out-of-core rejects it, although the oracle completes. The dtype guard types the
+    # middle key from its source schema, so pre-fix it missed this (Codex final gate).
+    tables = {
+        "parent": pa.table({"id": pa.array([1, 2, 3, 4], pa.int64()), "note": pa.array(["n"] * 4)}),
+        "child": pa.table(
+            {"parent_id": pa.array([1, 2, 3, 4], pa.int64()), "tag": pa.array(["t"] * 4)}
+        ),
+        "grand": pa.table({"ref": pa.array([1, 2, 3, 4], pa.int64()), "lbl": pa.array(["l"] * 4)}),
+    }
+    config = {
+        "version": 1,
+        "global_settings": {"job_name": "gap6_chain", "seed": 11},
+        "sources": {
+            name: {"type": "file", "path": _write(tmp_path, tbl, name), "format": "parquet"}
+            for name, tbl in tables.items()
+        },
+        "targets": {
+            name: {
+                "type": "file",
+                "path": str(tmp_path / f"{name}.out.parquet"),
+                "format": "parquet",
+            }
+            for name in tables
+        },
+        "tables": [
+            {
+                "name": "parent",
+                "columns": [
+                    {"name": "id", "strategy": "hash", "namespace": "ns"},
+                    {"name": "note", "strategy": "redact"},
+                ],
+            },
+            {
+                "name": "child",
+                "columns": [
+                    {"name": "parent_id", "strategy": "passthrough"},
+                    {"name": "tag", "strategy": "passthrough"},
+                ],
+            },
+            {
+                "name": "grand",
+                "columns": [
+                    {"name": "ref", "strategy": "passthrough"},
+                    {"name": "lbl", "strategy": "passthrough"},
+                ],
+            },
+        ],
+        "relationships": [
+            {
+                "parent": {"table": "parent", "columns": ["id"]},
+                "children": [{"table": "child", "columns": ["parent_id"]}],
+                "orphan_policy": "fail",
+                "namespace": "ns",
+            },
+            {
+                "parent": {"table": "child", "columns": ["parent_id"]},
+                "children": [{"table": "grand", "columns": ["ref"]}],
+                "orphan_policy": "preserve",
+                "namespace": "ns",
+            },
+        ],
+    }
+    return config, tables
+
+
+class TestT5cChainIntermediateKey:
+    """The Codex final-gate finding: a chain whose middle key is rewritten by the
+    upstream join. The guard must divert it to sequential on both admission paths, not
+    let it reach the out-of-core reject.
+    """
+
+    def test_the_chain_really_is_an_out_of_core_reject(self, tmp_path: Path) -> None:
+        config, sources = _chain_job(tmp_path)
+        _run(config, sources, execution_mode="full_frame")
+        with pytest.raises(ExecutionError) as exc:
+            _run(config, sources, execution_mode="out_of_core")
+        assert exc.value.code == "out_of_core_fk_key_dtype_unsupported"
+
+    def test_chain_completes_on_the_estimate_path(self, tmp_path: Path) -> None:
+        config, sources = _chain_job(tmp_path)
+        oracle = _run(config, sources, execution_mode="full_frame")
+        got = _run(config, sources, out_of_core_budget_bytes=_GB)
+        assert _mode(got) == ("sequential", "pure_mask_fk")
+        for table in oracle.outputs:
+            assert got.outputs[table].equals(oracle.outputs[table]), table
+
+    def test_chain_completes_on_the_probe_path(self, tmp_path: Path, probe_fit: None) -> None:
+        config, sources = _chain_job(tmp_path)
+        oracle = _run(config, sources, execution_mode="full_frame")
+        got = _run(config, sources, out_of_core_budget_bytes=_GB)
+        assert _mode(got) == ("sequential", "pure_mask_fk")
+        for table in oracle.outputs:
+            assert got.outputs[table].equals(oracle.outputs[table]), table
