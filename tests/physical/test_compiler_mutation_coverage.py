@@ -443,8 +443,13 @@ def test_select_driver_full_frame_with_relationships_full_selection_equality(
     parent = pa.table({"id": pa.array(["p1", "p2"], type=pa.string())})
     child = pa.table({"pid": pa.array(["p1", "p2"], type=pa.string())})
     config = _fk_config(tmp_path, parent, child)
+    # A fidelity report leaves no bounded route, so the confirmed fit is what admits
+    # full-frame (a bounded-eligible job takes its bounded route instead).
     inputs = capture_physical_plan_inputs(
-        config, {"parent": parent, "child": child}, engine_version="mutation-coverage"
+        config,
+        {"parent": parent, "child": child},
+        engine_version="mutation-coverage",
+        fidelity_report=True,
     )
     selection = select_driver(inputs)
     assert selection == DriverSelection(
@@ -464,6 +469,20 @@ def test_select_driver_full_frame_with_relationships_full_selection_equality(
                 attempted=True,
             ),
         ),
+    )
+
+
+def test_select_driver_fitting_bounded_eligible_job_prefers_out_of_core(tmp_path: Path) -> None:
+    parent = pa.table({"id": pa.array(["p1", "p2"], type=pa.string())})
+    child = pa.table({"pid": pa.array(["p1", "p2"], type=pa.string())})
+    config = _fk_config(tmp_path, parent, child)
+    inputs = capture_physical_plan_inputs(
+        config, {"parent": parent, "child": child}, engine_version="mutation-coverage"
+    )
+    assert inputs.out_of_core_facts.full_frame_fits_estimate is True
+    selection = select_driver(inputs)
+    assert selection == DriverSelection(
+        DriverId.OUT_OF_CORE, "byte_estimate_bounded_out_of_core", None, ()
     )
 
 
@@ -551,6 +570,112 @@ def test_out_of_core_not_ready_reason_below_threshold_boundary(tmp_path: Path) -
 
     below_facts = replace(inputs.out_of_core_facts, compatible=True, largest_table_rows=999)
     inputs = replace(inputs, out_of_core_facts=below_facts, out_of_core_threshold_rows=1_000)
+    assert out_of_core_not_ready_reason(inputs) == "out_of_core_below_threshold:999"
+
+
+def _decimal_key_inputs(tmp_path: Path) -> Any:
+    from decimal import Decimal
+
+    keys = pa.array([Decimal(1), Decimal(2)], type=pa.decimal128(10, 0))
+    parent = pa.table({"id": keys})
+    child = pa.table({"pid": keys})
+    config = _fk_config(tmp_path, parent, child)
+    return capture_physical_plan_inputs(
+        config, {"parent": parent, "child": child}, engine_version="mutation-coverage"
+    )
+
+
+def test_capture_flags_a_key_type_out_of_core_rejects(tmp_path: Path) -> None:
+    inputs = _decimal_key_inputs(tmp_path)
+    assert inputs.out_of_core_facts.compatible is True
+    assert inputs.out_of_core_facts.full_frame_fits_estimate is True
+    assert inputs.out_of_core_facts.fk_ooc_dtype_hazard is True
+
+
+def test_capture_does_not_flag_a_supported_key_type(tmp_path: Path) -> None:
+    parent = pa.table({"id": pa.array(["p1", "p2"], type=pa.string())})
+    child = pa.table({"pid": pa.array(["p1", "p2"], type=pa.string())})
+    config = _fk_config(tmp_path, parent, child)
+    inputs = capture_physical_plan_inputs(
+        config, {"parent": parent, "child": child}, engine_version="mutation-coverage"
+    )
+    assert inputs.out_of_core_facts.fk_ooc_dtype_hazard is False
+
+
+def test_select_driver_fitting_hazard_job_takes_sequential_and_names_the_hazard(
+    tmp_path: Path,
+) -> None:
+    inputs = _decimal_key_inputs(tmp_path)
+    selection = select_driver(inputs)
+    assert selection == DriverSelection(
+        DriverId.SEQUENTIAL,
+        "pure_mask_fk",
+        None,
+        (
+            RejectedAlternative(
+                DriverId.OUT_OF_CORE, "out_of_core_fk_key_dtype_hazard", attempted=True
+            ),
+        ),
+    )
+
+
+def test_plan_hash_covers_the_hazard_fact(tmp_path: Path) -> None:
+    from dataclasses import replace
+
+    from decoy_engine.execution.physical._inputs import compute_plan_hash
+
+    inputs = _decimal_key_inputs(tmp_path)
+    cleared = replace(
+        inputs, out_of_core_facts=replace(inputs.out_of_core_facts, fk_ooc_dtype_hazard=False)
+    )
+    assert compute_plan_hash(inputs) != compute_plan_hash(cleared)
+
+
+@pytest.mark.parametrize(
+    ("fits", "probe", "expected"),
+    [
+        (True, None, "out_of_core_fk_key_dtype_hazard"),
+        (False, True, "out_of_core_fk_key_dtype_hazard"),
+        (False, None, "out_of_core_below_threshold:999"),
+        (None, False, "out_of_core_below_threshold:999"),
+    ],
+)
+def test_out_of_core_not_ready_reason_names_the_hazard_only_for_a_fit_admission(
+    tmp_path: Path, fits: bool | None, probe: bool | None, expected: str
+) -> None:
+    from dataclasses import replace
+
+    inputs = _decimal_key_inputs(tmp_path)
+    facts = replace(
+        inputs.out_of_core_facts,
+        compatible=True,
+        largest_table_rows=999,
+        full_frame_fits_estimate=fits,
+        probe_recovers_full_frame=probe,
+    )
+    inputs = replace(inputs, out_of_core_facts=facts, out_of_core_threshold_rows=1_000)
+    assert out_of_core_not_ready_reason(inputs) == expected
+
+
+def test_out_of_core_not_ready_reason_ignores_a_probe_fit_when_the_probe_is_off(
+    tmp_path: Path,
+) -> None:
+    from dataclasses import replace
+
+    inputs = _decimal_key_inputs(tmp_path)
+    facts = replace(
+        inputs.out_of_core_facts,
+        compatible=True,
+        largest_table_rows=999,
+        full_frame_fits_estimate=False,
+        probe_recovers_full_frame=True,
+    )
+    inputs = replace(
+        inputs,
+        out_of_core_facts=facts,
+        out_of_core_threshold_rows=1_000,
+        use_probe_routing=False,
+    )
     assert out_of_core_not_ready_reason(inputs) == "out_of_core_below_threshold:999"
 
 

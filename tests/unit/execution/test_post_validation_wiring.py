@@ -446,9 +446,12 @@ class TestRoutingDeclinesBoundedRoutes:
         # unified-slice path the single-table off test exercises. An FK job
         # reaches full_frame finalize, so with the flag off none of the
         # post-validation keys may appear -- this guards the "a future
-        # unconditional run trips this" invariant at the seam itself.
+        # unconditional run trips this" invariant at the seam itself. A bounded-eligible
+        # job no longer reaches that seam on its own, so the route is forced.
         cfg, src = _dup_pk_fk_config(tmp_path)
-        off = run_pipeline(cfg, sources=src, engine_version=_ENGINE_VERSION)
+        off = run_pipeline(
+            cfg, sources=src, engine_version=_ENGINE_VERSION, execution_mode="full_frame"
+        )
         assert off.quality_metrics["execution"]["execution_mode"] == "full_frame"
         for key in ("quality_summary", "failed_checks", "post_validation_enforce"):
             assert key not in off.quality_metrics

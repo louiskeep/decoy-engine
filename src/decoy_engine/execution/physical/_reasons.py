@@ -79,6 +79,7 @@ OUT_OF_CORE_NOT_READY_NO_MASK_TABLE: Final = "out_of_core_no_mask_table"
 OUT_OF_CORE_NOT_READY_INCOMPATIBLE: Final = "out_of_core_incompatible"
 OUT_OF_CORE_NOT_READY_NO_SIZE_SIGNAL: Final = "out_of_core_no_size_signal"
 OUT_OF_CORE_NOT_READY_BELOW_THRESHOLD_PREFIX: Final = "out_of_core_below_threshold"
+OUT_OF_CORE_NOT_READY_FK_DTYPE_HAZARD: Final = "out_of_core_fk_key_dtype_hazard"
 OUT_OF_CORE_READY_CONTRADICTION: Final = "out_of_core_ready"
 
 OUT_OF_CORE_NOT_READY_CODES: Final[frozenset[str]] = frozenset(
@@ -87,6 +88,7 @@ OUT_OF_CORE_NOT_READY_CODES: Final[frozenset[str]] = frozenset(
         OUT_OF_CORE_NOT_READY_NO_MASK_TABLE,
         OUT_OF_CORE_NOT_READY_INCOMPATIBLE,
         OUT_OF_CORE_NOT_READY_NO_SIZE_SIGNAL,
+        OUT_OF_CORE_NOT_READY_FK_DTYPE_HAZARD,
     }
 )
 
@@ -313,6 +315,7 @@ __all__ = [
     "OUT_OF_CORE_NOT_READY_BELOW_THRESHOLD_PREFIX",
     "OUT_OF_CORE_NOT_READY_CODES",
     "OUT_OF_CORE_NOT_READY_CYCLIC",
+    "OUT_OF_CORE_NOT_READY_FK_DTYPE_HAZARD",
     "OUT_OF_CORE_NOT_READY_INCOMPATIBLE",
     "OUT_OF_CORE_NOT_READY_NO_MASK_TABLE",
     "OUT_OF_CORE_NOT_READY_NO_SIZE_SIGNAL",

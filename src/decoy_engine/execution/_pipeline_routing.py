@@ -295,6 +295,7 @@ def decide_execution_route(
     use_probe_routing: bool = True,
     probe_recovers_full_frame: bool | None = None,
     lazy_transform_bearing: bool = False,
+    fk_ooc_dtype_hazard: bool = False,
 ) -> tuple[str, str]:
     """Decide `(route, route_reason)` -- `"out_of_core"`, `"sequential"`, or
     `"full_frame"` -- or RAISE a fail-closed reject-before-read.
@@ -308,8 +309,10 @@ def decide_execution_route(
     excluded), the "auto" decision is REPLACED by the §13 conservative-filter
     ruling: full_frame only when `full_frame_fits_estimate is True` (the
     caller precomputes this via `byte_estimate_full_frame_fits` +
-    `resolve_budget`); otherwise -- UNPRICEABLE (`None`) treated identically
-    to `False`, per §13 -- the job routes to whichever BOUNDED path
+    `resolve_budget`) AND no bounded route applies -- a bounded-eligible
+    (eligible, acyclic) job takes its bounded route even when it fits, because
+    the full-frame oracle is the slowest route per row; otherwise -- UNPRICEABLE
+    (`None`) treated identically to `False`, per §13 -- the job routes to whichever BOUNDED path
     eligibility admits (out_of_core when compat-admitted, else sequential),
     or the existing reject when NEITHER applies (§13's one irreducible reject
     class). The choice AMONG bounded routes stays eligibility-based, never an
@@ -338,6 +341,10 @@ def decide_execution_route(
     exist -- an inconclusive probe NEVER yields full_frame, only a
     CONFIRMED fit does (the load-bearing safety property: recovery only on
     a measured fit).
+
+    `fk_ooc_dtype_hazard` (caller-precomputed from the source schemas by
+    `_pipeline_routing_fk_dtype`): out-of-core would reject a key type the oracle
+    completes, so a fitting job with it takes sequential rather than out-of-core.
 
     Priority (SC2), for a relationship-bearing PURE-MASK job under `auto`:
     out-of-core (when compat-admitted AND large) > sequential (bounded but
@@ -409,6 +416,10 @@ def decide_execution_route(
         resolved_substrate=resolved_substrate,
     )
     cyclic = _has_cross_table_fk_cycle(graph)
+    # `eligible` is a job-SHAPE check and stays true for a cross-table cycle, so
+    # `not cyclic` is what keeps a cyclic job (no bounded route can order it) off
+    # the bounded path.
+    bounded_eligible = eligible and not cyclic
     has_relationships = bool(profile.relationships)
     rows = largest_table_rows if largest_table_rows is not None else 0
     # Out-of-core is only auto-selected for the pure-mask FK shape (a strict
@@ -481,7 +492,7 @@ def decide_execution_route(
         # the asymmetric error_band). UNPRICEABLE (`None`) is treated
         # exactly like "does not fit" -- never admit an unknown estimate to
         # full_frame; B2's probe is the future fast-path recovery for it.
-        if full_frame_fits_estimate is True:
+        if full_frame_fits_estimate is True and not bounded_eligible:
             return "full_frame", "byte_estimate_full_frame_fits"
         # B2 (§13): the static estimate did NOT confirm a fit -- give the
         # probe a chance to RECOVER full_frame with a real measurement
@@ -494,8 +505,15 @@ def decide_execution_route(
         # `probe_recovers_full_frame=True` passed in with the flag off must
         # have NO effect, matching `use_byte_estimate_routing`'s own
         # defense-in-depth discipline above.
-        if use_probe_routing and probe_recovers_full_frame is True:
+        probe_fits = use_probe_routing and probe_recovers_full_frame is True
+        if probe_fits and not bounded_eligible:
             return "full_frame", "probe_recovered_full_frame"
+        # Only a bounded-eligible job gets past the two returns above with a fit, and it
+        # falls through to a bounded route (the oracle is far slower per row). Out-of-core
+        # rejects some key types the oracle and sequential both complete, so such a job
+        # takes sequential instead.
+        if (full_frame_fits_estimate is True or probe_fits) and fk_ooc_dtype_hazard:
+            return "sequential", route_reason
         # Does not fit (or UNPRICEABLE): route bounded by ELIGIBILITY alone,
         # never by an estimate of out_of_core/sequential peak -- their k's
         # are unmeasured placeholders (§13), and out_of_core's own runtime

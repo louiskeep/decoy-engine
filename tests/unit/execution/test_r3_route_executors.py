@@ -38,6 +38,7 @@ SEQUENTIAL_CASES = [
     "seq_fk_loader",
     "seq_fk_explain",
     "seq_fk_transforms_declined",
+    "seq_fk_transforms_declined_byte_routing",
 ]
 OUT_OF_CORE_CASES = [
     "ooc_fk_forced",
@@ -215,7 +216,7 @@ FULL_FRAME_CASES = [
     "ff_auto_chunk_dispatcher_lane",
     "ff_unified_admitted",
     "ff_unified_flag_off",
-    "ff_fk_transforms_declined_byte_routing",
+    "ff_fk_transforms_declined_fidelity_byte_routing",
 ]
 # Not re-executable on the same context (the patched failure only lives for the first run, or
 # the sink has already committed), so witness only; their parity is the baseline comparison.
