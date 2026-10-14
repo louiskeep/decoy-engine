@@ -1024,6 +1024,68 @@ def test_run_fk_out_of_core_self_referential_fk_fails_closed(tmp_path) -> None:
     assert exc.value.code == "out_of_core_self_referential_fk_unsupported"
 
 
+def _same_column_multi_parent_plan() -> Any:
+    """A child whose ONE FK column points at TWO different parents (Dmp multi-parent,
+    distinct from a junction's two separate FK columns). The full-frame oracle resolves
+    it first-hit-wins; the out-of-core route declines it (one child key, N parents)."""
+    return _plan_from_columns(
+        {
+            "p1": [("k", "p1")],
+            "p2": [("k", "p2")],
+            "x": [("ref", "xref")],
+        }
+    )
+
+
+def _same_column_multi_parent_graph() -> RelationshipGraph:
+    # Both edges target the SAME (child_table, child_columns) = ("x", ("ref",)); same policy so
+    # the graph-build orphan-policy-agreement guard passes and only the OOC decline is exercised.
+    e1 = _rel("p1", "k", "x", "ref", "p1", OrphanPolicy.PRESERVE)
+    e2 = _rel("p2", "k", "x", "ref", "p2", OrphanPolicy.PRESERVE)
+    return RelationshipGraph(edges=(e1, e2), ordering=())
+
+
+def test_check_out_of_core_compatibility_rejects_same_column_multi_parent_child() -> None:
+    """Pin the Dmp decline: a single child FK column targeting multiple parents is declined
+    out-of-core (`_compat.py` child_targets count > 1). The shape masks fine full-frame and on
+    SEQ; only the streaming route reroutes, and that reroute was asserted by no test before."""
+    plan = _same_column_multi_parent_plan()
+    graph = _same_column_multi_parent_graph()
+    work = order_work(build_work_list(plan, _REG), graph)
+
+    result = check_out_of_core_compatibility(plan, work, graph)
+
+    assert not result.accepted
+    assert "out_of_core_multi_parent_child_unsupported" in {r.code for r in result.rejections}
+
+
+def test_run_fk_out_of_core_same_column_multi_parent_fails_closed(tmp_path) -> None:
+    """The gate rejection must actually stop `run_fk_out_of_core` with the same fail-closed
+    code, on a config the full-frame oracle runs successfully."""
+    plan = _same_column_multi_parent_plan()
+    graph = _same_column_multi_parent_graph()
+    sources = {
+        "p1": pa.table({"k": pa.array(["p1a", "p1b"], type=pa.string())}),
+        "p2": pa.table({"k": pa.array(["p2a", "p2b"], type=pa.string())}),
+        "x": pa.table({"ref": pa.array(["p1a", "p2a", "nowhere"], type=pa.string())}),
+    }
+
+    # The oracle resolves the same-column multi-parent shape first-hit-wins.
+    PandasExecutionAdapter().run(
+        plan, sources, registry=_REG, relationship_graph=graph, namespace_registry=_NS
+    )
+
+    with pytest.raises(ExecutionError) as exc:
+        run_fk_out_of_core(
+            plan,
+            sources,
+            registry=_REG,
+            relationship_graph=graph,
+            temp_dir=tmp_path / "work",
+        )
+    assert exc.value.code == "out_of_core_multi_parent_child_unsupported"
+
+
 @pytest.mark.parametrize("policy", [OrphanPolicy.PRESERVE, OrphanPolicy.WARN])
 def test_run_fk_out_of_core_orphan_preserves_normalized_float_key(
     tmp_path, policy: OrphanPolicy
