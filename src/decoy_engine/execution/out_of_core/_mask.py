@@ -25,6 +25,7 @@ import pyarrow as pa
 from decoy_engine.execution._adapter import provider_config_to_dict
 from decoy_engine.execution._errors import ExecutionError, StrategyError
 from decoy_engine.execution.out_of_core._categorical_native import native_categorical_array
+from decoy_engine.execution.out_of_core._fpe_native import native_fpe_array
 from decoy_engine.execution.out_of_core._hash_native import BoundHashKernel, native_hash_array
 from decoy_engine.execution.out_of_core._mask_group_b import (
     GROUP_B_STRATEGIES,
@@ -43,6 +44,7 @@ from decoy_engine.kernel import hash_array, passthrough_array, redact_array, tru
 if TYPE_CHECKING:
     from decoy_engine.execution.out_of_core._bucket_native import NativeBucket
     from decoy_engine.execution.out_of_core._categorical_native import NativeCategorical
+    from decoy_engine.execution.out_of_core._fpe_native import NativeFpe
     from decoy_engine.execution.out_of_core._hash_run import TableHashPlan
     from decoy_engine.plan._types import ColumnSeed, Plan, TableSeed
     from decoy_engine.transforms._codeset_loader import _CorpusRecord
@@ -110,6 +112,7 @@ def mask_column(
     hash_kernel: BoundHashKernel | None = None,
     categorical_native: NativeCategorical | None = None,
     bucket_native: NativeBucket | None = None,
+    fpe_native: NativeFpe | None = None,
 ) -> pa.Array:
     """Apply one admitted strategy to one column (or column slice).
 
@@ -135,12 +138,21 @@ def mask_column(
     to run on the compiled companion. The FK remap sites never pass it and keep the Python hash.
     `categorical_native` is its categorical counterpart; `categorical_array` stays the reference
     and the path every declined column takes. `bucket_native` is the bucket_perturb counterpart,
-    taken inside the Group (c) seam once its own validation has run.
+    taken inside the Group (c) seam once its own validation has run. `fpe_native` is the fpe
+    counterpart; `fpe_array` stays the reference and the path every declined column takes.
     """
     job_seed = mask_key
     cfg = provider_config_to_dict(seed.provider_config)
     if seed.strategy in GROUP_B_STRATEGIES:
         if seed.strategy == "fpe":
+            if fpe_native is not None and seed.namespace is not None and column is not None:
+                return native_fpe_array(
+                    values,
+                    native=fpe_native,
+                    mask_key=job_seed,
+                    namespace=seed.namespace,
+                    column=column,
+                )
             return fpe_array(
                 values, job_seed=job_seed, namespace=seed.namespace, column=column, cfg=cfg
             )
@@ -377,6 +389,11 @@ def mask_batch(
             if hash_plan is not None and column_seed.strategy == "bucket_perturb"
             else None
         )
+        fpe_native = (
+            hash_plan.fpe_for(column, batch)
+            if hash_plan is not None and column_seed.strategy == "fpe"
+            else None
+        )
         idx = batch.schema.get_field_index(column)
         if idx < 0:
             continue
@@ -395,6 +412,7 @@ def mask_batch(
             hash_kernel=hash_kernel,
             categorical_native=categorical_native,
             bucket_native=bucket_native,
+            fpe_native=fpe_native,
         )
         arrays[idx] = masked
         # Same field semantics as Table.set_column with a bare name: the field
