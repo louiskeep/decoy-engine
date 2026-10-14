@@ -116,7 +116,7 @@ from decoy_engine.determinism import derive
 from decoy_engine.errors import FpeChecksumError, FpeUnencryptableError
 from decoy_engine.storm.detectors import Span, iter_spans
 from decoy_engine.transforms._faker_span import shared_faker
-from decoy_engine.transforms._text_mask_splice import splice_spans
+from decoy_engine.transforms._text_mask_splice import splice_spans, warn_passthrough_unmatched
 from decoy_engine.transforms.date_shift import _COMMON_FORMATS
 from decoy_engine.transforms.fpe import (
     _CHARSETS,
@@ -600,14 +600,7 @@ def mask_cell_with_spans(
         return text
 
     if unmatched_span_policy == "passthrough":
-        _log.warning(
-            "text_mask: unmatched_span_policy='passthrough' lets any text not covered by "
-            "a detected span ride through unchanged. Built-in span detection covers only "
-            "11 detectors (email, ssn, us_phone, us_zip, pan, iban, ipv4, icd10, npi, "
-            "url, street_address). Names, addresses, and dates require NER (extra_spans=) "
-            "or custom= patterns. Use the default 'redact' policy unless this column is "
-            "known-safe."
-        )
+        warn_passthrough_unmatched(_log)
 
     effective_map: dict[str, str] = dict(DETECTOR_DEFAULTS)
     if strategy_map:

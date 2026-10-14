@@ -15,6 +15,7 @@ nothing here re-implements it.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Sequence
 from typing import Any
 
@@ -48,6 +49,22 @@ def apply_unmatched(text: str, policy: str, token: str) -> str:
     return token
 
 
+def warn_passthrough_unmatched(log: logging.Logger) -> None:
+    """The per-cell caution for `unmatched_span_policy='passthrough'`.
+
+    The caller passes `text_mask`'s own logger so the record keeps its name, and the native
+    splice (which never enters `mask_cell_with_spans`) can emit the identical warning.
+    """
+    log.warning(
+        "text_mask: unmatched_span_policy='passthrough' lets any text not covered by "
+        "a detected span ride through unchanged. Built-in span detection covers only "
+        "11 detectors (email, ssn, us_phone, us_zip, pan, iban, ipv4, icd10, npi, "
+        "url, street_address). Names, addresses, and dates require NER (extra_spans=) "
+        "or custom= patterns. Use the default 'redact' policy unless this column is "
+        "known-safe."
+    )
+
+
 def splice_spans(
     text: str,
     spans: Sequence[Span],
@@ -77,4 +94,10 @@ def splice_spans(
     return "".join(parts)
 
 
-__all__: list[Any] = ["UNMATCHED_TOKEN", "MaskSpan", "apply_unmatched", "splice_spans"]
+__all__: list[Any] = [
+    "UNMATCHED_TOKEN",
+    "MaskSpan",
+    "apply_unmatched",
+    "splice_spans",
+    "warn_passthrough_unmatched",
+]

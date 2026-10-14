@@ -15,7 +15,11 @@ import pytest
 
 from decoy_engine.errors import FpeUnencryptableError
 from decoy_engine.execution._errors import StrategyError
-from decoy_engine.execution.native import _kernels_scalar, _text_redact_kernel
+from decoy_engine.execution.native import (
+    _kernels_scalar,
+    _text_mask_native_splice,
+    _text_redact_kernel,
+)
 from decoy_engine.execution.native._kernels_scalar import native_text_mask
 from decoy_engine.execution.native._text_redact_kernel import SUPPORTED_IDS
 from decoy_engine.storm.detectors import Span
@@ -103,6 +107,24 @@ def spies(monkeypatch: pytest.MonkeyPatch) -> _Spies:
         spy.iter_spans_calls += 1
         return real_iter_spans(*a, **k)
 
+    real_load = _kernels_scalar.load_splice_kernel
+
+    def load_splice() -> Any:
+        # Slice b folds detection into the splice call for redact/passthrough configs, so the
+        # detector set reaches the compiled kernel through `detect_splice` instead. Record it
+        # the same way so these tests still see which detectors the kernel ran.
+        loaded = real_load()
+        if loaded is None:
+            return None
+        real_detect = loaded.detect_splice
+
+        def detect(values: Any, ids: Any, *rest: Any) -> Any:
+            spy.kernel_calls.append((len(values), tuple(ids)))
+            return real_detect(values, ids, *rest)
+
+        return _text_mask_native_splice.SpliceKernel(loaded.splice_spans, detect)
+
+    monkeypatch.setattr(_kernels_scalar, "load_splice_kernel", load_splice)
     monkeypatch.setattr(cls, "text_redact_candidates", kernel)
     monkeypatch.setattr(_kernels_scalar, "mask_cell", counting_mask_cell)
     monkeypatch.setattr(_kernels_scalar, "iter_spans", counting_iter_spans)

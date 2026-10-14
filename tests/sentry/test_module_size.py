@@ -119,7 +119,7 @@ ALLOWLIST: dict[str, int] = {
     # custom-provider registry snapshot for the shadow-parity gate; one cohesive module, no split identified.
     "src/decoy_engine/internal/faker_setup.py": 622,
     # FF1 span path and sub-floor policy; split into _text_mask_sub_floor.py when next touched.
-    "src/decoy_engine/transforms/text_mask.py": 715,
+    "src/decoy_engine/transforms/text_mask.py": 708,
 }
 
 

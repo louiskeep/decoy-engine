@@ -51,6 +51,11 @@ import pyarrow as pa
 from decoy_engine.errors import FpeUnencryptableError
 from decoy_engine.execution._errors import StrategyError
 from decoy_engine.execution._strategies._text_redact import _splice
+from decoy_engine.execution.native._text_mask_native_splice import (
+    load_splice_kernel,
+    plan_native_splice,
+    splice_batch,
+)
 from decoy_engine.execution.native._text_mask_route import text_mask_fail_closed_error
 from decoy_engine.execution.native._text_redact_kernel import (
     load_text_redact_kernel,
@@ -280,9 +285,30 @@ def native_text_mask(
             from decoy_engine.execution.native._text_redact_kernel import CATALOG_VERSION
 
             rust_ids = requested_rust_ids(detector_ids)
+            splice = load_splice_kernel()
+            plan = (
+                plan_native_splice(detector_ids, strategy_map, unmatched_span_policy, token)
+                if splice is not None
+                else None
+            )
             # Fixed sub-batches bound the resident candidate lists, as in `native_text_redact`.
             for base in range(0, len(texts), _TEXT_REDACT_KERNEL_BATCH):
                 batch = texts[base : base + _TEXT_REDACT_KERNEL_BATCH]
+                if plan is not None and splice is not None:
+                    # Slice b: redact/passthrough configs splice in Rust; a declined cell runs
+                    # the same Python splice as below.
+                    out.extend(
+                        splice_batch(
+                            batch,
+                            plan=plan,
+                            splice=splice,
+                            kernel=kernel,
+                            detector_ids=detector_ids,
+                            rust_ids=rust_ids,
+                            fallback=mask,
+                        )
+                    )
+                    continue
                 per_cell = kernel.text_redact_candidates(batch, rust_ids, CATALOG_VERSION)
                 for text, cands in zip(batch, per_cell, strict=True):
                     if text is None:
