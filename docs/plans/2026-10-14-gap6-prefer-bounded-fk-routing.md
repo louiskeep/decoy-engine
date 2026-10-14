@@ -1,16 +1,26 @@
-Status: plan (Phase D / audit GAP6. DRAFT rev 1, pre Codex plan-gate. Stop auto-routing a bounded-eligible FK job to the full-frame oracle just because it "fits" RAM; prefer the measured-faster bounded route. HOLD merge for Cam.)
+Status: plan (Phase D / audit GAP6. rev 2, Codex plan-gate REVISE folded. Stop auto-routing a bounded-eligible FK job to the full-frame oracle just because it "fits" RAM; prefer the measured-faster bounded route. HOLD build + merge for Cam: the diverted-output envelope exceeds the NFC-only shift Cam pre-approved -- see the DECISION NEEDED block.)
 
 # Prefer the bounded route over the full-frame oracle for RAM-fitting FK jobs
 
-Rules consulted: dev-rules `00-universal.md`, `risk-and-exceptions.md`, `development-loop.md`, `autonomous-operation.md`, `architecture.md`; engine `CLAUDE.md`. Grounding: the 2026-10-14 bottleneck audit (GAP6: `auto` routes a RAM-fitting relationship (FK) job to the full-frame pandas oracle, measured ~2583s/10M, 4.3x over the 600s bar) + the 2026-10-14 local crossover measurement (below). Base: engine `origin/main` @ `9ef26c9f`. **Cam pre-authorized the direction** (prefer the bounded route above a measured cutoff, accepting the documented native-vs-Python output shift for the diverted jobs); this plan supplies the measured cutoff. **HOLD the merge for Cam's review** (it changes `auto`-mode default routing).
+Rules consulted: dev-rules `00-universal.md`, `risk-and-exceptions.md`, `development-loop.md`, `autonomous-operation.md`, `architecture.md`; engine `CLAUDE.md`. Grounding: the 2026-10-14 bottleneck audit (GAP6: `auto` routes a RAM-fitting relationship (FK) job to the full-frame pandas oracle, measured ~2583s/10M, 4.3x over the 600s bar) + the 2026-10-14 local crossover measurement (below). Base: engine `origin/main` @ `9ef26c9f`.
+
+## DECISION NEEDED FROM CAM (why this is held, not built yet)
+
+Cam pre-approved "prefer the bounded route, accepting the documented native-vs-Python NFC output shift." The Codex plan gate found that is NOT the whole shift. The byte-estimate OOC-selection branch (`_pipeline_routing.py:505`) diverts ANY out-of-core-COMPATIBLE acyclic fitting FK job to OUT-OF-CORE (not sequential), regardless of size. OOC output carries differences BEYOND NFC, all documented in `tests/parity/SEMANTIC_DIFFERENCES.md` but NOT covered by Cam's NFC approval:
+- missing pandas schema metadata; preserved float NaN vs oracle null; different empty-child and all-null FK schemas;
+- a documented dtype case where the oracle SUCCEEDS but OOC REJECTS (a job that works on full-frame today would fail after diversion -- a functional regression, not a byte diff);
+- error-contract differences (e.g. a composite-chain REMAP failure reports `sequential_composite_fk_chain_unsupported` instead of `orphan_remap_parent_missing`).
+
+So diverting fitting FK jobs is a broader compatibility change than the NFC envelope. **Cam's options (pick before build):**
+- **(A) Accept the broader bounded envelope** for diverted jobs (the documented OOC + SEQ differences), AND keep full-frame for the specific OOC-reject-dtype shape so no working job starts failing. Biggest win.
+- **(B) Divert to SEQUENTIAL only** (keep full-frame for OOC-compatible fitting jobs): stays closest to the NFC-only envelope, but a large share of fitting FK jobs are OOC-compatible, so the realized win is much smaller.
+- **(C) Divert to both, but only where the bounded route provably produces output within an agreed envelope**, retaining full-frame for anything outside it (needs the envelope defined).
+
+This plan is written for **(A)** as the recommended path, with the OOC-reject shape retained on full-frame. If Cam picks B or C the acceptance matrix narrows accordingly. HOLD build until Cam picks.
 
 ## 0. Why + the measurement
 
-`decide_execution_route` (`_pipeline_routing.py`) already prefers a bounded route (out-of-core, else sequential) over full-frame for an `auto` relationship-bearing pure-mask job, EXCEPT two returns that divert a bounded-eligible job to full-frame when a byte estimate or a probe says full-frame "fits" RAM:
-- `:484-485` `if full_frame_fits_estimate is True: return "full_frame", "byte_estimate_full_frame_fits"`
-- `:497-498` `if use_probe_routing and probe_recovers_full_frame is True: return "full_frame", "probe_recovered_full_frame"`
-
-Both exist on the assumption that **full-frame is faster than the bounded route when it fits**. The GAP6 measurement disproves that assumption. A local 3-table FK chain (width 15, hash), full-frame vs sequential:
+`decide_execution_route` (`_pipeline_routing.py`) already prefers a bounded route over full-frame for an `auto` relationship-bearing pure-mask job, EXCEPT two returns that divert a bounded-eligible job to full-frame when a byte estimate (`:484-485` `"byte_estimate_full_frame_fits"`) or a probe (`:497-498` `"probe_recovered_full_frame"`) says full-frame "fits" RAM, on the assumption full-frame is faster when it fits. A local 3-table FK chain (width 15, hash), full-frame vs sequential:
 
 | rows/table | full-frame wall / peak RSS | sequential wall / peak RSS | sequential advantage |
 |---|---|---|---|
@@ -19,63 +29,63 @@ Both exist on the assumption that **full-frame is faster than the bounded route 
 | 250k | (not run) | 67.6s / 2084 MB | |
 | 500k | 800.5s / 8187 MB | 130.3s / 3858 MB | 6.1x faster, 2.1x less memory |
 
-Sequential wins at every measured tier (no crossover), and full-frame OOMs by ~1M rows/table (needs ~16 GB) while sequential stays bounded. Full-frame's slowness is the strategy-agnostic per-cell pandas oracle, so other strategies only widen the gap. So diverting a bounded-eligible FK job to full-frame "because it fits" is strictly worse on both speed and memory.
+Sequential wins at every measured tier (no crossover); full-frame OOMs by ~1M rows/table. The measurement is SEQUENTIAL vs full-frame on a hash chain at 50k-500k. It does NOT by itself establish that OUT-OF-CORE is faster than full-frame for a tiny fitting job, nor that every strategy widens the gap (see MED-4 scope note in §6). Full-frame's slowness is the strategy-agnostic per-cell oracle, so the direction is expected to hold, but the headline claim is narrowed to what was measured.
 
-**This slice gates those two returns on `not bounded_eligible`:** a bounded-eligible FK job falls through to the existing bounded-by-eligibility logic (out-of-core when `out_of_core_ready`, else sequential); a bounded-INELIGIBLE job keeps the full-frame-if-fits behavior unchanged.
+## 1. The load-bearing subtlety (do not regress small cyclic FK jobs) -- Codex BLOCKER
 
-## 1. The load-bearing subtlety (do not regress small cyclic FK jobs)
+A cross-table FK cycle (A->B->A, acyclic column graph) is bounded-INELIGIBLE (the sequential route cannot order it; out-of-core excludes it). CRITICAL: `_sequential_eligible` (`:177`) checks job SHAPE only and does NOT inspect the graph, so a pure-mask cycle returns `eligible=True`; the cycle is flagged separately as `cyclic=True` (`_has_cross_table_fk_cycle`), and `out_of_core_ready=False`. So `eligible or out_of_core_ready` is TRUE for a cycle -- the rev-1 predicate would have sent a small cyclic fitting job (which runs on full-frame today) to the bounded fallback, which REJECTS it (`fk_full_frame_oom_risk_rejected`): the exact regression this plan exists to prevent (Codex reproduced it).
 
-A cross-table FK cycle (A->B->A with an acyclic column graph) cannot be ordered for the sequential route and is excluded from out-of-core, so it is bounded-INELIGIBLE. Today a SMALL cyclic FK job that fits full-frame runs successfully precisely BECAUSE of the `full_frame_fits_estimate is True` return being removed here. Removing that return unconditionally would send a small cyclic job to the bounded-by-eligibility fallback, which rejects it (`fk_full_frame_oom_risk_rejected`) -- a functional regression of a job that works today.
-
-Therefore the gate is **`full_frame_fits_estimate is True AND not bounded_eligible`** (and likewise for the probe return), where `bounded_eligible = eligible or out_of_core_ready` (sequential-eligible, or out-of-core-ready). A bounded-eligible job diverts to bounded; a bounded-ineligible-but-fitting job (small cyclic) keeps full-frame exactly as today. Large cyclic jobs still reject as today.
+**Correct predicate: `bounded_eligible = eligible and not cyclic`.** (Since `out_of_core_ready` already requires `eligible`, this is the true union of the bounded branches.) A non-cyclic eligible fitting FK job diverts to bounded; a cyclic fitting FK job keeps full-frame exactly as today.
 
 ## 2. The code change (minimal, in `decide_execution_route`)
 
-- Compute `bounded_eligible = eligible or out_of_core_ready` (both already computed at `:402`/`:419`).
-- `:484`: `if full_frame_fits_estimate is True and not bounded_eligible: return "full_frame", "byte_estimate_full_frame_fits"` (unchanged reason/behavior for the bounded-ineligible case).
+- Compute `bounded_eligible = eligible and not cyclic` (`eligible` at `:402`, `cyclic` at `:411`).
+- `:484`: `if full_frame_fits_estimate is True and not bounded_eligible: return "full_frame", "byte_estimate_full_frame_fits"`.
 - `:497`: `if use_probe_routing and probe_recovers_full_frame is True and not bounded_eligible: return "full_frame", "probe_recovered_full_frame"`.
-- A bounded-eligible job now falls through to the existing bounded-by-eligibility block (`:499+`): out-of-core when `out_of_core_ready`, else sequential. No change to that block, to the OOC-vs-SEQ choice, to the reject-before-read, to the explicit `execution_mode` escape hatches, to the lazy-transform branch, or to the row-count rollback path (`use_byte_estimate_routing=False`).
-- Keep `use_byte_estimate_routing` / `use_probe_routing` as-is (rollback knobs); this gate is additive within the byte-estimate-in-scope block.
+- A `bounded_eligible` job now falls through to the EXISTING bounded-by-eligibility block. That block (`:505`) selects OUT-OF-CORE for `eligible and not cyclic and out_of_core_compatible` (reason `byte_estimate_bounded_out_of_core`), regardless of the row threshold, and SEQUENTIAL for an eligible acyclic job that is not out-of-core-compatible. The plan does NOT change that block or the OOC-vs-SEQ choice; it only stops the full-frame diversion ahead of it.
+- For option (A), ADD: when `full_frame_fits_estimate is True` AND the job would divert to OOC AND the job is in the documented oracle-success/OOC-reject dtype shape, retain full-frame (do not create a new failing job). The exact predicate for that shape comes from `out_of_core_compatible` / the OOC reject code; the build must confirm `out_of_core_compatible` already excludes it (if so, no extra code; if not, add the retain-full-frame guard). This is the no-new-failing-job guarantee.
+- No change to the explicit `execution_mode` escape hatches, the lazy-transform branch, the reject-before-read, or the `use_byte_estimate_routing=False` rollback path. Keep the rollback knobs.
 
-No new module, no kernel, no change to any masking path. The only behavior change is which route a bounded-eligible RAM-fitting FK job takes.
+## 3. Behavior / parity contract (three populations)
 
-## 3. Behavior / parity contract
+- **Route unchanged -> byte-identical + route-identical to base:** non-FK jobs, generate+mask jobs, explicit `execution_mode` jobs, already-bounded (non-fitting) FK jobs, cyclic FK jobs (small -> still full-frame; large -> still rejected), the oracle-success/OOC-reject dtype shape (retained on full-frame under option A), and the `use_byte_estimate_routing=False` rollback path.
+- **Diverted full-frame -> SEQUENTIAL** (eligible, acyclic, NOT out-of-core-compatible, fitting): output vs old full-frame differs only by the documented native-vs-Python NFC envelope on hash/categorical/bucket_perturb; byte-identical for NFC-agnostic strategies (fpe/redact/truncate/passthrough/date_shift/faker/text_redact). FK RI: matched child keys resolve to a masked parent; PRESERVE/WARN/REMAP orphans follow the documented orphan contract (an orphan does not necessarily reference an emitted parent). SEQ error-contract codes may differ from full-frame for composite-chain REMAP (documented).
+- **Diverted full-frame -> OUT-OF-CORE** (eligible, acyclic, out-of-core-compatible, fitting): output vs old full-frame carries the documented OOC differences (missing pandas metadata, NaN-vs-null, empty-child/all-null FK schema differences) in addition to the NFC envelope. This is the population that EXCEEDS Cam's NFC approval (the DECISION NEEDED block).
 
-This is a routing change, NOT a byte-identity slice. Two classes:
-- **Route unchanged -> output byte-identical:** non-FK jobs, generate+mask jobs, explicit `execution_mode` jobs, already-bounded FK jobs (didn't fit full-frame), cyclic FK jobs (small -> still full-frame; large -> still rejected), and the `use_byte_estimate_routing=False` rollback path. All must be byte-for-byte and route-for-route unchanged.
-- **Route changed (bounded-eligible FK job that previously fit full-frame) -> now bounded:** output changes ONLY by the already-documented, already-accepted native-vs-Python NFC divergence on `hash`/`categorical`/`bucket_perturb` (the Unicode-version normalization difference recorded in `docs/strategies.md` + the compatibility contract). For NFC-agnostic strategies (`fpe`, `redact`, `truncate`, `passthrough`, `date_shift`, `faker`, `text_redact`) the diverted job's output is byte-identical to its old full-frame output. The slice must PROVE the diverted output differs from the old full-frame output ONLY by that documented envelope, never by a real divergence, and that FK referential integrity is preserved.
+## 4. Acceptance matrix (for option A; narrows for B/C)
 
-## 4. Acceptance matrix
-
-- **T1 divert happens + faster route chosen:** a bounded-eligible (sequential-eligible, below the OOC threshold) FK job whose full-frame estimate fits now returns `("sequential", ...)` not `("full_frame", "byte_estimate_full_frame_fits")`. Assert the route + reason changed; assert (via the routing decision, and a small real run) the sequential route runs. Include an OOC-ready (large, compatible) fitting FK job that now returns `("out_of_core", ...)` instead of full-frame.
-- **T2 small cyclic FK NOT regressed (the load-bearing guard):** a small cross-table-cycle FK job that fits full-frame STILL returns `("full_frame", "byte_estimate_full_frame_fits")` and runs successfully (not rejected). This is the regression this plan is built to avoid.
-- **T3 large cyclic FK still rejects:** a large cyclic FK job still raises `fk_full_frame_oom_risk_rejected` (unchanged).
-- **T4 route-unchanged classes byte-identical:** a non-FK job, a generate+mask job, an explicit `execution_mode=full_frame|sequential|out_of_core` job, and an already-bounded (non-fitting) FK job each take the SAME route and produce byte-identical output to base `origin/main`. Also the `use_byte_estimate_routing=False` rollback path is unchanged.
-- **T5 diverted-output parity envelope:** for a diverted bounded-eligible FK job, the new (sequential) output vs the old (full-frame) output is byte-identical for NFC-agnostic strategies (fpe/redact/truncate/passthrough/date_shift) and differs ONLY by the documented NFC envelope for hash/categorical/bucket_perturb; FK referential integrity holds (every masked child key resolves to a masked parent key). Prove it is NOT a real divergence (a negative control: an injected real difference must fail the check).
-- **T6 probe-recovery path gated too:** a bounded-eligible FK job that the probe would have recovered to full-frame now goes bounded; a bounded-ineligible (small cyclic) probe-fit job still returns full-frame.
-- **T7 routing-reason inventory:** enumerate every test that asserts `byte_estimate_full_frame_fits` / `probe_recovered_full_frame` for an FK job and update it to the new bounded route (the intended contract change, not a weakened assertion); pin that those reasons STILL fire for the cyclic-fitting case.
+- **T1 divert targets the correct bounded route (Codex HIGH-2):** an eligible, acyclic, out-of-core-COMPATIBLE fitting FK job (including a small one, e.g. 10 rows) now returns `("out_of_core", "byte_estimate_bounded_out_of_core")` not full-frame; an eligible, acyclic, NOT-out-of-core-compatible fitting FK job returns `("sequential", ...)`. Assert route + reason for both.
+- **T2 small cyclic FK NOT regressed (Codex BLOCKER):** a small cross-table-cycle FK job with an acyclic column graph (assert `eligible=True` AND `cyclic=True`), estimate fits, STILL returns `("full_frame", "byte_estimate_full_frame_fits")` and runs; same for the probe-recovers case (T6).
+- **T3 large non-bounded-eligible still rejects:** a large cyclic FK job still raises `fk_full_frame_oom_risk_rejected`; a large non-fitting non-eligible job unchanged. Byte-rejection requires estimate-not-fitting AND no successful probe (not "large" alone).
+- **T4 route-unchanged classes byte-identical:** non-FK, generate+mask, each explicit `execution_mode`, already-bounded FK, and the `use_byte_estimate_routing=False` rollback path -- same route + byte-identical output vs base.
+- **T5a diverted->SEQ envelope:** NFC-only vs old full-frame (byte-identical for NFC-agnostic strategies incl. fpe/redact/truncate/passthrough/date_shift/faker/text_redact; documented NFC envelope for hash/categorical/bucket), FK RI preserved, with a negative control (an injected real difference must fail).
+- **T5b diverted->OOC envelope:** output matches the OOC route's own strict baseline (the documented OOC differences), FK RI preserved, empty-child/all-null/boundary-date cases covered; a negative control. This is the matrix Cam's option-A approval would cover.
+- **T5c no-new-failing-job:** the oracle-success/OOC-reject dtype shape, when it fits full-frame, STILL runs on full-frame (not diverted to an OOC reject).
+- **T6 probe path gated identically:** bounded-eligible probe-fit job diverts to bounded; cyclic probe-fit job stays full-frame.
+- **T7 reason inventory (broad):** update every assertion of `byte_estimate_full_frame_fits` / `probe_recovered_full_frame` for a DIVERTED FK shape across the byte-estimate/probe tests, transform-admission, Arrow-integration, and the Phase-D faker/fpe/composite/text-redact route tests, AND the physical compiler reason handling -- to the new bounded route; RETAIN those reasons' assertions for the cyclic-fitting and other bounded-ineligible cases (the intended contract change, not a weakening).
 
 ## 5. Failure modes (reproduce, do not smooth)
 
-- A small cyclic FK job regressing from full-frame to a reject -> T2 (the primary risk of this change).
-- A non-FK / generate / explicit-mode job's route or output changing -> T4 (the gate must be scoped to the byte-estimate-in-scope relationship-bearing block only).
-- A diverted job's output differing from full-frame by more than the NFC envelope, or breaking FK RI -> T5 (that would be a real regression, not an accepted shift).
-- The OOC-ready case accidentally going to sequential (or vice-versa) -> T1 (the bounded-by-eligibility choice must be unchanged).
+- A small cyclic FK job regressing from full-frame to a reject -> T2 (the primary risk; the `not cyclic` term is load-bearing).
+- A fitting job diverted to OOC that the oracle would have completed but OOC rejects -> T5c (no new failing job).
+- A non-FK / generate / explicit-mode / rollback job changing route or output -> T4.
+- A diverted->SEQ job differing by more than the NFC envelope, or a diverted->OOC job differing from the OOC baseline, or broken FK RI -> T5a/T5b.
 
 ## 6. Verification + gates
 
-- abi-3 `~/.cache/decoy-d1a-abi3-venv/bin/python` (companion, for the SEQ/OOC native paths); ci-mirror `~/.cache/decoy-ci-mirror-venv/bin/python`. One test process via `~/bin/pytest-one`; PYTHONPATH `<worktree>/src:<worktree>`. Routing-decision tests are pure-Python (no companion needed); the diverted-output parity run uses the companion.
-- T1-T7 pass; the full existing routing suite (`test_pipeline_routing.py` and friends) stays green except the intended reason-change updates (T7). No masking-path test changes.
-- Coverage + mutation on the changed lines (the two gated returns + the `bounded_eligible` term); a mutant that drops the `not bounded_eligible` guard must be killed by T1; a mutant that drops it on the cyclic side must be killed by T2.
-- Module size: `_pipeline_routing.py` is 599 LOC (at the 600 goal) -- the change is a couple of lines + one local; confirm it stays <=600 (or add a census entry at the exact LOC if it crosses).
-- Perf witness: cite the measured 5.8-6.4x sequential advantage; add a routing-level assertion that the fast route is chosen for the fitting FK shape (a full 10M perf run is not required here -- the win is the route choice, and the SEQ/full-frame per-route numbers are already measured).
-- Gate chain: Opus VERIFY (diff + routing tests + the parity-envelope proof) -> dennis -> Codex final. **Do NOT merge:** build to merge-ready, post the diff + results to Slack, and HOLD for Cam's review (it changes `auto`-mode default routing with a documented output shift). Cam's pre-approval covers the direction; the merge is his call.
+- abi-3 companion venv for the SEQ/OOC paths; ci-mirror otherwise. One test process via `~/bin/pytest-one`; PYTHONPATH `<worktree>/src:<worktree>`. Routing-decision tests are pure-Python; the parity runs use the companion.
+- T1-T7 pass; full existing routing suite green except the intended T7 reason updates. No masking-path test weakened.
+- Coverage + mutation on the changed lines: a mutant removing the `not cyclic` term must be killed by T2; a mutant removing the whole `not bounded_eligible` guard must be killed by T1; a mutant dropping the T5c retain-full-frame guard must be killed by T5c.
+- Module size: `_pipeline_routing.py` is 599 LOC (at goal) -- a couple of lines + one local; confirm <=600 or add a census entry at the exact LOC.
+- Perf (Codex MED-4, narrowed): the measured claim is SEQUENTIAL 5.8-6.4x over full-frame on the hash chain at 50k-500k. Do NOT claim OOC is faster for tiny jobs or that all strategies widen it. Add a routing-level witness that the fast bounded route is chosen for the fitting shapes, plus one small real run per diverted route (SEQ and OOC) confirming it completes faster than the full-frame arm. No 10M rerun needed.
+- Gate chain: Opus VERIFY -> dennis -> Codex final. **Do NOT merge, and do NOT start the build until Cam picks A/B/C** (the diverted-output envelope exceeds his NFC pre-approval). Once he picks: build to the chosen scope, gate, post diff + results to Slack, HOLD merge for his final look.
 
 ## 7. Done when
 
-- [ ] T1-T7 green (divert to bounded + faster route; small-cyclic NOT regressed; large-cyclic still rejects; route-unchanged classes byte-identical; diverted-output NFC-envelope-only + FK RI; probe path gated; reason inventory updated); full routing suite green.
-- [ ] Changed lines coverage + mutation-proven; module within size policy.
-- [ ] Diff + results posted to Slack; slice HELD for Cam's review (not merged).
-- [ ] On Cam's go: merge, confirm main CI green, ROADMAP + RECENTLY-SHIPPED updated (GAP6 closed), graphify refresh (subject to the keyless blocker), Slack recap.
+- [ ] Cam has chosen A/B/C for the diverted-output envelope.
+- [ ] T1-T7 green for the chosen scope (divert to the correct bounded route; small-cyclic NOT regressed; large-cyclic rejects; route-unchanged byte-identical; SEQ + OOC diverted envelopes; no-new-failing-job; probe gated; reason inventory updated); full routing suite green.
+- [ ] Changed lines coverage + mutation-proven (incl. the cycle-exclusion and retain-full-frame mutants); module within size policy.
+- [ ] Perf witness recorded (narrowed claim); diff + results posted to Slack; HELD for Cam's merge go.
+- [ ] On merge: confirm main CI green, ROADMAP + RECENTLY-SHIPPED updated (GAP6 closed), graphify refresh (subject to the keyless blocker), Slack recap.
 
 cam
