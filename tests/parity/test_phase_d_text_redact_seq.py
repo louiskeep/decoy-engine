@@ -48,6 +48,13 @@ from tests.parity._text_redact_seq_data import (
     tr_seed,
 )
 
+
+def _declined_as(reason: str) -> str:
+    """The reason a declined column reports. Without the span kernel the unavailable check comes
+    first (the admit predicate is never consulted), so the config reason shows only with it."""
+    return reason if kernel_loads() else UNAVAILABLE
+
+
 PII = ["mail a@b.com now", "ssn 123-45-6789 ok", "call 212-555-1234", "clean", None]
 _SEQUENTIAL = ("sequential", "pure_mask_fk")
 _SEQ_BACKEND = "rust_companion" if kernel_loads() else "python_scalar"
@@ -112,12 +119,12 @@ def _install_ner_stub(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.parametrize("ner", [True, {"model": "en_core_web_sm"}], ids=["bool", "mapping"])
-def test_t4a_ner_declines_through_the_seam_and_runs_python(
+def test_t4_ner_declines_through_the_seam_and_runs_python(
     ner: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _install_ner_stub(monkeypatch)
     result = _equals_oracle(_shape(ner=ner))
-    assert_python_ran(result, "t", "text_redact_ner_not_native:t")
+    assert_python_ran(result, "t", _declined_as("text_redact_ner_not_native:t"))
     assert result.outputs["P"].column("t").to_pylist()[3] == "[REDACTED]an"  # NER really ran
 
 
@@ -129,10 +136,10 @@ def test_t4a_ner_declines_through_the_seam_and_runs_python(
     ],
     ids=["large_string", "int64"],
 )
-def test_t4b_a_non_string_source_declines_through_the_seam(typ: pa.DataType, reason: str) -> None:
+def test_t4_a_non_string_source_declines_through_the_seam(typ: pa.DataType, reason: str) -> None:
     values = [f"v{i} a@b.com" for i in range(6)] if typ == pa.large_string() else list(range(6))
     result = _equals_oracle(_shape(pa.array(values, typ)))
-    assert_python_ran(result, "t", reason)
+    assert_python_ran(result, "t", _declined_as(reason))
 
 
 def test_t4c_no_companion_declines_with_the_unavailable_reason_and_equals_the_oracle(
@@ -184,7 +191,7 @@ def test_t4b_handler_config_errors_are_unchanged_and_never_reach_the_seam(
     entry = tr_entry(result, "t")
     assert entry["executed_backend"] == "none"
     assert entry["native_calls"] == 0
-    assert entry["reason"] == reason
+    assert entry["reason"] == _declined_as(reason)
 
 
 # T_key (decline half): text_redact configured on an FK key stays Python.
