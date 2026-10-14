@@ -32,6 +32,7 @@ from decoy_engine.execution.native._crypto_ext import (
     CryptoExtensionUnavailableError,
     load_compiled_crypto_kernel,
 )
+from decoy_engine.execution.native._fpe_ext import load_compiled_fpe_kernel
 from decoy_engine.execution.native._index_ext import load_compiled_index_kernel
 from decoy_engine.execution.out_of_core._bucket_native import (
     NativeBucket,
@@ -44,6 +45,12 @@ from decoy_engine.execution.out_of_core._categorical_native import (
     TableCategoricalPlan,
     decide_table,
 )
+from decoy_engine.execution.out_of_core._fpe_native import (
+    BoundFpeKernel,
+    NativeFpe,
+    TableFpePlan,
+)
+from decoy_engine.execution.out_of_core._fpe_native import decide_table as decide_fpe_table
 from decoy_engine.execution.out_of_core._hash_native import (
     REASON_UNAVAILABLE,
     BoundHashKernel,
@@ -59,6 +66,7 @@ if TYPE_CHECKING:
 HASH_DISPOSITION_KEY = "out_of_core_hash"
 CATEGORICAL_DISPOSITION_KEY = "out_of_core_categorical"
 BUCKET_DISPOSITION_KEY = "out_of_core_bucket_perturb"
+FPE_DISPOSITION_KEY = "out_of_core_fpe"
 REMAP_DEFERRED = "fk_key_hash_remap_native_deferred"
 _NO_KERNEL_RAN = "none"
 _REASON_NO_ROWS = "no_rows_hashed"
@@ -104,11 +112,13 @@ class TableHashPlan:
         bound: BoundHashKernel | None,
         categorical: TableCategoricalPlan | None = None,
         bucket: TableBucketPlan | None = None,
+        fpe: TableFpePlan | None = None,
     ) -> None:
         self._decisions = dict(decisions)
         self._bound = bound
         self.categorical = categorical
         self.bucket = bucket
+        self.fpe = fpe
 
     @property
     def decisions(self) -> Mapping[str, HashColumnDecision]:
@@ -121,6 +131,10 @@ class TableHashPlan:
     def bucket_for(self, column: str, batch: pa.RecordBatch) -> NativeBucket | None:
         """The native handle for bucket_perturb `column` in `batch`, or None (see `gate`)."""
         return self.bucket.gate(column, batch) if self.bucket is not None else None
+
+    def fpe_for(self, column: str, batch: pa.RecordBatch) -> NativeFpe | None:
+        """The native handle for fpe `column` in `batch`, or None (see `gate`)."""
+        return self.fpe.gate(column, batch) if self.fpe is not None else None
 
     def kernel_for(self, column: str, batch: pa.RecordBatch) -> BoundHashKernel | None:
         """The native kernel for `column` in `batch`, or None when it stays on Python.
@@ -169,6 +183,8 @@ class OocHashRun:
         self._bound: BoundHashKernel | None = None
         self._index_loaded = False
         self._index_bound: BoundIndexKernel | None = None
+        self._fpe_loaded = False
+        self._fpe_bound: BoundFpeKernel | None = None
         self._plans: list[TableHashPlan] = []
         self._remap: list[dict[str, Any]] = []
 
@@ -191,6 +207,15 @@ class OocHashRun:
             except CryptoExtensionUnavailableError:
                 self._index_bound = None
         return self._index_bound
+
+    def _fpe_kernel(self) -> BoundFpeKernel | None:
+        if not self._fpe_loaded:
+            self._fpe_loaded = True
+            try:
+                self._fpe_bound = BoundFpeKernel(load_compiled_fpe_kernel(), self._native_threads)
+            except CryptoExtensionUnavailableError:
+                self._fpe_bound = None
+        return self._fpe_bound
 
     def prepare_table(
         self,
@@ -254,7 +279,24 @@ class OocHashRun:
             if bucket_seeds
             else None
         )
-        table_plan = TableHashPlan(decisions, self._bound, categorical, bucket)
+        fpe_seeds = {
+            column: column_seed
+            for column, column_seed in (seed.per_column if seed is not None else ())
+            if column_seed.strategy == "fpe"
+            and column not in skip_columns
+            and source_schema.get_field_index(column) >= 0
+        }
+        fpe = (
+            decide_fpe_table(
+                table_name,
+                source_schema,
+                fpe_seeds,
+                self._fpe_kernel() if fpe_seeds else None,
+            )
+            if fpe_seeds
+            else None
+        )
+        table_plan = TableHashPlan(decisions, self._bound, categorical, bucket, fpe)
         self._plans.append(table_plan)
         self._remap.extend(_remap_entries(plan, table_name, incoming_edges, site))
         return table_plan
@@ -275,10 +317,14 @@ class OocHashRun:
             if p.bucket is not None
             for d in p.bucket.decisions.values()
         ]
+        fpe = [
+            d.entry() for p in self._plans if p.fpe is not None for d in p.fpe.decisions.values()
+        ]
         return {
             **({HASH_DISPOSITION_KEY: entries} if entries else {}),
             **({CATEGORICAL_DISPOSITION_KEY: categorical} if categorical else {}),
             **({BUCKET_DISPOSITION_KEY: bucket} if bucket else {}),
+            **({FPE_DISPOSITION_KEY: fpe} if fpe else {}),
         }
 
 
@@ -311,6 +357,7 @@ def _remap_entries(
 __all__ = [
     "BUCKET_DISPOSITION_KEY",
     "CATEGORICAL_DISPOSITION_KEY",
+    "FPE_DISPOSITION_KEY",
     "HASH_DISPOSITION_KEY",
     "REMAP_DEFERRED",
     "HashColumnDecision",

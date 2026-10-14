@@ -625,6 +625,11 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         # the existing `native_bucket_perturb` operator and the operator registry (which gains the
         # `python_pandas` label); nothing from `execution.physical`.
         "src/decoy_engine/execution/out_of_core/_bucket_native.py",
+        # OOC fpe (out-of-core fpe on the compiled FF1 kernel): `_fpe_native.py` (per-column
+        # decision, the native call and its disposition) is new; `_hash_run.py` carries its
+        # per-table plan and `_mask.py` dispatches it. They import the existing FF1 kernel
+        # loader, `FpeConfig` and `fpe_fail_closed_error`; nothing from `execution.physical`.
+        "src/decoy_engine/execution/out_of_core/_fpe_native.py",
         "src/decoy_engine/execution/out_of_core/_mask.py",
         "src/decoy_engine/execution/out_of_core/_stream_driver.py",
         # D2a (sequential-route hash on the compiled companion): `_sequential_native.py`
