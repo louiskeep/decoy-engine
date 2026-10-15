@@ -80,6 +80,7 @@ def _wire(
     import decoy_engine.execution._pipeline_routing as routing_mod
     import decoy_engine.execution._pipeline_routing_fk_dtype as fk_dtype_mod
     import decoy_engine.execution.out_of_core._spill_estimate as spill_mod
+    import decoy_engine.execution.out_of_core._validate_batch as validate_mod
     import decoy_engine.execution.out_of_core._vault_collect as vault_mod
 
     oocrs = _Spy(ret=oocrs_tuple)
@@ -89,9 +90,11 @@ def _wire(
     enforce = _Spy(ret=None)
     hazard = _Spy(ret=True)  # fk_ooc_dtype_hazard (non-default: pins the forward)
     vault_safe = _Spy(ret=True)  # vault_ooc_safe (non-default: pins the forward)
+    validators_safe = _Spy(ret=True)  # validators_ooc_safe (non-default: pins the forward)
 
     monkeypatch.setattr(fk_dtype_mod, "fk_out_of_core_dtype_hazard", hazard)
     monkeypatch.setattr(vault_mod, "vault_ooc_safe", vault_safe)
+    monkeypatch.setattr(validate_mod, "validators_ooc_safe", validators_safe)
     monkeypatch.setattr(signals, "out_of_core_routing_signals", oocrs)
     monkeypatch.setattr(signals, "resolve_full_frame_fits_estimate", rffe)
     monkeypatch.setattr(signals, "resolve_probe_recovery", rpr)
@@ -129,6 +132,7 @@ def _wire(
         "enforce": enforce,
         "hazard": hazard,
         "vault_safe": vault_safe,
+        "validators_safe": validators_safe,
     }
 
 
@@ -187,6 +191,10 @@ def test_route_forwards_every_decide_execution_route_argument(
     v_args, v_kw = spies["vault_safe"].last
     assert v_args == (_CONFIG, _PLAN, _GRAPH, _CALLER, _VAULT)
     assert v_kw == {}
+    assert kw.get("validators_ooc_safe") is True
+    s_args, s_kw = spies["validators_safe"].last
+    assert s_args == (_CONFIG, _PLAN, _GRAPH, _CALLER)
+    assert s_kw == {}
 
 
 def test_route_does_not_price_the_fk_dtype_hazard_for_an_out_of_core_incompatible_job(
@@ -200,6 +208,8 @@ def test_route_does_not_price_the_fk_dtype_hazard_for_an_out_of_core_incompatibl
     # Same for the vault admission: it only matters when out-of-core can be chosen.
     assert spies["vault_safe"].calls == []
     assert spies["decide"].last[1].get("vault_ooc_safe") is False
+    assert spies["validators_safe"].calls == []
+    assert spies["decide"].last[1].get("validators_ooc_safe") is False
 
 
 def test_route_runs_disk_preflight_only_on_out_of_core_with_exact_args(
