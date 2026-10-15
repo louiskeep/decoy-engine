@@ -193,6 +193,13 @@ Note (dennis LOW-1): the log-interpolation sentry scans only `src/decoy_engine`,
 (`test_fk_scale_infra.py`), not the sentry. Future edits to `_error_record` must keep
 that test.
 
+Follow-up (Codex final-gate LOW, non-blocking): the opt-in Test 4 asserts the total bytes
+submitted to the sorter, then labels it "the single run," rather than asserting the
+buffered masked column at `_flush` directly. The 16-GiB cap holds the whole fixture in one
+run, so the reproducer is valid, but the assertion is indirect. When this heavy test is
+next exercised under `DECOY_RUN_HEAVY`, tighten it to spy on `_flush`, assert the buffered
+masked column exceeds 2^31 - 1 bytes, and assert no earlier flush occurred.
+
 ## Risk and gates
 
 - Primary risk is byte-parity: the large -> plain round-trip must be identical for
