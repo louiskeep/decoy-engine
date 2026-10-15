@@ -40,7 +40,7 @@ Perf = isolated-process p50/p95 + a declared absolute memory ceiling (the D9 rat
 - **100M tier:** parent 20M, child 35M, grand 45M (~100M total); ~80 min mask at ~20k rows/s.
 - **200M tier:** parent 40M, child 70M, grand 90M (~200M total); ~2.7 h mask.
 
-**Cap semantics (plan-gate MED):** "16GB/8GB cap" = the GCE instance RAM. Three DISTINCT things, all recorded + IDENTICAL across an A/B pair: (1) the engine OOC memory BUDGET (resolved bytes, passed to `run_pipeline`), (2) peak RSS measured EXTERNALLY by the supervisor, (3) the declared RSS acceptance CEILING (the pass bar, §5). An `RLIMIT_AS` address-space limit is NOT RSS; do not conflate. Also record batch size + thread count.
+**Cap semantics (plan-gate MED):** "16GB/8GB cap" = the GCE instance RAM. Three DISTINCT things, all recorded: (1) the engine OOC memory BUDGET (resolved bytes, passed to `run_pipeline`), (2) peak RSS measured EXTERNALLY by the supervisor, (3) the declared RSS acceptance CEILING (the pass bar, §5). The BUDGET, the CEILING, and the measurement METHOD are IDENTICAL across an A/B pair; the OBSERVED peak RSS (2) is the measurement and will differ between ON and OFF -- that is the comparison. An `RLIMIT_AS` address-space limit is NOT RSS; do not conflate. Also record batch size + thread count.
 **Reorder A/B (plan-gate MED):** ON = the default 2M parent-key threshold (reorder fires); OFF = a threshold ABOVE the max parent cardinality (forces the batch/DuckDB joiner). The A/B is TWO runs.
 
 Budget (~5 runs; `--confirm-cost` mandatory; est. $3-15/run by wall):
