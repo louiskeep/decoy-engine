@@ -292,6 +292,9 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         "src/decoy_engine/execution/_transforms_prepare.py",
         "src/decoy_engine/execution/_transforms_table.py",
         "src/decoy_engine/execution/out_of_core/_runner.py",
+        # D3b (token vault on the bounded out-of-core route): the vault collector the two
+        # out-of-core drivers call. It imports nothing from `execution.physical`.
+        "src/decoy_engine/execution/out_of_core/_vault_collect.py",
         "src/decoy_engine/execution/native/_chunk_masking.py",
         # R1b: the resolved per-operator parameters and the shared kernel step both native
         # routes call; `_chunk_masking.py` and `_chunked_entry.py` above only rewire to them.
