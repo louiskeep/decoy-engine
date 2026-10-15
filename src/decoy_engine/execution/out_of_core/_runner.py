@@ -54,13 +54,11 @@ from decoy_engine.execution._output_projection import (
     UnconfiguredColumnPolicy,
     enforce_output_projection,
 )
-from decoy_engine.execution._runner import build_work_list, order_work
 from decoy_engine.execution._transactional_sink import TransactionalSink
 from decoy_engine.execution.out_of_core import _join as _join_ooc
 from decoy_engine.execution.out_of_core import _mask_group_c, _validate_batch
 from decoy_engine.execution.out_of_core._batch_join import ChildFkBatchJoiner
 from decoy_engine.execution.out_of_core._budget import check_temp_disk_budget
-from decoy_engine.execution.out_of_core._compat import check_out_of_core_compatibility
 from decoy_engine.execution.out_of_core._emit import (
     assemble_resident,
     emit_to_sink,
@@ -75,12 +73,12 @@ from decoy_engine.execution.out_of_core._mask import (
     table_seed,
 )
 from decoy_engine.execution.out_of_core._memory_estimate import resolve_phase_memory_limits
+from decoy_engine.execution.out_of_core._preflight import run_preflight
 from decoy_engine.execution.out_of_core._relation import build_parent_key_relation_aligned
 from decoy_engine.execution.out_of_core._route_policy import (
     _edge_indexes,
     _table_order,
     decide_route,
-    resolve_reorder_threshold_rows,
     validate_outgoing_parent_columns,
 )
 from decoy_engine.execution.out_of_core._source import LazySource
@@ -89,10 +87,8 @@ from decoy_engine.execution.out_of_core._stream_driver_support import (
     _code_set_records_and_evidence_for_table,
 )
 from decoy_engine.execution.out_of_core._vault_collect import (
-    assert_vault_inputs,
     collect_batch_vault,
 )
-from decoy_engine.keyprovider import require_mask_key
 from decoy_engine.plan._types import ColumnSeed
 from decoy_engine.relationships._graph import OrphanPolicy
 
@@ -181,31 +177,18 @@ def run_fk_out_of_core(
     are route-stable (`_vault_collect.vault_ooc_safe`); persisting is the caller's, after a
     successful return.
     """
-    if batch_rows is not None and batch_rows < 1:
-        raise ExecutionError(
-            code="out_of_core_batch_rows_invalid",
-            message=f"batch_rows must be a positive row count, got {batch_rows}.",
-        )
-    # Validate the override before creating the temp root: an invalid value must not leak a scratch dir.
-    reorder_threshold_rows = resolve_reorder_threshold_rows(out_of_core_reorder_threshold_rows)
-    # DE-02 (Codex BLOCKER 4): fail-closed gate FIRST, before any admissibility or source
-    # check, so a keyed out-of-core job can never run off job_seed at GA from any entry point.
-    mask_key = require_mask_key(plan, key_provider)
-    assert_vault_inputs(vault_writer, config, mask_key)
-    work = order_work(build_work_list(plan, registry), relationship_graph)
-    compat = check_out_of_core_compatibility(plan, work, relationship_graph)
-    if not compat.accepted:
-        raise ExecutionError(
-            code=compat.primary_code or "out_of_core_rejected",
-            message=compat.message(),
-        )
-    _mask_group_c.preflight_group_c(work)
-    for edge in relationship_graph.edges:
-        if edge.parent_table not in sources or edge.child_table not in sources:
-            raise ExecutionError(
-                code="out_of_core_source_missing",
-                message="out-of-core FK route requires every parent and child source.",
-            )
+    pre = run_preflight(
+        plan,
+        sources,
+        registry=registry,
+        relationship_graph=relationship_graph,
+        key_provider=key_provider,
+        vault_writer=vault_writer,
+        config=config,
+        batch_rows=batch_rows,
+        out_of_core_reorder_threshold_rows=out_of_core_reorder_threshold_rows,
+    )
+    mask_key, reorder_threshold_rows = pre.mask_key, pre.reorder_threshold_rows
 
     validators = _validate_batch.build_validator_collector(
         config, plan, relationship_graph, sources

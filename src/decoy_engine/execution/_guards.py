@@ -16,7 +16,7 @@ silent downgrade.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from typing import TYPE_CHECKING
 
 import pyarrow as pa
@@ -26,9 +26,41 @@ from decoy_engine.execution._runner import build_work_list
 from decoy_engine.plan._checks import _INT_NULL_REJECTED_STRATEGIES
 
 if TYPE_CHECKING:
+    from decoy_engine.execution._runner import WorkNode
     from decoy_engine.plan._types import Plan
     from decoy_engine.providers_v2 import ProviderRegistry
     from decoy_engine.relationships import RelationshipGraph
+
+
+def null_bearing_int_candidates(
+    work: Iterable[WorkNode], relationship_graph: RelationshipGraph
+) -> Iterator[WorkNode]:
+    """Scalar nodes whose strategy is in the int+null reject set and that are masked.
+
+    FK-child columns are EXEMPT: they are resolved through the relationship edge
+    (not masked by the strategy), and an FK job runs via the pandas oracle on both
+    substrates, so the int+null divergence cannot arise for them. Shared by every
+    route's guard so the predicate cannot drift between resident and lazy sources.
+    """
+    for node in work:
+        if node.kind != "scalar" or node.strategy not in _INT_NULL_REJECTED_STRATEGIES:
+            continue
+        if relationship_graph.parents_of(node.table, node.columns):
+            continue  # FK child: resolved via the edge, not masked; no divergence
+        yield node
+
+
+def null_bearing_int_error(node: WorkNode) -> ExecutionError:
+    """The one typed rejection every route raises for an integer column with nulls."""
+    return ExecutionError(
+        code="null_bearing_int_unsupported",
+        message=(
+            f"Column {node.table}.{node.columns[0]} is an integer column with nulls "
+            f"masked under {node.strategy!r}. Integer-with-null is not supported "
+            "under truncate/hash/categorical (the masked value is ambiguous "
+            "across execution substrates); stringify or bin the column upstream."
+        ),
+    )
 
 
 def reject_null_bearing_int(
@@ -40,16 +72,9 @@ def reject_null_bearing_int(
     """Raise ExecutionError if a truncate/hash/categorical node masks an integer
     source column that contains a null. Substrate-agnostic: operates on the Arrow
     sources before conversion, so both adapters reject the same input identically.
-
-    FK-child columns are EXEMPT: they are resolved through the relationship edge
-    (not masked by the strategy), and an FK job runs via the pandas oracle on both
-    substrates, so the int+null divergence cannot arise for them.
     """
-    for node in build_work_list(plan, registry):
-        if node.kind != "scalar" or node.strategy not in _INT_NULL_REJECTED_STRATEGIES:
-            continue
-        if relationship_graph.parents_of(node.table, node.columns):
-            continue  # FK child: resolved via the edge, not masked; no divergence
+    work = build_work_list(plan, registry)
+    for node in null_bearing_int_candidates(work, relationship_graph):
         table = sources.get(node.table)
         if table is None:
             continue
@@ -59,15 +84,7 @@ def reject_null_bearing_int(
         if pa.types.is_integer(table.schema.field(column).type) and (
             table.column(column).null_count > 0
         ):
-            raise ExecutionError(
-                code="null_bearing_int_unsupported",
-                message=(
-                    f"Column {node.table}.{column} is an integer column with nulls "
-                    f"masked under {node.strategy!r}. Integer-with-null is not supported "
-                    "under truncate/hash/categorical (the masked value is ambiguous "
-                    "across execution substrates); stringify or bin the column upstream."
-                ),
-            )
+            raise null_bearing_int_error(node)
 
 
 def run_chunk_ingest_guards(
@@ -87,6 +104,8 @@ def run_chunk_ingest_guards(
 
 
 __all__ = [
+    "null_bearing_int_candidates",
+    "null_bearing_int_error",
     "reject_null_bearing_int",
     "run_chunk_ingest_guards",
 ]
