@@ -188,6 +188,11 @@ locals, NO message, NO data/expression text, so a future overflow reports where 
 without leaking payload. dennis must confirm no data leak; the log-hygiene sentry must
 stay green. Keep this in the same PR so the bench can self-describe the next failure.
 
+Note (dennis LOW-1): the log-interpolation sentry scans only `src/decoy_engine`, not
+`scripts/`, so the `_error_record` hygiene is guarded by its dedicated unit test
+(`test_fk_scale_infra.py`), not the sentry. Future edits to `_error_record` must keep
+that test.
+
 ## Risk and gates
 
 - Primary risk is byte-parity: the large -> plain round-trip must be identical for
