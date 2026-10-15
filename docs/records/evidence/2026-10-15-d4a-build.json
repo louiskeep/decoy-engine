@@ -1,0 +1,23 @@
+{
+ "rows": {
+  "parent": 2000000,
+  "child": 2200000,
+  "grandchild": 2300000
+ },
+ "total_rows": 6500000,
+ "width": 4,
+ "payload_columns": [
+  "payload_00",
+  "payload_01",
+  "payload_02",
+  "payload_03"
+ ],
+ "orphan_frac": 0.01,
+ "seed": 42,
+ "build_s": 6.37,
+ "paths": {
+  "parent": "/tmp/claude-1000/-home-cam/e038fc6f-51e2-4e19-8e63-cdf9bb35275b/scratchpad/d4a-auth/parent.parquet",
+  "child": "/tmp/claude-1000/-home-cam/e038fc6f-51e2-4e19-8e63-cdf9bb35275b/scratchpad/d4a-auth/child.parquet",
+  "grandchild": "/tmp/claude-1000/-home-cam/e038fc6f-51e2-4e19-8e63-cdf9bb35275b/scratchpad/d4a-auth/grandchild.parquet"
+ }
+}

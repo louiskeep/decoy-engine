@@ -37,27 +37,27 @@ Evidence comes from `tests/perf_fixtures/ooc_route_witness.py`, which wraps the 
 
 ### Real threshold, recorded run
 
-The same worker on a chain that clears the genuine 2,000,000 default with no override. Devbox, 4 vCPU, abi3 Rust companion, `run_pipeline` on the AUTO route.
+The same worker on a chain that clears the genuine 2,000,000 default with no override. Devbox, 4 vCPU, abi3 Rust companion, `run_pipeline` on the AUTO route. Raw evidence: `docs/records/evidence/2026-10-15-d4a-bench.json` (worker `BENCH_JSON`, schema `fk-scale/v1`) and `docs/records/evidence/2026-10-15-d4a-build.json` (fixture `BUILD_JSON`). The build file records `width: 4`, `payload_columns: ["payload_00".."payload_03"]`, `orphan_frac: 0.01`.
 
 | Item | Value |
 |---|---|
-| Rows (parent / child / grandchild) | 2,000,000 / 2,200,000 / 2,300,000 (6.5M total), 4 columns per table plus keys, 1% orphans |
+| Rows (parent / child / grandchild) | 2,000,000 / 2,200,000 / 2,300,000 (6.5M total), 4 payload columns per table (`payload_00`..`payload_03`) plus `id` keys, 1% orphans |
 | Engine OOC budget | 1024 MiB (`run_bytes_cap` 161,061,274 B, merge fan-in 16) |
 | Route | `out_of_core`, reason `byte_estimate_bounded_out_of_core`, AUTO (not forced) |
 | Drivers | `parent` batch, `child` reorder, `grandchild` reorder |
 | Sorter 1 (child) | 2 runs, 1 merge, 166.6 MB spilled, resident peak 317.5 MB, envelope 354.3 MB |
 | Sorter 2 (grandchild) | 2 runs, 1 merge, 174.2 MB spilled, resident peak 317.5 MB, envelope 354.3 MB |
-| Temp disk peak (sampled) | 1268 MB |
-| External peak RSS (`wait4` `ru_maxrss`) | 1301.7 MB, against a 1382 MB ceiling (1.35 x budget, the convention of `tests/perf/test_out_of_core_reorder_memory.py`) |
-| Wall (`mask_s`) | 54.8 s |
-| Native disposition | 8 of 8 payload and key columns on the Rust companion, none on Python |
-| Row counts, FK parity | committed counts equal inputs, parity ok on `parent->child` and `child->grandchild` |
+| Temp disk peak (sampled) | 1550.5 MB |
+| External peak RSS (`wait4` `ru_maxrss`) | 1328.0 MB, against a 1382 MB ceiling (1.35 x budget, the convention of `tests/perf/test_out_of_core_reorder_memory.py`) |
+| Wall (`mask_s`) | 70.5 s |
+| Native disposition | 14 of 14 masked columns on the Rust companion, none on Python (`disposition.columns_total` 14, `native_columns` 14, `non_native` empty): 12 payload columns across the three tables plus the `parent.id` and `child.id` keys |
+| Row counts, FK parity | committed counts equal inputs (`rowcount_match` true, 789.6 MB committed), parity ok on `parent->child` and `child->grandchild` (60 orphans in each spot-check window) |
 
-RSS used 94% of its ceiling, so the headroom is real but thin at this budget. The 100M and 200M runs are where the ceiling is actually tested.
+RSS used 96% of its ceiling, so the headroom is real but thin at this budget. The 100M and 200M runs are where the ceiling is actually tested. Wall and the sampled temp-disk and RSS peaks are load-dependent on a shared devbox; the deterministic spill structure (2 runs and 1 merge per sorter, 166.6 / 174.2 MB spilled) is identical to the first revalidation run.
 
 ## What this does not show
 
 - Throughput at scale: 6.5M rows is 6.5% of the 100M tier.
 - A real object-store sink. The sink here is the local Parquet sink.
 - The width of the payload does not enter the sort (the slim sort carries row number, match token and masked key), so 4 columns per table is representative for the reorder lane's memory. It is not representative for total mask time, which the 15-column tiers will measure.
-- Child FK columns (`parent_id`, `child_id`) carry no per-column disposition entry: they are masked through the parent relation join, not a hash kernel call. Disposition counts therefore cover non-FK columns plus the parent and child `id` keys.
+- Child FK columns (`parent_id`, `child_id`) carry no per-column disposition entry: they are masked through the parent relation join, not a hash kernel call. The 14 disposition entries are therefore the 12 payload columns (4 per table across three tables) plus the `parent.id` and `child.id` keys; the join-remapped FK columns and the leaf `grandchild.id` do not appear.
