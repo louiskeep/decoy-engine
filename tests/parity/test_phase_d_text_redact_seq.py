@@ -281,7 +281,7 @@ def _mixed_shape() -> s.Shape:
 @pytest.mark.parametrize(
     ("estimate", "expected"),
     [
-        (True, ("full_frame", "byte_estimate_full_frame_fits")),
+        (True, _OOC_BOUNDED),  # a fit no longer pulls a bounded-eligible job onto full_frame
         (False, _OOC_BOUNDED),
         (None, _OOC_BOUNDED),
     ],
@@ -302,7 +302,7 @@ def test_t6_byte_estimate_routing_for_a_text_redact_only_job(
 @pytest.mark.parametrize(
     ("estimate", "expected"),
     [
-        (True, ("full_frame", "byte_estimate_full_frame_fits")),
+        (True, _SEQUENTIAL),
         (False, _SEQUENTIAL),
         (None, _SEQUENTIAL),
     ],
@@ -402,10 +402,10 @@ def _visible(result: Any) -> tuple[str, str]:
     return execution["execution_mode"], execution["route_reason"]
 
 
-def test_default_routing_runs_a_small_text_redact_job_full_frame(tmp_path: Path) -> None:
+def test_default_routing_runs_a_small_text_redact_job_bounded(tmp_path: Path) -> None:
     result = _run(tmp_path)
-    assert _visible(result) == ("full_frame", "byte_estimate_full_frame_fits")
-    assert SEQ_TEXT_REDACT_DISPOSITION_KEY not in result.quality_metrics
+    assert _visible(result) == _OOC_BOUNDED
+    assert SEQ_TEXT_REDACT_DISPOSITION_KEY not in result.quality_metrics  # not the sequential seam
 
 
 @pytest.mark.parametrize(

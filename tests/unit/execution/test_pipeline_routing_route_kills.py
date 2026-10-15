@@ -68,19 +68,27 @@ _CONFIG = {"cfg": "value"}
 _OOCRS_TUPLE = (True, "RC", 123, False)  # compatible, reject_code, rows, exact
 
 
-def _wire(monkeypatch: pytest.MonkeyPatch, *, decide_route: str) -> dict[str, _Spy]:
+def _wire(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    decide_route: str,
+    oocrs_tuple: tuple[Any, ...] = _OOCRS_TUPLE,
+) -> dict[str, _Spy]:
     """Install spies for every resolve_execution_route collaborator and invoke
     it once with canonical inputs. `decide_route` sets the route the (spied)
     decider returns, which gates the OOC-D disk-preflight call site."""
     import decoy_engine.execution._pipeline_routing as routing_mod
+    import decoy_engine.execution._pipeline_routing_fk_dtype as fk_dtype_mod
     import decoy_engine.execution.out_of_core._spill_estimate as spill_mod
 
-    oocrs = _Spy(ret=_OOCRS_TUPLE)
+    oocrs = _Spy(ret=oocrs_tuple)
     rffe = _Spy(ret=False)  # full_frame_fits_estimate (non-None: pins the #34 forward)
     rpr = _Spy(ret=False)  # probe_recovers_full_frame
     decide = _Spy(ret=(decide_route, "spy_reason"))
     enforce = _Spy(ret=None)
+    hazard = _Spy(ret=True)  # fk_ooc_dtype_hazard (non-default: pins the forward)
 
+    monkeypatch.setattr(fk_dtype_mod, "fk_out_of_core_dtype_hazard", hazard)
     monkeypatch.setattr(signals, "out_of_core_routing_signals", oocrs)
     monkeypatch.setattr(signals, "resolve_full_frame_fits_estimate", rffe)
     monkeypatch.setattr(signals, "resolve_probe_recovery", rpr)
@@ -110,7 +118,14 @@ def _wire(monkeypatch: pytest.MonkeyPatch, *, decide_route: str) -> dict[str, _S
         engine_version="v-test",
     )
     assert (route, reason) == (decide_route, "spy_reason")
-    return {"oocrs": oocrs, "rffe": rffe, "rpr": rpr, "decide": decide, "enforce": enforce}
+    return {
+        "oocrs": oocrs,
+        "rffe": rffe,
+        "rpr": rpr,
+        "decide": decide,
+        "enforce": enforce,
+        "hazard": hazard,
+    }
 
 
 def test_route_forwards_signals_call_profile_and_has_mask_table(
@@ -160,6 +175,20 @@ def test_route_forwards_every_decide_execution_route_argument(
     assert kw.get("resolved_substrate") == "future_substrate"  # #74
     assert kw.get("use_byte_estimate_routing") is False  # #81
     assert kw.get("use_probe_routing") is False  # #83
+    assert kw.get("fk_ooc_dtype_hazard") is True
+    h_args, h_kw = spies["hazard"].last
+    assert h_args == (_PLAN, _GRAPH)
+    assert h_kw == {"caller_sources": _CALLER}
+
+
+def test_route_does_not_price_the_fk_dtype_hazard_for_an_out_of_core_incompatible_job(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The hazard only matters when out-of-core would be chosen, so an incompatible job
+    # skips the schema walk and forwards False.
+    spies = _wire(monkeypatch, decide_route="sequential", oocrs_tuple=(False, "RC", 1, True))
+    assert spies["hazard"].calls == []
+    assert spies["decide"].last[1].get("fk_ooc_dtype_hazard") is False
 
 
 def test_route_runs_disk_preflight_only_on_out_of_core_with_exact_args(

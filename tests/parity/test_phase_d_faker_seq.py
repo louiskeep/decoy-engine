@@ -435,7 +435,7 @@ def test_the_real_gate_declines_faker_for_the_out_of_core_route() -> None:
 @pytest.mark.parametrize(
     ("estimate", "expected"),
     [
-        (True, ("full_frame", "byte_estimate_full_frame_fits")),
+        (True, _SEQUENTIAL),  # a fit no longer pulls a bounded-eligible job onto full_frame
         (False, _SEQUENTIAL),
         (None, _SEQUENTIAL),
     ],
@@ -545,10 +545,12 @@ def _visible(result: Any) -> tuple[str, str]:
     return execution["execution_mode"], execution["route_reason"]
 
 
-def test_default_routing_runs_a_small_faker_job_full_frame(tmp_path: Path) -> None:
+def test_default_routing_runs_a_small_faker_job_sequential(tmp_path: Path) -> None:
     result = _run(tmp_path)
-    assert _visible(result) == ("full_frame", "byte_estimate_full_frame_fits")
-    assert SEQ_FAKER_DISPOSITION_KEY not in result.quality_metrics  # the oracle, not the seam
+    assert _visible(result) == _SEQUENTIAL
+    assert (
+        SEQ_FAKER_DISPOSITION_KEY in result.quality_metrics
+    )  # the sequential seam, not the oracle
 
 
 @pytest.mark.parametrize("deterministic", [True, False])

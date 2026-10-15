@@ -20,7 +20,7 @@ import pyarrow.parquet as pq
 import pytest
 
 from decoy_engine.config import PipelineConfig
-from decoy_engine.execution import run_pipeline
+from decoy_engine.execution import ExecutionError, run_pipeline
 from decoy_engine.execution._adapter import ExecutionResult
 from decoy_engine.execution._mem_estimate import (
     ColumnSizeSpec,
@@ -270,10 +270,22 @@ def _fk_pure_mask_with_temporal(
 
 def test_fk_pure_mask_with_temporal_columns_routes_by_the_byte_estimate(tmp_path: Path) -> None:
     config, sources = _fk_pure_mask_with_temporal(tmp_path)
-    result = _run(config, sources, out_of_core_budget_bytes=1 * _GB)
+    # A fidelity report needs every output resident, so no bounded route applies and the
+    # estimate alone admits full-frame (a bounded-eligible job takes its bounded route).
+    result = _run(config, sources, out_of_core_budget_bytes=1 * _GB, fidelity_report=True)
     execution = result.quality_metrics["execution"]
     assert execution["route_reason"] == "byte_estimate_full_frame_fits"
     assert execution["execution_mode"] == "full_frame"
+
+
+def test_fk_pure_mask_with_temporal_columns_takes_its_bounded_route(tmp_path: Path) -> None:
+    config, sources = _fk_pure_mask_with_temporal(tmp_path)
+    result = _run(config, sources, out_of_core_budget_bytes=1 * _GB)
+    execution = result.quality_metrics["execution"]
+    assert (execution["execution_mode"], execution["route_reason"]) == (
+        "sequential",
+        "pure_mask_fk",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -491,8 +503,16 @@ def test_late_null_columns_are_not_admitted_to_full_frame_by_a_one_byte_price(
         if source_kind == "lazy"
         else {"parent": parent, "child": child}
     )
-    result = _run(config, sources, out_of_core_budget_bytes=budget, use_probe_routing=False)
-    assert result.quality_metrics["execution"]["execution_mode"] != "full_frame"
+    # A fidelity report leaves no bounded route, so the price alone decides: not admitted.
+    with pytest.raises(ExecutionError) as exc:
+        _run(
+            config,
+            sources,
+            out_of_core_budget_bytes=budget,
+            use_probe_routing=False,
+            fidelity_report=True,
+        )
+    assert exc.value.code == "fk_full_frame_oom_risk_rejected"
 
 
 @pytest.mark.parametrize("source_kind", ["lazy", "resident"])
@@ -507,7 +527,13 @@ def test_the_same_job_without_nulls_still_fits_full_frame(tmp_path: Path, source
         if source_kind == "lazy"
         else {"parent": parent, "child": child}
     )
-    result = _run(config, sources, out_of_core_budget_bytes=budget, use_probe_routing=False)
+    result = _run(
+        config,
+        sources,
+        out_of_core_budget_bytes=budget,
+        use_probe_routing=False,
+        fidelity_report=True,
+    )
     execution = result.quality_metrics["execution"]
     assert execution["execution_mode"] == "full_frame"
     assert execution["route_reason"] == "byte_estimate_full_frame_fits"

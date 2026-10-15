@@ -93,14 +93,15 @@ def test_the_real_gate_admits_the_canonical_group_and_declines_the_scalar_child(
     assert _admission(_scalar_child_shape()) == (False, _SCALAR_CHILD_CODE)
 
 
-# estimate-FIT -> full_frame; no fit or no price -> the bounded route eligibility picks.
+# A fit no longer pulls a bounded-eligible job onto full_frame: eligibility alone picks the
+# bounded route whether the estimate fits, does not fit, or cannot be priced.
 @pytest.mark.parametrize(
     ("estimate", "canonical", "scalar_child"),
     [
         (
             True,
-            ("full_frame", "byte_estimate_full_frame_fits"),
-            ("full_frame", "byte_estimate_full_frame_fits"),
+            ("out_of_core", "byte_estimate_bounded_out_of_core"),
+            ("sequential", "pure_mask_fk"),
         ),
         (
             False,
@@ -235,10 +236,10 @@ def _hash_backends(result: Any) -> dict[tuple[str, str, str], str]:
     }
 
 
-def test_default_routing_runs_a_small_composite_job_full_frame(tmp_path: Path) -> None:
+def test_default_routing_runs_a_small_composite_job_out_of_core(tmp_path: Path) -> None:
     result = _run(tmp_path)
-    assert _visible(result) == ("full_frame", "byte_estimate_full_frame_fits")
-    assert _hash_backends(result) == {}  # the full-frame oracle, not the sequential native seam
+    assert _visible(result) == ("out_of_core", "byte_estimate_bounded_out_of_core")
+    assert _hash_backends(result) == {}  # the out-of-core route, not the sequential native seam
 
 
 @pytest.mark.parametrize(

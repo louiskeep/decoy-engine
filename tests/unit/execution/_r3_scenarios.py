@@ -445,11 +445,19 @@ def seq_fk_transforms_declined(tmp: Path) -> Run:
     return Run(_go(cfg, tables, out_of_core_threshold_rows=1, **_ROW_ROUTING))
 
 
-def ff_fk_transforms_declined_byte_routing(tmp: Path) -> Run:
-    """Default byte-estimate routing sizes the small job as fitting, so it runs full_frame while
-    the out-of-core decline is still stamped."""
+def seq_fk_transforms_declined_byte_routing(tmp: Path) -> Run:
+    """Default byte-estimate routing sizes the small job as fitting, but a bounded-eligible job
+    prefers its bounded route over full_frame, so it runs sequential while the out-of-core
+    decline is still stamped."""
     cfg, tables = fk_job(tmp, parent_transforms=True)
     return Run(_go(cfg, tables))
+
+
+def ff_fk_transforms_declined_fidelity_byte_routing(tmp: Path) -> Run:
+    """The fitting job with a fidelity report: that needs every output resident, so no bounded
+    route applies and the confirmed fit admits full_frame, out-of-core decline stamped."""
+    cfg, tables = fk_job(tmp, parent_transforms=True)
+    return Run(_go(cfg, tables, fidelity_report=True, now_iso=NOW_ISO))
 
 
 def ooc_fk_forced_loader(tmp: Path) -> Run:
@@ -527,7 +535,8 @@ SUCCESS_SCENARIOS: dict[str, Callable[[Path], Run]] = {
         seq_fk_loader,
         seq_fk_explain,
         seq_fk_transforms_declined,
-        ff_fk_transforms_declined_byte_routing,
+        seq_fk_transforms_declined_byte_routing,
+        ff_fk_transforms_declined_fidelity_byte_routing,
         ooc_fk_forced_loader,
         ooc_fk_forced,
         ooc_fk_auto,

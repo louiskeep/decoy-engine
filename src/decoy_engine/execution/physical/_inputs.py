@@ -158,6 +158,9 @@ class OutOfCoreRoutingFacts:
     # then never admits full-frame under `auto`. Defaulted so existing captures
     # (and the hash of every job without transforms) are unchanged.
     lazy_transform_bearing: bool = False
+    # A fitting job whose FK key types out-of-core would reject although the oracle
+    # completes them (`_pipeline_routing_fk_dtype`); defaulted for the same reason.
+    fk_ooc_dtype_hazard: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -340,6 +343,7 @@ def compute_plan_hash(inputs: PhysicalPlanInputs) -> str:
         facts.merge_fan_in,
         inputs.native_companion_reason,
         *((facts.lazy_transform_bearing,) if facts.lazy_transform_bearing else ()),
+        *(("fk_ooc_dtype_hazard",) if facts.fk_ooc_dtype_hazard else ()),
     )
     digest = hashlib.sha256()
     for part in parts:

@@ -191,12 +191,16 @@ class TestResidentJobsArePriced:
     @pytest.mark.parametrize(
         "kind", ["plain", "fidelity", "post_validation", "vault", "validators"]
     )
-    def test_small_job_runs_full_frame_and_equals_the_reference(self, tmp_path, kind):
+    def test_small_job_routes_by_eligibility_and_equals_the_reference(self, tmp_path, kind):
         cfg, sources = _job(tmp_path)
         if kind == "validators":
             cfg["validators"] = _VALIDATORS
         res = _run(cfg, sources, **_special_kwargs(kind))
-        assert _execution(res)["execution_mode"] == "full_frame"
+        # A plain job is bounded-eligible and takes its bounded route; the special
+        # kinds need every output resident, so the confirmed fit admits full-frame.
+        assert _execution(res)["execution_mode"] == (
+            "sequential" if kind == "plain" else "full_frame"
+        )
         expected = reference_run(
             tmp_path, cfg, _reference_tables(sources, cfg), **_special_kwargs(kind)
         )
@@ -236,8 +240,16 @@ class TestResidentJobsArePriced:
         assert _execution(actual)["execution_mode"] == "sequential"
         small = _run(cfg, sources)
         small_reference = reference_run(tmp_path, cfg, _reference_tables(sources, cfg))
-        assert _execution(small)["execution_mode"] == _execution(small_reference)["execution_mode"]
-        assert _execution(small)["route_reason"] == _execution(small_reference)["route_reason"]
+        # Fitting, both take their bounded route; the transforms decline out-of-core
+        # for the actual run only, which is the one difference from the reference.
+        assert (_execution(small)["execution_mode"], _execution(small)["route_reason"]) == (
+            "sequential",
+            "pure_mask_fk",
+        )
+        assert (
+            _execution(small_reference)["execution_mode"],
+            _execution(small_reference)["route_reason"],
+        ) == ("out_of_core", "byte_estimate_bounded_out_of_core")
 
     def test_no_reconciliation_warning_for_a_shrunk_prepared_table(self, tmp_path):
         cfg, sources = _job(tmp_path)
@@ -277,12 +289,26 @@ def _wide_job(tmp_path: Path) -> tuple[dict[str, Any], dict[str, pa.Table]]:
 class TestWideJob:
     def test_raw_fits_but_prepared_is_not_admitted_to_full_frame(self, tmp_path):
         cfg, sources = _wide_job(tmp_path)
+        # Bounded-eligible either way, so the fit no longer picks full-frame; what is
+        # left to pin is the transform-driven out-of-core decline.
         baseline = _run(cleared(cfg), sources, out_of_core_budget_bytes=_WIDE_BUDGET)
-        assert _execution(baseline)["route_reason"] == "byte_estimate_full_frame_fits"
+        assert _execution(baseline)["route_reason"] == "byte_estimate_bounded_out_of_core"
         res = _run(cfg, sources, out_of_core_budget_bytes=_WIDE_BUDGET, use_probe_routing=False)
         assert _execution(res)["execution_mode"] == "sequential"
         assert _execution(res)["out_of_core_declined"] == "per_table_transforms_present"
         assert "d19" in res.outputs["parent"].column_names
+
+    def test_raw_fits_but_prepared_is_priced_when_no_bounded_route_applies(self, tmp_path):
+        # A fidelity report needs every output resident, so the byte estimate alone
+        # decides between full-frame and the reject: the raw table fits, the wider
+        # prepared table does not.
+        cfg, sources = _wide_job(tmp_path)
+        kw = {"out_of_core_budget_bytes": _WIDE_BUDGET, "fidelity_report": True}
+        baseline = _run(cleared(cfg), sources, **kw)
+        assert _execution(baseline)["route_reason"] == "byte_estimate_full_frame_fits"
+        with pytest.raises(ExecutionError) as exc:
+            _run(cfg, sources, use_probe_routing=False, **kw)
+        assert exc.value.code == _REJECT
 
     def test_prepared_once_across_routing_probe_and_execution(
         self, tmp_path, monkeypatch, apply_calls
@@ -508,6 +534,20 @@ class TestExplainAndCaptureAgree:
         run = _run(cfg, sources, explain_plan=True)
         inputs = capture_physical_plan_inputs(cfg, sources, engine_version=ENGINE_VERSION)
         plan = compile_physical_plan(inputs)
+        assert _execution(run)["execution_mode"] == "sequential"
+        assert [t.driver.value for t in plan.tables] == ["sequential", "sequential"]
+        assert inputs.out_of_core_facts.full_frame_fits_estimate is True
+
+    def test_fitting_prepared_job_with_no_bounded_route(self, tmp_path):
+        from decoy_engine.execution.physical import compile_physical_plan
+        from decoy_engine.execution.physical._snapshot import capture_physical_plan_inputs
+
+        cfg, sources = _job(tmp_path)
+        run = _run(cfg, sources, explain_plan=True, fidelity_report=True)
+        inputs = capture_physical_plan_inputs(
+            cfg, sources, engine_version=ENGINE_VERSION, fidelity_report=True
+        )
+        plan = compile_physical_plan(inputs)
         assert _execution(run)["execution_mode"] == "full_frame"
         assert [t.driver.value for t in plan.tables] == ["full_frame", "full_frame"]
         assert inputs.out_of_core_facts.full_frame_fits_estimate is True
@@ -565,7 +605,8 @@ class TestProbeOnPreparedTables:
         monkeypatch.setattr(
             "decoy_engine.execution._mem_estimate.fits", lambda *a, **k: False, raising=True
         )
-        res = _run(cfg, sources, out_of_core_budget_bytes=1 << 30)
+        # A fidelity report leaves no bounded route, so the recovered fit admits full-frame.
+        res = _run(cfg, sources, out_of_core_budget_bytes=1 << 30, fidelity_report=True)
         assert len(seen) == 1
         prepared = _reference_tables(sources, cfg)
         assert seen[0]["target_rows"] == max(t.num_rows for t in prepared.values())
