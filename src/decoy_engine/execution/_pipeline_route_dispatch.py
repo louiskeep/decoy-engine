@@ -46,6 +46,7 @@ def execute_sequential_route(ctx: PipelineRunContext, decision: RouteDecision) -
         execution_plan_decision=decision.execution_plan_decision,
         unconfigured_column_policy=ctx.projection_policy,
         key_provider=ctx.key_provider,
+        native_threads=ctx.native_threads,
     )
     stamp_out_of_core_declined(sequential_result.quality_metrics, decision.ooc_declined)
     return sequential_result
@@ -72,4 +73,5 @@ def execute_out_of_core_route(ctx: PipelineRunContext, decision: RouteDecision) 
         out_of_core_reorder_threshold_rows=ctx.out_of_core_reorder_threshold_rows,
         vault_writer=ctx.vault_writer,
         config=ctx.config,
+        native_threads=ctx.native_threads,
     )
