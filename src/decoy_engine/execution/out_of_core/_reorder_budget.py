@@ -40,6 +40,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from decoy_engine.execution._errors import ExecutionError
+from decoy_engine.execution.out_of_core._memory_estimate import actual_duckdb_cap_bytes
 
 # Share of process_ceiling_bytes handed to the DuckDB connection driving the
 # join+buffer phase (`memory_limit`). Kept well under 1.0 alongside F_SORT so
@@ -210,6 +211,64 @@ def resolve_reorder_budgets(
     )
 
 
+# Bytes of DuckDB hash-build residency charged per distinct parent key when
+# deciding whether a parent is too large for the reorder lane. The reorder
+# lane forces the parent relation as the join BUILD side, and DuckDB's
+# `memory_limit` is a SOFT cap, so a large parent overshoots any engine
+# budget (100M proof: ~30 GB uncapped, killed above 14 GB under an 8 GB
+# budget, while the bounded batch lane did the same job in ~3.9 GB).
+#
+# This is an EMPIRICAL CARDINALITY BACKSTOP over the measured narrow-key
+# domain (hash / length-prefixed FK keys), not a proof that every admitted
+# build fits. Join keys are variable width, so a very wide-key parent can
+# still overshoot; the per-edge wide-key fallback in `_route_policy` and a
+# width-aware ceiling (V2 backlog) cover that gap.
+#
+# Calibration worksheet. C is the feasible interval the recorded anchors
+# define, compared against the cap DuckDB is actually told
+# (`actual_duckdb_cap_bytes(duckdb_memory_limit_bytes, 1)`, decimal "MB"
+# after a whole-MiB floor), not the nominal 0.55x. GB = 1e9, GiB = 2^30.
+#
+#   anchor                              budget   actual cap     constraint
+#   35M keys, must DEMOTE (100M run)    8 GB     4.196e9 B      C > 119.9
+#   2.2M keys, must REORDER (D4a)       1 GiB    5.63e8 B       C <= 255.9
+#   420k keys, must REORDER (both       128 MiB  7.0e7 B        C <= 166.7
+#     children; test_d4a_reorder_reachability)
+#
+# The band is the integers [120, 166]. C = 150 sits conservatively inside it
+# (a larger C demotes sooner) with about 10% margin under 166, so the 420k
+# two-sorter witness stays on reorder. At 8 GB the ceiling is
+# 4_196_000_000 // 150 = 27_973_333 keys: the 35M-key proof demotes, the
+# 2.2M and 420k cases keep the reorder lane.
+#
+# Evidence quality: the 100M reorder figure is a KILLED run (a lower bound,
+# not a completed peak) and the 35M count is the grandchild's parent (the
+# child table). Peak/count (30 GB / 35M ~= 857 B/key) is deliberately NOT
+# used: it mixes fixed cost, sort and masking and would demote every
+# recorded moderate case. The D4a record's COMPLETED 2.0M / 2.2M parents at
+# 1 GiB, inside the 1.35x RSS envelope, is the strongest "stay on reorder"
+# anchor. Not `_BUILD_FLOOR_BYTES_PER_ROW`: that is the resident-build floor
+# (120 B/row, the band's lower edge), and the join build side is heavier.
+# Basis: the reorder-memory FRAME and docs/records/2026-10-15-d4a-reorder-
+# revalidation.md; no new GCP runs. Calibrated against DuckDB as pinned in
+# this engine's lockfile; re-derive the band if the pin or key encoding moves.
+_REORDER_BUILD_BYTES_PER_KEY = 150
+
+
+def safe_parent_key_ceiling(budgets: ReorderBudgets) -> int:
+    """Largest distinct parent-key count the reorder lane may take at
+    `budgets`; a parent above it demotes to the bounded batch lane.
+
+    Uses the cap DuckDB is told for the join connection (live instances = 1,
+    as `decide_route` sizes `joiner_memory_limit`), so the ceiling tracks the
+    enforced limit rather than the nominal fraction. Pure arithmetic, no I/O.
+    """
+    return (
+        actual_duckdb_cap_bytes(budgets.duckdb_memory_limit_bytes, 1)
+        // _REORDER_BUILD_BYTES_PER_KEY
+    )
+
+
 def require_disk(
     budgets: ReorderBudgets,
     *,
@@ -253,4 +312,5 @@ __all__ = [
     "phase3_head_fit",
     "require_disk",
     "resolve_reorder_budgets",
+    "safe_parent_key_ceiling",
 ]
