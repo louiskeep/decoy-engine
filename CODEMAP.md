@@ -140,6 +140,7 @@ Shared Python data engine for Decoy masking, generation, plan-compile execution,
 | Execution strategies | `src/decoy_engine/execution/_strategies/` |
 | `text_mask` strategy: config surface, TIER table, operator doc | `docs/strategies.md` (text_mask section) |
 | `text_mask` core logic: span masking, dispatch table, HMAC keying | `src/decoy_engine/transforms/text_mask.py` |
+| `text_mask` native FF1 spans and Python fallback | `src/decoy_engine/execution/native/_text_mask_native_fpe.py` (called by `native/_kernels_scalar.py`) |
 | `joint_mask` strategy: config surface, modes, cross-version caveat | `docs/strategies.md` (joint_mask section) |
 | `joint_mask` core logic: HMAC-keyed row selection, gen-mode sampling | `src/decoy_engine/transforms/joint_mask.py` |
 | `geo_generalize` strategy: config surface, cascade levels, Safe Harbor framing | `docs/strategies.md` (geo_generalize section) |
