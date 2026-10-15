@@ -540,6 +540,7 @@ def resolve_execution_route(
     """
     from decoy_engine.execution._pipeline_routing import decide_execution_route
     from decoy_engine.execution._pipeline_routing_fk_dtype import fk_out_of_core_dtype_hazard
+    from decoy_engine.execution.out_of_core._vault_collect import vault_ooc_safe
 
     ooc_ok, ooc_code, rows, rows_exact = out_of_core_routing_signals(
         profile,
@@ -587,6 +588,7 @@ def resolve_execution_route(
         lazy_transform_bearing=lazy,
         fk_ooc_dtype_hazard=ooc_ok
         and fk_out_of_core_dtype_hazard(plan, graph, caller_sources=caller_sources),
+        vault_ooc_safe=ooc_ok and vault_ooc_safe(config, plan, graph, caller_sources, vault_writer),
     )
     if route == "out_of_core":
         # OOC-D advisory disk preflight (warns only, never rejects/reroutes):

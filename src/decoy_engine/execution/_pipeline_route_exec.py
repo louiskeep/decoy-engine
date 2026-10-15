@@ -205,6 +205,8 @@ def run_out_of_core_route(
     unconfigured_column_policy: UnconfiguredColumnPolicy | None = None,
     key_provider: KeyProvider | None = None,
     out_of_core_reorder_threshold_rows: int | None = None,
+    vault_writer: Any = None,
+    config: dict[str, Any] | None = None,
 ) -> ExecutionResult:
     """Execute the out-of-core FK route and package it as an `ExecutionResult`.
 
@@ -418,6 +420,8 @@ def run_out_of_core_route(
         unconfigured_column_policy=unconfigured_column_policy,
         key_provider=key_provider,
         out_of_core_reorder_threshold_rows=out_of_core_reorder_threshold_rows,
+        vault_writer=vault_writer,
+        config=config,
     )
     quality_metrics = dict(ooc_result.quality_metrics)
     quality_metrics["execution"] = execution_telemetry(

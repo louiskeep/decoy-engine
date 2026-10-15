@@ -99,10 +99,11 @@ from decoy_engine.execution.out_of_core._stream_join import (
     JoinRowCursor,
     StreamFkJoiner,
 )
+from decoy_engine.execution.out_of_core._vault_collect import collect_batch_vault
 from decoy_engine.relationships._graph import OrphanPolicy
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Iterator, Mapping
     from pathlib import Path
     from typing import TypeAlias
 
@@ -142,6 +143,8 @@ def stream_table(
     mask_key: bytes | None = None,
     code_set_corpora: dict[tuple[str, str], dict[str, Any]] | None = None,
     hash_run: OocHashRun | None = None,
+    vault_writer: Any = None,
+    vault_config: Mapping[str, Any] | None = None,
 ) -> None:
     """Rewrite one table via the three-phase sequential reorder driver.
 
@@ -346,6 +349,8 @@ def stream_table(
                 sub_floor_totals=text_mask_sub_floor_totals,
                 hash_plan=hash_plan,
             )
+            # Aligned source/masked pair, before the reorder and the type reconcile.
+            collect_batch_vault(vault_config, table_name, raw_batch, masked_batch, vault_writer)
             for col in payload_masked_observed:
                 idx = masked_batch.schema.get_field_index(col)
                 if idx >= 0:

@@ -296,6 +296,7 @@ def decide_execution_route(
     probe_recovers_full_frame: bool | None = None,
     lazy_transform_bearing: bool = False,
     fk_ooc_dtype_hazard: bool = False,
+    vault_ooc_safe: bool = False,
 ) -> tuple[str, str]:
     """Decide `(route, route_reason)` -- `"out_of_core"`, `"sequential"`, or
     `"full_frame"` -- or RAISE a fail-closed reject-before-read.
@@ -345,6 +346,13 @@ def decide_execution_route(
     `fk_ooc_dtype_hazard` (caller-precomputed from the source schemas by
     `_pipeline_routing_fk_dtype`): out-of-core would reject a key type the oracle
     completes, so a fitting job with it takes sequential rather than out-of-core.
+
+    `vault_ooc_safe` (D3b, caller-precomputed by `out_of_core._vault_collect.vault_ooc_safe`):
+    every vaulted column is on the reviewed allowlist, string-typed in and out, and not an
+    incoming FK child key. Such a job is otherwise a pure-mask job, so it takes the
+    out-of-core route (which collects the vault per batch) instead of full-frame-or-reject.
+    It never enables sequential, which has no vault collector, and the byte-estimate flag
+    OFF restores the old behaviour.
 
     Priority (SC2), for a relationship-bearing PURE-MASK job under `auto`:
     out-of-core (when compat-admitted AND large) > sequential (bounded but
@@ -416,6 +424,24 @@ def decide_execution_route(
         resolved_substrate=resolved_substrate,
     )
     cyclic = _has_cross_table_fk_cycle(graph)
+    # D3b: the vault is the ONLY disqualifier lifted, and only onto out-of-core.
+    vault_ooc_ready = (
+        vault_ooc_safe
+        and vault_writer is not None
+        and not cyclic
+        and has_mask_table
+        and out_of_core_compatible
+        and not fk_ooc_dtype_hazard
+        and _sequential_eligible(
+            profile,
+            has_generate_table=has_generate_table,
+            validators=validators,
+            fidelity_report=fidelity_report,
+            vault_writer=None,
+            post_validation=post_validation,
+            resolved_substrate=resolved_substrate,
+        )[0]
+    )
     # `eligible` is a job-SHAPE check and stays true for a cross-table cycle, so
     # `not cyclic` is what keeps a cyclic job (no bounded route can order it) off
     # the bounded path.
@@ -487,6 +513,14 @@ def decide_execution_route(
         and not has_generate_table
     )
     if byte_estimate_in_scope:
+        if vault_ooc_ready and full_frame_fits_estimate is True:
+            # A vault job that FITS takes the lower-memory OOC route (GAP6) instead of full-frame.
+            # The vault accumulates O(distinct triples) in PYTHON memory, OUTSIDE the OOC spill
+            # budget, so a NON-fitting or UNPRICEABLE vault job is NOT admitted here: it falls
+            # through to the full-frame-fit check (which also fails) and is rejected, exactly as a
+            # too-big vault job is today. The vault cannot be bounded for an oversized job; a
+            # spillable-vault follow-on could lift this. (Codex final gate HIGH.)
+            return "out_of_core", "byte_estimate_bounded_out_of_core"
         # §13's ruling: admit full_frame ONLY when the conservative
         # estimate clears the budget with margin (`fits` already applied
         # the asymmetric error_band). UNPRICEABLE (`None`) is treated
