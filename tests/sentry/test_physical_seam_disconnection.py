@@ -295,6 +295,12 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         # D3b (token vault on the bounded out-of-core route): the vault collector the two
         # out-of-core drivers call. It imports nothing from `execution.physical`.
         "src/decoy_engine/execution/out_of_core/_vault_collect.py",
+        # Reorder parent-size guard (2026-10-15): `decide_route` demotes a large-parent
+        # reorder-eligible table to the bounded batch lane (`_route_policy.py`), using the
+        # budget-derived `safe_parent_key_ceiling` (`_reorder_budget.py`). Both are
+        # intra-OOC routing/budget math and import nothing from `execution.physical`.
+        "src/decoy_engine/execution/out_of_core/_route_policy.py",
+        "src/decoy_engine/execution/out_of_core/_reorder_budget.py",
         "src/decoy_engine/execution/native/_chunk_masking.py",
         # R1b: the resolved per-operator parameters and the shared kernel step both native
         # routes call; `_chunk_masking.py` and `_chunked_entry.py` above only rewire to them.
