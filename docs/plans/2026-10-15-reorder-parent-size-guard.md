@@ -88,19 +88,27 @@ touched.
 
 ## 3. Calibrating `_REORDER_BUILD_BYTES_PER_KEY` (measure-first; reproducible worksheet)
 
-Pick a dedicated constant `C` (bytes per parent key) so the guard divert the unbounded case and
-does NOT regress the recorded moderate case. Two recorded anchors pin a FEASIBLE INTERVAL (Codex
-HIGH-2 arithmetic; GB = decimal 1e9, GiB = 2^30):
-- Demote 35M keys at an 8 GB budget (enforced DuckDB cap ~4.4 GB): requires `C > ~125.7 B/key`.
-- Preserve the D4a 2.2M-key run at a 1 GiB budget (completed within 1.35x): requires `C <= ~268.4
-  B/key`.
-So `C` in `(~126, ~268]` B/key. Pick CONSERVATIVELY within the interval (larger C -> smaller
-ceiling -> demote sooner), while keeping the 2.2M@1GiB case on reorder; the build records a chosen
-value with its margin. `_BUILD_FLOOR_BYTES_PER_ROW = 120` is the resident-build anchor the interval
-sits just above (the join build side is heavier than the resident floor), consistent with
-conservative. Do NOT use `30 GB / 35M ~= 857 B/key` -- that gross peak-over-count mixes fixed
-costs, sorting, masking and is a kill lower bound; it would demote the recorded 2.2M@1GiB case
-(~689k-key ceiling), a regression.
+Pick a dedicated constant `C` (bytes per parent key) so the guard diverts the unbounded case and
+does NOT regress the recorded/pinned moderate cases. The ceiling is `actual_duckdb_cap_bytes(...) //
+C` (the ENFORCED cap, §1/LOW-6), so all anchor arithmetic uses the ACTUAL cap, not the nominal
+0.55x (GB = decimal 1e9, GiB = 2^30; Codex rev-2 reproduced these):
+
+| Anchor | budget | actual DuckDB cap | constraint |
+|---|---|---|---|
+| must DEMOTE: 35M keys | 8 GB | 4,196,000,000 B | `C > 119.89` |
+| must REORDER (recorded D4a): 2.2M keys | 1 GiB | 563,000,000 B | `C <= 255.9` |
+| must REORDER (EXISTING perf test, both children): 420k keys | 128 MiB | 70,000,000 B | `C <= 166.67` |
+
+The third row is the EXISTING `tests/perf/test_d4a_reorder_reachability.py:43` two-sorter witness
+(420k parent keys reorder at 128 MiB); a larger `C` would demote its grandchild and BREAK that
+test. All three together give integer **`C` in [120, 166] B/key**. Pick CONSERVATIVELY within the
+band (larger C -> smaller ceiling -> demote sooner) but with margin below 166 to keep the 420k
+witness safe -- recommend `C = 150` (ceiling at 8 GB actual cap ~= 28.0M keys: 35M demotes, the
+420k / 2.2M cases stay on reorder with headroom). The build records the chosen value + margin.
+`_BUILD_FLOOR_BYTES_PER_ROW = 120` is the resident-build anchor the band sits just above (the join
+build side is heavier than the resident floor), consistent with conservative. Do NOT use `30 GB /
+35M ~= 857 B/key` -- that gross peak-over-count mixes fixed costs, sorting, masking and is a kill
+lower bound; it would demote every recorded moderate case.
 
 The constant's docstring MUST carry a reproducible calibration worksheet: workload (the D4 FK chain
 shape + key encoding), engine/DuckDB versions, budgets (with GB/GiB stated), which measurements are
@@ -134,12 +142,16 @@ the D4a record (established-methodology).
   threshold: `ceiling-1` -> reorder; `ceiling` -> reorder; `ceiling+1` -> batch. PLUS: a budget
   whose ceiling falls BELOW the 2M selection threshold (the sub-threshold path already returns batch
   -- the guard must not misbehave), and a `threshold`-override of zero.
-- **T3 moderate stays on reorder + large demotes:** the RECORDED D4a case (2.2M keys, 1 GiB budget)
-  -> `use_reorder is True`, `reorder_caps is not None`; and the 100M-class (~35M keys, 8 GB budget)
-  -> batch. These pin both ends of the calibration interval against regression.
-- **T4 ceiling math unit:** `safe_parent_key_ceiling(budgets)` directly against known budgets, using
-  `actual_duckdb_cap_bytes(...)` (not nominal 0.55x), so the constant + formula + the MiB/MB
-  conversion are pinned independent of `decide_route`.
+- **T3 moderate stays on reorder + large demotes (pin all three calibration anchors):** (a) the
+  recorded D4a case (2.2M keys, 1 GiB) -> `use_reorder is True`; (b) the 100M-class (~35M keys, 8 GB)
+  -> batch; (c) the EXISTING `tests/perf/test_d4a_reorder_reachability.py` (420k keys, 128 MiB, BOTH
+  children reorder) stays green unchanged -- it must remain in the suite and pass, proving the
+  constant does not demote the two-sorter witness. These pin all three ends of the calibration band.
+- **T4 ceiling math unit:** `safe_parent_key_ceiling(budgets)` directly against known budgets via
+  `actual_duckdb_cap_bytes(budgets.duckdb_memory_limit_bytes, 1)` (the ENFORCED cap, matching the
+  joiner's `memory_limit_for(..., 1)`; NOT nominal 0.55x) -- e.g. 8 GB -> actual cap 4,196,000,000 B
+  -> `ceiling = 4_196_000_000 // C`. Pins the constant + formula + the MiB/MB conversion independent
+  of `decide_route`.
 - **T5 demotion parity (route-seam harness, Codex MED-4):** use the
   `test_out_of_core_route_seam_parity.py:155` pattern -- a sink + resolved budgets + an otherwise
   reorder-eligible fixture whose parent is above the ceiling. WITNESS batch construction and the
