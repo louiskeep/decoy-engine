@@ -70,4 +70,6 @@ def execute_out_of_core_route(ctx: PipelineRunContext, decision: RouteDecision) 
         unconfigured_column_policy=ctx.projection_policy,
         key_provider=ctx.key_provider,
         out_of_core_reorder_threshold_rows=ctx.out_of_core_reorder_threshold_rows,
+        vault_writer=ctx.vault_writer,
+        config=ctx.config,
     )

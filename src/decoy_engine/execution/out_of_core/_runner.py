@@ -88,6 +88,10 @@ from decoy_engine.execution.out_of_core._stream_driver import stream_table
 from decoy_engine.execution.out_of_core._stream_driver_support import (
     _code_set_records_and_evidence_for_table,
 )
+from decoy_engine.execution.out_of_core._vault_collect import (
+    assert_vault_inputs,
+    collect_batch_vault,
+)
 from decoy_engine.keyprovider import require_mask_key
 from decoy_engine.plan._types import ColumnSeed
 from decoy_engine.relationships._graph import OrphanPolicy
@@ -124,6 +128,8 @@ def run_fk_out_of_core(
     unconfigured_column_policy: UnconfiguredColumnPolicy | None = None,
     key_provider: KeyProvider | None = None,
     out_of_core_reorder_threshold_rows: int | None = None,
+    vault_writer: Any = None,
+    config: Mapping[str, Any] | None = None,
 ) -> ExecutionResult:
     """Run the out-of-core FK relationship route as a batch stream.
 
@@ -168,6 +174,11 @@ def run_fk_out_of_core(
     and `resolve_reorder_threshold_rows` for the override's `None`/`0`/
     negative/`bool` semantics. Route choice changes timing and memory, never
     output (`_route_policy.py`'s module docstring).
+
+    `vault_writer` + `config` (D3b): both drivers add each masked batch's `vault: true`
+    pairs to the writer at their mask step. Routing admits only jobs whose vaulted columns
+    are route-stable (`_vault_collect.vault_ooc_safe`); persisting is the caller's, after a
+    successful return.
     """
     if batch_rows is not None and batch_rows < 1:
         raise ExecutionError(
@@ -179,6 +190,7 @@ def run_fk_out_of_core(
     # DE-02 (Codex BLOCKER 4): fail-closed gate FIRST, before any admissibility or source
     # check, so a keyed out-of-core job can never run off job_seed at GA from any entry point.
     mask_key = require_mask_key(plan, key_provider)
+    assert_vault_inputs(vault_writer, config, mask_key)
     work = order_work(build_work_list(plan, registry), relationship_graph)
     compat = check_out_of_core_compatibility(plan, work, relationship_graph)
     if not compat.accepted:
@@ -250,6 +262,8 @@ def run_fk_out_of_core(
                 "mask_key": mask_key,
                 "code_set_corpora": code_set_corpora,
                 "hash_run": hash_run,
+                "vault_writer": vault_writer,
+                "vault_config": config,
             }
             # `reorder_caps is not None` (not `route.use_reorder`) is the branch
             # condition so this narrows for mypy directly, matching `RouteDecision`'s
@@ -321,6 +335,8 @@ def _stream_table(
     mask_key: bytes | None = None,
     code_set_corpora: dict[tuple[str, str], dict[str, Any]] | None = None,
     hash_run: OocHashRun | None = None,
+    vault_writer: Any = None,
+    vault_config: Mapping[str, Any] | None = None,
 ) -> None:
     """Rewrite pass for one table: mask + join per batch, then emit.
 
@@ -441,6 +457,8 @@ def _stream_table(
                     sub_floor_totals=text_mask_sub_floor_totals,
                     hash_plan=hash_plan,
                 )
+                # Before the join: FK child keys are not yet remapped here (they decline admission).
+                collect_batch_vault(vault_config, table_name, raw_batch, out, vault_writer)
                 for join_idx, joiner in enumerate(joiners):
                     # key_source pins every join to the immutable raw batch:
                     # edges overlapping on a child column must each key off

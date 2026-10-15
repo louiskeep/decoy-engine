@@ -80,6 +80,7 @@ def _wire(
     import decoy_engine.execution._pipeline_routing as routing_mod
     import decoy_engine.execution._pipeline_routing_fk_dtype as fk_dtype_mod
     import decoy_engine.execution.out_of_core._spill_estimate as spill_mod
+    import decoy_engine.execution.out_of_core._vault_collect as vault_mod
 
     oocrs = _Spy(ret=oocrs_tuple)
     rffe = _Spy(ret=False)  # full_frame_fits_estimate (non-None: pins the #34 forward)
@@ -87,8 +88,10 @@ def _wire(
     decide = _Spy(ret=(decide_route, "spy_reason"))
     enforce = _Spy(ret=None)
     hazard = _Spy(ret=True)  # fk_ooc_dtype_hazard (non-default: pins the forward)
+    vault_safe = _Spy(ret=True)  # vault_ooc_safe (non-default: pins the forward)
 
     monkeypatch.setattr(fk_dtype_mod, "fk_out_of_core_dtype_hazard", hazard)
+    monkeypatch.setattr(vault_mod, "vault_ooc_safe", vault_safe)
     monkeypatch.setattr(signals, "out_of_core_routing_signals", oocrs)
     monkeypatch.setattr(signals, "resolve_full_frame_fits_estimate", rffe)
     monkeypatch.setattr(signals, "resolve_probe_recovery", rpr)
@@ -125,6 +128,7 @@ def _wire(
         "decide": decide,
         "enforce": enforce,
         "hazard": hazard,
+        "vault_safe": vault_safe,
     }
 
 
@@ -179,6 +183,10 @@ def test_route_forwards_every_decide_execution_route_argument(
     h_args, h_kw = spies["hazard"].last
     assert h_args == (_PLAN, _GRAPH)
     assert h_kw == {"caller_sources": _CALLER}
+    assert kw.get("vault_ooc_safe") is True
+    v_args, v_kw = spies["vault_safe"].last
+    assert v_args == (_CONFIG, _PLAN, _GRAPH, _CALLER, _VAULT)
+    assert v_kw == {}
 
 
 def test_route_does_not_price_the_fk_dtype_hazard_for_an_out_of_core_incompatible_job(
@@ -189,6 +197,9 @@ def test_route_does_not_price_the_fk_dtype_hazard_for_an_out_of_core_incompatibl
     spies = _wire(monkeypatch, decide_route="sequential", oocrs_tuple=(False, "RC", 1, True))
     assert spies["hazard"].calls == []
     assert spies["decide"].last[1].get("fk_ooc_dtype_hazard") is False
+    # Same for the vault admission: it only matters when out-of-core can be chosen.
+    assert spies["vault_safe"].calls == []
+    assert spies["decide"].last[1].get("vault_ooc_safe") is False
 
 
 def test_route_runs_disk_preflight_only_on_out_of_core_with_exact_args(
