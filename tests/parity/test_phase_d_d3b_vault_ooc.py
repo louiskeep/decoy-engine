@@ -319,9 +319,18 @@ def decide(**kw: Any) -> tuple[str, str]:
 _OOC = ("out_of_core", "byte_estimate_bounded_out_of_core")
 
 
-@pytest.mark.parametrize("fits", [True, False, None])
-def test_safe_vault_job_routes_out_of_core_whether_or_not_it_fits(fits: bool | None) -> None:
-    assert decide(full_frame_fits_estimate=fits) == _OOC
+def test_safe_vault_job_routes_out_of_core_when_it_fits() -> None:
+    assert decide(full_frame_fits_estimate=True) == _OOC
+
+
+@pytest.mark.parametrize("fits", [False, None])
+def test_safe_vault_job_that_does_not_fit_is_rejected(fits: bool | None) -> None:
+    # The vault accumulates O(distinct triples) in Python memory, OUTSIDE the OOC spill budget,
+    # so a non-fitting or unpriceable vault job cannot be bounded on OOC: it rejects, exactly as a
+    # too-big vault job does today (Codex final gate HIGH). A spillable-vault follow-on could lift it.
+    with pytest.raises(ExecutionError) as exc:
+        decide(full_frame_fits_estimate=fits)
+    assert exc.value.code == "fk_full_frame_oom_risk_rejected"
 
 
 def test_unsafe_vault_job_stays_full_frame_when_it_fits() -> None:
@@ -645,20 +654,28 @@ def test_declined_jobs_stay_full_frame_and_keep_the_oracle_vault(case: str, tmp_
     assert_same_vault(writer, oracle_writer, tmp_path)
 
 
-def test_a_too_big_declined_vault_job_is_rejected_while_the_admitted_one_runs(
+def test_a_too_big_vault_job_rejects_and_a_fitting_one_runs_out_of_core(
     tmp_path: Path,
 ) -> None:
-    # 64 MB is the budget floor; 200k rows is over it for full-frame, so only a bounded route fits.
-    rows = 200_000
-    declined = _declined_cases(tmp_path, rows=rows)["numeric-redact"]
+    # The vault accumulates O(distinct triples) in Python memory, OUTSIDE the OOC spill budget, so a
+    # vault job that does not fit full-frame cannot be bounded on OOC: it rejects, whether the vaulted
+    # column is admission-safe or not (Codex final gate HIGH). A FITTING safe-vault job takes OOC.
+    budget = 64 * 1024 * 1024  # 64 MB floor; 200k rows is over it, so full-frame does not fit.
+    big = 200_000
+    # (a) a too-big DECLINED (unsafe, numeric-redact) vault job rejects.
+    declined = _declined_cases(tmp_path, rows=big)["numeric-redact"]
     with pytest.raises(ExecutionError) as exc:
-        run(*declined, out_of_core_budget_bytes=64 * 1024 * 1024)
+        run(*declined, out_of_core_budget_bytes=budget)
     assert exc.value.code == "fk_full_frame_oom_risk_rejected"
-    sub = tmp_path / "admitted"
-    sub.mkdir()
-    admitted = _declined_job(sub, [_redact("v", "vn", "XXX", vault=True)], rows=rows)
-    result, _ = run(*admitted, out_of_core_budget_bytes=64 * 1024 * 1024)
-    assert mode(result) == _OOC
+    # (b) a too-big SAFE vault job ALSO rejects (the vault cannot be bounded on OOC) -- previously
+    # this was wrongly admitted to OOC. (A FITTING safe vault job routing OOC is covered by the
+    # many `standard()`-based tests above.)
+    big_safe_dir = tmp_path / "toobig_safe"
+    big_safe_dir.mkdir()
+    big_safe = _declined_job(big_safe_dir, [_redact("v", "vn", "XXX", vault=True)], rows=big)
+    with pytest.raises(ExecutionError) as exc2:
+        run(*big_safe, out_of_core_budget_bytes=budget)
+    assert exc2.value.code == "fk_full_frame_oom_risk_rejected"
 
 
 def test_the_rollback_flag_runs_an_admitted_job_full_frame(tmp_path: Path) -> None:

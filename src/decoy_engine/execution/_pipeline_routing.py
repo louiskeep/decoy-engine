@@ -513,8 +513,13 @@ def decide_execution_route(
         and not has_generate_table
     )
     if byte_estimate_in_scope:
-        if vault_ooc_ready:
-            # Before the full-frame-fit return below, which a vault job would otherwise take.
+        if vault_ooc_ready and full_frame_fits_estimate is True:
+            # A vault job that FITS takes the lower-memory OOC route (GAP6) instead of full-frame.
+            # The vault accumulates O(distinct triples) in PYTHON memory, OUTSIDE the OOC spill
+            # budget, so a NON-fitting or UNPRICEABLE vault job is NOT admitted here: it falls
+            # through to the full-frame-fit check (which also fails) and is rejected, exactly as a
+            # too-big vault job is today. The vault cannot be bounded for an oversized job; a
+            # spillable-vault follow-on could lift this. (Codex final gate HIGH.)
             return "out_of_core", "byte_estimate_bounded_out_of_core"
         # §13's ruling: admit full_frame ONLY when the conservative
         # estimate clears the budget with margin (`fits` already applied
