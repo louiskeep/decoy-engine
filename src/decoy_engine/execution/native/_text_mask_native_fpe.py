@@ -125,9 +125,11 @@ def encrypt_spans(
                 forward=True,
                 native_threads=None,
             )
-        except ValueError:
-            # A coded kernel error (bad seed length, ...): decline so the oracle raises it from
-            # its own call site in its own order.
+        except Exception:
+            # Any kernel failure -- a coded ValueError (bad seed length, ...) or an unexpected
+            # companion-side error -- declines the whole detector to the proven oracle, which
+            # either reproduces the value byte-identically or raises/handles sub-floor from its
+            # own call site in its own order. Fail safe to the byte-exact Python path.
             continue
         rejected = {int(i) for i, _ in errors}
         for i, (text, value) in enumerate(zip(texts, enc.to_pylist(), strict=True)):

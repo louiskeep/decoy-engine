@@ -283,6 +283,21 @@ def test_whole_batch_kernel_error_declines_to_the_oracle(monkeypatch: pytest.Mon
     assert got == want
 
 
+def test_an_unexpected_kernel_error_fails_safe_to_the_oracle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A non-ValueError companion-side failure must still decline to the byte-exact oracle, not
+    # propagate and crash the job (dennis LOW-1: the handler catches any Exception, not just coded
+    # ValueErrors). A mutant narrowing this back to `except ValueError` lets the error escape.
+    def boom(*a: Any, **k: Any) -> Any:
+        raise RuntimeError("unexpected companion-side failure")
+
+    monkeypatch.setattr(nfpe, "load_fpe_batch", lambda: boom)
+    got, _ = _native(NATIVE_CORPUS, **FPE_ONLY)
+    want, _ = _oracle(NATIVE_CORPUS, **FPE_ONLY)
+    assert got == want
+
+
 def test_randomised_digit_spans_match_the_python_oracle(paths: _Paths) -> None:
     rng = random.Random(0xC6B)
 
