@@ -266,7 +266,13 @@ def test_worker_reorder_off_and_forced_route_are_recorded(
 
 
 def test_worker_forced_oom_is_not_a_silent_pass(small_chain: Path, tmp_path: Path) -> None:
-    rc, rec = _worker(small_chain, tmp_path, "--budget-mb", "512", "--mem-cap-mb", "64")
+    # A tight RLIMIT_DATA cap forces a resource failure on brk-based allocators; where
+    # large allocations go through mmap (seen on some CI runners) the cap does not bite,
+    # so a short timeout backstop guarantees the run still ends as a classified, non-silent
+    # failure instead of hanging. Either path: completed is False with a recorded reason.
+    rc, rec = _worker(
+        small_chain, tmp_path, "--budget-mb", "512", "--mem-cap-mb", "64", "--timeout-s", "45"
+    )
     assert rc != 0
     assert rec["completed"] is False and rec["failure"] is not None
     assert rec["requested"]["mem_cap_kind"] == "RLIMIT_DATA"
