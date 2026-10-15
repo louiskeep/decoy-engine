@@ -27,7 +27,19 @@ from typing import Any
 
 import pytest
 
-pytestmark = pytest.mark.perf
+from decoy_engine.execution.native._companion_status import native_companion_status
+
+# Both tests measure the native out-of-core path (native_columns > 0, native thread
+# scaling). That REQUIRES the compiled companion; skip when absent, as the native suite
+# does. This is the regression-gate (.[dev,cloud], no companion build) and
+# substrate(pandas) CI legs, where the OOC run falls back to Python (native_columns == 0).
+pytestmark = [
+    pytest.mark.perf,
+    pytest.mark.skipif(
+        not native_companion_status().ok,
+        reason="compiled decoy-engine-native companion unavailable; the native OOC path requires it",
+    ),
+]
 
 _REPO = Path(__file__).resolve().parents[2]
 _SCRIPTS = _REPO / "scripts" / "fk-scale"
