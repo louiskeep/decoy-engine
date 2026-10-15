@@ -68,16 +68,20 @@ strings exceed 2^31 bytes in one run. This is the D4 failure.
 
 It does NOT lift a separate, much higher per-batch ceiling, and the plan must not claim
 it does. The emit re-box is bounded by row count, not bytes: a single resolved batch
-(default 65,536 rows, `_join.py:40`) rebuilds a plain int32 `string`/`binary` array, so
-its data span must fit 2^31 bytes. That is ~32 KB per non-null value at the default
-batch size (UTF-8 bytes for strings). The same per-batch int32 bound applies EARLIER, at
-the DuckDB Arrow fetch (`_stream_join.py:516`), which runs BEFORE the proposed widening,
-so widening cannot rescue a fetch batch that is already oversized on export.
+(default 65,536 rows, `_join.py:40`) rebuilds a plain int32 `string`/`binary` array, whose
+data span must fit the signed-int32 maximum of 2^31 - 1 bytes. This is an AGGREGATE
+constraint across the batch, not a per-value limit: with every row non-null it means an
+average just under 32 KiB per value (UTF-8 bytes for strings). The same per-batch int32
+bound applies EARLIER, at the DuckDB Arrow fetch (`_stream_join.py:516`), which runs
+BEFORE the proposed widening, so widening cannot rescue a fetch batch that is already
+oversized on export.
 
 This fix is therefore scoped to workloads whose per-batch fetched and resolved arrays
-stay int32-representable (every realistic masked value, and specifically the D4 fixture:
-masked width 4 over 65,536-row batches is ~256 KB per batch column, six orders of
-magnitude under the per-batch limit). Arbitrary per-value width is out of scope and left
+stay int32-representable. The D4 fixture satisfies this with large margin: `--width`
+(`build_fk_chain.py:69`) counts payload COLUMNS, and each masked FK value is a 32-byte
+digest rendered as 64 ASCII hex bytes (`bench_worker_fk.py:118`, no truncation), so one
+masked column at 65,536 rows is ~4 MiB, about 512x under the 2^31 - 1 ceiling. Arbitrary
+per-value width is out of scope and left
 as a documented limitation; the recommended follow-up is byte-aware emit batching, or a
 clear fail-closed error on an oversized single value rather than a raw `ArrowInvalid`.
 This limitation is recorded in the module docstring and in the D4 record.
