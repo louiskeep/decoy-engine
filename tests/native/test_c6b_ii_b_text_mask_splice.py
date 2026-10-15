@@ -256,6 +256,31 @@ def test_b1_plan_resolves_the_complete_detector_set_first() -> None:
     assert plan is not None and plan.rust_ids is None, "ssn is Python-detected: merged-span mode"
 
 
+def test_b1_crash_class_configs_decline_to_the_oracle() -> None:
+    # Codex final-gate MED-1/MED-2: configs where the oracle returns a value but the native path
+    # would raise -- an unrepresentable token (a lone surrogate cannot encode to UTF-8 for Rust),
+    # and a non-string strategy value (unhashable, crashes the set-membership test). Both must
+    # decline at plan time so the Python splice reproduces the oracle; a crash is worse than a diff.
+    surrogate = "\ud800"
+    assert plan_native_splice(["email"], None, "redact", surrogate) is None
+    assert plan_native_splice(["email"], {"email": []}, "redact", "[R]") is None
+    assert plan_native_splice(["email"], {"email": {}}, "redact", "[R]") is None
+    # MED-1 end-to-end: Codex's repro -- cells with NO matching span, so the surrogate token is
+    # never emitted into the output (Arrow can hold the result). Pre-fix the native path eagerly
+    # passed the token to Rust and crashed on the PyO3 conversion; the oracle returns the cells
+    # unchanged. (A cell that DOES emit a surrogate token crashes Arrow output on every route,
+    # including slice a and full-frame-on-Arrow; that is a pre-existing Arrow limit, out of scope.)
+    plain = ["plain text", "nothing here"]
+    assert _native(
+        plain, detectors=["email"], token=surrogate, unmatched_span_policy="passthrough"
+    ) == _oracle(plain, detectors=["email"], token=surrogate, unmatched_span_policy="passthrough")
+    # MED-2 end-to-end: a non-string (unhashable) strategy value on a cell WITH a span.
+    spanned = ["mail a@b.com now", "x"]
+    assert _native(spanned, detectors=["email"], per_detector_strategy={"email": []}) == _oracle(
+        spanned, detectors=["email"], per_detector_strategy={"email": []}
+    )
+
+
 def test_b1_older_companion_without_the_symbols_keeps_slice_a(
     monkeypatch: pytest.MonkeyPatch, paths: _Paths
 ) -> None:

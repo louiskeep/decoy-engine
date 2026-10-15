@@ -93,6 +93,12 @@ def plan_native_splice(
     """
     if unmatched_span_policy not in _NATIVE_POLICIES or not isinstance(token, str):
         return None
+    try:
+        token.encode("utf-8")
+    except UnicodeEncodeError:
+        # A token with unpaired surrogates cannot cross to Rust; the oracle emits it verbatim,
+        # so decline and let the Python splice reproduce that.
+        return None
     effective: dict[str, str] = dict(DETECTOR_DEFAULTS)
     if strategy_map:
         effective.update(strategy_map)
@@ -101,7 +107,9 @@ def plan_native_splice(
     verbatim: dict[str, bool] = {}
     for det_id in relevant:
         strategy = effective.get(det_id, "redact")
-        if strategy not in _NATIVE_STRATEGIES:
+        # A non-string strategy value (an unhashable list/dict, say) is unsupported config the
+        # oracle validates; decline rather than crash the set-membership test.
+        if not isinstance(strategy, str) or strategy not in _NATIVE_STRATEGIES:
             return None
         verbatim[det_id] = strategy == "passthrough"
     all_rust = all(d in _SUPPORTED_SET for d in relevant)
