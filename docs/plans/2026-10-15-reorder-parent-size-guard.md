@@ -147,6 +147,15 @@ the D4a record (established-methodology).
   -> batch; (c) the EXISTING `tests/perf/test_d4a_reorder_reachability.py` (420k keys, 128 MiB, BOTH
   children reorder) stays green unchanged -- it must remain in the suite and pass, proving the
   constant does not demote the two-sorter witness. These pin all three ends of the calibration band.
+- **T3b existing fan-in boundary test isolated from the guard (Codex rev-3):** the EXISTING
+  `tests/unit/execution/test_route_policy.py:227` `test_t6_admitted_fan_in_boundary_still_eligible`
+  uses 5M keys/parent at 1 GiB as scaffolding to exercise the 32-edge-eligible / 33-edge-fallback
+  FAN-IN boundary; the C=150 ceiling at 1 GiB (~3.75M) would demote 5M, breaking it. 5M@1GiB
+  genuinely SHOULD demote (5M x 150 B = 750 MB > the 563 MB cap; the fixture made no memory-safety
+  claim), so ADJUST this fixture's per-parent key count to a value above the 2M selection threshold
+  AND below the ceiling with margin (e.g. ~2.5-3M keys) -- OR raise its budget -- while preserving
+  its EXACT 32-edge reorder assertion and the 33-edge fallback control. This isolates the fan-in
+  boundary from the cardinality guard; it is a scaffolding adjustment, NOT an assertion change.
 - **T4 ceiling math unit:** `safe_parent_key_ceiling(budgets)` directly against known budgets via
   `actual_duckdb_cap_bytes(budgets.duckdb_memory_limit_bytes, 1)` (the ENFORCED cap, matching the
   joiner's `memory_limit_for(..., 1)`; NOT nominal 0.55x) -- e.g. 8 GB -> actual cap 4,196,000,000 B
@@ -173,9 +182,11 @@ the D4a record (established-methodology).
 
 - ci-mirror venv for routing/pure-Python; abi-3 companion venv for OOC parity (T5/T6). `~/bin/
   pytest-one`; `PYTHONPATH=<worktree>/src:<worktree>`.
-- T1-T6 green; routing + OOC-parity + reorder-memory suites green; no existing boundary/parity test
-  weakened. Coverage + mutation on the new clause + ceiling math (drop-guard, over-reject, boundary
-  mutants killed).
+- T1-T6 green; routing + OOC-parity + reorder-memory suites green. The ONLY existing test adjusted
+  is the fan-in fixture (T3b: scaffolding key-count moved, assertions preserved); no other
+  boundary/parity/perf test weakened, and `test_d4a_reorder_reachability` stays green unchanged.
+  Coverage + mutation on the new clause + ceiling math (drop-guard, over-reject, boundary mutants
+  killed).
 - Module sizes: `_route_policy.py` 242, `_reorder_budget.py` 256 -- both keep headroom under 600; no
   census, no `_pipeline_routing.py` / `_pipeline_route_exec.py` / `_capacity_eval.py` change.
 - Scope note in the code + record: `decide_route` is the only production reorder-selection path;
