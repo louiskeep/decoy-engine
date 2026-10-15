@@ -47,23 +47,31 @@ def _key_array(kind: str, values: list[int]) -> pa.Array:
     raise AssertionError(kind)
 
 
-def _batches(kind: str, values: list[int], batch_size: int) -> list[pa.RecordBatch]:
+def _batches(
+    kind: str, values: list[int], batch_size: int, *, wide: bool = False
+) -> list[pa.RecordBatch]:
     """Shuffled batches: a `KEY` column of the given type plus a `payload`
-    binary column tied to the key value (so a wrong reorder shows up)."""
+    binary column tied to the key value (so a wrong reorder shows up). `wide`
+    adds non-key `large_string` / `large_binary` payloads (the reorder lane's
+    widened masked columns)."""
     order = list(range(len(values)))
     random.Random(len(values)).shuffle(order)
     shuffled = [values[i] for i in order]
     out = []
     for start in range(0, len(shuffled), batch_size):
         chunk = shuffled[start : start + batch_size]
-        out.append(
-            pa.record_batch(
-                {
-                    KEY: _key_array(kind, chunk),
-                    "payload": pa.array([v.to_bytes(8, "big") for v in chunk], type=pa.binary()),
-                }
+        columns = {
+            KEY: _key_array(kind, chunk),
+            "payload": pa.array([v.to_bytes(8, "big") for v in chunk], type=pa.binary()),
+        }
+        if wide:
+            columns["wide_text"] = pa.array(
+                [f"\u00e9{v % 10}\x00" for v in chunk], type=pa.large_string()
             )
-        )
+            columns["wide_bytes"] = pa.array(
+                [b"\xff\x00" + bytes([v % 251]) for v in chunk], type=pa.large_binary()
+            )
+        out.append(pa.record_batch(columns))
     return out
 
 
@@ -96,16 +104,32 @@ ALLOWLISTED = [
 ]
 
 
+@pytest.mark.parametrize("cap", [256 * 1024, 8 * 1024], ids=["single-run", "multi-run"])
 @pytest.mark.parametrize("kind", ALLOWLISTED)
-def test_positive_parity_per_allowlisted_key_type(kind, tmp_path):
-    # One cheap single-run case per promised key type: value+schema parity to
-    # the in-memory sort_by oracle.
+def test_positive_parity_per_allowlisted_key_type(kind, cap, tmp_path):
+    # One cheap case per promised key type: value+schema parity to the in-memory
+    # sort_by oracle, with large_string/large_binary non-key payloads riding
+    # along. The small cap spills across >= 2 runs, so those payloads go through
+    # the run write, merge, and reread, not only the in-memory flush.
     n = 500
     values = list(range(n))
-    batches = _batches(kind, values, batch_size=37)
+    batches = _batches(kind, values, batch_size=37, wide=True)
     oracle = pa.Table.from_batches(batches).sort_by(KEY)
-    out = _sorted(batches, tmp_path, cap=256 * 1024, fan_in=4)
+    sorter = BoundedExternalSorter(
+        spill_dir=tmp_path / "spill", run_bytes_cap=cap, merge_fan_in=4, sort_key_column=KEY
+    )
+    try:
+        for b in batches:
+            sorter.write(b)
+        if cap < 64 * 1024:
+            assert len(list((tmp_path / "spill").glob("run_*.arrow"))) >= 2
+        sorter.finish()
+        out = pa.Table.from_batches(list(sorter.iter_ordered()), schema=batches[0].schema)
+    finally:
+        sorter.close()
     assert out.schema == oracle.schema
+    assert out.schema.field("wide_text").type == pa.large_string()
+    assert out.schema.field("wide_bytes").type == pa.large_binary()
     assert out.to_pydict() == oracle.to_pydict()
 
 

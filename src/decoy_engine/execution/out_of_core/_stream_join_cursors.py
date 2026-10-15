@@ -20,6 +20,11 @@ they must live together in one module; this sibling imports nothing back from
 `_stream_join.py` (only `BoundedExternalSorter` from `_external_sort.py`, plus
 Arrow/weakref/`ExecutionError`), so there is no import cycle. See
 `_stream_join.py`'s module docstring for the joiner's full lifecycle.
+
+Payload width (D4): `_widen_payload_offsets` carries the masked string/binary
+payload through the sorter as `large_string`/`large_binary`, lifting the int32
+offset limit on a de-chunked run. The per-batch int32 ceiling on the DuckDB fetch
+and on emit is NOT lifted; see that helper's docstring.
 """
 
 from __future__ import annotations
@@ -379,6 +384,45 @@ class ChildKeyLockstepCursor:
 
     def close(self) -> None:
         self._reader.close()
+
+
+_PAYLOAD_PREFIX = "__decoy_parent_masked_"
+_WIDE_PAYLOAD_TYPES = {pa.string(): pa.large_string(), pa.binary(): pa.large_binary()}
+
+
+def _widen_payload_offsets(batch: pa.RecordBatch) -> pa.RecordBatch:
+    """Cast masked string/binary payload columns to their 64-bit-offset twins.
+
+    Arrow `string`/`binary` use signed int32 offsets, so one contiguous array
+    holds at most 2^31 - 1 data bytes; `large_string`/`large_binary` use int64
+    offsets (the Arrow columnar spec's variable-size binary layout). The
+    external sorter de-chunks a whole run into one array (`sort_by`,
+    `combine_chunks`), which overflows int32 offsets once a run's masked payload
+    passes that limit at 100M rows. Widening before the sorter removes that
+    aggregate limit; `resolve_batch` narrows back on emit. Selected by name
+    prefix AND type, so the int64 row number, the bool match token, and any
+    non-text component stay as they are.
+
+    Known limit, not lifted here: each fetched DuckDB batch and each resolved
+    payload-store batch is still an int32-offset array, so one batch (default
+    65,536 rows) whose masked column exceeds 2^31 - 1 bytes in aggregate still
+    raises. Byte-aware batching, or a fail-closed error on an oversized batch,
+    is the follow-up (docs/plans/2026-10-15-d4-reorder-large-string-overflow.md).
+    """
+    columns = list(batch.columns)
+    changed = False
+    for idx, field in enumerate(batch.schema):
+        wide = _WIDE_PAYLOAD_TYPES.get(field.type)
+        if wide is not None and field.name.startswith(_PAYLOAD_PREFIX):
+            columns[idx] = columns[idx].cast(wide)
+            changed = True
+    if not changed:
+        return batch
+    fields = [
+        pa.field(f.name, c.type, f.nullable, f.metadata)
+        for f, c in zip(batch.schema, columns, strict=True)
+    ]
+    return pa.record_batch(columns, schema=pa.schema(fields, metadata=batch.schema.metadata))
 
 
 def _assert_slim_sorter_schema(schema: pa.Schema) -> None:
