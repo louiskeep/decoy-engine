@@ -1,4 +1,4 @@
-Status: plan (Phase D follow-on, reorder-lane parent-size admission guard. rev 1 DRAFT. HOLD build until Codex plan-gate GO. Autonomous merge on the full green gate per Cam's standing order; the Codex FINAL prompt must forbid the reviewer from merging. Cam 2026-10-15 approved: surgical guard now + document + V2 backlog for the partitioned-join redesign.)
+Status: plan (Phase D follow-on, reorder-lane parent-size admission guard. rev 2 (folds Codex plan-gate rev-1 NO-GO: 2 HIGH + 3 MED + 1 LOW -- scope as an empirical CARDINALITY BACKSTOP over the measured narrow-key domain, not a universal build-fit guarantee (keys are variable-width); calibrate the constant from the feasible interval the recorded anchors define via a reproducible worksheet, not peak/count; fix the T2 `>` boundary; T5 uses the route-seam-parity harness with sink+budget+batch-vs-reorder witness; T6 is a real subprocess with a concrete RSS bar; compare against the ACTUAL enforced DuckDB cap). Demotion design + seam + module placement AFFIRMED by the gate. HOLD build until Codex plan-gate GO. Autonomous merge on the full green gate; the Codex FINAL prompt must forbid the reviewer from merging. Cam 2026-10-15: surgical guard now + document + V2 backlog.)
 
 Rules consulted: dev-rules `00-universal.md`, `risk-and-exceptions.md`, `development-loop.md`, `autonomous-operation.md`, `architecture.md`, `documentation.md`; engine `CLAUDE.md` (established methodology; module-size ratchet; measure-first / cite the source pattern). Base: engine `origin/main` @ `4422e030`.
 
@@ -7,165 +7,193 @@ Rules consulted: dev-rules `00-universal.md`, `risk-and-exceptions.md`, `develop
 ## 0. Why + scope
 
 The out-of-core (OOC) FK **reorder** sub-lane forces the parent relation as the DuckDB hash
-BUILD side, whose resident cost is O(distinct parent keys). DuckDB's `memory_limit` is a SOFT
-cap, so a large parent overshoots any engine budget: the 100M proof ran at ~30 GB (uncapped)
-and was killed at 14 GB under an 8 GB budget, while the BATCH sub-lane did the same job at
-~3.9 GB. An earlier O(parent) admission floor was removed (plan
-`docs/plans/2026-07-22-ooc-b-external-reorder-implementation.md` Task 8) and the surviving
-capacity check was demoted to ADVISORY, so today NOTHING stops a large-parent job from entering
-the unbounded reorder lane.
+BUILD side, whose resident cost grows with distinct parent keys. DuckDB's `memory_limit` is a SOFT
+cap, so a large parent overshoots any engine budget: the 100M proof ran at ~30 GB (uncapped) and
+was killed at 14 GB under an 8 GB budget, while the BATCH sub-lane did the same job at ~3.9 GB. An
+earlier O(parent) admission floor was removed (plan `docs/plans/2026-07-22-ooc-b-external-reorder-
+implementation.md` Task 8) and the surviving capacity check is ADVISORY, so today nothing stops a
+large-parent job from entering the unbounded reorder lane.
 
 This slice adds a **budget-derived parent-size guard**: when the largest incoming edge's
-parent-key count exceeds what the reorder lane can keep within the memory budget, `decide_route`
-**demotes the table to the bounded BATCH lane** (slower, ~O(batch) RSS), instead of running the
-reorder lane unbounded.
+parent-key count exceeds a budget-derived ceiling, `decide_route` **demotes the table to the
+bounded BATCH lane** (slower, ~O(batch) RSS) instead of running the reorder lane unbounded.
 
-Key fact that makes this a demotion, NOT a reject (FRAME-confirmed): the reorder lane is an
-**optimization, not a correctness requirement**. BOTH OOC sub-lanes emit rows ordered by
-`__decoy_row_nr` and are byte-order-identical to the pandas oracle (batch: `ORDER BY
-c.__decoy_row_nr` at `_batch_join.py:258`,`:313`; reorder: a `BoundedExternalSorter` keyed on
-`__decoy_row_nr` restoring that same order, driver contract `_stream_driver.py:50-52`). The OOC
-parity harnesses compare POSITIONALLY (`test_out_of_core_fk_parity.py:131-144` folds + list-eq;
-`scripts/fk-scale/_parity.py:10,:35-53` relies on preserved order), so the batch 100M run's
-"parity ok" already proves batch preserves input order. Reorder buys SPEED (one join pass vs
-re-probing the spilled parent per child batch), never order. Batch is the universal, always-valid
-bounded default (`_route_policy.decide_route` already returns it as the fail-safe for non-sink /
-no-budget / sub-threshold / high-fan-in / wide-key). So a large-parent job demotes to batch with
-byte-identical output and nothing is rejected.
+Demotion, NOT reject (gate-affirmed): the reorder lane is an OPTIMIZATION, not a correctness
+requirement. BOTH OOC sub-lanes emit rows ordered by `__decoy_row_nr` and are byte-order-identical
+to the oracle (batch `ORDER BY c.__decoy_row_nr` `_batch_join.py:258`,`:313`; reorder restores that
+same order via a `BoundedExternalSorter`, driver contract `_stream_driver.py:50-52`), and the OOC
+parity harnesses compare POSITIONALLY, so the batch 100M "parity ok" already proves batch preserves
+input order. Reorder buys SPEED, never order. Batch is the universal, always-valid bounded default
+(`decide_route` already returns it for non-sink / no-budget / sub-threshold / high-fan-in /
+wide-key). So a large-parent job demotes to batch with byte-identical output; nothing is rejected.
+
+**What this guard IS (scoped, honest):** an EMPIRICAL CARDINALITY BACKSTOP calibrated over the
+MEASURED key domain (the narrow, hash/length-prefixed FK keys the recorded runs used). It is NOT a
+universal "admitted parent builds always fit the budget" proof: the join build holds variable-width
+encoded keys (`_fk_keys.fk_join_key_tuple` is length-prefixed, `_fk_keys.py:210`) plus masked
+parent components, and the existing per-edge wide-key fallback (`_route_policy.py:154-157`) measures
+the SLIM SORTER row per-row, not the aggregate raw-key build. So a cardinality ceiling alone cannot
+bound an arbitrarily WIDE-key parent. This patch's guarantee is therefore: over the measured
+narrow-key domain, a parent above the ceiling demotes before it can overshoot; wider-key shapes are
+a recorded remaining gap, handled conservatively (the existing wide-key fallback still fires, and a
+width-aware ceiling is a documented follow-on, see §8). The deferred partitioned-join redesign (§8)
+is the real general-case bound and is NOT pulled into this patch.
 
 Scope: `out_of_core/_route_policy.py` (`decide_route`, one fallback clause) + `out_of_core/
 _reorder_budget.py` (the budget -> safe-key-count math). No change to masked output, row order,
-parity, the reorder lane itself, or any reject-before-read code. `_pipeline_routing.py` is NOT
-touched (it owns full-frame/SEQ/OOC-route selection, not the intra-OOC reorder-vs-batch choice).
+parity, the reorder execution path, or any reject-before-read code. `_pipeline_routing.py` is NOT
+touched.
 
 ## 1. What exists to build on
 
-- **The seam:** `out_of_core/_route_policy.decide_route(...)` (`:94-158`), called per table in the
-  runner loop (`out_of_core/_runner.py:236-243`). It already returns
-  `RouteDecision(use_reorder=False, reorder_caps=None)` (-> batch) as the fail-safe fallback for
-  every "reorder can't take this" case: non-sink / no budget (`:121-128`), sub-threshold
-  (`REORDER_PARENT_KEY_THRESHOLD = 2_000_000`, `:49`), high fan-in (`:121-128`), per-edge wide-key
-  (`:154-157`). The guard is one more fallback clause of the identical shape, placed immediately
-  AFTER the existing `parent_key_count >= threshold` selection.
-- **Signals already in hand inside `decide_route`:**
-  - `parent_key_count = max(_parent_key_count(parent_relations[edge]) for edge in incoming_edges)`
-    (`:129-131`), read from the deduped relation's parquet footer `num_rows` (`:184-190`) -- the
-    SAME count the 2M reorder-selection threshold uses. Reuse it; no new read.
-  - `resolve_reorder_budgets(...)` (`:134-136`) yields `duckdb_memory_limit_bytes = round(F_DUCKDB
-    * process_ceiling_bytes)` = 0.55 x budget (`_reorder_budget.py:48,:192`). That is the ceiling
-    the parent build side must live within, and the right comparison basis.
-- **The removed floor (context):** Task 8 removed `enforce_ooc_memory_preflight`'s O(parent)
-  reject from the reorder path on the (now-falsified) theory that the spillable parent build is
-  bounded by `duckdb_memory_limit`. The surviving capacity check (`_capacity_eval.py`) is advisory
-  (`FIT` + `warned=True`), and the only hard refusal left is fan-in impossibility. So the guard
-  is reinstating the SAFETY the removal lost, but as a route-demotion (batch exists) rather than
-  the old reject-before-read.
-- **Per-key byte anchor (calibration starting point):** `_memory_estimate._BUILD_FLOOR_BYTES_PER_ROW
-  = 120.0` (`_memory_estimate.py:292`), fit against measured OOM tiers for the RESIDENT build
-  floor. It is a starting anchor, not the final constant (see §3).
+- **The seam:** `_route_policy.decide_route(...)` (`:94-158`), per table in `_runner.py:236-243`.
+  It already returns `RouteDecision(use_reorder=False, reorder_caps=None)` (-> batch) as the
+  fail-safe for non-sink / no budget (`:121-128`), sub-threshold (`REORDER_PARENT_KEY_THRESHOLD =
+  2_000_000`, `:49`), high fan-in, and per-edge wide-key (`:154-157`). The guard is one more clause
+  of the identical shape, placed immediately AFTER the `>= threshold` selection and AFTER
+  `resolve_reorder_budgets(...)`, before returning reorder caps. (Gate-confirmed: `_runner`
+  dispatches reorder ONLY after `decide_route`; direct joiner/driver calls in benchmarks/tests
+  bypass it -- documented known scope, §6, not a production bypass.)
+- **Signals in hand:** `parent_key_count = max(_parent_key_count(parent_relations[edge]) ...)`
+  (`:129-131`, deduped null-filtered parquet footer `num_rows`, `:184-190`) -- the SAME count the
+  2M threshold uses; and `resolve_reorder_budgets(...)` (`:134-136`). For the budget basis use the
+  ACTUAL enforced DuckDB cap, not the nominal 0.55x: `resolve_reorder_budgets` yields a nominal
+  `duckdb_memory_limit_bytes = round(0.55 x process_ceiling)` (`_reorder_budget.py:48,:192`), but
+  `memory_limit_for` rounds it through whole MiB and emits a decimal `"MB"` string, so the enforced
+  cap is smaller (Codex LOW-6). Compute the comparison basis via `actual_duckdb_cap_bytes(...)`
+  (`_memory_estimate.py:147`) so the ceiling reflects what DuckDB is actually told.
+- **Removed floor (context):** Task 8 removed the O(parent) reject on the theory the spillable
+  parent build is bounded by `duckdb_memory_limit` (falsified by the 100M run). The guard reinstates
+  that safety as a route-demotion (batch exists), not a reject.
+- **Recorded calibration evidence (no new GCP needed, Codex HIGH-2):**
+  - 100M run: ~35M distinct parent keys (grandchild's parent = child table), reorder peak ~30 GB
+    uncapped (25.7 GB budget) / killed >14 GB at 8 GB budget; batch ~3.9 GB. The killed number is a
+    LOWER BOUND, not a completed peak -- do NOT derive a slope from peak/count.
+  - D4a record (`docs/records/2026-10-15-d4a-reorder-revalidation.md:38`): a reorder run COMPLETED
+    with 2.0M / 2.2M parents at a **1 GiB** budget, within the established 1.35x RSS envelope -- the
+    strongest moderate-scale "must stay on reorder" anchor.
 
 ## 2. The change
 
-- **New budget math in `_reorder_budget.py`** (pure function alongside `resolve_reorder_budgets` /
+- **New budget math in `_reorder_budget.py`** (pure function by `resolve_reorder_budgets` /
   `ReorderBudgets`, e.g. `safe_parent_key_ceiling(budgets) -> int`): `safe_parent_keys =
-  duckdb_memory_limit_bytes // _REORDER_BUILD_BYTES_PER_KEY`. Define a DEDICATED module constant
-  `_REORDER_BUILD_BYTES_PER_KEY` (do NOT reuse `_BUILD_FLOOR_BYTES_PER_ROW`, so recalibrating the
-  reorder lane never silently moves the resident-build estimate used elsewhere). Its value is
-  calibrated per §3.
+  actual_duckdb_cap_bytes(...) // _REORDER_BUILD_BYTES_PER_KEY`. Dedicated module constant
+  `_REORDER_BUILD_BYTES_PER_KEY` (do NOT reuse `_BUILD_FLOOR_BYTES_PER_ROW`), value per §3, with a
+  docstring carrying the calibration worksheet.
 - **One fallback clause in `decide_route`**, immediately AFTER the `parent_key_count >= threshold`
-  reorder-selection test and alongside the existing wide-key fallback: if `parent_key_count >
-  safe_parent_key_ceiling(budgets)`, return `RouteDecision(use_reorder=False, reorder_caps=None)`
-  (demote to batch). Otherwise proceed to reorder as today.
-- No change anywhere else. Masked output, row order, parity, the reorder execution path, and all
-  reject-before-read codes are untouched.
+  selection and budget resolution: if `parent_key_count > safe_parent_key_ceiling(budgets)`, return
+  `RouteDecision(use_reorder=False, reorder_caps=None)` (demote to batch). Strictly `>`: at the
+  ceiling, stay on reorder.
+- No other change. Output, order, parity, the reorder path, reject-before-read codes all untouched.
 
-## 3. Calibrating `_REORDER_BUILD_BYTES_PER_KEY` (measure-first; do NOT guess)
+## 3. Calibrating `_REORDER_BUILD_BYTES_PER_KEY` (measure-first; reproducible worksheet)
 
-The constant must divert the unbounded cases and NOT over-reject jobs the lane handles. The
-build MUST derive and JUSTIFY it from evidence, not pick a round number:
-- Anchor evidence: the 100M GCP A/B. At ~35M distinct parent keys (the grandchild's parent = the
-  child table) the reorder peak was ~30 GB (uncapped, 25.7 GB budget) and >14 GB (killed, 8 GB
-  budget); batch did ~3.9 GB. The resident build anchor is 120 B/row.
-- The reorder lane uses the parent as the JOIN build side (a potentially different, larger slope
-  than the resident-build 120 B/row) AND DuckDB's `memory_limit` is soft and overshoots
-  (documented `_reorder_budget.py:24-30`). So err CONSERVATIVE (a larger bytes/key -> a smaller
-  safe ceiling -> demote sooner): better to demote a borderline job to the (correct, bounded)
-  batch lane than to OOM.
-- Cross-check against the existing A/B tooling where present (`scripts/route_reorder_vs_batchjoin_ab.py`,
-  `scripts/native-testing/reorder_crossover_bench.py`) and the perf sentinels, WITHOUT new GCP
-  spend (Cam dropped further cloud runs). Devbox-scale reasoning + the recorded 100M numbers are
-  the basis; state the derivation in the constant's docstring (established-methodology cite).
-- Required outcome the constant must satisfy (becomes T2/T3): at an 8 GB budget the 100M-class
-  (~35M-key) parent DEMOTES (safe ceiling below 35M), and a moderate parent in the proven-safe
-  band (just above the 2M selection threshold) still SELECTS reorder.
+Pick a dedicated constant `C` (bytes per parent key) so the guard divert the unbounded case and
+does NOT regress the recorded moderate case. Two recorded anchors pin a FEASIBLE INTERVAL (Codex
+HIGH-2 arithmetic; GB = decimal 1e9, GiB = 2^30):
+- Demote 35M keys at an 8 GB budget (enforced DuckDB cap ~4.4 GB): requires `C > ~125.7 B/key`.
+- Preserve the D4a 2.2M-key run at a 1 GiB budget (completed within 1.35x): requires `C <= ~268.4
+  B/key`.
+So `C` in `(~126, ~268]` B/key. Pick CONSERVATIVELY within the interval (larger C -> smaller
+ceiling -> demote sooner), while keeping the 2.2M@1GiB case on reorder; the build records a chosen
+value with its margin. `_BUILD_FLOOR_BYTES_PER_ROW = 120` is the resident-build anchor the interval
+sits just above (the join build side is heavier than the resident floor), consistent with
+conservative. Do NOT use `30 GB / 35M ~= 857 B/key` -- that gross peak-over-count mixes fixed
+costs, sorting, masking and is a kill lower bound; it would demote the recorded 2.2M@1GiB case
+(~689k-key ceiling), a regression.
+
+The constant's docstring MUST carry a reproducible calibration worksheet: workload (the D4 FK chain
+shape + key encoding), engine/DuckDB versions, budgets (with GB/GiB stated), which measurements are
+COMPLETED vs KILLED, the fixed-overhead assumption, and the safety margin. Basis = the recorded
+runs above plus bounded LOCAL measurements; NO new GCP runs (Cam). Cite the reorder-memory FRAME +
+the D4a record (established-methodology).
 
 ## 4. Risks (reproduce, do not smooth)
 
-- **Regressing moderate parents:** the guard sits AFTER the `>= threshold` selection and only
-  demotes when `parent_key_count > safe_parent_keys`; the proven-safe band [2M, safe] must keep
-  selecting reorder. Existing boundary tests stay green (`test_route_policy_wide_key_fallback.py`
-  per-head boundary, `test_narrow_max_key_bytes_still_selects_reorder`).
-- **Over/under-calibration:** §3; conservative by construction; validated by T2/T3.
-- **Byte-parity / order contract:** unaffected -- the demotion target (batch) is byte-identical by
-  construction (§0), pinned by `test_out_of_core_fk_parity.py`.
-- **Log hygiene:** a route demotion is silent by design (route choice "changes timing and memory,
-  never output", `_runner.py:170-176`). Any telemetry/warning names only the table, the counts,
-  and the budget -- never key values or payload (mirror `_route_policy.py`'s coded-error style).
-- **Budget absence:** moot -- `decide_route` already returns batch at `:121-128` before budget math.
+- **Over-rejecting moderate parents:** guard sits AFTER `>= threshold` and demotes only when
+  `count > ceiling`; the recorded 2.2M@1GiB case and the proven-safe band stay on reorder (T3).
+  Keep existing boundary tests green (`test_route_policy_wide_key_fallback.py`,
+  `test_narrow_max_key_bytes_still_selects_reorder`).
+- **Wide-key shapes (scoped gap, Codex HIGH-1):** a cardinality ceiling does not bound an
+  arbitrarily wide-key parent; this patch is a narrow-key-domain backstop. The existing per-edge
+  wide-key fallback still fires; a width-aware ceiling is the §8 follow-on. State the scope plainly;
+  do not claim universal build-fit.
+- **Calibration honesty (Codex HIGH-2):** the worksheet + the pinned recorded anchors are the
+  guard against a made-up slope; conservative direction; validated by T2/T3/T4.
+- **Byte-parity / order:** unaffected -- batch is byte-identical by construction, pinned by the
+  route-seam parity control (T5).
+- **Log hygiene:** demotion is silent by design (`_runner.py:170-176`); any telemetry names only the
+  table, counts, and budget -- never key values or payload.
+- **Budget absence:** moot -- `decide_route` returns batch at `:121-128` before budget math.
 
-## 5. Acceptance matrix (mirror `tests/unit/execution/test_route_policy_wide_key_fallback.py`)
+## 5. Acceptance matrix (mirror `test_route_policy_wide_key_fallback.py`; `_SINK = object()`)
 
-- **T1 large parent demotes:** a parent above the budget-derived ceiling ->
-  `decide_route(...) == RouteDecision(use_reorder=False, reorder_caps=None)` (batch). Mutant:
-  dropping the guard clause -> reorder selected -> killed.
-- **T2 boundary triple:** just under the ceiling -> `use_reorder is True`; at the ceiling and just
-  over -> `False` (model on `test_width_admission_boundary_matches_per_head_cap_arithmetic`).
-- **T3 moderate parent still reorders:** a parent in [2M, safe] -> `use_reorder is True`,
-  `reorder_caps is not None` (guards against over-rejection); AND the 100M-class (~35M-key) parent
-  at an 8 GB budget demotes (the calibration-outcome assertion from §3).
-- **T4 safe-key-ceiling math:** unit-test `safe_parent_key_ceiling(budgets)` directly against
-  known budgets (e.g. 8 GB -> duckdb_limit 4.4 GB -> ceiling = 4.4 GB // _REORDER_BUILD_BYTES_PER_KEY),
-  so the constant + formula are pinned independent of `decide_route`.
-- **T5 end-to-end byte-parity:** a forced-large-parent job completes via batch and matches the
-  oracle POSITIONALLY (extend `test_out_of_core_fk_parity.py`); proves the demotion preserves
-  output + order.
-- **T6 perf sentinel (devbox-feasible, NO GCP):** a parent that WOULD select reorder but is above
-  the ceiling, demoted to batch, keeps VmHWM within the batch envelope at a devbox-feasible scale
-  (extend/sibling `tests/perf/test_out_of_core_reorder_memory.py`); a scaled proxy, not a 100M run.
+- **T1 large parent demotes:** a parent above the ceiling -> `RouteDecision(use_reorder=False,
+  reorder_caps=None)`. Mutant: dropping the clause -> reorder selected -> killed.
+- **T2 boundary (match the `>` predicate, Codex MED-3):** with all three ABOVE the 2M selection
+  threshold: `ceiling-1` -> reorder; `ceiling` -> reorder; `ceiling+1` -> batch. PLUS: a budget
+  whose ceiling falls BELOW the 2M selection threshold (the sub-threshold path already returns batch
+  -- the guard must not misbehave), and a `threshold`-override of zero.
+- **T3 moderate stays on reorder + large demotes:** the RECORDED D4a case (2.2M keys, 1 GiB budget)
+  -> `use_reorder is True`, `reorder_caps is not None`; and the 100M-class (~35M keys, 8 GB budget)
+  -> batch. These pin both ends of the calibration interval against regression.
+- **T4 ceiling math unit:** `safe_parent_key_ceiling(budgets)` directly against known budgets, using
+  `actual_duckdb_cap_bytes(...)` (not nominal 0.55x), so the constant + formula + the MiB/MB
+  conversion are pinned independent of `decide_route`.
+- **T5 demotion parity (route-seam harness, Codex MED-4):** use the
+  `test_out_of_core_route_seam_parity.py:155` pattern -- a sink + resolved budgets + an otherwise
+  reorder-eligible fixture whose parent is above the ceiling. WITNESS batch construction and the
+  ABSENCE of reorder construction. Compare the demoted (batch) output against an ACTUAL reorder
+  control on the same fixture, positionally with exact schema/metadata; and against the oracle under
+  its documented normalizations. Do NOT describe either as serialized-Parquet byte identity. (The
+  plain `test_out_of_core_fk_parity.py` helper supplies no sink/budget and would bypass reorder
+  admission -- not sufficient here.)
+- **T6 perf sentinel (real subprocess, devbox-feasible, NO GCP, Codex MED-5):** a FRESH SUBPROCESS
+  running the PRODUCTION runner (`run_fk_out_of_core`, through `decide_route`) with lazy inputs + a
+  transactional sink, a real parent cardinality ABOVE the calibrated ceiling, the fixture generated
+  OUTSIDE the measured worker, and EXPLICIT budget / batch size / timeout / disk requirement / RSS
+  bar. Assert the demotion witness AND output completeness + order. The RSS bar is a CONCRETE number
+  for THIS fixture (note: recorded batch RSS ~1009 MiB at a nominal 512 MiB ceiling for 2M parents,
+  so the bar is the fixture's measured batch envelope, not ~3.9 GB and not universal). It proves
+  this fixture's batch envelope, not the 35M envelope or universal boundedness.
 
 ## 6. Verification + gates
 
-- ci-mirror venv for routing/pure-Python; abi-3 companion venv for any OOC parity (T5). `~/bin/
+- ci-mirror venv for routing/pure-Python; abi-3 companion venv for OOC parity (T5/T6). `~/bin/
   pytest-one`; `PYTHONPATH=<worktree>/src:<worktree>`.
 - T1-T6 green; routing + OOC-parity + reorder-memory suites green; no existing boundary/parity test
-  weakened. Coverage + mutation on the new clause + the ceiling math (drop-guard, over-reject,
-  boundary mutants killed).
-- Module sizes: `_route_policy.py` 242 and `_reorder_budget.py` 256 both have headroom under 600;
-  add the clause + the pure function; census only if a file crosses 600 (not expected). Do NOT
-  touch `_pipeline_routing.py` / `_pipeline_route_exec.py` / `_capacity_eval.py`.
-- Established-methodology note on `_REORDER_BUILD_BYTES_PER_KEY` (the derivation + the soft-limit
-  overshoot rationale), citing the reorder-memory FRAME + the 100M A/B record.
-- Gate chain: Opus VERIFY -> dennis -> Codex final. Build freely; autonomous merge on the full
-  green gate, flag Slack before merge-to-main, PR, PR CI green, merge, confirm main CI. **The
-  Codex FINAL prompt MUST say: do NOT merge/push/PR; Opus merges after CI.**
+  weakened. Coverage + mutation on the new clause + ceiling math (drop-guard, over-reject, boundary
+  mutants killed).
+- Module sizes: `_route_policy.py` 242, `_reorder_budget.py` 256 -- both keep headroom under 600; no
+  census, no `_pipeline_routing.py` / `_pipeline_route_exec.py` / `_capacity_eval.py` change.
+- Scope note in the code + record: `decide_route` is the only production reorder-selection path;
+  direct internal joiner/driver calls (benchmarks/tests) intentionally bypass it.
+- Established-methodology note + the calibration worksheet on `_REORDER_BUILD_BYTES_PER_KEY`.
+- Gate chain: Opus VERIFY -> dennis -> Codex final. Build freely; autonomous merge on the full green
+  gate, flag Slack before merge-to-main, PR, PR CI green, merge, confirm main CI. **The Codex FINAL
+  prompt MUST say: do NOT merge/push/PR; Opus merges after CI.**
 
 ## 7. Done when
 
-- [ ] T1-T6 green; large-parent reorder jobs demote to batch (byte-identical + order-preserving);
-  moderate parents still reorder; the calibrated constant is justified from evidence.
+- [ ] T1-T6 green; large-parent (measured-domain) reorder jobs demote to batch (byte-identical +
+  order-preserving); the recorded 2.2M@1GiB case still reorders; the calibrated constant is
+  justified by the worksheet.
 - [ ] Changed-lines coverage + mutation-proven; module sizes within policy.
 - [ ] diff + evidence to Slack; PR CI green; merge; main CI green.
-- [ ] DOCUMENT: ROADMAP + RECENTLY-SHIPPED updated (guard shipped); the reorder-memory finding
-  recorded (the wiki note `30_Resources/Decoy-Execution-Routing-and-Memory-Model.md` exists);
-  **add the V2 backlog entry** (below); engine graphify refresh (note if none cached).
+- [ ] DOCUMENT: ROADMAP + RECENTLY-SHIPPED updated; the wiki note
+  `30_Resources/Decoy-Execution-Routing-and-Memory-Model.md` exists; **add the V2 backlog entries
+  (§8)**; engine graphify refresh (note if none cached).
 
 ## 8. V2 backlog (deferred; Cam 2026-10-15)
 
-A genuinely memory-bounded reorder lane FOR HUGE PARENTS needs a partitioned / blocked join so
-neither side builds an O(distinct-keys) hash table, PLUS a large-parent RSS proof to replace the
-small-parent one (`tests/perf/test_out_of_core_reorder_memory.py` `_PARENT_ROWS=500`). That is an
-architecture task (the deferred "Task 4" large-parent bound), NOT this patch. Record as a V2
-roadmap entry: "bounded reorder for large parents (partitioned join)". Until then, large-parent
-order-sensitive jobs run correctly on the batch lane (slower), which this guard routes them to.
+1. **Bounded reorder for large parents (partitioned/blocked join):** so neither side builds an
+   O(distinct-keys) hash table, PLUS a large-parent RSS proof to replace the small-parent one
+   (`test_out_of_core_reorder_memory.py` `_PARENT_ROWS=500`). Architecture task ("Task 4"), not this
+   patch. Until then large-parent order-sensitive jobs run correctly on batch (slower).
+2. **Width-aware reorder admission:** replace the cardinality backstop with a build-size estimate
+   that accounts for encoded join-key + masked-component WIDTH, so wide-key parents are bounded too
+   (this patch's recorded gap, §0/§4).
+
+Record both as V2 roadmap entries.
 
 cam
