@@ -28,6 +28,7 @@ from decoy_engine.execution.out_of_core._memory_estimate import memory_limit_for
 from decoy_engine.execution.out_of_core._reorder_budget import (
     ReorderCaps,
     resolve_reorder_budgets,
+    safe_parent_key_ceiling,
 )
 
 if TYPE_CHECKING:
@@ -134,6 +135,16 @@ def decide_route(
     budgets = resolve_reorder_budgets(
         budget_bytes, temp_disk_budget_bytes, merge_fan_in=merge_fan_in
     )
+    # Parent-size admission: the reorder lane builds the parent side in DuckDB,
+    # whose soft memory cap a large parent overshoots (see
+    # `_reorder_budget._REORDER_BUILD_BYTES_PER_KEY`). Demote to the bounded
+    # batch lane, which emits the same rows in the same order, only slower.
+    # Strict `>`: a parent exactly at the ceiling stays on reorder. This is the
+    # only production reorder-selection path; direct joiner/driver calls in
+    # benchmarks and tests bypass it by design. Nothing is logged here, so no
+    # key values or payload can leak.
+    if parent_key_count > safe_parent_key_ceiling(budgets):
+        return RouteDecision(use_reorder=False, reorder_caps=None)
     reorder_caps = ReorderCaps(
         joiner_memory_limit=memory_limit_for(budgets.duckdb_memory_limit_bytes, 1),
         build_memory_limit=memory_limit_for(budget_bytes, 1),

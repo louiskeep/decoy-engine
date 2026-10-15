@@ -227,7 +227,10 @@ def test_t6_high_fan_in_falls_back_no_raise(tmp_path: Path) -> None:
 def test_t6_admitted_fan_in_boundary_still_eligible(tmp_path: Path) -> None:
     merge_fan_in = 16
     edges = tuple(_edge(tag=str(i)) for i in range(2 * merge_fan_in))  # exactly 32
-    relations = {edge: _relation(tmp_path, f"p{i}", 5_000_000) for i, edge in enumerate(edges)}
+    # 3M keys: above the 2M selection threshold and below the parent-size guard's
+    # ceiling at 1 GiB (3_753_333 keys), so this isolates the FAN-IN boundary from
+    # the cardinality guard. 5M keys would (correctly) demote at this budget.
+    relations = {edge: _relation(tmp_path, f"p{i}", 3_000_000) for i, edge in enumerate(edges)}
     decision = decide_route(
         edges,
         relations,
