@@ -51,7 +51,7 @@ The same worker on a chain that clears the genuine 2,000,000 default with no ove
 | External peak RSS (`wait4` `ru_maxrss`) | 1328.0 MB, against a 1382 MB ceiling (1.35 x budget, the convention of `tests/perf/test_out_of_core_reorder_memory.py`) |
 | Wall (`mask_s`) | 70.5 s |
 | Native disposition | 14 of 14 masked columns on the Rust companion, none on Python (`disposition.columns_total` 14, `native_columns` 14, `non_native` empty): 12 payload columns across the three tables plus the `parent.id` and `child.id` keys |
-| Row counts, FK parity | committed counts equal inputs (`rowcount_match` true, 789.6 MB committed), parity ok on `parent->child` and `child->grandchild` (60 orphans in each spot-check window) |
+| Row counts, FK parity | committed counts equal inputs (`rowcount_match` true, 789.6 MB committed), parity ok on `parent->child` and `child->grandchild` (60 orphans per edge across the spot-check windows) |
 
 RSS used 96% of its ceiling, so the headroom is real but thin at this budget. The 100M and 200M runs are where the ceiling is actually tested. Wall and the sampled temp-disk and RSS peaks are load-dependent on a shared devbox; the deterministic spill structure (2 runs and 1 merge per sorter, 166.6 / 174.2 MB spilled) is identical to the first revalidation run.
 
