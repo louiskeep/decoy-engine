@@ -26,7 +26,7 @@ Reason codes carry the strategy, the column name and the Arrow type only, never 
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -85,6 +85,7 @@ BUCKET_PERTURB = "bucket_perturb"
 DATE_SHIFT = "date_shift"
 FAKER = "faker"
 TEXT_REDACT = "text_redact"
+TEXT_MASK = "text_mask"
 SEQ_HASH_DISPOSITION_KEY = "sequential_hash"
 SEQ_FPE_DISPOSITION_KEY = "sequential_fpe"
 SEQ_CATEGORICAL_DISPOSITION_KEY = "sequential_categorical"
@@ -92,6 +93,7 @@ SEQ_BUCKET_DISPOSITION_KEY = "sequential_bucket_perturb"
 SEQ_DATE_SHIFT_DISPOSITION_KEY = "sequential_date_shift"
 SEQ_FAKER_DISPOSITION_KEY = "sequential_faker"
 SEQ_TEXT_REDACT_DISPOSITION_KEY = "sequential_text_redact"
+SEQ_TEXT_MASK_DISPOSITION_KEY = "sequential_text_mask"
 FAKER_DETERMINISTIC = "deterministic"
 FAKER_POSITIONAL = "positional"
 
@@ -102,6 +104,9 @@ class NativeResult:
 
     values: pa.Array
     errors: tuple[Any, ...] = ()
+    # Per-detector counts a kernel tallies while masking (text_mask sub-floor spans), so the seam
+    # can build the handler's aggregate warning without masking the column again.
+    notices: Mapping[str, int] | None = None
 
 
 @dataclass(frozen=True)
@@ -541,7 +546,9 @@ __all__ = [
     "SEQ_FAKER_DISPOSITION_KEY",
     "SEQ_FPE_DISPOSITION_KEY",
     "SEQ_HASH_DISPOSITION_KEY",
+    "SEQ_TEXT_MASK_DISPOSITION_KEY",
     "SEQ_TEXT_REDACT_DISPOSITION_KEY",
+    "TEXT_MASK",
     "TEXT_REDACT",
     "BoundFpeKernel",
     "BucketCall",

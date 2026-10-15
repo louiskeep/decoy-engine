@@ -31,6 +31,7 @@ pub mod fpe;
 // C6c-ii: the text_redact span kernel. Its pure detector/validator/predicate core builds without
 // PyO3 (so cargo tests exercise it directly); only the `#[pyfunction]` wrappers and `register` are
 // gated behind the PyO3 boundary feature, like `arrow_ffi`.
+pub mod text_mask;
 pub mod text_redact;
 pub mod threads;
 
@@ -56,5 +57,6 @@ fn _kernel(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(abi_version, m)?)?;
     arrow_ffi::register(m)?;
     text_redact::register(m)?;
+    text_mask::register(m)?;
     Ok(())
 }

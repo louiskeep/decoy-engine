@@ -108,6 +108,7 @@ from __future__ import annotations
 import hashlib
 import hmac as _hmac_mod
 import logging
+from collections.abc import Sequence
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -115,6 +116,7 @@ from decoy_engine.determinism import derive
 from decoy_engine.errors import FpeChecksumError, FpeUnencryptableError
 from decoy_engine.storm.detectors import Span, iter_spans
 from decoy_engine.transforms._faker_span import shared_faker
+from decoy_engine.transforms._text_mask_splice import splice_spans, warn_passthrough_unmatched
 from decoy_engine.transforms.date_shift import _COMMON_FORMATS
 from decoy_engine.transforms.fpe import (
     _CHARSETS,
@@ -127,7 +129,6 @@ from decoy_engine.transforms.fpe import (
 _log = logging.getLogger(__name__)
 
 _DEFAULT_TOKEN: str = "[REDACTED]"  # noqa: S105 - redaction placeholder, not a credential
-_UNMATCHED_TOKEN: str = "[UNMATCHED]"  # noqa: S105 - sentinel for replace_with_token policy
 
 # ── Per-detector default dispatch table (SP-07) ───────────────────────────────
 #
@@ -577,30 +578,51 @@ def _mask_span(
     return str(cfg.get("token", _DEFAULT_TOKEN))
 
 
-def _apply_unmatched(text: str, policy: str, token: str) -> str:
-    """Apply the unmatched_span_policy to a non-PII text segment.
+def mask_cell_with_spans(
+    text: Any,
+    spans: Sequence[Span],
+    mask_key: bytes,
+    *,
+    strategy_map: dict[str, str] | None = None,
+    unmatched_span_policy: str = "redact",
+    token: str = _DEFAULT_TOKEN,
+    cfg: dict[str, Any] | None = None,
+    sub_floor_span_policy: str | None = None,
+    sub_floor_notices: dict[str, int] | None = None,
+) -> Any:
+    """`mask_cell` for a cell whose resolved `spans` the caller already holds.
 
-    Called for each portion of the cell NOT covered by a detector match.
-
-    ``redact`` (default): replace with ``token`` -- treats the segment as
-        potentially undetected PII; safe but destroys surrounding context.
-    ``passthrough``: keep verbatim -- operator opt-in for columns where
-        the non-PII context is known safe.
-    ``replace_with_token``: replace with ``_UNMATCHED_TOKEN`` ("``[UNMATCHED]``")
-        -- lighter marker that distinguishes unmatched segments from
-        per-span redaction tokens.
-
-    Empty segments are returned as-is regardless of policy to avoid
-    emitting spurious tokens when two spans are adjacent.
+    `spans` must be what `iter_spans` returns for this cell (start-ordered, non-overlapping), so
+    the output is byte-identical to `mask_cell`. The native route builds them from the compiled
+    detection kernel; every other argument has `mask_cell`'s meaning.
     """
-    if not text:
+    if not isinstance(text, str) or not text:
         return text
-    if policy == "passthrough":
-        return text
-    if policy == "replace_with_token":
-        return _UNMATCHED_TOKEN
-    # "redact" and any unknown policy: use token (fail-safe).
-    return token
+
+    if unmatched_span_policy == "passthrough":
+        warn_passthrough_unmatched(_log)
+
+    effective_map: dict[str, str] = dict(DETECTOR_DEFAULTS)
+    if strategy_map:
+        effective_map.update(strategy_map)
+
+    extra_cfg: dict[str, Any] = dict(cfg or {})
+    extra_cfg.setdefault("token", token)
+
+    return splice_spans(
+        text,
+        spans,
+        mask_span=lambda span: _mask_span(
+            span,
+            mask_key,
+            effective_map.get(span.detector_id, "redact"),
+            extra_cfg,
+            sub_floor_span_policy=sub_floor_span_policy,
+            sub_floor_notices=sub_floor_notices,
+        ),
+        unmatched_span_policy=unmatched_span_policy,
+        token=token,
+    )
 
 
 def mask_cell(
@@ -673,50 +695,14 @@ def mask_cell(
     if not isinstance(text, str) or not text:
         return text
 
-    if unmatched_span_policy == "passthrough":
-        _log.warning(
-            "text_mask: unmatched_span_policy='passthrough' lets any text not covered by "
-            "a detected span ride through unchanged. Built-in span detection covers only "
-            "11 detectors (email, ssn, us_phone, us_zip, pan, iban, ipv4, icd10, npi, "
-            "url, street_address). Names, addresses, and dates require NER (extra_spans=) "
-            "or custom= patterns. Use the default 'redact' policy unless this column is "
-            "known-safe."
-        )
-
-    effective_map: dict[str, str] = dict(DETECTOR_DEFAULTS)
-    if strategy_map:
-        effective_map.update(strategy_map)
-
-    extra_cfg: dict[str, Any] = dict(cfg or {})
-    extra_cfg.setdefault("token", token)
-
-    spans: list[Span] = iter_spans(text, detector_ids, extra_spans=extra_spans)
-
-    if not spans:
-        # Entire cell is unmatched text.
-        return _apply_unmatched(text, unmatched_span_policy, token)
-
-    parts: list[str] = []
-    cursor = 0
-    for span in spans:
-        if span.start > cursor:
-            unmatched = text[cursor : span.start]
-            parts.append(_apply_unmatched(unmatched, unmatched_span_policy, token))
-        strategy = effective_map.get(span.detector_id, "redact")
-        parts.append(
-            _mask_span(
-                span,
-                mask_key,
-                strategy,
-                extra_cfg,
-                sub_floor_span_policy=sub_floor_span_policy,
-                sub_floor_notices=sub_floor_notices,
-            )
-        )
-        cursor = span.end
-
-    if cursor < len(text):
-        remaining = text[cursor:]
-        parts.append(_apply_unmatched(remaining, unmatched_span_policy, token))
-
-    return "".join(parts)
+    return mask_cell_with_spans(
+        text,
+        iter_spans(text, detector_ids, extra_spans=extra_spans),
+        mask_key,
+        strategy_map=strategy_map,
+        unmatched_span_policy=unmatched_span_policy,
+        token=token,
+        cfg=cfg,
+        sub_floor_span_policy=sub_floor_span_policy,
+        sub_floor_notices=sub_floor_notices,
+    )

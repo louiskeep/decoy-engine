@@ -489,7 +489,7 @@ def test_nfc_columns_follow_the_native_index_not_byte_identity_on_the_kernel_arg
     assert [c.rows for c in kernel.calls] == [len(NFC)]
 
 
-@pytest.mark.parametrize("strategy", ["text_mask"])
+@pytest.mark.parametrize("strategy", ["redact"])
 def test_an_unwired_strategy_has_no_descriptor_and_runs_in_python(strategy: str) -> None:
     assert strategy not in _sequential_native._OPS
     assert set(_sequential_native._OPS) == {
@@ -500,6 +500,7 @@ def test_an_unwired_strategy_has_no_descriptor_and_runs_in_python(strategy: str)
         "date_shift",
         "faker",
         "text_redact",
+        "text_mask",
     }
 
 

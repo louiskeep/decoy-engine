@@ -105,7 +105,7 @@ ALLOWLIST: dict[str, int] = {
     "src/decoy_engine/execution/native/_requirements.py": 657,
     # SeqNativeRun: one bespoke per-strategy seam method per tenant (7 now) around a shared
     # admit/pin/apply core; cohesive, the descriptors and decision types are already split out.
-    "src/decoy_engine/execution/_sequential_native.py": 645,
+    "src/decoy_engine/execution/_sequential_native.py": 676,
     # sequential FK route threading; split the per-table mask/quarantine loop.
     "src/decoy_engine/execution/_sequential.py": 677,
     # transactional publish hardening and row mask; split the publish cluster.
@@ -123,7 +123,7 @@ ALLOWLIST: dict[str, int] = {
     # custom-provider registry snapshot for the shadow-parity gate; one cohesive module, no split identified.
     "src/decoy_engine/internal/faker_setup.py": 622,
     # FF1 span path and sub-floor policy; split into _text_mask_sub_floor.py when next touched.
-    "src/decoy_engine/transforms/text_mask.py": 722,
+    "src/decoy_engine/transforms/text_mask.py": 708,
 }
 
 
