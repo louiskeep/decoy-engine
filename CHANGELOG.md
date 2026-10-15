@@ -9,6 +9,19 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Changed (native FF1 for text_mask spans, 2026-10-15)
+
+`text_mask` now uses the existing Rust FF1 kernel for eligible `ssn`, `us_phone`, and
+`us_zip` ZIP+4 spans on the unified, chunked, and sequential routes. The kernel preserves
+separators and produces the same bytes as the Python oracle, with the same detector-specific
+key and tweak. ZIP5, checksum detectors (`pan` and `npi`), and non-ASCII cells keep the Python
+path. Within an eligible cell, each declined span runs through Python once in span order.
+Warnings, sub-floor notice counts, and errors remain unchanged.
+
+An absent companion or a kernel exception sends the affected spans to the Python oracle.
+The existing native redact/passthrough path remains available. This change adds no Rust code
+and does not change the out-of-core route.
+
 ### Changed (text_mask reuses one thread-local Faker for span synthesis, 2026-10-10)
 
 `text_mask` synthetic spans (the `faker` strategy) now draw from a single thread-local `Faker`

@@ -51,6 +51,12 @@ import pyarrow as pa
 from decoy_engine.errors import FpeUnencryptableError
 from decoy_engine.execution._errors import StrategyError
 from decoy_engine.execution._strategies._text_redact import _splice
+from decoy_engine.execution.native._text_mask_native_fpe import (
+    encrypt_spans,
+    has_native_span,
+    mask_cell_hybrid,
+    plan_native_fpe,
+)
 from decoy_engine.execution.native._text_mask_native_splice import (
     load_splice_kernel,
     plan_native_splice,
@@ -291,6 +297,7 @@ def native_text_mask(
                 if splice is not None
                 else None
             )
+            fpe_detectors = plan_native_fpe(detector_ids, strategy_map)
             # Fixed sub-batches bound the resident candidate lists, as in `native_text_redact`.
             for base in range(0, len(texts), _TEXT_REDACT_KERNEL_BATCH):
                 batch = texts[base : base + _TEXT_REDACT_KERNEL_BATCH]
@@ -310,19 +317,44 @@ def native_text_mask(
                     )
                     continue
                 per_cell = kernel.text_redact_candidates(batch, rust_ids, CATALOG_VERSION)
+                cell_spans: list[list[Span]] = []
+                # Spans of kernel-eligible (ASCII-safe) cells only: a non-ASCII cell never
+                # reaches the compiled FF1 path, so its fpe spans stay on `_mask_span`.
+                native_cells: list[list[Span] | None] = []
                 for text, cands in zip(batch, per_cell, strict=True):
                     if text is None:
-                        out.append(None)
+                        cell_spans.append([])
+                        native_cells.append(None)
                     elif cands is None:
                         # Ineligible cell (non-ASCII or a 0x1c-0x1f control): full Python.
-                        out.append(mask(text, iter_spans(text, detector_ids, extra_spans=None)))
+                        cell_spans.append(iter_spans(text, detector_ids, extra_spans=None))
+                        native_cells.append(None)
                     else:
+                        merged = merge_text_redact_spans(text, detector_ids, rust_candidates=cands)
+                        cell_spans.append(merged)
+                        native_cells.append(merged)
+                fpe_out = encrypt_spans(native_cells, fpe_detectors, mask_key)
+                for text, spans, native in zip(batch, cell_spans, native_cells, strict=True):
+                    if text is None:
+                        out.append(None)
+                    elif native is not None and text and has_native_span(native, fpe_out):
+                        # Slice c: native FF1 for the plain-digit spans, `_mask_span` for the rest.
                         out.append(
-                            mask(
+                            mask_cell_hybrid(
                                 text,
-                                merge_text_redact_spans(text, detector_ids, rust_candidates=cands),
+                                native,
+                                fpe_out,
+                                mask_key,
+                                strategy_map=strategy_map,
+                                unmatched_span_policy=unmatched_span_policy,
+                                token=token,
+                                cfg=extra or None,
+                                sub_floor_span_policy=sub_floor_span_policy,
+                                sub_floor_notices=sub_floor_notices,
                             )
                         )
+                    else:
+                        out.append(mask(text, spans))
     except FpeUnencryptableError as exc:
         raise text_mask_fail_closed_error(exc, column) from exc
     return pa.array(out, type=pa.string()), sub_floor_notices
