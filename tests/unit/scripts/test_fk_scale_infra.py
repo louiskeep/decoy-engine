@@ -26,6 +26,7 @@ sys.path.insert(0, str(_SCRIPTS))
 import _chain_layout as layout  # noqa: E402
 import _parity  # noqa: E402
 import _supervisor as sup  # noqa: E402
+import bench_worker_fk  # noqa: E402
 import build_fk_chain  # noqa: E402
 
 _COUNTS = {"parent": 1_000, "child": 1_800, "grandchild": 2_500}
@@ -289,3 +290,23 @@ def test_worker_repeats_report_percentiles(small_chain: Path, tmp_path: Path) ->
     rc, rec = _worker(small_chain, tmp_path, "--budget-mb", "512", "--repeats", "2")
     assert rc == 0 and len(rec["mask_s_runs"]) == 2 and len(rec["runs"]) == 2
     assert min(rec["mask_s_runs"]) <= rec["mask_s_p50"] <= max(rec["mask_s_runs"])
+
+
+def test_error_record_reports_frames_without_message_or_source() -> None:
+    # Log hygiene: the record names where a failure threw (file:line:function) and
+    # nothing else -- no exception message, no source line, no locals.
+    secret = "SECRET-PAYLOAD-VALUE"
+
+    def _thrower() -> None:
+        local_value = secret  # noqa: F841
+        raise ValueError(secret)
+
+    try:
+        _thrower()
+    except ValueError as exc:
+        record = bench_worker_fk._error_record(exc)
+    assert record["type"] == "ValueError"
+    assert record["code"] is None
+    assert any(f.endswith(":_thrower") for f in record["frames"])
+    assert all(f.count(":") == 2 for f in record["frames"])
+    assert secret not in json.dumps(record)

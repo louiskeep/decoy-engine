@@ -31,6 +31,7 @@ import statistics
 import sys
 import tempfile
 import time
+import traceback
 from pathlib import Path
 from typing import Any
 
@@ -196,8 +197,14 @@ def _apply_mem_cap(cap_mb: int) -> None:
 
 
 def _error_record(exc: BaseException) -> dict[str, Any]:
-    # Class and coded error only: a message can carry a data value (log hygiene).
-    return {"type": type(exc).__name__, "code": getattr(exc, "code", None)}
+    # Class, coded error, and call-site frames only: a message or a frame's locals/source
+    # line can carry a data value (log hygiene). Frames are file:line:function, so a future
+    # failure reports where it threw without leaking payload.
+    frames = [
+        f"{Path(f.filename).name}:{f.lineno}:{f.name}"
+        for f in traceback.extract_tb(exc.__traceback__)
+    ]
+    return {"type": type(exc).__name__, "code": getattr(exc, "code", None), "frames": frames}
 
 
 def run_child(args: argparse.Namespace) -> int:

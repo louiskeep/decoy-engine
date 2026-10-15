@@ -65,6 +65,7 @@ from decoy_engine.execution.out_of_core._stream_join_cursors import (
     _assert_slim_sorter_schema,
     _combine_join_slices,
     _OrderedJoinRows,
+    _widen_payload_offsets,
 )
 from decoy_engine.execution.out_of_core._stream_join_plan import (
     _disable_join_optimizers,
@@ -570,10 +571,9 @@ class StreamFkJoiner:
             sort_key_column="__decoy_row_nr",
         )
         try:
-            for batch in self._iter_unordered_join_rows(batch_rows):
-                # Fail closed if the raw child columns ever reach the sorter: a
-                # single-read job cannot re-run _batch_join, so this must be an
-                # internal-invariant guard, not a runtime fallback (plan §3.4).
+            for batch in map(_widen_payload_offsets, self._iter_unordered_join_rows(batch_rows)):
+                # Widened above so the guard sees the sorter's exact schema. Fail closed if raw
+                # child columns reach it: a single-read job cannot re-run _batch_join (plan §3.4).
                 _assert_slim_sorter_schema(batch.schema)
                 sorter.write(batch)
             # The connection is closed BEFORE finish()'s merge runs, so the
