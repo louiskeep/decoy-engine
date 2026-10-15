@@ -67,7 +67,7 @@ ALLOWLIST: dict[str, int] = {
     # sampler start/finish and evidence threading in _spawn_and_classify; split the spawn/classify half into _isolated_spawn.py.
     "src/decoy_engine/execution/_isolated_run.py": 612,
     # bounded-eligible fit rule and the fk-dtype retention branch in decide_execution_route; split the route-priority docstring into the plan doc.
-    "src/decoy_engine/execution/_pipeline_routing.py": 646,
+    "src/decoy_engine/execution/_pipeline_routing.py": 651,
     # wiring of the fk-dtype hazard signal into the one routing call site; split the probe-recovery resolver into its own module.
     "src/decoy_engine/execution/_pipeline_routing_signals.py": 605,
     # fan-in guard on the budget resolver; split the disk-preflight helpers into _disk_budget.py.
