@@ -219,6 +219,7 @@ def run_sequential(
     quarantine_config: dict[str, Any] | None = None,
     unconfigured_column_policy: UnconfiguredColumnPolicy | None = None,
     key_provider: KeyProvider | None = None,
+    native_threads: int = 1,
 ) -> ExecutionResult:
     """Mask an FK-related job table by table in FK-topological order.
 
@@ -309,7 +310,7 @@ def run_sequential(
     cache = pool_cache if pool_cache is not None else PoolCache()
     # D2a: per-run hash decisions, kept for the whole run so REMAP on a child table still sees
     # its parent's decision after the parent frame is evicted.
-    native_run = SeqNativeRun()
+    native_run = SeqNativeRun(native_threads=native_threads)
     ctx = StrategyContext(
         registry=registry,
         pool_cache=cache,

@@ -107,11 +107,11 @@ ALLOWLIST: dict[str, int] = {
     # admit/pin/apply core; cohesive, the descriptors and decision types are already split out.
     "src/decoy_engine/execution/_sequential_native.py": 676,
     # sequential FK route threading; split the per-table mask/quarantine loop.
-    "src/decoy_engine/execution/_sequential.py": 677,
+    "src/decoy_engine/execution/_sequential.py": 678,
     # transactional publish hardening and row mask; split the publish cluster.
     "src/decoy_engine/quarantine.py": 645,
     # code_set provenance and FF1 notice plumbing through the streaming runner.
-    "src/decoy_engine/execution/out_of_core/_runner.py": 699,
+    "src/decoy_engine/execution/out_of_core/_runner.py": 700,
     # D3a validator mask-step hook threaded through the reorder driver; all logic lives in _validate_batch.py.
     "src/decoy_engine/execution/out_of_core/_stream_driver.py": 603,
     # corpus schema checks and verify_corpus; split into _codeset_verify.py when next touched.

@@ -127,6 +127,7 @@ def run_sequential_route(
     execution_plan_decision: ExecutionPlan | None = None,
     unconfigured_column_policy: UnconfiguredColumnPolicy | None = None,
     key_provider: KeyProvider | None = None,
+    native_threads: int = 1,
 ) -> ExecutionResult:
     """Execute the sequential route and package it as a full `ExecutionResult`.
 
@@ -162,6 +163,7 @@ def run_sequential_route(
         quarantine_config=quarantine_config,
         unconfigured_column_policy=unconfigured_column_policy,
         key_provider=key_provider,
+        native_threads=native_threads,
     )
     seq_quality_metrics = dict(seq_result.quality_metrics)
     seq_quality_metrics["execution"] = execution_telemetry(
@@ -207,6 +209,7 @@ def run_out_of_core_route(
     out_of_core_reorder_threshold_rows: int | None = None,
     vault_writer: Any = None,
     config: dict[str, Any] | None = None,
+    native_threads: int = 1,
 ) -> ExecutionResult:
     """Execute the out-of-core FK route and package it as an `ExecutionResult`.
 
@@ -422,6 +425,7 @@ def run_out_of_core_route(
         out_of_core_reorder_threshold_rows=out_of_core_reorder_threshold_rows,
         vault_writer=vault_writer,
         config=config,
+        native_threads=native_threads,
     )
     quality_metrics = dict(ooc_result.quality_metrics)
     quality_metrics["execution"] = execution_telemetry(

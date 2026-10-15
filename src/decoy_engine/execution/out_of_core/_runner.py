@@ -130,6 +130,7 @@ def run_fk_out_of_core(
     out_of_core_reorder_threshold_rows: int | None = None,
     vault_writer: Any = None,
     config: Mapping[str, Any] | None = None,
+    native_threads: int = 1,
 ) -> ExecutionResult:
     """Run the out-of-core FK relationship route as a batch stream.
 
@@ -228,7 +229,7 @@ def run_fk_out_of_core(
         # the first's. Same shape as the full-frame sink, so a multi-table
         # job's evidence list matches the pandas oracle's shape byte-for-byte.
         code_set_corpora: dict[tuple[str, str], dict[str, Any]] = {}
-        hash_run = OocHashRun()
+        hash_run = OocHashRun(native_threads=native_threads)
         for table_name in _table_order(plan, relationship_graph, sources):
             if table_name not in sources:
                 continue
