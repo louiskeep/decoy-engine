@@ -66,10 +66,10 @@ MAX = 700
 ALLOWLIST: dict[str, int] = {
     # sampler start/finish and evidence threading in _spawn_and_classify; split the spawn/classify half into _isolated_spawn.py.
     "src/decoy_engine/execution/_isolated_run.py": 612,
-    # bounded-eligible fit rule and the fk-dtype retention branch in decide_execution_route; split the route-priority docstring into the plan doc.
-    "src/decoy_engine/execution/_pipeline_routing.py": 651,
-    # wiring of the fk-dtype hazard signal into the one routing call site; split the probe-recovery resolver into its own module.
-    "src/decoy_engine/execution/_pipeline_routing_signals.py": 605,
+    # bounded-eligible fit rule, the fk-dtype retention branch and the D3a validator admission in decide_execution_route; split the route-priority docstring into the plan doc.
+    "src/decoy_engine/execution/_pipeline_routing.py": 675,
+    # wiring of the fk-dtype hazard and D3a validator signals into the one routing call site; split the probe-recovery resolver into its own module.
+    "src/decoy_engine/execution/_pipeline_routing_signals.py": 607,
     # fan-in guard on the budget resolver; split the disk-preflight helpers into _disk_budget.py.
     "src/decoy_engine/execution/out_of_core/_budget.py": 608,
     # float FK key token pricing; split the disk-width helpers into _spill_widths.py.
@@ -111,7 +111,9 @@ ALLOWLIST: dict[str, int] = {
     # transactional publish hardening and row mask; split the publish cluster.
     "src/decoy_engine/quarantine.py": 645,
     # code_set provenance and FF1 notice plumbing through the streaming runner.
-    "src/decoy_engine/execution/out_of_core/_runner.py": 691,
+    "src/decoy_engine/execution/out_of_core/_runner.py": 699,
+    # D3a validator mask-step hook threaded through the reorder driver; all logic lives in _validate_batch.py.
+    "src/decoy_engine/execution/out_of_core/_stream_driver.py": 603,
     # corpus schema checks and verify_corpus; split into _codeset_verify.py when next touched.
     "src/decoy_engine/transforms/_codeset_loader.py": 606,
     # DRAW_SITES catalogue; split into _draw_sites_mask.py / _draw_sites_gen.py if it grows.

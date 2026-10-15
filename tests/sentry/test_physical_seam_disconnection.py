@@ -652,6 +652,11 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         "src/decoy_engine/execution/out_of_core/_text_redact_native.py",
         "src/decoy_engine/execution/out_of_core/_mask.py",
         "src/decoy_engine/execution/out_of_core/_stream_driver.py",
+        # D3a (validators on the bounded out-of-core route): `_validate_batch.py` is new -- it
+        # computes validator admission, evaluates the admitted per-cell validators per masked
+        # batch, and assembles the ValidationReport. `_runner.py` / `_stream_driver.py` hook it at
+        # the mask step; it imports the validator registry + Arrow, nothing from `execution.physical`.
+        "src/decoy_engine/execution/out_of_core/_validate_batch.py",
         # D2a (sequential-route hash on the compiled companion): `_sequential_native.py`
         # (per-column decision, the pandas-to-Arrow boundary, the native call and its
         # disposition) is new; the hash handler asks it for tokens, `_orphan.py` marks the REMAP

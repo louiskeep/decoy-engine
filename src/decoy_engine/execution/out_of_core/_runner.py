@@ -57,7 +57,7 @@ from decoy_engine.execution._output_projection import (
 from decoy_engine.execution._runner import build_work_list, order_work
 from decoy_engine.execution._transactional_sink import TransactionalSink
 from decoy_engine.execution.out_of_core import _join as _join_ooc
-from decoy_engine.execution.out_of_core import _mask_group_c
+from decoy_engine.execution.out_of_core import _mask_group_c, _validate_batch
 from decoy_engine.execution.out_of_core._batch_join import ChildFkBatchJoiner
 from decoy_engine.execution.out_of_core._budget import check_temp_disk_budget
 from decoy_engine.execution.out_of_core._compat import check_out_of_core_compatibility
@@ -206,6 +206,9 @@ def run_fk_out_of_core(
                 message="out-of-core FK route requires every parent and child source.",
             )
 
+    validators = _validate_batch.build_validator_collector(
+        config, plan, relationship_graph, sources
+    )
     owned_temp = temp_dir is None
     root = Path(tempfile.mkdtemp(prefix="decoy-ooc-")) if temp_dir is None else temp_dir
     root.mkdir(parents=True, exist_ok=True)
@@ -264,6 +267,7 @@ def run_fk_out_of_core(
                 "hash_run": hash_run,
                 "vault_writer": vault_writer,
                 "vault_config": config,
+                "validators": validators,
             }
             # `reorder_caps is not None` (not `route.use_reorder`) is the branch
             # condition so this narrows for mypy directly, matching `RouteDecision`'s
@@ -286,6 +290,8 @@ def run_fk_out_of_core(
             **({"code_set_corpora": list(code_set_corpora.values())} if code_set_corpora else {}),
             **hash_run.metrics(),
         }
+        # Before the publish: a failed validation commits nothing.
+        _validate_batch.finish_validation(validators, quality_metrics)
         if sink is not None:
             sink.commit()
             committed = True
@@ -337,6 +343,7 @@ def _stream_table(
     hash_run: OocHashRun | None = None,
     vault_writer: Any = None,
     vault_config: Mapping[str, Any] | None = None,
+    validators: Any = None,
 ) -> None:
     """Rewrite pass for one table: mask + join per batch, then emit.
 
@@ -459,6 +466,7 @@ def _stream_table(
                 )
                 # Before the join: FK child keys are not yet remapped here (they decline admission).
                 collect_batch_vault(vault_config, table_name, raw_batch, out, vault_writer)
+                _validate_batch.collect_batch_validation(validators, table_name, out)
                 for join_idx, joiner in enumerate(joiners):
                     # key_source pins every join to the immutable raw batch:
                     # edges overlapping on a child column must each key off
