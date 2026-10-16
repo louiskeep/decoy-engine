@@ -50,23 +50,29 @@ sorter's `_RunHead`. Sites in
 For the two `with` sites: open the OSFile in the same `with` so both close
 together, e.g. `with pa.OSFile(str(self._path), "rb") as src, pa.ipc.open_stream(src) as reader:`.
 
-For the returned-reader site (`:233`): return the ACTUAL
-`pa.RecordBatchReader` (open `pa.OSFile` then `pa.ipc.open_stream(src)` and yield
-that reader), NOT a generic wrapper object - the reader is handed to DuckDB and
-must keep Arrow interoperability (a wrapper DuckDB cannot consume as an Arrow
-stream would break registration). Tie the OSFile's lifetime to the reader's
-consumption through the driver's EXISTING `ExitStack` (the context the driver
-already uses to register/unregister the reader), not non-deterministic GC. This
-reader has TWO consumers, BOTH of which must be covered (Codex plan-gate):
-- the DuckDB-registration path in `StreamFkJoiner` (register -> consume ->
-  unregister), and
-- the lockstep cursor consumer (`_stream_join_cursors.py:326`,
-  `__init__(self, reader)`).
-The build must handle, for both: reader-construction failure, registration
-failure, normal exhaustion, explicit early close, and exceptions mid-read -
-closing the OSFile deterministically in every path, never early while still in
-use, never leaked. Prefer entering the OSFile+reader as a context on the driver's
-ExitStack so unwinding is automatic.
+For the returned-reader site (`SpillChildKeys.open_reader`, `:224`/`:233`): make
+it a CONTEXT MANAGER (Codex plan-gate r2 - the earlier "tie it to the driver's
+ExitStack" was wrong: the driver's stack owns only the lockstep cursor; the
+DuckDB scans are opened inside `StreamFkJoiner`'s own methods, which run without
+the driver). The owner object holds both the `pa.OSFile` and the reader, yields
+the ACTUAL `pa.RecordBatchReader` on `__enter__` (DuckDB needs a real Arrow
+stream for `conn.register`, not a generic wrapper), and on `__exit__` closes the
+reader then the OSFile. Making it a context manager is what removes GC-dependence
+AT EVERY site - a caller cannot obtain the reader without entering the context.
+
+Migrate ALL FIVE call sites (enumerated) to the context:
+- the four `StreamFkJoiner` DuckDB-scan sites (`_stream_join.py:300, 369, 473,
+  509` - each `open_reader(); conn.register("child_keys", reader); <scan>`): wrap
+  each in a local `with self._child_keys.open_reader() as reader:` spanning
+  register -> scan -> unregister, so the OSFile closes at the end of that scan.
+- the pass-through site (`_stream_join.py:637`, `return self._child_keys.open_reader()`
+  feeding the lockstep cursor `_stream_join_cursors.py`): enter the context on the
+  driver's existing `ExitStack` so it closes when the driver unwinds.
+
+Cover for every site: reader-construction failure, `conn.register` failure,
+normal exhaustion, explicit early close, exception mid-scan - OSFile closed
+deterministically in each path, never early while still registered/in use, never
+leaked. No site may rely on GC.
 
 Keep `open_stream` (not `open_file`) - the payload/key spills are written as
 streams; only the source handle changes. Output stays byte-identical (same IPC
