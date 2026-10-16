@@ -48,7 +48,7 @@ Out-of-core route (payload; FK key surface is hash, redact, truncate, passthroug
 | code_set (mask mode) | dedicated Python | excluded |
 | faker, date_shift, bucketize, geo_generalize, formula, derived, nested, and the rest | excluded (declined with a caller-visible reason) | excluded |
 
-Native-chunked route: FK-participating tables on either side reroute to the oracle (`fk_relationship_not_native_route`), so no FK cell is admitted. Non-FK payload follows the operator registry: Rust kernels, faker as compiled index selection, redact and truncate as named-Arrow, passthrough as a no-op.
+Native-chunked route: FK-participating tables on either side reroute to the oracle (`fk_relationship_not_native_route`), so no FK cell is admitted. Non-FK payload follows the operator registry: Rust kernels, faker as compiled index selection, redact and truncate as named-Arrow, passthrough as a no-op. Because this route admits no FK cell, its non-FK compiled cells carry no fresh witness in this audit; they are proven by the Phase C chunked suites, and `test_native_chunked_compiled_cells_cite_their_real_kernel_suite` pins each classification against its suite (hash `test_phase_d_d1a_hash_native.py`, categorical `test_phase_d_d1b2_categorical_native.py`, bucket_perturb `test_phase_d_d1b1_bucket_native.py`, date_shift `test_phase_d_d1c_native.py`, text_mask `tests/native/test_c6b_i_text_mask_chunked.py`, text_redact `tests/native/test_c6c_i_text_redact_chunked.py`, faker `tests/native/test_chunked_nondet_faker_parity.py`).
 
 ## Dedicated-Python exceptions (the documented set)
 
@@ -56,7 +56,7 @@ Native-chunked route: FK-participating tables on either side reroute to the orac
 - NER (the `ner` config of text_redact and text_mask): Python by design (spaCy inference).
 - faker cells admission declines (provider outside the allowlist, non-string source, whole-column cardinality modes, no companion) and faker FK-key cells.
 - Non-injective native-capable strategies configured as an FK key on SEQ: declined with a reporting-only entry, the Python handler runs.
-- out-of-core text_mask: the shared `mask_cell` per-cell loop, no Rust span path on that route. Found by this audit; the program did not list it. Backlog item: route it through the same span kernel the SEQ and native-chunked routes use.
+- out-of-core text_mask: the shared `mask_cell` per-cell loop, no Rust span path on that route. Found by this audit; the program did not list it. Backlog item: route it through the same span kernel the SEQ and native-chunked routes use. Byte-parity for the OOC text_mask and code_set dedicated-Python cells is proven by `tests/parity/test_out_of_core_group_c_parity.py`.
 - The remaining shared SEQ handlers listed above run on the full-frame handler by design; none has native admission on any route.
 
 ## Qualification of program section 5

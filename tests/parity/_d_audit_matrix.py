@@ -75,14 +75,30 @@ def _seq_key(strategy: str) -> str:
     return _seq_payload(strategy)
 
 
+# The out-of-core Group (c) members with no streaming kernel: both run per-cell Python on this
+# route (text_mask -> `_mask_group_c._text_mask_array` mask_cell loop; code_set -> apply_code_set),
+# though SEQ/native-chunked kernelize text_mask. This is the only hand-named OOC fact, and it is a
+# genuine compute property, not a duplication of an admission rule -- everything else admitted on
+# this route has a proven out-of-core kernel.
+_OOC_PYTHON_RESIDUE: Final = frozenset({TEXT_MASK, "code_set"})
+
+
 def _ooc_payload(strategy: str) -> str:
     if strategy in NAMED_ARROW_STRATEGIES:
         return NAMED_ARROW
     if strategy in NOOP_STRATEGIES:
         return NOOP
-    if strategy in ("hash", "fpe", "categorical", "text_redact", "bucket_perturb"):
+    if strategy in _OOC_PYTHON_RESIDUE:
+        return DEDICATED_PYTHON
+    if strategy in (
+        _compat._INITIAL_SUPPORTED_STRATEGIES
+        | _compat._GROUP_B_SUPPORTED_STRATEGIES
+        | _compat._GROUP_C_SUPPORTED_STRATEGIES
+    ):
+        # hash (initial), all of Group B (fpe/text_redact/categorical, `_mask_group_b` byte-parity),
+        # and bucket_perturb (Group (c) conditional kernel) -- each a proven out-of-core kernel.
         return COMPILED_RUST
-    return DEDICATED_PYTHON  # text_mask (mask_cell loop) and code_set (apply_code_set)
+    return DEDICATED_PYTHON  # outside every known OOC group: conservative, never a false Rust claim
 
 
 def _chunked_payload(strategy: str) -> str:

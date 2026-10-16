@@ -822,6 +822,28 @@ def test_ooc_compiled_cells_without_a_buffer_witness_cite_their_real_kernel_suit
     assert (Path(__file__).resolve().parents[2] / suite).is_file()
 
 
+@pytest.mark.parametrize(
+    ("strategy", "classification", "suite"),
+    [
+        ("hash", mx.COMPILED_RUST, "tests/parity/test_phase_d_d1a_hash_native.py"),
+        ("categorical", mx.COMPILED_RUST, "tests/parity/test_phase_d_d1b2_categorical_native.py"),
+        ("bucket_perturb", mx.COMPILED_RUST, "tests/parity/test_phase_d_d1b1_bucket_native.py"),
+        ("date_shift", mx.COMPILED_RUST, "tests/parity/test_phase_d_d1c_native.py"),
+        ("text_mask", mx.COMPILED_RUST, "tests/native/test_c6b_i_text_mask_chunked.py"),
+        ("text_redact", mx.COMPILED_RUST, "tests/native/test_c6c_i_text_redact_chunked.py"),
+        ("faker", mx.COMPILED_SELECTION, "tests/native/test_chunked_nondet_faker_parity.py"),
+    ],
+)
+def test_native_chunked_compiled_cells_cite_their_real_kernel_suite(
+    strategy: str, classification: str, suite: str
+) -> None:
+    """Native-chunked admits no FK cell (every FK edge reroutes to the oracle), so its non-FK
+    compiled cells carry no fresh witness here; they are proven by the Phase C chunked suites.
+    This pins the classification and that each cited suite exists, matching the OOC cite test."""
+    assert mx.derive_matrix()[(mx.CHUNKED, strategy, mx.PAYLOAD)] == classification
+    assert (Path(__file__).resolve().parents[2] / suite).is_file()
+
+
 # ---------------------------------------------------------------------------
 # F. The redact conversion-failure fallback is LIVE: the audit fences it, it does not delete it.
 # ---------------------------------------------------------------------------
