@@ -30,7 +30,11 @@ from decoy_engine.execution._strategies import _text_mask as text_mask_mod
 from decoy_engine.execution._strategies import _text_redact as text_redact_mod
 from decoy_engine.execution._strategies._passthrough import PassthroughHandler
 from decoy_engine.execution._strategies._redact import RedactHandler
-from decoy_engine.execution.native import _text_redact_kernel
+from decoy_engine.execution.native import (
+    _kernels_scalar,
+    _text_mask_native_splice,
+    _text_redact_kernel,
+)
 from decoy_engine.execution.native._dispatch import _static_route_decision
 from decoy_engine.execution.out_of_core import _mask_group_c
 from decoy_engine.relationships._graph import OrphanPolicy
@@ -346,10 +350,23 @@ def test_hash_mutant_that_recomputes_in_python_trips_the_zero_fallback_spy(
         _assert_consumed(cell, mutant)
 
 
-# Text operators: the span detection is compiled Rust and the splice is Python, so the witness
-# is the compiled candidate call plus a guard that the handler's own per-cell loop never ran.
+# Text operators: the span detection is compiled Rust and the per-cell splice is Python. The
+# witness marks the output AT THE CANDIDATE BOUNDARY, not the seam: a test-only wrapper injects a
+# compiled span over a no-PII sentinel cell, and that injected span propagates through the Python
+# splice into the emitted string ONLY when the compiled candidates are actually consumed. A mutant
+# that discards the candidates (returning `[None]` per cell) forces a Python recompute that detects
+# no PII in the sentinel, so the mark is absent; every Python span-detection entry point reachable
+# for an eligible cell is also guarded, so the recompute raises rather than silently re-deriving.
 
 needs_text_kernel = pytest.mark.skipif(not kernel_loads(), reason="needs the text span kernel")
+
+# An ASCII, PII-free cell. Its only span is the one the candidate-boundary wrapper injects, so it is
+# redacted ONLY on the compiled path; a Python recompute finds nothing and leaves it unchanged.
+_SENTINEL = "zzmarkzz"
+# One compiled candidate `(detector_index, start, end)` over the whole sentinel cell. Index 0 is
+# `email` in `SUPPORTED_IDS`; `email` is requested by both witness configs (detectors=all) and its
+# text_mask default strategy is `redact`, so the span visibly rewrites the cell on either operator.
+_SENTINEL_SPAN = [(0, 0, len(_SENTINEL))]
 
 
 def _text_cell(strategy: str, source: list[str | None], seed: Any) -> Shape:
@@ -360,25 +377,54 @@ def _boom(*_a: Any, **_k: Any) -> Any:
     raise AssertionError("the handler's pandas/Python per-cell loop ran for an admitted cell")
 
 
+def _boom_eligible(real: Callable[..., Any]) -> Callable[..., Any]:
+    """Boom when Python span detection runs for an ASCII-ELIGIBLE cell, which must use the compiled
+    candidates. A non-ASCII cell legitimately detects in Python even on the compiled path, so it is
+    passed through to the real detector."""
+
+    def guard(text: Any, *a: Any, **k: Any) -> Any:
+        if isinstance(text, str) and _text_redact_kernel.is_ascii_safe(text):
+            raise AssertionError("Python span detection ran for an ASCII-eligible cell")
+        return real(text, *a, **k)
+
+    return guard
+
+
+def _guard_python_detection(m: pytest.MonkeyPatch) -> None:
+    """Boom every Python span-detection / recompute entry point the native text splice can reach
+    for an ELIGIBLE cell when the compiled candidates are discarded: the kernel's `iter_spans`
+    (text_redact and the text_mask non-splice path), the splice route's `iter_spans`, and both
+    handlers' own per-cell loops. `merge_text_redact_spans`/`finditer` are NOT guarded: they run on
+    the compiled path too (the three lookaround detectors), so they are not a recompute tell."""
+    m.setattr(_kernels_scalar, "iter_spans", _boom_eligible(_kernels_scalar.iter_spans))
+    m.setattr(
+        _text_mask_native_splice, "iter_spans", _boom_eligible(_text_mask_native_splice.iter_spans)
+    )
+    m.setattr(text_redact_mod, "iter_spans", _boom)  # text_redact handler's own per-cell loop
+    m.setattr(text_mask_mod, "mask_cell", _boom)  # text_mask handler's own per-cell loop
+
+
 @needs_text_kernel
 @pytest.mark.parametrize(
-    ("strategy", "source", "seed", "module", "loop", "seam"),
+    ("strategy", "source", "seed"),
     [
         (
             "text_redact",
             ["mail a@b.com now", "ssn 123-45-6789 ok", "call 212-555-1234", "clean", None],
             tr_seed(),
-            text_redact_mod,
-            "iter_spans",
-            "text_redact_column",
         ),
         (
+            # `unmatched_span_policy=passthrough` keeps non-span text verbatim (default `redact`
+            # would rewrite the whole no-PII sentinel to the token, erasing the distinction). The
+            # config stays admitted-native and, with its default fpe/faker span strategies, still
+            # routes through `text_redact_candidates` (the non-splice path).
             "text_mask",
             list(CORPUS),
-            column_seed("text_mask", namespace=None),
-            text_mask_mod,
-            "mask_cell",
-            "text_mask_column",
+            column_seed(
+                "text_mask",
+                namespace=None,
+                provider_config=(("unmatched_span_policy", "passthrough"),),
+            ),
         ),
     ],
 )
@@ -386,75 +432,67 @@ def test_seq_text_operator_runs_compiled_spans_and_never_the_handler_loop(
     strategy: str,
     source: list[str | None],
     seed: Any,
-    module: Any,
-    loop: str,
-    seam: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The SEQ seam's compiled output is MARKED, so the emitted column is distinguishable from
-    the oracle: a mutant that discards it and substitutes oracle values cannot pass."""
-    shape = _text_cell(strategy, source, seed)
+    """The mark originates at the compiled-candidate boundary: an injected span over a no-PII
+    sentinel reaches the emitted string ONLY when the candidates are consumed. Discarding them and
+    recomputing in Python yields output WITHOUT the mark (and, with detection guarded, raises)."""
+    shape = _text_cell(strategy, [*source, _SENTINEL], seed)
     oracle = run_full(shape).outputs["P"].column("t").to_pylist()
-    expected = [None if v is None else MARKED + v for v in oracle]
+    assert oracle[-1] == _SENTINEL, (
+        "the sentinel carries no PII: the oracle must leave it untouched"
+    )
+
     calls: list[int] = []
     original = _text_redact_kernel._CompiledTextRedactKernel.text_redact_candidates
-    real_seam = getattr(SeqNativeRun, seam)
 
-    def recording(self: Any, values: Any, detector_ids: Any, catalog_version: int) -> Any:
+    def injecting(self: Any, values: Any, detector_ids: Any, catalog_version: int) -> Any:
         calls.append(len(values))
-        return original(self, values, detector_ids, catalog_version)
+        per_cell = list(original(self, values, detector_ids, catalog_version))
+        for i, v in enumerate(values):
+            if v == _SENTINEL:  # the mark: a compiled email span over the whole sentinel cell
+                per_cell[i] = list(_SENTINEL_SPAN)
+        return per_cell
 
-    def marking_seam(self: Any, *args: Any, **kwargs: Any) -> Any:
-        picked = real_seam(self, *args, **kwargs)
-        if picked is None:
-            return None
-        mark = lambda vs: [None if v is None else MARKED + v for v in vs]
-        if strategy == "text_mask":
-            values, warnings = picked
-            return mark(values), warnings
-        return mark(picked)
+    def discard(self: Any, values: Any, detector_ids: Any, catalog_version: int) -> Any:
+        calls.append(len(values))
+        original(self, values, detector_ids, catalog_version)  # real call, result DISCARDED
+        return [None] * len(values)
 
-    def assert_consumed(result: Any) -> None:
-        got = result.outputs["P"].column("t").to_pylist()
-        assert got == expected, "the emitted column is not the seam's marked compiled output"
-        assert got != oracle and any(v is not None for v in got)
+    kernel_cls = _text_redact_kernel._CompiledTextRedactKernel
 
+    # Positive: the injected compiled span reaches the emitted string; every real cell is the
+    # oracle value, and no Python recompute of an eligible cell runs.
     with monkeypatch.context() as m:
-        m.setattr(
-            _text_redact_kernel._CompiledTextRedactKernel, "text_redact_candidates", recording
-        )
-        m.setattr(SeqNativeRun, seam, marking_seam)
-        m.setattr(module, loop, _boom)
+        m.setattr(kernel_cls, "text_redact_candidates", injecting)
+        _guard_python_detection(m)
         result = run_seq(shape)
-        assert_consumed(result)
-        assert calls, "the compiled span kernel was never called"
-        entry = _entry(result, strategy, "t")
-        assert entry["executed_backend"] == "rust_companion" and entry["native_calls"] >= 1
+    got = result.outputs["P"].column("t").to_pylist()
+    assert got[:-1] == oracle[:-1], "a real cell diverged from the oracle on the compiled path"
+    assert got[-1] not in (None, _SENTINEL), "the candidate-boundary mark never reached the string"
+    assert calls, "the compiled span kernel was never called"
+    entry = _entry(result, strategy, "t")
+    assert entry["executed_backend"] == "rust_companion" and entry["native_calls"] >= 1
 
-        # Mutant: the real handler ran (compiled spans, marked output), then its result was
-        # discarded for the precomputed oracle values. No per-cell loop runs, so only the
-        # marked-output check can reject it.
-        before = len(calls)
-        adapter = PandasExecutionAdapter()
-        adapter._handlers[strategy] = _DiscardRecompute(
-            adapter._handlers[strategy], lambda _df, _column: oracle
-        )
-        mutant = run_seq(shape, adapter=adapter)
-        assert len(calls) > before  # the compiled kernel ran, then its result was dropped
-        with pytest.raises(AssertionError, match="not the seam's marked compiled output"):
-            assert_consumed(mutant)
-
-    # Mutant 2: the handler's own legacy per-cell loop recomputes the column.
-    adapter = PandasExecutionAdapter()
-
-    def legacy_loop(_df: pd.DataFrame, _column: str) -> list[Any]:
-        return [_boom() for _ in range(1)]
-
-    adapter._handlers[strategy] = _DiscardRecompute(adapter._handlers[strategy], legacy_loop)
+    # Mutant (Codex round 2), guarded: discarding the candidates forces a Python recompute of the
+    # eligible cells, which every detection guard rejects. The mutant is REQUIRED to raise.
     with monkeypatch.context() as m:
-        m.setattr(module, loop, _boom)
-        with pytest.raises(AssertionError, match="per-cell loop ran"):
-            run_seq(shape, adapter=adapter)
+        m.setattr(kernel_cls, "text_redact_candidates", discard)
+        _guard_python_detection(m)
+        with pytest.raises(AssertionError):
+            run_seq(shape)
+
+    # Same mutant, UNGUARDED: the recompute now succeeds, reproducing the oracle byte for byte, but
+    # WITHOUT the candidate-boundary mark. This is what the old seam-level mark could not catch.
+    before = len(calls)
+    with monkeypatch.context() as m:
+        m.setattr(kernel_cls, "text_redact_candidates", discard)
+        recompute = run_seq(shape).outputs["P"].column("t").to_pylist()
+    assert len(calls) > before, "the compiled kernel ran, then its result was dropped"
+    assert recompute == oracle, "the Python recompute must reproduce the oracle"
+    assert recompute[-1] == _SENTINEL, (
+        "the mark is absent once the compiled candidates are discarded"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -896,9 +934,13 @@ _CHUNKED_SUITES = {
 
 def test_native_chunked_compiled_cells_cite_their_real_kernel_suite() -> None:
     """Native-chunked admits no FK cell (every FK edge reroutes to the oracle), so its non-FK
-    compiled cells carry no fresh witness here; they are proven by the chunked-route suites.
-    The cited set must EQUAL the derived compiled/selection set, so a new chunked compiled cell
-    fails here until it cites a suite, and each suite must drive the chunked route."""
+    compiled cells carry no fresh witness here; each cites a chunked-route suite. What a cited suite
+    proves differs by cell (see the record): the scalar cells' suites witness compiled consumption
+    (`rust_companion`/`rust_pool_select`, `compiled_kernel_executed` True), but the text suites only
+    witness the `arrow_python` chunked route plus oracle parity, NOT compiled-span consumption (a
+    Python span recompute would pass them) -- that witness is the SEQ/OOC suite, not a chunked one.
+    This test only checks the cited set equals the derived compiled/selection set, so a new chunked
+    compiled cell fails here until it cites a suite, and that each suite drives the chunked route."""
     matrix = mx.derive_matrix()
     derived = {
         k[1]
