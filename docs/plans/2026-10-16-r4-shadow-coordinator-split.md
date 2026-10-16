@@ -122,37 +122,77 @@ Each is pinned by an existing test; the extraction must not perturb any:
   `RESOURCE_LIMIT_BREACH`, `NATIVE_COMPANION_UNAVAILABLE`). Phase E's 100M run
   asserts on exactly this per-column Rust evidence, so it must be byte-identical.
 - Source-schema-order column reconstruction and the `SCHEMA_DIFF` guard.
+- Per-batch accounting inside the loop: the running `row_offset` fed to
+  `run_operator` and `rebase_row_errors` (table-global offsets must stay exact
+  across batches), the per-batch `when_mask` slice (`batch_when_mask`), the
+  `group_key` sibling single-column slice (preserving the pandas sidecar), and
+  the `RESOURCE_LIMIT_BREACH` per-batch budget check. A mechanical move must
+  carry these verbatim; they are covered by the §5.1 baseline cases (d), (e), (f).
 
 ## 5. Verification + acceptance tests
 
 Behavior-preserving refactor, so the acceptance bar is "nothing changed":
-1. Pre-extraction byte baseline (the R3/P6 pattern): before moving anything,
-   record the `ShadowRunResult` outputs (output tables' digests, route_evidence
-   keys + planned/actual operators, warnings, row_errors) for a representative
-   set of plans (scalar single-table, chunked, faker-pool, mixed, the degenerate
-   zero-row and all-null shapes). After the extraction, assert byte-identical.
+
+1. **Pre-extraction characterization baseline (the R3/P6 pattern), capturing the
+   full observable evidence, not just outputs.** Before moving anything, record
+   for a representative plan set: output tables' digests; the complete
+   `route_evidence` per node (`planned_operator`, `actual_operator`, `executed`,
+   and the counters `rows_seen`, `rows_selected`, `text_mask_sub_floor_notices`
+   from `OperatorCallEvidence` in `_shadow_operators.py`); `warnings`;
+   `row_errors` (table attribution + rebased offsets); `driver_invocation`;
+   `quality_metrics`. For timing, assert the `timed_strategy` RECORD COUNT,
+   LABELS, and SCOPE (one record per node, enclosing kernel-load + pool-resolve +
+   batch loop + assembly) are identical, NOT elapsed-time byte equality. After
+   the extraction, assert every captured field byte-identical. Concrete baseline
+   cases the set must include (each exercises an invariant a mechanical move
+   could break): (a) a faker-pool job with TWO nodes sharing one `PoolIdentity`
+   (proves build-once-per-identity survives); (b) a faker job that forces the
+   index-kernel lazy load (proves load-once-before-first-pool); (c) an
+   independent-mixed plan (proves the mask-half recursion into `run` still
+   reaches the batch runner); (d) a `group_key` node reading a sibling column
+   (proves the sibling-slice/stringify path); (e) a native `date_shift` producing
+   a `format_error` RowError (proves `rebase_row_errors` global-offset
+   accounting); (f) a `when:`-gated node (proves per-batch `when_mask` slicing);
+   (g) the degenerate zero-row and all-null shapes; (h) a non-string faker pool
+   (proves the `FAKER_POOL_NON_STRING_OUTPUT` raise reaches the caller).
    `tests/physical/test_shadow_corpus.py` already re-verifies the degenerate
    shapes against the live `run_pipeline(substrate="pandas")` oracle; keep it
    green unchanged.
-2. The full `tests/physical/` suite green with NO assertion change. The only
-   permitted test edit is the import line in `test_shadow_coordinator.py` for the
-   moved `_batches` / `_pool_values_are_string_valued` helpers (update to the new
-   module; no behavior change).
-3. Module size: coordinator drops well under 600; the new `_shadow_batch_runner.py`
-   is under 600 (if the loop + `_resolve_pool` exceed it, split `_resolve_pool`
-   into its own module too). Update the census (`tests/sentry/test_module_size.py`)
-   for both the coordinator's new (lower) LOC and the new module(s); relocate or
-   retarget the cap test at `test_shadow_full_frame.py:663` to the coordinator's
-   new size.
-4. Physical-seam sentry (`tests/sentry/test_physical_seam_disconnection.py`): the
-   new module lives under `execution/physical/` so it is inside the seam by
-   construction. The byte-identical-to-origin-main production check
-   (`test_production_execution_modules_are_byte_identical_to_origin_main`) will
-   flag both the changed coordinator and the new module; add both to that
-   sentry's permitted/changed list with the R4 rationale, per the standing
-   physical-seam allowlist rule. Confirm no module OUTSIDE `physical/` is touched
-   (so no `permitted_non_physical` / `DELIBERATELY_CONNECTED_MODULES` entry is
-   needed); if one is, add it with rationale.
+2. **The full `tests/physical/` suite green with NO assertion change.** Permitted
+   test edits are MECHANICAL ONLY (import lines, monkeypatch targets, direct
+   helper-call sites for the moved symbols), preserving every assertion. The
+   moved symbols (`_batches`, `_pool_values_are_string_valued`, `_resolve_pool`,
+   `ShadowRunResult`) have importers/patch-sites beyond `test_shadow_coordinator.py`:
+   grep the whole test tree for them during the build (known sites so far include
+   `test_shadow_full_frame.py`, `tests/unit/execution/_r3_scenarios.py`,
+   `tests/physical/test_compiler_units.py`) and update each to the new location.
+   Keep any patch of a method that STAYS on the coordinator pointed at the
+   coordinator. After each patch-target move, verify the spy still observes the
+   call and any injected-failure patch still triggers the raise: a stale
+   negative-path patch that no longer intercepts can silently pass.
+3. **Module size (`tests/sentry/test_module_size.py`): do NOT add census entries
+   for files at or under the 600 goal.** The census allowlist is only for files
+   OVER goal, and `test_allowlist_entries_are_still_over_goal` FAILS if an entry
+   is <= goal. So if the coordinator drops under 600 (it will), REMOVE its
+   allowlist entry rather than lower it; add no entry for the new
+   `_shadow_batch_runner.py`/`_shadow_result.py` while they are under 600 (if the
+   loop + `_resolve_pool` would exceed 600, split `_resolve_pool` into its own
+   module so neither needs an entry). Keep the coordinator LOC-cap assertion at
+   `test_shadow_full_frame.py:663` (retarget to the new lower size), and add a
+   dedicated cap assertion for the batch-runner module if desired.
+4. **Physical-seam sentry (`tests/sentry/test_physical_seam_disconnection.py`) is
+   a scope/import-boundary guard, NOT parity evidence.** Its
+   outside-`execution/physical/` change check (the `permitted_non_physical`
+   logic) only flags files that change OUTSIDE `execution/physical/`. R4's
+   changes (the modified coordinator + the new `_shadow_batch_runner.py` /
+   `_shadow_result.py`) are ALL under `execution/physical/`, so they do not trip
+   it and need NO allowlist edit. Leave both sentry allowlists
+   (`permitted_non_physical`, `DELIBERATELY_CONNECTED_MODULES`) UNCHANGED. The
+   `ShadowRunResult` re-export and the `_shadow_result.py` introduce no new
+   cross-seam import (`_unified_slice.py` already imports from the coordinator
+   module; it keeps importing `ShadowRunResult` from there via the re-export).
+   The build's job is to CONFIRM no non-`physical/` module's import set changed,
+   not to add entries.
 5. ci-mirror clean (ruff check + format, mypy on `src/decoy_engine`, no-extras
    env). Companion-present parity suite green (this is a native-touching area).
 
@@ -161,8 +201,9 @@ Behavior-preserving refactor, so the acceptance bar is "nothing changed":
 - Sole production reach: the per-batch loop is the only live unified-slice
   masking path (`_unified_slice.py:256`), run on every admitted single-table
   job. A behavior change here is a live-output correctness change. Mitigated by
-  the byte baseline + the oracle-anchored corpus test + the byte-identical seam
-  sentry.
+  the full-evidence characterization baseline (§5.1) + the oracle-anchored corpus
+  test. The physical-seam sentry is a scope/import-boundary guard here, not
+  parity evidence (§5.4).
 - Re-entrancy: the mixed branch recurses into `run`; the extraction must keep
   that reaching the batch runner.
 - Lifecycle invariants (§4) are easy to break in a mechanical move; each has a
