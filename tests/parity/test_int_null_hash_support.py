@@ -270,3 +270,24 @@ def test_a_when_on_the_hashed_integer_column_behaves_as_it_does_for_a_null_free_
             run_full(payload, (("h", column_seed()), ("s", gated)))
         codes.append(getattr(exc.value, "code", None))
     assert codes[0] == codes[1] == "when_expression_error"
+
+
+def test_exact_int_arrow_only_serves_the_frame_it_was_recorded_for() -> None:
+    # A snapshot must never key a frame that is not its widened form, e.g. a frame of orphan
+    # keys that REMAP builds under the parent's table and column name.
+    import pandas as pd
+
+    from decoy_engine.execution._exact_int_sources import exact_int_arrow
+
+    snap = pa.chunked_array([pa.array([1, None, 3], pa.int64())])
+    ctx: Any = type(
+        "Ctx", (), {"exact_int_sources": {("t", "c"): snap}, "nested_outer_column": ""}
+    )()
+    widened = pd.Series([1.0, None, 3.0])
+    assert exact_int_arrow(ctx, "t", "c", widened) is snap
+    assert exact_int_arrow(ctx, "t", "c", pd.Series([1.0, 2.0, 3.0])) is None  # same length
+    assert exact_int_arrow(ctx, "t", "c", pd.Series([1.0, None])) is None  # other length
+    assert exact_int_arrow(ctx, "t", "c", pd.Series(["a", None, "c"])) is None  # not numeric
+    assert exact_int_arrow(ctx, "t", "other", widened) is None
+    ctx.nested_outer_column = "outer"
+    assert exact_int_arrow(ctx, "t", "c", widened) is None
