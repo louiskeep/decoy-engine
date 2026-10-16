@@ -75,6 +75,7 @@ from decoy_engine.relationships._graph import OrphanPolicy
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
+    from contextlib import AbstractContextManager
     from pathlib import Path
 
     from decoy_engine.execution.out_of_core._relation import ParentKeyRelation
@@ -297,8 +298,7 @@ class StreamFkJoiner:
         assert self._child_keys is not None  # noqa: S101 -- the staged-check above guarantees this
         conn = self._ensure_conn()
         join_key = self._relation.join_key_column
-        reader = self._child_keys.open_reader()
-        try:
+        with self._child_keys.open_reader() as reader:
             conn.register("child_keys", reader)
             try:
                 count = conn.execute(
@@ -313,8 +313,6 @@ class StreamFkJoiner:
                 ).fetchone()[0]
             finally:
                 conn.unregister("child_keys")
-        finally:
-            reader.close()
         return int(count)
 
     def iter_join_rows(self, batch_rows: int) -> Iterator[pa.RecordBatch]:
@@ -366,19 +364,18 @@ class StreamFkJoiner:
               ON c.__decoy_fk_join_key = p.{_q(join_key)}
             ORDER BY c.__decoy_row_nr
         """
-        reader = self._child_keys.open_reader()
-        conn.register("child_keys", reader)
-        try:
-            yield from conn.execute(query).to_arrow_reader(batch_rows)
-        finally:
-            # An abandoned generator's cleanup can run AFTER `close()` already
-            # tore down the connection (Python finalizes it via GeneratorExit at
-            # GC, unordered against `stream_table`'s own joiner-closing finally).
-            # `unregister` is meaningless on a closed connection, so skip it
-            # rather than raise past a GeneratorExit.
-            if self._conn is not None:
-                self._conn.unregister("child_keys")
-            reader.close()
+        with self._child_keys.open_reader() as reader:
+            conn.register("child_keys", reader)
+            try:
+                yield from conn.execute(query).to_arrow_reader(batch_rows)
+            finally:
+                # An abandoned generator's cleanup can run AFTER `close()` already
+                # tore down the connection (Python finalizes it via GeneratorExit at
+                # GC, unordered against `stream_table`'s own joiner-closing finally).
+                # `unregister` is meaningless on a closed connection, so skip it
+                # rather than raise past a GeneratorExit.
+                if self._conn is not None:
+                    self._conn.unregister("child_keys")
 
     def _unordered_join_query(self) -> str:
         """The SLIM unordered join query -- shared by `_iter_unordered_join_rows`
@@ -470,18 +467,13 @@ class StreamFkJoiner:
             raise AssertionError("begin_staging must run before explain_join")
         assert self._child_keys is not None  # noqa: S101 -- the staged-check above guarantees this
         conn = self._ensure_conn()
-        reader = self._child_keys.open_reader()
-        # register() INSIDE the outer try so a registration failure still hits
-        # `reader.close()` -- otherwise the reader FD leaks. Mirrors total_orphans.
-        try:
+        with self._child_keys.open_reader() as reader:
             conn.register("child_keys", reader)
             try:
                 plan = self._run_explain_json(self._unordered_join_query())
                 disabled = self._disabled_optimizers()
             finally:
                 conn.unregister("child_keys")
-        finally:
-            reader.close()
         return {"plan": plan, "disabled_optimizers": disabled}
 
     def _iter_unordered_join_rows(self, batch_rows: int) -> Iterator[pa.RecordBatch]:
@@ -506,10 +498,7 @@ class StreamFkJoiner:
         assert self._child_keys is not None  # noqa: S101 -- the staged-check above guarantees this
         conn = self._ensure_conn()
         query = self._unordered_join_query()
-        reader = self._child_keys.open_reader()
-        # register() INSIDE the outer try so a registration failure still hits
-        # `reader.close()` -- otherwise the reader FD leaks.
-        try:
+        with self._child_keys.open_reader() as reader:
             conn.register("child_keys", reader)
             try:
                 plan = self._run_explain_json(query)
@@ -520,8 +509,6 @@ class StreamFkJoiner:
                 # cleanup can run after close() already tore down the connection.
                 if self._conn is not None:
                     self._conn.unregister("child_keys")
-        finally:
-            reader.close()
 
     def run_ordered_join(
         self,
@@ -628,10 +615,12 @@ class StreamFkJoiner:
         self._conn = conn
         return conn
 
-    def open_child_key_reader(self) -> Any:
-        """A fresh single-pass reader over this edge's raw child-key spill, for
-        the phase-3 out-of-line re-fetch (`ChildKeyLockstepCursor`). Must run
-        after `finalize_staging`; the caller owns closing the reader."""
+    def open_child_key_reader(self) -> AbstractContextManager[pa.RecordBatchReader]:
+        """Context manager over a fresh single-pass reader of this edge's raw
+        child-key spill, for the phase-3 out-of-line re-fetch
+        (`ChildKeyLockstepCursor`). Must run after `finalize_staging`; the
+        caller enters it (the driver on its ExitStack) and the exit closes the
+        reader and its file handle."""
         if self._child_keys is None:
             raise AssertionError("begin_staging must run before open_child_key_reader")
         return self._child_keys.open_reader()

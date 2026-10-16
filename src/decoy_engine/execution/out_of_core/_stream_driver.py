@@ -402,7 +402,11 @@ def stream_table(
                 )
                 stack.enter_context(rows)
                 cursors.append(JoinRowCursor(rows, join_columns=edge.child_columns))
-                child_cursor = ChildKeyLockstepCursor(joiner.open_child_key_reader())
+                # The context owns the OSFile + reader; the stack closes both on
+                # unwind (never GC), after the cursor's own close below.
+                child_cursor = ChildKeyLockstepCursor(
+                    stack.enter_context(joiner.open_child_key_reader())
+                )
                 stack.callback(child_cursor.close)
                 child_cursors.append(child_cursor)
 

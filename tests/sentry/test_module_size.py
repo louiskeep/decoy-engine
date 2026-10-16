@@ -113,7 +113,7 @@ ALLOWLIST: dict[str, int] = {
     # code_set provenance and FF1 notice plumbing through the streaming runner.
     "src/decoy_engine/execution/out_of_core/_runner.py": 683,
     # D3a validator mask-step hook threaded through the reorder driver; all logic lives in _validate_batch.py.
-    "src/decoy_engine/execution/out_of_core/_stream_driver.py": 603,
+    "src/decoy_engine/execution/out_of_core/_stream_driver.py": 607,
     # corpus schema checks and verify_corpus; split into _codeset_verify.py when next touched.
     "src/decoy_engine/transforms/_codeset_loader.py": 606,
     # DRAW_SITES catalogue; split into _draw_sites_mask.py / _draw_sites_gen.py if it grows.
@@ -121,7 +121,7 @@ ALLOWLIST: dict[str, int] = {
     # one provider class per draw mechanism across 30 sites; the size is fan-out, not tangle.
     "src/decoy_engine/execution/native/_draw_site_providers.py": 985,
     # load-time self-test and native_threads plumbing; no cleaner class split identified.
-    "src/decoy_engine/execution/out_of_core/_stream_join.py": 720,
+    "src/decoy_engine/execution/out_of_core/_stream_join.py": 709,
     # custom-provider registry snapshot for the shadow-parity gate; one cohesive module, no split identified.
     "src/decoy_engine/internal/faker_setup.py": 622,
     # FF1 span path and sub-floor policy; split into _text_mask_sub_floor.py when next touched.

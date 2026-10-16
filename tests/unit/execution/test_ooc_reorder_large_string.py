@@ -165,15 +165,15 @@ def _drive(
             _BATCH_ROWS, run_bytes_cap=_RUN_BYTES_CAP, merge_fan_in=_MERGE_FAN_IN
         ) as rows:
             cursor = JoinRowCursor(rows, join_columns=fx.edge.child_columns)
-            child_cursor = ChildKeyLockstepCursor(joiner.open_child_key_reader())
-            for start in range(0, n, step):
-                count = min(step, n - start)
-                slim = cursor.take(count, start)
-                raw = child_cursor.take(count, start)
-                resolved.append(joiner.resolve_batch(slim, raw)[0])
-            cursor.assert_exhausted()
-            child_cursor.assert_exhausted()
-            child_cursor.close()
+            with joiner.open_child_key_reader() as child_reader:
+                child_cursor = ChildKeyLockstepCursor(child_reader)
+                for start in range(0, n, step):
+                    count = min(step, n - start)
+                    slim = cursor.take(count, start)
+                    raw = child_cursor.take(count, start)
+                    resolved.append(joiner.resolve_batch(slim, raw)[0])
+                cursor.assert_exhausted()
+                child_cursor.assert_exhausted()
     return resolved, joiner
 
 

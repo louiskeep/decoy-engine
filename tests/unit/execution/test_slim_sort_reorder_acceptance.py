@@ -23,6 +23,7 @@ closed on any misalignment.
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -365,10 +366,11 @@ def _two_batch_joiner(tmp_path: Path) -> StreamFkJoiner:
 def test_child_cursor_wrong_row_nr_start_fails_closed(tmp_path: Path) -> None:
     joiner = _two_batch_joiner(tmp_path)
     try:
-        cursor = ChildKeyLockstepCursor(joiner.open_child_key_reader())
-        with pytest.raises(ExecutionError) as excinfo:
-            cursor.take(2, expected_row_nr_start=5)  # spill starts at 0, not 5
-        assert excinfo.value.code == "out_of_core_fk_row_alignment"
+        with joiner.open_child_key_reader() as reader:
+            cursor = ChildKeyLockstepCursor(reader)
+            with pytest.raises(ExecutionError) as excinfo:
+                cursor.take(2, expected_row_nr_start=5)  # spill starts at 0, not 5
+            assert excinfo.value.code == "out_of_core_fk_row_alignment"
     finally:
         joiner.close()
 
@@ -376,12 +378,13 @@ def test_child_cursor_wrong_row_nr_start_fails_closed(tmp_path: Path) -> None:
 def test_child_cursor_short_spill_fails_closed(tmp_path: Path) -> None:
     joiner = _two_batch_joiner(tmp_path)
     try:
-        cursor = ChildKeyLockstepCursor(joiner.open_child_key_reader())
-        # Ask for more rows than the spill holds (5): fails closed, never a
-        # silent short read.
-        with pytest.raises(ExecutionError) as excinfo:
-            cursor.take(999, expected_row_nr_start=0)
-        assert excinfo.value.code == "out_of_core_fk_row_alignment"
+        with joiner.open_child_key_reader() as reader:
+            cursor = ChildKeyLockstepCursor(reader)
+            # Ask for more rows than the spill holds (5): fails closed, never a
+            # silent short read.
+            with pytest.raises(ExecutionError) as excinfo:
+                cursor.take(999, expected_row_nr_start=0)
+            assert excinfo.value.code == "out_of_core_fk_row_alignment"
     finally:
         joiner.close()
 
@@ -389,12 +392,13 @@ def test_child_cursor_short_spill_fails_closed(tmp_path: Path) -> None:
 def test_child_cursor_overshoot_fails_closed(tmp_path: Path) -> None:
     joiner = _two_batch_joiner(tmp_path)
     try:
-        cursor = ChildKeyLockstepCursor(joiner.open_child_key_reader())
-        # The first spill batch holds 2 rows; asking for 1 would need a partial
-        # slice, which lockstep forbids (a retained remainder). Fail closed.
-        with pytest.raises(ExecutionError) as excinfo:
-            cursor.take(1, expected_row_nr_start=0)
-        assert excinfo.value.code == "out_of_core_fk_row_alignment"
+        with joiner.open_child_key_reader() as reader:
+            cursor = ChildKeyLockstepCursor(reader)
+            # The first spill batch holds 2 rows; asking for 1 would need a partial
+            # slice, which lockstep forbids (a retained remainder). Fail closed.
+            with pytest.raises(ExecutionError) as excinfo:
+                cursor.take(1, expected_row_nr_start=0)
+            assert excinfo.value.code == "out_of_core_fk_row_alignment"
     finally:
         joiner.close()
 
@@ -402,11 +406,12 @@ def test_child_cursor_overshoot_fails_closed(tmp_path: Path) -> None:
 def test_child_cursor_unconsumed_tail_fails_closed(tmp_path: Path) -> None:
     joiner = _two_batch_joiner(tmp_path)
     try:
-        cursor = ChildKeyLockstepCursor(joiner.open_child_key_reader())
-        cursor.take(2, expected_row_nr_start=0)  # first batch only; second remains
-        with pytest.raises(ExecutionError) as excinfo:
-            cursor.assert_exhausted()
-        assert excinfo.value.code == "out_of_core_fk_row_alignment"
+        with joiner.open_child_key_reader() as reader:
+            cursor = ChildKeyLockstepCursor(reader)
+            cursor.take(2, expected_row_nr_start=0)  # first batch only; second remains
+            with pytest.raises(ExecutionError) as excinfo:
+                cursor.assert_exhausted()
+            assert excinfo.value.code == "out_of_core_fk_row_alignment"
     finally:
         joiner.close()
 
@@ -414,12 +419,13 @@ def test_child_cursor_unconsumed_tail_fails_closed(tmp_path: Path) -> None:
 def test_child_cursor_lockstep_take_succeeds(tmp_path: Path) -> None:
     joiner = _two_batch_joiner(tmp_path)
     try:
-        cursor = ChildKeyLockstepCursor(joiner.open_child_key_reader())
-        first = cursor.take(2, expected_row_nr_start=0)
-        second = cursor.take(3, expected_row_nr_start=2)
-        assert first.column("__decoy_row_nr").to_pylist() == [0, 1]
-        assert second.column("__decoy_row_nr").to_pylist() == [2, 3, 4]
-        cursor.assert_exhausted()
+        with joiner.open_child_key_reader() as reader:
+            cursor = ChildKeyLockstepCursor(reader)
+            first = cursor.take(2, expected_row_nr_start=0)
+            second = cursor.take(3, expected_row_nr_start=2)
+            assert first.column("__decoy_row_nr").to_pylist() == [0, 1]
+            assert second.column("__decoy_row_nr").to_pylist() == [2, 3, 4]
+            cursor.assert_exhausted()
     finally:
         joiner.close()
 
@@ -439,3 +445,58 @@ def test_single_source_read_output_stable(tmp_path: Path) -> None:
     first, _ = ordered_join_output(fx, tmp_path / "a", run_bytes_cap=1 << 20, merge_fan_in=4)
     second, _ = ordered_join_output(fx, tmp_path / "b", run_bytes_cap=1 << 20, merge_fan_in=4)
     assert first.column("key").to_pylist() == second.column("key").to_pylist()
+
+
+# ---------------------------------------------------------------------------
+# Child-key spill handle lifecycle through the real joiner (no GC reliance)
+# ---------------------------------------------------------------------------
+
+
+def _open_fds_on(path: Path) -> int:
+    import os
+
+    n = 0
+    for entry in os.listdir("/proc/self/fd"):
+        try:
+            if os.readlink(f"/proc/self/fd/{entry}") == str(path):
+                n += 1
+        except OSError:
+            continue
+    return n
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="counts /proc/self/fd")
+def test_joiner_scans_leave_no_child_key_handle_open(tmp_path: Path) -> None:
+    joiner = _two_batch_joiner(tmp_path)
+    spill_path = tmp_path / "join" / "child_keys.arrow"
+    try:
+        assert joiner.total_orphans() == 0
+        assert _open_fds_on(spill_path) == 0
+        joiner.explain_join()
+        assert _open_fds_on(spill_path) == 0
+        it = joiner.iter_join_rows(2)
+        next(it)
+        assert _open_fds_on(spill_path) == 1  # open while the DuckDB scan is live
+        it.close()  # abandoned generator: handle closes deterministically
+        assert _open_fds_on(spill_path) == 0
+        it2 = joiner._iter_unordered_join_rows(2)
+        next(it2)
+        assert _open_fds_on(spill_path) == 1
+        it2.close()
+        assert _open_fds_on(spill_path) == 0
+    finally:
+        joiner.close()
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="counts /proc/self/fd")
+def test_joiner_child_key_reader_context_closes_on_exit(tmp_path: Path) -> None:
+    joiner = _two_batch_joiner(tmp_path)
+    spill_path = tmp_path / "join" / "child_keys.arrow"
+    try:
+        with joiner.open_child_key_reader() as reader:
+            cursor = ChildKeyLockstepCursor(reader)
+            cursor.take(2, expected_row_nr_start=0)
+            assert _open_fds_on(spill_path) == 1
+        assert _open_fds_on(spill_path) == 0
+    finally:
+        joiner.close()
