@@ -103,14 +103,14 @@ def test_reorder_shuffled_input_restores_row_order(tmp_path) -> None:
             # finish() ran at least one merge PASS (not a single buffered run).
             assert rows._sorter._run_counter > _MERGE_FAN_IN
             cursor = JoinRowCursor(rows, join_columns=fx.edge.child_columns)
-            child_cursor = ChildKeyLockstepCursor(joiner.open_child_key_reader())
             slim = cursor.take(n, 0)
             cursor.assert_exhausted()
             row_nrs = slim.column("__decoy_row_nr").to_pylist()
             assert row_nrs == list(range(n))
-            raw = child_cursor.take(n, 0)
-            child_cursor.assert_exhausted()
-            child_cursor.close()
+            with joiner.open_child_key_reader() as child_reader:
+                child_cursor = ChildKeyLockstepCursor(child_reader)
+                raw = child_cursor.take(n, 0)
+                child_cursor.assert_exhausted()
             fk_arrays = joiner.resolve_batch(slim, raw)
         result = fx.child.set_column(
             fx.child.schema.get_field_index(fx.edge.child_columns[0]),

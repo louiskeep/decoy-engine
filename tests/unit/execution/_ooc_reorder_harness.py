@@ -92,12 +92,12 @@ def ordered_join_output(
                 )
             else:
                 cursor = JoinRowCursor(rows, join_columns=fx.edge.child_columns)
-                child_cursor = ChildKeyLockstepCursor(joiner.open_child_key_reader())
                 slim = cursor.take(n, 0)
                 cursor.assert_exhausted()
-                raw = child_cursor.take(n, 0)
-                child_cursor.assert_exhausted()
-                child_cursor.close()
+                with joiner.open_child_key_reader() as child_reader:
+                    child_cursor = ChildKeyLockstepCursor(child_reader)
+                    raw = child_cursor.take(n, 0)
+                    child_cursor.assert_exhausted()
                 fk_arrays = joiner.resolve_batch(slim, raw)
         result = fx.child
         for idx, child_col in enumerate(fx.edge.child_columns):

@@ -21,6 +21,7 @@ compute that offset on read.
 
 from __future__ import annotations
 
+import contextlib
 from typing import TYPE_CHECKING, Protocol
 
 import pyarrow as pa
@@ -110,7 +111,7 @@ class SpillPayloadStore:
             # Nothing was ever appended (every batch was zero-row): no file was
             # created, so there is nothing to read back.
             return
-        with pa.ipc.open_stream(str(self._path)) as reader:
+        with pa.OSFile(str(self._path), "rb") as src, pa.ipc.open_stream(src) as reader:
             offset = 0
             for batch in reader:
                 yield offset, batch
@@ -161,7 +162,7 @@ class RawParentKeySpill:
             self._writer = None
 
     def __iter__(self) -> Iterator[pa.RecordBatch]:
-        with pa.ipc.open_stream(str(self._path)) as reader:
+        with pa.OSFile(str(self._path), "rb") as src, pa.ipc.open_stream(src) as reader:
             yield from reader
 
 
@@ -221,16 +222,27 @@ class SpillChildKeys:
             self._writer.close()
             self._writer = None
 
-    def open_reader(self) -> pa.RecordBatchReader:
-        """A fresh, single-pass reader over the finalized stream, from byte 0.
+    @contextlib.contextmanager
+    def open_reader(self) -> Iterator[pa.RecordBatchReader]:
+        """Context manager yielding a fresh, single-pass reader from byte 0.
 
-        Must be called after `finalize()`. The caller owns the returned
-        reader (registering, then unregistering, it with its own DuckDB
-        connection is `StreamFkJoiner`'s job, not this store's).
+        Must be called after `finalize()`. The context owns BOTH the
+        `pa.OSFile` and the IPC reader and closes them (reader first) on every
+        exit path, so no caller depends on GC to release the handle. The yielded
+        value is the real `pa.RecordBatchReader` (DuckDB's `conn.register`
+        needs an actual Arrow stream). Registering, then unregistering, it with
+        a DuckDB connection is `StreamFkJoiner`'s job and must finish inside
+        the `with`.
+
+        Opened through `pa.OSFile`, NOT a path string: a string path makes
+        pyarrow memory-map the file, and every touched page then stays resident
+        as file-backed RSS until the reader closes (the same failure
+        `_external_sort_run._RunHead` documents).
         """
         if self._writer is not None:
             raise AssertionError("open_reader before finalize")
-        return pa.ipc.open_stream(str(self._path))
+        with pa.OSFile(str(self._path), "rb") as src, pa.ipc.open_stream(src) as reader:
+            yield reader
 
 
 __all__ = [
