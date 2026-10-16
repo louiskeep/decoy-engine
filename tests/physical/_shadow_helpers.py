@@ -804,7 +804,7 @@ def assert_generation_failures_match(run: GenerationDifferentialRun) -> None:
 # `_generate_tables_from_config` call (Codex #5's "RAISED, not merely
 # entered" -- the spy below now distinguishes the two), but a malformed MASK
 # leaf has no equivalent shared function -- the shadow's native operators
-# (`_shadow_coordinator.run_operator`) and the oracle's pandas strategy
+# (`_shadow_batch_runner.run_operator`) and the oracle's pandas strategy
 # handlers are two independent implementations by design (that
 # independence is the whole point of the slices 1-4 parity proof). So
 # "did the mask stage raise" is proven by ELIMINATION plus a dispatch
@@ -865,11 +865,11 @@ def _arm_generate_raised_spy(patcher: pytest.MonkeyPatch) -> Callable[[], bool]:
 
 def _arm_shadow_mask_dispatch_counter(patcher: pytest.MonkeyPatch) -> Callable[[], int]:
     """Counts calls to the shadow coordinator's own mask-operator dispatch
-    point (`_shadow_coordinator.run_operator`, the bound name the
+    point (`_shadow_batch_runner.run_operator`, the bound name the
     per-node loop actually calls -- patching the origin module
     `_shadow_operators` would miss it, same lesson as the generate spy's
     own module-binding note)."""
-    from decoy_engine.execution.physical import _shadow_coordinator as _coordinator_module
+    from decoy_engine.execution.physical import _shadow_batch_runner as _coordinator_module
 
     count = 0
     original = _coordinator_module.run_operator  # type: ignore[attr-defined]

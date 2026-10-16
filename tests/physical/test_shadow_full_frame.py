@@ -669,3 +669,12 @@ def test_shadow_coordinator_module_stays_under_the_loc_cap() -> None:
     module_path = Path(coordinator_module.__file__)
     loc = sum(1 for _ in module_path.read_text().splitlines())
     assert loc < 600, f"_shadow_coordinator.py is {loc} LOC, over the 600-LOC cap"
+
+
+def test_shadow_batch_runner_module_stays_under_the_loc_cap() -> None:
+    """The per-node/per-batch loop extracted from the coordinator (R4) keeps
+    its own room under the 600-LOC goal for Phase E scale-hardening edits."""
+    from decoy_engine.execution.physical import _shadow_batch_runner
+
+    loc = sum(1 for _ in Path(_shadow_batch_runner.__file__).read_text().splitlines())
+    assert loc < 600, f"_shadow_batch_runner.py is {loc} LOC, over the 600-LOC cap"
