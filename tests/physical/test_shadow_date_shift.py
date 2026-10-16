@@ -52,7 +52,7 @@ from decoy_engine.execution.native._dispatch import plan_native_route
 from decoy_engine.execution.native._index_ext import load_compiled_index_kernel
 from decoy_engine.execution.native._operator_params import DateShiftParams
 from decoy_engine.execution.native._plan import native_route_eligibility
-from decoy_engine.execution.physical import _shadow_coordinator
+from decoy_engine.execution.physical import _shadow_batch_runner
 from decoy_engine.execution.physical._compiler import compile_physical_plan
 from decoy_engine.execution.physical._plan import ExecutionBinding, KeyBinding
 from decoy_engine.execution.physical._shadow_context import ShadowContext
@@ -454,7 +454,7 @@ def test_date_shift_node_loads_kernel_without_pool_resolution(
     """Kernel-load and pool-resolution are separate conditions: a date_shift node
     loads the index kernel exactly once and never reaches `_resolve_pool`."""
     loads: list[int] = []
-    real_load = _shadow_coordinator.load_compiled_index_kernel
+    real_load = _shadow_batch_runner.load_compiled_index_kernel
 
     def _counting_load() -> Any:
         loads.append(1)
@@ -463,8 +463,8 @@ def test_date_shift_node_loads_kernel_without_pool_resolution(
     def _no_pool(*_a: Any, **_k: Any) -> Any:
         raise AssertionError("pool resolution must not run for a date_shift node")
 
-    monkeypatch.setattr(_shadow_coordinator, "load_compiled_index_kernel", _counting_load)
-    monkeypatch.setattr(ShadowCoordinator, "_resolve_pool", _no_pool)
+    monkeypatch.setattr(_shadow_batch_runner, "load_compiled_index_kernel", _counting_load)
+    monkeypatch.setattr(_shadow_batch_runner, "_resolve_pool", _no_pool)
     source = pa.table({"c": pa.array(["2024-01-01", "2023-01-01", "2022-01-01"], type=pa.string())})
     write_read_only_fixture(tmp_path, source, "ds")
     config = build_config(tmp_path, "t", tmp_path / "ds.parquet", [_ds_column()])
@@ -583,7 +583,7 @@ def test_dropping_row_errors_would_leak(tmp_path: Path, monkeypatch: pytest.Monk
     """Regression guard: with the coordinator's row-error collection defeated,
     the native path SUCCEEDS and the unparseable raw value reaches the output.
     The collection is what forces the fail-closed outcome."""
-    real = _shadow_coordinator.run_operator
+    real = _shadow_batch_runner.run_operator
 
     def _drop_errors(*a: Any, **k: Any) -> Any:
         out, _ = real(*a, **k)
@@ -594,7 +594,7 @@ def test_dropping_row_errors_would_leak(tmp_path: Path, monkeypatch: pytest.Monk
     config = build_config(tmp_path, "t", path, [_ds_column()])
     with pytest.raises(RowErrorsFailedError):
         _run(config, path, flag=True)
-    monkeypatch.setattr(_shadow_coordinator, "run_operator", _drop_errors)
+    monkeypatch.setattr(_shadow_batch_runner, "run_operator", _drop_errors)
     leaked = _run(config, path, flag=True)
     assert QUALITY_METRICS_KEY in leaked.quality_metrics
     assert "not-a-date" in leaked.outputs["t"].column("c").to_pylist()
@@ -1053,7 +1053,7 @@ def test_broken_index_kernel_fails_loud_instead_of_rerouting(
     """A kernel that violates its own contract must not silently degrade the job
     to the oracle forever: the unified slice raises its invariant error."""
     monkeypatch.setattr(
-        _shadow_coordinator, "load_compiled_index_kernel", lambda: _BrokenIndexKernel(fault)
+        _shadow_batch_runner, "load_compiled_index_kernel", lambda: _BrokenIndexKernel(fault)
     )
     source = pa.table({"c": pa.array(["2024-01-01", "2023-06-30"], type=pa.string())})
     path = write_read_only_fixture(tmp_path, source, "ds")
@@ -1075,7 +1075,7 @@ def test_dispatch_assertion_fails_loud_instead_of_rerouting(
     def _assert(*_a: Any, **_k: Any) -> Any:
         raise AssertionError("date_shift node reached run_operator with no target column")
 
-    monkeypatch.setattr(_shadow_coordinator, "run_operator", _assert)
+    monkeypatch.setattr(_shadow_batch_runner, "run_operator", _assert)
     source = pa.table({"c": pa.array(["2024-01-01"], type=pa.string())})
     path = write_read_only_fixture(tmp_path, source, "ds")
     config = build_config(tmp_path, "t", path, [_ds_column()])

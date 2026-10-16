@@ -128,7 +128,7 @@ def test_unkeyed_multi_chunk_parity_always_run(
     # the behavioural proof that both crossed identical (50,50,50,50,30)
     # boundaries. Test-layer only (monkeypatch); no production code changes.
     import decoy_engine.execution._chunked as _chunked_mod
-    import decoy_engine.execution.physical._shadow_coordinator as _sc_mod
+    import decoy_engine.execution.physical._shadow_batch_runner as _sc_mod
 
     shadow_batches: list[list[int]] = []
     _orig_batches = _sc_mod._batches

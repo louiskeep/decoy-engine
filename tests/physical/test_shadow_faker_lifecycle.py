@@ -20,7 +20,7 @@ import pytest
 from decoy_engine.execution.native._crypto_ext import CryptoExtensionUnavailableError
 from decoy_engine.execution.native._index_ext import reference_index_derivation
 from decoy_engine.execution.native._operator_params import FakerParams
-from decoy_engine.execution.physical import _shadow_coordinator
+from decoy_engine.execution.physical import _shadow_batch_runner
 from decoy_engine.execution.physical._plan import (
     ExecutionBinding,
     KeyBinding,
@@ -149,7 +149,7 @@ def test_load_compiled_index_kernel_raising_yields_coded_failure_and_never_build
     def _raise() -> None:
         raise CryptoExtensionUnavailableError("simulated: companion missing")
 
-    monkeypatch.setattr(_shadow_coordinator, "load_compiled_index_kernel", _raise)
+    monkeypatch.setattr(_shadow_batch_runner, "load_compiled_index_kernel", _raise)
 
     def _guard_build(self, provider, **kwargs):  # pragma: no cover - must never run
         raise AssertionError("a pool must never be built when the index kernel failed to load")
@@ -182,7 +182,7 @@ def test_abi2_companion_without_derive_index_batch_yields_the_same_coded_failure
             "predates the index kernel"
         )
 
-    monkeypatch.setattr(_shadow_coordinator, "load_compiled_index_kernel", _raise)
+    monkeypatch.setattr(_shadow_batch_runner, "load_compiled_index_kernel", _raise)
 
     plan = _plan_with_nodes(_faker_node("c"))
     source = pa.table({"c": pa.array(["a", "b"], type=pa.string())})
@@ -204,7 +204,7 @@ def test_bound_faker_node_with_no_registry_raises_assertion_error(
     present rather than silently masking against the wrong one."""
     kernel = _CountingIndexKernel()
     loader, _ = _counting_loader(kernel)
-    monkeypatch.setattr(_shadow_coordinator, "load_compiled_index_kernel", loader)
+    monkeypatch.setattr(_shadow_batch_runner, "load_compiled_index_kernel", loader)
 
     plan = _plan_with_nodes(_faker_node("c"))
     source = pa.table({"c": pa.array(["a", "b"], type=pa.string())})
@@ -228,16 +228,16 @@ def test_lifecycle_counters_under_a_shared_and_distinct_identity_a_b_a_order(
 ) -> None:
     kernel = _CountingIndexKernel()
     loader, load_calls = _counting_loader(kernel)
-    monkeypatch.setattr(_shadow_coordinator, "load_compiled_index_kernel", loader)
+    monkeypatch.setattr(_shadow_batch_runner, "load_compiled_index_kernel", loader)
 
-    real_resolve = _shadow_coordinator.resolve_faker_pool_identity
+    real_resolve = _shadow_batch_runner.resolve_faker_pool_identity
     resolve_calls: list[str] = []
 
     def _counting_resolve(**kwargs):
         resolve_calls.append(kwargs["namespace"])
         return real_resolve(**kwargs)
 
-    monkeypatch.setattr(_shadow_coordinator, "resolve_faker_pool_identity", _counting_resolve)
+    monkeypatch.setattr(_shadow_batch_runner, "resolve_faker_pool_identity", _counting_resolve)
 
     real_build = PoolBuilder.build
     build_calls: list[tuple[str, str | None]] = []
@@ -309,7 +309,7 @@ def test_run_never_consults_the_module_global_default_pool_cache(
 
     kernel = _CountingIndexKernel()
     loader, _ = _counting_loader(kernel)
-    monkeypatch.setattr(_shadow_coordinator, "load_compiled_index_kernel", loader)
+    monkeypatch.setattr(_shadow_batch_runner, "load_compiled_index_kernel", loader)
 
     plan = _plan_with_nodes(_faker_node("c"))
     source = pa.table({"c": pa.array(["a", "b", "c", "a"], type=pa.string())})

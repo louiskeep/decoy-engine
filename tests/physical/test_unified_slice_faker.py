@@ -36,7 +36,7 @@ from decoy_engine.execution.native._companion_status import (
     native_companion_status,
 )
 from decoy_engine.execution.native._index_ext import load_compiled_index_kernel
-from decoy_engine.execution.physical import _shadow_coordinator
+from decoy_engine.execution.physical import _shadow_batch_runner
 from decoy_engine.execution.physical._shadow_coordinator import ShadowCoordinator
 from decoy_engine.execution.physical._shadow_diff_codes import CELL_VALUE_DIFF, ShadowDifference
 from decoy_engine.generation.pool import PoolBuilder, PoolCache
@@ -192,7 +192,7 @@ class _KernelSpy:
 
 def install_kernel_spy(monkeypatch: pytest.MonkeyPatch) -> _KernelSpy:
     spy = _KernelSpy()
-    monkeypatch.setattr(_shadow_coordinator, "load_compiled_index_kernel", lambda: spy)
+    monkeypatch.setattr(_shadow_batch_runner, "load_compiled_index_kernel", lambda: spy)
     return spy
 
 

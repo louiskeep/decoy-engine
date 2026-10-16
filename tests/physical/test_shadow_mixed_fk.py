@@ -33,6 +33,7 @@ from decoy_engine.config import PipelineConfig
 from decoy_engine.execution import ExecutionError, run_pipeline
 from decoy_engine.execution import _fk_resolve as fk_resolve_module
 from decoy_engine.execution import _stitch as stitch_module
+from decoy_engine.execution.physical import _shadow_batch_runner as _batch_runner_module
 from decoy_engine.execution.physical import _shadow_coordinator as _coordinator_module
 from decoy_engine.execution.physical._compiler import compile_physical_plan
 from decoy_engine.execution.physical._shadow_context import ShadowContext
@@ -384,7 +385,7 @@ def _assert_declines_with_no_dispatch(
         raise AssertionError("run_operator must not be invoked for a declined coupled plan")
 
     monkeypatch.setattr(SynthesisStageAdapter, "run", _bomb_generate)
-    monkeypatch.setattr(_coordinator_module, "run_operator", _bomb_mask)
+    monkeypatch.setattr(_batch_runner_module, "run_operator", _bomb_mask)
 
     with pytest.raises(ShadowDifference) as excinfo:
         ShadowCoordinator(ctx=ctx, registry=inputs.registry).run(plan, snapshot)

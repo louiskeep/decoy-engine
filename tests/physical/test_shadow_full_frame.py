@@ -661,11 +661,22 @@ def test_dispatch_full_frame_signature_carries_no_sink_shaped_parameter() -> Non
 
 
 def test_shadow_coordinator_module_stays_under_the_loc_cap() -> None:
-    """A9 (also enforced generally by tests/sentry/test_module_size.py):
-    _shadow_coordinator.py stays under the 600-LOC orchestration cap even
-    with the FULL_FRAME branch wired in."""
+    """After R4 the coordinator is a thin dispatcher (~287 LOC). Guard it at 350,
+    tight to its thin-dispatcher size, so the per-batch regrowth R4 removed cannot
+    creep back in under the loose 600 orchestration goal (also enforced generally by
+    tests/sentry/test_module_size.py)."""
     from decoy_engine.execution.physical import _shadow_coordinator as coordinator_module
 
     module_path = Path(coordinator_module.__file__)
     loc = sum(1 for _ in module_path.read_text().splitlines())
-    assert loc < 600, f"_shadow_coordinator.py is {loc} LOC, over the 600-LOC cap"
+    assert loc < 350, f"_shadow_coordinator.py is {loc} LOC, over the 350-LOC thin-dispatcher cap"
+
+
+def test_shadow_batch_runner_module_stays_under_the_loc_cap() -> None:
+    """The per-node/per-batch loop extracted from the coordinator (R4, ~344 LOC).
+    Guard at 450: real room for Phase E scale-hardening edits, but tight enough that
+    growth trips the cap well before the 600 goal."""
+    from decoy_engine.execution.physical import _shadow_batch_runner
+
+    loc = sum(1 for _ in Path(_shadow_batch_runner.__file__).read_text().splitlines())
+    assert loc < 450, f"_shadow_batch_runner.py is {loc} LOC, over the 450-LOC cap"

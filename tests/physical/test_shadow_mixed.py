@@ -39,7 +39,7 @@ import pytest
 from decoy_engine.config import PipelineConfig
 from decoy_engine.execution._strategies._redact import RedactHandler
 from decoy_engine.execution.native._companion_status import native_companion_status
-from decoy_engine.execution.physical import _shadow_coordinator as _coordinator_module
+from decoy_engine.execution.physical import _shadow_batch_runner as _batch_runner_module
 from decoy_engine.execution.physical._compiler import compile_physical_plan
 from decoy_engine.execution.physical._context import SeamContext
 from decoy_engine.execution.physical._shadow_context import ShadowContext
@@ -168,14 +168,14 @@ def test_dispatch_mixed_runs_generate_before_mask_and_stitches(
         return original_generate(self, *args, **kwargs)
 
     mask_calls: list[Any] = []
-    original_run_operator = _coordinator_module.run_operator  # type: ignore[attr-defined]
+    original_run_operator = _batch_runner_module.run_operator  # type: ignore[attr-defined]
 
     def _spy_mask(*args: Any, **kwargs: Any) -> Any:
         mask_calls.append(args)
         return original_run_operator(*args, **kwargs)
 
     monkeypatch.setattr(SynthesisStageAdapter, "run", _spy_generate)
-    monkeypatch.setattr(_coordinator_module, "run_operator", _spy_mask)
+    monkeypatch.setattr(_batch_runner_module, "run_operator", _spy_mask)
 
     result = ShadowCoordinator(ctx=ctx, registry=inputs.registry).run(plan, snapshot)
 
@@ -396,7 +396,7 @@ def _install_mask_fault_injection(monkeypatch: pytest.MonkeyPatch) -> None:
     def _boom_pandas(self: RedactHandler, *args: Any, **kwargs: Any) -> Any:
         raise ValueError(_INJECTED_FAULT_MESSAGE)
 
-    monkeypatch.setattr(_coordinator_module, "run_operator", _boom_native, raising=True)
+    monkeypatch.setattr(_batch_runner_module, "run_operator", _boom_native, raising=True)
     monkeypatch.setattr(RedactHandler, "run", _boom_pandas)
 
 

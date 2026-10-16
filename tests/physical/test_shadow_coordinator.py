@@ -29,12 +29,13 @@ from decoy_engine.execution.physical._plan import (
     PoolBinding,
 )
 from decoy_engine.execution.physical._shadow_assembly import assemble_column
-from decoy_engine.execution.physical._shadow_context import ShadowContext
-from decoy_engine.execution.physical._shadow_coordinator import (
-    ShadowCoordinator,
+from decoy_engine.execution.physical._shadow_batch_runner import (
     _batches,
     _pool_values_are_string_valued,
+    _resolve_pool,
 )
+from decoy_engine.execution.physical._shadow_context import ShadowContext
+from decoy_engine.execution.physical._shadow_coordinator import ShadowCoordinator
 from decoy_engine.execution.physical._shadow_diff_codes import (
     DUPLICATE_NODE_DECLARATION,
     FAKER_POOL_NON_STRING_OUTPUT,
@@ -201,7 +202,7 @@ def test_planned_vs_actual_route_diff_is_raised_on_mismatch(
         return array, ()
 
     monkeypatch.setattr(
-        "decoy_engine.execution.physical._shadow_coordinator.run_operator", _wrong_operator
+        "decoy_engine.execution.physical._shadow_batch_runner.run_operator", _wrong_operator
     )
     with pytest.raises(ShadowDifference) as excinfo:
         ShadowCoordinator(ctx=ctx).run(plan, snapshot)
@@ -424,7 +425,7 @@ def test_faker_non_string_registry_override_is_declined() -> None:
     coordinator = ShadowCoordinator(ctx=ctx, registry=custom_registry)
 
     with pytest.raises(ShadowDifference) as excinfo:
-        coordinator._resolve_pool(binding=binding, pools_by_identity={}, pool_cache=PoolCache())
+        _resolve_pool(coordinator, binding=binding, pools_by_identity={}, pool_cache=PoolCache())
     assert excinfo.value.code == FAKER_POOL_NON_STRING_OUTPUT
 
 
