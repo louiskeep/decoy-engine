@@ -57,7 +57,7 @@ def int_component_shape(
 ) -> s.Shape:
     """P.(k, n) -> C.(k, n): `k` is a hashed string and `n` an INTEGER passthrough key component.
 
-    A passthrough integer key may hold nulls (only hash/truncate/categorical reject them), so this
+    A passthrough integer key may hold nulls (only truncate/categorical reject them), so this
     is the shape that shows a null-bearing integer component keeping its Arrow integer type."""
     n_type = n_type or pa.int64()
     plan = s.make_plan(

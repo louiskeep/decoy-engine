@@ -1,9 +1,9 @@
 """Out-of-core parity for the `null_bearing_int_unsupported` ingest guard.
 
 Every other route rejects a masked integer column that holds a null under
-truncate/hash/categorical. The out-of-core FK route must reject the same input
-with the same code, on resident and lazy (Parquet) sources, and must not
-publish anything when it rejects.
+truncate/categorical (hash is supported on every route). The out-of-core FK route
+must reject the same input with the same code, on resident and lazy (Parquet)
+sources, and must not publish anything when it rejects.
 """
 
 from __future__ import annotations

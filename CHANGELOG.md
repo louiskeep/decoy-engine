@@ -9,6 +9,25 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Fixed (hash over integer columns with nulls is consistent across routes, 2026-10-16)
+
+Hashing an integer column that holds a null was rejected with `null_bearing_int_unsupported`
+on the full-frame, sequential, and chunked routes, and the out-of-core FK route did not check
+for it at all, so it masked the column while the others refused. Ungated `hash` over such a
+column now runs on every route and gives the same tokens on each (full-frame, sequential with
+and without the companion, native chunked, out-of-core, unified slice). The keys come from the
+exact integers recorded at ingest, so a `uint64` maximum and an `int64` minimum hash exactly.
+A null stays null. `truncate` and `categorical` over an integer column with nulls remain
+rejected.
+
+Conditional (`when:`) hashing of an integer column is not supported yet. It is now rejected
+with `gated_hash_on_integer_unsupported` before the affected table masks, where it previously
+failed late with a type error. The out-of-core route rejects any `when:` predicate with
+`out_of_core_when_predicate_unsupported`, so the new code is raised on the other routes.
+
+The out-of-core FK route now runs the null-bearing-integer guard for `truncate` and
+`categorical`, matching the other routes.
+
 ### Changed (native FF1 for text_mask spans, 2026-10-15)
 
 `text_mask` now uses the existing Rust FF1 kernel for eligible `ssn`, `us_phone`, and

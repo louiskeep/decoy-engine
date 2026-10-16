@@ -192,8 +192,9 @@ jobs) also hashes on the companion when it is installed. It uses the same kernel
 out-of-core route, so the same admitted input types (utf8, large_utf8, bool, the eight
 integer widths) and the same accepted Unicode nuance above apply, and its output is
 byte-identical to the Python handler otherwise. Admission sits behind the existing ingest
-guards: an integer hash column that holds a null is still rejected with
-`null_bearing_int_unsupported`, for parent and payload columns alike. A matched child key
+guards. An integer hash column that holds a null is hashed, not rejected: the token is
+keyed on the exact integer, so it matches the other routes. `null_bearing_int_unsupported`
+covers only `truncate` and `categorical`, for parent and payload columns alike. A matched child key
 inherits the parent's masked value and never calls the kernel. REMAP orphan keys are minted
 on the companion only when their parent column ran there, and each orphan batch is admitted
 on its own inferred type; so the parent-key derivation is single-normalization, while a native
