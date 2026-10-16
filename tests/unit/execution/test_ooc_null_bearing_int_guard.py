@@ -27,7 +27,7 @@ from decoy_engine.relationships._namespace import NamespaceRegistry
 
 _REG = get_default_registry()
 _CODE = "null_bearing_int_unsupported"
-_REJECTED = ("truncate", "hash", "categorical")
+_REJECTED = ("truncate", "categorical")
 
 
 def _seed(strategy: str, namespace: str | None = None) -> ColumnSeed:
@@ -49,8 +49,10 @@ def _seed(strategy: str, namespace: str | None = None) -> ColumnSeed:
     )
 
 
-def _job(payload_strategy: str, *, payload_in: str = "child") -> tuple[Any, RelationshipGraph]:
-    key = _seed("hash", "ns_k")
+def _job(
+    payload_strategy: str, *, payload_in: str = "child", key_strategy: str = "hash"
+) -> tuple[Any, RelationshipGraph]:
+    key = _seed(key_strategy, "ns_k")
     pay = _seed(payload_strategy, "ns_pay" if payload_strategy in ("hash", "categorical") else None)
     child_cols = (("fk", key), ("n", pay)) if payload_in == "child" else (("fk", key),)
     parent_cols = (("pk", key),) if payload_in == "child" else (("pk", key), ("n", pay))
@@ -175,11 +177,12 @@ def test_t2_float_payload_gets_no_new_rejection_from_this_guard(strategy: str) -
 
 def test_t2_fk_child_integer_with_null_is_exempt() -> None:
     # The FK-child key column is resolved through the edge, so an INTEGER null there
-    # is not this guard's to reject. The key seed is hash (a rejected strategy), so
+    # is not this guard's to reject. The key seed is categorical (a rejected strategy), so
     # without the FK-child exemption the guard would reject this column. Call the guard
     # directly: a full run rejects an integer FK key at the compat gate BEFORE the
     # guard, which would hide whether the exemption is load-bearing.
-    plan, graph = _job("passthrough")  # payload n is non-rejected; the key seed is hash
+    # payload n is non-rejected; the key seed is categorical
+    plan, graph = _job("passthrough", key_strategy="categorical")
     sources = {
         "parent": pa.table({"pk": pa.array([1, 2, 3], type=pa.int64())}),  # parent key: no null
         "child": pa.table(
@@ -299,3 +302,11 @@ def test_t5_unknown_stats_scan_never_materializes_the_table(
     with pytest.raises(ExecutionError) as exc:
         _null_int_guard.reject_null_bearing_int_ooc(work, sources, graph)
     assert exc.value.code == _CODE
+
+
+def test_t2_hash_over_integer_with_null_is_not_rejected() -> None:
+    # Hash is keyed on the exact integer, so int+null is supported; only truncate and
+    # categorical stay rejected.
+    plan, graph = _job("hash")
+    assert _ooc_code(plan, _sources([1, None, 3], pa.int64()), graph) != _CODE
+    assert _ooc_code(plan, _sources([None, None], pa.int64()), graph) != _CODE

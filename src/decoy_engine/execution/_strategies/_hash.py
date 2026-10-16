@@ -22,6 +22,7 @@ from decoy_engine.execution._adapter import (
     provider_config_to_dict,
 )
 from decoy_engine.execution._errors import StrategyError
+from decoy_engine.execution._exact_int_sources import exact_int_arrow
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.kernel import hash_array
 from decoy_engine.plan._types import ColumnSeed
@@ -49,6 +50,10 @@ class HashStrategyHandler:
         raw_truncate = cfg.get("truncate")
         truncate = raw_truncate if isinstance(raw_truncate, int) and raw_truncate > 0 else None
 
+        # An ungated integer column with nulls was widened to float64 in the frame; its exact
+        # typed Arrow values were recorded at ingest and key the hash instead.
+        exact = exact_int_arrow(ctx, getattr(ctx, "current_table", ""), column, df[column])
+
         # getattr: handlers are also driven with hand-built contexts that predate this field.
         seq = getattr(ctx, "seq_native", None)
         if seq is not None:
@@ -59,13 +64,14 @@ class HashStrategyHandler:
                 namespace=plan.namespace,
                 mask_key=ctx.mask_key,
                 truncate=truncate,
+                exact=exact,
             )
             if tokens is not None:
                 df[column] = tokens
                 return df, []
 
         masked = hash_array(
-            pandas_column_to_kernel_input(df[column]),
+            exact if exact is not None else pandas_column_to_kernel_input(df[column]),
             seed=ctx.mask_key,
             namespace=plan.namespace,
             truncate=truncate,

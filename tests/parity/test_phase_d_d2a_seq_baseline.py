@@ -156,22 +156,29 @@ def test_nullable_child_inherits_the_parent_token_and_keeps_its_null() -> None:
         assert sc.compare_strict(full["child"], seq["child"]) == _ALL_TRUE
 
 
-def test_nullable_integer_hash_payload_is_still_rejected() -> None:
+def test_nullable_integer_hash_payload_hashes_the_exact_integers_on_both_routes() -> None:
+    # Int8 with a null: pandas widens the frame column to float64, but the hash keys from the
+    # recorded Arrow values, so the tokens are D1a's frozen literals and the null stays null.
+    tokens = EXPECTED_TOKENS["c_i8"]
+    expected = [tokens[0], tokens[1], tokens[2], None, tokens[4]]
     nullable = source_nullable_int()
-    with pytest.raises(ExecutionError) as exc:
-        run_seq(nullable, (("c_i8", column_seed()),))
-    assert exc.value.code == "null_bearing_int_unsupported"
+    seq = run_seq(nullable, (("c_i8", column_seed()),)).outputs
+    full = run_full(nullable, (("c_i8", column_seed()),)).outputs
+    assert seq["t"].column("c_i8").to_pylist() == expected
+    assert sc.compare_strict(full["t"], seq["t"]) == _ALL_TRUE
 
 
-def test_nullable_integer_parent_key_is_still_rejected() -> None:
+def test_nullable_integer_parent_key_hashes_and_keeps_its_null_on_both_routes() -> None:
     srcs = chain_sources(pa.table({"a": pa.array(list("abcd"))}))
     t = srcs["t"]
     srcs["t"] = t.set_column(
         t.schema.get_field_index("hk"), "hk", pa.array([0, None, 2, 3], pa.int64())
     )
-    with pytest.raises(ExecutionError) as exc:
-        run_seq(None, _A_SEED, sources=srcs)
-    assert exc.value.code == "null_bearing_int_unsupported"
+    expected = [_INT_KEY_TOKENS[0], None, _INT_KEY_TOKENS[2], _INT_KEY_TOKENS[3]]
+    seq = run_seq(None, _A_SEED, sources=srcs).outputs
+    full = run_full(None, _A_SEED, sources=srcs).outputs
+    assert seq["t"].column("hk").to_pylist() == expected
+    assert sc.compare_strict(full["t"], seq["t"]) == _ALL_TRUE
 
 
 def source_nullable_int() -> pa.Table:
@@ -239,25 +246,33 @@ def test_contiguous_when_selection_on_large_string_with_nulls() -> None:
 
 
 def test_zero_match_when_leaves_the_column_untouched() -> None:
-    payload = pa.table({"a": pa.array(["w", "x"], pa.string()), "i": pa.array([1, 2], pa.int32())})
-    out = run_seq(payload, (("a", with_when("fk > 100")), ("i", with_when("fk > 100")))).outputs
+    payload = pa.table({"a": pa.array(["w", "x"], pa.string())})
+    out = run_seq(payload, (("a", with_when("fk > 100")),)).outputs
     assert out["t"].column("a").to_pylist() == ["w", "x"]
-    assert out["t"].column("i").to_pylist() == [1, 2]
-    assert out["t"].column("i").type == pa.int32()
 
 
-@pytest.mark.parametrize(
-    ("values", "arrow_type"),
-    [([1, 2, 3, 4], pa.int32()), ([True, False, True, False], pa.bool_())],
-)
-def test_partial_when_on_a_non_text_column_fails_on_conversion(
-    values: list[object], arrow_type: pa.DataType
-) -> None:
+def test_gated_hash_on_an_integer_column_is_rejected_even_when_no_row_matches() -> None:
+    # Conditional hashing of an integer column is deferred: the rejection keys on the Arrow
+    # schema, not on how many rows the predicate selects.
+    payload = pa.table({"i": pa.array([1, 2], pa.int32())})
+    with pytest.raises(ExecutionError) as exc:
+        run_seq(payload, (("i", with_when("fk > 100")),))
+    assert exc.value.code == "gated_hash_on_integer_unsupported"
+
+
+def test_partial_when_on_a_bool_column_fails_on_conversion() -> None:
     # The handler stitches string tokens into a typed column; the output conversion refuses it.
     # This is today's behavior on every route that stitches a partial gate, frozen as is.
-    payload = pa.table({"x": pa.array(values, arrow_type)})
+    payload = pa.table({"x": pa.array([True, False, True, False], pa.bool_())})
     with pytest.raises((pa.ArrowInvalid, pa.ArrowTypeError)):
         run_seq(payload, (("x", with_when("fk == 1 or fk == 3")),))
+
+
+def test_partial_when_on_an_integer_column_is_rejected_before_masking() -> None:
+    payload = pa.table({"x": pa.array([1, 2, 3, 4], pa.int32())})
+    with pytest.raises(ExecutionError) as exc:
+        run_seq(payload, (("x", with_when("fk == 1 or fk == 3")),))
+    assert exc.value.code == "gated_hash_on_integer_unsupported"
 
 
 # Sink behavior: the atomicity claim is scoped to the sink.

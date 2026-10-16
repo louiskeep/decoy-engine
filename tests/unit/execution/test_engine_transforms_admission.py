@@ -677,7 +677,7 @@ class TestCompileChecksOnRawSource:
             tmp_path,
             tbl,
             transforms=[{"op": "filter", "expression": "x > 0"}],
-            columns=[{"name": "x", "strategy": "hash", "namespace": "ns"}],
+            columns=[{"name": "x", "strategy": "truncate", "provider_config": {"length": 2}}],
         )
         with pytest.raises(PlanCompileError) as exc:
             _run(cfg, {"t": tbl})

@@ -589,11 +589,11 @@ def test_t8_a_float_widened_key_aborts_as_an_invariant_not_a_silent_coercion(
     real = SeqNativeRun.native_column
 
     def widened(
-        self: SeqNativeRun, ctx: Any, df: Any, column: str, strategy: str, call: Any
+        self: SeqNativeRun, ctx: Any, df: Any, column: str, strategy: str, call: Any, *rest: Any
     ) -> Any:
         df = df.copy()
         df[column] = df[column].astype("float64")  # what to_pandas_fk_safe exists to prevent
-        return real(self, ctx, df, column, strategy, call)
+        return real(self, ctx, df, column, strategy, call, *rest)
 
     monkeypatch.setattr(SeqNativeRun, "native_column", widened)
     spy = install_fpe(monkeypatch, SpyFpe("capture"))

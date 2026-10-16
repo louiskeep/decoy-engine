@@ -1,7 +1,7 @@
 """engine-v2 S13 B1: null-bearing-int reject-at-validation compile check.
 
 The plan-compile check `null_bearing_int_unsupported` (row 10) rejects an integer
-+ null-bearing column masked under truncate/hash/categorical, because its masked
++ null-bearing column masked under truncate/categorical, because its masked
 value is ambiguous across execution substrates (to_pandas widens int+null to
 float; the polars-native path keeps int). PO-settled 2026-05-28. FK-child columns
 are exempt (resolved via the edge, not masked; no divergence). Under
@@ -57,7 +57,7 @@ def _config(strategy: str, *, column: str = "c") -> dict[str, Any]:
 
 
 class TestNullBearingIntCompileCheck:
-    @pytest.mark.parametrize("strategy", ["truncate", "hash", "categorical"])
+    @pytest.mark.parametrize("strategy", ["truncate", "categorical"])
     @pytest.mark.parametrize(
         "dtype", ["int64", "int64[pyarrow]", "Int64", "integer", "bigint", "intp", "uintp"]
     )
@@ -79,15 +79,15 @@ class TestNullBearingIntCompileCheck:
         profile = _profile(_col("c", dtype=dtype, null_count=3))
         check_null_bearing_int_unsupported(_config("hash"), profile)  # no raise
 
-    @pytest.mark.parametrize("strategy", ["redact", "passthrough", "faker", "fpe"])
+    @pytest.mark.parametrize("strategy", ["redact", "passthrough", "faker", "fpe", "hash"])
     def test_other_strategies_not_rejected(self, strategy: str) -> None:
-        # Only truncate/hash/categorical hit the substrate divergence.
+        # Hash is keyed on the exact integer, so it is supported; only truncate/categorical hit the substrate divergence.
         profile = _profile(_col("c", dtype="int64", null_count=2))
         check_null_bearing_int_unsupported(_config(strategy), profile)  # no raise
 
     def test_fk_child_int_null_exempt(self) -> None:
         # An FK-child column is resolved via the edge, not masked; exempt even
-        # when integer + null + hash.
+        # when integer + null + categorical.
         profile = _profile(
             _col("c", dtype="int64", null_count=2),
             relationships=(
@@ -100,7 +100,7 @@ class TestNullBearingIntCompileCheck:
                 ),
             ),
         )
-        check_null_bearing_int_unsupported(_config("hash"), profile)  # no raise
+        check_null_bearing_int_unsupported(_config("categorical"), profile)  # no raise
 
 
 class TestNullBearingIntUnderNoProfile:

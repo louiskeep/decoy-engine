@@ -1502,7 +1502,8 @@ def test_multi_table_fk_cycle_gate_rejects() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Non-FK integer payload with nulls: every route rejects, never just the oracle
+# Non-FK integer payload with nulls: truncate is rejected on every route, never just
+# the oracle; ungated hash is supported and byte-identical across routes
 # ---------------------------------------------------------------------------
 
 
@@ -1519,7 +1520,7 @@ def test_non_fk_int_payload_reject_parity(strategy: str, payload: list[int | Non
         parent_nan_row=None,
         int_payload=payload,
     )
-    reject = None in payload and strategy in ("truncate", "hash")
+    reject = None in payload and strategy == "truncate"
     outcome = _assert_parity_or_faithful_rejection(
         plan,
         sources,

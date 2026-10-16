@@ -360,7 +360,7 @@ def compile_plan(
         )
         deterministic_namespace_completeness(config)
         # Row 10 (B1, S13): reject integer + null-bearing columns under
-        # truncate/hash/categorical. Profile-dependent (dtype + null_count), so it
+        # truncate/categorical. Profile-dependent (dtype + null_count), so it
         # runs here and is skipped under no_profile (the execution-time guard backs
         # it up there).
         check_null_bearing_int_unsupported(config, profile)

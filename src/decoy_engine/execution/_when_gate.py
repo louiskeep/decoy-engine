@@ -34,7 +34,7 @@ import pandas as pd
 
 from decoy_engine.errors import ValidationError
 from decoy_engine.execution._errors import StrategyError
-from decoy_engine.execution._exact_int_faker import gated_context, selected_positions
+from decoy_engine.execution._exact_int_sources import gated_context, selected_positions
 from decoy_engine.execution._row_errors import RowError
 from decoy_engine.expressions._when_parser import (
     WHEN_OUTSIDE_GRAMMAR_CODE,

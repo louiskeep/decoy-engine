@@ -1,4 +1,4 @@
-"""Out-of-core ingest guard: reject an integer column with nulls under truncate/hash/categorical.
+"""Out-of-core ingest guard: reject an integer column with nulls under truncate/categorical.
 
 Same rule and same error as `execution._guards.reject_null_bearing_int`, but the
 out-of-core sources are lazy Parquet readers that must not be materialized, so

@@ -1,10 +1,10 @@
-"""Exact integer keys for deterministic Faker over integer columns that hold nulls.
+"""Exact integer keys for deterministic Faker and hash over integer columns that hold nulls.
 
 pandas widens an Arrow integer column with a null to float64, and deterministic keying
 refuses a float, so the job fails. The shared frame has other readers (`when:` predicates,
 derived columns, group_by siblings), so it stays as it is. The adapter instead records the
-column's original Arrow values per table or chunk, and the Faker handler keys from those.
-The canonical bytes then equal those of the same value in a null-free int64 column.
+column's original Arrow values per table or chunk, and the Faker and hash handlers key from
+those. The canonical bytes then equal those of the same value in a null-free int64 column.
 """
 
 from __future__ import annotations
@@ -44,7 +44,7 @@ def _widened_int_column(source: pa.Table, frame: pd.DataFrame, column: str) -> b
 def exact_int_faker_sources(
     table: str, source: pa.Table, frame: pd.DataFrame, nodes: Iterable[WorkNode]
 ) -> dict[tuple[str, str], pa.ChunkedArray]:
-    """Original Arrow columns for the table's exact-int Faker columns.
+    """Original Arrow columns for the table's exact-int Faker and ungated hash columns.
 
     `nodes` are the table's work nodes in the adapter's real dispatch order. A column an
     earlier node declared as written no longer holds the converted source, so it keeps
@@ -57,10 +57,14 @@ def exact_int_faker_sources(
         plan = node.plan_slice
         if (
             node.kind == "scalar"
-            and node.strategy == "faker"
             and isinstance(plan, ColumnSeed)
-            and plan.deterministic
             and column not in written
+            and (
+                (node.strategy == "faker" and plan.deterministic)
+                # Hash is keyed, so it needs no namespace flag. A gated hash on an integer
+                # column is rejected at admission, so only the ungated whole column lands here.
+                or (node.strategy == "hash" and plan.when is None)
+            )
             and _widened_int_column(source, frame, column)
         ):
             out[(table, column)] = source.column(column)
@@ -107,6 +111,38 @@ def gated_context(
     gated = copy.copy(ctx)
     object.__setattr__(gated, "gate_positions", positions)
     return gated
+
+
+def exact_int_arrow(
+    ctx: StrategyContext,
+    table: str,
+    column: str,
+    frame_column: pd.Series[Any] | None = None,
+) -> pa.ChunkedArray | None:
+    """The column's exact Arrow integers as registered, typed, or None.
+
+    The typed array (not `sampling_source`'s object Series) keeps the source width, so a
+    uint64 above 2**63 reaches the hash kernel without an inferred int64 cast. A nested child
+    samples synthetic leaves under a placeholder name and never reads a real column's values.
+
+    With `frame_column`, the snapshot is returned only when that column is its widened float
+    form. REMAP re-runs a parent column's handler on a frame of orphan keys under the
+    parent's own table and column name; those keys must hash from themselves.
+    """
+    if getattr(ctx, "nested_outer_column", ""):
+        return None
+    # getattr: handlers are also driven with hand-built contexts that predate this field.
+    exact = getattr(ctx, "exact_int_sources", {}).get((table, column))
+    if exact is None or frame_column is None:
+        return exact
+    if len(exact) != len(frame_column):
+        return None
+    widened = exact.cast(pa.float64(), safe=False).to_numpy(zero_copy_only=False)
+    try:
+        framed = frame_column.to_numpy(dtype=np.float64, na_value=np.nan)
+    except (TypeError, ValueError):
+        return None  # not numeric: this is not the widened snapshot frame
+    return exact if np.array_equal(widened, framed, equal_nan=True) else None
 
 
 def sampling_source(

@@ -40,6 +40,7 @@ from ._chunked_fk_dtype import (
     reject_mismatched_chunked_fk_declared_dtype,
 )
 from ._chunked_profile import profile_input
+from ._guards import reject_gated_hash_on_integer
 from ._transforms import reject_config_references_stored_index
 
 
@@ -208,6 +209,9 @@ def _oracle_preflight(
     ns_registry = build_namespace_registry(config, profile)
     # group_by effective-type guard: needs the plan and source schema, absent at
     # the config-only compatibility check; runs once, pre-stream.
+    # A `when:`-gated hash of an integer column is unsupported; checked on the Arrow schema
+    # here so a null-free first chunk cannot start masking before a later chunk's null crashes.
+    reject_gated_hash_on_integer(plan, {table: first.schema}, resolved_registry, graph)
     group_key.reject_unsafe_group_key_group_by_dtype(
         plan, first.schema, table=table, registry=resolved_registry, relationship_graph=graph
     )

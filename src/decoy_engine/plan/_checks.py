@@ -33,7 +33,7 @@ from decoy_engine.profile._types import Profile
 # arrow-backed int+null column widens to float64 under `to_pandas()`, which the
 # deterministic remap then either reshapes or hard-errors on. B1, PO-settled
 # 2026-05-28: reject at validation.
-_INT_NULL_REJECTED_STRATEGIES = frozenset({"truncate", "hash", "categorical"})
+_INT_NULL_REJECTED_STRATEGIES = frozenset({"truncate", "categorical"})
 
 
 def _is_integer_dtype(dtype: str) -> bool:
@@ -195,11 +195,11 @@ def check_basic_uniqueness_pre_flight(config: dict[str, Any], profile: Profile) 
 
 
 def check_null_bearing_int_unsupported(config: dict[str, Any], profile: Profile) -> None:
-    """Reject integer + null-bearing source columns under truncate/hash/categorical.
+    """Reject integer + null-bearing source columns under truncate/categorical.
 
     Compile-check ownership table row #10 (B1, S13). PO-settled 2026-05-28: a
     column that is integer-typed AND null-bearing is REJECTED at plan-compile when
-    masked under truncate / hash / categorical, because its masked value is
+    masked under truncate / categorical, because its masked value is
     ambiguous: `to_pandas()` widens an arrow-backed int+null source to float64
     before the deterministic remap sees it. This is the same class of
     "ambiguous numeric source" the S5 float-canonicalization hard error already
@@ -247,7 +247,7 @@ def check_null_bearing_int_unsupported(config: dict[str, Any], profile: Profile)
                 message=(
                     f"Column {table_name}.{col_name} is an integer column with nulls "
                     f"masked under {col_entry.get('strategy')!r}. Integer-with-null is "
-                    "not supported under truncate/hash/categorical: the masked value is "
+                    "not supported under truncate/categorical: the masked value is "
                     "ambiguous across execution substrates (int widens to float on one "
                     "path, stays integer on the other). Stringify or bin this column "
                     "upstream. This mirrors the float-canonicalization hard error."

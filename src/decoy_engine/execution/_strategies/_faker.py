@@ -25,7 +25,7 @@ from __future__ import annotations
 import pandas as pd
 
 from decoy_engine.execution._adapter import StrategyContext, provider_config_to_dict
-from decoy_engine.execution._exact_int_faker import sampling_source
+from decoy_engine.execution._exact_int_sources import sampling_source
 from decoy_engine.execution._strategies._faker_positional import (
     positional_pool_indices,
     resolve_selection_namespace,

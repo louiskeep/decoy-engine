@@ -348,8 +348,8 @@ def test_hash_with_truncate_config(tmp_path: Path) -> None:
 
 
 def test_hash_admitted_int_type(tmp_path: Path) -> None:
-    # Null-bearing ints are rejected under hash (`reject_null_bearing_int`);
-    # the admitted native-hash int case is exercised null-free.
+    # Null-bearing ints under hash run through the exact-integer snapshot on the legacy
+    # route (see test_int_null_hash_support); the admitted native-hash case here is null-free.
     source = pa.table({"c": pa.array([1, 22, 333], type=pa.int64())})
     columns = [{"name": "c", "strategy": "hash", "namespace": "n"}]
     _verify(tmp_path, "t", source, columns, name="hash_int")
