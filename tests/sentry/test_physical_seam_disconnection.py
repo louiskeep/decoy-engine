@@ -103,6 +103,8 @@ GUARDED_MODULES: tuple[str, ...] = (
     "execution/native/_operator_step.py",
     "execution/out_of_core/_runner.py",
     "execution/out_of_core/_compat.py",
+    "execution/out_of_core/_preflight.py",
+    "execution/out_of_core/_null_int_guard.py",
     "execution/out_of_core/_route_policy.py",
     "generation/_plan_entry.py",
     "generation/synthesize.py",
@@ -292,6 +294,8 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         "src/decoy_engine/execution/_transforms_prepare.py",
         "src/decoy_engine/execution/_transforms_table.py",
         "src/decoy_engine/execution/out_of_core/_runner.py",
+        "src/decoy_engine/execution/out_of_core/_preflight.py",
+        "src/decoy_engine/execution/out_of_core/_null_int_guard.py",
         # D3b (token vault on the bounded out-of-core route): the vault collector the two
         # out-of-core drivers call. It imports nothing from `execution.physical`.
         "src/decoy_engine/execution/out_of_core/_vault_collect.py",
@@ -372,7 +376,7 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         "src/decoy_engine/execution/_when_gate.py",
         # C5c-a: exact Arrow keys for nullable-int deterministic Faker at the sampling boundary.
         # Parent-level module that imports nothing from `execution.physical`.
-        "src/decoy_engine/execution/_exact_int_faker.py",
+        "src/decoy_engine/execution/_exact_int_sources.py",
         "src/decoy_engine/execution/native/_determinism_protocol.py",
         # C5c-ii (deterministic Faker over bool/int/uint on the native routes, 2026-10-09): the
         # closed metadata-shape admission classifier (`native/_faker_deterministic_admission.py`,

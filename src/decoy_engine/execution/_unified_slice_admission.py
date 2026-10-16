@@ -51,7 +51,10 @@ import pyarrow as pa
 
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._fk_keys import to_pandas_fk_safe
-from decoy_engine.execution._guards import reject_null_bearing_int
+from decoy_engine.execution._guards import (
+    reject_gated_hash_on_integer,
+    reject_null_bearing_int,
+)
 from decoy_engine.execution._operator_registry import OPERATORS
 from decoy_engine.execution._unified_slice_resident_types import (
     _ADMITTED_RESIDENT_TYPES,
@@ -553,6 +556,7 @@ def resident_contract_admission(
             return None
     try:
         reject_null_bearing_int(plan, {table: source}, registry, graph)
+        reject_gated_hash_on_integer(plan, {table: source.schema}, registry, graph)
     except ExecutionError:
         return None
     return physical_table

@@ -162,7 +162,7 @@ def test_entry_matches_oracle_for_every_strategy_and_source_type(
 
 
 @NEEDS_COMPANION
-@pytest.mark.parametrize("strategy", ["truncate", "hash"])
+@pytest.mark.parametrize("strategy", ["truncate"])
 def test_null_bearing_int_in_a_later_chunk_fails_like_the_oracle(strategy: str) -> None:
     config = make_config([_STRATEGIES[strategy]])
     chunks = _SOURCES["int_null_in_chunk_2"]

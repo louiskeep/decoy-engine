@@ -43,7 +43,7 @@ from decoy_engine.execution._adapter import (
     StrategyHandler,
 )
 from decoy_engine.execution._errors import ExecutionError
-from decoy_engine.execution._exact_int_faker import register_exact_int_sources
+from decoy_engine.execution._exact_int_sources import register_exact_int_sources
 from decoy_engine.execution._faker_degenerate_pin import apply_degenerate_faker_pin
 from decoy_engine.execution._fk_keys import (
     fk_all_null_array,
@@ -194,7 +194,7 @@ class PandasExecutionAdapter:
         # Every seed's `when`, before a handler, provider or sink runs: a bad predicate on a
         # later table would otherwise surface after earlier output was written.
         validate_plan_when(plan)
-        # B1 (S13): reject integer + null-bearing columns under truncate/hash/
+        # B1 (S13): reject integer + null-bearing columns under truncate/
         # categorical on the Arrow sources, before to_pandas widens int+null to
         # float. Backstops the plan-compile check for the no_profile path; both
         # adapters reject identically (no silent cross-substrate divergence). FK

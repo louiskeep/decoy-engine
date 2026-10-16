@@ -374,7 +374,7 @@ def test_composite_tuple_with_one_declined_member_is_a_native_python_mix(
     assert by_member[("P", "j", "fk_remap")] == "python_scalar"
 
 
-def test_composite_root_with_a_nullable_integer_member_is_still_rejected(
+def test_composite_root_with_a_nullable_integer_member_keeps_its_null(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     install(monkeypatch, MarkingKernel())
@@ -382,9 +382,11 @@ def test_composite_root_with_a_nullable_integer_member_is_still_rejected(
     sources = dict(shape.sources)
     sources["P"] = pa.table({"k": s.strs(["a", "b", "c"]), "j": pa.array([1, None, 3], pa.int64())})
     sources["C"] = pa.table({"k": s.strs(["a"]), "j": pa.array([1], pa.int64())})
-    with pytest.raises(ExecutionError) as exc:
-        s.run_seq(s.Shape(shape.plan, shape.graph, sources))
-    assert exc.value.code == "null_bearing_int_unsupported"
+    seq = s.run_seq(s.Shape(shape.plan, shape.graph, sources)).outputs
+    full = s.run_full(s.Shape(shape.plan, shape.graph, sources)).outputs
+    j = seq["P"].column("j").to_pylist()
+    assert j[1] is None and j[0] is not None and j[2] is not None
+    assert [v.removeprefix(MARK) if v else v for v in j] == full["P"].column("j").to_pylist()
 
 
 # Composite multi-hop chain: a genuine orphan on a REMAP hop is declined, matched keys run.

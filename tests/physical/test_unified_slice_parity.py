@@ -343,20 +343,30 @@ def test_flag_off_run_still_calls_the_legacy_adapter(
 
 # ---------------------------------------------------------------------------
 # Failure parity: a config both routes reject IDENTICALLY. The unified
-# lane's own admission declines this shape (a null-bearing int under hash),
+# lane's own admission declines this shape (a null-bearing int under categorical),
 # so the flag-on call takes the SAME legacy code path the flag-off call
 # does -- proving type/code/message parity by construction, not by
 # reproducing the message by hand.
 # ---------------------------------------------------------------------------
 
 
-def test_null_bearing_int_under_hash_fails_identically_both_flags(tmp_path: Path) -> None:
+def test_null_bearing_int_under_categorical_fails_identically_both_flags(tmp_path: Path) -> None:
     from decoy_engine.execution._errors import ExecutionError
 
     source = pa.table({"c": pa.array([1, None, 3], type=pa.int64())})
     path = write_read_only_fixture(tmp_path, source, "fixture")
     config = build_config(
-        tmp_path, "t", path, [{"name": "c", "strategy": "hash", "namespace": "n"}]
+        tmp_path,
+        "t",
+        path,
+        [
+            {
+                "name": "c",
+                "strategy": "categorical",
+                "namespace": "n",
+                "provider_config": {"categories": ["a", "b"]},
+            }
+        ],
     )
 
     def _call(flag: bool) -> ExecutionError:

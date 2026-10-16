@@ -838,7 +838,7 @@ class TestOrderingRegressions:
         assert offending == ["aaa_group_key"]
 
     def test_preceding_when_gated_sibling_mask_is_rejected(self, tmp_path) -> None:
-        table = pa.table({"amount": pa.array([1, 2, 3], type=pa.int64())})
+        table = pa.table({"amount": pa.array(["1", "2", "3"], type=pa.string())})
         columns = [
             {"name": "amount", "strategy": "hash", "namespace": "amount_ns"},
             {
@@ -926,6 +926,8 @@ class TestDirectUnitCoverage:
         assert effective == pa.int64()
 
     def test_effective_type_returns_mask_output_type_when_ordered_before(self, tmp_path) -> None:
+        # int64 source so `== pa.string()` proves the effective type is the HASH MASK OUTPUT,
+        # not the unchanged source type (ungated int hash is supported, so int64 runs fine).
         table = pa.table({"amount": pa.array([1, 2, 3], type=pa.int64())})
         columns = [
             {"name": "amount", "strategy": "hash", "namespace": "amount_ns"},

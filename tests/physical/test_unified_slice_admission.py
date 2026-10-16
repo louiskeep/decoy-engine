@@ -510,8 +510,20 @@ def test_resident_contract_admission_declines_an_unsupported_strategy(tmp_path: 
 
 
 def test_null_bearing_int_declines_admission(tmp_path: Path) -> None:
+    # Hash is supported over int+null (it keys from the exact integers); categorical is not.
     source = pa.table({"c": pa.array([1, None, 3], type=pa.int64())})
-    config, source = _build(tmp_path, [{"name": "c", "strategy": "hash", "namespace": "n"}], source)
+    config, source = _build(
+        tmp_path,
+        [
+            {
+                "name": "c",
+                "strategy": "categorical",
+                "namespace": "n",
+                "provider_config": {"categories": ["a", "b"]},
+            }
+        ],
+        source,
+    )
     profile, plan = _profile_and_plan(config, source)
     physical_plan, registry = _compile(config, profile, plan, source)
     assert _resident_contract(physical_plan, plan, source, registry=registry) is None

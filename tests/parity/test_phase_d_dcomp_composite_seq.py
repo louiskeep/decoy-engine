@@ -322,20 +322,25 @@ def test_c5a_integer_passthrough_component_keeps_exact_values_and_type_on_ff_and
     assert backends == {("P", "k"): "rust_companion"}
 
 
-@pytest.mark.parametrize("runner", ["ff", "seq"])
-def test_c5b_nullable_hashed_integer_component_is_still_rejected_on_ff_and_seq(
-    runner: str, monkeypatch: pytest.MonkeyPatch
+def test_c5b_nullable_hashed_integer_component_keeps_its_null_and_agrees_on_ff_and_seq(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Retained rejection, not a success path: a hashed integer key component with a null is refused
-    # up front on both routes, where the passthrough integer above is accepted.
+    # A hashed integer key component with a null is supported: the null stays null and the
+    # exact-integer tokens match the full-frame oracle on both routes.
     install(monkeypatch, MarkingKernel())
+    hide_companion(monkeypatch)
     shape = s.composite_shape(PRESERVE)
     sources = dict(shape.sources)
     sources["P"] = pa.table({"k": s.strs(["a", "b", "c"]), "j": pa.array([1, None, 3], pa.int64())})
     sources["C"] = pa.table({"k": s.strs(["a"]), "j": pa.array([1], pa.int64())})
     shape = s.Shape(shape.plan, shape.graph, sources)
-    run = s.run_full if runner == "ff" else s.run_seq
-    assert _raised(lambda: run(shape)).code == "null_bearing_int_unsupported"
+    ff = s.run_full(shape).outputs
+    seq = s.run_seq(shape).outputs
+    for table in ff:
+        assert sc.compare_strict(ff[table], seq[table]) == dict.fromkeys(sc.DIMENSIONS, True)
+    j = ff["P"].column("j").to_pylist()
+    assert j[1] is None and j[0] is not None and j[2] is not None
+    assert ff["C"].column("j").to_pylist()[0] == j[0]
 
 
 @pytest.mark.parametrize("policy", [PRESERVE, WARN], ids=lambda p: p.name.lower())

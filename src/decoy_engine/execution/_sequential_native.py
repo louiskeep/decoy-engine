@@ -324,13 +324,23 @@ class SeqNativeRun:
         namespace: str,
         mask_key: bytes,
         truncate: int | None,
+        exact: pa.ChunkedArray | None = None,
     ) -> list[Any] | None:
-        """The tokens for `df[column]`, positionally, or None when the Python handler runs."""
+        """The tokens for `df[column]`, positionally, or None when the Python handler runs.
+
+        `exact` is the column's recorded typed Arrow values, used in place of the frame column
+        when the frame widened an integer column with nulls to float."""
         call = HashCall(namespace, mask_key, truncate)
-        return self.key_column(ctx, df, column, HASH, call)
+        return self.key_column(ctx, df, column, HASH, call, exact)
 
     def key_column(
-        self, ctx: StrategyContext, df: pd.DataFrame, column: str, strategy: str, call: Any
+        self,
+        ctx: StrategyContext,
+        df: pd.DataFrame,
+        column: str,
+        strategy: str,
+        call: Any,
+        exact: pa.ChunkedArray | None = None,
     ) -> list[Any] | None:
         """A key-strategy column's output: orphan REMAP minting inside `remap_scope`, else the
         ordinary native derivation. None when the Python handler runs."""
@@ -340,7 +350,7 @@ class SeqNativeRun:
             # `ctx.current_table` and `column` are the PARENT's here (make_remap_fn), and `call`
             # was built from the parent column's seed, so the tweak is the parent's.
             return self._remap_tokens(ctx.current_table, column, df[column], strategy, call)
-        return self.native_column(ctx, df, column, strategy, call)
+        return self.native_column(ctx, df, column, strategy, call, exact)
 
     def categorical_column(
         self,
@@ -553,7 +563,13 @@ class SeqNativeRun:
         return out.to_pylist()
 
     def native_column(
-        self, ctx: StrategyContext, df: pd.DataFrame, column: str, strategy: str, call: Any
+        self,
+        ctx: StrategyContext,
+        df: pd.DataFrame,
+        column: str,
+        strategy: str,
+        call: Any,
+        exact: pa.ChunkedArray | None = None,
     ) -> list[Any] | None:
         """The native output for `df[column]`, positionally, or None when the Python handler runs.
 
@@ -572,7 +588,12 @@ class SeqNativeRun:
                     "frame column is no longer integer; the run is aborted."
                 ),
             )
-        result = op.apply(bound, self._pinned_array(df[column], decision), call)
+        values = (
+            exact.combine_chunks()
+            if exact is not None and exact.type == decision.pinned_type
+            else self._pinned_array(df[column], decision)
+        )
+        result = op.apply(bound, values, call)
         if result.errors:
             if op.fail_closed is None:  # pragma: no cover - only a descriptor with errors sets them
                 raise AssertionError(f"{strategy} kernel returned errors with no fail-closed rule")

@@ -147,9 +147,19 @@ def _assert_value_equal(oracle: pa.Table, ooc: pa.Table, label: str) -> None:
 
 
 def _assert_parity_or_faithful_rejection(
-    plan: Any, sources: dict[str, pa.Table], graph: RelationshipGraph, label: str
+    plan: Any,
+    sources: dict[str, pa.Table],
+    graph: RelationshipGraph,
+    label: str,
+    *,
+    expect_reject_code: str | None = None,
 ) -> str:
-    """Run both routes and enforce the invariant. Returns an outcome tag."""
+    """Run both routes and enforce the invariant. Returns an outcome tag.
+
+    When `expect_reject_code` is set and the oracle rejects, BOTH routes must raise
+    a coded error with exactly that code (so an uncoded OOC failure cannot pass as a
+    faithful rejection).
+    """
     oracle_exc: BaseException | None = None
     oracle_res = None
     try:
@@ -179,7 +189,12 @@ def _assert_parity_or_faithful_rejection(
         )
         o_code = getattr(oracle_exc, "code", None)
         c_code = getattr(ooc_exc, "code", None)
-        if o_code is not None and c_code is not None:
+        if expect_reject_code is not None:
+            assert o_code == expect_reject_code and c_code == expect_reject_code, (
+                f"{label}: expected both routes to raise {expect_reject_code!r}, "
+                f"got oracle {o_code!r} / ooc {c_code!r}"
+            )
+        elif o_code is not None and c_code is not None:
             assert o_code == c_code, (
                 f"{label}: both raised but codes differ: oracle {o_code} vs ooc {c_code}"
             )
@@ -267,7 +282,9 @@ def _build_single_edge(
     parent_rows: int,
     child_refs: list[int | None],  # index into parent, or -1 orphan, or None null
     parent_nan_row: int | None,
+    int_payload: list[int | None] | None = None,
 ) -> tuple[Any, dict[str, pa.Table], RelationshipGraph]:
+    """`int_payload` adds a NON-FK integer column `n` to the child, masked under `strategy`."""
     namespace = "ns_p"
     pseed = _seed_for(strategy, namespace)
 
@@ -298,10 +315,15 @@ def _build_single_edge(
         }
     )
 
+    child_cols = (("fk", pseed),)
+    if int_payload is not None:
+        assert len(int_payload) == len(child_refs)
+        child_tbl = child_tbl.append_column("n", pa.array(int_payload, type=pa.int64()))
+        child_cols += (("n", pseed),)
     plan = _plan(
         (
             ("parent", TableSeed(per_column=(("pk", pseed),), per_group=())),
-            ("child", TableSeed(per_column=(("fk", pseed),), per_group=())),
+            ("child", TableSeed(per_column=child_cols, per_group=())),
         )
     )
     graph = RelationshipGraph(
@@ -1477,3 +1499,33 @@ def test_multi_table_fk_cycle_gate_rejects() -> None:
     }
     outcome = _assert_parity_or_faithful_rejection(plan, sources, graph, "multi-table-cycle")
     assert outcome == "gate-rejected"
+
+
+# ---------------------------------------------------------------------------
+# Non-FK integer payload with nulls: truncate is rejected on every route, never just
+# the oracle; ungated hash is supported and byte-identical across routes
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("strategy", ["truncate", "hash", "redact", "passthrough"])
+@pytest.mark.parametrize("payload", [[12, None, 34], [12, 33, 34]], ids=["with-null", "null-free"])
+def test_non_fk_int_payload_reject_parity(strategy: str, payload: list[int | None]) -> None:
+    plan, sources, graph = _build_single_edge(
+        parent_kind="str",
+        child_kind="str",
+        strategy=strategy,
+        policy=OrphanPolicy.PRESERVE,
+        parent_rows=3,
+        child_refs=[0, 1, 2],
+        parent_nan_row=None,
+        int_payload=payload,
+    )
+    reject = None in payload and strategy == "truncate"
+    outcome = _assert_parity_or_faithful_rejection(
+        plan,
+        sources,
+        graph,
+        f"{strategy}:{payload}",
+        expect_reject_code="null_bearing_int_unsupported" if reject else None,
+    )
+    assert outcome == ("both-raised" if reject else "parity")

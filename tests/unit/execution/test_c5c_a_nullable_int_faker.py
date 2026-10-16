@@ -470,7 +470,7 @@ def _node(column: str, seed: Any, *, kind: str = "scalar", columns: tuple[str, .
 
 
 def _registered(arrow: pa.Array, *, frame: pd.DataFrame | None = None, seed: Any = None) -> bool:
-    from decoy_engine.execution._exact_int_faker import exact_int_faker_sources
+    from decoy_engine.execution._exact_int_sources import exact_int_faker_sources
 
     table = pa.table({"n": arrow})
     frame = table.to_pandas() if frame is None else frame
@@ -508,7 +508,7 @@ def test_a_nondeterministic_faker_ignores_registered_exact_values() -> None:
 
 
 def test_registration_follows_the_real_order_for_a_multi_column_writer() -> None:
-    from decoy_engine.execution._exact_int_faker import exact_int_faker_sources
+    from decoy_engine.execution._exact_int_sources import exact_int_faker_sources
 
     table = pa.table({"a": pa.array(["x", "y"]), "n": pa.array([1, None], type=pa.int64())})
     frame = table.to_pandas()

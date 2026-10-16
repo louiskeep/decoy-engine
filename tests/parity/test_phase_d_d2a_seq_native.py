@@ -274,16 +274,24 @@ def test_empty_table_keeps_the_handler_dtype_and_skips_the_kernel(
     assert {e["executed_backend"] for e in _entries(result, "scalar")} == {"none"}
 
 
-@pytest.mark.parametrize(
-    ("values", "arrow_type"),
-    [([1, 2, 3, 4], pa.int32()), ([True, False, True, False], pa.bool_())],
-)
-def test_partial_when_on_a_non_text_column_still_fails_on_conversion(
-    values: list[object], arrow_type: pa.DataType, monkeypatch: pytest.MonkeyPatch
+def test_partial_when_on_a_bool_column_still_fails_on_conversion(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     install(monkeypatch, MarkingKernel())
+    payload = pa.table({"x": pa.array([True, False, True, False], pa.bool_())})
     with pytest.raises((pa.ArrowInvalid, pa.ArrowTypeError)):
-        run_seq(pa.table({"x": pa.array(values, arrow_type)}), (("x", with_when("fk == 1")),))
+        run_seq(payload, (("x", with_when("fk == 1")),))
+
+
+def test_partial_when_on_an_integer_column_is_rejected_before_the_kernel(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    kernel = install(monkeypatch, MarkingKernel())
+    payload = pa.table({"x": pa.array([1, 2, 3, 4], pa.int32())})
+    with pytest.raises(ExecutionError) as exc:
+        run_seq(payload, (("x", with_when("fk == 1")),))
+    assert exc.value.code == "gated_hash_on_integer_unsupported"
+    assert kernel.calls == []
 
 
 def test_a_column_that_stops_converting_to_its_pinned_type_aborts_without_leaking_the_cell() -> (
@@ -397,18 +405,20 @@ def test_remap_calls_on_two_child_tables_can_mix_backends() -> None:
 # The existing ingest guards run first and are unchanged.
 
 
-def test_nullable_integer_payload_is_rejected_before_the_kernel(
+def test_nullable_integer_payload_reaches_the_kernel_as_its_exact_typed_array(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     kernel = install(monkeypatch, MarkingKernel())
     nullable = pa.table({"c_i8": pa.array([-128, None, 127], pa.int8())})
-    with pytest.raises(ExecutionError) as exc:
-        run_seq(nullable, (("c_i8", column_seed()),))
-    assert exc.value.code == "null_bearing_int_unsupported"
-    assert kernel.calls == []
+    out = run_seq(nullable, (("c_i8", column_seed()),)).outputs
+    tokens = EXPECTED_TOKENS["c_i8"]
+    assert out["t"].column("c_i8").to_pylist() == [MARK + tokens[0], None, MARK + tokens[4]]
+    # The frame column is float64 here; the kernel still sees the source width.
+    payload_calls = [c for c in kernel.calls if c.arrow_type == pa.int8()]
+    assert [c.rows for c in payload_calls] == [3]
 
 
-def test_nullable_integer_parent_key_is_rejected_before_the_kernel(
+def test_nullable_integer_parent_key_hashes_natively_and_keeps_its_null(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     kernel = install(monkeypatch, MarkingKernel())
@@ -417,10 +427,10 @@ def test_nullable_integer_parent_key_is_rejected_before_the_kernel(
     srcs["t"] = t.set_column(
         t.schema.get_field_index("hk"), "hk", pa.array([0, None, 2, 3], pa.int64())
     )
-    with pytest.raises(ExecutionError) as exc:
-        run_seq(None, (("a", column_seed()),), sources=srcs)
-    assert exc.value.code == "null_bearing_int_unsupported"
-    assert kernel.calls == []
+    out = run_seq(None, (("a", column_seed()),), sources=srcs).outputs
+    hk = out["t"].column("hk").to_pylist()
+    assert hk[1] is None and all(v.startswith(MARK) for v in (hk[0], hk[2], hk[3]))
+    assert any(c.arrow_type == pa.int64() and c.rows == 4 for c in kernel.calls)
 
 
 def test_nullable_child_still_inherits_and_keeps_its_null(
