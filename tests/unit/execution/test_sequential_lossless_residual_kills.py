@@ -170,7 +170,7 @@ def _group_by_config(tmp_path: Path) -> dict[str, Any]:
     # a difference in the shifted output is a difference in the keyed offset --
     # which exists only if the two anchors stay distinct (lossless Int64). The
     # null row forces the widening under the mutant; `entity_id` is a passthrough
-    # column so the null-bearing-int ingest guard (truncate/hash/categorical
+    # column so the null-bearing-int ingest guard (truncate/categorical
     # only) does not reject it and DE-03 does not flag it.
     src = pa.table(
         {

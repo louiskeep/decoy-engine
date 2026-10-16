@@ -931,7 +931,7 @@ def reject_lossy_chunked_fk_passthrough(
 
     A narrower guard than `execution._guards.reject_null_bearing_int`
     deliberately: that guard rejects ANY null-bearing int column under
-    truncate/hash/categorical (those strategies re-derive their output, so
+    truncate/categorical (those strategies re-derive their output, so
     ANY int+null ambiguity is a cross-substrate correctness question, not a
     magnitude one). `passthrough` preserves the raw value, so a null-bearing
     `passthrough` int column with every value within exact float64 precision

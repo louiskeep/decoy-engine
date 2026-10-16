@@ -48,6 +48,12 @@ processes. Nulls are preserved. Needs a namespace.
 
 - `truncate`: positive int; keep only the first N hex characters.
 
+An integer column is hashed on its exact integer values, including one that holds
+nulls (a null stays null), and the token is the same on every execution route. A
+conditional (`when:`) hash of an integer column is not supported yet: the job is
+rejected with `gated_hash_on_integer_unsupported` before that table is masked. Hash
+the whole column, or stringify it upstream and hash the text.
+
 Use it for opaque identifiers (SSN, MRN, account number) that must remain
 join-stable but not human-readable.
 
