@@ -50,14 +50,23 @@ sorter's `_RunHead`. Sites in
 For the two `with` sites: open the OSFile in the same `with` so both close
 together, e.g. `with pa.OSFile(str(self._path), "rb") as src, pa.ipc.open_stream(src) as reader:`.
 
-For the returned-reader site (`:233`): the OSFile must stay alive as long as the
-caller uses the reader and close WITH it. The caller is `StreamFkJoiner` (it
-registers/unregisters the reader with its DuckDB connection). The build must
-ensure the OSFile's lifetime is tied to the reader's (options, builder picks the
-cleanest: return a tiny wrapper that owns both and closes both; or attach the
-OSFile to the reader object so it is not GC-closed early; or convert the caller
-to a `with` over an owner object). Do NOT leave the OSFile to be GC'd
-non-deterministically.
+For the returned-reader site (`:233`): return the ACTUAL
+`pa.RecordBatchReader` (open `pa.OSFile` then `pa.ipc.open_stream(src)` and yield
+that reader), NOT a generic wrapper object - the reader is handed to DuckDB and
+must keep Arrow interoperability (a wrapper DuckDB cannot consume as an Arrow
+stream would break registration). Tie the OSFile's lifetime to the reader's
+consumption through the driver's EXISTING `ExitStack` (the context the driver
+already uses to register/unregister the reader), not non-deterministic GC. This
+reader has TWO consumers, BOTH of which must be covered (Codex plan-gate):
+- the DuckDB-registration path in `StreamFkJoiner` (register -> consume ->
+  unregister), and
+- the lockstep cursor consumer (`_stream_join_cursors.py:326`,
+  `__init__(self, reader)`).
+The build must handle, for both: reader-construction failure, registration
+failure, normal exhaustion, explicit early close, and exceptions mid-read -
+closing the OSFile deterministically in every path, never early while still in
+use, never leaked. Prefer entering the OSFile+reader as a context on the driver's
+ExitStack so unwinding is automatic.
 
 Keep `open_stream` (not `open_file`) - the payload/key spills are written as
 streams; only the source handle changes. Output stays byte-identical (same IPC
@@ -65,18 +74,38 @@ bytes, read through a file handle instead of a mapping).
 
 ## 3. Acceptance tests
 
-- Byte-identical output: the existing out-of-core FK parity suite
+- Byte-identical output on a FORCED-REORDER path (Codex plan-gate): name the
+  specific forced-reorder sink test (or add one) and ASSERT the reorder route
+  actually executed (route evidence / driver_by_table), not just that some OOC
+  path ran. Compare pre-fix vs post-fix output with exact schema + field
+  metadata + row/column ordering + values (deterministic serialization if literal
+  byte-identity is the bar). The existing OOC FK parity suite
   (`tests/parity/test_out_of_core_fk_parity.py` and siblings) stays green,
   companion present (`~/.cache/decoy-d1a-abi3-venv/bin/python` via
-  `~/bin/pytest-one`). No output change on any route.
-- NEW regression test: on a multi-hundred-MB reorder-lane payload (a fixture big
-  enough that a mapped read would show it), assert the spill read stays bounded -
-  peak RssFile (or peak RSS minus a baseline) stays well under the payload size,
-  measured out-of-process (subprocess + `ru_maxrss`, or `/proc/self/smaps`
-  RssFile for the payload file), mirroring the sorter's own RSS reasoning. The
-  test must FAIL against the pre-fix mapped reader (prove non-vacuous) and pass
-  after. Keep it fast/bounded enough for CI (a few hundred MB, not GBs) and guard
-  on the companion if it needs the reorder lane.
+  `~/bin/pytest-one`).
+- Child-reader LIFECYCLE checks for BOTH consumers of the `:233` reader (Codex
+  plan-gate): the DuckDB-registration path AND the lockstep cursor
+  (`_stream_join_cursors.py`). Cover repeated opens from row 0, normal
+  exhaustion, explicit early close, exception mid-read, and deterministic handle
+  closure (no leak, no early close). An early/wrong close would break the join
+  read - these assert it does not.
+- NEW RSS regression test, specified to avoid false results (Codex plan-gate):
+  build the payload fixture OUTSIDE the measured reader process; in the measured
+  process, consume/checksum every payload buffer WITHOUT retaining batches, and
+  measure WHILE the reader is still open (peak is during the read, not after
+  close). Measure out-of-process (subprocess + `ru_maxrss`) and/or per-mapping
+  `Rss` from `/proc/self/smaps` for the spill file (note: smaps exposes per-mapping
+  `Rss`/`Pss`, there is no `RssFile` field). Assert the resident cost stays well
+  under the on-disk payload size. The test must FAIL against the pre-fix mapped
+  reader (non-vacuous) and pass after. Exercise all THREE reader APIs
+  (`iter_batches`, `RawParentKeySpill.__iter__`, `open_reader`), preferably
+  without requiring the companion (a raw spill file + direct reader, no full job).
+  Pin workload size (a few hundred MB, not GBs, for CI), batch size, threshold, a
+  Linux-only guard, and a timeout.
+- Modest THROUGHPUT check (Codex plan-gate): record before/after elapsed time
+  alongside RSS on the representative workload - no throughput cliff is expected
+  (OSFile copies each batch through the tracked pool, per the sorter's rationale),
+  but measure rather than assume.
 - No regression in the sorter's own bounded behavior; `tests/sentry` physical
   seam + module-size unaffected (change is within `out_of_core/`, under
   `execution/`, not `execution/physical/`).
@@ -103,7 +132,11 @@ That re-run is owner-approved GCP spend but should be flagged before launching
 Codex plan-gate (this doc) -> build (convert 3 readers + regression test) ->
 ci-mirror + parity + companion suite -> dennis -> Codex final -> merge on green +
 Slack. DOCUMENT: run-state ledger; note the bounded-100M confirmation re-run as
-the follow-up. This closes the Phase E bounded-memory finding (pending the
-confirming re-run).
+the follow-up. Scope of the completion claim (Codex plan-gate): this removes the
+spill-file MAPPING growth (the measured ~29 GB file-backed consumer). It is NOT
+by itself a proof that total reorder-lane memory is bounded at 100M - the
+remaining anonymous + budgeted-DuckDB + sorter residency, and the end-to-end
+bounded-100M claim, are SEPARATE evidence established by the confirming 100M
+re-run. State it that narrowly in the docs.
 
 cam
