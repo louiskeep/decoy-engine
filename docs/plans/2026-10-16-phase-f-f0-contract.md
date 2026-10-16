@@ -34,52 +34,83 @@ provides the oracle + the documented invariants, not a partitioned run.
 
 ## 3. Deliverables (tests-only)
 
-### 3.1 Whole-table generate-parity oracle + contract
-A frozen, seed-fixed parity baseline over a representative generation config
-(sequence, categorical, pooled-faker, composite, and a formula/statistical column
-for coverage): for a given (config, seed), `generate_tables` produces an exact
-output, pinned by CANONICAL ARROW equality - schema (names, types, field
-metadata, nullability), column/row order, and values (null-vs-NaN distinguished).
-Define "byte parity" explicitly as canonical Arrow values + schema (NOT serialized
-artifact bytes). This is the oracle F1 reproduces and F3 must not perturb.
+The builder DERIVES the coverage from the actual generation dispatch (as D-audit
+derived its matrix from admission constants), names the executable entry point +
+valid config for every fixture, and checks in the expected outputs. No guessing
+from this plan's illustrative lists.
 
-### 3.2 Documented + test-pinned invariants F1 must preserve
-Each is a property of the current path, asserted now so F1 cannot regress it
-silently:
-- Pool admission is a function of TOTAL n (`generation/_faker_pool.py:239`): pin
-  that pooled-vs-live faker selection is decided by the whole-job row count, so
-  F1 must compute admission on total n, never per-batch. Test: a config/size that
-  is pooled at total n stays pooled (document the boundary).
-- Pool IDENTITY is stable for a given (provider, config, namespace, job_seed)
-  (`generation/pool/_identity.py`): same identity -> same pool.
-- RNG progression / global row ordinals: the per-generator seeding + row indexing
-  is a function of (job_seed, global row position), not batch-local - pin the
-  determinism so a batched F1 that reset indices per batch would diverge from the
-  oracle.
-- Schema + late schema discovery and empty / all-null column shapes are part of
-  the frozen output (reproduce the current shapes exactly).
+### 3.1 Whole-table generate-parity oracle + contract
+A frozen, seed-fixed parity baseline whose expected outputs are CHECKED IN as
+canonical digests (or small expected tables) captured from `d11097f9`, with pinned
+inputs and the relevant dependency versions - NOT regenerated at runtime (Codex
+plan-gate P2). For a given (config, seed), the named entry point produces an exact
+output pinned by CANONICAL ARROW equality: schema (names, types, field metadata,
+nullability), column/row order, values, and null-vs-NaN distinguished - while
+accepting equivalent Arrow chunk layouts. "Byte parity" = canonical Arrow values +
+schema, NOT serialized artifact bytes. Name the entry point per fixture: whole
+`generate_tables` (`generation/_plan_entry.py:55`) for end-to-end cases; the
+composite samplers (`composite/_person.py`, `_name_email.py`) as SEPARATE sampler
+contracts where that is the surface. Do NOT point a fixture at a surface it does
+not actually exercise (Codex plan-gate P1-4). This is the oracle F1 reproduces and
+F3 must not perturb.
+
+### 3.2 Supported/deferred coverage matrix + the invariants F1 must preserve
+Build an explicit SUPPORTED/DEFERRED matrix with a concrete whole-table fixture
+per admitted generator/dependency family, derived from the dispatch. Families to
+classify (supported-and-pinned, or deferred-with-reason): sequence, categorical,
+pooled-faker, live-faker, composite, formula / referenced-formula (post-pass
+ordering), derived_aggregate, conditional sampling, statistical / DP-fit columns
+(pinned statistical artifacts), grouped/windowed, and partial-null / all-null
+masks. For each, pin the behavior F1 must preserve. Invariants to pin explicitly:
+- Pool admission is a function of the individual TABLE's `row_count`
+  (`generation/_faker_pool.py:239`) - NOT a job-wide sum (Codex plan-gate P1-4
+  correction). Pin that pooled-vs-live faker selection is decided by that table's
+  total row_count, so F1 computes admission on the table total, never per-batch.
+- Pool IDENTITY stable for (provider, config, namespace, job_seed)
+  (`generation/pool/_identity.py`); pin the ordered pool, resolved pool_size,
+  locale/provider resolution, kwargs, and the build-seed vs selection-seed
+  separation.
+- Parent-pool ordering + repair, and formula/reference POST-PASS ordering: pin so
+  a reordered or re-read F1 would diverge.
+- RNG progression / global row ordinals as a function of (seed, global row
+  position), not batch-local.
+- generated-parent -> masked-child FK coupling: `generate_tables` alone cannot
+  establish it; either add a `run_pipeline` contract fixture for that boundary OR
+  explicitly DEFER it to a later gate (F2) in the matrix. F1 must preserve or
+  explicitly decline every family the matrix does not cover.
 
 ### 3.3 Executed-backend witness harness
-A test harness that observes, per generated column, whether its value SELECTION
-ran on the compiled index kernel (`generation/pool/_sampler.py:49`) or the Python
-reference (`_sampler.py:135-157`). Today the backend baseline is NEGATIVE / mixed
-(no slice yet claims the compiled path as the admitted default); the witness
-exists so F3 can later assert "admitted pooled/deterministic columns ran compiled,
-the reference ran only for non-admitted/companion-absent cells." Model it on
-D-audit's executed-backend witness, companion-optional where possible.
+A per-column witness that classifies the ACTUAL selection backend among the full
+set the generation path uses today (Codex plan-gate P1-1): NumPy selection, live
+provider (Faker call), compiled index selection (`generation/pool/_sampler.py:49`),
+Python index reference (`_sampler.py:135-157`), and no-selection. It must
+POSITIVELY observe today's actual path per column (negative/mixed backend baseline
+is fine - no slice yet claims compiled as the admitted default; F3 will). Make it
+NON-VACUOUS (Codex plan-gate P1-2): a marking-index witness whose marked selected
+values appear in the final column, plus mutants that MUST trip it (discarded
+result, recompute, wrong-column attribution). Test the assertion logic WITHOUT the
+companion (stand-in), and include a real compiled-execution observation WITH the
+companion; label stand-in evidence separately. Separate the lower-level sampler
+coverage from end-to-end generation coverage, and state which F3 route connects
+them. Model on D-audit's marking-kernel witness.
 
 ## 4. Acceptance
 
-- All new tests pass against current main (`d11097f9`), companion venv
-  (`~/.cache/decoy-d1a-abi3-venv/bin/python` via `~/bin/pytest-one`) and, where
-  the witness is companion-optional, the ci-mirror (no-companion) venv.
-- The parity oracle is DETERMINISTIC (two runs identical) and the invariants
-  (3.2) are each pinned by a test that would FAIL if the property were violated
-  (non-vacuous - e.g. a test that simulates per-batch admission and shows it would
-  diverge, without changing production).
+- All new tests pass against current main (`d11097f9`): companion venv
+  (`~/.cache/decoy-d1a-abi3-venv/bin/python` via `~/bin/pytest-one`) and the
+  ci-mirror (no-companion) venv for the companion-optional assertion-logic tests.
+- Expected outputs are CHECKED IN (digests/tables from d11097f9), inputs + dep
+  versions pinned, no runtime regeneration of expectations.
+- Non-vacuity, enforced: each invariant (3.2) is pinned by a test that FAILS if
+  the property is violated, via a mutation through the EXERCISED PRODUCTION SEAM
+  (e.g. simulate per-batch/per-table-sum admission, a reset row index, a reordered
+  pool - without changing production code). The comparator is itself tested against
+  changed values, row order, null-vs-NaN, types, nullability, and metadata, while
+  accepting equivalent Arrow chunk layouts. The witness mutants (3.3) trip it.
 - No `src/` change; ruff + mypy clean on the new tests.
-- Document in the test module how F1 reuses this oracle (run F1's partitioned
-  output across irregular partitions against it) and how F3 uses the witness.
+- The matrix states, per family, supported-and-pinned vs deferred-with-reason, and
+  the test module documents how F1 reuses this oracle (partitioned output across
+  irregular partitions vs the frozen oracle) and how F3 asserts the witness.
 
 ## 5. Risk
 
