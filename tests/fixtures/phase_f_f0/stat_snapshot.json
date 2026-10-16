@@ -1,0 +1,221 @@
+{
+ "columns": {
+  "age": {
+   "distinct_count": 62,
+   "dtype": "int64",
+   "kind": "numeric",
+   "non_null_count": 400,
+   "null_count": 0,
+   "stats": {
+    "bin_counts": [
+     40,
+     40,
+     42,
+     37,
+     34,
+     42,
+     43,
+     36,
+     34,
+     52
+    ],
+    "bin_edges": [
+     18.0,
+     24.1,
+     30.2,
+     36.3,
+     42.4,
+     48.5,
+     54.6,
+     60.7,
+     66.8,
+     72.9,
+     79.0
+    ],
+    "max": 79.0,
+    "mean": 48.9075,
+    "min": 18.0,
+    "quantiles": {
+     "p05": 21.0,
+     "p25": 33.0,
+     "p50": 49.0,
+     "p75": 63.25,
+     "p95": 77.0
+    },
+    "std": 17.920569488075
+   }
+  },
+  "amount": {
+   "distinct_count": 387,
+   "dtype": "float64",
+   "kind": "numeric",
+   "non_null_count": 400,
+   "null_count": 0,
+   "stats": {
+    "bin_counts": [
+     4,
+     11,
+     33,
+     59,
+     85,
+     91,
+     59,
+     33,
+     20,
+     5
+    ],
+    "bin_edges": [
+     29.51,
+     42.901,
+     56.292,
+     69.683,
+     83.074,
+     96.465,
+     109.856,
+     123.247,
+     136.638,
+     150.029,
+     163.42
+    ],
+    "max": 163.42,
+    "mean": 97.621425,
+    "min": 29.51,
+    "quantiles": {
+     "p05": 58.2055,
+     "p25": 81.4625,
+     "p50": 97.435,
+     "p75": 113.5125,
+     "p95": 138.891
+    },
+    "std": 24.116626534569
+   }
+  },
+  "joined": {
+   "distinct_count": 356,
+   "dtype": "datetime64[ns]",
+   "kind": "datetime",
+   "non_null_count": 400,
+   "null_count": 0,
+   "stats": {
+    "max": "2024-12-20T00:00:00",
+    "min": "2020-01-02T00:00:00",
+    "year_bins": [
+     {
+      "count": 77,
+      "year": 2020
+     },
+     {
+      "count": 73,
+      "year": 2021
+     },
+     {
+      "count": 88,
+      "year": 2022
+     },
+     {
+      "count": 69,
+      "year": 2023
+     },
+     {
+      "count": 93,
+      "year": 2024
+     }
+    ]
+   }
+  },
+  "state": {
+   "distinct_count": 4,
+   "dtype": "object",
+   "kind": "categorical",
+   "non_null_count": 400,
+   "null_count": 0,
+   "stats": {
+    "other_count": 0,
+    "top_values": [
+     {
+      "count": 190,
+      "value": "CA"
+     },
+     {
+      "count": 125,
+      "value": "NY"
+     },
+     {
+      "count": 68,
+      "value": "TX"
+     },
+     {
+      "count": 17,
+      "value": "WA"
+     }
+    ]
+   }
+  },
+  "tier": {
+   "distinct_count": 3,
+   "dtype": "object",
+   "kind": "categorical",
+   "non_null_count": 400,
+   "null_count": 0,
+   "stats": {
+    "other_count": 0,
+    "top_values": [
+     {
+      "count": 190,
+      "value": "gold"
+     },
+     {
+      "count": 125,
+      "value": "silver"
+     },
+     {
+      "count": 85,
+      "value": "bronze"
+     }
+    ]
+   }
+  }
+ },
+ "joints": [
+  {
+   "cell_count": 4,
+   "cells": [
+    {
+     "count": 190,
+     "key": [
+      "CA",
+      "gold"
+     ]
+    },
+    {
+     "count": 125,
+     "key": [
+      "NY",
+      "silver"
+     ]
+    },
+    {
+     "count": 68,
+     "key": [
+      "TX",
+      "bronze"
+     ]
+    },
+    {
+     "count": 17,
+     "key": [
+      "WA",
+      "bronze"
+     ]
+    }
+   ],
+   "columns": [
+    "state",
+    "tier"
+   ],
+   "other_count": 0
+  }
+ ],
+ "row_count": 400,
+ "schema_version": "distribution-snapshot/v1"
+}
