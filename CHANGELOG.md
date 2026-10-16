@@ -9,6 +9,10 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+## [0.9.0]
+
+Phase D release for the platform pickup: engine main `1a180f2e`. Carries the Rust out-of-core FK kernels (D1-D4 + the reorder parent-size guard), GAP9 native-thread honoring on the sequential + out-of-core routes, the out-of-core null-bearing-int ingest guard, and consistent hashing of integer columns that contain nulls. Companion abi-3. Version label only; no engine behavior change versus main.
+
 ### Fixed (hash over integer columns with nulls is consistent across routes, 2026-10-16)
 
 Hashing an integer column that holds a null was rejected with `null_bearing_int_unsupported`
