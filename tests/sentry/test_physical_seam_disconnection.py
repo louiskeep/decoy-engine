@@ -662,6 +662,15 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         "src/decoy_engine/execution/out_of_core/_text_redact_native.py",
         "src/decoy_engine/execution/out_of_core/_mask.py",
         "src/decoy_engine/execution/out_of_core/_stream_driver.py",
+        # OOC spill-reader mmap->OSFile memory fix (2026-10-16): the reorder-lane spill readers
+        # read through `pa.OSFile` instead of a memory-mapped string path (mapped file pages were
+        # resident RSS, scaling with payload and defeating the budget). `_payload_store.py` makes
+        # `SpillChildKeys.open_reader` a context manager owning the OSFile + reader;
+        # `_stream_join.py` migrates its five reader call sites to that context. Read-handle swap
+        # only; neither imports `execution.physical` (the `physical_plan` tokens in `_stream_join.py`
+        # are DuckDB EXPLAIN strings, not an import).
+        "src/decoy_engine/execution/out_of_core/_payload_store.py",
+        "src/decoy_engine/execution/out_of_core/_stream_join.py",
         # D3a (validators on the bounded out-of-core route): `_validate_batch.py` is new -- it
         # computes validator admission, evaluates the admitted per-cell validators per masked
         # batch, and assembles the ValidationReport. `_runner.py` / `_stream_driver.py` hook it at
