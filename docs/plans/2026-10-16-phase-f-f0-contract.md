@@ -94,8 +94,11 @@ index selection (`_sampler.py:49`), Python index reference (`_sampler.py:135-157
 **Python RNG selection** (`random.Random.choices` - categorical `synthesize.py:377-378`,
 reference generation `:588-604`), **direct composite-derivation** (deterministic
 composites do `derive` + modulo selection in `composite/_person.py:171`, bypassing
-`_sampler`), live provider (Faker call during pool construction), and no-selection.
-Keep selection, pool CONSTRUCTION, and null MASKING as distinct observed subpaths
+`_sampler`), live-provider GENERATION (the unpooled `_faker` path calling the
+provider directly for every output ROW - distinct from provider calls made while
+BUILDING a pool, which are recorded separately as construction evidence inside
+`build_pool_values`), and no-selection. Keep selection, pool CONSTRUCTION, and
+null MASKING as distinct observed subpaths
 (do not collapse a Python-RNG or composite-derive column into "no-selection" or
 the reference kernel - that would misattribute execution and weaken F3's gate).
 Require a fixture that positively identifies EACH path. It must POSITIVELY observe
