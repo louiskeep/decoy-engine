@@ -8,7 +8,7 @@ Rules consulted: dev-rules `00-universal.md`, `risk-and-exceptions.md`, `develop
 
 ## 0. Why
 
-Phase D moved every admitted FK-cell masking COMPUTE onto a kernel (compiled Rust, or a named-Arrow kernel, or a no-op) on the sequential, native-chunked, and out-of-core routes; the full-frame pandas path is retained ONLY as the oracle baseline (§5). D-audit is the mandatory terminal slice that PROVES this is true and hard-deletes the now-dead legacy payload-masking paths, so the pandas masking compute is unreachable for an admitted cell and a future change cannot silently reintroduce it. Scope is the COMPUTE backend, not the shared `_dispatch_mask_node` orchestration (Cam 2026-10-16; §5:63). No new compute path is built (the FRAME confirmed all operators already run on a kernel).
+Phase D moved the admitted FK-cell masking COMPUTE onto a kernel (compiled Rust, compiled index-selection, a named-Arrow kernel, or a no-op) on the sequential, native-chunked, and out-of-core routes, with a documented set of dedicated-Python exceptions (code_set, NER, faker's declined/key cells; §2E); the full-frame pandas path is retained ONLY as the oracle baseline (§5). D-audit is the mandatory terminal slice that PROVES, per the admission-derived matrix, that each admitted cell runs on its classified compute (never the generic pandas masking fallback), witness-fences the live degraded fallbacks, and documents the Python exceptions. Scope is the COMPUTE backend, not the shared `_dispatch_mask_node` orchestration (Cam 2026-10-16; §5:63). No new compute path is built; no hard-deletes are planned (deletion is opportunistic only, requiring a graphify-traced caller-free-for-ALL-cells proof - see §2D).
 
 ## 1. What exists
 
@@ -41,7 +41,7 @@ Phase D moved every admitted FK-cell masking COMPUTE onto a kernel (compiled Rus
 
 ## 3. Risks (reproduce, do not smooth)
 
-- **Deleting a reachable fallback.** A fallback deleted while still reachable (companion-absent degraded mode, a declined cell) breaks a supported path. Graphify-trace + a no-caller proof + the full test suite BEFORE each delete; when in doubt, witness-fence instead of delete. The OOC bucket bridge delete is conditional on a proven companion-present admission guarantee.
+- **Deleting a reachable fallback.** A fallback deleted while still reachable (companion-absent degraded mode, a declined cell) breaks a supported path. Graphify-trace + a no-caller-for-ALL-cells proof + the full test suite BEFORE any delete; when in doubt, witness-fence instead of delete. The OOC bucket bridge and the redact conversion-failure fallback are RETAINED (live degraded paths, §2D); no delete is planned.
 - **Vacuous audit.** The consolidated test must prove the pandas-fallback did NOT fire (not merely "a dispatch ran" / "output looks right"). Use the MarkingKernel/spy so a mutant that routes an admitted cell through pandas FAILS the audit. Mutation: force an admitted cell to the pandas branch -> audit red.
 - **Witness-mechanism correctness for redact/truncate.** They are named-Arrow, not companion kernels; the witness must prove the NAMED-ARROW kernel ran, not conflate it with a compiled-companion disposition.
 - **Module size + physical-seam sentry.** Hard-deletes shrink `execution/` modules (good); any changed `execution/` module stays in `permitted_non_physical` ([[physical-seam-sentry-allowlist]]); census only shrinks. New audit test file is fine.
