@@ -146,6 +146,15 @@ def test_ooc_cells_match_the_support_sets() -> None:
         assert matrix[(mx.OOC, strategy, mx.PAYLOAD)] == mx.EXCLUDED, strategy
 
 
+def test_every_ooc_admitted_strategy_is_inside_the_enumeration_domain() -> None:
+    """`derive_matrix` enumerates `SCALAR_HANDLERS`; an OOC-admitted strategy outside it would be
+    invisible to the matrix, so the live support set must be contained in that domain."""
+    from decoy_engine.execution._strategies import SCALAR_HANDLERS
+    from decoy_engine.execution.out_of_core import _compat
+
+    assert set(SCALAR_HANDLERS) >= _compat._SUPPORTED_WORK_STRATEGIES
+
+
 def test_native_chunked_admits_no_fk_cell_and_its_sets_are_the_registry() -> None:
     matrix = mx.derive_matrix()
     assert mx.kernel_sets_agree()
@@ -353,7 +362,7 @@ def _boom(*_a: Any, **_k: Any) -> Any:
 
 @needs_text_kernel
 @pytest.mark.parametrize(
-    ("strategy", "source", "seed", "module", "loop"),
+    ("strategy", "source", "seed", "module", "loop", "seam"),
     [
         (
             "text_redact",
@@ -361,6 +370,7 @@ def _boom(*_a: Any, **_k: Any) -> Any:
             tr_seed(),
             text_redact_mod,
             "iter_spans",
+            "text_redact_column",
         ),
         (
             "text_mask",
@@ -368,6 +378,7 @@ def _boom(*_a: Any, **_k: Any) -> Any:
             column_seed("text_mask", namespace=None),
             text_mask_mod,
             "mask_cell",
+            "text_mask_column",
         ),
     ],
 )
@@ -377,33 +388,66 @@ def test_seq_text_operator_runs_compiled_spans_and_never_the_handler_loop(
     seed: Any,
     module: Any,
     loop: str,
+    seam: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """The SEQ seam's compiled output is MARKED, so the emitted column is distinguishable from
+    the oracle: a mutant that discards it and substitutes oracle values cannot pass."""
     shape = _text_cell(strategy, source, seed)
     oracle = run_full(shape).outputs["P"].column("t").to_pylist()
+    expected = [None if v is None else MARKED + v for v in oracle]
     calls: list[int] = []
     original = _text_redact_kernel._CompiledTextRedactKernel.text_redact_candidates
+    real_seam = getattr(SeqNativeRun, seam)
 
     def recording(self: Any, values: Any, detector_ids: Any, catalog_version: int) -> Any:
         calls.append(len(values))
         return original(self, values, detector_ids, catalog_version)
 
+    def marking_seam(self: Any, *args: Any, **kwargs: Any) -> Any:
+        picked = real_seam(self, *args, **kwargs)
+        if picked is None:
+            return None
+        mark = lambda vs: [None if v is None else MARKED + v for v in vs]
+        if strategy == "text_mask":
+            values, warnings = picked
+            return mark(values), warnings
+        return mark(picked)
+
+    def assert_consumed(result: Any) -> None:
+        got = result.outputs["P"].column("t").to_pylist()
+        assert got == expected, "the emitted column is not the seam's marked compiled output"
+        assert got != oracle and any(v is not None for v in got)
+
     with monkeypatch.context() as m:
         m.setattr(
             _text_redact_kernel._CompiledTextRedactKernel, "text_redact_candidates", recording
         )
+        m.setattr(SeqNativeRun, seam, marking_seam)
         m.setattr(module, loop, _boom)
         result = run_seq(shape)
-    got = result.outputs["P"].column("t").to_pylist()
-    assert got == oracle and got != source
-    assert calls, "the compiled span kernel was never called"
-    entry = _entry(result, strategy, "t")
-    assert entry["executed_backend"] == "rust_companion" and entry["native_calls"] >= 1
+        assert_consumed(result)
+        assert calls, "the compiled span kernel was never called"
+        entry = _entry(result, strategy, "t")
+        assert entry["executed_backend"] == "rust_companion" and entry["native_calls"] >= 1
 
-    # Mutant: the real handler ran (compiled spans), then the legacy loop recomputed the column.
+        # Mutant: the real handler ran (compiled spans, marked output), then its result was
+        # discarded for the precomputed oracle values. No per-cell loop runs, so only the
+        # marked-output check can reject it.
+        before = len(calls)
+        adapter = PandasExecutionAdapter()
+        adapter._handlers[strategy] = _DiscardRecompute(
+            adapter._handlers[strategy], lambda _df, _column: oracle
+        )
+        mutant = run_seq(shape, adapter=adapter)
+        assert len(calls) > before  # the compiled kernel ran, then its result was dropped
+        with pytest.raises(AssertionError, match="not the seam's marked compiled output"):
+            assert_consumed(mutant)
+
+    # Mutant 2: the handler's own legacy per-cell loop recomputes the column.
     adapter = PandasExecutionAdapter()
 
-    def legacy_loop(df: pd.DataFrame, column: str) -> list[Any]:
+    def legacy_loop(_df: pd.DataFrame, _column: str) -> list[Any]:
         return [_boom() for _ in range(1)]
 
     adapter._handlers[strategy] = _DiscardRecompute(adapter._handlers[strategy], legacy_loop)
@@ -452,9 +496,10 @@ def _expected_named_arrow() -> dict[str, list[Any]]:
     }
 
 
-def _assert_named_arrow_consumed(out: pa.Table) -> None:
-    for column, expected in _expected_named_arrow().items():
-        assert out.column(column).to_pylist() == expected, column
+def _assert_named_arrow_consumed(out: pa.Table, columns: tuple[str, ...] = ("r", "tr")) -> None:
+    expected = _expected_named_arrow()
+    for column in columns:
+        assert out.column(column).to_pylist() == expected[column], column
 
 
 def test_seq_redact_and_truncate_consume_the_named_arrow_kernels(
@@ -492,10 +537,17 @@ def test_truncate_mutant_that_discards_the_kernel_result_fails_the_witness(
 
     adapter = PandasExecutionAdapter()
     adapter._handlers["truncate"] = Mutant()
+    # Only truncate is marked here, so the witness targets the truncate column alone. The
+    # identical setup with the REAL handler must pass it; only then does a failure mean the
+    # mutant discarded the kernel result.
+    control = run_seq(_named_arrow_shape()).outputs["P"]
+    assert log, "the marked kernel must be called by the unmutated handler"
+    _assert_named_arrow_consumed(control, ("tr",))
+    log.clear()
     mutant = run_seq(_named_arrow_shape(), adapter=adapter).outputs["P"]
     assert log, "the marked kernel must have been called before its result was discarded"
-    with pytest.raises(AssertionError):
-        _assert_named_arrow_consumed(mutant)
+    with pytest.raises(AssertionError, match="tr"):
+        _assert_named_arrow_consumed(mutant, ("tr",))
 
 
 def test_redact_mutant_that_recomputes_through_the_pandas_branch_fails_the_witness(
@@ -516,10 +568,14 @@ def test_redact_mutant_that_recomputes_through_the_pandas_branch_fails_the_witne
 
     adapter = PandasExecutionAdapter()
     adapter._handlers["redact"] = Mutant()
+    control = run_seq(_named_arrow_shape()).outputs["P"]  # real handler, same marked kernel
+    assert log
+    _assert_named_arrow_consumed(control, ("r",))
+    log.clear()
     mutant = run_seq(_named_arrow_shape(), adapter=adapter).outputs["P"]
     assert log
-    with pytest.raises(AssertionError):
-        _assert_named_arrow_consumed(mutant)
+    with pytest.raises(AssertionError, match="r"):
+        _assert_named_arrow_consumed(mutant, ("r",))
 
 
 class _NoopSpy:
@@ -822,26 +878,42 @@ def test_ooc_compiled_cells_without_a_buffer_witness_cite_their_real_kernel_suit
     assert (Path(__file__).resolve().parents[2] / suite).is_file()
 
 
-@pytest.mark.parametrize(
-    ("strategy", "classification", "suite"),
-    [
-        ("hash", mx.COMPILED_RUST, "tests/parity/test_phase_d_d1a_hash_native.py"),
-        ("categorical", mx.COMPILED_RUST, "tests/parity/test_phase_d_d1b2_categorical_native.py"),
-        ("bucket_perturb", mx.COMPILED_RUST, "tests/parity/test_phase_d_d1b1_bucket_native.py"),
-        ("date_shift", mx.COMPILED_RUST, "tests/parity/test_phase_d_d1c_native.py"),
-        ("text_mask", mx.COMPILED_RUST, "tests/native/test_c6b_i_text_mask_chunked.py"),
-        ("text_redact", mx.COMPILED_RUST, "tests/native/test_c6c_i_text_redact_chunked.py"),
-        ("faker", mx.COMPILED_SELECTION, "tests/native/test_chunked_nondet_faker_parity.py"),
-    ],
-)
-def test_native_chunked_compiled_cells_cite_their_real_kernel_suite(
-    strategy: str, classification: str, suite: str
-) -> None:
+# Suites that drive the native-chunked route (`run_mask_chunked`, the chunked kernel entry), one
+# per compiled/selection cell. Each is checked below to import the chunked entry and NOT the
+# out-of-core route.
+_CHUNKED_SUITES = {
+    "hash": "tests/native/test_chunked_entry_parity_matrix.py",
+    "categorical": "tests/native/test_chunked_categorical_parity.py",
+    "bucket_perturb": "tests/native/test_chunked_bucket_perturb_parity.py",
+    "date_shift": "tests/native/test_chunked_date_shift_parity.py",
+    "fpe": "tests/native/test_c6a_fpe_chunked.py",
+    "group_key": "tests/native/test_chunked_group_key_parity.py",
+    "faker": "tests/native/test_chunked_nondet_faker_parity.py",
+    "text_mask": "tests/native/test_c6b_i_text_mask_chunked.py",
+    "text_redact": "tests/native/test_c6c_i_text_redact_chunked.py",
+}
+
+
+def test_native_chunked_compiled_cells_cite_their_real_kernel_suite() -> None:
     """Native-chunked admits no FK cell (every FK edge reroutes to the oracle), so its non-FK
-    compiled cells carry no fresh witness here; they are proven by the Phase C chunked suites.
-    This pins the classification and that each cited suite exists, matching the OOC cite test."""
-    assert mx.derive_matrix()[(mx.CHUNKED, strategy, mx.PAYLOAD)] == classification
-    assert (Path(__file__).resolve().parents[2] / suite).is_file()
+    compiled cells carry no fresh witness here; they are proven by the chunked-route suites.
+    The cited set must EQUAL the derived compiled/selection set, so a new chunked compiled cell
+    fails here until it cites a suite, and each suite must drive the chunked route."""
+    matrix = mx.derive_matrix()
+    derived = {
+        k[1]
+        for k, v in matrix.items()
+        if k[0] == mx.CHUNKED
+        and k[2] == mx.PAYLOAD
+        and v in (mx.COMPILED_RUST, mx.COMPILED_SELECTION)
+    }
+    assert set(_CHUNKED_SUITES) == derived
+    root = Path(__file__).resolve().parents[2]
+    for strategy, suite in _CHUNKED_SUITES.items():
+        text = (root / suite).read_text()
+        assert "out_of_core" not in text, f"{suite} drives the out-of-core route"
+        assert "run_mask_chunked" in text or "_chunked_entry" in text, suite
+        assert strategy in text or strategy.replace("_", "") in text, suite
 
 
 # ---------------------------------------------------------------------------
