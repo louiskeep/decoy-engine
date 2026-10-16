@@ -717,9 +717,14 @@ def test_seq_code_set_runs_its_dedicated_handler_and_has_no_kernel_anywhere(
     assert "code_set" not in _OPS and "code_set" not in mx.NATIVE_KERNEL_STRATEGIES
 
 
+@needs_text_kernel
 def test_seq_ner_text_redact_declines_to_the_python_handler(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # Companion-present assertion: the NER decline reason `text_redact_ner_not_native:t`
+    # is only reached when the compiled span kernel loads. Without the companion the
+    # admission path declines earlier with `crypto_extension_unavailable` (still Python,
+    # still a decline, but a different reason), so this companion-specific reason is gated.
     def fake(texts: list[str], *, model: str, entities: Any) -> list[list[Any]]:
         return [[detectors_mod.Span("person_name", 0, min(3, len(t)), t[:3])] for t in texts]
 
