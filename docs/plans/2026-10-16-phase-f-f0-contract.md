@@ -59,17 +59,24 @@ Build an explicit SUPPORTED/DEFERRED matrix with a concrete whole-table fixture
 per admitted generator/dependency family, derived from the dispatch. Families to
 classify (supported-and-pinned, or deferred-with-reason): sequence, categorical,
 pooled-faker, live-faker, composite, formula / referenced-formula (post-pass
-ordering), derived_aggregate, conditional sampling, statistical / DP-fit columns
+ordering), standalone `derived` and `reference` as distinct rows (Codex plan-gate),
+derived_aggregate, conditional sampling, statistical / DP-fit columns
 (pinned statistical artifacts), grouped/windowed, and partial-null / all-null
 masks. For each, pin the behavior F1 must preserve. Invariants to pin explicitly:
 - Pool admission is a function of the individual TABLE's `row_count`
   (`generation/_faker_pool.py:239`) - NOT a job-wide sum (Codex plan-gate P1-4
   correction). Pin that pooled-vs-live faker selection is decided by that table's
   total row_count, so F1 computes admission on the table total, never per-batch.
-- Pool IDENTITY stable for (provider, config, namespace, job_seed)
-  (`generation/pool/_identity.py`); pin the ordered pool, resolved pool_size,
-  locale/provider resolution, kwargs, and the build-seed vs selection-seed
-  separation.
+- Pool IDENTITY / build / selection, bound to GENERATION's actual seam
+  (Codex plan-gate P1-2 correction): whole-table pooled Faker generation uses
+  `_faker_pool._build_and_sample_returning_pool` + `GenDeriveContext` +
+  family-derived seeds - it does NOT call the masking resolver
+  `pool/_identity.py:resolve_faker_pool_identity`. Pin generation's identity/build/
+  selection invariants (ordered pool, its actual pool-size resolution,
+  locale/provider resolution, kwargs, build-seed vs selection-seed separation)
+  against `_faker_pool`/`GenDeriveContext`, verified by mutating through
+  `generate_tables`. If `_identity.py` is covered at all, label it a SEPARATE
+  masking contract (mutating it would not affect generation).
 - Parent-pool ordering + repair, and formula/reference POST-PASS ordering: pin so
   a reordered or re-read F1 would diverge.
 - RNG progression / global row ordinals as a function of (seed, global row
@@ -81,11 +88,19 @@ masks. For each, pin the behavior F1 must preserve. Invariants to pin explicitly
 
 ### 3.3 Executed-backend witness harness
 A per-column witness that classifies the ACTUAL selection backend among the full
-set the generation path uses today (Codex plan-gate P1-1): NumPy selection, live
-provider (Faker call), compiled index selection (`generation/pool/_sampler.py:49`),
-Python index reference (`_sampler.py:135-157`), and no-selection. It must
-POSITIVELY observe today's actual path per column (negative/mixed backend baseline
-is fine - no slice yet claims compiled as the admitted default; F3 will). Make it
+set the generation path uses today (Codex plan-gate P1-1, verified against the
+dispatch): NumPy selection (`np.random.default_rng`, `_sampler.py`), compiled
+index selection (`_sampler.py:49`), Python index reference (`_sampler.py:135-157`),
+**Python RNG selection** (`random.Random.choices` - categorical `synthesize.py:377-378`,
+reference generation `:588-604`), **direct composite-derivation** (deterministic
+composites do `derive` + modulo selection in `composite/_person.py:171`, bypassing
+`_sampler`), live provider (Faker call during pool construction), and no-selection.
+Keep selection, pool CONSTRUCTION, and null MASKING as distinct observed subpaths
+(do not collapse a Python-RNG or composite-derive column into "no-selection" or
+the reference kernel - that would misattribute execution and weaken F3's gate).
+Require a fixture that positively identifies EACH path. It must POSITIVELY observe
+today's actual path per column (negative/mixed backend baseline is fine - no slice
+yet claims compiled as the admitted default; F3 will). Make it
 NON-VACUOUS (Codex plan-gate P1-2): a marking-index witness whose marked selected
 values appear in the final column, plus mutants that MUST trip it (discarded
 result, recompute, wrong-column attribution). Test the assertion logic WITHOUT the
