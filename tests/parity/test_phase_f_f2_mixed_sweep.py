@@ -183,8 +183,11 @@ def _backends(result: Any, table: str = CHILD) -> dict[str, str]:
 
 
 def _assert_native_witness(case: str, got: Outcome, table: str = CHILD) -> None:
-    """The mask half ran on the compiled backend, not the pandas oracle leg."""
-    if not COMPANION_PRESENT or got.route != "mixed":
+    """The case routed mixed (always asserted: a silent full-frame fallback is byte-identical,
+    so only the route can catch it) and its mask half ran on the compiled backend, not the
+    pandas oracle leg (asserted when the companion is installed)."""
+    assert got.route == "mixed", f"{case}: expected the mixed route, got {got.route}"
+    if not COMPANION_PRESENT:
         return
     evidence = mask_evidence(got.result, table)
     assert evidence["native_admitted"] is True, case
@@ -442,6 +445,9 @@ class MaskSpec:
     # True: its warnings hold whole-table content (counts, row indices) that a chunk-by-chunk run
     # would compute chunk-locally, so mixed admission declines and the full-frame path answers.
     declines: bool = False
+    # True: the planner's chunk gate refuses the strategy (not value-keyed, so its output is not
+    # chunk-invariant), independent of warnings. It runs full-frame and equals the oracle.
+    chunk_unsafe: bool = False
 
 
 def _col(strategy: str, **extra: Any) -> dict[str, Any]:
@@ -518,6 +524,7 @@ MASKS: dict[str, MaskSpec] = {
         {"v": [f"item-{i}" for i in range(N)]},
         must_change=None,
         permutation=True,
+        chunk_unsafe=True,
     ),
     "code_set": MaskSpec(
         [_col("code_set", namespace="ns_cs", provider_config={"code_set": "icd10"})],
@@ -540,6 +547,7 @@ MASKS: dict[str, MaskSpec] = {
         [_col("formula", provider_config={"formula": "value"})],
         {"v": [f"f{i}" for i in range(N)]},
         must_change=None,
+        chunk_unsafe=True,
     ),
     "date_shift": MaskSpec(
         [
@@ -606,10 +614,18 @@ def test_mask_strategy_matches_the_oracle_in_every_topology(
         # `_compare` call above asserted both); the route proves it was the decline.
         reason = f"declined:mask_strategy_warnings_not_chunk_stable:{CHILD}.v:{strategy}"
         assert got.route == reason, got.route
+    elif spec.chunk_unsafe:
+        want_prefix = f"declined:mask_table_not_chunk_admissible:{CHILD}:strategy_not_chunk_safe"
+        assert got.route.startswith(want_prefix), got.route
     elif spec.native:
-        _assert_native_witness(case, got)
-    elif got.route == "mixed":
-        MATRIX[-1]["backends"] = sorted(set(_backends(got.result).values()))
+        _assert_native_witness(case, got)  # asserts the route is mixed
+    else:
+        # No compiled kernel: the table is admitted and routes mixed, but the mask half runs on
+        # the pandas oracle leg. Pin both, so a fallback to full-frame cannot pass silently.
+        assert got.route == "mixed", f"{case}: expected the mixed route, got {got.route}"
+        backends = _backends(got.result)
+        assert "pandas_oracle" in backends.values(), (case, backends)
+        MATRIX[-1]["backends"] = sorted(set(backends.values()))
     source = child.column("v").to_pylist()
     if spec.permutation:
         assert sorted(map(str, _strs(got.result, CHILD, "v"))) == sorted(map(str, source))
