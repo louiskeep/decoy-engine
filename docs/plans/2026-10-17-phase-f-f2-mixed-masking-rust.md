@@ -120,6 +120,17 @@ COUPLED mixed (exactly one edge):
    runs inside the chunk loop, so the equality-dedup chunk warning fold is never
    asked to sum orphan counts (see §6).
 
+KEY/PAYLOAD ALIGNMENT CONTRACT (plan-gate round-3 P2): the pre-resolved key array
+and the chunked payload stream MUST represent the same prepared source in the same
+row order. The carrier is derived from the SAME prepared source/iterator the
+payload chunks come from (not an independent load or re-sort); the per-chunk slice
+uses the payload chunk's own row offset+length, and the route asserts total key
+cardinality == total payload rows and monotonically advancing, non-overlapping
+offsets before reassembly. If a lazy source cannot guarantee a single stable row
+ordering across the key pass and the payload pass, DECLINE to full-frame before any
+publish (coded reason). This guards the one new assembly seam that kernel parity
+does not cover.
+
 Because the key is resolved whole-table (one WARN) and payloads mask chunked
 (byte-identical kernels), the composition's bytes = inherited kernels + the
 one-pass key resolution the oracle also does. Parity is the full-frame mixed
@@ -136,7 +147,11 @@ bounded route taken AND the native backend asserted (not just the route label):
   FAIL (assert `orphan_fk_violation` + publication abort), REMAP matched-only
   (identity resolve) AND REMAP-with-orphan (assert `orphan_remap_parent_missing`
   on both oracle and native);
-- integer keys above 2**53 (no silent rounding).
+- integer keys above 2**53 (no silent rounding);
+- a lazy-source coupled fixture with UNEVEN batch sizes, null child keys, and a
+  final PARTIAL chunk (exercises the key/payload alignment contract above);
+- a source that cannot preserve stable ordering declines to full-frame before any
+  publish.
 
 Two-stage admission tests:
 - STATIC declines keep full-frame before generating, coded reason: composite key,
