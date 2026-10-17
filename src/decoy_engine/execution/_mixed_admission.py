@@ -74,41 +74,29 @@ def chunk_unstable_warning_column(columns: Iterable[Any]) -> tuple[str, str] | N
 
     A warning is chunk-stable when running the table chunk-by-chunk yields the warnings the
     full-frame oracle yields. Warnings whose detail holds whole-table content (counts, row
-    indices) are not, when computed per chunk: each chunk emits its own chunk-local warning, so
-    the merged result differs from the oracle's single global one.
+    indices) are not, when each chunk computes its own: the merged result differs from the
+    oracle's single global one, on the native route and the oracle leg alike.
 
     Two sources of truth decide it, so a new strategy is caught without editing this function:
-
-      * the strategy's declared `warning_codes` (`capabilities_for`);
-      * the codes the native route reduces to the global value
-        (`OPERATORS[...].routed_diagnostics`, entries `reduce_warning:<code>`).
-
-    A strategy declaring a code the native route does not reduce always runs that code per
-    chunk on the oracle leg (top_code, geo_generalize, nested), so it is unstable. A strategy
-    whose every code is reduced is stable only while the table runs natively; the whole table
-    runs on the oracle leg as soon as one column has no operator, so it is unstable there. A
-    strategy with no capability entry cannot be classified, so it fails closed.
+    the strategy's declared `warning_codes` (`capabilities_for`), and the codes the cross-chunk
+    fold reproduces exactly (`CHUNK_STABLE_WARNING_CODES`: summed counts plus config-constant
+    codes, pinned to the operator registry's `reduce_warning:` declarations by a test). A strategy declaring any other code is
+    unstable (top_code, geo_generalize, nested carry row indices). A strategy with no capability
+    entry cannot be classified, so it fails closed.
     """
-    from decoy_engine.execution._operator_registry import OPERATORS
+    from decoy_engine.execution._chunked_warning_reduce import CHUNK_STABLE_WARNING_CODES
     from decoy_engine.execution.native._capabilities import capabilities_for
 
-    named = [
-        (str(c.get("name")), str(c.get("strategy") or "passthrough"))
-        for c in columns
-        if isinstance(c, dict)
-    ]
-    table_runs_on_oracle = any(strategy not in OPERATORS for _, strategy in named)
-    for column, strategy in named:
+    for c in columns:
+        if not isinstance(c, dict):
+            continue
+        strategy = str(c.get("strategy") or "passthrough")
         try:
             codes = capabilities_for(strategy).warning_codes
         except KeyError:
-            return column, strategy
-        if not codes:
-            continue
-        spec = OPERATORS.get(strategy)
-        reduced = spec.routed_diagnostics if spec is not None else frozenset()
-        if table_runs_on_oracle or any(f"reduce_warning:{code}" not in reduced for code in codes):
-            return column, strategy
+            return str(c.get("name")), strategy
+        if any(code not in CHUNK_STABLE_WARNING_CODES for code in codes):
+            return str(c.get("name")), strategy
     return None
 
 

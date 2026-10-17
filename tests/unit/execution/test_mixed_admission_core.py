@@ -296,7 +296,7 @@ def _cols(*pairs: tuple[str, str]) -> list[dict[str, str]]:
 
 
 @pytest.mark.parametrize("strategy", ["top_code", "geo_generalize", "nested"])
-def test_unreduced_warning_strategies_are_never_chunk_stable(strategy: str) -> None:
+def test_row_index_warning_strategies_are_never_chunk_stable(strategy: str) -> None:
     # Their warning codes carry counts or row indices and the native route has no reducer.
     assert core.chunk_unstable_warning_column(_cols(("a", "hash"), ("v", strategy))) == (
         "v",
@@ -305,16 +305,28 @@ def test_unreduced_warning_strategies_are_never_chunk_stable(strategy: str) -> N
 
 
 @pytest.mark.parametrize("strategy", ["fpe", "text_mask"])
-def test_reduced_warning_strategies_are_stable_only_while_the_table_runs_native(
+def test_strategies_whose_warning_counts_are_summed_across_chunks_stay_admitted(
     strategy: str,
 ) -> None:
-    # Every code is reduced natively, so a table of operator strategies stays admitted ...
+    # Their count warnings are folded to the global value (`_chunked_warning_reduce`), on the
+    # native route and on the per-chunk oracle leg, so admission must not decline them.
+    assert core.chunk_unstable_warning_column(_cols(("a", "formula"), ("v", strategy))) is None
     assert core.chunk_unstable_warning_column(_cols(("a", "hash"), ("v", strategy))) is None
-    # ... but one column without an operator sends the whole table to the per-chunk oracle leg.
-    assert core.chunk_unstable_warning_column(_cols(("a", "formula"), ("v", strategy))) == (
-        "v",
-        strategy,
-    )
+
+
+def test_the_fold_covers_exactly_the_codes_the_operator_registry_declares_reducible() -> None:
+    from decoy_engine.execution._chunked_warning_reduce import REDUCED_WARNING_CODES
+    from decoy_engine.execution._operator_registry import OPERATORS
+
+    declared = {
+        d.removeprefix("reduce_warning:")
+        for spec in OPERATORS.values()
+        for d in spec.routed_diagnostics
+        if d.startswith("reduce_warning:")
+    }
+    # fpe_join_group_active and the other equal-everywhere codes dedup; only the count codes sum.
+    assert declared >= REDUCED_WARNING_CODES
+    assert declared - REDUCED_WARNING_CODES == {"fpe_join_group_active"}
 
 
 @pytest.mark.parametrize(

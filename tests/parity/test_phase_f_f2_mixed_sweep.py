@@ -625,6 +625,74 @@ def test_mask_strategy_matches_the_oracle_in_every_topology(
 
 
 # ---------------------------------------------------------------------------
+# Count-carrying warnings: summed across chunks, not left chunk-local
+# ---------------------------------------------------------------------------
+
+PREFIXED = [f"M{100000 + i * 977:06d}" for i in range(N)]
+ZIP_TEXT = [f"home zip {10000 + i * 7:05d} on file" for i in range(N)]
+COUNT_WARNINGS = {
+    "fpe": (
+        {
+            "name": "v",
+            "strategy": "fpe",
+            "namespace": "ns_f",
+            "provider_config": {"charset": "digits", "preserve_separators": True},
+        },
+        PREFIXED,
+        "fpe_partial_plaintext_disclosure",
+    ),
+    "text_mask": (
+        {
+            "name": "v",
+            "strategy": "text_mask",
+            "provider_config": {
+                "detectors": ["us_zip"],
+                "sub_floor_span": "redact",
+                "unmatched_span_policy": "passthrough",
+            },
+        },
+        ZIP_TEXT,
+        "text_mask_sub_floor_span_handled",
+    ),
+}
+# A hash sibling keeps the table on the compiled route; a bucketize sibling (no operator)
+# sends the whole table to the per-chunk oracle leg. Both must fold to the oracle's one warning.
+SIBLINGS = {
+    "native_table": {"name": "w", "strategy": "hash", "namespace": "ns_w"},
+    "oracle_leg_table": {
+        "name": "w",
+        "strategy": "bucketize",
+        "provider_config": {"width": 10},
+    },
+}
+
+
+@pytest.mark.parametrize("topology", TOPOLOGIES)
+@pytest.mark.parametrize("sibling", sorted(SIBLINGS))
+@pytest.mark.parametrize("strategy", sorted(COUNT_WARNINGS))
+def test_count_warnings_equal_the_oracles_single_global_warning(
+    tmp_path: Path,
+    strategy: str,
+    sibling: str,
+    topology: str,
+    static_reasons: list[str],
+    generate_calls: list[int],
+) -> None:
+    column, values, code = COUNT_WARNINGS[strategy]
+    w_values: list[Any] = (
+        [f"x{i}@example.com" for i in range(N)] if sibling == "native_table" else list(range(N))
+    )
+    spec = MaskSpec([column, SIBLINGS[sibling]], {"v": values, "w": w_values})
+    config, child = _mask_job(tmp_path, spec, topology)
+    case = f"count-warning:{strategy}/{sibling}/{topology}"
+    want, got = _compare(case, config, {CHILD: child}, static_reasons, generate_calls)
+    assert got.route == "mixed", got.route  # fpe/text_mask are not over-declined
+    oracle_warnings = [w for w in want.result.warnings if w.code == code]
+    assert len(oracle_warnings) == 1  # the data really triggers it, once, over the whole table
+    assert [w for w in got.result.warnings if w.code == code] == oracle_warnings
+
+
+# ---------------------------------------------------------------------------
 # Fail-closed siblings and shapes
 # ---------------------------------------------------------------------------
 
