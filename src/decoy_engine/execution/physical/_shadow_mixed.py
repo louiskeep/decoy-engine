@@ -103,14 +103,11 @@ import dataclasses
 from typing import TYPE_CHECKING
 
 import pyarrow as pa
-import pyarrow.compute as pc
 
+from decoy_engine.execution import _mixed_admission as admission
 from decoy_engine.execution._stitch import stitch_generate_mask_outputs
 from decoy_engine.execution.physical._shadow_diff_codes import (
     GENERATION_SHAPE_UNSUPPORTED,
-    MIXED_DRIVER_UNSUPPORTED,
-    MIXED_FK_CROSS_GENERATE_UNSUPPORTED,
-    MIXED_FK_TOPOLOGY_UNSUPPORTED,
     ShadowDifference,
 )
 from decoy_engine.execution.physical._shadow_generation import (
@@ -132,19 +129,6 @@ if TYPE_CHECKING:
     from decoy_engine.relationships._graph import RelationshipEdge
 
 __all__ = ["dispatch_mixed", "require_independent_mixed_shadowable"]
-
-
-# Task 4.6 slice 5b-ii admission rule #5's key-shape check: a single-column
-# int or string key. Composite keys and every other scalar type (float,
-# decimal, bool, timestamp, ...) stay deferred -- see `_shadow_fk.py`'s
-# module docstring for why the write-back bridge only needs to reproduce
-# these two families.
-def _is_admitted_fk_key_type(arrow_type: pa.DataType | None) -> bool:
-    return arrow_type is not None and (
-        pa.types.is_integer(arrow_type)
-        or pa.types.is_string(arrow_type)
-        or pa.types.is_large_string(arrow_type)
-    )
 
 
 def dispatch_mixed(
@@ -247,92 +231,20 @@ def require_independent_mixed_shadowable(
     return plan_obj, admitted_edge
 
 
+def _as_shadow_difference(decline: admission.MixedDeclineError) -> ShadowDifference:
+    """The shared admission core raises its own `MixedDeclineError`; the shadow reports
+    the same code and detail as a `ShadowDifference`."""
+    return ShadowDifference(code=decline.code, detail=decline.detail)
+
+
 def _require_roundtrip_stable_generate_outputs(generate_outputs: dict[str, pa.Table]) -> None:
-    """Decline a mixed job whose GENERATED output is not byte-stable through
-    the oracle's pandas echo.
-
-    In a mixed job the oracle merges `generate_outputs` into `merged_sources`,
-    the pandas mask adapter round-trips every source frame through
-    `to_pandas`/`from_pandas`, and Step-3 lets that echoed copy WIN the name
-    tie -- so the oracle's final generate-table output is pandas-round-tripped
-    while this shadow dispatch stitches the RAW native-Arrow output. That
-    round-trip is NOT the identity for three column shapes, each of which
-    genuinely diverges under the byte comparator:
-
-      * any null (`null_count > 0`): an integer column widens to double
-        (pandas has no nullable-int in the boundary path) and null slots
-        refill differently;
-      * a floating NaN (even with `null_count == 0`): `from_pandas` folds a
-        NaN back to an Arrow null on re-import, so shadow (NaN) != oracle
-        (null);
-      * a nested type (`list`/`struct`/`map`/union): the element/field type
-        widens through pandas the same way a top-level numeric does
-        (`list<int64>` -> `list<double>`).
-
-    Gating on the MATERIALIZED output rather than the config knobs is
-    deliberate (dennis BLOCKER re-review): nullability/instability reaches the
-    output through `null_probability`, a `None`/NaN in `categories`, or a
-    nested category alike, and only the actual Arrow tables capture all of
-    them in one check. The check runs after generation (inert -- nothing is
-    published) and declines coded. Non-null, NaN-free, non-nested output of
-    any admitted type round-trips identically and is admitted. Nullable/
-    unstable generate columns in a mixed job are a tracked exclusion deferred
-    to a later slice. The PURE path (slice 5a) never reaches here -- it has no
-    mask adapter to echo through, so its nullable columns stay byte-stable.
-    """
-    for table_name, table in generate_outputs.items():
-        for column_name in table.column_names:
-            column = table.column(column_name)
-            field_type = column.type
-            if _is_nested_arrow_type(field_type):
-                raise ShadowDifference(
-                    code=GENERATION_SHAPE_UNSUPPORTED,
-                    detail=(
-                        f"table={table_name!r} column={column_name!r}: nested generate output "
-                        f"type {field_type} is not round-trip-stable through the oracle's pandas "
-                        "echo in a mixed job (deferred)"
-                    ),
-                )
-            if column.null_count > 0:
-                raise ShadowDifference(
-                    code=GENERATION_SHAPE_UNSUPPORTED,
-                    detail=(
-                        f"table={table_name!r} column={column_name!r}: a nullable generate output "
-                        "is not round-trip-stable through the oracle's pandas echo in a mixed job "
-                        "(deferred)"
-                    ),
-                )
-            if pa.types.is_floating(field_type) and _float_column_has_nan(column):
-                raise ShadowDifference(
-                    code=GENERATION_SHAPE_UNSUPPORTED,
-                    detail=(
-                        f"table={table_name!r} column={column_name!r}: a floating generate output "
-                        "carries NaN, which the oracle's pandas echo folds to null (not "
-                        "round-trip-stable in a mixed job; deferred)"
-                    ),
-                )
-
-
-def _is_nested_arrow_type(field_type: pa.DataType) -> bool:
-    return (
-        pa.types.is_list(field_type)
-        or pa.types.is_large_list(field_type)
-        or pa.types.is_fixed_size_list(field_type)
-        or pa.types.is_struct(field_type)
-        or pa.types.is_map(field_type)
-        or pa.types.is_union(field_type)
-    )
-
-
-def _float_column_has_nan(column: pa.ChunkedArray) -> bool:
-    # A NaN is distinct from a null in Arrow, so `null_count` misses it; the
-    # oracle's `from_pandas` re-import folds NaN -> null, so a NaN-bearing
-    # shadow column diverges from the oracle. `pc.is_nan` is defined only on
-    # floating input (guarded by the caller), and returns null for null slots
-    # -- `pc.any(..., skip_nulls=True)` treats those as "no NaN here".
-    return bool(
-        pc.any(pc.is_nan(column), skip_nulls=True).as_py()  # type: ignore[attr-defined, unused-ignore]
-    )
+    """Decline a mixed job whose GENERATED output is not byte-stable through the
+    oracle's pandas echo. The rule lives in `execution._mixed_admission`, shared
+    with the production mixed route; see its docstring for the full "why"."""
+    try:
+        admission.require_roundtrip_stable_generate_outputs(generate_outputs)
+    except admission.MixedDeclineError as decline:
+        raise _as_shadow_difference(decline) from decline
 
 
 def _table_name_set(plan: PhysicalPlan) -> frozenset[str]:
@@ -359,10 +271,12 @@ def _require_admitted_mask_drivers(plan: PhysicalPlan) -> None:
         raise ShadowDifference(
             code=GENERATION_SHAPE_UNSUPPORTED, detail="a mask table driver is unhashable"
         ) from exc
-    if DriverId.OUT_OF_CORE in mask_drivers:
-        raise ShadowDifference(
-            code=MIXED_DRIVER_UNSUPPORTED, detail="out_of_core mask driver in a mixed dispatch"
+    try:
+        admission.require_no_out_of_core_driver(
+            out_of_core_present=DriverId.OUT_OF_CORE in mask_drivers
         )
+    except admission.MixedDeclineError as decline:
+        raise _as_shadow_difference(decline) from decline
 
 
 def _select_admitted_coupled_edge(
@@ -371,89 +285,27 @@ def _select_admitted_coupled_edge(
     mask_table_names: frozenset[str],
     snapshot: ShadowSnapshot,
 ) -> RelationshipEdge | None:
-    """Item 4/5: find the AT MOST ONE `generate-parent -> mask-child` edge
-    this dispatch may couple the mask half's FK resolution to. `None` means
-    the independent case (no crossing edge at all -- unchanged 5b-i
-    behavior). The reverse direction (a mask-parent referenced by a generate
-    child) is already rejected upstream at generation-config validation, so
-    it never reaches this gate -- only THIS direction needs checking.
-
-    The admitted edge's PARENT key type is checked separately, in `dispatch_
-    mixed`, AFTER generation runs (a generate table's actual column type is
-    not knowable from the graph alone)."""
+    """Item 4/5: the AT MOST ONE `generate-parent -> mask-child` edge this
+    dispatch may couple the mask half's FK resolution to (`None` = independent
+    case). The topology and key-type rules are the shared core's
+    (`execution._mixed_admission.select_admitted_coupled_edge`); only the
+    shadow's own missing-graph guard and the resident-snapshot type lookup
+    live here. The edge's PARENT key type is checked in `dispatch_mixed`,
+    AFTER generation runs."""
     graph = ctx.relationship_graph
     if graph is None:
         raise ShadowDifference(
             code=GENERATION_SHAPE_UNSUPPORTED, detail="ShadowContext.relationship_graph is None"
         )
     try:
-        edges = graph.edges
-    except AttributeError as exc:
-        raise ShadowDifference(
-            code=GENERATION_SHAPE_UNSUPPORTED,
-            detail="ShadowContext.relationship_graph has no edges attribute",
-        ) from exc
-
-    crossing: list[RelationshipEdge] = []
-    for candidate in edges:
-        try:
-            parent_table = candidate.parent_table
-            child_table = candidate.child_table
-        except AttributeError as exc:
-            raise ShadowDifference(
-                code=GENERATION_SHAPE_UNSUPPORTED, detail="a relationship edge is malformed"
-            ) from exc
-        try:
-            crosses = parent_table in generate_table_names and child_table in mask_table_names
-        except TypeError as exc:
-            raise ShadowDifference(
-                code=GENERATION_SHAPE_UNSUPPORTED,
-                detail="a relationship edge table name is unhashable",
-            ) from exc
-        if crosses:
-            crossing.append(candidate)
-
-    if not crossing:
-        return None
-    if len(crossing) > 1:
-        raise ShadowDifference(
-            code=MIXED_FK_TOPOLOGY_UNSUPPORTED,
-            detail=f"{len(crossing)} generate-parent -> mask-child edges present",
+        return admission.select_admitted_coupled_edge(
+            graph,
+            generate_table_names,
+            mask_table_names,
+            lambda table, column: _resident_column_type(snapshot, table, column),
         )
-    edge = crossing[0]
-    if len(edge.parent_columns) != 1 or len(edge.child_columns) != 1:
-        raise ShadowDifference(
-            code=MIXED_FK_CROSS_GENERATE_UNSUPPORTED,
-            detail=(
-                f"parent={edge.parent_table!r} child={edge.child_table!r}: "
-                "composite FK key not admitted"
-            ),
-        )
-    child_type = _resident_column_type(snapshot, edge.child_table, edge.child_columns[0])
-    if not _is_admitted_fk_key_type(child_type):
-        raise ShadowDifference(
-            code=MIXED_FK_CROSS_GENERATE_UNSUPPORTED,
-            detail=(
-                f"child={edge.child_table!r}.{edge.child_columns[0]!r}: "
-                f"key type {child_type} not admitted"
-            ),
-        )
-    # The complete-graph rule (plan item 5): no OTHER relationship edge may
-    # touch a mask table at all, on either side. Since the admitted edge's
-    # own child is always a mask table, this single check subsumes "no other
-    # incoming edge to the child", "no outgoing edge from the child or the
-    # generated parent reaching a mask table", and "no FK edge involving any
-    # other mask table" all at once -- any other edge naming the child (as
-    # parent or child) or naming a different mask table fails it.
-    for other in edges:
-        if other is edge:
-            continue
-        if other.parent_table in mask_table_names or other.child_table in mask_table_names:
-            raise ShadowDifference(
-                code=MIXED_FK_TOPOLOGY_UNSUPPORTED,
-                detail="another relationship edge touches a mask table",
-            )
-    return edge
+    except admission.MixedDeclineError as decline:
+        raise _as_shadow_difference(decline) from decline
 
 
 def _resident_column_type(snapshot: ShadowSnapshot, table: str, column: str) -> pa.DataType | None:
@@ -466,25 +318,12 @@ def _resident_column_type(snapshot: ShadowSnapshot, table: str, column: str) -> 
 def _require_admitted_parent_key_type(
     edge: RelationshipEdge, generate_outputs: dict[str, pa.Table]
 ) -> None:
-    """The other half of admission rule #5's key-shape check, deferred until
-    now because a generate table's actual column type is only knowable
-    against its materialized output (nothing about `sequence`/`categorical`
-    config alone pins int-vs-string, and a mixed-type `categorical` is
-    possible in principle)."""
-    parent_table = generate_outputs.get(edge.parent_table)
-    column_name = edge.parent_columns[0]
-    key_type = (
-        parent_table.schema.field(column_name).type
-        if parent_table is not None and column_name in parent_table.schema.names
-        else None
-    )
-    if not _is_admitted_fk_key_type(key_type):
-        raise ShadowDifference(
-            code=MIXED_FK_CROSS_GENERATE_UNSUPPORTED,
-            detail=(
-                f"parent={edge.parent_table!r}.{column_name!r}: key type {key_type} not admitted"
-            ),
-        )
+    """The parent half of admission rule #5's key-shape check, run after
+    generation (see `execution._mixed_admission.require_admitted_parent_key_type`)."""
+    try:
+        admission.require_admitted_parent_key_type(edge, generate_outputs)
+    except admission.MixedDeclineError as decline:
+        raise _as_shadow_difference(decline) from decline
 
 
 def _require_no_disqualifying_job_settings(ctx: ShadowContext, config: dict[str, object]) -> None:
