@@ -140,7 +140,6 @@ class PipelineRunContext:
     use_probe_routing: bool
     out_of_core_reorder_threshold_rows: int | None
     unified_slice_enabled: bool
-    mixed_route_enabled: bool
     fidelity_report: bool
     post_validation: bool
     post_validation_skip: list[str]
@@ -201,7 +200,6 @@ def build_run_context(
     key_provider: KeyProvider | None,
     out_of_core_reorder_threshold_rows: int | None,
     unified_slice_enabled: bool,
-    mixed_route_enabled: bool,
     provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None,
     prepare_sources: Callable[..., PreparedSources],
 ) -> PipelineRunContext:
@@ -256,7 +254,6 @@ def build_run_context(
     require_bool("use_byte_estimate_routing", use_byte_estimate_routing)
     require_bool("use_probe_routing", use_probe_routing)
     require_bool("unified_slice_enabled", unified_slice_enabled)
-    require_bool("mixed_route_enabled", mixed_route_enabled)
     # A1 post-validation knobs share the substrate knobs' fail-early contract.
     require_bool("post_validation", post_validation)
     require_bool("post_validation_enforce", post_validation_enforce)
@@ -395,7 +392,6 @@ def build_run_context(
         use_probe_routing=use_probe_routing,
         out_of_core_reorder_threshold_rows=out_of_core_reorder_threshold_rows,
         unified_slice_enabled=unified_slice_enabled,
-        mixed_route_enabled=mixed_route_enabled,
         fidelity_report=fidelity_report,
         post_validation=post_validation,
         post_validation_skip=skip,
@@ -502,6 +498,5 @@ def _mixed_static_plan(ctx: PipelineRunContext) -> MixedStaticPlan | None:
         auto_chunk=ctx.auto_chunk,
         auto_chunk_threshold_rows=ctx.auto_chunk_threshold_rows,
         chunked_dispatcher_enabled=ctx.chunked_dispatcher_enabled,
-        mixed_route_enabled=ctx.mixed_route_enabled,
     )
     return admitted

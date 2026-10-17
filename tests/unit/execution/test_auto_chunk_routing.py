@@ -509,10 +509,10 @@ class TestFailClosed:
             }
         )
         sources = {"accounts": pa.Table.from_pandas(df, preserve_index=False)}
-        # The F2 mixed route takes this independent generate+mask job by default; its kill
-        # switch restores the full-frame outcome this test pins.
+        # The F2 mixed route takes this independent generate+mask job by default; the
+        # chunked-dispatcher kill switch restores the full-frame outcome this test pins.
         auto, forced = _run_pair(
-            cfg, sources, monkeypatch, explain_plan=True, mixed_route_enabled=False
+            cfg, sources, monkeypatch, explain_plan=True, chunked_dispatcher_enabled=False
         )
         _assert_full_frame_and_identical(auto, forced, "accounts", "generat")
         assert auto.outputs["gen"].equals(forced.outputs["gen"])

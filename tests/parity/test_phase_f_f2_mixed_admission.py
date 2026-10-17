@@ -233,7 +233,6 @@ def test_a_table_below_the_chunk_threshold_declines(
         ({"post_validation": True}, "post_validation_requested"),
         ({"auto_chunk": False}, "auto_chunk_disabled"),
         ({"chunked_dispatcher_enabled": False}, "chunked_dispatcher_disabled"),
-        ({"mixed_route_enabled": False}, "mixed_route_disabled"),
     ],
 )
 def test_job_settings_and_kill_switches_decline(
@@ -242,6 +241,16 @@ def test_job_settings_and_kill_switches_decline(
     child = child_table(pa.array(KEYS, pa.string()))
     config = mixed_config(tmp_path, child)
     _assert_static_decline(config, {CHILD: child}, static_reasons, token, **kwargs)
+
+
+def test_the_module_kill_switch_turns_the_route_off(
+    tmp_path: Path, static_reasons: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    child = child_table(pa.array(KEYS, pa.string()))
+    config = mixed_config(tmp_path, child)
+    monkeypatch.setattr(_mixed_static, "MIXED_ROUTE_ENABLED", False)
+    result = _assert_static_decline(config, {CHILD: child}, static_reasons, "mixed_route_disabled")
+    assert_outputs_identical(result.outputs, oracle(config, {CHILD: child}).outputs)
 
 
 def test_quarantine_declines(tmp_path: Path, static_reasons: list[str]) -> None:
@@ -342,7 +351,7 @@ def test_a_large_coupled_job_no_bounded_route_can_take_keeps_the_oom_reject(
     child = child_table(pa.array(KEYS, pa.string()))
     config = mixed_config(tmp_path, child)
     with pytest.raises(ExecutionError) as excinfo:
-        run(config, {CHILD: child}, mixed_route_enabled=False, full_frame_reject_rows=10)
+        run(config, {CHILD: child}, chunked_dispatcher_enabled=False, full_frame_reject_rows=10)
     assert excinfo.value.code.startswith("fk_full_frame_oom_risk_rejected")
 
 
@@ -421,6 +430,7 @@ def test_a_non_int_non_string_parent_key_falls_back_after_generation(
     assert_outputs_identical(got.outputs, oracle(config, {CHILD: child}).outputs)
 
 
+@pytest.mark.filterwarnings("ignore:Mask-table row count disagrees")
 def test_a_changed_lazy_source_declines_before_publishing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

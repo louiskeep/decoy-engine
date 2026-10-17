@@ -48,7 +48,12 @@ if TYPE_CHECKING:
     from decoy_engine.providers_v2 import ProviderRegistry
     from decoy_engine.relationships._graph import RelationshipEdge, RelationshipGraph
 
-__all__ = ["MixedStaticPlan", "admit_mixed_static", "write_order"]
+__all__ = ["MIXED_ROUTE_ENABLED", "MixedStaticPlan", "admit_mixed_static", "write_order"]
+
+# Module-level kill switch for the whole route, beside the operator-facing one: the public
+# `run_pipeline(chunked_dispatcher_enabled=False)` also turns the route off. A constant
+# rather than a new `run_pipeline` kwarg keeps the frozen public signature unchanged.
+MIXED_ROUTE_ENABLED: bool = True
 
 _PASSTHROUGH_COLUMN_DEFAULTS: dict[str, Any] = {
     "strategy": "passthrough",
@@ -98,7 +103,6 @@ def admit_mixed_static(
     auto_chunk: bool,
     auto_chunk_threshold_rows: int,
     chunked_dispatcher_enabled: bool,
-    mixed_route_enabled: bool,
 ) -> tuple[MixedStaticPlan | None, str]:
     """`(plan, "admitted")` or `(None, reason)`; the reason is a stable token for
     telemetry and tests, with a detail after the colon where one helps."""
@@ -115,7 +119,6 @@ def admit_mixed_static(
         quarantine=config.get("quarantine"),
         auto_chunk=auto_chunk,
         chunked_dispatcher_enabled=chunked_dispatcher_enabled,
-        mixed_route_enabled=mixed_route_enabled,
     )
     if declined is not None:
         return None, declined
@@ -174,9 +177,8 @@ def _job_setting_decline(
     quarantine: Any,
     auto_chunk: bool,
     chunked_dispatcher_enabled: bool,
-    mixed_route_enabled: bool,
 ) -> str | None:
-    if not mixed_route_enabled:
+    if not MIXED_ROUTE_ENABLED:
         return "mixed_route_disabled"
     if not auto_chunk:
         return "auto_chunk_disabled"

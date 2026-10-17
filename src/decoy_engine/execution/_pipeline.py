@@ -148,7 +148,6 @@ def run_pipeline(
     key_provider: KeyProvider | None = None,
     out_of_core_reorder_threshold_rows: int | None = None,
     unified_slice_enabled: bool = True,
-    mixed_route_enabled: bool = True,
     _provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None = None,
 ) -> ExecutionResult:
     """Execute a mixed mask + generate config end-to-end.
@@ -250,9 +249,6 @@ def run_pipeline(
     `unified_slice_enabled` (default True since 2026-09-20; admission is the safety
     gate, pass False for legacy): see `_unified_slice.maybe_run_unified_slice`.
 
-    `mixed_route_enabled` (default True; off => the full-frame mixed path): kill switch for the
-    bounded generate+mask route, see `_pipeline_mixed_route`.
-
     `_provider_snapshot` (5a-faker) is a private, test/harness-only hook: an
     already-captured immutable custom-faker-provider view
     (`internal.faker_setup.snapshot_custom_faker_providers`) forwarded straight to
@@ -297,7 +293,6 @@ def run_pipeline(
         key_provider=key_provider,
         out_of_core_reorder_threshold_rows=out_of_core_reorder_threshold_rows,
         unified_slice_enabled=unified_slice_enabled,
-        mixed_route_enabled=mixed_route_enabled,
         provider_snapshot=_provider_snapshot,
         prepare_sources=prepare_transform_sources,
     )
