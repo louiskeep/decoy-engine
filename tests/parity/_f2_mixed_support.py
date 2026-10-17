@@ -180,8 +180,9 @@ def chunk_count(result: ExecutionResult, table: str = CHILD) -> int:
 class RecordingSink:
     """A `TransactionalSink` that records every call and can fail on demand.
 
-    `fail_on` names the operation to fail: "write", "write_batches", "commit", or
-    "write:<table>" / "write_batches:<table>"."""
+    `fail_on` names the operation to fail: "write", "write_batches", "commit",
+    "write:<table>" / "write_batches:<table>", or "write_batches_late" (fail after one
+    masked batch has been staged)."""
 
     def __init__(self, fail_on: str | None = None) -> None:
         self.calls: list[tuple[str, str]] = []
@@ -203,6 +204,12 @@ class RecordingSink:
     def write_batches(self, table: str, batches: Any, *, schema: pa.Schema) -> None:
         self.calls.append(("write_batches", table))
         self._maybe_fail("write_batches", table)
+        if self.fail_on == "write_batches_late":
+            # Stage one masked batch, then fail: the generate table and a masked batch
+            # are both already staged when the session breaks.
+            first = next(iter(batches))
+            self.staged[table] = pa.Table.from_batches([first], schema=schema)
+            raise RuntimeError("injected sink failure after a staged masked batch")
         self.staged[table] = pa.Table.from_batches(list(batches), schema=schema)
 
     def commit(self) -> None:

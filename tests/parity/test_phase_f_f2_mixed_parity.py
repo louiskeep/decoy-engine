@@ -186,9 +186,10 @@ def test_lazy_source_with_uneven_batches_nulls_and_a_partial_final_chunk(
     sink = RecordingSink()
     got = run(config, {CHILD: lazy}, sink=sink)
     assert got.quality_metrics["execution"]["outputs_streamed"] is True
-    assert got.quality_metrics["mixed_route"]["mask_tables"][CHILD]["auto_chunk"]["input"][
-        "mode"
-    ] == "lazy"
+    assert (
+        got.quality_metrics["mixed_route"]["mask_tables"][CHILD]["auto_chunk"]["input"]["mode"]
+        == "lazy"
+    )
     assert chunk_count(got) == -(-41 // CHUNK_ROWS)
     assert got.outputs == {}
     assert sink.committed == 1 and sink.aborted == 0
