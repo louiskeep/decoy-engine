@@ -439,6 +439,9 @@ class MaskSpec:
     must_change: Callable[[Any], bool] | None = lambda v: True
     permutation: bool = False  # shuffle: same multiset, no per-row change guarantee
     native: bool = True  # False: the column has no compiled kernel and runs on the oracle leg
+    # True: its warnings hold whole-table content (counts, row indices) that a chunk-by-chunk run
+    # would compute chunk-locally, so mixed admission declines and the full-frame path answers.
+    declines: bool = False
 
 
 def _col(strategy: str, **extra: Any) -> dict[str, Any]:
@@ -468,6 +471,7 @@ MASKS: dict[str, MaskSpec] = {
         {"v": [60 + i % 45 for i in range(N)]},
         must_change=lambda v: v >= 90,
         native=False,
+        declines=True,
     ),
     "fpe": MaskSpec(
         [_col("fpe", namespace="ns_f", provider_config={"charset": "digits"})],
@@ -494,6 +498,7 @@ MASKS: dict[str, MaskSpec] = {
             )
         ],
         {"v": [f"{10000 + i * 137:05d}" for i in range(N)]},
+        declines=True,
     ),
     "categorical": MaskSpec(
         [
@@ -579,22 +584,8 @@ def _mask_job(
     return config, child
 
 
-TOP_CODE_WARNING_BUG = pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason=(
-        "F2 sweep finding: a python-only column (top_code) on the mixed route emits one "
-        "warning per chunk with chunk-local row indices; the full-frame oracle emits one "
-        "warning with global row indices. Output bytes are identical."
-    ),
-)
-MASK_PARAMS = [
-    pytest.param(s, marks=TOP_CODE_WARNING_BUG) if s == "top_code" else s for s in sorted(MASKS)
-]
-
-
 @pytest.mark.parametrize("topology", TOPOLOGIES)
-@pytest.mark.parametrize("strategy", MASK_PARAMS)
+@pytest.mark.parametrize("strategy", sorted(MASKS))
 def test_mask_strategy_matches_the_oracle_in_every_topology(
     tmp_path: Path,
     strategy: str,
@@ -607,7 +598,13 @@ def test_mask_strategy_matches_the_oracle_in_every_topology(
     case = f"mask:{strategy}/{topology}"
     _, got = _compare(case, config, {CHILD: child}, static_reasons, generate_calls)
     assert got.error is None
-    if spec.native:
+    if spec.declines:
+        # Fail closed: warnings that depend on the whole table cannot be reproduced chunk by
+        # chunk, so the column runs full-frame. Output AND warnings equal the oracle's (the
+        # `_compare` call above asserted both); the route proves it was the decline.
+        reason = f"declined:mask_strategy_warnings_not_chunk_stable:{CHILD}.v:{strategy}"
+        assert got.route == reason, got.route
+    elif spec.native:
         _assert_native_witness(case, got)
     elif got.route == "mixed":
         MATRIX[-1]["backends"] = sorted(set(_backends(got.result).values()))

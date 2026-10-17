@@ -37,8 +37,8 @@ the shadow catalog's values so the mapping is the identity.
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from typing import TYPE_CHECKING
+from collections.abc import Callable, Iterable
+from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 import pyarrow.compute as pc
@@ -54,6 +54,7 @@ __all__ = [
     "MIXED_FK_CROSS_GENERATE_UNSUPPORTED",
     "MIXED_FK_TOPOLOGY_UNSUPPORTED",
     "MixedDeclineError",
+    "chunk_unstable_warning_column",
     "is_admitted_fk_key_type",
     "require_admitted_parent_key_type",
     "require_no_out_of_core_driver",
@@ -66,6 +67,49 @@ GENERATION_SHAPE_UNSUPPORTED = "generation-shape-unsupported"
 MIXED_DRIVER_UNSUPPORTED = "mixed-driver-unsupported"
 MIXED_FK_CROSS_GENERATE_UNSUPPORTED = "mixed-fk-cross-generate-unsupported"
 MIXED_FK_TOPOLOGY_UNSUPPORTED = "mixed-fk-topology-unsupported"
+
+
+def chunk_unstable_warning_column(columns: Iterable[Any]) -> tuple[str, str] | None:
+    """`(column, strategy)` of the first mask column whose warnings are not chunk-stable.
+
+    A warning is chunk-stable when running the table chunk-by-chunk yields the warnings the
+    full-frame oracle yields. Warnings whose detail holds whole-table content (counts, row
+    indices) are not, when computed per chunk: each chunk emits its own chunk-local warning, so
+    the merged result differs from the oracle's single global one.
+
+    Two sources of truth decide it, so a new strategy is caught without editing this function:
+
+      * the strategy's declared `warning_codes` (`capabilities_for`);
+      * the codes the native route reduces to the global value
+        (`OPERATORS[...].routed_diagnostics`, entries `reduce_warning:<code>`).
+
+    A strategy declaring a code the native route does not reduce always runs that code per
+    chunk on the oracle leg (top_code, geo_generalize, nested), so it is unstable. A strategy
+    whose every code is reduced is stable only while the table runs natively; the whole table
+    runs on the oracle leg as soon as one column has no operator, so it is unstable there. A
+    strategy with no capability entry cannot be classified, so it fails closed.
+    """
+    from decoy_engine.execution._operator_registry import OPERATORS
+    from decoy_engine.execution.native._capabilities import capabilities_for
+
+    named = [
+        (str(c.get("name")), str(c.get("strategy") or "passthrough"))
+        for c in columns
+        if isinstance(c, dict)
+    ]
+    table_runs_on_oracle = any(strategy not in OPERATORS for _, strategy in named)
+    for column, strategy in named:
+        try:
+            codes = capabilities_for(strategy).warning_codes
+        except KeyError:
+            return column, strategy
+        if not codes:
+            continue
+        spec = OPERATORS.get(strategy)
+        reduced = spec.routed_diagnostics if spec is not None else frozenset()
+        if table_runs_on_oracle or any(f"reduce_warning:{code}" not in reduced for code in codes):
+            return column, strategy
+    return None
 
 
 class MixedDeclineError(DecoyError):

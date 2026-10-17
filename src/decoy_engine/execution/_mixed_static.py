@@ -17,6 +17,9 @@ what only the production route needs:
   * that no relationship edge touches a mask table when there is no coupled
     edge (a mask->mask FK cannot be resolved chunk-by-chunk, and the chunked
     gate would not see it once the per-table config drops `relationships`);
+  * that no mask column emits warnings whose content is whole-table scoped (counts, row
+    indices) while running per chunk: such a table declines to the full-frame path, where the
+    warnings equal the oracle's (`chunk_unstable_warning_column`);
   * per-mask-table chunk admission, asked of the planner's own gate
     (`classify_job`) on a single-table config so the mixed route cannot admit a
     table the pure-mask auto-chunk route would refuse.
@@ -156,6 +159,12 @@ def admit_mixed_static(
         per_table, reason = _mask_table_config(config, name, edge, registry)
         if per_table is None:
             return None, reason
+        unstable = admission.chunk_unstable_warning_column(
+            per_table["tables"][0].get("columns") or []
+        )
+        if unstable is not None:
+            column, strategy = unstable
+            return None, f"mask_strategy_warnings_not_chunk_stable:{name}.{column}:{strategy}"
         chunk_reason = _chunk_rejection(
             per_table,
             name,

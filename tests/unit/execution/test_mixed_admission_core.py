@@ -284,3 +284,48 @@ def test_forced_bounded_modes_still_reject_even_when_the_mixed_shape_is_admitted
 
     with pytest.raises(ConfigError):
         _decide(mode, mixed_admitted=True)
+
+
+# ---------------------------------------------------------------------------
+# Chunk-stable warnings
+# ---------------------------------------------------------------------------
+
+
+def _cols(*pairs: tuple[str, str]) -> list[dict[str, str]]:
+    return [{"name": n, "strategy": s} for n, s in pairs]
+
+
+@pytest.mark.parametrize("strategy", ["top_code", "geo_generalize", "nested"])
+def test_unreduced_warning_strategies_are_never_chunk_stable(strategy: str) -> None:
+    # Their warning codes carry counts or row indices and the native route has no reducer.
+    assert core.chunk_unstable_warning_column(_cols(("a", "hash"), ("v", strategy))) == (
+        "v",
+        strategy,
+    )
+
+
+@pytest.mark.parametrize("strategy", ["fpe", "text_mask"])
+def test_reduced_warning_strategies_are_stable_only_while_the_table_runs_native(
+    strategy: str,
+) -> None:
+    # Every code is reduced natively, so a table of operator strategies stays admitted ...
+    assert core.chunk_unstable_warning_column(_cols(("a", "hash"), ("v", strategy))) is None
+    # ... but one column without an operator sends the whole table to the per-chunk oracle leg.
+    assert core.chunk_unstable_warning_column(_cols(("a", "formula"), ("v", strategy))) == (
+        "v",
+        strategy,
+    )
+
+
+@pytest.mark.parametrize(
+    "strategy", ["hash", "redact", "bucketize", "code_set", "shuffle", "formula", "passthrough"]
+)
+def test_zero_warning_strategies_are_not_declined_even_on_the_oracle_leg(strategy: str) -> None:
+    assert core.chunk_unstable_warning_column(_cols(("a", "formula"), ("v", strategy))) is None
+
+
+def test_an_unclassified_strategy_fails_closed() -> None:
+    assert core.chunk_unstable_warning_column(_cols(("v", "no_such_strategy"))) == (
+        "v",
+        "no_such_strategy",
+    )
