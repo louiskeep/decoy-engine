@@ -9,6 +9,20 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (mixed generate+mask jobs mask on the Rust routes, 2026-10-17)
+
+Under `execution_mode="auto"` (the default), a job that generates some tables and masks others
+now runs its mask tables on the bounded chunked Rust routes. Generation is unchanged and stays
+held in memory. The output is byte-identical to the full-frame mixed path, and all tables
+publish in one transaction. Before this, any generated table sent the whole job to the
+full-frame pandas path.
+
+Jobs the route does not admit still run full-frame with the same output. These are fpe,
+text_mask, top_code, geo_generalize, and nested columns; composite foreign keys; the
+out-of-core mask driver; and generated output that holds nulls, NaN, or nested values. The
+route is on by default. Its kill switch is `MIXED_ROUTE_ENABLED` in
+`decoy_engine/execution/_mixed_static.py`.
+
 ### Fixed (hash over integer columns with nulls is consistent across routes, 2026-10-16)
 
 Hashing an integer column that holds a null was rejected with `null_bearing_int_unsupported`

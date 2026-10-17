@@ -1,4 +1,4 @@
-Status: plan
+Status: record (shipped in engine PR #274, squash 22bfc62f, 2026-10-17; see section 9)
 
 Rules consulted: 00-universal, development-loop, risk-and-exceptions, feature-dev, architecture, performance, testing, verification
 
@@ -220,3 +220,35 @@ Codex plan-gate (this doc) -> build (Sonnet) -> ci-mirror + mixed/FK parity +
 forced-route/backend + admission-decline + abort tests -> dennis -> Codex final ->
 merge on green + Slack. DOCUMENT: roadmap + shipped-log, program plan F2 done,
 engine graph refresh.
+
+## 9. Shipped and follow-ups (2026-10-17)
+
+Shipped in engine PR #274 (squash `22bfc62f`). `MIXED_ROUTE_ENABLED` is `True`
+(`src/decoy_engine/execution/_mixed_static.py:60`), so the route is on by default under
+`execution_mode="auto"`. Static admission is in `_mixed_static.py`. The semantic core it
+shares with the shadow coordinator is `execution/_mixed_admission.py`. Coverage:
+`tests/parity/test_phase_f_f2_mixed_sweep.py` (the expected route is pinned for every
+admitted mask strategy; formula and shuffle are pinned as chunk-gate declines) and
+`tests/unit/execution/test_mixed_admission_core.py`.
+
+Warning rule: a mask column is admitted only when every warning code its strategy
+declares is chunk-invariant (`CHUNK_INVARIANT_WARNING_CODES`). Strategies whose codes are
+chunk-variant (`CHUNK_VARIANT_WARNING_CODES`) decline: fpe, text_mask, top_code,
+geo_generalize, nested. Other declines: composite FK keys, the out-of-core mask driver, a
+sibling column that reads the FK key through `when:`, and generated output that does not
+survive the oracle's pandas round trip (nulls, floating NaN, nested types). Shuffle and
+formula never reach mixed admission: the planner chunk gate rejects them as
+`strategy_not_chunk_safe` (`execution/_chunked.py`).
+
+Follow-ups. Each one stays a typed decline until it lands.
+- Correct cross-chunk warning aggregation: denominators that count warning-free chunks,
+  the oracle's warning order, and partial chunks. This re-admits fpe, text_mask, top_code,
+  geo_generalize, and nested to the mixed fast path. The same fix covers a count-warning
+  divergence on the native chunked route for fpe and text_mask that predates F2.
+- A kernel-ABI backend-witness harness for the mixed route. The sweep pins the route;
+  a per-kernel witness is not written yet.
+- Composite FK keys and the out-of-core mask driver on the mixed route (V2).
+- Nullable and NaN generated output, then more FK key types (the decline-lifting order in
+  the v2 candidate plan).
+- F1 and F3 stay held pending a re-baselined generation oracle (Cam, 2026-10-17). 100M
+  mixed generation still needs F1.
