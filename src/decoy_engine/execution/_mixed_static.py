@@ -40,6 +40,7 @@ from typing import TYPE_CHECKING, Any
 import pyarrow as pa
 
 from decoy_engine.execution import _mixed_admission as admission
+from decoy_engine.execution._column_access import column_access
 from decoy_engine.profile._readers import LazySource
 
 if TYPE_CHECKING:
@@ -122,6 +123,12 @@ def admit_mixed_static(
     )
     if declined is not None:
         return None, declined
+    # classify_job on a narrowed {table: source} would hide an extra caller source from its
+    # unconfigured-source handling (oracle: warn-and-return or reject), and the route only
+    # publishes configured tables, so decline and let the oracle decide.
+    extra = sorted(n for n in caller_sources if n not in table_kinds)
+    if extra:
+        return None, f"unconfigured_extra_source_present:{','.join(extra)}"
     absent = [n for n in masks if n not in caller_sources]
     if absent:
         return None, f"mask_source_not_supplied:{','.join(absent)}"
@@ -146,7 +153,7 @@ def admit_mixed_static(
 
     mask_configs: dict[str, dict[str, Any]] = {}
     for name in masks:
-        per_table, reason = _mask_table_config(config, name, edge)
+        per_table, reason = _mask_table_config(config, name, edge, registry)
         if per_table is None:
             return None, reason
         chunk_reason = _chunk_rejection(
@@ -204,18 +211,8 @@ def _source_column_type(source: pa.Table | LazySource, column: str) -> pa.DataTy
     return schema.field(column).type if column in schema.names else None
 
 
-def _mentions(value: Any, name: str) -> bool:
-    if isinstance(value, str):
-        return value == name
-    if isinstance(value, Mapping):
-        return any(_mentions(k, name) or _mentions(v, name) for k, v in value.items())
-    if isinstance(value, (list, tuple, set, frozenset)):
-        return any(_mentions(v, name) for v in value)
-    return False
-
-
 def _mask_table_config(
-    config: dict[str, Any], table: str, edge: RelationshipEdge | None
+    config: dict[str, Any], table: str, edge: RelationshipEdge | None, registry: Any
 ) -> tuple[dict[str, Any] | None, str]:
     """The job config narrowed to one mask table; `(None, reason)` when the
     coupled FK column cannot be carried safely."""
@@ -239,10 +236,15 @@ def _mask_table_config(
                 rewritten.append({**col, **_PASSTHROUGH_COLUMN_DEFAULTS})
                 rewritten[-1].pop("when", None)
             else:
-                if isinstance(col, dict) and any(
-                    _mentions(col.get(field), key)
-                    for field in ("when", "coherent_with", "provider_config")
-                ):
+                if not isinstance(col, dict):
+                    return None, f"fk_key_column_read_unknown:{table}.{key}"
+                # The declared read set, not a string scan: it parses `when:` predicates and
+                # derived expressions. A read that cannot be named declines, because the
+                # sibling could be reading the key.
+                access = column_access(col, registry)
+                if access.reads_unknown:
+                    return None, f"fk_key_column_read_unknown:{table}.{key}"
+                if key in access.reads:
                     return None, f"fk_key_column_read_by_sibling:{table}.{key}"
                 rewritten.append(col)
         narrowed["columns"] = rewritten

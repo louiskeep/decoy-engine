@@ -18,6 +18,7 @@ from decoy_engine.config import PipelineConfig
 from decoy_engine.errors import ConfigError
 from decoy_engine.execution import _mixed_static
 from decoy_engine.generation import synthesize
+from decoy_engine.providers_v2 import get_default_registry
 from tests.parity._f2_mixed_support import (
     CHILD,
     FK,
@@ -28,6 +29,7 @@ from tests.parity._f2_mixed_support import (
     mixed_config,
     oracle,
     run,
+    warning_signature,
 )
 
 KEYS = [str(i % 5) for i in range(40)]
@@ -281,7 +283,7 @@ def test_a_sibling_that_reads_the_fk_column_declines() -> None:
             }
         ]
     }
-    narrowed, reason = _mixed_static._mask_table_config(config, CHILD, edge)  # type: ignore[arg-type]
+    narrowed, reason = _mixed_static._mask_table_config(config, CHILD, edge, get_default_registry())  # type: ignore[arg-type]
     assert narrowed is None and reason.startswith("fk_key_column_read_by_sibling")
 
 
@@ -303,7 +305,7 @@ def test_the_per_table_config_rewrites_only_the_fk_column() -> None:
             },
         ],
     }
-    narrowed, _ = _mixed_static._mask_table_config(config, CHILD, edge)  # type: ignore[arg-type]
+    narrowed, _ = _mixed_static._mask_table_config(config, CHILD, edge, get_default_registry())  # type: ignore[arg-type]
     assert narrowed is not None
     assert narrowed["relationships"] == []
     assert [t["name"] for t in narrowed["tables"]] == [CHILD]
@@ -456,3 +458,105 @@ def test_a_changed_lazy_source_declines_before_publishing(
         == "mixed_runtime_declined:lazy_source_changed"
     )
     assert sink.calls == []
+
+
+# ---------------------------------------------------------------------------
+# Fail-closed sibling reads and extra caller sources.
+# ---------------------------------------------------------------------------
+
+BIG = 2**63 + 1
+
+
+def _uint64_keys() -> pa.Array:
+    return pa.array([BIG if i % 3 == 0 else 1 + i % 4 for i in range(40)], pa.uint64())
+
+
+def _uint64_job(tmp_path: Path, email_when: str | None) -> tuple[dict[str, Any], pa.Table]:
+    child = child_table(_uint64_keys())
+    email: dict[str, Any] = {"name": "email", "strategy": "hash", "namespace": "ns_email"}
+    if email_when is not None:
+        email["when"] = email_when
+    config = mixed_config(
+        tmp_path,
+        child,
+        parent_columns=[
+            {"name": "id", "type": "categorical", "categories": [str(BIG), "1", "2", "3"]}
+        ],
+        child_columns=[email, {"name": "note", "strategy": "redact"}],
+    )
+    return config, child
+
+
+def test_a_when_predicate_reading_the_fk_column_declines_and_masks_like_the_oracle(
+    tmp_path: Path, static_reasons: list[str]
+) -> None:
+    """Numexpr would read the carried uint64 key as signed and flip `person_id > 0`, leaving
+    the gated email raw; the declared read set catches the parsed predicate."""
+    config, child = _uint64_job(tmp_path, f"{FK} > 0")
+    result = _assert_static_decline(
+        config, {CHILD: child}, static_reasons, "fk_key_column_read_by_sibling"
+    )
+    want = oracle(config, {CHILD: child})
+    assert_outputs_identical(result.outputs, want.outputs)
+    assert not set(result.outputs[CHILD].column("email").to_pylist()) & set(
+        child.column("email").to_pylist()
+    )
+
+
+def test_the_same_shape_without_the_fk_reading_when_routes_mixed(
+    tmp_path: Path, static_reasons: list[str]
+) -> None:
+    config, child = _uint64_job(tmp_path, None)
+    result = run(config, {CHILD: child})
+    want = oracle(config, {CHILD: child})
+    assert static_reasons and static_reasons[-1] == "admitted", static_reasons
+    assert "mixed_route" in result.quality_metrics
+    assert_outputs_identical(result.outputs, want.outputs)
+
+
+def test_an_unparseable_sibling_when_declines_rather_than_guessing() -> None:
+    edge = type("E", (), {"child_table": CHILD, "child_columns": (FK,)})()
+    config = {
+        "tables": [
+            {
+                "name": CHILD,
+                "columns": [
+                    {"name": FK, "strategy": "passthrough"},
+                    {"name": "email", "strategy": "hash", "when": "f'{x}' == 'a'"},
+                ],
+            }
+        ]
+    }
+    narrowed, reason = _mixed_static._mask_table_config(
+        config,
+        CHILD,
+        edge,
+        get_default_registry(),  # type: ignore[arg-type]
+    )
+    assert narrowed is None and reason.startswith("fk_key_column_read_unknown")
+
+
+@pytest.mark.parametrize("policy", ["warn", "error"])
+def test_an_extra_unconfigured_caller_source_declines_to_the_oracle(
+    tmp_path: Path, static_reasons: list[str], policy: str
+) -> None:
+    child = child_table(pa.array(KEYS, pa.string()))
+    config = mixed_config(tmp_path, child)
+    config["global_settings"]["unconfigured_column_policy"] = policy
+    sources = {CHILD: child, "extra": pa.table({"x": pa.array([1, 2, 3])})}
+
+    def outcome(mode: str) -> Any:
+        try:
+            return run(config, sources, mode=mode)
+        except Exception as exc:
+            return exc
+
+    got, want = outcome("auto"), outcome("full_frame")
+    assert static_reasons and "unconfigured_extra_source_present" in static_reasons[-1]
+    if isinstance(want, Exception):
+        assert type(got) is type(want) and str(got) == str(want)
+    else:
+        assert got.quality_metrics["execution"]["execution_mode"] == "full_frame"
+        assert "mixed_route" not in got.quality_metrics
+        assert_outputs_identical(got.outputs, want.outputs)
+        assert warning_signature(got) == warning_signature(want)
