@@ -61,13 +61,15 @@ sink committed, result.outputs empty) so the child does not accumulate resident.
 FIXTURE + VERIFIER (fold P1-2): the job is TWO tables - a generated parent + a masked
 child over one FK edge. Tiers are 2-table exact counts (parent + child), NOT the
 3-table parent/child/grandchild allocations: 1M smoke = parent 0.2M / child 0.8M;
-10M = parent 2M / child 8M (parent >= 2M clears the reorder threshold; child is the
-chunked-masked table). (100M deferred = parent 20M / child 80M.) A new
+10M = parent 2M / child 8M (child is the chunked-masked table; counts are capacity
+workload choices, not a reorder-threshold claim - the mixed route does not use the
+OOC reorder driver). (100M deferred = parent 20M / child 80M.) A new
 bench_worker_mixed verifier (NOT _parity.py): deterministic generated parent keys
 (from the generate config + seed), child FK built to reference them with a known
 orphan fraction, expected parent row-count from config, committed child row-count ==
-input, and bounded (head/middle/tail windowed) FK parity that child FK keys resolve
-to committed generated parent keys per the orphan policy. Specify exact parent/child
+input, and bounded (head/middle/tail windowed) FK parity checked ROW-SPECIFICALLY -
+expected-vs-actual value at each sampled child row position (incl. deterministic
+orphan rows per the orphan policy), not mere membership - labeled as SAMPLED coverage. Specify exact parent/child
 counts + schemas per tier in the worker.
 
 ORACLE CORRECTNESS, ISOLATED FROM CAPACITY (fold P1-3): the oracle byte-identity
@@ -108,7 +110,11 @@ bound. ru_maxrss is whole-process and cannot attribute bytes to the parent; so r
 generation-phase RSS (observed) + parent Arrow table nbytes as separate diagnostics,
 without claiming exact attribution. Light tiers validate the harness + bound SHAPE,
 not 100M capacity. The oracle materialization is the other trap (fold P1-3):
-isolated/separately-measured.
+isolated/separately-measured. NOTE (plan-gate r2 P2): the mixed route reads the WHOLE
+child FK key column and retains the source + resolved key arrays in its carrier, so
+child-side key memory is NOT fully chunk-bounded; report resident child-key/carrier
+bytes as a DISTINCT diagnostic alongside resident-generation bytes. Whole-process
+external RSS remains the capacity decision (it captures both).
 
 ## 6. Gate chain
 
