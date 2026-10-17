@@ -305,28 +305,32 @@ def test_row_index_warning_strategies_are_never_chunk_stable(strategy: str) -> N
 
 
 @pytest.mark.parametrize("strategy", ["fpe", "text_mask"])
-def test_strategies_whose_warning_counts_are_summed_across_chunks_stay_admitted(
-    strategy: str,
-) -> None:
-    # Their count warnings are folded to the global value (`_chunked_warning_reduce`), on the
-    # native route and on the per-chunk oracle leg, so admission must not decline them.
-    assert core.chunk_unstable_warning_column(_cols(("a", "formula"), ("v", strategy))) is None
-    assert core.chunk_unstable_warning_column(_cols(("a", "hash"), ("v", strategy))) is None
+def test_count_warning_strategies_decline(strategy: str) -> None:
+    # fpe also emits a config-constant code, but its count code still makes it variant.
+    assert core.chunk_unstable_warning_column(_cols(("a", "hash"), ("v", strategy))) == (
+        "v",
+        strategy,
+    )
 
 
-def test_the_fold_covers_exactly_the_codes_the_operator_registry_declares_reducible() -> None:
-    from decoy_engine.execution._chunked_warning_reduce import REDUCED_WARNING_CODES
+def test_every_declared_warning_code_is_classified_exactly_once() -> None:
     from decoy_engine.execution._operator_registry import OPERATORS
+    from decoy_engine.execution.native._capabilities import (
+        capabilities_for,
+        classified_strategies,
+    )
 
-    declared = {
+    declared = {c for s in classified_strategies() for c in capabilities_for(s).warning_codes}
+    # The operator registry's reduce_warning declarations are warning codes too.
+    declared |= {
         d.removeprefix("reduce_warning:")
         for spec in OPERATORS.values()
         for d in spec.routed_diagnostics
         if d.startswith("reduce_warning:")
     }
-    # fpe_join_group_active and the other equal-everywhere codes dedup; only the count codes sum.
-    assert declared >= REDUCED_WARNING_CODES
-    assert declared - REDUCED_WARNING_CODES == {"fpe_join_group_active"}
+    invariant, variant = core.CHUNK_INVARIANT_WARNING_CODES, core.CHUNK_VARIANT_WARNING_CODES
+    assert not invariant & variant
+    assert declared == invariant | variant, "classify a newly declared warning code"
 
 
 @pytest.mark.parametrize(

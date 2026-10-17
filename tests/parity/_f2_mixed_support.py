@@ -162,7 +162,8 @@ def assert_outputs_identical(got: dict[str, pa.Table], want: dict[str, pa.Table]
 
 
 def warning_signature(result: ExecutionResult) -> list[tuple[str, str, str]]:
-    return sorted((w.code, w.column, repr(sorted(w.detail.items()))) for w in result.warnings)
+    # Order-sensitive on purpose: the mixed route must emit the oracle's warnings in its order.
+    return [(w.code, w.column, repr(sorted(w.detail.items()))) for w in result.warnings]
 
 
 def mask_evidence(result: ExecutionResult, table: str = CHILD) -> dict[str, Any]:

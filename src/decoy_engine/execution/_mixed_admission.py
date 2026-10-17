@@ -49,6 +49,8 @@ if TYPE_CHECKING:
     from decoy_engine.relationships._graph import RelationshipEdge, RelationshipGraph
 
 __all__ = [
+    "CHUNK_INVARIANT_WARNING_CODES",
+    "CHUNK_VARIANT_WARNING_CODES",
     "GENERATION_SHAPE_UNSUPPORTED",
     "MIXED_DRIVER_UNSUPPORTED",
     "MIXED_FK_CROSS_GENERATE_UNSUPPORTED",
@@ -69,22 +71,37 @@ MIXED_FK_CROSS_GENERATE_UNSUPPORTED = "mixed-fk-cross-generate-unsupported"
 MIXED_FK_TOPOLOGY_UNSUPPORTED = "mixed-fk-topology-unsupported"
 
 
+# Every warning code a mask strategy can declare, classified by whether the chunk-by-chunk run
+# reproduces the full-frame warning. A chunk-invariant code is emitted identically by every chunk,
+# so the chunked merge's equality dedup leaves exactly the oracle's single warning. The others
+# carry a per-frame count or row index, so each chunk emits a chunk-local copy and the merge keeps
+# several partial warnings (with the wrong denominators and order) where the oracle emits one.
+# A test requires every declared code to appear in exactly one set, so a newly declared code must
+# be classified here before it can be admitted.
+#
+# Deferred: correct cross-chunk warning aggregation (denominators, ordering, partial chunks) to
+# re-admit the count and row-index strategies to the mixed route. v1 declines them.
+CHUNK_INVARIANT_WARNING_CODES: frozenset[str] = frozenset({"fpe_join_group_active"})
+CHUNK_VARIANT_WARNING_CODES: frozenset[str] = frozenset(
+    {
+        "fpe_partial_plaintext_disclosure",
+        "text_mask_sub_floor_span_handled",
+        "top_code_generalized",
+        "geo_generalize_cascade",
+        "nested_cell_json_parse_error",
+        "nested_jsonpath_path_overlap",
+    }
+)
+
+
 def chunk_unstable_warning_column(columns: Iterable[Any]) -> tuple[str, str] | None:
-    """`(column, strategy)` of the first mask column whose warnings are not chunk-stable.
+    """`(column, strategy)` of the first mask column whose warnings are not chunk-invariant.
 
-    A warning is chunk-stable when running the table chunk-by-chunk yields the warnings the
-    full-frame oracle yields. Warnings whose detail holds whole-table content (counts, row
-    indices) are not, when each chunk computes its own: the merged result differs from the
-    oracle's single global one, on the native route and the oracle leg alike.
-
-    Two sources of truth decide it, so a new strategy is caught without editing this function:
-    the strategy's declared `warning_codes` (`capabilities_for`), and the codes the cross-chunk
-    fold reproduces exactly (`CHUNK_STABLE_WARNING_CODES`: summed counts plus config-constant
-    codes, pinned to the operator registry's `reduce_warning:` declarations by a test). A strategy declaring any other code is
-    unstable (top_code, geo_generalize, nested carry row indices). A strategy with no capability
-    entry cannot be classified, so it fails closed.
+    A column is admitted only when every warning code its strategy declares
+    (`capabilities_for(...).warning_codes`) is in `CHUNK_INVARIANT_WARNING_CODES`. A code that is
+    not there, classified variant or not classified at all, declines, and so does a strategy with
+    no capability entry: anything that cannot be shown chunk-invariant fails closed.
     """
-    from decoy_engine.execution._chunked_warning_reduce import CHUNK_STABLE_WARNING_CODES
     from decoy_engine.execution.native._capabilities import capabilities_for
 
     for c in columns:
@@ -95,7 +112,7 @@ def chunk_unstable_warning_column(columns: Iterable[Any]) -> tuple[str, str] | N
             codes = capabilities_for(strategy).warning_codes
         except KeyError:
             return str(c.get("name")), strategy
-        if any(code not in CHUNK_STABLE_WARNING_CODES for code in codes):
+        if any(code not in CHUNK_INVARIANT_WARNING_CODES for code in codes):
             return str(c.get("name")), strategy
     return None
 

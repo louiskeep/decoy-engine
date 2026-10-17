@@ -575,17 +575,15 @@ def aggregate_chunk_warnings(chunk_results: list[Any]) -> tuple[Any, ...]:
 
     The same warning re-emitted by every chunk (they all run the same
     plan) collapses to one, exactly what the full-frame run would have
-    emitted; genuinely distinct warnings keep first-emission order. The count-carrying
-    codes in `_chunked_warning_reduce` are summed across chunks instead.
+    emitted; genuinely distinct warnings keep first-emission order.
     Equality-based dedup because QualityWarning carries a dict detail
     (unhashable); warning counts are tiny, so O(n^2) is irrelevant.
     """
-    from decoy_engine.execution._chunked_warning_reduce import fold_warning
-
     seen: list[Any] = []
     for result in chunk_results:
         for warning in result.warnings:
-            fold_warning(seen, warning)
+            if warning not in seen:
+                seen.append(warning)
     return tuple(seen)
 
 

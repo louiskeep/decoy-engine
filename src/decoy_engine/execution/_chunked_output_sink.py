@@ -176,12 +176,10 @@ def fold_timings(
 
 
 def fold_warnings(seen: list[Any], result: Any) -> None:
-    """Order-stable union by equality (a warning carries an unhashable dict detail); the
-    count-carrying codes are summed (`_chunked_warning_reduce`)."""
-    from decoy_engine.execution._chunked_warning_reduce import fold_warning
-
+    """Order-stable union by equality (a warning carries an unhashable dict detail)."""
     for warning in result.warnings:
-        fold_warning(seen, warning)
+        if warning not in seen:
+            seen.append(warning)
 
 
 def fold_corpora(seen: dict[tuple[Any, Any], dict[str, Any]], result: Any) -> None:

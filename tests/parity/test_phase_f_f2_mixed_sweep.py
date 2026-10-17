@@ -476,10 +476,12 @@ MASKS: dict[str, MaskSpec] = {
     "fpe": MaskSpec(
         [_col("fpe", namespace="ns_f", provider_config={"charset": "digits"})],
         {"v": [f"{100000 + i * 977:09d}" for i in range(N)]},
+        declines=True,
     ),
     "text_mask": MaskSpec(
         [_col("text_mask", provider_config={"detectors": ["ssn"]})],
         {"v": [f"call, SSN {100 + i:03d}-45-{1000 + i:04d} thanks" for i in range(N)]},
+        declines=True,
     ),
     "text_redact": MaskSpec(
         [_col("text_redact")],
@@ -625,7 +627,7 @@ def test_mask_strategy_matches_the_oracle_in_every_topology(
 
 
 # ---------------------------------------------------------------------------
-# Count-carrying warnings: summed across chunks, not left chunk-local
+# Count-carrying warnings: declined to full-frame (cross-chunk aggregation is deferred)
 # ---------------------------------------------------------------------------
 
 PREFIXED = [f"M{100000 + i * 977:06d}" for i in range(N)]
@@ -656,7 +658,8 @@ COUNT_WARNINGS = {
     ),
 }
 # A hash sibling keeps the table on the compiled route; a bucketize sibling (no operator)
-# sends the whole table to the per-chunk oracle leg. Both must fold to the oracle's one warning.
+# sends the whole table to the per-chunk oracle leg. Both decline: the warning counts are
+# per-frame, so a chunked run cannot reproduce the oracle's one global warning.
 SIBLINGS = {
     "native_table": {"name": "w", "strategy": "hash", "namespace": "ns_w"},
     "oracle_leg_table": {
@@ -670,7 +673,7 @@ SIBLINGS = {
 @pytest.mark.parametrize("topology", TOPOLOGIES)
 @pytest.mark.parametrize("sibling", sorted(SIBLINGS))
 @pytest.mark.parametrize("strategy", sorted(COUNT_WARNINGS))
-def test_count_warnings_equal_the_oracles_single_global_warning(
+def test_count_warning_strategies_decline_with_the_oracles_full_frame_warnings(
     tmp_path: Path,
     strategy: str,
     sibling: str,
@@ -686,7 +689,9 @@ def test_count_warnings_equal_the_oracles_single_global_warning(
     config, child = _mask_job(tmp_path, spec, topology)
     case = f"count-warning:{strategy}/{sibling}/{topology}"
     want, got = _compare(case, config, {CHILD: child}, static_reasons, generate_calls)
-    assert got.route == "mixed", got.route  # fpe/text_mask are not over-declined
+    assert got.route == (
+        f"declined:mask_strategy_warnings_not_chunk_stable:{CHILD}.v:{strategy}"
+    ), got.route
     oracle_warnings = [w for w in want.result.warnings if w.code == code]
     assert len(oracle_warnings) == 1  # the data really triggers it, once, over the whole table
     assert [w for w in got.result.warnings if w.code == code] == oracle_warnings
@@ -1035,7 +1040,7 @@ def _ledger() -> pa.Table:
 
 LEDGER_COLUMNS: list[dict[str, Any]] = [
     {"name": "ref", "strategy": "hash", "namespace": "ns_ref"},
-    {"name": "ssn", "strategy": "text_mask", "provider_config": {"detectors": ["ssn"]}},
+    {"name": "ssn", "strategy": "hash", "namespace": "ns_ssn"},
     {"name": "amt", "strategy": "redact"},
 ]
 
@@ -1084,7 +1089,7 @@ def test_coupled_and_independent_mask_tables_plus_a_second_generate_table(
 def _sink_jobs(tmp_path: Path) -> dict[str, tuple[dict[str, Any], dict[str, Any]]]:
     jobs: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {}
     for topology in TOPOLOGIES:
-        for strategy in ("hash", "fpe", "date_shift"):
+        for strategy in ("hash", "bucket_perturb", "date_shift"):
             sub = tmp_path / f"{strategy}-{topology}"
             sub.mkdir()
             config, child = _mask_job(sub, MASKS[strategy], topology)
@@ -1112,7 +1117,7 @@ def _sink_jobs(tmp_path: Path) -> dict[str, tuple[dict[str, Any], dict[str, Any]
     return jobs
 
 
-SINK_CASES = [f"{s}/{t}" for t in TOPOLOGIES for s in ("hash", "fpe", "date_shift")] + [
+SINK_CASES = [f"{s}/{t}" for t in TOPOLOGIES for s in ("hash", "bucket_perturb", "date_shift")] + [
     "dirty-null/independent",
     "faker-dob+formula/coupled",
     "multi-mask/coupled",
