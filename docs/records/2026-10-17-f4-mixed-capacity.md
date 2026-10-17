@@ -2,7 +2,7 @@ Status: record
 
 # F4 mixed generate + mask capacity: 1M and 10M light tiers (2026-10-17)
 
-Plan: [phase-f-f4-capacity](../plans/2026-10-17-phase-f-f4-capacity.md). Raw evidence:
+Plan: `docs/plans/2026-10-17-phase-f-f4-capacity.md`. Raw evidence:
 `decoy-platform/docs/product/release-1-validation-runs/2026-10-17-f4-mixed/summary.json`.
 Harness: `scripts/fk-scale/bench_worker_mixed.py` (+ `_mixed_layout.py`), tests in
 `tests/perf/test_f4_mixed_capacity_{smoke,scale}.py`.
