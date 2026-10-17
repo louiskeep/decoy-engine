@@ -303,4 +303,6 @@ def run_pipeline(
         return _dispatch.execute_sequential_route(ctx, decision)
     if ctx.has_mask_table and decision.route == "out_of_core":
         return _dispatch.execute_out_of_core_route(ctx, decision)
+    if ctx.has_mask_table and decision.route == "mixed":
+        return _dispatch.execute_mixed_route(ctx, decision)
     return _full_frame.run_full_frame_route(ctx, decision)

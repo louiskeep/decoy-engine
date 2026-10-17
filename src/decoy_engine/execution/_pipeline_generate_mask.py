@@ -109,10 +109,12 @@ def run_generate_and_mask_steps(
     fidelity_report: bool,
     now_iso: str | None,
     publish: _output_sink.OutputPublish,
+    pregenerated: dict[str, pa.Table] | None = None,
 ) -> GenerateMaskStepResult:
     """Run generate-kind tables then mask-kind tables (`_pipeline.py`
     Steps 1-2), returning everything the stitch + finalize stages need.
-    See the module docstring for why this is a separate function."""
+    See the module docstring for why this is a separate function. `pregenerated` skips
+    Step 1 with outputs a declined mixed route already built."""
     from decoy_engine.generation.synthesize import generate_tables
 
     # Step 1: generate-kind tables. Plan-only (guide 4.8/9): passing the
@@ -120,11 +122,15 @@ def run_generate_and_mask_steps(
     # filters by `generate_columns` presence internally.
     generate_outputs: dict[str, pa.Table] = {}
     if has_generate_table:
-        generate_outputs = generate_tables(
-            plan,
-            derive_key=derive_key,
-            instance_default_locale=instance_default_locale,
-            provider_snapshot=provider_snapshot,
+        generate_outputs = (
+            pregenerated
+            if pregenerated is not None
+            else generate_tables(
+                plan,
+                derive_key=derive_key,
+                instance_default_locale=instance_default_locale,
+                provider_snapshot=provider_snapshot,
+            )
         )
 
     # Step 2: mask-kind tables.

@@ -44,6 +44,7 @@ if TYPE_CHECKING:
 __all__ = [
     "execution_telemetry",
     "run_mask_chunked",
+    "run_mixed_route",
     "run_out_of_core_route",
     "run_sequential_route",
 ]
@@ -588,3 +589,11 @@ def run_mask_chunked(
         native_threads=native_threads,
         dispatcher_enabled=dispatcher_enabled,
     )
+
+
+def run_mixed_route(ctx: Any, decision: Any) -> ExecutionResult:
+    """Execute a statically admitted generate+mask job; a delegate to
+    `_pipeline_mixed_route`, which owns the route (kept apart to hold the module-size cap)."""
+    from decoy_engine.execution import _pipeline_mixed_route
+
+    return _pipeline_mixed_route.run_mixed_route(ctx, decision)

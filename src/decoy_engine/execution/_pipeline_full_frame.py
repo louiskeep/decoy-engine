@@ -31,7 +31,14 @@ if TYPE_CHECKING:
 __all__ = ["run_full_frame_route"]
 
 
-def run_full_frame_route(ctx: PipelineRunContext, decision: RouteDecision) -> ExecutionResult:
+def run_full_frame_route(
+    ctx: PipelineRunContext,
+    decision: RouteDecision,
+    *,
+    pregenerated: dict[str, pa.Table] | None = None,
+) -> ExecutionResult:
+    """`pregenerated` hands over generate outputs a prior route already built (the mixed
+    route's runtime decline), so generation is never run twice."""
     # TB-1: only full_frame / auto-chunk below needs every source resident, and a loader-backed
     # job diverted here must still get its mask tables through the loader. A lazy route or
     # split candidate stays lazy (`keep_lazy`); the unified slice sees the rest as tables.
@@ -94,6 +101,7 @@ def run_full_frame_route(ctx: PipelineRunContext, decision: RouteDecision) -> Ex
             fidelity_report=ctx.fidelity_report,
             now_iso=ctx.now_iso,
             publish=publish,
+            pregenerated=pregenerated,
         )
         # Step 3: stitch the outputs together via the shared helper both this
         # oracle and the shadow coordinator's mixed dispatch call, so "mask wins

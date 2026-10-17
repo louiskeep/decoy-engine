@@ -50,6 +50,10 @@ Two independent routing layers compose here, in a fixed decision order
    prevention posture: a too-big job that no bounded route can take is
    diverted to a clean typed error, not left to the OOM-killer.
 
+   A generate+mask job whose static shape `_mixed_static` admits takes a fourth route under
+   `auto`, `mixed`: generation stays resident and the mask tables run on the chunked lane
+   (`_pipeline_mixed_route`). Every job it declines keeps the outcomes above unchanged.
+
    `execution_mode="full_frame"` always forces full-frame (even when
    eligible, even when large -- an explicit operator escape hatch that
    bypasses the reject: the operator owns the OOM risk they asked for);
@@ -298,9 +302,18 @@ def decide_execution_route(
     fk_ooc_dtype_hazard: bool = False,
     vault_ooc_safe: bool = False,
     validators_ooc_safe: bool = False,
+    mixed_admitted: bool = False,
 ) -> tuple[str, str]:
-    """Decide `(route, route_reason)` -- `"out_of_core"`, `"sequential"`, or
+    """Decide `(route, route_reason)` -- `"out_of_core"`, `"sequential"`, `"mixed"`, or
     `"full_frame"` -- or RAISE a fail-closed reject-before-read.
+
+    `mixed_admitted` (caller-precomputed by `_mixed_static.admit_mixed_static`): a
+    generate+mask job whose static shape the production mixed route can run. It is
+    consulted only under `auto`, after the forced modes returned or raised, so
+    `full_frame` still runs the oracle and `out_of_core` / `sequential` still reject a
+    mixed job with the existing typed `ConfigError`. A mixed job it does not admit keeps
+    every existing outcome below, including the fail-closed reject of a large coupled job
+    no bounded route can take.
 
     `use_byte_estimate_routing` (Sprint B1b; TB-5 flipped the default to
     `True`, additive + forceable OFF for rollback): OFF, this function is
@@ -516,6 +529,9 @@ def decide_execution_route(
     if execution_mode == "sequential":
         reject_explicit_sequential(eligible, route_reason, cyclic, has_mask_table)
         return "sequential", route_reason
+
+    if mixed_admitted:
+        return "mixed", "mixed_generate_mask_chunked"
 
     if lazy_transform_bearing and has_relationships and has_mask_table:
         # A transform-bearing mask table that is not resident cannot be priced or

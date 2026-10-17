@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     from decoy_engine.execution._adapter import ExecutionResult
     from decoy_engine.execution._pipeline_context import PipelineRunContext, RouteDecision
 
-__all__ = ["execute_out_of_core_route", "execute_sequential_route"]
+__all__ = ["execute_mixed_route", "execute_out_of_core_route", "execute_sequential_route"]
 
 
 def execute_sequential_route(ctx: PipelineRunContext, decision: RouteDecision) -> ExecutionResult:
@@ -75,3 +75,8 @@ def execute_out_of_core_route(ctx: PipelineRunContext, decision: RouteDecision) 
         config=ctx.config,
         native_threads=ctx.native_threads,
     )
+
+
+def execute_mixed_route(ctx: PipelineRunContext, decision: RouteDecision) -> ExecutionResult:
+    """Run the production mixed (generate + mask) route."""
+    return _route_exec.run_mixed_route(ctx, decision)
