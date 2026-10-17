@@ -11,18 +11,24 @@ from __future__ import annotations
 import pprint
 
 from tests.parity._f0_canonical import table_fingerprint
-from tests.parity._f0_fixtures import FIXTURES_BY_ID, cfg_pooled_faker, run_generate_tables
+from tests.parity._f0_fixtures import (
+    FIXTURES_BY_ID,
+    cfg_pooled_faker,
+    frozen_faker_clock,
+    run_generate_tables,
+)
 from tests.parity._f0_seams import capture_pool_seam
 
 
 def main() -> None:
     from tests.parity._f0_fixtures import FIXTURES
 
-    captured = {
-        f.fid: {name: table_fingerprint(tbl) for name, tbl in f.run().items()} for f in FIXTURES
-    }
-    assert FIXTURES_BY_ID
-    log = capture_pool_seam(lambda: run_generate_tables(cfg_pooled_faker()))
+    with frozen_faker_clock():
+        captured = {
+            f.fid: {name: table_fingerprint(tbl) for name, tbl in f.run().items()} for f in FIXTURES
+        }
+        assert FIXTURES_BY_ID
+        log = capture_pool_seam(lambda: run_generate_tables(cfg_pooled_faker()))
     seam = [c.signature() for c in log.calls]
     print(
         "EXPECTED: dict[str, dict[str, dict[str, Any]]] = "

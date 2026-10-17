@@ -21,9 +21,10 @@ or stores an expectation.
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +34,61 @@ import pyarrow as pa
 from decoy_engine.generation.synthesize import generate_tables
 from decoy_engine.plan import compile_plan
 from decoy_engine.profile import Profile
+
+# The oracle in `_f0_expected.py` is a frozen contract recorded on this date. Faker's
+# `date_of_birth`, `date_time*`, `date_between`, and `date_this_*` providers are computed
+# relative to the wall clock (`datetime.now()` / `date.today()`), so without a frozen clock the
+# recorded fingerprints only match on the recording day. Generation is run under this clock
+# to reproduce them regardless of the real date.
+ORACLE_CLOCK = datetime(2026, 10, 16, 12, 0, 0)
+
+
+class _SameInstances(type):
+    """Keep `isinstance(real_value, Oracle*)` true: Faker type-checks against the patched names."""
+
+    _real: type
+
+    def __instancecheck__(cls, obj: object) -> bool:
+        return isinstance(obj, cls._real)
+
+    def __subclasscheck__(cls, sub: type) -> bool:
+        return issubclass(sub, cls._real)
+
+
+class _OracleDatetime(datetime, metaclass=_SameInstances):
+    _real = datetime
+
+    @classmethod
+    def now(cls, tz: Any = None) -> Any:
+        return ORACLE_CLOCK.replace(tzinfo=tz) if tz is not None else ORACLE_CLOCK
+
+    @classmethod
+    def today(cls) -> Any:
+        return ORACLE_CLOCK
+
+
+class _OracleDate(date, metaclass=_SameInstances):
+    _real = date
+
+    @classmethod
+    def today(cls) -> Any:
+        return ORACLE_CLOCK.date()
+
+
+@contextmanager
+def frozen_faker_clock() -> Iterator[None]:
+    """Pin the clock Faker's date/time providers read to `ORACLE_CLOCK`."""
+    from faker.providers import date_time
+
+    saved = {name: getattr(date_time, name) for name in ("datetime", "dtdate")}
+    setattr(date_time, "datetime", _OracleDatetime)  # noqa: B010
+    setattr(date_time, "dtdate", _OracleDate)  # noqa: B010
+    try:
+        yield
+    finally:
+        for name, original in saved.items():
+            setattr(date_time, name, original)
+
 
 SNAPSHOT_PATH = (
     Path(__file__).resolve().parents[1] / "fixtures" / "phase_f_f0" / "stat_snapshot.json"
