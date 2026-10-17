@@ -516,6 +516,7 @@ def resolve_execution_route(
     config: dict[str, Any],
     engine_version: str,
     prepared_tables: frozenset[str] = frozenset(),
+    mixed_admitted: bool = False,
 ) -> tuple[str, str]:
     """`run_pipeline`'s single call site bundling every routing SIGNAL in this
     module (out-of-core admission + size, the B1b byte estimate, the B2
@@ -591,6 +592,7 @@ def resolve_execution_route(
         and fk_out_of_core_dtype_hazard(plan, graph, caller_sources=caller_sources),
         vault_ooc_safe=ooc_ok and vault_ooc_safe(config, plan, graph, caller_sources, vault_writer),
         validators_ooc_safe=ooc_ok and validators_ooc_safe(config, plan, graph, caller_sources),
+        mixed_admitted=mixed_admitted,
     )
     if route == "out_of_core":
         # OOC-D advisory disk preflight (warns only, never rejects/reroutes):

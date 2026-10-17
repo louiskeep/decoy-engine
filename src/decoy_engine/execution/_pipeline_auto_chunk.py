@@ -33,6 +33,7 @@ from decoy_engine.execution._substrate import require_bool, require_positive_int
 from decoy_engine.profile._readers import LazySource
 
 if TYPE_CHECKING:
+    from decoy_engine.execution._chunked_preresolved import PreResolvedColumn
     from decoy_engine.execution._transactional_sink import TransactionalSink
     from decoy_engine.keyprovider import KeyProvider
     from decoy_engine.profile._readers import LazySource
@@ -225,9 +226,12 @@ def _run_legacy(
     chunk_size_rows: int,
     key_provider: KeyProvider | None,
     chunk_results: list[ExecutionResult],
+    preresolved: PreResolvedColumn | None = None,
 ) -> pa.Table:
     from decoy_engine.execution import _chunked
 
+    if preresolved is not None:  # pragma: no cover - the mixed route requires the dispatcher lane
+        raise AssertionError("a pre-resolved column reaches only the dispatcher lane")
     masked_chunks = list(
         _chunked.run_mask_pipeline_chunked(
             config,
@@ -257,16 +261,18 @@ def _run_dispatcher(
     key_provider: KeyProvider | None,
     native_threads: int,
     chunk_results: list[ExecutionResult],
+    preresolved: PreResolvedColumn | None = None,
 ) -> pa.Table:
     # Looked up through the module so a spy on the public entry sees the call.
     from decoy_engine.execution.native import _chunked_entry
 
+    # The C5c-ii producer: resident slices carry the resident schema metadata-inclusive,
+    # which the chunked route needs to admit deterministic Faker over bool/int/uint.
+    producer = _chunked_input.fixed_schema_chunks_from_resident(source, chunk_size_rows)
     chunks = list(
         _chunked_entry.run_mask_chunked(
             config,
-            # The C5c-ii producer: resident slices carry the resident schema metadata-inclusive,
-            # which the chunked route needs to admit deterministic Faker over bool/int/uint.
-            _chunked_input.fixed_schema_chunks_from_resident(source, chunk_size_rows),
+            producer if preresolved is None else preresolved.wrap(producer),
             table=table,
             engine_version=engine_version,
             registry=registry,
@@ -296,6 +302,7 @@ def _run_streamed(
     native_threads: int,
     chunk_results: _output_sink.OutputEvidenceAccumulator,
     expected: _chunked_input.SourceFacts | None,
+    preresolved: PreResolvedColumn | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """The dispatcher lane with the chunks streamed into `sink`; returns the `output` and
     `input` blocks. A `LazySource` is read as batches (B6b) and its handle is closed on every
@@ -311,12 +318,16 @@ def _run_streamed(
         native_threads=native_threads,
     )
     try:
+        first, stream = inputs.first, inputs.chunks
+        if preresolved is not None:
+            first = preresolved.substitute(first, 0, preresolved.schema_for(first.schema))
+            stream = preresolved.wrap(stream)
         # The columns B1's schema rule pins resolve from chunk 0, so only the rest can hold
         # the stream back (`_chunked_output_sink` module docstring).
-        rule = build_schema_rule(config, table=table, first=inputs.first, registry=registry)
+        rule = build_schema_rule(config, table=table, first=first, registry=registry)
         chunks = _chunked_entry.run_mask_chunked(
             config,
-            inputs.chunks,
+            stream,
             table=table,
             engine_version=engine_version,
             registry=registry,
@@ -353,6 +364,7 @@ def run_auto_chunk(
     dispatcher_enabled: bool,
     sink: TransactionalSink | None = None,
     expected: _chunked_input.SourceFacts | None = None,
+    preresolved: PreResolvedColumn | None = None,
 ) -> tuple[dict[str, pa.Table], tuple[Any, ...], float, tuple[Any, ...], dict[str, Any]]:
     """Mask one eligible table in `chunk_size_rows`-row slices on the selected lane.
 
@@ -365,6 +377,10 @@ def run_auto_chunk(
     Row errors are not part of the return: both lanes fail closed with
     `RowErrorsFailedError` the moment a chunk reports one. An error after the first
     chunk propagates with its own type and code; nothing retries on the other lane.
+
+    `preresolved` (the mixed route's coupled FK key, `_chunked_preresolved`) replaces
+    one column's source values with a slice resolved up front, per chunk, before the
+    masker sees the chunk; the column is configured `passthrough`. Dispatcher lane only.
     """
     from decoy_engine.execution._chunked import aggregate_chunk_timings, aggregate_chunk_warnings
     from decoy_engine.execution._chunked_code_set import aggregate_chunk_code_set_corpora
@@ -383,6 +399,7 @@ def run_auto_chunk(
         "vault_writer": vault_writer,
         "chunk_size_rows": chunk_size_rows,
         "key_provider": key_provider,
+        "preresolved": preresolved,
     }
     output_block: dict[str, Any] | None = None
     input_block: dict[str, Any] | None = None

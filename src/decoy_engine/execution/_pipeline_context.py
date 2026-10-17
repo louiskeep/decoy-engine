@@ -45,6 +45,7 @@ if TYPE_CHECKING:
     from faker import Faker
 
     from decoy_engine.execution._adapter import ExecutionAdapter
+    from decoy_engine.execution._mixed_static import MixedStaticPlan
     from decoy_engine.execution._output_projection import UnconfiguredColumnPolicy
     from decoy_engine.execution._planner import ExecutionPlan
     from decoy_engine.execution._transactional_sink import TransactionalSink
@@ -139,6 +140,7 @@ class PipelineRunContext:
     use_probe_routing: bool
     out_of_core_reorder_threshold_rows: int | None
     unified_slice_enabled: bool
+    mixed_route_enabled: bool
     fidelity_report: bool
     post_validation: bool
     post_validation_skip: list[str]
@@ -157,6 +159,8 @@ class RouteDecision:
     route_chunked: bool
     keep_lazy: Mapping[str, Any]
     ooc_declined: str | None
+    # The statically admitted mixed job when `route == "mixed"` (`_mixed_static`).
+    mixed: MixedStaticPlan | None = None
 
 
 def build_run_context(
@@ -197,6 +201,7 @@ def build_run_context(
     key_provider: KeyProvider | None,
     out_of_core_reorder_threshold_rows: int | None,
     unified_slice_enabled: bool,
+    mixed_route_enabled: bool,
     provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None,
     prepare_sources: Callable[..., PreparedSources],
 ) -> PipelineRunContext:
@@ -251,6 +256,7 @@ def build_run_context(
     require_bool("use_byte_estimate_routing", use_byte_estimate_routing)
     require_bool("use_probe_routing", use_probe_routing)
     require_bool("unified_slice_enabled", unified_slice_enabled)
+    require_bool("mixed_route_enabled", mixed_route_enabled)
     # A1 post-validation knobs share the substrate knobs' fail-early contract.
     require_bool("post_validation", post_validation)
     require_bool("post_validation_enforce", post_validation_enforce)
@@ -389,6 +395,7 @@ def build_run_context(
         use_probe_routing=use_probe_routing,
         out_of_core_reorder_threshold_rows=out_of_core_reorder_threshold_rows,
         unified_slice_enabled=unified_slice_enabled,
+        mixed_route_enabled=mixed_route_enabled,
         fidelity_report=fidelity_report,
         post_validation=post_validation,
         post_validation_skip=skip,
@@ -412,6 +419,7 @@ def decide_route(ctx: PipelineRunContext) -> RouteDecision:
     surfaces it on every route, relationship jobs included. `keep_lazy` is the B6b footer
     snapshot of lazy candidates; see `_pipeline_routing`.
     """
+    mixed = _mixed_static_plan(ctx)
     route, route_reason = _pipeline_routing.resolve_execution_route(
         routing_profile(ctx.profile, ctx.caller_sources, ctx.prepared.prepared),
         plan=ctx.plan,
@@ -435,6 +443,7 @@ def decide_route(ctx: PipelineRunContext) -> RouteDecision:
         config=ctx.config,
         engine_version=ctx.engine_version,
         prepared_tables=ctx.prepared.prepared,
+        mixed_admitted=mixed is not None,
     )
     execution_plan_decision, route_chunked, keep_lazy = _pipeline_routing.decide_chunk_route(
         ctx.config,
@@ -466,4 +475,33 @@ def decide_route(ctx: PipelineRunContext) -> RouteDecision:
         route_chunked=route_chunked,
         keep_lazy=keep_lazy,
         ooc_declined=ooc_declined,
+        mixed=mixed if route == "mixed" else None,
     )
+
+
+def _mixed_static_plan(ctx: PipelineRunContext) -> MixedStaticPlan | None:
+    """The production mixed route's static (pre-generation) admission. Only an `auto`
+    run of a job with both generate and mask tables is ever offered it: a forced mode
+    keeps the existing behaviour (`full_frame` runs the oracle, the others reject)."""
+    if not (ctx.has_generate_table and ctx.has_mask_table and ctx.execution_mode == "auto"):
+        return None
+    from decoy_engine.execution._mixed_static import admit_mixed_static
+
+    admitted, _reason = admit_mixed_static(
+        ctx.config,
+        plan=ctx.plan,
+        registry=ctx.registry,
+        graph=ctx.graph,
+        table_kinds=ctx.table_kinds,
+        caller_sources=ctx.caller_sources,
+        resolved_substrate=ctx.resolved_substrate,
+        validators=(ctx.config.get("validators") or []),
+        fidelity_report=ctx.fidelity_report,
+        post_validation=ctx.post_validation,
+        vault_writer=ctx.vault_writer,
+        auto_chunk=ctx.auto_chunk,
+        auto_chunk_threshold_rows=ctx.auto_chunk_threshold_rows,
+        chunked_dispatcher_enabled=ctx.chunked_dispatcher_enabled,
+        mixed_route_enabled=ctx.mixed_route_enabled,
+    )
+    return admitted

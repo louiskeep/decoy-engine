@@ -148,6 +148,7 @@ def run_pipeline(
     key_provider: KeyProvider | None = None,
     out_of_core_reorder_threshold_rows: int | None = None,
     unified_slice_enabled: bool = True,
+    mixed_route_enabled: bool = True,
     _provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None = None,
 ) -> ExecutionResult:
     """Execute a mixed mask + generate config end-to-end.
@@ -249,6 +250,11 @@ def run_pipeline(
     `unified_slice_enabled` (default True since 2026-09-20; admission is the safety
     gate, pass False for legacy): see `_unified_slice.maybe_run_unified_slice`.
 
+    `mixed_route_enabled` (default True; kill switch, off => the full-frame mixed path):
+    under `execution_mode="auto"`, a statically admitted generate+mask job keeps generation
+    resident and masks its mask tables on the bounded chunked lane
+    (`_pipeline_mixed_route`); see `_mixed_static` for the admission rules.
+
     `_provider_snapshot` (5a-faker) is a private, test/harness-only hook: an
     already-captured immutable custom-faker-provider view
     (`internal.faker_setup.snapshot_custom_faker_providers`) forwarded straight to
@@ -293,6 +299,7 @@ def run_pipeline(
         key_provider=key_provider,
         out_of_core_reorder_threshold_rows=out_of_core_reorder_threshold_rows,
         unified_slice_enabled=unified_slice_enabled,
+        mixed_route_enabled=mixed_route_enabled,
         provider_snapshot=_provider_snapshot,
         prepare_sources=prepare_transform_sources,
     )
@@ -303,4 +310,6 @@ def run_pipeline(
         return _dispatch.execute_sequential_route(ctx, decision)
     if ctx.has_mask_table and decision.route == "out_of_core":
         return _dispatch.execute_out_of_core_route(ctx, decision)
+    if ctx.has_mask_table and decision.route == "mixed":
+        return _dispatch.execute_mixed_route(ctx, decision)
     return _full_frame.run_full_frame_route(ctx, decision)
