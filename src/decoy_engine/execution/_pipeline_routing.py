@@ -50,6 +50,10 @@ Two independent routing layers compose here, in a fixed decision order
    prevention posture: a too-big job that no bounded route can take is
    diverted to a clean typed error, not left to the OOM-killer.
 
+   A generate+mask job whose static shape `_mixed_static` admits takes a fourth route under
+   `auto`, `mixed`: generation stays resident and the mask tables run on the chunked lane
+   (`_pipeline_mixed_route`). Every job it declines keeps the outcomes above unchanged.
+
    `execution_mode="full_frame"` always forces full-frame (even when
    eligible, even when large -- an explicit operator escape hatch that
    bypasses the reject: the operator owns the OOM risk they asked for);

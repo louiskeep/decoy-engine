@@ -39,7 +39,10 @@ def _graph(*edges: Any) -> Any:
     return SimpleNamespace(edges=tuple(edges))
 
 
-def _select(graph: Any, child_type: pa.DataType | None = pa.int64()) -> Any:
+_INT64 = pa.int64()
+
+
+def _select(graph: Any, child_type: pa.DataType | None = _INT64) -> Any:
     return core.select_admitted_coupled_edge(
         graph, frozenset({"gen"}), frozenset({"mask", "mask2"}), lambda t, c: child_type
     )
@@ -245,3 +248,39 @@ def test_an_int_key_above_two_to_the_53_is_carried_exactly() -> None:
     resolved = pa.array([big, big + 1, 7], pa.int64())
     out = list(PreResolvedColumn("t", "fk", source, resolved).wrap([_table(source)]))
     assert out[0].column("fk").to_pylist() == [big, big + 1, 7]
+
+
+# ---------------------------------------------------------------------------
+# The routing decision: the mixed branch is reachable only under `auto`.
+# ---------------------------------------------------------------------------
+
+
+def _decide(mode: str, *, mixed_admitted: bool) -> tuple[str, str]:
+    from decoy_engine.execution._pipeline_routing import decide_execution_route
+    from decoy_engine.relationships import RelationshipGraph
+
+    return decide_execution_route(
+        SimpleNamespace(relationships=()),
+        has_generate_table=True,
+        has_mask_table=True,
+        validators=[],
+        fidelity_report=False,
+        vault_writer=None,
+        execution_mode=mode,
+        graph=RelationshipGraph(edges=(), ordering=()),
+        mixed_admitted=mixed_admitted,
+    )
+
+
+def test_an_admitted_mixed_job_routes_mixed_under_auto_only() -> None:
+    assert _decide("auto", mixed_admitted=True) == ("mixed", "mixed_generate_mask_chunked")
+    assert _decide("auto", mixed_admitted=False)[0] == "full_frame"
+    assert _decide("full_frame", mixed_admitted=True) == ("full_frame", "override_full_frame")
+
+
+@pytest.mark.parametrize("mode", ["sequential", "out_of_core"])
+def test_forced_bounded_modes_still_reject_even_when_the_mixed_shape_is_admitted(mode: str) -> None:
+    from decoy_engine.errors import ConfigError
+
+    with pytest.raises(ConfigError):
+        _decide(mode, mixed_admitted=True)

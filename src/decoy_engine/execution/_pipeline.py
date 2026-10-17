@@ -250,10 +250,8 @@ def run_pipeline(
     `unified_slice_enabled` (default True since 2026-09-20; admission is the safety
     gate, pass False for legacy): see `_unified_slice.maybe_run_unified_slice`.
 
-    `mixed_route_enabled` (default True; kill switch, off => the full-frame mixed path):
-    under `execution_mode="auto"`, a statically admitted generate+mask job keeps generation
-    resident and masks its mask tables on the bounded chunked lane
-    (`_pipeline_mixed_route`); see `_mixed_static` for the admission rules.
+    `mixed_route_enabled` (default True; off => the full-frame mixed path): kill switch for the
+    bounded generate+mask route, see `_pipeline_mixed_route`.
 
     `_provider_snapshot` (5a-faker) is a private, test/harness-only hook: an
     already-captured immutable custom-faker-provider view

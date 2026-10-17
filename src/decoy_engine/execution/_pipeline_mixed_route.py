@@ -42,7 +42,12 @@ from typing import TYPE_CHECKING, Any
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from decoy_engine.execution import _chunked_input, _pipeline_auto_chunk, _pipeline_sources
+from decoy_engine.execution import (
+    _chunked_input,
+    _pipeline_auto_chunk,
+    _pipeline_finalize,
+    _pipeline_sources,
+)
 from decoy_engine.execution import _chunked_output_sink as _output_sink
 from decoy_engine.execution import _mixed_admission as admission
 from decoy_engine.execution._adapter import ExecutionResult
@@ -222,6 +227,25 @@ def run_mixed_route(ctx: PipelineRunContext, decision: RouteDecision) -> Executi
                 ),
             },
         }
+        # Only the adapter-identity stamp applies here: each mask table's own auto-chunk
+        # block rides under `mixed_route`, so the job-level `auto_chunk` stamp (which would
+        # report this job as full_frame) is deliberately not requested.
+        _pipeline_finalize.stamp_execution_metrics(
+            quality_metrics,
+            adapter=ctx.adapter,
+            substrate=ctx.substrate,
+            resolved_substrate=ctx.resolved_substrate,
+            fpe_chunk_count=ctx.fpe_chunk_count,
+            max_workers=ctx.max_workers,
+            fallback_to_pandas=ctx.fallback_to_pandas,
+            route_chunked=False,
+            auto_chunk=_pipeline_finalize.AUTO_CHUNK_DEFAULT,
+            chunk_size_rows=_pipeline_finalize.CHUNK_SIZE_ROWS_DEFAULT,
+            auto_chunk_threshold_rows=_pipeline_finalize.AUTO_CHUNK_THRESHOLD_DEFAULT,
+            table_kinds=ctx.table_kinds,
+            caller_sources={},
+            execution_plan_decision=None,
+        )
         if ctx.explain_plan:
             quality_metrics["execution_plan"] = {
                 "mode": "chunked",

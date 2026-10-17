@@ -8,7 +8,6 @@ never runs twice). Forced modes keep their existing meaning.
 
 from __future__ import annotations
 
-import copy
 from pathlib import Path
 from typing import Any
 
@@ -199,6 +198,18 @@ def test_a_nullable_int_key_declines_to_full_frame(
     )
     result = _assert_static_decline(config, {CHILD: child}, static_reasons, "not_chunk_admissible")
     assert_outputs_identical(result.outputs, oracle(config, {CHILD: child}).outputs)
+
+
+def test_a_transform_bearing_mask_table_declines(tmp_path: Path, static_reasons: list[str]) -> None:
+    """The planner's chunk gate refuses per-table transforms, so the mixed route does too;
+    the job keeps its existing outcome (here: the full-frame oracle's)."""
+    child = child_table(pa.array(KEYS, pa.string()))
+    config = mixed_config(tmp_path, child)
+    config["tables"][1]["transforms"] = [{"op": "dedupe", "columns": ["email"]}]
+    result = _assert_static_decline(
+        _revalidate(config), {CHILD: child}, static_reasons, "per_table_transforms_present"
+    )
+    assert result.quality_metrics["execution"]["route_reason"] == "generate_plus_mask"
 
 
 def test_a_table_below_the_chunk_threshold_declines(

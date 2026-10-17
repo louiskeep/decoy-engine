@@ -509,9 +509,19 @@ class TestFailClosed:
             }
         )
         sources = {"accounts": pa.Table.from_pandas(df, preserve_index=False)}
-        auto, forced = _run_pair(cfg, sources, monkeypatch, explain_plan=True)
+        # The F2 mixed route takes this independent generate+mask job by default; its kill
+        # switch restores the full-frame outcome this test pins.
+        auto, forced = _run_pair(
+            cfg, sources, monkeypatch, explain_plan=True, mixed_route_enabled=False
+        )
         _assert_full_frame_and_identical(auto, forced, "accounts", "generat")
         assert auto.outputs["gen"].equals(forced.outputs["gen"])
+        # Default: the same job routes mixed (generation resident, mask table chunked) and
+        # equals the forced full-frame run.
+        mixed, forced = _run_pair(cfg, sources, monkeypatch)
+        assert mixed.quality_metrics["execution"]["execution_mode"] == "mixed"
+        assert mixed.outputs["accounts"].equals(forced.outputs["accounts"])
+        assert mixed.outputs["gen"].equals(forced.outputs["gen"])
 
     def test_relationships_stay_full_frame(self, tmp_path, monkeypatch):
         customers = pd.DataFrame({"id": [f"C{i}" for i in range(_ROWS)]})

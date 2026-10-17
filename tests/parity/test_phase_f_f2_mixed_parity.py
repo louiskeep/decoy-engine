@@ -206,3 +206,75 @@ def test_streamed_and_resident_outputs_are_the_same_bytes(tmp_path: Path) -> Non
     assert streamed.quality_metrics["execution"]["outputs_streamed"] is True
     assert_outputs_identical(sink.published or {}, resident.outputs)
     assert ipc_bytes((sink.published or {})[CHILD]) == ipc_bytes(resident.outputs[CHILD])
+
+
+def test_two_independent_mask_tables_each_run_on_the_chunked_lane(tmp_path: Path) -> None:
+    import pyarrow.parquet as pq
+
+    from decoy_engine.config import PipelineConfig
+
+    child = child_table(pa.array(STRING_KEYS, pa.string()))
+    config = mixed_config(tmp_path, child, coupled=False)
+    refs = pa.table({"ref": pa.array([f"r{i}" for i in range(33)], pa.string())})
+    path = tmp_path / "refs.parquet"
+    pq.write_table(refs, path)
+    config["sources"]["refs"] = {"type": "file", "format": "parquet", "path": str(path)}
+    config["targets"]["refs"] = {"type": "file", "format": "csv", "path": "refs.out.csv"}
+    config["tables"].append(
+        {"name": "refs", "columns": [{"name": "ref", "strategy": "hash", "namespace": "ns_ref"}]}
+    )
+    config = PipelineConfig.model_validate(config).model_dump()
+    sources = {CHILD: child, "refs": refs}
+    want = oracle(config, sources)
+    got = run(config, sources)
+    assert sorted(got.quality_metrics["mixed_route"]["mask_tables"]) == [CHILD, "refs"]
+    assert chunk_count(got, "refs") >= 2 and chunk_count(got, CHILD) >= 2
+    assert_outputs_identical(got.outputs, want.outputs)
+
+
+def test_generation_runs_once_and_each_mask_table_gets_one_lane_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from decoy_engine.execution.native import _chunked_entry
+    from decoy_engine.generation import synthesize
+
+    lane_tables: list[str] = []
+    generated: list[int] = []
+    real_lane, real_generate = _chunked_entry.run_mask_chunked, synthesize.generate_tables
+
+    def lane(*args: Any, **kwargs: Any) -> Any:
+        lane_tables.append(kwargs["table"])
+        return real_lane(*args, **kwargs)
+
+    def generate(*args: Any, **kwargs: Any) -> Any:
+        generated.append(1)
+        return real_generate(*args, **kwargs)
+
+    monkeypatch.setattr(_chunked_entry, "run_mask_chunked", lane)
+    monkeypatch.setattr(synthesize, "generate_tables", generate)
+    child = child_table(pa.array(STRING_KEYS, pa.string()))
+    got = run(mixed_config(tmp_path, child), {CHILD: child})
+    assert got.quality_metrics["execution"]["execution_mode"] == "mixed"
+    assert lane_tables == [CHILD]
+    assert generated == [1]
+
+
+def test_streamed_warn_policy_still_emits_one_edge_warning(tmp_path: Path) -> None:
+    keys = [*STRING_KEYS[:30], *["zzz"] * 4, *STRING_KEYS[:6]]
+    child = child_table(pa.array(keys, pa.string()))
+    config = mixed_config(tmp_path, child, policy="warn")
+    want = oracle(config, {CHILD: child})
+    sink = RecordingSink()
+    got = run(config, {CHILD: child}, sink=sink)
+    assert [w.code for w in got.warnings].count("orphan_fk") == 1
+    assert warning_signature(got) == warning_signature(want)
+    assert_outputs_identical(sink.published or {}, want.outputs)
+
+
+def test_the_adapter_identity_stamp_matches_the_oracle(tmp_path: Path) -> None:
+    child = child_table(pa.array(STRING_KEYS, pa.string()))
+    config = mixed_config(tmp_path, child)
+    want = oracle(config, {CHILD: child}, fpe_chunk_count=2)
+    got = run(config, {CHILD: child}, fpe_chunk_count=2)
+    assert got.quality_metrics["execution"]["execution_mode"] == "mixed"
+    assert got.quality_metrics["execution_adapter"] == want.quality_metrics["execution_adapter"]

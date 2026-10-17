@@ -8,6 +8,13 @@ orchestration cap) and out of `_shadow_generation.py` (whose job stays
 scoped to the pure-only contract), mirroring how slice 3's OOC dispatch and
 slice 5a's synthesis dispatch each got their own module.
 
+The SEMANTIC half of the gate below (edge topology, the complete-graph rule, key types,
+the out_of_core decline, round-trip stability of the generate output) now lives in
+`execution/_mixed_admission.py`, shared with the production mixed route; this module wraps
+it, mapping its `MixedDeclineError` to `ShadowDifference`, and keeps the shadow-only
+inertness guards (item 7 and the job-setting exclusions of item 6) that production does
+not share.
+
 `require_independent_mixed_shadowable` (contract C, plan section "The
 eligibility gate"; name kept from 5b-i even though it now also admits the
 coupled case, since it is the one gate every caller -- production dispatch
