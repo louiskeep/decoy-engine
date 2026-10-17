@@ -43,6 +43,8 @@ from typing import TYPE_CHECKING
 import pyarrow as pa
 import pyarrow.compute as pc
 
+from decoy_engine.errors import DecoyError
+
 if TYPE_CHECKING:
     from decoy_engine.relationships._graph import RelationshipEdge, RelationshipGraph
 
@@ -66,7 +68,7 @@ MIXED_FK_CROSS_GENERATE_UNSUPPORTED = "mixed-fk-cross-generate-unsupported"
 MIXED_FK_TOPOLOGY_UNSUPPORTED = "mixed-fk-topology-unsupported"
 
 
-class MixedDeclineError(Exception):
+class MixedDeclineError(DecoyError):
     """A coded, privacy-safe decline of the mixed shape. `detail` names a
     location and a type only, never a value."""
 

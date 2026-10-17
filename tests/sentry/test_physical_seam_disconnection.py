@@ -72,6 +72,14 @@ GUARDED_MODULES: tuple[str, ...] = (
     "execution/_pipeline_context.py",
     "execution/_pipeline_route_dispatch.py",
     "execution/_pipeline_full_frame.py",
+    # F2 (production mixed route): the shared admission core, FK bridge, static admission,
+    # pre-resolved-column carrier and executor. Production routing code, so none may import
+    # `execution.physical`; the shadow imports the first two, never the reverse.
+    "execution/_mixed_admission.py",
+    "execution/_mixed_fk_bridge.py",
+    "execution/_mixed_static.py",
+    "execution/_chunked_preresolved.py",
+    "execution/_pipeline_mixed_route.py",
     # B2 (auto-chunk on the chunked dispatcher): a routing executor, so it must
     # not import `execution.physical` either.
     "execution/_pipeline_auto_chunk.py",
@@ -273,6 +281,19 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         # pyarrow and `profile._readers`, and nothing under `execution.physical`.
         "src/decoy_engine/execution/_mem_estimate_arrow.py",
         "src/decoy_engine/execution/_mem_estimate_dtypes.py",
+        # F2 (production mixed generate+mask route): the semantic admission core and the
+        # generate-parent FK bridge move OUT of `execution/physical/_shadow_mixed.py` /
+        # `_shadow_fk.py` into `_mixed_admission.py` / `_mixed_fk_bridge.py` so the shadow and
+        # the production route share one rule. Both import nothing from `execution.physical`
+        # (the shadow now imports them, the allowed direction). `_mixed_static.py` (static
+        # admission), `_chunked_preresolved.py` (the pre-resolved key carrier through the
+        # chunked lane) and `_pipeline_mixed_route.py` (the executor) are the new route; all
+        # are parent-level and covered by the import-direction sweeps (GUARDED_MODULES).
+        "src/decoy_engine/execution/_mixed_admission.py",
+        "src/decoy_engine/execution/_mixed_fk_bridge.py",
+        "src/decoy_engine/execution/_mixed_static.py",
+        "src/decoy_engine/execution/_chunked_preresolved.py",
+        "src/decoy_engine/execution/_pipeline_mixed_route.py",
         "src/decoy_engine/execution/_pipeline_routing.py",
         "src/decoy_engine/execution/_pipeline_routing_signals.py",
         "src/decoy_engine/execution/_pipeline_sources.py",
