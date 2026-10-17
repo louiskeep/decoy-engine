@@ -4,102 +4,116 @@ Rules consulted: 00-universal, development-loop, risk-and-exceptions, feature-de
 
 # Phase F slice F4: generate + mixed-route capacity validation (1M/10M/100M)
 
-Per the Phase F program plan (F4: 1M/10M/100M capacity) and Cam's recommended scope
-(100M capped; 200M deferred; GCP budget pre-authorized). F0/F1*/F2/F3* context:
-masking-at-scale is already proven (Phase E: 100M out-of-core bounded at 8 GiB).
-F4's NEW surface is capacity of the FULL pipeline that INCLUDES generation + the
-shipped F2 mixed route (generation resident + mask on the bounded Rust routes).
-(*F1/F3 held pending Cam's re-baseline; F4 validates the CURRENTLY-shipped pipeline.)
+Per the Phase F program plan (F4) + Cam's scope (100M capped; 200M deferred; GCP
+budget pre-authorized). Rev-2 folds the Codex plan-gate NO-GO (3 P1 + 2 P2): the
+mixed route needs F2's OWN evidence (not the OOC witness), a mixed-specific 2-table
+verifier (not the 3-table fk-scale parity), and the oracle byte-check must be
+isolated from the capacity measurement.
 
 ## 1. Problem + goal
 
-There is no capacity/bounded-memory validation for generation or generate+mask at
-scale (confirmed: scripts/fk-scale + fk_memory_probe + bench-* are masking-only or
-throughput-only). Goal: validate that a mixed generate+mask job (the F2 production
-route) runs at 1M/10M/100M TOTAL rows with BOUNDED memory, CORRECT output
-(byte-identical to the full-frame mixed oracle + FK parity + committed row counts),
-and recorded throughput, reusing the existing fk-scale measurement scaffolding.
+No capacity/bounded-memory validation exists for generation or generate+mask at
+scale (fk-scale + fk_memory_probe + bench-* are masking-only or throughput-only).
+Goal: validate that a mixed generate+mask job (the shipped F2 production route) runs
+at 1M/10M (now) and 100M (deferred) TOTAL rows with memory UNDER A PROPOSED CEILING,
+CORRECT output, and recorded throughput. "Bounded" here = "completed with external
+peak RSS under a pre-declared ceiling"; it is a PROPOSED mixed-run ceiling, NOT a
+proven size-independent bound (resident generation grows with parent cardinality -
+§5). A killed/failed run is NEVER labeled bounded regardless of its recorded peak.
 
-## 2. Scope (this slice) + explicit deferrals
+## 2. Scope + explicit deferrals
 
-IN scope (build + light validation, no new spend):
-- A new capacity bench worker for the MIXED route, modeled on
-  scripts/fk-scale/bench_worker_fk.py, driving the PRODUCTION run_pipeline through
-  the F2 mixed route (a generate-kind parent table + a masked child over one FK
-  edge; generation resident, child masked on the bounded chunked route).
-- Reuse verbatim: scripts/fk-scale/_supervisor.py (external ru_maxrss, kill-safe),
-  _parity.py (bounded FK parity + committed row counts), tests/perf_fixtures/
-  ooc_route_witness.py (route/spill witness for the mask half). Extend
-  build_fk_chain.py (or a sibling) to emit a GENERATE-table config for the parent
-  plus a masked child fixture (the parent is generated, not read).
-- Byte-identity gate: the worker (or its correctness test) compares the mixed-route
-  output to the full-frame mixed oracle for the SAME job+seed (reuse the F2 parity
-  helpers), so capacity validation also re-confirms correctness at scale.
-- A FAST wiring/correctness test under tests/perf/ (pytest.mark.perf, runs in the
-  default gate) that runs the worker at a TINY size (e.g. 2-5k rows) in a
-  subprocess and asserts: completed, bounded (external peak under a generous small
-  ceiling), mixed route actually taken (native backend witness), FK parity ok,
-  byte-identical to oracle.
-- An OPT-IN scale test (pytest.mark.benchmark, excluded from the default suite) for
-  the 1M and 10M tiers.
-- RUN the LIGHT tiers LOCALLY now as evidence: 1M (smoke) + 10M, memory-monitored,
-  within the proven bound; record results.
+IN (build + light validation, no new spend):
+- A new capacity bench worker for the MIXED route (scripts/fk-scale/
+  bench_worker_mixed.py), driving the PRODUCTION run_pipeline through the F2 mixed
+  route: a generate-kind PARENT table (resident) + a masked CHILD over one FK edge
+  (child masked on the bounded chunked route), with a TRANSACTIONAL STREAMING SINK
+  (ParquetTransactionalSink) so outputs do not accumulate in memory.
+- Reuse (correctly): scripts/fk-scale/_supervisor.py VERBATIM (external ru_maxrss
+  via os.wait4, kill-safe) - generation runs INSIDE the supervised worker so its
+  lifetime RSS (incl. transient peaks) is captured. Reuse build_fk_chain.py's
+  chunked-write helpers + _chain_layout.py helpers for the child parquet.
+- Do NOT reuse ooc_route_witness.py (it instruments run_fk_out_of_core, not the
+  mixed route) and do NOT reuse _parity.py verbatim (it needs 3 source tables + both
+  edges masked + rejects unchanged parent keys - wrong shape). See §3.
+- A FAST wiring/correctness test (tests/perf/, pytest.mark.perf, default gate): tiny
+  size (2-5k rows) in a subprocess, asserts completed, bounded (external peak under
+  a generous small ceiling), MIXED route actually taken, FK integrity, and
+  byte-identity to the full-frame mixed oracle.
+- An OPT-IN scale test (pytest.mark.benchmark, excluded from default suite) for 1M
+  and 10M tiers (capacity + correctness per the oracle matrix in §3).
+- RUN the light tiers LOCALLY now as EVIDENCE: 1M + 10M, memory-monitored; record.
 
-DEFERRED (explicit, for a Cam-paced step - scale/spend):
-- The 100M tier run (heavy ~1.5h, memory-intensive) - run it deliberately (local
-  within the proven 8 GiB bound, or GCP within the pre-authorized budget) when Cam
-  can see it; the harness supports it but F4-build does not auto-run 100M unattended.
-- The GCP engine-bench.sh "fk-scale/mixed" battery case: the survey flagged this may
-  not be live (only fk|throughput|unified-cert validated). Adding/confirming the GCP
-  battery wiring is part of the deferred 100M step, not this build slice.
-- 200M (Cam-deferred).
+DEFERRED (Cam-paced, scale/spend): the 100M run (heavy; local within the proposed
+ceiling, or GCP within the pre-authorized budget); the GCP engine-bench.sh mixed
+battery case (flagged possibly-not-live - confirm/add in the deferred step); 200M.
+Completion of THIS slice does NOT claim 100M mixed capacity.
 
-## 3. Design (reuse-first)
+## 3. Design (reuse-correctly)
 
-- `scripts/fk-scale/bench_worker_mixed.py` (new): builds/uses a resident generate
-  parent + a disk-backed masked child (one FK edge, admitted by the F2 mixed route),
-  runs run_pipeline under AUTO, emits BENCH_JSON. Reuses _supervisor for external
-  RSS when invoked via a supervisor entrypoint; reuses _parity for FK + row counts;
-  uses ooc_route_witness to assert the mask half's route/backend and bounded spill.
-  Three distinct limits kept separate (budget-mb vs rss-ceiling-mb vs mem-cap-mb),
-  exactly as bench_worker_fk.py does.
-- Fixture: extend scripts/fk-scale/build_fk_chain.py (or a thin sibling
-  build_mixed_fixture.py) to produce (a) a generate-table CONFIG for the parent and
-  (b) the masked child parquet; tiers passed as explicit row counts (D4 §4 tiers:
-  10M=2M/3.5M/4.5M analog; 1M smoke; 100M=20M/35M/45M for the deferred run).
-- Correctness: assert byte-identical to the full-frame mixed oracle for the same
-  job+seed at the tiny + 1M sizes (reuse the F2 sweep's oracle-vs-mixed comparison).
+ROUTE EVIDENCE (fold P1-1): assert the mixed route via F2's own signals, not the OOC
+witness: quality_metrics execution_mode == "mixed", and per mask table the
+mixed_route.mask_tables[<t>].chunked_route evidence (executed backend != pandas
+oracle for native-admitted columns, chunk count > 1 at scale). Require the
+transactional streaming sink and assert streamed-child evidence (outputs_streamed /
+sink committed, result.outputs empty) so the child does not accumulate resident.
+
+FIXTURE + VERIFIER (fold P1-2): the job is TWO tables - a generated parent + a masked
+child over one FK edge. Tiers are 2-table exact counts (parent + child), NOT the
+3-table parent/child/grandchild allocations: 1M smoke = parent 0.2M / child 0.8M;
+10M = parent 2M / child 8M (parent >= 2M clears the reorder threshold; child is the
+chunked-masked table). (100M deferred = parent 20M / child 80M.) A new
+bench_worker_mixed verifier (NOT _parity.py): deterministic generated parent keys
+(from the generate config + seed), child FK built to reference them with a known
+orphan fraction, expected parent row-count from config, committed child row-count ==
+input, and bounded (head/middle/tail windowed) FK parity that child FK keys resolve
+to committed generated parent keys per the orphan policy. Specify exact parent/child
+counts + schemas per tier in the worker.
+
+ORACLE CORRECTNESS, ISOLATED FROM CAPACITY (fold P1-3): the oracle byte-identity
+check runs in its OWN step/process, separately measured, NEVER alongside the
+capacity-measured production run (its whole-output materialization would dominate
+RSS). Oracle tier matrix: byte-identity at TINY (fast test) + 1M (opt-in); 10M is
+CAPACITY-ONLY (no oracle comparison alongside; an optional isolated 10M oracle check
+may run as a separate process, reported separately). Comparison is canonical Arrow
+schema + value-byte equality (reuse the F2 sweep's oracle-vs-mixed helper), not
+Parquet file identity. Unchecked tiers reported explicitly.
 
 ## 4. Acceptance
 
-- Fast perf test (default gate): tiny mixed job -> completed, bounded, mixed route +
-  native backend witnessed, FK parity ok, byte-identical to oracle. Deterministic,
-  fast (seconds), subprocess-isolated.
-- Opt-in benchmark test: 1M + 10M tiers complete, bounded (external peak <= declared
-  ceiling), FK parity ok, byte-identical to oracle, throughput recorded.
-- LIGHT-tier evidence recorded (1M + 10M) in
-  decoy-platform/docs/product/release-1-validation-runs/<date>-f4-mixed/ (summary
-  json) + a decoy-engine docs/records/ note; ROADMAP/RECENTLY-SHIPPED updated.
-- 100M + GCP explicitly listed as the deferred paced step (not run here).
-- ci-mirror clean; the new scale test carries @pytest.mark.benchmark (excluded from
-  the default suite per pyproject addopts); the fast test carries pytest.mark.perf.
-- Evidence-vs-gate split honored: scale RUNS are EVIDENCE (a missed bar is a finding,
-  Slacked), not a hard CI gate; only the fast wiring test + byte-identity gate.
+- Fast perf test (default gate, BLOCKING): tiny mixed job -> completed, external peak
+  under a generous ceiling, mixed route + native backend witnessed (F2 evidence),
+  streamed sink (no resident accumulation), FK parity ok, byte-identical to oracle
+  (isolated). Deterministic, seconds, subprocess-isolated.
+- Opt-in benchmark test (NON-blocking capacity; see disposition): 1M + 10M complete,
+  external peak under the PROPOSED ceiling, FK parity ok; byte-identity asserted at
+  1M (10M capacity-only). Throughput (mask_s p50/p95) + generation-phase RSS +
+  parent Arrow bytes recorded as DISTINCT diagnostics.
+- DISPOSITION (fold P2-5): executing AND recording both light tiers is REQUIRED.
+  A capacity/throughput MISS (completed but over the proposed ceiling, or slow) is a
+  FINDING (Slacked, recorded), NOT a merge blocker. A HARNESS DEFECT or an observed
+  CORRECTNESS mismatch (byte/parity/route) BLOCKS readiness. A killed/failed run is a
+  failure, never "bounded".
+- Light-tier EVIDENCE recorded in decoy-platform/docs/product/release-1-validation-
+  runs/<date>-f4-mixed/summary.json + a decoy-engine docs/records/ note;
+  ROADMAP/RECENTLY-SHIPPED updated; 100M + GCP listed as the deferred paced step.
+- ci-mirror clean; markers correct (benchmark excluded from default; perf in gate).
 
 ## 5. Risk
 
-The mask-half bounded-memory behavior is already proven (Phase E / D4); the new risk
-is the generate-resident parent's memory at scale (generation stays whole-table
-resident by design). At 100M the resident generated parent could dominate RSS - this
-is exactly what the deferred 100M run measures, and why generation-at-scale is F4's
-real question. The light tiers (1M/10M) validate the harness + bound shape without
-the heavy run. Keep the generated parent width modest; measure resident-parent RSS
-separately in BENCH_JSON so the deferred 100M run has a clean signal.
+The mask-half bounded behavior is proven (Phase E/D4); the NEW risk is the resident
+generated PARENT's memory, which grows with parent cardinality - this is precisely
+what the deferred 100M run measures, and why 8 GiB is a PROPOSED ceiling not a proven
+bound. ru_maxrss is whole-process and cannot attribute bytes to the parent; so report
+generation-phase RSS (observed) + parent Arrow table nbytes as separate diagnostics,
+without claiming exact attribution. Light tiers validate the harness + bound SHAPE,
+not 100M capacity. The oracle materialization is the other trap (fold P1-3):
+isolated/separately-measured.
 
 ## 6. Gate chain
 
-Codex plan-gate (this doc) -> build (Sonnet, reuse fk-scale infra) -> ci-mirror +
-fast perf test + 1M/10M opt-in run -> dennis -> Codex final -> merge on green +
-Slack. DOCUMENT: ROADMAP + RECENTLY-SHIPPED + a records note; 100M/GCP flagged as
-the deferred paced step for Cam. graphify refresh when the main-checkout layout
-allows.
+Codex plan-gate (this doc) -> build (Sonnet, reuse _supervisor + chunked-write
+helpers; mixed-specific route-evidence + verifier; isolated oracle) -> ci-mirror +
+fast perf test + 1M/10M opt-in run (record) -> dennis -> Codex final -> merge on
+green + Slack. DOCUMENT: ROADMAP + RECENTLY-SHIPPED + records note; 100M/GCP flagged
+as the deferred paced step for Cam.
