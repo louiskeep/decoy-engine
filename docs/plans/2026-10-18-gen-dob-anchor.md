@@ -96,8 +96,27 @@ a fixed anchor), concurrency-safe, with MASKING and caller-owned Faker UNCHANGED
 - MASKING untouched: the composite masking strategy + any masking date path byte-equal
   to today (explicit test).
 - ci-mirror clean; pytest-one affected suites, companion-present + absent.
+- ANCHOR-ENGAGED fail-loud guard (faker-bump robustness, Cam 2026-10-18): a test that,
+  inside `generation_faker_anchor()`, asserts the patch is ACTUALLY in effect - a fresh
+  Faker's `date_time.now()`/`date.today()` returns the anchor (not the wall clock). If a
+  future Faker version renames/moves the patched symbols or reads the clock differently,
+  this FAILS LOUDLY (anchor silently no-ops otherwise). Pair with a plain assertion at
+  patch-install that the expected faker.providers.date_time symbols exist.
 
-## 6. Risk
+## 6. Risk + Faker-version robustness
+
+FAKER BUMP (Cam asked): this patches Faker INTERNALS (module clock), not a public API,
+so a Faker upgrade is a risk on two axes, both GUARDED: (1) dob VALUES change if Faker
+alters date_of_birth math -> caught loudly by the F0 oracle + determinism goldens (a
+deliberate re-baseline, expected). (2) the anchor MECHANISM silently no-ops if Faker
+moves/renames the clock symbols -> caught by the ANCHOR-ENGAGED guard (§5) + the
+cross-date test, which fail rather than revert quietly. Faker is PINNED (40.23.0) so
+this is a deliberate, infrequent event. DEFERRED alternative (noted, not taken):
+compute dob ourselves from an explicit reference date instead of patching Faker's clock
+- removes the internals-fragility but requires reimplementing Faker's age-window logic
+(distribution-parity risk); revisit if the patch proves bump-fragile in practice.
+
+
 
 The contextvar-gated patch is global-but-inert-by-default (only active inside the
 generation context), avoiding the rev-1 race + masking leak. Remaining risks: a
