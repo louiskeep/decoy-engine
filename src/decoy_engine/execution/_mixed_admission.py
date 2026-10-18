@@ -228,16 +228,6 @@ def require_admitted_parent_key_type(
     generate table's actual column type is only knowable against its output."""
     parent_table = generate_outputs.get(edge.parent_table)
     column_name = edge.parent_columns[0]
-    # A zero-row parent has no key values to couple to. Before FR0 its key was Arrow-inferred
-    # `null`, which the type check below declined, so the job fell back to full_frame and
-    # published the oracle's `null`. FR0 declares the key `string`, which would pass that check
-    # and publish `string` instead. Declining on the row count keeps the pre-FR0 route and keeps
-    # the mixed output identical to the oracle for this edge.
-    if parent_table is not None and parent_table.num_rows == 0:
-        raise MixedDeclineError(
-            MIXED_FK_CROSS_GENERATE_UNSUPPORTED,
-            f"parent={edge.parent_table!r}: zero-row generated parent not admitted",
-        )
     key_type = (
         parent_table.schema.field(column_name).type
         if parent_table is not None and column_name in parent_table.schema.names
@@ -271,6 +261,16 @@ def require_roundtrip_stable_generate_outputs(generate_outputs: dict[str, pa.Tab
     catches instability from any source (`null_probability`, a `None`/NaN in
     `categories`, a nested category) in one place."""
     for table_name, table in generate_outputs.items():
+        # A zero-row table has no values to infer a type from: the pandas echo gives every column
+        # `null`, while the generation core declares `string`. Checked per TABLE, not only for the
+        # coupled parent, so an independent or lookup zero-row table also falls back to the
+        # full-frame continuation and publishes what the oracle does.
+        if table.num_rows == 0:
+            raise MixedDeclineError(
+                GENERATION_SHAPE_UNSUPPORTED,
+                f"table={table_name!r}: a zero-row generate output has no values to type, so its "
+                "schema is not stable through the oracle's pandas echo in a mixed job (deferred)",
+            )
         for column_name in table.column_names:
             column = table.column(column_name)
             field_type = column.type

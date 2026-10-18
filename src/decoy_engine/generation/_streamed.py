@@ -54,7 +54,7 @@ from decoy_engine.generation._faker_pool import pool_eligible
 from decoy_engine.generation.pool._runtime_pool_size import DEFAULT_POOL_SIZE
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator, Mapping, Sequence
+    from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 
     from faker import Faker
 
@@ -87,11 +87,58 @@ def is_bounded_sink(sink: Any) -> bool:
     return sink is not None and getattr(sink, "bounded_write_batches", False) is True
 
 
-def _partition(rows: int, batch_rows: int) -> list[int]:
-    sizes = [batch_rows] * (rows // batch_rows)
-    if rows % batch_rows:
-        sizes.append(rows % batch_rows)
-    return sizes
+# A caller-supplied layout is held as a Python sequence of ints: an 8-byte slot plus, for a
+# non-cached value, a 28-byte int object. Charged before the run so it is in the ledger, never
+# silently outside it.
+_LAYOUT_ENTRY_BYTES = 36
+
+
+@dataclass(frozen=True)
+class _Layout:
+    """One table's batch layout without materializing it.
+
+    The default layout is arithmetic (`rows`, `batch_rows`), so a 10M-row table at `batch_rows=1`
+    costs O(1) here instead of a 10M-entry list allocated before any budget check. A supplied
+    layout is kept as the caller's own sequence (never copied) and validated in one streaming
+    pass, so the maximum batch and the bookkeeping charge are known before anything is reserved.
+    """
+
+    rows: int
+    batch_rows: int
+    max_batch: int
+    supplied: Sequence[int] | None = None
+    bookkeeping_bytes: int = 0
+
+    def sizes(self) -> Iterator[int]:
+        if self.supplied is not None:
+            yield from self.supplied
+            return
+        full, rest = divmod(self.rows, self.batch_rows)
+        for _ in range(full):
+            yield self.batch_rows
+        if rest:
+            yield rest
+
+
+def _make_layout(
+    name: str,
+    rows: int,
+    batch_rows: int,
+    partition: Callable[[str, int], Sequence[int]] | None,
+) -> _Layout:
+    if partition is None:
+        return _Layout(rows, batch_rows, min(rows, batch_rows))
+    supplied = partition(name, rows)
+    total = count = largest = 0
+    for size in supplied:
+        if size < 0:
+            raise ValueError(f"partition for table {name!r} does not cover {rows} rows")
+        total += size
+        count += 1
+        largest = max(largest, size)
+    if total != rows:
+        raise ValueError(f"partition for table {name!r} does not cover {rows} rows")
+    return _Layout(rows, batch_rows, largest, supplied, count * _LAYOUT_ENTRY_BYTES)
 
 
 def _table_order(config: dict[str, Any]) -> list[dict[str, Any]]:
@@ -145,12 +192,13 @@ class _Plan:
     accumulators: int
     stage_peak: int
     sink_peak: int
+    layouts: int = 0
 
     def streaming_peak(self) -> int:
-        return self.key_pools + self.stage_peak + self.sink_peak
+        return self.layouts + self.key_pools + self.stage_peak + self.sink_peak
 
     def resident_peak(self) -> int:
-        return self.key_pools + self.accumulators + self.stage_peak
+        return self.layouts + self.key_pools + self.accumulators + self.stage_peak
 
 
 def _preflight(
@@ -158,6 +206,7 @@ def _preflight(
     bounds: Mapping[tuple[str, str], int | None],
     batch_rows_of: Callable[[dict[str, Any]], int],
     instance_default_locale: str | None,
+    layouts: int = 0,
 ) -> _Plan:
     referenced = _referenced_keys(tables)
     key_total = accumulators = stage_peak = sink_peak = 0
@@ -175,7 +224,7 @@ def _preflight(
         )
         stage_peak = max(stage_peak, batch_buffer_bytes(payloads, batch) + pools)
         sink_peak = max(sink_peak, sink_buffer_bytes(payloads, batch))
-    return _Plan(key_total, accumulators, stage_peak, sink_peak)
+    return _Plan(key_total, accumulators, stage_peak, sink_peak, layouts)
 
 
 def _reject_unbounded(config: dict[str, Any], bounds: Mapping[tuple[str, str], int | None]) -> None:
@@ -217,7 +266,7 @@ def _check_width(arr: pa.Array, bound: int, column: str) -> None:
 def _table_batches(
     table: dict[str, Any],
     schema: pa.Schema,
-    sizes: Sequence[int],
+    sizes: Iterable[int],
     streams: Sequence[ColumnStream],
     widths: Mapping[str, int],
     collectors: Mapping[str, KeyPool],
@@ -289,15 +338,15 @@ def run_generation(
             legacy_kwargs or {},
         )
 
-    layout: dict[str, list[int]] = {}
-    for t in tables:
-        rows = int(t.get("row_count") or 0)
-        sizes = list(partition(t["name"], rows)) if partition else _partition(rows, resolved_batch)
-        if sum(sizes) != rows or any(s < 0 for s in sizes):
-            raise ValueError(f"partition for table {t['name']!r} does not cover {rows} rows")
-        layout[t["name"]] = sizes
-    batch_of = {name: max(sizes, default=0) for name, sizes in layout.items()}
-    plan = _preflight(tables, bounds, lambda t: batch_of[t["name"]], instance_default_locale)
+    layout = {
+        t["name"]: _make_layout(t["name"], int(t.get("row_count") or 0), resolved_batch, partition)
+        for t in tables
+    }
+    batch_of = {name: lay.max_batch for name, lay in layout.items()}
+    layout_bytes = sum(lay.bookkeeping_bytes for lay in layout.values())
+    plan = _preflight(
+        tables, bounds, lambda t: batch_of[t["name"]], instance_default_locale, layout_bytes
+    )
     stream_it = is_bounded_sink(sink) and _fits(ledger, plan.streaming_peak())
     if not stream_it and not _fits(ledger, plan.resident_peak()):
         raise GenerationBudgetExceeded(
@@ -320,8 +369,49 @@ def run_generation(
     key_pools: dict[tuple[str, str], list[Any]] = {}
     referenced = _referenced_keys(tables)
 
+    def _consume_table(
+        t: dict[str, Any],
+        schema: pa.Schema,
+        lay: _Layout,
+        collectors: dict[str, KeyPool],
+        consume: Callable[[str, pa.Schema, Iterator[pa.RecordBatch]], None],
+        stage: ExitStack,
+    ) -> None:
+        """Build one table's streams, drain them, and let them die on return.
+
+        The streams (and any Faker pool they own) are locals of this frame so they are freed
+        before the caller closes `stage` and releases their reservations. Holding them in the
+        run-level loop kept table N's pool alive while table N+1's was built, with its charge
+        already released.
+        """
+        name = t["name"]
+        streams = [
+            make_column_stream(
+                c,
+                table=name,
+                rows=int(t.get("row_count") or 0),
+                seed=seed,
+                derive_key=derive_key,
+                instance_default_locale=instance_default_locale,
+                provider_snapshot=provider_snapshot,
+                key_pools=key_pools,
+                ledger=ledger,
+                stage=stage,
+                faker_payload=bounds.get((name, c["name"])),
+            )
+            for c in t["generate_columns"]
+        ]
+        widths: dict[str, int] = {}
+        for c in t["generate_columns"]:
+            width = bounds.get((name, c["name"]))
+            if enforce_widths and c.get("type") == "faker" and width is not None:
+                widths[c["name"]] = width
+        consume(name, schema, _table_batches(t, schema, lay.sizes(), streams, widths, collectors))
+
     def generate(consume: Callable[[str, pa.Schema, Iterator[pa.RecordBatch]], None]) -> None:
         with ExitStack() as run_stack:
+            if layout_bytes:
+                run_stack.callback(ledger.reserve("partition_layout", layout_bytes).release)
             for t in tables:
                 name, rows = t["name"], int(t.get("row_count") or 0)
                 payloads = _payloads(t, bounds)
@@ -355,29 +445,7 @@ def run_generation(
                                 f"accumulator:{name}", accumulator_bytes(rows, payloads)
                             ).release
                         )
-                    streams = [
-                        make_column_stream(
-                            c,
-                            table=name,
-                            rows=rows,
-                            seed=seed,
-                            derive_key=derive_key,
-                            instance_default_locale=instance_default_locale,
-                            provider_snapshot=provider_snapshot,
-                            key_pools=key_pools,
-                            ledger=ledger,
-                            stage=stage,
-                            faker_payload=bounds.get((name, c["name"])),
-                        )
-                        for c in t["generate_columns"]
-                    ]
-                    widths: dict[str, int] = {}
-                    for c in t["generate_columns"]:
-                        width = bounds.get((name, c["name"]))
-                        if enforce_widths and c.get("type") == "faker" and width is not None:
-                            widths[c["name"]] = width
-                    batches = _table_batches(t, schema, layout[name], streams, widths, collectors)
-                    consume(name, schema, batches)
+                    _consume_table(t, schema, layout[name], collectors, consume, stage)
                 for col_name, pool in collectors.items():
                     key_pools[(name, col_name)] = pool.seal()
                 counts[name] = rows
