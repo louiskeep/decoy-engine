@@ -28,14 +28,21 @@ de10 + shadow tests.
 
 ## 3. Design (Arrow-native VALUES; REUSE existing typing)
 
-PAIRWISE key-type gate (fold P1-1): take the Arrow path ONLY when the CHILD and PARENT
-key columns are the SAME family AND a family where Arrow equality == fk_key_value:
-- both plain integer (handle width/signedness losslessly; NO float coercion; cover
-  uint64 incl. 2**63+1), or both utf8/large_utf8.
-Any CROSS-family pair (e.g. int child / string parent - which index_in would wrongly
-match or raise) OR any float/decimal/bool-mixed/other type DELEGATES to the existing
-Python resolve_fk_keys bridge unchanged (the correctness-preserving fallback; F2 already
-declines dirty/float shapes to full-frame, so no admitted coverage is lost).
+PAIRWISE key-type gate (fold P1-1, rev-3): take the Arrow path ONLY on a TYPE-level rule
+(no value inspection), because index_in raises ArrowInvalid on signed/unsigned integer
+mixes where a negative and a value > INT64_MAX coexist (probed: int32 child [-1,1] vs
+uint64 parent [1, 2**63+1] -> ArrowInvalid; uint64 child [2**63+1] vs int64 parent ->
+ArrowInvalid). Admit the Arrow path when:
+- BOTH plain integer AND both the SAME SIGNEDNESS (both signed, or both unsigned): cast
+  both to the wider common type of that signedness (int64 or uint64) -- lossless, no
+  value check needed. Apply the SAME common-type cast to the if_else branch operands.
+- BOTH utf8/large_utf8 (mixed utf8/large_utf8 is fine; probed to match).
+DELEGATE to the existing Python resolve_fk_keys bridge unchanged for: any
+signed-vs-unsigned integer MIX (no lossless common Arrow integer type exists for the
+negative + >INT64_MAX case); any cross-family pair (int vs string); float / decimal / bool
+/ dictionary-encoded / extension / other type. F2 already declines dirty/float shapes to
+full-frame, so no admitted coverage is lost. fk_key_value adds no further normalization
+discrepancy for ordinary integer/string values (confirmed).
 
 RESOLVE with pyarrow compute (for the gated fast path):
 - Parent value_set from the parent output's key column. index_in returns the FIRST
@@ -50,21 +57,33 @@ RESOLVE with pyarrow compute (for the gated fast path):
   index_null AND child_valid). Verify parent nulls do not create spurious matches.
 - indices = pc.index_in(child_keys, value_set=parent_keys); taken = pc.take(parent_values,
   indices); orphan_mask = and(is_null(indices), is_valid(child_keys));
-  orphan_count = pc.sum(orphan_mask).as_py() (PLAIN int). resolved_values =
-  pc.if_else(orphan_mask, child_keys, taken) for PRESERVE/WARN; FAIL raises the exact
-  orphan_fk_violation message; REMAP raises orphan_remap_parent_missing (exact). Select
-  compatible branch types for if_else BEFORE calling it so uint64/2**63+1 cannot overflow.
+  orphan_count = pc.sum(orphan_mask, min_count=0).as_py() (fold P2-3b: min_count=0 so an
+  EMPTY child reduces to 0, not None -- pc.sum([]) is None and would break orphan_count>0).
+  resolved_values = pc.if_else(orphan_mask, child_keys, taken) for PRESERVE/WARN, with
+  BOTH branch operands pre-cast to the gate's common type so uint64/2**63+1 cannot overflow.
+  FAIL and REMAP raise ONLY when orphan_count > 0, BEFORE write-back / branch coercion:
+  FAIL raises the exact orphan_fk_violation (code + full message), REMAP raises
+  orphan_remap_parent_missing (exact); matched-only REMAP must SUCCEED. Preserve the
+  existing ExecutionError codes + complete messages (tests compare code AND message).
 
 WRITE-BACK dtype (fold P1-2): DO NOT reimplement the oracle's value-dependent dtype
 algorithm. The oracle output dtype is value-dependent (nonempty int -> int64; all-null
 int32 -> int32; string all-null -> null; large_string -> string; uint64 -> int64). FEED
 the Arrow-resolved values into the EXISTING write-back typing (lossless_fk_int_values /
 fk_nullable_int_array / fk_all_null_array in _fk_keys.py) that the oracle path already
-uses, so the exact dtype is reproduced by the proven code - not re-derived. Keep the
-existing float+int>2**53 rejection (out_of_core_fk_key_dtype_unsupported). This still
-removes the dominant transient (the per-row tuples/dicts) even if the write-back keeps a
-single O(N) column materialization; an Arrow-only write-back is a SEPARATE optional
-follow-up only if the 100M run shows the write-back itself is the new ceiling.
+uses, so the exact dtype is reproduced by the proven code - not re-derived. CRITICAL
+MECHANISM (fold P1-2, rev-3): pass `resolved_values.to_pylist()` (NOT the Arrow array) into
+the UNCHANGED `_write_back_fk_column`, and RETAIN the original child table/array for its
+all-null + empty dtype selection. Passing an Arrow array directly was probed to break the
+oracle: the helper's integer classification does not recognize Arrow scalars, so
+int32[1,null] -> double (want int64), int32[null] -> double (want int32), uint64[2**63+1]
+-> rounded double (want exact uint64). `.to_pylist()` preserves Python ints exactly. Do NOT
+insert any numpy/pandas conversion before classification. Qualify the "uint64 -> int64"
+shorthand: values ABOVE INT64_MAX correctly stay uint64. Keep the existing float+int>2**53
+rejection (out_of_core_fk_key_dtype_unsupported). This removes the dominant transient (the
+per-row tuples + parent dict); the one remaining Python materialization is a FLAT values
+list (far smaller than the old tuples/dict/duplicate-lists). An Arrow-only write-back that
+removes even that list is a pre-identified follow-up IF the 100M run shows it is the ceiling.
 
 WARN: reuse out_of_core/_join.py orphan_fk_warning (byte-identical detail + plain-int
 orphan_rows); one per edge, only when WARN + orphans>0.
@@ -79,14 +98,22 @@ Shared production+shadow via the one function (do not fork).
   int>2**53 lossless typing, string + int keys, NULLABLE keys (incl. null child != orphan),
   multi-chunk, streamed==resident. Dirty/float/when-reads-key/count-warning cases STILL
   decline to full-frame (gate unchanged).
-- NEW differential tests: cross-family pairs (int child/string parent AND string
-  child/int parent) DELEGATE to the Python bridge (not the Arrow path) and match the
-  oracle; uint64 boundary incl. 2**63+1; duplicate parent keys (identity-map dedup
-  non-observable); null child + null parent.
+- NEW differential tests (rev-3): cross-family pairs (int child/string parent AND string
+  child/int parent) DELEGATE to the Python bridge and match the oracle; SIGNED-vs-UNSIGNED
+  integer mix (int32 child vs uint64 parent; uint64 child vs int64 parent) DELEGATES and
+  matches the oracle; same-signedness integer width mixes (int32 vs int64; uint32 vs
+  uint64) take the Arrow path and match; uint64 boundary incl. 2**63+1 (stays uint64);
+  EMPTY child table under EVERY orphan policy (orphan_count 0, no spurious raise);
+  all-null integer / all-null string / empty -> exact oracle dtype via to_pylist; duplicate
+  parent keys (identity-map dedup non-observable); null child + null parent (no spurious match).
 - Shadow parity (tests/physical shadow_fk/shadow_mixed) + de10 lossless typing green.
-- MEMORY (fold P2-4): re-run the F4 10M mixed tier; set a NUMERICAL peak-RSS target
-  (meaningfully below the ~2009MB F4 10M baseline) and assert total external peak RSS +
-  show the per-row-object transient is gone. Describe as READINESS for the 100M GCP run,
+- MEMORY (fold P2-4, rev-3): re-run the EXACT F4 10M mixed tier workload
+  (scripts/fk-scale/bench_worker_mixed.py, 2M parent / 8M child, 1% orphan) under the SAME
+  external peak-RSS boundary (the _supervisor.py os.wait4 ru_maxrss). ACCEPTANCE: total
+  external peak RSS <= 1400 MB at 10M (the F4 10M baseline is 2009 MB; the ~1.6GB Python
+  tuple/dict transient is removed; the retained to_pylist values list + write-back round
+  trip are INCLUDED in this ceiling, which is why the target is 1400 not ~500 MB). Assert
+  the numeric ceiling in the test. Describe as READINESS for the 100M GCP run,
   NOT an 8GiB proof (the exact 100M is the separate GCP step).
 - ci-mirror clean; pytest-one affected suites, companion present + absent.
 
