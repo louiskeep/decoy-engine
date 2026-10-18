@@ -39,29 +39,47 @@ distribution reimplementation). Masking's composite path is unaffected in VALUE 
 
 - New module `generation/_dob_anchor.py`:
   - `DOB_ANCHOR = datetime.date(2026, 10, 16)` -- EXACTLY ORACLE_CLOCK's date (see §4).
-  - `anchored_date_of_birth(fake, *, minimum_age=0, maximum_age=115) -> date` that
-    REPRODUCES faker.date_of_birth's body with DOB_ANCHOR substituted for `now`:
+  - `anchored_date_of_birth(fake, *, tzinfo=None, minimum_age=0, maximum_age=115) -> date`
+    that REPRODUCES faker.date_of_birth's body with DOB_ANCHOR substituted for `now`:
     `start = change_year(DOB_ANCHOR, -(maximum_age+1)); end = change_year(DOB_ANCHOR,
-    -minimum_age); dob = fake.date_time_ad(start_datetime=start, end_datetime=end).date();
-    return dob if dob != start else dob + timedelta(days=1)`. Use Faker's OWN
-    `change_year` + the Faker instance's `date_time_ad` (seeded) -- do NOT hand-roll the
-    date draw (established-methodology: reuse Faker's algorithm, cite it in the docstring).
+    -minimum_age); dob = fake.date_time_ad(tzinfo=tzinfo, start_datetime=start,
+    end_datetime=end).date(); return dob if dob != start else dob + timedelta(days=1)`. Use
+    Faker's OWN `change_year` + the Faker instance's `date_time_ad` (seeded) -- do NOT
+    hand-roll the date draw (established-methodology: reuse Faker's algorithm, cite it).
+  - INPUT VALIDATION (fold P2-3): preserve faker.date_of_birth's exact validation BEFORE
+    the draw -- minimum_age/maximum_age must be int (TypeError otherwise), both >= 0
+    (ValueError), minimum_age <= maximum_age (ValueError) -- matching Faker's messages so a
+    bad age config fails the same way. tzinfo defaults None (the anchor is a naive date;
+    date_of_birth itself returns a tz-naive date); pass tzinfo through to date_time_ad.
   - SYMBOL GUARD at import: assert `faker.providers.date_time` exposes `change_year` and a
     `date_time_ad` on the Faker instance; raise a clear engine error if a Faker version
     moves/renames them (so a bump fails LOUDLY, never silently falling back to the clock).
-- Wire-in: at the single point the adapter dispatches the `date_of_birth` faker method
-  (resolved from provider `person_dob` and any direct `date_of_birth` provider), call
-  `anchored_date_of_birth(fake, minimum_age=..., maximum_age=...)` INSTEAD of the bound
-  `fake.date_of_birth(...)`. Thread minimum_age/maximum_age through if the provider config
-  supplies them (the pool build currently passes none -> defaults 0/115, matching Faker).
-  Enumerate every call path that reaches date_of_birth (per-row `_faker`, pooled
-  `_faker_pool.build_pool_values`, v2 adapter generate/generate_batch, composite `_pools`)
-  and confirm all route through the one adapter dispatch seam (or wire each that does not).
+- Wire-in (fold P1-1, rev-4): there are EXACTLY TWO seams that reach faker.date_of_birth,
+  both must be wired to `anchored_date_of_birth`:
+  1. `providers_v2/_faker_adapter.py::FakerAdapter._faker_call` (~L149): it does
+     `method = getattr(fake, method_name); method(**kwargs)`. When `method_name ==
+     "date_of_birth"`, call `anchored_date_of_birth(fake, **kwargs)` instead of the bound
+     method. This single seam covers generate() + generate_batch(), hence ALL of: per-row
+     `_faker`, pooled `_faker_pool.build_pool_values`, v2 adapter, and composite `_pools`
+     (all route through _faker_call).
+  2. `generators/_formula.py:312`: the formula generator maps `"date_of_birth":
+     self.faker.date_of_birth` and calls it DIRECTLY, bypassing the adapter (this is the
+     bypass the plan-gate found). Replace that entry with the anchored helper bound to
+     `self.faker`.
+  COVERAGE TEST (required): monkeypatch `faker.Faker.date_of_birth` to raise, run every
+  generation path that can produce person_dob (per-row, pooled, composite, formula), and
+  assert none raises (i.e. none reaches the unanchored method). This proves no path is
+  missed.
+  Thread minimum_age/maximum_age through where the provider config supplies them (pool
+  build passes none -> defaults 0/115, matching Faker).
 - NO clock patch, NO contextvar, NO generation-vs-masking gate. The reimplementation is a
-  pure function engaged wherever date_of_birth is generated.
-- SCOPE: this slice anchors `date_of_birth` / `person_dob` ONLY. Other Faker date
-  providers (date_this_year, etc.) still read the clock and are OUT of scope (not dob);
-  note this explicitly. Seed-derived anchoring is explicitly DEFERRED (fixed constant now).
+  pure function engaged at the two seams above.
+- SCOPE: this slice anchors the FAKER `date_of_birth` / `person_dob` path ONLY. The MIMESIS
+  person_dob backend (providers_v2/mimesis/_adapter.py:60 -> datetime.date) is a DIFFERENT
+  library with its own clock read and is OUT of scope this slice (the default backend +
+  the F0 oracle are Faker; a mimesis anchor is a separate follow-up -- note it, do not
+  silently leave it looking covered). Other Faker date providers (date_this_year, etc.)
+  are also out of scope (not dob). Seed-derived anchoring is DEFERRED (fixed constant now).
 
 ## 4. Oracle / baseline: ZERO churn (the central claim, must be proven)
 
@@ -78,11 +96,15 @@ oracle. Therefore:
   anchor, or a pool-path that bypasses the adapter), NOT license to re-record. Do NOT use
   `_f0_capture` to "fix" a mismatch (it runs under the test freeze and would hide a missing
   production anchor).
-- Masking: the dob pool build via the adapter is shared by masking's composite_person
-  strategy. Because the anchored VALUES equal the old values, masking output is
-  byte-identical too (no masking re-baseline). The latent improvement (masked dob is now
-  reproducibly anchored instead of wall-clock-dependent) comes for free. Prove it with an
-  explicit masking-unchanged test.
+- Masking (fold P1-2): the dob pool build via the adapter is shared by masking's
+  composite_person strategy. The masking-unchanged proof needs a CORRECT baseline, which is
+  NOT the anchored output (circular). Capture it properly: BEFORE wiring the change, run the
+  composite_person masking strategy on a fixed dob-bearing config UNDER `frozen_faker_clock`
+  (so the pre-change wall-clock dependence does not make the baseline itself unstable), and
+  commit those output bytes as a fixture. AFTER the change, run the SAME masking WITHOUT the
+  freeze and assert byte-equality to the committed fixture. This proves the anchored values
+  equal the frozen pre-change values AND that masking no longer depends on the wall clock.
+  The latent improvement (masked dob is now reproducibly anchored) comes for free.
 - The baseline-shift authority Cam granted is held in reserve: if any digest DOES move, it
   is a real finding first; re-baseline only after root-causing it (not a reflex).
 
@@ -96,8 +118,14 @@ oracle. Therefore:
 - ANCHOR-ENGAGED check (Cam's requirement, reframed for the reimplement): assert
   DOB_ANCHOR == date(2026,10,16); assert a dob generated through the engine EQUALS the
   value from `anchored_date_of_birth` under the same seed (the reference date IS the anchor,
-  not the wall clock); assert cross-date invariance (above). The SYMBOL GUARD (§3) is the
-  faker-bump tripwire: a moved/renamed change_year/date_time_ad fails loudly.
+  not the wall clock); assert cross-date invariance (above).
+- DIFFERENTIAL vs upstream (fold P2-4): the real independent reference + faker-bump
+  tripwire. With the clock FROZEN to DOB_ANCHOR, assert `anchored_date_of_birth(fake, ...)`
+  equals `faker.date_of_birth(...)` for the SAME seed, comparing BOTH the returned date AND
+  the Faker RNG state after the call, across multiple seeds and age ranges (incl. non-default
+  min/max). This fails loudly if a future Faker changes date_of_birth's formula (which the
+  copied impl would otherwise silently diverge from). Use explicit runtime raises, NOT bare
+  `assert` statements (which `python -O` strips), for both this and the §3 symbol guard.
 - F0 oracle green under production anchoring with the test freeze bypassed, digests
   UNCHANGED (§4).
 - Generation parity otherwise intact: tests/native/test_determinism_goldens.py +
@@ -110,13 +138,16 @@ oracle. Therefore:
 ## 6. Risk + Faker-version robustness
 
 This reuses Faker's PUBLIC `date_time_ad` + `change_year` (not a clock monkeypatch), so it
-is far less fragile than rev-2. Two bump axes, both GUARDED: (1) dob VALUES change if Faker
-alters date_time_ad / change_year / the date_of_birth formula we mirror -> caught loudly by
-the F0 oracle + determinism goldens (a deliberate, expected re-baseline). (2) the anchor
-MECHANISM breaks if Faker moves/renames the symbols -> caught by the SYMBOL GUARD +
-anchor-engaged test (loud fail, never a silent clock fallback). Faker is PINNED (40.23.0),
-so this is infrequent. Residual risk: a date_of_birth call path that bypasses the adapter
-dispatch seam -> guarded by the production-only F0 oracle check + the caller enumeration.
+is far less fragile than rev-2. Faker-bump coverage, stated precisely (fold P2-4): (1) a
+change to `date_time_ad` or `change_year` (the primitives we call) shifts our VALUES ->
+caught by the F0 oracle + determinism goldens. (2) a change to the symbols' NAMES/location
+-> caught by the §3 SYMBOL GUARD (detects removal). (3) a change to `date_of_birth`'s own
+formula does NOT touch our copied impl or the goldens, so it is caught ONLY by the §5
+DIFFERENTIAL test (anchored vs upstream date_of_birth at the frozen anchor). These three
+together are the tripwire; the symbol guard alone is NOT sufficient (it detects removal, not
+behavioral change). Faker is PINNED (40.23.0), so bumps are infrequent + deliberate.
+Residual risk: a date_of_birth call path missed by the two §3 seams -> guarded by the §3
+coverage test (monkeypatch date_of_birth to raise) + the production-only F0 oracle check.
 
 ## 7. Gate chain
 
