@@ -268,3 +268,43 @@ def test_symbol_guard_raises_not_asserts(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.delattr(date_time, "change_year")
     with pytest.raises(DecoyError):
         _dob_anchor._check_faker_symbols()
+
+
+# ---- seam 3: `faker_type: date_of_birth` column (reflected provider table) ---------------------
+
+
+def _faker_type_column(n: int, kwargs: dict[str, int] | None = None) -> list[Any]:
+    col: dict[str, Any] = {"name": "c", "type": "faker", "faker_type": "date_of_birth"}
+    if kwargs:
+        col["faker_kwargs"] = kwargs
+    return run_generate_tables(config([table("t", n, [col])]))["t"].column("c").to_pylist()
+
+
+@pytest.mark.parametrize("n", [5, 5000], ids=["per_row", "pooled"])
+def test_faker_type_date_of_birth_is_seed_stable_and_anchored(
+    n: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls = _install_spy(monkeypatch)
+    with simulated_system_date(_DAY_A):
+        first = _faker_type_column(n)
+        ranged = _faker_type_column(n, {"minimum_age": 18, "maximum_age": 65})
+    with simulated_system_date(_DAY_B):
+        second = _faker_type_column(n)
+    assert calls == []
+    assert first == second
+    assert all(v is not None for v in first + ranged)
+    assert first != ranged
+    # Reflected providers stringify; the value is the anchored date.
+    for v in ranged:
+        age_lo = dt.date(DOB_ANCHOR.year - 66, 10, 16)
+        age_hi = dt.date(DOB_ANCHOR.year - 18, 10, 16)
+        assert age_lo <= dt.date.fromisoformat(str(v)) <= age_hi
+
+
+def test_reflected_providers_other_than_dob_untouched() -> None:
+    from decoy_engine.internal.faker_setup import get_faker_providers
+
+    a, b = faker.Faker("en_US"), faker.Faker("en_US")
+    a.seed_instance(3)
+    b.seed_instance(3)
+    assert get_faker_providers(a)["first_name"]() == b.first_name()

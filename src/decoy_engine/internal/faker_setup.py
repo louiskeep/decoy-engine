@@ -417,6 +417,21 @@ def _make_reflected_provider(method: Callable[..., Any]) -> Callable[..., Any]:
     return call
 
 
+def _reflect(fake: Faker, name: str, attr: Callable[..., Any]) -> Callable[..., Any]:
+    """Reflected provider for `name`; `date_of_birth` is bound to the fixed dob anchor.
+
+    Faker's own date_of_birth reads the wall clock, so the same seed would give different dates on
+    different days. Only that one provider is redirected (see generation/_dob_anchor.py).
+    """
+    if name == "date_of_birth":
+        from functools import partial
+
+        from decoy_engine.generation._dob_anchor import anchored_date_of_birth
+
+        return _make_reflected_provider(partial(anchored_date_of_birth, fake))
+    return _make_reflected_provider(attr)
+
+
 def get_faker_providers(
     faker_instance: Faker,
     *,
@@ -457,7 +472,7 @@ def get_faker_providers(
         attr = getattr(fake, name, None)
         if not callable(attr):
             continue
-        providers[name] = _make_reflected_provider(attr)
+        providers[name] = _reflect(fake, name, attr)
 
     def _addr(**kwargs: Any) -> str:
         out = fake.address(**kwargs) if kwargs else fake.address()
@@ -557,7 +572,7 @@ def resolve_pool_provider(
         return _custom_call, exact_name_available, True
     if not exact_name_available or not callable(attr):
         return None, False, False
-    return _make_reflected_provider(attr), True, False
+    return _reflect(fake, faker_type, attr), True, False
 
 
 def list_generate_faker_providers(locale: str | list[str] | None = None) -> tuple[str, ...]:
