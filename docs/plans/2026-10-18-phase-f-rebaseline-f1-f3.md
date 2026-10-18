@@ -254,6 +254,25 @@ BEFORE it happens, backed by a runtime RSS ceiling.
 
 ## 4. F3 under re-baseline: kernel selection, per generator semantics (plan-gate #4)
 
+> **SHELVED 2026-10-18 (Cam), measured regression.** FR3 was built to spec and is
+> correct, but a measurement showed the compiled HMAC index kernel (~670 ns/row on
+> one thread, ~194 ns/row on four) is far more expensive than the vectorized RNG it
+> replaces for GENERATION (NumPy `integers` ~3 ns/row, `random.choices` ~100-130
+> ns/row). Every adopted column regressed (categorical uniform 0.09 s -> 0.73 s at
+> 1M; a mixed 6-column job 3.55 s -> 7.24 s); only weighted-reference got faster
+> (it had replaced a per-row Python loop). The kernel wins for MASKING (per-row
+> Python HMAC), not generation. FR0 already made generation route-independent, so
+> the kernel adds no correctness gain here, and the selection draw is not the
+> generation bottleneck (Faker calls and pool construction are). DECISION: do not
+> adopt the compiled kernel for generation selection. The full generator-to-algorithm
+> inventory and the per-column measurements are preserved on the parked branch
+> `feat/phase-f-fr3-kernel-select` @ `c417c105` (not merged) and
+> `docs/plans/2026-10-18-phase-f-fr3-selection-inventory.md` there. If a faster
+> route-independent selection is ever wanted, the backlog tracks the alternatives
+> (NumPy Philox counter-RNG; narrow weighted-reference-only adoption; a non-crypto
+> Rust position-index op). Phase F continues with F4 then F-audit on the FR0 + FR1
+> substrate. The section below is the shelved original design, kept for the record.
+
 F0's inventory finding holds: pure generation draws from seeded NumPy / Python
 RNG, the compiled kernel derives indices via HMAC; adopting the kernel changes
 emitted values. Re-baseline permits the change and re-freezes, but ONLY where the
@@ -387,9 +406,10 @@ the exact combined artifact.
 2. **FR1 - widen F1 admission: windowed_date only** (specced per §3), re-frozen
    per §5. Grouped families and reference-with-repair stay DEFERRED to their own
    design slices (§3).
-3. **FR3 - kernel selection** per the §4 per-mode inventory (arithmetic sequence
-   preserved, weighted preserved or Python, uniform adopted), uniformity + weight
-   proofs, witness, re-freeze. After FR0; may overlap FR1 with serialized golden
+3. **FR3 - kernel selection: SHELVED 2026-10-18 (measured regression, see the §4
+   banner).** Original design (now shelved): per the §4 per-mode inventory (arithmetic
+   sequence preserved, weighted preserved or Python, uniform adopted), uniformity +
+   weight proofs, witness, re-freeze. After FR0; may overlap FR1 with serialized golden
    updates.
 4. **FR-capacity hook.** Confirm the generation capacity slice (program §F4) rides
    the re-baselined core; bounded tiers, no new freeze.
