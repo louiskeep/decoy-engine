@@ -9,6 +9,21 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Changed (windowed_date admitted to unified generation, strict anchor contract, 2026-10-18)
+
+`windowed_date` is now admitted into the unified generation core; it was declined before.
+The anchor must be a strict, absolute, timezone-naive ISO date (`YYYY-MM-DD`) or ISO
+datetime. String anchors, `date32`, and timezone-naive `timestamp` anchors are accepted.
+`now`, `today`, timezone-bearing, ambiguous, partial, and non-ASCII forms are rejected. A
+genuine null anchor propagates to a null output and consumes no draw. A non-null anchor
+that fails the grammar, parses to NaT (including `""` and `"NaT"`), falls outside the
+supported range `[1700-01-01, 2200-12-31]`, or overflows raises `WindowedDateError`
+(fail closed). The change lives in the shared `apply_windowed_date`, so the windowed_date
+mask strategy inherits the same stricter contract. A timezone-aware anchor, a non-ISO
+string anchor, or a date outside `[1700, 2200]` that previously masked now fails closed
+with `WindowedDateError`, and a null anchor now yields null instead of raising. This is a
+pre-GA, fail-closed behavior change on the mask path.
+
 ### Changed (generation re-baselined to one route-independent core, 2026-10-18)
 
 Resident and streamed generation now run a single core (`generation/_streamed.py`),

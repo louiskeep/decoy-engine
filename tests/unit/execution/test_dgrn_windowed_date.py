@@ -37,6 +37,7 @@ from decoy_engine.plan import PlanCompileError
 from decoy_engine.providers_v2 import get_default_registry
 from decoy_engine.transforms.windowed_date import (
     WindowedDateConfig,
+    WindowedDateError,
     _sample_offset,
     apply_windowed_date,
 )
@@ -606,6 +607,24 @@ class TestNullAnchorPropagation:
             )
         )
         assert out.column("end_date").to_pylist()[4] is None
+
+
+class TestMaskPathStrictAnchorContract:
+    """The mask strategy shares `apply_windowed_date`, so it inherits the FR1 fail-closed anchor
+    grammar and supported range. The error must not echo the offending cell."""
+
+    @pytest.mark.parametrize(
+        "bad",
+        ["2024-01-01T00:00:00+02:00", "1650-01-01", "2300-01-01"],
+    )
+    def test_bad_anchor_fails_closed_without_echoing_value(self, tmp_path, bad) -> None:
+        df = pd.DataFrame({"start_date": ["1990-03-01", bad, "1991-04-02"]})
+        df.to_csv(tmp_path / "in.csv", index=False)
+        cfg = _windowed_date_cfg(tmp_path)
+        sources = {"accounts": pa.Table.from_pandas(df, preserve_index=False)}
+        with pytest.raises(WindowedDateError) as exc:
+            run_pipeline(cfg, sources=sources, engine_version=_ENGINE_VERSION, auto_chunk=False)
+        assert bad not in str(exc.value)
 
 
 # ---------------------------------------------------------------------------
