@@ -138,9 +138,18 @@ design.
     both co-compute within the same batch from the same global row offset. A
     cross-table or later-ordered anchor declines (no sibling-input seam is built
     here; that is a follow-up).
-  - *Supported anchor types:* `date32` and `timestamp` (tz-naive). Other types
-    decline. The existing `apply_windowed_date` conversion to pandas timestamps and
-    string formatting (`transforms/windowed_date.py`) carries over; the offset is
+  - *Supported anchor types (AMENDED 2026-10-18, FR1 build):* a parseable STRING
+    anchor (the realistic case), plus `date32` and `timestamp` (tz-naive). Other
+    types decline. RATIONALE for the amendment: no generated column the core admits
+    produces `date32`/`timestamp` (sequence and faker are `string`, categorical is
+    string/bool/int64/float64, reference copies one of those, windowed_date itself is
+    `string`), so a `date32`/`timestamp`-only rule would never fire; and the
+    `WindowedDateError` "unparseable anchor" rule below only has meaning for a string
+    anchor (a typed date cannot be unparseable). The common real shape is a date
+    windowed off a string date column, e.g. an event date off a str `date_of_birth`.
+    A string anchor parses via `pd.Timestamp` exactly as the existing legacy
+    `apply_windowed_date` already does. The existing `apply_windowed_date` conversion
+    and string formatting (`transforms/windowed_date.py`) carries over; the offset is
     computed relative to each row's own anchor via the existing global `row_offset`.
   - *Output schema:* `string`, matching the current formatter. No inference.
   - *Null / invalid anchor (INTENTIONAL SEMANTIC CHANGE, plan-gate #3).* Today's
