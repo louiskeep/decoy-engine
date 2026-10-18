@@ -2,133 +2,126 @@ Status: plan
 
 Rules consulted: 00-universal, development-loop, risk-and-exceptions, feature-dev, architecture, testing, verification, use-established-methodology
 
-# Generation: anchor Faker date providers to a fixed reference (seed-stable dob)
+# Generation: deterministic seed-stable dob via an anchored reimplementation
 
-Foundational re-baseline slice (Cam 2026-10-18: "anchor dob deterministically").
-Rev-2 folds the Codex plan-gate NO-GO (3 P1 + 2 P2): the naive global clock-patch is
-wrong (hits masking, races under concurrency, misses the composite path). Rev-2 uses a
-CONTEXTVAR-GATED clock that generation opts into and masking never does.
+Foundational re-baseline slice (Cam 2026-10-18: "anchor dob deterministically", "we can
+shift the baseline, we're prerelease", "reimplement dob approach"). Rev-3 REPLACES the
+rev-2 contextvar-gated clock-patch approach entirely. Instead of patching Faker's module
+clock, we reimplement `date_of_birth` using Faker's OWN public `date_time_ad` with
+explicit anchor-relative endpoints. This reads NO wall clock, reuses Faker's exact date
+distribution, needs no clock patch / contextvar / generation-vs-masking gating, and (see
+§4) yields ZERO oracle churn because the anchor equals ORACLE_CLOCK's date.
 
 ## 1. Problem
 
-`person_dob` -> Faker `date_of_birth` computes a date from an age window relative to
-`datetime.now()` inside `faker.providers.date_time`. Nothing in src/ anchors it; only
-the TEST `frozen_faker_clock()` pins it to ORACLE_CLOCK = 2026-10-16 12:00:00. So
-production dob for the same seed+config shifts by calendar day. CRUCIAL CONSTRAINTS the
-gate surfaced:
-- The dob-bearing composite fixtures call `CompositePerson.generate_bundle()` DIRECTLY
-  (_pools -> PoolBuilder.build -> FakerAdapter.generate_batch), NOT via generate_tables.
-- That SAME `generate_bundle` is called by MASKING (execution/_strategies/_composite.py).
-  So anchoring the shared composite/adapter unconditionally would change MASKING.
-- `synthesize.py` promises concurrent-generation isolation (tested), so a module-global
-  save/restore clock patch races across overlapping jobs.
+`person_dob` -> Faker `date_of_birth` (providers_v2/_faker_adapter.py:54 maps person_dob
+-> date_of_birth). Faker's `date_of_birth` computes `now = datetime.now(tzinfo).date()`,
+then `start = change_year(now, -(max_age+1))`, `end = change_year(now, -min_age)`, then
+`date_time_ad(start_datetime=start, end_datetime=end).date()` (with a one-day boundary
+nudge). The ONLY wall-clock input is `now`. Nothing in src/ anchors it; production dob for
+the same seed shifts by calendar day. The dob POOL is built via PoolBuilder ->
+FakerAdapter -> faker.date_of_birth per draw (composite _person.py `_pools`, dob_pool),
+then indexed deterministically. So the non-determinism lives entirely in the per-draw
+clock read at POOL-BUILD time.
+
+Key fact confirmed from Faker source: `date_time_ad(start_datetime, end_datetime)` does
+NOT read the clock when both endpoints are given (`_rand_seconds(start, end)` only); it is
+a pure function of the Faker seed + the endpoints. `change_year` is a pure helper. Both
+are importable from `faker.providers.date_time`.
 
 ## 2. Goal
 
-Faker date providers are deterministic for GENERATION (pure function of the Faker seed +
-a fixed anchor), concurrency-safe, with MASKING and caller-owned Faker UNCHANGED.
+`date_of_birth` / `person_dob` generation is a pure function of (Faker seed + a fixed
+anchor), with NO wall-clock read, reusing Faker's own uniform-date algorithm (no
+distribution reimplementation). Masking's composite path is unaffected in VALUE (§4).
 
-## 3. Design: contextvar-gated faker clock (generation opts in; masking does not)
+## 3. Design: reimplement date_of_birth against a fixed anchor
 
-- Patch `faker.providers.date_time.datetime` and `.dtdate` ONCE at engine import (reuse
-  the proven `_SameInstances` metaclass so isinstance stays valid). The patched
-  `now()/today()` return the ANCHOR **iff** a `contextvars.ContextVar` (e.g.
-  `_GENERATION_FAKER_ANCHOR`) is set; otherwise they DELEGATE to the real stdlib
-  now()/today(). ContextVars are per-thread/per-task, so this is concurrency-safe and
-  needs no save/restore race. Masking never sets the var -> sees the real clock. (Est.
-  methodology: same clock-pin technique as the F0 test harness; cite it.)
-- A context manager `generation_faker_anchor()` sets/resets the ContextVar via
-  set()/reset(token) (exception-safe).
-- GENERATION opts in: wrap the generation paths that drive Faker dates:
-  (a) `_generate_tables_from_config` (covers the per-row `_faker` loop + pooled
-  `_faker_pool.build_pool_values`), and (b) the COMPOSITE GENERATION entry
-  (CompositePerson generate / generate_bundle AS DRIVEN BY GENERATION, incl. the
-  `_pools` dob pool) - the distinct piece that bypasses generate_tables. MASKING's
-  `_strategies/_composite.py` call of generate_bundle does NOT enter the context -> its
-  behavior is byte-unchanged.
-  - Resolve the generation-vs-masking opt-in cleanly: the context manager is entered by
-    generation callers only; masking keeps the real clock. Enumerate every generation
-    caller of generate_bundle / FakerAdapter and confirm masking's is excluded (the
-    build must prove no masking path sets the var).
-- ANCHOR = the exact datetime `2026-10-16 12:00:00` with the SAME tz behavior as the
-  F0 fixture's ORACLE_CLOCK (not just the date; midnight-vs-noon changes date_time*).
-  Match the fixture exactly so dob/date digests are unchanged. Fixed constant now;
-  seed-derived anchoring explicitly DEFERRED (adds unneeded semantics).
+- New module `generation/_dob_anchor.py`:
+  - `DOB_ANCHOR = datetime.date(2026, 10, 16)` -- EXACTLY ORACLE_CLOCK's date (see §4).
+  - `anchored_date_of_birth(fake, *, minimum_age=0, maximum_age=115) -> date` that
+    REPRODUCES faker.date_of_birth's body with DOB_ANCHOR substituted for `now`:
+    `start = change_year(DOB_ANCHOR, -(maximum_age+1)); end = change_year(DOB_ANCHOR,
+    -minimum_age); dob = fake.date_time_ad(start_datetime=start, end_datetime=end).date();
+    return dob if dob != start else dob + timedelta(days=1)`. Use Faker's OWN
+    `change_year` + the Faker instance's `date_time_ad` (seeded) -- do NOT hand-roll the
+    date draw (established-methodology: reuse Faker's algorithm, cite it in the docstring).
+  - SYMBOL GUARD at import: assert `faker.providers.date_time` exposes `change_year` and a
+    `date_time_ad` on the Faker instance; raise a clear engine error if a Faker version
+    moves/renames them (so a bump fails LOUDLY, never silently falling back to the clock).
+- Wire-in: at the single point the adapter dispatches the `date_of_birth` faker method
+  (resolved from provider `person_dob` and any direct `date_of_birth` provider), call
+  `anchored_date_of_birth(fake, minimum_age=..., maximum_age=...)` INSTEAD of the bound
+  `fake.date_of_birth(...)`. Thread minimum_age/maximum_age through if the provider config
+  supplies them (the pool build currently passes none -> defaults 0/115, matching Faker).
+  Enumerate every call path that reaches date_of_birth (per-row `_faker`, pooled
+  `_faker_pool.build_pool_values`, v2 adapter generate/generate_batch, composite `_pools`)
+  and confirm all route through the one adapter dispatch seam (or wire each that does not).
+- NO clock patch, NO contextvar, NO generation-vs-masking gate. The reimplementation is a
+  pure function engaged wherever date_of_birth is generated.
+- SCOPE: this slice anchors `date_of_birth` / `person_dob` ONLY. Other Faker date
+  providers (date_this_year, etc.) still read the clock and are OUT of scope (not dob);
+  note this explicitly. Seed-derived anchoring is explicitly DEFERRED (fixed constant now).
 
-## 4. Oracle / baseline (unchanged is MANDATORY)
+## 4. Oracle / baseline: ZERO churn (the central claim, must be proven)
 
-- The anchor equals ORACLE_CLOCK, so the F0 oracle digests MUST be UNCHANGED under
-  PRODUCTION-only anchoring. Acceptance: run the F0 oracle suite with the production
-  contextvar anchor active AND the test autouse `frozen_faker_clock` REMOVED/bypassed
-  for those modules; digests must match byte-for-byte. A mismatch is a FINDING to
-  investigate (a missed seam or wrong anchor), NOT license to re-record. Do NOT use
-  `_f0_capture` to "fix" a mismatch (it runs under the test freeze, so it would
-  reproduce old digests and HIDE a missing production anchor).
-- Keep a PERMANENT production-only oracle check (a test that exercises the composite
-  generation path through the production anchor, without the test freeze, asserting the
-  oracle) so the production guarantee stays pinned.
-- Test-conftest `frozen_faker_clock`: with production anchoring, it is redundant for
-  generation faker-dates. KEEP it this slice (harmless belt-and-suspenders) but it is
-  NOT the production evidence; the production-only check above is. (Correction vs rev-1:
-  frozen_faker_clock does NOT patch formula helpers - those use the separate injectable
-  ColumnGenerator._reference_date; no claim is made on them here.)
+Because DOB_ANCHOR == ORACLE_CLOCK.date() (ORACLE_CLOCK = datetime(2026,10,16,12,0,0),
+tests/parity/_f0_fixtures.py) AND the F0 oracle was recorded under `frozen_faker_clock()`
+(which makes datetime.now() return ORACLE_CLOCK), the anchored computation produces the
+IDENTICAL endpoints and the IDENTICAL `date_time_ad` draw as the frozen-clock
+faker.date_of_birth. Through the pool build + deterministic pool indexing this means the
+composite dob values, pool indices, and final digests are BYTE-IDENTICAL to the existing
+oracle. Therefore:
+- ACCEPTANCE: run the F0 oracle suite with the production anchor active AND the test
+  `frozen_faker_clock` REMOVED/bypassed for those modules; digests MUST match the frozen
+  digests byte-for-byte. A mismatch is a FINDING to investigate (a missed seam, a wrong
+  anchor, or a pool-path that bypasses the adapter), NOT license to re-record. Do NOT use
+  `_f0_capture` to "fix" a mismatch (it runs under the test freeze and would hide a missing
+  production anchor).
+- Masking: the dob pool build via the adapter is shared by masking's composite_person
+  strategy. Because the anchored VALUES equal the old values, masking output is
+  byte-identical too (no masking re-baseline). The latent improvement (masked dob is now
+  reproducibly anchored instead of wall-clock-dependent) comes for free. Prove it with an
+  explicit masking-unchanged test.
+- The baseline-shift authority Cam granted is held in reserve: if any digest DOES move, it
+  is a real finding first; re-baseline only after root-causing it (not a reflex).
 
 ## 5. Acceptance
 
-- CONCURRENCY-SAFE + MASKING-UNCHANGED (new, load-bearing):
-  - A forced-overlap test: two generations on different threads/tasks with different
-    (simulated) ambient clocks run concurrently; each gets the anchor, neither leaks to
-    the other; after both exit, the real clock is restored. Must FAIL against a naive
-    global-patch implementation.
-  - A generation||masking overlap test: masking running concurrently with generation
-    sees the REAL clock (its composite/date output is byte-identical to today's,
-    unaffected by the generation anchor).
-- SEED-STABLE ACROSS DAYS (non-vacuous): generate a dob-bearing config under TWO
-  distinct simulated system dates, FRESH composite instances/pools each run (no cached
-  pool reuse), the F0 test freeze DISABLED, simulating at the real clock dependency
-  Faker reads; assert byte-identical output across the two dates. The test MUST FAIL
-  against the current unanchored implementation (prove it bites). Cover table per-row,
+- SEED-STABLE ACROSS DAYS (non-vacuous): generate a dob-bearing config under TWO distinct
+  simulated system dates, FRESH composite instances/pools each run (no cached pool reuse),
+  with the F0 test freeze DISABLED; assert byte-identical output across the two dates. MUST
+  FAIL against the current unanchored implementation (prove it bites). Cover table per-row,
   table pooled, AND independent composite paths.
-- F0 oracle green under production-only anchoring (digests unchanged, §4).
+- ANCHOR-ENGAGED check (Cam's requirement, reframed for the reimplement): assert
+  DOB_ANCHOR == date(2026,10,16); assert a dob generated through the engine EQUALS the
+  value from `anchored_date_of_birth` under the same seed (the reference date IS the anchor,
+  not the wall clock); assert cross-date invariance (above). The SYMBOL GUARD (§3) is the
+  faker-bump tripwire: a moved/renamed change_year/date_time_ad fails loudly.
+- F0 oracle green under production anchoring with the test freeze bypassed, digests
+  UNCHANGED (§4).
 - Generation parity otherwise intact: tests/native/test_determinism_goldens.py +
-  tests/parity/test_phase_f_f0_* + composite tests green; the ONLY changed outputs are
-  date-provider values becoming anchored (nothing else).
-- MASKING untouched: the composite masking strategy + any masking date path byte-equal
-  to today (explicit test).
+  tests/parity/test_phase_f_f0_* + composite tests green; the ONLY path changed is the
+  date_of_birth draw source, and its values are unchanged vs the frozen oracle.
+- MASKING unchanged: composite masking strategy dob output byte-equal to today (explicit
+  test), since the anchored values equal the old values.
 - ci-mirror clean; pytest-one affected suites, companion-present + absent.
-- ANCHOR-ENGAGED fail-loud guard (faker-bump robustness, Cam 2026-10-18): a test that,
-  inside `generation_faker_anchor()`, asserts the patch is ACTUALLY in effect - a fresh
-  Faker's `date_time.now()`/`date.today()` returns the anchor (not the wall clock). If a
-  future Faker version renames/moves the patched symbols or reads the clock differently,
-  this FAILS LOUDLY (anchor silently no-ops otherwise). Pair with a plain assertion at
-  patch-install that the expected faker.providers.date_time symbols exist.
 
 ## 6. Risk + Faker-version robustness
 
-FAKER BUMP (Cam asked): this patches Faker INTERNALS (module clock), not a public API,
-so a Faker upgrade is a risk on two axes, both GUARDED: (1) dob VALUES change if Faker
-alters date_of_birth math -> caught loudly by the F0 oracle + determinism goldens (a
-deliberate re-baseline, expected). (2) the anchor MECHANISM silently no-ops if Faker
-moves/renames the clock symbols -> caught by the ANCHOR-ENGAGED guard (§5) + the
-cross-date test, which fail rather than revert quietly. Faker is PINNED (40.23.0) so
-this is a deliberate, infrequent event. DEFERRED alternative (noted, not taken):
-compute dob ourselves from an explicit reference date instead of patching Faker's clock
-- removes the internals-fragility but requires reimplementing Faker's age-window logic
-(distribution-parity risk); revisit if the patch proves bump-fragile in practice.
-
-
-
-The contextvar-gated patch is global-but-inert-by-default (only active inside the
-generation context), avoiding the rev-1 race + masking leak. Remaining risks: a
-generation faker-date seam not wrapped (guarded by the production-only oracle check +
-enumerating callers); a masking path accidentally entering the context (guarded by the
-generation||masking test). The import-time patch must be a no-op when the var is unset
-(delegates to real clock) so nothing changes globally.
+This reuses Faker's PUBLIC `date_time_ad` + `change_year` (not a clock monkeypatch), so it
+is far less fragile than rev-2. Two bump axes, both GUARDED: (1) dob VALUES change if Faker
+alters date_time_ad / change_year / the date_of_birth formula we mirror -> caught loudly by
+the F0 oracle + determinism goldens (a deliberate, expected re-baseline). (2) the anchor
+MECHANISM breaks if Faker moves/renames the symbols -> caught by the SYMBOL GUARD +
+anchor-engaged test (loud fail, never a silent clock fallback). Faker is PINNED (40.23.0),
+so this is infrequent. Residual risk: a date_of_birth call path that bypasses the adapter
+dispatch seam -> guarded by the production-only F0 oracle check + the caller enumeration.
 
 ## 7. Gate chain
 
-Codex plan-gate (this doc) -> build (Sonnet) -> ci-mirror + F0 oracle (production-only
-anchor) + determinism goldens + concurrency/overlap tests + cross-date seed-stability
-+ masking-unchanged, both venvs -> dennis -> Codex final -> merge (Codex + dennis green
-+ local CI; GitHub CI ignored). DOCUMENT: CHANGELOG + records note; unblocks the F1/F3
-re-baseline.
+Codex plan-gate (this doc) -> build (Sonnet) -> ci-mirror + F0 oracle (production anchor,
+freeze bypassed) + determinism goldens + cross-date seed-stability + anchor-engaged +
+masking-unchanged, both venvs -> dennis -> Codex final -> merge (Codex + dennis green +
+local CI; GitHub CI ignored). DOCUMENT: CHANGELOG + records note; unblocks the F1/F3
+generation re-baseline.
