@@ -52,3 +52,19 @@ def test_mixed_oracle_byte_identity_1m() -> None:
     record = run_worker(["--mode", "oracle", *_rows("1M")], timeout_s=1800)
     assert record["completed"] is True, record["failure"]
     assert record["oracle"]["byte_identical"] is True, record["oracle"]["mismatch"]
+
+
+# Observed 1418-1420 MB over 3 runs after the Arrow-native string write-back
+# (2026-10-18); before it 1906 MB (to_pylist) and 2009 MB (baseline). The ceiling is
+# the observed peak plus a small margin, so a regression back to a Python-list
+# write-back fails here.
+FK_WRITEBACK_10M_CEILING_MB = 1500
+
+
+def test_mixed_10m_string_fk_writeback_peak_rss() -> None:
+    record = run_worker(
+        [*_rows("10M"), "--rss-ceiling-mb", str(FK_WRITEBACK_10M_CEILING_MB)], timeout_s=1800
+    )
+    assert record["completed"] is True, record["failure"]
+    assert record["peak_rss_mb"] <= FK_WRITEBACK_10M_CEILING_MB, record["peak_rss_mb"]
+    assert record["fk_parity"]["status"] == "ok", record["fk_parity"]["problems"]
