@@ -40,6 +40,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import pyarrow as pa
+import pyarrow.compute as pc
 
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._fk_keys import (
@@ -50,6 +51,8 @@ from decoy_engine.execution._fk_keys import (
     to_pandas_fk_safe,
 )
 from decoy_engine.execution._fk_resolve import resolve_fk_keys
+from decoy_engine.execution.out_of_core._join import orphan_fk_warning
+from decoy_engine.relationships._graph import OrphanPolicy
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -79,6 +82,91 @@ def resolve_generate_parent_fk_child(
     build the parent's identity map, run it through the shared orphan-policy
     engine, and write the resolved column back through the oracle's own lossless
     pandas<->Arrow boundary. `child_table` needs only the child key column."""
+    parent_column = edge.parent_columns[0]
+    child_column = edge.child_columns[0]
+    parent_keys = parent_table.column(parent_column)
+    child_keys = child_table.column(child_column)
+    common = _arrow_common_key_type(child_keys.type, parent_keys.type)
+    if common is not None:
+        return _resolve_arrow(edge, child_table, child_column, child_keys, parent_keys, common)
+    return _resolve_python(edge, parent_table, child_table)
+
+
+def _arrow_common_key_type(child: pa.DataType, parent: pa.DataType) -> pa.DataType | None:
+    """TYPE-level gate for the Arrow resolve (never inspects values). Returns the
+    lossless common key type, or None to delegate to the Python resolve.
+
+    Admitted: both integer with the SAME signedness (common type int64/uint64),
+    or both utf8/large_utf8 (common large_string). A signed/unsigned mix is
+    delegated: `index_in` raises ArrowInvalid when a negative and a value above
+    INT64_MAX coexist, and no lossless common Arrow integer type exists.
+    Everything else (cross-family, float, decimal, bool, dictionary, extension)
+    keeps the Python path, which F2 admission already confines to the shapes the
+    oracle handles.
+    """
+    if pa.types.is_integer(child) and pa.types.is_integer(parent):
+        if pa.types.is_signed_integer(child) and pa.types.is_signed_integer(parent):
+            return pa.int64()
+        if pa.types.is_unsigned_integer(child) and pa.types.is_unsigned_integer(parent):
+            return pa.uint64()
+        return None
+    if (pa.types.is_string(child) or pa.types.is_large_string(child)) and (
+        pa.types.is_string(parent) or pa.types.is_large_string(parent)
+    ):
+        return pa.large_string()
+    return None
+
+
+def _resolve_arrow(
+    edge: RelationshipEdge,
+    child_table: pa.Table,
+    child_column: str,
+    child_keys: pa.ChunkedArray,
+    parent_keys: pa.ChunkedArray,
+    common: pa.DataType,
+) -> FkResolution:
+    """Resolve with pyarrow compute: no per-row Python key tuples or parent dict.
+
+    The parent map is the identity map, so a matched child key resolves to the
+    parent's own value. `index_in` returns the FIRST match where the Python dict
+    is last-write-wins; duplicate equal keys carry equal identity values, so the
+    difference is not observable. Null child keys resolve to null and are never
+    orphans; `skip_nulls=True` keeps a null parent key from matching anything.
+    """
+    child_c = child_keys.cast(common)
+    parent_c = parent_keys.cast(common)
+    indices = pc.index_in(child_c, value_set=parent_c, skip_nulls=True)
+    orphan_mask = pc.and_(pc.is_null(indices), pc.is_valid(child_c))
+    orphan_count = pc.sum(orphan_mask, min_count=0).as_py()
+    policy = edge.orphan_policy
+    warnings: tuple[QualityWarning, ...] = ()
+    if orphan_count > 0:
+        if policy is OrphanPolicy.FAIL:
+            raise ExecutionError(
+                code="orphan_fk_violation",
+                message=(
+                    f"{orphan_count} orphan row(s) in "
+                    f"{edge.child_table}.{edge.child_columns} reference no parent key in "
+                    f"{edge.parent_table}.{edge.parent_columns} (orphan_policy=fail)."
+                ),
+            )
+        if policy is OrphanPolicy.REMAP:
+            _reject_remap(edge)([])
+        if policy is OrphanPolicy.WARN:
+            warnings = (orphan_fk_warning(edge, int(orphan_count)),)
+    taken = pc.take(parent_c, indices)
+    resolved = pc.if_else(orphan_mask, child_c, taken)
+    # to_pylist (not the Arrow array): the write-back classifier recognises
+    # Python ints exactly; an Arrow input would widen int32+null / uint64 to double.
+    column = _write_back_fk_column(child_table, child_column, resolved.to_pylist())
+    return FkResolution(column=column, warnings=warnings)
+
+
+def _resolve_python(
+    edge: RelationshipEdge, parent_table: pa.Table, child_table: pa.Table
+) -> FkResolution:
+    """The original per-row resolve through the shared `resolve_fk_keys` engine,
+    kept for key shapes the Arrow gate does not admit."""
     parent_column = edge.parent_columns[0]
     child_column = edge.child_columns[0]
     parent_map = _identity_parent_map(parent_table, parent_column)
