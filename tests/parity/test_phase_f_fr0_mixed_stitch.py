@@ -60,22 +60,14 @@ def _values(table: pa.Table) -> dict[str, list[Any]]:
     return {name: table.column(name).to_pylist() for name in table.column_names}
 
 
-def _assert_same_values_and_fields(
-    got: dict[str, pa.Table], want: dict[str, pa.Table], *, types_may_be_declared: bool = False
-) -> None:
-    """Canonical values, column order, nullability and field metadata must match the oracle.
-
-    Types must match too, except where `types_may_be_declared` allows a column the oracle types
-    `null` to carry the core's declared type instead (the zero-row case, checked separately)."""
+def _assert_same_values_and_fields(got: dict[str, pa.Table], want: dict[str, pa.Table]) -> None:
+    """Canonical values, column order, types, nullability and field metadata must match the oracle."""
     assert list(got) == list(want)
     for name in want:
         assert _values(got[name]) == _values(want[name]), name
         assert got[name].num_rows == want[name].num_rows, name
         for g, w in zip(_field_view(got[name]), _field_view(want[name]), strict=True):
-            if types_may_be_declared and w[1] == "null":
-                assert g[:1] + g[2:] == w[:1] + w[2:], (name, g, w)
-            else:
-                assert g == w, (name, g, w)
+            assert g == w, (name, g, w)
 
 
 # ---- the admitted mixed route -----------------------------------------------------------------
@@ -110,27 +102,29 @@ def test_real_parquet_publication_keeps_the_declared_schema(tmp_path: Path) -> N
     _assert_same_values_and_fields(read, want)
 
 
-def test_a_zero_row_generated_parent_keeps_its_declared_string_schema(tmp_path: Path) -> None:
-    """FR0 declares a zero-row table's columns, so the mixed route now admits it and publishes
-    `string` where Arrow inference (and the pandas-echoing oracle) says `null`. Values, column
-    order, nullability and field metadata still match the oracle."""
+def test_a_zero_row_generated_parent_matches_the_oracle_exactly(tmp_path: Path) -> None:
+    """FR0 declares a zero-row core table's columns `string`, but the mixed route must still
+    publish what the full_frame oracle does. Admission declines a zero-row generated parent, as
+    it did when Arrow inferred `null` for its key, so the job runs the pregenerated full-frame
+    continuation and the output equals the oracle in values AND schema types (`null`)."""
     config, child = _job(tmp_path, [ID, KIND], rows=0)
     declared = generate_tables_via_plan_for(config)[PARENT]
     assert [str(f.type) for f in declared.schema] == ["string", "string"]
     assert declared.num_rows == 0
 
     got = run(config, {CHILD: child})
-    assert got.quality_metrics["execution"]["route_reason"] == "mixed_generate_mask_chunked"
+    assert got.quality_metrics["execution"]["route_reason"] == (
+        "mixed_runtime_declined:mixed-fk-cross-generate-unsupported"
+    )
     want = oracle(config, {CHILD: child})
-    _assert_same_values_and_fields(got.outputs, want.outputs, types_may_be_declared=True)
-    assert [str(f.type) for f in got.outputs[PARENT].schema] == ["string", "string"]
+    _assert_same_values_and_fields(got.outputs, want.outputs)
+    assert [str(f.type) for f in got.outputs[PARENT].schema] == ["null", "null"]
     assert got.outputs[PARENT].num_rows == 0
 
-    target = tmp_path / "published"
-    run(config, {CHILD: child}, sink=ParquetTransactionalSink(target))
-    published = pq.read_table(target / f"{PARENT}.parquet")
-    assert [str(f.type) for f in published.schema] == ["string", "string"]
-    assert published.num_rows == 0
+    sink = RecordingSink()
+    run(config, {CHILD: child}, sink=sink)
+    assert sink.calls == []
+    _assert_same_values_and_fields(got.outputs, oracle(config, {CHILD: child}).outputs)
 
 
 def generate_tables_via_plan_for(config: dict[str, Any]) -> dict[str, pa.Table]:
