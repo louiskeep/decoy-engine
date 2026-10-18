@@ -74,6 +74,7 @@ def mixed_config(
     child_columns: list[dict[str, Any]] | None = None,
     coupled: bool = True,
     extra_generate: bool = False,
+    lookup_rows: int = 3,
     seed: int = 20261017,
 ) -> dict[str, Any]:
     """Generate parent `people` + mask child `accounts` (parquet source). `coupled`
@@ -114,7 +115,7 @@ def mixed_config(
         raw["tables"].append(
             {
                 "name": "lookup",
-                "row_count": 3,
+                "row_count": lookup_rows,
                 "generate_columns": [{"name": "code", "type": "sequence", "start": 0, "step": 1}],
             }
         )

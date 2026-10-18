@@ -104,8 +104,8 @@ def test_real_parquet_publication_keeps_the_declared_schema(tmp_path: Path) -> N
 
 def test_a_zero_row_generated_parent_matches_the_oracle_exactly(tmp_path: Path) -> None:
     """FR0 declares a zero-row core table's columns `string`, but the mixed route must still
-    publish what the full_frame oracle does. Admission declines a zero-row generated parent, as
-    it did when Arrow inferred `null` for its key, so the job runs the pregenerated full-frame
+    publish what the full_frame oracle does. Admission declines ANY zero-row generated table
+    (see the independent and lookup tests below), so the job runs the pregenerated full-frame
     continuation and the output equals the oracle in values AND schema types (`null`)."""
     config, child = _job(tmp_path, [ID, KIND], rows=0)
     declared = generate_tables_via_plan_for(config)[PARENT]
@@ -114,7 +114,7 @@ def test_a_zero_row_generated_parent_matches_the_oracle_exactly(tmp_path: Path) 
 
     got = run(config, {CHILD: child})
     assert got.quality_metrics["execution"]["route_reason"] == (
-        "mixed_runtime_declined:mixed-fk-cross-generate-unsupported"
+        "mixed_runtime_declined:generation-shape-unsupported"
     )
     want = oracle(config, {CHILD: child})
     _assert_same_values_and_fields(got.outputs, want.outputs)
@@ -125,6 +125,44 @@ def test_a_zero_row_generated_parent_matches_the_oracle_exactly(tmp_path: Path) 
     run(config, {CHILD: child}, sink=sink)
     assert sink.calls == []
     _assert_same_values_and_fields(got.outputs, oracle(config, {CHILD: child}).outputs)
+
+
+def test_an_independent_zero_row_generated_table_matches_the_oracle_exactly(
+    tmp_path: Path,
+) -> None:
+    """No FK edge at all: the zero-row table is not a coupled parent, so only the per-table
+    admission check can keep the mixed route from publishing the declared `string` for `id`
+    where the oracle publishes `null`."""
+    child = child_table(pa.array(KEYS, pa.string()))
+    config = mixed_config(tmp_path, child, parent_columns=[ID], parent_rows=0, coupled=False)
+    assert generate_tables_via_plan_for(config)[PARENT].schema.field("id").type == pa.string()
+
+    got = run(config, {CHILD: child})
+    want = oracle(config, {CHILD: child})
+    assert got.quality_metrics["execution"]["route_reason"] == (
+        "mixed_runtime_declined:generation-shape-unsupported"
+    )
+    _assert_same_values_and_fields(got.outputs, want.outputs)
+    assert str(got.outputs[PARENT].schema.field("id").type) == "null"
+
+
+def test_a_zero_row_lookup_beside_a_nonempty_coupled_parent_matches_the_oracle(
+    tmp_path: Path,
+) -> None:
+    """The coupled parent has rows and passes every check; a separate zero-row generated lookup
+    must still make the whole job match the oracle (`code: null`, not the declared `string`)."""
+    child = child_table(pa.array(KEYS, pa.string()))
+    config = mixed_config(
+        tmp_path, child, parent_columns=[ID], parent_rows=5, extra_generate=True, lookup_rows=0
+    )
+    got = run(config, {CHILD: child})
+    want = oracle(config, {CHILD: child})
+    assert got.quality_metrics["execution"]["route_reason"] == (
+        "mixed_runtime_declined:generation-shape-unsupported"
+    )
+    _assert_same_values_and_fields(got.outputs, want.outputs)
+    assert str(got.outputs["lookup"].schema.field("code").type) == "null"
+    assert got.outputs[PARENT].num_rows == 5
 
 
 def generate_tables_via_plan_for(config: dict[str, Any]) -> dict[str, pa.Table]:
