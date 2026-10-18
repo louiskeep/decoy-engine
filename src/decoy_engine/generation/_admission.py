@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     from faker import Faker
 
 # Every generator kind `GenerateColumnConfig.type` allows, with its admission and the reason.
-# `tests/parity/test_phase_f_fr0_admission.py` fails if a kind is added to the config Literal
+# `tests/unit/generation/test_fr0_admission.py` fails if a kind is added to the config Literal
 # without a row here.
 ADMISSION_MATRIX: dict[str, tuple[bool, str]] = {
     "sequence": (True, "value is start + step * global row ordinal; prefix-stable"),
