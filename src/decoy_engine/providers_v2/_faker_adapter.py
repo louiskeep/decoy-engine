@@ -146,9 +146,14 @@ class FakerAdapter:
             )
         kwargs = dict(_FAKER_DEFAULT_KWARGS.get(provider, {}))
         kwargs.update(spec.extra)
-        method = getattr(fake, method_name)
         try:
-            return method(**kwargs)
+            if method_name == "date_of_birth":
+                # Faker's own date_of_birth reads the wall clock; the anchored form is a pure
+                # function of the seed. See generation/_dob_anchor.py.
+                from decoy_engine.generation._dob_anchor import anchored_date_of_birth
+
+                return anchored_date_of_birth(fake, **kwargs)
+            return getattr(fake, method_name)(**kwargs)
         except Exception as exc:
             raise AdapterError(
                 code="capability_violation",

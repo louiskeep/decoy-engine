@@ -19,6 +19,17 @@ keep the existing write-back. At 10M rows (2M parent, 8M child, 1% orphans) the 
 RSS fell from 2009 MB (baseline) and 1906 MB (Arrow resolve with a Python-list write-back) to
 about 1419 MB.
 
+### Changed (date-of-birth generation is seed-stable, 2026-10-18)
+
+`person_dob` and the formula helper `date_of_birth` now compute the age window against a fixed
+anchor date (2026-10-16) instead of today's date. The same seed gives the same dates on every
+calendar day. Before this, the generated and masked dates of birth moved each day with Faker's
+clock. The draw still uses Faker's own `date_time_ad`, so the date distribution is unchanged.
+
+The anchor equals the date the F0 oracle was recorded on, so the output matches the F0 oracle
+and the composite_person masking output recorded before the change. Not covered yet: a column
+with `faker_type: date_of_birth` (it reads the clock), and the Mimesis `person_dob` backend.
+
 ### Added (mixed generate+mask jobs mask on the Rust routes, 2026-10-17)
 
 Under `execution_mode="auto"` (the default), a job that generates some tables and masks others
