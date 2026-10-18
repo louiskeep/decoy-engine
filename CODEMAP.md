@@ -41,7 +41,14 @@ Shared Python data engine for Decoy masking, generation, plan-compile execution,
 | `src/decoy_engine/execution/_substrate.py` | `select_execution_adapter`; `require_bool` / `require_positive_int` public fail-closed knob validators |
 | `src/decoy_engine/execution/_planner.py` | `classify_job` -> `ExecutionPlan` (execution-mode planner; classification never routes on its own EXCEPT the `chunked` mode, which `run_pipeline`'s `auto_chunk` knob routes; surfaced via `run_pipeline(explain_plan=True)`) |
 | `src/decoy_engine/execution/_pandas_adapter.py` | `PandasExecutionAdapter` (the only masking substrate) |
-| `src/decoy_engine/generation/synthesize.py` | `generate_tables` (GENERATE entry) |
+| `src/decoy_engine/generation/synthesize.py` | Legacy whole-table generator (`_generate_tables_from_config`), now run only for plans with a semantically ineligible column; re-exports `generate_tables` |
+| `src/decoy_engine/generation/_plan_entry.py` | Plan-only public entries: `generate_tables` (resident) and `generate_tables_streamed` (bounded sink); both call the one core |
+| `src/decoy_engine/generation/_streamed.py` | The single generation core `run_generation`: batches into a bounded sink or an in-memory table, byte-budget preflight, transactional publish |
+| `src/decoy_engine/generation/_admission.py` | Semantic eligibility (`classify_plan`, `ADMISSION_MATRIX`) and declared Arrow types; pure function of the plan |
+| `src/decoy_engine/generation/_column_streams.py` | Persistent per-column generators (sequence, categorical, per-row and pooled faker, reference, null mask) advanced by global row offset |
+| `src/decoy_engine/generation/_budget_ledger.py` | `GenerationBudgetLedger` (reserve-before-allocate), `GenerationBudgetExceeded`, `GenerationUnboundedError` |
+| `src/decoy_engine/generation/_bounds.py` | Conservative per-column value-width bounds and per-stage byte formulas the ledger reserves |
+| `src/decoy_engine/generation/_reproducibility.py` | Reproducibility exclusion closure (fresh, custom provider, uncontrolled clock, dependents) and the `PinnedEnvelope` |
 | `src/decoy_engine/generation/_faker_pool.py` | GP2 generation-local pool bridge for scalar `faker_type` columns: `POOL_ELIGIBLE_FAKER_TYPES`, `pool_eligible`, `build_and_sample`. Called from `synthesize.py::_faker`; reuses `generation/pool`'s `ValuePool`/`PoolSampler`, not the V2 `PoolBuilder`/`ProviderRegistry` seam. |
 | `src/decoy_engine/storm/profiler.py` | `run_storm` |
 | `src/decoy_engine/validation_result.py` | `ValidationResult` wire shape + `VALIDATION_CODES` |
