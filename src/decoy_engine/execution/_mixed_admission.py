@@ -228,6 +228,16 @@ def require_admitted_parent_key_type(
     generate table's actual column type is only knowable against its output."""
     parent_table = generate_outputs.get(edge.parent_table)
     column_name = edge.parent_columns[0]
+    # A zero-row parent has no key values to couple to. Before FR0 its key was Arrow-inferred
+    # `null`, which the type check below declined, so the job fell back to full_frame and
+    # published the oracle's `null`. FR0 declares the key `string`, which would pass that check
+    # and publish `string` instead. Declining on the row count keeps the pre-FR0 route and keeps
+    # the mixed output identical to the oracle for this edge.
+    if parent_table is not None and parent_table.num_rows == 0:
+        raise MixedDeclineError(
+            MIXED_FK_CROSS_GENERATE_UNSUPPORTED,
+            f"parent={edge.parent_table!r}: zero-row generated parent not admitted",
+        )
     key_type = (
         parent_table.schema.field(column_name).type
         if parent_table is not None and column_name in parent_table.schema.names
