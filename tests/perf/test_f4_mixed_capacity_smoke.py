@@ -99,7 +99,9 @@ def test_verifier_flags_a_corrupted_child_fk(tmp_path: Path) -> None:
     assert layout.verify_committed(committed, src, **kw)["status"] == "ok"
 
     bad = cols["person_id"].to_pylist()
-    bad[rows // 2] = str(int(bad[rows // 2]) + 1)  # one row points at the wrong parent (numeric string FK)
+    bad[rows // 2] = str(
+        int(bad[rows // 2]) + 1
+    )  # one row points at the wrong parent (numeric string FK)
     cols["person_id"] = pa.array(bad, cols["person_id"].type)
     pq.write_table(pa.table(cols), out)
     verdict = layout.verify_committed(committed, src, **kw)
