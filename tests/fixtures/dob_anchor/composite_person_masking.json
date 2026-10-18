@@ -1,0 +1,42 @@
+{
+ "dob": [
+  "1918-01-02",
+  "1954-04-16",
+  null,
+  "1964-02-15",
+  "1918-01-02",
+  "1941-02-20",
+  "2026-07-23",
+  "1918-09-15"
+ ],
+ "email": [
+  "troy.smith@mail.example.com",
+  "thomas.hull@example.com",
+  null,
+  "james.yu@example.com",
+  "troy.smith@mail.example.com",
+  "lori.hines@example.net",
+  "paul.anderson@example.com",
+  "blake.gregory@corp.example.com"
+ ],
+ "first_name": [
+  "Troy",
+  "Thomas",
+  null,
+  "James",
+  "Troy",
+  "Lori",
+  "Paul",
+  "Blake"
+ ],
+ "last_name": [
+  "Smith",
+  "Hull",
+  null,
+  "Yu",
+  "Smith",
+  "Hines",
+  "Anderson",
+  "Gregory"
+ ]
+}
