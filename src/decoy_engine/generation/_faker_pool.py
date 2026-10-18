@@ -41,7 +41,7 @@ from faker import Faker
 
 from decoy_engine.generation.pool._cardinality import CardinalityMode
 from decoy_engine.generation.pool._runtime_pool_size import DEFAULT_POOL_SIZE
-from decoy_engine.generation.pool._sampler import PoolSampler
+from decoy_engine.generation.pool._sampler import PoolSampler, _seed_bytes_to_int
 from decoy_engine.generation.pool._value_pool import ValuePool, _freeze_array
 from decoy_engine.generators.derivation import GenDeriveContext
 from decoy_engine.internal.faker_setup import make_faker, resolve_pool_provider
@@ -410,6 +410,65 @@ def _build_and_sample_returning_pool(
     return values.tolist(), sampled.tolist(), exact_name_available, custom_override_present
 
 
+def _pool_seeds(gen_ctx: GenDeriveContext) -> tuple[bytes, bytes]:
+    build_seed = gen_ctx.family_bytes(_BUILD_FAMILY)[:8]
+    selection_seed = gen_ctx.family_bytes(_SELECTION_FAMILY)[:8]
+    if build_seed == selection_seed:
+        # Astronomically unlikely for distinct HMAC labels; a real collision
+        # here means family_bytes stopped being label-disjoint, which would
+        # silently collapse the build and selection draws onto one stream.
+        raise RuntimeError(
+            "faker_pool_build/faker_pool_selection HMAC domains collided -- "
+            "GenDeriveContext.family_bytes is no longer label-disjoint"
+        )
+    return build_seed, selection_seed
+
+
+class PooledSelector:
+    """One pooled column's selection as a persistent stream, for batched generation.
+
+    `build_and_sample` draws `integers(0, pool_size, size=n)` in one call. This holds the same
+    `default_rng(selection_seed)` and advances it `size=batch` per call, which yields the same
+    indices in the same order (a Generator's stream is position-based, NumPy's documented
+    sequential-draw behavior), so streamed batches concatenate to the whole-table draw. The pool
+    is built once, before the first batch.
+    """
+
+    def __init__(self, values: Any, selection_seed: bytes) -> None:
+        self._values = values
+        self._rng = np.random.default_rng(_seed_bytes_to_int(selection_seed))
+
+    def select(self, size: int) -> list[Any]:
+        indices = self._rng.integers(0, len(self._values), size=size)
+        return list(self._values[indices].tolist())
+
+
+def open_pooled_selector(
+    *,
+    faker_type: str,
+    faker_kwargs: dict[str, Any],
+    gen_ctx: GenDeriveContext,
+    effective_locale: str | None,
+    pool_size: int = DEFAULT_POOL_SIZE,
+    provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None = None,
+) -> PooledSelector | None:
+    """Build the pool once and return its persistent selector, or `None` when the build
+    declines (custom override or provider unavailable for the locale): the caller then runs the
+    column per row, decided before the first batch."""
+    build_seed, selection_seed = _pool_seeds(gen_ctx)
+    raw_values, exact_name_available, custom_override_present = build_pool_values(
+        faker_type,
+        effective_locale,
+        build_seed,
+        pool_size,
+        faker_kwargs,
+        provider_snapshot=provider_snapshot,
+    )
+    if custom_override_present or not exact_name_available:
+        return None
+    return PooledSelector(_freeze_array(np.array(raw_values, dtype=object)), selection_seed)
+
+
 def build_and_sample(
     *,
     faker_type: str,
@@ -472,8 +531,10 @@ __all__ = [
     "N_THRESHOLD",
     "POOL_ELIGIBLE_FAKER_TYPES",
     "POOL_ELIGIBLE_LOCALE_PAIRS",
+    "PooledSelector",
     "build_and_sample",
     "build_pool_values",
+    "open_pooled_selector",
     "pool_eligible",
     "try_pool",
 ]

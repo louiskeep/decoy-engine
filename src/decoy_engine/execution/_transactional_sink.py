@@ -146,6 +146,10 @@ class ParquetTransactionalSink:
             atomic rename from the staging directory.
     """
 
+    # Capability marker for bounded generation: write_batches appends one row group per batch and
+    # never materializes the stream. The callable adapter lacks it, so it cannot take a streamed run.
+    bounded_write_batches = True
+
     def __init__(self, target_dir: Path) -> None:
         self._target = target_dir
         self._staging: Path | None = None

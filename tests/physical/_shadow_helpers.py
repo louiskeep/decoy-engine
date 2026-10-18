@@ -638,14 +638,14 @@ def _call_with_generate_phase_spy(
     `Exception`, never `BaseException` (Task 4.6 slice 5a §3): an interrupt
     or other process-control signal is not a parity outcome.
 
-    Patches `_plan_entry._generate_tables_from_config` specifically -- the
-    NAME `generation._plan_entry.generate_tables` actually calls (bound at
-    `_plan_entry` import time via `from ...synthesize import
-    _generate_tables_from_config`), not `synthesize`'s own module
-    attribute, which `_plan_entry`'s call site never looks up through.
+    Patches `_plan_entry.run_generation` specifically -- the NAME
+    `generation._plan_entry.generate_tables` actually calls (bound at
+    `_plan_entry` import time via `from ..._streamed import run_generation`),
+    not `_streamed`'s own module attribute, which `_plan_entry`'s call site
+    never looks up through.
     """
     entered = False
-    original = _plan_entry_module._generate_tables_from_config
+    original = _plan_entry_module.run_generation
 
     def _spy(*args: Any, **kwargs: Any) -> dict[str, pa.Table]:
         nonlocal entered
@@ -653,7 +653,7 @@ def _call_with_generate_phase_spy(
         return original(*args, **kwargs)
 
     with pytest.MonkeyPatch.context() as patcher:
-        patcher.setattr(_plan_entry_module, "_generate_tables_from_config", _spy)
+        patcher.setattr(_plan_entry_module, "run_generation", _spy)
         try:
             result = fn()
         except Exception as exc:  # captured for a differential comparison, never swallowed silently
@@ -801,7 +801,7 @@ def assert_generation_failures_match(run: GenerationDifferentialRun) -> None:
 #
 # The failure/failure case needs more than the pure-generate harness above:
 # a malformed generate leaf still funnels through the ONE shared
-# `_generate_tables_from_config` call (Codex #5's "RAISED, not merely
+# `run_generation` call (Codex #5's "RAISED, not merely
 # entered" -- the spy below now distinguishes the two), but a malformed MASK
 # leaf has no equivalent shared function -- the shadow's native operators
 # (`_shadow_batch_runner.run_operator`) and the oracle's pandas strategy
@@ -849,7 +849,7 @@ def _arm_generate_raised_spy(patcher: pytest.MonkeyPatch) -> Callable[[], bool]:
     misattributed to GENERATE just because generation ran earlier in the
     same call. Returns a zero-arg accessor for the recorded verdict."""
     raised = False
-    original = _plan_entry_module._generate_tables_from_config
+    original = _plan_entry_module.run_generation
 
     def _spy(*args: Any, **kwargs: Any) -> dict[str, pa.Table]:
         nonlocal raised
@@ -859,7 +859,7 @@ def _arm_generate_raised_spy(patcher: pytest.MonkeyPatch) -> Callable[[], bool]:
             raised = True
             raise
 
-    patcher.setattr(_plan_entry_module, "_generate_tables_from_config", _spy)
+    patcher.setattr(_plan_entry_module, "run_generation", _spy)
     return lambda: raised
 
 

@@ -151,15 +151,19 @@ sys.path.insert(0, {bench_dir!r})
 from decoy_engine.generation import _faker_pool
 
 
-def _stub_build_and_sample(**kwargs):
-    # Simulates a resolver decline that still hands back SOMETHING
-    # without ever reaching PoolSampler.sample -- the exact mismatch the
-    # worker's vacuity guard (both wrappers must fire on the on arm)
-    # exists to catch.
-    return ["stub"] * kwargs["n"]
+class _StubSelector:
+    # Simulates a pool build that hands back SOMETHING without ever reaching
+    # PooledSelector.select -- the exact mismatch the worker's vacuity guard
+    # (both wrappers must fire on the on arm) exists to catch.
+    def select(self, size):
+        return ["stub"] * size
 
 
-_faker_pool.build_and_sample = _stub_build_and_sample
+def _stub_open_pooled_selector(**kwargs):
+    return _StubSelector()
+
+
+_faker_pool.open_pooled_selector = _stub_open_pooled_selector
 
 import bench_worker_gen
 
@@ -167,7 +171,7 @@ bench_worker_gen.main()
 """
 
 
-def test_vacuity_guard_catches_build_and_sample_that_never_reaches_pool_sampler(
+def test_vacuity_guard_catches_a_pool_build_that_never_reaches_the_selector(
     tmp_path: Path,
 ) -> None:
     runner_script = tmp_path / "vacuity_runner.py"

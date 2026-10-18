@@ -32,6 +32,7 @@ For F1: invariant 4's `naive_batch_local` is exactly what a first-draft partitio
 
 from __future__ import annotations
 
+import dataclasses
 from collections import Counter
 from collections.abc import Callable
 from functools import partial
@@ -41,9 +42,14 @@ import numpy as np
 import pyarrow as pa
 import pytest
 
-from decoy_engine.generation import _faker_pool, _referenced_formula, synthesize
+from decoy_engine.generation import (
+    _column_streams,
+    _faker_pool,
+    _referenced_formula,
+    _streamed,
+    synthesize,
+)
 from decoy_engine.generation import _plan_entry as plan_entry
-from decoy_engine.generation.pool._sampler import PoolSampler
 from decoy_engine.generators.columns import ColumnGenerator
 from decoy_engine.generators.derivation import GenDeriveContext
 from tests.parity import _f0_fixtures as fx
@@ -218,27 +224,25 @@ def test_reordered_pool_is_caught(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_swapped_build_and_selection_seeds_are_caught(monkeypatch: pytest.MonkeyPatch) -> None:
-    real = _faker_pool._build_and_sample_returning_pool
+    real = _faker_pool._pool_seeds
 
-    def swapped(**kw: Any) -> Any:
-        kw["build_seed"], kw["selection_seed"] = kw["selection_seed"], kw["build_seed"]
-        return real(**kw)
+    def swapped(gen_ctx: Any) -> Any:
+        build_seed, selection_seed = real(gen_ctx)
+        return selection_seed, build_seed
 
-    log = _pooled_log(
-        monkeypatch, lambda mp: mp.setattr(_faker_pool, "_build_and_sample_returning_pool", swapped)
-    )
+    log = _pooled_log(monkeypatch, lambda mp: mp.setattr(_faker_pool, "_pool_seeds", swapped))
     _trips(lambda: _check_pool_identity(log), match="pool identity/build/selection moved")
 
 
 def test_resized_pool_is_caught(monkeypatch: pytest.MonkeyPatch) -> None:
-    real = _faker_pool._build_and_sample_returning_pool
+    real = _faker_pool.open_pooled_selector
 
     def resized(**kw: Any) -> Any:
         kw["pool_size"] = 5_000
         return real(**kw)
 
     log = _pooled_log(
-        monkeypatch, lambda mp: mp.setattr(_faker_pool, "_build_and_sample_returning_pool", resized)
+        monkeypatch, lambda mp: mp.setattr(_faker_pool, "open_pooled_selector", resized)
     )
     _trips(lambda: _check_pool_identity(log), match="pool identity/build/selection moved")
 
@@ -624,18 +628,23 @@ def test_reset_row_index_is_caught_through_the_seam(monkeypatch: pytest.MonkeyPa
 def test_restarted_selection_stream_is_caught_through_the_seam(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Mutate `PoolSampler.sample` so a 50_000-row selection is drawn as two independent halves
-    (each re-creating `default_rng(seed)`), the batch-local stream restart."""
-    real = PoolSampler.sample
+    """Mutate the persistent pooled selector so each batch re-creates `default_rng(seed)` (the
+    batch-local stream restart), with the 50_000-row fixture forced into two batches."""
+    real_select = _faker_pool.PooledSelector.select
 
-    def halves(self: PoolSampler, pool: Any, n: int, **kw: Any) -> Any:
-        first = real(self, pool, n // 2, **kw)
-        second = real(self, pool, n - n // 2, **kw)
-        import pandas as pd
+    def restarting(self: _faker_pool.PooledSelector, size: int) -> Any:
+        self._rng = np.random.default_rng(self._seed_int)
+        return real_select(self, size)
 
-        return pd.concat([first, second], ignore_index=True)
+    real_init = _faker_pool.PooledSelector.__init__
 
-    monkeypatch.setattr(PoolSampler, "sample", halves)
+    def init(self: _faker_pool.PooledSelector, values: Any, selection_seed: bytes) -> None:
+        real_init(self, values, selection_seed)
+        self._seed_int = int.from_bytes(selection_seed, "big")
+
+    monkeypatch.setattr(_faker_pool.PooledSelector, "__init__", init)
+    monkeypatch.setattr(_faker_pool.PooledSelector, "select", restarting)
+    monkeypatch.setattr(_streamed, "DEFAULT_BATCH_ROWS", 20_000)
     _trips(
         lambda: assert_matches_oracle("pooled_faker", fx.FIXTURES_BY_ID["pooled_faker"].run()),
         match="values differ|digest differs",
@@ -662,12 +671,16 @@ def test_generated_parent_reaches_the_masked_child_complete() -> None:
 
 
 def test_parent_truncated_to_its_first_batch_is_caught(monkeypatch: pytest.MonkeyPatch) -> None:
-    real = plan_entry._generate_tables_from_config
+    real = plan_entry.run_generation
 
-    def first_batch_only(*a: Any, **k: Any) -> dict[str, pa.Table]:
-        return {name: tbl.slice(0, 2) for name, tbl in real(*a, **k).items()}
+    def first_batch_only(*a: Any, **k: Any) -> Any:
+        result = real(*a, **k)
+        assert result.tables is not None
+        return dataclasses.replace(
+            result, tables={name: tbl.slice(0, 2) for name, tbl in result.tables.items()}
+        )
 
-    monkeypatch.setattr(plan_entry, "_generate_tables_from_config", first_batch_only)
+    monkeypatch.setattr(plan_entry, "run_generation", first_batch_only)
     _trips(
         lambda: _check_fk_coupling(fx.run_mixed_fk()),
         match="complete parent|rows|values differ|digest differs",
@@ -675,5 +688,7 @@ def test_parent_truncated_to_its_first_batch_is_caught(monkeypatch: pytest.Monke
 
 
 def test_perturbed_parent_keys_are_caught(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(synthesize, "_categorical", lambda col, n, seed, derive_key=None: ["x"] * n)
+    monkeypatch.setattr(
+        _column_streams.CategoricalStream, "next_batch", lambda self, offset, size: ["x"] * size
+    )
     _trips(lambda: _check_fk_coupling(fx.run_mixed_fk()), match="values differ|digest differs")
