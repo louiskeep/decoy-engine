@@ -2,8 +2,8 @@
 
 Plan: docs/plans/2026-10-17-phase-f-f4-capacity.md section 3. The job is TWO tables:
 
-  people    GENERATED parent (resident): id = sequence 0..P-1 (int64), tier = categorical
-  accounts  MASKED child (disk-backed Parquet, chunked lane): person_id (int64 FK),
+  people    GENERATED parent (resident): id = sequence 0..P-1 (generated as text), tier = categorical
+  accounts  MASKED child (disk-backed Parquet, chunked lane): person_id (text FK, same type as the parent key),
             email/payload_NN hashed, note redacted
 
 The parent key is deterministic from the generate config, so the verifier can compute
@@ -49,7 +49,7 @@ def payload_names(width: int) -> list[str]:
 
 def child_schema(width: int) -> pa.Schema:
     fields = [
-        pa.field(FK, pa.int64()),
+        pa.field(FK, pa.string()),
         pa.field("email", pa.string()),
         pa.field("note", pa.string()),
     ]
@@ -84,7 +84,9 @@ def write_child(
     try:
         for start in range(0, rows, chunk_rows):
             idx = np.arange(start, min(start + chunk_rows, rows))
-            cols: dict[str, Any] = {FK: expected_fk(idx, parents, orphan_every)}
+            cols: dict[str, Any] = {
+                FK: expected_fk(idx, parents, orphan_every).astype("U").astype(object)
+            }
             cols["email"] = ("u" + idx.astype("U") + "@example.com").astype(object)
             cols["note"] = ("note-" + idx.astype("U")).astype(object)
             for name in payload_names(width):
@@ -154,7 +156,7 @@ def _full_fk_scan(path: Path, parents: int, orphan_every: int) -> dict[str, Any]
     pf = pq.ParquetFile(path)
     offset = bad = orphans = 0
     for rg in range(pf.metadata.num_row_groups):
-        got = pf.read_row_group(rg, columns=[FK]).column(0).to_numpy(zero_copy_only=False)
+        got = pf.read_row_group(rg, columns=[FK]).column(0).cast(pa.int64()).to_numpy()
         want = expected_fk(np.arange(offset, offset + len(got)), parents, orphan_every)
         bad += int(np.count_nonzero(got != want))
         orphans += int(np.count_nonzero(got >= parents))
@@ -195,8 +197,9 @@ def verify_committed(
     for label, start in _starts(child_rows, sample).items():
         n = min(sample, child_rows)
         idx = np.arange(start, start + n)
-        want = expected_fk(idx, parents, orphan_every).tolist()
-        sampled_orphans += int(np.count_nonzero(np.asarray(want) >= parents))
+        want_int = expected_fk(idx, parents, orphan_every)
+        want = [str(v) for v in want_int.tolist()]
+        sampled_orphans += int(np.count_nonzero(want_int >= parents))
         if read_window(child_out, FK, start, n) != want:
             problems.append(f"child_fk_{label}")
         if read_window(child_src, FK, start, n) != want:
