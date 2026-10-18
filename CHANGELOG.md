@@ -9,6 +9,35 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Changed (generation selection moved onto the compiled index kernel, 2026-10-18)
+
+Uniform and weighted selection in the unified generation core now draws from the same
+HMAC index kernel masking uses, instead of a stateful Python or NumPy random generator. This
+covers `categorical` columns (uniform and weighted), pooled `faker` columns, and `reference`
+columns with the `random` or `weighted` distribution. Each draw depends only on the column's key
+and the global row number, so a value cannot change with how rows are batched, and the compiled
+companion (or its byte-identical Python reference when it is absent) can draw a whole batch at once.
+Values are identical with and without the companion.
+
+The configured distribution is preserved. A uniform column stays uniform. A weighted column maps
+one uniform draw through the cumulative weights, so a 90/10 split stays 90/10 (each probability is
+within 2**-32 of its configured share); it is never flattened to uniform. A weight set that this
+mapping cannot hold (wrong length, negative, non-finite, a zero total, or a positive weight too
+small to own a slot) stays on the Python generator with the weights you configured. Pool
+construction stays in Python. `sequence` columns, the `sequential` reference distribution,
+per-row and custom Faker, the `null_probability` mask, `windowed_date`, formula, statistical and
+grouped families, and every plan that takes the legacy whole-table path are unchanged byte for
+byte. The composite generators are not reachable from `generate_tables` and are unchanged.
+
+Observable change: the emitted values of the affected columns differ from earlier builds for the
+same seed, so the generation golden was re-frozen (categorical, pooled Faker, and the
+`nulls`/mixed-FK fixtures that contain them) under the same unreleased engine minor. The re-freeze
+passed a semantic gate (marginals against the configured weights and pool multiplicities, FK
+membership, sequence order and uniqueness, null propagation) with mutants that flatten a weight or
+bias a frequency. `SEED_PROTOCOL_VERSION` is not bumped: the draw uses a new key label under the
+existing protocol version. The generator-to-algorithm inventory that decides each site is in
+`docs/plans/2026-10-18-phase-f-fr3-selection-inventory.md`.
+
 ### Changed (windowed_date admitted to unified generation, strict anchor contract, 2026-10-18)
 
 `windowed_date` is now admitted into the unified generation core; it was declined before.
