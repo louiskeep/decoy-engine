@@ -9,6 +9,29 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Changed (generation re-baselined to one route-independent core, 2026-10-18)
+
+Resident and streamed generation now run a single core (`generation/_streamed.py`),
+so a job produces the same data whether it streams to a sink or stays in memory. This
+replaces the earlier requirement that streamed generation match today's bytes exactly.
+The guarantee is now reproducibility (the same seed, config, and engine minor version
+give identical bytes) and route-independence, with the generation golden re-frozen to
+the accelerated output. The only observable output change: an all-null column and a
+zero-row table generated through the unified core now declare an Arrow `string` type
+instead of the previously inferred `null` type. Every generated value is unchanged, so
+`SEED_PROTOCOL_VERSION` is not bumped. A zero-row generated table in a mixed
+generate-then-mask job matches the full-frame oracle.
+
+### Added (bounded, reserve-before-allocate generation, 2026-10-18)
+
+`generate_tables_streamed(plan, *, sink, budget_bytes=None, ...)` generates an eligible
+plan in bounded batches into a transactional sink; `generate_tables` runs the same core
+into memory. A run-scoped budget ledger reserves memory before each stage allocates, so
+a column with no defensible memory bound is refused with `GenerationUnboundedError`
+before any provider runs, and a job that would exceed the ceiling raises
+`GenerationBudgetExceeded` instead of allocating past it. Eligible families: sequence,
+categorical, built-in faker, null_mask, and reference without cardinality repair.
+
 ### Changed (Arrow-native write-back for string FK keys in the mixed route, 2026-10-18)
 
 The mixed generate+mask route resolved foreign keys with pyarrow but then wrote the result
