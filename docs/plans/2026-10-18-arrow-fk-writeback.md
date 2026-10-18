@@ -29,30 +29,31 @@ mixed route fits the 100M 8GiB target. Integer keys keep the existing (correct) 
 ## 3. Design: Arrow-native write-back for STRING keys; integer keys unchanged
 
 SCOPE SPLIT (deliberate, risk-minimizing):
-- STRING fast-path (the realistic mixed-route case): write the resolved Arrow STRING array
-  back DIRECTLY via pyarrow, NO `to_pylist`, NO pandas round-trip. This is the entire 100M
-  memory win, because the mixed route's keys are strings.
+- STRING fast-path: applies to EVERY admitted mixed job whose FK keys are strings (not just
+  the F4 bench; the bench is representative because the `sequence` generator always emits
+  strings, but any string-keyed mixed job takes this path). Write the resolved Arrow STRING
+  array back DIRECTLY via pyarrow, NO `to_pylist`, NO pandas round-trip. This is the 100M
+  memory win for string-keyed jobs.
 - INTEGER fast-path: KEEP the existing `resolved.to_pylist()` -> `_write_back_fk_column`
   path unchanged. Integers are not the mixed-route 100M bottleneck (sequence keys are
   strings), and the integer value-dependent dtype (int32->int64 widening, uint64 edges) is
   exactly the fragile case the resolve plan-gate flagged; reproducing it in Arrow is not
   worth the risk for a non-bottleneck path. Document this split explicitly.
 
-STRING write-back dtype (must match the oracle BYTE-for-BYTE):
-- The oracle's string FK output dtype is value-dependent (the build's differential tests
-  pin: all-null string -> null type; large_string input -> string output; nonempty ->
-  string). Reproduce it from the resolved Arrow array WITHOUT Python:
-  - all-null (null_count == len) -> cast to the oracle's all-null string dtype (null type
-    per the differential oracle).
-  - otherwise -> cast to the oracle's nonempty string dtype (string / large_string per the
-    oracle; confirm which via the differential reference, do not guess).
-  Use `pc.cast` (or an Arrow array builder) directly on the resolved array. The resolved
-  array is already the right VALUES (from index_in/take/if_else over string inputs); only
-  its type needs to match the oracle's chosen string dtype.
-- CRITICAL byte-identity check: the oracle path produces its string column via a pandas
-  object round-trip. The Arrow-native cast MUST produce the identical Arrow IPC bytes
-  (schema + values). This is the main risk; the differential suite + F2 parity/sweep are
-  the guard. If any case diverges, the build STOPS and reports (do not weaken the oracle).
+STRING write-back dtype (PINNED rule, fold P2-3; Codex probed PyArrow 24 and matched oracle
+IPC bytes in all 20 string differential cases with exactly this):
+- empty OR all-null (null_count == len, incl. length 0) -> `pa.nulls(length)` (the typed
+  null array). Do NOT cast to `null` type via pc.cast: `large_string -> null` raises
+  ArrowNotImplementedError (probed). `pa.nulls(length)` is the supported, byte-matching path.
+- populated -> cast the resolved array to `pa.string()` (this covers large_string INPUT ->
+  string OUTPUT, matching the oracle's pandas-object round-trip; probed byte-identical).
+- The resolved array already holds the right VALUES (from index_in/take/if_else over string
+  inputs); only its type is normalized by the above. No to_pylist, no pandas.
+- CRITICAL byte-identity: the oracle produces its string column via a pandas object round
+  trip. The Arrow-native result MUST produce identical CANONICAL Arrow IPC bytes (schema +
+  values, using F2's metadata/chunk normalization). This is enforced by the acceptance
+  (next section), not left to "confirm against the oracle": the rule above is pinned, and
+  any case that still diverges STOPS the build.
 
 Shared production + shadow via the one function (do not fork). WARN / FAIL / REMAP paths
 unchanged (they act on the resolved array + orphan mask before write-back, already Arrow).
@@ -64,29 +65,46 @@ unchanged (they act on the resolved array + orphan mask before write-back, alrea
   unchanged path). No test changed to pass.
 - The build's differential suite (tests/unit/execution/test_arrow_fk_resolve_differential.py,
   105 cases) stays green, INCLUDING the string dtype cases (all-null string, large_string,
-  nonempty) now produced by the Arrow-native write-back. Extend it if the string write-back
-  adds observable dtype cases.
+  nonempty) now produced by the Arrow-native write-back. ADD a CANONICAL IPC byte comparison
+  to the string differential cases (fold P2-3): compare the Arrow-native write-back output to
+  the oracle output as normalized IPC bytes (F2's metadata/chunk normalization), not just
+  value equality, so a string-vs-large_string or null-type divergence is caught. Cover
+  empty, all-null, large_string input, and nonempty.
 - Shadow parity + de10 lossless typing green.
-- MEMORY: re-run the F4 10M mixed tier (string FK, 2M/8M, 1% orphan) under the external
-  supervisor. ACCEPTANCE: total external peak RSS <= 1000 MB at 10M (vs 1906MB with the
-  to_pylist write-back, and the F4 baseline 2009MB). Assert the numeric ceiling. The
-  remaining memory should be the Arrow carrier + output column only, no O(child-rows)
-  Python list. If it misses, STOP and report the number (do not move the target).
+- MEMORY (fold P2-4): re-run the F4 10M mixed tier (string FK, 2M/8M, 1% orphan) under the
+  external supervisor. The <= 1000 MB figure is an EMPIRICAL target to verify, not a derived
+  guarantee (removing the Python list removes ~600MB of the measured 1906MB, which predicts
+  ~1300MB; the string output column + Arrow concat may add back, so measure). ACCEPTANCE:
+  measure + assert whatever ceiling the run demonstrates, and it MUST be meaningfully below
+  the 1906MB to_pylist result AND the 2009MB baseline. If it does not drop meaningfully,
+  STOP and report (the Python list was supposed to be the dominant transient). Record the
+  number; set the asserted ceiling to the observed peak rounded up with a small margin.
 - ci-mirror clean; pytest-one both venvs (companion present + absent).
 
 ## 5. Risk
 
-The one real risk is string-dtype byte-identity between the Arrow-native cast and the
-oracle's pandas-object round-trip (string vs large_string, all-null -> null). Mitigated by:
-(a) keeping the integer path on the proven to_pylist write-back (no int dtype risk); (b) the
-105-case differential suite + F2 parity/sweep pinning exact dtype + IPC bytes; (c) STOP-on-
-divergence. If the string cast cannot match the oracle exactly, fall back to a CHUNKED
-to_pylist write-back (bounded batch size) as plan B -- still bounds memory, lower risk,
-noted here so the builder has a pre-approved fallback rather than improvising.
+The one real risk is string-dtype byte-identity between the Arrow-native write and the
+oracle's pandas-object round-trip. Mitigated by: (a) keeping the integer path on the proven
+to_pylist write-back (no int dtype risk); (b) the PINNED rule (§3: pa.nulls for empty/all
+null, cast to string otherwise) which Codex probed byte-identical on all 20 string cases;
+(c) the canonical-IPC differential acceptance + F2 parity/sweep; (d) STOP-on-divergence.
+
+FALLBACK (fold P1), pre-approved plan B with a COLUMN-WIDE dtype contract: if the pinned
+Arrow rule ever diverges for a case, use a CHUNKED to_pylist write-back:
+1. Decide the column-level output dtype ONCE from the WHOLE resolved array BEFORE chunking
+   (empty/all-null -> pa.nulls; populated -> string). The dtype is a column decision, not a
+   per-chunk one.
+2. Iterate fixed-size batches: to_pylist(batch) -> build that batch AS the pre-decided dtype
+   -> accumulate; the Python list is bounded to one batch. Concat the typed batches.
+3. Every batch uses the SAME step-1 dtype (no per-chunk drift), so the concatenated column
+   byte-matches the oracle while memory stays bounded to batch_size.
+Not expected to be needed for strings (the pinned rule is probed byte-identical); it exists
+so the builder has a specified fallback rather than improvising.
 
 ## 6. Gate chain
 
 Codex plan-gate (this doc) -> build (Sonnet) -> ci-mirror + F2 parity/sweep + differential
-+ shadow + de10 + the 10M <=1000MB memory assertion, both venvs -> dennis -> Codex final ->
+(incl. canonical-IPC string cases) + shadow + de10 + the 10M memory measure+assert, both
+venvs -> dennis -> Codex final ->
 merge (blocked by the auto-mode classifier -> Cam clears the push) -> then the GCP 100M
 mixed run. DOCUMENT: CHANGELOG + records note; refresh the engine graphify graph post-merge.
