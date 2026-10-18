@@ -59,8 +59,8 @@ distribution reimplementation). Masking's composite path is unaffected in VALUE 
   - SYMBOL GUARD at import: assert `faker.providers.date_time` exposes `change_year` and a
     `date_time_ad` on the Faker instance; raise a clear engine error if a Faker version
     moves/renames them (so a bump fails LOUDLY, never silently falling back to the clock).
-- Wire-in (fold P1-1, rev-4): there are EXACTLY TWO seams that reach faker.date_of_birth,
-  both must be wired to `anchored_date_of_birth`:
+- Wire-in (fold P1-1, rev-4; THIRD seam added rev-6 after build found it): there are THREE
+  seams that reach faker.date_of_birth, all must be wired to `anchored_date_of_birth`:
   1. `providers_v2/_faker_adapter.py::FakerAdapter._faker_call` (~L149): it does
      `method = getattr(fake, method_name); method(**kwargs)`. When `method_name ==
      "date_of_birth"`, call `anchored_date_of_birth(fake, **kwargs)` instead of the bound
@@ -75,6 +75,15 @@ distribution reimplementation). Masking's composite path is unaffected in VALUE 
      65)` positionally (see signature note above). Regression tests: a formula calling
      date_of_birth positionally AND one calling it by keyword, both producing non-null
      anchored dates.
+  3. `internal/faker_setup.py` reflected provider table (`get_faker_providers` /
+     `resolve_pool_provider`): a column with `faker_type: date_of_birth` resolves
+     date_of_birth through this reflected table, bypassing seams 1+2, and is still
+     wall-clock dependent (build confirmed it under two system dates; the F2 mixed sweep's
+     faker_date_of_birth families use it). Special-case `date_of_birth` in the reflected
+     table to route to `anchored_date_of_birth` (scope the change to that ONE provider; do
+     not alter other reflected providers). VERIFY the F2 mixed sweep stays byte-identical
+     (anchor == ORACLE_CLOCK date, so a frozen-clock sweep is unchanged; if it MOVES, STOP
+     and report -- it would mean the sweep relied on wall-clock dob, a latent bug).
   COVERAGE TEST (required, fold P2-new rev-5): patch the PROVIDER method that actually
   backs it -- `faker.providers.date_time.Provider.date_of_birth` (NOT `faker.Faker`, which
   has no class-level date_of_birth attribute, so monkeypatch.setattr would fail at setup;
