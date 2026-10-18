@@ -156,6 +156,17 @@ def _resolve_arrow(
             warnings = (orphan_fk_warning(edge, int(orphan_count)),)
     taken = pc.take(parent_c, indices)
     resolved = pc.if_else(orphan_mask, child_c, taken)
+    if pa.types.is_string(common) or pa.types.is_large_string(common):
+        # String keys: normalize the type in Arrow and skip the Python list and
+        # the pandas round-trip, which dominate memory at 100M rows. The oracle's
+        # pandas-object round-trip yields a null-typed column when empty/all-null
+        # and a plain `string` column otherwise (large_string input included).
+        resolved_arr = (
+            resolved.combine_chunks() if isinstance(resolved, pa.ChunkedArray) else resolved
+        )
+        if resolved_arr.null_count == len(resolved_arr):
+            return FkResolution(column=pa.nulls(len(resolved_arr)), warnings=warnings)
+        return FkResolution(column=resolved_arr.cast(pa.string()), warnings=warnings)
     # to_pylist (not the Arrow array): the write-back classifier recognises
     # Python ints exactly; an Arrow input would widen int32+null / uint64 to double.
     column = _write_back_fk_column(child_table, child_column, resolved.to_pylist())

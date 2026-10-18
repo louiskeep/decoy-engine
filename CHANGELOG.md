@@ -9,6 +9,16 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Changed (Arrow-native write-back for string FK keys in the mixed route, 2026-10-18)
+
+The mixed generate+mask route resolved foreign keys with pyarrow but then wrote the result
+back through a full Python list and a pandas round trip. For string keys the resolved column
+is now typed in Arrow directly (null array when empty or all null, otherwise `string`), with
+no Python list and no pandas. Output is byte-identical to the full-frame oracle. Integer keys
+keep the existing write-back. At 10M rows (2M parent, 8M child, 1% orphans) the external peak
+RSS fell from 2009 MB (baseline) and 1906 MB (Arrow resolve with a Python-list write-back) to
+about 1419 MB.
+
 ### Added (mixed generate+mask jobs mask on the Rust routes, 2026-10-17)
 
 Under `execution_mode="auto"` (the default), a job that generates some tables and masks others

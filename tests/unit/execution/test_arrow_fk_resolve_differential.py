@@ -11,6 +11,7 @@ import pytest
 import decoy_engine.execution._mixed_fk_bridge as bridge
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.relationships._graph import OrphanPolicy, RelationshipEdge
+from tests.parity._f2_mixed_support import ipc_bytes
 
 POLICIES = list(OrphanPolicy)
 U63 = 2**63 + 1
@@ -52,6 +53,9 @@ def _assert_same(parent: pa.Array, child: pa.Array, policy: OrphanPolicy, *, arr
     assert g.column.type == w.column.type
     assert g.column.to_pylist() == w.column.to_pylist()
     assert g.column.equals(w.column)
+    # Canonical IPC bytes (schema + values) so a string vs large_string or
+    # null-type divergence fails even when the values compare equal.
+    assert ipc_bytes(pa.table({"pid": g.column})) == ipc_bytes(pa.table({"pid": w.column}))
     assert g.warnings == w.warnings
 
 
