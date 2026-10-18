@@ -215,28 +215,37 @@ def _is_null_cell(raw: Any) -> bool:
 def _parse_anchor(raw: Any, position: int) -> pd.Timestamp:
     """Validate one non-null anchor against the supported grammar and range, then parse it."""
     ts: pd.Timestamp
+    failed = False
     if isinstance(raw, str):
         if _ISO_ANCHOR.match(raw) is None:
             raise WindowedDateError(
                 f"windowed_date anchor at row {position} is not an ISO date or datetime "
                 "without a timezone"
             )
+        # The pandas error text embeds the raw cell (e.g. "day is out of range for month:
+        # 2024-02-30"). Raise outside the except block so neither __cause__ nor __context__
+        # carries it into a formatted traceback.
         try:
             ts = pd.Timestamp(raw)
-        except (ValueError, OverflowError) as exc:
+        except (ValueError, OverflowError):
+            failed = True
+        if failed:
             raise WindowedDateError(
                 f"windowed_date anchor at row {position} is not a valid calendar date"
-            ) from exc
+            ) from None
     elif isinstance(raw, (pd.Timestamp, _dt.datetime, _dt.date)):
         # Typed date32 / timestamp anchors (and datetime64 mask-side columns) arrive as these.
         if getattr(raw, "tzinfo", None) is not None:
             raise WindowedDateError(f"windowed_date anchor at row {position} carries a timezone")
+        # Same leak as above: the pandas bounds error quotes the cell value.
         try:
             ts = pd.Timestamp(raw)
-        except (ValueError, OverflowError) as exc:
+        except (ValueError, OverflowError):
+            failed = True
+        if failed:
             raise WindowedDateError(
                 f"windowed_date anchor at row {position} is outside the supported range"
-            ) from exc
+            ) from None
     else:
         raise WindowedDateError(
             f"windowed_date anchor at row {position} has unsupported type {type(raw).__name__}"
@@ -251,15 +260,17 @@ def _parse_anchor(raw: Any, position: int) -> pd.Timestamp:
 
 
 def _shift_and_format(anchor: pd.Timestamp, offset: int, position: int) -> str:
+    # The pandas/strftime error text can quote the anchor or shifted date, so the cause is
+    # dropped (raised outside the except block: no __cause__, no __context__).
     try:
         out = anchor + pd.Timedelta(days=offset)
-        if not (SUPPORTED_MIN <= out <= SUPPORTED_MAX):
-            raise OverflowError
-        return str(out.strftime(_DATE_FMT))
-    except (OverflowError, ValueError) as exc:
-        raise WindowedDateError(
-            f"windowed_date result at row {position} is outside the supported range"
-        ) from exc
+        if SUPPORTED_MIN <= out <= SUPPORTED_MAX:
+            return str(out.strftime(_DATE_FMT))
+    except (OverflowError, ValueError):
+        pass
+    raise WindowedDateError(
+        f"windowed_date result at row {position} is outside the supported range"
+    ) from None
 
 
 def apply_windowed_date(
