@@ -78,3 +78,28 @@ None of the composite generators is reachable from `generate_tables` (the F0 mat
 its output is parity-preserved and unchanged. The other deterministic composites split one
 `derive()` latent into several slots, which the single-index kernel cannot reproduce without
 changing the seeded result, so they are declined. The composite F0 fixtures are not re-frozen.
+
+## Measured effect (1M rows, one column, resident, companion installed, 4-core devbox)
+
+Baseline is `origin/main` (3c1bbabb); each figure is the median of three runs of
+`run_generation`, one column per run, end to end including Faker pool construction.
+
+| Column | Before | After | Ratio |
+|---|---|---|---|
+| pooled Faker (`city`, 10_000 pool) | 0.59 s | 1.25 s | 0.47x |
+| categorical, uniform | 0.09 s | 0.73 s | 0.12x |
+| categorical, weighted 50/30/15/5 | 0.16 s | 0.74 s | 0.22x |
+| reference, random | 0.30 s | 0.73 s | 0.41x |
+| reference, weighted | 1.30 s | 0.75 s | 1.7x |
+| sequence (control, unchanged) | 0.23 s | 0.23 s | 1.0x |
+
+A mixed job of four pooled Faker columns and two categorical columns at 1M rows went from 3.55 s to
+7.24 s (0.49x).
+
+The compiled index kernel costs about 670 ns per row on one thread (194 ns per row on four
+threads, `native_threads=4`): it is a per-row HMAC-SHA256. The draws it replaces cost about 3 ns per
+row for NumPy `integers` (pooled Faker), about 100 to 130 ns per row for `random.choices`
+(categorical), and about 290 ns per row for the per-row `rng.choice` loop (reference). Only the
+weighted reference, which called `rng.choices(k=1)` once per row, gets faster. The kernel is the
+winning backend for masking because it replaces the per-row Python HMAC; against a vectorized
+RNG it is slower, with or without threads.
