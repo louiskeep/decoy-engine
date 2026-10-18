@@ -63,7 +63,23 @@ def test_refrozen_fixtures_record_their_previous_digest_and_reason() -> None:
         for table, previous in info["previous_tables"].items():
             assert previous != MANIFEST["fixtures"][fid]["tables"][table]
     unchanged = [f for f, e in MANIFEST["fixtures"].items() if e["status"] == "unchanged"]
-    assert set(unchanged) == set(MANIFEST["fixtures"]) - set(rf.REFROZEN)
+    assert set(unchanged) == set(MANIFEST["fixtures"]) - set(rf.REFROZEN) - set(rf.ADDED)
+    assert set(MANIFEST["added"]) == set(rf.ADDED)
+    for fid in rf.ADDED:
+        assert MANIFEST["fixtures"][fid]["status"] == "added"
+
+
+def test_every_slice_digest_is_a_real_earlier_digest_of_a_moved_table() -> None:
+    """`by_slice` records the digest each slice replaced; none may equal today's golden."""
+    for fid, info in MANIFEST["refrozen"].items():
+        for slice_name, previous in info.get("by_slice", {}).items():
+            for table, digest in previous.items():
+                assert len(digest) == 64, (fid, slice_name, table)
+                assert digest != MANIFEST["fixtures"][fid]["tables"][table], (fid, slice_name)
+    for fid, previous in rf.REFROZEN_PIPELINE.items():
+        for table, digest in previous.items():
+            assert digest != EXPECTED[fid][table]["table"], (fid, table)
+    assert set(MANIFEST["refrozen_outside_manifest"]) == set(rf.REFROZEN_PIPELINE)
 
 
 def test_envelope_digest_moves_with_each_pinned_input() -> None:

@@ -628,21 +628,13 @@ def test_reset_row_index_is_caught_through_the_seam(monkeypatch: pytest.MonkeyPa
 def test_restarted_selection_stream_is_caught_through_the_seam(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Mutate the persistent pooled selector so each batch re-creates `default_rng(seed)` (the
-    batch-local stream restart), with the 50_000-row fixture forced into two batches."""
+    """Mutate the pooled selector so each batch draws from row 0 again (the batch-local restart
+    of a position-keyed selection), with the 50_000-row fixture forced into two batches."""
     real_select = _faker_pool.PooledSelector.select
 
-    def restarting(self: _faker_pool.PooledSelector, size: int) -> Any:
-        self._rng = np.random.default_rng(self._seed_int)
-        return real_select(self, size)
+    def restarting(self: _faker_pool.PooledSelector, offset: int, size: int) -> Any:
+        return real_select(self, 0, size)
 
-    real_init = _faker_pool.PooledSelector.__init__
-
-    def init(self: _faker_pool.PooledSelector, values: Any, selection_seed: bytes) -> None:
-        real_init(self, values, selection_seed)
-        self._seed_int = int.from_bytes(selection_seed, "big")
-
-    monkeypatch.setattr(_faker_pool.PooledSelector, "__init__", init)
     monkeypatch.setattr(_faker_pool.PooledSelector, "select", restarting)
     monkeypatch.setattr(_streamed, "DEFAULT_BATCH_ROWS", 20_000)
     _trips(

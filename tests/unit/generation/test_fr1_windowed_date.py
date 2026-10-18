@@ -130,6 +130,7 @@ def test_typed_anchor_types_are_supported_by_the_helper(arrow_type: pa.DataType)
 
 # ---- parity: resident == streamed == legacy ---------------------------------------------------
 
+_DATETIME_ANCHORS = ["2020-02-29", "1999-12-31T23:59:59", "2001-05-06 07:08:09.123456"]
 PARITY_CFGS = {
     "plain": lambda: _cfg(60, DOB, _win(distribution="early", min_days=-20)),
     "null_mask_anchor": lambda: _cfg(
@@ -139,10 +140,30 @@ PARITY_CFGS = {
     "two_windows": lambda: _cfg(60, DOB, _win(name="a"), _win(name="b", max_days=400)),
     "datetime_strings": lambda: _cfg(
         40,
-        _anchor_values(["2020-02-29", "1999-12-31T23:59:59", "2001-05-06 07:08:09.123456"]),
+        _anchor_values(_DATETIME_ANCHORS),
         _win(),
     ),
 }
+
+
+# A categorical anchor draws from the index kernel in the core (FR3) and from random.choices in the
+# legacy path, so the two anchors differ by design. What must still agree is the windowed column: the
+# core's value equals the legacy whole-table windowed generator applied to the CORE's anchor.
+KERNEL_ANCHORED = {"datetime_strings"}
+
+
+def _assert_windowed_matches_the_whole_table_helper(cfg: dict[str, Any], table: pa.Table) -> None:
+    from decoy_engine.generation._grouped_windowed_generators import _windowed_date_generate
+    from decoy_engine.plan._seed import _normalize_job_seed_int
+
+    config = prepared_config(cfg)
+    col = next(c for c in config["tables"][0]["generate_columns"] if c["name"] == "ev")
+    anchors = table.column("dob").to_pylist()
+    assert set(anchors) <= set(_DATETIME_ANCHORS)
+    want = _windowed_date_generate(
+        col, len(anchors), _normalize_job_seed_int(config), {"dob": anchors}
+    )
+    assert table.column("ev").to_pylist() == want
 
 
 @pytest.mark.parametrize("name", PARITY_CFGS)
@@ -160,8 +181,11 @@ def test_resident_streamed_and_legacy_agree(name: str, tmp_path: Path) -> None:
     assert fingerprints(whole) == fingerprints(cut) == fingerprints(singles)
     assert fingerprints(whole) == fingerprints(streamed)
     cols = whole["w"].column_names
-    for col in cols:
-        assert whole["w"].column(col).to_pylist() == legacy["w"].column(col).to_pylist(), col
+    if name in KERNEL_ANCHORED:
+        _assert_windowed_matches_the_whole_table_helper(cfg, whole["w"])
+    else:
+        for col in cols:
+            assert whole["w"].column(col).to_pylist() == legacy["w"].column(col).to_pylist(), col
     for tbl in (whole, cut, singles, streamed):
         assert tbl["w"].schema.field(cols[-1]).type == pa.string()
 

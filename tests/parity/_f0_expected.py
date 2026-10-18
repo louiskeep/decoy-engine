@@ -19,6 +19,15 @@ digests of those two tables moved; every column value digest and every other fix
 The change passed the semantic gate in `_fr0_refreeze.py`; its manifest is
 `tests/fixtures/phase_f_fr0/manifest.json`.
 
+Re-baselined 2026-10-18 (Phase F FR3): the unified core draws uniform and weighted selections from
+the shared HMAC index kernel (`generation/_kernel_select.py`) instead of a stateful Python/NumPy
+RNG, so the moved values are exactly the selection columns the core runs: the `categorical` table
+(all three columns), the three `pooled_faker` columns, `nulls.cat_partial` and
+`mixed_fk_generated_parent.people.id` (with the orphan warning count that depends on it). Pool
+construction is unchanged (the pooled digests of the pools themselves are identical), the
+sequence, per-row Faker, legacy-path and composite fixtures are byte-unchanged, and `reference_core`
+is new. The change passed the semantic gate in `_fr0_refreeze.py`; see the manifest.
+
 Shape: ``EXPECTED[fixture_id][table_name]`` is a `_f0_canonical.table_fingerprint` dict.
 ``POOL_SEAM`` is the generation pooled-faker seam (`_f0_seams.PoolCall.signature`) for the
 `pooled_faker` fixture, one entry per pooled column in declared order.
@@ -46,11 +55,11 @@ EXPECTED: dict[str, dict[str, dict[str, Any]]] = {
             "schema": "8fcbb11a0ef84792f501201461c155a60257ba6a2d3b5c25cbde6a07b6e54492",
             "rows": 40,
             "columns": [
-                ("weighted", "1758720cdf34a626b572af6973b6bb835c6181e38c214fff2075b61b8194cf8f"),
-                ("uniform", "d202835d414aae22c5da5820e6136f9e6564552ea1e921bddbe52003637fba43"),
-                ("ints", "aa8d85f74d5ce432f8c411e97572bd6a2254bd8855ac7cff30044c62b28ef1e5"),
+                ("weighted", "db91f259cb2bfc238cf42d40f3bd1e9eb098390b214509350fda21ef4f0212a9"),
+                ("uniform", "cae6411b97b7cc28982b266a0d359b4ed711de4cc39d942c82daa3386d530d6d"),
+                ("ints", "81307b44dd0d43ac2c88ab1d5a8c0c141cb39b357c279353c87eecd07331c357"),
             ],
-            "table": "4b55d8edeba3b78e55c4df7eed549e6b7e7e00a5ec9ca69cd35c843eea6aa317",
+            "table": "4aee156c1275e5295a42ba0976f9c0f85365ded5e1d5ac543217db77c0ec23de",
         }
     },
     "pooled_faker": {
@@ -58,11 +67,11 @@ EXPECTED: dict[str, dict[str, dict[str, Any]]] = {
             "schema": "95da74638c7a0e193c0ae6cc86b32f3668f20ef216543e59ad0b144f5ce7d95e",
             "rows": 50000,
             "columns": [
-                ("city", "fce445cffb8ae3274e9c1c5f7fc61a3d9b42ab10225e8a4002c6c9127d8aa788"),
-                ("last", "b5c2c38e35d3f3ee73719b7cdd9780bae2e7bf6c382d8ee874fb83c7b9a666dc"),
-                ("street", "5c0b043324339261ae9c73fb5e4cb4b0be351be5e81df0716bac9b49a2b87494"),
+                ("city", "6bcab694336edf1fcd432fa2cd2cdece764d597072e6dfd662e3b16ca0912b6e"),
+                ("last", "105fef543ab3e3c0d130692f0642dcf832cbfd696135fb359a02cbfac93d5406"),
+                ("street", "527021a6ea012dd636f10ba3212a23ab8a51ec222b193da9357ddd78d24ad08d"),
             ],
-            "table": "7515cc948560fda6092680426cac4ff73a5cba3047cf79a07c446262654aa0cd",
+            "table": "f088a1f39a9626385f53478c38796389741abfe02738a6d562aa3d114bbafd0d",
         }
     },
     "live_faker": {
@@ -174,6 +183,29 @@ EXPECTED: dict[str, dict[str, dict[str, Any]]] = {
             "table": "81619e14f5bc9f70a517ca6e21d4ff21080b701dd15494f9123f83f8e98861ef",
         },
     },
+    "reference_core": {
+        "rc_parent": {
+            "schema": "abd9d5a2cbbc42ae3009aaaff8a8ab85ed3c8ec8638968e89af709f108418ad2",
+            "rows": 6,
+            "columns": [
+                ("pkey", "b662178b738fbc84539eb408f2dadeb873aa1d87948837efa16fdb6579646d8e")
+            ],
+            "table": "c8a64aaae6ad372fd0ff32fb975077fd5a64f8be2026904437002019fb3a7b93",
+        },
+        "rc_child": {
+            "schema": "71ea56474e5610bab4b36e30bb5386029c8a9d6bab4b20597f4cd14dd573fcfc",
+            "rows": 14,
+            "columns": [
+                ("cid", "c15e5ad0b6fc9c50eb2e9dc73c00215b98ed3f0a0dbe1667a596aae05caa0c36"),
+                ("r_random", "3f1989ade243cc40bffbacaf56a1f8ae655acdd7529ff3e1b350c72a5fe3aa65"),
+                ("r_seq", "72e08fc059a77b12a214f5b533ce2299fcf79d4edc9092086f9f3042c743e5c4"),
+                ("r_weighted", "09326b5697c04f1c9041d98cc46499627ca890cbde529bbea95fe9458787c442"),
+                ("r_mismatch", "08bc945c24ef029b550cc552b75dde35ee0521556da1802f60d075e4b10c0ca8"),
+                ("r_null", "f3cd914c8899c21777dd918152af7b593428105cdce7688205d04ca82bcda48d"),
+            ],
+            "table": "9c4c864044530ece819e21a4453632da7633e1d75e28d34245db2e2f5c25906d",
+        },
+    },
     "derived_aggregate": {
         "agg": {
             "schema": "3f75e66c95c14a4d4e3d68e2892d0564a6d4d2f822d51f6c742052c286a9d567",
@@ -236,7 +268,7 @@ EXPECTED: dict[str, dict[str, dict[str, Any]]] = {
             "rows": 30,
             "columns": [
                 ("seq_partial", "490f0cbb0e8ac47131fceb444a16c6c677abd8840e30eaa61d24aff9a2b4bdb6"),
-                ("cat_partial", "3364fee8d96f7a7150178fbdf46dd7449e0aa763f729be97fc9cf66c80af2248"),
+                ("cat_partial", "5ca381f5b27651a899fa8166c2cf7775aa4cbead3a49fe7eb258b87a07baf0a8"),
                 (
                     "faker_partial",
                     "b4fa6c819d8a337677184f97856ca9cd1b353c24f86f0b8bc9885bb37f1d81d0",
@@ -246,7 +278,7 @@ EXPECTED: dict[str, dict[str, dict[str, Any]]] = {
                     "265822d774b2309b02cae4e9497a6d4d157cf60aa317e02cc6b04a3fa94a81e6",
                 ),
             ],
-            "table": "232902afc3faf49c772ad7bd6cddaba7846f58599e9e1c5b8c7f533d229cd271",
+            "table": "08b0eea8b3c4996e95377b583cf6ae2799e0d8d16e14a9fef20ee3667245c795",
         },
         "empty": {
             "schema": "c0cc89f59ad1792bfd3e6ab9eef47a610f70e3264bfcb4591ced62ec7de299bf",
@@ -260,10 +292,10 @@ EXPECTED: dict[str, dict[str, dict[str, Any]]] = {
             "schema": "9a31618979c4ed6d06e64e9f49b1f3257b81cb47daf4cd9a4cbec30d93b3a871",
             "rows": 5,
             "columns": [
-                ("id", "ae455a2530ee14a2609557a48555d84c5a7706b099c5b1020dcde70604639abc"),
+                ("id", "d21c8dd78654e6e333655d2c04eff512a9e7988d04573c6518d9f36929fc4433"),
                 ("nm", "f94a9fc0b731455aa8af03ce3f45dd167c316c991ac5558be4ce2f8a928c88a4"),
             ],
-            "table": "14acfc63f1435997498fa3f7b1e357d4857dcf40213e470ca624b2d346be624b",
+            "table": "f2c9f8dc23ddc00ed740da69d622afe0b6b881908ca334028ff2e4a30e86ff7b",
         },
         "accounts": {
             "schema": "d5655e336eed516a1c449bef81b0160f0e6abc5d0ae81a3e824099d0ed55db65",
@@ -280,9 +312,9 @@ EXPECTED: dict[str, dict[str, dict[str, Any]]] = {
             "columns": [
                 ("code", "1baa12215435da99765211c24194bb15b4a6b333fa6edf6fe2392494b5b33735"),
                 ("column", "8fb9598bfb9d7db465da2ecf20f71c9af6ef1dd5aed424eec13d9c56f6608aa8"),
-                ("orphan_rows", "5b8efbb6b2909b1ab335ad3ff9bb8d5d00031363a8cd1a0578af4b79977f4838"),
+                ("orphan_rows", "736a3bc70f6975ff17290c365d29357fa2ab643f732880617bee06a08a40b9ec"),
             ],
-            "table": "10053c6e5c1faf58b1e5199bd71fa48dceba5afeca8bc6e06f24d2baa9acef20",
+            "table": "b5f06070ab849888e5d38aa3332cae7813762ad638e9b954524e104a6a7626ba",
         },
     },
     "composite_person_deterministic": {
@@ -345,9 +377,10 @@ POOL_SEAM: list[dict[str, Any]] = [
         "locale": None,
         "pool_size": 10000,
         "build_seed": "5facd2dcd2a5e53b",
-        "selection_seed": "ebdaa835ab9cfd18",
+        "selection": "kernel",
+        "selection_seed": "f8f81ba6b06359963338a485f9aec0accace3f5e02c124165e7e0814af0dd97b",
         "pool_digest": "a2d52e514cf59ec73caae48899b3bb96a017f6bb83372ef7b7e4f71555efcb1f",
-        "sampled_digest": "5e4b1fd14ca80872f889095cd2d4f5dae245f014ae201aefa22d3e07d642331e",
+        "sampled_digest": "1c4e071d93a0721bc0af04541e64b7184309df54386a2496aeabe5e801bf0ca2",
     },
     {
         "faker_type": "last_name",
@@ -356,9 +389,10 @@ POOL_SEAM: list[dict[str, Any]] = [
         "locale": "de_DE",
         "pool_size": 10000,
         "build_seed": "82446ead7bf203cc",
-        "selection_seed": "dc4929348d54853a",
+        "selection": "kernel",
+        "selection_seed": "0e3dd2421d64a98a96d8f4bc6f4102314bee650a5aa4e183e92877df4cdac134",
         "pool_digest": "df902d131f89027059cfa6ec3f488d586bce610272f8d135a7b466df5c5dd16f",
-        "sampled_digest": "8b4a5ee6b71a13573843fca0d3f56c5397de23104c8854d046f1d3a832b21d24",
+        "sampled_digest": "e7bb933e879c3faa08feadab8b876dcc717b1b11d90437cb008f6c9b0fe0fe05",
     },
     {
         "faker_type": "street_name",
@@ -367,8 +401,9 @@ POOL_SEAM: list[dict[str, Any]] = [
         "locale": "fr_FR",
         "pool_size": 10000,
         "build_seed": "029853f11ffd739a",
-        "selection_seed": "fae2a64b1d7932ce",
+        "selection": "kernel",
+        "selection_seed": "c1649fcfcc5c2f86e5d6d2a4325e6b9f402e13990ee07a0cff173a477985277c",
         "pool_digest": "c6d58ec427bb9b510876e110da27cc64c63e986a3fa307ff244a19285252fbb0",
-        "sampled_digest": "2e86f4c4dd172070c7c2344f593eb82ee998b97775c6900806473616d2f0b6b0",
+        "sampled_digest": "c371d8f8f55e462bf7491dac6b1d6a9635f878f0b38da887acb3e395e3e3f2a4",
     },
 ]

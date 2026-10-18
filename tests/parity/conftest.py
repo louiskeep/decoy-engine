@@ -1,4 +1,4 @@
-"""Run every F0 oracle module (and the FR0 re-baseline modules that reuse it) under the frozen Faker clock (see `_f0_fixtures.ORACLE_CLOCK`).
+"""Run every F0 oracle module (and the FR0/FR3 re-baseline modules that reuse it) under the frozen Faker clock (see `_f0_fixtures.ORACLE_CLOCK`).
 
 ``F0_DOB_ANCHOR_CHECK`` switches the freeze off for the dob-anchor acceptance runs
 (tests/unit/generation/test_dob_anchor.py documents the procedure):
@@ -24,7 +24,7 @@ def _f0_frozen_faker_clock(
     request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
 ) -> Iterator[None]:
     module = request.module.__name__.rsplit(".", 1)[-1]
-    if not module.startswith(("test_phase_f_f0_", "test_phase_f_fr0_")):
+    if not module.startswith(("test_phase_f_f0_", "test_phase_f_fr0_", "test_phase_f_fr3_")):
         yield
         return
     mode = os.environ.get("F0_DOB_ANCHOR_CHECK", "")

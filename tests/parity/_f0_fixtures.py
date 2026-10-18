@@ -433,6 +433,39 @@ def cfg_reference() -> dict[str, Any]:
     return config([table("ref_child", 14, child_cols), table("ref_parent", 12, parent_cols)])
 
 
+def cfg_reference_core(child_rows: int = 14) -> dict[str, Any]:
+    """`reference` columns the unified core can run (no cardinality repair), every distribution.
+
+    The parent key is a sequence so the key list is fixed and the weights line up with it.
+    Added with the FR3 kernel selection: `cfg_reference` holds a repaired column, so it takes the
+    legacy path and cannot pin the core's reference selection.
+    """
+    parent_cols: list[dict[str, Any]] = [
+        {"name": "pkey", "type": "sequence", "start": 1, "prefix": "P-"}
+    ]
+
+    def ref(name: str, distribution: str, **extra: Any) -> dict[str, Any]:
+        return {
+            "name": name,
+            "type": "reference",
+            "reference_table": "rc_parent",
+            "reference_column": "pkey",
+            "distribution": distribution,
+            **extra,
+        }
+
+    child_cols: list[dict[str, Any]] = [
+        {"name": "cid", "type": "sequence", "start": 1},
+        ref("r_random", "random"),
+        ref("r_seq", "sequential"),
+        ref("r_weighted", "weighted", weights=[1, 2, 3, 4, 5, 6]),
+        # A weight list of the wrong length falls back to uniform, as the whole-table path does.
+        ref("r_mismatch", "weighted", weights=[1, 2]),
+        ref("r_null", "random", null_probability=0.3),
+    ]
+    return config([table("rc_child", child_rows, child_cols), table("rc_parent", 6, parent_cols)])
+
+
 def cfg_derived_aggregate() -> dict[str, Any]:
     return config(
         [
@@ -792,6 +825,13 @@ FIXTURES: tuple[Fixture, ...] = (
     ),
     Fixture("derived", ENTRY_GENERATE_TABLES, "derived", _gt(cfg_derived)),
     Fixture("reference", ENTRY_GENERATE_TABLES, "reference", _gt(cfg_reference)),
+    Fixture(
+        "reference_core",
+        ENTRY_GENERATE_TABLES,
+        "reference",
+        _gt(cfg_reference_core),
+        note="no cardinality repair, so the unified core (kernel selection) runs it",
+    ),
     Fixture(
         "derived_aggregate", ENTRY_GENERATE_TABLES, "derived_aggregate", _gt(cfg_derived_aggregate)
     ),

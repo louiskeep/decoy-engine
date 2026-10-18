@@ -1,12 +1,15 @@
 {
+  "added": {
+    "reference_core": "FR3: pins the unified core's reference selection (random, sequential, weighted, mismatched-weights fallback, null mask); cfg_reference holds a repaired column and takes the legacy path"
+  },
   "engine_minor": "0.7",
   "fixtures": {
     "categorical": {
       "envelope_digest": "47ee3b519e9fb093bdfbf0a15b0e57d9c6037ccfffd7cdbc6d1c98dce0539b7f",
       "excluded_columns": [],
-      "status": "unchanged",
+      "status": "refrozen",
       "tables": {
-        "cat": "4b55d8edeba3b78e55c4df7eed549e6b7e7e00a5ec9ca69cd35c843eea6aa317"
+        "cat": "4aee156c1275e5295a42ba0976f9c0f85365ded5e1d5ac543217db77c0ec23de"
       }
     },
     "conditional": {
@@ -79,15 +82,15 @@
       "status": "refrozen",
       "tables": {
         "empty": "2445c1c0db89b65b0be8c6c6f88cf5befd76dd3251e7a8f9701fffe9db6872fd",
-        "nulls": "232902afc3faf49c772ad7bd6cddaba7846f58599e9e1c5b8c7f533d229cd271"
+        "nulls": "08b0eea8b3c4996e95377b583cf6ae2799e0d8d16e14a9fef20ee3667245c795"
       }
     },
     "pooled_faker": {
       "envelope_digest": "66c2f9a17e9565d28af0df57ab5b269f9af2d863c35cf0a75bf8fa2a1bcb1df6",
       "excluded_columns": [],
-      "status": "unchanged",
+      "status": "refrozen",
       "tables": {
-        "pooled": "7515cc948560fda6092680426cac4ff73a5cba3047cf79a07c446262654aa0cd"
+        "pooled": "f088a1f39a9626385f53478c38796389741abfe02738a6d562aa3d114bbafd0d"
       }
     },
     "reference": {
@@ -97,6 +100,15 @@
       "tables": {
         "ref_child": "81619e14f5bc9f70a517ca6e21d4ff21080b701dd15494f9123f83f8e98861ef",
         "ref_parent": "5bd260410af58db6e28aa25502fe8865da080149765f8f97fa1e6bb839bb2371"
+      }
+    },
+    "reference_core": {
+      "envelope_digest": "bb763644832de302328099ed335dcc7c950f6794094d849ad5afba2b01d741a7",
+      "excluded_columns": [],
+      "status": "added",
+      "tables": {
+        "rc_child": "9c4c864044530ece819e21a4453632da7633e1d75e28d34245db2e2f5c25906d",
+        "rc_parent": "c8a64aaae6ad372fd0ff32fb975077fd5a64f8be2026904437002019fb3a7b93"
       }
     },
     "referenced_formula": {
@@ -126,12 +138,45 @@
   },
   "re_frozen_on": "2026-10-18",
   "refrozen": {
+    "categorical": {
+      "by_slice": {
+        "FR3": {
+          "cat": "4b55d8edeba3b78e55c4df7eed549e6b7e7e00a5ec9ca69cd35c843eea6aa317"
+        }
+      },
+      "previous_tables": {
+        "cat": "4b55d8edeba3b78e55c4df7eed549e6b7e7e00a5ec9ca69cd35c843eea6aa317"
+      },
+      "reason": "FR3: uniform and weighted selection moved from a stateful Python/NumPy RNG to the shared HMAC index kernel keyed on the global row (generation/_kernel_select.py); distribution preserved (semantic gate: marginals against the configured weights / pool multiplicities); all three columns (weighted, uniform, ints) moved"
+    },
     "nulls": {
+      "by_slice": {
+        "FR0": {
+          "nulls": "85588c66a32d807e060337af1abc3c12a9369902c91a6528943b81c02ceb0855"
+        },
+        "FR3": {
+          "nulls": "232902afc3faf49c772ad7bd6cddaba7846f58599e9e1c5b8c7f533d229cd271"
+        }
+      },
       "previous_tables": {
         "empty": "6fb55c2d1210f8fb8e4ac79c3ff6fca06158df62f07e768834f439eaec685322",
         "nulls": "85588c66a32d807e060337af1abc3c12a9369902c91a6528943b81c02ceb0855"
       },
-      "reason": "schema only: the all-null categorical column and the zero-row table now carry their declared string type instead of Arrow's inferred null type; every value digest is unchanged"
+      "reason": "FR0: schema only: the all-null categorical column and the zero-row table now carry their declared string type instead of Arrow's inferred null type; every value digest is unchanged. FR3: uniform and weighted selection moved from a stateful Python/NumPy RNG to the shared HMAC index kernel keyed on the global row (generation/_kernel_select.py); distribution preserved (semantic gate: marginals against the configured weights / pool multiplicities); only cat_partial moved"
+    },
+    "pooled_faker": {
+      "by_slice": {
+        "FR3": {
+          "pooled": "7515cc948560fda6092680426cac4ff73a5cba3047cf79a07c446262654aa0cd"
+        }
+      },
+      "previous_tables": {
+        "pooled": "7515cc948560fda6092680426cac4ff73a5cba3047cf79a07c446262654aa0cd"
+      },
+      "reason": "FR3: uniform and weighted selection moved from a stateful Python/NumPy RNG to the shared HMAC index kernel keyed on the global row (generation/_kernel_select.py); distribution preserved (semantic gate: marginals against the configured weights / pool multiplicities); the three pooled columns moved, the 10_000-value pools themselves (Python construction) are byte-identical"
     }
-  }
+  },
+  "refrozen_outside_manifest": [
+    "mixed_fk_generated_parent"
+  ]
 }

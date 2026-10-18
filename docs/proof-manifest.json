@@ -231,22 +231,22 @@
       {
         "event_id": "2",
         "actor": "waterscassandra",
-        "action": "export"
+        "action": "view"
       },
       {
         "event_id": "3",
         "actor": "aewing",
-        "action": "edit"
+        "action": "delete"
       },
       {
         "event_id": "4",
         "actor": "christopher72",
-        "action": "view"
+        "action": "edit"
       },
       {
         "event_id": "5",
         "actor": "fbell",
-        "action": "edit"
+        "action": "view"
       }
     ],
     "invariants": [

@@ -16,10 +16,11 @@ label                      where it happens
 =========================  ================================================================
 numpy_selection            `PoolSampler.sample` non-deterministic REUSE: `np.random.default_rng`
                            (`pool/_sampler.py`), reached by pooled `faker` columns
-compiled_index_selection   `_sampler._derive_pool_indices` -> compiled `derive_index_batch`
-                           (`pool/_sampler.py:49` loader), deterministic sampler calls only
-python_index_reference     the same function when the compiled kernel is absent or declines the
-                           value class (`_sampler.py:135-157` reference fallback)
+compiled_index_selection   the compiled `derive_index_batch` (`pool/_sampler.py` loader): the
+                           deterministic sampler, and (FR3) the unified core's position-keyed
+                           uniform / weighted selections (`_kernel_select.PositionalIndexer`)
+python_index_reference     the byte-identical Python reference kernel, picked by the same lookup
+                           when the companion is absent (or for a value class it declines)
 python_rng_selection       `random.Random.choices` / `.choice` (categorical `synthesize.py:377`,
                            reference `:588-604`)
 composite_direct_derive    `derive(...)` + modulo in `composite/_person.py:171` and
@@ -35,6 +36,11 @@ generator (`synthesize._generate_column`, plans with an ineligible column) and t
 persistent per-column streams (`_column_streams`, eligible plans). The witness hooks both and
 labels a column the same way whichever path produced it; the core hooks wrap each stream's
 `next_batch`, so a column's events and final values are accumulated across batches.
+
+FR3 moved the core's uniform and weighted selections onto the index kernel. The witness records
+each kernel call's RESULT under the column that was being drawn, reads the stream's choice list
+and indexer, and requires every live cell to equal `choices[index]`. A `kernel_shift` skews the
+kernel's result so a consumer that drops the result and recomputes cannot reproduce the column.
 
 Two further sub-paths are recorded but are NEVER folded into a selection backend:
 `pool_construction` (provider calls inside `build_pool_values`) and `null_mask` (the
@@ -62,7 +68,13 @@ import pandas as pd
 import pyarrow as pa
 import pytest
 
-from decoy_engine.generation import _column_streams, _faker_pool, _streamed, synthesize
+from decoy_engine.generation import (
+    _column_streams,
+    _faker_pool,
+    _kernel_select,
+    _streamed,
+    synthesize,
+)
 from decoy_engine.generation.pool import _sampler
 from decoy_engine.generation.pool._errors import GenerationError
 from decoy_engine.generation.pool._sampler import PoolSampler
@@ -220,6 +232,16 @@ class _ObservedStream:
         return values
 
 
+class _ColumnSink:
+    """List-like sink that files each kernel event under the column being drawn."""
+
+    def __init__(self, outer: EndToEndWitness) -> None:
+        self._outer = outer
+
+    def append(self, event: Event) -> None:
+        self._outer._record(event.label, event.payload)
+
+
 class EndToEndWitness:
     """Installs recording hooks around `generate_tables` and classifies every generated column.
 
@@ -233,9 +255,18 @@ class EndToEndWitness:
         *,
         marking: bool = False,
         attribution: Callable[[ColumnKey], ColumnKey] | None = None,
+        kernel_shift: int = 0,
+        compiled: Any = "real",
+        compiled_evidence: str = REAL,
     ) -> None:
         self.mp = mp
         self.marking = marking
+        self.kernel_shift = kernel_shift
+        # "real": whatever the loader finds (None without the companion, so the reference runs).
+        self._compiled = _sampler._compiled_index_kernel() if compiled == "real" else compiled
+        self._compiled_evidence = compiled_evidence
+        self.choices: dict[ColumnKey, list[Any]] = {}
+        self.indexers: dict[ColumnKey, Any] = {}
         self.attribution = attribution or (lambda k: k)
         self.events: dict[ColumnKey, list[Event]] = {}
         self.kinds: dict[ColumnKey, str] = {}
@@ -302,6 +333,7 @@ class EndToEndWitness:
                 stream = real_make(col, **kw)
             finally:
                 outer._current = None
+            outer._capture_selection(key, stream)
             return _ObservedStream(outer, key, stream)
 
         mp.setattr(_streamed, "make_column_stream", make_stream)
@@ -322,28 +354,31 @@ class EndToEndWitness:
 
         mp.setattr(_column_streams, "get_faker_providers", core_providers)
 
-        # The persistent pooled selector: `default_rng` is seen at creation, each batch's result
-        # at selection (the legacy sampler records one `sample` event, the core one per batch).
-        mp.setattr(
-            _faker_pool, "np", _NpProxy(lambda label, payload: outer._record(label, payload))
-        )
-        real_select = _faker_pool.PooledSelector.select
+        # The index kernel: every lookup the core's selections make returns a recorder that logs
+        # the (optionally skewed) result under the column being drawn.
+        from decoy_engine.execution.native._index_ext import reference_index_derivation
 
-        def select(selector: _faker_pool.PooledSelector, size: int) -> Any:
-            out = real_select(selector, size)
-            outer._record(
-                NUMPY_SELECTION,
-                {
-                    "stage": "sample",
-                    "result": list(out),
-                    "pool_size": len(selector._values),
-                    "n": size,
-                    "deterministic": False,
-                },
+        sink = _ColumnSink(outer)
+        compiled_recorder = (
+            MarkingKernel(
+                self._compiled,
+                evidence=self._compiled_evidence,
+                backend=COMPILED_INDEX,
+                sink=sink,  # type: ignore[arg-type]
+                shift=self.kernel_shift,
             )
-            return out
-
-        mp.setattr(_faker_pool.PooledSelector, "select", select)
+            if self._compiled is not None
+            else None
+        )
+        reference_recorder = MarkingKernel(
+            reference_index_derivation(),
+            evidence=REAL,
+            backend=PYTHON_INDEX_REFERENCE,
+            sink=sink,  # type: ignore[arg-type]
+            shift=self.kernel_shift,
+        )
+        mp.setattr(_sampler, "_compiled_index_kernel", lambda: compiled_recorder)
+        mp.setattr(_sampler, "_reference_index_kernel", lambda: reference_recorder)
 
         # Pool construction (kept apart from selection) and optional marking.
         real_build = _faker_pool.build_pool_values
@@ -413,6 +448,20 @@ class EndToEndWitness:
         mp.setattr(ColumnGenerator, "_eval_formula_inline", inline)
         mp.setattr(ColumnGenerator, "fill_referenced_formula_column", fill)
 
+    def _capture_selection(self, key: ColumnKey, stream: Any) -> None:
+        """Remember the choice list and indexer a kernel-selected stream draws from."""
+        inner = stream._inner if isinstance(stream, _column_streams.NullMaskedStream) else stream
+        if isinstance(inner, _column_streams.CategoricalStream):
+            choices, indexer = inner._choices, inner._indexer
+        elif isinstance(inner, _column_streams.ReferenceStream):
+            choices, indexer = inner._vals, inner._indexer
+        elif isinstance(inner, _column_streams.PooledFakerStream):
+            choices, indexer = list(inner._selector._values), inner._selector._indexer
+        else:
+            return
+        if indexer is not None:
+            self.choices[key], self.indexers[key] = choices, indexer
+
     # -- classification ----------------------------------------------------------------------
 
     def classify(self, tables: dict[str, pa.Table]) -> dict[ColumnKey, ColumnReport]:
@@ -462,6 +511,11 @@ class EndToEndWitness:
                 raise WitnessError(f"{key}: formula results were not what the column holds")
             selection.add(FORMULA_EXPRESSION)
 
+        kernel = [e for e in events if e.label in (COMPILED_INDEX, PYTHON_INDEX_REFERENCE)]
+        if kernel:
+            self._check_kernel(key, kernel, final, live_positions())
+            selection.update({e.label for e in kernel})
+
         np_events = [e for e in events if e.label == NUMPY_SELECTION]
         if np_events:
             self._check_numpy(key, events, np_events, final, live_positions())
@@ -473,7 +527,32 @@ class EndToEndWitness:
             selection.add(NO_SELECTION)
         if not selection:
             raise WitnessError(f"{key}: kind {kind!r} produced no observable backend event")
-        return ColumnReport(key, kind, frozenset(selection), frozenset(labels & SUBPATH_LABELS))
+        evidence = STAND_IN if any(e.payload.get("evidence") == STAND_IN for e in kernel) else REAL
+        return ColumnReport(
+            key, kind, frozenset(selection), frozenset(labels & SUBPATH_LABELS), evidence
+        )
+
+    def _check_kernel(
+        self, key: ColumnKey, kernel: list[Event], final: list[Any], live: list[int]
+    ) -> None:
+        consumed = [e for e in kernel if "result" in e.payload]
+        choices, indexer = self.choices.get(key), self.indexers.get(key)
+        if not consumed or choices is None or indexer is None:
+            raise WitnessError(f"{key}: kernel selection without a recorded result or indexer")
+        drawn = [v for e in consumed for v in e.payload["result"]]
+        if isinstance(indexer, _kernel_select.WeightedIndexer):
+            picked = np.searchsorted(indexer.thresholds, np.asarray(drawn, dtype=np.int64), "right")
+            indices = [int(i) for i in picked]
+        else:
+            indices = [int(i) for i in drawn]
+        if len(indices) != len(final):
+            raise WitnessError(f"{key}: {len(indices)} kernel draws for {len(final)} rows")
+        if not all(_same(final[i], choices[indices[i]]) for i in live):
+            raise WitnessError(f"{key}: the column does not hold the kernel-selected values")
+        if self.marking and key in self.pool_values:
+            decoded = [decode_mark(final[i]) for i in live]
+            if any(d is None for d in decoded) or decoded != [indices[i] for i in live]:
+                raise WitnessError(f"{key}: marked indices differ from the kernel's result")
 
     def _check_numpy(
         self,
@@ -523,17 +602,31 @@ def end_to_end(
     *,
     marking: bool = False,
     attribution: Callable[[ColumnKey], ColumnKey] | None = None,
+    kernel_shift: int = 0,
+    compiled: Any = "real",
+    compiled_evidence: str = REAL,
 ) -> Iterator[EndToEndWitness]:
-    w = EndToEndWitness(mp, marking=marking, attribution=attribution)
+    w = EndToEndWitness(
+        mp,
+        marking=marking,
+        attribution=attribution,
+        kernel_shift=kernel_shift,
+        compiled=compiled,
+        compiled_evidence=compiled_evidence,
+    )
     w.install()
     yield w
 
 
 def classify_columns(
-    mp: pytest.MonkeyPatch, run: Callable[[], dict[str, pa.Table]], *, marking: bool = False
+    mp: pytest.MonkeyPatch,
+    run: Callable[[], dict[str, pa.Table]],
+    *,
+    marking: bool = False,
+    **witness_kwargs: Any,
 ) -> dict[ColumnKey, ColumnReport]:
     """Run `run()` (a `generate_tables` call) under the witness and classify every column."""
-    with end_to_end(mp, marking=marking) as w:
+    with end_to_end(mp, marking=marking, **witness_kwargs) as w:
         tables = run()
     return w.classify(tables)
 

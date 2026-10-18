@@ -4,9 +4,12 @@ What F3 does with this. F3 routes some generation selection through the compiled
 itself by (1) keeping `assert_matches_oracle` green (values unchanged) and (2) calling
 `_f0_witness.classify_columns` on the same fixture and asserting that the routed column moved from
 its `TODAY_BASELINE` label to the compiled label, with the marked indices in the final column.
-Today NO generate_tables column is compiled: pooled faker is `numpy_selection`, categorical and
+The baseline pinned below is the LEGACY whole-table path (this config holds formula columns, so the
+plan is ineligible for the unified core): pooled faker is `numpy_selection`, categorical and
 reference are `python_rng_selection`, unpooled faker is `live_provider_generation`, sequence /
-derived / derived_aggregate are `no_selection`. That mixed/negative baseline is what is pinned.
+derived / derived_aggregate are `no_selection`. It is the proof that the Python reference stays
+reachable for non-admitted cells. FR3 moved the unified core's uniform and weighted selections onto
+the index kernel; `test_phase_f_fr0_witness.py` pins that baseline.
 
 Two levels, kept apart on purpose:
 
@@ -181,11 +184,13 @@ def test_observer_is_transparent(monkeypatch: pytest.MonkeyPatch) -> None:
     witness.classify(observed)
 
 
-def test_real_threshold_pooled_fixture_is_numpy_selection(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The pooled labels above came from a lowered threshold; this is the REAL 50_000-row path."""
+def test_real_threshold_pooled_fixture_is_kernel_selection(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The pooled labels above came from a lowered threshold on the legacy path; the REAL
+    50_000-row fixture is eligible, so it runs on the unified core and rides the index kernel."""
     reports = w.classify_columns(monkeypatch, lambda: fx.run_generate_tables(fx.cfg_pooled_faker()))
+    kernel = w.COMPILED_INDEX if _companion() is not None else w.PYTHON_INDEX_REFERENCE
     assert {k: (r.selection, r.subpaths) for k, r in reports.items()} == {
-        ("pooled", c): (_NUMPY, frozenset({w.POOL_CONSTRUCTION}))
+        ("pooled", c): (frozenset({kernel}), frozenset({w.POOL_CONSTRUCTION}))
         for c in ("city", "last", "street")
     }
 

@@ -8,16 +8,20 @@ the ones the whole-table generators in `synthesize.py` make (same `GenDeriveCont
 RNG families), consumed incrementally:
 
 - sequence: no RNG, `start + step * global_i`;
-- categorical: one `random.Random(base_int("py"))`, `choices(k=batch)` per call;
+- categorical: the index kernel keyed on the global row (`_kernel_select`), or, for a config the
+  kernel mapping declines, one `random.Random(base_int("py"))` with `choices(k=batch)` per call;
 - per-row faker: `seed_instance(row_int("faker", global_i))` then the provider;
-- pooled faker: pool built once, then one persistent `default_rng(selection_seed)`;
-- reference (no repair): parent key set materialized once, one persistent `random.Random`;
+- pooled faker: pool built once (Python), then the index kernel keyed on the global row;
+- reference (no repair): parent key set materialized once; `random`/`weighted` draw through the
+  index kernel, `sequential` is arithmetic, and a declined weight set keeps one `random.Random`;
 - windowed_date: no RNG state; each row derives its own offset from the global row index and
   its own same-batch anchor value (`transforms/windowed_date.py`), so it needs the sibling batch;
 - null mask: one `default_rng(base_int("np")).random(size)` per call.
 
-Sequential draws from one generator equal one longer draw (CPython `random.Random`, NumPy
-`Generator`); the route-independence tests assert that over irregular partitions.
+A kernel draw is a pure function of the global row, so it carries no state across batches. The
+remaining RNG-backed streams rely on sequential draws from one generator equalling one longer draw
+(CPython `random.Random`, NumPy `Generator`). The route-independence tests assert both over
+irregular partitions.
 """
 
 from __future__ import annotations
@@ -29,7 +33,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 import numpy as np
 import pandas as pd
 
-from decoy_engine.generation import _faker_pool
+from decoy_engine.generation import _faker_pool, _kernel_select
 from decoy_engine.generation._bounds import faker_pool_bytes
 from decoy_engine.generators.derivation import GenDeriveContext
 from decoy_engine.internal.faker_setup import get_faker_providers, make_faker
@@ -128,14 +132,38 @@ class SequenceStream:
         return out
 
 
+def gather(
+    indexer: _kernel_select.Indexer, choices: list[Any], offset: int, size: int
+) -> list[Any]:
+    """The choices an indexer picks for global rows `offset .. offset + size - 1`."""
+    return [choices[i] for i in indexer.draw(offset, size).tolist()]
+
+
 class CategoricalStream:
+    """Uniform or weighted choice over `categories`.
+
+    The kernel indexer is chosen once, from the configuration alone. When it declines (empty or
+    non-list categories, or a weight set the CDF mapping cannot represent) the column keeps the
+    Python RNG, so the backend never depends on the host.
+    """
+
     def __init__(self, col: dict[str, Any], ctx: GenDeriveContext) -> None:
         self._cats = col.get("categories", ["Category A", "Category B"])
         self._weights = col.get("weights")
+        admissible = isinstance(self._cats, (list, tuple))
+        self._indexer = (
+            _kernel_select.choice_indexer(ctx, len(self._cats), self._weights)
+            if admissible
+            else None
+        )
+        self._choices = list(self._cats) if admissible else []
         # Instance-local Random: same Mersenne Twister state init as random.seed, thread-safe.
-        self._rng = random.Random(ctx.base_int("py"))
+        self._rng = random.Random(ctx.base_int("py")) if self._indexer is None else None
 
     def next_batch(self, offset: int, size: int) -> list[Any]:
+        if self._indexer is not None:
+            return gather(self._indexer, self._choices, offset, size)
+        assert self._rng is not None  # noqa: S101 -- set whenever there is no indexer
         return self._rng.choices(self._cats, weights=self._weights, k=size)
 
 
@@ -185,7 +213,7 @@ class PooledFakerStream:
         self._selector = selector
 
     def next_batch(self, offset: int, size: int) -> list[Any]:
-        return self._selector.select(size)
+        return self._selector.select(offset, size)
 
 
 class ReferenceStream:
@@ -197,20 +225,31 @@ class ReferenceStream:
         weights = col.get("weights")
         # Size mismatch falls back to uniform, as the whole-table generator does.
         self._weights = weights if weights and len(weights) == len(ref_vals) else None
-        self._rng = random.Random(ctx.base_int("py"))
+        self._indexer: _kernel_select.Indexer | None = None
+        if ref_vals and self._distribution != "sequential":
+            weighted = self._distribution == "weighted" and self._weights is not None
+            self._indexer = _kernel_select.choice_indexer(
+                ctx, len(ref_vals), self._weights if weighted else None
+            )
+        self._rng = (
+            random.Random(ctx.base_int("py"))
+            if self._indexer is None and self._distribution != "sequential"
+            else None
+        )
 
     def next_batch(self, offset: int, size: int) -> list[Any]:
         if not self._vals:
             return [None] * size
-        out: list[Any] = []
-        for i in range(offset, offset + size):
-            if self._distribution == "sequential":
-                out.append(self._vals[i % len(self._vals)])
-            elif self._distribution == "weighted":
-                out.append(self._rng.choices(self._vals, weights=self._weights, k=1)[0])
-            else:
-                out.append(self._rng.choice(self._vals))
-        return out
+        if self._distribution == "sequential":
+            return [self._vals[i % len(self._vals)] for i in range(offset, offset + size)]
+        if self._indexer is not None:
+            return gather(self._indexer, self._vals, offset, size)
+        assert self._rng is not None  # noqa: S101 -- set whenever there is no indexer
+        if self._distribution == "weighted":
+            return [
+                self._rng.choices(self._vals, weights=self._weights, k=1)[0] for _ in range(size)
+            ]
+        return [self._rng.choice(self._vals) for _ in range(size)]
 
 
 class NullMaskedStream:
@@ -339,5 +378,6 @@ __all__ = [
     "SequenceStream",
     "WindowedDateStream",
     "draw_batch",
+    "gather",
     "make_column_stream",
 ]

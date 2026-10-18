@@ -127,7 +127,7 @@ MATRIX: tuple[MatrixRow, ...] = (
     MatrixRow(
         "reference",
         SUPPORTED,
-        ("reference", "mixed_fk_generated_parent"),
+        ("reference", "reference_core", "mixed_fk_generated_parent"),
         ("reference",),
         "Parent pool is the first-seen, null-dropped unique of the COMPLETE parent column; "
         "cardinality repair is whole-table; parents are generated before children (topo sort).",

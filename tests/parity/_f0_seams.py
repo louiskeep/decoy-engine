@@ -42,6 +42,9 @@ class PoolCall:
     pool_size: int
     pool_values: list[Any] | None
     sampled: list[Any] | None
+    # "numpy": the whole-table legacy draw (`selection_seed` seeds default_rng). "kernel": the
+    # unified core's position-keyed index kernel (`selection_seed` is the 32-byte column key).
+    selection: str = "numpy"
 
     def pool_digest(self) -> str:
         import pyarrow as pa
@@ -50,7 +53,28 @@ class PoolCall:
         return column_digest(pa.array(self.pool_values))
 
     def selection_indices(self) -> np.ndarray[Any, Any]:
-        """The index stream the NumPy selection draws: `default_rng(selection_seed).integers`."""
+        """The index stream the recorded selection draws, recomputed without production code.
+
+        NumPy: `default_rng(selection_seed).integers`. Kernel: `derive_index` of the global row
+        under the pinned namespace, computed by the determinism primitive itself (the namespace is
+        spelled out here on purpose, so renaming it in production trips the seam test).
+        """
+        if self.selection == "kernel":
+            from decoy_engine.determinism import derive_index
+            from decoy_engine.kernel import encode_int
+
+            return np.array(
+                [
+                    derive_index(
+                        self.selection_seed,
+                        "gen/select/uniform",
+                        encode_int(g),
+                        pool_size=self.pool_size,
+                    )
+                    for g in range(self.n)
+                ],
+                dtype=np.int64,
+            )
         rng = np.random.default_rng(int.from_bytes(self.selection_seed, "big"))
         return rng.integers(0, self.pool_size, size=self.n)
 
@@ -63,6 +87,7 @@ class PoolCall:
             "locale": self.effective_locale,
             "pool_size": self.pool_size,
             "build_seed": self.build_seed.hex(),
+            "selection": self.selection,
             "selection_seed": self.selection_seed.hex(),
             "pool_digest": self.pool_digest(),
             "sampled_digest": hashlib.sha256(repr(self.sampled).encode()).hexdigest(),
@@ -109,23 +134,24 @@ def observe_pool_seam(mp: pytest.MonkeyPatch) -> Iterator[PoolSeamLog]:
         selector = real_open(**kwargs)
         if selector is None:
             return None
-        build_seed, selection_seed = _faker_pool._pool_seeds(kwargs["gen_ctx"])
+        build_seed = _faker_pool._pool_seeds(kwargs["gen_ctx"])[0]
         call = PoolCall(
             faker_type=kwargs["faker_type"],
             faker_kwargs=dict(kwargs["faker_kwargs"]),
             n=0,
             build_seed=build_seed,
-            selection_seed=selection_seed,
+            selection_seed=selector._indexer.key,
             effective_locale=kwargs["effective_locale"],
             pool_size=len(selector._values),
             pool_values=selector._values.tolist(),
             sampled=[],
+            selection="kernel",
         )
         log.calls.append(call)
         real_select = selector.select
 
-        def select_spy(size: int) -> Any:
-            picked = real_select(size)
+        def select_spy(offset: int, size: int) -> Any:
+            picked = real_select(offset, size)
             call.n += size
             assert call.sampled is not None
             call.sampled.extend(picked)

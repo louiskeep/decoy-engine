@@ -39,9 +39,10 @@ import numpy as np
 from faker import VERSION as _FAKER_VERSION
 from faker import Faker
 
+from decoy_engine.generation import _kernel_select
 from decoy_engine.generation.pool._cardinality import CardinalityMode
 from decoy_engine.generation.pool._runtime_pool_size import DEFAULT_POOL_SIZE
-from decoy_engine.generation.pool._sampler import PoolSampler, _seed_bytes_to_int
+from decoy_engine.generation.pool._sampler import PoolSampler
 from decoy_engine.generation.pool._value_pool import ValuePool, _freeze_array
 from decoy_engine.generators.derivation import GenDeriveContext
 from decoy_engine.internal.faker_setup import make_faker, resolve_pool_provider
@@ -425,21 +426,20 @@ def _pool_seeds(gen_ctx: GenDeriveContext) -> tuple[bytes, bytes]:
 
 
 class PooledSelector:
-    """One pooled column's selection as a persistent stream, for batched generation.
+    """One pooled column's selection for batched generation.
 
-    `build_and_sample` draws `integers(0, pool_size, size=n)` in one call. This holds the same
-    `default_rng(selection_seed)` and advances it `size=batch` per call, which yields the same
-    indices in the same order (a Generator's stream is position-based, NumPy's documented
-    sequential-draw behavior), so streamed batches concatenate to the whole-table draw. The pool
-    is built once, before the first batch.
+    The pool is built once, before the first batch, and stays Python-built. Row `g` takes
+    `pool[derive_index(select_key, namespace, g, len(pool))]` (`_kernel_select`), a uniform draw
+    that is a pure function of the global row, so a batch's values do not depend on how rows were
+    cut into batches and the compiled kernel can draw a whole batch at once.
     """
 
-    def __init__(self, values: Any, selection_seed: bytes) -> None:
+    def __init__(self, values: Any, indexer: _kernel_select.PositionalIndexer) -> None:
         self._values = values
-        self._rng = np.random.default_rng(_seed_bytes_to_int(selection_seed))
+        self._indexer = indexer
 
-    def select(self, size: int) -> list[Any]:
-        indices = self._rng.integers(0, len(self._values), size=size)
+    def select(self, offset: int, size: int) -> list[Any]:
+        indices = self._indexer.draw(offset, size)
         return list(self._values[indices].tolist())
 
 
@@ -455,7 +455,7 @@ def open_pooled_selector(
     """Build the pool once and return its persistent selector, or `None` when the build
     declines (custom override or provider unavailable for the locale): the caller then runs the
     column per row, decided before the first batch."""
-    build_seed, selection_seed = _pool_seeds(gen_ctx)
+    build_seed = _pool_seeds(gen_ctx)[0]
     raw_values, exact_name_available, custom_override_present = build_pool_values(
         faker_type,
         effective_locale,
@@ -466,7 +466,10 @@ def open_pooled_selector(
     )
     if custom_override_present or not exact_name_available:
         return None
-    return PooledSelector(_freeze_array(np.array(raw_values, dtype=object)), selection_seed)
+    values = _freeze_array(np.array(raw_values, dtype=object))
+    indexer = _kernel_select.uniform_indexer(gen_ctx, len(values))
+    assert indexer is not None  # noqa: S101 -- a built pool is non-empty and far below MAX_POOL
+    return PooledSelector(values, indexer)
 
 
 def build_and_sample(

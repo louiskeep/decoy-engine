@@ -47,6 +47,7 @@ CORE_FIXTURES = (
     "live_faker",
     "live_faker_default_locale",
     "nulls",
+    "reference_core",
 )
 
 
@@ -179,10 +180,25 @@ def test_any_partition_gives_the_same_bytes_on_both_routes(
     assert fingerprints(streamed) == fingerprints(whole)
 
 
+# Columns whose values the FR3 re-baseline left byte-identical to the legacy whole-table generator:
+# arithmetic sequences, the `sequential` reference (index arithmetic) and per-row Faker. Every other
+# column of `_relational_cfg` is a uniform or weighted selection that now rides the index kernel.
+_LEGACY_IDENTICAL = {
+    ("parent", "id"),
+    ("parent", "nick"),
+    ("child", "cid"),
+    ("child", "p_sequential"),
+}
+
+
 @settings(max_examples=15, deadline=None)
 @given(rows=st.integers(41, 200), cuts=_cuts(200))
-def test_core_values_equal_the_legacy_whole_table_generator(rows: int, cuts: list[int]) -> None:
-    """Persistent per-batch state reproduces the historical whole-column draws, value for value."""
+def test_core_values_equal_the_legacy_whole_table_generator_outside_kernel_selection(
+    rows: int, cuts: list[int]
+) -> None:
+    """Persistent per-batch state reproduces the historical whole-column draws, value for value,
+    for every column that is not a kernel-selected one. Null positions are independent of the
+    selection and so equal the legacy path's for EVERY column."""
     cfg = _relational_cfg(rows, rows)
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(_faker_pool, "N_THRESHOLD", 40)
@@ -191,7 +207,29 @@ def test_core_values_equal_the_legacy_whole_table_generator(rows: int, cuts: lis
     assert list(core) == list(legacy)
     for name, table in legacy.items():
         for col in table.column_names:
-            assert core[name].column(col).to_pylist() == table.column(col).to_pylist(), (name, col)
+            got, want = core[name].column(col).to_pylist(), table.column(col).to_pylist()
+            assert [v is None for v in got] == [v is None for v in want], (name, col)
+            if (name, col) in _LEGACY_IDENTICAL:
+                assert got == want, (name, col)
+
+
+@settings(max_examples=15, deadline=None)
+@given(rows=st.integers(41, 200), cuts=_cuts(200))
+def test_kernel_selected_columns_stay_inside_their_configured_sets(
+    rows: int, cuts: list[int]
+) -> None:
+    """The kernel columns differ from the legacy draw by design; what must hold is membership."""
+    cfg = _relational_cfg(rows, rows)
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(_faker_pool, "N_THRESHOLD", 40)
+        core = run_resident(cfg, partition_from_cuts({"parent": cuts, "child": cuts}))
+    parent, child = core["parent"], core["child"]
+    assert set(parent.column("kind").to_pylist()) <= {"a", "b", "c"}
+    assert set(child.column("flag").to_pylist()) <= {True, False, None}
+    assert set(child.column("score").to_pylist()) <= {1.5, 2.5, 4.0}
+    ids = set(parent.column("id").to_pylist())
+    for col in ("p_random", "p_sequential", "p_weighted"):
+        assert set(child.column(col).to_pylist()) <= ids, col
 
 
 # ---- repeatability: fresh processes -----------------------------------------------------------
@@ -226,7 +264,15 @@ def _fresh_process(fids: list[str], hashseed: str) -> dict[str, Any]:
 
 
 def test_fresh_processes_repeat_the_golden_byte_for_byte() -> None:
-    fids = ["sequence", "categorical", "live_faker", "live_faker_default_locale", "nulls"]
+    fids = [
+        "sequence",
+        "categorical",
+        "live_faker",
+        "live_faker_default_locale",
+        "nulls",
+        "pooled_faker",
+        "reference_core",
+    ]
     first = _fresh_process(fids, "0")
     second = _fresh_process(fids, "98765")
     assert first == second

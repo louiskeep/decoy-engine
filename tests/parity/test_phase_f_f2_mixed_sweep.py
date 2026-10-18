@@ -54,7 +54,12 @@ from tests.parity._f2_mixed_support import (
 )
 
 N = 41  # 5 full 7-row chunks plus a partial final chunk of 6
-PARENT_ROWS = 12
+# The generated parent draws its `id` from a four-key categorical. The coupled topologies need the
+# parent to hold EVERY key the child references, which a small draw only does by seed luck (the FR3
+# kernel selection moved which keys 12 rows hit). 48 rows miss a key with probability ~4e-5 under any
+# selection, so the precondition no longer rides one golden; `test_parent_covers_the_child_keys`
+# asserts it.
+PARENT_ROWS = 48
 INT_PARENT = [{"name": "id", "type": "categorical", "categories": [10, 11, 12, 13]}]
 STR_PARENT = [{"name": "id", "type": "categorical", "categories": ["k0", "k1", "k2", "k3"]}]
 INT_KEYS = [10 + i % 4 for i in range(N)]
@@ -640,6 +645,18 @@ def test_mask_strategy_matches_the_oracle_in_every_topology(
     if topology != "independent":
         parent_ids = set(_strs(got.result, PARENT, "id"))
         assert set(_strs(got.result, CHILD, FK)) <= parent_ids  # FK integrity (no orphans)
+
+
+def test_parent_covers_the_child_keys(tmp_path: Path) -> None:
+    """The coupled topologies assume a parent holding every referenced key (see PARENT_ROWS)."""
+    from decoy_engine.generation._plan_entry import generate_tables
+    from tests.parity._fr0_support import plan_of
+
+    for parent, keys in ((STR_PARENT, STR_KEYS), (INT_PARENT, INT_KEYS)):
+        child = child_table(_key_array(keys))
+        config = mixed_config(tmp_path, child, parent_columns=parent, parent_rows=PARENT_ROWS)
+        ids = set(generate_tables(plan_of(config))[PARENT].column("id").to_pylist())
+        assert set(keys) <= ids
 
 
 # ---------------------------------------------------------------------------

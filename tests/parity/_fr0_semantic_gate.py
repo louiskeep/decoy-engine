@@ -14,6 +14,9 @@ CONFIGURED distribution (not against an old sample):
 - sequential-reference order: row i is `parent_keys[i % len]`;
 - null propagation: a derived value is null exactly when its input is null;
 - marginal: category frequencies within a binomial z-bound of the configured weights;
+- pool marginal (FR3): a pooled Faker column is uniform over its pool, so each distinct value
+  appears with probability (its multiplicity in the pool) / (pool size), checked as one
+  chi-square over the pool's distinct values;
 - declared schema: an all-null column or zero-row table keeps its declared (string) type.
 
 Every check raises AssertionError; `tests/parity/test_phase_f_fr0_refreeze.py` runs each against
@@ -129,6 +132,36 @@ def check_marginal(
         assert abs(observed - p) <= bound, (
             f"category {cat!r}: frequency {observed:.4f} is outside {p:.4f} +/- {bound:.4f}"
         )
+
+
+def check_pool_marginal(values: Sequence[Any], pool: Sequence[Any], *, z: float = Z_BOUND) -> None:
+    """Uniform selection over `pool`: chi-square of the observed value counts against the pool's
+    multiplicities. Cells expecting fewer than five draws are merged into one so the statistic
+    stays valid; the bound is `df + z * sqrt(2 * df)`."""
+    present = [v for v in values if v is not None]
+    n = len(present)
+    assert n > 0, "no values to check"
+    multiplicity = Counter(pool)
+    counts = Counter(present)
+    assert set(counts) <= set(multiplicity), "a value outside the pool appeared"
+    stat = 0.0
+    cells = 0
+    sparse_observed = 0
+    sparse_expected = 0.0
+    for value, mult in multiplicity.items():
+        expected = n * mult / len(pool)
+        if expected < 5:
+            sparse_observed += counts[value]
+            sparse_expected += expected
+            continue
+        stat += (counts[value] - expected) ** 2 / expected
+        cells += 1
+    if sparse_expected >= 5:
+        stat += (sparse_observed - sparse_expected) ** 2 / sparse_expected
+        cells += 1
+    df = max(cells - 1, 1)
+    bound = df + z * math.sqrt(2 * df)
+    assert stat <= bound, f"pool frequency chi-square {stat:.1f} exceeds {bound:.1f} (df={df})"
 
 
 def check_declared_string_column(table: pa.Table, column: str) -> None:
