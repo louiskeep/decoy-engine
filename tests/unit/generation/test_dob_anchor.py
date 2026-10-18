@@ -280,7 +280,9 @@ def _faker_type_column(n: int, kwargs: dict[str, int] | None = None) -> list[Any
     return run_generate_tables(config([table("t", n, [col])]))["t"].column("c").to_pylist()
 
 
-@pytest.mark.parametrize("n", [5, 5000], ids=["per_row", "pooled"])
+# Both sizes run the per-row path: date_of_birth is not pool-eligible. The pool-resolver branch has
+# its own direct test below.
+@pytest.mark.parametrize("n", [5, 5000], ids=["small", "large"])
 def test_faker_type_date_of_birth_is_seed_stable_and_anchored(
     n: int, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -308,3 +310,29 @@ def test_reflected_providers_other_than_dob_untouched() -> None:
     a.seed_instance(3)
     b.seed_instance(3)
     assert get_faker_providers(a)["first_name"]() == b.first_name()
+
+
+def _resolved_values(seed: int, count: int, **kwargs: int) -> list[Any]:
+    from decoy_engine.internal.faker_setup import make_faker, resolve_pool_provider
+
+    fake = make_faker("en_US")
+    fn, exact, custom = resolve_pool_provider(fake, "date_of_birth")
+    assert fn is not None and exact and not custom
+    fake.seed_instance(seed)
+    return [fn(**kwargs) for _ in range(count)]
+
+
+def test_resolve_pool_provider_date_of_birth_is_anchored(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _install_spy(monkeypatch)  # before any Faker instance is built
+    with simulated_system_date(_DAY_A):
+        first = _resolved_values(11, 30)
+        ranged = _resolved_values(11, 30, minimum_age=18, maximum_age=65)
+    with simulated_system_date(_DAY_B):
+        second = _resolved_values(11, 30)
+    assert calls == []
+    assert first == second
+    ref = faker.Faker("en_US")
+    ref.seed_instance(11)
+    assert first == [str(anchored_date_of_birth(ref)) for _ in range(30)]
+    ref.seed_instance(11)
+    assert ranged == [str(anchored_date_of_birth(ref, None, 18, 65)) for _ in range(30)]
