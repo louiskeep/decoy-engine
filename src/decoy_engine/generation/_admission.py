@@ -45,7 +45,11 @@ ADMISSION_MATRIX: dict[str, tuple[bool, str]] = {
     "derived": (False, "reads sibling columns row by row; no sibling-input seam yet"),
     "derived_aggregate": (False, "whole-column reduction"),
     "grouped_series": (False, "group sort then restore; needs a bounded sort or two-pass design"),
-    "windowed_date": (False, "anchor co-computation not admitted in this slice"),
+    "windowed_date": (
+        True,
+        "CHANGED semantics (FR1): same-table earlier eligible anchor (string ISO / date32 / "
+        "naive timestamp); null anchor -> null, invalid anchor -> WindowedDateError",
+    ),
     "group_key": (False, "group-scoped keys; needs a bounded two-pass design"),
 }
 
@@ -131,13 +135,35 @@ def faker_is_built_in(
     return True
 
 
+_WINDOWED_ANCHOR_TYPES = (pa.string(), pa.date32())
+
+
+def _anchor_type_supported(arrow_type: pa.DataType | None) -> bool:
+    if arrow_type is None:
+        return False
+    return arrow_type in _WINDOWED_ANCHOR_TYPES or (
+        pa.types.is_timestamp(arrow_type) and arrow_type.tz is None
+    )
+
+
 def classify_plan(
     config: dict[str, Any],
     *,
     provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None = None,
 ) -> PlanAdmission:
     """Classify every generate column of the plan's configuration."""
+    from decoy_engine.generation._reproducibility import reproducibility_exclusions
+
     tables = {t["name"]: t for t in (config.get("tables") or []) if t.get("generate_columns")}
+    # Only a windowed_date column reads a sibling's reproducibility, so skip the closure otherwise.
+    has_windowed = any(
+        c.get("type") == "windowed_date" for t in tables.values() for c in t["generate_columns"]
+    )
+    exclusions = (
+        reproducibility_exclusions(config, provider_snapshot=provider_snapshot)
+        if has_windowed
+        else {}
+    )
     memo: dict[tuple[str, str], ColumnAdmission] = {}
     in_progress: set[tuple[str, str]] = set()
 
@@ -171,6 +197,23 @@ def classify_plan(
             return decline(table, col, "reference_parent_ineligible")
         return admit(table, col, parent_adm.arrow_type)
 
+    def classify_windowed_date(table: str, col: dict[str, Any]) -> ColumnAdmission:
+        cols = tables[table]["generate_columns"]
+        names = [c["name"] for c in cols]
+        anchor_name = col.get("anchor")
+        if not isinstance(anchor_name, str) or anchor_name not in names:
+            return decline(table, col, "windowed_date_anchor_not_in_table")
+        if names.index(anchor_name) >= names.index(col["name"]):
+            return decline(table, col, "windowed_date_anchor_not_earlier")
+        if (table, anchor_name) in exclusions:
+            return decline(table, col, "windowed_date_anchor_not_reproducible")
+        anchor_adm = classify(table, cols[names.index(anchor_name)])
+        if not anchor_adm.eligible:
+            return decline(table, col, "windowed_date_anchor_ineligible")
+        if not _anchor_type_supported(anchor_adm.arrow_type):
+            return decline(table, col, "windowed_date_anchor_type_unsupported")
+        return admit(table, col, pa.string())
+
     def classify(table: str, col: dict[str, Any]) -> ColumnAdmission:
         key = (table, col["name"])
         if key in memo:
@@ -188,6 +231,8 @@ def classify_plan(
         elif kind == "categorical":
             arrow_type, reason = _categorical_type(col)
             result = admit(table, col, arrow_type) if arrow_type else decline(table, col, reason)
+        elif kind == "windowed_date":
+            result = classify_windowed_date(table, col)
         elif kind == "faker":
             faker_type = col.get("faker_type", "word")
             if isinstance(faker_type, str) and faker_is_built_in(faker_type, provider_snapshot):

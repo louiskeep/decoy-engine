@@ -12,6 +12,8 @@ RNG families), consumed incrementally:
 - per-row faker: `seed_instance(row_int("faker", global_i))` then the provider;
 - pooled faker: pool built once, then one persistent `default_rng(selection_seed)`;
 - reference (no repair): parent key set materialized once, one persistent `random.Random`;
+- windowed_date: no RNG state; each row derives its own offset from the global row index and
+  its own same-batch anchor value (`transforms/windowed_date.py`), so it needs the sibling batch;
 - null mask: one `default_rng(base_int("np")).random(size)` per call.
 
 Sequential draws from one generator equal one longer draw (CPython `random.Random`, NumPy
@@ -25,6 +27,7 @@ from contextlib import ExitStack
 from typing import TYPE_CHECKING, Any, Protocol
 
 import numpy as np
+import pandas as pd
 
 from decoy_engine.generation import _faker_pool
 from decoy_engine.generation._bounds import faker_pool_bytes
@@ -41,6 +44,47 @@ if TYPE_CHECKING:
 
 class ColumnStream(Protocol):
     def next_batch(self, offset: int, size: int) -> list[Any]: ...
+
+
+class WindowedDateStream:
+    """A date within a window of a same-table anchor column emitted earlier in the same batch.
+
+    The per-row offset RNG is re-derived from (job seed, column namespace, global row index), so
+    the stream holds no draw state and a row's value cannot depend on how rows are batched. A
+    null anchor propagates to null without a draw; an invalid one raises `WindowedDateError`
+    (the shared `apply_windowed_date` owns both rules, so the legacy path behaves identically).
+    """
+
+    def __init__(self, col: dict[str, Any], seed: int) -> None:
+        from decoy_engine.transforms.windowed_date import WindowedDateConfig
+
+        cfg: dict[str, Any] = {"anchor": col.get("anchor", "")}
+        for key in ("min_days", "max_days", "distribution"):
+            if key in col:
+                cfg[key] = col[key]
+        self._config = WindowedDateConfig.from_dict(cfg)
+        self._seed = seed.to_bytes(8, "big")
+        self._namespace = f"windowed_date/{col.get('name', 'windowed_date_col')}"
+
+    @property
+    def anchor(self) -> str:
+        return self._config.anchor
+
+    def next_batch(self, offset: int, size: int) -> list[Any]:
+        raise ValueError("windowed_date needs its anchor batch; call next_batch_from")
+
+    def next_batch_from(
+        self, offset: int, size: int, siblings: Mapping[str, list[Any]]
+    ) -> list[Any]:
+        from decoy_engine.transforms.windowed_date import apply_windowed_date
+
+        # object dtype keeps every cell as the Python value the stream emitted (a str, a date,
+        # or None); pandas inference would turn a null into NaN and an all-null batch into float.
+        anchor = pd.Series(siblings[self._config.anchor], dtype=object)
+        df = pd.DataFrame({self._config.anchor: anchor})
+        return list(
+            apply_windowed_date(self._config, df, self._seed, self._namespace, row_offset=offset)
+        )
 
 
 class KeyPool:
@@ -178,10 +222,25 @@ class NullMaskedStream:
         self._rng = np.random.default_rng(ctx.base_int("np"))
 
     def next_batch(self, offset: int, size: int) -> list[Any]:
-        values = self._inner.next_batch(offset, size)
+        return self.next_batch_from(offset, size, {})
+
+    def next_batch_from(
+        self, offset: int, size: int, siblings: Mapping[str, list[Any]]
+    ) -> list[Any]:
+        values = draw_batch(self._inner, offset, size, siblings)
         for idx in np.flatnonzero(self._rng.random(size) < self._p):
             values[int(idx)] = None
         return values
+
+
+def draw_batch(
+    stream: ColumnStream, offset: int, size: int, siblings: Mapping[str, list[Any]]
+) -> list[Any]:
+    """Draw one batch, handing the already-emitted sibling batches to a stream that reads them."""
+    from_siblings = getattr(stream, "next_batch_from", None)
+    if from_siblings is not None:
+        return from_siblings(offset, size, siblings)
+    return stream.next_batch(offset, size)
 
 
 def make_column_stream(
@@ -223,6 +282,8 @@ def make_column_stream(
         inner = ReferenceStream(
             col, ctx, key_pools[(col["reference_table"], col["reference_column"])]
         )
+    elif kind == "windowed_date":
+        inner = WindowedDateStream(col, seed)
     else:
         raise ValueError(f"column {col.get('name')!r}: type {kind!r} has no streamed generator")
     null_prob = float(col.get("null_probability") or 0.0)
@@ -276,5 +337,7 @@ __all__ = [
     "PooledFakerStream",
     "ReferenceStream",
     "SequenceStream",
+    "WindowedDateStream",
+    "draw_batch",
     "make_column_stream",
 ]

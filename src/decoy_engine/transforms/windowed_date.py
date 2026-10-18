@@ -42,6 +42,8 @@ Validation timing:
 
 from __future__ import annotations
 
+import datetime as _dt
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -50,6 +52,7 @@ import numpy as np
 import pandas as pd
 
 from decoy_engine.determinism._derive import derive
+from decoy_engine.errors import DecoyError
 from decoy_engine.plan._errors import PlanCompileError
 
 # Closed enumeration of allowed distributions.
@@ -57,6 +60,29 @@ WINDOWED_DATE_DISTRIBUTIONS: frozenset[str] = frozenset({"uniform", "early", "la
 
 # Output date format for string-typed anchor columns.
 _DATE_FMT = "%Y-%m-%d"
+
+# Supported date range, for the anchor and for the produced date. It is declared (not inherited
+# from pandas' nanosecond bounds) so the accepted domain does not move with a pandas release, and
+# it is narrower than those bounds so window arithmetic cannot silently wrap near the edge.
+SUPPORTED_MIN = pd.Timestamp("1700-01-01")
+SUPPORTED_MAX = pd.Timestamp("2200-12-31 23:59:59.999999999")
+
+# The only string anchor grammar: a numeric ISO date or ISO datetime with NO timezone. Anything
+# else is rejected BEFORE parsing, because `pd.Timestamp` also accepts "now"/"today" (wall clock),
+# zone-bearing strings, and locale or partial forms, none of which are reproducible or
+# route-independent.
+_ISO_ANCHOR = re.compile(
+    r"\A\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?)?\Z",
+    re.ASCII,
+)
+
+
+class WindowedDateError(DecoyError, ValueError):
+    """A non-null anchor cannot be windowed (grammar, NaT, out of range, or overflow).
+
+    The message names the row position and the reason only, never the anchor value, so a
+    failure cannot leak cell content into logs.
+    """
 
 
 @dataclass(frozen=True)
@@ -179,6 +205,63 @@ def _sample_offset(
     return max(a, b)
 
 
+def _is_null_cell(raw: Any) -> bool:
+    """True only for an actual null cell. A string such as "" or "NaT" is NOT null."""
+    if raw is None or raw is pd.NaT or raw is pd.NA:
+        return True
+    return isinstance(raw, float) and raw != raw  # NaN is the only self-unequal float
+
+
+def _parse_anchor(raw: Any, position: int) -> pd.Timestamp:
+    """Validate one non-null anchor against the supported grammar and range, then parse it."""
+    ts: pd.Timestamp
+    if isinstance(raw, str):
+        if _ISO_ANCHOR.match(raw) is None:
+            raise WindowedDateError(
+                f"windowed_date anchor at row {position} is not an ISO date or datetime "
+                "without a timezone"
+            )
+        try:
+            ts = pd.Timestamp(raw)
+        except (ValueError, OverflowError) as exc:
+            raise WindowedDateError(
+                f"windowed_date anchor at row {position} is not a valid calendar date"
+            ) from exc
+    elif isinstance(raw, (pd.Timestamp, _dt.datetime, _dt.date)):
+        # Typed date32 / timestamp anchors (and datetime64 mask-side columns) arrive as these.
+        if getattr(raw, "tzinfo", None) is not None:
+            raise WindowedDateError(f"windowed_date anchor at row {position} carries a timezone")
+        try:
+            ts = pd.Timestamp(raw)
+        except (ValueError, OverflowError) as exc:
+            raise WindowedDateError(
+                f"windowed_date anchor at row {position} is outside the supported range"
+            ) from exc
+    else:
+        raise WindowedDateError(
+            f"windowed_date anchor at row {position} has unsupported type {type(raw).__name__}"
+        )
+    if ts is pd.NaT or pd.isna(ts):
+        raise WindowedDateError(f"windowed_date anchor at row {position} parses to NaT")
+    if not (SUPPORTED_MIN <= ts <= SUPPORTED_MAX):
+        raise WindowedDateError(
+            f"windowed_date anchor at row {position} is outside the supported range"
+        )
+    return ts
+
+
+def _shift_and_format(anchor: pd.Timestamp, offset: int, position: int) -> str:
+    try:
+        out = anchor + pd.Timedelta(days=offset)
+        if not (SUPPORTED_MIN <= out <= SUPPORTED_MAX):
+            raise OverflowError
+        return str(out.strftime(_DATE_FMT))
+    except (OverflowError, ValueError) as exc:
+        raise WindowedDateError(
+            f"windowed_date result at row {position} is outside the supported range"
+        ) from exc
+
+
 def apply_windowed_date(
     config: WindowedDateConfig,
     df: pd.DataFrame,
@@ -186,7 +269,7 @@ def apply_windowed_date(
     namespace: str,
     row_offset: int = 0,
     positions: Sequence[int] | None = None,
-) -> list[str]:
+) -> list[str | None]:
     """Generate one date per row within the configured window around the anchor.
 
     Pattern: derive()-per-column namespace (HKDF-SHA256 + HMAC-SHA256) for
@@ -210,10 +293,16 @@ def apply_windowed_date(
                     source instead of restarting at 0 each chunk.
 
     Returns:
-        List of ISO-format date strings (``YYYY-MM-DD``) aligned to df rows.
+        List of ISO-format date strings (``YYYY-MM-DD``) aligned to df rows. A genuine null
+        anchor cell yields ``None`` and consumes no draw.
+
+    Raises:
+        WindowedDateError: a non-null anchor fails the accepted grammar, parses to NaT (including
+            ``""`` and ``"NaT"``), lies outside ``SUPPORTED_MIN``..``SUPPORTED_MAX``, or the
+            window arithmetic or formatting overflows. Fail-closed: no row is clamped.
     """
     anchor_series = df[config.anchor]
-    result: list[str] = []
+    result: list[str | None] = []
 
     # C8-iii-d: `positions` gives each row its full-table row number under a `when:` gate, so a
     # selected row seeds the same as in an ungated run. Without it, rows are contiguous from
@@ -222,11 +311,13 @@ def apply_windowed_date(
         positions if positions is not None else range(row_offset, row_offset + len(anchor_series))
     )
     for i, raw_anchor in zip(row_numbers, anchor_series, strict=True):
-        anchor_ts = pd.Timestamp(raw_anchor)
+        if _is_null_cell(raw_anchor):
+            result.append(None)
+            continue
+        anchor_ts = _parse_anchor(raw_anchor, int(i))
         row_seed_int = int.from_bytes(derive(seed, namespace, int(i).to_bytes(8, "big"))[:8], "big")
         row_rng = np.random.default_rng(row_seed_int)
         offset = _sample_offset(row_rng, config.min_days, config.max_days, config.distribution)
-        out_ts = anchor_ts + pd.Timedelta(days=offset)
-        result.append(out_ts.strftime(_DATE_FMT))
+        result.append(_shift_and_format(anchor_ts, offset, int(i)))
 
     return result
