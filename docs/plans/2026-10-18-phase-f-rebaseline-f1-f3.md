@@ -14,11 +14,14 @@ re-baseline direction on 2026-10-18, with three design calls settled the same da
 (§1). F0's contract, witness and comparator are reused unchanged; only the frozen
 golden is re-based.
 
-Rev-2 folds the Codex plan-gate (NO-GO, 9 P1 + 1 P2). The central correction: the
-generated VALUES are chosen by semantic eligibility alone, never by the execution
-environment (§2). This is a production generation change; the guards are
-reproducibility, route-independence, semantic integrity, and bounded memory, not
-equivalence to today's resident bytes.
+Rev-3 folds two Codex plan-gate rounds (r1 NO-GO 9 P1 + 1 P2, all resolved; r2
+NO-GO 2 P1 + 1 P2, resolved here): a reserve-before-allocate memory enforcement
+mechanism (§3), a reproducibility-eligibility axis with dependency-closure
+exclusions covering the legacy path (§1), and the full windowed_date design (§3).
+The central correction from r1 stands: generated VALUES are chosen by semantic
+eligibility alone, never by the execution environment (§2). This is a production
+generation change; the guards are reproducibility, route-independence, semantic
+integrity, and enforced bounded memory, not equivalence to today's resident bytes.
 
 ## 1. The contract (whole-PLAN, the one decision)
 
@@ -35,15 +38,32 @@ reproduce the old resident draws bit-for-bit. Re-baseline replaces the guarantee
 
 **Pinned input envelope (plan-gate #8).** Reproducibility is asserted only over an
 explicit, complete input set: `(job seed, config, parent key sets, pinned inputs
-[statistical_specs / provider snapshots], derive_key, per-column locale, engine
-minor version)`. Two guarantees follow and are tested separately:
+[statistical_specs / provider snapshots], derive_key, RESOLVED effective per-column
+locale [including `instance_default_locale`], controlled-clock inputs for any
+admitted date provider, engine minor version)`. Two guarantees follow and are
+tested separately:
 - Repeatability: same envelope, two FRESH PROCESSES, identical bytes (not merely
   two in-process runs).
 - Route-independence: same envelope, resident route == streamed route, identical
   bytes.
-EXCLUDED by definition: `determinism=="fresh"` columns (deliberate `os.urandom`);
-they are never asserted reproducible and never re-frozen. Clock-dependent admitted
-date providers are asserted only under a controlled clock, or they decline.
+
+**Reproducibility eligibility is a THIRD, independent axis (plan-gate #8),** distinct
+from semantic eligibility (§2) and streaming feasibility (§2). A column is
+reproducibility-EXCLUDED when its output is not a deterministic function of the
+envelope, and exclusion propagates over the DEPENDENCY CLOSURE:
+- Directly excluded: `determinism=="fresh"` (deliberate `os.urandom`); a custom
+  provider WITHOUT a deterministic-output contract (a pinned callable snapshot does
+  not freeze the provider's mutable state, clock reads, or external randomness); a
+  clock-dependent provider run WITHOUT a controlled clock.
+- Transitively excluded: any column (reference, formula, referenced_formula,
+  derived_aggregate, composite) whose inputs include an excluded column.
+- The exclusion applies REGARDLESS of path: a legacy-executed (semantically
+  ineligible) column that is also reproducibility-excluded is still excluded.
+Excluded columns are NEVER re-frozen into a golden and NEVER carry a reproducibility
+or route-independence assertion. Everything else (the reproducibility-eligible set)
+is re-frozen and asserted. A clock-dependent date provider is reproducibility-
+eligible ONLY under a controlled clock recorded in the envelope; otherwise it is
+excluded.
 
 Three calls settled with Cam (2026-10-18, recorded in
 `memory/decoy-c4-chunked-date-shift-state.md` cont-7):
@@ -102,11 +122,29 @@ whole-column draw); re-baseline lets them stream because the streamed output is
 now the golden. That is the bulk of the near-term win and it needs no new family
 design.
 
-**Newly admitted in FR1 (one family, specced exactly):**
-- **windowed_date:** admit by REUSING its existing global `row_offset` support
-  (`transforms/windowed_date.py:182`), not an invented "anchor/offset state."
-  Spec the anchor derivation, null handling, and out-of-window error behavior
-  explicitly; the window offset is computed relative to each row's own anchor.
+**Newly admitted in FR1 (one family, fully specced below, plan-gate #3):**
+- **windowed_date**, admitted ONLY under this exact scope (anything outside it
+  declines). The design, not an instruction to design:
+  - *Anchor availability.* The anchor is a SAME-TABLE column that is itself
+    reproducibility-eligible and ordered BEFORE the windowed column in the plan, so
+    both co-compute within the same batch from the same global row offset. A
+    cross-table or later-ordered anchor declines (no sibling-input seam is built
+    here; that is a follow-up).
+  - *Supported anchor types:* `date32` and `timestamp` (tz-naive). Other types
+    decline. The existing `apply_windowed_date` conversion to pandas timestamps and
+    string formatting (`transforms/windowed_date.py`) is PRESERVED; the offset is
+    computed relative to each row's own anchor via the existing global `row_offset`.
+  - *Output schema:* `string`, matching the current formatter. No inference.
+  - *Null / invalid anchor:* a null anchor PROPAGATES to a null output (deterministic,
+    no draw consumed for that row). A non-null anchor that is unparseable or produces
+    an out-of-range date RAISES a declared `WindowedDateError` (fail-closed, not a
+    silent clamp); this preserves today's error semantics rather than inventing a
+    clamp.
+  - *Derivation namespace:* the offset RNG is keyed by the existing per-column
+    namespace plus the global row index (unchanged from the resident path), so
+    streamed == resident by construction.
+  - *Preserved vs changed:* value semantics PRESERVED; the only change is that the
+    column may now stream. State this in the admission matrix.
 
 **Deferred to their OWN follow-up slices (plan-gate #2, #3), NOT admitted here:**
 - **grouped_cumcount / grouped series / walk:** these sort by group + `order_by`
@@ -131,20 +169,43 @@ during the probe and another type later, and probing a stateful provider changes
 its subsequent output). Otherwise decline. Deliver the TOTAL admission matrix over
 every generator kind with its reason.
 
-**Memory, actually enforced (plan-gate #6).** The byte budget (F1 rev-3 §3) is
-kept AND hardened:
-- Preflight RESERVATION uses conservative upper bounds, not benchmark-friendly
-  estimates: parent-key pools by parent `row_count` upper bound; any per-group
-  store (when grouped families later land) by a conservative group-count and
-  key-width bound plus actual per-group RNG/state bytes; Faker width from a bound
-  that covers variable-width values, not just a short probe, or the column
-  declines.
-- All simultaneously-live stores are summed over the run lifetime alongside batch
-  buffers and the sink/accumulator copy.
-- Decline-to-resident happens BEFORE execution. Once batches are being produced,
-  exceeding the reservation does NOT silently fall back; it aborts transactionally
-  (`GenerationBudgetExceeded`), staging removed. Post-start fallback is forbidden
-  because it would change the execution mode mid-run.
+**Memory enforcement mechanism (plan-gate #6).** The byte budget is not just an
+admission estimate; it is a run-scoped ledger that gates every bounded allocation
+BEFORE it happens, backed by a runtime RSS ceiling.
+
+- *Budget owner:* a run-scoped `GenerationBudgetLedger` created from the resolved
+  ceiling (`execution/out_of_core/_budget.resolve_budget` +
+  `detect_effective_memory_bytes`). It owns the remaining-bytes counter for the
+  whole generation run and is the single place memory is charged and released.
+- *Reserve-before-allocate lifecycle.* Each bounded STAGE calls
+  `ledger.reserve(stage, conservative_upper_bound)` and only allocates AFTER the
+  reservation succeeds; on success the bytes stay charged for the stage's lifetime
+  and are released when it ends. The bounded stages, each charged before it runs:
+  (1) Faker pool CONSTRUCTION; (2) parent-key pool build; (3) per-batch Arrow
+  conversion buffer (batch_rows x per-column width, plus the Python-list and
+  null-copy overhead); (4) the resident ACCUMULATOR (whole-table footprint) or the
+  one-row-group sink buffer. Overlapping live buffers (Python + Arrow + conversion +
+  sink/accumulator) are summed; a stage whose reservation would exceed the remaining
+  budget REFUSES before allocating.
+- *No defensible bound = decline at admission.* A stage that cannot produce a
+  conservative upper bound (for example a Faker provider whose value width is not
+  boundable, or a parent pool of unknown size) makes the plan DECLINE the streamed
+  path at admission, before any allocation. It never reaches a mid-run surprise.
+- *Resident and legacy obey the SAME ceiling.* Resident accumulation charges the
+  whole-table footprint through the ledger and FAILS (`GenerationBudgetExceeded`) if
+  it would exceed, rather than silently materializing past the ceiling. Legacy
+  whole-table generation likewise preflights its whole-table estimate against the
+  ceiling and declines/fails if it does not fit. The resident path is exempt only
+  from the bounded-OUTPUT guarantee (output is a whole table by design), NOT from
+  the ceiling.
+- *Runtime backstop.* The planned-reservation enforcement is paired with the
+  supervisor's hard RSS ceiling (`scripts/fk-scale/_supervisor`, `--rss-kill-mb`) so
+  an estimate that is wrong low is still killed rather than OOMing the host. The
+  reservation is the primary control; the RSS kill is the backstop.
+- *No post-start fallback.* Once batches are being produced, a reservation breach
+  aborts transactionally (`GenerationBudgetExceeded`, staging removed); it does NOT
+  switch execution mode mid-run, because that would change neither the values nor
+  the mode silently.
 
 ## 4. F3 under re-baseline: kernel selection, per generator semantics (plan-gate #4)
 
@@ -211,22 +272,39 @@ algorithm cannot pass.
   byte-identical; an interleaved-run test (two generations advancing together)
   confirms no shared mutable state; the manifest's pinned minor version matches the
   running engine.
-- **Fresh exclusion:** a `determinism=="fresh"` fixture is asserted NON-reproducible
-  and is never re-frozen (guards against over-broad reproducibility claims).
+- **Reproducibility exclusion closure (plan-gate #8):** a `determinism=="fresh"`
+  fixture, a STATEFUL custom-provider column that declines a deterministic contract,
+  and a reference/formula column DEPENDENT on either are each asserted
+  NON-reproducible and never re-frozen, on BOTH the streamed and legacy paths. A
+  negative test confirms none of them carries a reproducibility or route-independence
+  assertion. A resolved-locale test (including `instance_default_locale`) and a
+  controlled-clock date-provider test confirm those inputs are in the envelope.
 - **Semantic re-freeze gate (§5):** passes for every re-frozen table; the
   relation-breaking and frequency-bias mutants each fail it.
 - **Decline path:** a plan with each declining family / schema / provider case
   returns `mode="resident"` with the right reason and the SINK UNTOUCHED (zero sink
-  writes); its resident output is the legacy whole-table output and is itself
-  reproducible. A budget-too-small-even-for-resident case raises
-  `GenerationBudgetExceeded` and does NOT emit alternate values.
+  writes); its resident output is the legacy whole-table output, and is asserted
+  reproducible ONLY for its reproducibility-eligible columns (excluded columns per
+  the §1 closure carry no such assertion). A budget-too-small-even-for-resident case
+  raises `GenerationBudgetExceeded` and does NOT emit alternate values.
 - **Bounded RSS, non-vacuous:** the generation bench worker
   (`scripts/fk-scale/_supervisor.run_worker`) streams into a
   `ParquetTransactionalSink` at TWO tiers (5M + 10M) under the same budget and
   frozen batch size, asserts EXTERNAL peak RSS under a predeclared ceiling and not
-  materially growing tier-to-tier, committed rows == n. A UNIQUE-group / long-key /
-  wide-value stress case confirms the reservation declines or aborts instead of
-  overrunning.
+  materially growing tier-to-tier, committed rows == n.
+- **Reserve-before-allocate enforcement (plan-gate #6):** a per-stage test forces
+  the ledger near-exhaustion and asserts the REFUSAL happens BEFORE the disallowed
+  allocation at EACH bounded stage (Faker pool construction, parent-key pool build,
+  batch Arrow conversion, resident accumulation). An unbounded-width provider and an
+  unknown-size parent pool each DECLINE at admission (no allocation attempted). A
+  resident-too-big case raises `GenerationBudgetExceeded` without materializing past
+  the ceiling. The supervisor RSS kill is exercised as the backstop (estimate wrong
+  low still terminates rather than OOMs).
+- **windowed_date (FR1, plan-gate #3):** cross-partition route-independence with the
+  anchor and windowed columns co-computed in one batch; a null-anchor row yields a
+  null output and consumes no draw (verified by downstream determinism); an
+  unparseable / out-of-range anchor raises `WindowedDateError`; a cross-table or
+  later-ordered anchor DECLINES at admission.
 - **F3 selection:** admitted columns record the compiled backend (F0 witness); a
   uniformity test for uniform cells AND a weight-preservation test for weighted
   categorical; a sequence test for order/uniqueness/formatting; a consumed-output
