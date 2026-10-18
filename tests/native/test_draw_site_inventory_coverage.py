@@ -261,6 +261,13 @@ _ALLOWLIST = frozenset(
         # `derive` primitive (group_key's source-keyed HMAC site) to reproduce the
         # uncanonicalized hex derivation. Not a new draw site (mirrors _index_ext.py).
         "execution/native/_group_key_ext.py",
+        # Phase F FR0 unified generation core: the persistent per-column streams re-express the
+        # ALREADY-catalogued synthesize.py draws (sequence has none; categorical, reference,
+        # per-row faker, pooled faker and the null mask use the same GenDeriveContext roots and
+        # RNG families), consumed `size=batch` at a time. They are the same draw sites, advanced
+        # incrementally, not new ones; `synthesize.py` keeps the catalogued entries for the legacy
+        # whole-table path.
+        "generation/_column_streams.py",
     }
 )
 

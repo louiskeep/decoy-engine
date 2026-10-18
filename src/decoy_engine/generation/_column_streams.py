@@ -187,6 +187,7 @@ class NullMaskedStream:
 def make_column_stream(
     col: dict[str, Any],
     *,
+    table: str,
     rows: int,
     seed: int,
     derive_key: Any,
@@ -207,6 +208,7 @@ def make_column_stream(
         inner = CategoricalStream(col, ctx)
     elif kind == "faker":
         inner = _faker_stream(
+            f"{table}.{col['name']}",
             col,
             ctx,
             rows,
@@ -228,6 +230,7 @@ def make_column_stream(
 
 
 def _faker_stream(
+    label: str,
     col: dict[str, Any],
     ctx: GenDeriveContext,
     rows: int,
@@ -247,7 +250,7 @@ def _faker_stream(
         raw_kwargs = col.get("faker_kwargs") or {}
         # Reserve before the 10_000 provider calls that build the pool allocate anything.
         reservation = ledger.reserve(
-            "faker_pool_build",
+            f"faker_pool_build:{label}",
             faker_pool_bytes(10_000, faker_payload if faker_payload is not None else 0),
         )
         selector = _faker_pool.open_pooled_selector(

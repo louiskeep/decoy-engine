@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import dataclasses
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pyarrow as pa
@@ -209,7 +210,9 @@ def test_generate_tables_rejects_before_any_provider_call(
 
     calls: list[Any] = []
     monkeypatch.setattr(
-        _plan_entry, "_generate_tables_from_config", lambda *a, **k: calls.append(a) or {}
+        _plan_entry,
+        "run_generation",
+        lambda *a, **k: calls.append(a) or SimpleNamespace(tables={}),
     )
     with pytest.raises(ValidationError) as info:
         generate_tables(bad)

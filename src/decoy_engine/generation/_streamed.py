@@ -358,6 +358,7 @@ def run_generation(
                     streams = [
                         make_column_stream(
                             c,
+                            table=name,
                             rows=rows,
                             seed=seed,
                             derive_key=derive_key,

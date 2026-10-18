@@ -30,6 +30,12 @@ formula_expression         an evaluated `formula` (the expression may draw from 
                            RNG; that is expression evaluation, not a generator selection)
 =========================  ================================================================
 
+Two production paths feed this taxonomy since the unified generation core: the legacy whole-table
+generator (`synthesize._generate_column`, plans with an ineligible column) and the core's
+persistent per-column streams (`_column_streams`, eligible plans). The witness hooks both and
+labels a column the same way whichever path produced it; the core hooks wrap each stream's
+`next_batch`, so a column's events and final values are accumulated across batches.
+
 Two further sub-paths are recorded but are NEVER folded into a selection backend:
 `pool_construction` (provider calls inside `build_pool_values`) and `null_mask` (the
 `null_probability` post-process). `statistical`, `grouped_series`, `windowed_date`, `group_key`
@@ -56,7 +62,7 @@ import pandas as pd
 import pyarrow as pa
 import pytest
 
-from decoy_engine.generation import _faker_pool, synthesize
+from decoy_engine.generation import _column_streams, _faker_pool, _streamed, synthesize
 from decoy_engine.generation.pool import _sampler
 from decoy_engine.generation.pool._errors import GenerationError
 from decoy_engine.generation.pool._sampler import PoolSampler
@@ -173,6 +179,47 @@ class _NpProxy:
         return getattr(np, name)
 
 
+class _Snapshot:
+    """Sits under a null mask so the pre-mask values can be compared with the masked ones."""
+
+    def __init__(self, inner: Any) -> None:
+        self._inner = inner
+        self.last: list[Any] = []
+
+    def next_batch(self, offset: int, size: int) -> list[Any]:
+        values = self._inner.next_batch(offset, size)
+        self.last = list(values)
+        return values
+
+
+class _ObservedStream:
+    """A core column stream that attributes every event of a batch to its column."""
+
+    def __init__(self, outer: EndToEndWitness, key: ColumnKey, inner: Any) -> None:
+        self._outer, self._key, self._inner = outer, key, inner
+        self._snapshot: _Snapshot | None = None
+        if isinstance(inner, _column_streams.NullMaskedStream):
+            self._snapshot = _Snapshot(inner._inner)
+            inner._inner = self._snapshot
+
+    def next_batch(self, offset: int, size: int) -> list[Any]:
+        outer = self._outer
+        outer._current = self._key
+        try:
+            values = self._inner.next_batch(offset, size)
+        finally:
+            outer._current = None
+        outer.final.setdefault(self._key, []).extend(values)
+        if self._snapshot is not None:
+            nulled = [
+                offset + i
+                for i, (before, after) in enumerate(zip(self._snapshot.last, values, strict=True))
+                if after is None and before is not None
+            ]
+            outer._record(NULL_MASK, {"nulled": nulled}, self._key)
+        return values
+
+
 class EndToEndWitness:
     """Installs recording hooks around `generate_tables` and classifies every generated column.
 
@@ -241,6 +288,62 @@ class EndToEndWitness:
             return {name: wrap(fn) for name, fn in real_providers(*a, **kw).items()}
 
         mp.setattr(synthesize, "get_faker_providers", providers)
+
+        # The unified core: attribute each column's stream, and observe the same backends on it.
+        real_make = _streamed.make_column_stream
+
+        def make_stream(col: dict[str, Any], **kw: Any) -> Any:
+            outer._table = kw["table"]
+            key = (outer._table, str(col.get("name")))
+            outer._current = key
+            outer.kinds[key] = str(col.get("type"))
+            outer.events.setdefault(outer.attribution(key), [])
+            try:
+                stream = real_make(col, **kw)
+            finally:
+                outer._current = None
+            return _ObservedStream(outer, key, stream)
+
+        mp.setattr(_streamed, "make_column_stream", make_stream)
+        mp.setattr(_column_streams, "random", SimpleNamespace(Random=_RecordingRandom))
+
+        real_core_providers = _column_streams.get_faker_providers
+
+        def core_providers(*a: Any, **kw: Any) -> dict[str, Callable[..., Any]]:
+            def wrap(fn: Callable[..., Any]) -> Callable[..., Any]:
+                def called(*args: Any, **kwargs: Any) -> Any:
+                    out = fn(*args, **kwargs)
+                    outer._record(LIVE_PROVIDER, {"result": out})
+                    return out
+
+                return called
+
+            return {name: wrap(fn) for name, fn in real_core_providers(*a, **kw).items()}
+
+        mp.setattr(_column_streams, "get_faker_providers", core_providers)
+
+        # The persistent pooled selector: `default_rng` is seen at creation, each batch's result
+        # at selection (the legacy sampler records one `sample` event, the core one per batch).
+        mp.setattr(
+            _faker_pool, "np", _NpProxy(lambda label, payload: outer._record(label, payload))
+        )
+        real_select = _faker_pool.PooledSelector.select
+
+        def select(selector: _faker_pool.PooledSelector, size: int) -> Any:
+            out = real_select(selector, size)
+            outer._record(
+                NUMPY_SELECTION,
+                {
+                    "stage": "sample",
+                    "result": list(out),
+                    "pool_size": len(selector._values),
+                    "n": size,
+                    "deterministic": False,
+                },
+            )
+            return out
+
+        mp.setattr(_faker_pool.PooledSelector, "select", select)
 
         # Pool construction (kept apart from selection) and optional marking.
         real_build = _faker_pool.build_pool_values
@@ -381,16 +484,16 @@ class EndToEndWitness:
         live: list[int],
     ) -> None:
         rng_ev = next((e for e in np_events if e.payload.get("stage") == "default_rng"), None)
-        sample_ev = next((e for e in np_events if e.payload.get("stage") == "sample"), None)
+        sample_evs = [e for e in np_events if e.payload.get("stage") == "sample"]
         build = next((e for e in events if e.label == POOL_CONSTRUCTION), None)
-        if rng_ev is None or sample_ev is None or build is None:
+        if rng_ev is None or not sample_evs or build is None:
             raise WitnessError(f"{key}: numpy selection needs default_rng, sample and a pool build")
         pool = build.payload["values"]
         idx = np.random.default_rng(rng_ev.payload["seed"]).integers(
-            0, len(pool), size=sample_ev.payload["n"]
+            0, len(pool), size=sum(e.payload["n"] for e in sample_evs)
         )
         expected = [pool[i] for i in idx]
-        if sample_ev.payload["result"] != expected:
+        if [v for e in sample_evs for v in e.payload["result"]] != expected:
             raise WitnessError(f"{key}: sampler result is not pool[default_rng(seed).integers]")
         if not all(final[i] == expected[i] for i in live):
             raise WitnessError(f"{key}: the column does not hold the numpy-selected values")
