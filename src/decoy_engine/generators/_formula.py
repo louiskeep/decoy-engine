@@ -16,6 +16,7 @@ import pandas as pd
 from simpleeval import FunctionNotDefined, NameNotDefined
 
 from decoy_engine.expressions import BASE_GLOBALS, safe_eval
+from decoy_engine.generation._dob_anchor import anchored_date_of_birth
 from decoy_engine.internal.crypto import hmac_hex
 
 
@@ -309,7 +310,8 @@ class _FormulaMixin:
             "date_this_month": self.faker.date_this_month,
             "future_date": self.faker.future_date,
             "past_date": self.faker.past_date,
-            "date_of_birth": self.faker.date_of_birth,
+            # Anchored (wall-clock-free); forwards positional AND keyword args like Faker's own.
+            "date_of_birth": lambda *a, **k: anchored_date_of_birth(self.faker, *a, **k),
             "time": lambda: self.faker.time(),
             # Wall-clock helpers bound to reference_date (H7).
             "now": lambda fmt="%Y-%m-%d": ref_date.strftime(fmt),
