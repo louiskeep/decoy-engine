@@ -14,14 +14,22 @@ re-baseline direction on 2026-10-18, with three design calls settled the same da
 (§1). F0's contract, witness and comparator are reused unchanged; only the frozen
 golden is re-based.
 
-Rev-3 folds two Codex plan-gate rounds (r1 NO-GO 9 P1 + 1 P2, all resolved; r2
-NO-GO 2 P1 + 1 P2, resolved here): a reserve-before-allocate memory enforcement
-mechanism (§3), a reproducibility-eligibility axis with dependency-closure
-exclusions covering the legacy path (§1), and the full windowed_date design (§3).
-The central correction from r1 stands: generated VALUES are chosen by semantic
+Rev-4 folds three Codex plan-gate rounds (r1 NO-GO 9 P1 + 1 P2; r2 NO-GO 2 P1 + 1
+P2; r3 NO-GO 1 P1 + 1 P2). r1/r2 findings and r3's #8 are resolved. Rev-4 closes
+r3's last two: the unbounded-allocation ESCAPE through the resident/legacy path (a
+column lacking a defensible bound is now rejected on EVERY path before provider
+invocation, and the bench supervisor is explicitly containment, not production
+enforcement, §3), and the windowed_date null/error behavior is now stated as an
+INTENTIONAL semantic change applied to both paths, not a false preservation claim
+(§3). The central correction from r1 stands: generated VALUES are chosen by semantic
 eligibility alone, never by the execution environment (§2). This is a production
 generation change; the guards are reproducibility, route-independence, semantic
 integrity, and enforced bounded memory, not equivalence to today's resident bytes.
+
+NOTE: rev-4 was authored at the 3-round review cap. The remaining fixes are
+unambiguous engineering corrections (no product or multi-option call), so they are
+applied here; a confirming gate round is Cam's to authorize rather than run
+automatically.
 
 ## 1. The contract (whole-PLAN, the one decision)
 
@@ -132,19 +140,25 @@ design.
     here; that is a follow-up).
   - *Supported anchor types:* `date32` and `timestamp` (tz-naive). Other types
     decline. The existing `apply_windowed_date` conversion to pandas timestamps and
-    string formatting (`transforms/windowed_date.py`) is PRESERVED; the offset is
+    string formatting (`transforms/windowed_date.py`) carries over; the offset is
     computed relative to each row's own anchor via the existing global `row_offset`.
   - *Output schema:* `string`, matching the current formatter. No inference.
-  - *Null / invalid anchor:* a null anchor PROPAGATES to a null output (deterministic,
-    no draw consumed for that row). A non-null anchor that is unparseable or produces
-    an out-of-range date RAISES a declared `WindowedDateError` (fail-closed, not a
-    silent clamp); this preserves today's error semantics rather than inventing a
-    clamp.
+  - *Null / invalid anchor (INTENTIONAL SEMANTIC CHANGE, plan-gate #3).* Today's
+    `apply_windowed_date` (`transforms/windowed_date.py:224`) unconditionally
+    converts, samples, and formats, with no null branch and no error wrapper. FR1
+    deliberately CHANGES that: a null anchor PROPAGATES to a null output
+    (deterministic, no draw consumed for that row), and a non-null anchor that is
+    unparseable or produces an out-of-range date RAISES a declared `WindowedDateError`
+    (fail-closed, not a silent clamp). This is a behavior change, not a preservation;
+    it applies to BOTH the unified batch core AND the legacy whole-table path, so the
+    two stay route-independent. It lands under the one re-baseline minor (§7) and is
+    re-frozen with the golden.
   - *Derivation namespace:* the offset RNG is keyed by the existing per-column
     namespace plus the global row index (unchanged from the resident path), so
     streamed == resident by construction.
-  - *Preserved vs changed:* value semantics PRESERVED; the only change is that the
-    column may now stream. State this in the admission matrix.
+  - *Compatibility assertions:* the admission matrix records windowed_date as a
+    CHANGED-semantics family; acceptance (§6) asserts the new null/error behavior on
+    both paths and the pre/post diff is captured in the re-freeze manifest.
 
 **Deferred to their OWN follow-up slices (plan-gate #2, #3), NOT admitted here:**
 - **grouped_cumcount / grouped series / walk:** these sort by group + `order_by`
@@ -187,21 +201,30 @@ BEFORE it happens, backed by a runtime RSS ceiling.
   one-row-group sink buffer. Overlapping live buffers (Python + Arrow + conversion +
   sink/accumulator) are summed; a stage whose reservation would exceed the remaining
   budget REFUSES before allocating.
-- *No defensible bound = decline at admission.* A stage that cannot produce a
-  conservative upper bound (for example a Faker provider whose value width is not
-  boundable, or a parent pool of unknown size) makes the plan DECLINE the streamed
-  path at admission, before any allocation. It never reaches a mid-run surprise.
-- *Resident and legacy obey the SAME ceiling.* Resident accumulation charges the
-  whole-table footprint through the ledger and FAILS (`GenerationBudgetExceeded`) if
-  it would exceed, rather than silently materializing past the ceiling. Legacy
-  whole-table generation likewise preflights its whole-table estimate against the
-  ceiling and declines/fails if it does not fit. The resident path is exempt only
-  from the bounded-OUTPUT guarantee (output is a whole table by design), NOT from
-  the ceiling.
-- *Runtime backstop.* The planned-reservation enforcement is paired with the
-  supervisor's hard RSS ceiling (`scripts/fk-scale/_supervisor`, `--rss-kill-mb`) so
-  an estimate that is wrong low is still killed rather than OOMing the host. The
-  reservation is the primary control; the RSS kill is the backstop.
+- *No defensible bound = rejected on EVERY path, before provider invocation
+  (plan-gate #6, r3).* A column that cannot produce a conservative upper bound (a
+  Faker provider whose value width is not boundable, a parent pool of unknown size)
+  is NOT merely declined from streaming while legacy runs it on an estimate. Under a
+  bounded ceiling there is NO estimate-based escape: such a column makes the whole
+  plan fail the bounded contract at admission with a declared
+  `GenerationUnboundedError`, before the provider is ever called. The only paths that
+  execute are ones where every column has a defensible bound. (An unbounded ceiling,
+  i.e. no `budget_bytes`, is a separate explicit mode that carries no bounded
+  guarantee and is never auto-selected for a bounded request.)
+- *Resident and legacy use a DEFENSIBLE BOUND, not an estimate.* Resident
+  accumulation and legacy whole-table generation both charge a conservative
+  whole-table UPPER BOUND through the ledger and are rejected before allocation if it
+  does not fit, or if any column lacks such a bound (previous bullet). "Estimate" is
+  not sufficient: a bound that can be exceeded by real data is not a bound. The
+  resident path is exempt only from the bounded-OUTPUT guarantee (output is a whole
+  table by design), NOT from the ceiling or the defensible-bound requirement.
+- *The benchmark supervisor is containment, not production enforcement.* The
+  supervisor RSS kill (`scripts/fk-scale/_supervisor`, `--rss-kill-mb`) is an
+  external benchmark process that polls RSS and SIGKILLs; it does not protect
+  ordinary library calls, guarantee pre-OOM termination, or run transactional
+  cleanup. Production enforcement is the preflight defensible-bound rejection above,
+  on every path. The supervisor is measurement and a bench-only safety net, not the
+  memory guarantee.
 - *No post-start fallback.* Once batches are being produced, a reservation breach
   aborts transactionally (`GenerationBudgetExceeded`, staging removed); it does NOT
   switch execution mode mid-run, because that would change neither the values nor
@@ -292,14 +315,17 @@ algorithm cannot pass.
   `ParquetTransactionalSink` at TWO tiers (5M + 10M) under the same budget and
   frozen batch size, asserts EXTERNAL peak RSS under a predeclared ceiling and not
   materially growing tier-to-tier, committed rows == n.
-- **Reserve-before-allocate enforcement (plan-gate #6):** a per-stage test forces
-  the ledger near-exhaustion and asserts the REFUSAL happens BEFORE the disallowed
-  allocation at EACH bounded stage (Faker pool construction, parent-key pool build,
-  batch Arrow conversion, resident accumulation). An unbounded-width provider and an
-  unknown-size parent pool each DECLINE at admission (no allocation attempted). A
-  resident-too-big case raises `GenerationBudgetExceeded` without materializing past
-  the ceiling. The supervisor RSS kill is exercised as the backstop (estimate wrong
-  low still terminates rather than OOMs).
+- **Reserve-before-allocate enforcement (plan-gate #6), DIRECT LIBRARY, not via the
+  bench supervisor:** a per-stage test forces the ledger near-exhaustion and asserts
+  the REFUSAL happens BEFORE the disallowed allocation at EACH bounded stage (Faker
+  pool construction, parent-key pool build, batch Arrow conversion, resident
+  accumulation). An unbounded-width provider and an unknown-size parent pool each
+  raise `GenerationUnboundedError` at admission on EVERY path (streamed, resident,
+  legacy) with the provider NEVER invoked and nothing written (assert zero provider
+  calls and zero sink/file writes). A resident/legacy-too-big case raises
+  `GenerationBudgetExceeded` without materializing past the ceiling. These are
+  in-process library assertions; the bench supervisor RSS kill is covered separately
+  as a bench-only containment check, not as the memory guarantee.
 - **windowed_date (FR1, plan-gate #3):** cross-partition route-independence with the
   anchor and windowed columns co-computed in one batch; a null-anchor row yields a
   null output and consumes no draw (verified by downstream determinism); an
