@@ -10,8 +10,10 @@ Plan: `docs/plans/2026-10-18-gen-dob-anchor.md` (Codex plan-gate GO).
   tzinfo=None, minimum_age=0, maximum_age=115)`. It is Faker's `date_of_birth` with the anchor in
   place of `datetime.now()`, drawn through Faker's own `date_time_ad` and `change_year`. The
   signature is positional-or-keyword so formulas can call `date_of_birth(None, 18, 65)`.
-- Two seams call it: `FakerAdapter._faker_call` (per-row, pooled, composite pools) and the
-  formula scope in `generators/_formula.py`.
+- Three seams call it: `FakerAdapter._faker_call` (per-row, pooled, composite pools), the formula
+  scope in `generators/_formula.py`, and the reflected provider table in
+  `internal/faker_setup.py` (`get_faker_providers`, `resolve_pool_provider`), where only
+  `date_of_birth` is redirected. The third covers `faker_type: date_of_birth` columns.
 - Import-time symbol guard raises `DecoyError` if Faker drops `change_year` or `date_time_ad`.
 
 ## Why the oracle did not move
@@ -23,9 +25,6 @@ F0 modules with `F0_DOB_ANCHOR_CHECK=poison` (Faker's own `date_of_birth` raises
 
 ## Known gaps
 
-- A generation or masking column with `faker_type: date_of_birth` resolves through the reflected
-  Faker provider table (`internal/faker_setup.py::get_faker_providers` and
-  `resolve_pool_provider`), not the two seams above. It still reads the clock.
 - Mimesis `person_dob` reads its own clock. Out of scope for this slice.
 - Faker date helpers other than dob (`date_this_year`, ...) are unchanged.
 

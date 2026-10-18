@@ -123,7 +123,7 @@ ALLOWLIST: dict[str, int] = {
     # load-time self-test and native_threads plumbing; no cleaner class split identified.
     "src/decoy_engine/execution/out_of_core/_stream_join.py": 709,
     # custom-provider registry snapshot for the shadow-parity gate; one cohesive module, no split identified.
-    "src/decoy_engine/internal/faker_setup.py": 622,
+    "src/decoy_engine/internal/faker_setup.py": 637,
     # FF1 span path and sub-floor policy; split into _text_mask_sub_floor.py when next touched.
     "src/decoy_engine/transforms/text_mask.py": 708,
 }
