@@ -1,0 +1,137 @@
+{
+  "engine_minor": "0.7",
+  "fixtures": {
+    "categorical": {
+      "envelope_digest": "47ee3b519e9fb093bdfbf0a15b0e57d9c6037ccfffd7cdbc6d1c98dce0539b7f",
+      "excluded_columns": [],
+      "status": "unchanged",
+      "tables": {
+        "cat": "4b55d8edeba3b78e55c4df7eed549e6b7e7e00a5ec9ca69cd35c843eea6aa317"
+      }
+    },
+    "conditional": {
+      "envelope_digest": "8f99802742a3942c56b586e2f359a89aabc5d71ce211640b0faa660f8bf91cdf",
+      "excluded_columns": [],
+      "status": "unchanged",
+      "tables": {
+        "cond": "a256949efcae44979028c9421912a4fb511bbb02cb106d2c54eb57e314011b64"
+      }
+    },
+    "derived": {
+      "envelope_digest": "6098078fe2e5d6b1e13677b4c730e38ece6cec74a778d00f27fa91ca55ac695f",
+      "excluded_columns": [],
+      "status": "unchanged",
+      "tables": {
+        "derived": "d0e134747083e7e67a66f7d07d706569e5e569d7fe86443d18c404e0b552383f"
+      }
+    },
+    "derived_aggregate": {
+      "envelope_digest": "9fad100e22fd29a8014bb04d8e266b0b339157edf2e0cb2066d8d73972a259e4",
+      "excluded_columns": [],
+      "status": "unchanged",
+      "tables": {
+        "agg": "61acfeac32544546e11f199764fe152cde035be6c26bbad285c2055ca0f331aa"
+      }
+    },
+    "formula": {
+      "envelope_digest": "3acdbe82f83cddde238d8e11c7887ef24d81ca32007e0948d0b77693260490bd",
+      "excluded_columns": [],
+      "status": "unchanged",
+      "tables": {
+        "formula": "3942827b9e13d99d3257e17d0443d2905425d90bd3a35b36c0779e04d5f8b1ba"
+      }
+    },
+    "grouped_windowed": {
+      "envelope_digest": "9512d7a4598e1fe9d0bbf6058ffc7d40a912a94d341a3676b7725b2279a00799",
+      "excluded_columns": [],
+      "status": "unchanged",
+      "tables": {
+        "gw": "38d60aecec60ba4eec009d36b13b1e7a04ac423fcda1dbe829aa310d04d5117a"
+      }
+    },
+    "keyed_derive": {
+      "envelope_digest": "b55f6aa4862d013fb55dd9ef770a8ba3f8180e55098fe0daa1fa7cd58dcb1478",
+      "excluded_columns": [],
+      "status": "unchanged",
+      "tables": {
+        "keyed": "5fc5490f068d0d40cd4322f23d7ecc04b13ab84c4e2455483de74d60f6b5f9e1"
+      }
+    },
+    "live_faker": {
+      "envelope_digest": "913b06eea5f4a48a641cbe3f17538614894258a2491a9b146ece4fa52053908d",
+      "excluded_columns": [],
+      "status": "unchanged",
+      "tables": {
+        "live": "571f2ecd49f43a7cfbb6d37f979bc25008fdef09ac2e9abdc73fdb57c969ed79"
+      }
+    },
+    "live_faker_default_locale": {
+      "envelope_digest": "16446cc2c075bc5af09c05f59eb85569efc49bc46f0e55d3fd71ab1532dc5bd5",
+      "excluded_columns": [],
+      "status": "unchanged",
+      "tables": {
+        "live_loc": "ea3e1d889e9c68f3bcbfe32c5a122ae2961ceca384eede566f53e3669ad03073"
+      }
+    },
+    "nulls": {
+      "envelope_digest": "83d9870085d5bf392cd7b16a4da2b305a323a67842393b68df8b624a6e6c6049",
+      "excluded_columns": [],
+      "status": "refrozen",
+      "tables": {
+        "empty": "2445c1c0db89b65b0be8c6c6f88cf5befd76dd3251e7a8f9701fffe9db6872fd",
+        "nulls": "232902afc3faf49c772ad7bd6cddaba7846f58599e9e1c5b8c7f533d229cd271"
+      }
+    },
+    "pooled_faker": {
+      "envelope_digest": "66c2f9a17e9565d28af0df57ab5b269f9af2d863c35cf0a75bf8fa2a1bcb1df6",
+      "excluded_columns": [],
+      "status": "unchanged",
+      "tables": {
+        "pooled": "7515cc948560fda6092680426cac4ff73a5cba3047cf79a07c446262654aa0cd"
+      }
+    },
+    "reference": {
+      "envelope_digest": "d256f2095f55f5b37aa16958a093d9ffedb6369524ca250bae9c8a43667337a9",
+      "excluded_columns": [],
+      "status": "unchanged",
+      "tables": {
+        "ref_child": "81619e14f5bc9f70a517ca6e21d4ff21080b701dd15494f9123f83f8e98861ef",
+        "ref_parent": "5bd260410af58db6e28aa25502fe8865da080149765f8f97fa1e6bb839bb2371"
+      }
+    },
+    "referenced_formula": {
+      "envelope_digest": "16bdc36b9d043b91b720c6473aa648229712627194a6c8a70fb37101629f1754",
+      "excluded_columns": [],
+      "status": "unchanged",
+      "tables": {
+        "rf": "d2c5f13e8900138664e150a18e15363f077729b402afa4ec87e824f50da8e57a"
+      }
+    },
+    "sequence": {
+      "envelope_digest": "1a547f6c2bf91c3d30b8ac402fbef1e1868022736b66b064d07fe1f9830bb6a9",
+      "excluded_columns": [],
+      "status": "unchanged",
+      "tables": {
+        "seq": "3df0c6047f7783128b54df894c8f737792708e97a3fb318223c710a621d3698b"
+      }
+    },
+    "statistical": {
+      "envelope_digest": "36777fd10cab6e460d2e6eab5d447a02f5d12a2c782b0ca5814981ea48be0e75",
+      "excluded_columns": [],
+      "status": "unchanged",
+      "tables": {
+        "stat": "3543ce7ade1f386db08ba44fa1d3e01a790d27636d65649ed554edcded44937d"
+      }
+    }
+  },
+  "re_frozen_on": "2026-10-18",
+  "refrozen": {
+    "nulls": {
+      "previous_tables": {
+        "empty": "6fb55c2d1210f8fb8e4ac79c3ff6fca06158df62f07e768834f439eaec685322",
+        "nulls": "85588c66a32d807e060337af1abc3c12a9369902c91a6528943b81c02ceb0855"
+      },
+      "reason": "schema only: the all-null categorical column and the zero-row table now carry their declared string type instead of Arrow's inferred null type; every value digest is unchanged"
+    }
+  }
+}

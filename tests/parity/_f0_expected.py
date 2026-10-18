@@ -12,6 +12,13 @@ is regenerated at test time. A mismatch means generation output changed: fix the
 change is deliberate and approved, re-capture with `python -m tests.parity._f0_capture` and review
 the diff as a behavior change. Never edit a digest to make a test pass.
 
+Re-baselined 2026-10-18 (Phase F FR0): the unified generation core declares each column's Arrow
+type from the configuration, so the `nulls` fixture's all-null categorical column and the
+zero-row `empty` table are `string` instead of Arrow's inferred `null`. Only the schema and table
+digests of those two tables moved; every column value digest and every other fixture is unchanged.
+The change passed the semantic gate in `_fr0_refreeze.py`; its manifest is
+`tests/fixtures/phase_f_fr0/manifest.json`.
+
 Shape: ``EXPECTED[fixture_id][table_name]`` is a `_f0_canonical.table_fingerprint` dict.
 ``POOL_SEAM`` is the generation pooled-faker seam (`_f0_seams.PoolCall.signature`) for the
 `pooled_faker` fixture, one entry per pooled column in declared order.
@@ -225,7 +232,7 @@ EXPECTED: dict[str, dict[str, dict[str, Any]]] = {
     },
     "nulls": {
         "nulls": {
-            "schema": "cf645d0b5b299425bfbe8e3f3e7bb55bfd112fedbfb4e1968f84e82418a90ceb",
+            "schema": "3eaa2e412ab4937ecee72bce2d43fe1b603db5344d5d02ea60cf3d2aae5a7d63",
             "rows": 30,
             "columns": [
                 ("seq_partial", "490f0cbb0e8ac47131fceb444a16c6c677abd8840e30eaa61d24aff9a2b4bdb6"),
@@ -239,13 +246,13 @@ EXPECTED: dict[str, dict[str, dict[str, Any]]] = {
                     "265822d774b2309b02cae4e9497a6d4d157cf60aa317e02cc6b04a3fa94a81e6",
                 ),
             ],
-            "table": "85588c66a32d807e060337af1abc3c12a9369902c91a6528943b81c02ceb0855",
+            "table": "232902afc3faf49c772ad7bd6cddaba7846f58599e9e1c5b8c7f533d229cd271",
         },
         "empty": {
-            "schema": "3372b59b1f41d6fac8ece0fc0c72b567efaa31aecb7232c175fcf88959396686",
+            "schema": "c0cc89f59ad1792bfd3e6ab9eef47a610f70e3264bfcb4591ced62ec7de299bf",
             "rows": 0,
             "columns": [("id", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")],
-            "table": "6fb55c2d1210f8fb8e4ac79c3ff6fca06158df62f07e768834f439eaec685322",
+            "table": "2445c1c0db89b65b0be8c6c6f88cf5befd76dd3251e7a8f9701fffe9db6872fd",
         },
     },
     "mixed_fk_generated_parent": {

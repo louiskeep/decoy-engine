@@ -751,7 +751,13 @@ def run_mixed_fk() -> dict[str, pa.Table]:
 
 
 def _gt(builder: Callable[[], dict[str, Any]], **kw: Any) -> Callable[[], dict[str, pa.Table]]:
-    return lambda: run_generate_tables(builder(), **kw)
+    def run() -> dict[str, pa.Table]:
+        return run_generate_tables(builder(), **kw)
+
+    # The re-freeze manifest rebuilds each fixture's pinned input envelope from these.
+    run.builder = builder  # type: ignore[attr-defined]
+    run.kwargs = kw  # type: ignore[attr-defined]
+    return run
 
 
 FIXTURES: tuple[Fixture, ...] = (
