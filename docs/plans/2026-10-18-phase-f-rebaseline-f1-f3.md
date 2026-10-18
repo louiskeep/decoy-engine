@@ -147,20 +147,33 @@ design.
     `WindowedDateError` "unparseable anchor" rule below only has meaning for a string
     anchor (a typed date cannot be unparseable). The common real shape is a date
     windowed off a string date column, e.g. an event date off a str `date_of_birth`.
-    A string anchor parses via `pd.Timestamp` exactly as the existing legacy
-    `apply_windowed_date` already does. The existing `apply_windowed_date` conversion
-    and string formatting (`transforms/windowed_date.py`) carries over; the offset is
-    computed relative to each row's own anchor via the existing global `row_offset`.
+    A string anchor is parsed, but NOT by unrestricted `pd.Timestamp` (plan-gate
+    HIGH, 2026-10-18): raw `pd.Timestamp` accepts wall-clock forms like `"now"` /
+    `"today"` and timezone-bearing / ambiguous strings, which would make output
+    non-reproducible and route-dependent. REQUIRED: accept only an ABSOLUTE,
+    UNAMBIGUOUS, timezone-naive string in a fixed grammar (full numeric ISO date
+    `YYYY-MM-DD` or ISO datetime, no timezone, no relative/partial/locale forms),
+    VALIDATE the string against that grammar BEFORE parsing, and reject every other
+    form identically on both paths. The existing `apply_windowed_date` conversion and
+    string formatting (`transforms/windowed_date.py`) carries over for the accepted
+    grammar; the offset is computed relative to each row's own anchor via the existing
+    global `row_offset`.
   - *Output schema:* `string`, matching the current formatter. No inference.
   - *Null / invalid anchor (INTENTIONAL SEMANTIC CHANGE, plan-gate #3).* Today's
     `apply_windowed_date` (`transforms/windowed_date.py:224`) unconditionally
     converts, samples, and formats, with no null branch and no error wrapper. FR1
-    deliberately CHANGES that: a null anchor PROPAGATES to a null output
-    (deterministic, no draw consumed for that row), and a non-null anchor that is
-    unparseable or produces an out-of-range date RAISES a declared `WindowedDateError`
-    (fail-closed, not a silent clamp). This is a behavior change, not a preservation;
-    it applies to BOTH the unified batch core AND the legacy whole-table path, so the
-    two stay route-independent. It lands under the one re-baseline minor (§7) and is
+    deliberately CHANGES that: a genuine NULL anchor (an actual null cell, not a
+    string) PROPAGATES to a null output (deterministic, no draw consumed for that
+    row). A non-null anchor that fails the grammar above, parses to `NaT` (including
+    `""` and `"NaT"`, which `pd.Timestamp` turns into `NaT`), or whose date falls
+    outside the declared SUPPORTED RANGE or overflows during the window arithmetic or
+    formatting RAISES a declared `WindowedDateError` (fail-closed, not a silent clamp).
+    A successful parse is NOT sufficient (plan-gate MEDIUM): distinguish an actual null
+    from a non-null string that parses to `NaT`, and declare a stable supported date
+    range so overflow is caught deterministically. All of this lives in the shared
+    `apply_windowed_date` so BOTH the unified batch core AND the legacy whole-table
+    path behave identically (sharing the helper is necessary but the parity must still
+    be TESTED, not assumed). It lands under the one re-baseline minor (§7) and is
     re-frozen with the golden.
   - *Derivation namespace:* the offset RNG is keyed by the existing per-column
     namespace plus the global row index (unchanged from the resident path), so
