@@ -39,8 +39,13 @@ distribution reimplementation). Masking's composite path is unaffected in VALUE 
 
 - New module `generation/_dob_anchor.py`:
   - `DOB_ANCHOR = datetime.date(2026, 10, 16)` -- EXACTLY ORACLE_CLOCK's date (see §4).
-  - `anchored_date_of_birth(fake, *, tzinfo=None, minimum_age=0, maximum_age=115) -> date`
-    that REPRODUCES faker.date_of_birth's body with DOB_ANCHOR substituted for `now`:
+  - `anchored_date_of_birth(fake, tzinfo=None, minimum_age=0, maximum_age=115) -> date`
+    that REPRODUCES faker.date_of_birth's body with DOB_ANCHOR substituted for `now`.
+    SIGNATURE (fold P1-new, rev-5): the params are POSITIONAL-OR-KEYWORD, EXACTLY matching
+    Faker's `date_of_birth(tzinfo=None, minimum_age=0, maximum_age=115)` -- NOT keyword-only.
+    Faker callers pass positionally (e.g. a formula's `date_of_birth(None, 18, 65)`); a
+    keyword-only helper would raise TypeError there, which the formula path SWALLOWS and
+    emits NULL dob (silent data loss, generators/_formula.py:239). Body:
     `start = change_year(DOB_ANCHOR, -(maximum_age+1)); end = change_year(DOB_ANCHOR,
     -minimum_age); dob = fake.date_time_ad(tzinfo=tzinfo, start_datetime=start,
     end_datetime=end).date(); return dob if dob != start else dob + timedelta(days=1)`. Use
@@ -64,12 +69,21 @@ distribution reimplementation). Masking's composite path is unaffected in VALUE 
      (all route through _faker_call).
   2. `generators/_formula.py:312`: the formula generator maps `"date_of_birth":
      self.faker.date_of_birth` and calls it DIRECTLY, bypassing the adapter (this is the
-     bypass the plan-gate found). Replace that entry with the anchored helper bound to
-     `self.faker`.
-  COVERAGE TEST (required): monkeypatch `faker.Faker.date_of_birth` to raise, run every
-  generation path that can produce person_dob (per-row, pooled, composite, formula), and
-  assert none raises (i.e. none reaches the unanchored method). This proves no path is
-  missed.
+     bypass the plan-gate found). Replace that entry with a wrapper that forwards BOTH
+     positional and keyword args to the helper, e.g. `lambda *a, **k:
+     anchored_date_of_birth(self.faker, *a, **k)` -- it MUST accept `date_of_birth(None, 18,
+     65)` positionally (see signature note above). Regression tests: a formula calling
+     date_of_birth positionally AND one calling it by keyword, both producing non-null
+     anchored dates.
+  COVERAGE TEST (required, fold P2-new rev-5): patch the PROVIDER method that actually
+  backs it -- `faker.providers.date_time.Provider.date_of_birth` (NOT `faker.Faker`, which
+  has no class-level date_of_birth attribute, so monkeypatch.setattr would fail at setup;
+  use raising=False if patching the proxy). Install a SPY that records calls (do not just
+  raise -- the formula path swallows raises and returns null, which would falsely satisfy
+  "none raises"). Run every person_dob generation path (per-row, pooled, composite,
+  formula) and assert: ZERO calls to the unanchored provider method AND all dob outputs are
+  non-null + equal the anchored values. The test MUST fail against the current unanchored
+  implementation (demonstrate it).
   Thread minimum_age/maximum_age through where the provider config supplies them (pool
   build passes none -> defaults 0/115, matching Faker).
 - NO clock patch, NO contextvar, NO generation-vs-masking gate. The reimplementation is a
