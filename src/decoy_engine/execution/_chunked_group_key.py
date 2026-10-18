@@ -171,9 +171,9 @@ def _static_group_by_source_type(node: WorkNode, source_type: pa.DataType) -> pa
             return source_type
         return pa.string()
     if strategy in ("group_key", "windowed_date"):
-        # apply_group_key / apply_windowed_date always return list[str]; no
-        # null-fallthrough, no content-dependent branch (see each module's
-        # own docstring).
+        # apply_group_key / apply_windowed_date always yield string-typed output (windowed_date
+        # emits null for a null anchor, which is still a string column); no content-dependent
+        # branch (see each module's own docstring).
         return pa.string()
     if strategy == "redact":
         # Config-aware (the constant replacement value's own inferred

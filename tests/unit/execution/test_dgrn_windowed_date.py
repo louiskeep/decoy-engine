@@ -9,8 +9,8 @@ traps the plan-gate caught:
 
 1. `windowed_date` + `when:` is inadmissible (filtered enumeration).
 2. `windowed_date` must stay OUT of `CHUNK_SAFE_STRATEGIES` (FK-child RI).
-3. A null anchor raises the same `ValueError` on both routes and produces
-   no `ExecutionResult`.
+3. A null anchor yields a null output on both routes (FR1 changed this from a raised
+   `ValueError`; see `TestNullAnchorPropagation`).
 4. The DGRN domain (`0 <= i <= 2**64-1`) is guarded with a coded error, both
    at entry (`base_row_offset`) and per chunk.
 """
@@ -558,61 +558,54 @@ class TestFkChildRIRegression:
 # ---------------------------------------------------------------------------
 
 
-class TestNullAnchorFailure:
-    def test_null_anchor_raises_same_error_both_routes_no_result(self, tmp_path) -> None:
+class TestNullAnchorPropagation:
+    """FR1 changed the null-anchor contract: a null anchor yields a null output (no draw) on every
+    route, where it used to raise from `strftime`. Chunked must still equal full-frame."""
+
+    def _both(self, tmp_path, df, chunk_size):
+        df.to_csv(tmp_path / "in.csv", index=False)
+        cfg = _windowed_date_cfg(tmp_path)
+        sources = {"accounts": pa.Table.from_pandas(df, preserve_index=False)}
+        full = run_pipeline(
+            cfg, sources=sources, engine_version=_ENGINE_VERSION, auto_chunk=False
+        ).outputs["accounts"]
+        chunked = run_pipeline(
+            cfg,
+            sources=sources,
+            engine_version=_ENGINE_VERSION,
+            auto_chunk_threshold_rows=_LOW_THRESHOLD,
+            chunk_size_rows=chunk_size,
+        )
+        assert chunked.quality_metrics["auto_chunk"]["mode"] == "chunked"
+        return full, chunked.outputs["accounts"]
+
+    def test_null_anchor_is_null_output_on_both_routes(self, tmp_path) -> None:
         df = _anchor_frame(10)
         df.loc[5, "start_date"] = None  # a chunk boundary when chunk_size_rows=5
-        df.to_csv(tmp_path / "in.csv", index=False)
-        cfg = _windowed_date_cfg(tmp_path)
-        sources = {"accounts": pa.Table.from_pandas(df, preserve_index=False)}
+        full, chunked = self._both(tmp_path, df, 5)
+        assert full.column("end_date").to_pylist()[5] is None
+        assert sum(v is None for v in full.column("end_date").to_pylist()) == 1
+        assert chunked.equals(full)
 
-        with pytest.raises(ValueError, match="strftime"):
-            run_pipeline(
-                cfg,
-                sources=sources,
-                engine_version=_ENGINE_VERSION,
-                auto_chunk=False,
-            )
-        with pytest.raises(ValueError, match="strftime"):
-            run_pipeline(
-                cfg,
-                sources=sources,
-                engine_version=_ENGINE_VERSION,
-                auto_chunk_threshold_rows=_LOW_THRESHOLD,
-                chunk_size_rows=5,
-            )
+    def test_all_null_tail_chunk_is_null_output(self, tmp_path) -> None:
+        df = _anchor_frame(12)
+        df.loc[9:, "start_date"] = None  # the last chunk of 3 is entirely null
+        full, chunked = self._both(tmp_path, df, 3)
+        assert full.column("end_date").to_pylist()[9:] == [None, None, None]
+        assert chunked.column("end_date").to_pylist() == full.column("end_date").to_pylist()
 
-    def test_all_null_tail_chunk_raises_no_result(self, tmp_path) -> None:
-        df = _anchor_frame(9)
-        df.loc[6:, "start_date"] = None  # the last chunk of 3 is entirely null
-        df.to_csv(tmp_path / "in.csv", index=False)
-        cfg = _windowed_date_cfg(tmp_path)
-        sources = {"accounts": pa.Table.from_pandas(df, preserve_index=False)}
-
-        with pytest.raises(ValueError, match="strftime"):
-            run_pipeline(
-                cfg,
-                sources=sources,
-                engine_version=_ENGINE_VERSION,
-                auto_chunk_threshold_rows=_LOW_THRESHOLD,
-                chunk_size_rows=3,
-            )
-
-    def test_manual_chunked_entrypoint_null_anchor_raises_mid_iteration(self, tmp_path) -> None:
-        """The generator raises during `list(...)` materialization, matching
-        the full-frame route's raise-with-no-result contract exactly."""
+    def test_manual_chunked_entrypoint_null_anchor_matches_full_frame(self, tmp_path) -> None:
         df = _anchor_frame(6)
         df.loc[4, "start_date"] = None
         cfg = _windowed_date_cfg(tmp_path)
-        with pytest.raises(ValueError, match="strftime"):
+        out = pa.concat_tables(
             list(
                 run_mask_pipeline_chunked(
-                    cfg,
-                    _chunks(df, 2),
-                    table="accounts",
-                    engine_version=_ENGINE_VERSION,
+                    cfg, _chunks(df, 2), table="accounts", engine_version=_ENGINE_VERSION
                 )
             )
+        )
+        assert out.column("end_date").to_pylist()[4] is None
 
 
 # ---------------------------------------------------------------------------
@@ -681,8 +674,8 @@ class TestC8IiiDFullTablePositions:
         assert sub_result == [full_result[r] for r in rows]
 
     def test_null_anchor_split(self) -> None:
-        # A full run with a null anchor raises; a gate that excludes the null row succeeds and
-        # matches the full-frame result at the surviving rows.
+        # A null anchor yields null at its own row; a gate that excludes the null row matches the
+        # full-frame result at the surviving rows.
         cfg = WindowedDateConfig.from_dict({"anchor": "start_date", "max_days": 5})
         seed = (0x1234).to_bytes(8, "big")
         ns = "windowed_date/end_date"
@@ -698,8 +691,9 @@ class TestC8IiiDFullTablePositions:
 
         with_null = base.copy()
         with_null.loc[2, "start_date"] = None
-        with pytest.raises(ValueError):
-            apply_windowed_date(cfg, with_null, seed=seed, namespace=ns)
+        full_null = apply_windowed_date(cfg, with_null, seed=seed, namespace=ns)
+        assert full_null[2] is None
+        assert [full_null[r] for r in valid_rows] == valid_result
 
         surviving = with_null.iloc[valid_rows].reset_index(drop=True)
         survived_result = apply_windowed_date(

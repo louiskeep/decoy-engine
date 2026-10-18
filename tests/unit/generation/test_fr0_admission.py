@@ -42,7 +42,9 @@ def test_matrix_has_a_row_for_every_generator_kind() -> None:
 
 def test_only_the_prefix_stable_families_are_admitted() -> None:
     admitted = {k for k, (ok, _) in ADMISSION_MATRIX.items() if ok}
-    assert admitted == {"sequence", "categorical", "faker", "reference"}
+    # windowed_date joins in FR1 as the one CHANGED-semantics family (see test_fr1_windowed_date).
+    assert admitted == {"sequence", "categorical", "faker", "reference", "windowed_date"}
+    assert "CHANGED" in ADMISSION_MATRIX["windowed_date"][1]
 
 
 @pytest.mark.parametrize(
@@ -53,7 +55,6 @@ def test_only_the_prefix_stable_families_are_admitted() -> None:
         {"type": "derived_aggregate", "op": "sum", "column": "a"},
         {"type": "statistical", "snapshot_file": "x"},
         {"type": "grouped_series", "group_by": "a", "order_by": "b"},
-        {"type": "windowed_date", "anchor": "a", "min_days": 1, "max_days": 2},
         {"type": "group_key", "group_by": "a"},
     ],
 )
