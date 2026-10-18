@@ -17,6 +17,8 @@ traps the plan-gate caught:
 
 from __future__ import annotations
 
+import traceback
+
 import numpy as np
 import pandas as pd
 import pyarrow as pa
@@ -609,6 +611,10 @@ class TestNullAnchorPropagation:
         assert out.column("end_date").to_pylist()[4] is None
 
 
+def _full_traceback(error: BaseException) -> str:
+    return "".join(traceback.format_exception(type(error), error, error.__traceback__))
+
+
 class TestMaskPathStrictAnchorContract:
     """The mask strategy shares `apply_windowed_date`, so it inherits the FR1 fail-closed anchor
     grammar and supported range. The error must not echo the offending cell."""
@@ -625,6 +631,21 @@ class TestMaskPathStrictAnchorContract:
         with pytest.raises(WindowedDateError) as exc:
             run_pipeline(cfg, sources=sources, engine_version=_ENGINE_VERSION, auto_chunk=False)
         assert bad not in str(exc.value)
+        assert bad not in _full_traceback(exc.value)
+
+    @pytest.mark.parametrize("bad", ["2024-02-30", "2023-02-29", "2024-13-01"])
+    def test_invalid_calendar_anchor_traceback_excludes_value(self, tmp_path, bad) -> None:
+        """pandas quotes the cell in its error; the full chain must not re-expose it."""
+        df = pd.DataFrame({"start_date": ["1990-03-01", bad, "1991-04-02"]})
+        df.to_csv(tmp_path / "in.csv", index=False)
+        cfg = _windowed_date_cfg(tmp_path)
+        sources = {"accounts": pa.Table.from_pandas(df, preserve_index=False)}
+        with pytest.raises(WindowedDateError) as exc:
+            run_pipeline(cfg, sources=sources, engine_version=_ENGINE_VERSION, auto_chunk=False)
+        assert bad not in str(exc.value)
+        assert bad not in _full_traceback(exc.value)
+        assert exc.value.__cause__ is None
+        assert exc.value.__context__ is None
 
 
 # ---------------------------------------------------------------------------
