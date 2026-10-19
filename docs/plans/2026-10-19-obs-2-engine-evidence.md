@@ -158,6 +158,31 @@ Freeze a golden masked-output artifact captured at base `da9623b7` as a committe
 
 Do NOT add `compiled_kernel_executed`/`pool_select_calls` to the public payload in this slice (rev-3 §D floated them without a contract). They stay internal explanatory references. `strategy_branch_calls` is the ONLY new D public field. The "did a compiled kernel actually run" question is answered by the existing per-column `executed_backend` already on the payload.
 
+## rev 5: closes the rev-4 re-gate (#4, #7 remainders; #9 freeze)
+
+rev-4 re-gate = NO-GO narrowed to two blocking remainders (#4, #7) plus a #9 polish; #5/#6/#10/#11 and the extra-field defect RESOLVED. rev 5 closes them and supersedes R4.1/R4.4/R4.5 where it differs. Code verified at this worktree.
+
+### R5.1 Empty-input: reconciled, not surfaced (closes #4)
+
+The zero-chunk carrier proposed in R4.1 is unreachable, confirmed: the resident route always yields at least one chunk (`_pipeline_auto_chunk.py:111-113`), so `join_dispatcher_chunks([])` raising (`:115`) is a caller-bug guard, not a normal empty path; neither dispatcher caller wires `route_evidence_sink` (`_pipeline_auto_chunk.py:273`, `:328` pass only `chunk_result_sink`); a genuinely empty source (`state.first is None`, `_chunked_entry.py:476`) returns `iter(())` and then hits that raise. There is no clean successful-empty-output path through the chunked dispatcher.
+
+DECISION (explicit reconciliation per the gate's option): do NOT surface a zero-chunk `EMPTY_INPUT` decline on the public payload in this slice. `decline_records` surfaces declines only for tables that reach the per-chunk builder (at least one chunk). The `EMPTY_INPUT` enum member stays DEFINED but internal-only (it remains the existing `_oracle_evidence(table, "empty_input")` reroute reason, unchanged); it is not emitted as a public `RouteDeclineRecord`. Rationale: an empty source does no per-column masking, so there is no per-column attribution to report, and wiring a sink through both callers past the zero-chunk raise is disproportionate for a case with zero observability value. No-output-change invariant is trivially preserved: the empty path is untouched. Acceptance: an empty-source table's public payload carries NO fabricated decline record and its output/behavior is byte-identical to today. Remove the EMPTY_INPUT public-surfacing commitment from §B.
+
+### R5.2 Row-error summary: multi-table exception + ordering + validator-first (closes #7)
+
+Correct R4.3/R4.4 wording and types:
+- Exception carriers. `RowErrorsFailedError` gains `summaries_by_table: Mapping[str, RowErrorSummary]` for the full-frame path (which can hold several tables, `_pipeline_finalize.py`), AND keeps the singular `summary: RowErrorSummary | None` for the chunked legs (`_chunked_entry.py:357`, `_chunked_oracle.py:393`), which are single-table by construction (R4.3). `ValidatorFailedError` also gains `summaries_by_table` (see validator-first below). Single-table callers set `summary`; the full-frame finalizer sets `summaries_by_table`.
+- Build order (corrects "before partitioning"). In `_pipeline_finalize.py`: retain all `mask_row_errors`; compute the coverage PARTITION (`row_errors_covered`/`row_errors_uncovered`, `:428-431`); GROUP all observed records per table; build one `RowErrorSummary` per table from that table's full observed record set with per-table `total_observed`/`covered`/`uncovered` (COMPLETE completeness, full-frame observation); then raise. The summaries are built AFTER computing the partition counts but BEFORE either raise, never from `.records` alone.
+- Validator-first hole. An uncovered validator failure raises `ValidatorFailedError` first (`_pipeline_finalize.py:438`), before `RowErrorsFailedError` (`:441`). Build the per-table row-error summaries ONCE before the raise block and attach `summaries_by_table` to WHICHEVER error raises (both exception types carry it), so observed row errors are reported even when a validator failure preempts. `.records` on `RowErrorsFailedError` stays the uncovered subset, unchanged.
+- Acceptance adds: two failing tables (full-frame) yield one summary each in `summaries_by_table`; a simultaneous validator + row-error failure still carries the row-error summaries on the raised `ValidatorFailedError`.
+
+### R5.3 Freeze the summary key set (closes #9)
+
+In the plan, freeze (not "state during build") the serialized key sets:
+- `RouteDeclineRecord`: exactly `code`, `table`, `column`, `table_wide`.
+- `RowErrorSummary`: exactly `table`, `by_column`, `total_observed`, `covered`, `uncovered`, `sample`, `sample_limit`, `omitted`, `completeness`. Each `sample` item serializes exactly `column`, `trigger`, `row_index`, `chunk_index`, `chunk_row_offset` (no `reason`). `by_column` keys are schema column identifiers (allowed); inner keys are closed trigger codes.
+- The hostile-input absence assertions and the frozen key sets apply identically to every value in `row_error_summary_by_table`.
+
 ## 0. Why
 
 OBS-1 wired the job narrative but four job-log data points are still missing or wrong at the engine boundary. The platform cannot report them because the engine does not emit them in a structured, leak-safe shape:
