@@ -532,6 +532,9 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         "src/decoy_engine/execution/_chunked_profile.py",
         "src/decoy_engine/execution/native/_chunk_schema.py",
         "src/decoy_engine/execution/native/_chunked_entry.py",
+        # OBS-2: the non-empty-source preflight wiring split out of `_chunked_entry.py` for
+        # module headroom (pure move); imports nothing from `execution.physical`.
+        "src/decoy_engine/execution/native/_chunked_preflight_wiring.py",
         "src/decoy_engine/execution/native/_chunked_evidence.py",
         # C4: the native chunked route's date_shift row-error records, re-sorted into the
         # oracle's work-list order. Imports only `_row_errors` and `_date_shift_ext`.
