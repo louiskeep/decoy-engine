@@ -9,6 +9,21 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Changed (OBS-1b: log and error leak scrub, 2026-10-19)
+
+Exception messages and child output no longer reach logs or the job's visible error. The storm
+scan, `_log_stats` and custom-provider loaders log the exception type only, the geo
+generalizer no longer logs a restricted zip3 prefix, and `storm.scan`'s `emit_step` carries the
+type name. `IsolatedRunResult.error` is now a safe summary built from the return code, signal, a
+stable reason (`no_result_envelope`, `memory_marker_in_stderr`, `memory_shaped_signal`), memory
+figures and the route-ineligibility markers the governor matches, for every producer: child
+stderr and stdout, the worker envelope, the in-process path and both commit-failure branches. It
+no longer includes the stderr or stdout tail, the exception message or the output path. Routing
+and classification are unchanged. The leak sentry now covers `emit_step(error_msg=)`, the
+`error=` field, the worker envelope and the error-text builders, follows assignments, flags the
+exact names `z3`, `z5`, `zip3`, `zip5`, `zipcode` and `prefix`, and runs with no allowlist
+entries for the sites fixed here.
+
 ### Added (F-audit: no-legacy generation compute audit, 2026-10-19)
 
 Phase F closes with an audit of where generation computes. It changes no engine behavior; the

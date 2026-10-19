@@ -46,7 +46,7 @@ def _run(**kw) -> IsolatedRunResult:
     return run_pipeline_isolated({}, None, engine_version="memwatch-test", **kw)
 
 
-_MAIN_SILENT_ERROR = "child terminated abnormally (returncode=0); stderr tail: ''"
+_MAIN_SILENT_ERROR = "child terminated abnormally (returncode=0, reason=no_result_envelope)"
 _SUFFIX = re.compile(r"; memory: last [\d.]+ MiB, peak [\d.]+ MiB of 64 MiB \(data\)$")
 
 
@@ -140,7 +140,8 @@ class TestLifecycle:
         assert result.signal_number == signal.SIGKILL
         assert result.error is not None
         assert result.error.startswith(
-            "child terminated abnormally (returncode=-9, signal=SIGKILL); stderr tail: ''"
+            "child terminated abnormally (returncode=-9, signal=SIGKILL, "
+            "reason=memory_shaped_signal)"
         )
 
     def test_envelope_result_carries_evidence_with_the_flag_off(self, tmp_path, monkeypatch):

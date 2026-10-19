@@ -65,7 +65,7 @@ MAX = 700
 # docs/decisions/module-size-census-history.md.
 ALLOWLIST: dict[str, int] = {
     # sampler start/finish and evidence threading in _spawn_and_classify; split the spawn/classify half into _isolated_spawn.py.
-    "src/decoy_engine/execution/_isolated_run.py": 612,
+    "src/decoy_engine/execution/_isolated_run.py": 607,
     # bounded-eligible fit rule, the fk-dtype retention branch and the D3a validator admission in decide_execution_route; split the route-priority docstring into the plan doc.
     "src/decoy_engine/execution/_pipeline_routing.py": 691,
     # wiring of the fk-dtype hazard and D3a validator signals into the one routing call site; split the probe-recovery resolver into its own module.

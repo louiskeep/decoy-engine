@@ -153,7 +153,8 @@ class TestRecognitionUnchanged:
         monkeypatch.setattr(_isolated_worker, "run_pipeline", _convert)
         envelope = _isolated_worker._run(_payload(tmp_path))
         assert envelope["outcome"] == "crashed"
-        assert "Wrapping <value> failed" in envelope["error"]
+        # The summary keeps the class name only; the Arrow message (and the cell) is gone.
+        assert "Wrapping" not in envelope["error"]
         assert "John" not in envelope["error"]
         assert "Smith" not in envelope["error"]
 
@@ -202,7 +203,7 @@ class TestScrub:
         monkeypatch.setattr(_isolated_worker, "run_pipeline", _raising(exc))
         error = _isolated_worker._run(_payload(tmp_path))["error"]
         assert not _leaks(error, _VALUES[name])
-        assert error == "ArrowException: " + _WRAPPING.format("<value>")
+        assert error == "ArrowException"
 
     @pytest.mark.parametrize("name", list(_VALUES))
     def test_main_handler_scrubs(self, name, tmp_path, monkeypatch):
@@ -213,7 +214,7 @@ class TestScrub:
         _isolated_worker.main(["worker", str(payload_path)])
         error = _read_envelope(tmp_path)["error"]
         assert not _leaks(error, _VALUES[name])
-        assert error == "ArrowException: " + _WRAPPING.format("<value>")
+        assert error == "ArrowException"
 
     def test_a_long_value_is_scrubbed_before_truncation(self, tmp_path, monkeypatch):
         # Truncating first would cut the terminal " failed" and leave the value in place.
@@ -222,9 +223,9 @@ class TestScrub:
         error = _isolated_worker._run(_payload(tmp_path))["error"]
         assert "SECRET" not in error
 
-    def test_non_wrapping_error_is_stored_unchanged(self, tmp_path, monkeypatch):
+    def test_non_wrapping_error_message_is_not_stored(self, tmp_path, monkeypatch):
         monkeypatch.setattr(_isolated_worker, "run_pipeline", _raising(ValueError("plain failure")))
-        assert _isolated_worker._run(_payload(tmp_path))["error"] == "ValueError: plain failure"
+        assert _isolated_worker._run(_payload(tmp_path))["error"] == "ValueError"
 
 
 # --- 6. classifier parity -----------------------------------------------------------------
@@ -304,5 +305,6 @@ class TestDriverResidue:
         monkeypatch.setattr(_isolated_run, "run_pipeline", boom)
         result = _isolated_run._run_in_process({}, None, {}, None)
         assert result.error is not None
+        # The whole message is dropped now, not only the Arrow pattern: type name stays.
         assert "John Smith" not in result.error
-        assert "<value>" in result.error
+        assert result.error == "ArrowException"

@@ -89,7 +89,10 @@ class BaseMaskingStrategy(MaskingStrategy):
         except Exception as exc:
             # _log_stats is debug-only. Don't kill the mask run if the
             # comparison can't be computed for any reason.
-            self.logger.debug(f"Couldn't compute change stats for '{column_name}': {exc}")
+            # Type only: the comparison runs over column values, so the message can echo one.
+            self.logger.debug(
+                f"Couldn't compute change stats for '{column_name}': {type(exc).__name__}"
+            )
             changed_count = 0
 
         if non_null_count > 0:

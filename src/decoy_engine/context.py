@@ -110,7 +110,8 @@ def emit_step(
     ``rows_in`` and ``rows_out`` are populated at ``finish`` when known.
 
     On ``status='error'`` callers can pass ``error_class`` (the Python
-    exception type name) and ``error_msg`` (the str(exc)) so the
+    exception type name) and ``error_msg`` (a safe summary such as the type
+    name; never ``str(exc)``, which can echo data) so the
     JobLogger can format the spec ERROR line tail per LOGGING_GUIDE
     §4c (``request_id=`` + ``error_class=`` + ``node_id=``). The
     JobLogger also persists ``error_class`` to the JobStep companion

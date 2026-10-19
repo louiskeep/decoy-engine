@@ -13,7 +13,7 @@ test; an allowlisted site that disappears must be removed from the list.
 from __future__ import annotations
 
 import ast
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import pytest
 
@@ -44,7 +44,24 @@ RISKY_NAMES = frozenset(
         "item",
         "line",
         "content",
+        # Geographic quasi-identifiers taken straight from rows (HIPAA Safe Harbor zip3/zip5).
+        # Exact names, not a `zip*` wildcard, so unrelated identifiers stay clean.
+        "z3",
+        "z5",
+        "zip3",
+        "zip5",
+        "zipcode",
+        "prefix",
     }
+)
+# Names that hold child-process output. Only the error sinks below treat them as risky, because
+# `stderr`/`stdout` are routine, harmless names in code that does not build a user-facing error.
+SINK_RISKY = RISKY_NAMES | {"stderr", "stdout"}
+# Functions whose return value IS the user-visible error text. Their bodies are held to the
+# same standard as a sink: a builder that returns the exception message leaks through every
+# caller, so the check sits at the definition rather than at each call.
+ERROR_TEXT_BUILDERS = frozenset(
+    {"_error_text", "exception_error_text", "commit_error_text", "abnormal_exit_text"}
 )
 _LEVELS = frozenset({"debug", "info", "warning", "warn", "error", "exception", "critical", "log"})
 _EXCEPTION_MARKER = "<exception traceback>"
@@ -63,12 +80,6 @@ ALLOWLIST: dict[tuple[str, str, str], tuple[int, str]] = {
         "model pack and environment config text",
     ),
     ("internal/faker_setup.py", "make_faker", "exc"): (1, "Faker locale error; locale is config"),
-    # Deferred to the post-Phase F Observability program (decoy-platform ROADMAP): these can
-    # echo file content or column values and should log the exception type only.
-    ("internal/faker_setup.py", "_load_txt", "exc"): (1, "Observability follow-up"),
-    ("internal/faker_setup.py", "_load_json", "exc"): (1, "Observability follow-up"),
-    ("storm/profiler.py", "_run_storm_inner", "exc"): (1, "Observability follow-up"),
-    ("transforms/base.py", "BaseMaskingStrategy._log_stats", "exc"): (1, "Observability follow-up"),
 }
 
 
@@ -133,7 +144,8 @@ def _risky_in(value: ast.expr, risky: frozenset[str]) -> list[str]:
             base = base.value
         # `str(exc)[:200]` still exposes the text; `type(exc).__name__` stays exempt because
         # `type` is not a formatting call.
-        return _risky_in(base, risky) if isinstance(base, ast.Call) else []
+        # A sliced f-string (`f"{exc}"[:500]`) exposes the same text as the f-string itself.
+        return _risky_in(base, risky) if not isinstance(base, ast.Name) else []
     children: list[ast.expr] = []
     if isinstance(value, ast.JoinedStr):
         children = [p.value for p in value.values if isinstance(p, ast.FormattedValue)]
@@ -162,6 +174,9 @@ def _risky_in(value: ast.expr, risky: frozenset[str]) -> list[str]:
             isinstance(func, ast.Attribute) and func.attr in {"format", "join"}
         ):
             children = [*value.args, *(k.value for k in value.keywords)]
+        elif isinstance(func, ast.Name) and func.id == "scrub_error_text":
+            # Returns the message with only the Arrow cell pattern removed: still the message.
+            children = list(value.args)
         elif isinstance(func, ast.Attribute):
             if func.attr in _COUNT_METHODS:
                 return []  # `row.count()`, `values.nunique()` log a number, not the data
@@ -214,11 +229,107 @@ def _findings(source: str, module: str) -> dict[tuple[str, str, str], int]:
     return found
 
 
+def _own_nodes(scope: ast.AST) -> list[ast.AST]:
+    """Nodes that belong to `scope` itself: nested defs and classes appear but are not entered."""
+    own: list[ast.AST] = []
+    pending = list(ast.iter_child_nodes(scope))
+    while pending:
+        node = pending.pop()
+        own.append(node)
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+            pending.extend(ast.iter_child_nodes(node))
+    return own
+
+
+def _tainted_names(own: list[ast.AST], risky: frozenset[str]) -> frozenset[str]:
+    """Names assigned from a risky expression, in source order, one pass.
+
+    Bounded on purpose: a single scope, plain `name = expr` / `name += expr` assignments, no
+    loops to a fixpoint, no cross-function flow. It is enough to follow
+    `stderr_tail = stderr.strip()...` into the `error=` that uses `stderr_tail`, which an
+    expression-only check cannot see because `stderr_tail` is not a risky name.
+    """
+    tainted: set[str] = set()
+    assigns = sorted(
+        (n for n in own if isinstance(n, (ast.Assign, ast.AnnAssign, ast.AugAssign))),
+        key=lambda n: (n.lineno, n.col_offset),
+    )
+    for node in assigns:
+        if node.value is None:
+            continue
+        if _risky_in(node.value, risky | tainted):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            tainted |= {t.id for t in targets if isinstance(t, ast.Name)}
+    return frozenset(tainted)
+
+
+def _call_name(node: ast.Call) -> str:
+    func = node.func
+    return func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+
+
+def _is_envelope_module(module: str) -> bool:
+    """The isolated-run modules, whose `{"error": ...}` dict is the worker's result envelope.
+
+    Other `"error"` dict keys (a warning detail, an API payload) are a different sink with
+    different consumers; widening this to every module is a separate decision.
+    """
+    return PurePosixPath(module).name.startswith("_isolated_")
+
+
+def _sink_findings(source: str, module: str) -> dict[tuple[str, str, str], int]:
+    """Risky values reaching a user-visible error, not a log call.
+
+    Named sinks only: `emit_step(error_msg=...)`, `IsolatedRunResult(error=...)`, a dict entry
+    keyed `"error"` in an isolated-run module (the worker envelope), and the return of an `ERROR_TEXT_BUILDERS` function.
+    The variable in each key is `<sink>:<name>` so a sink finding never collides with a log one.
+    """
+    found: dict[tuple[str, str, str], int] = {}
+
+    def add(qualname: str, sink: str, hits: list[str]) -> None:
+        for hit in hits:
+            key = (module, qualname, f"{sink}:{hit}")
+            found[key] = found.get(key, 0) + 1
+
+    def scan(scope: ast.AST, qualname: str) -> None:
+        own = _own_nodes(scope)
+        risky = SINK_RISKY | {
+            n.name for n in own if isinstance(n, ast.ExceptHandler) and n.name is not None
+        }
+        risky = risky | _tainted_names(own, risky)
+        in_builder = (
+            isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and scope.name in ERROR_TEXT_BUILDERS
+        )
+        for node in own:
+            if isinstance(node, ast.Call):
+                sink = {"emit_step": "error_msg", "IsolatedRunResult": "error"}.get(
+                    _call_name(node)
+                )
+                for keyword in node.keywords:
+                    if sink is not None and keyword.arg == sink:
+                        add(qualname, f"{_call_name(node)}.{sink}", _risky_in(keyword.value, risky))
+            elif isinstance(node, ast.Dict) and _is_envelope_module(module):
+                for key_node, value in zip(node.keys, node.values, strict=True):
+                    if isinstance(key_node, ast.Constant) and key_node.value == "error":
+                        add(qualname, "envelope.error", _risky_in(value, risky))
+            elif in_builder and isinstance(node, ast.Return) and node.value is not None:
+                add(qualname, "builder", _risky_in(node.value, risky))
+        for node in own:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                scan(node, node.name if qualname == "<module>" else f"{qualname}.{node.name}")
+
+    scan(ast.parse(source), "<module>")
+    return found
+
+
 def _engine_findings() -> dict[tuple[str, str, str], int]:
     found: dict[tuple[str, str, str], int] = {}
     for path in sorted(SRC.rglob("*.py")):
         module = path.relative_to(SRC).as_posix()
-        found.update(_findings(path.read_text(encoding="utf-8"), module))
+        text = path.read_text(encoding="utf-8")
+        found.update(_findings(text, module))
+        found.update(_sink_findings(text, module))
     return found
 
 
@@ -330,3 +441,127 @@ _TB = "<exception traceback>"
 )
 def test_the_detector(source: str, expected: dict[tuple[str, str, str], int]) -> None:
     assert _findings(source, _M) == expected
+
+
+# --- error sinks ---------------------------------------------------------------------------
+# The fixtures below are the pre-OBS-1b engine code, verbatim where it matters: each leaked a
+# raw message or child output into the user-visible `IsolatedRunResult.error` and passed the
+# log-only sentry, because the exposed variables are not risky-named and the sinks are not log
+# calls.
+_ISO = "_isolated_run.py"
+
+_PRE_FIX_TAIL_ERROR = """
+def _run_isolated(stderr, stdout, proc, signal_name, evidence):
+    stderr_tail = stderr.strip().splitlines()[-1][:300] if stderr.strip() else ""
+    stdout_tail = stdout.strip().splitlines()[-1][:300] if stdout.strip() else ""
+    return IsolatedRunResult(
+        outcome="crashed",
+        error=(
+            f"child terminated abnormally (returncode={proc.returncode}"
+            f"{f', signal={signal_name}' if signal_name else ''}); "
+            f"stderr tail: {stderr_tail!r}"
+            f"{f'; stdout tail: {stdout_tail!r}' if stdout_tail else ''}"
+            f"{error_suffix(evidence) if evidence else ''}"
+        ),
+    )
+"""
+
+_PRE_FIX_BUILDER = """
+def exception_error_text(exc):
+    return f"{type(exc).__name__}: {scrub_error_text(str(exc))}"
+"""
+
+
+def test_sink_flags_the_pre_fix_tail_expression_through_assignments() -> None:
+    assert _sink_findings(_PRE_FIX_TAIL_ERROR, _ISO) == {
+        (_ISO, "_run_isolated", "IsolatedRunResult.error:stderr_tail"): 1,
+        (_ISO, "_run_isolated", "IsolatedRunResult.error:stdout_tail"): 1,
+    }
+
+
+def test_sink_expression_check_alone_would_miss_the_pre_fix_tail() -> None:
+    # Pins WHY assignment tracking exists: the expression names only `stderr_tail`/`stdout_tail`,
+    # which are not risky by name, so checking the `error=` expression alone sees nothing.
+    expr = ast.parse("f'{stderr_tail!r}'", mode="eval").body
+    assert _risky_in(expr, SINK_RISKY) == []
+
+
+def test_sink_flags_the_pre_fix_error_text_builder() -> None:
+    assert _sink_findings(_PRE_FIX_BUILDER, "_isolated_common.py") == {
+        ("_isolated_common.py", "exception_error_text", "builder:exc"): 1
+    }
+
+
+def test_sink_flags_a_builder_that_returns_the_message_directly() -> None:
+    src = "def _error_text(exc):\n    return f'{type(exc).__name__}: {exc}'[:500]\n"
+    assert _sink_findings(src, "_isolated_worker.py") == {
+        ("_isolated_worker.py", "_error_text", "builder:exc"): 1
+    }
+
+
+def test_sink_flags_the_envelope_error_entry() -> None:
+    src = "def _run():\n    try:\n        pass\n    except BaseException as exc:\n        return {'error': str(exc)}\n"
+    assert _sink_findings(src, "_isolated_worker.py") == {
+        ("_isolated_worker.py", "_run", "envelope.error:exc"): 1
+    }
+    # The same dict in a module that is not an isolated-run one is a different sink.
+    assert _sink_findings(src, "other.py") == {}
+
+
+def test_sink_flags_the_storm_emit_step_message() -> None:
+    src = (
+        "def scan(logger):\n    try:\n        pass\n    except Exception as exc:\n"
+        "        emit_step(logger, 's', status='error', error_class=type(exc).__name__,\n"
+        "                  error_msg=str(exc))\n"
+    )
+    assert _sink_findings(src, "storm/profiler.py") == {
+        ("storm/profiler.py", "scan", "emit_step.error_msg:exc"): 1
+    }
+
+
+def test_sink_flags_the_commit_error_branch() -> None:
+    src = (
+        "def f():\n    try:\n        pass\n    except CommitError as exc:\n"
+        "        return IsolatedRunResult(outcome='crashed', error=str(exc))\n"
+    )
+    assert _sink_findings(src, _ISO) == {(_ISO, "f", "IsolatedRunResult.error:exc"): 1}
+
+
+@pytest.mark.parametrize(
+    "src",
+    [
+        # The post-fix shapes: summaries built by the safe helpers, type names, counts.
+        "def f(proc, stderr, stdout, sig):\n"
+        "    return IsolatedRunResult(error=abnormal_exit_text(proc.returncode, sig, stderr, stdout)"
+        " + (error_suffix(ev) if ev else ''))\n",
+        "def f(exc):\n    return IsolatedRunResult(error=commit_error_text(exc))\n",
+        "def f(exc):\n    return IsolatedRunResult(error=exception_error_text(exc))\n",
+        "def f(exc):\n    emit_step(l, 's', error_msg=type(exc).__name__)\n",
+        "def f(stderr):\n    n = len(stderr)\n    return IsolatedRunResult(error=f'{n} bytes')\n",
+        "def exception_error_text(exc):\n    head = type(exc).__name__\n"
+        "    markers = preserved_route_markers(str(exc))\n    return head + '; '.join(markers)\n",
+    ],
+)
+def test_sink_accepts_the_safe_shapes(src: str) -> None:
+    assert _sink_findings(src, _ISO) == {}
+
+
+def test_geo_names_are_exact_matches_not_a_wildcard() -> None:
+    for name in ("z3", "z5", "zip3", "zip5", "zipcode", "prefix"):
+        assert name in RISKY_NAMES
+    assert _findings("def f():\n    log.debug('p %r', z3)\n", _M) == {(_M, "f", "z3"): 1}
+    # Unrelated identifiers that merely contain the letters are not flagged.
+    assert _findings("def f():\n    log.debug('p %s', zip_count)\n", _M) == {}
+    assert _findings("def f():\n    log.debug('p %s', prefix_len)\n", _M) == {}
+
+
+def test_pre_fix_geo_log_line_is_flagged() -> None:
+    src = (
+        "def _cascade_one_row(z3, restricted):\n"
+        "    if z3 in restricted:\n"
+        "        _LOG.debug('geo_generalize: zip3 prefix %r is HHS-restricted '\n"
+        "                   '(45 CFR 164.514(b)(2)(i)(B)); skipping zip3 level.', z3)\n"
+    )
+    assert _findings(src, "transforms/geo_generalize.py") == {
+        ("transforms/geo_generalize.py", "_cascade_one_row", "z3"): 1
+    }
