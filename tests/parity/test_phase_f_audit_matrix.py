@@ -72,6 +72,8 @@ def test_fields_are_separate_and_the_compute_enum_is_closed() -> None:
         ("faker-below-threshold", mx.CORE, mx.LIVE_PROVIDER),
         ("faker-opt-out", mx.CORE, mx.LIVE_PROVIDER),
         ("faker-uncertified", mx.CORE, mx.LIVE_PROVIDER),
+        ("faker-certified-locale-pair", mx.CORE, mx.NUMPY),
+        ("faker-uncertified-locale", mx.CORE, mx.LIVE_PROVIDER),
         ("faker-build-refused", mx.CORE, mx.LIVE_PROVIDER),
         ("faker-custom-provider", mx.LEGACY, mx.LIVE_PROVIDER),
         ("windowed-date", mx.CORE, mx.WINDOWED_SHIFT),
@@ -97,3 +99,13 @@ def test_materialization_follows_the_route() -> None:
     for r in mx.ROWS:
         want = (mx.RESIDENT, mx.STREAMED) if r.route == mx.CORE else (mx.RESIDENT,)
         assert r.materialization == want, r.row_id
+
+
+def test_the_locale_pair_type_pools_only_through_the_pair_allowlist() -> None:
+    """Independent of the derivation: the type is not a legacy global type, the pair is certified."""
+    from decoy_engine.generation import _faker_pool
+
+    t, certified = mx.LOCALE_PAIR
+    assert t not in _faker_pool.POOL_ELIGIBLE_FAKER_TYPES
+    assert (t, certified) in _faker_pool.POOL_ELIGIBLE_LOCALE_PAIRS
+    assert (t, mx.UNCERTIFIED_LOCALE) not in _faker_pool.POOL_ELIGIBLE_LOCALE_PAIRS

@@ -18,6 +18,7 @@ import pytest
 from decoy_engine.generation import _column_streams, _faker_pool, synthesize
 from decoy_engine.generators.columns import ColumnGenerator
 from tests.parity import _f0_fixtures as fx
+from tests.parity import _f_audit_matrix as mx
 from tests.parity._f0_witness import ColumnKey
 
 # Irregular batch cuts applied to every table: zero-row batches, a duplicate cut, a straddle.
@@ -394,13 +395,16 @@ def mutants_for(row_id: str, unmarked_windowed: Callable[..., list[Any]]) -> tup
                 "python RNG selections",
             ),
         ),
-        "faker-pooled": (
-            Mutant(
-                "recomputed-pool-index",
-                _outer(_faker_pool.PooledSelector, "select", _sub_pooled),
-                "numpy-selected|sampler result",
-            ),
-        ),
+        **{
+            fid: (
+                Mutant(
+                    "recomputed-pool-index",
+                    _outer(_faker_pool.PooledSelector, "select", _sub_pooled),
+                    "numpy-selected|sampler result",
+                ),
+            )
+            for fid in ("faker-pooled", "faker-certified-locale-pair")
+        },
         **{
             fid: (
                 Mutant(
@@ -413,6 +417,7 @@ def mutants_for(row_id: str, unmarked_windowed: Callable[..., list[Any]]) -> tup
                 "faker-below-threshold",
                 "faker-opt-out",
                 "faker-uncertified",
+                "faker-uncertified-locale",
                 "faker-build-refused",
             )
         },
@@ -513,6 +518,18 @@ def _cells(unmarked_windowed: Callable[..., list[Any]]) -> tuple[Cell, ...]:
         faker_cell("faker-below-threshold", "city"),
         faker_cell("faker-opt-out", "city", threshold=POOL_THRESHOLD, cfg={"pooled": False}),
         faker_cell("faker-uncertified", "email", threshold=POOL_THRESHOLD),
+        faker_cell(
+            "faker-certified-locale-pair",
+            mx.LOCALE_PAIR[0],
+            threshold=POOL_THRESHOLD,
+            cfg={"locale": mx.LOCALE_PAIR[1]},
+        ),
+        faker_cell(
+            "faker-uncertified-locale",
+            mx.LOCALE_PAIR[0],
+            threshold=POOL_THRESHOLD,
+            cfg={"locale": mx.UNCERTIFIED_LOCALE},
+        ),
         faker_cell(
             "faker-build-refused", "city", threshold=POOL_THRESHOLD, inject=refuse_pool_build
         ),

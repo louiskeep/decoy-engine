@@ -52,11 +52,16 @@ NON_LITERAL_EXCLUSIONS: Final = ("composite",)
 
 ADMITTED_KINDS: Final = frozenset(k for k, (ok, _) in ADMISSION_MATRIX.items() if ok)
 
+LOCALE_PAIR: Final = ("street_name", "de_DE")
+UNCERTIFIED_LOCALE: Final = "ja_JP"
+
 FAKER_MODES: Final = (
     "pooled",
     "below_threshold",
     "opt_out",
     "uncertified",
+    "locale_pair",
+    "uncertified_locale",
     "build_refused",
     "custom",
 )
@@ -118,6 +123,12 @@ def _pool_gate(mode: str) -> bool:
         return _faker_pool.pool_eligible("city", None, n, opted_out=True)
     if mode == "uncertified":
         return _faker_pool.pool_eligible("email", None, n, opted_out=False)
+    # Eligible ONLY through POOL_ELIGIBLE_LOCALE_PAIRS: not a legacy global type, so the locale
+    # decides. de_DE is a certified pair for street_name; ja_JP is not.
+    if mode == "locale_pair":
+        return _faker_pool.pool_eligible(LOCALE_PAIR[0], LOCALE_PAIR[1], n, opted_out=False)
+    if mode == "uncertified_locale":
+        return _faker_pool.pool_eligible(LOCALE_PAIR[0], UNCERTIFIED_LOCALE, n, opted_out=False)
     return _faker_pool.pool_eligible("city", None, n, opted_out=False)
 
 
@@ -274,6 +285,18 @@ ROWS: Final[tuple[AuditRow, ...]] = (
         Probe("faker", faker="uncertified"),
         lambda p: _faker(p, "uncertified"),
         "type outside POOL_ELIGIBLE_FAKER_TYPES",
+    ),
+    _row(
+        "faker-certified-locale-pair",
+        Probe("faker", faker="locale_pair"),
+        lambda p: _faker(p, "locale_pair"),
+        "type outside POOL_ELIGIBLE_FAKER_TYPES, pooled only via a certified (type, locale) pair",
+    ),
+    _row(
+        "faker-uncertified-locale",
+        Probe("faker", faker="uncertified_locale"),
+        lambda p: _faker(p, "uncertified_locale"),
+        "same type, locale outside POOL_ELIGIBLE_LOCALE_PAIRS: per-row",
     ),
     _row(
         "faker-build-refused",

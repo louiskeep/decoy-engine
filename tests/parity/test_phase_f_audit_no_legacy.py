@@ -36,7 +36,7 @@ import pyarrow.parquet as pq
 import pytest
 
 from decoy_engine.execution import ParquetTransactionalSink
-from decoy_engine.generation import _column_streams, _plan_entry, _streamed
+from decoy_engine.generation import _column_streams, _faker_pool, _plan_entry, _streamed
 from decoy_engine.generation._admission import PlanAdmission, classify_plan
 from decoy_engine.generation._streamed import GenerationResult
 from tests.parity import _f0_witness as w
@@ -356,3 +356,30 @@ def test_a_wrong_column_attribution_of_the_windowed_boundary_trips(
         _, tables = run_cell(cell, mx.RESIDENT, tmp_path)
     with pytest.raises(w.WitnessError, match="windowed_date output is not what the column holds"):
         witness.classify(tables)
+
+
+def test_forcing_the_locale_pair_type_onto_per_row_generation_fails_the_audit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Routing mutant: pool eligibility ignores the locale-pair allowlist, so the certified-pair
+    type flips numpy_selection -> live_provider_generation. Green without it, red with it."""
+    cell = next(c for c in CORE_CELLS if c.row_id == "faker-certified-locale-pair")
+    want = {mx.row(cell.row_id).compute}
+
+    def selections() -> dict[Any, Any]:
+        with monkeypatch.context() as mp:
+            prepare(cell, mp)
+            with audit(mp, marking=True) as witness:
+                _, tables = run_cell(cell, mx.RESIDENT, tmp_path)
+            return {k: r.selection for k, r in witness.classify(tables).items()}
+
+    assert {s for k, s in selections().items() if k[1] in ("f", "f_m")} == {frozenset(want)}
+    real = _faker_pool.pool_eligible
+
+    def global_types_only(faker_type: str, *a: Any, **kw: Any) -> bool:
+        return faker_type in _faker_pool.POOL_ELIGIBLE_FAKER_TYPES and real(faker_type, *a, **kw)
+
+    monkeypatch.setattr(_faker_pool, "pool_eligible", global_types_only)
+    flipped = selections()
+    assert {flipped[("t", "f")], flipped[("t", "f_m")]} == {frozenset({mx.LIVE_PROVIDER})}
+    assert flipped[("t", "f")] != want
