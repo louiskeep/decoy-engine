@@ -286,7 +286,7 @@ _F9_KEPT_BINDINGS = (
     SsnValidator,
 )
 
-__version__ = "0.7.0"
+__version__ = "0.10.0"
 
 __all__ = [
     "CAP_DRY_RUN",
