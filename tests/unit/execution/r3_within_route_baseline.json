@@ -2997,6 +2997,29 @@
     "output_path": "<TMP>/quarantine.jsonl",
     "total_quarantined": 1
    },
+   "row_error_summary": {
+    "by_column": {
+     "d": {
+      "format_error": 1
+     }
+    },
+    "completeness": "complete",
+    "covered": 1,
+    "omitted": 0,
+    "sample": [
+     {
+      "chunk_index": null,
+      "chunk_row_offset": null,
+      "column": "d",
+      "row_index": 7,
+      "trigger": "format_error"
+     }
+    ],
+    "sample_limit": 50,
+    "table": "t",
+    "total_observed": 1,
+    "uncovered": 0
+   },
    "row_errors": {
     "t.d[format_error]": 1
    }

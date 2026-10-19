@@ -43,6 +43,7 @@ from decoy_engine.execution._output_projection import (
     enforce_output_projection,
     known_output_columns,
 )
+from decoy_engine.execution._row_error_summary import chunk_row_error_summary
 from decoy_engine.execution._transforms import stored_index_fields
 from decoy_engine.execution.native._categorical_prepared import (
     PreparedCategorical,
@@ -363,7 +364,16 @@ def _native_route(
                             decision=decision,
                         )
                     )
-                raise RowErrorsFailedError(row_errors)
+                raise RowErrorsFailedError(
+                    row_errors,
+                    summary=chunk_row_error_summary(
+                        row_errors,
+                        table=table,
+                        columns=chunk.schema.names,
+                        chunk_index=i,
+                        chunk_row_offset=row_offset,
+                    ),
+                )
             out = (
                 masked
                 if rule is None
