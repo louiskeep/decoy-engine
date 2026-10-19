@@ -76,6 +76,11 @@ from decoy_engine.execution.native._dispatch import (
 )
 from decoy_engine.execution.native._faker_null_mask import plan_faker_null_masks
 from decoy_engine.execution.native._operator_params import TextMaskParams, resolve_params_by_column
+from decoy_engine.execution.native._route_decline_codes import (
+    RouteDeclineCode,
+    column_decline,
+    table_decline,
+)
 from decoy_engine.execution.native._when_mask import plan_when_masks
 from decoy_engine.generation.pool import PoolCache, ValuePool
 from decoy_engine.instrumentation.timing import StrategyTimingRecord
@@ -110,7 +115,7 @@ def _oracle_route(
     base_row_offset: int,
     rule: SchemaRule | None,
     columns: tuple[ColumnPlan, ...],
-    reroute_reason: str | None,
+    decision: NativeRouteEvidence,
     read_passthrough: tuple[str, ...],
 ) -> Iterator[pa.Table]:
     # Eager, like the oracle's own preflight: a provider failure surfaces now.
@@ -139,7 +144,8 @@ def _oracle_route(
             evidence = chunk_route_evidence(
                 table=table,
                 native_admitted=False,
-                reroute_reason=reroute_reason,
+                reroute_reason=decision.reroute_reason,
+                decline_records=decision.decline_records,
                 columns=columns,
                 elapsed_ms=elapsed,
                 pandas_read_passthrough=read_passthrough,
@@ -182,6 +188,7 @@ def _native_chunk_result(
     kernel_idle: set[str],
     row_errors: tuple[Any, ...],
     preserved_rows: dict[str, int],
+    decision: NativeRouteEvidence,
 ) -> ExecutionResult:
     elapsed_ms = {col: s * 1000.0 for col, s in elapsed_s.items()}
     return ExecutionResult(
@@ -202,6 +209,8 @@ def _native_chunk_result(
                 table=table,
                 native_admitted=True,
                 reroute_reason=None,
+                decline_records=decision.decline_records,
+                strategy_branch_calls=decision.kernel_calls,
                 columns=columns,
                 elapsed_ms=elapsed_ms,
                 pandas_read_passthrough=read_passthrough,
@@ -352,6 +361,7 @@ def _native_route(
                             kernel_idle=kernel_idle,
                             row_errors=row_errors,
                             preserved_rows=preserved_rows,
+                            decision=decision,
                         )
                     )
                 raise RowErrorsFailedError(row_errors)
@@ -373,6 +383,7 @@ def _native_route(
                         kernel_idle=kernel_idle,
                         row_errors=(),
                         preserved_rows=preserved_rows,
+                        decision=decision,
                     )
                 )
             row_offset = dgrn.advance_row_offset(row_offset, chunk)
@@ -414,7 +425,11 @@ def _resolve_admitted_pools(
             provider = col_seed_by_name[column].provider
             return (
                 _downgrade_to_oracle(
-                    decision, f"faker_provider_output_not_string:{column}:{provider}"
+                    decision,
+                    f"faker_provider_output_not_string:{column}:{provider}",
+                    column_decline(
+                        RouteDeclineCode.FAKER_PROVIDER_OUTPUT_NOT_STRING, table, column
+                    ),
                 ),
                 {},
             )
@@ -522,6 +537,7 @@ def _run_chunked(
                 decision,
                 f"unconfigured_set_mismatch:{sorted(oracle_set)}:"
                 f"{sorted(preflight.unconfigured_passthrough)}",
+                table_decline(RouteDeclineCode.UNCONFIGURED_SET_MISMATCH, table),
             )
     pools: dict[str, ValuePool] = {}
     if decision.native_admitted and any(n.strategy == "faker" for n in decision.node_routes):
@@ -563,7 +579,7 @@ def _run_chunked(
             base_row_offset=base_row_offset,
             rule=rule,
             columns=columns,
-            reroute_reason=decision.reroute_reason,
+            decision=decision,
             read_passthrough=read_passthrough,
         )
     return _native_route(

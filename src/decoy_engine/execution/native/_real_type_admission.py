@@ -48,6 +48,7 @@ from decoy_engine.execution.native._operator_config_rejections import (
     group_key_sibling_type_admitted,
 )
 from decoy_engine.execution.native._requirements import hash_config_rejection
+from decoy_engine.execution.native._route_decline_codes import CodedDecline, RouteDeclineCode, coded
 
 # The frozen C1 recipe's faker providers, from the operator registry (edit the registry). An
 # unset allowlist admits no provider, so a registry edit cannot widen admission by accident.
@@ -123,15 +124,16 @@ def group_key_sibling_type_rejection(column: str, group_by: str, schema: pa.Sche
     return f"group_key_sibling_type_not_native:{column}:{group_by}:{typ}"
 
 
-def real_type_rejection(
+def real_type_decline(
     config: dict[str, Any],
     node_routes: Iterable[Any],
     first_schema: pa.Schema,
     *,
     table: str,
     profile: Any,
-) -> str | None:
-    """The coded reason an admitted table must run on the oracle, or None."""
+) -> CodedDecline | None:
+    """The first real-type decline as its legacy reason plus a structured record, or None.
+    The column is the node under test, so attribution never reparses the reason string."""
     node_routes = tuple(node_routes)
     # Only the hash columns are read from the resident table (`hash_config_rejection`
     # resolves one column's type). `Schema.empty_table` raises for a union or a
@@ -145,26 +147,50 @@ def real_type_rejection(
     providers = _providers(config, table)
     group_by_of = group_by_columns(config, table)
     for node in node_routes:
+        column = node.column
         if node.strategy == "fpe":
             # A checksum mode declines before the string-source check below runs, so a checksum
             # column over a non-string source still reports the checksum reason (both decline).
-            checksum_reason = _fpe_checksum_decline(config, table, node.column)
+            checksum_reason = _fpe_checksum_decline(config, table, column)
             if checksum_reason is not None:
-                return checksum_reason
+                return coded(
+                    checksum_reason, RouteDeclineCode.FPE_CHECKSUM_NOT_NATIVE, table, column
+                )
         if node.strategy == "hash":
-            reason = hash_config_rejection(node.column, table, profile, resident_sources=resident)
+            reason = hash_config_rejection(column, table, profile, resident_sources=resident)
             if reason is not None:
-                return reason
-        elif node.strategy == "faker" and providers.get(node.column) not in C1_PROVIDER_ALLOWLIST:
-            return f"faker_provider_not_native:{node.column}:{providers.get(node.column)}"
-        elif node.strategy in _STRING_SOURCE_STRATEGIES:
-            reason = string_source_type_rejection(node.strategy, node.column, first_schema)
-            if reason is not None:
-                return reason
-        elif node.strategy == "group_key" and node.column in group_by_of:
-            reason = group_key_sibling_type_rejection(
-                node.column, group_by_of[node.column], first_schema
+                return coded(reason, RouteDeclineCode.HASH_CONFIG_REJECTED, table, column)
+        elif node.strategy == "faker" and providers.get(column) not in C1_PROVIDER_ALLOWLIST:
+            return coded(
+                f"faker_provider_not_native:{column}:{providers.get(column)}",
+                RouteDeclineCode.FAKER_PROVIDER_NOT_NATIVE,
+                table,
+                column,
             )
+        elif node.strategy in _STRING_SOURCE_STRATEGIES:
+            reason = string_source_type_rejection(node.strategy, column, first_schema)
             if reason is not None:
-                return reason
+                return coded(reason, RouteDeclineCode.SOURCE_TYPE_NOT_STRING, table, column)
+        elif node.strategy == "group_key" and column in group_by_of:
+            reason = group_key_sibling_type_rejection(column, group_by_of[column], first_schema)
+            if reason is not None:
+                code = (
+                    RouteDeclineCode.GROUP_KEY_SIBLING_MISSING
+                    if group_by_of[column] not in first_schema.names
+                    else RouteDeclineCode.GROUP_KEY_SIBLING_TYPE_NOT_NATIVE
+                )
+                return coded(reason, code, table, column)
     return None
+
+
+def real_type_rejection(
+    config: dict[str, Any],
+    node_routes: Iterable[Any],
+    first_schema: pa.Schema,
+    *,
+    table: str,
+    profile: Any,
+) -> str | None:
+    """The coded reason an admitted table must run on the oracle, or None."""
+    decline = real_type_decline(config, node_routes, first_schema, table=table, profile=profile)
+    return None if decline is None else decline.reason

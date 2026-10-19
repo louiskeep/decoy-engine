@@ -33,6 +33,7 @@ from decoy_engine.execution._operator_registry import (
     DETERMINISTIC_FAKER_SOURCE_TYPES,
     OPERATORS,
 )
+from decoy_engine.execution.native._route_decline_codes import CodedDecline, RouteDeclineCode, coded
 
 # The string-output provider allowlist (the frozen C1 recipe). A deterministic Faker over a
 # numeric source draws through the string pool, so the admitted set is bounded to these
@@ -46,6 +47,7 @@ __all__ = [
     "SCHEMA_NOT_GUARANTEED",
     "C5cIiAdmissionContext",
     "classify_deterministic_nonstring_faker",
+    "deterministic_faker_decline",
     "faker_provider_allowlisted",
     "is_effective_deterministic_faker",
     "is_effective_deterministic_faker_column",
@@ -293,15 +295,16 @@ def metadata_shape_admits(schema: pa.Schema, *, column: str, ordinal: int) -> bo
     return schema.field(ordinal).type in DETERMINISTIC_FAKER_SOURCE_TYPES
 
 
-def classify_deterministic_nonstring_faker(
+def deterministic_faker_decline(
     column: str,
     *,
+    table: str,
     source_type: pa.DataType,
     admission: C5cIiAdmissionContext | None,
     provider_allowlisted: bool,
-) -> str | None:
+) -> CodedDecline | None:
     """Decide C5c-ii native admission for one effective-deterministic Faker column over a
-    non-string source. Returns `None` to admit, else a coded decline reason.
+    non-string source. Returns `None` to admit, else the coded decline (legacy reason + record).
 
     The caller has already established the column is an effective-deterministic Faker whose
     first-chunk source type is not string, that this node samples the original column (stock
@@ -313,14 +316,48 @@ def classify_deterministic_nonstring_faker(
     if source_type not in DETERMINISTIC_FAKER_SOURCE_TYPES or not provider_allowlisted:
         # float / temporal / decimal / ... and any non-allowlisted (non-string-output) provider
         # keep the existing non-string decline reason, so they run the oracle unchanged.
-        return f"faker_source_type_not_string:{column}:{source_type}"
+        return coded(
+            f"faker_source_type_not_string:{column}:{source_type}",
+            RouteDeclineCode.FAKER_SOURCE_NOT_STRING,
+            table,
+            column,
+        )
     if admission is None:
-        return f"{SCHEMA_NOT_GUARANTEED}:{column}"
+        return coded(
+            f"{SCHEMA_NOT_GUARANTEED}:{column}",
+            RouteDeclineCode.FAKER_SCHEMA_NOT_GUARANTEED,
+            table,
+            column,
+        )
     schema = admission.source_schema
     names = schema.names
-    if column not in names or names.count(column) != 1:
-        return f"{METADATA_NOT_ALLOWLISTED}:{column}"
-    ordinal = names.index(column)
-    if not metadata_shape_admits(schema, column=column, ordinal=ordinal):
-        return f"{METADATA_NOT_ALLOWLISTED}:{column}"
+    if (
+        column not in names
+        or names.count(column) != 1
+        or not metadata_shape_admits(schema, column=column, ordinal=names.index(column))
+    ):
+        return coded(
+            f"{METADATA_NOT_ALLOWLISTED}:{column}",
+            RouteDeclineCode.FAKER_METADATA_NOT_ALLOWLISTED,
+            table,
+            column,
+        )
     return None
+
+
+def classify_deterministic_nonstring_faker(
+    column: str,
+    *,
+    source_type: pa.DataType,
+    admission: C5cIiAdmissionContext | None,
+    provider_allowlisted: bool,
+) -> str | None:
+    """The legacy reason-only form of `deterministic_faker_decline` (`None` admits)."""
+    decline = deterministic_faker_decline(
+        column,
+        table="",
+        source_type=source_type,
+        admission=admission,
+        provider_allowlisted=provider_allowlisted,
+    )
+    return None if decline is None else decline.reason
