@@ -183,6 +183,12 @@ In the plan, freeze (not "state during build") the serialized key sets:
 - `RowErrorSummary`: exactly `table`, `by_column`, `total_observed`, `covered`, `uncovered`, `sample`, `sample_limit`, `omitted`, `completeness`. Each `sample` item serializes exactly `column`, `trigger`, `row_index`, `chunk_index`, `chunk_row_offset` (no `reason`). `by_column` keys are schema column identifiers (allowed); inner keys are closed trigger codes.
 - The hostile-input absence assertions and the frozen key sets apply identically to every value in `row_error_summary_by_table`.
 
+## rev 6: frozen-baseline authorization (build-time gap)
+
+The build correctly STOPPED on a divergence rev 1-5 did not cover: the R3 route baselines (`tests/unit/execution/r3_within_route_baseline.json`, pinned by `test_r3_within_route_baseline.py` and `test_r3_route_executors.py`) freeze the WHOLE `quality_metrics` dict, including `chunked_route`/`chunked_route_by_table` and the unified-slice `nodes` leaf, with a "regenerate only with reviewer approval (`R3_WRITE_BASELINES=1`)" guard. Finding #8 authorized only the 2a unified-slice fixtures.
+
+AUTHORIZED (same guardrail as #8): regenerate the R3 baselines for this additive change via `R3_WRITE_BASELINES=1`, under the condition that the regenerated diff is PURELY the authorized additive keys and no existing value changes. Verified at this worktree: the regenerated diff adds only `decline_records`, `strategy_branch_calls` (B/D) and the 2a `table`/`columns`/`strategy` node fields; every existing value (`reroute_reason`, `native_admitted`, `pandas_read_passthrough`, `plan_hash`, operator/backend/calls, and all masked output tables) is unchanged, and all 82 R3 cases pass after regeneration. The 2a node fields appearing here also close a stale-baseline loose end from the 2a commit (the `ff_unified_admitted` R3 scenario). Any frozen-shape fixture that pins full `quality_metrics` is covered by this same authorization: additive keys only, diff-audited, no output/other-field change.
+
 ## 0. Why
 
 OBS-1 wired the job narrative but four job-log data points are still missing or wrong at the engine boundary. The platform cannot report them because the engine does not emit them in a structured, leak-safe shape:
