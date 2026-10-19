@@ -46,7 +46,6 @@ __all__ = [
     "METADATA_NOT_ALLOWLISTED",
     "SCHEMA_NOT_GUARANTEED",
     "C5cIiAdmissionContext",
-    "classify_deterministic_nonstring_faker",
     "deterministic_faker_decline",
     "faker_provider_allowlisted",
     "is_effective_deterministic_faker",
@@ -343,21 +342,3 @@ def deterministic_faker_decline(
             column,
         )
     return None
-
-
-def classify_deterministic_nonstring_faker(
-    column: str,
-    *,
-    source_type: pa.DataType,
-    admission: C5cIiAdmissionContext | None,
-    provider_allowlisted: bool,
-) -> str | None:
-    """The legacy reason-only form of `deterministic_faker_decline` (`None` admits)."""
-    decline = deterministic_faker_decline(
-        column,
-        table="",
-        source_type=source_type,
-        admission=admission,
-        provider_allowlisted=provider_allowlisted,
-    )
-    return None if decline is None else decline.reason
