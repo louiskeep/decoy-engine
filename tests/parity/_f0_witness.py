@@ -40,7 +40,13 @@ Two further sub-paths are recorded but are NEVER folded into a selection backend
 `pool_construction` (provider calls inside `build_pool_values`) and `null_mask` (the
 `null_probability` post-process). `statistical`, `grouped_series`, `windowed_date`, `group_key`
 are intentionally UNOBSERVED here (they do not route through a selection backend F3 targets) and
-the classifier raises rather than label them `no_selection`.
+the classifier raises rather than label them `no_selection`. The F-audit subclass
+(`_f_audit_witness.AuditWitness`) observes `windowed_date` on the core at its real producer
+boundary; the base classifier still refuses it, so no caller gets a label it did not earn.
+
+A positive value-equality label needs at least one live, actually non-null position. A column
+that is empty, entirely nulled by the mask, or entirely intrinsically null (an empty reference
+parent) compares nothing, so `_classify_one` refuses it instead of passing vacuously.
 
 Evidence labels: every report carries `evidence`, either `real` (a real compiled kernel or a real
 production call executed) or `stand_in` (a pure-Python stand-in kernel used to test the assertion
@@ -51,7 +57,7 @@ from __future__ import annotations
 
 import random
 import re
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from types import SimpleNamespace
@@ -76,6 +82,7 @@ COMPOSITE_DERIVE = "composite_direct_derive"
 LIVE_PROVIDER = "live_provider_generation"
 NO_SELECTION = "no_selection"
 FORMULA_EXPRESSION = "formula_expression"
+WINDOWED_DATE_SHIFT = "windowed_date_shift"
 POOL_CONSTRUCTION = "pool_construction"
 NULL_MASK = "null_mask"
 
@@ -89,6 +96,7 @@ SELECTION_LABELS = frozenset(
         LIVE_PROVIDER,
         NO_SELECTION,
         FORMULA_EXPRESSION,
+        WINDOWED_DATE_SHIFT,
     }
 )
 SUBPATH_LABELS = frozenset({POOL_CONSTRUCTION, NULL_MASK})
@@ -187,7 +195,14 @@ class _Snapshot:
         self.last: list[Any] = []
 
     def next_batch(self, offset: int, size: int) -> list[Any]:
-        values = self._inner.next_batch(offset, size)
+        return self.next_batch_from(offset, size, {})
+
+    def next_batch_from(
+        self, offset: int, size: int, siblings: Mapping[str, list[Any]]
+    ) -> list[Any]:
+        # Forwarded (not just next_batch) so a windowed_date inner keeps its sibling mapping and
+        # global offset; production dispatches `next_batch_from` dynamically (`draw_batch`).
+        values = _column_streams.draw_batch(self._inner, offset, size, siblings)
         self.last = list(values)
         return values
 
@@ -203,10 +218,15 @@ class _ObservedStream:
             inner._inner = self._snapshot
 
     def next_batch(self, offset: int, size: int) -> list[Any]:
+        return self.next_batch_from(offset, size, {})
+
+    def next_batch_from(
+        self, offset: int, size: int, siblings: Mapping[str, list[Any]]
+    ) -> list[Any]:
         outer = self._outer
         outer._current = self._key
         try:
-            values = self._inner.next_batch(offset, size)
+            values = _column_streams.draw_batch(self._inner, offset, size, siblings)
         finally:
             outer._current = None
         outer.final.setdefault(self._key, []).extend(values)
@@ -240,6 +260,8 @@ class EndToEndWitness:
         self.events: dict[ColumnKey, list[Event]] = {}
         self.kinds: dict[ColumnKey, str] = {}
         self.final: dict[ColumnKey, list[Any]] = {}
+        # Columns whose stream was built by the unified core (not the legacy whole-table path).
+        self.core_keys: set[ColumnKey] = set()
         self.pool_values: dict[ColumnKey, list[Any]] = {}
         self._current: ColumnKey | None = None
         self._table: str = ""
@@ -297,6 +319,7 @@ class EndToEndWitness:
             key = (outer._table, str(col.get("name")))
             outer._current = key
             outer.kinds[key] = str(col.get("type"))
+            outer.core_keys.add(key)
             outer.events.setdefault(outer.attribution(key), [])
             try:
                 stream = real_make(col, **kw)
@@ -467,6 +490,9 @@ class EndToEndWitness:
             self._check_numpy(key, events, np_events, final, live_positions())
             selection.add(NUMPY_SELECTION)
 
+        if selection:
+            self._require_nonvacuous(key, final, live_positions())
+
         if kind in _NO_EVENT_KINDS:
             if events and (labels - SUBPATH_LABELS):
                 raise WitnessError(f"{key}: {kind} must not select, saw {sorted(labels)}")
@@ -474,6 +500,13 @@ class EndToEndWitness:
         if not selection:
             raise WitnessError(f"{key}: kind {kind!r} produced no observable backend event")
         return ColumnReport(key, kind, frozenset(selection), frozenset(labels & SUBPATH_LABELS))
+
+    @staticmethod
+    def _require_nonvacuous(key: ColumnKey, final: list[Any], live: list[int]) -> None:
+        """`live` excludes mask-nulls only; an intrinsic null (empty reference parent) still counts
+        as nothing compared, so require one actual non-null value before granting a label."""
+        if not any(not _is_null(final[i]) for i in live):
+            raise WitnessError(f"{key}: no live non-null position, the value proof is vacuous")
 
     def _check_numpy(
         self,

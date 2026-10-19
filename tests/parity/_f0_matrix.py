@@ -177,8 +177,10 @@ MATRIX: tuple[MatrixRow, ...] = (
         SUPPORTED,
         ("nulls",),
         ("sequence", "categorical", "faker"),
-        "Null mask is one default_rng(col_seed).random(n) draw; all-null and zero-row columns "
-        "come out as Arrow `null` type (pinned in the schema digest).",
+        "Null mask is one default_rng(col_seed).random(n) draw. On the core (every column here is "
+        "eligible) all-null and zero-row columns carry the DECLARED type from "
+        "`_admission.classify_plan(...).schema` (string for these fixtures), not an inferred Arrow "
+        "`null`; only the legacy whole-table path still infers `null` from values.",
     ),
     MatrixRow(
         "generated-parent -> masked-child FK",
@@ -211,11 +213,19 @@ HOW_F1_REUSES = (
     "are the properties a partitioned run most easily breaks."
 )
 HOW_F3_ASSERTS_WITNESS = (
-    "F3 (Rust generation selection) routes a selection through the compiled kernel and then "
-    "asserts, with `_f0_witness.classify_columns`, that the routed column's backend moved from "
-    "TODAY_BASELINE to the compiled label while the oracle fingerprint stays unchanged. The "
-    "sampler-level witness (PoolSampler.sample, deterministic) and the end-to-end witness "
-    "(generate_tables) are separate; the route that connects them is the pooled-faker selection "
-    "in `_faker_pool._build_and_sample_returning_pool`, which today calls PoolSampler.sample "
-    "non-deterministically (NumPy default_rng) and is what F3 would re-point."
+    "F3 (Rust generation selection) is SHELVED: it measured slower than vectorized RNG "
+    "(`docs/plans/2026-10-18-phase-f-rebaseline-f1-f3.md`), so generation has NO compiled path by "
+    "design and the original obligation (no admitted cell silently falls back from a CLAIMED Rust "
+    "generation backend) is INAPPLICABLE. What stays true is guarded as a forbidden path: both "
+    "generation pool entry points are non-deterministic, `_faker_pool.PooledSelector.select` "
+    "(core, `np.random.default_rng(...).integers`) and "
+    "`_faker_pool._build_and_sample_returning_pool` (legacy whole-table, "
+    "`PoolSampler.sample(..., deterministic=False)`), so no generate_tables column enters "
+    "`_sampler._derive_pool_indices`, the only route to the compiled index kernel. The F-audit "
+    "(`test_phase_f_audit_*.py`, matrix `_f_audit_matrix.py`) keeps the remaining obligations: a "
+    "predicate-derived matrix, consumed-output witnesses with discard-and-substitute mutants, the "
+    "core-versus-legacy and resident-versus-streamed route proofs, a deterministic-index spy that "
+    "records ZERO entries, and the generate -> mask seam. The sampler-level witness "
+    "(PoolSampler.sample, deterministic) and the end-to-end witness "
+    "(`_f0_witness.classify_columns` over generate_tables) remain separate."
 )

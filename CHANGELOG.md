@@ -9,6 +9,20 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (F-audit: no-legacy generation compute audit, 2026-10-19)
+
+Phase F closes with an audit of where generation computes. It changes no engine behavior; the
+new tests and their matrix live under `tests/parity/` (`_f_audit_matrix.py`,
+`test_phase_f_audit_*.py`). Generation has no compiled path by design, because the Rust selection
+slice (FR3) was shelved after it measured slower than vectorized RNG. The audit proves that instead:
+every generator kind runs on the backend its dispatch predicates classify it for (admitted plans on
+the core, the rest on the legacy whole-table generator for a named reason), resident and bounded
+streaming give the same values over different batch partitions, and generation never enters the
+deterministic pool-index derivation that leads to the compiled kernel. The generate -> mask -> sink
+mixed route is checked from the generate side and across the hand-off. Producer outputs for
+`sequence`, sequential `reference` and `windowed_date` are now witnessed at their real compute
+boundary, and a witness no longer grants a label over an empty or all-null comparison.
+
 ### Added (F4a: lower-tier generation capacity evidence, 2026-10-18)
 
 An opt-in benchmark (`tests/perf/test_f4a_gen_capacity.py`, `-m benchmark`) now measures
