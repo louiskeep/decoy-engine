@@ -34,10 +34,22 @@ def _assemble(nodes: Any, evidence: Any, timings: Any) -> dict[str, dict[str, An
     return assemble_node_evidence(nodes, evidence, timings)
 
 
-def node(node_id: str, strategy: str, column: str, operator: str | None) -> Any:
+def node(
+    node_id: str,
+    strategy: str,
+    column: str | tuple[str, ...],
+    operator: str | None,
+    *,
+    table: str = "t",
+) -> Any:
     execution = None if operator is None else SimpleNamespace(operator_id=operator)
+    columns = (column,) if isinstance(column, str) else tuple(column)
     return SimpleNamespace(
-        node_id=node_id, strategy=strategy, columns=(column,), execution=execution
+        node_id=node_id,
+        strategy=strategy,
+        columns=columns,
+        table=table,
+        execution=execution,
     )
 
 
@@ -110,6 +122,9 @@ def test_full_node_dict_for_each_backend_family() -> None:
     out = _assemble(nodes, evidence, timings)
     assert out == {
         "h": {
+            "table": "t",
+            "columns": ["h"],
+            "strategy": "hash",
             "operator": HASH,
             "executed": True,
             "compiled_kernel_executed": True,
@@ -118,6 +133,9 @@ def test_full_node_dict_for_each_backend_family() -> None:
             "calls": 1,
         },
         "f": {
+            "table": "t",
+            "columns": ["f"],
+            "strategy": "faker",
             "operator": FAKER,
             "executed": True,
             "compiled_kernel_executed": True,
@@ -126,6 +144,9 @@ def test_full_node_dict_for_each_backend_family() -> None:
             "calls": 1,
         },
         "r": {
+            "table": "t",
+            "columns": ["r"],
+            "strategy": "redact",
             "operator": REDACT,
             "executed": True,
             "compiled_kernel_executed": False,
@@ -134,6 +155,27 @@ def test_full_node_dict_for_each_backend_family() -> None:
             "calls": 1,
         },
     }
+
+
+def test_attribution_reports_all_columns_and_carries_delimiter_names() -> None:
+    # OBS-2a: a node can cover several columns, and a column name may contain the
+    # `:`/`+` characters the node_id uses as separators. The attribution must read
+    # table/columns/strategy off the plan node, so a reader never splits node_id.
+    multi = node("t:a+b:hash:native_keyed_hash", "hash", ("a", "b"), HASH)
+    tricky = node("weird-id", "redact", ("a:b", "c+d"), REDACT, table="my:table")
+    evidence = {multi.node_id: ev(HASH), tricky.node_id: ev(REDACT, compiled=False)}
+    timings = [
+        rec("hash", "a,b", 1.0),  # coordinator keys timing on ",".join(columns)
+        rec("redact", "a:b,c+d", 2.0),
+    ]
+    out = _assemble([multi, tricky], evidence, timings)
+    assert out[multi.node_id]["table"] == "t"
+    assert out[multi.node_id]["columns"] == ["a", "b"]
+    assert out[multi.node_id]["strategy"] == "hash"
+    assert out[tricky.node_id]["table"] == "my:table"
+    assert out[tricky.node_id]["columns"] == ["a:b", "c+d"]
+    assert out[tricky.node_id]["strategy"] == "redact"
+    json.dumps(out, allow_nan=False)
 
 
 # ---------------------------------------------------------------------------
