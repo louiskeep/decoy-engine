@@ -9,6 +9,28 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (OBS-2: job-log completeness evidence, 2026-10-19)
+
+Four additive, leak-safe diagnostic fields at the engine boundary so a consumer can report a
+complete job log. None changes masked or generated output, row order, dtypes, schema metadata,
+determinism, or any accepted-job result; every new field carries closed codes, counts, positions,
+and schema identifiers only, never a cell value, expression, raw exception, provider string, or the
+row-error reason text.
+
+- Each unified-slice node entry under `quality_metrics["unified_slice_activation"]["nodes"]` now
+  carries `table`, `columns`, and `strategy`, read from the plan node, so a consumer attributes a
+  masking step to its columns without splitting the composite `node_id`.
+- `quality_metrics["chunked_route"]` (and `chunked_route_by_table`) gains `decline_records`: a list
+  of `{code, table, column, table_wide}` emitted at each routing-decision source, where `code` is a
+  member of the closed `RouteDeclineCode` vocabulary. It replaces the per-column attribution that was
+  only recoverable by parsing the free-text `reroute_reason`, which is unchanged.
+- The same payload gains `strategy_branch_calls`: table-level per-strategy branch-activation counts.
+  The per-column `calls` field keeps its own meaning.
+- A bounded, value-free `RowErrorSummary` (counts per column by trigger, a capped sample of
+  positions, an exact observed total, and a completeness state) rides `RowErrorsFailedError` and
+  `ValidatorFailedError`, and appears on completed runs as `quality_metrics["row_error_summary"]`
+  (or `row_error_summary_by_table`). `RowErrorsFailedError.records` keeps its existing meaning.
+
 ### Changed (OBS-1b: log and error leak scrub, 2026-10-19)
 
 Exception messages and child output no longer reach logs or the job's visible error. The storm
