@@ -4,6 +4,26 @@ Rules consulted: dev-rules `00-universal.md`, `development-loop.md` (OBS-0 done-
 
 # OBS-2 engine evidence emission (consolidated)
 
+## rev 2: Codex plan-gate NO-GO and reshape
+
+Codex gated rev 1 NO-GO with 11 findings (7 HIGH, 4 MEDIUM). The gate confirmed 2a is sound (`PhysicalNode` carries `table`/`columns`/`strategy`; `physical/_compiler.py:343` concatenates unescaped names into `node_id`, so splitting it is unsafe) and that excluding `reason` from the row-error summary is right. It found 2b/2c/2d materially under-specified and partly wrong. This splits the slice into one buildable piece and a design agenda.
+
+2a: BUILD NOW. Only finding against it is MEDIUM #8, a plan-text correction: existing exact-shape evidence fixtures must be authorized to gain the `table` field and the three literal keys (keep exact equality, never swap to subset). Folded into §2. Build proceeds; merge held for Cam's shape steer (see below).
+
+2b/2c/2d: DESIGN FIRST, do not build. The gate agenda to resolve before a rev 3 re-gate:
+- 2d (#1): `kernel_calls` counts strategy-branch executions (including successful Faker and some idle/Arrow branches), NOT compiled-kernel invocations. The "compiled-only / absence-equals-zero" claim is wrong. Preserve the counter's actual behavior; document the real rules; assert explicit expected counts (active Faker, Arrow-only, idle, all-false `when`). Cumulative table/per-strategy scope is correct.
+- 2b (#2): the decline graph has ~8 sources (static admission, group-key, preflight, Faker admission, resolved pools, real-type, `when`, companion probes), not the 5 `reasons.append` sites. The named `_not_native` helper is actually `_oracle_evidence`. Build the complete source-to-code matrix with attribution and precedence; give distinct causes specific codes; stable serialized values; reserve `OTHER` for genuinely unknown input only.
+- 2b (#3): attribution must be built where column and decision are known (the classifier), not at the generic routing helper `_downgrade_to_oracle` (which erases column attribution). Define `table_wide` as causal scope, independent of the table-wide routing consequence. Specify preservation/ordering of earlier records when a `when` decline overrides `reroute_reason`.
+- 2b/2d (#4, the central gap): the emission BOUNDARY is unspecified. `kernel_calls` lives on `NativeRouteEvidence` (mutable internal), not the public `quality_metrics["chunked_route"]` payload; adding fields there does not reach the result. Name the exact destination keys and primitive serialization, and specify propagation through native and oracle chunk results, resident aggregation, streamed accumulation, multi-table metrics, and isolated serialization. For counters, copy each cumulative snapshot and keep the latest when folding; never sum snapshots or alias a mutable dict.
+- 2c (#5): `summarize_row_errors` needs an explicit table and single-table validation, with a separate grouping step for multi-table results (results and exceptions can hold several tables; empty records cannot identify one). Pin sample order, a default/hard sample bound, zero/invalid-limit behavior; bound the count map by schema columns and the closed trigger vocabulary.
+- 2c (#6): chunk identity is not on `RowErrorRecord` or `RowErrorsFailedError`. Summarize each chunk while its index and absolute offset are available, attach before raising, and aggregate retaining per-sample identity. Both routes stop at the first error-bearing chunk, so cross-chunk repeated positions need a unit aggregation fixture, not a pipeline scenario.
+- 2c (#7): completeness describes observed coverage, not job outcome. Post-mask full-frame enforcement raises with only uncovered errors, so a summary from `.records` can undercount. Define a producer/state matrix (full-frame completion, post-mask policy failure, chunk failure, premature termination, isolated noncompletion); capture observed records before policy filtering when promising an exact total; distinguish exact observed total from total errors in unprocessed input.
+- #9: acceptance wording must permit exact schema identifiers only in their designated fields (the leak sentry does not cover arbitrary dataclass payloads); assert exact serialized key sets and inject distinct provider/expression/exception/reason/unknown-trigger markers and require their absence; map unknown triggers to `other`.
+- #10: `_chunked_entry.py` is 665 LOC and also needs wiring; B and D share carriers, so they are NOT independent commits as rev 1 claimed. Identify the extraction that frees headroom or the justified census change; record B to D sequencing. `_row_errors.py` is NOT in the physical-seam allowlist and must be added if edited.
+- #11: parity needs a pinned baseline (flag-on/flag-off can share a new regression). Pin golden/oracle fixtures with explicit expected values; for 2d, independently count branches, not another projection of `kernel_calls`.
+
+Shape decision pending Cam: consolidation was approved on the framing that all four were small additive emissions. That held for 2a only. 2b/2c/2d are a real multi-subsystem design. 2a is built and will be gate-validated as merge-ready; whether it ships on its own (one pin bump now) or folds into the consolidated PR after 2b/2c/2d are designed (one pin bump later) is Cam's call. Surfaced on Slack; not blocking.
+
 ## 0. Why
 
 OBS-1 wired the job narrative but four job-log data points are still missing or wrong at the engine boundary. The platform cannot report them because the engine does not emit them in a structured, leak-safe shape:
@@ -45,7 +65,7 @@ Acceptance:
 - An ACTIVATED unified-slice run: every node's evidence carries `table`, `columns`, `strategy`, with values INDEPENDENTLY computed from the physical plan (assert against the plan's nodes, not re-parsed from `node_id`).
 - A node covering multiple columns reports all its columns as a list (the case that defeats node_id splitting).
 - A column name containing `:` or `+` is carried verbatim in `columns` and is never confused with the id delimiters.
-- Existing fields and the one-to-one timing check are unchanged; the existing `assemble_node_evidence` tests stay green unmodified.
+- Existing fields and the one-to-one timing check are unchanged. Per gate finding #8, existing exact-shape evidence fixtures are AUTHORIZED to gain the `table` attribute on their node namespaces and the three literal keys in their expected dicts and key sets. Keep exact equality and every negative test; never swap to a subset check and never change an existing key's value.
 
 Leak check: table/column/strategy are schema identifiers; no values. Covered by the unit test plus the leak sentry.
 
