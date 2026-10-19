@@ -264,6 +264,9 @@ def test_faker_case_stamps_positive_kernel_evidence_when_companion_available(
     leaf = _assert_full_parity(off, on)
     (evidence,) = leaf["nodes"].values()
     assert evidence == {
+        "table": "t",
+        "columns": ["c"],
+        "strategy": "faker",
         "operator": "native_faker_select",
         "executed": True,
         "compiled_kernel_executed": True,

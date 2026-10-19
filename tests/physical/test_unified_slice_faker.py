@@ -248,6 +248,9 @@ def test_1_admits_and_runs_native(tmp_path: Path) -> None:
     assert len(faker_evidence) == 1
     assert faker_evidence == [
         {
+            "table": "t",
+            "columns": ["c"],
+            "strategy": "faker",
             "operator": FAKER_OP,
             "executed": True,
             "compiled_kernel_executed": True,
@@ -495,6 +498,9 @@ def test_8b_non_deterministic_reuse_admits_and_runs_native(tmp_path: Path) -> No
     leaf = assert_lane_parity(Case(tmp_path, string_source(40, null_every=7), [column]))
     assert evidence_by_operator(leaf) == [
         {
+            "table": "t",
+            "columns": ["c"],
+            "strategy": "faker",
             "operator": FAKER_OP,
             "executed": True,
             "compiled_kernel_executed": True,
