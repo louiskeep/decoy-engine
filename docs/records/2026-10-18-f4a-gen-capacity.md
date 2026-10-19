@@ -26,8 +26,9 @@ Decisions to review:
   pool-eligible and runs the live per-row provider, which would make this a Faker-speed bench.
 - The mixed parent has no null-masked column. A generated parent holding nulls makes the mixed
   route decline (`generation-shape-unsupported`) and fall to the resident full-frame path, which
-  is unbounded (observed 1.6 GB at 1M, killed above 3.2 GB at 10M). Lifting that decline is F2
-  scope. Null masking is covered by the pure-generation plan.
+  is unbounded and grows with row count (an un-committed smoke run, not in the evidence JSON, saw it
+  climb into multiple GB and get killed at the 10M tier). Lifting that decline is F2 scope. Null
+  masking is covered by the pure-generation plan.
 - Content digests are computed in a separate process after the measured run. Reading the 10M-row
   output back inside the worker added 230 MB to its RSS and would have been charged to generation.
 
@@ -82,3 +83,15 @@ Pure generation throughput is therefore about 14k rows/s, and 100M would take ab
 
 100M tier; platform-side evidence transport; the digest is bound to the sink's row-group layout, so
 it proves rerun determinism, not equivalence between layouts (route independence is FR0's tests).
+
+## Follow-ups (from the F4a dennis gate, non-blocking)
+
+- The mixed `_mixed_layout.py` disposition read assumes the chunked route was taken; a mixed run
+  below the engine auto-chunk threshold KeyErrors (it fails loudly, worker returncode 3, not
+  silently, and the committed tiers at 1M+ child always chunk). Guard the key access with a clear
+  "route did not chunk at this row count" diagnostic before this harness runs at smaller tiers.
+- The mixed absolute ceiling (1500 MB) runs at ~95.7% utilization at 10M. On-host reruns were
+  extremely stable (1435.5 / 1435.4 MB), so the thin headroom is fine on the stated 4-core / 12 GB
+  box, but a noisier host could flake. Revisit the headroom if this bench is ever run elsewhere. The
+  secondary superlinear-growth gate for mixed has wide headroom (~11.5x bound vs 1.71x observed); the
+  absolute ceiling is the real mixed gate.
