@@ -35,6 +35,7 @@ import duckdb
 
 from decoy_engine.execution._isolated_memwatch import MemoryEvidence
 from decoy_engine.execution._row_errors import RowErrorRecord
+from decoy_engine.validation_result import CODES
 
 if TYPE_CHECKING:
     import pyarrow as pa
@@ -233,7 +234,11 @@ ROUTE_INELIGIBLE_MARKERS: dict[str, tuple[str, ...]] = {
 _ALL_ROUTE_MARKERS: tuple[str, ...] = tuple(
     dict.fromkeys(marker for markers in ROUTE_INELIGIBLE_MARKERS.values() for marker in markers)
 )
-_STABLE_CODE = re.compile(r"[a-z0-9_]{1,64}")
+# A code is echoed only if the engine registered it. Character shape is not trust: an exception
+# from a parser or user callback can carry a data-derived `code` that is still lowercase/digits.
+_TRUSTED_CODES: frozenset[str] = frozenset(
+    value for name, value in vars(CODES).items() if name.isupper() and isinstance(value, str)
+)
 
 
 def preserved_route_markers(*texts: str) -> tuple[str, ...]:
@@ -246,12 +251,12 @@ def exception_error_text(exc: BaseException) -> str:
 
     Messages from parsers, validators and Arrow echo the cell, expression or file text they
     choked on, and this string reaches the job's user-visible error. Keep the class name, the
-    machine-readable `code` of an `ExecutionError`, and the governor's route markers (matched
+    `code` when it is a registered `validation_result.CODES` value, and the governor's route markers (matched
     against the original message, emitted as engine constants).
     """
     head = type(exc).__name__
     code = getattr(exc, "code", None)
-    if isinstance(code, str) and _STABLE_CODE.fullmatch(code):
+    if isinstance(code, str) and code in _TRUSTED_CODES:
         head = f"{head} [{code}]"
     markers = preserved_route_markers(str(exc))
     return f"{head}: {'; '.join(markers)}" if markers else head

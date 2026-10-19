@@ -175,6 +175,41 @@ class TestWorkerEnvelope:
         assert _is_route_ineligible_error(route, result.error)
 
 
+class TestCodeEchoThroughProducers:
+    """A secret-shaped `code` must not surface; a registered one must, via both producers."""
+
+    def test_worker_envelope_drops_an_untrusted_code(self, tmp_path, monkeypatch):
+        source = _ENVELOPE_WORKER.format(raised="_coded()").replace(
+            "def boom",
+            "def _coded():\n    e = ValueError('m')\n    e.code = 'customer_secret_123'\n    return e\n\ndef boom",
+        )
+        result = _spawn(tmp_path, monkeypatch, source)
+        assert result.error == "ValueError"
+
+    def test_worker_envelope_keeps_a_registered_code(self, tmp_path, monkeypatch):
+        source = _ENVELOPE_WORKER.format(
+            raised="__import__('decoy_engine.execution._errors', fromlist=['x']).ExecutionError(code='graph.cycle')"
+        )
+        result = _spawn(tmp_path, monkeypatch, source)
+        assert result.error == "ExecutionError [graph.cycle]"
+
+    def test_in_process_drops_an_untrusted_code_and_keeps_a_registered_one(self, monkeypatch):
+        from decoy_engine.execution._errors import ExecutionError
+
+        secret = ValueError("m")
+        secret.code = "customer_secret_123"  # type: ignore[attr-defined]
+        for raised, expected in (
+            (secret, "ValueError"),
+            (ExecutionError(code="graph.cycle"), "ExecutionError [graph.cycle]"),
+        ):
+
+            def boom(*_a: Any, _r: BaseException = raised, **_k: Any) -> Any:
+                raise _r
+
+            monkeypatch.setattr(_isolated_run, "run_pipeline", boom)
+            assert _isolated_run._run_in_process({}, None, {}, None).error == expected
+
+
 class TestInProcess:
     """(d) the isolate=False fallback shares the summary builder with the worker."""
 
@@ -252,17 +287,21 @@ class TestSummaryBuilders:
     def test_the_governor_reads_the_same_marker_table_the_builders_write(self):
         assert _governor._INELIGIBLE_ROUTE_MARKERS is ROUTE_INELIGIBLE_MARKERS
 
-    def test_an_execution_error_keeps_its_stable_code_only(self):
+    def test_a_registered_engine_code_is_echoed(self):
+        from decoy_engine.execution._errors import ExecutionError
+        from decoy_engine.validation_result import CODES
+
+        exc = ExecutionError(code=CODES.GRAPH_CYCLE, message=_SENTINEL)
+        assert exception_error_text(exc) == "ExecutionError [graph.cycle]"
+
+    @pytest.mark.parametrize("code", ["customer_secret_123", "fk_full_frame_oom_risk_rejected"])
+    def test_an_unregistered_code_is_never_echoed_however_it_is_shaped(self, code):
         from decoy_engine.execution._errors import ExecutionError
 
-        exc = ExecutionError(code="fk_full_frame_oom_risk_rejected", message=_SENTINEL)
-        assert exception_error_text(exc) == "ExecutionError [fk_full_frame_oom_risk_rejected]"
-
-    def test_a_non_identifier_code_is_not_echoed(self):
-        from decoy_engine.execution._errors import ExecutionError
-
-        exc = ExecutionError(code=f"bad code {_SENTINEL}")
-        assert exception_error_text(exc) == "ExecutionError"
+        assert exception_error_text(ExecutionError(code=code)) == "ExecutionError"
+        coded = ValueError("m")
+        coded.code = code  # type: ignore[attr-defined]
+        assert exception_error_text(coded) == "ValueError"
 
     def test_a_commit_error_without_an_os_cause_has_no_errno(self):
         from decoy_engine.execution._isolated_commit import CommitError
