@@ -22,7 +22,76 @@ Codex gated rev 1 NO-GO with 11 findings (7 HIGH, 4 MEDIUM). The gate confirmed 
 - #10: `_chunked_entry.py` is 665 LOC and also needs wiring; B and D share carriers, so they are NOT independent commits as rev 1 claimed. Identify the extraction that frees headroom or the justified census change; record B to D sequencing. `_row_errors.py` is NOT in the physical-seam allowlist and must be added if edited.
 - #11: parity needs a pinned baseline (flag-on/flag-off can share a new regression). Pin golden/oracle fixtures with explicit expected values; for 2d, independently count branches, not another projection of `kernel_calls`.
 
-Shape decision pending Cam: consolidation was approved on the framing that all four were small additive emissions. That held for 2a only. 2b/2c/2d are a real multi-subsystem design. 2a is built and will be gate-validated as merge-ready; whether it ships on its own (one pin bump now) or folds into the consolidated PR after 2b/2c/2d are designed (one pin bump later) is Cam's call. Surfaced on Slack; not blocking.
+Shape decision pending Cam: consolidation was approved on the framing that all four were small additive emissions. That held for 2a only. 2b/2c/2d are a real multi-subsystem design. 2a is built and gate-validated as merge-ready (Codex plan-gate design SOUND, dennis GO, Codex final GO); whether it ships on its own (one pin bump now) or folds into the consolidated PR after 2b/2c/2d are designed (one pin bump later) is Cam's call. Surfaced on Slack; not blocking.
+
+## rev 3: grounded 2b/2c/2d design
+
+Grounded against the code (dossier, all line refs verified at this worktree). This supersedes the thin rev-1 §3/§4/§5 for build. 2a is unchanged (§2). Codex plan-gate on this rev is HELD for Cam's shape steer (do not fire the gate or build until Cam confirms consolidation-vs-split and that 2b/2c/2d proceed now).
+
+### A. Shared foundation: the emission-boundary contract (resolves #4)
+
+`kernel_calls` is a mutable field on `NativeRouteEvidence` (`native/_dispatch.py:133`), delivered once to the route-evidence sink then mutated per chunk. It does NOT reach the public result. There is no `NativeChunkEvidence` class. The PUBLIC payload is `quality_metrics["chunked_route"]`, a JSON-safe dict built PER CHUNK by `chunk_route_evidence` (`native/_chunked_evidence.py:133-178`) and folded across chunks by TWO folders that must stay in lockstep:
+- resident: `aggregate_chunked_route_evidence` (`_chunked_evidence.py:181-236`)
+- streamed: `_RouteFold` / `OutputEvidenceAccumulator.route_evidence()` (`_chunked_output_sink.py:191-307`)
+
+Both SUM per-column `calls`/`elapsed_ms`/`preserved_rows`, take head fields (`table`, `native_admitted`, `reroute_reason`) from the FIRST chunk, copy (not alias) column dicts, and raise on cross-chunk disagreement. Single-table lands at `quality_metrics["chunked_route"]` (`_pipeline_auto_chunk.py:452`, after `_without_elapsed`); multi-table lands at a DIFFERENT key `quality_metrics["chunked_route_by_table"]` (`_pipeline_multi_table.py:391`). Isolated/capped runs round-trip the whole `quality_metrics` dict across the process boundary (`_isolated_common.py:379`), so a JSON-safe additive field needs no extra serialization.
+
+CONTRACT for any new chunked_route field (B and D both use this):
+1. Emit it in `chunk_route_evidence` so every per-chunk dict carries it.
+2. Carry it through BOTH folders with an EXPLICIT fold rule (below), copying never aliasing, and extend the cross-chunk consistency guard.
+3. Confirm it survives both `chunked_route` and `chunked_route_by_table`, and that `_without_elapsed` passes it through.
+4. Fold-contract test for the new field (extend the existing streaming-evidence fold tests).
+
+Fold rules differ by field kind and MUST be stated, or the bug the gate warned of recurs:
+- Preflight-constant head fields (B decline records): same value every chunk, folded HEAD-FROM-FIRST (taken once, consistency-checked like `reroute_reason`). Never summed.
+- Cumulative snapshots (D `kernel_calls`): the running total is already accumulated on the shared mutable evidence, so each chunk's emitted snapshot is a superset of the previous. Fold by taking the snapshot from the LAST folded chunk (define fold order explicitly), copying the dict. NEVER sum snapshots (double-counts) and never retain the mutable alias.
+
+### B. OBS-2b structured route-decline codes (resolves #2, #3, #9)
+
+The complete decline graph (dossier Q1) has ~19 causes across three phases. Emit a structured record at EACH decision source where the column (if any) is known, NOT at `_downgrade_to_oracle` (`_dispatch.py:155-166`), which re-tags all `node_routes` to oracle and flattens per-column cause to one table-wide string.
+
+New module `native/_route_decline_codes.py`:
+- `RouteDeclineCode`: a closed `str` enum with one member per distinct cause in the Q1 matrix. Column-attributable causes (keep their own code): `STRATEGY_VETOED_CHUNKED` (#4, dead-but-wired, reserve), `GROUP_KEY_SELF_ANCHOR` / `GROUP_KEY_MASKED_SIBLING` (#5), `FALLBACK_POLICY_NOT_NATIVE` (#6), `NO_NATIVE_KERNEL_OR_POOL` (#7), `WHEN_PREDICATE_NOT_NATIVE` / `WHEN_OUTSIDE_SUBSET` / `WHEN_READS_MASKED_COLUMN` (#8), `FAKER_SOURCE_NOT_STRING` (#11), `FAKER_SCHEMA_NOT_GUARANTEED` / `FAKER_METADATA_NOT_ALLOWLISTED` (#11b), `FPE_CHECKSUM_NOT_NATIVE` / `HASH_CONFIG_REJECTED` / `FAKER_PROVIDER_NOT_NATIVE` / `SOURCE_TYPE_NOT_STRING` / `GROUP_KEY_SIBLING_MISSING` / `GROUP_KEY_SIBLING_TYPE_NOT_NATIVE` (#12), `FAKER_PROVIDER_OUTPUT_NOT_STRING` (#19). Genuinely table-wide causes: `FK_RELATIONSHIP` (#1), `NO_MASK_NODES` (#2), `NON_SCALAR_NODE` (#3, node has no single column), `ADAPTER_REQUESTED` (#9), `UNCOVERED_OR_MISSING_COLUMNS` (#10), `CRYPTO_EXT_UNAVAILABLE` / `FPE_EXT_UNAVAILABLE` / `INDEX_EXT_UNAVAILABLE` / `RAW_HEX_EXT_UNAVAILABLE` (#13-16), `EMPTY_INPUT` (#17), `UNCONFIGURED_SET_MISMATCH` (#18). Reserve `OTHER` for genuinely unknown input only. Pin stable serialized string values.
+- `RouteDeclineRecord` (frozen): `code: RouteDeclineCode`, `table: str`, `column: str | None`, `table_wide: bool`. `table_wide` = CAUSAL scope (the cause is inherently table-wide), independent of the routing consequence that every decline sends the whole table to the oracle. `column is None` iff `table_wide`.
+
+Emission + preservation:
+- Phase A (`_static_route_decision`) accumulates causes 3-7 across nodes; emit one record per `reasons.append`. Phase B steps 8-16 short-circuit; emit at each. Phase C (17-19) in `_chunked_entry`. APPEND to a `decline_records: tuple[RouteDeclineRecord, ...]` on `NativeRouteEvidence` (new field next to `reroute_reason`, which stays unchanged). Cause #8 (`when`) is computed even when the table is already vetoed (`_dispatch.py:394-398`) and must PRESERVE earlier records (append, do not replace); order records by decision phase.
+- Surface `decline_records` as a head field via the shared contract (A), folded head-from-first.
+
+Platform consumes the codes, refines the table-level reroute reason to per-column via OBS-1's safe allowlist (unknown code -> `other`) applied before persistence and narration.
+
+Leak (resolves #9): the record holds a closed enum code plus schema identifiers only; no provider/expression/exception/strategy free text. Acceptance asserts the EXACT serialized key set, injects distinct hostile markers in provider/expression/exception/column text, and requires their absence from every record and from the folded payload. Identifiers appear only in the designated `table`/`column` fields. The leak sentry does not cover arbitrary dict payloads, so this is a dedicated hostile-input test, not a sentry claim.
+
+### C. OBS-2c bounded value-free row-error summary (resolves #5, #6, #7)
+
+Records (`RowErrorRecord`: table, column, chunk-local `row_index`, trigger, reason) carry NO chunk identity or absolute offset, by design on both legs (`native/_chunked_row_errors.py:1-12`). `RowErrorsFailedError.records` is per-single-table on the chunked legs (raised at `_chunked_entry.py:357`, `_chunked_oracle.py:393`), potentially multi-table only on the full-frame path. Post-mask full-frame enforcement raises with the UNCOVERED subset only (`_pipeline_finalize.py:428-441`); quarantine-covered errors never reach `.records`, so `.records` undercounts. The true observed total is `mask_row_errors` (covered + uncovered), already surfaced as counts in `quality_metrics["row_errors"]` (`:412-416`) and `quality_metrics["quarantine"]`. A non-completed isolated run carries `row_errors == ()` exactly like a clean completed run (`_isolated_common.py:392`); distinguish by `outcome` (`completed` vs `oom_killed`/`crashed`), never by the empty tuple.
+
+New module `execution/_row_error_summary.py` (add `_row_errors.py` and this module to the physical-seam allowlist if edited):
+- `RowErrorCompleteness`: `COMPLETE` (completed, exact total known), `PARTIAL_BEFORE_ABORT` (chunked leg stopped at first error-bearing chunk), `UNAVAILABLE` (non-completed outcome, nothing to attribute).
+- `RowErrorSummary` (frozen): `table: str` (REQUIRED, validated single-table; multi-table grouped by a separate step), `by_column: Mapping[str, Mapping[str, int]]` (column -> trigger code -> count; map size bounded by schema columns x closed trigger vocabulary), `total_observed: int` (from `mask_row_errors`/the counts, NOT just `.records`, so quarantine-covered errors are included), `covered: int`, `uncovered: int`, `sample: tuple[...]` of `(column, trigger, row_index, chunk_index, chunk_row_offset)` with NO reason, `sample_limit: int` (hard default), `omitted: int`, `completeness: RowErrorCompleteness`.
+- `summarize_row_errors(records, *, table, completeness, total_observed, covered, uncovered, sample_limit, chunk_index, chunk_row_offset)`: pure; validates every record belongs to `table`; carries `trigger` as-is (closed set), unknown -> `other`; pins sample order; rejects a zero/negative limit.
+
+Capture chunk identity: at the raise sites (`_chunked_entry.py:336-357`, `_chunked_oracle.py:385-394`) `chunk_index` and `base_row_offset` are in scope; summarize the chunk there and attach to the raised error (or stage into `quality_metrics`) BEFORE the exception escapes, since it is discarded afterward. Cross-chunk repeated positions are tested with a unit aggregation fixture (both legs stop at the first error-bearing chunk, so a multi-chunk pipeline scenario is not reachable).
+
+Leak: no reason text anywhere; hostile reason text asserted absent.
+
+### D. OBS-2d strategy branch counts (resolves #1 + ambiguity 1)
+
+`kernel_calls[strategy]` (`_chunk_masking.py:276-278`) counts strategy-BRANCH executions per (column, chunk), including successful Faker pool selections and idle bucket_perturb/date_shift/group_key branches and the Python-only text_redact/text_mask branches (`result.ran is None`), but excluding idle categorical/faker and idle when-masked branches. It is NOT a compiled-kernel count. The pinning test asserts `kernel_calls["faker"] == 3` (`tests/native/test_dispatch_faker.py:388-389`); do NOT change it.
+
+Surface it on the public payload as a table-level per-strategy field named `strategy_branch_calls` (the name avoids implying compiled invocation), documented as branch activations with the text_redact/text_mask + idle caveat explicit. For "real compiled/selection work" the payload already carries per-column `executed_backend` and the evidence already tracks `compiled_kernel_executed` / `pool_select_calls`; expose those for the "did a compiled kernel actually run" question rather than overloading `strategy_branch_calls`. Thread it through the shared contract (A) with the CUMULATIVE-SNAPSHOT fold rule (take the last chunk's snapshot, never sum). Keep per-column `calls` unchanged and distinct.
+
+Parity (resolves #11): the no-output-change assertion uses a pinned golden/oracle baseline, not flag-on vs flag-off (which can share a new regression); assert row/column order, dtypes, metadata, and deterministic values separately from the diagnostic fields. For 2d, independently count the specified branches, not another projection of `strategy_branch_calls`.
+
+### Sequencing, module size, sentries (resolves #10)
+
+- `_dispatch.py` is 597 LOC and `_chunked_entry.py` is 665 LOC, both near the 600 soft / 700 hard cap. The enum/record (B), the summary builder (C), and any D helper land in NEW modules, not in these files; any unavoidable growth needs an exact-LOC census entry under 700.
+- B and D share the chunked_route evidence carrier and both folders, so they are NOT independent commits: land the shared foundation (A) first, then B and D on it; C is independent (separate carrier). Within whatever PR shape Cam picks, sequence A -> {B, D} -> C, each intermediate commit testable.
+- Add `_row_errors.py`, `_row_error_summary.py`, `_route_decline_codes.py`, and any edited `execution/` module to the physical-seam allowlist with a one-line justification.
+
+### Acceptance (per feature, independent expected values)
+
+Each datum tested datum-by-route across unified / chunked / legacy-unavailable / generation / mixed, with INDEPENDENT expected values. B: each known decline yields its enumerated code with correct column/table-wide attribution; hostile text absent; `when`-override preserves earlier records. C: later-chunk and repeated-position aggregation (unit fixture); truncation (sample_limit + omitted, total exact); FAILED-job persistence; completed-zero != unavailable; total_observed includes quarantine-covered. D: two columns one strategy across chunks match an independent branch count and are not multiplied by the fold; idle and text-op caveats asserted. All: no output/determinism change (pinned baseline); additive only; sentries green.
 
 ## 0. Why
 
