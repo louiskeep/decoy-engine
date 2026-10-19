@@ -93,6 +93,71 @@ Parity (resolves #11): the no-output-change assertion uses a pinned golden/oracl
 
 Each datum tested datum-by-route across unified / chunked / legacy-unavailable / generation / mixed, with INDEPENDENT expected values. B: each known decline yields its enumerated code with correct column/table-wide attribution; hostile text absent; `when`-override preserves earlier records. C: later-chunk and repeated-position aggregation (unit fixture); truncation (sample_limit + omitted, total exact); FAILED-job persistence; completed-zero != unavailable; total_observed includes quarantine-covered. D: two columns one strategy across chunks match an independent branch count and are not multiplied by the fold; idle and text-op caveats asserted. All: no output/determinism change (pinned baseline); additive only; sentries green.
 
+## rev 4: executable contract (resolves the rev-3 plan-gate NO-GO)
+
+Codex plan-gated rev 3 NO-GO: #1/#2/#3/#8 RESOLVED; blocking refinements on #4/#5/#7; smaller required fixes on #6/#9/#10/#11 and one new-defect note. All are tech-lead-level (pre-release; Cam delegated engineering calls). This section is the authoritative build contract and supersedes §A-D and §3/§4/§5 where they differ. Code facts below verified at this worktree (b5bcbcb3).
+
+### R4.1 Emission boundary, corrected and completed (blocking #4)
+
+Correct the §A description to the verified truth, do not claim checks that do not exist:
+- Both folders consistency-check ONLY `table` (`_chunked_evidence.py:192`, `_chunked_output_sink.py:208`) and `pandas_read_passthrough` (`:203`, `:217`). `native_admitted`/`reroute_reason` are taken HEAD-FROM-FIRST with NO cross-chunk check (`_chunked_evidence.py:232-233`, `_chunked_output_sink.py:302-304`).
+- Pre-existing asymmetry, OUT OF SCOPE, leave untouched: the resident folder sums `preserved_rows` (`_chunked_evidence.py:219-220`); the streamed folder does not. The new D field is table-level (not per-column), so it is unaffected; do not "fix" this asymmetry in this slice.
+
+New head field `decline_records` (B) and new table-level field `strategy_branch_calls` (D):
+1. Emit in `chunk_route_evidence` on every per-chunk dict (B: the preflight-constant tuple; D: a COPY of the current cumulative `kernel_calls` snapshot).
+2. Add BOTH to the `head is None` empty-head defaults (`_chunked_evidence.py:222-229`, `_chunked_output_sink.py:292-299`): `decline_records: ()`, `strategy_branch_calls: {}`.
+3. Fold rules (NEW work, implemented by this slice, not pre-existing):
+   - `decline_records`: head-from-first, same as `reroute_reason`. ADD an explicit cross-chunk consistency check (raise on disagreement) as new code; state in the plan that this check is newly added.
+   - `strategy_branch_calls`: cumulative snapshot. Fold order is chunk EMISSION order (both folders fold in iteration order); keep the LAST folded chunk's snapshot, copied not aliased. Never sum. "Last" = final cumulative total by construction.
+4. Mutation-isolation test: after folding, mutating the source `NativeRouteEvidence.kernel_calls` must not change the folded payload (proves the copy).
+
+Zero-chunk / empty-input decline surfacing (the #4a gap): empty input returns `iter(())` with no chunk results (`_chunked_entry.py:476-479`), so the fold yields the empty-head default (`table: None`). The table-level decline (`EMPTY_INPUT`, and any preflight table-wide decline that early-returns) is already recorded to the optional `route_evidence_sink` at `:478` (`_oracle_evidence(table, "empty_input")`). FIX: at finalization (`_pipeline_auto_chunk.py:452` single-table; `_pipeline_multi_table.py:391` multi-table), when the fold produced the empty-head default, build the public `chunked_route` payload from the KNOWN `table` argument plus the sink's table-level record, so `table` and `decline_records=(RouteDeclineRecord(EMPTY_INPUT, table, None, table_wide=True),)` reach the payload with zero chunks. Table identity comes from the finalization `table` argument, never from the (None) fold head. Acceptance: an empty-input run yields a public payload with the correct `table` and the `EMPTY_INPUT` decline record.
+
+### R4.2 Row-error summary API, fully bounded (blocking #5)
+
+`summarize_row_errors(records, *, table, columns, completeness, total_observed, covered, uncovered, sample_limit=DEFAULT_SAMPLE_LIMIT, chunk_index=None, chunk_row_offset=None) -> RowErrorSummary`, pure. Concrete bounds:
+- `DEFAULT_SAMPLE_LIMIT = 50`; `MAX_SAMPLE_LIMIT = 1000`. `sample_limit <= 0` raises `ValueError`; `sample_limit > MAX_SAMPLE_LIMIT` CLAMPS to `MAX_SAMPLE_LIMIT` (does not raise).
+- `columns: frozenset[str]` = the table's schema columns (REQUIRED). Every record's column must be in `columns`; a record outside it raises. The `by_column` map is thereby bounded by `len(columns) x len(closed trigger vocab)`.
+- Deterministic sample order: sort eligible records by `(column, chunk_index, row_index)`, then truncate to the effective limit. `sample` holds the first `min(limit, len(eligible))`.
+- `omitted = max(0, len(eligible) - len(sample))` where `eligible` = the records passed in (chunk-local `.records`). `total_observed`/`covered`/`uncovered` are the counts-based observed totals and are DISTINCT from `len(eligible)`; document both.
+- Invariants validated in `__post_init__`: `covered >= 0`, `uncovered >= 0`, `total_observed == covered + uncovered`, `omitted >= 0`, `len(sample) <= sample_limit`.
+
+### R4.3 Chunk identity, correct offsets (#6)
+
+Capture at the raise sites the RUNNING offsets, not `base_row_offset`:
+- Native (`_chunked_entry.py`): loop `i` and running `row_offset` (initialized from `base_row_offset` at `:292`). Pass `(chunk_index=i, chunk_row_offset=row_offset)`.
+- Oracle (`_chunked_oracle.py`): `chunk_index` and running `row_offset` (`:319`). Pass `(chunk_index, chunk_row_offset=row_offset)`.
+Attach the built summary to the ESCAPING exception: `RowErrorsFailedError` gains an optional `summary: RowErrorSummary | None` attribute, set before raise. Staging only into local metrics is insufficient. Tests: unequal chunk lengths and a nonzero invocation `base_row_offset`.
+
+### R4.4 Completeness as observed coverage (blocking #7)
+
+Producer/state matrix for `RowErrorCompleteness`:
+- `COMPLETE` = the run OBSERVED every error in processed input, exact total known. Two producers: (a) full-frame clean completion; (b) full-frame post-mask POLICY FAILURE (all records observed at `_pipeline_finalize.py:410` before the partition). COMPLETE is defined by completed observation, NOT by job success.
+- `PARTIAL_BEFORE_ABORT` = a chunked leg stopped at the first error-bearing chunk (`_chunked_entry.py:357`, `_chunked_oracle.py:393`); later unprocessed chunks unknown.
+- `UNAVAILABLE` = non-completed outcome with nothing transportable (isolated caught failure, OOM, crash). COMPLETE-with-zero-records (clean completion) is DISTINCT from UNAVAILABLE.
+
+Build + carrier:
+- Build per-table summaries from ALL observed records (`mask_row_errors`) BEFORE the partition at `_pipeline_finalize.py:428-441`. `total_observed = len(mask_row_errors)`, `covered = len(row_errors_covered)`, `uncovered = len(row_errors_uncovered)`. Attach the summary to `RowErrorsFailedError` (R4.3) while leaving `.records` (the uncovered subset) UNCHANGED.
+- Public carrier: `quality_metrics["row_error_summary"]` (single-table) and `quality_metrics["row_error_summary_by_table"]` (multi-table full-frame), JSON-safe. On the raise path the summary rides the exception; on completed runs it rides `quality_metrics`.
+- Build `by_column` directly from `RowErrorRecord.table`/`.column`; NEVER reconstruct attribution from `quality_metrics["row_errors"]` keys, which concatenate unescaped identifiers (`_pipeline_finalize.py:414`).
+- Isolated boundary DECISION: isolated CAUGHT failures return `UNAVAILABLE` (the process-exception path drops metrics by design at `_isolated_worker.py:216` / `_isolated_run.py:525`); do not build cross-process exception-payload transport. "FAILED-job persistence" is scoped to the in-process `RowErrorsFailedError` summary and to successfully-completed isolated runs (metrics transported normally).
+
+### R4.5 Hostile-input acceptance, scoped (#9)
+
+Scope absence assertions to the NEW projections ONLY (`decline_records`, `row_error_summary`), never to the whole folded payload (which keeps the legacy free-text `reroute_reason` by design). Assert adversarial provider/expression/exception/reason markers absent from the new projections; preserve adversarial identifiers verbatim ONLY in the designated `table`/`column` fields; unknown trigger serializes `other`. State the EXACT serialized key set for `RouteDeclineRecord` (`code`, `table`, `column`, `table_wide`) and `RowErrorSummary` (incl the column-keyed count-map keys). Do not require sanitizing `reroute_reason`.
+
+### R4.6 Module size, concrete plan (#10)
+
+`_chunked_entry.py` is 665 LOC (35 headroom); `_dispatch.py` 597. Design keeps new logic OUT of these files: `summarize_row_errors` and all summary logic live in `_row_error_summary.py`, so the native raise site adds only a call + attach (~5-8 LOC). If that still breaches, PRIMARY extraction: move the empty-input/preflight-admission wiring block (`_chunked_entry.py:476-499+`, the `state.first is None` guard + `reject_*` + `validated_rest` + C5c-ii admission) into a new `native/_chunked_preflight_wiring.py`. Census any file in 600-700 at its exact LOC; never exceed 700. Measure during build, not assumed now.
+
+### R4.7 Parity baseline, concrete (#11)
+
+Freeze a golden masked-output artifact captured at base `da9623b7` as a committed fixture, with expected values recorded INDEPENDENTLY of the changed implementation; parity asserts row/column order, dtypes, schema metadata, and deterministic values against that frozen artifact. A live oracle sharing the changed code is insufficient alone. For 2d, hand-count the specified branches independently; never assert `strategy_branch_calls` against another projection of itself.
+
+### R4.8 Drop the extra-field exposure (new-defect note)
+
+Do NOT add `compiled_kernel_executed`/`pool_select_calls` to the public payload in this slice (rev-3 §D floated them without a contract). They stay internal explanatory references. `strategy_branch_calls` is the ONLY new D public field. The "did a compiled kernel actually run" question is answered by the existing per-column `executed_backend` already on the payload.
+
 ## 0. Why
 
 OBS-1 wired the job narrative but four job-log data points are still missing or wrong at the engine boundary. The platform cannot report them because the engine does not emit them in a structured, leak-safe shape:
