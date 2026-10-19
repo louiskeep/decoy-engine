@@ -96,7 +96,24 @@ def write_child(
         writer.close()
 
 
-def build_config(child_path: Path, out_dir: Path, *, parents: int, width: int) -> dict[str, Any]:
+def parent_columns(rich: bool) -> list[dict[str, Any]]:
+    """The generated parent's columns. `rich` (F4a) adds the other eligible generation families
+    (categorical, null_mask, pooled faker, windowed_date) so the generate half of the mixed job
+    exercises the representative plan, not just a sequence and one categorical."""
+    base: list[dict[str, Any]] = [
+        {"name": "id", "type": "sequence", "start": 0, "step": 1},
+        {"name": "tier", "type": "categorical", "categories": TIERS},
+    ]
+    if not rich:
+        return base
+    from _f4a_gen import rich_parent_columns
+
+    return [*base, *rich_parent_columns()]
+
+
+def build_config(
+    child_path: Path, out_dir: Path, *, parents: int, width: int, rich_parent: bool = False
+) -> dict[str, Any]:
     """The production config: generate `people`, mask `accounts`, one preserve FK edge."""
     from decoy_engine.config import PipelineConfig
 
@@ -122,10 +139,7 @@ def build_config(child_path: Path, out_dir: Path, *, parents: int, width: int) -
             {
                 "name": PARENT,
                 "row_count": parents,
-                "generate_columns": [
-                    {"name": "id", "type": "sequence", "start": 0, "step": 1},
-                    {"name": "tier", "type": "categorical", "categories": TIERS},
-                ],
+                "generate_columns": parent_columns(rich_parent),
             },
             {"name": CHILD, "columns": columns},
         ],

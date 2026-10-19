@@ -9,6 +9,19 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (F4a: lower-tier generation capacity evidence, 2026-10-18)
+
+An opt-in benchmark (`tests/perf/test_f4a_gen_capacity.py`, `-m benchmark`) now measures
+generation and a mixed generate-then-mask job at 1M and 10M rows. Each run is supervised from
+outside the worker, so peak RSS comes from `wait4` and not from the process under test. It checks
+the peak against a ceiling declared before the 10M run, checks that RSS stays flat from 1M to 10M,
+checks that a rerun commits identical content, and records which backend produced each generated
+column. The committed results and the declared ceilings are in
+`docs/records/2026-10-18-f4a-gen-capacity.md`. The 100M tier and the platform evidence transport
+are separate slices. Measured: pure generation holds a flat peak (211 MB at 1M, 227 MB at 10M);
+the mixed job stays under its ceiling but grows 1.71x from 1M to 10M (841 to 1436 MB) because
+the FK carrier holds child keys resident. No engine behavior changes.
+
 ### Changed (windowed_date admitted to unified generation, strict anchor contract, 2026-10-18)
 
 `windowed_date` is now admitted into the unified generation core; it was declined before.

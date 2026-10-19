@@ -1,0 +1,1136 @@
+{
+ "backends": {
+  "generation_plan": {
+   "completed": true,
+   "digest": null,
+   "failure": null,
+   "mode": "probe",
+   "peak_rss_mb": 283.0,
+   "peak_rss_poll_mb": 283.0,
+   "requested": {
+    "batch_rows": 32768,
+    "budget_mb": 1024,
+    "parent_rows": 100000,
+    "plan": "rep",
+    "rows": 100000,
+    "rss_ceiling_mb": 500.0
+   },
+   "result": {
+    "columns": [
+     {
+      "column": "id",
+      "evidence": "real",
+      "kind": "sequence",
+      "rust_native": false,
+      "selection": [
+       "no_selection"
+      ],
+      "subpaths": [],
+      "table": "people"
+     },
+     {
+      "column": "city",
+      "evidence": "real",
+      "kind": "faker",
+      "rust_native": false,
+      "selection": [
+       "numpy_selection"
+      ],
+      "subpaths": [
+       "pool_construction"
+      ],
+      "table": "people"
+     },
+     {
+      "column": "oid",
+      "evidence": "real",
+      "kind": "sequence",
+      "rust_native": false,
+      "selection": [
+       "no_selection"
+      ],
+      "subpaths": [],
+      "table": "orders"
+     },
+     {
+      "column": "pid",
+      "evidence": "real",
+      "kind": "reference",
+      "rust_native": false,
+      "selection": [
+       "python_rng_selection"
+      ],
+      "subpaths": [],
+      "table": "orders"
+     },
+     {
+      "column": "status",
+      "evidence": "real",
+      "kind": "categorical",
+      "rust_native": false,
+      "selection": [
+       "python_rng_selection"
+      ],
+      "subpaths": [],
+      "table": "orders"
+     },
+     {
+      "column": "grade",
+      "evidence": "real",
+      "kind": "categorical",
+      "rust_native": false,
+      "selection": [
+       "python_rng_selection"
+      ],
+      "subpaths": [
+       "null_mask"
+      ],
+      "table": "orders"
+     },
+     {
+      "column": "city",
+      "evidence": "real",
+      "kind": "faker",
+      "rust_native": false,
+      "selection": [
+       "numpy_selection"
+      ],
+      "subpaths": [
+       "pool_construction"
+      ],
+      "table": "orders"
+     },
+     {
+      "column": "dob",
+      "evidence": "real",
+      "kind": "categorical",
+      "rust_native": false,
+      "selection": [
+       "python_rng_selection"
+      ],
+      "subpaths": [],
+      "table": "orders"
+     },
+     {
+      "admission_note": "CHANGED semantics (FR1): same-table earlier eligible anchor (string ISO / date32 / naive timestamp); null anchor -> null, invalid anchor -> WindowedDateError",
+      "admitted_to_core": true,
+      "column": "event_date",
+      "evidence": "unwitnessed",
+      "executed": "shared apply_windowed_date (outside the F0 selection taxonomy)",
+      "kind": "windowed_date",
+      "populated_rows": 100000,
+      "rust_native": false,
+      "selection": [],
+      "subpaths": [],
+      "table": "orders"
+     }
+    ],
+    "completed_inner": true,
+    "core_eligible": true,
+    "probe_rows": {
+     "orders": 100000,
+     "people": 100000
+    }
+   },
+   "rss_method": "wait4_ru_maxrss",
+   "rss_within_ceiling": true,
+   "schema": "f4a-gen-capacity/v1",
+   "wall_s": 11.26
+  },
+  "mixed_parent": {
+   "completed": true,
+   "digest": null,
+   "failure": null,
+   "mode": "probe",
+   "peak_rss_mb": 252.7,
+   "peak_rss_poll_mb": 252.7,
+   "requested": {
+    "batch_rows": 32768,
+    "budget_mb": 1024,
+    "parent_rows": 100000,
+    "plan": "mixed-parent",
+    "rows": 200000,
+    "rss_ceiling_mb": 500.0
+   },
+   "result": {
+    "columns": [
+     {
+      "column": "id",
+      "evidence": "real",
+      "kind": "sequence",
+      "rust_native": false,
+      "selection": [
+       "no_selection"
+      ],
+      "subpaths": [],
+      "table": "people"
+     },
+     {
+      "column": "tier",
+      "evidence": "real",
+      "kind": "categorical",
+      "rust_native": false,
+      "selection": [
+       "python_rng_selection"
+      ],
+      "subpaths": [],
+      "table": "people"
+     },
+     {
+      "column": "status",
+      "evidence": "real",
+      "kind": "categorical",
+      "rust_native": false,
+      "selection": [
+       "python_rng_selection"
+      ],
+      "subpaths": [],
+      "table": "people"
+     },
+     {
+      "column": "city",
+      "evidence": "real",
+      "kind": "faker",
+      "rust_native": false,
+      "selection": [
+       "numpy_selection"
+      ],
+      "subpaths": [
+       "pool_construction"
+      ],
+      "table": "people"
+     },
+     {
+      "column": "dob",
+      "evidence": "real",
+      "kind": "categorical",
+      "rust_native": false,
+      "selection": [
+       "python_rng_selection"
+      ],
+      "subpaths": [],
+      "table": "people"
+     },
+     {
+      "admission_note": "CHANGED semantics (FR1): same-table earlier eligible anchor (string ISO / date32 / naive timestamp); null anchor -> null, invalid anchor -> WindowedDateError",
+      "admitted_to_core": true,
+      "column": "event_date",
+      "evidence": "unwitnessed",
+      "executed": "shared apply_windowed_date (outside the F0 selection taxonomy)",
+      "kind": "windowed_date",
+      "populated_rows": 200000,
+      "rust_native": false,
+      "selection": [],
+      "subpaths": [],
+      "table": "people"
+     }
+    ],
+    "completed_inner": true,
+    "core_eligible": true,
+    "probe_rows": {
+     "people": 200000
+    }
+   },
+   "rss_method": "wait4_ru_maxrss",
+   "rss_within_ceiling": true,
+   "schema": "fr0-gen-bounded/v1",
+   "wall_s": 16.52
+  }
+ },
+ "budget_mb": 1024,
+ "ceilings_mb": {
+  "generation": 500,
+  "mixed": 1500
+ },
+ "generation": {
+  "10M": {
+   "run1": {
+    "completed": true,
+    "digest": {
+     "combined": "8dadafd018837cce2fd6fd0ff9cc8173e1782d32e682b644e694806ec0dd1839",
+     "per_table": {
+      "orders": "ea2d8edfce17f56b41595acf2fa7b40fe3527bc7a6da3ecad05b90b890e051bd",
+      "people": "dcf17beabb71499537bf93c350a93d1a73df358e265612d26219a0da18fc237e"
+     }
+    },
+    "failure": null,
+    "mode": "capacity",
+    "peak_rss_mb": 226.1,
+    "peak_rss_poll_mb": 226.5,
+    "requested": {
+     "batch_rows": 32768,
+     "budget_mb": 1024,
+     "parent_rows": 100000,
+     "plan": "rep",
+     "rows": 10000000,
+     "rss_ceiling_mb": 500.0
+    },
+    "result": {
+     "committed_rows": {
+      "orders": 10000000,
+      "people": 100000
+     },
+     "completed_inner": true,
+     "expected_rows": {
+      "orders": 10000000,
+      "people": 100000
+     },
+     "gen_s": 719.93,
+     "mode": "streamed",
+     "peak_reserved_mb": 104.7,
+     "reason": "eligible",
+     "reported_rows": {
+      "orders": 10000000,
+      "people": 100000
+     },
+     "rows_per_s": 14029,
+     "rss_before_mb": 175.1,
+     "rss_hwm_after_mb": 226.1
+    },
+    "rss_method": "wait4_ru_maxrss",
+    "rss_within_ceiling": true,
+    "schema": "f4a-gen-capacity/v1",
+    "wall_s": 721.18
+   },
+   "run2": {
+    "completed": true,
+    "digest": {
+     "combined": "8dadafd018837cce2fd6fd0ff9cc8173e1782d32e682b644e694806ec0dd1839",
+     "per_table": {
+      "orders": "ea2d8edfce17f56b41595acf2fa7b40fe3527bc7a6da3ecad05b90b890e051bd",
+      "people": "dcf17beabb71499537bf93c350a93d1a73df358e265612d26219a0da18fc237e"
+     }
+    },
+    "failure": null,
+    "mode": "capacity",
+    "peak_rss_mb": 227.1,
+    "peak_rss_poll_mb": 227.3,
+    "requested": {
+     "batch_rows": 32768,
+     "budget_mb": 1024,
+     "parent_rows": 100000,
+     "plan": "rep",
+     "rows": 10000000,
+     "rss_ceiling_mb": 500.0
+    },
+    "result": {
+     "committed_rows": {
+      "orders": 10000000,
+      "people": 100000
+     },
+     "completed_inner": true,
+     "expected_rows": {
+      "orders": 10000000,
+      "people": 100000
+     },
+     "gen_s": 729.75,
+     "mode": "streamed",
+     "peak_reserved_mb": 104.7,
+     "reason": "eligible",
+     "reported_rows": {
+      "orders": 10000000,
+      "people": 100000
+     },
+     "rows_per_s": 13840,
+     "rss_before_mb": 174.8,
+     "rss_hwm_after_mb": 227.1
+    },
+    "rss_method": "wait4_ru_maxrss",
+    "rss_within_ceiling": true,
+    "schema": "f4a-gen-capacity/v1",
+    "wall_s": 730.97
+   }
+  },
+  "1M": {
+   "run1": {
+    "completed": true,
+    "digest": {
+     "combined": "66b291fd4aa49511c77392e7a0b88252220f8adbbcb13ca9f2f3733491f233a6",
+     "per_table": {
+      "orders": "3591b6e87eac6095a79f0686a658687a946f0669bedf1e251d29c9dce78c042a",
+      "people": "dcf17beabb71499537bf93c350a93d1a73df358e265612d26219a0da18fc237e"
+     }
+    },
+    "failure": null,
+    "mode": "capacity",
+    "peak_rss_mb": 210.6,
+    "peak_rss_poll_mb": 210.9,
+    "requested": {
+     "batch_rows": 32768,
+     "budget_mb": 1024,
+     "parent_rows": 100000,
+     "plan": "rep",
+     "rows": 1000000,
+     "rss_ceiling_mb": 500.0
+    },
+    "result": {
+     "committed_rows": {
+      "orders": 1000000,
+      "people": 100000
+     },
+     "completed_inner": true,
+     "expected_rows": {
+      "orders": 1000000,
+      "people": 100000
+     },
+     "gen_s": 73.57,
+     "mode": "streamed",
+     "peak_reserved_mb": 104.5,
+     "reason": "eligible",
+     "reported_rows": {
+      "orders": 1000000,
+      "people": 100000
+     },
+     "rows_per_s": 14952,
+     "rss_before_mb": 175.0,
+     "rss_hwm_after_mb": 210.6
+    },
+    "rss_method": "wait4_ru_maxrss",
+    "rss_within_ceiling": true,
+    "schema": "f4a-gen-capacity/v1",
+    "wall_s": 74.82
+   },
+   "run2": {
+    "completed": true,
+    "digest": {
+     "combined": "66b291fd4aa49511c77392e7a0b88252220f8adbbcb13ca9f2f3733491f233a6",
+     "per_table": {
+      "orders": "3591b6e87eac6095a79f0686a658687a946f0669bedf1e251d29c9dce78c042a",
+      "people": "dcf17beabb71499537bf93c350a93d1a73df358e265612d26219a0da18fc237e"
+     }
+    },
+    "failure": null,
+    "mode": "capacity",
+    "peak_rss_mb": 211.1,
+    "peak_rss_poll_mb": 211.3,
+    "requested": {
+     "batch_rows": 32768,
+     "budget_mb": 1024,
+     "parent_rows": 100000,
+     "plan": "rep",
+     "rows": 1000000,
+     "rss_ceiling_mb": 500.0
+    },
+    "result": {
+     "committed_rows": {
+      "orders": 1000000,
+      "people": 100000
+     },
+     "completed_inner": true,
+     "expected_rows": {
+      "orders": 1000000,
+      "people": 100000
+     },
+     "gen_s": 72.76,
+     "mode": "streamed",
+     "peak_reserved_mb": 104.5,
+     "reason": "eligible",
+     "reported_rows": {
+      "orders": 1000000,
+      "people": 100000
+     },
+     "rows_per_s": 15118,
+     "rss_before_mb": 174.6,
+     "rss_hwm_after_mb": 211.1
+    },
+    "rss_method": "wait4_ru_maxrss",
+    "rss_within_ceiling": true,
+    "schema": "f4a-gen-capacity/v1",
+    "wall_s": 74.07
+   }
+  }
+ },
+ "max_tier_growth": 1.15,
+ "mixed": {
+  "10M": {
+   "run1": {
+    "carrier_phase": {
+     "carrier_s": 1.15,
+     "fk_warnings": 0,
+     "hwm_after_mb": 1071.9,
+     "resident_key_mb": 180.4,
+     "rss_after_mb": 625.5
+    },
+    "committed_output_mb": 726.9,
+    "companion_present": true,
+    "completed": true,
+    "digest": {
+     "combined": "5f40de68f1b30ea6d90cc1e76cb69a7d1388a68626dfff16720ec1671810ec62",
+     "per_table": {
+      "accounts": "c3eb21d5bb6799c1c5389fe96ca7a1835480cc25236f5242f72490d4ff387512",
+      "people": "c2429187bbaa38b1f14e36ed608038320642a1d7dd19d650a7a71152ebb0b633"
+     }
+    },
+    "failure": null,
+    "fk_parity": {
+     "coverage": "sampled",
+     "fk_full_scan": {
+      "expected_orphan_rows": 100000,
+      "mismatches": 0,
+      "orphan_rows": 100000,
+      "rows_scanned": 10000000
+     },
+     "problems": [],
+     "rowcount_match": true,
+     "rows_out": {
+      "accounts": 10000000,
+      "people": 200000
+     },
+     "sample_rows_per_window": 2000,
+     "sampled_orphan_rows": 60,
+     "status": "ok",
+     "windows": [
+      "head",
+      "middle",
+      "tail"
+     ]
+    },
+    "generation_phase": {
+     "gen_s": 14.9,
+     "hwm_after_mb": 297.4,
+     "parent_arrow_mb": 12.9,
+     "parent_arrow_nbytes": {
+      "people": 13561419
+     },
+     "rss_after_mb": 268.2
+    },
+    "mask_s": 66.48,
+    "mask_s_p50": 66.48,
+    "mask_s_p95": 66.48,
+    "mask_s_runs": [
+     66.48
+    ],
+    "peak_rss_mb": 1435.5,
+    "peak_rss_poll_mb": 1435.5,
+    "requested": {
+     "child_rows": 10000000,
+     "chunk_rows": null,
+     "chunk_threshold": null,
+     "cpu_count": 4,
+     "mode": "capacity",
+     "native_threads": 1,
+     "orphan_every": 100,
+     "parent_rows": 200000,
+     "repeats": 1,
+     "rss_ceiling_mb": 1500.0,
+     "timeout_s": 7200.0,
+     "total_rows": 10200000,
+     "width_hash_payload": 3
+    },
+    "route": {
+     "checks": {
+      "chunked_lane_native_admitted": true,
+      "execution_mode_mixed": true,
+      "multi_chunk": true,
+      "native_hash_columns": true,
+      "outputs_streamed": true,
+      "result_outputs_empty": true
+     },
+     "disposition": {
+      "chunk_count": 200,
+      "columns": [
+       {
+        "calls": 200,
+        "column": "person_id",
+        "executed_backend": "arrow_python",
+        "strategy": "passthrough"
+       },
+       {
+        "calls": 200,
+        "column": "email",
+        "executed_backend": "rust_companion",
+        "strategy": "hash"
+       },
+       {
+        "calls": 200,
+        "column": "note",
+        "executed_backend": "arrow_python",
+        "strategy": "redact"
+       },
+       {
+        "calls": 200,
+        "column": "payload_00",
+        "executed_backend": "rust_companion",
+        "strategy": "hash"
+       },
+       {
+        "calls": 200,
+        "column": "payload_01",
+        "executed_backend": "rust_companion",
+        "strategy": "hash"
+       },
+       {
+        "calls": 200,
+        "column": "payload_02",
+        "executed_backend": "rust_companion",
+        "strategy": "hash"
+       }
+      ],
+      "hash_columns": 4,
+      "native_admitted": true,
+      "native_hash_columns": 4
+     },
+     "execution_mode": "mixed",
+     "ok": true,
+     "outputs_streamed": true,
+     "result_outputs": 0,
+     "route_reason": "mixed_generate_mask_chunked",
+     "sink_output_mode": {
+      "mode": "streamed",
+      "reason": "eligible"
+     }
+    },
+    "rows": {
+     "accounts": 10000000,
+     "people": 200000
+    },
+    "rows_per_s_last": 153426,
+    "rss_before_run_mb": 250.9,
+    "rss_hwm_after_run_mb": 1435.5,
+    "rss_method": "wait4_ru_maxrss",
+    "rss_within_ceiling": true,
+    "runs": [
+     {
+      "completed": true,
+      "digest": {
+       "combined": "5f40de68f1b30ea6d90cc1e76cb69a7d1388a68626dfff16720ec1671810ec62",
+       "per_table": {
+        "accounts": "c3eb21d5bb6799c1c5389fe96ca7a1835480cc25236f5242f72490d4ff387512",
+        "people": "c2429187bbaa38b1f14e36ed608038320642a1d7dd19d650a7a71152ebb0b633"
+       }
+      },
+      "failure": null,
+      "peak_rss_mb": 1435.5,
+      "peak_rss_poll_mb": 1435.5,
+      "returncode": 0,
+      "signal": null,
+      "wall_s": 86.84
+     }
+    ],
+    "schema": "f4-mixed/v1",
+    "spill": {
+     "staged_output_peak_mb": 726.9,
+     "temp_disk_peak_mb": 0.0
+    },
+    "throughput_rows_per_s": 153430
+   },
+   "run2": {
+    "carrier_phase": {
+     "carrier_s": 1.15,
+     "fk_warnings": 0,
+     "hwm_after_mb": 1052.7,
+     "resident_key_mb": 180.4,
+     "rss_after_mb": 606.4
+    },
+    "committed_output_mb": 726.9,
+    "companion_present": true,
+    "completed": true,
+    "digest": {
+     "combined": "5f40de68f1b30ea6d90cc1e76cb69a7d1388a68626dfff16720ec1671810ec62",
+     "per_table": {
+      "accounts": "c3eb21d5bb6799c1c5389fe96ca7a1835480cc25236f5242f72490d4ff387512",
+      "people": "c2429187bbaa38b1f14e36ed608038320642a1d7dd19d650a7a71152ebb0b633"
+     }
+    },
+    "failure": null,
+    "fk_parity": {
+     "coverage": "sampled",
+     "fk_full_scan": {
+      "expected_orphan_rows": 100000,
+      "mismatches": 0,
+      "orphan_rows": 100000,
+      "rows_scanned": 10000000
+     },
+     "problems": [],
+     "rowcount_match": true,
+     "rows_out": {
+      "accounts": 10000000,
+      "people": 200000
+     },
+     "sample_rows_per_window": 2000,
+     "sampled_orphan_rows": 60,
+     "status": "ok",
+     "windows": [
+      "head",
+      "middle",
+      "tail"
+     ]
+    },
+    "generation_phase": {
+     "gen_s": 14.75,
+     "hwm_after_mb": 273.7,
+     "parent_arrow_mb": 12.9,
+     "parent_arrow_nbytes": {
+      "people": 13561419
+     },
+     "rss_after_mb": 247.3
+    },
+    "mask_s": 66.07,
+    "mask_s_p50": 66.07,
+    "mask_s_p95": 66.07,
+    "mask_s_runs": [
+     66.07
+    ],
+    "peak_rss_mb": 1435.4,
+    "peak_rss_poll_mb": 1435.4,
+    "requested": {
+     "child_rows": 10000000,
+     "chunk_rows": null,
+     "chunk_threshold": null,
+     "cpu_count": 4,
+     "mode": "capacity",
+     "native_threads": 1,
+     "orphan_every": 100,
+     "parent_rows": 200000,
+     "repeats": 1,
+     "rss_ceiling_mb": 1500.0,
+     "timeout_s": 7200.0,
+     "total_rows": 10200000,
+     "width_hash_payload": 3
+    },
+    "route": {
+     "checks": {
+      "chunked_lane_native_admitted": true,
+      "execution_mode_mixed": true,
+      "multi_chunk": true,
+      "native_hash_columns": true,
+      "outputs_streamed": true,
+      "result_outputs_empty": true
+     },
+     "disposition": {
+      "chunk_count": 200,
+      "columns": [
+       {
+        "calls": 200,
+        "column": "person_id",
+        "executed_backend": "arrow_python",
+        "strategy": "passthrough"
+       },
+       {
+        "calls": 200,
+        "column": "email",
+        "executed_backend": "rust_companion",
+        "strategy": "hash"
+       },
+       {
+        "calls": 200,
+        "column": "note",
+        "executed_backend": "arrow_python",
+        "strategy": "redact"
+       },
+       {
+        "calls": 200,
+        "column": "payload_00",
+        "executed_backend": "rust_companion",
+        "strategy": "hash"
+       },
+       {
+        "calls": 200,
+        "column": "payload_01",
+        "executed_backend": "rust_companion",
+        "strategy": "hash"
+       },
+       {
+        "calls": 200,
+        "column": "payload_02",
+        "executed_backend": "rust_companion",
+        "strategy": "hash"
+       }
+      ],
+      "hash_columns": 4,
+      "native_admitted": true,
+      "native_hash_columns": 4
+     },
+     "execution_mode": "mixed",
+     "ok": true,
+     "outputs_streamed": true,
+     "result_outputs": 0,
+     "route_reason": "mixed_generate_mask_chunked",
+     "sink_output_mode": {
+      "mode": "streamed",
+      "reason": "eligible"
+     }
+    },
+    "rows": {
+     "accounts": 10000000,
+     "people": 200000
+    },
+    "rows_per_s_last": 154374,
+    "rss_before_run_mb": 227.0,
+    "rss_hwm_after_run_mb": 1435.4,
+    "rss_method": "wait4_ru_maxrss",
+    "rss_within_ceiling": true,
+    "runs": [
+     {
+      "completed": true,
+      "digest": {
+       "combined": "5f40de68f1b30ea6d90cc1e76cb69a7d1388a68626dfff16720ec1671810ec62",
+       "per_table": {
+        "accounts": "c3eb21d5bb6799c1c5389fe96ca7a1835480cc25236f5242f72490d4ff387512",
+        "people": "c2429187bbaa38b1f14e36ed608038320642a1d7dd19d650a7a71152ebb0b633"
+       }
+      },
+      "failure": null,
+      "peak_rss_mb": 1435.4,
+      "peak_rss_poll_mb": 1435.4,
+      "returncode": 0,
+      "signal": null,
+      "wall_s": 87.1
+     }
+    ],
+    "schema": "f4-mixed/v1",
+    "spill": {
+     "staged_output_peak_mb": 726.9,
+     "temp_disk_peak_mb": 0.0
+    },
+    "throughput_rows_per_s": 154382
+   }
+  },
+  "1M": {
+   "run1": {
+    "carrier_phase": {
+     "carrier_s": 0.14,
+     "fk_warnings": 0,
+     "hwm_after_mb": 323.0,
+     "resident_key_mb": 18.0,
+     "rss_after_mb": 323.0
+    },
+    "committed_output_mb": 75.4,
+    "companion_present": true,
+    "completed": true,
+    "digest": {
+     "combined": "c9f6ed57a3b7d736a5b8ab7987fabab0a4145c8bc6444501d907ade2f38fb6bd",
+     "per_table": {
+      "accounts": "2c76e91b51cbecdc64357c64ba76ba7fdd121b193c7af180f3b2aaaf0b982257",
+      "people": "c2429187bbaa38b1f14e36ed608038320642a1d7dd19d650a7a71152ebb0b633"
+     }
+    },
+    "failure": null,
+    "fk_parity": {
+     "coverage": "sampled",
+     "fk_full_scan": {
+      "expected_orphan_rows": 10000,
+      "mismatches": 0,
+      "orphan_rows": 10000,
+      "rows_scanned": 1000000
+     },
+     "problems": [],
+     "rowcount_match": true,
+     "rows_out": {
+      "accounts": 1000000,
+      "people": 200000
+     },
+     "sample_rows_per_window": 2000,
+     "sampled_orphan_rows": 60,
+     "status": "ok",
+     "windows": [
+      "head",
+      "middle",
+      "tail"
+     ]
+    },
+    "generation_phase": {
+     "gen_s": 14.9,
+     "hwm_after_mb": 244.8,
+     "parent_arrow_mb": 12.9,
+     "parent_arrow_nbytes": {
+      "people": 13561419
+     },
+     "rss_after_mb": 229.7
+    },
+    "mask_s": 20.32,
+    "mask_s_p50": 20.32,
+    "mask_s_p95": 20.32,
+    "mask_s_runs": [
+     20.32
+    ],
+    "peak_rss_mb": 840.7,
+    "peak_rss_poll_mb": 840.9,
+    "requested": {
+     "child_rows": 1000000,
+     "chunk_rows": null,
+     "chunk_threshold": null,
+     "cpu_count": 4,
+     "mode": "capacity",
+     "native_threads": 1,
+     "orphan_every": 100,
+     "parent_rows": 200000,
+     "repeats": 1,
+     "rss_ceiling_mb": 1500.0,
+     "timeout_s": 7200.0,
+     "total_rows": 1200000,
+     "width_hash_payload": 3
+    },
+    "route": {
+     "checks": {
+      "chunked_lane_native_admitted": true,
+      "execution_mode_mixed": true,
+      "multi_chunk": true,
+      "native_hash_columns": true,
+      "outputs_streamed": true,
+      "result_outputs_empty": true
+     },
+     "disposition": {
+      "chunk_count": 20,
+      "columns": [
+       {
+        "calls": 20,
+        "column": "person_id",
+        "executed_backend": "arrow_python",
+        "strategy": "passthrough"
+       },
+       {
+        "calls": 20,
+        "column": "email",
+        "executed_backend": "rust_companion",
+        "strategy": "hash"
+       },
+       {
+        "calls": 20,
+        "column": "note",
+        "executed_backend": "arrow_python",
+        "strategy": "redact"
+       },
+       {
+        "calls": 20,
+        "column": "payload_00",
+        "executed_backend": "rust_companion",
+        "strategy": "hash"
+       },
+       {
+        "calls": 20,
+        "column": "payload_01",
+        "executed_backend": "rust_companion",
+        "strategy": "hash"
+       },
+       {
+        "calls": 20,
+        "column": "payload_02",
+        "executed_backend": "rust_companion",
+        "strategy": "hash"
+       }
+      ],
+      "hash_columns": 4,
+      "native_admitted": true,
+      "native_hash_columns": 4
+     },
+     "execution_mode": "mixed",
+     "ok": true,
+     "outputs_streamed": true,
+     "result_outputs": 0,
+     "route_reason": "mixed_generate_mask_chunked",
+     "sink_output_mode": {
+      "mode": "streamed",
+      "reason": "eligible"
+     }
+    },
+    "rows": {
+     "accounts": 1000000,
+     "people": 200000
+    },
+    "rows_per_s_last": 59041,
+    "rss_before_run_mb": 203.4,
+    "rss_hwm_after_run_mb": 840.7,
+    "rss_method": "wait4_ru_maxrss",
+    "rss_within_ceiling": true,
+    "runs": [
+     {
+      "completed": true,
+      "digest": {
+       "combined": "c9f6ed57a3b7d736a5b8ab7987fabab0a4145c8bc6444501d907ade2f38fb6bd",
+       "per_table": {
+        "accounts": "2c76e91b51cbecdc64357c64ba76ba7fdd121b193c7af180f3b2aaaf0b982257",
+        "people": "c2429187bbaa38b1f14e36ed608038320642a1d7dd19d650a7a71152ebb0b633"
+       }
+      },
+      "failure": null,
+      "peak_rss_mb": 840.7,
+      "peak_rss_poll_mb": 840.9,
+      "returncode": 0,
+      "signal": null,
+      "wall_s": 25.78
+     }
+    ],
+    "schema": "f4-mixed/v1",
+    "spill": {
+     "staged_output_peak_mb": 75.4,
+     "temp_disk_peak_mb": 0.0
+    },
+    "throughput_rows_per_s": 59055
+   },
+   "run2": {
+    "carrier_phase": {
+     "carrier_s": 0.15,
+     "fk_warnings": 0,
+     "hwm_after_mb": 327.5,
+     "resident_key_mb": 18.0,
+     "rss_after_mb": 327.5
+    },
+    "committed_output_mb": 75.4,
+    "companion_present": true,
+    "completed": true,
+    "digest": {
+     "combined": "c9f6ed57a3b7d736a5b8ab7987fabab0a4145c8bc6444501d907ade2f38fb6bd",
+     "per_table": {
+      "accounts": "2c76e91b51cbecdc64357c64ba76ba7fdd121b193c7af180f3b2aaaf0b982257",
+      "people": "c2429187bbaa38b1f14e36ed608038320642a1d7dd19d650a7a71152ebb0b633"
+     }
+    },
+    "failure": null,
+    "fk_parity": {
+     "coverage": "sampled",
+     "fk_full_scan": {
+      "expected_orphan_rows": 10000,
+      "mismatches": 0,
+      "orphan_rows": 10000,
+      "rows_scanned": 1000000
+     },
+     "problems": [],
+     "rowcount_match": true,
+     "rows_out": {
+      "accounts": 1000000,
+      "people": 200000
+     },
+     "sample_rows_per_window": 2000,
+     "sampled_orphan_rows": 60,
+     "status": "ok",
+     "windows": [
+      "head",
+      "middle",
+      "tail"
+     ]
+    },
+    "generation_phase": {
+     "gen_s": 14.64,
+     "hwm_after_mb": 243.3,
+     "parent_arrow_mb": 12.9,
+     "parent_arrow_nbytes": {
+      "people": 13561419
+     },
+     "rss_after_mb": 232.1
+    },
+    "mask_s": 20.07,
+    "mask_s_p50": 20.07,
+    "mask_s_p95": 20.07,
+    "mask_s_runs": [
+     20.07
+    ],
+    "peak_rss_mb": 840.8,
+    "peak_rss_poll_mb": 841.3,
+    "requested": {
+     "child_rows": 1000000,
+     "chunk_rows": null,
+     "chunk_threshold": null,
+     "cpu_count": 4,
+     "mode": "capacity",
+     "native_threads": 1,
+     "orphan_every": 100,
+     "parent_rows": 200000,
+     "repeats": 1,
+     "rss_ceiling_mb": 1500.0,
+     "timeout_s": 7200.0,
+     "total_rows": 1200000,
+     "width_hash_payload": 3
+    },
+    "route": {
+     "checks": {
+      "chunked_lane_native_admitted": true,
+      "execution_mode_mixed": true,
+      "multi_chunk": true,
+      "native_hash_columns": true,
+      "outputs_streamed": true,
+      "result_outputs_empty": true
+     },
+     "disposition": {
+      "chunk_count": 20,
+      "columns": [
+       {
+        "calls": 20,
+        "column": "person_id",
+        "executed_backend": "arrow_python",
+        "strategy": "passthrough"
+       },
+       {
+        "calls": 20,
+        "column": "email",
+        "executed_backend": "rust_companion",
+        "strategy": "hash"
+       },
+       {
+        "calls": 20,
+        "column": "note",
+        "executed_backend": "arrow_python",
+        "strategy": "redact"
+       },
+       {
+        "calls": 20,
+        "column": "payload_00",
+        "executed_backend": "rust_companion",
+        "strategy": "hash"
+       },
+       {
+        "calls": 20,
+        "column": "payload_01",
+        "executed_backend": "rust_companion",
+        "strategy": "hash"
+       },
+       {
+        "calls": 20,
+        "column": "payload_02",
+        "executed_backend": "rust_companion",
+        "strategy": "hash"
+       }
+      ],
+      "hash_columns": 4,
+      "native_admitted": true,
+      "native_hash_columns": 4
+     },
+     "execution_mode": "mixed",
+     "ok": true,
+     "outputs_streamed": true,
+     "result_outputs": 0,
+     "route_reason": "mixed_generate_mask_chunked",
+     "sink_output_mode": {
+      "mode": "streamed",
+      "reason": "eligible"
+     }
+    },
+    "rows": {
+     "accounts": 1000000,
+     "people": 200000
+    },
+    "rows_per_s_last": 59791,
+    "rss_before_run_mb": 201.6,
+    "rss_hwm_after_run_mb": 840.8,
+    "rss_method": "wait4_ru_maxrss",
+    "rss_within_ceiling": true,
+    "runs": [
+     {
+      "completed": true,
+      "digest": {
+       "combined": "c9f6ed57a3b7d736a5b8ab7987fabab0a4145c8bc6444501d907ade2f38fb6bd",
+       "per_table": {
+        "accounts": "2c76e91b51cbecdc64357c64ba76ba7fdd121b193c7af180f3b2aaaf0b982257",
+        "people": "c2429187bbaa38b1f14e36ed608038320642a1d7dd19d650a7a71152ebb0b633"
+       }
+      },
+      "failure": null,
+      "peak_rss_mb": 840.8,
+      "peak_rss_poll_mb": 841.3,
+      "returncode": 0,
+      "signal": null,
+      "wall_s": 25.27
+     }
+    ],
+    "schema": "f4-mixed/v1",
+    "spill": {
+     "staged_output_peak_mb": 75.4,
+     "temp_disk_peak_mb": 0.0
+    },
+    "throughput_rows_per_s": 59791
+   }
+  }
+ },
+ "mixed_parent_rows": 200000,
+ "schema": "f4a-capacity-evidence/v1"
+}

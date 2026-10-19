@@ -49,6 +49,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import _f4a_gen
 from _supervisor import classify_failure, run_worker
 from bench_worker_fk import _DiskPeakSampler, _percentile
 
@@ -162,7 +163,13 @@ def _prepare(args: argparse.Namespace, work: Path) -> tuple[Path, dict[str, Any]
         orphan_every=args.orphan_every,
         width=args.width,
     )
-    config = build_config(child, work / "cfg-targets", parents=args.parent_rows, width=args.width)
+    config = build_config(
+        child,
+        work / "cfg-targets",
+        parents=args.parent_rows,
+        width=args.width,
+        rich_parent=args.rich_parent,
+    )
     config["_build_s"] = round(time.perf_counter() - t0, 2)
     return child, config
 
@@ -242,6 +249,7 @@ def _run_capacity(args: argparse.Namespace, work: Path) -> dict[str, Any]:
         },
         "fk_parity": verdict,
         "committed_output_mb": round(_dir_mb(committed), 1),
+        "rows_per_s": round((args.parent_rows + args.child_rows) / mask_s) if mask_s else None,
     }
 
 
@@ -320,6 +328,8 @@ def _child_cmd(args: argparse.Namespace, work: Path, result_path: Path) -> list[
         "--orphan-every", str(args.orphan_every), "--width", str(args.width),
         "--native-threads", str(args.native_threads),
     ]  # fmt: skip
+    if args.rich_parent:
+        cmd.append("--rich-parent")
     if args.chunk_rows:
         cmd += ["--chunk-rows", str(args.chunk_rows)]
     if args.chunk_threshold is not None:
@@ -340,11 +350,18 @@ def _one_run(args: argparse.Namespace, run_no: int) -> dict[str, Any]:
             timeout_s=args.timeout_s,
             rss_kill_mb=args.rss_kill_mb,
         )
+        failure = classify_failure(outcome)
+        # Digested after the measured process exited; see `_f4a_gen.digest_in_subprocess`.
+        digest = (
+            _f4a_gen.digest_in_subprocess(work / "out" / "committed")
+            if failure is None and args.rich_parent and args.mode == "capacity"
+            else None
+        )
     finally:
         if not args.keep:
             shutil.rmtree(work, ignore_errors=True)
-    failure = classify_failure(outcome)
     return {
+        "digest": digest,
         "completed": failure is None,
         "failure": failure,
         "wall_s": round(outcome.wall_s, 2),
@@ -411,6 +428,8 @@ def supervise(args: argparse.Namespace) -> dict[str, Any]:
         "fk_parity": last.get("fk_parity"),
         "committed_output_mb": last.get("committed_output_mb"),
         "companion_present": last.get("companion_present"),
+        "digest": runs[-1].get("digest"),
+        "rows_per_s_last": last.get("rows_per_s"),
         "throughput_rows_per_s": (
             round((args.parent_rows + args.child_rows) / mask[-1]) if mask and mask[-1] else None
         ),
@@ -427,6 +446,11 @@ def _parser() -> argparse.ArgumentParser:
     ap.add_argument("--chunk-rows", type=int, default=None, help="lane chunk rows (engine default)")
     ap.add_argument("--chunk-threshold", type=int, default=None, help="auto-chunk threshold rows")
     ap.add_argument("--native-threads", type=int, default=1)
+    ap.add_argument(
+        "--rich-parent",
+        action="store_true",
+        help="F4a: generate the parent with every eligible family, and digest the output",
+    )
     ap.add_argument(
         "--rss-ceiling-mb", type=float, default=None, help="declared acceptance ceiling"
     )
