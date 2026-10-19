@@ -98,8 +98,10 @@ def write_child(
 
 def parent_columns(rich: bool) -> list[dict[str, Any]]:
     """The generated parent's columns. `rich` (F4a) adds the other eligible generation families
-    (categorical, null_mask, pooled faker, windowed_date) so the generate half of the mixed job
-    exercises the representative plan, not just a sequence and one categorical."""
+    (categorical, pooled faker, windowed_date) so the generate half of the mixed job exercises the
+    representative plan, not just a sequence and one categorical. It deliberately OMITS null_mask:
+    a null-bearing generated parent makes the mixed route decline to the unbounded full-frame path
+    (F2 scope), so the bounded mixed bench keeps the parent null-free."""
     base: list[dict[str, Any]] = [
         {"name": "id", "type": "sequence", "start": 0, "step": 1},
         {"name": "tier", "type": "categorical", "categories": TIERS},

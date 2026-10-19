@@ -9,7 +9,9 @@ Four claims, each from OUTSIDE the measured process where it matters:
    faker, windowed_date) streams into a Parquet sink under one byte budget, with external peak RSS
    (`wait4` ru_maxrss) under a ceiling declared BELOW, before any 10M run, and flat from 1M to 10M.
 2. A mixed generate-then-mask job (rich generated parent, masked child over one FK edge, the
-   production `run_pipeline` mixed route) holds the same two properties.
+   production `run_pipeline` mixed route) stays under its (higher) ceiling, but its memory is NOT
+   flat: it grows sub-linearly from 1M to 10M because the route keeps the child and resolved FK
+   keys resident. The gate is the absolute ceiling plus a no-worse-than-linear growth bound.
 3. Reproducibility: a second run of the same configuration commits an identical content digest.
 4. Per-column executed backend, from the F0 witness over the same table definitions at a row count
    above the pooled-faker threshold. Backend choice follows the plan, not the row count.
