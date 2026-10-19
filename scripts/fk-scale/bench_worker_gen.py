@@ -12,6 +12,11 @@ Prints one `BENCH_JSON {...}` line. `completed` is true only when the run stream
 `streamed`), the sink committed, and the committed row counts equal the request.
 
     python scripts/fk-scale/bench_worker_gen.py --rows 5000000 --budget-mb 1024 --rss-ceiling-mb 1500
+
+`--plan rep` (Phase F F4a) swaps in the representative plan from `_f4a_gen` (sequence, categorical,
+null_mask, pooled faker, reference, windowed_date), adds an output digest and rows/s, and
+`--mode probe` instead runs that plan resident under the F0 witness to report each column's executed
+backend. The default `--plan fr0` keeps the FR0 bounded-RSS test's plan unchanged.
 """
 
 from __future__ import annotations
@@ -29,9 +34,11 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import _f4a_gen
 from _supervisor import classify_failure, run_worker
 
 SCHEMA = "fr0-gen-bounded/v1"
+F4A_SCHEMA = "f4a-gen-capacity/v1"
 PARENT_ROWS = 100_000  # fixed across tiers so the parent key pool does not scale with the tier
 BATCH_ROWS = 32_768
 
@@ -55,7 +62,9 @@ def _error_record(exc: BaseException) -> dict[str, Any]:
     return {"type": type(exc).__name__, "code": getattr(exc, "code", None), "frames": frames}
 
 
-def build_config(rows: int) -> dict[str, Any]:
+def build_config(rows: int, plan: str = "fr0") -> dict[str, Any]:
+    if plan == "rep":
+        return _f4a_gen.representative_config(rows, PARENT_ROWS)
     return {
         "version": 1,
         "global_settings": {"seed": 20261018},
@@ -114,7 +123,9 @@ def _run(args: argparse.Namespace, work: Path) -> dict[str, Any]:
         profiled_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
         decoy_engine_version="fr0-bench",
     )
-    plan = compile_plan(build_config(args.rows), profile, decoy_engine_version="fr0-bench")
+    plan = compile_plan(
+        build_config(args.rows, args.plan), profile, decoy_engine_version="fr0-bench"
+    )
     committed = work / "committed"
     rss_before = _status_mb("VmRSS")
     t0 = time.perf_counter()
@@ -127,8 +138,10 @@ def _run(args: argparse.Namespace, work: Path) -> dict[str, Any]:
     gen_s = time.perf_counter() - t0
     rows = {p.stem: pq.ParquetFile(p).metadata.num_rows for p in committed.glob("*.parquet")}
     expected = {"orders": args.rows, "people": PARENT_ROWS}
+    total_rows = sum(rows.values())
     return {
         "completed_inner": result.mode == "streamed" and rows == expected,
+        "rows_per_s": round(total_rows / gen_s) if gen_s else None,
         "mode": result.mode,
         "reason": result.reason,
         "committed_rows": rows,
@@ -148,7 +161,16 @@ def run_child(args: argparse.Namespace) -> int:
     result_path = Path(args.result_path)
     record: dict[str, Any] = {"completed_inner": False}
     try:
-        record.update(_run(args, Path(args.work_dir)))
+        if args.mode == "probe":
+            cfg = (
+                _f4a_gen.mixed_parent_config(args.rows)
+                if args.plan == "mixed-parent"
+                else build_config(args.rows, "rep")
+            )
+            probe = _f4a_gen.probe_backends(cfg)
+            record.update(probe, completed_inner=bool(probe["core_eligible"]))
+        else:
+            record.update(_run(args, Path(args.work_dir)))
     except BaseException as exc:
         record["error"] = _error_record(exc)
     tmp = result_path.with_suffix(".tmp")
@@ -167,6 +189,7 @@ def supervise(args: argparse.Namespace) -> dict[str, Any]:
         sys.executable, str(Path(__file__).resolve()), "--child",
         "--work-dir", str(work), "--result-path", str(result_path),
         "--rows", str(args.rows), "--budget-mb", str(args.budget_mb),
+        "--plan", args.plan, "--mode", args.mode,
     ]  # fmt: skip
     try:
         outcome = run_worker(
@@ -176,11 +199,18 @@ def supervise(args: argparse.Namespace) -> dict[str, Any]:
             timeout_s=args.timeout_s,
             rss_kill_mb=args.rss_kill_mb,
         )
+        failure = classify_failure(outcome)
+        # Digested after the measured process exited; see `digest_in_subprocess`.
+        digest = (
+            _f4a_gen.digest_in_subprocess(work / "committed")
+            if failure is None and args.plan == "rep" and args.mode == "capacity"
+            else None
+        )
     finally:
         shutil.rmtree(work, ignore_errors=True)
-    failure = classify_failure(outcome)
     return {
-        "schema": SCHEMA,
+        "schema": F4A_SCHEMA if args.plan == "rep" else SCHEMA,
+        "mode": args.mode,
         "completed": failure is None,
         "failure": failure,
         "requested": {
@@ -189,6 +219,7 @@ def supervise(args: argparse.Namespace) -> dict[str, Any]:
             "budget_mb": args.budget_mb,
             "batch_rows": BATCH_ROWS,
             "rss_ceiling_mb": args.rss_ceiling_mb,
+            "plan": args.plan,
         },
         "peak_rss_mb": outcome.peak_rss_mb,
         "peak_rss_poll_mb": outcome.peak_rss_poll_mb,
@@ -199,6 +230,7 @@ def supervise(args: argparse.Namespace) -> dict[str, Any]:
             else None
         ),
         "wall_s": round(outcome.wall_s, 2),
+        "digest": digest,
         "result": outcome.result or {},
     }
 
@@ -207,6 +239,8 @@ def _parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     ap.add_argument("--rows", type=int, required=True, help="rows in the child table")
     ap.add_argument("--budget-mb", type=int, default=1024)
+    ap.add_argument("--plan", choices=("fr0", "rep", "mixed-parent"), default="fr0")
+    ap.add_argument("--mode", choices=("capacity", "probe"), default="capacity")
     ap.add_argument(
         "--rss-ceiling-mb", type=float, default=None, help="declared acceptance ceiling"
     )
