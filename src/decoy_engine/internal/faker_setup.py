@@ -261,7 +261,7 @@ def _load_txt(path: Path) -> list[str]:
         lines = path.read_text(encoding="utf-8").splitlines()
         return [line.strip() for line in lines if line.strip() and not line.strip().startswith("#")]
     except Exception as exc:
-        _log.warning("custom_providers: failed to read %s: %s", path.name, exc)
+        _log.warning("custom_providers: failed to read %s: %s", path.name, type(exc).__name__)
         return []
 
 
@@ -278,7 +278,7 @@ def _load_json(path: Path) -> list[str]:
             return []
         return [str(v) for v in raw if v is not None]
     except Exception as exc:
-        _log.warning("custom_providers: failed to parse %s: %s", path.name, exc)
+        _log.warning("custom_providers: failed to parse %s: %s", path.name, type(exc).__name__)
         return []
 
 

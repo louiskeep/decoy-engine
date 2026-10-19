@@ -93,7 +93,9 @@ from decoy_engine.execution._isolated_common import (
     RLIMIT_KINDS,
     IsolatedRunOutcome,
     IsolatedRunResult,
+    abnormal_exit_text,
     classify_abnormal_exit,
+    commit_error_text,
     exception_error_text,
     is_memory_failure,
     peak_rss_mb,
@@ -290,7 +292,7 @@ def _run_in_process(
                 table_kinds={},
                 returncode=None,
                 signal_number=None,
-                error=str(exc),
+                error=commit_error_text(exc),
                 isolated=False,
             )
         committed_dir = str(output_dir)
@@ -494,12 +496,8 @@ def _spawn_and_classify(
     outcome = classify_abnormal_exit(proc.returncode, stderr)
     signal_number = -proc.returncode if proc.returncode < 0 else None
     signal_name = _signal_name(signal_number)
-    stderr_tail = stderr.strip().splitlines()[-1][:300] if stderr.strip() else ""
-    # stdout is diagnostics-only now (HIGH-1: never the envelope transport),
-    # but still worth surfacing here -- this is exactly the branch where the
-    # child died without a parseable envelope, so whatever it printed before
-    # dying is the best remaining clue.
-    stdout_tail = stdout.strip().splitlines()[-1][:300] if stdout.strip() else ""
+    # stderr/stdout feed the classifier and the route-marker scan only; their text is
+    # never exposed (a crashing strategy can print the data value it choked on).
     evidence = evidence_of(finished, abnormal=True)
     return IsolatedRunResult(
         outcome=outcome,
@@ -510,11 +508,8 @@ def _spawn_and_classify(
         returncode=proc.returncode,
         signal_number=signal_number,
         error=(
-            f"child terminated abnormally (returncode={proc.returncode}"
-            f"{f', signal={signal_name}' if signal_name else ''}); "
-            f"stderr tail: {stderr_tail!r}"
-            f"{f'; stdout tail: {stdout_tail!r}' if stdout_tail else ''}"
-            f"{error_suffix(evidence) if evidence else ''}"
+            abnormal_exit_text(proc.returncode, signal_name, stderr, stdout)
+            + (error_suffix(evidence) if evidence else "")
         ),
         isolated=True,
         pid=proc.pid,
@@ -557,7 +552,7 @@ def _result_from_envelope(
             table_kinds={},
             returncode=0,
             signal_number=None,
-            error=str(exc),
+            error=commit_error_text(exc),
             isolated=True,
             pid=pid,
         )

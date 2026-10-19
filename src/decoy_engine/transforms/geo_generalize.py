@@ -395,10 +395,11 @@ def _cascade_one_row(
         elif level == "zip3":
             # Skip this level for HHS-restricted prefixes regardless of count.
             if z3 in restricted:
+                # Log the fact, not the prefix: a restricted zip3 is a quasi-identifier
+                # taken straight from the customer's rows.
                 _LOG.debug(
-                    "geo_generalize: zip3 prefix %r is HHS-restricted "
-                    "(45 CFR 164.514(b)(2)(i)(B)); skipping zip3 level.",
-                    z3,
+                    "geo_generalize: a zip3 prefix is HHS-restricted "
+                    "(45 CFR 164.514(b)(2)(i)(B)); skipping zip3 level."
                 )
                 continue
             # For non-restricted prefixes, population is >= 20000 per the HHS

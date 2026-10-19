@@ -44,7 +44,7 @@ from decoy_engine.profile._readers import LazySource
 
 
 def _error_text(exc: BaseException) -> str:
-    """Stored error text: scrub first, then truncate, or a cut could hide the scrub's anchor."""
+    """Stored error text: the safe summary (no exception message), capped."""
     return exception_error_text(exc)[:500]
 
 

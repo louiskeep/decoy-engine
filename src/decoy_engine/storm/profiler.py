@@ -610,13 +610,13 @@ def _run_storm_inner(
         )
     except Exception as exc:
         if logger is not None:
-            logger.error(f"✗ storm.scan failed: {type(exc).__name__}: {exc}")
+            logger.error(f"✗ storm.scan failed: {type(exc).__name__}")
         emit_step(
             logger,
             "storm.scan",
             status="error",
             error_class=type(exc).__name__,
-            error_msg=str(exc),
+            error_msg=type(exc).__name__,
         )
         raise
     if logger is not None:

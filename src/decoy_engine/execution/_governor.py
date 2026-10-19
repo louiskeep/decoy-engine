@@ -103,7 +103,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
 from decoy_engine.execution._governor_monitor import _RssMonitor
-from decoy_engine.execution._isolated_common import IsolatedRunResult
+from decoy_engine.execution._isolated_common import ROUTE_INELIGIBLE_MARKERS, IsolatedRunResult
 from decoy_engine.execution._isolated_run import run_pipeline_isolated
 from decoy_engine.execution._substrate import require_bool
 
@@ -155,23 +155,9 @@ GovernorTripKind = Literal["governor_kill", "self_oom", "route_ineligible", "cra
 # based cross-process classification `_isolated_common`'s own
 # `_ABNORMAL_EXIT_MEMORY_MARKERS` already uses for the OOM/crash split -- an
 # established pattern in this module family, not a new heuristic.
-_INELIGIBLE_ROUTE_MARKERS: dict[GovernorRoute, tuple[str, ...]] = {
-    "out_of_core": (
-        "is not out-of-core-eligible",
-        "is not out-of-core-compatible",
-        "no mask-kind table to run through the out-of-core path",
-    ),
-    "sequential": (
-        "is not sequential-eligible",
-        "FK graph has a cross-table cycle",
-        "no mask-kind table to run through the sequential path",
-    ),
-    # full_frame has no forced-mode eligibility gate in `decide_execution_
-    # route` (it is the universal override), so it never lands here as a
-    # rung within the ladder's reroute (only ever the first rung, and it is
-    # always "eligible").
-    "full_frame": (),
-}
+# The fragments live in `_isolated_common` so the safe-error-summary builder that writes the
+# `error` field and this matcher cannot drift apart.
+_INELIGIBLE_ROUTE_MARKERS = ROUTE_INELIGIBLE_MARKERS
 
 
 def _is_route_ineligible_error(route: GovernorRoute, error: str | None) -> bool:

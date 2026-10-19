@@ -43,13 +43,17 @@ __all__ = [
     "ISOLATED_WORKER_ENV",
     "RESULT_FILENAME",
     "RLIMIT_KINDS",
+    "ROUTE_INELIGIBLE_MARKERS",
     "IsolatedRunOutcome",
     "IsolatedRunResult",
+    "abnormal_exit_text",
     "apply_mem_cap",
     "classify_abnormal_exit",
+    "commit_error_text",
     "exception_error_text",
     "is_memory_failure",
     "peak_rss_mb",
+    "preserved_route_markers",
     "scrub_error_text",
 ]
 
@@ -206,9 +210,89 @@ def scrub_error_text(message: str) -> str:
     return f"{message[:value_start]}<value>{message[value_end:]}"
 
 
+# `IsolatedRunResult.error` is a CONTROL-FLOW input, not only a log line: the route governor
+# (`_governor._is_route_ineligible_error`) reroutes a `crashed` run when one of these stable
+# fragments appears in it. `decide_execution_route` raises a `ConfigError` carrying the
+# fragment for an explicit `execution_mode` the job is not eligible for. The fragments are
+# engine-authored constants, so the safe summary below re-emits them verbatim after dropping
+# the rest of the message (which also holds config text such as the eligibility reason).
+ROUTE_INELIGIBLE_MARKERS: dict[str, tuple[str, ...]] = {
+    "out_of_core": (
+        "is not out-of-core-eligible",
+        "is not out-of-core-compatible",
+        "no mask-kind table to run through the out-of-core path",
+    ),
+    "sequential": (
+        "is not sequential-eligible",
+        "FK graph has a cross-table cycle",
+        "no mask-kind table to run through the sequential path",
+    ),
+    # full_frame is the universal override and has no eligibility gate to trip.
+    "full_frame": (),
+}
+_ALL_ROUTE_MARKERS: tuple[str, ...] = tuple(
+    dict.fromkeys(marker for markers in ROUTE_INELIGIBLE_MARKERS.values() for marker in markers)
+)
+_STABLE_CODE = re.compile(r"[a-z0-9_]{1,64}")
+
+
+def preserved_route_markers(*texts: str) -> tuple[str, ...]:
+    """The route-ineligibility fragments present in the ORIGINAL text, in a fixed order."""
+    return tuple(m for m in _ALL_ROUTE_MARKERS if any(m in t for t in texts))
+
+
 def exception_error_text(exc: BaseException) -> str:
-    """The stored text for a failed run: class name plus the scrubbed message."""
-    return f"{type(exc).__name__}: {scrub_error_text(str(exc))}"
+    """The stored text for a failed run: a safe summary, never the exception message.
+
+    Messages from parsers, validators and Arrow echo the cell, expression or file text they
+    choked on, and this string reaches the job's user-visible error. Keep the class name, the
+    machine-readable `code` of an `ExecutionError`, and the governor's route markers (matched
+    against the original message, emitted as engine constants).
+    """
+    head = type(exc).__name__
+    code = getattr(exc, "code", None)
+    if isinstance(code, str) and _STABLE_CODE.fullmatch(code):
+        head = f"{head} [{code}]"
+    markers = preserved_route_markers(str(exc))
+    return f"{head}: {'; '.join(markers)}" if markers else head
+
+
+def commit_error_text(exc: BaseException) -> str:
+    """Safe text for a failed output commit; the message holds the output path and OS text."""
+    cause = exc.__cause__
+    code = cause.errno if isinstance(cause, OSError) else None
+    errno_name = errno.errorcode.get(code, "") if code is not None else ""
+    detail = f" (errno={errno_name})" if errno_name else ""
+    return f"{type(exc).__name__}: staged output could not be committed{detail}"
+
+
+def abnormal_exit_reason(returncode: int, stderr: str) -> str:
+    """A stable token for why a child with no result envelope was classified as it was.
+
+    Mirrors `classify_abnormal_exit`'s decision inputs so the exposed summary carries the
+    evidence without the stderr text that the classifier reads.
+    """
+    if any(marker in stderr for marker in _ABNORMAL_EXIT_MEMORY_MARKERS) or any(
+        pattern.search(stderr) for pattern in _MEMORY_ERROR_PATTERNS
+    ):
+        return "memory_marker_in_stderr"
+    if returncode in (-signal.SIGKILL, -signal.SIGABRT):
+        return "memory_shaped_signal"
+    return "no_result_envelope"
+
+
+def abnormal_exit_text(returncode: int, signal_name: str | None, stderr: str, stdout: str) -> str:
+    """Safe `error` text for a child that died without a result envelope.
+
+    The child's stderr/stdout stay out: they can carry data values from a crashing strategy.
+    Return code, signal, the stable reason and any route markers are what a reader and the
+    governor need.
+    """
+    signal_part = f", signal={signal_name}" if signal_name else ""
+    reason = abnormal_exit_reason(returncode, stderr)
+    summary = f"child terminated abnormally (returncode={returncode}{signal_part}, reason={reason})"
+    markers = preserved_route_markers(stderr, stdout)
+    return f"{summary}: {'; '.join(markers)}" if markers else summary
 
 
 def classify_abnormal_exit(returncode: int, stderr: str) -> IsolatedRunOutcome:
