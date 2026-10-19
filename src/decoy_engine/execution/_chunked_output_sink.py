@@ -42,7 +42,12 @@ from decoy_engine.execution._adapter import ExecutionResult
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._substrate import require_bool
 from decoy_engine.execution._transactional_sink import TransactionalSink
-from decoy_engine.execution.native._chunked_evidence import merge_executed_backend
+from decoy_engine.execution.native._chunked_evidence import (
+    check_decline_records_consistent,
+    copy_decline_records,
+    copy_strategy_branch_calls,
+    merge_executed_backend,
+)
 
 if TYPE_CHECKING:
     from decoy_engine.execution._pipeline_multi_table import MultiTableSplit
@@ -192,6 +197,7 @@ def fold_corpora(seen: dict[tuple[Any, Any], dict[str, Any]], result: Any) -> No
 class _RouteFold:
     head: dict[str, Any] | None = None
     read_head: list[str] | None = None
+    branch_calls: dict[str, int] = dataclasses.field(default_factory=dict)
     sums: dict[str, dict[str, Any]] = dataclasses.field(default_factory=dict)
 
 
@@ -222,6 +228,9 @@ def fold_route_evidence(state: _RouteFold, result: Any) -> None:
                     f"pandas_read_passthrough ({state.read_head!r} then {listed!r})."
                 ),
             )
+        check_decline_records_consistent(state.head, evidence, who="chunk evidence")
+    # Cumulative snapshot: the last folded chunk's is the final total (never summed).
+    state.branch_calls = copy_strategy_branch_calls(evidence)
     for col in evidence["columns"]:
         acc = state.sums.get(col["column"])
         if acc is None:
@@ -294,6 +303,8 @@ class OutputEvidenceAccumulator:
                 "table": None,
                 "native_admitted": False,
                 "reroute_reason": None,
+                "decline_records": [],
+                "strategy_branch_calls": {},
                 "pandas_read_passthrough": [],
                 "columns": [],
             }
@@ -302,6 +313,8 @@ class OutputEvidenceAccumulator:
             "table": head["table"],
             "native_admitted": head["native_admitted"],
             "reroute_reason": head["reroute_reason"],
+            "decline_records": copy_decline_records(head),
+            "strategy_branch_calls": dict(self._route.branch_calls),
             "pandas_read_passthrough": [] if read_head is None else list(read_head),
             "columns": list(self._route.sums.values()),
         }

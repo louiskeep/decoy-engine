@@ -3,10 +3,12 @@
 `assemble_node_evidence` turns the coordinator's per-node operator evidence and the
 timing collector's records into the JSON-safe `nodes` leaf under
 `quality_metrics["unified_slice_activation"]`. It takes no context, so every invariant
-is unit-testable without running a pipeline. Each node entry carries the fields the
-chunked route publishes per column (`planned_backend`, `executed_backend`, `calls`) next
-to the original three, and the executed backend comes from the one rule the chunked route
-also uses (`_chunked_evidence.executed_backend`). Elapsed time is NOT published here: as
+is unit-testable without running a pipeline. Each node entry carries structured plan
+attribution (`table`, `columns`, `strategy`, read from the plan node, not parsed from
+`node_id`, whose separators column names may themselves contain), the fields the chunked
+route publishes per column (`planned_backend`, `executed_backend`, `calls`), and the
+original three, and the executed backend comes from the one rule the chunked route also
+uses (`_chunked_evidence.executed_backend`). Elapsed time is NOT published here: as
 on the chunked route (`_pipeline_auto_chunk._without_elapsed`), it lives only in
 `ExecutionResult.timings` so `quality_metrics` stays deterministic. The timing records are
 still checked one-to-one against the nodes, which guarantees every node has exactly one
@@ -134,6 +136,13 @@ def assemble_node_evidence(
             evidence.compiled_kernel_executed
         )
         node_evidence[node.node_id] = {
+            # Structured attribution from the plan node (OBS-2a). The node_id
+            # concatenates these with `:`/`+` separators that column names may
+            # themselves contain, so a consumer must read them here, not split
+            # the id. table/columns/strategy are schema identifiers, not values.
+            "table": node.table,
+            "columns": list(node.columns),
+            "strategy": node.strategy,
             "operator": evidence.actual_operator,
             "executed": evidence.executed,
             "compiled_kernel_executed": evidence.compiled_kernel_executed,

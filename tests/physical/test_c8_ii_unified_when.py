@@ -557,6 +557,7 @@ def _one_node_evidence(operator: str, evidence: OperatorCallEvidence) -> dict[st
         node_id="n",
         strategy="hash",
         columns=("c",),
+        table="t",
         execution=SimpleNamespace(operator_id=operator, params=None),
     )
     record = StrategyTimingRecord(
@@ -612,6 +613,7 @@ def test_7_the_positional_faker_exemption_is_unchanged() -> None:
         node_id="n",
         strategy="faker",
         columns=("c",),
+        table="t",
         execution=SimpleNamespace(operator_id="native_faker_select", params=params),
     )
     record = StrategyTimingRecord(
@@ -764,7 +766,9 @@ def test_a_declined_predicate_failure_logs_no_predicate_text(
 
 def _when_node(expression: str | None) -> Any:
     binding = SimpleNamespace(when_expression=expression)
-    return SimpleNamespace(node_id="n", strategy="redact", columns=("c",), execution=binding)
+    return SimpleNamespace(
+        node_id="n", strategy="redact", columns=("c",), table="t", execution=binding
+    )
 
 
 def test_a_mask_of_the_wrong_length_raises_an_invariant_error(

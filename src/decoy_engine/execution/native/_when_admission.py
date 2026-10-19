@@ -26,6 +26,11 @@ from typing import Any
 import pyarrow as pa
 
 from decoy_engine.execution._column_access import column_access, has_when
+from decoy_engine.execution.native._route_decline_codes import (
+    CodedDecline,
+    RouteDeclineCode,
+    coded,
+)
 from decoy_engine.expressions._when_parser import (
     WhenExpr,
     parse_when,
@@ -178,14 +183,34 @@ def first_when_rejection(
 ) -> str | None:
     """The first config-order `when:` column of `table` that cannot run natively, as its
     code, or None when the table has no `when:` or every one of them can."""
+    decline = first_when_decline(config, registry, table=table, schema=schema)
+    return None if decline is None else decline.reason
+
+
+_WHEN_DECLINE_CODES = {
+    NOT_NATIVE_CODE: RouteDeclineCode.WHEN_PREDICATE_NOT_NATIVE,
+    OUTSIDE_SUBSET_CODE: RouteDeclineCode.WHEN_OUTSIDE_SUBSET,
+    READS_MASKED_CODE: RouteDeclineCode.WHEN_READS_MASKED_COLUMN,
+}
+
+
+def first_when_decline(
+    config: Mapping[str, Any],
+    registry: Any,
+    *,
+    table: str,
+    schema: pa.Schema | None,
+) -> CodedDecline | None:
+    """`first_when_rejection` with its structured record. The column is the `when:` entry under
+    test; the code is the verdict's own leading token (a fixed vocabulary, never config text)."""
     entries = table_column_entries(config, table)
     for entry in entries:
         if has_when(entry):
-            reason = when_native_rejection(
-                str(entry.get("name", "?")), entries, registry, table=table, schema=schema
-            )
+            column = str(entry.get("name", "?"))
+            reason = when_native_rejection(column, entries, registry, table=table, schema=schema)
             if reason is not None:
-                return reason
+                code = _WHEN_DECLINE_CODES.get(reason.split(":", 1)[0], RouteDeclineCode.OTHER)
+                return coded(reason, code, table, column)
     return None
 
 
@@ -272,6 +297,7 @@ __all__ = [
     "OUTSIDE_SUBSET_CODE",
     "READS_MASKED_CODE",
     "admitted_when_columns",
+    "first_when_decline",
     "first_when_rejection",
     "parsed_when",
     "planner_relaxed_when_columns",

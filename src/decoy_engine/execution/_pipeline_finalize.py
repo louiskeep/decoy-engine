@@ -430,15 +430,36 @@ def finalize_validators_and_quarantine(
         )
         row_errors_uncovered = tuple(r for r in mask_row_errors if r not in row_errors_covered)
 
+        # Every observed error (covered and uncovered), summarized per table BEFORE either
+        # raise, so a validator failure that preempts the row-error raise still carries them.
+        # Built from the records, never from the `row_errors` count keys above.
+        summaries_by_table: dict[str, Any] = {}
+        if mask_row_errors:
+            from decoy_engine.execution._row_error_summary import summarize_observed_by_table
+
+            summaries_by_table = summarize_observed_by_table(
+                mask_row_errors,
+                row_errors_uncovered,
+                columns_by_table={name: tbl.column_names for name, tbl in outputs.items()},
+            )
+            if len(outputs) == 1:
+                quality_metrics["row_error_summary"] = next(
+                    iter(summaries_by_table.values())
+                ).to_dict()
+            else:
+                quality_metrics["row_error_summary_by_table"] = {
+                    name: summary.to_dict() for name, summary in summaries_by_table.items()
+                }
+
         # LOW-1 (S2 remediation guide section 8): raise BEFORE writing the
         # quarantine JSONL, matching the sequential path (which raises before
         # its single post-loop write). A fail-loud run must publish nothing
         # durable, including a partial quarantine JSONL from the covered
         # remainder of a mixed covered+uncovered run.
         if validator_failed and not validation_covered:
-            raise ValidatorFailedError(v_report)
+            raise ValidatorFailedError(v_report, summaries_by_table=summaries_by_table or None)
         if row_errors_uncovered:
-            raise RowErrorsFailedError(row_errors_uncovered)
+            raise RowErrorsFailedError(row_errors_uncovered, summaries_by_table=summaries_by_table)
 
         if validation_covered or row_errors_covered:
             from decoy_engine.quarantine import (

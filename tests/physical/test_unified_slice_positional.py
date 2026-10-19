@@ -327,6 +327,7 @@ def _unit_node(strategy: str, operator: str, params: Any = None) -> Any:
         node_id="n",
         strategy=strategy,
         columns=("c",),
+        table="t",
         execution=SimpleNamespace(operator_id=operator, params=params),
     )
 
@@ -438,6 +439,9 @@ _DETERMINISTIC_ZERO_ROW: dict[str, tuple[Callable[[], dict[str, Any]], dict[str,
     "det_faker": (
         lambda: nd_faker(deterministic=True),
         {
+            "table": "t",
+            "columns": ["c"],
+            "strategy": "faker",
             "executed": True,
             "compiled_kernel_executed": True,
             "planned_backend": "rust_pool_select",
@@ -448,6 +452,9 @@ _DETERMINISTIC_ZERO_ROW: dict[str, tuple[Callable[[], dict[str, Any]], dict[str,
     "det_categorical": (
         lambda: cat_col(deterministic=True),
         {
+            "table": "t",
+            "columns": ["c"],
+            "strategy": "categorical",
             "executed": True,
             "compiled_kernel_executed": True,
             "planned_backend": "rust_companion",
@@ -458,6 +465,9 @@ _DETERMINISTIC_ZERO_ROW: dict[str, tuple[Callable[[], dict[str, Any]], dict[str,
     "hash": (
         lambda: {"name": "c", "strategy": "hash", "namespace": "ns_h"},
         {
+            "table": "t",
+            "columns": ["c"],
+            "strategy": "hash",
             "executed": True,
             "compiled_kernel_executed": True,
             "planned_backend": "rust_companion",

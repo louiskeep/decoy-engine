@@ -62,7 +62,7 @@ from decoy_engine.execution.native._crypto_ext import (
 )
 from decoy_engine.execution.native._faker_deterministic_admission import (
     C5cIiAdmissionContext,
-    classify_deterministic_nonstring_faker,
+    deterministic_faker_decline,
     faker_provider_allowlisted,
     is_effective_deterministic_faker_column,
 )
@@ -80,13 +80,21 @@ from decoy_engine.execution.native._operator_params import (  # noqa: F401 -- re
     _resolve_truncate_keep,
 )
 from decoy_engine.execution.native._plan import compile_native_plan
-from decoy_engine.execution.native._real_type_admission import real_type_rejection
+from decoy_engine.execution.native._real_type_admission import real_type_decline
 from decoy_engine.execution.native._requirements import (
     CHUNKED_ROUTE_VETOED_STRATEGIES,
     NATIVE_KERNEL_STRATEGIES,
     NATIVE_POOL_STRATEGIES,
 )
-from decoy_engine.execution.native._when_admission import first_when_rejection
+from decoy_engine.execution.native._route_decline_codes import (
+    RouteDeclineCode as Decline,
+)
+from decoy_engine.execution.native._route_decline_codes import (
+    RouteDeclineRecord,
+    column_decline,
+    table_decline,
+)
+from decoy_engine.execution.native._when_admission import first_when_decline
 from decoy_engine.generation.pool import PoolCache
 
 RouteTag = Literal["native_kernel", "native_pool", "oracle"]
@@ -142,19 +150,32 @@ class NativeRouteEvidence:
     # Task 3.6's exact-count route ledger.
     pool_select_executed: bool = False
     pool_select_calls: int = 0
+    # Structured counterpart of `reroute_reason` (OBS-2b), one record per decline cause in
+    # decision-phase order. Last so existing positional construction is unaffected.
+    decline_records: tuple[RouteDeclineRecord, ...] = ()
 
 
 def _oracle_evidence(
-    table: str, reason: str, node_routes: tuple[NodeRouteRecord, ...] = ()
+    table: str,
+    reason: str,
+    node_routes: tuple[NodeRouteRecord, ...] = (),
+    declines: tuple[RouteDeclineRecord, ...] = (),
 ) -> NativeRouteEvidence:
     return NativeRouteEvidence(
-        table=table, native_admitted=False, reroute_reason=reason, node_routes=node_routes
+        table=table,
+        native_admitted=False,
+        reroute_reason=reason,
+        node_routes=node_routes,
+        decline_records=declines,
     )
 
 
-def _downgrade_to_oracle(decision: NativeRouteEvidence, reason: str) -> NativeRouteEvidence:
+def _downgrade_to_oracle(
+    decision: NativeRouteEvidence, reason: str, *declines: RouteDeclineRecord
+) -> NativeRouteEvidence:
     """Reroute an already-admitted decision to the oracle, re-tagging every
-    node's route from `native_kernel` to `oracle` (never a per-column mix)."""
+    node's route from `native_kernel` to `oracle` (never a per-column mix). The decision
+    sources pass their own `declines`; earlier records are kept, new ones appended."""
     return NativeRouteEvidence(
         table=decision.table,
         native_admitted=False,
@@ -163,6 +184,7 @@ def _downgrade_to_oracle(decision: NativeRouteEvidence, reason: str) -> NativeRo
             NodeRouteRecord(column=r.column, strategy=r.strategy, route="oracle")
             for r in decision.node_routes
         ),
+        decline_records=(*decision.decline_records, *declines),
     )
 
 
@@ -231,7 +253,11 @@ def _static_route_decision(
     # single-column FK child under the production profile shape, before either can
     # bypass the oracle's orphan-policy enforcement.
     if _table_in_declared_relationship(config, table):
-        return _oracle_evidence(table, "fk_relationship_not_native_route")
+        return _oracle_evidence(
+            table,
+            "fk_relationship_not_native_route",
+            declines=(table_decline(Decline.FK_RELATIONSHIP, table),),
+        )
 
     plan = compile_native_plan(
         config,
@@ -242,7 +268,9 @@ def _static_route_decision(
     )
     table_nodes = [n for n in plan.nodes if n.table == table]
     if not table_nodes:
-        return _oracle_evidence(table, "no_mask_nodes")
+        return _oracle_evidence(
+            table, "no_mask_nodes", declines=(table_decline(Decline.NO_MASK_NODES, table),)
+        )
 
     # Two passes: first decide native_admitted from EVERY node (a rejection on
     # node 5 must still veto nodes 1-4), then stamp the table's ONE resulting
@@ -251,11 +279,13 @@ def _static_route_decision(
     # (`<group>` / `<composite>`) have no single column to tag and stay out of
     # `node_routes`; their exclusion is recorded in `reroute_reason` instead.
     reasons: list[str] = []
+    declines: list[RouteDeclineRecord] = []
     scalar_columns: list[tuple[str, str]] = []
     for node in table_nodes:
         label = ",".join(node.columns) if node.columns else "?"
         if node.kind != "scalar":
             reasons.append(f"non_scalar_node:{node.kind}:{label}")
+            declines.append(table_decline(Decline.NON_SCALAR_NODE, table))
             continue
         column = node.columns[0]
         scalar_columns.append((column, node.strategy))
@@ -265,6 +295,7 @@ def _static_route_decision(
             # handler, so veto the whole table to the oracle here. The set is empty today;
             # the reason carries the strategy so a future veto stays distinguishable.
             reasons.append(f"{node.strategy}_not_native_chunked_route:{column}")
+            declines.append(column_decline(Decline.STRATEGY_VETOED_CHUNKED, table, column))
             continue
         if node.strategy == "group_key" and node.fallback_policy == "native":
             # The sibling must reach group_key unmasked, or the native leg (which masks from
@@ -275,6 +306,16 @@ def _static_route_decision(
             )
             if order_reason is not None:
                 reasons.append(order_reason)
+                self_anchor = group_by == column
+                declines.append(
+                    column_decline(
+                        Decline.GROUP_KEY_SELF_ANCHOR
+                        if self_anchor
+                        else Decline.GROUP_KEY_MASKED_SIBLING,
+                        table,
+                        column,
+                    )
+                )
                 continue
         no_kernel = node.strategy not in NATIVE_KERNEL_STRATEGIES
         no_pool_path = node.strategy not in NATIVE_POOL_STRATEGIES
@@ -284,6 +325,7 @@ def _static_route_decision(
         positional = chunked_positional_column(config, table, node.strategy, column)
         if node.fallback_policy != "native" and not positional:
             reasons.append(f"fallback_policy_not_native:{column}:{node.fallback_policy}")
+            declines.append(column_decline(Decline.FALLBACK_POLICY_NOT_NATIVE, table, column))
         elif no_kernel and no_pool_path:
             # Defense in depth (see module docstring): `fallback_policy` already
             # encodes this via `_requirements.py`'s combined kernel-or-pool
@@ -293,6 +335,7 @@ def _static_route_decision(
             # NATIVE_POOL_STRATEGIES, so it passes here alongside the
             # compiled-kernel strategies.
             reasons.append(f"no_native_kernel_or_pool:{column}:{node.strategy}")
+            declines.append(column_decline(Decline.NO_NATIVE_KERNEL_OR_POOL, table, column))
 
     native_admitted = not reasons
     node_routes = tuple(
@@ -308,6 +351,8 @@ def _static_route_decision(
         native_admitted=native_admitted,
         reroute_reason=None if native_admitted else "; ".join(reasons),
         node_routes=node_routes,
+        # Several composite nodes decline for the same table-wide cause; one record each is noise.
+        decline_records=tuple(dict.fromkeys(declines)),
     )
 
 
@@ -393,9 +438,9 @@ def plan_native_route(
     # A declined `when:` column names the reroute reason even when another column would
     # have vetoed the table anyway: its meaning (leave unselected rows untouched)
     # is the one a caller can act on.
-    when_reason = first_when_rejection(config, registry, table=table, schema=first_schema)
-    if when_reason is not None:
-        decision = _downgrade_to_oracle(decision, when_reason)
+    when_decline = first_when_decline(config, registry, table=table, schema=first_schema)
+    if when_decline is not None:
+        decision = _downgrade_to_oracle(decision, when_decline.reason, when_decline.record)
     elif decision.native_admitted and adapter is not None:
         from decoy_engine.execution._pandas_adapter import PandasExecutionAdapter
 
@@ -404,7 +449,9 @@ def plan_native_route(
         # one gets the oracle route, which calls it. An exact type check: a
         # subclass may override `run`, and the native route would bypass that.
         if type(adapter) is not PandasExecutionAdapter:
-            decision = _downgrade_to_oracle(decision, "adapter_requested")
+            decision = _downgrade_to_oracle(
+                decision, "adapter_requested", table_decline(Decline.ADAPTER_REQUESTED, table)
+            )
     if not decision.native_admitted:
         return NativePreflight(decision, None, raw_hex_kernel=None)
 
@@ -427,6 +474,7 @@ def plan_native_route(
                     decision,
                     f"uncovered_columns:{sorted(uncovered)};"
                     f"missing_configured_columns:{sorted(missing)}",
+                    table_decline(Decline.UNCOVERED_OR_MISSING_COLUMNS, table),
                 )
             else:
                 unconfigured = tuple(uncovered)
@@ -460,37 +508,46 @@ def plan_native_route(
                     # so it admits only when the chunked stream guarantees the schema AND the
                     # schema's metadata is in the closed allowlist (so the oracle's pandas
                     # conversion is a provable identity on that value). Everything else declines.
-                    reason = classify_deterministic_nonstring_faker(
+                    faker_decline = deterministic_faker_decline(
                         node.column,
+                        table=table,
                         source_type=ftype,
                         admission=c5c_ii_admission,
                         provider_allowlisted=faker_provider_allowlisted(config, table, node.column),
                     )
-                    if reason is None:
+                    if faker_decline is None:
                         admitted = True
                     else:
-                        decision = _downgrade_to_oracle(decision, reason)
+                        decision = _downgrade_to_oracle(
+                            decision, faker_decline.reason, faker_decline.record
+                        )
                         break
                 elif not admitted:
                     decision = _downgrade_to_oracle(
-                        decision, f"faker_source_type_not_string:{node.column}:{ftype}"
+                        decision,
+                        f"faker_source_type_not_string:{node.column}:{ftype}",
+                        column_decline(Decline.FAKER_SOURCE_NOT_STRING, table, node.column),
                     )
                     break
 
         if decision.native_admitted:
             # Admission rests on the first chunk's real Arrow types and each
             # provider's output type, never the profile's coarse dtype labels.
-            reason = real_type_rejection(
+            real = real_type_decline(
                 config, decision.node_routes, first_schema, table=table, profile=profile
             )
-            if reason is not None:
-                decision = _downgrade_to_oracle(decision, reason)
+            if real is not None:
+                decision = _downgrade_to_oracle(decision, real.reason, real.record)
 
     if decision.native_admitted and any(n.strategy == "hash" for n in decision.node_routes):
         try:
             load_compiled_crypto_kernel()
         except CryptoExtensionUnavailableError:
-            decision = _downgrade_to_oracle(decision, "crypto_extension_unavailable")
+            decision = _downgrade_to_oracle(
+                decision,
+                "crypto_extension_unavailable",
+                table_decline(Decline.CRYPTO_EXT_UNAVAILABLE, table),
+            )
 
     if decision.native_admitted and any(n.strategy == "fpe" for n in decision.node_routes):
         # fpe loads its own compiled FF1 kernel inside the per-chunk call, so a missing or
@@ -498,7 +555,11 @@ def plan_native_route(
         try:
             load_compiled_fpe_kernel()
         except CryptoExtensionUnavailableError:
-            decision = _downgrade_to_oracle(decision, "fpe_extension_unavailable")
+            decision = _downgrade_to_oracle(
+                decision,
+                "fpe_extension_unavailable",
+                table_decline(Decline.FPE_EXT_UNAVAILABLE, table),
+            )
 
     index_kernel: IndexDerivationKernel | None = None
     if decision.native_admitted and any(
@@ -507,7 +568,11 @@ def plan_native_route(
         try:
             index_kernel = load_compiled_index_kernel()
         except CryptoExtensionUnavailableError:
-            decision = _downgrade_to_oracle(decision, "index_extension_unavailable")
+            decision = _downgrade_to_oracle(
+                decision,
+                "index_extension_unavailable",
+                table_decline(Decline.INDEX_EXT_UNAVAILABLE, table),
+            )
             index_kernel = None
 
     raw_hex_kernel: RawHexDerivationKernel | None = None
@@ -517,7 +582,11 @@ def plan_native_route(
         try:
             raw_hex_kernel = load_compiled_raw_hex_kernel()
         except CryptoExtensionUnavailableError:
-            decision = _downgrade_to_oracle(decision, "raw_hex_extension_unavailable")
+            decision = _downgrade_to_oracle(
+                decision,
+                "raw_hex_extension_unavailable",
+                table_decline(Decline.RAW_HEX_EXT_UNAVAILABLE, table),
+            )
             raw_hex_kernel = None
 
     return NativePreflight(decision, index_kernel, unconfigured, raw_hex_kernel)

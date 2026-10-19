@@ -31,6 +31,7 @@ from decoy_engine.execution.native._chunked_group_key_gate import sibling_reside
 from decoy_engine.execution.native._faker_positional_admission import chunked_positional_column
 from decoy_engine.execution.native._plan import compile_native_plan
 from decoy_engine.execution.native._requirements import CHUNKED_ROUTE_VETOED_STRATEGIES
+from decoy_engine.execution.native._route_decline_codes import RouteDeclineRecord, decline_payload
 
 __all__ = [
     "ARROW_PYTHON",
@@ -39,7 +40,10 @@ __all__ = [
     "RUST_POOL_SELECT",
     "ColumnPlan",
     "aggregate_chunked_route_evidence",
+    "check_decline_records_consistent",
     "chunk_route_evidence",
+    "copy_decline_records",
+    "copy_strategy_branch_calls",
     "executed_backend",
     "merge_executed_backend",
     "plan_column_backends",
@@ -135,6 +139,8 @@ def chunk_route_evidence(
     table: str,
     native_admitted: bool,
     reroute_reason: str | None,
+    decline_records: Iterable[RouteDeclineRecord] = (),
+    strategy_branch_calls: Mapping[str, int] | None = None,
     columns: Iterable[ColumnPlan],
     elapsed_ms: Mapping[str, float],
     pandas_read_passthrough: Iterable[str] = (),
@@ -153,13 +159,29 @@ def chunk_route_evidence(
     so they report `arrow_python` rather than the planned companion backend.
 
     `preserved_rows` maps each column that opted into D1c `preserve_values` to the rows it passed
-    through this chunk. Only those columns carry the key, so an unset config adds nothing."""
+    through this chunk. Only those columns carry the key, so an unset config adds nothing.
+
+    `decline_records` is the table's structured decline causes (OBS-2b), fixed at preflight so
+    every chunk carries the same list; the payload form is `decline_payload`, exactly
+    code/table/column/table_wide per record, with no provider, expression or exception text.
+
+    `strategy_branch_calls` is a COPY of the table's cumulative per-strategy branch-activation
+    count at the end of this chunk (`NativeRouteEvidence.kernel_calls`), so each chunk's
+    snapshot is a superset of the previous one and the folders keep the last, never the sum.
+    A branch activation is one (column, chunk) run of that strategy's branch. It is NOT a
+    compiled-kernel invocation count: a successful faker pool selection counts, as do idle
+    bucket_perturb, date_shift and group_key chunks and the Python-only text_redact and
+    text_mask branches, while an idle categorical or faker branch and a branch whose `when:`
+    mask left it idle do not. A strategy that never activated is absent, never zero. The
+    per-column `calls` field is a different, per-column chunk count and is unchanged."""
     idle = frozenset(kernel_idle_columns)
     kept = preserved_rows or {}
     return {
         "table": table,
         "native_admitted": native_admitted,
         "reroute_reason": reroute_reason,
+        "decline_records": decline_payload(tuple(decline_records)),
+        "strategy_branch_calls": dict(strategy_branch_calls or {}),
         "pandas_read_passthrough": sorted(pandas_read_passthrough),
         "columns": [
             {
@@ -178,10 +200,32 @@ def chunk_route_evidence(
     }
 
 
+def copy_decline_records(evidence: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """A detached copy of a chunk's decline records (absent on a hand-built payload: none)."""
+    return [dict(r) for r in evidence.get("decline_records") or ()]
+
+
+def copy_strategy_branch_calls(evidence: Mapping[str, Any]) -> dict[str, int]:
+    """A detached copy of a chunk's cumulative branch-call snapshot."""
+    return dict(evidence.get("strategy_branch_calls") or {})
+
+
+def check_decline_records_consistent(
+    head: Mapping[str, Any], evidence: Mapping[str, Any], *, who: str
+) -> None:
+    """Decline records are preflight-constant, so every chunk must carry the head's list."""
+    if copy_decline_records(evidence) != copy_decline_records(head):
+        raise ExecutionError(
+            code="chunked_route_evidence_inconsistent",
+            message=f"{who} takes the results of one call; chunk evidence disagrees on decline_records.",
+        )
+
+
 def aggregate_chunked_route_evidence(results: Iterable[Any]) -> dict[str, Any]:
     """Sum calls and elapsed time per column across the chunk results' evidence."""
     head: dict[str, Any] | None = None
     read_head: list[str] | None = None
+    branch_calls: dict[str, int] = {}
     sums: dict[str, dict[str, Any]] = {}
     for result in results:
         evidence = result.quality_metrics.get("chunked_route")
@@ -209,6 +253,10 @@ def aggregate_chunked_route_evidence(results: Iterable[Any]) -> dict[str, Any]:
                     f"{listed!r})."
                 ),
             )
+        if head is not evidence:
+            check_decline_records_consistent(head, evidence, who="aggregate_chunked_route_evidence")
+        # Cumulative snapshot: the last folded chunk's is the final total (never summed).
+        branch_calls = copy_strategy_branch_calls(evidence)
         for col in evidence["columns"]:
             acc = sums.get(col["column"])
             if acc is None:
@@ -224,6 +272,8 @@ def aggregate_chunked_route_evidence(results: Iterable[Any]) -> dict[str, Any]:
             "table": None,
             "native_admitted": False,
             "reroute_reason": None,
+            "decline_records": [],
+            "strategy_branch_calls": {},
             "pandas_read_passthrough": [],
             "columns": [],
         }
@@ -231,6 +281,8 @@ def aggregate_chunked_route_evidence(results: Iterable[Any]) -> dict[str, Any]:
         "table": head["table"],
         "native_admitted": head["native_admitted"],
         "reroute_reason": head["reroute_reason"],
+        "decline_records": copy_decline_records(head),
+        "strategy_branch_calls": branch_calls,
         "pandas_read_passthrough": [] if read_head is None else list(read_head),
         "columns": list(sums.values()),
     }

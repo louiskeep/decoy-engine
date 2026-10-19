@@ -53,6 +53,9 @@ NEEDS_COMPANION = pytest.mark.skipif(
 )
 
 EVIDENCE_KEYS = {
+    "table",
+    "columns",
+    "strategy",
     "operator",
     "executed",
     "compiled_kernel_executed",
@@ -116,6 +119,20 @@ OPERATORS: dict[str, tuple[list[dict[str, Any]], str, str, bool]] = {
     "native_redact": ([_REDACT], "r", ARROW_PYTHON, False),
     "native_truncate": ([_TRUNCATE], "t", ARROW_PYTHON, False),
     "native_passthrough": ([_PASSTHROUGH], "p", ARROW_PYTHON, False),
+}
+
+# OBS-2a: each operator's node carries its configured strategy string (not the
+# operator id). The node column is `OPERATORS[op][1]`; the source table is "t".
+STRATEGY_BY_OPERATOR: dict[str, str] = {
+    "native_keyed_hash": "hash",
+    "native_faker_select": "faker",
+    "native_categorical": "categorical",
+    "native_bucket_perturb": "bucket_perturb",
+    "native_date_shift": "date_shift",
+    "native_group_key": "group_key",
+    "native_redact": "redact",
+    "native_truncate": "truncate",
+    "native_passthrough": "passthrough",
 }
 
 _VALUES: dict[str, list[Any]] = {
@@ -207,9 +224,15 @@ def assert_exact_evidence(
     planned: str,
     executed: str,
     calls: int,
+    table: str,
+    columns: list[str],
+    strategy: str,
 ) -> None:
     assert set(ev) == EVIDENCE_KEYS
     assert ev == {
+        "table": table,
+        "columns": columns,
+        "strategy": strategy,
         "operator": operator,
         "executed": True,
         "compiled_kernel_executed": compiled,
@@ -239,6 +262,9 @@ def test_exact_evidence_per_operator(
         planned=planned,
         executed=planned,
         calls=1,
+        table="t",
+        columns=[_col],
+        strategy=STRATEGY_BY_OPERATOR[operator],
     )
 
 
@@ -258,6 +284,11 @@ def test_exact_evidence_for_a_mixed_table_holding_every_operator(
     for operator, (_cols, _col, planned, compiled) in OPERATORS.items():
         matching = [ev for ev in nodes.values() if ev["operator"] == operator]
         assert matching, operator
+        strategy = STRATEGY_BY_OPERATOR[operator]
+        # Passthrough covers both the standalone `p` column and the group_key
+        # sibling `gb`, so pin the exact set of columns the two nodes carry.
+        expected_columns = {("gb",), ("p",)} if operator == "native_passthrough" else {(_col,)}
+        assert {tuple(ev["columns"]) for ev in matching} == expected_columns
         for ev in matching:
             assert_exact_evidence(
                 ev,
@@ -266,6 +297,9 @@ def test_exact_evidence_for_a_mixed_table_holding_every_operator(
                 planned=planned,
                 executed=planned,
                 calls=1,
+                table="t",
+                columns=list(ev["columns"]),
+                strategy=strategy,
             )
 
 
@@ -290,6 +324,9 @@ def test_empty_table_is_idle_for_value_dependent_kernels(
         planned=RUST_COMPANION,
         executed=ARROW_PYTHON,
         calls=1,
+        table="t",
+        columns=[_col],
+        strategy=STRATEGY_BY_OPERATOR[operator],
     )
 
 
@@ -308,6 +345,9 @@ def test_all_null_is_idle_for_bucket_perturb_and_date_shift(
         planned=RUST_COMPANION,
         executed=ARROW_PYTHON,
         calls=1,
+        table="t",
+        columns=[col],
+        strategy=STRATEGY_BY_OPERATOR[operator],
     )
 
 
@@ -330,6 +370,9 @@ def test_all_null_group_key_sibling_still_runs_the_compiled_kernel(
         planned=RUST_COMPANION,
         executed=RUST_COMPANION,
         calls=1,
+        table="t",
+        columns=["gk"],
+        strategy="group_key",
     )
 
 
@@ -349,6 +392,9 @@ def test_empty_table_hash_categorical_faker_keep_their_planned_backend(
         planned=planned,
         executed=planned,
         calls=1,
+        table="t",
+        columns=[_col],
+        strategy=STRATEGY_BY_OPERATOR[operator],
     )
 
 
@@ -398,6 +444,9 @@ def test_all_unparseable_date_shift_is_idle_at_the_seam(tmp_path: Path) -> None:
         planned=RUST_COMPANION,
         executed=ARROW_PYTHON,
         calls=2,
+        table="t",
+        columns=["d"],
+        strategy="date_shift",
     )
 
 
@@ -447,6 +496,9 @@ def test_compiled_flag_accumulates_across_batches(
         planned=RUST_COMPANION,
         executed=RUST_COMPANION if compiled else ARROW_PYTHON,
         calls=2,
+        table="t",
+        columns=[col],
+        strategy=STRATEGY_BY_OPERATOR[operator],
     )
 
 
@@ -466,6 +518,9 @@ def test_valid_dates_then_one_null_row_stay_compiled_on_the_production_lane(
         planned=RUST_COMPANION,
         executed=RUST_COMPANION,
         calls=2,
+        table="t",
+        columns=[col],
+        strategy=STRATEGY_BY_OPERATOR[operator],
     )
 
 

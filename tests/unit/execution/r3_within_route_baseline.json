@@ -54,9 +54,15 @@
       "strategy": "truncate"
      }
     ],
+    "decline_records": [],
     "native_admitted": true,
     "pandas_read_passthrough": [],
     "reroute_reason": null,
+    "strategy_branch_calls": {
+     "passthrough": 3,
+     "redact": 3,
+     "truncate": 3
+    },
     "table": "t"
    },
    "execution": {
@@ -234,11 +240,13 @@
       "strategy": "hash"
      }
     ],
+    "decline_records": [],
     "native_admitted": false,
     "pandas_read_passthrough": [
      "p"
     ],
     "reroute_reason": "dispatcher_disabled",
+    "strategy_branch_calls": {},
     "table": "t"
    },
    "execution": {
@@ -2471,9 +2479,18 @@
        "strategy": "passthrough"
       }
      ],
+     "decline_records": [
+      {
+       "code": "crypto_ext_unavailable",
+       "column": null,
+       "table": "a",
+       "table_wide": true
+      }
+     ],
      "native_admitted": false,
      "pandas_read_passthrough": [],
      "reroute_reason": "crypto_extension_unavailable",
+     "strategy_branch_calls": {},
      "table": "a"
     },
     "b": {
@@ -2493,9 +2510,14 @@
        "strategy": "passthrough"
       }
      ],
+     "decline_records": [],
      "native_admitted": true,
      "pandas_read_passthrough": [],
      "reroute_reason": null,
+     "strategy_branch_calls": {
+      "passthrough": 3,
+      "redact": 3
+     },
      "table": "b"
     }
    },
@@ -2975,6 +2997,29 @@
     "output_path": "<TMP>/quarantine.jsonl",
     "total_quarantined": 1
    },
+   "row_error_summary": {
+    "by_column": {
+     "d": {
+      "format_error": 1
+     }
+    },
+    "completeness": "complete",
+    "covered": 1,
+    "omitted": 0,
+    "sample": [
+     {
+      "chunk_index": null,
+      "chunk_row_offset": null,
+      "column": "d",
+      "row_index": 7,
+      "trigger": "format_error"
+     }
+    ],
+    "sample_limit": 50,
+    "table": "t",
+    "total_observed": 1,
+    "uncovered": 0
+   },
    "row_errors": {
     "t.d[format_error]": 1
    }
@@ -3326,9 +3371,18 @@
       "strategy": "hash"
      }
     ],
+    "decline_records": [
+     {
+      "code": "crypto_ext_unavailable",
+      "column": null,
+      "table": "t",
+      "table_wide": true
+     }
+    ],
     "native_admitted": false,
     "pandas_read_passthrough": [],
     "reroute_reason": "crypto_extension_unavailable",
+    "strategy_branch_calls": {},
     "table": "t"
    },
    "execution": {
@@ -3527,9 +3581,15 @@
       "strategy": "truncate"
      }
     ],
+    "decline_records": [],
     "native_admitted": true,
     "pandas_read_passthrough": [],
     "reroute_reason": null,
+    "strategy_branch_calls": {
+     "passthrough": 3,
+     "redact": 3,
+     "truncate": 3
+    },
     "table": "t"
    },
    "execution": {
@@ -3669,27 +3729,42 @@
     "nodes": {
      "t:p:scalar:passthrough": {
       "calls": 1,
+      "columns": [
+       "p"
+      ],
       "compiled_kernel_executed": false,
       "executed": true,
       "executed_backend": "arrow_python",
       "operator": "native_passthrough",
-      "planned_backend": "arrow_python"
+      "planned_backend": "arrow_python",
+      "strategy": "passthrough",
+      "table": "t"
      },
      "t:r:scalar:redact": {
       "calls": 1,
+      "columns": [
+       "r"
+      ],
       "compiled_kernel_executed": false,
       "executed": true,
       "executed_backend": "arrow_python",
       "operator": "native_redact",
-      "planned_backend": "arrow_python"
+      "planned_backend": "arrow_python",
+      "strategy": "redact",
+      "table": "t"
      },
      "t:tr:scalar:truncate": {
       "calls": 1,
+      "columns": [
+       "tr"
+      ],
       "compiled_kernel_executed": false,
       "executed": true,
       "executed_backend": "arrow_python",
       "operator": "native_truncate",
-      "planned_backend": "arrow_python"
+      "planned_backend": "arrow_python",
+      "strategy": "truncate",
+      "table": "t"
      }
     },
     "plan_hash": {

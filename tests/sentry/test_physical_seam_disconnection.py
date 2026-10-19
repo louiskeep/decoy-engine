@@ -532,6 +532,12 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         "src/decoy_engine/execution/_chunked_profile.py",
         "src/decoy_engine/execution/native/_chunk_schema.py",
         "src/decoy_engine/execution/native/_chunked_entry.py",
+        # OBS-2: the non-empty-source preflight wiring split out of `_chunked_entry.py` for
+        # module headroom (pure move); imports nothing from `execution.physical`.
+        "src/decoy_engine/execution/native/_chunked_preflight_wiring.py",
+        # OBS-2c: bounded value-free row-error summary (schema ids, trigger codes, counts);
+        # pure, imports nothing from `execution.physical`.
+        "src/decoy_engine/execution/_row_error_summary.py",
         "src/decoy_engine/execution/native/_chunked_evidence.py",
         # C4: the native chunked route's date_shift row-error records, re-sorted into the
         # oracle's work-list order. Imports only `_row_errors` and `_date_shift_ext`.
@@ -543,6 +549,9 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         # routes call.
         # None imports `execution.physical`.
         "src/decoy_engine/execution/native/_real_type_admission.py",
+        # OBS-2b: closed decline-code enum and record the chunked native route attaches to its
+        # route evidence. Pure value types; imports nothing from `execution.physical`.
+        "src/decoy_engine/execution/native/_route_decline_codes.py",
         # Slice C2 (bucket_perturb on the chunked route): the native kernel module gains an
         # optional `derive_calls` out-parameter the chunked masker reads, so evidence only
         # claims a compiled kernel when one ran. It imports nothing from `execution.physical`.

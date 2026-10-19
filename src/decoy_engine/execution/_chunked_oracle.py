@@ -41,6 +41,7 @@ from ._chunked_fk_dtype import (
 )
 from ._chunked_profile import profile_input
 from ._guards import reject_gated_hash_on_integer
+from ._row_error_summary import chunk_row_error_summary
 from ._transforms import reject_config_references_stored_index
 
 
@@ -391,7 +392,16 @@ def _oracle_masked(
             # closes. Fail closed the moment any chunk reports a row error; this
             # applies to every caller, including a routed job in run_pipeline.
             if result.row_errors:
-                raise RowErrorsFailedError(result.row_errors)
+                raise RowErrorsFailedError(
+                    result.row_errors,
+                    summary=chunk_row_error_summary(
+                        result.row_errors,
+                        table=table,
+                        columns=chunk.schema.names,
+                        chunk_index=chunk_index,
+                        chunk_row_offset=row_offset,
+                    ),
+                )
             masked = result.outputs[table] if on_chunk is None else on_chunk(result, chunk)
             row_offset = dgrn.advance_row_offset(row_offset, chunk)
             if vault_writer is not None:

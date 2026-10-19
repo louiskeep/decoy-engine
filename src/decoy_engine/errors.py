@@ -15,7 +15,11 @@ move to typed exceptions.
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from decoy_engine.execution._row_error_summary import RowErrorSummary
 
 
 class DecoyError(Exception):
@@ -368,8 +372,13 @@ class ValidatorFailedError(DecoyError):
             whose ``passed`` attribute is ``False``.
     """
 
-    def __init__(self, report: Any) -> None:
+    def __init__(
+        self, report: Any, *, summaries_by_table: Mapping[str, RowErrorSummary] | None = None
+    ) -> None:
         self.report = report
+        # Row errors observed in the same full-frame run; a validator failure raises first,
+        # so without this the row-error evidence would be dropped.
+        self.summaries_by_table = summaries_by_table
         findings = getattr(report, "findings", ())
         n = len(findings)
         validators_run = list(getattr(report, "validators_run", ()))
@@ -400,13 +409,23 @@ class RowErrorsFailedError(DecoyError):
     see ``execution._row_errors.RowError``).
     """
 
-    def __init__(self, records: tuple[Any, ...]) -> None:
+    def __init__(
+        self,
+        records: tuple[Any, ...],
+        *,
+        summary: RowErrorSummary | None = None,
+        summaries_by_table: Mapping[str, RowErrorSummary] | None = None,
+    ) -> None:
         self.records = records
+        # `summary`: single-table chunked legs. `summaries_by_table`: full-frame runs. Both
+        # describe every observed error; `.records` stays the uncovered subset.
+        self.summary = summary
+        self.summaries_by_table = summaries_by_table
         counts: dict[tuple[str, str, str], int] = {}
         for r in records:
             key = (r.table, r.column, r.trigger)
             counts[key] = counts.get(key, 0) + 1
-        summary = ", ".join(
+        by_key = ", ".join(
             f"{table}.{column} [{trigger}]: {n}"
             for (table, column, trigger), n in sorted(counts.items())
         )
@@ -414,7 +433,7 @@ class RowErrorsFailedError(DecoyError):
         super().__init__(
             f"row-error framework: {len(records)} row(s) failed strategy execution and are "
             f"not covered by an enabled quarantine trigger. Counts by (table, column, "
-            f"trigger): {summary}. Enable quarantine with trigger(s) {triggers} to route "
+            f"trigger): {by_key}. Enable quarantine with trigger(s) {triggers} to route "
             "failing rows to a separate output instead of failing the job."
         )
 
