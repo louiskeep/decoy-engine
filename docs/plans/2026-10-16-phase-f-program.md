@@ -34,7 +34,9 @@ Current state (recon 2026-10-16):
   generation selection executes on the compiled path vs the Python reference at
   runtime (Codex plan-gate P2) - F0's executed-backend witness establishes which,
   and F3 widens only where it is parity-preserving. Pool CONSTRUCTION (calling
-  Faker to fill the pool) stays Python.
+  Faker to fill the pool) stays Python. (Settled by FR0/F-audit: generation's
+  pool selection is the non-deterministic NumPy draw and never reaches that
+  kernel; see the F3 and F-audit status notes below.)
 - Mixed jobs (generate + mask in one job) always route full-frame/pandas in
   production today (`execution/_pipeline_routing.py:216-217`,
   `_pipeline_generate_mask.py:73`). A native/bounded mixed path is already built
@@ -135,6 +137,10 @@ declared RSS ceiling; one transactional publish boundary with abort tests; every
 non-admitted shape a coded decline, never a silent full-frame drop.
 
 ### F3 - Rust generation selection for pooled/deterministic generators (M)
+STATUS (2026-10-18): SHELVED. It measured slower than vectorized RNG
+(`2026-10-18-phase-f-rebaseline-f1-f3.md`), so generation has no Rust selection
+path and the text below is the original, never-built design.
+
 NOT a trivial "widen the compiled path" (Codex plan-gate correction). The
 compiled index kernel derives indices via HMAC (the MASKING selection
 algorithm); pure generation today draws from seeded NumPy / Python RNG. Those
@@ -171,6 +177,17 @@ evidence captured AND transported to the platform (not just the in-process
 F-audit witness).
 
 ### F-audit - no-legacy generation compute audit (terminal Phase F slice)
+STATUS (2026-10-19): BUILT as `2026-10-19-phase-f-f-audit-no-legacy.md` (tests and
+docs only, no `src/` change). FR3 is shelved, so generation has NO compiled path by
+design and the "no admitted cell silently drops from a claimed Rust backend"
+obligation below is INAPPLICABLE. The rest is kept and re-targeted to FR0's real
+contract: every generator on its predicate-derived Python/numpy backend, a
+zero-entry lock on the deterministic-index path (the only route to the compiled
+kernel), admitted plans proven on the core across resident and streamed routes,
+and the generate -> mask -> sink seam. Boxes: [x] predicate-derived matrix; [x]
+consumed-output witnesses with discard-and-substitute mutants; [x] vacuity fence;
+[x] core and route proof; [x] zero-companion lock; [x] seam audit; [x] docs.
+
 Mirrors D-audit's FULL discipline (Codex plan-gate correction - not just a
 matrix). A generation compute-admission matrix DERIVED FROM THE ACTUAL DISPATCH
 PREDICATES (not observed dispositions), classifying EVERY generator
@@ -188,7 +205,8 @@ NOTE: an F0 test spy proves backend locally but does NOT emit F4's platform-side
 per-column evidence - production evidence emission + aggregation for generation
 is its own build slice (F3/F4 scope, see §4/§7), not the audit's. Closes Phase F.
 (Program rule: CI fails if a column admitted to a Rust backend records zero
-compiled calls - the per-generation witness satisfies it.)
+compiled calls. No generation column is admitted to a Rust backend while FR3 is
+shelved, so the rule is vacuous for generation; it still binds the mask half.)
 
 ## 4. Sequencing
 

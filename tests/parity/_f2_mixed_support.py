@@ -238,3 +238,40 @@ def lazy_source(tmp_path: Path, table: pa.Table, *, row_group_size: int) -> Any:
 
 def tables_in_order(result: ExecutionResult) -> Iterator[str]:
     yield from result.outputs
+
+
+# --------------------------------------------------------------------------------------------
+# F-audit seam fixture: witnessed generated payload and explicit VALID + ORPHAN child keys
+# --------------------------------------------------------------------------------------------
+
+SEAM_PARENT_ROWS = 60
+SEAM_POOL_THRESHOLD = 40  # lowered so the 60-row parent's `city` pools (numpy selection)
+SEAM_CHILD_ROWS = 40
+SEAM_ORPHAN_EVERY = 4  # child rows i with i % 4 == 3 carry a key the parent never generates
+
+
+def seam_parent_columns() -> list[dict[str, Any]]:
+    """Generated parent: a string key plus a pooled-faker and a categorical payload column."""
+    return [
+        {"name": "id", "type": "sequence", "start": 0, "step": 1, "prefix": "P"},
+        {"name": "city", "type": "faker", "faker_type": "city"},
+        {"name": "tier", "type": "categorical", "categories": ["a", "b", "c"]},
+    ]
+
+
+def seam_child_keys() -> list[str]:
+    return [
+        f"ORPHAN-{i}" if i % SEAM_ORPHAN_EVERY == SEAM_ORPHAN_EVERY - 1 else f"P{(i * 7) % 60}"
+        for i in range(SEAM_CHILD_ROWS)
+    ]
+
+
+def seam_orphan_count(parent_ids: set[str], child_keys: list[str]) -> int:
+    return sum(1 for k in child_keys if k not in parent_ids)
+
+
+def orphan_rows(result: ExecutionResult) -> int:
+    """The edge-level `orphan_fk` warning's whole-column row count (one resolve, no summing)."""
+    found = [int(w.detail["orphan_rows"]) for w in result.warnings if w.code == "orphan_fk"]
+    assert len(found) == 1, "exactly one orphan_fk warning for the single edge"
+    return found[0]
