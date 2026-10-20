@@ -283,7 +283,7 @@ _CATALOG_SQL = (
 def _classify(type_text: str, typtype: str) -> str | None:
     """Return a guard class for a supported type, or None if unsupported.
 
-    Classes: ``plain`` (no guard needed), ``date``, ``timestamp``,
+    Classes: ``plain`` (no guard needed), ``array`` (lower-bound guard), ``date``, ``timestamp``,
     ``numeric`` (bounded <= 38 digits; NaN guard).
     """
     base = type_text
@@ -292,10 +292,10 @@ def _classify(type_text: str, typtype: str) -> str | None:
         base = base[:-2]
         is_array = True
     base_nolen = _LEN_SUFFIX_RE.sub("", base)
-    if typtype == "e":
-        return "plain"
-    if base_nolen in _PLAIN_TYPES:
-        return "plain"
+    if typtype == "e" or base_nolen in _PLAIN_TYPES:
+        # Arrays need a lower-bound guard: the scanner drops a non-1 lower
+        # bound, so '[0:2]={..}' would export with its indexing lost.
+        return "array" if is_array else "plain"
     # Temporal and numeric element guards run on scalar columns only. An array
     # of them would need an unnest guard, so it is rejected instead.
     if is_array:
@@ -314,18 +314,31 @@ def _check_types(conn: Any, sel: RelationSelection) -> dict[str, str]:
     """Verify columns exist and are lossless. Returns {column: guard class}."""
     try:
         rows = conn.execute(
-            f"SELECT attname, fmt, typtype FROM postgres_query({_lit(_ATTACH_ALIAS)}, ?) "
+            f"SELECT nspname, relname, attname, fmt, typtype FROM postgres_query({_lit(_ATTACH_ALIAS)}, ?) "
             "AS q(nspname, relname, attname, fmt, typtype) "
-            "WHERE nspname = ? AND relname = ?",
+            "WHERE lower(nspname) = lower(?) AND lower(relname) = lower(?)",
             [_CATALOG_SQL, sel.schema_name, sel.table],
         ).fetchall()
     except Exception as exc:
         raise PostgresSnapshotError(
             "catalog_read_failed", location=sel.key, cause_type=type(exc).__name__
         ) from None
+    # DuckDB resolves schema, table and column names case-insensitively, so a
+    # source with names differing only by case would export the wrong object
+    # without any error. Fetch case-insensitive matches and reject ambiguity,
+    # then require an exact-case match so a near miss is never resolved.
+    if len({r[0] for r in rows}) > 1 or len({(r[0], r[1]) for r in rows}) > 1:
+        raise PostgresSnapshotError("ambiguous_name", location=sel.key)
+    rows = [r for r in rows if r[0] == sel.schema_name and r[1] == sel.table]
     if not rows:
         raise PostgresSnapshotError("relation_not_found", location=sel.key)
-    declared = {r[0]: (r[1], r[2]) for r in rows}
+    folded: dict[str, int] = {}
+    for r in rows:
+        folded[r[2].lower()] = folded.get(r[2].lower(), 0) + 1
+    for col in sel.columns:
+        if folded.get(col.lower(), 0) > 1:
+            raise PostgresSnapshotError("ambiguous_name", location=f"{sel.key}.{col}")
+    declared = {r[2]: (r[3], r[4]) for r in rows}
     classes: dict[str, str] = {}
     for col in sel.columns:
         if col not in declared:
@@ -341,13 +354,12 @@ def _guard_values(conn: Any, sel: RelationSelection, classes: dict[str, str]) ->
     """Reject values DuckDB would alter silently, before any export.
 
     Runs through ``postgres_query`` on the same attached connection and inside
-    the same transaction as the exports, so it reads from that transaction's
-    snapshot. Note: the guard's participation in the snapshot is not itself
-    gate-tested (gate 1 exercises the ATTACH scan path); the guard-to-export
-    window is sub-second against an operator's own near-static database, so a
-    value changing in between is a low-risk edge, tracked as a Slice-2
-    follow-up. The SQL is built only from validated, quoted identifiers and
-    fixed literals.
+    the same transaction as the exports, so it is expected to read from that
+    transaction's snapshot. That participation is not gate-tested (gate 1
+    exercises the ATTACH scan path), and a spike showed it for a trivial query
+    only. Until a mutation test covers it, treat a value changing between the
+    guard and a later export as an unverified edge, tracked for Slice 2. The
+    SQL is built only from validated, quoted identifiers and fixed literals.
     """
     checks: list[tuple[str, str]] = []
     for col, cls in classes.items():
@@ -359,6 +371,10 @@ def _guard_values(conn: Any, sel: RelationSelection, classes: dict[str, str]) ->
                 f"(NOT isfinite({qc}) OR {qc} < '{_TS_MIN}'::timestamp "
                 f"OR {qc} > '{_TS_MAX}'::timestamp)"
             )
+        elif cls == "array":
+            # array_lower is NULL for empty arrays, which are fine. Postgres
+            # allows at most 6 dimensions.
+            cond = " OR ".join(f"array_lower({qc}, {d}) <> 1" for d in range(1, 7))
         elif cls == "numeric":
             # DuckDB's scanner maps numeric NaN to NULL by default.
             cond = f"{qc} = 'NaN'::numeric"

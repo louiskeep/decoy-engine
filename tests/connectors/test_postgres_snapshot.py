@@ -447,3 +447,71 @@ def test_errors_and_logs_never_contain_the_dsn(pg, make_config, tmp_path, caplog
     for part in dsn.split():
         assert part not in rendered
     assert "password" not in rendered
+
+
+# ----- case-collision and array lower-bound regressions --------------------
+
+
+def test_case_colliding_columns_are_rejected_not_misresolved(pg, make_config, tmp_path):
+    """DuckDB resolves identifiers case-insensitively, so ("a", "A") would
+    export a's value for either request. Reject, including when only one of
+    the colliding columns is selected."""
+    s = pg.schema
+    pg.run(f'CREATE TABLE {s}.c("a" int, "A" int); INSERT INTO {s}.c VALUES (11, 22)')
+    for cols in (["A"], ["a"], ["a", "A"]):
+        with pytest.raises(PostgresSnapshotError) as ei:
+            snapshot_tables_to_parquet(make_config(), [_sel(pg, "c", cols)], tmp_path / "d")
+        assert ei.value.code == "ambiguous_name"
+    assert not (tmp_path / "d").exists() or not any((tmp_path / "d").iterdir())
+
+
+def test_case_colliding_unselected_column_is_rejected(pg, make_config, tmp_path):
+    s = pg.schema
+    pg.run(f'CREATE TABLE {s}.c2("id" int, "Id" int, "x" int); INSERT INTO {s}.c2 VALUES (1, 2, 3)')
+    with pytest.raises(PostgresSnapshotError) as ei:
+        snapshot_tables_to_parquet(make_config(), [_sel(pg, "c2", ["x", "id"])], tmp_path / "d")
+    assert ei.value.code == "ambiguous_name"
+
+
+def test_case_colliding_table_names_are_rejected(pg, make_config, tmp_path):
+    s = pg.schema
+    pg.run(
+        f'CREATE TABLE {s}."t" (a int); CREATE TABLE {s}."T" (a int); INSERT INTO {s}."t" VALUES (1)'
+    )
+    with pytest.raises(PostgresSnapshotError) as ei:
+        snapshot_tables_to_parquet(make_config(), [_sel(pg, "t", ["a"])], tmp_path / "d")
+    assert ei.value.code == "ambiguous_name"
+
+
+def test_case_differing_request_does_not_resolve_to_another_relation(pg, make_config, tmp_path):
+    s = pg.schema
+    pg.run(f'CREATE TABLE {s}."Mixed" (a int); INSERT INTO {s}."Mixed" VALUES (1)')
+    with pytest.raises(PostgresSnapshotError) as ei:
+        snapshot_tables_to_parquet(make_config(), [_sel(pg, "mixed", ["a"])], tmp_path / "d")
+    assert ei.value.code == "relation_not_found"
+
+
+def test_array_with_nonstandard_lower_bound_is_rejected(pg, make_config, tmp_path):
+    s = pg.schema
+    pg.run(
+        f"CREATE TABLE {s}.lb(id int, v int[]); "
+        f"INSERT INTO {s}.lb VALUES (1, '[0:2]={{10,20,30}}'::int[])"
+    )
+    with pytest.raises(PostgresSnapshotError) as ei:
+        snapshot_tables_to_parquet(
+            make_config(), [_sel(pg, "lb", ["id", "v"], ["id"])], tmp_path / "d"
+        )
+    assert ei.value.code == "value_not_representable"
+    assert ei.value.location == f"{s}.lb.v"
+
+
+def test_standard_arrays_empty_and_null_still_pass(pg, make_config, tmp_path):
+    s = pg.schema
+    pg.run(
+        f"CREATE TABLE {s}.ok(id int, v int[]); INSERT INTO {s}.ok VALUES "
+        "(1, '{1,2}'), (2, '{}'), (3, NULL)"
+    )
+    out = snapshot_tables_to_parquet(
+        make_config(), [_sel(pg, "ok", ["id", "v"], ["id"])], tmp_path / "d"
+    )
+    assert _read(out[f"{s}.ok"], "v") == [[1, 2], [], None]
