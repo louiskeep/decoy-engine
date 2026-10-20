@@ -404,6 +404,7 @@ markers = [
     "benchmark: informational performance benchmarks; not a regression gate",
     "determinism_harness: full faker-pool determinism matrix sweep (scripts/faker-determinism/check_determinism.py against golden_digests.json); excluded from the default loop for runtime, run explicitly via pytest -m determinism_harness",
     "codspeed: pytest-codspeed instrumented microbenchmarks (tests/codspeed/); needs the [perf] extra; run only by the codspeed CI workflow, gated on the CODSPEED_TOKEN secret",
+    "pg_integration: needs a throwaway Postgres (docker, or DECOY_TEST_PG_DSN); skips cleanly when neither is available. Postgres snapshot primitive suites.",
     "perf: PERF.BASE.2/3 fixture + baseline tests; run in the default regression gate (not opt-in)",
     "golden: engine-v2 S1 golden fixture suite (CSVs + manifests under tests/fixtures/golden/); CI gates engine-v2 sprint work on these",
     "regression: a bugfix's regression test; the prove-regression gate re-runs it against the pre-fix baseline and requires it to fail there",

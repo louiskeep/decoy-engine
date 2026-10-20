@@ -9,6 +9,21 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (DuckDB Postgres snapshot input primitive, 2026-10-20)
+
+New `decoy_engine.connectors.postgres_snapshot` module: a read-only snapshot-to-Parquet
+materialization primitive over DuckDB's `postgres` scanner. `snapshot_tables_to_parquet(config,
+selections, dest_dir)` takes one read-only ATTACH and one transaction across all selected relations,
+exporting each as an enumerated-column `COPY ... ORDER BY ... TO parquet` with atomic publish (the
+staged directory is renamed into place only after every relation succeeds; all staged and spill
+files are removed on any failure, timeout, or cancellation). Structured selection only (schema,
+table, and an explicit column list, validated and quoted as identifiers); there is no raw-SQL path.
+The engine never persists the DSN (`SecretStr`, runtime only), and coded, redacted errors never
+carry the DSN, a value, or raw exception text. Rejects case-colliding source identifiers,
+non-standard array lower bounds, and value or type classes the scanner would silently degrade. Loads
+the pinned `postgres` extension from a bundled directory offline (no network install). The engine
+itself does not call it; the platform wires it in as a managed database source in a later slice.
+
 ### Added (OBS-2: job-log completeness evidence, 2026-10-19)
 
 Four additive, leak-safe diagnostic fields at the engine boundary so a consumer can report a
