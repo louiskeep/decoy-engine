@@ -473,6 +473,19 @@ def test_case_colliding_unselected_column_is_rejected(pg, make_config, tmp_path)
     assert ei.value.code == "ambiguous_name"
 
 
+def test_case_collision_outside_projection_is_rejected(pg, make_config, tmp_path):
+    # a + "A" collide, so DuckDB renames the duplicate to A_1, which shadows the
+    # real a_1 column. Selecting only a_1 (the collision is wholly outside the
+    # projection) must still be rejected, not silently export "A"'s data.
+    s = pg.schema
+    pg.run(
+        f'CREATE TABLE {s}.c3("a" int, "A" int, "a_1" int); INSERT INTO {s}.c3 VALUES (11, 22, 33)'
+    )
+    with pytest.raises(PostgresSnapshotError) as ei:
+        snapshot_tables_to_parquet(make_config(), [_sel(pg, "c3", ["a_1"])], tmp_path / "d")
+    assert ei.value.code == "ambiguous_name"
+
+
 def test_case_colliding_table_names_are_rejected(pg, make_config, tmp_path):
     s = pg.schema
     pg.run(

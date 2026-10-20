@@ -335,9 +335,13 @@ def _check_types(conn: Any, sel: RelationSelection) -> dict[str, str]:
     folded: dict[str, int] = {}
     for r in rows:
         folded[r[2].lower()] = folded.get(r[2].lower(), 0) + 1
-    for col in sel.columns:
-        if folded.get(col.lower(), 0) > 1:
-            raise PostgresSnapshotError("ambiguous_name", location=f"{sel.key}.{col}")
+    # Reject the relation if ANY two of its columns collide case-insensitively,
+    # even ones outside this projection. DuckDB folds a case-colliding pair to
+    # one name and renames the duplicate with a generated suffix (a + "A" ->
+    # a, A_1), which can then shadow a real column like a_1 and export the
+    # wrong column with no error. The whole relation is unsafe, so refuse it.
+    if any(count > 1 for count in folded.values()):
+        raise PostgresSnapshotError("ambiguous_name", location=sel.key)
     declared = {r[2]: (r[3], r[4]) for r in rows}
     classes: dict[str, str] = {}
     for col in sel.columns:
