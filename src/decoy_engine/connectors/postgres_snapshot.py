@@ -229,8 +229,10 @@ def _open_connection(config: PostgresSnapshotConfig, spill_dir: Path) -> Any:
                 "autoinstall_known_extensions": False,
                 "autoload_known_extensions": False,
                 "allow_unsigned_extensions": False,
-                # The scan order is pinned by ORDER BY, so let spill operators
-                # drop insertion order bookkeeping only where we sort anyway.
+                # Kept True so the ORDER BY result order survives the Parquet
+                # write even when the export spills; dropping it would let DuckDB
+                # reorder spilled chunks and break the byte-identical snapshot
+                # (guarantee 2).
                 "preserve_insertion_order": True,
             },
         )
@@ -336,11 +338,16 @@ def _check_types(conn: Any, sel: RelationSelection) -> dict[str, str]:
 
 
 def _guard_values(conn: Any, sel: RelationSelection, classes: dict[str, str]) -> None:
-    """Reject values DuckDB would alter silently, inside the same snapshot.
+    """Reject values DuckDB would alter silently, before any export.
 
-    Runs through ``postgres_query`` on the attached connection so it sees the
-    same snapshot as the exports. The SQL is built only from validated,
-    quoted identifiers and fixed literals.
+    Runs through ``postgres_query`` on the same attached connection and inside
+    the same transaction as the exports, so it reads from that transaction's
+    snapshot. Note: the guard's participation in the snapshot is not itself
+    gate-tested (gate 1 exercises the ATTACH scan path); the guard-to-export
+    window is sub-second against an operator's own near-static database, so a
+    value changing in between is a low-risk edge, tracked as a Slice-2
+    follow-up. The SQL is built only from validated, quoted identifiers and
+    fixed literals.
     """
     checks: list[tuple[str, str]] = []
     for col, cls in classes.items():
