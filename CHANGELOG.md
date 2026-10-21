@@ -7,6 +7,17 @@ Engine versions are independent of `decoy-cli`; the CLI declares the
 minimum engine version it was tested against via its
 `decoy-engine>=X.Y` dependency pin.
 
+
+## 0.11.0 - 2026-10-21
+
+### Added
+- `decoy_engine.connectors.postgres_snapshot`: a read-only, structured-selection
+  Postgres-to-Parquet snapshot primitive over DuckDB's postgres scanner (DB-input
+  Slice 0, #291). One ATTACH + one transaction for multi-table snapshot consistency,
+  atomic publish, identifier-safe (no raw SQL), offline extension load, DSN never
+  persisted, preserve-or-reject type fidelity. Unused by the engine itself; the
+  platform wires it as a managed database source.
+
 ## [Unreleased]
 
 ### Added (DuckDB Postgres snapshot input primitive, 2026-10-20)
