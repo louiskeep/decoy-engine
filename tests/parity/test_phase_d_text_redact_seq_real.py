@@ -91,7 +91,7 @@ def test_t1_across_row_counts(n: int, monkeypatch: pytest.MonkeyPatch) -> None:
     _cell(_shape(values), monkeypatch)
 
 
-# T2: lookaround detectors still go through the native path and replay in Python per cell.
+# T2: lookaround detectors now run in the Rust kernel (ported); output still matches the oracle.
 
 
 @pytest.mark.parametrize("name", ["python_only", "mixed", "dup_email", "unknown_id"])

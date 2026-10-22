@@ -1,26 +1,28 @@
 """C6c-ii: per-cell ASCII-domain routing for the native `text_redact` span detection.
 
-The oracle's `iter_spans` runs eleven detectors in Python per cell. C6c-ii moves the eight
+The oracle's `iter_spans` runs eleven detectors in Python per cell. C6c-ii moved the eight
 lookaround-free detectors (`email`, `us_phone`, `pan`, `iban`, `ipv4`, `icd10`, `npi`, `url`)
-into the compiled companion for cells in the ASCII-safe domain, where Python's `\\d`/`\\s`/ASCII
-case-fold classes and the Rust `(?-u)` classes coincide code-point-for-code-point (plan 2.1/2.2).
-Every other cell (non-ASCII, a 0x1c-0x1f separator, a lone surrogate, a non-string) and the three
-lookaround detectors (`ssn`, `us_zip`, `street_address`) stay on the unchanged Python path, so the
-spliced output is byte-identical to the oracle always.
+into the compiled companion for cells in the ASCII-safe domain; the lookaround port then added the
+remaining three (`ssn`, `us_zip`, `street_address`, which use lookahead/lookbehind) via
+fancy-regex, so all eleven built-ins run in Rust on an eligible cell. On that domain Python's
+`\\d`/`\\s`/`\\w`/`\\b`/ASCII case-fold classes and the Rust `(?-u)` classes coincide
+code-point-for-code-point (plan 2.1/2.2). Every other cell (non-ASCII, a 0x1c-0x1f separator, a
+lone surrogate, a non-string) still stays on the unchanged Python path, so the spliced output is
+byte-identical to the oracle always.
 
 This module owns three pieces the wrapper in `_kernels_scalar.py` builds on:
 
 - The versioned detector catalog (ids, labels, Rust-supported flag) mirrored in Rust under
   `CATALOG_VERSION`. The loader rejects a version or supported-set skew and falls back to full
-  Python (plan 4.6); a detector known to the oracle but not in the eight runs in Python, never a
-  silent no-op.
+  Python (plan 4.6); a detector known to the oracle but not in the supported set runs in Python,
+  never a silent no-op.
 - `load_text_redact_kernel()`, which returns a thin kernel wrapper or `None` (companion absent,
   the symbol absent on an older companion, or a catalog skew), each resolving to the literal
   Python path.
 - `merge_text_redact_spans(...)`, which assembles one cell's final span list in the EXACT order
-  `iter_spans` builds it (extras, then built-ins in requested order with the eight interleaved
-  with the three Python lookaround detectors, then custom), so Python's stable sort resolves ties
-  identically. The eight's candidates come from the Rust call; the rest run `finditer` here.
+  `iter_spans` builds it (extras, then built-ins in requested order, then custom), so Python's
+  stable sort resolves ties identically. A supported built-in's candidates come from the Rust
+  call; any unsupported built-in (and the custom specs) run `finditer` here.
 
 Keeping `finditer` out of `_kernels_scalar.py` is deliberate: that module's "no regex of its own"
 contract (C6c-i) stays intact because every regex call for the lookaround/custom path lives here.
@@ -35,9 +37,11 @@ from decoy_engine.storm.detectors import _SPAN_DETECTORS, Span
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-# The eight lookaround-free detector ids, in catalog order. The index returned by the Rust kernel
-# is a position in this tuple; it maps back to the id (and its `[REDACTED:<id>]` label) here. Keep
-# in sync with `decoy-engine-native/src/text_redact.rs::SUPPORTED_IDS`.
+# The eleven Rust-supported detector ids, in catalog order. The index returned by the Rust kernel
+# is a position in this tuple; it maps back to the id (and its `[REDACTED:<id>]` label) here. The
+# first eight are the lookaround-free detectors (regex crate); the last three are the lookaround
+# detectors ported to fancy-regex, appended so the first eight keep their indices. Keep in sync
+# with `decoy-engine-native/src/text_redact.rs::SUPPORTED_IDS`.
 SUPPORTED_IDS: tuple[str, ...] = (
     "email",
     "us_phone",
@@ -47,14 +51,18 @@ SUPPORTED_IDS: tuple[str, ...] = (
     "icd10",
     "npi",
     "url",
+    "ssn",
+    "us_zip",
+    "street_address",
 )
 _SUPPORTED_SET = frozenset(SUPPORTED_IDS)
 _INDEX_OF: dict[str, int] = {det_id: i for i, det_id in enumerate(SUPPORTED_IDS)}
 
 # The detector-catalog contract id. Bump when ANY detector's id, order, label, pattern, validator,
 # OR Rust-supported flag changes (plan 4.6). The Rust mirror (`text_redact.rs::CATALOG_VERSION`)
-# must match this exactly, or the loader falls back to full Python.
-CATALOG_VERSION = 1
+# must match this exactly, or the loader falls back to full Python. v2 added the three lookaround
+# detectors (`ssn`, `us_zip`, `street_address`) to the supported set.
+CATALOG_VERSION = 2
 
 # The label emitted for a detector under `label_token=True` is the detector id itself (the oracle's
 # `_splice` reads `Span.detector_id`), so the catalog's label column equals its id column. An

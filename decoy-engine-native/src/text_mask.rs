@@ -13,8 +13,9 @@
 //!   lookaround spans such as `ssn` are included) and only splices.
 //! - `text_mask_detect_splice` runs detection, the oracle's merge (stable sort by
 //!   `(start, -(end - start))`, then a leftmost-longest sweep), and the splice in one call. It is
-//!   used only when every requested detector is one of the eight Rust detectors, so no
-//!   Python-detected span can be missed.
+//!   used only when every requested detector is one of the Rust-supported detectors (all eleven
+//!   since the lookaround port -- `ssn`/`us_zip`/`street_address` included), so no Python-detected
+//!   span can be missed. A requested detector outside that set still forces the splice-spans path.
 //!
 //! Gap rule (`apply_unmatched`): an empty gap emits nothing under any policy, so two adjacent
 //! spans never gain a stray token between them; a non-empty gap is the token (`redact`) or
@@ -22,11 +23,11 @@
 //! caller passes one `token`; they stay separate decisions here.
 //!
 //! Established methodology: no new algorithm. Detection is `text_redact::candidates_for_cell`
-//! (the `regex` crate); the merge is the stable-sort plus sweep that `merge_text_redact_spans`
-//! uses. Cells are ASCII-only by construction, where byte offsets equal the code-point offsets
-//! Python slices with.
+//! (the `regex` crate for the lookaround-free detectors, `fancy-regex` for the three lookaround
+//! ones); the merge is the stable-sort plus sweep that `merge_text_redact_spans` uses. Cells are
+//! ASCII-only by construction, where byte offsets equal the code-point offsets Python slices with.
 
-use crate::text_redact::{candidates_for_cell, is_eligible};
+use crate::text_redact::{candidates_for_cell, is_eligible, CATALOG_LEN};
 
 #[cfg(feature = "extension-module")]
 use crate::text_redact::{CATALOG_VERSION, SUPPORTED_IDS};
@@ -95,11 +96,12 @@ pub fn splice_cell(
 /// Detection + the oracle's merge + the splice for one eligible cell. `indices` are catalog
 /// indices in the oracle's requested order (duplicates preserved: a repeated id re-emits its
 /// spans and the sweep collapses them, as the Python replay does); `verbatim[i]` is the strategy
-/// for catalog index `i`. `None` means the cell is outside the ASCII-safe domain.
+/// for catalog index `i`. `None` means the cell is outside the ASCII-safe domain, so the caller
+/// runs the Python path.
 pub fn detect_splice_cell(
     text: &str,
     indices: &[usize],
-    verbatim: &[bool; 8],
+    verbatim: &[bool; CATALOG_LEN],
     token: &str,
     passthrough_unmatched: bool,
 ) -> Option<String> {
@@ -210,7 +212,7 @@ fn text_mask_detect_splice(
         return Err(PyValueError::new_err("verbatim_length_mismatch"));
     }
     let mut indices = Vec::with_capacity(detector_ids.len());
-    let mut verbatim_by_index = [false; 8];
+    let mut verbatim_by_index = [false; CATALOG_LEN];
     for (id, v) in detector_ids.iter().zip(&verbatim) {
         let Some(i) = SUPPORTED_IDS.iter().position(|s| s == id) else {
             return Err(PyValueError::new_err(format!(
@@ -300,7 +302,7 @@ mod tests {
 
     #[test]
     fn detect_splice_merges_like_the_oracle() {
-        let verbatim = [false; 8];
+        let verbatim = [false; crate::text_redact::CATALOG_LEN];
         let email = 0usize;
         let got = detect_splice_cell("mail a@b.com now", &[email], &verbatim, "[X]", true);
         assert_eq!(got.as_deref(), Some("mail [X] now"));
@@ -316,7 +318,7 @@ mod tests {
     #[test]
     fn same_start_keeps_the_longest_and_adjacent_spans_both_survive() {
         let (email, ipv4) = (0usize, 4usize);
-        let redact = [false; 8];
+        let redact = [false; crate::text_redact::CATALOG_LEN];
         // email and ipv4 both start at 0; the longer email wins and swallows the ipv4.
         let tie = detect_splice_cell("10.0.0.1a@b.com", &[email, ipv4], &redact, "[X]", true);
         assert_eq!(tie.as_deref(), Some("[X]"));
@@ -330,7 +332,7 @@ mod tests {
 
     #[test]
     fn verbatim_flag_is_per_detector() {
-        let mut verbatim = [false; 8];
+        let mut verbatim = [false; crate::text_redact::CATALOG_LEN];
         verbatim[0] = true; // email passes through, ipv4 is redacted
         let got = detect_splice_cell("a@b.com 10.0.0.1", &[0, 4], &verbatim, "[X]", true);
         assert_eq!(got.as_deref(), Some("a@b.com [X]"));
