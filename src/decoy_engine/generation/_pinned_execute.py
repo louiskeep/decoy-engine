@@ -129,6 +129,7 @@ def execute_pinned(plan: PinnedPlan, seed: int) -> dict[str, pa.Table]:
                 table_name=name,
                 statistical_specs=specs,
                 reference_date=plan.reference_date,
+                pinned=True,
             )
         pools[name] = pa.table(data)
     return {name: pools[name] for name in sorted(pools)}

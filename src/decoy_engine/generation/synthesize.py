@@ -249,6 +249,7 @@ def _generate_column(
     statistical_specs: dict[tuple[str, str], StatisticalSpec] | None = None,
     provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None = None,
     reference_date: str | None = None,
+    pinned: bool = False,
 ) -> list[Any]:
     """Dispatch a generate column to its generator by ``type`` (mirrors V1
     ``ColumnGenerator.generators``), then apply the V1 ``null_probability``
@@ -304,10 +305,17 @@ def _generate_column(
         # at validation; this branch is the defensive fallback for callers that
         # bypass validation (e.g. an unvalidated dict).
         raise ValueError(f"generate column {col.get('name')!r}: unexpected generator type {kind!r}")
+    # Fold the pinned snapshot digest into the null-injection seed ONLY in pinned execution, so the
+    # null mask matches the sampler's digest-folded seed. On the ordinary path this stays None, so
+    # null injection is byte-identical to pre-1b-E (the ordinary sampler/null digest consistency is a
+    # separate, pre-existing concern, out of scope for this additive slice).
     pinned_spec = (statistical_specs or {}).get((table_name, str(col.get("name"))))
     digest = (
         f"sha256:{pinned_spec.snapshot_digest}"
-        if kind == "statistical" and pinned_spec is not None and pinned_spec.snapshot_digest
+        if pinned
+        and kind == "statistical"
+        and pinned_spec is not None
+        and pinned_spec.snapshot_digest
         else None
     )
     return _apply_null_probability(values, col, seed, derive_key, snapshot_content_digest=digest)
