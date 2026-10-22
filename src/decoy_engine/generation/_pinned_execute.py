@@ -23,7 +23,7 @@ from typing import Any
 
 import pyarrow as pa
 
-from decoy_engine.generation._pinned_compile import LIVE_TOKEN, reject_unpinnable
+from decoy_engine.generation._pinned_compile import refuse_live_tokens, reject_unpinnable
 from decoy_engine.generation._pinned_plan import (
     PinnedModeError,
     PinnedPlan,
@@ -70,21 +70,20 @@ def _order_tables(plan: PinnedPlan) -> list[str]:
     return order
 
 
-def _refuse_tokens_in_names(plan: PinnedPlan) -> None:
-    """Names and dependency entries are plan fields outside the config scan; check them too."""
-    for ti, t in enumerate(plan.tables):
-        names = [t.name, *t.depends_on, *(c.name for c in t.columns)]
-        if any(LIVE_TOKEN.search(n) for n in names):
-            raise PinnedModeError(
-                code="pinned_live_token",
-                message=f"table #{ti} holds an unresolved variable token",
-            )
-    for si, st in enumerate(plan.statistical):
-        if LIVE_TOKEN.search(st.table) or LIVE_TOKEN.search(st.column):
-            raise PinnedModeError(
-                code="pinned_live_token",
-                message=f"statistical entry #{si} holds an unresolved variable token",
-            )
+def _scan_plan_for_tokens(plan: PinnedPlan) -> None:
+    """One pass over the decoded plan (configs and specs included) before anything validates it."""
+    try:
+        decoded = plan.to_dict()
+        for t in decoded["tables"]:
+            for c in t["columns"]:
+                c["config"] = json.loads(c.pop("config_json"))
+        for st in decoded["statistical"]:
+            st["spec"] = json.loads(st.pop("spec_json"))
+    except (ValueError, TypeError):
+        raise PinnedModeError(
+            code="pinned_plan_malformed", message="a column config or spec is not valid JSON"
+        ) from None
+    refuse_live_tokens(decoded, "plan")
 
 
 def _check_plan(plan: PinnedPlan) -> dict[tuple[str, str], StatisticalSpec]:
@@ -94,7 +93,6 @@ def _check_plan(plan: PinnedPlan) -> dict[tuple[str, str], StatisticalSpec]:
             code="pinned_runtime_changed",
             message="the runtime identity differs from the one the plan was pinned under",
         )
-    _refuse_tokens_in_names(plan)
     reject_unpinnable(
         {
             "tables": [
@@ -166,6 +164,7 @@ def execute_pinned(plan: PinnedPlan, seed: int) -> dict[str, pa.Table]:
 
     import pandas as pd
 
+    _scan_plan_for_tokens(plan)
     seed = validate_seed(seed)
     specs = _check_plan(plan)
     with warnings.catch_warnings():

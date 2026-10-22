@@ -648,3 +648,43 @@ def test_malformed_plan_messages_do_not_echo_names(snap: str) -> None:
             execute_pinned(dataclasses.replace(plan, tables=(table, *plan.tables[1:])), 1)
         assert exc.value.code == "pinned_plan_malformed"
         assert "leaky" not in str(exc.value)
+
+
+def test_token_in_global_settings_seed_is_refused_without_echo(snap: str) -> None:
+    cfg = _config(snap)
+    cfg["global_settings"]["seed"] = "${env.SECRET}"
+    with pytest.raises(PinnedModeError) as exc:
+        compile_pinned_plan(cfg, REF)
+    assert exc.value.code == "pinned_live_token"
+    assert "${" not in str(exc.value) and "SECRET" not in str(exc.value)
+
+
+def test_token_in_statistical_spec_is_refused_without_echo(snap: str) -> None:
+    plan = compile_pinned_plan(_config(snap), REF)
+    stat = plan.statistical[0]
+    spec = json.loads(stat.spec_json)
+    spec["column"] = "${env.SECRET}"
+    bad = dataclasses.replace(
+        stat, column="${env.SECRET}", spec_json=json.dumps(spec, sort_keys=True)
+    )
+    with pytest.raises(PinnedModeError) as exc:
+        execute_pinned(dataclasses.replace(plan, statistical=(bad,)), 1)
+    assert exc.value.code == "pinned_live_token"
+    assert "${" not in str(exc.value) and "SECRET" not in str(exc.value)
+
+    spec_only = dataclasses.replace(
+        stat, spec_json=json.dumps({**json.loads(stat.spec_json), "dtype": "${var.x}"})
+    )
+    with pytest.raises(PinnedModeError) as exc2:
+        execute_pinned(dataclasses.replace(plan, statistical=(spec_only,)), 1)
+    assert exc2.value.code == "pinned_live_token"
+    assert "${" not in str(exc2.value)
+
+
+def test_token_in_a_config_key_is_not_echoed(snap: str) -> None:
+    cfg = _config(snap)
+    cfg["tables"][0]["generate_columns"][0]["x-${env.SECRET}"] = 1
+    with pytest.raises(PinnedModeError) as exc:
+        compile_pinned_plan(cfg, REF)
+    assert exc.value.code == "pinned_live_token"
+    assert "${" not in str(exc.value) and "SECRET" not in str(exc.value)

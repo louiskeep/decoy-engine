@@ -74,14 +74,41 @@ def anchor_is_absolute(text: str) -> bool:
 LIVE_TOKEN = re.compile(r"\$\{[^}]*\}")
 
 
-def _has_live_token(value: Any) -> bool:
+def find_live_token(value: Any, path: str = "") -> str | None:
+    """Field path of the first ``${...}`` token in ``value``, scanning every key and value.
+
+    The path never contains the token: a key that holds one is shown as ``<key>``.
+    """
     if isinstance(value, str):
-        return LIVE_TOKEN.search(value) is not None
+        return path if LIVE_TOKEN.search(value) else None
     if isinstance(value, dict):
-        return any(_has_live_token(k) or _has_live_token(v) for k, v in value.items())
+        for k, v in value.items():
+            key = str(k)
+            seg = "<key>" if LIVE_TOKEN.search(key) else key
+            sub = f"{path}.{seg}" if path else seg
+            if LIVE_TOKEN.search(key):
+                return sub
+            hit = find_live_token(v, sub)
+            if hit is not None:
+                return hit
+        return None
     if isinstance(value, (list, tuple)):
-        return any(_has_live_token(v) for v in value)
-    return False
+        for i, v in enumerate(value):
+            hit = find_live_token(v, f"{path}[{i}]")
+            if hit is not None:
+                return hit
+    return None
+
+
+def refuse_live_tokens(value: Any, root: str) -> None:
+    """The one token guard: run first, over the whole input, before any validator sees it."""
+    hit = find_live_token(value)
+    if hit is not None:
+        where = f"{root}.{hit}" if hit and not hit.startswith("[") else f"{root}{hit}"
+        raise PinnedModeError(
+            code="pinned_live_token",
+            message=f"{where or root} holds an unresolved variable token",
+        )
 
 
 def _where(table: str, column: str) -> str:
@@ -95,13 +122,6 @@ def reject_unpinnable(config: dict[str, Any]) -> None:
         raise PinnedModeError(
             code="pinned_not_generation_only", message="the job declares no tables"
         )
-    # Positions only: a token can sit in a table or column name, and must not reach a message.
-    for ti, table in enumerate(tables):
-        if _has_live_token(table):
-            raise PinnedModeError(
-                code="pinned_live_token",
-                message=f"table #{ti} holds an unresolved variable token",
-            )
     for table in tables:
         tname = str(table.get("name"))
         gcols = table.get("generate_columns")
@@ -177,6 +197,7 @@ def compile_pinned_plan(config: dict[str, Any], reference_date: datetime | str) 
     from decoy_engine.plan import compile_plan
     from decoy_engine.plan._types import unfreeze_json
 
+    refuse_live_tokens(config, "config")
     reference = normalize_reference_date(reference_date)
     reject_unpinnable(config)
     plan = compile_plan(
