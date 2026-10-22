@@ -39,16 +39,24 @@ compile branches and in `run_config_only_checks`.
 
 ### Fixed (§WHEN-NUMERIC: reject a `when:`-gated string-output mask on a numeric column, 2026-10-22)
 
-A `when:` row gate combined with a string-output strategy on an integer or float
-column used to crash mid-run: matched rows became strings while unmatched rows
-kept their numbers, and one Arrow column cannot hold both, so the pandas route
-raised a raw `pyarrow.ArrowInvalid` at reconstruction. `redact` (with a string
-replacement) and `truncate` now fail closed at plan-compile with a clear coded
-`PlanCompileError` (`when_string_output_on_numeric_unsupported`) naming the
-table/column/strategy, instead of crashing. Valid configs are unaffected: a
-numeric `redact_with`, a non-numeric source column, and whole-column masking
-(no `when:`) all still run, and `hash` keeps its own existing coded guards
-(`gated_hash_on_integer_unsupported` / `float_canonicalization_unsupported`).
+A `when:` row gate combined with a string-output strategy on an integer, float
+or decimal column used to crash mid-run: matched rows became strings while
+unmatched rows kept their numbers, and one Arrow column cannot hold both, so the
+pandas route raised a raw `pyarrow.ArrowInvalid` at reconstruction. Every
+statically-typed string-output strategy now fails closed at plan-compile with a
+clear coded `PlanCompileError` (`when_string_output_on_numeric_unsupported`)
+naming the table/column/strategy: `truncate`, `redact` with a string
+replacement, `fpe`, `categorical` with string categories, `text_redact` (unless
+its token is non-string), `text_mask`, `code_set` and `bucket_perturb`. Which
+strategies emit a string is read from the engine's own output typing
+(`masked_output_type`), not a second list. `faker` has no declared output type
+at compile time, so a gated `faker` column whose provider produces strings over a
+numeric column, with a gate that leaves some rows unmasked, fails at execution with
+`gated_faker_string_on_numeric_unsupported`, before the gated write. Valid configs are unaffected: a numeric `redact_with`,
+numeric categorical categories, a non-numeric source column, an FK-child column,
+and whole-column masking (no `when:`) all still run, and `hash` keeps its own
+existing coded guards (`gated_hash_on_integer_unsupported` /
+`float_canonicalization_unsupported`).
 Profile-dependent, so it is recorded in `checks_skipped` under `no_profile=True`.
 
 ### Confirmed closed (§MEM-EST-DTYPES: byte-estimate routing on category/tz columns, 2026-10-22)

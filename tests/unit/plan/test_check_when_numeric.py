@@ -2,11 +2,13 @@
 a numeric column.
 
 The plan-compile check `when_string_output_on_numeric_unsupported` rejects a
-`when:` row gate combined with a string-output strategy (`truncate`, or `redact`
-with a string replacement) on an integer or float column: matched rows would be
+`when:` row gate combined with a statically-typed string-output strategy (truncate,
+redact with a string replacement, fpe, categorical with string categories,
+text_redact, text_mask, code_set, bucket_perturb; resolved via the engine's
+`masked_output_type`) on an integer, float or decimal column: matched rows would be
 strings and unmatched rows numbers, which has no single Arrow type and crashes
-the pandas route at reconstruction (`pyarrow.ArrowInvalid`). `hash` is left to its
-own dedicated guards. FK-child columns are exempt (resolved via the edge). Under
+the pandas route at reconstruction (`pyarrow.ArrowInvalid`). `hash` and `faker` are
+left to their execution guards. FK-child columns are exempt (resolved via the edge). Under
 no_profile=True the check lands in checks_skipped. Plan:
 docs/plans/2026-10-22-engine-correctness-when-numeric.md.
 """
@@ -91,6 +93,118 @@ class TestWhenNumericRejected:
         profile = _profile(_col("c", dtype="int64"))
         with pytest.raises(PlanCompileError):
             check_when_string_output_on_numeric_unsupported(_config("redact"), profile)
+
+
+_STRING_STRATEGIES: list[tuple[str, dict[str, Any]]] = [
+    ("fpe", {}),
+    ("categorical", {"categories": ["a", "b"]}),
+    ("text_redact", {}),
+    ("text_mask", {}),
+    ("code_set", {"code_set": "icd10"}),
+    ("bucket_perturb", {"bucket": "month"}),
+]
+
+
+class TestWhenNumericAllStringStrategies:
+    @pytest.mark.parametrize(("strategy", "cfg"), _STRING_STRATEGIES)
+    @pytest.mark.parametrize("dtype", ["int64", "float64", "decimal128(10, 2)"])
+    def test_rejects_each_string_output_strategy(
+        self, strategy: str, cfg: dict[str, Any], dtype: str
+    ) -> None:
+        profile = _profile(_col("c", dtype=dtype))
+        with pytest.raises(PlanCompileError) as exc:
+            check_when_string_output_on_numeric_unsupported(
+                _config(strategy, provider_config=cfg), profile
+            )
+        assert exc.value.code == "when_string_output_on_numeric_unsupported"
+        assert repr(strategy) in str(exc.value)
+
+    def test_message_does_not_leak_config_values(self) -> None:
+        profile = _profile(_col("c", dtype="int64"))
+        config = _config("categorical", provider_config={"categories": ["SECRET-VALUE-9"]})
+        with pytest.raises(PlanCompileError) as exc:
+            check_when_string_output_on_numeric_unsupported(config, profile)
+        assert "SECRET-VALUE-9" not in str(exc.value)
+        assert "c > 2" not in str(exc.value)
+
+    def test_rejects_through_compile_plan_path(self) -> None:
+        profile = _profile(_col("c", dtype="int64"))
+        with pytest.raises(PlanCompileError) as exc:
+            check_when_string_output_on_numeric_unsupported(
+                _config("truncate", provider_config={"length": 1, "keep": "head"}), profile
+            )
+        assert exc.value.code == "when_string_output_on_numeric_unsupported"
+
+
+class TestWhenNumericNoFalsePositive:
+    @pytest.mark.parametrize(
+        ("strategy", "cfg"),
+        [
+            ("categorical", {"categories": [1, 2, 3]}),
+            ("categorical", {"categories": [1.5, 2.5]}),
+            ("text_redact", {"token": 0}),
+            ("redact", {"redact_with": 0}),
+            ("redact", {"redact_with": 1.5}),
+            ("passthrough", {}),
+        ],
+    )
+    @pytest.mark.parametrize("dtype", ["int64", "float64"])
+    def test_numeric_output_on_numeric_allowed(
+        self, strategy: str, cfg: dict[str, Any], dtype: str
+    ) -> None:
+        profile = _profile(_col("c", dtype=dtype))
+        check_when_string_output_on_numeric_unsupported(
+            _config(strategy, provider_config=cfg), profile
+        )
+
+    @pytest.mark.parametrize(("strategy", "cfg"), _STRING_STRATEGIES)
+    def test_string_source_allowed(self, strategy: str, cfg: dict[str, Any]) -> None:
+        profile = _profile(_col("c", dtype="object"))
+        check_when_string_output_on_numeric_unsupported(
+            _config(strategy, provider_config=cfg), profile
+        )
+
+    @pytest.mark.parametrize(("strategy", "cfg"), _STRING_STRATEGIES)
+    def test_no_when_gate_allowed(self, strategy: str, cfg: dict[str, Any]) -> None:
+        profile = _profile(_col("c", dtype="int64"))
+        check_when_string_output_on_numeric_unsupported(
+            _config(strategy, when=None, provider_config=cfg), profile
+        )
+
+    @pytest.mark.parametrize(("strategy", "cfg"), _STRING_STRATEGIES)
+    def test_fk_child_exempt(self, strategy: str, cfg: dict[str, Any]) -> None:
+        profile = _profile(
+            _col("c", dtype="int64"),
+            relationships=(
+                Relationship(
+                    parent_table="parent",
+                    parent_columns=("pid",),
+                    child_table="t",
+                    child_columns=("c",),
+                    namespace="ns",
+                ),
+            ),
+        )
+        check_when_string_output_on_numeric_unsupported(
+            _config(strategy, provider_config=cfg), profile
+        )
+
+    def test_faker_not_typed_at_compile(self) -> None:
+        # faker has no declared output type; it is guarded at execution instead.
+        profile = _profile(_col("c", dtype="int64"))
+        check_when_string_output_on_numeric_unsupported(_config("faker"), profile)
+
+    def test_flat_redact_with_is_not_read(self) -> None:
+        # The engine reads redact_with only from provider_config; a flat key is inert.
+        profile = _profile(_col("c", dtype="int64"))
+        config = _config("redact", provider_config={"redact_with": 0})
+        config["tables"][0]["columns"][0]["redact_with"] = "X"
+        check_when_string_output_on_numeric_unsupported(config, profile)
+
+    def test_invalid_strategy_config_left_to_its_own_check(self) -> None:
+        profile = _profile(_col("c", dtype="int64"))
+        config = _config("categorical", provider_config={"categories": []})
+        check_when_string_output_on_numeric_unsupported(config, profile)
 
 
 class TestWhenNumericAllowed:

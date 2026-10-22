@@ -6,6 +6,8 @@ import importlib.util
 import re
 from typing import Any
 
+import pyarrow as pa
+
 from decoy_engine.plan._checks import _is_integer_dtype
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.profile._types import Profile
@@ -13,41 +15,66 @@ from decoy_engine.profile._types import Profile
 # §WHEN-NUMERIC: under a `when:` row gate, a strategy whose output is a string
 # makes matched rows strings while unmatched rows keep their numbers, and one
 # Arrow column cannot hold both -- the pandas route crashes at reconstruction.
-# `truncate` always emits a string, so it always triggers the crash on a numeric
-# source. `redact` emits a string only when its replacement is a string (a
-# numeric `redact_with` keeps the column numeric), so it is checked
-# conditionally below. `hash` is deliberately NOT here: it already raises its own
-# dedicated coded errors (`gated_hash_on_integer_unsupported` for int,
-# `float_canonicalization_unsupported` for float) rather than raw-crashing.
-_WHEN_UNCONDITIONAL_STRING_STRATEGIES = frozenset({"truncate"})
-_WHEN_CONDITIONAL_STRING_STRATEGIES = frozenset({"redact"})
+# Whether a strategy emits a string is NOT listed here: it is read from the
+# engine's own per-strategy output typing (`masked_output_type`, which delegates
+# to `group_b_output_type` / `group_c_output_type`), so it cannot drift from what
+# the masks actually emit. `hash` has dedicated execution guards
+# (`gated_hash_on_integer_unsupported`, `float_canonicalization_unsupported`) and
+# `faker` has no declared output type at compile time (its provider return type
+# is only known by running it), so it is guarded at execution instead
+# (`gated_faker_string_on_numeric_unsupported`).
+_WHEN_UNTYPED_HERE = frozenset({"hash", "faker", "passthrough"})
 
 
 def _is_float_dtype(dtype: str) -> bool:
-    """True for pandas/numpy/arrow/DB floating-point dtype strings.
+    """True for pandas/numpy/arrow/DB floating-point and decimal dtype strings.
 
     Like `_is_integer_dtype`, `ColumnProfile.dtype` is `str(series.dtype)`, so it
-    can be `float64`, `Float32` (nullable), `float64[pyarrow]`, or a DB-source
-    label like `double precision` / `real` / `numeric`. Integers, object,
-    datetime and boolean are excluded.
+    can be `float64`, `Float32` (nullable), `float64[pyarrow]`, `decimal128(10, 2)`
+    or a DB-source label like `double precision` / `real` / `numeric`. Integers,
+    object, datetime and boolean are excluded.
     """
     base = dtype.lower().split("[", 1)[0].strip()
     if base in {"double", "double precision", "real", "numeric", "decimal", "float"}:
         return True
+    if base.startswith(("decimal128", "decimal256")):
+        return True
     return bool(re.fullmatch(r"float(16|32|64)?", base))
 
 
-def _redact_replacement_is_string(col_entry: dict[str, Any]) -> bool:
-    """Whether a `redact` column's replacement value is a string (so the masked
-    output is string-typed). Mirrors `masked_output_type`'s resolution: the
-    nested `provider_config` wins over a flat top-level key, default `"REDACTED"`.
+def _strategy_emits_string(strategy: object, col_entry: dict[str, Any]) -> bool:
+    """Whether `strategy`, configured as `col_entry` says, emits a string column.
+
+    Reuses `masked_output_type` (execution/out_of_core/_mask.py) on a seed built
+    from the config, so the answer is the engine's own: truncate and hash are
+    string, redact is typed from its replacement scalar (read from the nested
+    `provider_config`, the only place the engine reads it), and the Group (b)/(c)
+    strategies resolve through `group_b_output_type` / `group_c_output_type`.
+    A strategy the output typing does not cover, or a config it rejects, is left
+    alone here: the latter has its own config check and the former is not a
+    statically-typed string producer.
     """
-    provider_config = col_entry.get("provider_config")
-    if isinstance(provider_config, dict) and "redact_with" in provider_config:
-        return isinstance(provider_config["redact_with"], str)
-    if "redact_with" in col_entry:
-        return isinstance(col_entry["redact_with"], str)
-    return True  # default replacement "REDACTED" is a string
+    if not isinstance(strategy, str) or strategy in _WHEN_UNTYPED_HERE:
+        return False
+    from decoy_engine.execution._errors import ExecutionError, StrategyError
+    from decoy_engine.execution.out_of_core._mask import masked_output_type
+    from decoy_engine.plan._types import ColumnSeed
+
+    raw_cfg = col_entry.get("provider_config")
+    seed = ColumnSeed(
+        namespace=None,
+        strategy=strategy,
+        provider=None,
+        backend_type="faker",
+        backend_version="",
+        cardinality_mode="reuse",
+        provider_config=tuple(raw_cfg.items()) if isinstance(raw_cfg, dict) else (),
+    )
+    try:
+        out_type = masked_output_type(seed, None)
+    except (ExecutionError, StrategyError, ValueError, TypeError):
+        return False
+    return bool(pa.types.is_string(out_type) or pa.types.is_large_string(out_type))
 
 
 def check_when_string_output_on_numeric_unsupported(
@@ -59,9 +86,10 @@ def check_when_string_output_on_numeric_unsupported(
     column leaves matched rows holding a string and unmatched rows holding their
     numbers; one Arrow column cannot hold both, so the pandas route crashes at
     reconstruction (`pyarrow.ArrowInvalid`). Reject it at compile with a clear
-    coded error instead. `truncate` (always string) and `redact` with a string
-    replacement are covered; `hash` has its own dedicated guards and is left
-    alone. An FK-child column is exempt, mirroring
+    coded error instead. Every statically-typed string-output strategy is covered
+    (truncate, redact with a string replacement, fpe, categorical with string
+    categories, text_redact, text_mask, code_set, bucket_perturb), resolved through
+    `masked_output_type`. `hash` and `faker` are left to their execution guards. An FK-child column is exempt, mirroring
     `check_null_bearing_int_unsupported`: its values are resolved through the
     relationship edge, not written by this strategy.
 
@@ -94,11 +122,7 @@ def check_when_string_output_on_numeric_unsupported(
             if not (isinstance(when, str) and when.strip()):
                 continue
             strategy = col_entry.get("strategy")
-            string_output = strategy in _WHEN_UNCONDITIONAL_STRING_STRATEGIES or (
-                strategy in _WHEN_CONDITIONAL_STRING_STRATEGIES
-                and _redact_replacement_is_string(col_entry)
-            )
-            if not string_output:
+            if not _strategy_emits_string(strategy, col_entry):
                 continue
             col_name = col_entry.get("name", "?")
             if (table_name, col_name) in fk_child_columns:
@@ -114,7 +138,7 @@ def check_when_string_output_on_numeric_unsupported(
                     "gated by `when:` would leave matched rows as strings and unmatched "
                     "rows as numbers in one column, which has no single Arrow type and "
                     "fails at reconstruction. Mask the whole column (drop `when:`), "
-                    "stringify the column upstream, or use a numeric replacement value."
+                    "stringify the column upstream, or choose a strategy whose output stays numeric."
                 ),
             )
 

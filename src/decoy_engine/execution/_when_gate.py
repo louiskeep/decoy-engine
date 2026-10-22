@@ -35,6 +35,7 @@ import pandas as pd
 from decoy_engine.errors import ValidationError
 from decoy_engine.execution._errors import StrategyError
 from decoy_engine.execution._exact_int_sources import gated_context, selected_positions
+from decoy_engine.execution._gated_faker_guard import reject_gated_faker_string_on_numeric
 from decoy_engine.execution._row_errors import RowError
 from decoy_engine.expressions._when_parser import (
     WHEN_OUTSIDE_GRAMMAR_CODE,
@@ -258,5 +259,9 @@ def run_with_when_gate(
     if len(ctx.row_errors) > err_start:
         # `.tolist()` (only on the rare error path) gives a plain Sequence.
         _remap_gated_row_errors(ctx, err_start, positions.tolist())
+    if plan.strategy == "faker":
+        reject_gated_faker_string_on_numeric(
+            df[column], sub_df[column], mask, table=ctx.current_table, column=column
+        )
     df.loc[mask, column] = sub_df[column]
     return df, warnings

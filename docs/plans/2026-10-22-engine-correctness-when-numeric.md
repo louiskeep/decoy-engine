@@ -82,15 +82,30 @@ existing execution-time behavior backs that case up. Output-string resolution:
 - redact/truncate+when on a STRING column → ALLOWED.
 - redact/truncate with NO when on a numeric column → ALLOWED.
 - hash+when on numeric → still its own existing coded error (unchanged).
+- fpe, categorical (string categories), text_redact, text_mask, code_set, bucket_perturb
+  +when on numeric → rejected; numeric-category categorical and numeric-token
+  text_redact → allowed. A gated faker string provider on numeric with a partial gate → execution error
+  `gated_faker_string_on_numeric_unsupported`.
 - `no_profile=True` → the check is skipped (listed in checks_skipped).
 
 ### Non-goals
 
-Other string-output strategies (fpe, text_mask/text_redact, categorical) under
-`when:` on numeric are out of scope: the finding names hash/redact/truncate, fpe
-and the text strategies have their own type constraints, and over-broad
-rejection risks false positives. Recorded as a follow-up if any is shown to
-raw-crash the same way. The "cast unmatched to string" alternative (roadmap
+The first cut of this check named only truncate and redact, on the belief that
+the other string-output strategies "have their own type constraints". That was
+wrong: a gated `faker` string provider and a gated `categorical` with string
+categories on an int64 column both raise the same `pyarrow.ArrowInvalid`
+(reproduced), as do fpe, text_redact, text_mask, code_set and bucket_perturb. The
+shipped check therefore covers every statically-typed string-output strategy at
+compile, resolved through the engine's `masked_output_type` rather than a second
+list, so numeric-output configs (numeric categorical categories, a non-string
+`text_redact` token, a numeric `redact_with`) are not rejected. `faker` cannot be
+typed at compile (a provider's return type is only known by running it), so it is
+guarded at execution by `gated_faker_string_on_numeric_unsupported`, which checks the
+gated subset's realized output in the `when:` gate wrapper before the write. It fires
+only when the gate leaves non-null rows unmasked; a gate that selects every non-null
+row turns the column uniformly to strings, which works and is not rejected. `hash` keeps its own execution guards. Not covered:
+`date_shift` and other pandas-only strategies that `masked_output_type` does not type.
+The "cast unmatched to string" alternative (roadmap
 option 1) is deliberately not taken: reject-at-validation is the triage's choice
 and avoids silently restyping a numeric column.
 
