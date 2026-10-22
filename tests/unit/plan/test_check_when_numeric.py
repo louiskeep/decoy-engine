@@ -18,7 +18,7 @@ from typing import Any
 
 import pytest
 
-from decoy_engine.plan._checks import check_when_string_output_on_numeric_unsupported
+from decoy_engine.plan._checks_correctness import check_when_string_output_on_numeric_unsupported
 from decoy_engine.plan._compile import compile_plan
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.profile import ColumnProfile, Profile, Relationship, TableProfile

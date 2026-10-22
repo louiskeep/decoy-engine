@@ -85,9 +85,9 @@ ALLOWLIST: dict[str, int] = {
     # monolithic train_and_evaluate; decompose into split/fit/calibrate/evaluate modules.
     "src/decoy_engine/storm/model_pack/trainer.py": 715,
     # compile-check ownership table; split into per-strategy check modules once the check set stabilises.
-    "src/decoy_engine/plan/_checks.py": 783,
+    "src/decoy_engine/plan/_checks.py": 712,
     # statistical-column check threading; same per-strategy-check decomposition target as _checks.py.
-    "src/decoy_engine/plan/_compile.py": 652,
+    "src/decoy_engine/plan/_compile.py": 663,
     # safety invariants documented in docstrings are part of the fix; extract the emission builders into _mem_telemetry_emit.py.
     "src/decoy_engine/execution/_mem_telemetry.py": 762,
     # chunk-parity invariant text and admission gate calls; dense exception.

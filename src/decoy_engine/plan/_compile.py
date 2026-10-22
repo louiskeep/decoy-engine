@@ -56,8 +56,6 @@ from decoy_engine.plan._checks import (
     check_text_mask_ner_available,
     check_text_redact_ner_available,
     check_unknown_provider,
-    check_vault_columns,
-    check_when_string_output_on_numeric_unsupported,
 )
 
 # Per-strategy fail-closed check modules (truncate, bucketize, categorical, ...),
@@ -65,6 +63,10 @@ from decoy_engine.plan._checks import (
 from decoy_engine.plan._checks_bucket_perturb import check_bucket_perturb_config
 from decoy_engine.plan._checks_bucketize import check_bucketize_config
 from decoy_engine.plan._checks_categorical import check_categorical_categories
+from decoy_engine.plan._checks_correctness import (
+    check_vault_columns,
+    check_when_string_output_on_numeric_unsupported,
+)
 from decoy_engine.plan._checks_date_shift import (
     check_date_preserve_values,
     check_date_shift_group_by_refs,
