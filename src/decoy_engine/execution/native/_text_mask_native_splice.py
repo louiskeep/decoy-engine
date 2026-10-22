@@ -27,13 +27,13 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from decoy_engine.detection.detectors import _SPAN_DETECTORS, Span, iter_spans
 from decoy_engine.execution.native._text_redact_kernel import (
     CATALOG_VERSION,
     SUPPORTED_IDS,
     TextRedactKernel,
     merge_text_redact_spans,
 )
-from decoy_engine.storm.detectors import _SPAN_DETECTORS, Span, iter_spans
 from decoy_engine.transforms._text_mask_splice import warn_passthrough_unmatched
 from decoy_engine.transforms.text_mask import DETECTOR_DEFAULTS
 

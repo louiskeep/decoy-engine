@@ -8,8 +8,8 @@ silently break the contract.
 
 import pytest
 
-from decoy_engine.storm.detectors import REGISTERED_DETECTORS
-from decoy_engine.storm.recommendations import (
+from decoy_engine.detection.detectors import REGISTERED_DETECTORS
+from decoy_engine.profiling.recommendations import (
     DEFAULT_STRATEGY_BY_DETECTOR,
     VALID_STRATEGIES,
     get_default_strategy,

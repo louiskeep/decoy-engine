@@ -66,7 +66,7 @@ class TestNpi:
     https://www.cms.gov/Regulations-and-Guidance/Administrative-Simplification/
     NationalProvIdentStand/Downloads/NPIcheckdigit.pdf
 
-    Verified against the examples in decoy_engine.storm._validators._npi_valid
+    Verified against the examples in decoy_engine.detection._validators._npi_valid
     (independent implementation).
     """
 

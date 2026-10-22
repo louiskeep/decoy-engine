@@ -19,9 +19,9 @@ import pandas as pd
 import pytest
 
 from decoy_engine.checksums import validate as _checksum_validate
+from decoy_engine.detection.detectors import _SPAN_DETECTORS, Span
 from decoy_engine.errors import FpeUnencryptableError
 from decoy_engine.plan._types import ColumnSeed
-from decoy_engine.storm.detectors import _SPAN_DETECTORS, Span
 from decoy_engine.transforms.text_mask import (
     _DEFAULT_TOKEN,
     DETECTOR_DEFAULTS,
@@ -412,7 +412,7 @@ class TestAllDetectorsHaveDefaultStrategy:
 
     def test_defaults_cover_all_25_registered_detectors(self) -> None:
         """DETECTOR_DEFAULTS covers all STORM REGISTERED_DETECTORS (25 + street_address)."""
-        from decoy_engine.storm.detectors import REGISTERED_DETECTORS
+        from decoy_engine.detection.detectors import REGISTERED_DETECTORS
 
         registered_ids = {fn.__name__.replace("detect_", "") for fn in REGISTERED_DETECTORS}
         missing = registered_ids - set(DETECTOR_DEFAULTS.keys())

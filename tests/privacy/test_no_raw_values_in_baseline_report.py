@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import json
 
-from decoy_engine.storm.eval import build_fixtures, run_baseline
+from decoy_engine.profiling.eval import build_fixtures, run_baseline
 
 
 def _sample_raw_values(n_per_column: int = 5) -> list[str]:
@@ -67,7 +67,7 @@ def test_baseline_report_contains_no_raw_cell_values() -> None:
 
 def test_column_features_contain_no_raw_cell_values() -> None:
     """ColumnFeatures dicts (X from make_split_inputs) must be aggregate-only."""
-    from decoy_engine.storm.eval.split import make_split_inputs
+    from decoy_engine.profiling.eval.split import make_split_inputs
 
     fixtures = build_fixtures()
     raw_values = _sample_raw_values(n_per_column=5)

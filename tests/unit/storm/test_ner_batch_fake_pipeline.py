@@ -19,7 +19,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from decoy_engine.storm.detectors import Span
+from decoy_engine.detection.detectors import Span
 
 
 class _FakeEnt:
@@ -76,7 +76,7 @@ class _FakePipeline:
 
 
 def _install_fake_pipeline(monkeypatch, fake: _FakePipeline) -> None:
-    import decoy_engine.storm.ner as ner_mod
+    import decoy_engine.detection.ner as ner_mod
 
     monkeypatch.setattr(ner_mod, "_pipeline", lambda model=None: fake)
 
@@ -114,7 +114,7 @@ class TestCharacterizationGolden:
         }
 
     def test_exact_spans_order_mapping_and_unmapped_exclusion(self, monkeypatch) -> None:
-        from decoy_engine.storm.ner import iter_ner_spans_batch
+        from decoy_engine.detection.ner import iter_ner_spans_batch
 
         _install_fake_pipeline(monkeypatch, _FakePipeline(self._docs()))
         result = iter_ner_spans_batch([self._TEXT_A, self._TEXT_B, self._TEXT_C])
@@ -133,7 +133,7 @@ class TestCharacterizationGolden:
         ]
 
     def test_entities_filter_by_detector_id(self, monkeypatch) -> None:
-        from decoy_engine.storm.ner import iter_ner_spans_batch
+        from decoy_engine.detection.ner import iter_ner_spans_batch
 
         _install_fake_pipeline(monkeypatch, _FakePipeline(self._docs()))
         only_location = iter_ner_spans_batch([self._TEXT_A], entities=["location"])
@@ -142,7 +142,7 @@ class TestCharacterizationGolden:
         assert only_person == [[Span("person_name", 0, 11, "Marie Curie")]]
 
     def test_entities_empty_list_yields_no_spans(self, monkeypatch) -> None:
-        from decoy_engine.storm.ner import iter_ner_spans_batch
+        from decoy_engine.detection.ner import iter_ner_spans_batch
 
         _install_fake_pipeline(monkeypatch, _FakePipeline(self._docs()))
         assert iter_ner_spans_batch([self._TEXT_A], entities=[]) == [[]]
@@ -150,7 +150,7 @@ class TestCharacterizationGolden:
     def test_entities_spacy_label_is_not_a_detector_id_yields_no_spans(self, monkeypatch) -> None:
         # "GPE" is the spaCy ENTITY LABEL, not the detector id ("location");
         # `entities` filters by detector id, so this must yield nothing.
-        from decoy_engine.storm.ner import iter_ner_spans_batch
+        from decoy_engine.detection.ner import iter_ner_spans_batch
 
         _install_fake_pipeline(monkeypatch, _FakePipeline(self._docs()))
         assert iter_ner_spans_batch([self._TEXT_A], entities=["GPE"]) == [[]]
@@ -161,7 +161,7 @@ class TestWhitespaceEntersThePipe:
     non-empty and must reach `.pipe` exactly as it reaches `nlp()` today."""
 
     def test_whitespace_reaches_pipe_empty_and_nonstr_do_not(self, monkeypatch) -> None:
-        from decoy_engine.storm.ner import iter_ner_spans_batch
+        from decoy_engine.detection.ner import iter_ner_spans_batch
 
         fake = _FakePipeline({})
         _install_fake_pipeline(monkeypatch, fake)
@@ -174,7 +174,7 @@ class TestWhitespaceEntersThePipe:
         assert result[3] == []  # 42
 
     def test_oversized_whitespace_raises_same_error_class_both_paths(self, monkeypatch) -> None:
-        from decoy_engine.storm.ner import iter_ner_spans, iter_ner_spans_batch
+        from decoy_engine.detection.ner import iter_ner_spans, iter_ner_spans_batch
 
         oversized_ws = " " * 5  # stands in for a whitespace cell over max_length
         fake = _FakePipeline({}, raise_on=oversized_ws)
@@ -194,7 +194,7 @@ class TestBatchSizeAndCardinalityGuard:
 
     @pytest.mark.parametrize("bad_batch_size", [0, -1])
     def test_non_positive_batch_size_raises_value_error(self, bad_batch_size: int) -> None:
-        from decoy_engine.storm.ner import iter_ner_spans_batch
+        from decoy_engine.detection.ner import iter_ner_spans_batch
 
         # Assert the message, not just "some ValueError": a mutant that
         # relaxes the boundary to `< 0` would let `batch_size=0` fall through
@@ -210,28 +210,28 @@ class TestBatchSizeAndCardinalityGuard:
     def test_batch_size_one_is_valid_and_does_not_raise(self, monkeypatch) -> None:
         # The boundary is `<= 0`, not `<= 1`: batch_size=1 is the smallest
         # VALID value and must not raise.
-        from decoy_engine.storm.ner import iter_ner_spans_batch
+        from decoy_engine.detection.ner import iter_ner_spans_batch
 
         fake = _FakePipeline({})
         _install_fake_pipeline(monkeypatch, fake)
         assert iter_ner_spans_batch(["hello"], batch_size=1) == [[]]
 
     def test_fewer_docs_than_inputs_raises_never_empty(self, monkeypatch) -> None:
-        from decoy_engine.storm.ner import iter_ner_spans_batch
+        from decoy_engine.detection.ner import iter_ner_spans_batch
 
         _install_fake_pipeline(monkeypatch, _FakePipeline({}, missing_docs=1))
         with pytest.raises(ValueError):
             iter_ner_spans_batch(["a", "b", "c"])
 
     def test_more_docs_than_inputs_raises_never_empty(self, monkeypatch) -> None:
-        from decoy_engine.storm.ner import iter_ner_spans_batch
+        from decoy_engine.detection.ner import iter_ner_spans_batch
 
         _install_fake_pipeline(monkeypatch, _FakePipeline({}, extra_docs=1))
         with pytest.raises(ValueError):
             iter_ner_spans_batch(["a", "b", "c"])
 
     def test_all_empty_batch_short_circuits_without_a_pipe_call(self, monkeypatch) -> None:
-        from decoy_engine.storm.ner import iter_ner_spans_batch
+        from decoy_engine.detection.ner import iter_ner_spans_batch
 
         fake = _FakePipeline({})
         _install_fake_pipeline(monkeypatch, fake)
@@ -242,7 +242,7 @@ class TestBatchSizeAndCardinalityGuard:
 
 class TestScatterMixedPositions:
     def test_mixed_positions_scatter_to_guarded_out_and_correct_spans(self, monkeypatch) -> None:
-        from decoy_engine.storm.ner import iter_ner_spans_batch
+        from decoy_engine.detection.ner import iter_ner_spans_batch
 
         entity_text = "ZQMARK"
         dup_text = "DUPTXT"
@@ -276,8 +276,8 @@ class TestPipeArgForwarding:
     ignores its own inputs), so it needs a dedicated forwarding check."""
 
     def test_model_batch_size_and_n_process_forwarded_verbatim(self, monkeypatch) -> None:
-        import decoy_engine.storm.ner as ner_mod
-        from decoy_engine.storm.ner import iter_ner_spans_batch
+        import decoy_engine.detection.ner as ner_mod
+        from decoy_engine.detection.ner import iter_ner_spans_batch
 
         seen_model: list[object] = []
         fake = _FakePipeline({})

@@ -14,10 +14,10 @@ import random
 import pandas as pd
 import pytest
 
+from decoy_engine.detection import DetectorMatch
 from decoy_engine.profile import PIIClass
 from decoy_engine.profile._pii import _best_high_confidence_match
 from decoy_engine.profile._walk import walk_dataframe
-from decoy_engine.storm import DetectorMatch
 
 
 def _rng(seed: int = 42) -> random.Random:
@@ -245,8 +245,9 @@ class TestCustomDetectorIdsSkipped:
         monkeypatch: pytest.MonkeyPatch,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
+        from decoy_engine.detection import DetectorMatch
         from decoy_engine.profile import _pii
-        from decoy_engine.storm import DetectorMatch, FieldStats, StormProfile
+        from decoy_engine.profiling import ColumnProfile, FieldStats
 
         fake_field = FieldStats(
             name="weird_col",
@@ -266,17 +267,17 @@ class TestCustomDetectorIdsSkipped:
                 )
             ],
         )
-        fake_profile = StormProfile(
+        fake_profile = ColumnProfile(
             source_label="t",
             row_count=10,
             sample_strategy="full",
             fields=[fake_field],
         )
 
-        def _fake_run_storm(df: pd.DataFrame, source_label: str, **kwargs: object) -> StormProfile:
+        def _fake_profile_columns(df: pd.DataFrame, source_label: str, **kwargs: object) -> ColumnProfile:
             return fake_profile
 
-        monkeypatch.setattr(_pii, "run_storm", _fake_run_storm)
+        monkeypatch.setattr(_pii, "profile_columns", _fake_profile_columns)
         with caplog.at_level("WARNING", logger="decoy_engine.profile._pii"):
             tags = _pii.detect_pii_classes(pd.DataFrame({"weird_col": list(range(10))}), "t")
 
@@ -291,8 +292,9 @@ class TestCustomDetectorIdsSkipped:
         monkeypatch: pytest.MonkeyPatch,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
+        from decoy_engine.detection import DetectorMatch
         from decoy_engine.profile import _pii
-        from decoy_engine.storm import DetectorMatch, FieldStats, StormProfile
+        from decoy_engine.profiling import ColumnProfile, FieldStats
 
         # Simulate a future built-in STORM detector ("dob_iso", say) that
         # lands before the enum catches up. The walker should drop the tag
@@ -315,17 +317,17 @@ class TestCustomDetectorIdsSkipped:
                 )
             ],
         )
-        fake_profile = StormProfile(
+        fake_profile = ColumnProfile(
             source_label="t",
             row_count=10,
             sample_strategy="full",
             fields=[fake_field],
         )
 
-        def _fake_run_storm(df: pd.DataFrame, source_label: str, **kwargs: object) -> StormProfile:
+        def _fake_profile_columns(df: pd.DataFrame, source_label: str, **kwargs: object) -> ColumnProfile:
             return fake_profile
 
-        monkeypatch.setattr(_pii, "run_storm", _fake_run_storm)
+        monkeypatch.setattr(_pii, "profile_columns", _fake_profile_columns)
         with caplog.at_level("WARNING", logger="decoy_engine.profile._pii"):
             tags = _pii.detect_pii_classes(pd.DataFrame({"dob": list(range(10))}), "people")
 

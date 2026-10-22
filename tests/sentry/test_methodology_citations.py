@@ -138,7 +138,8 @@ def test_no_orphan_pattern_lines_in_unregistered_modules() -> None:
     candidate_globs = [
         "src/decoy_engine/transforms/*.py",
         "src/decoy_engine/forecast/*.py",
-        "src/decoy_engine/storm/*.py",
+        "src/decoy_engine/detection/*.py",
+        "src/decoy_engine/profiling/*.py",
         "src/decoy_engine/generators/*.py",
         "src/decoy_engine/graph/runner.py",
     ]

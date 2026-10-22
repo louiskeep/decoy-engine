@@ -14,8 +14,8 @@ import json
 
 import pytest
 
-from decoy_engine.storm.eval import build_fixtures
-from decoy_engine.storm.eval.split import (
+from decoy_engine.profiling.eval import build_fixtures
+from decoy_engine.profiling.eval.split import (
     assign_value_level_groups,
     make_group_key,
     make_split_inputs,
@@ -135,7 +135,7 @@ class TestHeldOutSplit:
 
     def test_split_yields_non_overlapping_indices(self):
         sklearn = pytest.importorskip("sklearn")  # noqa: F841
-        from decoy_engine.storm.eval.split import held_out_split
+        from decoy_engine.profiling.eval.split import held_out_split
 
         fixtures = build_fixtures()
         X, y, groups = make_split_inputs(fixtures)
@@ -150,7 +150,7 @@ class TestHeldOutSplit:
 
     def test_same_group_not_in_both_splits(self):
         sklearn = pytest.importorskip("sklearn")  # noqa: F841
-        from decoy_engine.storm.eval.split import held_out_split
+        from decoy_engine.profiling.eval.split import held_out_split
 
         fixtures = build_fixtures()
         X, y, groups = make_split_inputs(fixtures)
@@ -177,7 +177,7 @@ class TestHeldOutSplit:
         for k in keys:
             sys.modules[k] = None  # force ImportError on the next `from sklearn...`
         try:
-            from decoy_engine.storm.eval.split import held_out_split
+            from decoy_engine.profiling.eval.split import held_out_split
 
             with pytest.raises(ImportError, match="scikit-learn"):
                 list(held_out_split([1], ["ssn"], ["g1"], n_splits=2))

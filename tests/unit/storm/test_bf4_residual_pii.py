@@ -26,8 +26,8 @@ import re
 
 import pandas as pd
 
-from decoy_engine.storm.postmask.residual_pii import check_residual_pii
-from decoy_engine.storm.postmask.runner import run_storm_post_mask
+from decoy_engine.verification.postmask.residual_pii import check_residual_pii
+from decoy_engine.verification.postmask.runner import run_post_mask
 
 # ── Synthetic fixture factories ───────────────────────────────────────────────
 
@@ -102,7 +102,7 @@ class TestS1FailedHashSsn:
         config = {
             "tables": [{"name": "patients", "columns": [{"name": "ssn", "strategy": "hash"}]}],
         }
-        report = run_storm_post_mask(src, out, config=config)
+        report = run_post_mask(src, out, config=config)
         assert report["fail_count"] >= 1
         assert any(f["severity"] == "fail" for f in report["residual_pii"])
 
@@ -142,7 +142,7 @@ class TestS2SuccessfulHashSsn:
         config = {
             "tables": [{"name": "patients", "columns": [{"name": "ssn", "strategy": "hash"}]}],
         }
-        report = run_storm_post_mask(src, out, config=config)
+        report = run_post_mask(src, out, config=config)
         ssn_fails = [
             f for f in report["residual_pii"] if f["column"] == "ssn" and f["severity"] == "fail"
         ]
@@ -282,7 +282,7 @@ class TestS5MultiColumnMixedOutcomes:
                 }
             ],
         }
-        report = run_storm_post_mask(src, out, config=config)
+        report = run_post_mask(src, out, config=config)
         # At least one fail (SSN) and at least one info (email faker)
         assert report["fail_count"] >= 1
         all_sevs = {f["severity"] for f in report["residual_pii"]}
@@ -339,7 +339,7 @@ class TestSecurityNoRawValuesInReport:
                 {"name": "patients", "columns": [{"name": "ssn", "strategy": "hash"}]},
             ],
         }
-        report = run_storm_post_mask(src, out, config=config)
+        report = run_post_mask(src, out, config=config)
         # Guard against a vacuous canary: the scanner MUST have flagged the
         # residual SSN, otherwise the no-leak assertion below proves nothing.
         assert any(f["severity"] == "fail" for f in report["residual_pii"]), (

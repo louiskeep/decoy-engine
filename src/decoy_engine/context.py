@@ -259,7 +259,7 @@ class ExecutionContext:
         self.resolve_connector = resolve_connector
         # Side channel for ops that produce out-of-band artifacts the runner
         # can't reach via the dataframe stream (e.g. `run_storm` produces a
-        # StormProfile, not row data). Each entry is a dict shaped like
+        # ColumnProfile, not row data). Each entry is a dict shaped like
         # {"kind": "<artifact-kind>", ...}; the platform reads it after the
         # graph completes and persists each entry per its kind. List rather
         # than dict because a single graph may run multiple instances of the

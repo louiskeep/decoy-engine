@@ -40,7 +40,7 @@ modules:
     pattern: HMAC-SHA256-keyed deterministic offset
     source: HMAC RFC 2104
 
-  - path: src/decoy_engine/storm/model_pack/provenance.py
+  - path: src/decoy_engine/profiling/model_pack/provenance.py
     pattern: HMAC-SHA256
     source: RFC 2104
     note: Manifest integrity signing for ML model packs (ML3.2). Same stdlib
@@ -183,7 +183,7 @@ modules:
   # of being blunt-redacted. No new methodology use: the detection primitive is
   # this already-registered spaCy NER module, and the replacement primitive is
   # text_mask's already-registered HMAC-SHA256 keyed span determinism.
-  - path: src/decoy_engine/storm/ner.py
+  - path: src/decoy_engine/detection/ner.py
     pattern: spaCy NER
     source: explosion/spaCy (MIT); en_core_web_sm pretrained pipeline
 

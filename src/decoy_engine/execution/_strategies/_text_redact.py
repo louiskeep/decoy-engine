@@ -39,11 +39,11 @@ from __future__ import annotations
 
 import pandas as pd
 
+from decoy_engine.detection.detectors import Span, iter_spans
 from decoy_engine.execution._adapter import StrategyContext, provider_config_to_dict
 from decoy_engine.execution._errors import StrategyError
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.plan._types import ColumnSeed
-from decoy_engine.storm.detectors import Span, iter_spans
 
 _DEFAULT_TOKEN = "[REDACTED]"  # noqa: S105 - redaction placeholder, not a credential
 
@@ -76,7 +76,7 @@ class TextRedactHandler:
         ner_model: str | None = None
         ner_entities: list[str] | None = None
         if ner_cfg:
-            from decoy_engine.storm.ner import DEFAULT_NER_MODEL
+            from decoy_engine.detection.ner import DEFAULT_NER_MODEL
 
             if isinstance(ner_cfg, dict):
                 ner_model = str(ner_cfg.get("model") or DEFAULT_NER_MODEL)
@@ -94,7 +94,7 @@ class TextRedactHandler:
         # rather than emit different redactions. Runs before iter_ner_spans, so
         # it needs no spaCy pipeline; skipped when no version was stamped.
         if ner_model is not None and plan.ner_model_version is not None:
-            from decoy_engine.storm.ner import installed_model_version
+            from decoy_engine.detection.ner import installed_model_version
 
             current_version = installed_model_version(ner_model)
             if current_version is not None and current_version != plan.ner_model_version:
@@ -179,7 +179,7 @@ class TextRedactHandler:
             # (the whole column is already in memory), so a bounded window
             # keeps peak RSS from rising materially above the per-cell loop on
             # a wide column, rather than collecting every span list at once.
-            from decoy_engine.storm.ner import _NER_APPLY_WINDOW, iter_ner_spans_batch
+            from decoy_engine.detection.ner import _NER_APPLY_WINDOW, iter_ner_spans_batch
 
             non_null_positions = [pos for pos, is_null in enumerate(null_mask) if not is_null]
             for pos in non_null_positions:

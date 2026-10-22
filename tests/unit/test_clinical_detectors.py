@@ -8,7 +8,7 @@ biometric_id) that fire on name hint alone.
 
 import pandas as pd
 
-from decoy_engine.storm.detectors import (
+from decoy_engine.detection.detectors import (
     _icd10_valid,
     _npi_valid,
     detect_biometric_id,

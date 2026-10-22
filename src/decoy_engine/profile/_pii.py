@@ -1,7 +1,7 @@
 """STORM PII detection bridge for the Profile module.
 
 When walk_dataframe is called with run_pii_detection=True, this module
-calls decoy_engine.storm.run_storm against the DataFrame and translates
+calls decoy_engine.profiling.profile_columns against the DataFrame and translates
 its DetectorMatch hits into the closed PIIClass enum.
 
 Confidence policy: only STORM "high"-confidence matches set pii_class.
@@ -29,13 +29,14 @@ import logging
 
 import pandas as pd
 
+from decoy_engine.detection import DetectorMatch
 from decoy_engine.profile._types import PIIClass
-from decoy_engine.storm import DetectorMatch, run_storm
+from decoy_engine.profiling import profile_columns
 
 logger = logging.getLogger(__name__)
 
 # Custom-detector ids follow this prefix per the CustomDetectorSpec
-# docstring in decoy_engine.storm.types. Hits with this prefix are
+# docstring in decoy_engine.profiling.types. Hits with this prefix are
 # silently dropped (intentional); hits without it that are not in
 # PIIClass are logged at WARNING so the symmetry gap is operationally
 # visible.
@@ -59,7 +60,7 @@ def detect_pii_classes(df: pd.DataFrame, table_name: str) -> dict[str, PIIClass]
         Mapping from column name to PIIClass for columns where STORM
         fired a high-confidence built-in detector mapped into the enum.
     """
-    storm_profile = run_storm(df, source_label=table_name)
+    storm_profile = profile_columns(df, source_label=table_name)
     tags: dict[str, PIIClass] = {}
     for field_stats in storm_profile.fields:
         best = _best_high_confidence_match(field_stats.detector_matches)

@@ -112,9 +112,9 @@ from collections.abc import Sequence
 from datetime import datetime, timedelta
 from typing import Any
 
+from decoy_engine.detection.detectors import Span, iter_spans
 from decoy_engine.determinism import derive
 from decoy_engine.errors import FpeChecksumError, FpeUnencryptableError
-from decoy_engine.storm.detectors import Span, iter_spans
 from decoy_engine.transforms._faker_span import shared_faker
 from decoy_engine.transforms._text_mask_splice import splice_spans, warn_passthrough_unmatched
 from decoy_engine.transforms.date_shift import _COMMON_FORMATS

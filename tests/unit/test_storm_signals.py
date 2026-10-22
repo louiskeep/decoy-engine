@@ -12,13 +12,13 @@ from __future__ import annotations
 
 import pandas as pd
 
-from decoy_engine.storm import run_storm
+from decoy_engine.profiling import profile_columns
 
 
 def _scan(**columns) -> dict[str, object]:
     """Run STORM on the columns and return a {name: FieldStats} map."""
     df = pd.DataFrame(columns)
-    profile = run_storm(df, source_label="signals-test.csv")
+    profile = profile_columns(df, source_label="signals-test.csv")
     return {f.name: f for f in profile.fields}
 
 

@@ -415,7 +415,7 @@ def _check_ner_available_for_strategy(config: dict[str, Any], strategy: str) -> 
     installed packages only (no model load, no profile): safe for config-only
     callers (decoy validate).
     """
-    from decoy_engine.storm.ner import DEFAULT_NER_MODEL, NerUnavailableError, ensure_ner_available
+    from decoy_engine.detection import ner  # module import keeps the legacy-file LOC flat
 
     tables = config.get("tables", []) if isinstance(config.get("tables"), list) else []
     for table_entry in tables:
@@ -431,13 +431,13 @@ def _check_ner_available_for_strategy(config: dict[str, Any], strategy: str) -> 
             ner_cfg = provider_config.get("ner") if isinstance(provider_config, dict) else None
             if not ner_cfg:
                 continue
-            model = DEFAULT_NER_MODEL
+            model = ner.DEFAULT_NER_MODEL
             if isinstance(ner_cfg, dict) and ner_cfg.get("model"):
                 model = str(ner_cfg["model"])
             col_name = col_entry.get("name", "?")
             try:
-                ensure_ner_available(model)
-            except NerUnavailableError as exc:
+                ner.ensure_ner_available(model)
+            except ner.NerUnavailableError as exc:
                 raise PlanCompileError(
                     code=exc.code,
                     path=f"tables.{table_name}.columns.{col_name}.provider_config.ner",

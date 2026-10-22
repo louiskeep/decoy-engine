@@ -11,10 +11,10 @@ from __future__ import annotations
 
 import pandas as pd
 
-from decoy_engine.storm.postmask.fk_preservation import check_fk_preservation
-from decoy_engine.storm.postmask.policy_validation import check_policy_validation
-from decoy_engine.storm.postmask.residual_pii import check_residual_pii
-from decoy_engine.storm.postmask.runner import run_storm_post_mask
+from decoy_engine.verification.postmask.fk_preservation import check_fk_preservation
+from decoy_engine.verification.postmask.policy_validation import check_policy_validation
+from decoy_engine.verification.postmask.residual_pii import check_residual_pii
+from decoy_engine.verification.postmask.runner import run_post_mask
 
 # ── H4: composite FK tuple-wise check ─────────────────────────────
 
@@ -239,14 +239,14 @@ class TestResidualPiiPassthroughIsNoOp:
 
 
 class TestEnginePayloadGeneratedAt:
-    """M23: the run_storm_post_mask payload now includes generated_at
+    """M23: the run_post_mask payload now includes generated_at
     so the FE typings + JobStormReport row column agree with the
     engine emission."""
 
     def test_payload_carries_generated_at_iso_string(self):
         # Minimal config; empty frames so the checks short-circuit.
         cfg = {"tables": [], "relationships": []}
-        payload = run_storm_post_mask(
+        payload = run_post_mask(
             source_frames={},
             output_frames={},
             config=cfg,

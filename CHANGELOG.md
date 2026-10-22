@@ -9,6 +9,32 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Changed (STORM taxonomy rename: engine half, 2026-10-22)
+
+Pre-GA hard rename (no shims) retiring the prototype name `storm` as an internal
+package. `src/decoy_engine/storm/` is split by concern into three packages:
+`decoy_engine.detection` (detectors, patterns, validators, NER, domains,
+name-hints, detection types), `decoy_engine.profiling` (the column profiler,
+classification, distributions, sentinels, recommendations, model_pack, features,
+eval, profile types) and `decoy_engine.verification` (the post-mask pass).
+
+Public symbol renames (top-level re-exports updated): `run_storm` ->
+`profile_columns`, `StormProfile` -> `ColumnProfile`, `run_storm_post_mask` ->
+`run_post_mask`, `StormPostMaskReport` -> `PostMaskReport`; `DetectorMatch`,
+`FieldStats`, `SentinelFlag` and the exception classes keep their names at new
+import paths. The engine-internal `storm_profiles_to_snapshot` ->
+`profiles_to_snapshot`.
+
+Behavior, output, algorithms are unchanged. `storm` is retained as a product
+label on every user-facing / wire / persisted / telemetry surface: the
+`run_storm` config field, the `"storm-post-mask/v1"` schema string VALUE, the
+`"storm.scan"` event, `storm_run_group_id`, and the `/storm/...` routes are all
+unchanged. Two guard sentries enforce the rename (no `decoy_engine.storm`
+import; no leftover renamed-away symbol name). This is the engine half of a
+three-repo coordinated change; the decoy-platform and decoy CLI consumer
+migrations (and the CI-pin sequencing) are separate PRs. Plan:
+docs/plans/2026-10-09-storm-split-taxonomy.md.
+
 ### Added (DuckDB Postgres snapshot input primitive, 2026-10-20)
 
 New `decoy_engine.connectors.postgres_snapshot` module: a read-only snapshot-to-Parquet

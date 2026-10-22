@@ -261,7 +261,7 @@ def test_text_mask_ner_path_parity(batch_rows: int | None) -> None:
     `_text_mask_ner`), so parity must hold -- including at small batch sizes,
     which is where a non-batch-local port would diverge (mirrors
     `test_out_of_core_group_b_parity.test_text_redact_ner_path_parity`)."""
-    from decoy_engine.storm.ner import model_installed, spacy_installed
+    from decoy_engine.detection.ner import model_installed, spacy_installed
 
     if not (spacy_installed() and model_installed()):
         pytest.skip("NER spaCy model not installed; text_mask NER path not exercisable here")

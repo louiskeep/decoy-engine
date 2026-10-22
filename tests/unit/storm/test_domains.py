@@ -10,19 +10,19 @@ from __future__ import annotations
 
 import pandas as pd
 
-from decoy_engine.storm.detectors import (
+from decoy_engine.detection.detectors import (
     REGISTERED_DETECTORS,
     detect_email,
     detect_pan,
     detect_ssn,
 )
-from decoy_engine.storm.domains import (
+from decoy_engine.detection.domains import (
     DOMAIN_BY_DETECTOR,
     Domain,
     domain_for,
     registered_detector_ids,
 )
-from decoy_engine.storm.profiler import run_storm
+from decoy_engine.profiling import profile_columns
 
 
 def _registered_ids() -> set[str]:
@@ -83,6 +83,6 @@ class TestFieldStatsDomain:
         df = pd.DataFrame(
             {"ssn": [f"{500 + i:03d}-{10 + i:02d}-{1000 + i:04d}" for i in range(20)]}
         )
-        profile = run_storm(df, "people.csv")
+        profile = profile_columns(df, "people.csv")
         field = {f.name: f for f in profile.fields}["ssn"]
         assert field.domain == "IDENTITY"

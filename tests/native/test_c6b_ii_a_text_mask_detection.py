@@ -13,6 +13,7 @@ from typing import Any
 import pyarrow as pa
 import pytest
 
+from decoy_engine.detection.detectors import Span
 from decoy_engine.errors import FpeUnencryptableError
 from decoy_engine.execution._errors import StrategyError
 from decoy_engine.execution.native import (
@@ -22,7 +23,6 @@ from decoy_engine.execution.native import (
 )
 from decoy_engine.execution.native._kernels_scalar import native_text_mask
 from decoy_engine.execution.native._text_redact_kernel import SUPPORTED_IDS
-from decoy_engine.storm.detectors import Span
 from decoy_engine.transforms.text_mask import mask_cell
 from tests.native._c6b_i_support import CORPUS, SUB_FLOOR_TEXTS
 from tests.native._c6c_ii_support import (

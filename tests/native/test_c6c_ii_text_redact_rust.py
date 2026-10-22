@@ -21,6 +21,15 @@ from typing import Any
 import pyarrow as pa
 import pytest
 
+from decoy_engine.detection import detectors as storm_detectors
+from decoy_engine.detection._validators import (
+    _iban_valid,
+    _icd10_valid,
+    _ipv4_valid,
+    _luhn_valid,
+    _npi_valid,
+)
+from decoy_engine.detection.detectors import Span, iter_spans
 from decoy_engine.execution.native import _kernels_scalar
 from decoy_engine.execution.native._kernels_scalar import native_text_redact
 from decoy_engine.execution.native._text_redact_kernel import (
@@ -32,15 +41,6 @@ from decoy_engine.execution.native._text_redact_kernel import (
     merge_text_redact_spans,
     requested_rust_ids,
 )
-from decoy_engine.storm import detectors as storm_detectors
-from decoy_engine.storm._validators import (
-    _iban_valid,
-    _icd10_valid,
-    _ipv4_valid,
-    _luhn_valid,
-    _npi_valid,
-)
-from decoy_engine.storm.detectors import Span, iter_spans
 from tests.native._c6c_ii_support import (
     CORPUS,
     DETECTOR_SELECTIONS,

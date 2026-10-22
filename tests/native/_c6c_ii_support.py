@@ -15,9 +15,9 @@ from typing import Any
 
 import pytest
 
+from decoy_engine.detection.detectors import _SPAN_DETECTORS, iter_spans
 from decoy_engine.execution._strategies._text_redact import _DEFAULT_TOKEN, _splice
 from decoy_engine.execution.native._text_redact_kernel import load_text_redact_kernel
-from decoy_engine.storm.detectors import _SPAN_DETECTORS, iter_spans
 
 # The eight Rust-supported detectors and the three that always stay Python (plan 2).
 RUST_DETECTORS = ("email", "us_phone", "pan", "iban", "ipv4", "icd10", "npi", "url")

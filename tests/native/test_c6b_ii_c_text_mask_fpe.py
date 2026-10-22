@@ -157,7 +157,7 @@ def test_known_answers_pinned_to_the_python_oracle() -> None:
 
 
 def _span(det: str, text: str) -> Any:
-    from decoy_engine.storm.detectors import Span
+    from decoy_engine.detection.detectors import Span
 
     return Span(det, 0, len(text), text)
 
