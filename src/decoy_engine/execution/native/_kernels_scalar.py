@@ -154,11 +154,11 @@ def native_text_redact(
 ) -> pa.Array:
     """Replace PII spans in every non-null cell; nulls stay null.
 
-    C6c-ii routes the eight lookaround-free detectors into the compiled companion for cells in the
-    ASCII-safe domain and keeps the Python path for every other cell and the three lookaround
-    detectors (`_text_redact_kernel`), so the spliced output is byte-identical to the oracle's
-    `iter_spans` + `_splice` always. With no companion (or an older/catalog-skewed one) the loader
-    returns `None` and the whole column runs the literal Python path, unchanged from C6c-i.
+    C6c-ii (plus the lookaround port) routes all eleven built-in detectors into the compiled
+    companion for cells in the ASCII-safe domain and keeps the Python path for every other cell
+    (`_text_redact_kernel`), so the spliced output is byte-identical to the oracle's `iter_spans` +
+    `_splice` always. With no companion (or an older/catalog-skewed one) the loader returns `None`
+    and the whole column runs the literal Python path, unchanged from C6c-i.
 
     Splicing has one implementation (`_splice`) and the empty-means-all rule is the resolver's: an
     empty tuple here runs zero detectors, as `iter_spans([])` does. Output is `pa.string()`; each

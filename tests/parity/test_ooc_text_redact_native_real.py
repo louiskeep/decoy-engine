@@ -234,10 +234,11 @@ def test_an_empty_or_absent_selection_sends_every_supported_detector_to_the_cand
     [
         (["email"], ("email",)),
         (["url", "email"], ("url", "email")),
-        (["email", "ssn", "us_phone"], ("email", "us_phone")),  # lookaround runs in Python
+        # ssn is Rust-supported now (the lookaround port), so it reaches the candidate call.
+        (["email", "ssn", "us_phone"], ("email", "ssn", "us_phone")),
         (["email", "no_such_detector"], ("email",)),
     ],
-    ids=["one", "ordered", "lookaround-stays-python", "unknown-dropped"],
+    ids=["one", "ordered", "lookaround-now-rust", "unknown-dropped"],
 )
 def test_a_subset_reaches_the_candidate_call_as_its_supported_ids(
     detectors: list[str], sent: tuple[str, ...], monkeypatch: pytest.MonkeyPatch
@@ -247,14 +248,19 @@ def test_a_subset_reaches_the_candidate_call_as_its_supported_ids(
     assert {ids for _, ids in spy.calls} == {sent}
 
 
-def test_a_lookaround_only_selection_still_masks_through_the_python_replay(
+def test_a_lookaround_only_selection_masks_through_the_rust_candidate_call(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # The lookaround port moved ssn/us_zip/street_address into Rust, so a lookaround-only selection
+    # now reaches the candidate call with exactly those ids (it used to send none and replay in
+    # Python). Output stays byte-identical to the oracle, and the SSN is still masked.
+    spy = spy_candidates(monkeypatch)
     seed = tr_seed(detectors=["ssn", "us_zip", "street_address"])
     run = run_chain(_payload(_FAMILIES["lookaround"]), (("a", seed),), batch_rows=3)
     got = run.tables["t"].column("a").to_pylist()
     assert got == _reference(_FAMILIES["lookaround"], seed)
     assert "123-45-6789" not in "".join(g for g in got if g)
+    assert {ids for _, ids in spy.calls} == {("ssn", "us_zip", "street_address")}
 
 
 def test_the_loader_self_test_is_not_a_masking_call(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -19,9 +19,24 @@ from decoy_engine.execution._strategies._text_redact import _DEFAULT_TOKEN, _spl
 from decoy_engine.execution.native._text_redact_kernel import load_text_redact_kernel
 from decoy_engine.storm.detectors import _SPAN_DETECTORS, iter_spans
 
-# The eight Rust-supported detectors and the three that always stay Python (plan 2).
-RUST_DETECTORS = ("email", "us_phone", "pan", "iban", "ipv4", "icd10", "npi", "url")
-PYTHON_DETECTORS = ("ssn", "us_zip", "street_address")
+# All eleven built-in detectors now run in Rust on an eligible cell: the eight original
+# lookaround-free ones plus the three lookaround detectors ported to fancy-regex. Nothing but an
+# ineligible cell (non-ASCII / 0x1c-0x1f / surrogate / non-string) now declines to Python.
+RUST_DETECTORS = (
+    "email",
+    "us_phone",
+    "pan",
+    "iban",
+    "ipv4",
+    "icd10",
+    "npi",
+    "url",
+    "ssn",
+    "us_zip",
+    "street_address",
+)
+# The lookaround detectors ported in this slice -- kept as a named group for targeted parity tests.
+LOOKAROUND_DETECTORS = ("ssn", "us_zip", "street_address")
 
 _COMPANION_PRESENT = importlib.util.find_spec("decoy_engine_native") is not None
 _TR_KERNEL = load_text_redact_kernel()

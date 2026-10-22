@@ -46,12 +46,17 @@ from tests.native._c6c_ii_support import (
     DETECTOR_SELECTIONS,
     ELIGIBLE_TEXTS,
     INELIGIBLE_TEXTS,
+    LOOKAROUND_DETECTORS,
     NEEDS_TR_KERNEL,
     RUST_DETECTORS,
     SHAPES,
     oracle_text_redact,
     python_raw_candidates,
 )
+
+# The eight original lookaround-free detectors (regex crate) vs the three lookaround ones
+# (fancy-regex). The split is the index boundary in the Rust catalog.
+LOOKAROUND_FREE_DETECTORS = tuple(d for d in RUST_DETECTORS if d not in LOOKAROUND_DETECTORS)
 
 
 def _kernel() -> Any:
@@ -138,6 +143,106 @@ def test_raw_candidates_match_python_per_detector_on_eligible_cells(text: str) -
     for det_id in RUST_DETECTORS:
         rust = [(s, e) for (idx, s, e) in per_cell if idx == index_of[det_id]]
         assert rust == python_raw_candidates(text, det_id), det_id
+
+
+def _lookaround_adversarial_corpus(seed: int, n: int) -> list[str]:
+    """ASCII-only cells stressing the three lookaround detectors' boundary semantics: SSA reserved
+    blocks and optional hyphens (ssn), the non-word lookbehind/lookahead and decimal guard
+    (us_zip), and the house-number + USPS-suffix + unit + trailing-punctuation anchor
+    (street_address). Every cell is eligible, so the kernel must match Python span-for-span."""
+    rng = random.Random(seed)
+    ssn_ish = [
+        "123-45-6789",
+        "123456789",
+        "000-12-3456",
+        "666-12-3456",
+        "912-34-5678",
+        "123-00-4567",
+        "123-45-0000",
+        "078-05-1120",
+        "1234567890",
+        "12-345-6789",
+    ]
+    zip_ish = [
+        "12345",
+        "90210-1234",
+        "12345mg",
+        "12345.6",
+        "x12345",
+        "123456",
+        "12345-678",
+        "00000",
+        "12345-67890",
+        "a12345b",
+        "12345,",
+        " 12345 ",
+        "12345-1234x",
+    ]
+    street_ish = [
+        "12 Main Street",
+        "742 Evergreen Terrace.",
+        "1 A St",
+        "100 oak AVE here",
+        "350 Fifth Ave, Suite 200",
+        "1600 Pennsylvania Ave NW",
+        "42 2nd St Apt 3B",
+        "no number Main Street",
+        "12 Main",
+        "5 Elm Rd; next",
+        "9 Birch Ln.",
+        "1234567 Long St",
+        "10 Main Street#5",
+        "7 A B C D E Blvd",
+    ]
+    punct = ["", " ", ",", ". ", "; ", ": ", "! ", "? ", ")", '"', "'", " - ", "/", "x", "0"]
+    fillers = ["patient", "note", "seen", "on", "re", "visit", "and", "the", "id", "addr", "mrn"]
+    pools = ssn_ish + zip_ish + street_ish + fillers
+    out: list[str] = []
+    for _ in range(n):
+        parts: list[str] = []
+        for _ in range(rng.randint(0, 7)):
+            parts.append(rng.choice(pools))
+            parts.append(rng.choice(punct))
+        # Also emit raw random ASCII runs so the scanners meet shapes no fixture anticipated.
+        if rng.random() < 0.3:
+            alphabet = "0123456789- .,#/abcdefXYZ"
+            parts.append("".join(rng.choice(alphabet) for _ in range(rng.randint(1, 25))))
+        out.append("".join(parts))
+    return out
+
+
+@NEEDS_TR_KERNEL
+def test_lookaround_raw_candidates_match_python_on_an_adversarial_corpus() -> None:
+    """Byte-parity gate for the ported detectors: the kernel's raw per-detector candidate list for
+    ssn/us_zip/street_address must equal Python `finditer`+validator span-for-span on a large
+    randomized ASCII corpus, before any merge. A divergence here is the regression the port must
+    not introduce."""
+    kern = _kernel()
+    index_of = {det_id: i for i, det_id in enumerate(SUPPORTED_IDS)}
+    corpus = _lookaround_adversarial_corpus(seed=20261022, n=4000)
+    # Every generated cell must be eligible (ASCII, no 0x1c-0x1f); otherwise the kernel returns
+    # None and the comparison would be vacuous.
+    for text in corpus:
+        assert is_ascii_safe(text), repr(text)
+    per_cell_all = kern.text_redact_candidates(corpus, list(SUPPORTED_IDS), CATALOG_VERSION)
+    for text, per_cell in zip(corpus, per_cell_all, strict=True):
+        assert per_cell is not None, repr(text)
+        for det_id in LOOKAROUND_DETECTORS:
+            rust = [(s, e) for (idx, s, e) in per_cell if idx == index_of[det_id]]
+            assert rust == python_raw_candidates(text, det_id), (det_id, repr(text))
+
+
+@NEEDS_TR_KERNEL
+def test_lookaround_merged_output_matches_oracle_on_the_adversarial_corpus() -> None:
+    """End-to-end: the native wrapper's spliced output equals the oracle on the same adversarial
+    corpus, for the lookaround-only selection and for the all-detector selection, labeled and not."""
+    corpus = _lookaround_adversarial_corpus(seed=7, n=3000)
+    for detectors in (LOOKAROUND_DETECTORS, None):
+        for label in (False, True):
+            got = _native(corpus, detectors=detectors, token="<X>", label_token=label)
+            assert got == oracle_text_redact(
+                corpus, detectors=detectors, token="<X>", label_token=label
+            )
 
 
 @NEEDS_TR_KERNEL
@@ -340,14 +445,31 @@ def test_rust_and_python_ascii_classes_agree_and_0x1c_0x1f_is_the_only_gap() -> 
     assert python_unicode_s - rust_s == {0x1C, 0x1D, 0x1E, 0x1F}
 
 
-@NEEDS_TR_KERNEL
-def test_the_eight_patterns_use_only_d_s_and_ascii_case_fold() -> None:
-    # None of the eight use \w or \b (those live in the Python-only lookaround detectors), so the
+def test_the_lookaround_free_patterns_use_only_d_s_and_ascii_case_fold() -> None:
+    # The eight lookaround-free detectors use neither \w/\b nor any lookaround, so their
     # class-equivalence proof needs only \d, \s and ASCII case folding.
-    for det_id in RUST_DETECTORS:
+    for det_id in LOOKAROUND_FREE_DETECTORS:
         pattern = storm_detectors._SPAN_DETECTORS[det_id][0].pattern
         assert r"\w" not in pattern, det_id
         assert r"\b" not in pattern, det_id
+        for lookaround in (r"(?=", r"(?!", r"(?<=", r"(?<!"):
+            assert lookaround not in pattern, (det_id, lookaround)
+
+
+def test_the_lookaround_patterns_use_only_classes_whose_ascii_membership_is_proven() -> None:
+    # The three ported detectors add lookaround and the \w/\b constructs. Their byte parity rests
+    # on (a) the ASCII membership of \d, \s and \w (proven equal to Python's by the class test
+    # below), (b) \b being derived purely from \w, and (c) the eligibility predicate excluding the
+    # one \s divergence (0x1c-0x1f). Assert they introduce no OTHER class escape that would need
+    # its own proof (e.g. \D, \S, \W, a Unicode property \p{...}).
+    # \d/\s/\w are the classes; \b is derived from \w; the rest are escaped literals (dot,
+    # hyphen, quote, backslash) that carry no Unicode-vs-ASCII ambiguity.
+    allowed_escapes = {r"\d", r"\s", r"\w", r"\b", r"\.", r"\-", r"\\", '\\"'}
+    for det_id in LOOKAROUND_DETECTORS:
+        pattern = storm_detectors._SPAN_DETECTORS[det_id][0].pattern
+        escapes = {pattern[i : i + 2] for i in range(len(pattern) - 1) if pattern[i] == "\\"}
+        unexpected = escapes - allowed_escapes
+        assert not unexpected, (det_id, unexpected)
 
 
 # ---------------------------------------------------------------------------
@@ -521,8 +643,16 @@ def test_empty_selection_redacts_nothing_but_all_selection_redacts() -> None:
 
 def test_requested_rust_ids_filters_dedupes_and_expands_none() -> None:
     assert requested_rust_ids(None) == list(SUPPORTED_IDS)
-    assert requested_rust_ids(["ssn", "email", "us_zip", "ipv4"]) == ["email", "ipv4"]
-    assert requested_rust_ids(["email", "email", "ssn"]) == ["email"]
+    # ssn/us_zip are supported now, so they survive the filter in requested order; only ids
+    # outside the catalog (and duplicates) are dropped.
+    assert requested_rust_ids(["ssn", "email", "us_zip", "ipv4"]) == [
+        "ssn",
+        "email",
+        "us_zip",
+        "ipv4",
+    ]
+    assert requested_rust_ids(["email", "email", "ssn"]) == ["email", "ssn"]
+    assert requested_rust_ids(["person_name", "mrn", "email"]) == ["email"]  # unsupported dropped
     assert requested_rust_ids(["no_such"]) == []
 
 
