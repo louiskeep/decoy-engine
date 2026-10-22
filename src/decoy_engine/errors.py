@@ -459,6 +459,31 @@ class FixedWidthParseError(DecoyError):
     """
 
 
+class FixedWidthWriteError(DecoyError):
+    """Raised when a value cannot be written to a fixed-width file such that
+    it reads back unchanged against its `FixedWidthLayout` column-spec
+    (`profile._fixed_width_writer.write_fixed_width`).
+
+    The writer is the inverse of `read_fixed_width`: it fails closed on any
+    value that would not round-trip exactly -- a rendered value wider than its
+    column `width` (overflow), a string whose strip-side edge is the pad
+    character (the reader would strip part of the value), an integer whose
+    trailing digits the reader's pad-strip would remove, a null/NaN (the reader
+    never emits one), a value whose Python type does not match the column's
+    declared type, a string carrying an embedded newline, or a character that
+    cannot encode as UTF-8 -- rather than publishing a file that would decode to
+    different data. A mid-frame failure publishes nothing (atomic move on full
+    success only), so the canonical path is never left half-written.
+
+    Mirrors `FixedWidthParseError`'s PII-safe contract: the message carries only
+    the 0-based row index, column name and rendered value length -- never the
+    cell value -- and every raise happens from a frame that holds no cell value,
+    with the caught caster exception never attached as `__cause__`/`__context__`,
+    because the file being written may itself carry the PII this is a masking
+    product for. See docs/security/error-reporting-and-data-exposure.md.
+    """
+
+
 __all__ = [
     "ConfigError",
     "ConnectorAuthError",
@@ -467,6 +492,7 @@ __all__ = [
     "EmptyParentPoolError",
     "FKPreservationError",
     "FixedWidthParseError",
+    "FixedWidthWriteError",
     "FlagPauseSignal",
     "FpeChecksumError",
     "FpeUnencryptableError",
