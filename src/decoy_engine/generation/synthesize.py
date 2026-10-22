@@ -305,10 +305,9 @@ def _generate_column(
         # at validation; this branch is the defensive fallback for callers that
         # bypass validation (e.g. an unvalidated dict).
         raise ValueError(f"generate column {col.get('name')!r}: unexpected generator type {kind!r}")
-    # Fold the pinned snapshot digest into the null-injection seed ONLY in pinned execution, so the
-    # null mask matches the sampler's digest-folded seed. On the ordinary path this stays None, so
-    # null injection is byte-identical to pre-1b-E (the ordinary sampler/null digest consistency is a
-    # separate, pre-existing concern, out of scope for this additive slice).
+    # Pinned plans store `snapshot_file` as `sha256:<digest>`, not a path. Passing the digest keeps
+    # for_column from trying to open that string as a file. The ordinary path passes None and
+    # derives the null seed exactly as before.
     pinned_spec = (statistical_specs or {}).get((table_name, str(col.get("name"))))
     digest = (
         f"sha256:{pinned_spec.snapshot_digest}"
@@ -501,8 +500,7 @@ def _apply_null_probability(
     # identical null PATTERN (same seed, same N) so a null-prob column is
     # byte-identical V1<->V2, closing the pre-fix divergence the parity
     # oracle previously tolerated as fraction-only convergence.
-    # The pinned digest keeps this derivation identical to the sampler's and avoids reopening
-    # snapshot_file here.
+    # A caller-supplied digest replaces the snapshot_file read inside for_column.
     col_seed = GenDeriveContext.for_column(
         derive_key=derive_key,
         column_config=col,

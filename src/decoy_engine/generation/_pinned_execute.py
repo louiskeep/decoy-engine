@@ -38,6 +38,7 @@ def _order_tables(plan: PinnedPlan) -> list[str]:
     deps = {t.name: sorted(t.depends_on) for t in plan.tables}
     order: list[str] = []
     done: set[str] = set()
+    finished: set[str] = set()
     for start in sorted(deps):
         if start in done:
             continue
@@ -48,12 +49,18 @@ def _order_tables(plan: PinnedPlan) -> list[str]:
             parent = next(parents, None)
             if parent is None:
                 order.append(node)
+                finished.add(node)
                 stack.pop()
                 continue
             if parent not in deps:
                 raise PinnedModeError(
                     code="pinned_plan_malformed",
                     message=f"table {node!r} depends on unknown table {parent!r}",
+                )
+            if parent in done and parent not in finished:
+                raise PinnedModeError(
+                    code="pinned_plan_malformed",
+                    message=f"tables {node!r} and {parent!r} depend on each other",
                 )
             if parent not in done:
                 done.add(parent)

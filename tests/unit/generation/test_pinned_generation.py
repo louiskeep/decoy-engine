@@ -103,6 +103,8 @@ def _config(snapshot: str, seed: int = 11, **overrides: Any) -> dict[str, Any]:
                 "reference_table": "zeta_customers",
                 "reference_column": "id",
                 "distribution": "random",
+                "min_per_parent": 1,
+                "max_per_parent": 3,
                 "null_probability": 0.1,
             },
         ],
@@ -451,3 +453,88 @@ def test_ordinary_generation_is_untouched_by_pinned_mode(snap: str) -> None:
     cols[2]["categories"] = ["2024-01-15", "now"]
     with pytest.raises(WindowedDateError):
         compile_and_generate(copy.deepcopy(cfg))
+
+
+GOLDEN_ORDINARY_NULL_STATISTICAL = (
+    "7c609d6c04f896bde2c5073cf0bf0b2ca9dbc4c9fd5de71778285b32438e2082"
+)
+
+
+def test_ordinary_statistical_null_injection_matches_origin_main_golden() -> None:
+    """Digest captured from clean origin/main (b63be004); guards the ordinary null-seed path."""
+    from tests.unit._dps_helpers import compile_and_generate
+
+    snap_path = Path(__file__).resolve().parents[2] / "fixtures/phase_f_f0/stat_snapshot.json"
+    cfg = {
+        "version": 1,
+        "global_settings": {"seed": 5},
+        "sources": {},
+        "targets": {},
+        "tables": [
+            {
+                "name": "t",
+                "row_count": 60,
+                "generate_columns": [
+                    {
+                        "name": "amount",
+                        "type": "statistical",
+                        "snapshot_file": str(snap_path),
+                        "null_probability": 0.3,
+                    }
+                ],
+            }
+        ],
+    }
+    col = compile_and_generate(cfg)["t"].column("amount").to_pylist()
+    assert hashlib.sha256(repr(col).encode()).hexdigest() == GOLDEN_ORDINARY_NULL_STATISTICAL
+
+
+def test_pinnable_allowlist_covers_every_config_type() -> None:
+    """A new GenerateColumnConfig type must be classified before it can enter pinned mode."""
+    import typing
+
+    from decoy_engine.config._tables import GenerateColumnConfig
+    from decoy_engine.generation._pinned_compile import PINNABLE_TYPES, REJECTED_TYPES
+
+    known = set(typing.get_args(GenerateColumnConfig.model_fields["type"].annotation))
+    unclassified = known - set(PINNABLE_TYPES) - set(REJECTED_TYPES)
+    assert not unclassified, f"classify for pinned mode: {sorted(unclassified)}"
+    assert set(REJECTED_TYPES) == {"faker", "formula"}
+
+
+def test_unlisted_type_is_refused_at_compile_and_execute(snap: str) -> None:
+    from decoy_engine.generation._pinned_compile import reject_unpinnable
+
+    cfg = {"tables": [{"name": "t", "generate_columns": [{"name": "x", "type": "novel"}]}]}
+    with pytest.raises(PinnedModeError) as exc:
+        reject_unpinnable(cfg)
+    assert exc.value.code == "pinned_type_not_allowlisted"
+
+    plan = compile_pinned_plan(_config(snap), REF)
+    tables = list(plan.tables)
+    bad = dataclasses.replace(
+        tables[0].columns[0], config_json=json.dumps({"name": "order_no", "type": "novel"})
+    )
+    tables[0] = dataclasses.replace(tables[0], columns=(bad, *tables[0].columns[1:]))
+    with pytest.raises(PinnedModeError) as exc2:
+        execute_pinned(dataclasses.replace(plan, tables=tuple(tables)), 1)
+    assert exc2.value.code == "pinned_type_not_allowlisted"
+
+
+def test_hybrid_source_table_is_refused(snap: str) -> None:
+    cfg = _config(snap)
+    cfg["tables"][0]["source"] = "src"
+    with pytest.raises(PinnedModeError) as exc:
+        compile_pinned_plan(cfg, REF)
+    assert exc.value.code == "pinned_not_generation_only"
+
+
+def test_cyclic_plan_is_a_coded_error(snap: str) -> None:
+    plan = compile_pinned_plan(_config(snap), REF)
+    tables = tuple(
+        dataclasses.replace(t, depends_on=("alpha_orders",)) if t.name == "zeta_customers" else t
+        for t in plan.tables
+    )
+    with pytest.raises(PinnedModeError) as exc:
+        execute_pinned(dataclasses.replace(plan, tables=tables), 1)
+    assert exc.value.code == "pinned_plan_malformed"

@@ -29,6 +29,22 @@ from decoy_engine.generation._pinned_plan import (
     runtime_identity,
 )
 
+# Fail-closed allowlist: a generator type enters pinned mode only by being listed here after its
+# purity is reviewed. The sentry test keeps this and REJECTED_TYPES in step with the config Literal.
+PINNABLE_TYPES = frozenset(
+    {
+        "sequence",
+        "categorical",
+        "reference",
+        "derived",
+        "derived_aggregate",
+        "grouped_series",
+        "group_key",
+        "windowed_date",
+        "statistical",
+    }
+)
+
 REJECTED_TYPES = {
     "faker": (
         "pinned_faker_unsupported",
@@ -67,6 +83,11 @@ def reject_unpinnable(config: dict[str, Any]) -> None:
     for table in tables:
         tname = str(table.get("name"))
         gcols = table.get("generate_columns")
+        if table.get("source") or table.get("sources"):
+            raise PinnedModeError(
+                code="pinned_not_generation_only",
+                message=f"table {tname!r} declares a source; pinned mode is generation-only",
+            )
         if not gcols:
             raise PinnedModeError(
                 code="pinned_not_generation_only",
@@ -83,6 +104,11 @@ def _reject_column(tname: str, col: dict[str, Any], siblings: dict[Any, dict[str
     if kind in REJECTED_TYPES:
         code, why = REJECTED_TYPES[kind]
         raise PinnedModeError(code=code, message=f"{_where(tname, cname)}: {why}")
+    if kind not in PINNABLE_TYPES:
+        raise PinnedModeError(
+            code="pinned_type_not_allowlisted",
+            message=f"{_where(tname, cname)}: generator type is not pinnable",
+        )
     if col.get("determinism") == "fresh":
         raise PinnedModeError(
             code="pinned_determinism_fresh",
