@@ -172,8 +172,64 @@ def test_warnings_sorted_deterministically() -> None:
     r1 = compute_quality_report(src, out, now_iso=FIXED_TS)
     r2 = compute_quality_report(src, out, now_iso=FIXED_TS)
     assert json.dumps(r1, sort_keys=True) == json.dumps(r2, sort_keys=True)
-    codes = [w["code"] for w in r1["warnings"]]
-    assert codes == sorted(codes)
+    # Warnings are ordered by their full sort key (source, then code, then the
+    # detail tiebreakers), not by code alone -- the state column here is a
+    # disjoint single-label categorical, so it also raises a fidelity
+    # `gof_unavailable` warning alongside the diagnostic drift warnings.
+    keys = [(w["source"], w["code"]) for w in r1["warnings"]]
+    assert keys == sorted(keys)
+
+
+# ── F-DI0-2: nested-GOF unavailability propagation ───────────────────────
+
+
+def test_gof_unavailable_surfaces_when_primary_comparable() -> None:
+    # A constant categorical column: the primary TVD is comparable (identical
+    # distribution -> similarity 1), but the chi-square GOF has no identifiable
+    # support (one shared label, no tail). That unavailability must be reported,
+    # not silently dropped while the report implies full GOF coverage.
+    src = pd.DataFrame({"flag": ["X", "X", "X", "X"]})
+    out = pd.DataFrame({"flag": ["X", "X", "X", "X"]})
+    report = compute_quality_report(src, out, now_iso=FIXED_TS)
+
+    gof = [w for w in report["warnings"] if w["code"] == "gof_unavailable"]
+    assert len(gof) == 1
+    assert gof[0]["source"] == "fidelity"
+    assert gof[0]["detail"] == {
+        "column": "flag",
+        "metric": "chi_cramers_v",
+        "reason": "insufficient_identifiable_support",
+    }
+    # Primary score is comparable, so the column is NOT an omission and the grade
+    # still reflects the (identical) primary distribution.
+    assert [o for o in report["omissions"] if o["name"] == "flag"] == []
+    assert report["marginal"]["score"] == 1.0
+    assert report["grade"] == "A"
+
+
+def test_no_gof_unavailable_when_gof_comparable() -> None:
+    # Numeric + a 3-label categorical: both nested GOF metrics are comparable,
+    # so no gof_unavailable warning is emitted (guards against false positives).
+    df = pd.DataFrame(
+        {
+            "age": [25, 30, 35, 40, 45, 50],
+            "state": ["CA", "NY", "TX", "CA", "NY", "TX"],
+        }
+    )
+    report = compute_quality_report(df, df, now_iso=FIXED_TS)
+    assert [w for w in report["warnings"] if w["code"] == "gof_unavailable"] == []
+
+
+def test_gof_unavailable_warnings_deterministic_and_sorted() -> None:
+    # Two constant categorical columns -> two gof_unavailable warnings, ordered
+    # byte-stably by the column tiebreaker across runs.
+    src = pd.DataFrame({"a": ["X"] * 4, "b": ["Y"] * 4})
+    out = pd.DataFrame({"a": ["X"] * 4, "b": ["Y"] * 4})
+    r1 = compute_quality_report(src, out, now_iso=FIXED_TS)
+    r2 = compute_quality_report(src, out, now_iso=FIXED_TS)
+    assert json.dumps(r1, sort_keys=True) == json.dumps(r2, sort_keys=True)
+    gof_cols = [w["detail"]["column"] for w in r1["warnings"] if w["code"] == "gof_unavailable"]
+    assert gof_cols == ["a", "b"]
 
 
 # ── assemble_quality_report (pure) ────────────────────────────────────────
