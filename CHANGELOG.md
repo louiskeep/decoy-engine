@@ -7,6 +7,18 @@ Engine versions are independent of `decoy-cli`; the CLI declares the
 minimum engine version it was tested against via its
 `decoy-engine>=X.Y` dependency pin.
 
+## [0.12.0] - 2026-10-22
+
+### Added (GEN-API Slice 0: windowed generation primitive)
+
+New `decoy_engine.generation.window` module: `generate_rows(plan, *, table, offset, count, seed,
+budget_bytes, deadline_s)` produces a random-access `[offset, offset+count)` row window for a Class-A
+(seekable, reproducible) generation plan, byte-identical to the equivalent slice of a full
+`generate_tables` run, plus `classify_window` / the `_window_admission` admission model that refuses
+ungenerable configs (formula, non-finite/overflow numeric edges, tz-aware or out-of-range datetimes,
+non-monotonic/oversize freetext) before generation. Hardens the shared statistical sampler against
+zero-weight / subnormal histograms (no-op on normal specs). Underlies the platform Generation API.
+
 ## [Unreleased]
 
 ### Added (DuckDB Postgres snapshot input primitive, 2026-10-20)
