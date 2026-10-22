@@ -68,6 +68,8 @@ def _windowed_date_generate(
     n: int,
     seed: int,
     generated: dict[str, list[Any]],
+    *,
+    reference_date: str | None = None,
 ) -> list[Any]:
     """SP-10c: windowed_date in a generate table.
 
@@ -98,6 +100,10 @@ def _windowed_date_generate(
         cfg_dict["distribution"] = col["distribution"]
     config = WindowedDateConfig.from_dict(cfg_dict)
     anchor_vals = generated.get(config.anchor, [None] * n)
+    if reference_date is not None:
+        from decoy_engine.generation._pinned_anchor import resolve_anchor_cells
+
+        anchor_vals = resolve_anchor_cells(anchor_vals, reference_date)
     df = pd.DataFrame({config.anchor: anchor_vals})
     seed_bytes = seed.to_bytes(8, "big")
     col_name = col.get("name", "windowed_date_col")
