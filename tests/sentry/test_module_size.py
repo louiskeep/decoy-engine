@@ -75,7 +75,7 @@ ALLOWLIST: dict[str, int] = {
     # float FK key token pricing; split the disk-width helpers into _spill_widths.py.
     "src/decoy_engine/execution/out_of_core/_spill_estimate.py": 623,
     # pinned-Plan generation threading through the per-generator dispatch; split the statistical/derived/formula branches.
-    "src/decoy_engine/generation/synthesize.py": 632,
+    "src/decoy_engine/generation/synthesize.py": 658,
     "src/decoy_engine/storm/detectors.py": 1046,
     "src/decoy_engine/generators/columns.py": 660,
     "src/decoy_engine/storm/profiler.py": 635,

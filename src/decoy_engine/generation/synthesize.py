@@ -248,6 +248,8 @@ def _generate_column(
     table_name: str = "",
     statistical_specs: dict[tuple[str, str], StatisticalSpec] | None = None,
     provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None = None,
+    reference_date: str | None = None,
+    pinned: bool = False,
 ) -> list[Any]:
     """Dispatch a generate column to its generator by ``type`` (mirrors V1
     ``ColumnGenerator.generators``), then apply the V1 ``null_probability``
@@ -260,7 +262,8 @@ def _generate_column(
     ``table_name``/``statistical_specs`` (DPS Scope B) are the pinned-spec
     lookup for the ``statistical`` branch -- no snapshot path is reopened
     here (guide section 4.8). ``provider_snapshot`` (5a-faker) forwards to
-    the ``faker`` branch only; every other branch ignores it."""
+    the ``faker`` branch only; every other branch ignores it. ``reference_date`` is set only by
+    pinned execution: ``windowed_date`` then resolves ``now``/``today`` anchors against it."""
     kind = col.get("type")
     if kind == "sequence":
         values: list[Any] = _sequence(col, n)
@@ -292,7 +295,9 @@ def _generate_column(
         if kind == "grouped_series":
             values = _grouped_series_generate(col, n, seed, generated or {})
         elif kind == "windowed_date":
-            values = _windowed_date_generate(col, n, seed, generated or {})
+            values = _windowed_date_generate(
+                col, n, seed, generated or {}, reference_date=reference_date
+            )
         else:
             values = _group_key_generate(col, n, seed, generated or {})
     else:
@@ -300,7 +305,19 @@ def _generate_column(
         # at validation; this branch is the defensive fallback for callers that
         # bypass validation (e.g. an unvalidated dict).
         raise ValueError(f"generate column {col.get('name')!r}: unexpected generator type {kind!r}")
-    return _apply_null_probability(values, col, seed, derive_key)
+    # Pinned plans store `snapshot_file` as `sha256:<digest>`, not a path. Passing the digest keeps
+    # for_column from trying to open that string as a file. The ordinary path passes None and
+    # derives the null seed exactly as before.
+    pinned_spec = (statistical_specs or {}).get((table_name, str(col.get("name"))))
+    digest = (
+        f"sha256:{pinned_spec.snapshot_digest}"
+        if pinned
+        and kind == "statistical"
+        and pinned_spec is not None
+        and pinned_spec.snapshot_digest
+        else None
+    )
+    return _apply_null_probability(values, col, seed, derive_key, snapshot_content_digest=digest)
 
 
 def _sequence(col: dict[str, Any], n: int) -> list[str]:
@@ -457,7 +474,12 @@ def _faker(
 
 
 def _apply_null_probability(
-    values: list[Any], col: dict[str, Any], seed: int, derive_key: Any = None
+    values: list[Any],
+    col: dict[str, Any],
+    seed: int,
+    derive_key: Any = None,
+    *,
+    snapshot_content_digest: str | None = None,
 ) -> list[Any]:
     """Apply V1's ``null_probability`` post-process (``columns.py:174-187``): per-row
     seeded coin-flip; same column + same row -> same null/non-null decision across
@@ -478,8 +500,12 @@ def _apply_null_probability(
     # identical null PATTERN (same seed, same N) so a null-prob column is
     # byte-identical V1<->V2, closing the pre-fix divergence the parity
     # oracle previously tolerated as fraction-only convergence.
+    # A caller-supplied digest replaces the snapshot_file read inside for_column.
     col_seed = GenDeriveContext.for_column(
-        derive_key=derive_key, column_config=col, fallback_seed=seed
+        derive_key=derive_key,
+        column_config=col,
+        fallback_seed=seed,
+        snapshot_content_digest=snapshot_content_digest,
     ).base_int("np")
     out = list(values)
     null_mask = np.random.default_rng(col_seed).random(len(out)) < null_prob
