@@ -594,6 +594,10 @@ def check_vault_columns(config: dict[str, Any]) -> None:
       algebraically reversible under the config's seed, so a vault there
       stores a second copy of the source values for zero capability,
       pure disclosure liability.
+    - `vault: true` on `strategy: passthrough` is rejected: the column is
+      never masked, so the vault entry would map a value to itself (no
+      reversal capability), and the entry build (`to_pylist`) raises on
+      far dates and the -2^63 marker and silently truncates time64[ns].
 
     Config-only (no profile, no source data), so it runs in both
     compile branches and in `run_config_only_checks`.
@@ -633,6 +637,22 @@ def check_vault_columns(config: dict[str, Any]) -> None:
                         "vault: true on strategy fpe, which `decoy unmask` already "
                         "reverses from the config alone. A vault there duplicates "
                         "the source values for no capability; remove the flag."
+                    ),
+                )
+            if col_entry.get("strategy") == "passthrough":
+                # A passthrough column is never masked, so its vault entry would
+                # map a value to itself -- no reversal capability -- while the
+                # vault build (`to_pylist` over the source values) raises on far
+                # dates and the -2^63 marker and silently truncates time64[ns].
+                # Reject at compile rather than crash at vault-write time.
+                raise PlanCompileError(
+                    code="vault_strategy_unmasked",
+                    path=f"tables.{table_name}.columns.{col_name}.vault",
+                    message=(
+                        f"column {col_name!r} in table {table_name!r} declares "
+                        "vault: true on strategy passthrough, which leaves the "
+                        "value unmasked, so the vault would map it to itself for "
+                        "no capability; remove the flag or mask the column."
                     ),
                 )
             if not col_entry.get("namespace"):

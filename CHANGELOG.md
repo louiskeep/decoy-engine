@@ -9,6 +9,19 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Fixed (§VAULT-PASSTHROUGH: reject `vault: true` on a passthrough column, 2026-10-22)
+
+`vault: true` on a `strategy: passthrough` column used to pass compile and then
+crash at vault-write time: a passthrough value is never masked, so the vault
+would map a value to itself (no reversal capability), and the entry build
+(`to_pylist` over the source values) raises on far dates and the `-2^63` marker
+and silently truncates `time64[ns]`. The plan compiler now rejects it at
+PLAN/COMPILE time with a clear coded `PlanCompileError`
+(`vault_strategy_unmasked`) naming the table/column, alongside the existing
+`vault_requires_cryptography` / `vault_requires_namespace` /
+`vault_strategy_reversible` (fpe) vault guards. Config-only, so it runs in both
+compile branches and in `run_config_only_checks`.
+
 ### Fixed (§WHEN-NUMERIC: reject a `when:`-gated string-output mask on a numeric column, 2026-10-22)
 
 A `when:` row gate combined with a string-output strategy on an integer or float
