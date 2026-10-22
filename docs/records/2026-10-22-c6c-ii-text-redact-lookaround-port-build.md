@@ -139,7 +139,21 @@ lookaround detectors, which previously ran entirely in Python even on the native
 the latency floor and the RSS budget (no regression). The rejected fancy-regex variant, for
 contrast, measured R-representative 1.08x and R-python-only 0.45x (FAIL).
 
-<!-- 1M-ROW-ACCEPTANCE -->
+Acceptance scale, the plan's pinned 1,000,000 rows, 3 reps + 1 warmup (same methodology as the
+original C6c-ii record), this slice's scanner kernel:
+
+```
+row                base med(s)  new med(s)  speedup  lat<=1.05  rss<=1.20   hit%
+R-representative       95.8068     25.9686    3.69x         OK         OK  95.0%
+R-all-ineligible      100.5248     99.9790    1.01x         OK         OK   0.0%
+R-python-only          33.1778     11.1822    2.97x         OK         OK  95.0%
+R-short-no-match        4.5558      1.9964    2.28x         OK         OK 100.0%
+```
+
+Versus the original C6c-ii 1M record (the 8-detector kernel: R-representative 2.09x, R-python-only
+0.95x): R-representative improved 2.09x -> 3.69x and R-python-only 0.95x -> 2.97x. The new path runs
+R-representative at ~38.5k rows/s single-thread (1,000,000 / 25.97s). All rows pass the latency floor
+and the RSS budget.
 
 ### ASCII-hit-rate assumptions
 
