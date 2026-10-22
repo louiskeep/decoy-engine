@@ -223,11 +223,18 @@ def sample_column(
     *,
     col_seed: int,
     parent_values: list[Any] | None = None,
+    start: int = 0,
 ) -> list[Any]:
     """Draw `n` deterministic synthetic values for `spec`.
 
     `parent_values` is required when the spec declares `condition_on`:
     the already-generated values of the conditioning column, one per row.
+
+    `start` is the ABSOLUTE row index of the first returned value (windowed read). Row `i` of
+    the result is seeded with `col_seed + start + i`, so it equals row `start + i` of a full
+    run. It is a two-index contract for a conditional column: the per-row seed is absolute,
+    but `parent_values` stays indexed by the LOCAL position `i`, so a windowed caller passes
+    a parent list of length `n` aligned to the window, never the absolute index.
     """
     if spec.condition_on is not None and parent_values is None:
         raise StatisticalSpecError(
@@ -257,7 +264,7 @@ def sample_column(
         lo_bound, hi_bound = edges[0], edges[-1]
         out: list[Any] = []
         for i in range(n):
-            rng.seed(col_seed + i)
+            rng.seed(col_seed + start + i)
             x = _numeric_row(rng, edges, cum)
             if as_int:
                 out.append(int(min(max(round(x), lo_bound), hi_bound)))
@@ -287,7 +294,7 @@ def sample_column(
         conditional = _conditional_tables(spec) if spec.condition_on else {}
         out = []
         for i in range(n):
-            rng.seed(col_seed + i)
+            rng.seed(col_seed + start + i)
             table = (values, weights)
             if spec.condition_on is not None and parent_values is not None:
                 parent = parent_values[i] if i < len(parent_values) else None
@@ -317,7 +324,7 @@ def sample_column(
         hi = datetime.fromisoformat(str(spec.stats["max"]))
         out = []
         for i in range(n):
-            rng.seed(col_seed + i)
+            rng.seed(col_seed + start + i)
             year = rng.choices(years, weights=weights, k=1)[0]
             year_start = datetime(year, 1, 1)
             year_seconds = (datetime(year + 1, 1, 1) - year_start).total_seconds()
@@ -341,7 +348,7 @@ def sample_column(
         lo_len, hi_len = int(edges[0]), int(edges[-1])
         out = []
         for i in range(n):
-            rng.seed(col_seed + i)
+            rng.seed(col_seed + start + i)
             target = int(min(max(round(_numeric_row(rng, edges, cum)), lo_len), hi_len))
             out.append(_lorem_text(rng, target))
         return out
