@@ -35,6 +35,18 @@ from decoy_engine.profile._types import Profile
 # 2026-05-28: reject at validation.
 _INT_NULL_REJECTED_STRATEGIES = frozenset({"truncate", "categorical"})
 
+# §WHEN-NUMERIC: under a `when:` row gate, a strategy whose output is a string
+# makes matched rows strings while unmatched rows keep their numbers, and one
+# Arrow column cannot hold both -- the pandas route crashes at reconstruction.
+# `truncate` always emits a string, so it always triggers the crash on a numeric
+# source. `redact` emits a string only when its replacement is a string (a
+# numeric `redact_with` keeps the column numeric), so it is checked
+# conditionally below. `hash` is deliberately NOT here: it already raises its own
+# dedicated coded errors (`gated_hash_on_integer_unsupported` for int,
+# `float_canonicalization_unsupported` for float) rather than raw-crashing.
+_WHEN_UNCONDITIONAL_STRING_STRATEGIES = frozenset({"truncate"})
+_WHEN_CONDITIONAL_STRING_STRATEGIES = frozenset({"redact"})
+
 
 def _is_integer_dtype(dtype: str) -> bool:
     """True for pandas/numpy/arrow/DB integer dtype strings.
@@ -48,6 +60,20 @@ def _is_integer_dtype(dtype: str) -> bool:
     if base in {"integer", "bigint", "smallint", "tinyint", "int", "intp", "uintp"}:
         return True
     return bool(re.fullmatch(r"u?int(8|16|32|64)?", base))
+
+
+def _is_float_dtype(dtype: str) -> bool:
+    """True for pandas/numpy/arrow/DB floating-point dtype strings.
+
+    Like `_is_integer_dtype`, `ColumnProfile.dtype` is `str(series.dtype)`, so it
+    can be `float64`, `Float32` (nullable), `float64[pyarrow]`, or a DB-source
+    label like `double precision` / `real` / `numeric`. Integers, object,
+    datetime and boolean are excluded.
+    """
+    base = dtype.lower().split("[", 1)[0].strip()
+    if base in {"double", "double precision", "real", "numeric", "decimal", "float"}:
+        return True
+    return bool(re.fullmatch(r"float(16|32|64)?", base))
 
 
 def check_unknown_provider(config: dict[str, Any]) -> None:
@@ -251,6 +277,88 @@ def check_null_bearing_int_unsupported(config: dict[str, Any], profile: Profile)
                     "ambiguous across execution substrates (int widens to float on one "
                     "path, stays integer on the other). Stringify or bin this column "
                     "upstream. This mirrors the float-canonicalization hard error."
+                ),
+            )
+
+
+def _redact_replacement_is_string(col_entry: dict[str, Any]) -> bool:
+    """Whether a `redact` column's replacement value is a string (so the masked
+    output is string-typed). Mirrors `masked_output_type`'s resolution: the
+    nested `provider_config` wins over a flat top-level key, default `"REDACTED"`.
+    """
+    provider_config = col_entry.get("provider_config")
+    if isinstance(provider_config, dict) and "redact_with" in provider_config:
+        return isinstance(provider_config["redact_with"], str)
+    if "redact_with" in col_entry:
+        return isinstance(col_entry["redact_with"], str)
+    return True  # default replacement "REDACTED" is a string
+
+
+def check_when_string_output_on_numeric_unsupported(
+    config: dict[str, Any], profile: Profile
+) -> None:
+    """§WHEN-NUMERIC: reject a `when:`-gated string-output mask on a numeric column.
+
+    A `when:` row gate plus a string-output strategy on an integer or float
+    column leaves matched rows holding a string and unmatched rows holding their
+    numbers; one Arrow column cannot hold both, so the pandas route crashes at
+    reconstruction (`pyarrow.ArrowInvalid`). Reject it at compile with a clear
+    coded error instead. `truncate` (always string) and `redact` with a string
+    replacement are covered; `hash` has its own dedicated guards and is left
+    alone. An FK-child column is exempt, mirroring
+    `check_null_bearing_int_unsupported`: its values are resolved through the
+    relationship edge, not written by this strategy.
+
+    Profile-dependent (reads `dtype`), so under `no_profile=True` it lands in
+    `checks_skipped`; the crash it prevents is rare and the config is still
+    caught at run time there.
+    """
+    numeric_lookup: dict[tuple[str, str], bool] = {}
+    for table in profile.tables:
+        for col in table.columns:
+            numeric_lookup[(table.name, col.name)] = _is_integer_dtype(
+                col.dtype
+            ) or _is_float_dtype(col.dtype)
+
+    fk_child_columns: set[tuple[str, str]] = {
+        (rel.child_table, child_col)
+        for rel in profile.relationships
+        for child_col in rel.child_columns
+    }
+
+    tables = config.get("tables", []) if isinstance(config.get("tables"), list) else []
+    for table_entry in tables:
+        if not isinstance(table_entry, dict):
+            continue
+        table_name = table_entry.get("name", "?")
+        for col_entry in table_entry.get("columns", []) or []:
+            if not isinstance(col_entry, dict):
+                continue
+            when = col_entry.get("when")
+            if not (isinstance(when, str) and when.strip()):
+                continue
+            strategy = col_entry.get("strategy")
+            string_output = strategy in _WHEN_UNCONDITIONAL_STRING_STRATEGIES or (
+                strategy in _WHEN_CONDITIONAL_STRING_STRATEGIES
+                and _redact_replacement_is_string(col_entry)
+            )
+            if not string_output:
+                continue
+            col_name = col_entry.get("name", "?")
+            if (table_name, col_name) in fk_child_columns:
+                continue
+            if not numeric_lookup.get((table_name, col_name), False):
+                continue
+            raise PlanCompileError(
+                code="when_string_output_on_numeric_unsupported",
+                path=f"tables.{table_name}.columns.{col_name}.when",
+                message=(
+                    f"Column {table_name}.{col_name} is a numeric column masked under "
+                    f"{strategy!r} with a `when:` row gate. A string-output strategy "
+                    "gated by `when:` would leave matched rows as strings and unmatched "
+                    "rows as numbers in one column, which has no single Arrow type and "
+                    "fails at reconstruction. Mask the whole column (drop `when:`), "
+                    "stringify the column upstream, or use a numeric replacement value."
                 ),
             )
 

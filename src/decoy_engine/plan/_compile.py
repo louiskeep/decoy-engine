@@ -57,6 +57,7 @@ from decoy_engine.plan._checks import (
     check_text_redact_ner_available,
     check_unknown_provider,
     check_vault_columns,
+    check_when_string_output_on_numeric_unsupported,
 )
 
 # Per-strategy fail-closed check modules (truncate, bucketize, categorical, ...),
@@ -352,6 +353,8 @@ def compile_plan(
             # Row 10 (B1, S13): profile-dependent, so skipped here; the
             # execution-time guard rejects the same input on both adapters.
             "null_bearing_int_unsupported",
+            # §WHEN-NUMERIC: profile-dependent (dtype), skipped under no_profile.
+            "when_string_output_on_numeric_unsupported",
         )
     else:
         check_basic_uniqueness_pre_flight(config, profile)
@@ -364,6 +367,11 @@ def compile_plan(
         # runs here and is skipped under no_profile (the execution-time guard backs
         # it up there).
         check_null_bearing_int_unsupported(config, profile)
+        # §WHEN-NUMERIC: reject a `when:`-gated string-output mask (truncate, or
+        # redact with a string replacement) on a numeric column before it crashes
+        # at Arrow reconstruction. Profile-dependent (dtype), skipped under
+        # no_profile.
+        check_when_string_output_on_numeric_unsupported(config, profile)
         checks_passed = (
             "namespace_ambiguity",
             "unknown_provider",
@@ -375,6 +383,7 @@ def compile_plan(
             "composite_wiring_consistent",
             "deterministic_namespace_completeness",
             "null_bearing_int_unsupported",
+            "when_string_output_on_numeric_unsupported",
             # Row 11 (audit H5): structural, tail-appended.
             "non_poolable_provider_with_pool_backend",
             "dp_generate_contract",  # Row 31 (DPS-3)

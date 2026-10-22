@@ -537,3 +537,31 @@ def test_the_same_job_without_nulls_still_fits_full_frame(tmp_path: Path, source
     execution = result.quality_metrics["execution"]
     assert execution["execution_mode"] == "full_frame"
     assert execution["route_reason"] == "byte_estimate_full_frame_fits"
+
+
+# ---------------------------------------------------------------------------
+# §MEM-EST-DTYPES repro-of-record: category + tz columns together, byte-estimate
+# ON, must not crash (pre-audit-triage asked for a 1-test repro before closing).
+# ---------------------------------------------------------------------------
+
+
+def test_mem_est_dtypes_category_and_tz_together_do_not_crash(tmp_path: Path) -> None:
+    # A categorical (dictionary) column and a tz-aware timestamp column in one
+    # table, masked through run_pipeline with byte-estimate routing ON (default):
+    # the dictionary column is Unpriceable (routes bounded) and the tz timestamp
+    # prices as datetime64[ns] (8 bytes), so neither reaches the string sampler /
+    # the "unrecognized dtype" ValueError that §MEM-EST-DTYPES named. The run must
+    # not crash and must match byte-estimate OFF.
+    table = pa.table(
+        {
+            "s": pa.array(list("abcde")),
+            "cat": pa.array(["a", "b", "a", "c", "b"]).dictionary_encode(),
+            "ts": pa.array([1, 2, 3, 4, 5], pa.timestamp("us", "UTC")),
+        }
+    )
+    config = _single_table_config(
+        tmp_path, _write(tmp_path, table), [_hash("s"), _passthrough("cat"), _passthrough("ts")]
+    )
+    off = _run(config, {"t": table}, use_byte_estimate_routing=False)
+    on = _run(config, {"t": table})
+    _assert_same_outputs(on, off)
