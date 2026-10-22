@@ -92,6 +92,14 @@ jobs:
     timeout-minutes: 75
     steps:
       - uses: actions/checkout@v7
+        with:
+          # fetch-depth: 0 so origin/main is reachable in the checkout.
+          # tests/sentry/test_physical_seam_disconnection.py's byte-identical
+          # diff gate (Part 2) diffs against merge-base(origin/main, HEAD) and
+          # SKIPS when origin/main is absent; the default depth-1 checkout made
+          # it skip on every run, so the refactor-safety gate never actually
+          # ran in CI (§SEAM-SENTRY-CI). Matches compat-preflight / regression-proof.
+          fetch-depth: 0
       - uses: actions/setup-python@v6
         with:
           python-version: "3.10"
