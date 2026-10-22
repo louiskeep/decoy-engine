@@ -135,7 +135,7 @@ def _connectors() -> tuple[list[str], list[tuple[str, dict]]]:
 
 
 def _detectors() -> list[tuple[str, str]]:
-    from decoy_engine.storm.detectors import _SPAN_DETECTORS, REGISTERED_DETECTORS
+    from decoy_engine.detection.detectors import _SPAN_DETECTORS, REGISTERED_DETECTORS
 
     span = {getattr(f, "__name__", "") for f in _SPAN_DETECTORS}
     rows = []

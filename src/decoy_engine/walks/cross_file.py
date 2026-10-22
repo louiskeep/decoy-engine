@@ -23,7 +23,7 @@ primary contributor. The SQL-style rule still runs in case a profile
 mixes conventions.
 
 The security-blind boundary holds: this module only consumes
-``StormProfile`` dataclasses (which never carry raw row data), so it
+``ColumnProfile`` dataclasses (which never carry raw row data), so it
 can run anywhere in the engine without elevating data access.
 """
 
@@ -31,7 +31,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from decoy_engine.storm.types import StormProfile
+from decoy_engine.profiling.types import ColumnProfile
 from decoy_engine.walks.inference import infer_edges
 from decoy_engine.walks.types import Column, Edge, SchemaSnapshot, Table
 
@@ -49,13 +49,13 @@ class CrossFileWalkResult:
     edges: tuple[Edge, ...]
 
 
-def run_cross_file_walk(profiles: list[StormProfile]) -> CrossFileWalkResult:
+def run_cross_file_walk(profiles: list[ColumnProfile]) -> CrossFileWalkResult:
     """Infer cross-file foreign-key edges from a group of STORM profiles.
 
     Returns deterministic, sorted edges. Empty result is valid (no
     inferable relationships) - callers should not treat it as an error.
     """
-    snapshot = storm_profiles_to_snapshot(profiles)
+    snapshot = profiles_to_snapshot(profiles)
     file_style = infer_cross_file_edges(snapshot)
     sql_style = infer_edges(snapshot)
 
@@ -82,7 +82,7 @@ def run_cross_file_walk(profiles: list[StormProfile]) -> CrossFileWalkResult:
     )
 
 
-def storm_profiles_to_snapshot(profiles: list[StormProfile]) -> SchemaSnapshot:
+def profiles_to_snapshot(profiles: list[ColumnProfile]) -> SchemaSnapshot:
     """Build a multi-table ``SchemaSnapshot`` from STORM profiles.
 
     Each profile becomes one ``Table`` named after the profile's

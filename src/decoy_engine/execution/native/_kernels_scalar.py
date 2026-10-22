@@ -48,6 +48,7 @@ from typing import Any
 
 import pyarrow as pa
 
+from decoy_engine.detection.detectors import Span, iter_spans
 from decoy_engine.errors import FpeUnencryptableError
 from decoy_engine.execution._errors import StrategyError
 from decoy_engine.execution._strategies._text_redact import _splice
@@ -69,7 +70,6 @@ from decoy_engine.execution.native._text_redact_kernel import (
     requested_rust_ids,
 )
 from decoy_engine.kernel import passthrough_array, redact_array, truncate_array
-from decoy_engine.storm.detectors import Span, iter_spans
 from decoy_engine.transforms.text_mask import mask_cell, mask_cell_with_spans
 
 

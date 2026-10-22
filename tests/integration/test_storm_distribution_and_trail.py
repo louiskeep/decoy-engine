@@ -8,11 +8,11 @@ Roadmap Item 8.
 
 import pandas as pd
 
-from decoy_engine.storm import run_storm
+from decoy_engine.profiling import profile_columns
 
 
 def _profile(field_name: str, df: pd.DataFrame):
-    profile = run_storm(df, "test.csv")
+    profile = profile_columns(df, "test.csv")
     return next(f for f in profile.fields if f.name == field_name)
 
 
@@ -251,7 +251,7 @@ class TestSerialization:
                 "score": list(range(10, 20)),
             }
         )
-        profile = run_storm(df, "test.csv")
+        profile = profile_columns(df, "test.csv")
         d = profile.to_dict()
         ssn_field = next(f for f in d["fields"] if f["name"] == "ssn")
         score_field = next(f for f in d["fields"] if f["name"] == "score")

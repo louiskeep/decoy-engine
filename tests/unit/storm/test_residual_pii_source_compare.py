@@ -14,8 +14,8 @@ from __future__ import annotations
 
 import pandas as pd
 
-from decoy_engine.storm.postmask import run_storm_post_mask
-from decoy_engine.storm.postmask.residual_pii import check_residual_pii
+from decoy_engine.verification.postmask import run_post_mask
+from decoy_engine.verification.postmask.residual_pii import check_residual_pii
 
 _EMAILS = [f"user{i}@realmail.com" for i in range(100)]
 
@@ -48,7 +48,7 @@ class TestC1RegressionFakerLeak:
 
     def test_faker_leak_fails_through_runner(self):
         source, output = _frames(_EMAILS, _EMAILS)
-        report = run_storm_post_mask(source, output, config=_cfg("faker"))
+        report = run_post_mask(source, output, config=_cfg("faker"))
         assert report["fail_count"] >= 1
         sevs = [f["severity"] for f in report["residual_pii"]]
         assert "fail" in sevs

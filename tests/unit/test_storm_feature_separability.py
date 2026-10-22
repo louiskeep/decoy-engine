@@ -14,8 +14,8 @@ these content features can recover them - that genuine ceiling is asserted
 too, so the artifact does not overclaim.
 """
 
-from decoy_engine.storm.eval import build_fixtures
-from decoy_engine.storm.features import build_column_features
+from decoy_engine.profiling.eval import build_fixtures
+from decoy_engine.profiling.features import build_column_features
 
 
 def _all_features() -> dict[tuple[str, str], object]:

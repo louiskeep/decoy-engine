@@ -531,7 +531,7 @@ ignore = [
 # loader by the _NAME_HINTS table; contextvars by the per-scan extras layer;
 # dataclass by the Span/iter_spans block), each with its own explanatory
 # header. Deliberate narrative layout, not a top-of-file omission.
-"src/decoy_engine/storm/detectors.py" = ["E402"]
+"src/decoy_engine/detection/detectors.py" = ["E402"]
 
 # Legacy modules scheduled for V2.1 hard deletion (per the V2 sprint
 # plan + v2-roadmap Phase 1 Sprint 5). Each entry deletes with its

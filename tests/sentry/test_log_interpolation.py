@@ -75,7 +75,7 @@ ALLOWLIST: dict[tuple[str, str, str], tuple[int, str]] = {
     ("internal/memory.py", "MemoryMonitor.monitor_memory_usage", "e"): (1, "psutil failure"),
     ("quarantine.py", "publish_staged_jsonl", "exc"): (1, "OSError removing a staging link"),
     # Package or environment configuration text, no customer data.
-    ("storm/model_pack/loader.py", "ModelPackLoader.load_with_fallback", "exc"): (
+    ("profiling/model_pack/loader.py", "ModelPackLoader.load_with_fallback", "exc"): (
         2,
         "model pack and environment config text",
     ),
@@ -514,8 +514,8 @@ def test_sink_flags_the_storm_emit_step_message() -> None:
         "        emit_step(logger, 's', status='error', error_class=type(exc).__name__,\n"
         "                  error_msg=str(exc))\n"
     )
-    assert _sink_findings(src, "storm/profiler.py") == {
-        ("storm/profiler.py", "scan", "emit_step.error_msg:exc"): 1
+    assert _sink_findings(src, "profiling/profiler.py") == {
+        ("profiling/profiler.py", "scan", "emit_step.error_msg:exc"): 1
     }
 
 

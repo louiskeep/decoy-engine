@@ -22,6 +22,8 @@ import pandas as pd
 import pyarrow as pa
 import pytest
 
+from decoy_engine.detection import detectors as detectors_mod
+from decoy_engine.detection import ner as ner_mod
 from decoy_engine.execution import PandasExecutionAdapter
 from decoy_engine.execution._sequential_native import _KEY_STRATEGIES, _OPS, SeqNativeRun
 from decoy_engine.execution._sequential_native_ops import FAKER
@@ -38,8 +40,6 @@ from decoy_engine.execution.native import (
 from decoy_engine.execution.native._dispatch import _static_route_decision
 from decoy_engine.execution.out_of_core import _mask_group_c
 from decoy_engine.relationships._graph import OrphanPolicy
-from decoy_engine.storm import detectors as detectors_mod
-from decoy_engine.storm import ner as ner_mod
 from tests.native._c6b_i_support import CORPUS
 from tests.native._chunked_faker_support import oracle_pool_for
 from tests.parity import _d2b_shapes as s

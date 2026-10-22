@@ -20,8 +20,8 @@ Everything else under `walks/` is an implementation detail and may change.
 from decoy_engine.walks.cross_file import (
     CrossFileWalkResult,
     infer_cross_file_edges,
+    profiles_to_snapshot,
     run_cross_file_walk,
-    storm_profiles_to_snapshot,
 )
 from decoy_engine.walks.diff import compare
 from decoy_engine.walks.graph import ERGraph, build_er_graph
@@ -52,6 +52,6 @@ __all__ = [
     "detect_hazards",
     "infer_cross_file_edges",
     "infer_edges",
+    "profiles_to_snapshot",
     "run_cross_file_walk",
-    "storm_profiles_to_snapshot",
 ]

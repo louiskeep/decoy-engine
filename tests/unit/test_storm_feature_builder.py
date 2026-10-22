@@ -8,7 +8,7 @@ import json
 
 import pandas as pd
 
-from decoy_engine.storm.features import (
+from decoy_engine.profiling.features import (
     ColumnFeatures,
     build_column_features,
     tokenize_header,

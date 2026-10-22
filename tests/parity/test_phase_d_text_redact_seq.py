@@ -17,6 +17,8 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
+from decoy_engine.detection import detectors as detectors_mod
+from decoy_engine.detection import ner as ner_mod
 from decoy_engine.execution import _sequential_native
 from decoy_engine.execution._pipeline import run_pipeline
 from decoy_engine.execution._pipeline_routing import decide_execution_route
@@ -30,8 +32,6 @@ from decoy_engine.execution._sequential_native_ops import (
 )
 from decoy_engine.execution.native import _text_redact_kernel
 from decoy_engine.relationships._graph import OrphanPolicy
-from decoy_engine.storm import detectors as detectors_mod
-from decoy_engine.storm import ner as ner_mod
 from tests.parity import _d2b_shapes as s
 from tests.parity._d2b_shapes import make_plan, run_full, run_seq, table_seed
 from tests.parity._d2c_cat_data import payload_shape

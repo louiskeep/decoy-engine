@@ -14,8 +14,8 @@ import unicodedata
 import pandas as pd
 import pytest
 
-from decoy_engine.storm.detectors import Span, iter_spans
-from decoy_engine.storm.ner import (
+from decoy_engine.detection.detectors import Span, iter_spans
+from decoy_engine.detection.ner import (
     DEFAULT_NER_MODEL,
     model_installed,
     spacy_installed,
@@ -54,7 +54,7 @@ class TestExtraSpansContract:
 @needs_ner
 class TestNerSpans:
     def test_person_name_found(self) -> None:
-        from decoy_engine.storm.ner import iter_ner_spans
+        from decoy_engine.detection.ner import iter_ner_spans
 
         spans = iter_ner_spans("Patient Marie Curie presented with chest pain.")
         names = [s for s in spans if s.detector_id == "person_name"]
@@ -62,14 +62,14 @@ class TestNerSpans:
         assert "Curie" in names[0].matched_text
 
     def test_entities_filter(self) -> None:
-        from decoy_engine.storm.ner import iter_ner_spans
+        from decoy_engine.detection.ner import iter_ner_spans
 
         text = "John Smith flew to Paris."
         only_loc = iter_ner_spans(text, entities=["location"])
         assert {s.detector_id for s in only_loc} <= {"location"}
 
     def test_deterministic(self) -> None:
-        from decoy_engine.storm.ner import iter_ner_spans
+        from decoy_engine.detection.ner import iter_ner_spans
 
         text = "Dr. Ada Lovelace of London reviewed the chart."
         assert iter_ner_spans(text) == iter_ner_spans(text)
@@ -225,7 +225,7 @@ class TestLocaleLabelScheme:
         """Non-English models emit PER (WikiNER), not PERSON (OntoNotes);
         both must land on person_name or locale models silently drop
         every person hit."""
-        from decoy_engine.storm.ner import NER_ENTITY_MAP
+        from decoy_engine.detection.ner import NER_ENTITY_MAP
 
         assert NER_ENTITY_MAP["PER"] == "person_name"
         assert NER_ENTITY_MAP["PERSON"] == "person_name"
@@ -236,7 +236,7 @@ class TestLocaleLabelScheme:
         reason="de_core_news_sm not installed (locale model)",
     )
     def test_german_model_finds_person_and_location(self) -> None:
-        from decoy_engine.storm.ner import iter_ner_spans
+        from decoy_engine.detection.ner import iter_ner_spans
 
         spans = iter_ner_spans("Angela Schmidt wohnt in Berlin.", model="de_core_news_sm")
         detectors = {s.detector_id for s in spans}
@@ -246,7 +246,7 @@ class TestLocaleLabelScheme:
 
 class TestModelVersionStamp:
     def test_installed_model_version_resolves_known_package(self) -> None:
-        from decoy_engine.storm.ner import installed_model_version
+        from decoy_engine.detection.ner import installed_model_version
 
         # pytest is always installed; the helper is a plain metadata lookup.
         assert installed_model_version("pytest")
@@ -260,7 +260,7 @@ class TestModelVersionStamp:
         from decoy_engine.plan import _compile as compile_mod
         from decoy_engine.plan import compile_plan
 
-        monkeypatch.setattr("decoy_engine.storm.ner.installed_model_version", lambda model: "9.9.9")
+        monkeypatch.setattr("decoy_engine.detection.ner.installed_model_version", lambda model: "9.9.9")
         cfg = {
             "global_settings": {"seed": 1},
             "tables": [
@@ -297,7 +297,7 @@ class TestModelVersionStamp:
         from decoy_engine.plan import _compile as compile_mod
         from decoy_engine.plan import compile_plan
 
-        monkeypatch.setattr("decoy_engine.storm.ner.installed_model_version", lambda model: None)
+        monkeypatch.setattr("decoy_engine.detection.ner.installed_model_version", lambda model: None)
         monkeypatch.setattr(compile_mod, "check_text_redact_ner_available", lambda config: None)
         cfg = {
             "global_settings": {"seed": 1},
@@ -365,13 +365,13 @@ class TestBatchDifferentialIdentity:
         ]
 
     def test_differential_identity_over_unicode_corpus(self) -> None:
-        from decoy_engine.storm.ner import iter_ner_spans, iter_ner_spans_batch
+        from decoy_engine.detection.ner import iter_ner_spans, iter_ner_spans_batch
 
         corpus = self._corpus()
         assert iter_ner_spans_batch(corpus) == [iter_ner_spans(t) for t in corpus]
 
     def test_differential_identity_with_entities_filter(self) -> None:
-        from decoy_engine.storm.ner import iter_ner_spans, iter_ner_spans_batch
+        from decoy_engine.detection.ner import iter_ner_spans, iter_ner_spans_batch
 
         corpus = self._corpus()
         assert iter_ner_spans_batch(corpus, entities=["location"]) == [
@@ -379,7 +379,7 @@ class TestBatchDifferentialIdentity:
         ]
 
     def test_all_empty_batch(self) -> None:
-        from decoy_engine.storm.ner import iter_ner_spans_batch
+        from decoy_engine.detection.ner import iter_ner_spans_batch
 
         assert iter_ner_spans_batch([]) == []
         assert iter_ner_spans_batch(["", "   " * 0, None]) == [[], [], []]
@@ -388,7 +388,7 @@ class TestBatchDifferentialIdentity:
 @needs_ner
 class TestBatchSizeInvariance:
     def test_batch_size_invariant_over_a_mixed_corpus(self) -> None:
-        from decoy_engine.storm.ner import iter_ner_spans_batch
+        from decoy_engine.detection.ner import iter_ner_spans_batch
 
         corpus = [
             "Marie Curie visited Paris.",
@@ -404,7 +404,7 @@ class TestBatchSizeInvariance:
 @needs_ner
 class TestMaxLengthRaiseParity:
     def test_oversized_cell_raises_same_error_class_from_batch_helper(self) -> None:
-        from decoy_engine.storm.ner import (
+        from decoy_engine.detection.ner import (
             DEFAULT_NER_MODEL,
             _pipeline,
             iter_ner_spans,
@@ -433,7 +433,7 @@ class TestPeakMemoryCharacterization:
     def test_windowed_apply_bounds_peak_memory_independent_of_column_width(self) -> None:
         import tracemalloc
 
-        from decoy_engine.storm.ner import _NER_APPLY_WINDOW, iter_ner_spans_batch
+        from decoy_engine.detection.ner import _NER_APPLY_WINDOW, iter_ner_spans_batch
 
         def _peak_processing_windowed(n_rows: int) -> int:
             texts = [f"plain filler row {i} with no entities" for i in range(n_rows)]

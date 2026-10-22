@@ -16,11 +16,11 @@ import pandas as pd
 import pytest
 
 import decoy_engine.execution._strategies._text_redact as txr_mod
+from decoy_engine.detection.detectors import Span
+from decoy_engine.detection.ner import DEFAULT_NER_MODEL, model_installed, spacy_installed
 from decoy_engine.execution._errors import StrategyError
 from decoy_engine.execution._strategies._text_redact import TextRedactHandler
 from decoy_engine.plan._types import ColumnSeed
-from decoy_engine.storm.detectors import Span
-from decoy_engine.storm.ner import DEFAULT_NER_MODEL, model_installed, spacy_installed
 
 # TX-1 (2026-07-20): gates the real-model smoke test below on spaCy + the
 # default model actually being importable, mirroring the ml/geo extras
@@ -246,7 +246,7 @@ class TestF14bNerVersionGuard:
     version lookup (the guard runs before any iter_ner_spans call)."""
 
     def test_version_mismatch_raises(self, monkeypatch):
-        import decoy_engine.storm.ner as ner_mod
+        import decoy_engine.detection.ner as ner_mod
 
         monkeypatch.setattr(ner_mod, "installed_model_version", lambda model=None: "2.0.0")
         df = pd.DataFrame({"notes": ["Contact alice@example.com"]})
@@ -260,7 +260,7 @@ class TestF14bNerVersionGuard:
     def test_version_match_does_not_fire_guard(self, monkeypatch):
         # Same installed version as stamped -> guard passes; stub the NER batch
         # call (no real spaCy) so the rest of the handler runs without error.
-        import decoy_engine.storm.ner as ner_mod
+        import decoy_engine.detection.ner as ner_mod
 
         monkeypatch.setattr(ner_mod, "installed_model_version", lambda model=None: "1.0.0")
         monkeypatch.setattr(
@@ -277,7 +277,7 @@ class TestF14bNerVersionGuard:
     def test_no_stamped_version_skips_guard(self, monkeypatch):
         # A plan with no stamped version (ner_model_version=None) cannot be
         # compared, so the guard is skipped even if a version is installed.
-        import decoy_engine.storm.ner as ner_mod
+        import decoy_engine.detection.ner as ner_mod
 
         monkeypatch.setattr(ner_mod, "installed_model_version", lambda model=None: "9.9.9")
         monkeypatch.setattr(
@@ -379,7 +379,7 @@ class TestNerConfigResolution:
     class)."""
 
     def _run_with_ner_spy(self, monkeypatch, ner_cfg):
-        import decoy_engine.storm.ner as ner_mod
+        import decoy_engine.detection.ner as ner_mod
 
         captured: dict = {}
 
@@ -425,7 +425,7 @@ class TestNerCallSiteForwarding:
     all reach their call sites. Killed off-spaCy via the mock boundary."""
 
     def test_ner_result_and_call_args_forwarded(self, monkeypatch):
-        import decoy_engine.storm.ner as ner_mod
+        import decoy_engine.detection.ner as ner_mod
 
         expected_span = Span("person_name", 0, 5, "Alice")
         captured: dict = {}
@@ -460,7 +460,7 @@ class TestNerCallSiteForwarding:
     def test_version_guard_checks_the_resolved_model(self, monkeypatch):
         # The version lookup must query the RESOLVED model, not None: only the
         # resolved model reports the drifting version that fires the guard.
-        import decoy_engine.storm.ner as ner_mod
+        import decoy_engine.detection.ner as ner_mod
 
         monkeypatch.setattr(
             ner_mod,

@@ -10,12 +10,12 @@ from __future__ import annotations
 
 import json
 
-from decoy_engine.storm.types import FieldStats, StormProfile
+from decoy_engine.profiling.types import ColumnProfile, FieldStats
 from decoy_engine.walks import (
     Edge,
     infer_cross_file_edges,
+    profiles_to_snapshot,
     run_cross_file_walk,
-    storm_profiles_to_snapshot,
 )
 
 
@@ -43,8 +43,8 @@ def _fs(
     )
 
 
-def _profile(source_label: str, fields: list[FieldStats]) -> StormProfile:
-    return StormProfile(
+def _profile(source_label: str, fields: list[FieldStats]) -> ColumnProfile:
+    return ColumnProfile(
         source_label=source_label,
         row_count=1000,
         sample_strategy="full",
@@ -52,11 +52,11 @@ def _profile(source_label: str, fields: list[FieldStats]) -> StormProfile:
     )
 
 
-# ── storm_profiles_to_snapshot ─────────────────────────────────────────
+# ── profiles_to_snapshot ─────────────────────────────────────────
 
 
 def test_snapshot_strips_file_extension_from_source_label():
-    snap = storm_profiles_to_snapshot(
+    snap = profiles_to_snapshot(
         [
             _profile("acme_csv_customers.csv", [_fs("customer_id", is_likely_unique=True)]),
         ]
@@ -69,7 +69,7 @@ def test_snapshot_keeps_schema_qualified_table_name_intact():
     # Connector-sourced scans use ``schema.table`` as the source_label.
     # The 1-5 char alnum extension heuristic leaves names ending in
     # 6+ char fragments alone, so ``public.orders`` survives intact.
-    snap = storm_profiles_to_snapshot(
+    snap = profiles_to_snapshot(
         [
             _profile("public.orders", [_fs("order_id", is_likely_unique=True)]),
         ]
@@ -78,7 +78,7 @@ def test_snapshot_keeps_schema_qualified_table_name_intact():
 
 
 def test_snapshot_marks_unique_columns_as_primary_keys():
-    snap = storm_profiles_to_snapshot(
+    snap = profiles_to_snapshot(
         [
             _profile(
                 "customers.csv",
@@ -95,7 +95,7 @@ def test_snapshot_marks_unique_columns_as_primary_keys():
 
 
 def test_snapshot_nullable_reflects_null_rate():
-    snap = storm_profiles_to_snapshot(
+    snap = profiles_to_snapshot(
         [
             _profile(
                 "t.csv",
@@ -116,7 +116,7 @@ def test_snapshot_nullable_reflects_null_rate():
 
 def test_file_style_edge_when_fk_column_name_matches_pk_column_name():
     """customers.customer_id (PK) <- orders.customer_id (FK)."""
-    snap = storm_profiles_to_snapshot(
+    snap = profiles_to_snapshot(
         [
             _profile("customers.csv", [_fs("customer_id", is_likely_unique=True)]),
             _profile(
@@ -143,7 +143,7 @@ def test_file_style_edge_when_fk_column_name_matches_pk_column_name():
 def test_does_not_emit_self_loops_when_pk_column_name_repeats_in_same_table():
     # A column flagged PK doesn't emit edges from itself even when other
     # columns share the name (rare in practice, but the guard matters).
-    snap = storm_profiles_to_snapshot(
+    snap = profiles_to_snapshot(
         [
             _profile("t.csv", [_fs("id", is_likely_unique=True)]),
         ]
@@ -153,7 +153,7 @@ def test_does_not_emit_self_loops_when_pk_column_name_repeats_in_same_table():
 
 def test_does_not_emit_edge_between_two_non_pk_columns_with_same_name():
     # Without a PK anchor we have no idea which side is the parent.
-    snap = storm_profiles_to_snapshot(
+    snap = profiles_to_snapshot(
         [
             _profile("a.csv", [_fs("customer_id", is_likely_unique=False)]),
             _profile("b.csv", [_fs("customer_id", is_likely_unique=False)]),
@@ -164,7 +164,7 @@ def test_does_not_emit_edge_between_two_non_pk_columns_with_same_name():
 
 def test_emits_multiple_edges_for_a_three_file_chain():
     # customers (PK customer_id) <- orders (PK order_id, FK customer_id) <- orderlines (FK order_id)
-    snap = storm_profiles_to_snapshot(
+    snap = profiles_to_snapshot(
         [
             _profile("customers.csv", [_fs("customer_id", is_likely_unique=True)]),
             _profile(
@@ -197,7 +197,7 @@ def test_tie_break_when_fk_column_is_also_100_percent_unique():
     # both have unique_rate == 1.0. The tie-break should pick the table
     # whose name matches the column's `<stem>_id` stem ("customer" /
     # "customers"), demoting the other to FK so the edge still fires.
-    snap = storm_profiles_to_snapshot(
+    snap = profiles_to_snapshot(
         [
             _profile(
                 "customers.csv",
@@ -222,7 +222,7 @@ def test_tie_break_matches_table_name_suffix_pattern():
     # File-named tables often have a prefix that doesn't strip into the
     # column stem (e.g. "acme_csv_customers"). The suffix-match path
     # should still resolve customer_id to that table.
-    snap = storm_profiles_to_snapshot(
+    snap = profiles_to_snapshot(
         [
             _profile(
                 "acme_csv_customers.csv",
@@ -249,7 +249,7 @@ def test_no_edge_when_pk_ambiguity_cannot_be_resolved():
     # Two tables both flag `id` as PK and neither table name matches a
     # ``<stem>_id`` pattern (the column name is bare "id", no stem).
     # The tie-break can't pick a winner so no edge is emitted.
-    snap = storm_profiles_to_snapshot(
+    snap = profiles_to_snapshot(
         [
             _profile("a.csv", [_fs("id", is_likely_unique=True)]),
             _profile("b.csv", [_fs("id", is_likely_unique=True)]),
@@ -300,7 +300,7 @@ def test_run_cross_file_walk_dedupes_against_sql_style_inference():
     # File-style would NOT fire here because the column name differs between
     # the PK ('id') and the FK ('customer_id'). The merged result should be
     # exactly one edge (the SQL-style one) without duplication.
-    snap_profile_customers = StormProfile(
+    snap_profile_customers = ColumnProfile(
         source_label="customers.csv",
         row_count=10,
         sample_strategy="full",
@@ -318,7 +318,7 @@ def test_run_cross_file_walk_dedupes_against_sql_style_inference():
             ),
         ],
     )
-    snap_profile_orders = StormProfile(
+    snap_profile_orders = ColumnProfile(
         source_label="orders.csv",
         row_count=10,
         sample_strategy="full",
@@ -351,19 +351,19 @@ def test_run_cross_file_walk_dedupes_against_sql_style_inference():
     assert result.edges == (Edge("orders", "customer_id", "customers", "id", False),)
 
 
-# ── round-trip through StormProfile.to_dict() ──────────────────────────
+# ── round-trip through ColumnProfile.to_dict() ──────────────────────────
 
 
 def test_profiles_round_trip_through_dict_unchanged():
-    """The platform stores StormProfile as JSON; deserialize must still
+    """The platform stores ColumnProfile as JSON; deserialize must still
     feed the walk correctly. Exercise via to_dict() -> json -> dict ->
     field-by-field reconstruction (mirrors the platform code path)."""
     p = _profile("customers.csv", [_fs("customer_id", is_likely_unique=True)])
     blob = json.dumps(p.to_dict())
     loaded = json.loads(blob)
-    # Reconstruct StormProfile from the dict (skip FieldStats sub-fields
+    # Reconstruct ColumnProfile from the dict (skip FieldStats sub-fields
     # the loader doesn't care about - same shape as platform does).
-    reconstructed = StormProfile(
+    reconstructed = ColumnProfile(
         source_label=loaded["source_label"],
         row_count=loaded["row_count"],
         sample_strategy=loaded["sample_strategy"],
@@ -390,7 +390,7 @@ def test_walks_gen_f2_pk_tie_break_stable_under_set_iteration_order():
     qualified PK owners and asserting the resolution is the same
     string on every call.
     """
-    snap = storm_profiles_to_snapshot(
+    snap = profiles_to_snapshot(
         [
             _profile(
                 "customers.csv",

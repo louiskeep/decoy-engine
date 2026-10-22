@@ -17,6 +17,7 @@ from typing import Any
 import pyarrow as pa
 import pytest
 
+from decoy_engine.detection import detectors as storm_detectors
 from decoy_engine.execution import _operator_registry
 from decoy_engine.execution._operator_registry import ARROW_PYTHON, OPERATORS
 from decoy_engine.execution._runner import WorkNode
@@ -35,7 +36,6 @@ from decoy_engine.execution.native._requirements import (
 )
 from decoy_engine.plan._types import ColumnSeed
 from decoy_engine.profile import ColumnProfile, Profile, TableProfile
-from decoy_engine.storm import detectors as storm_detectors
 from tests.native._c6c_i_support import (
     ADMITTED_CONFIGS,
     EXCLUDED_CONFIGS,

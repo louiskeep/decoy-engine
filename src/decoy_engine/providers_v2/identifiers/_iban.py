@@ -17,7 +17,7 @@ https://www.swift.com/standards/data-standards/iban-international-bank-account-n
 Quarterly source review: the SWIFT registry adds new countries
 occasionally (last big update added BY / IQ / EG / GT). The table
 below is conservative + covers every country in
-decoy_engine.storm.detectors._IBAN_COUNTRIES. Last reviewed:
+decoy_engine.detection.detectors._IBAN_COUNTRIES. Last reviewed:
 2026-06-01.
 
 MG-1 S4 (2026-06-01). Dennis explicitly budgeted IBAN as a full
@@ -34,12 +34,12 @@ from typing import Any
 
 import numpy as np
 
+from decoy_engine.detection.detectors import _iban_valid
 from decoy_engine.determinism import derive_value
 from decoy_engine.generation.pool._canonicalize import _canonicalize_source
 from decoy_engine.providers_v2._adapter import CapabilityMatrix, ProviderSpec
 from decoy_engine.providers_v2._errors import ProviderError
 from decoy_engine.providers_v2.identifiers._errors import IdentifierError
-from decoy_engine.storm.detectors import _iban_valid
 
 # Per-country IBAN total length (country + check + BBAN) per the
 # SWIFT IBAN registry. Every country in _IBAN_COUNTRIES has an

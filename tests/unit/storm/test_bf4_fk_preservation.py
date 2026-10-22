@@ -27,8 +27,8 @@ import hashlib
 
 import pandas as pd
 
-from decoy_engine.storm.postmask.fk_preservation import check_fk_preservation
-from decoy_engine.storm.postmask.runner import run_storm_post_mask
+from decoy_engine.verification.postmask.fk_preservation import check_fk_preservation
+from decoy_engine.verification.postmask.runner import run_post_mask
 
 # ── Synthetic fixture helpers ─────────────────────────────────────────────────
 
@@ -111,7 +111,7 @@ class TestF1ConsistentMaskingFksIntact:
         users = _make_users(50)
         orders = _make_orders(users, 100)
         config = _single_fk_config()
-        report = run_storm_post_mask(
+        report = run_post_mask(
             source_frames={"users": users, "orders": orders},
             output_frames={"users": users, "orders": orders},
             config=config,
@@ -182,7 +182,7 @@ class TestF2InconsistentMaskingOrphans:
         bad_fks = [f"ghost_{i}" for i in range(20)]
         orders = pd.DataFrame({"order_id": range(20), "user_id": bad_fks})
         config = _single_fk_config()
-        report = run_storm_post_mask(
+        report = run_post_mask(
             source_frames={"users": users, "orders": orders},
             output_frames={"users": users, "orders": orders},
             config=config,
@@ -407,7 +407,7 @@ class TestF8SecurityNoRawKeyValues:
         parent = pd.DataFrame({"user_id": [_hash_id(i) for i in range(5)]})
         child = pd.DataFrame({"user_id": [self._CANARY_ID] * 20})
         config = _single_fk_config()
-        report = run_storm_post_mask(
+        report = run_post_mask(
             source_frames={"users": parent, "orders": child},
             output_frames={"users": parent, "orders": child},
             config=config,

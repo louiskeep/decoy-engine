@@ -45,7 +45,7 @@ from pathlib import Path
 
 import pytest
 
-from decoy_engine.storm.detectors import _NAME_HINTS, hits_name_hint
+from decoy_engine.detection.detectors import _NAME_HINTS, hits_name_hint
 
 GOLDEN = Path(__file__).parent / "golden" / "name_hints"
 

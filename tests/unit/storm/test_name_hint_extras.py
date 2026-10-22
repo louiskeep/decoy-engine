@@ -21,7 +21,7 @@ import threading
 
 import pytest
 
-from decoy_engine.storm.detectors import (
+from decoy_engine.detection.detectors import (
     _NAME_HINT_EXTRAS,
     hits_name_hint,
     name_hint_extras,
