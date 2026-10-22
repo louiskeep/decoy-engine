@@ -149,9 +149,22 @@ def _is_integer_dtype(dtype: str) -> bool:
     return dtype.lstrip("uU").startswith("int") or dtype.startswith("Int")
 
 
+def _positive_weight_only(values: list[Any], weights: list[float]) -> tuple[list[Any], list[float]]:
+    """Drop zero-weight entries before a weighted draw. random.choices can round a draw up to the
+    cumulative total and select a trailing zero-weight entry, so filter them out first."""
+    kept = [(v, w) for v, w in zip(values, weights, strict=True) if w > 0]
+    return [v for v, _ in kept], [w for _, w in kept]
+
+
 def _numeric_row(rng: random.Random, edges: list[float], cum: list[float]) -> float:
     u = rng.random() * cum[-1]
-    bin_idx = min(bisect_right(cum, u), len(cum) - 1)
+    # Clamp to the last POSITIVE-weight bin, not just the last index: cum is non-decreasing, so a
+    # trailing zero-weight bin leaves it flat (cum[last] == cum[last-1]) and an FP-rounded u == cum[-1]
+    # would otherwise select that empty bin. No-op when the last bin has positive weight (parity-safe).
+    last = len(cum) - 1
+    while last > 0 and cum[last] == cum[last - 1]:
+        last -= 1
+    bin_idx = min(bisect_right(cum, u), last)
     lo, hi = edges[bin_idx], edges[bin_idx + 1]
     return lo + rng.random() * (hi - lo)
 
@@ -291,7 +304,15 @@ def sample_column(
                     "larger epsilon if the snapshot was DP-noised."
                 ),
             )
-        conditional = _conditional_tables(spec) if spec.condition_on else {}
+        # Drop zero-weight entries before drawing (see _positive_weight_only). sum(weights) > 0 keeps
+        # the marginal non-empty; each conditional table is non-empty because admission refuses a
+        # conditional row whose weights sum to <= 0.
+        values, weights = _positive_weight_only(values, weights)
+        conditional = (
+            {k: _positive_weight_only(v, w) for k, (v, w) in _conditional_tables(spec).items()}
+            if spec.condition_on
+            else {}
+        )
         out = []
         for i in range(n):
             rng.seed(col_seed + start + i)
@@ -320,6 +341,12 @@ def sample_column(
                     "larger epsilon if the snapshot was DP-noised."
                 ),
             )
+        # Drop zero-weight bins before drawing: random.choices can round a draw up to the cumulative
+        # total and land on a trailing zero-weight year, so a year admission ignored (weight 0, e.g.
+        # 9999) could still be picked and crash datetime(year + 1). Non-empty since sum(weights) > 0.
+        kept = [(y, w) for y, w in zip(years, weights, strict=True) if w > 0]
+        years = [y for y, _ in kept]
+        weights = [w for _, w in kept]
         lo = datetime.fromisoformat(str(spec.stats["min"]))
         hi = datetime.fromisoformat(str(spec.stats["max"]))
         out = []

@@ -351,6 +351,123 @@ def test_sampled_year_check_ignores_zero_weight_bins() -> None:
     assert _verdict(_stat_col(), spec).is_class_a
 
 
+def test_weight_sum_overflow_is_refused_at_admission() -> None:
+    # Two finite weights can sum to inf (pass `w < 0`/isfinite per-weight and `sum > 0`), which would
+    # otherwise raise an UNCODED ValueError in random.choices mid-generation (Codex final-gate finding).
+    cat = _spec(
+        "categorical",
+        {"top_values": [{"value": "a", "count": 1e308}, {"value": "b", "count": 1e308}]},
+        dtype="object",
+    )
+    with pytest.raises(GenerationAdmissionError) as exc:
+        _verdict(_stat_col(), cat)
+    assert exc.value.code == "statistical_stats_degenerate" and exc.value.prop == "top_values"
+    dt = _spec(
+        "datetime",
+        {
+            "year_bins": [{"year": 2000, "count": 1e308}, {"year": 2001, "count": 1e308}],
+            "min": "2000-01-01",
+            "max": "2002-01-01",
+        },
+    )
+    with pytest.raises(GenerationAdmissionError) as exc:
+        _verdict(_stat_col(), dt)
+    assert exc.value.code == "statistical_stats_degenerate" and exc.value.prop == "year_bins"
+
+
+def test_integer_numeric_edges_beyond_int64_refused() -> None:
+    # An integer histogram near 1e19 (e.g. a uint64 column) produces Python ints above 2**63-1,
+    # which overflow pa.table AFTER the draw unless admission refuses it (Codex final-gate finding).
+    spec = _spec("numeric", {"bin_edges": [1e19, 1.1e19], "bin_counts": [1]}, dtype="uint64")
+    with pytest.raises(GenerationAdmissionError) as exc:
+        _verdict(_stat_col(), spec)
+    assert exc.value.code == "generation_unbounded_column" and exc.value.prop == "bin_edges"
+    # the same edges as a float column are fine (float64 represents them)
+    assert _verdict(
+        _stat_col(),
+        _spec("numeric", {"bin_edges": [1e19, 1.1e19], "bin_counts": [1]}, dtype="float64"),
+    ).is_class_a
+
+
+def test_datetime_inverted_range_refused() -> None:
+    # min after max passes the per-bound checks but makes the sampler clamp every row to max.
+    spec = _spec(
+        "datetime",
+        {"year_bins": [{"year": 2000, "count": 5}], "min": "2001-01-01", "max": "2000-01-01"},
+    )
+    with pytest.raises(GenerationAdmissionError) as exc:
+        _verdict(_stat_col(), spec)
+    assert exc.value.code == "statistical_stats_degenerate" and exc.value.prop == "min"
+
+
+@pytest.mark.parametrize(
+    ("edges", "counts"),
+    [
+        ([10.0, 2.0], [1]),  # endpoint inversion
+        ([0.0, 100.0, 10.0], [0, 1]),  # interior descending pair collapses the distribution
+        ([-1.0, 5.0], [1]),  # negative length
+    ],
+)
+def test_freetext_non_monotonic_or_negative_length_edges_refused(
+    edges: list[float], counts: list[int]
+) -> None:
+    spec = _spec(
+        "freetext",
+        {"length_bin_edges": edges, "length_bin_counts": counts},
+        dtype="object",
+    )
+    with pytest.raises(GenerationAdmissionError) as exc:
+        _verdict(_stat_col(), spec)
+    assert exc.value.code == "statistical_stats_degenerate" and exc.value.prop == "length_bin_edges"
+
+
+def test_zero_weight_year_bin_never_sampled_and_no_crash() -> None:
+    # Subnormal positive weight + a trailing zero-weight 9999 bin: random.choices could round a draw
+    # up to the zero-weight year and crash datetime(10000). The shared sampler drops zero-weight bins.
+    spec = _spec(
+        "datetime",
+        {
+            "year_bins": [{"year": 2000, "count": 5e-324}, {"year": 9999, "count": 0}],
+            "min": "2000-01-01",
+            "max": "2001-01-01",
+        },
+    )
+    out = sample_column(spec, 500, col_seed=7)
+    assert all(v.year == 2000 for v in out)
+
+
+def test_numeric_trailing_zero_weight_bin_never_sampled() -> None:
+    # Subnormal positive weight + trailing zero-weight bin: an FP-rounded draw could land in the empty
+    # bin [1,2). _numeric_row clamps to the last positive-weight bin, so every draw stays in [0,1).
+    spec = _spec(
+        "numeric", {"bin_edges": [0.0, 1.0, 2.0], "bin_counts": [5e-324, 0.0]}, dtype="float64"
+    )
+    out = sample_column(spec, 1000, col_seed=11)
+    assert all(0.0 <= v < 1.0 for v in out)
+
+
+def test_freetext_trailing_zero_weight_length_bin_never_sampled() -> None:
+    spec = _spec(
+        "freetext",
+        {"length_bin_edges": [1.0, 5.0, 9.0], "length_bin_counts": [5e-324, 0.0]},
+        dtype="object",
+    )
+    out = sample_column(spec, 500, col_seed=12)
+    assert all(1 <= len(s) <= 5 for s in out)  # bin 0 = [1,5]; the [5,9] bin is empty
+
+
+def test_categorical_zero_weight_entry_never_sampled() -> None:
+    # random.choices can round a draw up to the total and pick the zero-weight entry; the sampler
+    # filters zero-weight entries (marginal and conditional) first.
+    spec = _spec(
+        "categorical",
+        {"top_values": [{"value": "a", "count": 5e-324}, {"value": "b", "count": 0.0}]},
+        dtype="object",
+    )
+    out = sample_column(spec, 1000, col_seed=13)
+    assert set(out) == {"a"}
+
+
 def test_refusal_wins_over_class_b() -> None:
     cfg = {
         "tables": [
@@ -420,6 +537,32 @@ def test_unknown_table() -> None:
 def test_sequence_cell_width_is_capped() -> None:
     with pytest.raises(GenerationAdmissionError):
         _verdict({"type": "sequence", "pad_length": 10_000}, max_cell_chars=100)
+
+
+def test_sequence_digit_width_at_window_end_is_capped() -> None:
+    col = {"type": "sequence", "step": 10**30, "pad_length": 1}
+    assert _verdict(col, max_cell_chars=33, window_end=2).is_class_a
+    with pytest.raises(GenerationAdmissionError) as exc:
+        _verdict(col, max_cell_chars=33, window_end=10**6)
+    assert exc.value.code == "generation_unbounded_column"
+
+
+@pytest.mark.parametrize(
+    "col",
+    [
+        {"type": "faker", "faker_type": "text", "faker_kwargs": {"max_nb_chars": 10**9}},
+        {"type": "faker", "faker_type": "pystr"},
+        {"type": "faker", "faker_type": "first_name"},
+    ],
+)
+def test_unbounded_or_oversized_per_row_faker_is_refused(col: dict[str, Any]) -> None:
+    if col["faker_type"] == "first_name":
+        with pytest.raises(GenerationAdmissionError):
+            _verdict(col, max_cell_chars=10)  # bounded type, but wider than the cap
+        return
+    with pytest.raises(GenerationAdmissionError) as exc:
+        _verdict(col)
+    assert exc.value.code == "generation_unbounded_column" and exc.value.prop == "faker_type"
 
 
 def test_overflowing_span_still_refused_when_dataclass_replaced() -> None:

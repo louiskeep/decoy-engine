@@ -92,6 +92,7 @@ def classify_window(
     table: str,
     *,
     max_cell_chars: int = DEFAULT_MAX_CELL_CHARS,
+    window_end: int = _MAX_POSITION,
     instance_default_locale: str | None = None,
     provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None = None,
 ) -> WindowAdmission:
@@ -104,6 +105,7 @@ def classify_window(
         table,
         statistical_specs=prepared.legacy_kwargs["statistical_specs"],
         max_cell_chars=max_cell_chars,
+        window_end=window_end,
         instance_default_locale=instance_default_locale,
         provider_snapshot=provider_snapshot,
     )
@@ -250,6 +252,7 @@ def generate_rows(
         table,
         statistical_specs=specs,
         max_cell_chars=max_cell_chars,
+        window_end=offset + count,
         instance_default_locale=instance_default_locale,
         provider_snapshot=provider_snapshot,
     )
@@ -297,6 +300,12 @@ def generate_rows(
             acc[name].extend(window[name][:keep])
         emitted += keep
         done += size
+    # Re-check after the last chunk: the in-loop guard runs only BEFORE each chunk, so a final
+    # chunk (or a zero-row request) that overruns would otherwise return successfully.
+    if deadline_s is not None and time.monotonic() - started > deadline_s:
+        raise GenerationWindowTimeoutError(
+            code=CODE_TIMEOUT, message=f"deadline of {deadline_s}s passed after {emitted} rows"
+        )
     result = pa.table(acc) if emitted else pa.table({n: pa.array([], pa.null()) for n in names})
     return GeneratedWindow(
         result,

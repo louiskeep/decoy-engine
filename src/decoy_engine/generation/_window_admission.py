@@ -49,8 +49,8 @@ CODE_TIMEOUT = "generation_window_timeout"
 
 _MIN_YEAR = 1
 _MAX_SAMPLED_YEAR = 9998  # datetime(year + 1, 1, 1) must be representable
-# Digits of a sequence value a window can reach (offset + count < 2**64, step bounded by config).
-_SEQUENCE_DIGIT_ALLOWANCE = 40
+# Highest addressable row position; the default window end when a caller names none.
+_MAX_POSITION = 2**63
 
 
 class GenerationWindowError(DecoyError):
@@ -148,7 +148,12 @@ def _check_datetime(table: str, col: dict[str, Any], spec: StatisticalSpec) -> N
     except (TypeError, ValueError, KeyError):
         _refuse(table, col, CODE_DEGENERATE, "year_bins", "year_bins entries are malformed")
     total = sum(weights)
-    if not years or any(w < 0 or not math.isfinite(w) for w in weights) or not total > 0:
+    if (
+        not years
+        or any(w < 0 or not math.isfinite(w) for w in weights)
+        or not math.isfinite(total)  # two finite weights can sum to inf and pass `total > 0`
+        or not total > 0
+    ):
         _refuse(table, col, CODE_DEGENERATE, "year_bins", "year_bins empty or counts unusable")
     bad = sorted(
         {
@@ -165,15 +170,26 @@ def _check_datetime(table: str, col: dict[str, Any], spec: StatisticalSpec) -> N
             "year_bins",
             f"sampled year(s) {bad[:3]} outside {_MIN_YEAR}..{_MAX_SAMPLED_YEAR}",
         )
+    parsed_bounds: dict[str, datetime] = {}
     for bound in ("min", "max"):
         try:
-            parsed = datetime.fromisoformat(str(spec.stats[bound]))
+            parsed_bounds[bound] = datetime.fromisoformat(str(spec.stats[bound]))
         except (KeyError, ValueError):
             _refuse(
                 table, col, CODE_UNBOUNDED, bound, f"datetime {bound} is missing or unparseable"
             )
-        if parsed.tzinfo is not None:
+        if parsed_bounds[bound].tzinfo is not None:
             _refuse(table, col, CODE_UNBOUNDED, bound, "timezone-aware datetime bound")
+    # An inverted range passes the per-bound checks but makes the sampler clamp every row to
+    # `max` silently (a wrong value, not a crash), so reject it at admission.
+    if parsed_bounds["min"] > parsed_bounds["max"]:
+        _refuse(
+            table,
+            col,
+            CODE_DEGENERATE,
+            "min",
+            f"datetime min {parsed_bounds['min']} is after max {parsed_bounds['max']}",
+        )
 
 
 def _check_categorical(
@@ -191,14 +207,25 @@ def _check_categorical(
         _refuse(table, col, CODE_FLAG_TOKEN, "top_values", exc.message)
     except (TypeError, ValueError, KeyError):
         _refuse(table, col, CODE_DEGENERATE, "top_values", "top_values entries are malformed")
-    if not values or any(w < 0 or not math.isfinite(w) for w in weights) or not sum(weights) > 0:
+    cat_total = sum(weights)
+    if (
+        not values
+        or any(w < 0 or not math.isfinite(w) for w in weights)
+        or not math.isfinite(cat_total)  # finite weights can sum to inf and pass `> 0`
+        or not cat_total > 0
+    ):
         _refuse(table, col, CODE_DEGENERATE, "top_values", "top_values empty or counts unusable")
     # BR-2: a category token is materialized per cell before any byte meter sees it.
     tokens = [str(v) for v in values]
     conditional = _conditional_tables(spec) if spec.condition_on else {}
     for kids, wts in conditional.values():
         tokens.extend(kids)
-        if any(w < 0 or not math.isfinite(w) for w in wts) or not sum(wts) > 0:
+        cond_total = sum(wts)
+        if (
+            any(w < 0 or not math.isfinite(w) for w in wts)
+            or not math.isfinite(cond_total)  # finite weights can sum to inf
+            or not cond_total > 0
+        ):
             _refuse(table, col, CODE_DEGENERATE, "joint", "a conditional row has no usable weight")
     if any(len(t) > max_cell_chars for t in tokens):
         _refuse(
@@ -214,11 +241,36 @@ def _check_statistical(
     table: str, col: dict[str, Any], spec: StatisticalSpec, max_cell_chars: int
 ) -> None:
     if spec.kind == "numeric":
-        _check_histogram(table, col, "bin_edges", "bin_counts", spec.stats, strictly_ordered=True)
+        edges = _check_histogram(
+            table, col, "bin_edges", "bin_counts", spec.stats, strictly_ordered=True
+        )
+        from decoy_engine.generation.statistical._sample import _is_integer_dtype
+
+        # Integer outputs are clamped to [edges[0], edges[-1]] then materialized as Arrow int64;
+        # edges beyond int64 (e.g. a uint64 histogram near 1e19) overflow pa.table AFTER the draw.
+        if _is_integer_dtype(spec.dtype) and not (edges[0] >= -(2**63) and edges[-1] < 2**63):
+            _refuse(
+                table,
+                col,
+                CODE_UNBOUNDED,
+                "bin_edges",
+                f"integer numeric edges [{edges[0]}, {edges[-1]}] exceed the int64 range",
+            )
     elif spec.kind == "freetext":
         edges = _check_histogram(
             table, col, "length_bin_edges", "length_bin_counts", spec.stats, strictly_ordered=False
         )
+        # Length edges must be non-negative and non-decreasing (ties allowed). A negative or any
+        # descending adjacent pair (endpoint OR interior, e.g. [0, 100, 10]) makes the sampler clamp
+        # every cell to one length, silently collapsing the distribution. Reject at admission.
+        if edges[0] < 0 or any(b < a for a, b in pairwise(edges)):
+            _refuse(
+                table,
+                col,
+                CODE_DEGENERATE,
+                "length_bin_edges",
+                f"length edges {edges} are negative or not non-decreasing",
+            )
         if int(edges[-1]) > max_cell_chars:
             _refuse(
                 table,
@@ -237,14 +289,38 @@ def _check_statistical(
         )
 
 
-def _check_sequence(table: str, col: dict[str, Any], max_cell_chars: int) -> None:
-    width = (
-        len(str(col.get("prefix", "")))
-        + len(str(col.get("suffix", "")))
-        + max(int(col.get("pad_length", 0)), _SEQUENCE_DIGIT_ALLOWANCE)
-    )
+def _check_sequence(table: str, col: dict[str, Any], max_cell_chars: int, window_end: int) -> None:
+    """Cell width at the highest index the window reaches, so a huge offset cannot slip past."""
+    from decoy_engine.generation._bounds import sequence_payload_bound
+
+    width = sequence_payload_bound(col, window_end)
     if width > max_cell_chars:
-        _refuse(table, col, CODE_UNBOUNDED, "pad_length", f"cell width {width} > {max_cell_chars}")
+        _refuse(
+            table,
+            col,
+            CODE_UNBOUNDED,
+            "pad_length",
+            f"cell width {width} at row {window_end} exceeds max_cell_chars={max_cell_chars}",
+        )
+
+
+def _check_faker(
+    table: str,
+    col: dict[str, Any],
+    max_cell_chars: int,
+    provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None,
+) -> None:
+    from decoy_engine.generation._bounds import faker_payload_bound
+
+    bound = faker_payload_bound(col, provider_snapshot)
+    if bound is None or bound > max_cell_chars:
+        _refuse(
+            table,
+            col,
+            CODE_UNBOUNDED,
+            "faker_type",
+            "no defensible value-width bound within max_cell_chars",
+        )
 
 
 def _windowed_anchor_ok(
@@ -286,6 +362,7 @@ def classify_window_table(
     *,
     statistical_specs: Mapping[tuple[str, str], StatisticalSpec],
     max_cell_chars: int = DEFAULT_MAX_CELL_CHARS,
+    window_end: int = _MAX_POSITION,
     instance_default_locale: str | None = None,
     provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None = None,
 ) -> WindowAdmission:
@@ -332,8 +409,15 @@ def classify_window_table(
                 _refuse(table, col, "statistical_spec_not_pinned", "snapshot", "no pinned spec")
             else:
                 _check_statistical(table, col, spec, max_cell_chars)
+        elif kind == "faker":
+            locale = col.get("locale") or instance_default_locale
+            pooled = pool_eligible(
+                col.get("faker_type", "word"), locale, rows, opted_out=col.get("pooled") is False
+            )
+            if not pooled:
+                _check_faker(table, col, max_cell_chars, provider_snapshot)
         elif kind == "sequence":
-            _check_sequence(table, col, max_cell_chars)
+            _check_sequence(table, col, max_cell_chars, window_end)
 
     verdicts: dict[str, str | None] = {}  # column -> Class B reason, None for Class A
     for idx, col in enumerate(cols):
