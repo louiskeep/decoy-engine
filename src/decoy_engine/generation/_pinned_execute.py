@@ -23,7 +23,7 @@ from typing import Any
 
 import pyarrow as pa
 
-from decoy_engine.generation._pinned_compile import reject_unpinnable
+from decoy_engine.generation._pinned_compile import LIVE_TOKEN, reject_unpinnable
 from decoy_engine.generation._pinned_plan import (
     PinnedModeError,
     PinnedPlan,
@@ -36,6 +36,8 @@ from decoy_engine.generation.statistical import StatisticalSpec, spec_from_dict
 def _order_tables(plan: PinnedPlan) -> list[str]:
     """Parents before children; ties broken by sorted name so the order is hash-seed stable."""
     deps = {t.name: sorted(t.depends_on) for t in plan.tables}
+    # Messages name tables by position: names in a deserialized plan are untrusted text.
+    pos = {t.name: i for i, t in enumerate(plan.tables)}
     order: list[str] = []
     done: set[str] = set()
     finished: set[str] = set()
@@ -55,17 +57,34 @@ def _order_tables(plan: PinnedPlan) -> list[str]:
             if parent not in deps:
                 raise PinnedModeError(
                     code="pinned_plan_malformed",
-                    message=f"table {node!r} depends on unknown table {parent!r}",
+                    message=f"table #{pos[node]} depends on a table the plan does not declare",
                 )
             if parent in done and parent not in finished:
                 raise PinnedModeError(
                     code="pinned_plan_malformed",
-                    message=f"tables {node!r} and {parent!r} depend on each other",
+                    message=f"tables #{pos[node]} and #{pos[parent]} depend on each other",
                 )
             if parent not in done:
                 done.add(parent)
                 stack.append((parent, iter(deps[parent])))
     return order
+
+
+def _refuse_tokens_in_names(plan: PinnedPlan) -> None:
+    """Names and dependency entries are plan fields outside the config scan; check them too."""
+    for ti, t in enumerate(plan.tables):
+        names = [t.name, *t.depends_on, *(c.name for c in t.columns)]
+        if any(LIVE_TOKEN.search(n) for n in names):
+            raise PinnedModeError(
+                code="pinned_live_token",
+                message=f"table #{ti} holds an unresolved variable token",
+            )
+    for si, st in enumerate(plan.statistical):
+        if LIVE_TOKEN.search(st.table) or LIVE_TOKEN.search(st.column):
+            raise PinnedModeError(
+                code="pinned_live_token",
+                message=f"statistical entry #{si} holds an unresolved variable token",
+            )
 
 
 def _check_plan(plan: PinnedPlan) -> dict[tuple[str, str], StatisticalSpec]:
@@ -75,6 +94,7 @@ def _check_plan(plan: PinnedPlan) -> dict[tuple[str, str], StatisticalSpec]:
             code="pinned_runtime_changed",
             message="the runtime identity differs from the one the plan was pinned under",
         )
+    _refuse_tokens_in_names(plan)
     reject_unpinnable(
         {
             "tables": [
@@ -86,12 +106,12 @@ def _check_plan(plan: PinnedPlan) -> dict[tuple[str, str], StatisticalSpec]:
             ]
         }
     )
-    for t in plan.tables:
-        for c in t.columns:
+    for ti, t in enumerate(plan.tables):
+        for ci, c in enumerate(t.columns):
             if json.loads(c.config_json).get("name") != c.name:
                 raise PinnedModeError(
                     code="pinned_plan_malformed",
-                    message=f"table {t.name!r}: column name {c.name!r} differs from its config",
+                    message=f"table #{ti} column #{ci}: name differs from its config",
                 )
     specs: dict[tuple[str, str], StatisticalSpec] = {}
     for s in plan.statistical:

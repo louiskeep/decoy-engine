@@ -613,3 +613,38 @@ def test_live_token_in_a_column_name_is_not_echoed(snap: str) -> None:
         compile_pinned_plan(cfg, REF)
     assert exc.value.code == "pinned_live_token"
     assert "${" not in str(exc.value) and "SECRET" not in str(exc.value)
+
+
+def test_tokens_in_plan_names_and_dependencies_are_not_echoed(snap: str) -> None:
+    plan = compile_pinned_plan(_config(snap), REF)
+    evil = "pre-${env.SECRET}-post"
+    child = plan.tables[0]
+    col0 = child.columns[0]
+    variants = [
+        dataclasses.replace(
+            child, columns=(dataclasses.replace(col0, name=evil), *child.columns[1:])
+        ),
+        dataclasses.replace(child, depends_on=(*child.depends_on, evil)),
+        dataclasses.replace(child, name=evil),
+    ]
+    for table in variants:
+        bad = dataclasses.replace(plan, tables=(table, *plan.tables[1:]))
+        with pytest.raises(PinnedModeError) as exc:
+            execute_pinned(bad, 1)
+        assert exc.value.code == "pinned_live_token"
+        assert "${" not in str(exc.value) and "SECRET" not in str(exc.value)
+
+
+def test_malformed_plan_messages_do_not_echo_names(snap: str) -> None:
+    plan = compile_pinned_plan(_config(snap), REF)
+    child = plan.tables[0]
+    renamed = dataclasses.replace(child.columns[0], name="leaky_name")
+    cases = [
+        dataclasses.replace(child, columns=(renamed, *child.columns[1:])),
+        dataclasses.replace(child, depends_on=("leaky_table",)),
+    ]
+    for table in cases:
+        with pytest.raises(PinnedModeError) as exc:
+            execute_pinned(dataclasses.replace(plan, tables=(table, *plan.tables[1:])), 1)
+        assert exc.value.code == "pinned_plan_malformed"
+        assert "leaky" not in str(exc.value)
