@@ -13,6 +13,7 @@ reads.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
@@ -21,6 +22,7 @@ from decoy_engine.execution import _pipeline_finalize, _pipeline_generate_mask, 
 from decoy_engine.execution import _pipeline_route_exec as _route_exec
 from decoy_engine.execution import _pipeline_sources as _psrc
 from decoy_engine.execution._adapter import ExecutionResult
+from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._stitch import stitch_generate_mask_outputs
 from decoy_engine.execution._transforms_admission import stamp_out_of_core_declined
 from decoy_engine.generation.pool import PoolCache
@@ -29,6 +31,55 @@ if TYPE_CHECKING:
     from decoy_engine.execution._pipeline_context import PipelineRunContext, RouteDecision
 
 __all__ = ["run_full_frame_route"]
+
+
+# §PANDAS-RANGE-ERROR: exceptions an Arrow->pandas conversion raises for a value
+# pandas cannot hold -- a date beyond year 9999, a sub-microsecond time64, the
+# -2^63 datetime marker. The same family `_chunked_carry` attributes for a
+# carried passthrough column on the chunked route; here it is the full-frame
+# oracle's up-front ingest conversion (`_pandas_adapter` `to_pandas_fk_safe`),
+# which converts every source column -- masked or passthrough -- at once.
+_INGEST_CONVERSION_ERRORS: tuple[type[BaseException], ...] = (pa.ArrowInvalid, pa.ArrowTypeError)
+
+
+def _ingest_conversion_errors() -> tuple[type[BaseException], ...]:
+    from pandas.errors import OutOfBoundsDatetime
+
+    return (*_INGEST_CONVERSION_ERRORS, ValueError, OverflowError, OutOfBoundsDatetime)
+
+
+def _raise_if_source_value_unrepresentable(
+    resident_sources: Mapping[str, Any], graph: Any, exc: BaseException
+) -> None:
+    """The full-frame pandas oracle converts every source column to pandas up
+    front, so a column holding a value pandas cannot represent fails there with
+    an uncoded error that names no column. Re-convert each source column alone
+    (the same FK-safe way the oracle did) to find the offender and raise a coded
+    `ExecutionError` naming it. If no single source column reproduces the failure
+    -- so it was not the ingest conversion -- return and let the caller re-raise
+    the original exception unchanged."""
+    from decoy_engine.execution._fk_keys import fk_columns_for_table, to_pandas_fk_safe
+
+    edges = getattr(graph, "edges", ())
+    for table, tbl in resident_sources.items():
+        if not isinstance(tbl, pa.Table):
+            continue
+        fk_cols = fk_columns_for_table(edges, table)
+        for name in tbl.column_names:
+            try:
+                to_pandas_fk_safe(tbl.select([name]), fk_cols & {name})
+            except Exception as again:
+                if type(again) is type(exc) and str(again) == str(exc):
+                    raise ExecutionError(
+                        code="full_frame_value_unrepresentable",
+                        message=(
+                            f"table {table!r} column {name!r} holds a value pandas "
+                            f"cannot represent ({type(exc).__name__}: {exc}). The "
+                            "full-frame pandas route converts every column to pandas; "
+                            "the default native (Rust) route keeps columns in Arrow "
+                            "and does not hit this limit."
+                        ),
+                    ) from exc
 
 
 def run_full_frame_route(
@@ -63,46 +114,54 @@ def run_full_frame_route(
     with publish:
         # Steps 1-2 (generate-kind tables, then mask-kind tables) live in
         # `_pipeline_generate_mask.run_generate_and_mask_steps` (LOC ceiling).
-        step = _pipeline_generate_mask.run_generate_and_mask_steps(
-            has_generate_table=ctx.has_generate_table,
-            has_mask_table=ctx.has_mask_table,
-            plan=ctx.plan,
-            derive_key=ctx.derive_key,
-            instance_default_locale=ctx.instance_default_locale,
-            provider_snapshot=ctx.provider_snapshot,
-            resident_sources=resident_sources,
-            caller_sources=caller_sources,
-            keep_lazy=decision.keep_lazy,
-            route_chunked=decision.route_chunked,
-            table_kinds=ctx.table_kinds,
-            config=ctx.config,
-            engine_version=ctx.engine_version,
-            registry=ctx.registry,
-            adapter=ctx.adapter,
-            vault_writer=ctx.vault_writer,
-            chunk_size_rows=ctx.chunk_size_rows,
-            native_threads=ctx.native_threads,
-            pool_cache=pool_cache,
-            chunked_dispatcher_enabled=ctx.chunked_dispatcher_enabled,
-            multi_table_dispatch_enabled=ctx.multi_table_dispatch_enabled,
-            key_provider=ctx.key_provider,
-            graph=ctx.graph,
-            namespace_registry=ctx.namespace_registry,
-            unconfigured_column_policy=ctx.projection_policy,
-            generate_output_tables=ctx.generate_output_tables,
-            substrate=ctx.substrate,
-            resolved_substrate=ctx.resolved_substrate,
-            fpe_chunk_count=ctx.fpe_chunk_count,
-            max_workers=ctx.max_workers,
-            fallback_to_pandas=ctx.fallback_to_pandas,
-            auto_chunk=ctx.auto_chunk,
-            auto_chunk_threshold_rows=ctx.auto_chunk_threshold_rows,
-            execution_plan_decision=decision.execution_plan_decision,
-            fidelity_report=ctx.fidelity_report,
-            now_iso=ctx.now_iso,
-            publish=publish,
-            pregenerated=pregenerated,
-        )
+        # §PANDAS-RANGE-ERROR: the mask step's oracle converts every source
+        # column to pandas; a value pandas cannot hold (far date, sub-us time)
+        # would otherwise crash uncoded with no column named. Attribute it to
+        # its source column, or re-raise unchanged if it was not that conversion.
+        try:
+            step = _pipeline_generate_mask.run_generate_and_mask_steps(
+                has_generate_table=ctx.has_generate_table,
+                has_mask_table=ctx.has_mask_table,
+                plan=ctx.plan,
+                derive_key=ctx.derive_key,
+                instance_default_locale=ctx.instance_default_locale,
+                provider_snapshot=ctx.provider_snapshot,
+                resident_sources=resident_sources,
+                caller_sources=caller_sources,
+                keep_lazy=decision.keep_lazy,
+                route_chunked=decision.route_chunked,
+                table_kinds=ctx.table_kinds,
+                config=ctx.config,
+                engine_version=ctx.engine_version,
+                registry=ctx.registry,
+                adapter=ctx.adapter,
+                vault_writer=ctx.vault_writer,
+                chunk_size_rows=ctx.chunk_size_rows,
+                native_threads=ctx.native_threads,
+                pool_cache=pool_cache,
+                chunked_dispatcher_enabled=ctx.chunked_dispatcher_enabled,
+                multi_table_dispatch_enabled=ctx.multi_table_dispatch_enabled,
+                key_provider=ctx.key_provider,
+                graph=ctx.graph,
+                namespace_registry=ctx.namespace_registry,
+                unconfigured_column_policy=ctx.projection_policy,
+                generate_output_tables=ctx.generate_output_tables,
+                substrate=ctx.substrate,
+                resolved_substrate=ctx.resolved_substrate,
+                fpe_chunk_count=ctx.fpe_chunk_count,
+                max_workers=ctx.max_workers,
+                fallback_to_pandas=ctx.fallback_to_pandas,
+                auto_chunk=ctx.auto_chunk,
+                auto_chunk_threshold_rows=ctx.auto_chunk_threshold_rows,
+                execution_plan_decision=decision.execution_plan_decision,
+                fidelity_report=ctx.fidelity_report,
+                now_iso=ctx.now_iso,
+                publish=publish,
+                pregenerated=pregenerated,
+            )
+        except _ingest_conversion_errors() as exc:
+            _raise_if_source_value_unrepresentable(resident_sources, ctx.graph, exc)
+            raise
         # Step 3: stitch the outputs together via the shared helper both this
         # oracle and the shadow coordinator's mixed dispatch call, so "mask wins
         # ties" cannot drift between the two (Task 4.6 slice 5b-i).

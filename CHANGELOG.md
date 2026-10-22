@@ -9,6 +9,21 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Fixed (§PANDAS-RANGE-ERROR: coded error when the full-frame pandas oracle meets an unrepresentable value, 2026-10-22)
+
+The full-frame pandas route converts every source column to pandas up front, so a
+column holding a value pandas cannot represent — a date beyond year 9999, a
+sub-microsecond `time64[ns]` — used to crash there with an uncoded exception
+(`ValueError: year N is out of range`, `pyarrow.ArrowInvalid: ... non-zero
+nanoseconds`) that named no column. `run_full_frame_route` now attributes the
+failure to its source column and raises a coded
+`ExecutionError(code="full_frame_value_unrepresentable")` naming the table and
+column, and noting that the default native (Rust) route keeps columns in Arrow and
+does not hit this limit. Error-path only: a run whose values all fit pandas is
+byte-identical to before, and the bounded routes (chunked carry / out-of-core)
+keep their own existing coded attributions. No up-front scan — the column is
+identified only after the conversion fails.
+
 ### Fixed (§VAULT-PASSTHROUGH: reject `vault: true` on a passthrough column, 2026-10-22)
 
 `vault: true` on a `strategy: passthrough` column used to pass compile and then
