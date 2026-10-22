@@ -95,6 +95,13 @@ def reject_unpinnable(config: dict[str, Any]) -> None:
         raise PinnedModeError(
             code="pinned_not_generation_only", message="the job declares no tables"
         )
+    # Positions only: a token can sit in a table or column name, and must not reach a message.
+    for ti, table in enumerate(tables):
+        if _has_live_token(table):
+            raise PinnedModeError(
+                code="pinned_live_token",
+                message=f"table #{ti} holds an unresolved variable token",
+            )
     for table in tables:
         tname = str(table.get("name"))
         gcols = table.get("generate_columns")
@@ -119,11 +126,6 @@ def _reject_column(tname: str, col: dict[str, Any], siblings: dict[Any, dict[str
     if kind in REJECTED_TYPES:
         code, why = REJECTED_TYPES[kind]
         raise PinnedModeError(code=code, message=f"{_where(tname, cname)}: {why}")
-    if _has_live_token(col):
-        raise PinnedModeError(
-            code="pinned_live_token",
-            message=f"{_where(tname, cname)}: config holds an unresolved ${{...}} token",
-        )
     if kind not in PINNABLE_TYPES:
         raise PinnedModeError(
             code="pinned_type_not_allowlisted",

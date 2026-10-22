@@ -591,6 +591,7 @@ def test_live_resolver_tokens_are_refused(snap: str, value: str) -> None:
     with pytest.raises(PinnedModeError) as exc:
         compile_pinned_plan(cfg, REF)
     assert exc.value.code == "pinned_live_token"
+    assert "${" not in str(exc.value)
     assert "SECRET" not in str(exc.value)
 
     plan = compile_pinned_plan(_config(snap), REF)
@@ -602,3 +603,13 @@ def test_live_resolver_tokens_are_refused(snap: str, value: str) -> None:
     with pytest.raises(PinnedModeError) as exc2:
         execute_pinned(dataclasses.replace(plan, tables=tuple(tables)), 1)
     assert exc2.value.code == "pinned_live_token"
+    assert "${" not in str(exc2.value)
+
+
+def test_live_token_in_a_column_name_is_not_echoed(snap: str) -> None:
+    cfg = _config(snap)
+    cfg["tables"][0]["generate_columns"][0]["name"] = "pre-${env.SECRET}-post"
+    with pytest.raises(PinnedModeError) as exc:
+        compile_pinned_plan(cfg, REF)
+    assert exc.value.code == "pinned_live_token"
+    assert "${" not in str(exc.value) and "SECRET" not in str(exc.value)
