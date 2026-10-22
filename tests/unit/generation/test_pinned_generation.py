@@ -538,3 +538,67 @@ def test_cyclic_plan_is_a_coded_error(snap: str) -> None:
     with pytest.raises(PinnedModeError) as exc:
         execute_pinned(dataclasses.replace(plan, tables=tables), 1)
     assert exc.value.code == "pinned_plan_malformed"
+
+
+def _inf_count_config() -> dict[str, Any]:
+    return {
+        "version": 1,
+        "global_settings": {"seed": 1},
+        "sources": {},
+        "targets": {},
+        "tables": [
+            {
+                "name": "t",
+                "row_count": 2,
+                "generate_columns": [
+                    {"name": "big", "type": "derived", "expression": "1e308 * 1e308"},
+                    {"name": "n", "type": "derived_aggregate", "op": "count", "column": "big"},
+                ],
+            }
+        ],
+    }
+
+
+def test_pinned_output_ignores_ambient_pandas_options() -> None:
+    import warnings
+
+    plan = compile_pinned_plan(_inf_count_config(), REF)
+    results = []
+    for flag in (False, True):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", FutureWarning)
+            with pd.option_context("mode.use_inf_as_na", flag):
+                results.append(execute_pinned(plan, 1)["t"].column("n").to_pylist())
+    assert results[0] == results[1]
+
+
+def test_column_name_is_part_of_the_fingerprint(snap: str) -> None:
+    plan = compile_pinned_plan(_config(snap), REF)
+    tables = list(plan.tables)
+    renamed = dataclasses.replace(tables[0].columns[0], name="renamed")
+    tables[0] = dataclasses.replace(tables[0], columns=(renamed, *tables[0].columns[1:]))
+    other = dataclasses.replace(plan, tables=tuple(tables))
+    assert fingerprint(other) != fingerprint(plan)
+    with pytest.raises(PinnedModeError) as exc:
+        execute_pinned(other, 1)
+    assert exc.value.code == "pinned_plan_malformed"
+
+
+@pytest.mark.parametrize("value", ["${env.SECRET}", "${var.x}", "pre-${storm.k}-post"])
+def test_live_resolver_tokens_are_refused(snap: str, value: str) -> None:
+    cfg = _config(snap)
+    cfg["tables"][0]["generate_columns"][0]["prefix"] = value
+    with pytest.raises(PinnedModeError) as exc:
+        compile_pinned_plan(cfg, REF)
+    assert exc.value.code == "pinned_live_token"
+    assert "SECRET" not in str(exc.value)
+
+    plan = compile_pinned_plan(_config(snap), REF)
+    tables = list(plan.tables)
+    col = json.loads(tables[0].columns[0].config_json)
+    col["prefix"] = value
+    bad = dataclasses.replace(tables[0].columns[0], config_json=json.dumps(col))
+    tables[0] = dataclasses.replace(tables[0], columns=(bad, *tables[0].columns[1:]))
+    with pytest.raises(PinnedModeError) as exc2:
+        execute_pinned(dataclasses.replace(plan, tables=tuple(tables)), 1)
+    assert exc2.value.code == "pinned_live_token"

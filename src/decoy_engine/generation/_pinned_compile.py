@@ -69,6 +69,21 @@ def anchor_is_absolute(text: str) -> bool:
     return text.strip().lower() in ANCHOR_TOKENS or ISO_ANCHOR.match(text) is not None
 
 
+# Any ${...} form: the platform resolver substitutes these before the engine sees the job, so one
+# surviving here is a live input the plan cannot pin.
+LIVE_TOKEN = re.compile(r"\$\{[^}]*\}")
+
+
+def _has_live_token(value: Any) -> bool:
+    if isinstance(value, str):
+        return LIVE_TOKEN.search(value) is not None
+    if isinstance(value, dict):
+        return any(_has_live_token(k) or _has_live_token(v) for k, v in value.items())
+    if isinstance(value, (list, tuple)):
+        return any(_has_live_token(v) for v in value)
+    return False
+
+
 def _where(table: str, column: str) -> str:
     return f"table {table!r} column {column!r}"
 
@@ -104,6 +119,11 @@ def _reject_column(tname: str, col: dict[str, Any], siblings: dict[Any, dict[str
     if kind in REJECTED_TYPES:
         code, why = REJECTED_TYPES[kind]
         raise PinnedModeError(code=code, message=f"{_where(tname, cname)}: {why}")
+    if _has_live_token(col):
+        raise PinnedModeError(
+            code="pinned_live_token",
+            message=f"{_where(tname, cname)}: config holds an unresolved ${{...}} token",
+        )
     if kind not in PINNABLE_TYPES:
         raise PinnedModeError(
             code="pinned_type_not_allowlisted",

@@ -86,6 +86,13 @@ def _check_plan(plan: PinnedPlan) -> dict[tuple[str, str], StatisticalSpec]:
             ]
         }
     )
+    for t in plan.tables:
+        for c in t.columns:
+            if json.loads(c.config_json).get("name") != c.name:
+                raise PinnedModeError(
+                    code="pinned_plan_malformed",
+                    message=f"table {t.name!r}: column name {c.name!r} differs from its config",
+                )
     specs: dict[tuple[str, str], StatisticalSpec] = {}
     for s in plan.statistical:
         if not s.snapshot_digest:
@@ -112,12 +119,47 @@ def _check_plan(plan: PinnedPlan) -> dict[tuple[str, str], StatisticalSpec]:
     return specs
 
 
+# Process-global pandas options that can change generated values (inf handling in count(),
+# float reductions via bottleneck/numexpr, string and downcast behaviour). Pinned to the pandas
+# defaults without optional accelerators, so ambient settings cannot move the bytes.
+_PANDAS_OPTIONS = (
+    "mode.use_inf_as_na",
+    False,
+    "compute.use_bottleneck",
+    False,
+    "compute.use_numexpr",
+    False,
+    "mode.string_storage",
+    "python",
+    "future.infer_string",
+    False,
+    "future.no_silent_downcasting",
+    False,
+    "mode.copy_on_write",
+    False,
+)
+
+
 def execute_pinned(plan: PinnedPlan, seed: int) -> dict[str, pa.Table]:
     """Generate every table of ``plan`` under ``seed``; byte-identical for equal inputs."""
-    from decoy_engine.generation.synthesize import _generate_column
+    import warnings
+
+    import pandas as pd
 
     seed = validate_seed(seed)
     specs = _check_plan(plan)
+    with warnings.catch_warnings():
+        # mode.use_inf_as_na is deprecated; setting it to its default is still the pin.
+        warnings.simplefilter("ignore", FutureWarning)
+        with pd.option_context(*_PANDAS_OPTIONS):
+            return _run(plan, seed, specs)
+
+
+def _run(
+    plan: PinnedPlan, seed: int, specs: dict[tuple[str, str], StatisticalSpec]
+) -> dict[str, pa.Table]:
+    from decoy_engine.generation.synthesize import _generate_column
+
     by_name = {t.name: t for t in plan.tables}
     pools: dict[str, pa.Table] = {}
     for name in _order_tables(plan):

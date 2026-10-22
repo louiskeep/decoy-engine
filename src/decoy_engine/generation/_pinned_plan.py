@@ -219,7 +219,9 @@ def fingerprint(plan: PinnedPlan) -> str:
                 "name": t.name,
                 "row_count": t.row_count,
                 "depends_on": list(t.depends_on),
-                "columns": [json.loads(c.config_json) for c in t.columns],
+                "columns": [
+                    {"name": c.name, "config": json.loads(c.config_json)} for c in t.columns
+                ],
             }
             for t in plan.tables
         ],
