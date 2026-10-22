@@ -22,6 +22,8 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+from collections.abc import Callable
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any
 
@@ -39,6 +41,13 @@ from decoy_engine.quality.snapshot import DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION
 # a fail-closed size fence on an embedded artifact is a typed compile
 # error, never a silent truncation or a fallback to a runtime path read.
 EMBEDDED_SNAPSHOT_MAX_BYTES = 16 * 1024 * 1024  # 16 MiB
+
+
+# Set by pinned compilation to inspect each snapshot's decoded JSON before any schema or spec
+# validation sees it, without a second read of the file.
+snapshot_content_guard: ContextVar[Callable[[Any], None] | None] = ContextVar(
+    "snapshot_content_guard", default=None
+)
 
 
 @dataclass(frozen=True)
@@ -137,6 +146,9 @@ def read_and_pin_snapshots(
                 message=f"snapshot_file {path!r} could not be read: {exc}",
             )
             continue
+        guard = snapshot_content_guard.get()
+        if guard is not None:
+            guard(parsed)
         version = parsed.get("schema_version") if isinstance(parsed, dict) else None
         if not isinstance(parsed, dict) or version != DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION:
             failures[path] = StatisticalSpecError(

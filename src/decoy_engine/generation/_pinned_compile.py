@@ -200,9 +200,15 @@ def compile_pinned_plan(config: dict[str, Any], reference_date: datetime | str) 
     refuse_live_tokens(config, "config")
     reference = normalize_reference_date(reference_date)
     reject_unpinnable(config)
-    plan = compile_plan(
-        config, _empty_profile(reference), decoy_engine_version=str(decoy_engine.__version__)
-    )
+    from decoy_engine.plan._generation import snapshot_content_guard
+
+    reset = snapshot_content_guard.set(lambda parsed: refuse_live_tokens(parsed, "snapshot"))
+    try:
+        plan = compile_plan(
+            config, _empty_profile(reference), decoy_engine_version=str(decoy_engine.__version__)
+        )
+    finally:
+        snapshot_content_guard.reset(reset)
     gen = plan.generation
     if gen is None:
         raise PinnedModeError(
