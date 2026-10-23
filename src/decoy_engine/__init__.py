@@ -164,6 +164,7 @@ from decoy_engine.plan.validate import (
     validate_plan,
 )
 from decoy_engine.profile._fixed_width_reader import read_fixed_width
+from decoy_engine.profile._fixed_width_writer import write_fixed_width
 from decoy_engine.providers import (
     atomic_swap_db_providers,
     list_generate_faker_providers,
@@ -438,4 +439,5 @@ __all__ = [
     "validate_config",
     "validate_plan",
     "vault_writer_for_config",
+    "write_fixed_width",
 ]

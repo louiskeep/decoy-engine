@@ -87,6 +87,26 @@ of the primary score (a column can be score-comparable, so not an omission, and
 GOF-unavailable here). Additive and deterministic: `omissions` is unchanged, no
 existing report digest changes, and warning ordering stays byte-stable.
 
+### Added (Fixed-width OUTPUT writer, 2026-10-22)
+
+New public `decoy_engine.write_fixed_width(frame, layout, path)`: the inverse of
+`read_fixed_width`. It materializes a pandas DataFrame to a newline-delimited
+fixed-width file per a `FixedWidthLayout` such that `read_fixed_width` reads back
+the exact frame. Inversion is verified against the reader's own per-column decode
+(a field is accepted only when the reader reads it back unchanged), so the
+writer fails closed on any value that would not round-trip exactly: overflow,
+a string whose strip-side edge is the pad character, an integer whose trailing
+digits the pad-strip would remove, null/NaN, a type mismatch, an embedded
+newline, or a non-UTF-8-encodable character. Publication is failure-safe: records
+are written to a temp file and `os.replace`d into place only on full success, so
+a fail-closed failure mid-frame leaves the canonical path untouched. Errors are
+PII-safe (position + column + length, never the cell value; no cause/context
+chain), mirroring `FixedWidthParseError`. `FileTarget` now accepts
+`format="fixed_width"` with a required `layout` (mirroring `FileSource`); cloud
+targets (`S3Target`/`GCSTarget`) still reject fixed-width output. New
+`FixedWidthWriteError`. The engine does not itself write output targets; CLI and
+platform wiring to call this primitive are separate follow-up slices.
+
 ### Added (DuckDB Postgres snapshot input primitive, 2026-10-20)
 
 New `decoy_engine.connectors.postgres_snapshot` module: a read-only snapshot-to-Parquet

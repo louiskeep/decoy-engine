@@ -235,6 +235,11 @@ def test_all_lists_every_public_name():
         # may change without a version bump).
         "read_fixed_width",
         "FixedWidthParseError",
+        # Fixed-width OUTPUT (2026-10-22): the writer that inverts
+        # `read_fixed_width`, re-exported so a `format: fixed_width` FileTarget
+        # can be materialized without importing the private
+        # `profile._fixed_width_writer` module.
+        "write_fixed_width",
     }
     assert set(decoy_engine.__all__) == expected
 
