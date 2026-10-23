@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
@@ -187,6 +188,20 @@ def _empty_profile(reference_date: str) -> Any:
     )
 
 
+@dataclass(frozen=True)
+class PinnedCompilation:
+    """The ``PinnedPlan`` and the ``GenerationPlan`` it was built from, from one compile.
+
+    An in-process pair, not a wire type: fingerprint and serialize ``pinned``. ``generation`` is
+    the identical object ``pinned`` was projected from, so window admission and execution cannot
+    disagree about tables, columns or row counts. It is not seed-independent the way the
+    fingerprint is.
+    """
+
+    pinned: PinnedPlan
+    generation: Any  # GenerationPlan; plan types are imported lazily in this module
+
+
 def compile_pinned_plan(
     config: dict[str, Any], reference_date: datetime | str | None = None
 ) -> PinnedPlan:
@@ -197,6 +212,17 @@ def compile_pinned_plan(
 
     The config seed is deliberately dropped: the caller supplies the seed at execution, and the
     fingerprint must be the same for every seed.
+    """
+    return compile_pinned_plan_with_generation(config, reference_date).pinned
+
+
+def compile_pinned_plan_with_generation(
+    config: dict[str, Any], reference_date: datetime | str | None = None
+) -> PinnedCompilation:
+    """``compile_pinned_plan`` that also returns the ``GenerationPlan`` of the same compile.
+
+    The step order is load-bearing for which error wins: token scan, reference date, pre-compile
+    rejection, guarded compile, resolved-config recheck.
     """
     import decoy_engine
     from decoy_engine.plan import compile_plan
@@ -279,10 +305,11 @@ def compile_pinned_plan(
             )
         )
 
-    return PinnedPlan(
+    pinned = PinnedPlan(
         schema_version=PINNED_PLAN_SCHEMA,
         reference_date=reference,
         runtime_identity=runtime_identity(),
         tables=tuple(tables),
         statistical=tuple(sorted(statistical, key=lambda s: (s.table, s.column))),
     )
+    return PinnedCompilation(pinned=pinned, generation=gen)
