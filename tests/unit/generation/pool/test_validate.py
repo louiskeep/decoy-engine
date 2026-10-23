@@ -422,6 +422,9 @@ class TestNoProfileMode:
             # B1 (S13): row 10 is profile-dependent, so it is skipped under
             # no_profile too (the execution-time guard backstops it).
             "null_bearing_int_unsupported",
+            # §WHEN-NUMERIC: the when-gated string-output-on-numeric check is
+            # profile-dependent, so it is skipped here too.
+            "when_string_output_on_numeric_unsupported",
         )
 
     def test_profile_mode_leaves_checks_skipped_empty(self) -> None:

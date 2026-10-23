@@ -624,7 +624,7 @@ def _declined_cases(tmp: Path, **kw: Any) -> dict[str, tuple[dict[str, Any], dic
         "numeric-categories": ([_cat("v", "vn", [1, 2], vault=True)], None, False),
         "text-redact": ([text_redact], None, False),
         "int-source": ([_h("n", "nn", vault=True)], ints, False),
-        "float-source": ([_pass("n", "nn", vault=True)], floats, False),
+        "float-source": ([_trunc("n", "nn", vault=True)], floats, False),
         "child-key": ([], None, True),
     }
     out = {}
