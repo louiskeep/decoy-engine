@@ -3,7 +3,8 @@
 Rules consulted: 00-universal, development-loop, feature-dev, testing, risk-and-exceptions,
 reuse-first, architecture.
 
-Status: plan rev 2 (Opus, 2026-10-23). Folds the Codex plan-gate round-1 NO-GO (1 HIGH + 3 MED + 1 LOW).
+Status: plan rev 3 (Opus, 2026-10-23). Folds Codex round-1 (1 HIGH + 3 MED + 1 LOW) and round-2
+(1 MED targeted-None-drop + 2 LOW).
 Unblocks the platform GEN-API 1c adapter. Scope set by
 Cam's locked decisions (2026-10-23): the generation API rides the PINNED subsystem for
 identity/execution; V1 REFUSES statistical-reference generation jobs (at the platform adapter, not
@@ -114,16 +115,23 @@ Then `normalize_reference_date(reference_date)` unchanged (idempotent on an alre
 - **An UNSET `reference_date` must NOT change an existing config's digest** (round-1 MEDIUM-4): a
   default field means `model_dump()` now emits `reference_date: None` for every pre-existing config,
   and `_hash_config` would include that key and silently shift every existing approval digest. Fix: in
-  `_hash_config`, drop `global_settings` keys whose value is `None` from the hashed semantic config (a
-  value-None key is semantically "unset"), so a config with no reference_date hashes IDENTICALLY to
-  before the field existed, while a supplied reference_date is covered. (Implement in the same filter
-  that already excludes `_NON_SEMANTIC_GLOBAL_SETTINGS`.) Test: a config with no reference_date hashes
-  identically before/after the field is added; `reference_date: null` == field absent.
+  `_hash_config`, drop ONLY the `reference_date` key from `global_settings` WHEN its value is `None`
+  (a TARGETED drop of the new key, NOT a blanket None-drop). round-2 MEDIUM: a blanket "remove every
+  None global_settings key" is WRONG because `unconfigured_column_policy=None` and
+  `mask_secret_ref=None` are already in `model_dump()` and already hashed today, so removing them would
+  itself migrate existing digests. Only the newly-added `reference_date` key may be dropped-when-None.
+  Test: a config with no reference_date hashes IDENTICALLY to the pre-field baseline (confirm the
+  existing None keys `unconfigured_column_policy`/`mask_secret_ref` are still hashed as before);
+  `reference_date: null` == field absent; a supplied reference_date hashes differently.
 - `compile_plan` / `generate_tables` (non-pinned path) ignore the new field (benign carry on
   `GlobalSettings`).
-- Guarantee is limited to the VALIDATED config path: a raw unvalidated dict could carry a `datetime`
-  into `_hash_config` and raise; the engine entries all validate via `PipelineConfig.model_validate`
-  first, so the normalized-string guarantee holds for them.
+- Normalization guarantee (round-2 LOW, claim corrected): neither `compile_plan` nor
+  `compile_pinned_plan` calls `PipelineConfig.model_validate`, so the `mode="before"` field validator
+  only normalizes configs that were built THROUGH the Pydantic model. The platform always passes a
+  model-validated config (so `reference_date` is already the canonical string by the time it reaches
+  `_hash_config`). A caller passing a RAW dict with a `datetime` reference_date is the pre-existing
+  no-`default=str` class (any non-JSON-native value already raises `TypeError` in `_hash_config`
+  today); this slice does not change that and does not claim to normalize raw dicts.
 - `execute_pinned` reads `plan.reference_date` (`_pinned_execute.py:199`) unchanged; `classify_window`
   (full-`Plan`) unchanged; the new bridge is additive.
 - No change to the pinned statistical path; statistical jobs are refused at the platform adapter.
@@ -149,13 +157,21 @@ Then `normalize_reference_date(reference_date)` unchanged (idempotent on an alre
 5. Digest coverage: two configs identical except a SUPPLIED `reference_date` produce DIFFERENT
    `_hash_config` digests; `_hash_config` does not raise on the string value (JSON-native); the field
    is NOT in `_NON_SEMANTIC_GLOBAL_SETTINGS`. Omission: a config with NO reference_date (and one with
-   `reference_date: null`) hashes IDENTICALLY to the pre-field baseline (the None-drop in `_hash_config`
-   holds), so adding the field does not migrate existing approval digests.
+   `reference_date: null`) hashes IDENTICALLY to the pre-field baseline (the TARGETED reference_date-only
+   None-drop holds), so adding the field does not migrate existing approval digests. Guard the targeted
+   drop: a config carrying `unconfigured_column_policy: null` / `mask_secret_ref: null` (both already
+   hashed today) hashes the SAME before and after this change (assert the drop touches ONLY
+   reference_date, not those pre-existing None keys).
 6. compile_pinned_plan: reads `global_settings.reference_date` when the positional arg is absent;
    positional arg still wins when supplied; raises `pinned_reference_date_invalid` when neither is
    present.
-7. Sentries: module-size + public-import-boundary green (relocate `normalize_reference_date` if the
-   boundary sentry flags the config->generation import; re-run to confirm).
+7. Sentries + import decision: module-size + public-import-boundary sentries green (the
+   public-import-boundary sentry only checks the four designated boundary files for
+   `decoy_engine.internal` imports, so it will NOT flag or bless a config->generation dependency; do
+   NOT treat it as the relocation decision). The config/generation import decision is a direct SMOKE
+   IMPORT test: import `config._global_settings` and assert no circular-import error and that
+   `reference_date` validation works. Per §4.2, prefer relocating `normalize_reference_date` to a
+   neutral module so `config` does not import `generation`; the smoke test confirms whichever choice.
 
 ## 6. Done-when
 
