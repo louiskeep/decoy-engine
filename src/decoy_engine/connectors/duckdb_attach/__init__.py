@@ -15,6 +15,7 @@ from decoy_engine.connectors.duckdb_attach.catalog import (
     TableInfo,
     browse,
 )
+from decoy_engine.connectors.duckdb_attach.duckdb_file import DuckDbFileDialect, DuckDbFileError
 from decoy_engine.connectors.duckdb_attach._errors import SnapshotError
 from decoy_engine.connectors.duckdb_attach._models import (
     _IDENT_RE,
@@ -28,6 +29,8 @@ __all__ = [
     "CatalogListing",
     "ColumnInfo",
     "Dialect",
+    "DuckDbFileDialect",
+    "DuckDbFileError",
     "RelationSelection",
     "SnapshotConfig",
     "SnapshotError",
