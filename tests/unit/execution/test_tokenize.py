@@ -158,3 +158,75 @@ def test_fails_closed_without_a_namespace() -> None:
         "tokenize_requires_namespace" in str(exc.value)
         or getattr(exc.value, "code", "") == "tokenize_requires_namespace"
     )
+
+
+# --- V0b: run_pipeline exposure + full-frame routing ------------------------
+
+
+def test_run_pipeline_threads_vault_and_forces_full_frame(tmp_path: Any) -> None:
+    """The platform injects the token vault via run_pipeline. A tokenize job must
+    reach the full-frame adapter (the bounded routes don't thread the vault), so
+    run_pipeline forces full-frame + no auto-chunk when a token vault is passed."""
+    import pyarrow.parquet as pq
+
+    from decoy_engine.config import PipelineConfig
+    from decoy_engine.execution import run_pipeline
+    from decoy_engine.keyprovider import SecretKeyProvider
+
+    tbl = pa.table({"pan": ["4111", "5500", "4111"]})
+    src = tmp_path / "in.parquet"
+    pq.write_table(tbl, src)
+    raw = {
+        "version": 1,
+        "global_settings": {"seed": 7},
+        "sources": {"t": {"type": "file", "format": "parquet", "path": str(src)}},
+        "targets": {
+            "t": {"type": "file", "format": "parquet", "path": str(tmp_path / "o.parquet")}
+        },
+        "tables": [
+            {"name": "t", "columns": [{"name": "pan", "strategy": "tokenize", "namespace": "ns"}]}
+        ],
+    }
+    cfg = PipelineConfig.model_validate(raw).model_dump()
+    vault = FakeVault()
+    res = run_pipeline(
+        cfg,
+        {"t": tbl},
+        engine_version="v0b",
+        key_provider=SecretKeyProvider(secret=bytes(range(32)), key_version="v1"),
+        token_vault_writer=vault,
+    )
+    out = res.outputs["t"].column("pan").to_pylist()
+    assert all(t.startswith("tok_") for t in out)
+    assert out[0] == out[2]  # idempotent surrogate for the repeated value
+    assert len(vault.puts) == 2  # two distinct plaintexts written
+    assert res.quality_metrics["execution"]["execution_mode"] == "full_frame"
+
+
+def test_run_pipeline_without_vault_fails_closed(tmp_path: Any) -> None:
+    import pyarrow.parquet as pq
+
+    from decoy_engine.config import PipelineConfig
+    from decoy_engine.execution import run_pipeline
+
+    tbl = pa.table({"pan": ["x"]})
+    src = tmp_path / "in.parquet"
+    pq.write_table(tbl, src)
+    raw = {
+        "version": 1,
+        "global_settings": {"seed": 7},
+        "sources": {"t": {"type": "file", "format": "parquet", "path": str(src)}},
+        "targets": {
+            "t": {"type": "file", "format": "parquet", "path": str(tmp_path / "o.parquet")}
+        },
+        "tables": [
+            {"name": "t", "columns": [{"name": "pan", "strategy": "tokenize", "namespace": "ns"}]}
+        ],
+    }
+    cfg = PipelineConfig.model_validate(raw).model_dump()
+    with pytest.raises(ExecutionError) as exc:
+        run_pipeline(cfg, {"t": tbl}, engine_version="v0b")  # no token vault
+    assert (
+        "tokenize_requires_vault" in str(exc.value)
+        or getattr(exc.value, "code", "") == "tokenize_requires_vault"
+    )

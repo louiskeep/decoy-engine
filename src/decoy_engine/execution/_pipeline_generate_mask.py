@@ -88,6 +88,7 @@ def run_generate_and_mask_steps(
     registry: ProviderRegistry,
     adapter: ExecutionAdapter,
     vault_writer: Any,
+    token_vault_writer: Any = None,
     chunk_size_rows: int,
     native_threads: int,
     pool_cache: PoolCache,
@@ -285,6 +286,7 @@ def run_generate_and_mask_steps(
                 unconfigured_column_policy=unconfigured_column_policy,
                 generate_output_tables=generate_output_tables,
                 key_provider=key_provider,
+                token_vault_writer=token_vault_writer,
                 # Full-frame route: pin an admitted deterministic-Faker column's degenerate
                 # output to `string` (C5c-ii option A). The chunked legs pin their own way.
                 pin_degenerate_faker=True,
