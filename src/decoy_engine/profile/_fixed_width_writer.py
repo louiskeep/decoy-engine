@@ -254,6 +254,21 @@ def _check_columns(frame: pd.DataFrame, spec: FixedWidthLayout) -> str | None:
     return None
 
 
+def _fsync_dir(directory: str) -> None:
+    """Best-effort fsync of the directory so the os.replace rename survives a crash.
+    A no-op where a directory fd cannot be opened or fsynced (e.g. Windows)."""
+    try:
+        fd = os.open(directory, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
+
+
 def _write_all(frame: pd.DataFrame, spec: FixedWidthLayout, path: str) -> str | None:
     """Atomically write every record, or return a PII-safe failure message with
     nothing published. Raises only for genuine I/O errors (OSError)."""
@@ -290,6 +305,7 @@ def _write_all(frame: pd.DataFrame, spec: FixedWidthLayout, path: str) -> str | 
             _silent_unlink(tmp_path)
             return failure
         os.replace(tmp_path, path)
+        _fsync_dir(directory)
         return None
     except BaseException:
         _silent_unlink(tmp_path)

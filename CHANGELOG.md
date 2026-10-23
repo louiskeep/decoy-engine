@@ -94,7 +94,7 @@ New public `decoy_engine.write_fixed_width(frame, layout, path)`: the inverse of
 fixed-width file per a `FixedWidthLayout` such that `read_fixed_width` reads back
 the exact frame. Inversion is verified against the reader's own per-column decode
 (a field is accepted only when the reader reads it back unchanged), so the
-writer fails closed on any value that would not round-trip exactly — overflow,
+writer fails closed on any value that would not round-trip exactly: overflow,
 a string whose strip-side edge is the pad character, an integer whose trailing
 digits the pad-strip would remove, null/NaN, a type mismatch, an embedded
 newline, or a non-UTF-8-encodable character. Publication is failure-safe: records

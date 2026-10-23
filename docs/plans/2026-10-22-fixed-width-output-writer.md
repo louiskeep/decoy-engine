@@ -1,6 +1,6 @@
 # Fixed-width OUTPUT: writer that inverts the reader
 
-Status: BUILT 2026-10-22 (branch `claude/fixed-width-output`) — writer +
+Status: BUILT 2026-10-22 (branch `claude/fixed-width-output`): writer +
 `FixedWidthWriteError` + `FileTarget` schema + public export; 33 tests
 (incl. a 250-example Hypothesis round-trip), 100% line+branch coverage on the
 new module, ruff + mypy clean. Dev loop, no cross-model review (owner
@@ -22,7 +22,7 @@ shim).
 Fixed-width is the one remaining any-to-any file-format direction that is
 asymmetric: the engine can READ a fixed-width file (`read_fixed_width` +
 `FixedWidthLayout`, `FileSource.format == "fixed_width"`), but the output side
-rejects it — `FileTarget.format` is `Literal["csv", "parquet"]`, so a
+rejects it: `FileTarget.format` is `Literal["csv", "parquet"]`, so a
 fixed-width output target fails config validation and there is no writer
 primitive. A masked table read from a fixed-width file cannot be written back
 in the same shape.
@@ -54,7 +54,7 @@ non-goals, each its own later slice in its own repo:
 - Platform wiring (`decoy-platform` `v2_cloud_materialize` / `binding_resolve`;
   platform is release-held and currently rejects fixed-width output by design).
 - Cloud fixed-width output (`S3Target` / `GCSTarget` stay `csv|parquet`, so a
-  cloud fixed-width target still fails validation — fail-closed, symmetric with
+  cloud fixed-width target still fails validation, fail-closed, symmetric with
   cloud fixed-width INPUT, which is also unsupported today).
 - Wider type set, multi-line records, COBOL copybook, implied-decimal / sign /
   overpunch / packed-decimal fields (the file-format-contract writeup slices 6
@@ -70,14 +70,14 @@ A review finding outside this guarantee is a recorded follow-up, not a blocker.
 
 - There is no `pandas.to_fwf` / stdlib fixed-width writer. The established
   convention for emitting a fixed-width field is `str.ljust` / `str.rjust` with
-  an explicit fill character — the exact inverse of the `(start, width)` colspec
+  an explicit fill character, the exact inverse of the `(start, width)` colspec
   slicing `pandas.read_fwf` and our `read_fixed_width` use. The writer follows
   that convention.
 - Inversion is made literal and future-proof by REUSING the reader's own
   per-column decode (`profile._fixed_width_reader._strip_pad` and `_cast_value`)
   to VERIFY each produced field reconstructs its source value, rather than
   re-deriving padding/strip rules independently. "The writer is correct iff the
-  reader reads back what it wrote" — a single source of truth for the
+  reader reads back what it wrote", a single source of truth for the
   round-trip contract (reuse-first; one place per fact). If the reader's decode
   changes, the writer's verification tracks it.
 - Failure-safe publication follows the same atomic-move pattern already
@@ -106,14 +106,14 @@ A review finding outside this guarantee is a recorded follow-up, not a blocker.
   ending in the pad char; an int left-aligned with pad `"0"` whose trailing
   digits would be stripped; a NaN; a null) without enumerating them.
 - **Record assembly.** build a `record_width`-length buffer of the gap-fill
-  character (space, 0x20 — gap bytes lie outside every column slice so the
+  character (space, 0x20; gap bytes lie outside every column slice so the
   reader never reads them, making any fill round-trip-safe), place each column's
   padded field at `[start, start+width)`, join, append `"\n"` (LF). Columns are
   non-overlapping ascending by `FixedWidthLayout`'s own validator, so placement
   never conflicts.
 - **Frame contract.** the frame must contain every layout column by name;
   columns are written in layout order. An extra frame column not in the layout
-  is a fail-closed error (never silently dropped — a data-loss concern).
+  is a fail-closed error (never silently dropped, a data-loss concern).
   Zero-row frame → empty file (round-trips to a zero-row frame).
 - House style: typed `FixedWidthWriteError`, single-purpose helpers, no flag
   arguments, comments explain why (the PII and round-trip invariants).
