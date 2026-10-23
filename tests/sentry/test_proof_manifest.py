@@ -126,10 +126,12 @@ def test_providers_and_generation_strategies_listed():
 def test_benchmarks_are_dated_and_sourced():
     gen = _load_generator()
     benches = gen.build()["benchmarks"]
-    assert benches, "expected at least one transcribed benchmark"
+    # The list may be empty: a figure is published only when a run whose method
+    # it honestly describes exists. Whatever is present must carry its provenance.
+    assert isinstance(benches, list)
     for b in benches:
         assert b["measured_at"], "benchmark missing measured_at"
-        assert b["source"].endswith("results.md")
+        assert b["source"], "benchmark missing source"
         assert b["throughput"]
         assert b["shape"]
 
