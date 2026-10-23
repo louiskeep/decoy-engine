@@ -1,6 +1,6 @@
 # Warehouse sources — S0: Pattern-E export fidelity reuse proof
 
-**Status:** implementation plan, 2026-10-23. First slice of the V2 warehouse-sources work. Engine-side, **tests + fixtures only, no src change**. Plan-gate ready (Opus plan → Codex plan-gate → Sonnet build tests-first → dennis → Codex final → ci-mirror).
+**Status:** BUILT + GREEN on branch `claude/brave-goodall-ya1d55`, pending external review before merge (2026-10-23). First slice of the V2 warehouse-sources work. Engine-side, **tests + fixtures only, no src change**. 83 tests pass; lint + format clean. Artifacts: `tests/integration/_warehouse_fixtures.py` (the `WAREHOUSE_TYPES` source of truth), `tests/integration/test_warehouse_export_fidelity.py`, and the frozen matrix `docs/records/2026-10-23-warehouse-export-fidelity-matrix.md`. Observed findings (reader reuse win holds; null-bearing-int→float64 with a ≥2**53 precision gap; decimal precision value-derived) are recorded in the matrix for S1/S2.
 
 **Parent framing:** `decoy-platform/docs/plans/2026-10-23-warehouse-sources-cloud-output-framing.md` (read/write envelope: read Redshift/Snowflake/MSSQL, write cloud-bucket files only).
 
