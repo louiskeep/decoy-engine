@@ -39,6 +39,7 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from decoy_engine.errors import ConfigError
 from decoy_engine.profile._fixed_width_reader import read_fixed_width
 
 if TYPE_CHECKING:
@@ -353,13 +354,24 @@ class CsvFileSource:
     column_names: list[str] | None = None
     delimiter: str = ","
 
-    def _read_kwargs(self) -> dict[str, Any]:
-        # header=None + names= reads a headerless file under the supplied names;
-        # the FileSource validator guarantees names are present when has_header
-        # is false, so column_names is not None on that branch.
+    def _read(self, nrows: int | None = None) -> pd.DataFrame:
         if self.has_header:
-            return {"sep": self.delimiter}
-        return {"sep": self.delimiter, "header": None, "names": self.column_names}
+            return pd.read_csv(self.path, nrows=nrows, sep=self.delimiter)
+        # Headerless: read WITHOUT `names=` first (pandas silently index-shifts
+        # when `names` is shorter than the file and NaN-pads when longer, which
+        # would mislabel or drop columns). Read positionally, assert the width
+        # matches the declared names, then assign. The names, path and counts are
+        # safe to surface; the message never embeds a cell value (the file may
+        # itself be the PII this product masks).
+        frame = pd.read_csv(self.path, nrows=nrows, sep=self.delimiter, header=None)
+        names = self.column_names or []
+        if frame.shape[1] != len(names):
+            raise ConfigError(
+                f"FileSource: headerless file {self.path.name!r} has {frame.shape[1]} "
+                f"columns but column_names declares {len(names)}; the counts must match"
+            )
+        frame.columns = names
+        return frame
 
     def row_count(self) -> RowCount:
         total = os.path.getsize(self.path)
@@ -378,14 +390,14 @@ class CsvFileSource:
         return estimate_csv_rows(total, header_bytes, line_bytes)
 
     def schema(self) -> pa.Schema:
-        head = pd.read_csv(self.path, nrows=_CSV_ESTIMATE_LINES, **self._read_kwargs())
+        head = self._read(nrows=_CSV_ESTIMATE_LINES)
         return pa.Table.from_pandas(head, preserve_index=False).schema
 
     def sample_frame(self, sample_rows: int) -> pd.DataFrame:
-        return pd.read_csv(self.path, nrows=sample_rows, **self._read_kwargs())
+        return self._read(nrows=sample_rows)
 
     def to_frame(self) -> pd.DataFrame:
-        return pd.read_csv(self.path, **self._read_kwargs())
+        return self._read()
 
 
 # ---------------------------------------------------------------------

@@ -22,8 +22,12 @@ hash-neutral: the three fields default to today's behaviour (a comma file with a
 header row) and are omitted from the config dump at their defaults, so an
 existing `format: csv` source validates, serializes, and fingerprints exactly as
 before. The fields are csv-only; setting any on a `parquet` / `fixed_width`
-source is a validation error, as is `has_header: false` without `column_names`,
-`column_names` with a header, or a multi-character delimiter. Reuses the reserved
+source is a validation error, as is `has_header: false` without `column_names`
+(including an empty list), `column_names` with a header, blank or duplicate
+`column_names`, or a multi-character delimiter. The reader additionally guards the
+name count against the file: a headerless file whose column count differs from
+`column_names` fails closed (no silent pandas index-shift or NaN-pad), with a
+message that names the counts but never a cell value. Reuses the reserved
 `ValidationCode.SOURCE_FILE_*` semantics (no_header_columns,
 column_names_with_header, bad_delimiter, csv_param_on_non_csv).
 

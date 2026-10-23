@@ -11,7 +11,9 @@ from __future__ import annotations
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
+from decoy_engine.errors import ConfigError
 from decoy_engine.profile._readers import CsvFileSource, build_profile_source
 
 _ROWS = "1,Ada,ada@example.com\n2,Grace,grace@example.com\n"
@@ -44,6 +46,33 @@ def test_tab_delimiter_is_respected(tmp_path: Path) -> None:
     frame = CsvFileSource(path, delimiter="\t").to_frame()
     assert list(frame.columns) == ["id", "name"]
     assert frame["name"].tolist() == ["Ada", "Grace"]
+
+
+def test_undercount_names_raises_not_silent_shift(tmp_path: Path) -> None:
+    # pandas with a too-short `names=` silently pushes the first column into the
+    # index and mislabels the rest; the width guard must reject instead.
+    path = tmp_path / "no_header.csv"
+    path.write_text(_ROWS, encoding="utf-8")
+    with pytest.raises(ConfigError, match="3 columns but column_names declares 1"):
+        CsvFileSource(path, has_header=False, column_names=["id"]).to_frame()
+
+
+def test_overcount_names_raises_not_nan_pad(tmp_path: Path) -> None:
+    path = tmp_path / "no_header.csv"
+    path.write_text(_ROWS, encoding="utf-8")
+    with pytest.raises(ConfigError, match="3 columns but column_names declares 4"):
+        CsvFileSource(
+            path, has_header=False, column_names=["id", "name", "email", "extra"]
+        ).to_frame()
+
+
+def test_headerless_row_count_counts_first_data_row(tmp_path: Path) -> None:
+    # The headerless branch skips no header line, so every data row is counted.
+    path = tmp_path / "no_header.csv"
+    path.write_text(_ROWS, encoding="utf-8")  # two data rows
+    rc = CsvFileSource(path, has_header=False, column_names=_NAMES).row_count()
+    assert rc.exact is False
+    assert rc.value >= 2
 
 
 def test_build_profile_source_threads_params(tmp_path: Path) -> None:

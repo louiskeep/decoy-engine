@@ -134,11 +134,21 @@ class FileSource(BaseModel):
                 "FileSource: `column_names` is forbidden when has_header=true "
                 "(the header row already names the columns)"
             )
-        if not self.has_header and self.column_names is None:
+        if not self.has_header and not self.column_names:
+            # None OR an empty list: an empty list would read a zero-column frame
+            # and silently drop the whole file from profiling/masking.
             raise ValueError(
-                "FileSource: has_header=false requires `column_names` "
+                "FileSource: has_header=false requires a non-empty `column_names` "
                 "(a headerless file has no names to read)"
             )
+        if self.column_names is not None:
+            # Names are the handle every mask rule keys on; a blank or duplicated
+            # name would mislabel a column, so reject at config time. Count-vs-file
+            # cannot be checked here (no file read) -- the reader guards that.
+            if any(not name.strip() for name in self.column_names):
+                raise ValueError("FileSource: `column_names` entries must be non-empty")
+            if len(set(self.column_names)) != len(self.column_names):
+                raise ValueError("FileSource: `column_names` must be unique")
         if len(self.delimiter) != 1:
             raise ValueError(
                 f"FileSource: `delimiter` must be exactly one character (got {self.delimiter!r})"
@@ -150,9 +160,11 @@ class FileSource(BaseModel):
         self, handler: SerializerFunctionWrapHandler
     ) -> dict[str, Any]:
         # The delimited params at their defaults stay out of the dump, so a csv
-        # source that never sets them serializes and hashes exactly as before the
-        # fields existed (the pipeline fingerprint is a stability contract). An
-        # explicit default means the same as an omitted one, so both drop.
+        # source that never sets them round-trips and persists byte-identically to
+        # before the fields existed, and an older engine can re-validate the dump.
+        # (`pipeline_config_hash` already excludes `sources`; this keeps the config
+        # dump itself stable, not that hash.) An explicit default means the same as
+        # an omitted one, so both drop.
         data: dict[str, Any] = handler(self)
         if data.get("has_header") is True:
             data.pop("has_header", None)

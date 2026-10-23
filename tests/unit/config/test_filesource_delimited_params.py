@@ -40,7 +40,7 @@ class TestDelimitedParamsAccepted:
 class TestDelimitedParamsRejected:
     def test_headerless_without_names_is_error(self) -> None:
         # source_file.no_header_columns
-        with pytest.raises(ValidationError, match="has_header=false requires `column_names`"):
+        with pytest.raises(ValidationError, match="requires a non-empty `column_names`"):
             FileSource.model_validate(_csv(has_header=False))
 
     def test_names_with_header_is_error(self) -> None:
@@ -70,6 +70,19 @@ class TestDelimitedParamsRejected:
             FileSource.model_validate(
                 {"type": "file", "format": "parquet", "path": "data.parquet", "delimiter": "\t"}
             )
+
+    def test_empty_column_names_is_error(self) -> None:
+        # An empty list would read a zero-column frame and silently drop the file.
+        with pytest.raises(ValidationError, match="requires a non-empty `column_names`"):
+            FileSource.model_validate(_csv(has_header=False, column_names=[]))
+
+    def test_duplicate_column_names_is_error(self) -> None:
+        with pytest.raises(ValidationError, match="must be unique"):
+            FileSource.model_validate(_csv(has_header=False, column_names=["x", "x"]))
+
+    def test_blank_column_name_is_error(self) -> None:
+        with pytest.raises(ValidationError, match="must be non-empty"):
+            FileSource.model_validate(_csv(has_header=False, column_names=["id", "  "]))
 
     def test_column_names_on_fixed_width_is_error(self) -> None:
         with pytest.raises(ValidationError, match="only valid when format='csv'"):
