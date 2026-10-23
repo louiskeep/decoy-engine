@@ -224,6 +224,10 @@ def write_fixed_width(
         raise ValueError("path must not contain a NUL character")
     spec = _resolve_layout(layout, path=path)
 
+    layout_message = _check_layout(spec)
+    if layout_message is not None:
+        raise FixedWidthWriteError(layout_message)
+
     schema_message = _check_columns(frame, spec)
     if schema_message is not None:
         raise FixedWidthWriteError(schema_message)
@@ -237,10 +241,30 @@ def write_fixed_width(
     return path
 
 
+def _check_layout(spec: FixedWidthLayout) -> str | None:
+    """Return a value-free message if the layout cannot round-trip through the
+    newline-delimited reader, else None. A pad character that is itself a record
+    separator (LF or CR) would inject or swallow line breaks, so a per-field check
+    passes while the assembled file reads back with the wrong row structure."""
+    for column in spec.columns:
+        if column.pad in ("\n", "\r"):
+            return (
+                f"column {column.name!r} pads with a line separator (pad={column.pad!r}); "
+                "records are newline-delimited, so this cannot round-trip through the reader"
+            )
+    return None
+
+
 def _check_columns(frame: pd.DataFrame, spec: FixedWidthLayout) -> str | None:
     """Return a value-free message if the frame's columns do not match the
-    layout (missing or extra), else None. Column names are schema, not data."""
+    layout (missing, extra, or duplicated), else None. Column names are schema, not data."""
     frame_columns = list(frame.columns)
+    duplicates = sorted({str(name) for name in frame_columns if frame_columns.count(name) > 1})
+    if duplicates:
+        return (
+            f"frame carries duplicate column label(s) {duplicates}; a fixed-width layout "
+            "names each column once"
+        )
     layout_names = [column.name for column in spec.columns]
     missing = [name for name in layout_names if name not in frame_columns]
     if missing:
@@ -266,7 +290,10 @@ def _fsync_dir(directory: str) -> None:
     except OSError:
         pass
     finally:
-        os.close(fd)
+        try:
+            os.close(fd)
+        except OSError:
+            pass
 
 
 def _write_all(frame: pd.DataFrame, spec: FixedWidthLayout, path: str) -> str | None:

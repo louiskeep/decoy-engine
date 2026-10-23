@@ -418,3 +418,57 @@ def test_io_failure_on_replace_propagates_and_cleans_temp(
 def test_silent_unlink_ignores_missing_file(tmp_path: Path) -> None:
     # Best-effort cleanup never raises on an already-gone temp file.
     _fixed_width_writer._silent_unlink(str(tmp_path / "does-not-exist.tmp"))
+
+
+# --------------------------------------------------------------------------- #
+# Codex final-gate regressions: record-breaking pad, duplicate columns,       #
+# directory-fsync close guard.                                                #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize("pad", ["\n", "\r"])
+def test_record_separator_pad_rejected_before_publication(tmp_path: Path, pad: str) -> None:
+    """A pad char that is itself a record separator (LF/CR) passes the per-field
+    check but makes the assembled file read back with the wrong row structure
+    (silent row loss / parse error). Reject it fail-closed before any write."""
+    layout = FixedWidthLayout(
+        columns=[{"name": "a", "start": 0, "width": 1, "type": "str", "pad": pad}]
+    )
+    frame = pd.DataFrame({"a": [""]})
+    path = tmp_path / "o.txt"
+    with pytest.raises(FixedWidthWriteError) as exc:
+        write_fixed_width(frame, layout, str(path))
+    assert "line separator" in str(exc.value)
+    assert not path.exists()  # nothing published
+    # no leaked value or exception chain
+    assert exc.value.__cause__ is None and exc.value.__context__ is None
+
+
+def test_duplicate_frame_columns_rejected_as_coded_error(tmp_path: Path) -> None:
+    """A frame with duplicate column labels used to raise an uncoded
+    AttributeError (frame[name] is a DataFrame). Reject it as a coded,
+    value-free FixedWidthWriteError before the temp file is created."""
+    layout = FixedWidthLayout(columns=[{"name": "a", "start": 0, "width": 2, "type": "int"}])
+    frame = pd.DataFrame([[1, 2]], columns=["a", "a"])
+    path = tmp_path / "o.txt"
+    with pytest.raises(FixedWidthWriteError) as exc:
+        write_fixed_width(frame, layout, str(path))
+    assert "duplicate" in str(exc.value)
+    assert not path.exists()
+
+
+def test_fsync_dir_survives_close_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The best-effort directory fsync must not raise out of a successful write:
+    an os.close fault after os.replace would otherwise surface as a spurious
+    failure on an already-published file."""
+    import os
+
+    real_close = os.close
+
+    def raising_close(fd: int) -> None:
+        real_close(fd)
+        raise OSError("EIO on close")
+
+    monkeypatch.setattr(os, "close", raising_close)
+    # Must return cleanly despite the close fault.
+    _fixed_width_writer._fsync_dir(str(tmp_path))
