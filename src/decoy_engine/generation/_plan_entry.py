@@ -33,6 +33,8 @@ if TYPE_CHECKING:
 
     from faker import Faker
 
+    from decoy_engine.plan._types import GenerationPlan
+
 
 def _config_declares_statistical_column(config: dict[str, Any]) -> bool:
     """D-M7 (round-3 remediation): does ANY table declare a `type:
@@ -63,8 +65,8 @@ class _PreparedPlan:
 
 
 def _prepare(plan: Any, caller: str) -> _PreparedPlan:
-    """Plan-only boundary shared by every public entry: the type guard, the `when` re-check,
-    the DP receipt check, and the decode of the pinned statistical specs and snapshots."""
+    """Plan-only boundary shared by the full-Plan entries: the type guard and the `when`
+    re-check, then the generation-payload decode shared with the pinned entries."""
     from decoy_engine.plan._types import Plan
 
     if not isinstance(plan, Plan):
@@ -77,18 +79,24 @@ def _prepare(plan: Any, caller: str) -> _PreparedPlan:
     # Before any provider runs: a deserialized or hand-built Plan can carry a `when` the
     # compile check never saw.
     validate_plan_when(plan)
-    if plan.generation is None:
+    return _prepare_generation(plan.generation, caller)
+
+
+def _prepare_generation(generation: GenerationPlan | None, caller: str) -> _PreparedPlan:
+    """The DP receipt check and the decode of the pinned config, statistical specs and
+    snapshots. Trusts the supplied object: it checks the receipt's presence, never re-verifies."""
+    if generation is None:
         raise TypeError(
             f"{caller}: this Plan has no generation payload (compiled from a "
             "config with no generate_columns, or an older serialized Plan version "
             "loaded for reporting/diagnostics only)."
         )
-    config = json.loads(plan.generation.config_json)
+    config = json.loads(generation.config_json)
     from decoy_engine.plan._checks_dp import _dp_declared
 
     if (
         _dp_declared(config)
-        and plan.generation.dp_verification is None
+        and generation.dp_verification is None
         and _config_declares_statistical_column(config)
     ):
         raise TypeError(
@@ -99,19 +107,17 @@ def _prepare(plan: Any, caller: str) -> _PreparedPlan:
         )
     statistical_specs = {
         (spec.table_name, spec.column_name): spec_from_dict(unfreeze_json(spec.spec))
-        for spec in plan.generation.statistical_specs
+        for spec in generation.statistical_specs
     }
     snapshot_index_for_column = {
         (spec.table_name, spec.column_name): spec.snapshot_index
-        for spec in plan.generation.statistical_specs
+        for spec in generation.statistical_specs
     }
     # Decoded once here, not reopened from `source_path` (guide section
     # 4.8/F4): every consumer (the statistical sampler via
     # `statistical_specs` above, and the fidelity gate via this list)
     # reads only these already-pinned bytes.
-    snapshot_artifacts = [
-        json.loads(base64.b64decode(s.payload_b64)) for s in plan.generation.snapshots
-    ]
+    snapshot_artifacts = [json.loads(base64.b64decode(s.payload_b64)) for s in generation.snapshots]
     return _PreparedPlan(
         config,
         {
@@ -120,6 +126,20 @@ def _prepare(plan: Any, caller: str) -> _PreparedPlan:
             "snapshot_artifacts": snapshot_artifacts,
         },
     )
+
+
+def _prepare_pinned(generation_plan: Any, caller: str) -> _PreparedPlan:
+    """Pinned-admission boundary: accepts only an already-compiled or already-verified
+    `GenerationPlan` (a serialized payload must go through the deserialize-and-verify path first).
+    It never reads the seed envelope, so it skips `validate_plan_when`."""
+    from decoy_engine.plan._types import GenerationPlan
+
+    if not isinstance(generation_plan, GenerationPlan):
+        raise TypeError(
+            f"{caller}(generation_plan) requires a compiled GenerationPlan "
+            f"(the `.generation` of a compiled Plan); got {type(generation_plan).__name__!r}."
+        )
+    return _prepare_generation(generation_plan, caller)
 
 
 def generate_tables(
@@ -214,6 +234,63 @@ def generate_tables_streamed(
     provider runs, when a column has no defensible bound under a bounded ``budget_bytes``.
     """
     prepared = _prepare(plan, "generate_tables_streamed")
+    return run_generation(
+        prepared.config,
+        derive_key=derive_key,
+        instance_default_locale=instance_default_locale,
+        sink=sink,
+        budget_bytes=budget_bytes,
+        batch_rows=batch_rows,
+        provider_snapshot=provider_snapshot,
+        legacy_kwargs=prepared.legacy_kwargs,
+    )
+
+
+def generate_tables_from_generation_plan(
+    generation_plan: Any,
+    derive_key: Any = None,
+    instance_default_locale: str | None = None,
+    *,
+    provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None = None,
+    budget_bytes: int | None = None,
+) -> dict[str, pa.Table]:
+    """`generate_tables` for an already-pinned `GenerationPlan`, byte-identical to calling it on
+    the full `Plan` that embeds the same payload.
+
+    The payload is trusted: pass `plan.generation` from `compile_plan`, or the result of the
+    deserialize-and-verify path, never an unverified serialized document. Masking seed `when`
+    validation does not apply, so the seed envelope is neither needed nor read.
+
+    Raises:
+        TypeError: ``generation_plan`` is not a `GenerationPlan`, or declares DP statistical
+            columns without a ``DpVerification`` receipt.
+    """
+    prepared = _prepare_pinned(generation_plan, "generate_tables_from_generation_plan")
+    result = run_generation(
+        prepared.config,
+        derive_key=derive_key,
+        instance_default_locale=instance_default_locale,
+        budget_bytes=budget_bytes,
+        provider_snapshot=provider_snapshot,
+        legacy_kwargs=prepared.legacy_kwargs,
+    )
+    assert result.tables is not None  # noqa: S101 -- sink=None can only run resident
+    return result.tables
+
+
+def generate_tables_streamed_from_generation_plan(
+    generation_plan: Any,
+    derive_key: Any = None,
+    instance_default_locale: str | None = None,
+    *,
+    sink: Any,
+    budget_bytes: int | None = None,
+    batch_rows: int | None = None,
+    provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None = None,
+) -> GenerationResult:
+    """`generate_tables_streamed` for an already-pinned `GenerationPlan`; see
+    `generate_tables_from_generation_plan` for the trust contract."""
+    prepared = _prepare_pinned(generation_plan, "generate_tables_streamed_from_generation_plan")
     return run_generation(
         prepared.config,
         derive_key=derive_key,

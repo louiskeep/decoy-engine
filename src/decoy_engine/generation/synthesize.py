@@ -655,4 +655,8 @@ def _reference(
 # resolves cleanly. `generate_tables` stays importable from its documented
 # path (`decoy_engine.generation.synthesize.generate_tables`,
 # `decoy_engine/__init__.py`) even though the implementation moved.
-from decoy_engine.generation._plan_entry import generate_tables as generate_tables  # noqa: E402
+from decoy_engine.generation._plan_entry import (  # noqa: E402, F401
+    generate_tables,
+    generate_tables_from_generation_plan,
+    generate_tables_streamed_from_generation_plan,
+)
