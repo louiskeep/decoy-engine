@@ -30,7 +30,9 @@ runner; the runner imports it through the re-export shim at its old path.
 
 from __future__ import annotations
 
+import csv
 import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
@@ -42,6 +44,19 @@ import pyarrow.parquet as pq
 from decoy_engine.errors import PipelineValidationError
 from decoy_engine.profile._fixed_width_reader import read_fixed_width
 from decoy_engine.validation_result import CODES
+
+# The headerless width scan (see CsvFileSource._assert_record_widths) tokenizes
+# with the stdlib csv parser, which defaults to a 131072-char field cap pandas
+# does not have. Raise it to the platform maximum so a large text/JSON field is
+# not falsely rejected. Narrow back on platforms where sys.maxsize overflows the
+# C long the module uses.
+_limit = sys.maxsize
+while True:
+    try:
+        csv.field_size_limit(_limit)
+        break
+    except OverflowError:
+        _limit //= 2
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
@@ -385,20 +400,28 @@ class CsvFileSource:
     def _assert_record_widths(self, expected: int, nrows: int | None) -> None:
         """Fail closed when a consumed record's field count != `expected`.
 
-        Scans only the records the read will consume (`nrows`), skipping blank
-        lines exactly as pandas does, so a huge file is not walked in full for a
-        bounded sample. Raises a coded PipelineValidationError naming the 1-based
-        line and the two counts, never a cell value."""
-        import csv
-
+        Scans only the records the read will consume (`nrows`), so a huge file is
+        not walked in full for a bounded sample, and raises a coded
+        PipelineValidationError naming the physical line and the two counts, never
+        a cell value. The scan is configured to agree with the pandas reader it
+        guards: `utf-8-sig` strips the BOM pandas strips; the field-size cap is
+        lifted (module top); NUL bytes are dropped (they are never field
+        delimiters/quotes/newlines, so they cannot change a field count, but the
+        csv parser rejects them while pandas reads them); and a line is skipped
+        only when it is empty or a single whitespace-only field with no delimiter,
+        which is exactly what pandas' skip_blank_lines does (a whitespace line
+        that contains the delimiter, or an empty-field line like ",", is a real
+        row to both)."""
         consumed = 0
-        with open(self.path, encoding="utf-8", newline="") as handle:
-            for lineno, record in enumerate(csv.reader(handle, delimiter=self.delimiter), start=1):
-                if not record:
-                    continue  # pandas skips blank lines (skip_blank_lines=True)
+        with open(self.path, encoding="utf-8-sig", newline="") as handle:
+            stripped = (line.replace("\x00", "") for line in handle)
+            reader = csv.reader(stripped, delimiter=self.delimiter)
+            for record in reader:
+                if len(record) <= 1 and (not record or not record[0].strip()):
+                    continue
                 if len(record) != expected:
                     raise PipelineValidationError(
-                        f"headerless file {self.path.name!r} line {lineno} has "
+                        f"headerless file {self.path.name!r} line {reader.line_num} has "
                         f"{len(record)} fields but column_names declares {expected}",
                         code=CODES.SOURCE_FILE_COLUMN_COUNT_MISMATCH,
                     )

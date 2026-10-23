@@ -102,6 +102,38 @@ def test_quoted_delimiter_counts_as_one_field(tmp_path: Path) -> None:
     assert frame.iloc[0]["name"] == "Ada, Jr."
 
 
+@pytest.mark.parametrize(
+    "label,content",
+    [
+        ("bom_quoted", b'\xef\xbb\xbf1,"a,b",c@x\n2,d,e@x\n'),
+        ("ws_only_line", b"1,Ada,a@x\n   \n2,Bob,b@x\n"),
+        ("trailing_spaced_line", b"1,Ada,a@x\n2,Bob,b@x\n  \n"),
+        ("ws_with_delim", b"1,Ada,a@x\n , , \n2,Bob,b@x\n"),
+        ("large_field", b"1," + b"x" * 200000 + b",a@x\n"),
+        ("nul_in_field", b"1,Ad\x00a,a@x\n2,Bob,b@x\n"),
+        ("multiline_quoted", b'1,"Ada\nJr",a@x\n2,Bob,b@x\n'),
+        ("crlf", b"1,Ada,a@x\r\n2,Bob,b@x\r\n"),
+    ],
+)
+def test_valid_file_is_not_falsely_rejected(tmp_path: Path, label: str, content: bytes) -> None:
+    # The width scan must agree with pandas: none of these valid shapes (BOM,
+    # whitespace-only / trailing-spaced lines, a whitespace-field row, a large
+    # field, NUL bytes, a multiline-quoted field, CRLF) may be rejected.
+    path = tmp_path / f"{label}.csv"
+    path.write_bytes(content)
+    frame = CsvFileSource(path, has_header=False, column_names=_NAMES).to_frame()
+    assert list(frame.columns) == _NAMES
+
+
+def test_mismatch_line_number_is_physical(tmp_path: Path) -> None:
+    # A multiline-quoted first record spans two physical lines, so the mismatch
+    # on the next record is reported at its physical line, not its record ordinal.
+    path = tmp_path / "multiline_then_bad.csv"
+    path.write_bytes(b'1,"Ada\nJr",a@x\n2,b@x\n')
+    with pytest.raises(PipelineValidationError, match="line 3 has 2 fields"):
+        CsvFileSource(path, has_header=False, column_names=_NAMES).to_frame()
+
+
 def test_error_message_never_embeds_a_cell_value(tmp_path: Path) -> None:
     # Leak rule: the mismatch message names path/line/counts, never a cell value.
     path = tmp_path / "ragged.csv"

@@ -26,9 +26,11 @@ source is a validation error, as is `has_header: false` without `column_names`
 (including an empty list), `column_names` with a header, blank or duplicate
 `column_names`, or a delimiter that is not a single non-line-terminator
 character. The reader additionally validates every consumed record's field count
-against `column_names` with the stdlib `csv` parser (honouring quoting and
-multiline-quoted fields): a short/ragged row, an over-wide row, or an empty file
-fails closed with a coded `PipelineValidationError`
+against `column_names` with the stdlib `csv` parser, configured to agree with the
+pandas read it guards (BOM stripped, no field-size cap, NUL bytes dropped, and the
+same blank-line rule, so a valid file is never falsely rejected): a short/ragged
+row, an over-wide row, or an empty file fails closed with a coded
+`PipelineValidationError`
 (`source_file.column_count_mismatch`) naming the path, line and counts but never
 a cell value, instead of pandas silently padding or shifting columns. Reuses the
 reserved `CODES.SOURCE_FILE_*` semantics (no_header_columns,
