@@ -417,29 +417,43 @@ class CsvFileSource:
         PipelineValidationError naming the physical line and the two counts, never
         a cell value. The scan is configured to agree with the pandas reader it
         guards: `utf-8-sig` strips the BOM pandas strips; the field-size cap is
-        lifted (module top); NUL bytes are dropped (they are never field
-        delimiters/quotes/newlines, so they cannot change a field count, but the
-        csv parser rejects them while pandas reads them); and a line is skipped
-        only when it is empty or a single whitespace-only field with no delimiter,
-        which is exactly what pandas' skip_blank_lines does (a whitespace line
-        that contains the delimiter, or an empty-field line like ",", is a real
-        row to both).
+        lifted (module top); and a line is skipped only when it is empty or a
+        single whitespace-only field with no delimiter, which is exactly what
+        pandas' skip_blank_lines does (a whitespace line that contains the
+        delimiter, or an empty-field line like ",", is a real row to both).
 
-        Documented limitation: a line whose sole field is a quoted-empty (`""`),
-        quoted-whitespace, or non-breaking-space value is also treated as blank by
-        this scan and so is not width-checked, while pandas retains it and pads it
-        to an all-empty row. The two readers therefore diverge on such a line (the
-        frame keeps a row the scan skipped). This is accepted rather than closed:
-        the skip predicate only fires for a <=1-field empty/whitespace record, so a
-        line carrying real field-aligned data is always width-checked; the only
-        rows that slip through are blank-equivalent and pad to empty, never a value
-        misalignment and never a cell leak. Full byte-level parity with pandas'
-        blank-line rule would need the pre-parse line syntax the csv reader does
-        not expose post-tokenization."""
+        A NUL byte is rejected outright (coded error) rather than sanitized: NUL is
+        not valid in a text delimited file, and the csv parser and pandas tokenize
+        it differently (pandas keeps it, so a NUL before a quote makes the quote
+        literal; the csv parser rejects it), so removing it before tokenizing would
+        make the two readers disagree on field boundaries. Failing closed on NUL is
+        what keeps the two tokenizers in agreement for every file this scan admits.
+
+        Blank-line limitation (now bounded): a line whose sole field is a
+        quoted-empty (`""`), quoted-whitespace, or non-breaking-space value is
+        treated as blank by this scan and not width-checked, while pandas retains it
+        and pads it to an all-empty row. Because NUL is rejected above, the csv scan
+        and pandas tokenize every admitted file identically, so a skipped line is
+        genuinely blank to pandas too: it pads to an all-empty row, never surfacing a
+        non-empty cell. The skip predicate only fires for a <=1-field
+        empty/whitespace record, so a line carrying real field-aligned data is always
+        width-checked. No value misalignment and no cell leak results."""
         consumed = 0
         with open(self.path, encoding="utf-8-sig", newline="") as handle:
-            stripped = (line.replace("\x00", "") for line in handle)
-            reader = csv.reader(stripped, delimiter=self.delimiter)
+
+            def _reject_nul(lines: Iterable[str]) -> Iterator[str]:
+                # NUL is not reconcilable between the csv scan and pandas (see the
+                # docstring); fail closed before tokenizing. Path + reason only.
+                for line in lines:
+                    if "\x00" in line:
+                        raise PipelineValidationError(
+                            f"headerless file {self.path.name!r} contains a NUL byte, "
+                            "which is not valid in a text delimited file",
+                            code=CODES.SOURCE_FILE_NUL_BYTE,
+                        )
+                    yield line
+
+            reader = csv.reader(_reject_nul(handle), delimiter=self.delimiter)
             for record in reader:
                 if len(record) <= 1 and (not record or not record[0].strip()):
                     continue

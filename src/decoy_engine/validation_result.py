@@ -283,6 +283,11 @@ class CODES:
     # declared column_names (a short/ragged row, an over-wide row, or an empty
     # file). Raised at read time by the profiler, never with a cell value.
     SOURCE_FILE_COLUMN_COUNT_MISMATCH = "source_file.column_count_mismatch"
+    # A headerless delimited file containing a NUL byte. NUL is not valid in a
+    # text delimited file; the csv width scan and pandas tokenize it differently
+    # (pandas keeps it, csv rejects it), so the two cannot be reconciled. Fail
+    # closed at read rather than sanitize-and-guess. Never raised with a cell value.
+    SOURCE_FILE_NUL_BYTE = "source_file.nul_byte"
 
     # R3.10 generation key policy. Platform-only preflight codes -- the
     # engine doesn't know about admin settings, but the codes live in

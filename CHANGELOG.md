@@ -29,21 +29,23 @@ source is a validation error, as is `has_header: false` without `column_names`
 config so the reader never meets a delimiter it cannot tokenize). The reader
 additionally validates every consumed record's field count against `column_names`
 with the stdlib `csv` parser, configured to agree with the pandas read it guards
-(BOM stripped, no field-size cap, NUL bytes dropped, and the same blank-line rule,
-so a valid file is never falsely rejected): a short/ragged row, an over-wide row,
-or an empty file fails closed with a coded `PipelineValidationError`
+(BOM stripped, no field-size cap, and the same blank-line rule, so a valid file is
+never falsely rejected): a short/ragged row, an over-wide row, or an empty file
+fails closed with a coded `PipelineValidationError`
 (`source_file.column_count_mismatch`) naming the path, line and counts but never
-a cell value, instead of pandas silently padding or shifting columns. Because the
-`csv`-module scan and pandas tokenize independently, a crafted NUL-before-quote
-byte sequence can make them disagree on field count; a frame-width check after the
-read turns what would be an uncoded `ValueError` into the same coded error.
-Documented limitation: a line whose sole field is quoted-empty, quoted-whitespace,
-or a bare non-breaking space is treated as blank by the scan and padded to an
-all-empty row by pandas (the two diverge on that line); this is accepted because
-such a line is blank-equivalent and never carries field-aligned data, so no value
-misaligns. Reuses the reserved `CODES.SOURCE_FILE_*` semantics (no_header_columns,
-column_names_with_header, bad_delimiter, csv_param_on_non_csv) and adds
-`column_count_mismatch`.
+a cell value, instead of pandas silently padding or shifting columns. A NUL byte
+(not valid in a text delimited file, and tokenized differently by the `csv` parser
+and pandas, so the two cannot be reconciled) is rejected outright with a coded
+`source_file.nul_byte` before tokenizing, rather than sanitized; a frame-width
+check after the read is a further coded backstop for any residual scan/pandas
+disagreement. Because NUL is rejected, the scan and pandas tokenize every admitted
+file identically. Documented limitation: a line whose sole field is quoted-empty,
+quoted-whitespace, or a bare non-breaking space is treated as blank by the scan and
+padded to an all-empty row by pandas; this is accepted because such a line is
+blank-equivalent and (NUL being excluded) pandas pads it to an all-empty row, so no
+value ever misaligns and no cell leaks. Reuses the reserved `CODES.SOURCE_FILE_*`
+semantics (no_header_columns, column_names_with_header, bad_delimiter,
+csv_param_on_non_csv) and adds `column_count_mismatch` and `nul_byte`.
 
 ### Fixed (§PANDAS-RANGE-ERROR: coded error when the full-frame pandas oracle meets an unrepresentable value, 2026-10-22)
 

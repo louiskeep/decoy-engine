@@ -110,7 +110,6 @@ def test_quoted_delimiter_counts_as_one_field(tmp_path: Path) -> None:
         ("trailing_spaced_line", b"1,Ada,a@x\n2,Bob,b@x\n  \n"),
         ("ws_with_delim", b"1,Ada,a@x\n , , \n2,Bob,b@x\n"),
         ("large_field", b"1," + b"x" * 200000 + b",a@x\n"),
-        ("nul_in_field", b"1,Ad\x00a,a@x\n2,Bob,b@x\n"),
         ("multiline_quoted", b'1,"Ada\nJr",a@x\n2,Bob,b@x\n'),
         ("crlf", b"1,Ada,a@x\r\n2,Bob,b@x\r\n"),
     ],
@@ -118,33 +117,44 @@ def test_quoted_delimiter_counts_as_one_field(tmp_path: Path) -> None:
 def test_valid_file_is_not_falsely_rejected(tmp_path: Path, label: str, content: bytes) -> None:
     # The width scan must agree with pandas: none of these valid shapes (BOM,
     # whitespace-only / trailing-spaced lines, a whitespace-field row, a large
-    # field, NUL bytes, a multiline-quoted field, CRLF) may be rejected.
+    # field, a multiline-quoted field, CRLF) may be rejected.
     path = tmp_path / f"{label}.csv"
     path.write_bytes(content)
     frame = CsvFileSource(path, has_header=False, column_names=_NAMES).to_frame()
     assert list(frame.columns) == _NAMES
 
 
-def test_nul_quote_tokenization_disagreement_is_coded(tmp_path: Path) -> None:
-    # A NUL before a quote makes the csv-module width scan (which drops the NUL
-    # and sees a quoted field) disagree with pandas (which keeps the NUL, so the
-    # quote is not at field start and the inner delimiter splits). The frame-width
-    # backstop converts what would be an uncoded `frame.columns = names` ValueError
-    # into the coded error. Counts only, no cell value.
-    path = tmp_path / "nul_quote.csv"
-    path.write_bytes(b'\x00"a,b",c,d\n')
+@pytest.mark.parametrize(
+    "label,content",
+    [
+        # NUL in a plain field, NUL before a quote (the r3 tokenization
+        # disagreement), and NUL opening a multiline quote (the r4 case where a
+        # scan-skipped record would otherwise surface a non-blank pandas cell).
+        ("nul_in_field", b"1,Ad\x00a,a@x\n2,Bob,b@x\n"),
+        ("nul_before_quote", b'\x00"a,b",c,d\n'),
+        ("nul_opens_multiline_quote", b'1,2,3\n\x00"\n "\n4,5,6\n'),
+    ],
+)
+def test_nul_bearing_file_is_rejected_coded(tmp_path: Path, label: str, content: bytes) -> None:
+    # NUL is not reconcilable between the csv scan and pandas, so a NUL-bearing file
+    # fails closed with the coded `source_file.nul_byte` before pandas tokenizes it.
+    # This is what keeps the acceptance claim below sound. Message carries no cell value.
+    path = tmp_path / f"{label}.csv"
+    path.write_bytes(content)
     with pytest.raises(PipelineValidationError) as exc:
         CsvFileSource(path, has_header=False, column_names=_NAMES).to_frame()
-    assert exc.value.code == CODES.SOURCE_FILE_COLUMN_COUNT_MISMATCH
+    assert exc.value.code == CODES.SOURCE_FILE_NUL_BYTE
     assert "a,b" not in str(exc.value)
+    assert "Ad" not in str(exc.value)
 
 
 def test_blank_interior_line_is_documented_limitation(tmp_path: Path) -> None:
     # Documented limitation (see CsvFileSource._assert_record_widths): a line whose
     # sole field is quoted-empty is treated as blank by the width scan, while pandas
-    # retains it and pads to an all-empty row. The two diverge on such a line; this
-    # is accepted because the slipped row is blank-equivalent (never a value
-    # misalignment). Pin the behavior so any future change to it is deliberate.
+    # retains it and pads to an all-empty row. With NUL-bearing files rejected, the
+    # scan and pandas tokenize every admitted file identically, so a skipped line is
+    # genuinely blank to pandas too and pads to an all-empty row (never a non-blank
+    # cell, never a value misalignment). Pin the behavior so any change is deliberate.
     path = tmp_path / "blank_interior.csv"
     path.write_bytes(b'1,2,3\n""\n4,5,6\n')
     frame = CsvFileSource(path, has_header=False, column_names=_NAMES).to_frame()
