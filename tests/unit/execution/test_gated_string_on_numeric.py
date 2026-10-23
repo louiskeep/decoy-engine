@@ -19,7 +19,10 @@ import pytest
 
 from decoy_engine.execution import PandasExecutionAdapter
 from decoy_engine.execution._errors import ExecutionError
-from decoy_engine.execution._gated_string_guard import reject_gated_string_on_numeric
+from decoy_engine.execution._gated_string_guard import (
+    reject_gated_string_on_numeric,
+    widen_numeric_target_for_strings,
+)
 from decoy_engine.relationships._namespace import NamespaceRegistry
 from tests.unit.execution import _c8_iii_c_support as sup
 from tests.unit.execution import _multi_table_support as mt
@@ -214,3 +217,44 @@ class TestNullablePredicateAndBucketPerturb:
         with pytest.raises(ExecutionError) as exc:
             _run(tmp_path, dates, col)
         assert exc.value.code == _CODE
+
+
+class TestMixedOutput:
+    def test_codex_mixed_repro_bucket_perturb_raises(self, tmp_path: Path) -> None:
+        # Selected rows: 20240317 -> a date string, 4 -> kept integer. `produced` is mixed.
+        mixed = pa.table({"c": pa.array([1, 2, 20240317, 4], pa.int64())})
+        col = _gate_col(
+            "bucket_perturb",
+            namespace="ns_bp",
+            provider_config={"bucket": "month", "date_format": "%Y%m%d"},
+            when="c > 2",
+        )
+        with pytest.raises(ExecutionError) as exc:
+            _run(tmp_path, mixed, col)
+        assert exc.value.code == _CODE
+
+    def test_intrinsically_mixed_output_on_full_gate_raises(self) -> None:
+        source = pd.Series([1, 2, 3], dtype="int64")
+        with pytest.raises(ExecutionError) as exc:
+            _guard(source, ["Ann", 7, "Bob"], [True, True, True])
+        assert exc.value.code == _CODE
+
+    def test_numeric_only_output_not_fired(self) -> None:
+        _guard(pd.Series([1, 2, 3], dtype="int64"), [7, 8], [True, True, False])
+
+    def test_uniform_string_full_replacement_not_fired(self) -> None:
+        _guard(pd.Series([1, 2, 3], dtype="int64"), ["a", "b", "c"], [True, True, True])
+
+    def test_uniform_string_replacing_every_non_null_row_not_fired(self) -> None:
+        _guard(pd.Series([1.0, None, 3.0]), ["a", "b"], [True, False, True])
+
+    def test_string_with_nulls_in_produced_full_gate_not_fired(self) -> None:
+        _guard(pd.Series([1.0, 2.0, 3.0]), ["a", None, "c"], [True, True, True])
+
+    def test_widen_runs_only_on_uniform_string_path(self) -> None:
+        df = pd.DataFrame({"c": pd.Series([1, 2], dtype="int64")})
+        widen_numeric_target_for_strings(df, "c", pd.Series(["a", "b"]))
+        assert df["c"].dtype == object
+        df2 = pd.DataFrame({"c": pd.Series([1, 2], dtype="int64")})
+        widen_numeric_target_for_strings(df2, "c", pd.Series([5, 6]))
+        assert df2["c"].dtype == "int64"
