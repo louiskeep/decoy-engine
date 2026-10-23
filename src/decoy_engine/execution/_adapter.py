@@ -344,6 +344,9 @@ class ExecutionAdapter(Protocol):
         # C5c-ii: full-frame callers pin an admitted deterministic-Faker column's degenerate
         # output to `string`. Default False keeps every pre-existing caller unchanged.
         pin_degenerate_faker: bool = False,
+        # MG-5: platform-injected token vault for the `tokenize` strategy. None
+        # keeps every pre-existing caller unchanged (and makes tokenize fail closed).
+        token_vault_writer: TokenVaultWriter | None = None,
     ) -> ExecutionResult: ...
 
     def supports_strategy(self, strategy_name: str) -> bool: ...
