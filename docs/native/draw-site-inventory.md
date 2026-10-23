@@ -44,11 +44,11 @@ partitionable.
 
 ## Summary
 
-- 33 catalogued draw sites (plus 43 mirror call sites: the pandas substrate,
+- 34 catalogued draw sites (plus 43 mirror call sites: the pandas substrate,
   the out-of-core batched path, the delegation handlers, and the 9 identifier
   provider adapters).
-- 22 partitionable, 11 not.
-- Family breakdown: `source_keyed_hmac` 14, `numpy_pcg64` 8, `faker_seed_instance`
+- 23 partitionable, 11 not.
+- Family breakdown: `source_keyed_hmac` 15, `numpy_pcg64` 8, `faker_seed_instance`
   4, `python_mt19937` 3, `per_row_reseed` 2, `per_group_stream` 1,
   `gen_derive_context` 1.
 - GP2 (2026-09-17) added `gen.faker_pool_build` / `gen.faker_pool_selection`: a
@@ -93,7 +93,7 @@ both named honestly in the catalog's `entropy_root` field.
 
 ---
 
-## Family: source_keyed_hmac (14 sites)
+## Family: source_keyed_hmac (15 sites)
 
 The HMAC/HKDF digest IS the pseudo-randomness. There is no RNG object and no
 stream position. Every site keys on the source value (or, for `code_set` in
@@ -106,6 +106,16 @@ should push everything else toward.
 `kernel/_scalar.py:75`. `derive(seed, namespace, canonicalize_derive_source(value))`,
 emitted as `.hex()[:truncate]`. Joinability-preserving. Null/NaN rows emit null
 and consume no derivation.
+
+### mask.tokenize
+`execution/_strategies/_tokenize.py:84` (MG-5 reversible tokenization). A fresh
+surrogate is drawn exactly as `mask.hash` does: `derive(mask_key, namespace,
+plaintext)`, emitted as `'tok_' + .hex()[:32]`. The `(plaintext, token)` pair is
+then recorded in the platform token vault; the vault is EXTERNAL STATE and its
+`lookup_existing` may override the freshly drawn token with a previously stored
+one (the vault is the identity boundary). Null/NaN rows emit null and consume no
+derivation. `tokenize` is never native-routed (no compiled kernel; per-cell vault
+callback), so this site is catalogued for totality/audit, not a native draw.
 
 ### mask.categorical_deterministic
 `execution/_strategies/_categorical.py:198`. Uniform path:
@@ -532,7 +542,7 @@ The `unit_float_from_bits53(raw_u64)` primitive extracts the upper 53 bits of a
 FULL 64-bit value (`(raw_u64 >> 11) / 2**53`), matching NumPy's own `random()`
 construction and always `< 1.0` (the all-ones input maps to `(2**53 - 1) / 2**53`).
 
-Registry: exactly one provider per catalogued `draw_site_id` (33 sites; 22
+Registry: exactly one provider per catalogued `draw_site_id` (34 sites; 23
 partitionable, 11 not). An import-time invariant fails if the registry drifts
 from `DRAW_SITES`.
 
@@ -569,6 +579,7 @@ from `DRAW_SITES`.
 | mask.fpe                          | source_keyed_hmac   | yes           | seed_protocol_v7 |
 | mask.group_key                    | source_keyed_hmac   | yes           | seed_protocol_v7 |
 | mask.hash                         | source_keyed_hmac   | yes           | seed_protocol_v7 |
+| mask.tokenize                     | source_keyed_hmac   | yes           | seed_protocol_v7 (fresh token; vault reuse is external state) |
 | mask.joint_mask_keyed_row         | source_keyed_hmac   | yes           | seed_protocol_v7 |
 | mask.text_mask_date_shift         | source_keyed_hmac   | yes           | seed_protocol_v7 |
 

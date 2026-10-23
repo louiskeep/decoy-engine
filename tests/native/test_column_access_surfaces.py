@@ -66,7 +66,7 @@ def _scalar_gap(handler_keys: set[str], declared: set[str]) -> set[str]:
 
 def test_g1_every_scalar_handler_has_a_declaration_and_no_more() -> None:
     assert _scalar_gap(set(SCALAR_HANDLERS), _keys("scalar")) == set()
-    assert len(SCALAR_HANDLERS) == 24
+    assert len(SCALAR_HANDLERS) == 25
 
 
 def test_g1_check_fails_for_a_stub_strategy_without_a_declaration() -> None:
