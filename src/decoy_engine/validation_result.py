@@ -279,6 +279,10 @@ class CODES:
     SOURCE_FILE_BAD_ROW_LIMIT = "source_file.bad_row_limit"
     SOURCE_FILE_MISSING_FW_COLUMNS = "source_file.missing_fw_columns"
     SOURCE_FILE_CSV_PARAM_ON_NON_CSV = "source_file.csv_param_on_non_csv"
+    # A headerless delimited file whose per-record field count does not match the
+    # declared column_names (a short/ragged row, an over-wide row, or an empty
+    # file). Raised at read time by the profiler, never with a cell value.
+    SOURCE_FILE_COLUMN_COUNT_MISMATCH = "source_file.column_count_mismatch"
 
     # R3.10 generation key policy. Platform-only preflight codes -- the
     # engine doesn't know about admin settings, but the codes live in

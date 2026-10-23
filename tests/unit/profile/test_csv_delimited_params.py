@@ -13,8 +13,9 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from decoy_engine.errors import ConfigError
+from decoy_engine.errors import PipelineValidationError
 from decoy_engine.profile._readers import CsvFileSource, build_profile_source
+from decoy_engine.validation_result import CODES
 
 _ROWS = "1,Ada,ada@example.com\n2,Grace,grace@example.com\n"
 _NAMES = ["id", "name", "email"]
@@ -50,20 +51,64 @@ def test_tab_delimiter_is_respected(tmp_path: Path) -> None:
 
 def test_undercount_names_raises_not_silent_shift(tmp_path: Path) -> None:
     # pandas with a too-short `names=` silently pushes the first column into the
-    # index and mislabels the rest; the width guard must reject instead.
+    # index and mislabels the rest; the per-record width scan rejects instead.
     path = tmp_path / "no_header.csv"
     path.write_text(_ROWS, encoding="utf-8")
-    with pytest.raises(ConfigError, match="3 columns but column_names declares 1"):
+    with pytest.raises(PipelineValidationError, match="line 1 has 3 fields") as exc:
         CsvFileSource(path, has_header=False, column_names=["id"]).to_frame()
+    assert exc.value.code == CODES.SOURCE_FILE_COLUMN_COUNT_MISMATCH
 
 
 def test_overcount_names_raises_not_nan_pad(tmp_path: Path) -> None:
     path = tmp_path / "no_header.csv"
     path.write_text(_ROWS, encoding="utf-8")
-    with pytest.raises(ConfigError, match="3 columns but column_names declares 4"):
+    with pytest.raises(PipelineValidationError, match="declares 4"):
         CsvFileSource(
             path, has_header=False, column_names=["id", "name", "email", "extra"]
         ).to_frame()
+
+
+def test_ragged_short_row_fails_closed(tmp_path: Path) -> None:
+    # A single short row among correct rows: pandas would pad/shift and keep the
+    # frame width, hiding the misalignment. The per-record scan catches the row.
+    path = tmp_path / "ragged.csv"
+    path.write_text("1,Ada,ada@example.com\n2,grace@example.com\n", encoding="utf-8")
+    with pytest.raises(PipelineValidationError, match="line 2 has 2 fields") as exc:
+        CsvFileSource(path, has_header=False, column_names=_NAMES).to_frame()
+    assert exc.value.code == CODES.SOURCE_FILE_COLUMN_COUNT_MISMATCH
+
+
+def test_overwide_row_fails_closed(tmp_path: Path) -> None:
+    path = tmp_path / "wide.csv"
+    path.write_text("1,Ada\n2,Grace,extra\n", encoding="utf-8")
+    with pytest.raises(PipelineValidationError, match="line 2 has 3 fields"):
+        CsvFileSource(path, has_header=False, column_names=["id", "name"]).to_frame()
+
+
+def test_empty_headerless_file_is_coded_error(tmp_path: Path) -> None:
+    path = tmp_path / "empty.csv"
+    path.write_text("", encoding="utf-8")
+    with pytest.raises(PipelineValidationError, match="no data rows") as exc:
+        CsvFileSource(path, has_header=False, column_names=["id"]).to_frame()
+    assert exc.value.code == CODES.SOURCE_FILE_COLUMN_COUNT_MISMATCH
+
+
+def test_quoted_delimiter_counts_as_one_field(tmp_path: Path) -> None:
+    # A delimiter inside a quoted field is one field, not two; the csv-module
+    # scan must agree with pandas so a valid quoted file is not falsely rejected.
+    path = tmp_path / "quoted.csv"
+    path.write_text('1,"Ada, Jr.",ada@example.com\n', encoding="utf-8")
+    frame = CsvFileSource(path, has_header=False, column_names=_NAMES).to_frame()
+    assert frame.iloc[0]["name"] == "Ada, Jr."
+
+
+def test_error_message_never_embeds_a_cell_value(tmp_path: Path) -> None:
+    # Leak rule: the mismatch message names path/line/counts, never a cell value.
+    path = tmp_path / "ragged.csv"
+    path.write_text("1,secretvalue\n", encoding="utf-8")
+    with pytest.raises(PipelineValidationError) as exc:
+        CsvFileSource(path, has_header=False, column_names=_NAMES).to_frame()
+    assert "secretvalue" not in str(exc.value)
 
 
 def test_headerless_row_count_counts_first_data_row(tmp_path: Path) -> None:

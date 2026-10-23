@@ -24,12 +24,16 @@ existing `format: csv` source validates, serializes, and fingerprints exactly as
 before. The fields are csv-only; setting any on a `parquet` / `fixed_width`
 source is a validation error, as is `has_header: false` without `column_names`
 (including an empty list), `column_names` with a header, blank or duplicate
-`column_names`, or a multi-character delimiter. The reader additionally guards the
-name count against the file: a headerless file whose column count differs from
-`column_names` fails closed (no silent pandas index-shift or NaN-pad), with a
-message that names the counts but never a cell value. Reuses the reserved
-`ValidationCode.SOURCE_FILE_*` semantics (no_header_columns,
-column_names_with_header, bad_delimiter, csv_param_on_non_csv).
+`column_names`, or a delimiter that is not a single non-line-terminator
+character. The reader additionally validates every consumed record's field count
+against `column_names` with the stdlib `csv` parser (honouring quoting and
+multiline-quoted fields): a short/ragged row, an over-wide row, or an empty file
+fails closed with a coded `PipelineValidationError`
+(`source_file.column_count_mismatch`) naming the path, line and counts but never
+a cell value, instead of pandas silently padding or shifting columns. Reuses the
+reserved `CODES.SOURCE_FILE_*` semantics (no_header_columns,
+column_names_with_header, bad_delimiter, csv_param_on_non_csv) and adds
+`column_count_mismatch`.
 
 ### Fixed (§PANDAS-RANGE-ERROR: coded error when the full-frame pandas oracle meets an unrepresentable value, 2026-10-22)
 

@@ -25,6 +25,21 @@ class TestDelimitedParamsAccepted:
         assert src.column_names is None
         assert src.delimiter == ","
 
+    def test_serialization_json_schema_enumerates_fields(self) -> None:
+        # The wrap-serializer must not collapse the serialization-mode JSON schema
+        # to a generic object; `decoy schema` and consumers depend on it.
+        for mode in ("validation", "serialization"):
+            props = FileSource.model_json_schema(mode=mode).get("properties", {})
+            assert {
+                "type",
+                "format",
+                "path",
+                "layout",
+                "has_header",
+                "column_names",
+                "delimiter",
+            } <= set(props), mode
+
     def test_headerless_with_names_validates(self) -> None:
         src = FileSource.model_validate(
             _csv(has_header=False, column_names=["id", "name", "email"])
@@ -52,6 +67,11 @@ class TestDelimitedParamsRejected:
         # source_file.bad_delimiter
         with pytest.raises(ValidationError, match="must be exactly one character"):
             FileSource.model_validate(_csv(delimiter="||"))
+
+    def test_line_terminator_delimiter_is_error(self) -> None:
+        for terminator in ("\n", "\r"):
+            with pytest.raises(ValidationError, match="must not be a line terminator"):
+                FileSource.model_validate(_csv(delimiter=terminator))
 
     def test_empty_delimiter_is_error(self) -> None:
         with pytest.raises(ValidationError, match="must be exactly one character"):

@@ -39,8 +39,9 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from decoy_engine.errors import ConfigError
+from decoy_engine.errors import PipelineValidationError
 from decoy_engine.profile._fixed_width_reader import read_fixed_width
+from decoy_engine.validation_result import CODES
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
@@ -357,21 +358,59 @@ class CsvFileSource:
     def _read(self, nrows: int | None = None) -> pd.DataFrame:
         if self.has_header:
             return pd.read_csv(self.path, nrows=nrows, sep=self.delimiter)
-        # Headerless: read WITHOUT `names=` first (pandas silently index-shifts
-        # when `names` is shorter than the file and NaN-pads when longer, which
-        # would mislabel or drop columns). Read positionally, assert the width
-        # matches the declared names, then assign. The names, path and counts are
-        # safe to surface; the message never embeds a cell value (the file may
-        # itself be the PII this product masks).
-        frame = pd.read_csv(self.path, nrows=nrows, sep=self.delimiter, header=None)
+        # Headerless: pandas cannot fail closed on a mis-sized file. A too-short
+        # row is silently padded (and earlier values shift into the wrong column);
+        # a too-long row is dropped or shifts. Frame-width alone does not catch a
+        # ragged row, because pandas normalizes every row to the widest one. So
+        # validate the field count of each consumed record with the stdlib csv
+        # parser (which honours quoting and multiline-quoted fields the same way
+        # pandas does for a single-char delimiter), then read positionally and
+        # assign the names. Messages name only the path, line and counts -- never a
+        # cell value, since the file may itself hold the PII this product masks.
         names = self.column_names or []
-        if frame.shape[1] != len(names):
-            raise ConfigError(
-                f"FileSource: headerless file {self.path.name!r} has {frame.shape[1]} "
-                f"columns but column_names declares {len(names)}; the counts must match"
-            )
+        self._assert_record_widths(len(names), nrows)
+        try:
+            frame = pd.read_csv(self.path, nrows=nrows, sep=self.delimiter, header=None)
+        except (pd.errors.EmptyDataError, pd.errors.ParserError):
+            # The width scan above already rejects the known mis-size cases with a
+            # coded error; this is a fail-closed backstop for any parser disagreement.
+            raise PipelineValidationError(
+                f"headerless file {self.path.name!r} could not be read against its "
+                f"{len(names)} declared column_names",
+                code=CODES.SOURCE_FILE_COLUMN_COUNT_MISMATCH,
+            ) from None
         frame.columns = names
         return frame
+
+    def _assert_record_widths(self, expected: int, nrows: int | None) -> None:
+        """Fail closed when a consumed record's field count != `expected`.
+
+        Scans only the records the read will consume (`nrows`), skipping blank
+        lines exactly as pandas does, so a huge file is not walked in full for a
+        bounded sample. Raises a coded PipelineValidationError naming the 1-based
+        line and the two counts, never a cell value."""
+        import csv
+
+        consumed = 0
+        with open(self.path, encoding="utf-8", newline="") as handle:
+            for lineno, record in enumerate(csv.reader(handle, delimiter=self.delimiter), start=1):
+                if not record:
+                    continue  # pandas skips blank lines (skip_blank_lines=True)
+                if len(record) != expected:
+                    raise PipelineValidationError(
+                        f"headerless file {self.path.name!r} line {lineno} has "
+                        f"{len(record)} fields but column_names declares {expected}",
+                        code=CODES.SOURCE_FILE_COLUMN_COUNT_MISMATCH,
+                    )
+                consumed += 1
+                if nrows is not None and consumed >= nrows:
+                    return
+        if consumed == 0:
+            raise PipelineValidationError(
+                f"headerless file {self.path.name!r} has no data rows to read "
+                f"against its {expected} declared column_names",
+                code=CODES.SOURCE_FILE_COLUMN_COUNT_MISMATCH,
+            )
 
     def row_count(self) -> RowCount:
         total = os.path.getsize(self.path)

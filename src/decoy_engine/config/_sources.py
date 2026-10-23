@@ -54,6 +54,17 @@ from pydantic import (
 from decoy_engine.config._fixed_width import FixedWidthLayout
 
 
+def _strip_serialization(node: Any) -> Any:
+    """Return `node` (a pydantic core-schema tree) with every `serialization`
+    entry removed, so a JSON-schema handler regenerates the field schema instead
+    of the generic object a custom serializer otherwise produces."""
+    if isinstance(node, dict):
+        return {k: _strip_serialization(v) for k, v in node.items() if k != "serialization"}
+    if isinstance(node, list):
+        return [_strip_serialization(item) for item in node]
+    return node
+
+
 class FileSource(BaseModel):
     """A local-filesystem CSV, Parquet, or fixed-width source.
 
@@ -153,6 +164,10 @@ class FileSource(BaseModel):
             raise ValueError(
                 f"FileSource: `delimiter` must be exactly one character (got {self.delimiter!r})"
             )
+        if self.delimiter in ("\n", "\r"):
+            # A line terminator as the field delimiter has no coherent reader
+            # meaning (pandas treats it as a record boundary); reject at config.
+            raise ValueError("FileSource: `delimiter` must not be a line terminator")
         return self
 
     @model_serializer(mode="wrap")
@@ -176,12 +191,15 @@ class FileSource(BaseModel):
 
     @classmethod
     def __get_pydantic_json_schema__(cls, core_schema: Any, handler: Any) -> Any:
-        # The wrap serializer above makes pydantic report the serialization schema
-        # as a generic object; re-ask without the `serialization` entry to recover
-        # the field schema (same recovery GlobalSettings/ColumnConfig use).
+        # The wrap serializer above makes pydantic report the SERIALIZATION schema
+        # as a generic object. GlobalSettings/ColumnConfig recover by dropping the
+        # `serialization` entry, but here the model node sits under two
+        # `model_validator(mode="after")` wrappers, so the entry to drop is nested,
+        # not top-level. Strip every `serialization` entry in the core-schema tree,
+        # then re-ask, so the serialization JSON schema still enumerates the fields.
         schema = handler(core_schema)
         if "properties" not in schema and "$ref" not in schema:
-            schema = handler({k: v for k, v in core_schema.items() if k != "serialization"})
+            schema = handler(_strip_serialization(core_schema))
         return schema
 
 
