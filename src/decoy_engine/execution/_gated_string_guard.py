@@ -37,7 +37,11 @@ def reject_gated_string_on_numeric(
         return
     if pd.api.types.infer_dtype(produced, skipna=True) != "string":
         return
-    if not bool((~mask & source.notna()).any()):
+    # A nullable-boolean predicate yields <NA> for rows it cannot decide; `.loc[mask]` leaves
+    # those rows unwritten, so they are unmasked. `~NA` stays NA and `.any()` skips it, so
+    # normalize missing entries to False first.
+    selected = mask.fillna(False).astype(bool)
+    if not bool((~selected & source.notna()).any()):
         return  # every non-null row is replaced: the column becomes uniformly string
     raise ExecutionError(
         code="gated_string_output_on_numeric_unsupported",

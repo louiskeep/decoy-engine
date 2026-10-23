@@ -47,11 +47,11 @@ closed at one of two points. Statically-typed string-output strategies fail clos
 plan-compile with a coded `PlanCompileError`
 (`when_string_output_on_numeric_unsupported`) naming the table/column/strategy:
 `truncate`, `redact` with a string replacement, `fpe`, `categorical` with string
-categories, `text_redact` (unless its token is non-string), `text_mask`, `code_set` and
-`bucket_perturb`. Which strategies emit a string is read from the engine's own output
+categories, `text_redact` (unless its token is non-string), `text_mask` and `code_set`. Which strategies emit a string is read from the engine's own output
 typing (`masked_output_type`), not a second list. Anything that cannot be typed at
-compile (`faker`, whose provider return type is only known by running it; `bucketize`
-range labels; any other pandas-only string emitter) is caught at execution by one guard
+compile (`faker`, whose provider return type is only known by running it; `bucket_perturb`,
+whose output is data-dependent because values pass through when the date format does not
+parse them; `bucketize` range labels; any other pandas-only string emitter) is caught at execution by one guard
 in the `when:` gate wrapper, which raises `gated_string_output_on_numeric_unsupported`
 before the write when string output would be mixed into a numeric column with a gate
 that leaves rows unmasked. A gate that selects every non-null row turns the column

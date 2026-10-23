@@ -4,7 +4,7 @@ a numeric column.
 The plan-compile check `when_string_output_on_numeric_unsupported` rejects a
 `when:` row gate combined with a statically-typed string-output strategy (truncate,
 redact with a string replacement, fpe, categorical with string categories,
-text_redact, text_mask, code_set, bucket_perturb; resolved via the engine's
+text_redact, text_mask, code_set; resolved via the engine's
 `masked_output_type`) on an integer, float or decimal column: matched rows would be
 strings and unmatched rows numbers, which has no single Arrow type and crashes
 the pandas route at reconstruction (`pyarrow.ArrowInvalid`). `hash` and `faker` are
@@ -101,7 +101,6 @@ _STRING_STRATEGIES: list[tuple[str, dict[str, Any]]] = [
     ("text_redact", {}),
     ("text_mask", {}),
     ("code_set", {"code_set": "icd10"}),
-    ("bucket_perturb", {"bucket": "month"}),
 ]
 
 
@@ -187,6 +186,18 @@ class TestWhenNumericNoFalsePositive:
         )
         check_when_string_output_on_numeric_unsupported(
             _config(strategy, provider_config=cfg), profile
+        )
+
+    @pytest.mark.parametrize("cfg", [{"bucket": "month"}, {"bucket": "month", "date_format": "%Y"}])
+    @pytest.mark.parametrize("dtype", ["int64", "float64"])
+    def test_bucket_perturb_deferred_to_execution_guard(
+        self, cfg: dict[str, Any], dtype: str
+    ) -> None:
+        # Its pandas output is data-dependent (values pass through when the date format
+        # does not parse them), so compile must not reject; the execution guard backs it up.
+        profile = _profile(_col("c", dtype=dtype))
+        check_when_string_output_on_numeric_unsupported(
+            _config("bucket_perturb", provider_config=cfg), profile
         )
 
     def test_faker_not_typed_at_compile(self) -> None:

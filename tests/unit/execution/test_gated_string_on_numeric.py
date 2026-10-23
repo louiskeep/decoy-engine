@@ -150,3 +150,67 @@ class TestGuardIsGeneralised:
             warnings.simplefilter("error", FutureWarning)
             out = _run(tmp_path, _INTS, _faker_col(when="c > 0"))
         assert all(isinstance(v, str) for v in out.column("c").to_pylist())
+
+
+def _run_two(tmp_path: Path, table: pa.Table, cols: list[dict[str, Any]]) -> pa.Table:
+    cfg, sources = mt.build_job(tmp_path, {"t": (cols, table)})
+    plan, graph, _ns, registry = sup.compile_job(cfg)
+    out = PandasExecutionAdapter().run(
+        plan,
+        sources,
+        registry=registry,
+        relationship_graph=graph,
+        namespace_registry=NamespaceRegistry(bindings=()),
+    )
+    return out.outputs["t"]
+
+
+class TestNullablePredicateAndBucketPerturb:
+    def test_nullable_predicate_na_rows_count_as_unmasked(self, tmp_path: Path) -> None:
+        # `f == 1` over a nullable Int64 is <NA> for the null flag; `.loc[mask]` leaves that row
+        # unwritten, so a string faker over the numeric column must still be rejected.
+        flags = pd.array([1, None], dtype="Int64")
+        table = pa.Table.from_pandas(
+            pd.DataFrame({"c": pd.array([10, 20], dtype="int64"), "f": flags}),
+            preserve_index=False,
+        )
+        cols = [_faker_col(when="f == 1"), {"name": "f", "strategy": "passthrough"}]
+        with pytest.raises(ExecutionError) as exc:
+            _run_two(tmp_path, table, cols)
+        assert exc.value.code == _CODE
+
+    def test_guard_unit_normalises_na_mask(self) -> None:
+        source = pd.Series([10, 20], dtype="int64")
+        mask = pd.Series([True, pd.NA], dtype="boolean")
+        with pytest.raises(ExecutionError):
+            reject_gated_string_on_numeric(
+                source,
+                pd.Series(["Ann"], index=[0]),
+                mask,
+                table="t",
+                column="c",
+                strategy="faker",
+            )
+
+    def test_bucket_perturb_passthrough_config_runs_and_preserves_numbers(
+        self, tmp_path: Path
+    ) -> None:
+        nums = pa.table({"c": pa.array([1, 2, 3, 4], pa.int64())})
+        col = _gate_col(
+            "bucket_perturb", namespace="ns_bp", provider_config={"bucket": "month"}, when="c > 2"
+        )
+        assert _run(tmp_path, nums, col).column("c").to_pylist() == [1, 2, 3, 4]
+
+    def test_bucket_perturb_that_emits_strings_is_caught_by_execution_guard(
+        self, tmp_path: Path
+    ) -> None:
+        dates = pa.table({"c": pa.array([20240115, 20240216, 20240317, 20240418], pa.int64())})
+        col = _gate_col(
+            "bucket_perturb",
+            namespace="ns_bp",
+            provider_config={"bucket": "month", "date_format": "%Y%m%d"},
+            when="c > 20240300",
+        )
+        with pytest.raises(ExecutionError) as exc:
+            _run(tmp_path, dates, col)
+        assert exc.value.code == _CODE

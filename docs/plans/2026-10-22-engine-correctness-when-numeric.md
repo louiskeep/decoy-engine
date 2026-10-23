@@ -82,7 +82,7 @@ existing execution-time behavior backs that case up. Output-string resolution:
 - redact/truncate+when on a STRING column → ALLOWED.
 - redact/truncate with NO when on a numeric column → ALLOWED.
 - hash+when on numeric → still its own existing coded error (unchanged).
-- fpe, categorical (string categories), text_redact, text_mask, code_set, bucket_perturb
+- fpe, categorical (string categories), text_redact, text_mask, code_set
   +when on numeric → rejected; numeric-category categorical and numeric-token
   text_redact → allowed. A gated faker string provider or bucketize on numeric with a partial gate → execution
   error `gated_string_output_on_numeric_unsupported`; a numeric-output gated strategy is
@@ -95,12 +95,14 @@ The first cut of this check named only truncate and redact, on the belief that
 the other string-output strategies "have their own type constraints". That was
 wrong: a gated `faker` string provider and a gated `categorical` with string
 categories on an int64 column both raise the same `pyarrow.ArrowInvalid`
-(reproduced), as do fpe, text_redact, text_mask, code_set and bucket_perturb. The
+(reproduced), as do fpe, text_redact, text_mask, code_set and bucket_perturb (when its
+date format parses the values). The
 shipped check therefore covers every statically-typed string-output strategy at
 compile, resolved through the engine's `masked_output_type` rather than a second
 list, so numeric-output configs (numeric categorical categories, a non-string
 `text_redact` token, a numeric `redact_with`) are not rejected. `faker` cannot be
-typed at compile (a provider's return type is only known by running it) and `bucketize`
+typed at compile (a provider's return type is only known by running it) `bucket_perturb`'s pandas output is data-dependent (values pass through unchanged
+when the date format does not parse them, so compile must not reject it), and `bucketize`
 emits range labels that `masked_output_type` does not type, so those, and any other
 pandas-only string emitter, are caught at execution instead. One guard in
 `run_with_when_gate` (`execution/_gated_string_guard.py`) checks every gated write: it
