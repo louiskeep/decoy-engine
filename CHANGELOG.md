@@ -24,16 +24,24 @@ existing `format: csv` source validates, serializes, and fingerprints exactly as
 before. The fields are csv-only; setting any on a `parquet` / `fixed_width`
 source is a validation error, as is `has_header: false` without `column_names`
 (including an empty list), `column_names` with a header, blank or duplicate
-`column_names`, or a delimiter that is not a single non-line-terminator
-character. The reader additionally validates every consumed record's field count
-against `column_names` with the stdlib `csv` parser, configured to agree with the
-pandas read it guards (BOM stripped, no field-size cap, NUL bytes dropped, and the
-same blank-line rule, so a valid file is never falsely rejected): a short/ragged
-row, an over-wide row, or an empty file fails closed with a coded
-`PipelineValidationError`
+`column_names`, or a delimiter that is not a single printable character or a tab
+(a line terminator or other control character, including NUL, is rejected at
+config so the reader never meets a delimiter it cannot tokenize). The reader
+additionally validates every consumed record's field count against `column_names`
+with the stdlib `csv` parser, configured to agree with the pandas read it guards
+(BOM stripped, no field-size cap, NUL bytes dropped, and the same blank-line rule,
+so a valid file is never falsely rejected): a short/ragged row, an over-wide row,
+or an empty file fails closed with a coded `PipelineValidationError`
 (`source_file.column_count_mismatch`) naming the path, line and counts but never
-a cell value, instead of pandas silently padding or shifting columns. Reuses the
-reserved `CODES.SOURCE_FILE_*` semantics (no_header_columns,
+a cell value, instead of pandas silently padding or shifting columns. Because the
+`csv`-module scan and pandas tokenize independently, a crafted NUL-before-quote
+byte sequence can make them disagree on field count; a frame-width check after the
+read turns what would be an uncoded `ValueError` into the same coded error.
+Documented limitation: a line whose sole field is quoted-empty, quoted-whitespace,
+or a bare non-breaking space is treated as blank by the scan and padded to an
+all-empty row by pandas (the two diverge on that line); this is accepted because
+such a line is blank-equivalent and never carries field-aligned data, so no value
+misaligns. Reuses the reserved `CODES.SOURCE_FILE_*` semantics (no_header_columns,
 column_names_with_header, bad_delimiter, csv_param_on_non_csv) and adds
 `column_count_mismatch`.
 

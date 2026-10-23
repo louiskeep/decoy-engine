@@ -168,6 +168,16 @@ class FileSource(BaseModel):
             # A line terminator as the field delimiter has no coherent reader
             # meaning (pandas treats it as a record boundary); reject at config.
             raise ValueError("FileSource: `delimiter` must not be a line terminator")
+        if not self.delimiter.isprintable() and self.delimiter != "\t":
+            # A NUL or other control char has no coherent single-char delimiter
+            # meaning: csv.reader rejects NUL outright, and the reader drops NUL
+            # bytes before tokenizing, so a NUL delimiter would be erased rather
+            # than split on. Tab is the one control char that is a real delimiter
+            # (TSV), so it is the sole exception.
+            raise ValueError(
+                "FileSource: `delimiter` must be a printable character or a tab "
+                f"(got {self.delimiter!r})"
+            )
         return self
 
     @model_serializer(mode="wrap")

@@ -394,6 +394,18 @@ class CsvFileSource:
                 f"{len(names)} declared column_names",
                 code=CODES.SOURCE_FILE_COLUMN_COUNT_MISMATCH,
             ) from None
+        if frame.shape[1] != len(names):
+            # The csv-module width scan and pandas tokenize independently, so a
+            # crafted byte sequence can make them disagree on field count (e.g. a
+            # NUL before a quote: the scan drops the NUL and sees a quoted field,
+            # pandas keeps it and splits on the inner delimiter). A raw
+            # `frame.columns = names` would then raise an uncoded ValueError; fail
+            # closed with the coded error instead. Counts only, never a cell value.
+            raise PipelineValidationError(
+                f"headerless file {self.path.name!r} parsed to {frame.shape[1]} columns "
+                f"against its {len(names)} declared column_names",
+                code=CODES.SOURCE_FILE_COLUMN_COUNT_MISMATCH,
+            )
         frame.columns = names
         return frame
 
@@ -411,7 +423,19 @@ class CsvFileSource:
         only when it is empty or a single whitespace-only field with no delimiter,
         which is exactly what pandas' skip_blank_lines does (a whitespace line
         that contains the delimiter, or an empty-field line like ",", is a real
-        row to both)."""
+        row to both).
+
+        Documented limitation: a line whose sole field is a quoted-empty (`""`),
+        quoted-whitespace, or non-breaking-space value is also treated as blank by
+        this scan and so is not width-checked, while pandas retains it and pads it
+        to an all-empty row. The two readers therefore diverge on such a line (the
+        frame keeps a row the scan skipped). This is accepted rather than closed:
+        the skip predicate only fires for a <=1-field empty/whitespace record, so a
+        line carrying real field-aligned data is always width-checked; the only
+        rows that slip through are blank-equivalent and pad to empty, never a value
+        misalignment and never a cell leak. Full byte-level parity with pandas'
+        blank-line rule would need the pre-parse line syntax the csv reader does
+        not expose post-tokenization."""
         consumed = 0
         with open(self.path, encoding="utf-8-sig", newline="") as handle:
             stripped = (line.replace("\x00", "") for line in handle)

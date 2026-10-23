@@ -125,6 +125,34 @@ def test_valid_file_is_not_falsely_rejected(tmp_path: Path, label: str, content:
     assert list(frame.columns) == _NAMES
 
 
+def test_nul_quote_tokenization_disagreement_is_coded(tmp_path: Path) -> None:
+    # A NUL before a quote makes the csv-module width scan (which drops the NUL
+    # and sees a quoted field) disagree with pandas (which keeps the NUL, so the
+    # quote is not at field start and the inner delimiter splits). The frame-width
+    # backstop converts what would be an uncoded `frame.columns = names` ValueError
+    # into the coded error. Counts only, no cell value.
+    path = tmp_path / "nul_quote.csv"
+    path.write_bytes(b'\x00"a,b",c,d\n')
+    with pytest.raises(PipelineValidationError) as exc:
+        CsvFileSource(path, has_header=False, column_names=_NAMES).to_frame()
+    assert exc.value.code == CODES.SOURCE_FILE_COLUMN_COUNT_MISMATCH
+    assert "a,b" not in str(exc.value)
+
+
+def test_blank_interior_line_is_documented_limitation(tmp_path: Path) -> None:
+    # Documented limitation (see CsvFileSource._assert_record_widths): a line whose
+    # sole field is quoted-empty is treated as blank by the width scan, while pandas
+    # retains it and pads to an all-empty row. The two diverge on such a line; this
+    # is accepted because the slipped row is blank-equivalent (never a value
+    # misalignment). Pin the behavior so any future change to it is deliberate.
+    path = tmp_path / "blank_interior.csv"
+    path.write_bytes(b'1,2,3\n""\n4,5,6\n')
+    frame = CsvFileSource(path, has_header=False, column_names=_NAMES).to_frame()
+    assert frame.shape == (3, 3)
+    middle = frame.iloc[1]
+    assert all((v == "") or pd.isna(v) for v in middle), list(middle)
+
+
 def test_mismatch_line_number_is_physical(tmp_path: Path) -> None:
     # A multiline-quoted first record spans two physical lines, so the mismatch
     # on the next record is reported at its physical line, not its record ordinal.

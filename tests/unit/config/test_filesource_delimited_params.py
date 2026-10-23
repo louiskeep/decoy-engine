@@ -73,6 +73,14 @@ class TestDelimitedParamsRejected:
             with pytest.raises(ValidationError, match="must not be a line terminator"):
                 FileSource.model_validate(_csv(delimiter=terminator))
 
+    def test_control_char_delimiter_is_error(self) -> None:
+        # A NUL or other control char has no coherent delimiter meaning and the
+        # reader's NUL-strip would erase it; reject at config rather than let the
+        # reader raise an uncoded error at read time. Tab is the lone exception.
+        for ctrl in ("\x00", "\x01", "\x1f", "\x7f", "\x0c"):
+            with pytest.raises(ValidationError, match="must be a printable character or a tab"):
+                FileSource.model_validate(_csv(delimiter=ctrl))
+
     def test_empty_delimiter_is_error(self) -> None:
         with pytest.raises(ValidationError, match="must be exactly one character"):
             FileSource.model_validate(_csv(delimiter=""))
