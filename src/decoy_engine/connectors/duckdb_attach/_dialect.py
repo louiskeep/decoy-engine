@@ -49,3 +49,14 @@ class Dialect(Protocol):
     def export_relation(
         self, conn: Any, sel: RelationSelection, target: Path, row_group_size: int, alias: str
     ) -> None: ...
+
+    # --- catalog browse (D1) ---------------------------------------------
+    # declared_types returns the SOURCE's declared type (with precision) +
+    # typtype per column, keyed (schema, table, column), for the whole attached
+    # database; the generic browser pairs it with DuckDB's mapped type.
+    def declared_types(self, conn: Any, alias: str) -> dict[tuple[str, str, str], tuple[str, str]]: ...
+
+    # column_verdict judges one column from its declared type: the fidelity
+    # call the snapshot would make. Returns (status, note) where status is
+    # "supported" | "lossy" | "rejected"; note is a guard class or a reason.
+    def column_verdict(self, declared_type: str, typtype: str) -> tuple[str, str]: ...

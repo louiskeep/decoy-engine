@@ -388,6 +388,32 @@ class _PostgresDialect:
     ) -> None:
         _export_relation(conn, sel, target, row_group_size)
 
+    def declared_types(
+        self, conn: Any, alias: str
+    ) -> dict[tuple[str, str, str], tuple[str, str]]:
+        """Declared format_type + typtype for every column of the attached DB,
+        the browse-wide form of ``_check_types``' per-relation catalog read."""
+        try:
+            rows = conn.execute(
+                f"SELECT nspname, relname, attname, fmt, typtype "
+                f"FROM postgres_query({_lit(_ATTACH_ALIAS)}, ?) "
+                "AS q(nspname, relname, attname, fmt, typtype)",
+                [_CATALOG_SQL],
+            ).fetchall()
+        except Exception as exc:
+            raise PostgresSnapshotError(
+                "catalog_read_failed", cause_type=type(exc).__name__
+            ) from None
+        return {(r[0], r[1], r[2]): (r[3], r[4]) for r in rows}
+
+    def column_verdict(self, declared_type: str, typtype: str) -> tuple[str, str]:
+        """Postgres is preserve-or-reject: a guard class -> supported, else
+        rejected. No lossy tier (a lossy type is simply not carried)."""
+        cls = _classify(declared_type, typtype)
+        if cls is None:
+            return "rejected", f"unsupported_type:{declared_type}"
+        return "supported", cls
+
 
 def snapshot_tables_to_parquet(
     config: PostgresSnapshotConfig,

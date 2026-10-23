@@ -9,6 +9,12 @@ A source database is a ``Dialect`` (``_dialect.Dialect``) plus the generic
 
 from decoy_engine.connectors.duckdb_attach._core import run_snapshot
 from decoy_engine.connectors.duckdb_attach._dialect import Dialect
+from decoy_engine.connectors.duckdb_attach.catalog import (
+    CatalogListing,
+    ColumnInfo,
+    TableInfo,
+    browse,
+)
 from decoy_engine.connectors.duckdb_attach._errors import SnapshotError
 from decoy_engine.connectors.duckdb_attach._models import (
     _IDENT_RE,
@@ -19,10 +25,14 @@ from decoy_engine.connectors.duckdb_attach._models import (
 from decoy_engine.connectors.duckdb_attach._sql import _lit, _order_clause, _q
 
 __all__ = [
+    "CatalogListing",
+    "ColumnInfo",
     "Dialect",
     "RelationSelection",
     "SnapshotConfig",
     "SnapshotError",
+    "TableInfo",
+    "browse",
     "run_snapshot",
     "_IDENT_RE",
     "_lit",
