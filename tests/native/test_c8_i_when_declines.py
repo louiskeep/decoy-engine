@@ -152,9 +152,19 @@ def test_a_non_string_target_declines_with_the_legacy_code() -> None:
     assert when_native_rejection("n", entries, REG, table=TABLE, schema=None) == (
         "when_predicate_not_native:n"
     )
-    outcome = _outcome(lambda: run_native(config, chunk_by_sizes(source_table(), [11]))[0])
-    assert outcome == _outcome(
-        lambda: run_public_oracle(config, chunk_by_sizes(source_table(), [11]))
+    # §WHEN-NUMERIC: the config itself stays rejected, fail-closed, on both routes. The
+    # profiled entry point now rejects it at compile, before the native decline is reached
+    # (the decline rule above is still asserted directly). The profile-less oracle skips
+    # that check, so an execution guard rejects instead.
+    assert _outcome(lambda: run_native(config, chunk_by_sizes(source_table(), [11]))[0]) == (
+        "error",
+        "PlanCompileError",
+        "when_string_output_on_numeric_unsupported",
+    )
+    assert _outcome(lambda: run_public_oracle(config, chunk_by_sizes(source_table(), [11]))) == (
+        "error",
+        "ExecutionError",
+        "null_bearing_int_unsupported",
     )
 
 

@@ -19,6 +19,7 @@ import pytest
 from decoy_engine import run_mask_chunked, run_mask_pipeline_chunked
 from decoy_engine.execution import ExecutionError, run_pipeline
 from decoy_engine.execution.native._dispatch import NativeRouteEvidence
+from decoy_engine.plan._errors import PlanCompileError
 from tests.native._chunked_entry_support import (
     COMPANION_PRESENT,
     ENGINE_VERSION,
@@ -171,24 +172,48 @@ def test_when_predicate_matches_the_oracle_and_routes_by_admission(column: dict[
         assert column_values(got, "s")[2] == _WHEN_SOURCE.column("s")[2].as_py()
 
 
+# (column, oracle outcome, entry outcome): each is (exception type, code).
+_COMPILE_REJECT = (PlanCompileError, "when_string_output_on_numeric_unsupported")
+
+
 @pytest.mark.parametrize(
-    "column", [redact("n"), truncate("n"), hash_col("n")], ids=["redact", "truncate", "hash"]
+    ("column", "oracle_outcome", "entry_outcome"),
+    [
+        (
+            redact("n"),
+            (ExecutionError, "gated_string_output_on_numeric_unsupported"),
+            _COMPILE_REJECT,
+        ),
+        (truncate("n"), (ExecutionError, "null_bearing_int_unsupported"), _COMPILE_REJECT),
+        (
+            hash_col("n"),
+            (ExecutionError, "gated_hash_on_integer_unsupported"),
+            (ExecutionError, "gated_hash_on_integer_unsupported"),
+        ),
+    ],
+    ids=["redact", "truncate", "hash"],
 )
-def test_string_output_strategy_with_when_on_numeric_column_fails_like_the_oracle(
+def test_string_output_strategy_with_when_on_numeric_column_is_rejected_on_both_routes(
     column: dict[str, Any],
+    oracle_outcome: tuple[type[BaseException], str],
+    entry_outcome: tuple[type[BaseException], str],
 ) -> None:
-    """Characterization (roadmap item WHEN-NUMERIC): the oracle cannot put a string
-    into an integer column it only partly masked, so both entry points fail today,
-    with the same error."""
+    """§WHEN-NUMERIC: a `when:`-gated string-output mask on a numeric column has no single
+    Arrow type, so both entry points reject the config with a coded error (fail-closed).
+    The stage differs by route. The profiled entry point rejects at compile
+    (`PlanCompileError`); the oracle runs without a profile, so that check is skipped and
+    an execution guard rejects instead. A silent success or an uncoded Arrow type error
+    fails the test."""
     config = _when_config(column)
     chunks = split(_WHEN_SOURCE, 3)
 
     def failure(call: Any) -> tuple[type[BaseException], Any]:
-        with pytest.raises((pa.ArrowTypeError, ExecutionError)) as info:
+        with pytest.raises((pa.ArrowTypeError, PlanCompileError, ExecutionError)) as info:
             call()
         return type(info.value), getattr(info.value, "code", None)
 
-    assert failure(lambda: _oracle(config, chunks)) == failure(lambda: _entry(config, chunks))
+    assert failure(lambda: _oracle(config, chunks)) == oracle_outcome
+    assert failure(lambda: _entry(config, chunks)) == entry_outcome
 
 
 @pytest.mark.parametrize("blank", ["", "   "])
