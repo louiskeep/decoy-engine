@@ -20,7 +20,6 @@ alongside the graph builder that consumes its lookup output.
 
 from __future__ import annotations
 
-import importlib.util
 import re
 from typing import Any
 
@@ -467,76 +466,6 @@ def check_text_mask_ner_available(config: dict[str, Any]) -> None:
     fail mode (dead at run without this check).
     """
     _check_ner_available_for_strategy(config, "text_mask")
-
-
-def check_vault_columns(config: dict[str, Any]) -> None:
-    """Reject `vault: true` columns whose vault entries could not work.
-
-    Compile-check ownership table row #14 (deferred follow-up 1,
-    2026-06-12). Rules:
-
-    - the `cryptography` package (the optional `vault` extra) must be
-      installed: the vault is Fernet-encrypted, so without it the run
-      would fail only at vault-write time, potentially hours in (F14a,
-      2026-06-26);
-    - a vaulted column needs a `namespace`: the vault's lookup key is
-      `(namespace, masked_value)`, so without one the entry could never
-      be found at unmask time;
-    - `vault: true` on `strategy: fpe` is rejected: fpe is already
-      algebraically reversible under the config's seed, so a vault there
-      stores a second copy of the source values for zero capability,
-      pure disclosure liability.
-
-    Config-only (no profile, no source data), so it runs in both
-    compile branches and in `run_config_only_checks`.
-    """
-    tables = config.get("tables", []) if isinstance(config.get("tables"), list) else []
-    crypto_ok: bool | None = None  # per-call memo; resolved lazily on the first vaulted column
-    for table_entry in tables:
-        if not isinstance(table_entry, dict):
-            continue
-        table_name = table_entry.get("name", "?")
-        for col_entry in table_entry.get("columns", []) or []:
-            if not isinstance(col_entry, dict) or not col_entry.get("vault"):
-                continue
-            col_name = col_entry.get("name", "?")
-            # F14a: vault is Fernet-encrypted via the `cryptography` package. If
-            # it is absent the run would fail only at vault-write time; fail at
-            # compile instead. Checked once, reported on the first vaulted column.
-            if crypto_ok is None:
-                crypto_ok = importlib.util.find_spec("cryptography") is not None
-            if not crypto_ok:
-                raise PlanCompileError(
-                    code="vault_requires_cryptography",
-                    path=f"tables.{table_name}.columns.{col_name}.vault",
-                    message=(
-                        f"column {col_name!r} in table {table_name!r} declares "
-                        "vault: true but the `cryptography` package is not installed. "
-                        "The token vault is Fernet-encrypted; install it with "
-                        "`pip install 'decoy-engine[vault]'` and re-run."
-                    ),
-                )
-            if col_entry.get("strategy") == "fpe":
-                raise PlanCompileError(
-                    code="vault_strategy_reversible",
-                    path=f"tables.{table_name}.columns.{col_name}.vault",
-                    message=(
-                        f"column {col_name!r} in table {table_name!r} declares "
-                        "vault: true on strategy fpe, which `decoy unmask` already "
-                        "reverses from the config alone. A vault there duplicates "
-                        "the source values for no capability; remove the flag."
-                    ),
-                )
-            if not col_entry.get("namespace"):
-                raise PlanCompileError(
-                    code="vault_requires_namespace",
-                    path=f"tables.{table_name}.columns.{col_name}.vault",
-                    message=(
-                        f"column {col_name!r} in table {table_name!r} declares "
-                        "vault: true but has no namespace; vault entries are keyed "
-                        "by (namespace, masked_value), so add a namespace."
-                    ),
-                )
 
 
 def check_fpe_checksum_scheme(config: dict[str, Any]) -> None:

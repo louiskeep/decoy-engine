@@ -9,6 +9,69 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Fixed (§PANDAS-RANGE-ERROR: coded error when the full-frame pandas oracle meets an unrepresentable value, 2026-10-22)
+
+The full-frame pandas route converts every source column to pandas up front, so a
+column holding a value pandas cannot represent — a date beyond year 9999, a
+sub-microsecond `time64[ns]` — used to crash there with an uncoded exception
+(`ValueError: year N is out of range`, `pyarrow.ArrowInvalid: ... non-zero
+nanoseconds`) that named no column. `run_full_frame_route` now attributes the
+failure to its source column and raises a coded
+`ExecutionError(code="full_frame_value_unrepresentable")` naming the table and
+column, and noting that the default native (Rust) route keeps columns in Arrow and
+does not hit this limit. Error-path only: a run whose values all fit pandas is
+byte-identical to before, and the bounded routes (chunked carry / out-of-core)
+keep their own existing coded attributions. No up-front scan — the column is
+identified only after the conversion fails.
+
+### Fixed (§VAULT-PASSTHROUGH: reject `vault: true` on a passthrough column, 2026-10-22)
+
+`vault: true` on a `strategy: passthrough` column used to pass compile and then
+crash at vault-write time: a passthrough value is never masked, so the vault
+would map a value to itself (no reversal capability), and the entry build
+(`to_pylist` over the source values) raises on far dates and the `-2^63` marker
+and silently truncates `time64[ns]`. The plan compiler now rejects it at
+PLAN/COMPILE time with a clear coded `PlanCompileError`
+(`vault_strategy_unmasked`) naming the table/column, alongside the existing
+`vault_requires_cryptography` / `vault_requires_namespace` /
+`vault_strategy_reversible` (fpe) vault guards. Config-only, so it runs in both
+compile branches and in `run_config_only_checks`.
+
+### Fixed (§WHEN-NUMERIC: reject a `when:`-gated string-output mask on a numeric column, 2026-10-22)
+
+A `when:` row gate combined with a string-output strategy on an integer, float
+or decimal column used to crash mid-run: matched rows became strings while
+unmatched rows kept their numbers, and one Arrow column cannot hold both, so the
+pandas route raised a raw `pyarrow.ArrowInvalid` at reconstruction. The class is now
+closed at one of two points. Statically-typed string-output strategies fail closed at
+plan-compile with a coded `PlanCompileError`
+(`when_string_output_on_numeric_unsupported`) naming the table/column/strategy:
+`truncate`, `redact` with a string replacement, `fpe`, `categorical` with string
+categories, `text_redact` (unless its token is non-string), `text_mask` and `code_set`. Which strategies emit a string is read from the engine's own output
+typing (`masked_output_type`), not a second list. Anything that cannot be typed at
+compile (`faker`, whose provider return type is only known by running it; `bucket_perturb`,
+whose output is data-dependent because values pass through when the date format does not
+parse them; `bucketize` range labels; any other pandas-only string emitter) is caught at execution by one guard
+in the `when:` gate wrapper, which raises `gated_string_output_on_numeric_unsupported`
+before the write when string output would be mixed into a numeric column with a gate
+that leaves rows unmasked. A gate that selects every non-null row turns the column
+uniformly to strings, still works, and now casts the target to object explicitly instead
+of relying on pandas' deprecated implicit upcast. Valid configs are unaffected: a numeric `redact_with`,
+numeric categorical categories, a non-numeric source column, an FK-child column,
+and whole-column masking (no `when:`) all still run, and `hash` keeps its own
+existing coded guards (`gated_hash_on_integer_unsupported` /
+`float_canonicalization_unsupported`).
+Profile-dependent, so it is recorded in `checks_skipped` under `no_profile=True`.
+
+### Confirmed closed (§MEM-EST-DTYPES: byte-estimate routing on category/tz columns, 2026-10-22)
+
+Added an explicit end-to-end regression (a categorical/dictionary column and a
+tz-aware timestamp column together, masked through `run_pipeline` with
+byte-estimate routing on, matching routing off) confirming the byte-estimate
+router no longer crashes on these dtypes (hardened earlier by the Arrow-type
+classifier: a dictionary column is unpriceable and routes bounded; a tz-aware
+timestamp prices as `datetime64[ns]`). No production change.
+
 ### Added (DuckDB Postgres snapshot input primitive, 2026-10-20)
 
 New `decoy_engine.connectors.postgres_snapshot` module: a read-only snapshot-to-Parquet

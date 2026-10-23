@@ -51,6 +51,9 @@ EXPECTED_S2_CHECKS_PASSED = (
     "deterministic_namespace_completeness",
     # Row 10 (B1, S13): null-bearing-int reject rule.
     "null_bearing_int_unsupported",
+    # §WHEN-NUMERIC (2026-10-22): reject a `when:`-gated string-output mask on a
+    # numeric column, right after the null-bearing-int check it is modelled on.
+    "when_string_output_on_numeric_unsupported",
     # Row 11 (audit H5, 2026-06-12): non-poolable provider on the pool
     # path rejected at compile time, appended at the tail.
     "non_poolable_provider_with_pool_backend",
@@ -148,7 +151,7 @@ class TestChecksPassedShape:
         # row 26 (DE-03: faker_requires_provider), row 29 (HC-7:
         # freetext_advisory), row 30 (TX-2: text_mask_ner_available).
         plan = compile_plan(simple_config, simple_profile, decoy_engine_version="0.1.0")
-        assert len(plan.plan_compile.checks_passed) == 32
+        assert len(plan.plan_compile.checks_passed) == 33
 
     def test_orphan_fk_policy_completeness_at_documented_position(
         self, simple_config: dict, simple_profile: Profile
@@ -171,12 +174,14 @@ class TestChecksPassedShape:
         DPS-3 (2026-07-20) adds row 31 (dp_generate_contract) right after
         non_poolable_provider_with_pool_backend, ahead of statistical_columns."""
         plan = compile_plan(simple_config, simple_profile, decoy_engine_version="0.1.0")
-        assert plan.plan_compile.checks_passed[-28] == "composite_columns_length_match"
-        assert plan.plan_compile.checks_passed[-27] == "orphan_fk_policy_completeness"
-        assert plan.plan_compile.checks_passed[-26] == "pool_capacity_pre_flight"
-        assert plan.plan_compile.checks_passed[-25] == "composite_wiring_consistent"
-        assert plan.plan_compile.checks_passed[-24] == "deterministic_namespace_completeness"
-        assert plan.plan_compile.checks_passed[-23] == "null_bearing_int_unsupported"
+        assert plan.plan_compile.checks_passed[-29] == "composite_columns_length_match"
+        assert plan.plan_compile.checks_passed[-28] == "orphan_fk_policy_completeness"
+        assert plan.plan_compile.checks_passed[-27] == "pool_capacity_pre_flight"
+        assert plan.plan_compile.checks_passed[-26] == "composite_wiring_consistent"
+        assert plan.plan_compile.checks_passed[-25] == "deterministic_namespace_completeness"
+        assert plan.plan_compile.checks_passed[-24] == "null_bearing_int_unsupported"
+        # §WHEN-NUMERIC (2026-10-22): right after the null-bearing-int check.
+        assert plan.plan_compile.checks_passed[-23] == "when_string_output_on_numeric_unsupported"
         assert plan.plan_compile.checks_passed[-22] == "non_poolable_provider_with_pool_backend"
         assert plan.plan_compile.checks_passed[-21] == "dp_generate_contract"
         assert plan.plan_compile.checks_passed[-20] == "statistical_columns"

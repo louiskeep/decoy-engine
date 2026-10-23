@@ -357,6 +357,30 @@ class TestCompileChecks:
             run_config_only_checks(cfg)
         assert exc.value.code == "vault_strategy_reversible"
 
+    def test_vault_on_passthrough_rejected(self, tmp_path):
+        # §VAULT-PASSTHROUGH: a passthrough column is never masked, so its
+        # vault entry would map a value to itself for no capability, and the
+        # vault build raises on far dates / the -2^63 marker; reject at compile.
+        cfg = _config(
+            tmp_path,
+            [{"name": "acct", "strategy": "passthrough", "namespace": "n", "vault": True}],
+        )
+        with pytest.raises(PlanCompileError) as exc:
+            run_config_only_checks(cfg)
+        assert exc.value.code == "vault_strategy_unmasked"
+
+    def test_vault_passthrough_rejected_even_without_namespace(self, tmp_path):
+        # The unmasked-strategy rejection is more fundamental than the missing
+        # namespace: adding a namespace would not make a passthrough column
+        # vaultable, so the passthrough code wins.
+        cfg = _config(
+            tmp_path,
+            [{"name": "acct", "strategy": "passthrough", "vault": True}],
+        )
+        with pytest.raises(PlanCompileError) as exc:
+            run_config_only_checks(cfg)
+        assert exc.value.code == "vault_strategy_unmasked"
+
     def test_vault_requires_cryptography_when_missing(self, tmp_path, monkeypatch):
         # F14a: a vault: true job must fail at compile when `cryptography` is
         # absent, not after a multi-hour run at vault-write time. Simulate the

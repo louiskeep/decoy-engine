@@ -398,6 +398,8 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         # C5c-a: exact Arrow keys for nullable-int deterministic Faker at the sampling boundary.
         # Parent-level module that imports nothing from `execution.physical`.
         "src/decoy_engine/execution/_exact_int_sources.py",
+        # §WHEN-NUMERIC: a pure value-shape guard on the gated pandas write (no physical seam).
+        "src/decoy_engine/execution/_gated_string_guard.py",
         "src/decoy_engine/execution/native/_determinism_protocol.py",
         # C5c-ii (deterministic Faker over bool/int/uint on the native routes, 2026-10-09): the
         # closed metadata-shape admission classifier (`native/_faker_deterministic_admission.py`,

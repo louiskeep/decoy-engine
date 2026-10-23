@@ -83,9 +83,12 @@ the failure would surface as an opaque `vault_key_mismatch`.
 2. Store the vault and the config separately, each access-controlled.
 3. `vault: true` requires the `cryptography` package, a `namespace`, and
    is rejected on `strategy: fpe` (already reversible from the config
-   alone). The plan compiler enforces all three at PLAN/COMPILE time:
+   alone) and on `strategy: passthrough` (never masked, so the vault would
+   map a value to itself and the entry build raises on far dates / the
+   -2^63 marker). The plan compiler enforces all four at PLAN/COMPILE time:
    `vault_requires_cryptography` (missing package), `vault_requires_namespace`
-   (missing namespace), `vault_strategy_reversible` (fpe strategy).
+   (missing namespace), `vault_strategy_reversible` (fpe strategy),
+   `vault_strategy_unmasked` (passthrough strategy).
    `cryptography` is a base dependency (Task 5.2), so a normal install
    always has it; the check is defense in depth against a broken or
    partial install, caught here rather than hours into a run at

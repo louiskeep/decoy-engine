@@ -70,6 +70,7 @@ class TestCompilePlanHappyPath:
             "composite_wiring_consistent",
             "deterministic_namespace_completeness",
             "null_bearing_int_unsupported",
+            "when_string_output_on_numeric_unsupported",
             "non_poolable_provider_with_pool_backend",
             "dp_generate_contract",
             "statistical_columns",

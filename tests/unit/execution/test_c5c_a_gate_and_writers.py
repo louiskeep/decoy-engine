@@ -8,6 +8,7 @@ import pandas as pd
 import pyarrow as pa
 import pytest
 
+from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.generation.pool._errors import GenerationError
 from decoy_engine.relationships._namespace import NamespaceBinding, NamespaceRegistry
 from tests.unit.execution import _c5c_a_support as sup
@@ -116,8 +117,9 @@ def test_nullable_boolean_predicate_with_na_selects_like_loc() -> None:
 
 def test_string_output_partial_gate_keeps_the_mixed_type_rejection() -> None:
     table = _table_with_exact_ints([1, 0, 1, 0, 0, 1, 0])
-    with pytest.raises(pa.ArrowTypeError):
+    with pytest.raises(ExecutionError) as exc:
         sup.run(_plan("f == 1", "person_email"), table)
+    assert exc.value.code == "gated_string_output_on_numeric_unsupported"
 
 
 def test_string_output_gate_selecting_every_non_null_value_succeeds() -> None:
