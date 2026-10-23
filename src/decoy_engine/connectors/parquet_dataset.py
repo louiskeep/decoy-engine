@@ -90,14 +90,16 @@ def stage_parquet_parts(
     dest_dir: str | Path,
     *,
     batch_rows: int = _DEFAULT_BATCH_ROWS,
+    preserve_order: bool = False,
 ) -> Path:
     """Merge local parquet part-files into one staged parquet; return its path.
 
-    Parts are read in sorted-path order with each part's row order preserved. The
-    first part's Arrow schema is the dataset schema; every other part must match
-    it exactly or the call fails closed (``schema_mismatch``) and publishes
-    nothing. On any failure, timeout, or interrupt the staging directory is
-    removed and nothing is published.
+    By default parts are read in sorted-path order (deterministic for a caller
+    that has no authoritative order of its own). Each part's row order is
+    preserved. The first part's Arrow schema is the dataset schema; every other
+    part must match it exactly or the call fails closed (``schema_mismatch``) and
+    publishes nothing. On any failure, timeout, or interrupt the staging
+    directory is removed and nothing is published.
 
     Args:
         part_paths: local parquet files to merge (at least one). The platform
@@ -105,6 +107,11 @@ def stage_parquet_parts(
             no bucket/credential work.
         dest_dir: directory the staged file is published into.
         batch_rows: per-part streaming batch size (bounds memory).
+        preserve_order: when True, merge in the GIVEN ``part_paths`` order instead
+            of sorting by path. Use it when the caller already holds the
+            authoritative order (e.g. the platform staged a warehouse export's
+            parts under UUID-bearing local names but knows the part-KEY order);
+            relying on the local-path sort would then be non-deterministic.
 
     Raises:
         ParquetDatasetError: ``no_parts`` (empty input), ``part_unreadable``
@@ -114,9 +121,11 @@ def stage_parquet_parts(
     if not part_paths:
         raise ParquetDatasetError("no_parts")
 
-    # Deterministic order: sort by resolved path string. Within-part order is
-    # preserved by streaming each part's batches in file order.
-    ordered = sorted((Path(p) for p in part_paths), key=lambda p: str(p))
+    # Order: the caller's given order when it is authoritative, else a
+    # deterministic sort by resolved path string. Within-part row order is
+    # preserved either way by streaming each part's batches in file order.
+    paths = [Path(p) for p in part_paths]
+    ordered = paths if preserve_order else sorted(paths, key=lambda p: str(p))
 
     dest_dir = Path(dest_dir)
     dest_dir.mkdir(parents=True, exist_ok=True)

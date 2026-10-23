@@ -68,6 +68,18 @@ def test_deterministic_content_across_runs(tmp_path: Path) -> None:
     assert a == b
 
 
+def test_preserve_order_merges_in_given_order_not_path_order(tmp_path: Path) -> None:
+    # Names chosen so sorted-path order ("a" < "z") is the REVERSE of given order.
+    z = _write_part(tmp_path, "z.parquet", pa.table({"id": [1]}))
+    a = _write_part(tmp_path, "a.parquet", pa.table({"id": [2]}))
+    # Default: sorted by path -> a (2) then z (1).
+    default = pq.read_table(stage_parquet_parts([z, a], tmp_path / "d"))
+    assert default.column("id").to_pylist() == [2, 1]
+    # preserve_order: the given [z, a] order is honored -> 1 then 2.
+    kept = pq.read_table(stage_parquet_parts([z, a], tmp_path / "k", preserve_order=True))
+    assert kept.column("id").to_pylist() == [1, 2]
+
+
 # ---------------------------------------------------------------------------
 # Type fidelity
 # ---------------------------------------------------------------------------
