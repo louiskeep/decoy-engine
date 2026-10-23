@@ -433,14 +433,19 @@ class CsvFileSource:
             boundary differently, which can shift a value into the wrong column
             without changing the frame width.
         Only LF and CRLF line endings are reconcilable, so failing closed on NUL and
-        lone CR is what keeps the two tokenizers in agreement for every file this
-        scan admits.
+        lone CR is what keeps the two readers agreeing on LINE BOUNDARIES for every
+        file this scan admits. They can still disagree WITHIN a line -- an
+        unterminated quote (`1,2,"3`), for one, which the stdlib csv parser tolerates
+        but pandas rejects -- and that residual disagreement is caught by the
+        pandas read below: it raises `EmptyDataError`/`ParserError`, or the
+        `frame.shape[1]` backstop fires, both coded, so no frame or misaligned value
+        escapes.
 
         Blank-line limitation (now bounded): a line whose sole field is quoted-empty
         (`""`), quoted-whitespace (`" "`, `"\t"`), or a bare/quoted non-breaking
         space is treated as blank by this scan and not width-checked, while pandas
         retains it as a one-field row. Because NUL and lone CR are rejected above,
-        the csv scan and pandas tokenize every admitted file identically, so a
+        the csv scan and pandas agree on line boundaries for every admitted file, so a
         skipped line is genuinely blank to pandas too: pandas pads it to a
         blank-equivalent row whose only non-NaN value is that single whitespace
         field in its correct leading column, with the rest NaN. The skip predicate

@@ -202,6 +202,18 @@ def test_blank_interior_line_is_documented_limitation(
         assert pd.isna(middle.iloc[1]) and pd.isna(middle.iloc[2])
 
 
+def test_unterminated_quote_fails_closed_coded(tmp_path: Path) -> None:
+    # The stdlib csv scan tolerates an unterminated quote (`1,2,"3`) and sees three
+    # fields, but pandas rejects it. The pandas-read backstop catches the residual
+    # within-line disagreement with a coded error -- no frame or misaligned value
+    # escapes. Pins the "no frame escapes" guarantee the docstring now qualifies.
+    path = tmp_path / "unterminated_quote.csv"
+    path.write_bytes(b'1,2,"3')
+    with pytest.raises(PipelineValidationError) as exc:
+        CsvFileSource(path, has_header=False, column_names=_NAMES).to_frame()
+    assert exc.value.code == CODES.SOURCE_FILE_COLUMN_COUNT_MISMATCH
+
+
 def test_mismatch_line_number_is_physical(tmp_path: Path) -> None:
     # A multiline-quoted first record spans two physical lines, so the mismatch
     # on the next record is reported at its physical line, not its record ordinal.

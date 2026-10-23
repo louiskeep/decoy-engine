@@ -41,10 +41,12 @@ pandas keeps it, so a NUL before a quote makes the quote literal), and a lone CR
 (`source_file.lone_cr` -- a carriage return not part of a CRLF pair, i.e. an
 old-Mac line ending or a CR inside a record, which the two readers treat as a row
 boundary differently and so can shift a value into the wrong column without
-changing the frame width). Only LF and CRLF line endings are supported. A
-frame-width check after the read is a further coded backstop for any residual
-scan/pandas disagreement. Because NUL and lone CR are rejected, the scan and pandas
-tokenize every admitted file identically. Documented limitation: a line whose sole
+changing the frame width). Only LF and CRLF line endings are supported. Because NUL and lone CR are rejected,
+the scan and pandas agree on line boundaries for every admitted file; a residual
+within-line disagreement (an unterminated quote the stdlib `csv` parser tolerates
+but pandas rejects) is caught by the pandas read as a coded error
+(`EmptyDataError`/`ParserError`, or the `frame.shape[1]` backstop), so no frame or
+misaligned value escapes. Documented limitation: a line whose sole
 field is quoted-empty, quoted-whitespace (`" "`, `"\t"`), or a bare/quoted
 non-breaking space is treated as blank by the scan and not width-checked; pandas
 pads it to a blank-equivalent row whose only non-NaN value is that single
