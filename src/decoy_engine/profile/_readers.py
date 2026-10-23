@@ -422,28 +422,43 @@ class CsvFileSource:
         pandas' skip_blank_lines does (a whitespace line that contains the
         delimiter, or an empty-field line like ",", is a real row to both).
 
-        A NUL byte is rejected outright (coded error) rather than sanitized: NUL is
-        not valid in a text delimited file, and the csv parser and pandas tokenize
-        it differently (pandas keeps it, so a NUL before a quote makes the quote
-        literal; the csv parser rejects it), so removing it before tokenizing would
-        make the two readers disagree on field boundaries. Failing closed on NUL is
-        what keeps the two tokenizers in agreement for every file this scan admits.
+        Two byte classes are rejected outright (coded error) rather than sanitized,
+        because the csv parser and pandas tokenize them differently so no sanitize
+        step can keep the two in agreement:
+          - a NUL byte (not valid in a text delimited file; pandas keeps it, so a
+            NUL before a quote makes the quote literal, while the csv parser rejects
+            it);
+          - a lone CR -- a carriage return not part of a CRLF pair (an old-Mac line
+            ending, or a CR inside a record): the two readers treat it as a row
+            boundary differently, which can shift a value into the wrong column
+            without changing the frame width.
+        Only LF and CRLF line endings are reconcilable, so failing closed on NUL and
+        lone CR is what keeps the two tokenizers in agreement for every file this
+        scan admits.
 
-        Blank-line limitation (now bounded): a line whose sole field is a
-        quoted-empty (`""`), quoted-whitespace, or non-breaking-space value is
-        treated as blank by this scan and not width-checked, while pandas retains it
-        and pads it to an all-empty row. Because NUL is rejected above, the csv scan
-        and pandas tokenize every admitted file identically, so a skipped line is
-        genuinely blank to pandas too: it pads to an all-empty row, never surfacing a
-        non-empty cell. The skip predicate only fires for a <=1-field
-        empty/whitespace record, so a line carrying real field-aligned data is always
-        width-checked. No value misalignment and no cell leak results."""
+        Blank-line limitation (now bounded): a line whose sole field is quoted-empty
+        (`""`), quoted-whitespace (`" "`, `"\t"`), or a bare/quoted non-breaking
+        space is treated as blank by this scan and not width-checked, while pandas
+        retains it as a one-field row. Because NUL and lone CR are rejected above,
+        the csv scan and pandas tokenize every admitted file identically, so a
+        skipped line is genuinely blank to pandas too: pandas pads it to a
+        blank-equivalent row whose only non-NaN value is that single whitespace
+        field in its correct leading column, with the rest NaN. The skip predicate
+        only fires for a <=1-field record whose sole field strips to empty, so a
+        line carrying real (non-whitespace) field-aligned data is always
+        width-checked. No real value is ever misaligned and no cell leaks; the only
+        thing that slips is a leading whitespace-only cell in its own correct
+        column."""
         consumed = 0
         with open(self.path, encoding="utf-8-sig", newline="") as handle:
 
-            def _reject_nul(lines: Iterable[str]) -> Iterator[str]:
-                # NUL is not reconcilable between the csv scan and pandas (see the
-                # docstring); fail closed before tokenizing. Path + reason only.
+            def _reject_unreconcilable(lines: Iterable[str]) -> Iterator[str]:
+                # NUL and a lone CR are not reconcilable between the csv scan and
+                # pandas (see the docstring); fail closed before tokenizing. Path +
+                # reason only, never a cell value. With newline="" the handle splits
+                # on CR, LF and CRLF, so a lone-CR ending leaves a trailing "\r" and
+                # a CRLF ending a trailing "\r\n"; strip one trailing LF/CRLF, then
+                # any remaining "\r" is a lone CR.
                 for line in lines:
                     if "\x00" in line:
                         raise PipelineValidationError(
@@ -451,9 +466,16 @@ class CsvFileSource:
                             "which is not valid in a text delimited file",
                             code=CODES.SOURCE_FILE_NUL_BYTE,
                         )
+                    body = line[:-2] if line.endswith("\r\n") else line.rstrip("\n")
+                    if "\r" in body:
+                        raise PipelineValidationError(
+                            f"headerless file {self.path.name!r} contains a lone "
+                            "carriage return (only LF and CRLF line endings are supported)",
+                            code=CODES.SOURCE_FILE_LONE_CR,
+                        )
                     yield line
 
-            reader = csv.reader(_reject_nul(handle), delimiter=self.delimiter)
+            reader = csv.reader(_reject_unreconcilable(handle), delimiter=self.delimiter)
             for record in reader:
                 if len(record) <= 1 and (not record or not record[0].strip()):
                     continue

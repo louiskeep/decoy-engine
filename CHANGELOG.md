@@ -33,19 +33,26 @@ with the stdlib `csv` parser, configured to agree with the pandas read it guards
 never falsely rejected): a short/ragged row, an over-wide row, or an empty file
 fails closed with a coded `PipelineValidationError`
 (`source_file.column_count_mismatch`) naming the path, line and counts but never
-a cell value, instead of pandas silently padding or shifting columns. A NUL byte
-(not valid in a text delimited file, and tokenized differently by the `csv` parser
-and pandas, so the two cannot be reconciled) is rejected outright with a coded
-`source_file.nul_byte` before tokenizing, rather than sanitized; a frame-width
-check after the read is a further coded backstop for any residual scan/pandas
-disagreement. Because NUL is rejected, the scan and pandas tokenize every admitted
-file identically. Documented limitation: a line whose sole field is quoted-empty,
-quoted-whitespace, or a bare non-breaking space is treated as blank by the scan and
-padded to an all-empty row by pandas; this is accepted because such a line is
-blank-equivalent and (NUL being excluded) pandas pads it to an all-empty row, so no
-value ever misaligns and no cell leaks. Reuses the reserved `CODES.SOURCE_FILE_*`
-semantics (no_header_columns, column_names_with_header, bad_delimiter,
-csv_param_on_non_csv) and adds `column_count_mismatch` and `nul_byte`.
+a cell value, instead of pandas silently padding or shifting columns. Two byte classes that the
+`csv` parser and pandas tokenize differently (so no sanitize step could keep the
+two in agreement) are rejected outright before tokenizing, each with its own coded
+error: a NUL byte (`source_file.nul_byte` -- not valid in a text delimited file;
+pandas keeps it, so a NUL before a quote makes the quote literal), and a lone CR
+(`source_file.lone_cr` -- a carriage return not part of a CRLF pair, i.e. an
+old-Mac line ending or a CR inside a record, which the two readers treat as a row
+boundary differently and so can shift a value into the wrong column without
+changing the frame width). Only LF and CRLF line endings are supported. A
+frame-width check after the read is a further coded backstop for any residual
+scan/pandas disagreement. Because NUL and lone CR are rejected, the scan and pandas
+tokenize every admitted file identically. Documented limitation: a line whose sole
+field is quoted-empty, quoted-whitespace (`" "`, `"\t"`), or a bare/quoted
+non-breaking space is treated as blank by the scan and not width-checked; pandas
+pads it to a blank-equivalent row whose only non-NaN value is that single
+whitespace field in its correct leading column (the rest NaN). This is accepted
+because such a line carries no real field-aligned data, so no real value misaligns
+and no cell leaks. Reuses the reserved `CODES.SOURCE_FILE_*` semantics
+(no_header_columns, column_names_with_header, bad_delimiter, csv_param_on_non_csv)
+and adds `column_count_mismatch`, `nul_byte`, and `lone_cr`.
 
 ### Fixed (§PANDAS-RANGE-ERROR: coded error when the full-frame pandas oracle meets an unrepresentable value, 2026-10-22)
 

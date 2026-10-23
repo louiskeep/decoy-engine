@@ -288,6 +288,13 @@ class CODES:
     # (pandas keeps it, csv rejects it), so the two cannot be reconciled. Fail
     # closed at read rather than sanitize-and-guess. Never raised with a cell value.
     SOURCE_FILE_NUL_BYTE = "source_file.nul_byte"
+    # A headerless delimited file containing a lone CR (a carriage return not part
+    # of a CRLF pair): an old-Mac line ending, or an unquoted/quoted CR in a record.
+    # The csv width scan and pandas treat a lone CR as a row boundary differently,
+    # which can shift a value into the wrong column without changing the frame
+    # width. Only LF and CRLF are reconcilable, so a lone CR fails closed at read.
+    # Never raised with a cell value.
+    SOURCE_FILE_LONE_CR = "source_file.lone_cr"
 
     # R3.10 generation key policy. Platform-only preflight codes -- the
     # engine doesn't know about admin settings, but the codes live in

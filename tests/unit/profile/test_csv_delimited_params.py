@@ -148,19 +148,58 @@ def test_nul_bearing_file_is_rejected_coded(tmp_path: Path, label: str, content:
     assert "Ad" not in str(exc.value)
 
 
-def test_blank_interior_line_is_documented_limitation(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "label,content",
+    [
+        # A lone CR (not part of CRLF) tokenizes differently in csv.reader vs pandas
+        # and could shift a value into the wrong column at the same frame width, so
+        # it fails closed. `cr_shifts_value` is the verified case where pandas aligns
+        # `X` under a different column than the width scan tokenized. Old-Mac CR-only
+        # line endings are rejected for the same reason. CRLF stays valid (tested above).
+        ("cr_shifts_value", b'1,2,3\n\r,X,X\t"\n4,5,6\n'),
+        ("old_mac_cr_endings", b"1,Ada,a@x\r2,Bob,b@x\r"),
+        ("cr_at_eof", b"1,Ada,a@x\n2,Bob,b@x\r"),
+    ],
+)
+def test_lone_cr_file_is_rejected_coded(tmp_path: Path, label: str, content: bytes) -> None:
+    path = tmp_path / f"{label}.csv"
+    path.write_bytes(content)
+    with pytest.raises(PipelineValidationError) as exc:
+        CsvFileSource(path, has_header=False, column_names=_NAMES).to_frame()
+    assert exc.value.code == CODES.SOURCE_FILE_LONE_CR
+    assert "Ada" not in str(exc.value)
+
+
+@pytest.mark.parametrize(
+    "label,content,leading_is_whitespace",
+    [
+        ("quoted_empty", b'1,2,3\n""\n4,5,6\n', False),
+        ("quoted_space", b'1,2,3\n" "\n4,5,6\n', True),
+        ("quoted_tab", b'1,2,3\n"\t"\n4,5,6\n', True),
+        ("bare_nbsp", "1,2,3\n\u00a0\n4,5,6\n".encode(), True),
+    ],
+)
+def test_blank_interior_line_is_documented_limitation(
+    tmp_path: Path, label: str, content: bytes, leading_is_whitespace: bool
+) -> None:
     # Documented limitation (see CsvFileSource._assert_record_widths): a line whose
-    # sole field is quoted-empty is treated as blank by the width scan, while pandas
-    # retains it and pads to an all-empty row. With NUL-bearing files rejected, the
-    # scan and pandas tokenize every admitted file identically, so a skipped line is
-    # genuinely blank to pandas too and pads to an all-empty row (never a non-blank
-    # cell, never a value misalignment). Pin the behavior so any change is deliberate.
-    path = tmp_path / "blank_interior.csv"
-    path.write_bytes(b'1,2,3\n""\n4,5,6\n')
+    # sole field strips to empty is treated as blank by the width scan and not
+    # width-checked, while pandas retains it as a one-field row. With NUL and lone CR
+    # rejected, the scan and pandas tokenize every admitted file identically, so the
+    # skipped line pads to a blank-equivalent row whose ONLY non-NaN value is that
+    # single whitespace field in its correct leading column (never a real/misaligned
+    # value, never a leak). Pin this so any change to the behavior is deliberate.
+    path = tmp_path / f"{label}.csv"
+    path.write_bytes(content)
     frame = CsvFileSource(path, has_header=False, column_names=_NAMES).to_frame()
     assert frame.shape == (3, 3)
     middle = frame.iloc[1]
-    assert all((v == "") or pd.isna(v) for v in middle), list(middle)
+    # Every non-NaN cell in the slipped row is whitespace-only (no real value).
+    assert all(pd.isna(v) or str(v).strip() == "" for v in middle), list(middle)
+    # Any whitespace content is in the leading column; the rest are NaN.
+    if leading_is_whitespace:
+        assert not pd.isna(middle.iloc[0]) and str(middle.iloc[0]).strip() == ""
+        assert pd.isna(middle.iloc[1]) and pd.isna(middle.iloc[2])
 
 
 def test_mismatch_line_number_is_physical(tmp_path: Path) -> None:
