@@ -55,59 +55,84 @@ Factor `_prepare` so the pinned-payload decode (steps 3-4 above) is reachable fr
 `GenerationPlan` alone, keeping the full-`Plan` entry a thin wrapper so its behavior is provably
 unchanged.
 
-1. **Split the boundary.** Extract the generation-payload half of `_prepare` into
-   `_prepare_generation(generation: GenerationPlan, caller: str) -> _PreparedPlan` that runs the
-   `generation is None`/DP guards and the `config_json` / `statistical_specs` / `snapshots` decode.
-   `_prepare(plan: Plan, caller)` keeps the `isinstance` guard + `validate_plan_when(plan)` and then
-   delegates to `_prepare_generation(plan.generation, caller)`. This is a behavior-preserving
-   refactor: `generate_tables(Plan)` produces the identical `_PreparedPlan`.
+1. **Split the boundary, preserving order.** Extract the generation-payload half of `_prepare` into
+   `_prepare_generation(generation: GenerationPlan | None, caller: str) -> _PreparedPlan` (param typed
+   `| None` because it owns the missing-payload guard) that runs the `generation is None` guard, the
+   conditional DP-receipt guard, the `config_json` decode, and the `statistical_specs` / `snapshots`
+   decode. `_prepare(plan: Plan, caller)` keeps, IN THIS ORDER: the `isinstance(plan, Plan)` guard →
+   `validate_plan_when(plan)` → delegate to `_prepare_generation(plan.generation, caller)`. The
+   preserved order is: type guard → seed validation → missing-payload guard → config decode → DP guard
+   → artifact decode. This is a behavior-preserving refactor: `generate_tables(Plan)` yields the
+   identical `_PreparedPlan` and raises the identical errors in the identical order.
 
 2. **Public pinned entry.** Add `generate_tables_from_generation_plan(generation_plan: GenerationPlan,
    derive_key=None, instance_default_locale=None, *, provider_snapshot=None, budget_bytes=None)`
    (name TBD-in-review; mirror the `generate_tables` signature minus the `Plan`). It type-guards
-   `GenerationPlan`, calls `_prepare_generation`, and runs the identical generation core
-   (`_streamed.run_generation` / the legacy whole-table path) that `generate_tables` uses. Provide a
-   streamed sibling if `generate_tables_streamed` has the same shape.
+   `GenerationPlan` (reject a raw dict or a full `Plan` with a clear `TypeError`), calls
+   `_prepare_generation`, and runs the identical generation core (`_streamed.run_generation` / the
+   legacy whole-table path) that `generate_tables` uses. Add the streamed sibling definitively
+   (`generate_tables_streamed` has the required shape, `_plan_entry.py:193`): a
+   `generate_tables_streamed_from_generation_plan(...)` covering `sink`, `batch_rows`, and the result
+   mode. **Public surface:** export BOTH new entries from `generation.synthesize` (where consumers
+   import `generate_tables`, per `tests/unit/execution/test_pipeline_generation_contract.py:23`);
+   defining them in `_plan_entry.py` alone does not establish the supported import path. Keep the thin
+   adapters in `_plan_entry.py` and reuse `run_generation` (its module docstring explains the size
+   boundary, `_plan_entry.py:4`); no new module, framework, or `internal/` relocation.
 
-3. **Risk A -- the `when` re-check.** `validate_plan_when(plan)` validates masking `when:` over
-   `seed_envelope`, which the pinned entry has no analog for. Decide in PLAN review, after confirming
-   whether generate columns can carry a `when:` that needs call-time validation:
-   - **3a (preferred if generate `when` is validated at compile and embedded in `config_json`):** the
-     pinned entry does NOT call `validate_plan_when`; it relies on the compile-time validation already
-     baked into the pinned `config_json`, and (if a config-level when validator exists) re-runs THAT
-     over `config_json`. Document that the pinned payload is trusted-as-compiled for `when`.
-   - **3b (fallback):** if generate output genuinely depends on a `when:` that only the seed-envelope
-     validator checks, synthesize the minimal structure needed and validate it, or require the caller
-     to pass it. 3b only if 3a is shown unsafe.
-   The acceptance tests below pin whichever is chosen; do not silently skip validation that affects
-   output.
+3. **The `when` re-check (resolved by plan-gate: 3a).** `validate_plan_when(plan)`
+   (`_when_parser.py:259`) walks ONLY `seed_envelope.per_table[].per_column[].when`
+   (`_when_parser.py:230`), and `ColumnSeed.when` is conditional **masking** (`plan/_types.py:88`).
+   There is no config-level `when` validator, and the seed predicate never reaches the generation core
+   (only the decoded `config` and pinned artifacts do, `_plan_entry.py:180`). So `validate_plan_when`
+   is masking-seed validation that is irrelevant to generation: the pinned entry does **not** call it,
+   and the full-`Plan` wrapper keeps calling it (behavior unchanged for `generate_tables(Plan)`). Do
+   NOT claim generate-column `when` is compile-validated or embedded in `config_json`; this plan
+   asserts nothing about generate-column `when` semantics. The acceptance tests pin exactly this: the
+   full-Plan path still runs seed validation; the pinned path is independent of the seed envelope.
 
-4. Mirror the deserialize-and-reverify shape of `_generation_plan_from_dict`
-   (`plan/_serialize.py:381`) -- that function already rebuilds a `GenerationPlan` and re-verifies the
-   DP receipt from pinned bytes without reopening files; the pinned entry is the same contract at the
-   admission boundary.
+4. **Admission contract: trusted object, not serialized-payload verification.** The shared helper does
+   NOT re-verify: `_prepare` checks DP-receipt *presence* only, then trusts the supplied
+   `statistical_specs` and decodes the embedded snapshots (`_plan_entry.py:89`). This is different from
+   `_generation_plan_from_dict` (`plan/_serialize.py:381`), which verifies digests, requires snapshot
+   coverage, recomputes DP verification, and rebuilds specs. Therefore the new entry's contract is:
+   **it accepts an already-compiled or already-verified `GenerationPlan` object** (the output of
+   `compile_plan`, or of a trusted `_generation_plan_from_dict` deserialize). A caller replaying a
+   **serialized** pinned payload (e.g. platform 1c reading a stored plan) MUST run it through the
+   existing deserialize-and-verify path FIRST, then pass the resulting trusted object here. The shared
+   `_prepare_generation` helper preserves the existing presence-check-and-trust behavior exactly; this
+   slice adds NO re-verification to it (doing so would change `generate_tables(Plan)` behavior). The
+   plan and the platform 1c adapter must both state this caller responsibility.
 
 ## Acceptance tests (land before/with the implementation)
 
-In `tests/unit/execution/test_pipeline_generation_contract.py` (the home of the Plan-only contract)
-and `tests/unit/test_v2_generation.py`:
+Placement: put the new pinned-admission tests in a focused new module
+`tests/unit/generation/test_pinned_admission.py` (do NOT enlarge the 1,651-line
+`tests/unit/test_v2_generation.py`). Keep the Plan-only pipeline-contract assertions in
+`tests/unit/execution/test_pipeline_generation_contract.py`.
 
-1. **Byte-identity:** compile a config to a `Plan`; call `generate_tables(plan)` and
-   `generate_tables_from_generation_plan(plan.generation)`; assert the per-table Arrow output is
-   byte-identical (same schema, same values, same row order).
-2. **No reopen:** with the snapshot source files deleted/made unreadable after compile, the pinned
-   entry still generates (proves it reads only pinned bytes). Mirror
-   `test_compile_plan_reads_each_snapshot_path_once`.
-3. **Type guard:** passing a raw dict or a full `Plan` to the pinned entry raises `TypeError` with a
-   clear message; passing a bare `GenerationPlan` to `generate_tables` still raises (the Plan-only
-   contract is preserved).
-4. **DP receipt:** a `GenerationPlan` whose config declares DP but carries no `dp_verification`
-   raises, same as the full-Plan path.
-5. **`when` behavior (per the 3a/3b decision):** a generate config with a `when:` produces identical
-   output through both entries; if 3a, add a test asserting the pinned entry does not require
-   `seed_envelope`.
-6. **Refactor safety:** existing `generate_tables` tests stay green unchanged (the `_prepare` split is
-   behavior-preserving).
+1. **Byte-identity (resident/legacy):** compile a config to a `Plan`; call `generate_tables(plan)` and
+   `generate_tables_from_generation_plan(plan.generation)`; assert per-table Arrow output is
+   byte-identical (schema, values, row order) with identical `derive_key`, `instance_default_locale`,
+   and `provider_snapshot`. Cover BOTH a streamed-eligible plan and a legacy-whole-table plan (a plan
+   with an ineligible column), since the core branches on that.
+2. **Byte-identity (streamed):** same parity for the streamed sibling, covering `sink`, `batch_rows`,
+   and the result mode, against `generate_tables_streamed(plan)`.
+3. **No reopen:** delete/chmod-away the snapshot source files after compile; the pinned entry still
+   generates (reads only pinned bytes). Mirror `test_compile_plan_reads_each_snapshot_path_once`.
+4. **Type guard + contract preservation:** a raw dict or a full `Plan` passed to a pinned entry raises
+   `TypeError` with a clear message; a bare `GenerationPlan` passed to `generate_tables` still raises
+   (Plan-only contract intact).
+5. **DP receipt:** a `GenerationPlan` whose config declares DP with statistical columns but carries no
+   `dp_verification` raises, same as the full-Plan path; AND a config declaring DP with NO statistical
+   columns succeeds (the guard at `_plan_entry.py:37` deliberately permits it).
+6. **`budget_bytes`:** success under budget and refusal over budget, identical to the full-Plan path.
+7. **Seed-envelope independence (the 3a invariant):** the pinned entry generates correctly for a plan
+   whose output does not depend on masking seed `when`, WITHOUT consulting `seed_envelope`; and the
+   full-Plan path still runs `validate_plan_when` (assert an invalid seed `when` still fails the
+   full-Plan entry). Do not assume any generate-column `when` semantics.
+8. **Error ordering + refactor safety:** the full-Plan path raises the SAME errors in the SAME order
+   as before (type guard → seed validation → missing-payload → DP), and existing `generate_tables`
+   tests stay green unchanged (the `_prepare` split is behavior-preserving).
 
 ## Risks
 
@@ -123,9 +148,20 @@ Pre-GA, hard change (no compatibility shim). Single engine slice; no Plan schema
 Promote the behavior into `docs/reference/` and note it in the generation API surface; update the
 cross-repo roadmap row for GEN-API 1c.
 
-## Open question for PLAN review (Codex plan-gate)
+## PLAN-gate resolution (Codex, 2026-10-23)
 
-The 3a-vs-3b `when` decision is the one real design fork. Confirm from the code whether a generate
-column's `when:` is fully validated at compile time and embedded in `config_json` (then 3a is safe and
-correct), or whether any generate output depends on a `when:` validated only by the seed-envelope path
-(then 3b). Everything else is a mechanical, behavior-preserving extraction.
+Codex plan-gate resolved the `when` fork and corrected two framings; this revision folds all findings
+in. Resolved:
+- **`when` = 3a:** `validate_plan_when` is masking-seed validation (`_when_parser.py:230,259`;
+  `ColumnSeed.when` = masking, `_types.py:88`), there is no config-level `when` validator, and the seed
+  predicate never reaches the generation core. The pinned entry does not call it; the full-Plan wrapper
+  keeps it. The plan asserts nothing about generate-column `when` semantics (test 7).
+- **Admission contract:** the new entry accepts an already-compiled/verified `GenerationPlan` (trusted
+  object); serialized replay is deserialized-and-verified by the caller first. No re-verification is
+  added to the shared helper (it keeps the presence-check-and-trust behavior). See Design step 4.
+- Acceptance coverage broadened (streamed + legacy parity, `budget_bytes`, DP-without-statistical,
+  provider/key/locale, error ordering) and the public surface fixed to `generation.synthesize` with a
+  focused new test module.
+Codex affirmed: the extraction is behavior-preserving if the order is kept, the no-reopen claim holds
+for valid pinned payloads, the masking non-goal is correct, and no new module/framework/`internal/`
+move is warranted. Build-ready after this revision.
