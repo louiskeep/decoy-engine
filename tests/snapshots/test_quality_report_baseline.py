@@ -113,12 +113,26 @@ def _assembled_from_pieces() -> dict[str, Any]:
     )
 
 
+def _gof_unavailable_case() -> dict[str, Any]:
+    # F-DI0-2: a constant categorical column (`flag`) whose primary TVD is
+    # comparable but whose chi-square GOF has no identifiable support, so the
+    # report carries a `gof_unavailable` warning while `age` scores normally.
+    df = pd.DataFrame(
+        {
+            "age": [25, 30, 35, 40, 45, 50],
+            "flag": ["X"] * 6,
+        }
+    )
+    return compute_quality_report(df, df, now_iso=FIXED_TS)
+
+
 FIXTURES: dict[str, Callable[[], dict[str, Any]]] = {
     "identity": _identity_case,
     "kind_drift": _kind_drift_case,
     "row_count_drift": _row_count_drift_case,
     "mixed_drift_with_meta": _mixed_drift_with_meta,
     "assembled_from_pieces": _assembled_from_pieces,
+    "gof_unavailable": _gof_unavailable_case,
 }
 
 

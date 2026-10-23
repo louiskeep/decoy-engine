@@ -71,6 +71,21 @@ byte-estimate routing on, matching routing off) confirming the byte-estimate
 router no longer crashes on these dtypes (hardened earlier by the Arrow-type
 classifier: a dictionary column is unpriceable and routes bounded; a tz-aware
 timestamp prices as `datetime64[ns]`). No production change.
+### Fixed (Distribution-integrity: nested-GOF unavailability now propagates, 2026-10-22)
+
+The quality report no longer silently overclaims goodness-of-fit coverage. A
+column's nested GOF metric (`marginal.columns[*].extra_metrics.ks_complement` /
+`chi_cramers_v`) can be incomparable even when the column's PRIMARY similarity is
+comparable — for example a constant or fully-disjoint categorical whose
+chi-square has no identifiable support, or a numeric column with no histogram.
+Previously only the primary `comparable` flag fed the report, so that GOF
+unavailability produced no omission and no warning, and a reader could not tell a
+reported GOF metric from a missing one. `quality.report` now emits a
+`gof_unavailable` warning (`{source: "fidelity", code: "gof_unavailable", detail:
+{column, metric, reason}}`) for each incomparable nested GOF metric, independent
+of the primary score (a column can be score-comparable, so not an omission, and
+GOF-unavailable here). Additive and deterministic: `omissions` is unchanged, no
+existing report digest changes, and warning ordering stays byte-stable.
 
 ### Added (DuckDB Postgres snapshot input primitive, 2026-10-20)
 

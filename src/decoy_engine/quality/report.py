@@ -38,7 +38,9 @@ What the report contains:
   - sampled / sample_size: caller-provided; for D2 to fill when
     runner samples large frames before snapshotting
   - warnings: collated from diagnostic + fidelity (kind drift,
-    no-comparable-data, etc.)
+    no-comparable-data, and `gof_unavailable` when a column's nested
+    goodness-of-fit metric is incomparable while its primary score is
+    not -- so the report never silently overclaims GOF coverage)
   - omissions: per-column / per-joint exclusions from the score
     (kind mismatches, empty columns, missing joint pairs)
 
@@ -294,8 +296,40 @@ def _collect_warnings(
                 "detail": {},
             },
         )
-    # Deterministic ordering for byte-stable JSON output.
-    warnings.sort(key=lambda w: (w["source"], w["code"]))
+    # F-DI0-2: a column's nested GOF (extra_metrics.ks_complement /
+    # chi_cramers_v) can be incomparable even when its PRIMARY similarity is
+    # comparable (e.g. a constant/disjoint categorical whose chi-square has no
+    # identifiable support, or a numeric column with no histogram). The primary
+    # `comparable` flag that feeds omissions never sees this, so without a signal
+    # here the report silently overclaims GOF coverage. Surface each incomparable
+    # sub-metric as a warning (independent of the primary: a column may be both
+    # score-comparable, so not an omission, and GOF-unavailable here).
+    for col in fidelity.get("marginal", {}).get("columns", []):
+        for metric, gof in (col.get("extra_metrics") or {}).items():
+            if gof.get("comparable") is False:
+                warnings.append(
+                    {
+                        "source": "fidelity",
+                        "code": "gof_unavailable",
+                        "detail": {
+                            "column": col.get("column"),
+                            "metric": metric,
+                            "reason": gof.get("reason"),
+                        },
+                    },
+                )
+    # Deterministic ordering for byte-stable JSON output. The detail tiebreakers
+    # disambiguate same-(source, code) gof_unavailable warnings; every other
+    # warning has a unique (source, code), so its position is unchanged by them.
+    warnings.sort(
+        key=lambda w: (
+            w["source"],
+            w["code"],
+            str(w["detail"].get("column", "")),
+            str(w["detail"].get("metric", "")),
+            str(w["detail"].get("reason", "")),
+        ),
+    )
     return warnings
 
 
