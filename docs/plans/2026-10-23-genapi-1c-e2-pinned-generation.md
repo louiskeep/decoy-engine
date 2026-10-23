@@ -113,6 +113,16 @@ dedicated fixture - a statistical column (snapshot_file) for the digest-substitu
    `compile_pinned_plan_with_generation` and `compile_pinned_plan` raise identically. Assert the
    `snapshot_content_guard` ContextVar is RESTORED to its prior value after BOTH a successful compile and a
    compile that raises (guard lifecycle).
+   PRECEDENCE + RESOLVED-RECHECK cases (plan-gate rev2 GO residual MEDIUM-4; assert FIXED pre-refactor
+   (code, message), not merely wrapper/new-entry equality):
+   - live token AND missing reference_date present together -> expect the live-token error (token scan runs
+     before reference resolution).
+   - invalid reference_date AND an unpinnable column together -> expect the reference_date error (reference
+     resolution runs before `reject_unpinnable`).
+   - unpinnable input -> assert `compile_plan` is NEVER invoked (pre-compile rejection; use the compile spy).
+   - valid input whose RESOLVED config becomes unpinnable (drive via a controlled `compile_plan` result that
+     returns a generation whose `config_json` is unpinnable) -> expect the original resolved-config refusal,
+     proving the post-compile `reject_unpinnable(resolved)` recheck is actually reached.
 7. EXPORTS: both new names import from `decoy_engine.generation.pinned`.
 8. EXISTING-SUITE REGRESSION: run the existing `tests/unit/generation/test_pinned_generation.py` AND
    `test_generation_admission_bridge.py` unchanged (the latter already covers fallback/precedence).
