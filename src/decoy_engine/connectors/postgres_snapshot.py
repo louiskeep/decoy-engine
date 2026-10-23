@@ -7,6 +7,13 @@ each relation as one Parquet file. This is a materialization step, not a
 streaming connector: DuckDB owns the wire protocol and type mapping, Decoy
 owns only the narrow, read-only, structured selection-to-Parquet step.
 
+D0: this module is now the **Postgres adapter** of the shared DuckDB-attach
+seam. The dialect-independent orchestration, models, SQL helpers, and error base
+live in ``decoy_engine.connectors.duckdb_attach``; everything below is the
+Postgres-specific ``Dialect`` plus the public surface preserved for callers
+(``PostgresSnapshotConfig`` / ``PostgresSnapshotError`` / ``RelationSelection`` /
+``snapshot_tables_to_parquet``). Behavior is byte-identical to the pre-D0 module.
+
 Pinned guarantees (each has a test in ``tests/connectors/test_postgres_snapshot*``):
 
 * One snapshot per call. All relations are exported inside one DuckDB
@@ -44,18 +51,27 @@ The library does not know its callers: it takes a resolved DSN as a
 
 from __future__ import annotations
 
-import logging
 import os
 import re
-import shutil
-import threading
-import uuid
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
-
-from decoy_engine.sdk import PermanentError
+# Dialect-independent core (D0). Re-exported names keep the public + private
+# surface this module has always exposed (callers import several privates, and
+# the integration suite monkeypatches `_export_relation` / `_open_connection`
+# as module globals -- preserved here as bare module functions). `_IDENT_RE` and
+# `_validate_ident` are re-exported for compatibility only.
+from decoy_engine.connectors.duckdb_attach import (
+    _IDENT_RE,  # noqa: F401
+    RelationSelection,
+    SnapshotConfig,
+    SnapshotError,
+    _lit,
+    _order_clause,
+    _q,
+    _validate_ident,  # noqa: F401
+    run_snapshot,
+)
 
 __all__ = [
     "PostgresSnapshotConfig",
@@ -63,13 +79,6 @@ __all__ = [
     "RelationSelection",
     "snapshot_tables_to_parquet",
 ]
-
-_log = logging.getLogger(__name__)
-
-# Strict on purpose: unquoted-safe Postgres identifiers. Names needing quoted
-# oddities (spaces, quotes, unicode) are rejected rather than escaped, so the
-# validation boundary and the quoting boundary cannot disagree.
-_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]{0,62}$")
 
 # Alias for the attached database. Fixed, never caller-derived.
 _ATTACH_ALIAS = "decoy_pg_src"
@@ -111,102 +120,18 @@ _NUMERIC_RE = re.compile(r"^numeric\((\d+),(\d+)\)$")
 _LEN_SUFFIX_RE = re.compile(r"\(\d+\)$")
 
 
-class PostgresSnapshotError(PermanentError):
-    """Coded, redacted snapshot failure.
+class PostgresSnapshotConfig(SnapshotConfig):
+    """Connection and resource policy for one Postgres snapshot call.
 
-    ``code`` is a stable machine-readable token. ``location`` is a relation
-    (``schema.table``) or ``schema.table.column``, never a value or DSN. The
-    message is built only from those parts plus an exception type name.
+    The shared :class:`SnapshotConfig`; named for the public API and so a future
+    Postgres-only field has a home.
     """
 
-    def __init__(self, code: str, *, location: str = "", cause_type: str = "") -> None:
-        self.code = code
-        self.location = location
-        self.cause_type = cause_type
-        parts = [f"postgres_snapshot[{code}]"]
-        if location:
-            parts.append(f"at {location}")
-        if cause_type:
-            parts.append(f"cause={cause_type}")
-        super().__init__(" ".join(parts))
 
+class PostgresSnapshotError(SnapshotError):
+    """Coded, redacted snapshot failure. Message: ``postgres_snapshot[code] …``."""
 
-def _validate_ident(value: str, what: str) -> str:
-    if not isinstance(value, str) or not _IDENT_RE.fullmatch(value):
-        # The offending text is not echoed: it may be attacker-shaped input.
-        raise ValueError(f"invalid {what} identifier")
-    return value
-
-
-class PostgresSnapshotConfig(BaseModel):
-    """Connection and resource policy for one snapshot call. No SQL field."""
-
-    # hide_input_in_errors: a ValidationError would otherwise echo the rejected
-    # input, which for these models can be a DSN or attacker-shaped text.
-    model_config = ConfigDict(
-        extra="forbid", frozen=True, arbitrary_types_allowed=True, hide_input_in_errors=True
-    )
-
-    dsn: SecretStr
-    extension_directory: Path = Field(
-        description="Directory holding the bundled DuckDB postgres extension. Never installed from the network."
-    )
-    memory_limit: str = Field(pattern=r"^\d+(\.\d+)?\s?(KB|MB|GB|TB|KiB|MiB|GiB|TiB|B)$")
-    temp_directory: Path
-    threads: int = Field(ge=1, le=256)
-    row_group_size: int = Field(ge=1_000, le=10_000_000)
-    statement_timeout_s: int = Field(ge=1)
-    deadline_s: int = Field(ge=1)
-
-
-class RelationSelection(BaseModel):
-    """One relation to stage. Identifiers only; there is no predicate field."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True, hide_input_in_errors=True)
-
-    schema_name: str = Field(alias="schema")
-    table: str
-    columns: list[str] = Field(min_length=1)
-    order_by: list[str] = Field(default_factory=list)
-
-    @field_validator("schema_name")
-    @classmethod
-    def _v_schema(cls, v: str) -> str:
-        return _validate_ident(v, "schema")
-
-    @field_validator("table")
-    @classmethod
-    def _v_table(cls, v: str) -> str:
-        return _validate_ident(v, "table")
-
-    @field_validator("columns", "order_by")
-    @classmethod
-    def _v_cols(cls, v: list[str]) -> list[str]:
-        for c in v:
-            _validate_ident(c, "column")
-        if len(set(v)) != len(v):
-            raise ValueError("duplicate column")
-        return v
-
-    @model_validator(mode="after")
-    def _order_subset(self) -> RelationSelection:
-        if not set(self.order_by) <= set(self.columns):
-            raise ValueError("order_by must be a subset of columns")
-        return self
-
-    @property
-    def key(self) -> str:
-        return f"{self.schema_name}.{self.table}"
-
-
-def _q(ident: str) -> str:
-    """Quote a validated identifier. Validation already excludes ``"``."""
-    return '"' + ident.replace('"', '""') + '"'
-
-
-def _lit(text: str) -> str:
-    """SQL string literal. Used only for the DSN and generated paths."""
-    return "'" + text.replace("'", "''") + "'"
+    _PREFIX = "postgres_snapshot"
 
 
 # ----- extension loading --------------------------------------------------
@@ -408,13 +333,6 @@ def _guard_values(conn: Any, sel: RelationSelection, classes: dict[str, str]) ->
 # ----- export -------------------------------------------------------------
 
 
-def _order_clause(sel: RelationSelection) -> str:
-    # Key columns first, then every other projected column as tiebreaker, so
-    # keyless relations and non-unique keys still export in one total order.
-    ordered = list(sel.order_by) + [c for c in sel.columns if c not in sel.order_by]
-    return ", ".join(f"{_q(c)} ASC NULLS LAST" for c in ordered)
-
-
 def _export_relation(conn: Any, sel: RelationSelection, target: Path, row_group_size: int) -> None:
     cols = ", ".join(_q(c) for c in sel.columns)
     src = f"{_q(_ATTACH_ALIAS)}.{_q(sel.schema_name)}.{_q(sel.table)}"
@@ -422,6 +340,53 @@ def _export_relation(conn: Any, sel: RelationSelection, target: Path, row_group_
         f"COPY (SELECT {cols} FROM {src} ORDER BY {_order_clause(sel)}) "
         f"TO {_lit(str(target))} (FORMAT parquet, ROW_GROUP_SIZE {int(row_group_size)})"
     )
+
+
+# ----- the Postgres dialect + public entrypoint ---------------------------
+
+
+class _PostgresDialect:
+    """The Postgres hooks for ``duckdb_attach.run_snapshot``.
+
+    The connection / extension / export hooks call this module's bare globals
+    (``_open_connection`` etc.) so the integration suite's
+    ``monkeypatch.setattr(ps, "_export_relation", …)`` still reaches them; type
+    and attach hooks are Postgres-specific and live here directly.
+    """
+
+    log_label = "postgres_snapshot"
+    attach_alias = _ATTACH_ALIAS
+
+    def error(self, code: str, *, location: str = "", cause_type: str = "") -> PostgresSnapshotError:
+        return PostgresSnapshotError(code, location=location, cause_type=cause_type)
+
+    def open_connection(self, config: PostgresSnapshotConfig, spill_dir: Path) -> Any:
+        return _open_connection(config, spill_dir)
+
+    def load_extension(self, conn: Any, config: PostgresSnapshotConfig) -> None:
+        _load_postgres_extension(conn, config)
+
+    def pre_attach(self, conn: Any, config: PostgresSnapshotConfig) -> None:
+        conn.execute(f"SET pg_statement_timeout_millis = {int(config.statement_timeout_s) * 1000}")
+
+    def attach(self, conn: Any, config: PostgresSnapshotConfig, alias: str) -> None:
+        conn.execute(
+            f"ATTACH {_lit(config.dsn.get_secret_value())} AS {_q(alias)} "
+            "(TYPE postgres, READ_ONLY)"
+        )
+
+    def check_types(self, conn: Any, sel: RelationSelection, alias: str) -> dict[str, str]:
+        return _check_types(conn, sel)
+
+    def guard_values(
+        self, conn: Any, sel: RelationSelection, classes: dict[str, str], alias: str
+    ) -> None:
+        _guard_values(conn, sel, classes)
+
+    def export_relation(
+        self, conn: Any, sel: RelationSelection, target: Path, row_group_size: int, alias: str
+    ) -> None:
+        _export_relation(conn, sel, target, row_group_size)
 
 
 def snapshot_tables_to_parquet(
@@ -436,93 +401,4 @@ def snapshot_tables_to_parquet(
     On any failure, timeout, or interrupt nothing is published and every
     staged and spill file is removed.
     """
-    if not selections:
-        raise PostgresSnapshotError("no_selections")
-    keys = [s.key for s in selections]
-    if len(set(keys)) != len(keys):
-        raise PostgresSnapshotError("duplicate_relation")
-
-    run_id = uuid.uuid4().hex
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    stage_dir = dest_dir / f".stage-{run_id}"
-    final_dir = dest_dir / f"snapshot-{run_id}"
-    spill_dir = config.temp_directory / f"spill-{run_id}"
-    stage_dir.mkdir(mode=0o700)
-
-    published = False
-    conn: Any = None
-    timed_out = threading.Event()
-    timer: threading.Timer | None = None
-    try:
-        conn = _open_connection(config, spill_dir)
-        _load_postgres_extension(conn, config)
-
-        def _on_deadline() -> None:
-            timed_out.set()
-            try:
-                conn.interrupt()
-            except Exception:
-                pass
-
-        timer = threading.Timer(config.deadline_s, _on_deadline)
-        timer.daemon = True
-        timer.start()
-
-        try:
-            conn.execute("SET TimeZone = 'UTC'")
-            conn.execute(
-                f"SET pg_statement_timeout_millis = {int(config.statement_timeout_s) * 1000}"
-            )
-            conn.execute(
-                f"ATTACH {_lit(config.dsn.get_secret_value())} AS {_q(_ATTACH_ALIAS)} "
-                "(TYPE postgres, READ_ONLY)"
-            )
-        except Exception as exc:
-            raise PostgresSnapshotError(
-                "source_unreachable", cause_type=type(exc).__name__
-            ) from None
-
-        staged: dict[str, Path] = {}
-        try:
-            conn.execute("BEGIN TRANSACTION")
-            # Validate every relation first so a late type rejection never
-            # follows a long export. All of this reads the same snapshot.
-            plans = [(sel, _check_types(conn, sel)) for sel in selections]
-            for sel, classes in plans:
-                _guard_values(conn, sel, classes)
-            for sel, _ in plans:
-                target = stage_dir / f"{sel.schema_name}.{sel.table}.parquet"
-                _export_relation(conn, sel, target, config.row_group_size)
-                staged[sel.key] = target
-            conn.execute("COMMIT")
-        except PostgresSnapshotError:
-            if timed_out.is_set():
-                raise PostgresSnapshotError("deadline_exceeded") from None
-            raise
-        except Exception as exc:
-            if timed_out.is_set():
-                raise PostgresSnapshotError("deadline_exceeded") from None
-            raise PostgresSnapshotError("export_failed", cause_type=type(exc).__name__) from None
-
-        if timed_out.is_set():
-            raise PostgresSnapshotError("deadline_exceeded")
-        os.replace(stage_dir, final_dir)
-        published = True
-        _log.info("postgres_snapshot published relations=%d", len(staged))
-        return {k: final_dir / p.name for k, p in staged.items()}
-    except PostgresSnapshotError as failure:
-        code, location = failure.code, failure.location
-        _log.warning("postgres_snapshot failed code=%s location=%s", code, location)
-        raise
-    finally:
-        if timer is not None:
-            timer.cancel()
-        if conn is not None:
-            try:
-                conn.close()
-            except Exception:
-                pass
-        shutil.rmtree(stage_dir, ignore_errors=True)
-        shutil.rmtree(spill_dir, ignore_errors=True)
-        if not published:
-            shutil.rmtree(final_dir, ignore_errors=True)
+    return run_snapshot(config, selections, dest_dir, dialect=_PostgresDialect())
