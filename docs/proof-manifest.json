@@ -1254,27 +1254,5 @@
     "statistical",
     "windowed_date"
   ],
-  "benchmarks": [
-    {
-      "shape": "1M rows, HIPAA-shaped parquet, hybrid engine",
-      "throughput": "~1.7M rows/s",
-      "measured_at": "2026-05-09",
-      "note": "0.59 s elapsed; Intel Core i7-1265U; single hash-rule pipeline",
-      "source": "tests/benchmark/calibration/results.md"
-    },
-    {
-      "shape": "5M rows, HIPAA-shaped parquet, hybrid engine",
-      "throughput": "~1.6M rows/s",
-      "measured_at": "2026-05-09",
-      "note": "3.14 s elapsed; Intel Core i7-1265U; single hash-rule pipeline",
-      "source": "tests/benchmark/calibration/results.md"
-    },
-    {
-      "shape": "10M rows, HIPAA-shaped parquet, hybrid engine",
-      "throughput": "~1.8M rows/s",
-      "measured_at": "2026-05-09",
-      "note": "5.47 s elapsed; Intel Core i7-1265U; single hash-rule pipeline",
-      "source": "tests/benchmark/calibration/results.md"
-    }
-  ]
+  "benchmarks": []
 }

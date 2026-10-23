@@ -30,7 +30,6 @@ from decoy_engine.execution._pipeline import run_pipeline
 SAMPLE_ROWS = 5
 
 _MATRIX_GEN_PATH = Path(__file__).resolve().parent / "gen_capability_matrix.py"
-_CALIBRATION_REL = "tests/benchmark/calibration/results.md"
 
 
 def _capability_matrix_module():
@@ -1181,30 +1180,13 @@ def _generation_strategies_list() -> list[str]:
 
 
 def _benchmarks() -> list[dict]:
-    # Transcribed from tests/benchmark/calibration/results.md, Run 1 (captured
-    # 2026-05-09, Intel Core i7-1265U). Pipeline: source.file, filter (10% pass),
-    # mask (single hash rule), target.file on a HIPAA-shaped parquet fixture.
-    # Benchmarks are a captured artifact, not regenerable here; the date is the
-    # provenance. The source doc states no engine version, so none is claimed.
-    runs = [
-        # (rows label, row count, hybrid elapsed seconds)
-        ("1M rows", 1_000_000, 0.59),
-        ("5M rows", 5_000_000, 3.14),
-        ("10M rows", 10_000_000, 5.47),
-    ]
-    out = []
-    for label, rows, elapsed in runs:
-        rate_m = round(rows / elapsed / 1_000_000, 1)
-        out.append(
-            {
-                "shape": f"{label}, HIPAA-shaped parquet, hybrid engine",
-                "throughput": f"~{rate_m}M rows/s",
-                "measured_at": "2026-05-09",
-                "note": f"{elapsed} s elapsed; Intel Core i7-1265U; single hash-rule pipeline",
-                "source": _CALIBRATION_REL,
-            }
-        )
-    return out
+    # No benchmark is published here. The former calibration figures
+    # (tests/benchmark/calibration/results.md) came from a 10%-filtered,
+    # single-hash-rule pipeline timed end to end, so stating them as masking
+    # throughput overstated the real rate by roughly an order of magnitude. A
+    # number is only published next to a run whose method it honestly describes;
+    # until that record exists here, the strip renders its empty-state note.
+    return []
 
 
 def build() -> dict:
