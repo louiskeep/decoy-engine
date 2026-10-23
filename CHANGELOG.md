@@ -42,17 +42,21 @@ compile branches and in `run_config_only_checks`.
 A `when:` row gate combined with a string-output strategy on an integer, float
 or decimal column used to crash mid-run: matched rows became strings while
 unmatched rows kept their numbers, and one Arrow column cannot hold both, so the
-pandas route raised a raw `pyarrow.ArrowInvalid` at reconstruction. Every
-statically-typed string-output strategy now fails closed at plan-compile with a
-clear coded `PlanCompileError` (`when_string_output_on_numeric_unsupported`)
-naming the table/column/strategy: `truncate`, `redact` with a string
-replacement, `fpe`, `categorical` with string categories, `text_redact` (unless
-its token is non-string), `text_mask`, `code_set` and `bucket_perturb`. Which
-strategies emit a string is read from the engine's own output typing
-(`masked_output_type`), not a second list. `faker` has no declared output type
-at compile time, so a gated `faker` column whose provider produces strings over a
-numeric column, with a gate that leaves some rows unmasked, fails at execution with
-`gated_faker_string_on_numeric_unsupported`, before the gated write. Valid configs are unaffected: a numeric `redact_with`,
+pandas route raised a raw `pyarrow.ArrowInvalid` at reconstruction. The class is now
+closed at one of two points. Statically-typed string-output strategies fail closed at
+plan-compile with a coded `PlanCompileError`
+(`when_string_output_on_numeric_unsupported`) naming the table/column/strategy:
+`truncate`, `redact` with a string replacement, `fpe`, `categorical` with string
+categories, `text_redact` (unless its token is non-string), `text_mask`, `code_set` and
+`bucket_perturb`. Which strategies emit a string is read from the engine's own output
+typing (`masked_output_type`), not a second list. Anything that cannot be typed at
+compile (`faker`, whose provider return type is only known by running it; `bucketize`
+range labels; any other pandas-only string emitter) is caught at execution by one guard
+in the `when:` gate wrapper, which raises `gated_string_output_on_numeric_unsupported`
+before the write when string output would be mixed into a numeric column with a gate
+that leaves rows unmasked. A gate that selects every non-null row turns the column
+uniformly to strings, still works, and now casts the target to object explicitly instead
+of relying on pandas' deprecated implicit upcast. Valid configs are unaffected: a numeric `redact_with`,
 numeric categorical categories, a non-numeric source column, an FK-child column,
 and whole-column masking (no `when:`) all still run, and `hash` keeps its own
 existing coded guards (`gated_hash_on_integer_unsupported` /

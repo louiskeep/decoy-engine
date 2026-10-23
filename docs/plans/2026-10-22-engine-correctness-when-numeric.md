@@ -84,8 +84,9 @@ existing execution-time behavior backs that case up. Output-string resolution:
 - hash+when on numeric → still its own existing coded error (unchanged).
 - fpe, categorical (string categories), text_redact, text_mask, code_set, bucket_perturb
   +when on numeric → rejected; numeric-category categorical and numeric-token
-  text_redact → allowed. A gated faker string provider on numeric with a partial gate → execution error
-  `gated_faker_string_on_numeric_unsupported`.
+  text_redact → allowed. A gated faker string provider or bucketize on numeric with a partial gate → execution
+  error `gated_string_output_on_numeric_unsupported`; a numeric-output gated strategy is
+  not guarded.
 - `no_profile=True` → the check is skipped (listed in checks_skipped).
 
 ### Non-goals
@@ -99,12 +100,17 @@ shipped check therefore covers every statically-typed string-output strategy at
 compile, resolved through the engine's `masked_output_type` rather than a second
 list, so numeric-output configs (numeric categorical categories, a non-string
 `text_redact` token, a numeric `redact_with`) are not rejected. `faker` cannot be
-typed at compile (a provider's return type is only known by running it), so it is
-guarded at execution by `gated_faker_string_on_numeric_unsupported`, which checks the
-gated subset's realized output in the `when:` gate wrapper before the write. It fires
-only when the gate leaves non-null rows unmasked; a gate that selects every non-null
-row turns the column uniformly to strings, which works and is not rejected. `hash` keeps its own execution guards. Not covered:
-`date_shift` and other pandas-only strategies that `masked_output_type` does not type.
+typed at compile (a provider's return type is only known by running it) and `bucketize`
+emits range labels that `masked_output_type` does not type, so those, and any other
+pandas-only string emitter, are caught at execution instead. One guard in
+`run_with_when_gate` (`execution/_gated_string_guard.py`) checks every gated write: it
+raises `gated_string_output_on_numeric_unsupported` when the source column is numeric, the
+gated subset's output is string, and the gate leaves non-null rows unmasked. A gate that
+selects every non-null row turns the column uniformly to strings, which works; the target
+is cast to object explicitly first. `hash` keeps its own execution guards. Out by design:
+`date_shift` and `geo_generalize` (not typed by `masked_output_type`; the execution guard
+still catches them if they emit strings on a numeric column) and strategies whose output
+stays numeric.
 The "cast unmatched to string" alternative (roadmap
 option 1) is deliberately not taken: reject-at-validation is the triage's choice
 and avoids silently restyping a numeric column.

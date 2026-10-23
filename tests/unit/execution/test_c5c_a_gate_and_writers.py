@@ -119,7 +119,7 @@ def test_string_output_partial_gate_keeps_the_mixed_type_rejection() -> None:
     table = _table_with_exact_ints([1, 0, 1, 0, 0, 1, 0])
     with pytest.raises(ExecutionError) as exc:
         sup.run(_plan("f == 1", "person_email"), table)
-    assert exc.value.code == "gated_faker_string_on_numeric_unsupported"
+    assert exc.value.code == "gated_string_output_on_numeric_unsupported"
 
 
 def test_string_output_gate_selecting_every_non_null_value_succeeds() -> None:

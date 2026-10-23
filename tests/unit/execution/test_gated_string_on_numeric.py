@@ -1,6 +1,7 @@
-"""A `when:`-gated faker column that would write strings into a numeric column is rejected cleanly.
+"""A `when:`-gated write that would mix strings into a numeric column is rejected cleanly.
 
-A faker provider has no declared output type, so the plan-compile check cannot type it; the
+Faker (no declared output type) and bucketize (range labels, not typed by `masked_output_type`)
+cannot be typed by the plan-compile check, so the
 gate wrapper checks the realized subset output and raises a coded error before the write,
 replacing the raw Arrow error at reconstruction. Numeric output, string columns, ungated columns
 and a gate that selects every non-null row (the column becomes uniformly string) are not guarded.
@@ -8,6 +9,7 @@ and a gate that selects every non-null row (the column becomes uniformly string)
 
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 from typing import Any
 
@@ -17,18 +19,23 @@ import pytest
 
 from decoy_engine.execution import PandasExecutionAdapter
 from decoy_engine.execution._errors import ExecutionError
-from decoy_engine.execution._gated_faker_guard import reject_gated_faker_string_on_numeric
+from decoy_engine.execution._gated_string_guard import reject_gated_string_on_numeric
 from decoy_engine.relationships._namespace import NamespaceRegistry
 from tests.unit.execution import _c8_iii_c_support as sup
 from tests.unit.execution import _multi_table_support as mt
 
-_CODE = "gated_faker_string_on_numeric_unsupported"
+_CODE = "gated_string_output_on_numeric_unsupported"
 
 
 def _guard(source: pd.Series, produced: list[Any], mask: list[bool]) -> None:
     m = pd.Series(mask, index=source.index)
-    reject_gated_faker_string_on_numeric(
-        source, pd.Series(produced, index=source.index[m]), m, table="t", column="c"
+    reject_gated_string_on_numeric(
+        source,
+        pd.Series(produced, index=source.index[m]),
+        m,
+        table="t",
+        column="c",
+        strategy="faker",
     )
 
 
@@ -51,6 +58,10 @@ class TestGuardUnit:
 
     def test_bool_source_allowed(self) -> None:
         _guard(pd.Series([True, False, True]), ["Ann", "Bob"], [True, True, False])
+
+
+def _gate_col(strategy: str, **extra: Any) -> dict[str, Any]:
+    return {"name": "c", "strategy": strategy, **extra}
 
 
 def _faker_col(*, when: str | None) -> dict[str, Any]:
@@ -103,3 +114,39 @@ class TestGuardEndToEnd:
         table = pa.table({"c": pa.array([1, 2, 3, 4], pa.int64())})
         out = _run(tmp_path, table, _faker_col(when=None))
         assert out.num_rows == 4
+
+
+_INTS = pa.table({"c": pa.array([5, 15, 25, 35], pa.int64())})
+
+
+class TestGuardIsGeneralised:
+    def test_bucketize_partial_gate_on_numeric_raises_coded_error(self, tmp_path: Path) -> None:
+        col = _gate_col("bucketize", provider_config={"width": 10}, when="c > 20")
+        with pytest.raises(ExecutionError) as exc:
+            _run(tmp_path, _INTS, col)
+        assert exc.value.code == _CODE
+        assert "bucketize" in str(exc.value)
+        assert "c > 20" not in str(exc.value)
+
+    def test_numeric_output_partial_gate_on_numeric_not_guarded(self, tmp_path: Path) -> None:
+        col = _gate_col("redact", provider_config={"redact_with": 0}, when="c > 20")
+        out = _run(tmp_path, _INTS, col)
+        assert out.column("c").to_pylist() == [5, 15, 0, 0]
+
+    def test_numeric_category_categorical_partial_gate_not_guarded(self, tmp_path: Path) -> None:
+        col = _gate_col(
+            "categorical",
+            namespace="ns_cat",
+            provider_config={"categories": [1, 2]},
+            when="c > 20",
+        )
+        out = _run(tmp_path, _INTS, col)
+        assert out.column("c").to_pylist()[:2] == [5, 15]
+
+    def test_full_gate_string_output_replaces_column_without_upcast_warning(
+        self, tmp_path: Path
+    ) -> None:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", FutureWarning)
+            out = _run(tmp_path, _INTS, _faker_col(when="c > 0"))
+        assert all(isinstance(v, str) for v in out.column("c").to_pylist())

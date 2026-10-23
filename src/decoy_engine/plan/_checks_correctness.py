@@ -21,8 +21,9 @@ from decoy_engine.profile._types import Profile
 # the masks actually emit. `hash` has dedicated execution guards
 # (`gated_hash_on_integer_unsupported`, `float_canonicalization_unsupported`) and
 # `faker` has no declared output type at compile time (its provider return type
-# is only known by running it), so it is guarded at execution instead
-# (`gated_faker_string_on_numeric_unsupported`).
+# is only known by running it), and `bucketize` is not typed by
+# `masked_output_type`; both, and any other pandas-only string emitter, are caught
+# at execution by `gated_string_output_on_numeric_unsupported`.
 _WHEN_UNTYPED_HERE = frozenset({"hash", "faker", "passthrough"})
 
 
@@ -89,7 +90,8 @@ def check_when_string_output_on_numeric_unsupported(
     coded error instead. Every statically-typed string-output strategy is covered
     (truncate, redact with a string replacement, fpe, categorical with string
     categories, text_redact, text_mask, code_set, bucket_perturb), resolved through
-    `masked_output_type`. `hash` and `faker` are left to their execution guards. An FK-child column is exempt, mirroring
+    `masked_output_type`. `hash` and `faker` are left to their execution guards. An FK-child column
+    is exempt, mirroring
     `check_null_bearing_int_unsupported`: its values are resolved through the
     relationship edge, not written by this strategy.
 
