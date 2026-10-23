@@ -167,6 +167,22 @@ _MASK: dict[str, _Ortho] = {
     "redact": _Ortho(True, False, False, False, True),
     "truncate": _Ortho(True, False, False, False, True),
     "hash": _Ortho(True, False, False, False, True),
+    # Reversible tokenization (MG-5). Row-local keyed surrogate with a static
+    # string output, no row-error/warning/pool diagnostics. It is NOT native-
+    # eligible: each cell goes through a platform-provided vault callback
+    # (TokenVaultWriter), so there is no compiled kernel -- the eligibility
+    # query coded-rejects it to the Python path.
+    "tokenize": _Ortho(
+        True,
+        False,
+        False,
+        False,
+        True,
+        notes=(
+            "Platform-provided token vault is required state (TokenVaultWriter); "
+            "per-cell vault callback, no compiled kernel."
+        ),
+    ),
     # -- keyed row-local, zero-diagnostic ------------------------------------
     "fpe": _Ortho(
         True,

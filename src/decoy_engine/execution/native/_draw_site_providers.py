@@ -856,6 +856,9 @@ class UnseededProvider(DrawSiteProvider):
 # selection) have their own dedicated providers above, not this generic map.
 _SOURCE_KEYED_PRIMITIVE: dict[str, str] = {
     "mask.hash": "derive",
+    # tokenize draws a fresh surrogate exactly as hash does: derive(mask_key,
+    # namespace, source). The vault reuse/persistence is outside the draw.
+    "mask.tokenize": "derive",
     "mask.date_shift": "derive",
     "mask.bucket_perturb": "derive",
     "mask.group_key": "derive",
