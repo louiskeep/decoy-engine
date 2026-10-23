@@ -59,6 +59,7 @@ _MAX_POSITION = 2**63
 __all__ = [
     "GeneratedWindow",
     "classify_window",
+    "classify_window_from_generation_plan",
     "generate_rows",
 ]
 
@@ -100,6 +101,30 @@ def classify_window(
     from decoy_engine.generation._plan_entry import _prepare
 
     prepared = _prepare(plan, "classify_window")
+    return classify_window_table(
+        prepared.config,
+        table,
+        statistical_specs=prepared.legacy_kwargs["statistical_specs"],
+        max_cell_chars=max_cell_chars,
+        window_end=window_end,
+        instance_default_locale=instance_default_locale,
+        provider_snapshot=provider_snapshot,
+    )
+
+
+def classify_window_from_generation_plan(
+    generation_plan: Any,
+    table: str,
+    *,
+    max_cell_chars: int = DEFAULT_MAX_CELL_CHARS,
+    window_end: int = _MAX_POSITION,
+    instance_default_locale: str | None = None,
+    provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None = None,
+) -> WindowAdmission:
+    """`classify_window` for a caller that holds only the compiled `GenerationPlan`."""
+    from decoy_engine.generation._plan_entry import _prepare_pinned
+
+    prepared = _prepare_pinned(generation_plan, "classify_window_from_generation_plan")
     return classify_window_table(
         prepared.config,
         table,

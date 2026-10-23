@@ -20,28 +20,14 @@ import hashlib
 import json
 import platform
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from typing import Any
 
-from decoy_engine.errors import DecoyError
+from decoy_engine._reference_date import PinnedModeError
 
 PINNED_PLAN_SCHEMA = "pinned-plan/v1"
 _FINGERPRINT_SCHEMA = "pinned-plan-fingerprint/v1"
 
 MAX_SEED = 1 << 64
-
-
-class PinnedModeError(DecoyError):
-    """A coded, fail-closed refusal in pinned generation mode.
-
-    Messages name the table and column and the reason, never a cell value, so a refusal cannot
-    leak generated or snapshot content into logs.
-    """
-
-    def __init__(self, *, code: str, message: str) -> None:
-        self.code = code
-        self.message = message
-        super().__init__(f"[{code}] {message}")
 
 
 @dataclass(frozen=True)
@@ -167,27 +153,6 @@ def runtime_identity() -> tuple[tuple[str, str], ...]:
             }.items()
         )
     )
-
-
-def normalize_reference_date(value: datetime | str) -> str:
-    """Canonical UTC second-precision text (``YYYY-MM-DDTHH:MM:SSZ``) for a reference instant.
-
-    A naive datetime is refused: it would bind the plan to the host's local zone.
-    """
-    if isinstance(value, str):
-        try:
-            value = datetime.fromisoformat(value.replace("Z", "+00:00"))
-        except ValueError:
-            raise PinnedModeError(
-                code="pinned_reference_date_invalid",
-                message="reference_date is not an ISO 8601 datetime",
-            ) from None
-    if not isinstance(value, datetime) or value.tzinfo is None:
-        raise PinnedModeError(
-            code="pinned_reference_date_invalid",
-            message="reference_date must be a timezone-aware datetime",
-        )
-    return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def validate_seed(seed: Any) -> int:

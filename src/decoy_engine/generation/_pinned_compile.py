@@ -18,6 +18,7 @@ import re
 from datetime import datetime
 from typing import Any
 
+from decoy_engine._reference_date import normalize_reference_date
 from decoy_engine.generation._pinned_plan import (
     PINNED_PLAN_SCHEMA,
     PinnedColumn,
@@ -25,7 +26,6 @@ from decoy_engine.generation._pinned_plan import (
     PinnedPlan,
     PinnedStatistical,
     PinnedTable,
-    normalize_reference_date,
     runtime_identity,
 )
 
@@ -187,8 +187,13 @@ def _empty_profile(reference_date: str) -> Any:
     )
 
 
-def compile_pinned_plan(config: dict[str, Any], reference_date: datetime | str) -> PinnedPlan:
+def compile_pinned_plan(
+    config: dict[str, Any], reference_date: datetime | str | None = None
+) -> PinnedPlan:
     """Resolve ``config`` into a ``PinnedPlan`` bound to ``reference_date``.
+
+    Without a positional ``reference_date`` the config's ``global_settings.reference_date`` is
+    used, so an approved config carries its own clock anchor. The positional argument wins.
 
     The config seed is deliberately dropped: the caller supplies the seed at execution, and the
     fingerprint must be the same for every seed.
@@ -198,6 +203,13 @@ def compile_pinned_plan(config: dict[str, Any], reference_date: datetime | str) 
     from decoy_engine.plan._types import unfreeze_json
 
     refuse_live_tokens(config, "config")
+    if reference_date is None:
+        reference_date = (config.get("global_settings") or {}).get("reference_date")
+    if reference_date is None:
+        raise PinnedModeError(
+            code="pinned_reference_date_invalid",
+            message="reference_date is required: pass it or set global_settings.reference_date",
+        )
     reference = normalize_reference_date(reference_date)
     reject_unpinnable(config)
     from decoy_engine.plan._generation import snapshot_content_guard
