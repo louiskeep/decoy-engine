@@ -342,17 +342,34 @@ class CsvFileSource:
     `(filesize - header_bytes) // mean_row_bytes`, with mean row width measured
     from a bounded header sample. The estimate is flagged (`exact=False`). The
     bounded sample is `pd.read_csv(nrows=...)`.
+
+    `has_header` / `column_names` / `delimiter` mirror the `FileSource` fields
+    (same contract) so a headerless or non-comma file profiles with the names
+    its mask rules key on, not pandas' positional `0,1,2...`.
     """
 
     path: Path
+    has_header: bool = True
+    column_names: list[str] | None = None
+    delimiter: str = ","
+
+    def _read_kwargs(self) -> dict[str, Any]:
+        # header=None + names= reads a headerless file under the supplied names;
+        # the FileSource validator guarantees names are present when has_header
+        # is false, so column_names is not None on that branch.
+        if self.has_header:
+            return {"sep": self.delimiter}
+        return {"sep": self.delimiter, "header": None, "names": self.column_names}
 
     def row_count(self) -> RowCount:
         total = os.path.getsize(self.path)
         header_bytes = 0
         line_bytes: list[int] = []
         with open(self.path, "rb") as fh:
-            header = fh.readline()
-            header_bytes = len(header)
+            if self.has_header:
+                # A header row is not a data row; its bytes are excluded from
+                # the per-row mean. A headerless file has no such line to skip.
+                header_bytes = len(fh.readline())
             for _ in range(_CSV_ESTIMATE_LINES):
                 line = fh.readline()
                 if not line:
@@ -361,14 +378,14 @@ class CsvFileSource:
         return estimate_csv_rows(total, header_bytes, line_bytes)
 
     def schema(self) -> pa.Schema:
-        head = pd.read_csv(self.path, nrows=_CSV_ESTIMATE_LINES)
+        head = pd.read_csv(self.path, nrows=_CSV_ESTIMATE_LINES, **self._read_kwargs())
         return pa.Table.from_pandas(head, preserve_index=False).schema
 
     def sample_frame(self, sample_rows: int) -> pd.DataFrame:
-        return pd.read_csv(self.path, nrows=sample_rows)
+        return pd.read_csv(self.path, nrows=sample_rows, **self._read_kwargs())
 
     def to_frame(self) -> pd.DataFrame:
-        return pd.read_csv(self.path)
+        return pd.read_csv(self.path, **self._read_kwargs())
 
 
 # ---------------------------------------------------------------------
@@ -454,7 +471,12 @@ def _build_file_source(descriptor: dict[str, Any]) -> ProfileSource:
     if not isinstance(path, str):
         raise ValueError(f"profile_source: file source missing string `path`, got {path!r}")
     if fmt == "csv":
-        return CsvFileSource(Path(path))
+        return CsvFileSource(
+            Path(path),
+            has_header=descriptor.get("has_header", True),
+            column_names=descriptor.get("column_names"),
+            delimiter=descriptor.get("delimiter", ","),
+        )
     if fmt == "parquet":
         return ParquetFileSource(Path(path))
     if fmt == "fixed_width":

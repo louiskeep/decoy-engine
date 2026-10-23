@@ -9,6 +9,24 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (§CSV-PARAMS: declare headerless and non-comma delimited sources, 2026-10-23)
+
+`FileSource` (format `csv`) grows three optional delimited-dialect fields:
+`has_header` (default `true`), `column_names` (a list, for headerless files), and
+`delimiter` (default `","`). A headerless file is read by setting
+`has_header: false` and supplying `column_names` (the names mask rules key on);
+`delimiter: "\t"` reads a TSV, `"|"` a pipe-delimited file. The profiler
+(`scan` / STORM) honours all three, so a headerless file profiles under its
+supplied names rather than pandas' positional `0,1,2...`. Additive and
+hash-neutral: the three fields default to today's behaviour (a comma file with a
+header row) and are omitted from the config dump at their defaults, so an
+existing `format: csv` source validates, serializes, and fingerprints exactly as
+before. The fields are csv-only; setting any on a `parquet` / `fixed_width`
+source is a validation error, as is `has_header: false` without `column_names`,
+`column_names` with a header, or a multi-character delimiter. Reuses the reserved
+`ValidationCode.SOURCE_FILE_*` semantics (no_header_columns,
+column_names_with_header, bad_delimiter, csv_param_on_non_csv).
+
 ### Fixed (§PANDAS-RANGE-ERROR: coded error when the full-frame pandas oracle meets an unrepresentable value, 2026-10-22)
 
 The full-frame pandas route converts every source column to pandas up front, so a
