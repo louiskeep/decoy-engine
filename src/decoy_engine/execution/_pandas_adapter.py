@@ -41,6 +41,7 @@ from decoy_engine.execution._adapter import (
     ExecutionResult,
     StrategyContext,
     StrategyHandler,
+    TokenVaultWriter,
 )
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._exact_int_sources import register_exact_int_sources
@@ -186,6 +187,7 @@ class PandasExecutionAdapter:
         row_offset: int = 0,
         code_set_records: Mapping[tuple[str, str], object] | None = None,
         pin_degenerate_faker: bool = False,
+        token_vault_writer: TokenVaultWriter | None = None,
     ) -> ExecutionResult:
         """Mask every table in `sources`; inputs must already be transformed (a Plan has none).
 
@@ -257,6 +259,7 @@ class PandasExecutionAdapter:
             # `_chunked_code_set.py`'s corpus-pinning contract). Empty dict
             # (the field default) for every pre-existing caller.
             code_set_records=dict(code_set_records) if code_set_records else {},
+            vault_writer=token_vault_writer,
         )
 
         ordered = order_work(build_work_list(plan, registry), relationship_graph)
