@@ -222,6 +222,9 @@ def test_all_lists_every_public_name():
         "estimate_job_capacity",
         "CapacityEstimate",
         "CapacityVerdict",
+        # Job-time estimator: the advisory estimate_job primitive + its result type.
+        "estimate_job",
+        "JobEstimate",
         # Task 3.2a (2026-09-13): the public native-companion probe. Platform
         # startup gates depend on this rather than the private crypto/index
         # loaders, so a fail-closed check crosses the in-process boundary

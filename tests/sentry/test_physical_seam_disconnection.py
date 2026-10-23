@@ -281,6 +281,12 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         # pyarrow and `profile._readers`, and nothing under `execution.physical`.
         "src/decoy_engine/execution/_mem_estimate_arrow.py",
         "src/decoy_engine/execution/_mem_estimate_dtypes.py",
+        # job-time estimator: the throughput calibration and the `estimate_job`
+        # primitive (route + peak + runtime band). Both sit beside the mem-estimate
+        # modules, import only `_mem_estimate`/routing/calibration + capacity's
+        # config resolver, and nothing under `execution.physical`.
+        "src/decoy_engine/execution/_throughput_calibration.py",
+        "src/decoy_engine/execution/_job_estimate.py",
         # F2 (production mixed generate+mask route): the semantic admission core and the
         # generate-parent FK bridge move OUT of `execution/physical/_shadow_mixed.py` /
         # `_shadow_fk.py` into `_mixed_admission.py` / `_mixed_fk_bridge.py` so the shadow and
