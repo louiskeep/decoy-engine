@@ -7,6 +7,27 @@ Engine versions are independent of `decoy-cli`; the CLI declares the
 minimum engine version it was tested against via its
 `decoy-engine>=X.Y` dependency pin.
 
+## [0.14.0] - 2026-10-23
+
+GEN-API Slice 1c engine foundations plus the fixed-width OUTPUT writer. Carries
+every change on main since 0.13.0 (itemised under [Unreleased] below).
+
+### Added
+- Fixed-width OUTPUT writer (`write_fixed_width`), the fail-closed inverse of the
+  reader: it stages to a temp file and atomically publishes, rejects any
+  non-round-trippable value, and never names a cell value in an error.
+- A `GenerationPlan`-based admission entry (`classify_window_from_generation_plan`)
+  and the pinned-admission generation bridge, so a caller can admit a compiled
+  generation plan without passing a full masking `Plan`.
+- A digest-covered `reference_date` on `GlobalSettings`, letting a generation job
+  pin its clock anchor inside the approved config; an unset value is omitted from
+  the config dump, so existing configs hash unchanged.
+
+### Fixed
+- A `when:`-gated string-output mask is rejected on a numeric column; distribution
+  nested-GOF unavailability now propagates; the unified-route evidence helper
+  signature was corrected.
+
 ## [Unreleased]
 
 ### Fixed (§PANDAS-RANGE-ERROR: coded error when the full-frame pandas oracle meets an unrepresentable value, 2026-10-22)
