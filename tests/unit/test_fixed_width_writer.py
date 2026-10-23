@@ -495,7 +495,9 @@ def test_negative_zero_with_minus_pad_fails_closed(tmp_path: Path) -> None:
     +0.0. The exact round-trip check must now reject it rather than publish a
     sign-flipped value."""
     layout = FixedWidthLayout(
-        columns=[{"name": "a", "start": 0, "width": 6, "type": "float", "align": "right", "pad": "-"}]
+        columns=[
+            {"name": "a", "start": 0, "width": 6, "type": "float", "align": "right", "pad": "-"}
+        ]
     )
     frame = pd.DataFrame({"a": [-0.0]})
     path = tmp_path / "o.txt"
@@ -509,7 +511,9 @@ def test_extreme_integer_fails_closed_with_coded_error(tmp_path: Path) -> None:
     ValueError; it must fail closed with a coded, value-free FixedWidthWriteError."""
     layout = FixedWidthLayout(columns=[{"name": "a", "start": 0, "width": 5000, "type": "int"}])
     # object dtype keeps the Python int (a bare list makes pandas try float and overflow).
-    frame = pd.DataFrame({"a": pd.Series([10**4500], dtype=object)})  # 4501 digits, over the 4300 cap
+    frame = pd.DataFrame(
+        {"a": pd.Series([10**4500], dtype=object)}
+    )  # 4501 digits, over the 4300 cap
     path = tmp_path / "o.txt"
     with pytest.raises(FixedWidthWriteError) as exc:
         write_fixed_width(frame, layout, str(path))

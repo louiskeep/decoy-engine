@@ -110,7 +110,14 @@ _ALPHANUM36 = "0123456789abcdefghijklmnopqrstuvwxyz"
 # (tests/unit/transforms/test_ff1_primitive.py) to remove transcription risk.
 _NIST_AES256_SAMPLES = [
     ("nist_sample7_aes256_radix10", 10, _DECIMAL, "", "0123456789", "6657667009"),
-    ("nist_sample8_aes256_radix10", 10, _DECIMAL, "39383736353433323130", "0123456789", "1001623463"),
+    (
+        "nist_sample8_aes256_radix10",
+        10,
+        _DECIMAL,
+        "39383736353433323130",
+        "0123456789",
+        "1001623463",
+    ),
     (
         "nist_sample9_aes256_radix36",
         36,
