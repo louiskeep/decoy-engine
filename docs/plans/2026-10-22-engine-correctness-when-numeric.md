@@ -115,6 +115,15 @@ The "cast unmatched to string" alternative (roadmap
 option 1) is deliberately not taken: reject-at-validation is the triage's choice
 and avoids silently restyping a numeric column.
 
+Tracked follow-ups (out of this slice's string-on-numeric scope, pre-existing, not
+regressions): (1) a `when:`-gated strategy that mixes a NON-string, non-numeric type
+into a numeric column (e.g. a bool source, or a decimal-typed output) is still not
+caught by this guard, which keys on a numeric source and a `string`-inferred output;
+same shape as the prior faker-only guard and the compile check's bool exclusion. A
+later slice could widen the guard to "produced dtype incompatible with source" rather
+than string-specific. (2) cosmetic: the guard message reads "Column .col" when the
+table name is empty (only with test doubles; production sets `current_table`).
+
 ## §MEM-EST-DTYPES (confirm closed)
 
 The named example in the roadmap. The byte-estimate router was hardened by engine
