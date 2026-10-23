@@ -107,6 +107,9 @@ def _assert_text_mask_evidence(nodes: dict[str, dict[str, Any]], *, calls: int =
         planned=ARROW_PYTHON,
         executed=ARROW_PYTHON,
         calls=calls,
+        table="t",
+        columns=["s"],
+        strategy="text_mask",
     )
 
 
