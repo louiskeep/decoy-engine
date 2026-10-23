@@ -30,7 +30,7 @@ The platform adapter calls BOTH `compile_plan(config).generation` (for the cheap
 
 R2 (engine surface: a new admission entry + a digest-covered config field that feeds the determinism
 contract). A wrong digest treatment would let `reference_date` drift without changing the approved
-digest (breaking reproducibility), so it MUST ride `_hash_config`. Full gate chain: this plan -> Codex
+digest (breaking reproducibility), so it MUST ride the config digests. Full gate chain: this plan -> Codex
 plan-gate -> Sonnet build tests-first -> self-check -> dennis -> Codex final -> engine CI -> merge
 (PR + squash). This slice lands on engine main; it ships to the platform via the shared Phase-1
 engine release (0.14.0) + platform pin bump, together with #297 and the other post-0.13.0 engine
@@ -112,17 +112,19 @@ Then `normalize_reference_date(reference_date)` unchanged (idempotent on an alre
 - A SUPPLIED `reference_date` must be digest-covered (do NOT add it to
   `_NON_SEMANTIC_GLOBAL_SETTINGS`): two configs differing only in a supplied `reference_date` hash
   differently.
-- **An UNSET `reference_date` must NOT change an existing config's digest** (round-1 MEDIUM-4): a
-  default field means `model_dump()` now emits `reference_date: None` for every pre-existing config,
-  and `_hash_config` would include that key and silently shift every existing approval digest. Fix: in
-  `_hash_config`, drop ONLY the `reference_date` key from `global_settings` WHEN its value is `None`
-  (a TARGETED drop of the new key, NOT a blanket None-drop). round-2 MEDIUM: a blanket "remove every
-  None global_settings key" is WRONG because `unconfigured_column_policy=None` and
-  `mask_secret_ref=None` are already in `model_dump()` and already hashed today, so removing them would
-  itself migrate existing digests. Only the newly-added `reference_date` key may be dropped-when-None.
-  Test: a config with no reference_date hashes IDENTICALLY to the pre-field baseline (confirm the
-  existing None keys `unconfigured_column_policy`/`mask_secret_ref` are still hashed as before);
-  `reference_date: null` == field absent; a supplied reference_date hashes differently.
+- **An UNSET `reference_date` must NOT change an existing config's digest**: a default field would
+  make `model_dump()` emit `reference_date: None` for every pre-existing config. Two digests read
+  that dump: `_hash_config` (pipeline_config_hash) and `_canonical_config_json`
+  (`execution/physical/_inputs.py`, the plan_hash input). A `_hash_config`-only drop would miss the
+  second (found at build: `test_a_config_without_when_hashes_exactly_as_before_the_field_existed`
+  failed). Fix, single mechanism: the existing `GlobalSettings` `model_serializer` also omits
+  `reference_date` from the dump when it is None, as it already does for an unset `dp` (and as `when`
+  does). `_hash_config` and `plan/_compile.py` are NOT changed. A blanket None-drop would be wrong:
+  `unconfigured_column_policy=None` / `mask_secret_ref=None` are already dumped and hashed today.
+  Raw dicts that bypass model validation stay the caller's responsibility (the no-`default=str`
+  contract already governs them).
+  Test: with no reference_date, BOTH digests equal the pre-field baseline; `reference_date: null`
+  == absent; a supplied reference_date changes both; the None keys above stay hashed.
 - `compile_plan` / `generate_tables` (non-pinned path) ignore the new field (benign carry on
   `GlobalSettings`).
 - Normalization guarantee (round-2 LOW, claim corrected): neither `compile_plan` nor
@@ -155,13 +157,12 @@ Then `normalize_reference_date(reference_date)` unchanged (idempotent on an alre
    the `reference_date` field location, NOT a raw `PinnedModeError`). A naive-only rejection test is
    vacuous since the fix must reject naive while ACCEPTING aware datetimes.
 5. Digest coverage: two configs identical except a SUPPLIED `reference_date` produce DIFFERENT
-   `_hash_config` digests; `_hash_config` does not raise on the string value (JSON-native); the field
-   is NOT in `_NON_SEMANTIC_GLOBAL_SETTINGS`. Omission: a config with NO reference_date (and one with
-   `reference_date: null`) hashes IDENTICALLY to the pre-field baseline (the TARGETED reference_date-only
-   None-drop holds), so adding the field does not migrate existing approval digests. Guard the targeted
-   drop: a config carrying `unconfigured_column_policy: null` / `mask_secret_ref: null` (both already
-   hashed today) hashes the SAME before and after this change (assert the drop touches ONLY
-   reference_date, not those pre-existing None keys).
+   `_hash_config` digests AND different plan_hash canonical digests (`_canonical_config_json`); the
+   string value is JSON-native; the field is NOT in `_NON_SEMANTIC_GLOBAL_SETTINGS`. Omission: a
+   config with NO reference_date (and one with `reference_date: null`) hashes IDENTICALLY to the
+   pre-field baseline under BOTH digests (serializer omission), and
+   `test_a_config_without_when_hashes_exactly_as_before_the_field_existed` passes unchanged. The
+   `unconfigured_column_policy: null` / `mask_secret_ref: null` keys stay hashed.
 6. compile_pinned_plan: reads `global_settings.reference_date` when the positional arg is absent;
    positional arg still wins when supplied; raises `pinned_reference_date_invalid` when neither is
    present.
@@ -175,9 +176,10 @@ Then `normalize_reference_date(reference_date)` unchanged (idempotent on an alre
 
 ## 6. Done-when
 
-- 4 files changed (`generation/window.py` bridge, `config/_global_settings.py` field+validator,
-  `generation/_pinned_compile.py` read-the-field, `plan/_compile.py` `_hash_config` None-drop) +
-  possibly a neutral relocation of `normalize_reference_date`.
+- Files changed: `generation/window.py` (bridge), `config/_global_settings.py` (field, validator,
+  serializer omission), `generation/_pinned_compile.py` (read-the-field), and the new neutral
+  `_reference_date.py` (relocated `PinnedModeError` + `normalize_reference_date`, re-imported by
+  `generation/_pinned_plan.py`). NOT `plan/_compile.py`.
 - Section-5 tests pass; red-first captured. ruff + format + mypy clean on changed modules; module-size
   + import-boundary sentries green.
 - dennis GO + Codex final GO; merge to engine main (PR + squash).

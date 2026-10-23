@@ -10,7 +10,16 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
+
+from decoy_engine._reference_date import PinnedModeError, normalize_reference_date
 
 
 class DpGenerateSettings(BaseModel):
@@ -111,6 +120,23 @@ class GlobalSettings(BaseModel):
     freetext_advisory_min_avg_length: float = Field(default=40.0)
     freetext_advisory_min_distinctness: float = Field(default=0.5, ge=0.0, le=1.0)
     dp: DpGenerateSettings | None = None
+    reference_date: str | None = None
+
+    @field_validator("reference_date", mode="before")
+    @classmethod
+    def _normalize_reference_date(cls, value: Any) -> Any:
+        """Canonical UTC text, so the dumped config is JSON-native and hashes stably.
+
+        Runs before type coercion because YAML timestamps arrive as aware `datetime` objects.
+        The pinned-mode refusal is re-raised as a plain `ValueError` so it surfaces as a
+        field-level validation error; the message never echoes the input.
+        """
+        if value is None:
+            return None
+        try:
+            return normalize_reference_date(value)
+        except PinnedModeError:
+            raise ValueError("reference_date must be a timezone-aware ISO 8601 datetime") from None
 
     @model_validator(mode="before")
     @classmethod
@@ -243,4 +269,8 @@ class GlobalSettings(BaseModel):
         data = handler(self)
         if isinstance(data, dict) and "dp" not in self.model_fields_set:
             data.pop("dp", None)
+        # An absent reference_date is omitted so configs that predate the field keep the exact
+        # pipeline_config_hash and plan_hash they had. Unlike `dp`, null and unset mean the same.
+        if isinstance(data, dict) and data.get("reference_date", 0) is None:
+            data.pop("reference_date")
         return data
