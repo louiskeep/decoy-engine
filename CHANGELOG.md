@@ -7,6 +7,17 @@ Engine versions are independent of `decoy-cli`; the CLI declares the
 minimum engine version it was tested against via its
 `decoy-engine>=X.Y` dependency pin.
 
+## [0.14.1] - 2026-10-23
+
+Adds the pinned-compile generation bundle over 0.14.0 (one new change, #302).
+
+### Added
+- `compile_pinned_plan_with_generation(config, reference_date=None) -> PinnedCompilation`
+  returns the `PinnedPlan` and the `GenerationPlan` it was built from in a single compile,
+  so window admission (`classify_window_from_generation_plan`) and execution
+  (`execute_pinned`) cannot disagree. `compile_pinned_plan` is now a thin wrapper over it and
+  is byte-for-byte unchanged.
+
 ## [Unreleased]
 
 ### Fixed (§PANDAS-RANGE-ERROR: coded error when the full-frame pandas oracle meets an unrepresentable value, 2026-10-22)
