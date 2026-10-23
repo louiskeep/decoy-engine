@@ -258,3 +258,25 @@ class TestMixedOutput:
         df2 = pd.DataFrame({"c": pd.Series([1, 2], dtype="int64")})
         widen_numeric_target_for_strings(df2, "c", pd.Series([5, 6]))
         assert df2["c"].dtype == "int64"
+
+    def test_categorical_mixed_produced_raises_not_typeerror(self) -> None:
+        # A categorical `produced` must not blow up Series.any() with an uncoded TypeError;
+        # a mixed category set on a partial gate is a real mix -> coded error.
+        source = pd.Series([1, 2, 3], dtype="int64")
+        mask = pd.Series([True, True, False], index=source.index)
+        produced = pd.Series(["Ann", 7], index=source.index[mask], dtype="category")
+        with pytest.raises(ExecutionError) as exc:
+            reject_gated_string_on_numeric(
+                source, produced, mask, table="t", column="c", strategy="categorical"
+            )
+        assert exc.value.code == _CODE
+
+    def test_numeric_only_categorical_produced_not_fired(self) -> None:
+        # Regression: a numeric-only categorical is not is_numeric_dtype and used to crash the
+        # Series.any() scan; it must simply not fire (no string present).
+        source = pd.Series([1, 2, 3], dtype="int64")
+        mask = pd.Series([True, True, False], index=source.index)
+        produced = pd.Series([7, 7], index=source.index[mask], dtype="category")
+        reject_gated_string_on_numeric(
+            source, produced, mask, table="t", column="c", strategy="categorical"
+        )

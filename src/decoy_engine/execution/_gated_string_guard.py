@@ -31,9 +31,13 @@ def _string_and_number_flags(produced: pd.Series) -> tuple[bool, bool]:
         return True, False
     if kind == "empty":
         return False, False
-    values = produced.dropna()
-    is_str = values.map(lambda v: isinstance(v, str))
-    return bool(is_str.any()), bool((~is_str).any())
+    # Plain Python iteration, not Series.map/.any(): a categorical `produced` keeps its dtype
+    # through .map(), and .any() on a categorical Series raises TypeError (even a numeric-only
+    # categorical, which is not is_numeric_dtype above and falls through to here).
+    values = produced.dropna().tolist()
+    has_string = any(isinstance(v, str) for v in values)
+    has_other = any(not isinstance(v, str) for v in values)
+    return has_string, has_other
 
 
 def _column_would_be_mixed(source: pd.Series, produced: pd.Series, mask: pd.Series) -> bool:
