@@ -132,6 +132,18 @@ within the confidence band. **Open input:** the bench JSON/records to calibrate 
 located runs but not a single machine-readable corpus — confirm the source or capture a small one).
 
 ### Slice 2 — `estimate_job` primitive + public export
+STATUS: **BUILT 2026-10-23** (`claude/job-time-estimator`). New `execution/_job_estimate.py`:
+public `estimate_job(config, base_dir) -> JobEstimate{route, priceable, peak_bytes, runtime,
+notes}`, exported from `decoy_engine` (+ `execution`). Composes the route
+(`decide_execution_route`, row-count path — the byte-estimate promotion is left to capacity.py by
+design), peak (`estimate_peak_bytes`), and the Slice-1 runtime band. Advisory: it never raises (an
+error or unpriceable case returns a flagged result). Pre-run string pricing is honestly UNPRICEABLE
+(no resident sample), matching the engine's own byte-estimate router. The prelude is mirrored (not
+shared) because capacity.py early-returns for non-relational jobs before compiling. Added both new
+modules to the physical-seam byte-identical sentry's permitted list (fixing a Slice-1 omission) and
+to the public-API `__all__` test. 12 estimator tests + the seam sentry + public-API test green;
+ruff + mypy clean.
+
 Compose route (`decide_execution_route`, router OFF) + peak bytes (`estimate_peak_bytes` /
 `estimate_job_capacity`) + runtime (Slice 1) into `JobEstimate`; export from `__init__.py`.
 Advisory: unpriceable columns / missing calibration → `unpriceable` or `low` confidence, never a
