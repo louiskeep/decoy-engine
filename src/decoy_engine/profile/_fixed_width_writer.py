@@ -49,7 +49,7 @@ from __future__ import annotations
 import numbers
 import os
 import tempfile
-from math import isnan
+from math import copysign, isnan
 from typing import Any
 
 import pandas as pd
@@ -90,7 +90,13 @@ def _render_value(value: Any, column: FixedWidthColumn) -> tuple[str, str | None
         # error, not the integer 1/0.
         if isinstance(value, bool) or not isinstance(value, numbers.Integral):
             return "", _type_message(column, value, want="int")
-        return str(int(value)), None
+        try:
+            rendered = str(int(value))
+        except ValueError:
+            # Python caps int->str past ~4300 digits (sys.get_int_max_str_digits);
+            # such a value cannot render, so fail closed with a value-free message.
+            return "", f"column {column.name!r}: integer is too large to render"
+        return rendered, None
     # float: a strictly-fractional real (float / numpy float / Decimal), never an
     # int (Integral) or bool. repr round-trips a Python float exactly.
     if not isinstance(value, numbers.Real) or isinstance(value, numbers.Integral):
@@ -157,8 +163,14 @@ def _render_field(value: Any, column: FixedWidthColumn) -> tuple[str, str | None
 def _equal(decoded: Any, original: Any) -> bool:
     """Round-trip equality for a decoded value vs the source value. NaN is
     rejected before this point, so a plain `==` is exact for the supported
-    types; `bool(...)` collapses any numpy scalar truth value."""
-    return bool(decoded == original)
+    types; `bool(...)` collapses any numpy scalar truth value. A signed zero is
+    the one exception: `==` treats `-0.0` and `+0.0` as equal, so for a float the
+    sign bit must also match, else an accepted `-0.0` could read back as `+0.0`."""
+    if not bool(decoded == original):
+        return False
+    if isinstance(original, numbers.Real) and not isinstance(original, numbers.Integral):
+        return copysign(1.0, float(decoded)) == copysign(1.0, float(original))
+    return True
 
 
 def _build_record(

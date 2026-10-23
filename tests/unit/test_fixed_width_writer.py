@@ -472,3 +472,48 @@ def test_fsync_dir_survives_close_error(tmp_path: Path, monkeypatch: pytest.Monk
     monkeypatch.setattr(os, "close", raising_close)
     # Must return cleanly despite the close fault.
     _fixed_width_writer._fsync_dir(str(tmp_path))
+
+
+def test_negative_zero_sign_preserved_on_round_trip(tmp_path: Path) -> None:
+    """-0.0 must either round-trip with its sign intact or fail closed; it must
+    never be silently accepted as +0.0 (== treats them equal)."""
+    layout = FixedWidthLayout(
+        columns=[{"name": "a", "start": 0, "width": 6, "type": "float", "align": "right"}]
+    )
+    frame = pd.DataFrame({"a": [-0.0]})
+    path = tmp_path / "o.txt"
+    out = write_fixed_width(frame, layout, str(path))
+    back = read_fixed_width(str(out), layout)
+    got = float(back["a"].iloc[0])
+    import math
+
+    assert got == 0.0 and math.copysign(1.0, got) == -1.0  # sign preserved
+
+
+def test_negative_zero_with_minus_pad_fails_closed(tmp_path: Path) -> None:
+    """A '-' pad strips the value's own sign on read-back, turning -0.0 into
+    +0.0. The exact round-trip check must now reject it rather than publish a
+    sign-flipped value."""
+    layout = FixedWidthLayout(
+        columns=[{"name": "a", "start": 0, "width": 6, "type": "float", "align": "right", "pad": "-"}]
+    )
+    frame = pd.DataFrame({"a": [-0.0]})
+    path = tmp_path / "o.txt"
+    with pytest.raises(FixedWidthWriteError):
+        write_fixed_width(frame, layout, str(path))
+    assert not path.exists()
+
+
+def test_extreme_integer_fails_closed_with_coded_error(tmp_path: Path) -> None:
+    """An integer beyond Python's int->str digit cap used to raise a raw
+    ValueError; it must fail closed with a coded, value-free FixedWidthWriteError."""
+    layout = FixedWidthLayout(columns=[{"name": "a", "start": 0, "width": 5000, "type": "int"}])
+    # object dtype keeps the Python int (a bare list makes pandas try float and overflow).
+    frame = pd.DataFrame({"a": pd.Series([10**4500], dtype=object)})  # 4501 digits, over the 4300 cap
+    path = tmp_path / "o.txt"
+    with pytest.raises(FixedWidthWriteError) as exc:
+        write_fixed_width(frame, layout, str(path))
+    assert "too large to render" in str(exc.value)
+    # value-free: the giant integer must not appear in the message
+    assert "1000" not in str(exc.value)
+    assert not path.exists()
