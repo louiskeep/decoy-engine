@@ -46,7 +46,7 @@ class TestTechniqueClassRegistry:
             # Full taxonomy pinned per-value (TQ finding #9: mutmut does not mutate
             # the module-level TECHNIQUE_CLASS_BY_STRATEGY constant, so every
             # strategy->class mapping is pinned here as a hardcoded golden, not
-            # recomputed from the constant). All 23 entries covered.
+            # recomputed from the constant). All 24 entries covered.
             ("passthrough", "passthrough"),
             ("redact", "anonymisation"),
             ("truncate", "anonymisation"),
@@ -67,6 +67,7 @@ class TestTechniqueClassRegistry:
             ("group_key", "pseudonymisation"),
             ("text_mask", "pseudonymisation"),
             ("windowed_date", "pseudonymisation"),
+            ("tokenize", "pseudonymisation"),
             ("faker", "synthetic"),
             ("categorical", "synthetic"),
             ("grouped_series", "synthetic"),
@@ -107,6 +108,7 @@ class TestTechniqueClassRegistry:
             "group_key",
             "text_mask",
             "windowed_date",
+            "tokenize",
             "faker",
             "categorical",
             "grouped_series",
