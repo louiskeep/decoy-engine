@@ -275,7 +275,11 @@ def _write_all(frame: pd.DataFrame, spec: FixedWidthLayout, path: str) -> str | 
                 if message is not None:
                     failure = f"{rendered}: {message}"
                     break
-                assert line is not None  # _build_record returns a line iff message is None
+                if line is None:
+                    # _build_record returns a line iff message is None, so this is
+                    # unreachable; fail closed (publish nothing) rather than trust it.
+                    failure = f"{rendered}: internal error (no record produced)"
+                    break
                 handle.write(line)
                 handle.write("\n")
             if failure is None:
