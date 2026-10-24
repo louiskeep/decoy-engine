@@ -31,7 +31,6 @@ from typing import Any
 
 import pyarrow as pa
 
-from decoy_engine.progress import get_active_channel
 from decoy_engine.execution import _chunked, _chunked_oracle
 from decoy_engine.execution import _chunked_bucket_perturb as bucket_perturb_gate
 from decoy_engine.execution import _chunked_dgrn as dgrn
@@ -85,6 +84,7 @@ from decoy_engine.execution.native._route_decline_codes import (
 from decoy_engine.execution.native._when_mask import plan_when_masks
 from decoy_engine.generation.pool import PoolCache, ValuePool
 from decoy_engine.instrumentation.timing import StrategyTimingRecord
+from decoy_engine.progress import get_active_channel
 
 # Matches `MAX_NATIVE_THREADS` in decoy-engine-native/src/threads.rs: the compiled
 # kernels refuse a larger request, so the entry point refuses it before any work.
@@ -660,19 +660,19 @@ def run_mask_chunked(
     return get_active_channel().count_rows(
         table,
         _run_chunked(
-        config,
-        chunks,
-        table=table,
-        engine_version=engine_version,
-        registry=registry,
-        adapter=adapter,
-        vault_writer=vault_writer,
-        chunk_result_sink=chunk_result_sink,
-        key_provider=key_provider,
-        base_row_offset=base_row_offset,
-        native_threads=native_threads,
-        route_evidence_sink=route_evidence_sink,
-        pool_cache=pool_cache,
+            config,
+            chunks,
+            table=table,
+            engine_version=engine_version,
+            registry=registry,
+            adapter=adapter,
+            vault_writer=vault_writer,
+            chunk_result_sink=chunk_result_sink,
+            key_provider=key_provider,
+            base_row_offset=base_row_offset,
+            native_threads=native_threads,
+            route_evidence_sink=route_evidence_sink,
+            pool_cache=pool_cache,
         ),
     )
 

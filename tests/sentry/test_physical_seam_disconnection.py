@@ -297,6 +297,12 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         "src/decoy_engine/execution/_pipeline_routing.py",
         "src/decoy_engine/execution/_pipeline_routing_signals.py",
         "src/decoy_engine/execution/_pipeline_sources.py",
+        # E3b (run_storm honoured in-run): `capacity.py` passes
+        # `run_storm=bool(config.get("run_storm"))` into its two `decide_execution_route`
+        # calls so the capacity probe sees the same storm-forces-full-frame decision the
+        # production route makes. Pure kwarg threading; imports nothing from
+        # `execution.physical` (the import-direction sweeps above stay green).
+        "src/decoy_engine/execution/capacity.py",
         # R3 (run context + route executors, 2026-10-10): `run_pipeline`'s resolve and route
         # phases move into the new `_pipeline_context.py` (a frozen `PipelineRunContext` and
         # `RouteDecision`) and the two bounded layer-1 routes get context-driven entry points in

@@ -70,7 +70,9 @@ _GOLDEN = {
 class TestDefaultRoute:
     def test_default_output_matches_golden_and_stamps_no_adapter_block(self, tmp_path):
         cfg = _scalar_mask_config(tmp_path)
-        result = run_pipeline(cfg, sources=_scalar_mask_sources(tmp_path), engine_version=_ENGINE_VERSION)
+        result = run_pipeline(
+            cfg, sources=_scalar_mask_sources(tmp_path), engine_version=_ENGINE_VERSION
+        )
         assert result.outputs["customers"].to_pydict() == _GOLDEN
         assert "execution_adapter" not in result.quality_metrics
 
@@ -79,7 +81,10 @@ class TestFpeChunkCountKnob:
     def test_non_default_count_stamps_the_adapter_block(self, tmp_path):
         cfg = _scalar_mask_config(tmp_path)
         result = run_pipeline(
-            cfg, sources=_scalar_mask_sources(tmp_path), engine_version=_ENGINE_VERSION, fpe_chunk_count=9
+            cfg,
+            sources=_scalar_mask_sources(tmp_path),
+            engine_version=_ENGINE_VERSION,
+            fpe_chunk_count=9,
         )
         block = result.quality_metrics["execution_adapter"]
         assert block["resolved_substrate"] == "pandas"
@@ -108,7 +113,9 @@ class TestFpeChunkCountKnob:
 
 
 class TestRemovedKnobsAreGone:
-    @pytest.mark.parametrize("kw", [{"substrate": "pandas"}, {"max_workers": 4}, {"fallback_to_pandas": True}])
+    @pytest.mark.parametrize(
+        "kw", [{"substrate": "pandas"}, {"max_workers": 4}, {"fallback_to_pandas": True}]
+    )
     def test_removed_kwarg_is_a_type_error_not_a_silent_no_op(self, tmp_path, kw):
         cfg = _scalar_mask_config(tmp_path)
         with pytest.raises(TypeError):
@@ -117,5 +124,7 @@ class TestRemovedKnobsAreGone:
     def test_substrate_env_var_is_not_read(self, tmp_path, monkeypatch):
         monkeypatch.setenv("DECOY_SUBSTRATE", "polars")
         cfg = _scalar_mask_config(tmp_path)
-        result = run_pipeline(cfg, sources=_scalar_mask_sources(tmp_path), engine_version=_ENGINE_VERSION)
+        result = run_pipeline(
+            cfg, sources=_scalar_mask_sources(tmp_path), engine_version=_ENGINE_VERSION
+        )
         assert result.outputs["customers"].to_pydict() == _GOLDEN

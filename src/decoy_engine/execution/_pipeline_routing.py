@@ -227,8 +227,7 @@ def _sequential_eligible(
     if post_validation:
         return False, "post_validation_requested"
     if run_storm:
-        # `run_storm: true` (E3b) runs the STORM post-mask checks over the resident
-        # output on the full-frame finalize branch, the same need as post_validation.
+        # STORM post-mask checks need the resident output (full-frame), like post_validation.
         return False, "run_storm_requested"
     if vault_writer is not None:
         return False, "vault_writer_requested"
@@ -539,7 +538,8 @@ def decide_execution_route(
         reject_explicit_sequential(eligible, route_reason, cyclic, has_mask_table)
         return "sequential", route_reason
 
-    if mixed_admitted:
+    # `not run_storm`: STORM needs the resident full-frame output, so a storm job declines mixed here.
+    if mixed_admitted and not run_storm:
         return "mixed", "mixed_generate_mask_chunked"
 
     if lazy_transform_bearing and has_relationships and has_mask_table:

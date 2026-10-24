@@ -34,7 +34,6 @@ from typing import TYPE_CHECKING, Any
 import pyarrow as pa
 import pyarrow.compute as pc
 
-from decoy_engine.progress import get_active_channel
 from decoy_engine.generation._admission import PlanAdmission, classify_plan
 from decoy_engine.generation._bounds import (
     accumulator_bytes,
@@ -58,6 +57,7 @@ from decoy_engine.generation._column_streams import (
 )
 from decoy_engine.generation._faker_pool import pool_eligible
 from decoy_engine.generation.pool._runtime_pool_size import DEFAULT_POOL_SIZE
+from decoy_engine.progress import get_active_channel
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence

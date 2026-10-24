@@ -313,4 +313,6 @@ def _emit_route(channel: ProgressChannel, decision: Any) -> None:
     lane = getattr(plan_decision, "mode", None)
     if getattr(decision, "route_chunked", False):
         lane = "chunked"
-    channel.route(str(getattr(decision, "route", "unknown")), lane=None if lane is None else str(lane))
+    channel.route(
+        str(getattr(decision, "route", "unknown")), lane=None if lane is None else str(lane)
+    )

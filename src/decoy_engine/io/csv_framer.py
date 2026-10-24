@@ -40,6 +40,8 @@ import re
 from collections.abc import Iterator
 from typing import BinaryIO
 
+from decoy_engine.errors import DecoyError
+
 DEFAULT_BLOCK_SIZE = 1024 * 1024
 _BOM = b"\xef\xbb\xbf"
 _TERMINATORS = re.compile(rb"\r\n|\r|\n")
@@ -53,7 +55,7 @@ _QUOTED = 1
 _AFTER_QUOTE = 2
 
 
-class CsvRecordTooLarge(Exception):  # noqa: N818 -- coded condition, name fixed by the plan
+class CsvRecordTooLarge(DecoyError):  # noqa: N818 -- coded condition, name fixed by the plan
     """A logical record passed ``max_record_bytes``. ``index`` is its 0-based
     position (0 is the header)."""
 
@@ -62,7 +64,7 @@ class CsvRecordTooLarge(Exception):  # noqa: N818 -- coded condition, name fixed
         self.index = index
 
 
-class CsvUnterminatedQuote(Exception):  # noqa: N818 -- coded condition, name fixed by the plan
+class CsvUnterminatedQuote(DecoyError):  # noqa: N818 -- coded condition, name fixed by the plan
     """End of file inside a quoted field."""
 
     def __init__(self, index: int) -> None:

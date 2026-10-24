@@ -148,9 +148,7 @@ def _build_ctx(
 ) -> ShadowContext:
     ns_registry = build_namespace_registry(config, inputs.profile)
     projection_policy = resolve_unconfigured_column_policy(config)
-    resolved_adapter = (
-        adapter if adapter is not None else select_execution_adapter()
-    )
+    resolved_adapter = adapter if adapter is not None else select_execution_adapter()
     return ShadowContext.from_key_provider(
         plan=plan_override if plan_override is not None else inputs.plan,
         key_provider=None,

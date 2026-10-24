@@ -36,7 +36,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
-from typing import Any, TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from decoy_engine.execution.physical import _reasons
 from decoy_engine.execution.physical._plan import (

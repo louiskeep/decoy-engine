@@ -29,13 +29,31 @@ import pyarrow.compute as pc
 import pyarrow.csv as pa_csv
 import pyarrow.parquet as pq
 
+from decoy_engine.errors import DecoyError
 from decoy_engine.io import csv_framer as framer
 
 # pandas' default `na_values`, the set the full-frame CSV read (`read_csv(dtype=str)`)
 # treats as null; the chunked read must match it for CSV->CSV byte parity.
 PANDAS_DEFAULT_NA_VALUES: tuple[str, ...] = (
-    "", "#N/A", "#N/A N/A", "#NA", "-1.#IND", "-1.#QNAN", "-NaN", "-nan", "1.#IND",
-    "1.#QNAN", "<NA>", "N/A", "NA", "NULL", "NaN", "None", "n/a", "nan", "null",
+    "",
+    "#N/A",
+    "#N/A N/A",
+    "#NA",
+    "-1.#IND",
+    "-1.#QNAN",
+    "-NaN",
+    "-nan",
+    "1.#IND",
+    "1.#QNAN",
+    "<NA>",
+    "N/A",
+    "NA",
+    "NULL",
+    "NaN",
+    "None",
+    "n/a",
+    "nan",
+    "null",
 )
 
 # 4 bytes of offset plus one validity byte per variable-width value; one validity
@@ -47,7 +65,7 @@ _STRING_TYPES = ("string", "large_string", "binary", "large_binary")
 _pc: Any = pc
 
 
-class BoundedReadError(RuntimeError):
+class BoundedReadError(DecoyError):
     """A coded bounded-read failure. ``code`` is stable; the message carries
     identifiers and positions, never row data."""
 
@@ -88,8 +106,14 @@ class ChunkBudget:
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int) or value < 1:
                 raise ValueError(f"ChunkBudget.{name} must be a positive int; got {value!r}")
-        if isinstance(self.out_row_bound, bool) or not isinstance(self.out_row_bound, int) or self.out_row_bound < 0:
-            raise ValueError(f"ChunkBudget.out_row_bound must be a non-negative int; got {self.out_row_bound!r}")
+        if (
+            isinstance(self.out_row_bound, bool)
+            or not isinstance(self.out_row_bound, int)
+            or self.out_row_bound < 0
+        ):
+            raise ValueError(
+                f"ChunkBudget.out_row_bound must be a non-negative int; got {self.out_row_bound!r}"
+            )
 
 
 def _binary_length(array: pa.Array) -> pa.Array:
@@ -120,7 +144,9 @@ def _column_costs(column: pa.Array) -> np.ndarray:
     return np.full(len(column), width + _FIXED_OVERHEAD, dtype=np.int64)
 
 
-def cut_batch(batch: pa.RecordBatch, budget: ChunkBudget, *, table: str, row_base: int = 0) -> Iterator[pa.Table]:
+def cut_batch(
+    batch: pa.RecordBatch, budget: ChunkBudget, *, table: str, row_base: int = 0
+) -> Iterator[pa.Table]:
     """Cut one decoded batch into owned chunks within `budget`; a row over
     `max_row_bytes` raises after the rows before it were yielded."""
     rows = batch.num_rows
@@ -156,7 +182,9 @@ def iter_parquet_chunks(path: str, budget: ChunkBudget, *, table: str) -> Iterat
     parquet_file = pq.ParquetFile(path, read_dictionary=dictionary_columns or None)
     row_base = 0
     for group in range(parquet_file.num_row_groups):
-        for batch in parquet_file.iter_batches(batch_size=budget.read_rows, row_groups=[group], use_threads=False):
+        for batch in parquet_file.iter_batches(
+            batch_size=budget.read_rows, row_groups=[group], use_threads=False
+        ):
             rows = batch.num_rows
             yield from cut_batch(batch, budget, table=table, row_base=row_base)
             row_base += rows
@@ -200,7 +228,9 @@ def iter_csv_chunks(path: str, budget: ChunkBudget, *, table: str) -> Iterator[p
             payload = header + b"".join(batch)
             # One block holds the whole framed batch: PyArrow refuses a record that
             # straddles blocks, and the framer already bounded every record.
-            read_options = pa_csv.ReadOptions(use_threads=False, block_size=min(len(payload) + 1, 2**31 - 1))
+            read_options = pa_csv.ReadOptions(
+                use_threads=False, block_size=min(len(payload) + 1, 2**31 - 1)
+            )
             try:
                 return pa_csv.read_csv(
                     io.BytesIO(payload),
@@ -222,7 +252,10 @@ def iter_csv_chunks(path: str, budget: ChunkBudget, *, table: str) -> Iterator[p
                 break
             record_index += 1
             estimate = len(record) + per_record
-            if batch and (len(batch) + 1 > budget.max_chunk_rows or batch_estimate + estimate > budget.chunk_budget_bytes):
+            if batch and (
+                len(batch) + 1 > budget.max_chunk_rows
+                or batch_estimate + estimate > budget.chunk_budget_bytes
+            ):
                 yield flush()
                 batch, batch_estimate = [], 0
                 first_index = record_index

@@ -66,10 +66,10 @@ MAX = 700
 ALLOWLIST: dict[str, int] = {
     # sampler start/finish and evidence threading in _spawn_and_classify; split the spawn/classify half into _isolated_spawn.py.
     "src/decoy_engine/execution/_isolated_run.py": 608,
-    # bounded-eligible fit rule, the fk-dtype retention branch and the D3a validator admission in decide_execution_route; split the route-priority docstring into the plan doc.
-    "src/decoy_engine/execution/_pipeline_routing.py": 691,
-    # wiring of the fk-dtype hazard and D3a validator signals into the one routing call site; split the probe-recovery resolver into its own module.
-    "src/decoy_engine/execution/_pipeline_routing_signals.py": 609,
+    # bounded-eligible fit rule, fk-dtype retention, D3a validator admission, and the E3b run_storm decline on the sequential/mixed branches; AT THE 700 HARD CAP -- decompose (extract the forced-mode and byte-estimate blocks) before any further routing logic lands.
+    "src/decoy_engine/execution/_pipeline_routing.py": 700,
+    # wiring of the fk-dtype hazard, D3a validator signals and the E3b run_storm flag into the one routing call site; split the probe-recovery resolver into its own module.
+    "src/decoy_engine/execution/_pipeline_routing_signals.py": 610,
     # fan-in guard on the budget resolver; split the disk-preflight helpers into _disk_budget.py.
     "src/decoy_engine/execution/out_of_core/_budget.py": 608,
     # float FK key token pricing; split the disk-width helpers into _spill_widths.py.

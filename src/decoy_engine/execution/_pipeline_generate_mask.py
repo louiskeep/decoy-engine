@@ -20,7 +20,6 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
-from decoy_engine.progress import get_active_channel
 from decoy_engine.execution import (
     _chunked_input,
     _pipeline_auto_chunk,
@@ -31,6 +30,7 @@ from decoy_engine.execution import _chunked_output_sink as _output_sink
 from decoy_engine.execution import _pipeline_multi_table as _multi_table
 from decoy_engine.execution import _pipeline_route_exec as _route_exec
 from decoy_engine.profile._readers import LazySource
+from decoy_engine.progress import get_active_channel
 
 __all__ = ["GenerateMaskStepResult", "run_generate_and_mask_steps"]
 

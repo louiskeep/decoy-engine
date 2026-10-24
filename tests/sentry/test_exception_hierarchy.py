@@ -53,6 +53,9 @@ _REPARENTED_ROOTS: tuple[tuple[str, str, type | None], ...] = (
     ("decoy_engine.config._errors", "PipelineConfigError", ValueError),
     ("decoy_engine.transforms._ff1", "Ff1Error", ValueError),
     ("decoy_engine.execution.native._draw_site_providers", "DrawSiteProtocolError", RuntimeError),
+    ("decoy_engine.io.bounded_reader", "BoundedReadError", None),
+    ("decoy_engine.io.csv_framer", "CsvRecordTooLarge", None),
+    ("decoy_engine.io.csv_framer", "CsvUnterminatedQuote", None),
 )
 
 # Lane-internal control-flow carriers that never reach a caller, so the

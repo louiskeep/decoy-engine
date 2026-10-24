@@ -139,7 +139,6 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
-from decoy_engine.progress import get_active_channel
 from decoy_engine.errors import RowErrorsFailedError
 from decoy_engine.execution._adapter import ExecutionResult, StrategyContext
 from decoy_engine.execution._errors import ExecutionError
@@ -172,6 +171,7 @@ from decoy_engine.generation.pool._cache import PoolCache
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.instrumentation.timing import TimingCollector, use_collector
 from decoy_engine.keyprovider import require_mask_key
+from decoy_engine.progress import get_active_channel
 from decoy_engine.quarantine import compute_quarantine, finalize_committed_quarantine
 
 if TYPE_CHECKING:
