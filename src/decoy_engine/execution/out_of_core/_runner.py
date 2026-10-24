@@ -50,6 +50,7 @@ import pyarrow.compute as pc
 from decoy_engine.execution._adapter import ExecutionResult, provider_config_to_dict
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._fk_keys import NULL_FK_KEY, fk_key_value
+from decoy_engine.execution._fk_resolve import orphan_fk_violation_error
 from decoy_engine.execution._output_projection import (
     UnconfiguredColumnPolicy,
     enforce_output_projection,
@@ -65,7 +66,7 @@ from decoy_engine.execution.out_of_core._emit import (
     empty_output_table,
 )
 from decoy_engine.execution.out_of_core._hash_run import OocHashRun
-from decoy_engine.execution.out_of_core._join import orphan_fk_error, orphan_fk_warning
+from decoy_engine.execution.out_of_core._join import orphan_fk_warning
 from decoy_engine.execution.out_of_core._mask import (
     mask_batch,
     mask_column,
@@ -587,7 +588,7 @@ def _raise_on_total_orphans(
     for raw_batch in _iter_source_batches(raw, batch_rows):
         total += joiner.count_batch_orphans(raw_batch)
     if total:
-        raise orphan_fk_error(edge, total)
+        raise orphan_fk_violation_error(edge, total)
 
 
 def _iter_source_batches(src: TableSource, batch_rows: int) -> Iterator[pa.RecordBatch]:

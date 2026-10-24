@@ -311,7 +311,7 @@
  "f_ooc_orphan_fail": {
   "exception": {
    "code": "orphan_fk_violation",
-   "message": "4 orphan FK row(s) found for child.('parent_id',).",
+   "message": "4 orphan row(s) in child.('parent_id',) reference no parent key in parent.('id',) (orphan_policy=fail).",
    "module": "decoy_engine.execution._errors",
    "type": "ExecutionError"
   },

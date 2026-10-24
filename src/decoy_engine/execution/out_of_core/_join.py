@@ -22,6 +22,7 @@ from decoy_engine.execution._fk_keys import (
     fk_join_key_tuple,
     fk_key_value,
 )
+from decoy_engine.execution._fk_resolve import orphan_fk_violation_error
 from decoy_engine.execution.out_of_core._duckdb import connect_duckdb
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.relationships._graph import OrphanPolicy, RelationshipEdge
@@ -38,16 +39,6 @@ if TYPE_CHECKING:
 # streaming runner reads this at call time, so it is the one batch-size knob
 # for the whole out-of-core route.
 _JOIN_BATCH_ROWS: Final = 65_536
-
-
-def orphan_fk_error(edge: RelationshipEdge, orphan_count: int) -> ExecutionError:
-    """The FAIL-policy error, shared so every join surface reports one shape."""
-    return ExecutionError(
-        code="orphan_fk_violation",
-        message=(
-            f"{orphan_count} orphan FK row(s) found for {edge.child_table}.{edge.child_columns}."
-        ),
-    )
 
 
 def orphan_fk_warning(edge: RelationshipEdge, orphan_count: int) -> QualityWarning:
@@ -137,7 +128,7 @@ def mask_child_fk(
                 """
             ).fetchone()[0]
             if fail_count:
-                raise orphan_fk_error(edge, fail_count)
+                raise orphan_fk_violation_error(edge, fail_count)
         select_list = [f"c.{_q('__decoy_row_nr')}", f"c.{_q('__decoy_fk_join_key')}"]
         select_list += [f"c.{_q(f'__decoy_src_{idx}')}" for idx in range(len(edge.child_columns))]
         # Explicit LEFT JOIN match indicator: parent_keys only ever holds rows
