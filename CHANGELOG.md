@@ -9,6 +9,68 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (parity E2a: shared bounded reader, 2026-10-24)
+
+`decoy_engine.io` is the bounded source reader both the CLI and the platform now
+share, promoted verbatim from the platform's `api/jobs/native_reader.py` +
+`csv_record_framer.py` so a source is chunked the same way in both products.
+`csv_framer` frames CSV logical records by bytes before any parser sees them;
+`bounded_reader` cuts Parquet and CSV into owned Arrow chunks within a
+`ChunkBudget` (decoded-input bytes plus a per-row output allowance per chunk, a
+row cap, a per-row byte cap, the Parquet batch size). Established patterns cited
+in the module docstring: Arrow's row-group/batch reading with `read_dictionary`,
+Spark's `maxPartitionBytes`, Hadoop record framing. Credentials, pricing and
+fingerprints stay with the caller; the reader takes a local path and a budget
+only. `PANDAS_DEFAULT_NA_VALUES` pins the CSV null set to pandas' default so the
+chunked and full-frame CSV reads agree byte-for-byte. Coded failures
+`RowExceedsMaxRowBytes`, `CsvRecordExceedsMaxRowBytes`, `CsvMalformed` carry
+identifiers and positions, never row data.
+
+### Added (parity E1: progress contract, 2026-10-24)
+
+`decoy_engine.progress` is the engine's value-free run-event stream for callers'
+monitors (pattern: dbt's structured events; binding: the thread-local channel the
+timing collector already uses). `run_pipeline(progress=<ProgressSink>,
+progress_interval_s=1.0)` emits `PhaseEvent`s (resolve; `mask` per table on the
+sequential and out-of-core routes and once on the full-frame step; `generate` per
+table; finalize is covered by the terminal event), one `RouteEvent` (layer-1 route
+and lane), `RateSample`s (rows done and rows/s per table, at most once per interval
+plus a final sample, from the chunked dispatcher, the out-of-core batch stream and
+generation batches), `WarningEvent`s and a `TerminalEvent` (ok / error with the
+exception class name). Any other entry point reports to the same sink when called
+inside `with decoy_engine.progress.use_progress(sink):`. Events carry table and
+column names and counts only, never cell values, expression text or `str(exc)`.
+Observation only: output bytes are identical with or without a sink, a raising sink
+is counted and reported once at the terminal event, and `run_pipeline_isolated`
+refuses a sink (it cannot cross the process boundary). `StructuredEventsSink`
+adapts events onto the optional `StructuredEvents` logger surface so a logger such
+as the platform's `JobLogger` receives `step` / `throughput_sample` calls unchanged.
+Four over-600-LOC route modules grew by their emit lines (census updated).
+
+### Fixed (parity E3b: `run_storm: true` was inert, 2026-10-24)
+
+`PipelineConfig.run_storm` was accepted by the schema but nothing in the
+execution spine honoured it. `run_pipeline` now runs the STORM post-mask
+integrity checks (`storm.postmask.run_storm_post_mask`) over every mask table on
+the full-frame finalize branch and stamps the report under
+`quality_metrics["storm_postmask"]`. Report-only: findings never fail the run and
+output bytes are unchanged. Like `post_validation`, an opted-in job is declined
+from the sequential and out-of-core routes (`run_storm_requested`) so the whole
+output is resident when the checks run.
+
+### Removed (parity E3a: caller-chosen substrate and no-op adapter knobs, 2026-10-24)
+
+`run_pipeline` no longer accepts `substrate`, `max_workers` or `fallback_to_pandas`;
+`select_execution_adapter` takes only `fpe_chunk_count`; `resolve_substrate`,
+`VALID_SUBSTRATES` and the `DECOY_SUBSTRATE` environment variable are gone. Pandas is
+the only adapter (the parity oracle); which compute backend runs a strategy is decided
+by the routing layers and the native operator registry (see
+`docs/execution-backends.md`), never by the caller. The `execution_adapter` evidence
+block, stamped only when `fpe_chunk_count` is non-default, drops its
+`requested_substrate`, `max_workers` and `fallback_to_pandas` keys. The never-implemented
+`SchemaInspector` and always-free `LicenseVerifier` stubs are deleted from the public API.
+Pre-GA hard delete: a caller passing a removed kwarg gets a `TypeError`.
+
 ### Added (§CSV-PARAMS: declare headerless and non-comma delimited sources, 2026-10-23)
 
 `FileSource` (format `csv`) grows three optional delimited-dialect fields:

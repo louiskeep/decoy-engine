@@ -90,6 +90,7 @@ from decoy_engine.execution.out_of_core._vault_collect import (
     collect_batch_vault,
 )
 from decoy_engine.plan._types import ColumnSeed
+from decoy_engine.progress import get_active_channel
 from decoy_engine.relationships._graph import OrphanPolicy
 
 if TYPE_CHECKING:
@@ -218,6 +219,8 @@ def run_fk_out_of_core(
                 continue
             table_incoming_edges = tuple(incoming[table_name])
             table_outgoing_edges = tuple(outgoing[table_name])
+            _pg = get_active_channel()
+            _pg_started = _pg.phase_start("mask", table=table_name)
             # Route-independent gate: both drivers raise the same coded error (not a bare KeyError).
             validate_outgoing_parent_columns(table_outgoing_edges, sources[table_name].schema)
             route = decide_route(
@@ -265,6 +268,8 @@ def run_fk_out_of_core(
                 )
             else:
                 _stream_table(**table_kwargs)
+            _pg.flush(table_name)
+            _pg.phase_finish("mask", _pg_started, table=table_name)
             if temp_disk_budget_bytes is not None:
                 # Table boundaries are the natural checkpoints: the spill
                 # footprint peaks with each table's relation/join staging, and
@@ -422,6 +427,7 @@ def _stream_table(
 
         def rewritten() -> Iterator[pa.RecordBatch]:
             for raw_batch in _iter_source_batches(raw, batch_rows):
+                get_active_channel().rows(table_name, raw_batch.num_rows)
                 for column, seen in code_set_null_seen.items():
                     if seen:
                         continue

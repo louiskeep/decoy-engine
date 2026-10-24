@@ -348,7 +348,6 @@ def test_race_custom_provider_mutation_uses_captured_snapshot_not_live(row_count
         config,
         {},
         engine_version=ENGINE_VERSION,
-        substrate="pandas",
         execution_mode="full_frame",
         key_provider=None,
         registry=inputs.registry,

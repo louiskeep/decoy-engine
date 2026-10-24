@@ -216,8 +216,6 @@ class PhysicalPlanInputs:
     use_byte_estimate_routing: bool
     use_probe_routing: bool
     fpe_chunk_count: int
-    max_workers: int
-    fallback_to_pandas: bool
     out_of_core_facts: OutOfCoreRoutingFacts
     native_companion_reason: str
     engine_version: str
@@ -328,8 +326,6 @@ def compute_plan_hash(inputs: PhysicalPlanInputs) -> str:
         inputs.use_byte_estimate_routing,
         inputs.use_probe_routing,
         inputs.fpe_chunk_count,
-        inputs.max_workers,
-        inputs.fallback_to_pandas,
         inputs.registry_fingerprint(),
         tuple(sorted(inputs.table_kinds.items())),
         facts.compatible,

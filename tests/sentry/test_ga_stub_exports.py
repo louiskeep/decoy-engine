@@ -1,74 +1,32 @@
-"""Sentry test: public stub exports cannot silently ship into GA.
+"""Sentry test: the public API carries no stub exports.
 
-consultant-2026-07-09 F4: `SchemaInspector` and `LicenseVerifier` are
-top-level public exports (`decoy_engine.__all__`) that are intentionally
-fake pre-GA (`NotImplementedError` / always-free-tier). That's fine pre-GA,
-CLI/platform code needs the symbols importable, but nothing currently stops
-`RELEASE_PHASE` flipping to `"ga"` (`decoy_engine.release`) while these stay
-exported, which would ship silently-fake behavior on the public surface. See
-docs/engine-consultant-findings-2026-07-09.md.
-
-dennis review caught that a dict-driven gate (`STUB_EXPORTS`) is gameable:
-emptying the dict satisfies the assertion without touching the actual stub
-behavior. So the GA-phase check below does not read `STUB_EXPORTS` at all;
-it directly re-derives each stub's exact current fake behavior and asserts
-it is gone by GA. The only way to pass at GA is to actually change the
-behavior. `STUB_EXPORTS` still exists as a pre-GA documentation/registry
-(kept in sync with `decoy_engine.__all__` by the first test below) but is
-not load-bearing for the release gate itself.
+consultant-2026-07-09 F4 flagged `SchemaInspector` (raised NotImplementedError)
+and `LicenseVerifier` (always returned a free tier) as fake public exports that
+could ship silently into GA. Both were hard-deleted pre-GA (parity E3a,
+2026-10-24). This sentry keeps them, and any module with their shape, from
+coming back as exports: a real implementation lands under a reviewed name and
+plan, never by reviving these symbols.
 """
 
 from __future__ import annotations
 
+import importlib
+
+import pytest
+
 import decoy_engine
-from decoy_engine.license import LicenseVerifier
-from decoy_engine.release import is_pre_ga
-from decoy_engine.schema import SchemaInspector
 
-# name -> why it's still a stub / where the real implementation is tracked.
-# Purely documentation pre-GA; the GA gate below does not consult this dict,
-# so emptying it does not weaken the gate. Resolve the export, THEN delete
-# the entry here to keep the registry accurate.
-STUB_EXPORTS: dict[str, str] = {
-    "SchemaInspector": (
-        "raises NotImplementedError; connector schema introspection, "
-        "planned Phase 2 per SHARED_ENGINE_ARCHITECTURE.md"
-    ),
-    "LicenseVerifier": (
-        "verify() always returns a free-tier license; real JWT verification "
-        "replaces this before paid-tier launch"
-    ),
-}
+_DELETED_STUBS = ("SchemaInspector", "LicenseVerifier")
+_DELETED_MODULES = ("decoy_engine.schema", "decoy_engine.license")
 
 
-def test_stub_exports_are_still_exported_pre_ga() -> None:
-    for name in STUB_EXPORTS:
-        assert name in decoy_engine.__all__, (
-            f"{name!r} is in STUB_EXPORTS but no longer in decoy_engine.__all__; "
-            "if it was resolved, drop it from STUB_EXPORTS instead."
-        )
+@pytest.mark.parametrize("name", _DELETED_STUBS)
+def test_deleted_stub_is_not_exported(name: str) -> None:
+    assert name not in decoy_engine.__all__
+    assert not hasattr(decoy_engine, name)
 
 
-def test_no_unresolved_public_stubs_at_ga() -> None:
-    if is_pre_ga():
-        return
-
-    still_stub: list[str] = []
-
-    try:
-        SchemaInspector()
-    except NotImplementedError:
-        still_stub.append("SchemaInspector still raises NotImplementedError")
-
-    result = LicenseVerifier.verify()
-    if result == {"tier": "free", "features": [], "expires_at": None}:
-        still_stub.append(
-            "LicenseVerifier.verify() still returns the exact hardcoded stub response"
-        )
-
-    assert not still_stub, (
-        "decoy_engine.RELEASE_PHASE is 'ga' but the following public exports "
-        f"still exhibit their pre-GA stub behavior: {still_stub}. Implement, "
-        "move behind an experimental namespace, or remove from "
-        "decoy_engine.__all__ before shipping GA."
-    )
+@pytest.mark.parametrize("module", _DELETED_MODULES)
+def test_deleted_stub_module_is_gone(module: str) -> None:
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module(module)

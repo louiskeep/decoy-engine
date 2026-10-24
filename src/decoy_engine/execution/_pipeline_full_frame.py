@@ -146,11 +146,8 @@ def run_full_frame_route(
                 namespace_registry=ctx.namespace_registry,
                 unconfigured_column_policy=ctx.projection_policy,
                 generate_output_tables=ctx.generate_output_tables,
-                substrate=ctx.substrate,
                 resolved_substrate=ctx.resolved_substrate,
                 fpe_chunk_count=ctx.fpe_chunk_count,
-                max_workers=ctx.max_workers,
-                fallback_to_pandas=ctx.fallback_to_pandas,
                 auto_chunk=ctx.auto_chunk,
                 auto_chunk_threshold_rows=ctx.auto_chunk_threshold_rows,
                 execution_plan_decision=decision.execution_plan_decision,
@@ -240,5 +237,6 @@ def run_full_frame_route(
             post_validation_sample_size=ctx.post_validation_sample_size,
             post_validation_enforce=ctx.post_validation_enforce,
         )
+        _pipeline_finalize.compute_storm_postmask(result, config=ctx.config, sources=step.sources)
         publish.commit()  # B6a: the run's last action; inert unless this run streamed
         return result

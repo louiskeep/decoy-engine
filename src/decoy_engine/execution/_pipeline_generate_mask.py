@@ -30,6 +30,7 @@ from decoy_engine.execution import _chunked_output_sink as _output_sink
 from decoy_engine.execution import _pipeline_multi_table as _multi_table
 from decoy_engine.execution import _pipeline_route_exec as _route_exec
 from decoy_engine.profile._readers import LazySource
+from decoy_engine.progress import get_active_channel
 
 __all__ = ["GenerateMaskStepResult", "run_generate_and_mask_steps"]
 
@@ -98,11 +99,8 @@ def run_generate_and_mask_steps(
     namespace_registry: NamespaceRegistry,
     unconfigured_column_policy: UnconfiguredColumnPolicy,
     generate_output_tables: frozenset[str],
-    substrate: str | None,
     resolved_substrate: str,
     fpe_chunk_count: int,
-    max_workers: int,
-    fallback_to_pandas: bool,
     auto_chunk: bool,
     auto_chunk_threshold_rows: int,
     execution_plan_decision: ExecutionPlan | None,
@@ -275,6 +273,10 @@ def run_generate_and_mask_steps(
                     modes.get(mask_table_name, ("", _chunked_input.REASON_RESIDENT_SOURCE))[1]
                 )
         else:
+            _pg = get_active_channel()
+            _pg_started = _pg.phase_start(
+                "mask", rows_in=sum(getattr(t, "num_rows", 0) for t in merged_sources.values())
+            )
             mask_result = adapter.run(
                 plan,
                 merged_sources,
@@ -288,6 +290,9 @@ def run_generate_and_mask_steps(
                 # Full-frame route: pin an admitted deterministic-Faker column's degenerate
                 # output to `string` (C5c-ii option A). The chunked legs pin their own way.
                 pin_degenerate_faker=True,
+            )
+            _pg.phase_finish(
+                "mask", _pg_started, rows_out=sum(t.num_rows for t in mask_result.outputs.values())
             )
             # Adapters echo every source frame in `outputs` (generate-kind
             # entries in `merged_sources` come back round-tripped through the
@@ -314,11 +319,8 @@ def run_generate_and_mask_steps(
         _pipeline_finalize.stamp_execution_metrics(
             mask_quality_metrics,
             adapter=adapter,
-            substrate=substrate,
             resolved_substrate=resolved_substrate,
             fpe_chunk_count=fpe_chunk_count,
-            max_workers=max_workers,
-            fallback_to_pandas=fallback_to_pandas,
             route_chunked=route_chunked,
             auto_chunk=auto_chunk,
             chunk_size_rows=chunk_size_rows,

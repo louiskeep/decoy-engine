@@ -574,8 +574,6 @@ def test_passthrough_input_and_output_schema_are_resident_not_profile(tmp_path: 
         use_byte_estimate_routing=True,
         use_probe_routing=True,
         fpe_chunk_count=4,
-        max_workers=4,
-        fallback_to_pandas=True,
         out_of_core_reorder_threshold_rows=None,
         out_of_core_budget_bytes=None,
         engine_version=ENGINE_VERSION,
