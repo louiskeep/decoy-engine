@@ -60,7 +60,9 @@ def resolve_incoming(
     consumer (REMAP seeds, the WARN and FAIL identity, the per-column component map) reads
     the first parent exactly as the oracle does, and the other members' entries are removed
     together with their files, which no later table reads (a relation is keyed by its edge,
-    and each edge serves one child). A singleton group passes through untouched.
+    and each edge serves one child). A singleton group passes through untouched. A group whose
+    edges disagree on the orphan policy is refused with the planner's own code,
+    `orphan_policy_conflict`, before anything is merged.
     """
     groups: dict[tuple[str, ...], list[RelationshipEdge]] = {}
     for edge in incoming_edges:
@@ -72,6 +74,19 @@ def resolve_incoming(
         representatives.append(first)
         if len(members) == 1:
             continue
+        policies = {edge.orphan_policy for edge in members}
+        if len(policies) > 1:
+            # The planner rejects this at graph build (`orphan_policy_conflict`); a graph
+            # that bypassed it must not be resolved under the first edge's policy silently.
+            raise ExecutionError(
+                code="orphan_policy_conflict",
+                message=(
+                    f"out-of-core multi-parent FK: the edges into {first.child_table}."
+                    f"{first.child_columns} declare different orphan policies "
+                    f"({sorted(p.value for p in policies)}); one policy per child tuple is "
+                    "required, as the planner enforces at graph build."
+                ),
+            )
         member_relations = tuple(parent_relations[edge] for edge in members)
         parent_relations[first] = merge_parent_relations(
             member_relations,
