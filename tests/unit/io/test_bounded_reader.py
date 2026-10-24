@@ -24,7 +24,13 @@ from decoy_engine.io import (
 
 
 def _budget(**kw) -> ChunkBudget:
-    base = dict(chunk_budget_bytes=4096, max_chunk_rows=1000, max_row_bytes=1024, out_row_bound=0, read_rows=500)
+    base = dict(
+        chunk_budget_bytes=4096,
+        max_chunk_rows=1000,
+        max_row_bytes=1024,
+        out_row_bound=0,
+        read_rows=500,
+    )
     base.update(kw)
     return ChunkBudget(**base)
 

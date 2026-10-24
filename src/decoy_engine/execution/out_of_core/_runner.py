@@ -47,7 +47,6 @@ from typing import TYPE_CHECKING, Any
 import pyarrow as pa
 import pyarrow.compute as pc
 
-from decoy_engine.progress import get_active_channel
 from decoy_engine.execution._adapter import ExecutionResult, provider_config_to_dict
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._fk_keys import NULL_FK_KEY, fk_key_value
@@ -91,6 +90,7 @@ from decoy_engine.execution.out_of_core._vault_collect import (
     collect_batch_vault,
 )
 from decoy_engine.plan._types import ColumnSeed
+from decoy_engine.progress import get_active_channel
 from decoy_engine.relationships._graph import OrphanPolicy
 
 if TYPE_CHECKING:

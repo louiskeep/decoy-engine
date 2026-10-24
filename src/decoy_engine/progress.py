@@ -155,7 +155,9 @@ class StructuredEventsSink:
         elif isinstance(event, WarningEvent):
             warn = getattr(self._logger, "warning", None)
             if callable(warn):
-                warn("engine warning %s (table=%s column=%s)", event.code, event.table, event.column)
+                warn(
+                    "engine warning %s (table=%s column=%s)", event.code, event.table, event.column
+                )
         elif isinstance(event, TerminalEvent):
             emit_step(
                 self._logger,
@@ -171,7 +173,7 @@ class StructuredEventsSink:
 
 
 class _Rate:
-    __slots__ = ("rows", "started", "last_emit", "total")
+    __slots__ = ("last_emit", "rows", "started", "total")
 
     def __init__(self, started: float, total: int | None) -> None:
         self.rows = 0
@@ -189,6 +191,7 @@ class ProgressChannel:
         self._sink = sink
         self._interval = float(interval_s)
         self._rates: dict[str, _Rate] = {}
+        self._open_phases: dict[tuple[str, str | None], float] = {}
         self._started = time.perf_counter()
         self.sink_failures = 0
 
@@ -206,9 +209,13 @@ class ProgressChannel:
             self.sink_failures += 1
 
     # -- phases --------------------------------------------------------------
-    def phase_start(self, name: str, *, table: str | None = None, rows_in: int | None = None) -> float:
+    def phase_start(
+        self, name: str, *, table: str | None = None, rows_in: int | None = None
+    ) -> float:
         self.emit(PhaseEvent(name, "start", table=table, rows_in=rows_in))
-        return time.perf_counter()
+        started = time.perf_counter()
+        self._open_phases[(name, table)] = started
+        return started
 
     def phase_finish(
         self,
@@ -229,9 +236,12 @@ class ProgressChannel:
                 elapsed_s=time.perf_counter() - started,
             )
         )
+        self._open_phases.pop((name, table), None)
 
     @contextmanager
-    def phase(self, name: str, *, table: str | None = None, rows_in: int | None = None) -> Iterator[None]:
+    def phase(
+        self, name: str, *, table: str | None = None, rows_in: int | None = None
+    ) -> Iterator[None]:
         started = self.phase_start(name, table=table, rows_in=rows_in)
         try:
             yield
@@ -245,12 +255,20 @@ class ProgressChannel:
                     error_class=type(exc).__name__,
                 )
             )
+            self._open_phases.pop((name, table), None)
             raise
         else:
             self.phase_finish(name, started, table=table, rows_in=rows_in)
 
     # -- routes / warnings ---------------------------------------------------
-    def route(self, route: str, *, lane: str | None = None, reason_code: str | None = None, table: str | None = None) -> None:
+    def route(
+        self,
+        route: str,
+        *,
+        lane: str | None = None,
+        reason_code: str | None = None,
+        table: str | None = None,
+    ) -> None:
         self.emit(RouteEvent(route, lane=lane, reason_code=reason_code, table=table))
 
     def warning(self, code: str, *, table: str | None = None, column: str | None = None) -> None:
@@ -294,7 +312,9 @@ class ProgressChannel:
         )
         rate.last_emit = now
 
-    def count_rows(self, table: str, chunks: Iterable[Any], *, total: int | None = None) -> Iterator[Any]:
+    def count_rows(
+        self, table: str, chunks: Iterable[Any], *, total: int | None = None
+    ) -> Iterator[Any]:
         """Yield `chunks` unchanged, accounting each one's `num_rows`."""
         if self._sink is None:
             yield from chunks
@@ -313,10 +333,28 @@ class ProgressChannel:
         try:
             yield
         except BaseException as exc:
+            # Any phase started via the manual `phase_start`/`phase_finish` pair
+            # (the sequential, out-of-core, generate and generate+mask routes
+            # compute `rows_out` at finish, so they cannot use the `phase()` CM)
+            # that the raising work never finished would otherwise leave a
+            # consumer's step stuck "running". Close each as an error before the
+            # terminal event so a monitor sees a terminal state for every step.
+            error_class = type(exc).__name__
+            for (name, table), started in list(self._open_phases.items()):
+                self.emit(
+                    PhaseEvent(
+                        name,
+                        "error",
+                        table=table,
+                        elapsed_s=time.perf_counter() - started,
+                        error_class=error_class,
+                    )
+                )
+            self._open_phases.clear()
             self.emit(
                 TerminalEvent(
                     "error",
-                    error_class=type(exc).__name__,
+                    error_class=error_class,
                     elapsed_s=time.perf_counter() - self._started,
                     sink_failures=self.sink_failures,
                 )
@@ -344,7 +382,9 @@ def get_active_channel() -> ProgressChannel:
 
 
 @contextmanager
-def use_progress(sink: ProgressSink | None, *, interval_s: float = 1.0) -> Iterator[ProgressChannel]:
+def use_progress(
+    sink: ProgressSink | None, *, interval_s: float = 1.0
+) -> Iterator[ProgressChannel]:
     """Bind `sink` as this thread's active progress channel.
 
     `sink=None` leaves any outer binding in place (an inner public entry called
@@ -355,7 +395,9 @@ def use_progress(sink: ProgressSink | None, *, interval_s: float = 1.0) -> Itera
         yield get_active_channel()
         return
     if not callable(getattr(sink, "on_event", None)):
-        raise TypeError("progress must implement on_event(event) (see decoy_engine.progress.ProgressSink)")
+        raise TypeError(
+            "progress must implement on_event(event) (see decoy_engine.progress.ProgressSink)"
+        )
     previous = getattr(_thread_local, "channel", None)
     channel = ProgressChannel(sink, interval_s=interval_s)
     _thread_local.channel = channel

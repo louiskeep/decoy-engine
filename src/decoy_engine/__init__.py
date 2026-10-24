@@ -162,6 +162,16 @@ from decoy_engine.plan.validate import (
 )
 from decoy_engine.profile._fixed_width_reader import read_fixed_width
 from decoy_engine.profile._fixed_width_writer import write_fixed_width
+from decoy_engine.progress import (
+    CallbackSink,
+    PhaseEvent,
+    ProgressSink,
+    RateSample,
+    RouteEvent,
+    StructuredEventsSink,
+    TerminalEvent,
+    WarningEvent,
+)
 from decoy_engine.providers import (
     atomic_swap_db_providers,
     list_generate_faker_providers,
@@ -215,16 +225,6 @@ from decoy_engine.relationships import (
     check_orphan_fk_policy_completeness,
 )
 from decoy_engine.release import RELEASE_PHASE, ReleasePhase, is_pre_ga
-from decoy_engine.progress import (
-    CallbackSink,
-    PhaseEvent,
-    ProgressSink,
-    RateSample,
-    RouteEvent,
-    StructuredEventsSink,
-    TerminalEvent,
-    WarningEvent,
-)
 
 # Connector SDK.
 from decoy_engine.sdk import (
@@ -303,19 +303,12 @@ __all__ = [
     "CAP_SIGNED_URL",
     "CAP_STREAMING",
     "RELEASE_PHASE",
-    "CallbackSink",
-    "PhaseEvent",
-    "ProgressSink",
-    "RateSample",
-    "RouteEvent",
-    "StructuredEventsSink",
-    "TerminalEvent",
-    "WarningEvent",
     "SDK_VERSION",
     "SEED_PROTOCOL_VERSION",
     "VALIDATION_CODES",
     "AdapterError",
     "BackendAdapter",
+    "CallbackSink",
     "CapabilityMatrix",
     "CapacityEstimate",
     "CapacityVerdict",
@@ -368,6 +361,7 @@ __all__ = [
     "OrphanPolicy",
     "PandasExecutionAdapter",
     "PermanentError",
+    "PhaseEvent",
     "PipelineConfig",
     "PipelineValidationError",
     "PlanCheckError",
@@ -377,21 +371,26 @@ __all__ = [
     "PoolCapacityError",
     "PoolSampler",
     "PostValidationRunner",
+    "ProgressSink",
     "ProviderError",
     "ProviderRegistry",
     "ProviderSpec",
     "QualitySummary",
     "QualityWarning",
+    "RateSample",
     "RelationshipEdge",
     "RelationshipGraph",
     "ReleasePhase",
+    "RouteEvent",
     "SecretKeyProvider",
     "SeedKeyProvider",
     "SentinelFlag",
     "StormProfile",
     "StrategyError",
     "StructuredEvents",
+    "StructuredEventsSink",
     "TelemetryClient",
+    "TerminalEvent",
     "TransientError",
     "UnmaskColumnReport",
     "UnmaskResult",
@@ -401,6 +400,7 @@ __all__ = [
     "ValuePool",
     "VaultError",
     "VaultWriter",
+    "WarningEvent",
     "WeakMaskSecret",
     "WriteResult",
     "apply_table_transforms",
