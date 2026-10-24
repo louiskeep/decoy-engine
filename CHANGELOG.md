@@ -245,7 +245,7 @@ itself does not call it; the platform wires it in as a managed database source i
 
 ## [0.10.0] - 2026-10-20
 
-Observability release for the platform pickup: engine main `bd40efd4` (OBS-2 merged). Adds the four additive, leak-safe job-log evidence fields (unified-slice per-column attribution, structured route-decline codes, per-strategy branch counts, and the bounded value-free row-error summary), on top of the OBS-1 job narrative and the OBS-1b log/error leak scrub carried since 0.9.0. Companion abi-3 unchanged (`decoy_engine_native` 0.1.0; no native code change). Version label only; no masking/generation/determinism change versus main.
+Observability release for the platform pickup: engine main `bd40efd4` (OBS-2 merged). Adds the four additive, leak-safe job-log evidence fields (unified-slice per-column attribution, structured route-decline codes, per-strategy branch counts, and the bounded value-free row-error summary), on top of the OBS-1 job narrative (from 0.9.0), with the OBS-1b log/error leak scrub added in this release. Companion abi-3 unchanged (`decoy_engine_native` 0.1.0; no native code change). Version label only; no masking/generation/determinism change versus main.
 
 ### Added (OBS-2: job-log completeness evidence, 2026-10-19)
 
