@@ -7,7 +7,9 @@ compiled wrapper at the ABI the engine requires, the route's evidence names `rus
 and the kernel's tokens on composite parent key components equal the oracle's and the
 companion-hidden Python route's byte for byte, on every run mode, at 1 and 4 native threads
 and at every batch size the resident suite pins, with the lane each mode must build asserted.
-Skipped where the companion is not installed or does not load at the engine's ABI.
+Skipped only where NO companion is installed; an installed companion that does not load (wrong
+ABI, failed self-test) FAILS every case here instead (`_companion_gate`), so a stale binary can
+never pass this suite by skipping it.
 """
 
 from __future__ import annotations
@@ -19,14 +21,12 @@ from typing import Any
 import pytest
 
 from decoy_engine.execution.native import _crypto_ext
-from decoy_engine.execution.native._crypto_ext import (
-    CryptoExtensionUnavailableError,
-    load_compiled_crypto_kernel,
-)
+from decoy_engine.execution.native._crypto_ext import load_compiled_crypto_kernel
 from decoy_engine.relationships._graph import OrphanPolicy
 from tests.parity import _d2b_shapes as s
 from tests.parity import _dcomp_ooc_shapes as o
 from tests.parity import _dcomp_shapes as d
+from tests.parity._companion_gate import CompanionState, require_companion
 from tests.parity._d1a_hash_data import PythonReferenceKernel
 from tests.parity._kernel_witness import force_companion_unavailable
 
@@ -37,17 +37,11 @@ BATCH_IDS = ["rows1", "rows2", "rows3", "default"]
 THREADS = [1, 4]
 
 
-def _companion_loads() -> bool:
-    try:
-        load_compiled_crypto_kernel()
-    except CryptoExtensionUnavailableError:
-        return False
-    return True
+@pytest.fixture(autouse=True, scope="module")
+def _companion() -> CompanionState:
+    """Absent companion: skip. Installed but not loadable: fail, never skip."""
+    return require_companion()
 
-
-pytestmark = pytest.mark.skipif(
-    not _companion_loads(), reason="compiled companion not installed at the engine's ABI"
-)
 
 _SHAPES = {
     "composite-remap": lambda: s.composite_shape(R),
