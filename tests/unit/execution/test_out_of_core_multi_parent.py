@@ -156,6 +156,28 @@ def test_resolve_incoming_passes_singletons_through_and_groups_by_child_tuple(
     assert b.path.exists()
 
 
+def test_resolve_incoming_refuses_edges_that_disagree_on_the_orphan_policy(tmp_path: Path) -> None:
+    """The planner's `orphan_policy_conflict` rule, re-checked where a hand-built graph could
+    bypass it: nothing is merged, nothing is unlinked, and the code is the planner's."""
+    first = _edge("P1")
+    second = RelationshipEdge(
+        **{**first.__dict__, "parent_table": "P2", "orphan_policy": OrphanPolicy.REMAP}
+    )
+    relations = {
+        first: _relation_tagged(tmp_path, "P1", ["a"]),
+        second: _relation_tagged(tmp_path, "P2", ["b"]),
+    }
+    with pytest.raises(ExecutionError) as exc:
+        resolve_incoming(
+            [first, second], relations, temp_dir=tmp_path / "merged", memory_limit=None
+        )
+    assert exc.value.code == "orphan_policy_conflict"
+    assert "['preserve', 'remap']" in str(exc.value) and "X.('ref',)" in str(exc.value)
+    assert set(relations) == {first, second}
+    assert all(r.path.exists() for r in relations.values())
+    assert not (tmp_path / "merged").exists()
+
+
 def test_resolve_incoming_with_no_multi_parent_group_builds_nothing(tmp_path: Path) -> None:
     b = _relation_tagged(tmp_path, "B", ["z"])
     e_b = _edge("B")

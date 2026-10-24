@@ -10,7 +10,11 @@ declines the shape and pass once the merged first-hit-wins relation lands.
 
 from __future__ import annotations
 
+import dataclasses
+from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 
 import pyarrow as pa
 import pytest
@@ -18,11 +22,13 @@ import pytest
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._runner import build_work_list, order_work
 from decoy_engine.execution.out_of_core._compat import check_out_of_core_compatibility
+from decoy_engine.plan._errors import PlanCompileError
+from decoy_engine.profile._types import Profile, Relationship
+from decoy_engine.relationships import build_namespace_registry, build_relationship_graph
 from decoy_engine.relationships._graph import OrphanPolicy
 from tests.parity import _d2b_shapes as s
 from tests.parity import _dmp_shapes as m
-from tests.parity import _strict_compare as sc
-from tests.parity._d1a_hash_data import install_companion
+from tests.parity._d1a_hash_data import PythonReferenceKernel, install_companion
 from tests.parity._kernel_witness import ExpectedMask, KernelWitness, force_companion_unavailable
 
 P, R, W, F = OrphanPolicy.PRESERVE, OrphanPolicy.REMAP, OrphanPolicy.WARN, OrphanPolicy.FAIL
@@ -48,10 +54,11 @@ def _gate_codes(shape: s.Shape) -> list[str]:
     ]
 
 
-def _agree(shape: s.Shape, **kw: object) -> tuple[object, m.OocRun]:
+def _agree(shape: s.Shape, **kw: object) -> tuple[Any, m.OocRun]:
+    """Both routes succeed and differ on the oracle's `pandas` schema key alone (D0-G1)."""
     oracle = s.run_full(shape)
     run = m.run_ooc(shape, **kw)  # type: ignore[arg-type]
-    assert m.strict(oracle, run) == {t: m.METADATA_ONLY for t in oracle.outputs}
+    m.assert_agrees(oracle, run)
     assert m.sorted_warnings(run.warnings) == m.sorted_warnings(oracle.warnings)
     return oracle, run
 
@@ -142,12 +149,13 @@ def test_m9_overlapping_keys_across_batch_boundaries_on_both_lanes(
     oracle, resident = _agree(shape, batch_rows=batch_rows)
     batch = m.run_ooc(shape, "sink-batch", tmp_path=tmp_path / "b", batch_rows=batch_rows)
     reorder = m.run_ooc(shape, "sink-reorder", tmp_path=tmp_path / "r", batch_rows=batch_rows)
-    assert (batch.reorder_joiners, reorder.batch_joiners) == (0, 0) and reorder.reorder_joiners > 0
+    m.assert_lane(batch, "sink-batch")
+    m.assert_lane(reorder, "sink-reorder")
     for table in shape.sources:
         assert reorder.outputs[table].equals(batch.outputs[table], check_metadata=True), table
-        assert sc.compare_strict(batch.outputs[table], reorder.outputs[table]) == m.ALL_TRUE
-    assert m.strict(oracle, batch) == {t: m.METADATA_ONLY for t in shape.sources}
-    assert m.sorted_warnings(batch.warnings) == m.sorted_warnings(oracle.warnings)
+    for run in (batch, reorder):
+        m.assert_agrees(oracle, run)
+        assert m.sorted_warnings(run.warnings) == m.sorted_warnings(oracle.warnings)
     # Every matched child key is P2's token only where P1 lacks the key (odd keys).
     p1 = dict(
         zip(shape.sources["P1"].column("k").to_pylist(), _tokens(resident, "P1"), strict=True)
@@ -164,15 +172,128 @@ def test_m9_overlapping_keys_across_batch_boundaries_on_both_lanes(
             assert out == p2[src]
 
 
-def test_m10_thread_count_invariance(monkeypatch: pytest.MonkeyPatch) -> None:
-    install_companion(monkeypatch)
+class _ThreadRecorder(PythonReferenceKernel):
+    """The stand-in, recording the `native_threads` each `derive_batch` call received."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.threads: set[int | None] = set()
+
+    def derive_batch(self, values: Any, *, native_threads: int | None = None, **kw: Any) -> Any:
+        self.threads.add(native_threads)
+        return super().derive_batch(values, native_threads=native_threads, **kw)
+
+
+def test_m10_native_threads_reach_the_kernel_and_the_stand_in_output_is_thread_invariant(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Plumbing only: the stand-in ignores the thread count, so this proves `native_threads`
+    reaches every `derive_batch` call (for every parent) and the route's output does not depend
+    on it. Thread invariance of the COMPILED kernel's tokens on these shapes is
+    `test_phase_d_dmp_multi_parent_ooc_real.py`."""
     shape = m.three_parent_shape(R)
-    one, four = m.run_ooc(shape, native_threads=1), m.run_ooc(shape, native_threads=4)
+    runs: dict[int, m.OocRun] = {}
+    for threads in (1, 4):
+        kernel = _ThreadRecorder()
+        install_companion(monkeypatch, kernel)
+        runs[threads] = m.run_ooc(shape, native_threads=threads)
+        assert kernel.threads == {threads}
     for table in shape.sources:
-        assert four.outputs[table].equals(one.outputs[table], check_metadata=True), table
+        assert runs[4].outputs[table].equals(runs[1].outputs[table], check_metadata=True), table
+    m.assert_agrees(s.run_full(shape), runs[4])
 
 
-# M11: the one shape the merge refuses.
+# Contract controls: the metadata exemption is exactly the oracle's `pandas` schema key, on the
+# multi-parent child too.
+
+_FIELD_METADATA_ONLY = {**m.ALL_TRUE, "field_metadata": False}
+_UNEXPECTED = {b"decoy_unexpected": b"1"}
+
+
+def _with_outputs(run: m.OocRun, **tables: pa.Table) -> m.OocRun:
+    return dataclasses.replace(run, outputs={**run.outputs, **tables})
+
+
+def test_the_metadata_contract_rejects_unexpected_metadata_on_the_multi_parent_child() -> None:
+    """Negative controls: per-field metadata on `X.ref` and a schema key other than the
+    oracle's `pandas` (either side) each fail `assert_agrees`; the raw report alone is blind to
+    the first (the dimension reads False either way)."""
+    oracle, run = _agree(s.multi_parent_shape(P))
+    table = run.outputs["X"]
+    idx = table.schema.get_field_index("ref")
+    schema = table.schema.set(idx, table.schema.field(idx).with_metadata(_UNEXPECTED))
+    field_injected = _with_outputs(run, X=pa.Table.from_arrays(table.columns, schema=schema))
+    assert m.strict(oracle, field_injected)["X"] == m.METADATA_ONLY
+    assert m.strict_modulo_pandas(oracle, field_injected)["X"] == _FIELD_METADATA_ONLY
+    with pytest.raises(AssertionError):
+        m.assert_agrees(oracle, field_injected)
+    schema_injected = _with_outputs(run, X=table.replace_schema_metadata(_UNEXPECTED))
+    assert m.strict_modulo_pandas(oracle, schema_injected)["X"] == _FIELD_METADATA_ONLY
+    with pytest.raises(AssertionError):
+        m.assert_agrees(oracle, schema_injected)
+    child = oracle.outputs["X"]
+    extra = child.replace_schema_metadata({**child.schema.metadata, **_UNEXPECTED})
+    oracle_extra = SimpleNamespace(outputs={**oracle.outputs, "X": extra}, warnings=oracle.warnings)
+    assert m.strict_modulo_pandas(oracle_extra, run)["X"] == _FIELD_METADATA_ONLY
+    with pytest.raises(AssertionError):
+        m.assert_agrees(oracle_extra, run)
+
+
+# M11 and M12: the declared-policy agreement rule and the one shape the merge refuses.
+
+
+def _compiled_graph(first: OrphanPolicy, second: OrphanPolicy) -> Any:
+    """The planner's path (`build_relationship_graph`), which owns `orphan_policy_conflict`."""
+    rels = tuple(
+        Relationship(
+            parent_table=p,
+            parent_columns=("k",),
+            child_table="X",
+            child_columns=("ref",),
+            namespace="ns_x",
+        )
+        for p in ("P1", "P2")
+    )
+    profile = Profile(
+        schema_version=1,
+        tables=(),
+        relationships=rels,
+        profiled_at=datetime(2026, 10, 24),
+        decoy_engine_version="0.1.0",
+    )
+    registry = build_namespace_registry({"tables": []}, profile)
+    lookup = {("P1", ("k",), "X", ("ref",)): first, ("P2", ("k",), "X", ("ref",)): second}
+    return build_relationship_graph(rels, namespace_registry=registry, orphan_policy_lookup=lookup)
+
+
+@pytest.mark.parametrize(("first", "second"), [(P, R), (R, F), (W, P)])
+def test_m12_conflicting_orphan_policies_on_one_child_tuple_fail_at_graph_build_and_at_the_merge(
+    first: OrphanPolicy, second: OrphanPolicy, tmp_path: Path
+) -> None:
+    """Per-edge policy agreement is the planner's rule on every route (`orphan_policy_conflict`
+    at graph build); the out-of-core merge re-checks it under the same code, so a graph that
+    bypassed the planner is refused before any output instead of resolved under the first
+    edge's policy. Agreeing policies build and run."""
+    with pytest.raises(PlanCompileError) as exc:
+        _compiled_graph(first, second)
+    assert exc.value.code == "orphan_policy_conflict"
+    assert len(_compiled_graph(first, first).edges) == 2
+    base = s.multi_parent_shape(first)
+    bypass = s.Shape(
+        base.plan,
+        s.graph(
+            s.edge("P1", "k", "X", "ref", "ns_x", first),
+            s.edge("P2", "k", "X", "ref", "ns_x", second),
+        ),
+        base.sources,
+    )
+    assert _gate_codes(bypass) == []  # the static gate does not own this rule
+    kind, code, message = m.raised(lambda: m.run_ooc(bypass))
+    assert (kind, code) == (ExecutionError, "orphan_policy_conflict")
+    assert "X.('ref',)" in message and first.value in message and second.value in message
+    kind, code, _ = m.raised(lambda: m.run_ooc(bypass, "sink-batch", tmp_path=tmp_path))
+    assert (kind, code) == (ExecutionError, "orphan_policy_conflict")
+    assert not list((tmp_path / "out").rglob("*.parquet"))
 
 
 @pytest.mark.parametrize("policy", POLICIES)
@@ -181,7 +302,13 @@ def test_m11_heterogeneous_masked_key_types_fail_closed_before_any_output(
 ) -> None:
     shape = m.int_passthrough_shape(policy, p2_type=pa.float64())
     assert s.run_full(shape).outputs["X"].num_rows == 5  # the oracle types the column by value
-    assert m.raised(lambda: m.run_ooc(shape))[:2] == (ExecutionError, m.FK_DTYPE_CODE)
+    kind, code, message = m.raised(lambda: m.run_ooc(shape))
+    assert (kind, code) == (ExecutionError, m.FK_DTYPE_CODE)
+    # The reason names the two masked key types and the route to take, and nothing else: no
+    # table or column identifiers and no key values reach the message.
+    assert "the parents' masked key types differ (int64 vs double)" in message
+    assert "execution_mode='sequential'" in message
+    assert "P1" not in message and "P2" not in message and "ref" not in message
     kind, code, _ = m.raised(lambda: m.run_ooc(shape, "sink-batch", tmp_path=tmp_path))
     assert (kind, code) == (ExecutionError, m.FK_DTYPE_CODE)
     assert not list((tmp_path / "out").rglob("*.parquet"))  # the sink aborted, nothing published
@@ -200,7 +327,7 @@ def test_m11_routing_keeps_the_heterogeneous_shape_off_out_of_core(policy: Orpha
     assert not fk_out_of_core_dtype_hazard(same.plan, same.graph, caller_sources=same.sources)
 
 
-# M14: compute provenance.
+# M14: compute provenance (stand-in companion; the compiled kernel is the `_real` suite).
 
 _PARENTS = [ExpectedMask("P1", "k", "hash_array"), ExpectedMask("P2", "k", "hash_array")]
 _EVIDENCE_REMAP = [

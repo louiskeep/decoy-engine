@@ -20,7 +20,9 @@ full-frame oracle exactly (`tests/parity/test_phase_d_dmp_multi_parent_ooc.py`).
 shape the route refuses is parents whose masked key types differ (for example an integer and
 a float key), which fails closed with `out_of_core_fk_key_dtype_unsupported` before any
 output; run such a job with `execution_mode="sequential"`. The compile-time
-`orphan_policy_conflict` rule is unchanged.
+`orphan_policy_conflict` rule is unchanged, and the out-of-core merge re-checks it under the same
+code, so a relationship graph that bypassed the planner with conflicting per-edge policies fails
+closed before any output instead of resolving under the first edge's policy.
 
 ### Changed (Phase D / Dcomp-OOC: composite FK on the out-of-core route, 2026-10-24)
 
