@@ -182,6 +182,7 @@ def _sequential_eligible(
     vault_writer: Any,
     post_validation: bool = False,
     resolved_substrate: str = "pandas",
+    run_storm: bool = False,
 ) -> tuple[bool, str]:
     """Decide whether a mask job may take the bounded-memory sequential path.
 
@@ -225,6 +226,10 @@ def _sequential_eligible(
         return False, "fidelity_report_requested"
     if post_validation:
         return False, "post_validation_requested"
+    if run_storm:
+        # `run_storm: true` (E3b) runs the STORM post-mask checks over the resident
+        # output on the full-frame finalize branch, the same need as post_validation.
+        return False, "run_storm_requested"
     if vault_writer is not None:
         return False, "vault_writer_requested"
     if resolved_substrate != "pandas":
@@ -287,6 +292,7 @@ def decide_execution_route(
     execution_mode: str,
     graph: RelationshipGraph,
     post_validation: bool = False,
+    run_storm: bool = False,
     resolved_substrate: str = "pandas",
     out_of_core_compatible: bool = False,
     out_of_core_reject_code: str | None = None,
@@ -441,6 +447,7 @@ def decide_execution_route(
         vault_writer=vault_writer,
         post_validation=post_validation,
         resolved_substrate=resolved_substrate,
+        run_storm=run_storm,
     )
     cyclic = _has_cross_table_fk_cycle(graph)
     # D3b: the vault is the ONLY disqualifier lifted, and only onto out-of-core.
@@ -459,6 +466,7 @@ def decide_execution_route(
             vault_writer=None,
             post_validation=post_validation,
             resolved_substrate=resolved_substrate,
+            run_storm=run_storm,
         )[0]
     )
     # D3a: validators are the only disqualifier lifted here, and only onto out-of-core.
@@ -477,6 +485,7 @@ def decide_execution_route(
             vault_writer=vault_writer,
             post_validation=post_validation,
             resolved_substrate=resolved_substrate,
+            run_storm=run_storm,
         )[0]
     )
     # `eligible` is a job-SHAPE check and stays true for a cross-table cycle, so

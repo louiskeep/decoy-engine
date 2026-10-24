@@ -60,6 +60,17 @@ adapts events onto the optional `StructuredEvents` logger surface so a logger su
 as the platform's `JobLogger` receives `step` / `throughput_sample` calls unchanged.
 Four over-600-LOC route modules grew by their emit lines (census updated).
 
+### Fixed (parity E3b: `run_storm: true` was inert, 2026-10-24)
+
+`PipelineConfig.run_storm` was accepted by the schema but nothing in the
+execution spine honoured it. `run_pipeline` now runs the STORM post-mask
+integrity checks (`storm.postmask.run_storm_post_mask`) over every mask table on
+the full-frame finalize branch and stamps the report under
+`quality_metrics["storm_postmask"]`. Report-only: findings never fail the run and
+output bytes are unchanged. Like `post_validation`, an opted-in job is declined
+from the sequential and out-of-core routes (`run_storm_requested`) so the whole
+output is resident when the checks run.
+
 ### Removed (parity E3a: caller-chosen substrate and no-op adapter knobs, 2026-10-24)
 
 `run_pipeline` no longer accepts `substrate`, `max_workers` or `fallback_to_pandas`;

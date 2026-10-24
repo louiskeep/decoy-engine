@@ -237,5 +237,6 @@ def run_full_frame_route(
             post_validation_sample_size=ctx.post_validation_sample_size,
             post_validation_enforce=ctx.post_validation_enforce,
         )
+        _pipeline_finalize.compute_storm_postmask(result, config=ctx.config, sources=step.sources)
         publish.commit()  # B6a: the run's last action; inert unless this run streamed
         return result
