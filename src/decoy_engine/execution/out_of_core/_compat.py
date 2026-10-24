@@ -164,8 +164,9 @@ def check_out_of_core_compatibility(
 ) -> OutOfCoreCompatibility:
     """Return the current Option 4 compatibility decision.
 
-    Initial acceptance covers kernelized per-value parent key strategies and no
-    multiple-parent resolution for the same child FK tuple yet.
+    Acceptance covers kernelized per-value parent key strategies; a child FK tuple
+    with several parents is admitted and resolved first-hit-wins by the runner
+    (`_multi_parent.py`).
     """
     rejections: list[OutOfCoreRejection] = []
     if not relationship_graph.edges:
@@ -179,22 +180,12 @@ def check_out_of_core_compatibility(
             ),
         )
 
-    child_targets: dict[tuple[str, tuple[str, ...]], int] = {}
     composite_fk_child_columns: dict[str, set[str]] = {}
     for edge in relationship_graph.edges:
-        key = (edge.child_table, edge.child_columns)
-        child_targets[key] = child_targets.get(key, 0) + 1
         if len(edge.child_columns) > 1:
             composite_fk_child_columns.setdefault(edge.child_table, set()).update(
                 edge.child_columns
             )
-    if any(count > 1 for count in child_targets.values()):
-        rejections.append(
-            OutOfCoreRejection(
-                "out_of_core_multi_parent_child_unsupported",
-                "out-of-core route does not yet support multiple parents for one child FK.",
-            )
-        )
 
     for edge in relationship_graph.edges:
         _check_edge(edge, plan, rejections)

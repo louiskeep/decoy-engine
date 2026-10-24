@@ -9,6 +9,19 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Changed (Phase D / Dmp: multi-parent FK admitted on the out-of-core route, 2026-10-24)
+
+A child FK column tuple that references several parent tables (the polymorphic
+association) now runs on the out-of-core route; `out_of_core_multi_parent_child_unsupported`
+is gone (pre-GA hard delete). The route merges the parents' key relations into one
+first-hit-wins relation in relationship order (the order the full-frame and sequential routes
+already resolve in) and joins the child once, so the output, warnings and FAIL code match the
+full-frame oracle exactly (`tests/parity/test_phase_d_dmp_multi_parent_ooc.py`). The one
+shape the route refuses is parents whose masked key types differ (for example an integer and
+a float key), which fails closed with `out_of_core_fk_key_dtype_unsupported` before any
+output; run such a job with `execution_mode="sequential"`. The compile-time
+`orphan_policy_conflict` rule is unchanged.
+
 ### Changed (Phase D / Dcomp-OOC: composite FK on the out-of-core route, 2026-10-24)
 
 The out-of-core FK route's `orphan_fk_violation` error (orphan policy `fail` with a genuine
