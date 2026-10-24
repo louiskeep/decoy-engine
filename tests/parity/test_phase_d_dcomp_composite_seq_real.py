@@ -1,9 +1,11 @@
 """Phase D / Dcomp: the REAL compiled companion across the composite SEQ acceptance shapes.
 
-Needs the abi-3 companion; skipped (not weakened) on a box without it, where
-`test_phase_d_dcomp_composite_seq.py` carries the companion-independent assertions with a
-stand-in kernel. These tests run the real kernel and check what only it can show: native SEQ
-output equals the full-frame oracle on every strict dimension, equals the SEQ Python path byte for
+Needs the abi-3 companion, where `test_phase_d_dcomp_composite_seq.py` carries the
+companion-independent assertions with a stand-in kernel. Skipped only where NO companion is
+installed; an installed companion that does not load (wrong ABI, failed self-test) FAILS every
+case here instead (`_companion_gate`), so a stale or broken binary can never pass this suite by
+skipping it. These tests run the real kernel and check what only it can show: native SEQ output
+equals the full-frame oracle on every strict dimension, equals the SEQ Python path byte for
 byte, is the kernel's own result rather than a recomputation, and does not move with the worker
 thread count.
 """
@@ -19,13 +21,11 @@ import pytest
 
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._sequential_native import SEQ_HASH_DISPOSITION_KEY
-from decoy_engine.execution.native._crypto_ext import (
-    CryptoExtensionUnavailableError,
-    load_compiled_crypto_kernel,
-)
+from decoy_engine.execution.native._crypto_ext import load_compiled_crypto_kernel
 from decoy_engine.relationships._graph import OrphanPolicy
 from tests.parity import _d2b_shapes as s
 from tests.parity import _dcomp_shapes as d
+from tests.parity._companion_gate import CompanionState, require_companion
 from tests.parity._d2a_seq_data import table_digest
 from tests.parity._seq_witness import hide_companion, install
 
@@ -37,18 +37,10 @@ FAIL, WARN, PRESERVE, REMAP = (
 )
 
 
-def _companion_loads() -> bool:
-    try:
-        load_compiled_crypto_kernel()
-    except CryptoExtensionUnavailableError:
-        return False
-    return True
-
-
-pytestmark = pytest.mark.skipif(
-    not _companion_loads(),
-    reason="decoy-engine-native abi-3 companion not loadable; the companion-present job covers this",
-)
+@pytest.fixture(autouse=True, scope="module")
+def _companion() -> CompanionState:
+    """Absent companion: skip. Installed but not loadable: fail, never skip."""
+    return require_companion()
 
 
 class RecordingRealKernel:

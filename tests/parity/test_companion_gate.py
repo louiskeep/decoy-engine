@@ -2,12 +2,16 @@
 
 Runs on every box, companion or not, by simulating each state: a missing distribution, an
 installed binary reporting another ABI, an installed binary that fails the loader's
-known-answer self-test, and (where one is installed) the real companion.
+known-answer self-test, and (where one is installed) the real companion. The last two tests pin
+that the real-kernel suites actually route their companion check through `require_companion`, so
+a broken companion makes them FAIL rather than vacuously skip.
 """
 
 from __future__ import annotations
 
+import importlib
 import sys
+from collections.abc import Callable
 from importlib.machinery import ModuleSpec
 from types import ModuleType
 from typing import Any
@@ -19,6 +23,13 @@ from decoy_engine.execution.native import _crypto_ext
 from tests.parity import _companion_gate as gate
 
 OTHER_ABI = "decoy-native-abi-2"
+
+# The real-kernel suites whose companion gate this file pins: each must skip on an absent
+# companion but FAIL on an installed-but-broken one, never skipping it away.
+REAL_KERNEL_SUITES = [
+    "tests.parity.test_phase_d_dcomp_composite_ooc_real",
+    "tests.parity.test_phase_d_dcomp_composite_seq_real",
+]
 
 
 def _fake_companion(monkeypatch: pytest.MonkeyPatch, *, abi: str, derive: Any) -> None:
@@ -90,3 +101,34 @@ def test_a_fake_companion_at_the_engine_abi_that_reproduces_the_reference_is_rea
 def test_the_installed_companion_is_ready_or_the_gate_fails() -> None:
     """On a box with a companion: it loads at the engine's ABI, or this test fails (not skips)."""
     assert gate.require_companion().ready
+
+
+def _suite_gate(module_name: str) -> Callable[[], Any]:
+    """The autouse `_companion` gate fixture a real-kernel suite installs, as a plain callable.
+    Reaching it through the imported module is the pin: a suite that drops the fixture for a
+    module-level companion skip has no `_companion` to find, and this lookup fails loudly."""
+    module = importlib.import_module(module_name)
+    return module._companion.__wrapped__
+
+
+@pytest.mark.parametrize("suite", REAL_KERNEL_SUITES)
+def test_a_real_kernel_suite_fails_not_skips_on_a_broken_companion(
+    suite: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The vacuous-skip regression class: an installed-but-broken companion (here, wrong ABI)
+    must make the suite's gate FAIL, so a stale binary cannot turn the suite green by skipping."""
+    gate_fixture = _suite_gate(suite)
+    _fake_companion(monkeypatch, abi=OTHER_ABI, derive=_reference_derive)
+    with pytest.raises(pytest.fail.Exception, match=OTHER_ABI):
+        gate_fixture()
+
+
+@pytest.mark.parametrize("suite", REAL_KERNEL_SUITES)
+def test_a_real_kernel_suite_skips_on_an_absent_companion(
+    suite: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The one case a real-kernel suite may skip: nothing installed, nothing to prove."""
+    gate_fixture = _suite_gate(suite)
+    monkeypatch.setattr(gate, "find_spec", lambda name: None)
+    with pytest.raises(pytest.skip.Exception):
+        gate_fixture()
