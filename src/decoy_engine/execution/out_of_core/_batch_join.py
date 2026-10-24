@@ -75,13 +75,14 @@ from decoy_engine.execution.out_of_core._join import (
     cast_fk_chunk,
 )
 from decoy_engine.execution.out_of_core._mask import mask_column, masked_output_type
+from decoy_engine.execution.out_of_core._relation import _column_seed
 from decoy_engine.relationships._graph import OrphanPolicy
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     from decoy_engine.execution.out_of_core._relation import ParentKeyRelation
-    from decoy_engine.plan._types import ColumnSeed
+    from decoy_engine.plan._types import ColumnSeed, Plan
     from decoy_engine.relationships._graph import RelationshipEdge
 
 
@@ -531,6 +532,37 @@ def _cast_chunks(chunks: list[pa.Array], target: pa.DataType) -> pa.Array:
     # which would crash (ArrowInvalid) on any value beyond +/-2**53 even when it
     # is exactly representable -- a parity gap with the oracle's int64 output.
     return pa.concat_arrays([cast_fk_chunk(chunk, target) for chunk in chunks])
+
+
+def _remap_values(
+    plan: Plan,
+    edge: RelationshipEdge,
+    source_child: pa.Table,
+    *,
+    mask_key: bytes | None = None,
+) -> tuple[pa.Array, ...]:
+    """Whole-child REMAP value minting.
+
+    `ChildFkBatchJoiner._batch_remap_values` mints per batch; this is the
+    single-shot lowering retained as the executable oracle definition the
+    joiner tests compare against. `mask_key` (DE-02) defaults to `job_seed`
+    when absent (byte-identical).
+    """
+    key = mask_key if mask_key is not None else plan.seed_envelope.job_seed
+    remapped: list[pa.Array] = []
+    for parent_column, child_column in zip(edge.parent_columns, edge.child_columns, strict=True):
+        parent_seed = _column_seed(plan, edge.parent_table, parent_column)
+        if parent_seed is None:
+            raise ExecutionError(
+                code="out_of_core_parent_seed_missing",
+                message=f"parent key {edge.parent_table}.{parent_column} is not in the plan.",
+            )
+        normalized = [
+            None if fk_key_value(value) is NULL_FK_KEY else fk_key_value(value)
+            for value in source_child.column(child_column).combine_chunks().to_pylist()
+        ]
+        remapped.append(mask_column(pa.array(normalized, from_pandas=True), parent_seed, key))
+    return tuple(remapped)
 
 
 __all__ = ["ChildFkBatchJoiner"]

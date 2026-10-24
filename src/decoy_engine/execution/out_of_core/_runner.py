@@ -7,9 +7,12 @@ path:
 1. Rewrite pass: the raw source streams through `mask_batch` (non-FK
    columns) and one `ChildFkBatchJoiner` per incoming edge (FK columns).
    Every joiner keys off the IMMUTABLE raw batch while its rewrite
-   accumulates in the output batch: edges may overlap on a child column, and
-   the whole-child contract is that each edge joins the RAW child, with later
-   edges overwriting the shared column. The rewritten batches flow straight
+   accumulates in the output batch: DISTINCT edges may overlap on a child
+   column, and the whole-child contract is that each edge joins the RAW child,
+   with later edges overwriting the shared column. Edges sharing one child
+   tuple (a multi-parent child) join ONE relation merged first-hit-wins in
+   edge order (`_multi_parent.resolve_incoming`), through the first edge.
+   The rewritten batches flow straight
    into `TransactionalSink.write_batches` under one analytically fixed
    schema, because an Arrow ParquetWriter writes a single-schema file (the
    same constraint pyarrow.dataset resolves by unifying fragment schemas up
@@ -49,7 +52,6 @@ import pyarrow.compute as pc
 
 from decoy_engine.execution._adapter import ExecutionResult, provider_config_to_dict
 from decoy_engine.execution._errors import ExecutionError
-from decoy_engine.execution._fk_keys import NULL_FK_KEY, fk_key_value
 from decoy_engine.execution._fk_resolve import orphan_fk_violation_error
 from decoy_engine.execution._output_projection import (
     UnconfiguredColumnPolicy,
@@ -69,13 +71,19 @@ from decoy_engine.execution.out_of_core._hash_run import OocHashRun
 from decoy_engine.execution.out_of_core._join import orphan_fk_warning
 from decoy_engine.execution.out_of_core._mask import (
     mask_batch,
-    mask_column,
     masked_output_type,
     table_seed,
 )
-from decoy_engine.execution.out_of_core._memory_estimate import resolve_phase_memory_limits
+from decoy_engine.execution.out_of_core._memory_estimate import (
+    memory_limit_for,
+    resolve_phase_memory_limits,
+)
+from decoy_engine.execution.out_of_core._multi_parent import resolve_incoming
 from decoy_engine.execution.out_of_core._preflight import run_preflight
-from decoy_engine.execution.out_of_core._relation import build_parent_key_relation_aligned
+from decoy_engine.execution.out_of_core._relation import (
+    _column_seed,
+    build_parent_key_relation_aligned,
+)
 from decoy_engine.execution.out_of_core._route_policy import (
     _edge_indexes,
     _table_order,
@@ -217,7 +225,13 @@ def run_fk_out_of_core(
         for table_name in _table_order(plan, relationship_graph, sources):
             if table_name not in sources:
                 continue
-            table_incoming_edges = tuple(incoming[table_name])
+            # The merge runs before any joiner opens, so it takes the undivided build cap.
+            table_incoming_edges = resolve_incoming(
+                incoming[table_name],
+                parent_relations,
+                temp_dir=root / "relations" / table_name / "merged",
+                memory_limit=memory_limit_for(budget_bytes, 1) if budget_bytes else memory_limit,
+            )
             table_outgoing_edges = tuple(outgoing[table_name])
             # Route-independent gate: both drivers raise the same coded error (not a bare KeyError).
             validate_outgoing_parent_columns(table_outgoing_edges, sources[table_name].schema)
@@ -604,8 +618,8 @@ def _fk_component_map(
 ) -> dict[str, tuple[ChildFkBatchJoiner, int]]:
     """Map each FK child column to (its joiner, component index).
 
-    Well-defined because the compatibility gate rejects multiple parents for
-    one child FK tuple.
+    Well-defined because the runner resolves one representative edge per child
+    FK tuple (`_multi_parent.resolve_incoming`).
     """
     components: dict[str, tuple[ChildFkBatchJoiner, int]] = {}
     for edge, joiner in zip(incoming_edges, joiners, strict=True):
@@ -639,46 +653,6 @@ def _fixed_output_schema(
         else:
             fields.append(field)
     return pa.schema(fields, metadata=source_schema.metadata)
-
-
-def _remap_values(
-    plan: Plan,
-    edge: RelationshipEdge,
-    source_child: pa.Table,
-    *,
-    mask_key: bytes | None = None,
-) -> tuple[pa.Array, ...]:
-    """Whole-child REMAP value minting.
-
-    The runner mints remap values per batch inside the joiner; this is the
-    single-shot lowering retained as the executable oracle definition.
-    `mask_key` (DE-02) defaults to `job_seed` when absent (byte-identical).
-    """
-    key = mask_key if mask_key is not None else plan.seed_envelope.job_seed
-    remapped: list[pa.Array] = []
-    for parent_column, child_column in zip(edge.parent_columns, edge.child_columns, strict=True):
-        parent_seed = _column_seed(plan, edge.parent_table, parent_column)
-        if parent_seed is None:
-            raise ExecutionError(
-                code="out_of_core_parent_seed_missing",
-                message=f"parent key {edge.parent_table}.{parent_column} is not in the plan.",
-            )
-        normalized = [
-            None if fk_key_value(value) is NULL_FK_KEY else fk_key_value(value)
-            for value in source_child.column(child_column).combine_chunks().to_pylist()
-        ]
-        remapped.append(mask_column(pa.array(normalized, from_pandas=True), parent_seed, key))
-    return tuple(remapped)
-
-
-def _column_seed(plan: Plan, table: str, column: str) -> ColumnSeed | None:
-    for table_name, candidate_seed in plan.seed_envelope.per_table:
-        if table_name != table:
-            continue
-        for col_name, col_seed in candidate_seed.per_column:
-            if col_name == column:
-                return col_seed
-    return None
 
 
 __all__ = ["run_fk_out_of_core"]

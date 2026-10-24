@@ -115,7 +115,7 @@ ALLOWLIST: dict[str, int] = {
     # transactional publish hardening and row mask; split the publish cluster.
     "src/decoy_engine/quarantine.py": 645,
     # code_set provenance and FF1 notice plumbing through the streaming runner.
-    "src/decoy_engine/execution/out_of_core/_runner.py": 684,
+    "src/decoy_engine/execution/out_of_core/_runner.py": 658,
     # D3a validator mask-step hook threaded through the reorder driver; all logic lives in _validate_batch.py.
     "src/decoy_engine/execution/out_of_core/_stream_driver.py": 608,
     # corpus schema checks and verify_corpus; split into _codeset_verify.py when next touched.
