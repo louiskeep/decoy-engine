@@ -50,7 +50,7 @@ from decoy_engine.execution._fk_keys import (
     lossless_fk_int_values,
     to_pandas_fk_safe,
 )
-from decoy_engine.execution._fk_resolve import resolve_fk_keys
+from decoy_engine.execution._fk_resolve import orphan_fk_violation_error, resolve_fk_keys
 from decoy_engine.execution.out_of_core._join import orphan_fk_warning
 from decoy_engine.relationships._graph import OrphanPolicy
 
@@ -142,14 +142,7 @@ def _resolve_arrow(
     warnings: tuple[QualityWarning, ...] = ()
     if orphan_count > 0:
         if policy is OrphanPolicy.FAIL:
-            raise ExecutionError(
-                code="orphan_fk_violation",
-                message=(
-                    f"{orphan_count} orphan row(s) in "
-                    f"{edge.child_table}.{edge.child_columns} reference no parent key in "
-                    f"{edge.parent_table}.{edge.parent_columns} (orphan_policy=fail)."
-                ),
-            )
+            raise orphan_fk_violation_error(edge, int(orphan_count))
         if policy is OrphanPolicy.REMAP:
             _reject_remap(edge)([])
         if policy is OrphanPolicy.WARN:

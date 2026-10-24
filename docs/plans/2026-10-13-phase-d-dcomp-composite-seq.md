@@ -70,7 +70,7 @@ Both are retained regression (§2); Dcomp re-asserts the dispositions are unchan
 
 ## 8. Open program cells this slice explicitly does NOT close (honest hand-off)
 - **Non-hash operators on an FK KEY run Python** (fpe/categorical/bucket_perturb/date_shift) on SEQ: a §5 no-legacy gap that is CROSS-CUTTING across all FK shapes. Owner: a dedicated FK-key-native slice (or folded into D-audit). Surfaced to Cam as program reshaping.
-- **Strict OOC composite acceptance** (non-normalized): owned by the OOC strict-contract extension (D0 contract -> composite on OOC).
+- **Strict OOC composite acceptance** (non-normalized): owned by the OOC strict-contract extension (D0 contract -> composite on OOC). Taken up by `docs/plans/2026-10-24-phase-d-dcomp-composite-ooc.md` (Dcomp-OOC, 2026-10-24).
 
 ## 9. Done when
 - [ ] C1, C2, C3, C5(a-c), C-bound, C-route pass; strict output parity + the separate warning/row-error/quarantine/provenance assertions hold on SEQ vs oracle; companion-independent parts green in ci-mirror.

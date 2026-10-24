@@ -419,7 +419,7 @@ def test_cross_batch_orphans_fail_with_total_count(tmp_path, monkeypatch) -> Non
         )
 
     assert exc.value.code == "orphan_fk_violation"
-    assert "3 orphan FK row(s)" in str(exc.value)
+    assert "3 orphan row(s) in" in str(exc.value)  # the oracle's message, one producer
 
 
 def _redact_to_null_plan() -> Any:

@@ -435,7 +435,7 @@ def test_fail_policy_raises_on_orphaned_batch_before_output(tmp_path) -> None:
             joiner.join_batch(batches[1])
 
     assert exc.value.code == "orphan_fk_violation"
-    assert "1 orphan FK row(s)" in str(exc.value)
+    assert "1 orphan row(s) in" in str(exc.value)  # the oracle's message, one producer
 
 
 def test_remap_masks_per_batch_not_per_child(tmp_path, monkeypatch) -> None:

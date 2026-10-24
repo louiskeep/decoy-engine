@@ -316,6 +316,11 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         "src/decoy_engine/execution/_transforms_table.py",
         "src/decoy_engine/execution/out_of_core/_runner.py",
         "src/decoy_engine/execution/out_of_core/_preflight.py",
+        # Dcomp-OOC (composite FK strict parity): the out-of-core joiners raise the one
+        # orphan FAIL error producer (`_fk_resolve.orphan_fk_violation_error`) directly.
+        # Both import nothing from `execution.physical`.
+        "src/decoy_engine/execution/out_of_core/_join.py",
+        "src/decoy_engine/execution/out_of_core/_batch_join.py",
         "src/decoy_engine/execution/out_of_core/_null_int_guard.py",
         # D3b (token vault on the bounded out-of-core route): the vault collector the two
         # out-of-core drivers call. It imports nothing from `execution.physical`.

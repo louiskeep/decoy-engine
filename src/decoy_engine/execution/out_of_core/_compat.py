@@ -435,7 +435,28 @@ def _check_edge(
                 "table depending on itself); falls back to full-frame.",
             )
         )
+    chain_members = tuple(
+        column
+        for column in edge.parent_columns
+        if _column_seed(plan, edge.parent_table, column) is None
+        and _is_composite_group_member(plan, edge.parent_table, column)
+    )
+    if chain_members:
+        # A composite CHAIN: this parent key is itself a composite FK child, so the planner
+        # compiled it into a group with no scalar seed per member. The route mints REMAP keys
+        # from the parent member's own seed, which does not exist, and admitting matched-only
+        # chains would let the orphan policy pick the route. Sequential runs them natively.
+        rejections.append(
+            OutOfCoreRejection(
+                "out_of_core_composite_fk_chain_unsupported",
+                f"parent key {edge.parent_table}.{edge.parent_columns} is a composite FK "
+                "group (a composite child used as a parent key); the out-of-core route has "
+                "no per-member seed to resolve a composite chain from. Falls back to sequential.",
+            )
+        )
     for parent_column in edge.parent_columns:
+        if parent_column in chain_members:
+            continue
         parent_seed = _column_seed(plan, edge.parent_table, parent_column)
         if parent_seed is None:
             rejections.append(
@@ -469,3 +490,13 @@ def _column_seed(plan: Plan, table: str, column: str) -> ColumnSeed | None:
             if col_name == column:
                 return col_seed
     return None
+
+
+def _is_composite_group_member(plan: Plan, table: str, column: str) -> bool:
+    # Same walk as `_column_seed`: every entry for the table, not only the first.
+    return any(
+        column in group.coherent_columns
+        for table_name, table_seed in plan.seed_envelope.per_table
+        if table_name == table
+        for _key, group in table_seed.per_group
+    )

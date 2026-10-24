@@ -63,6 +63,7 @@ import pyarrow.compute as pc
 
 from decoy_engine.execution._adapter import provider_config_to_dict
 from decoy_engine.execution._errors import ExecutionError
+from decoy_engine.execution._fk_resolve import orphan_fk_violation_error
 from decoy_engine.execution._output_projection import (
     UnconfiguredColumnPolicy,
     enforce_output_projection,
@@ -75,7 +76,7 @@ from decoy_engine.execution.out_of_core._emit import (
     reconcile_batch,
 )
 from decoy_engine.execution.out_of_core._hash_run import OocHashRun
-from decoy_engine.execution.out_of_core._join import orphan_fk_error, orphan_fk_warning
+from decoy_engine.execution.out_of_core._join import orphan_fk_warning
 from decoy_engine.execution.out_of_core._mask import mask_batch, table_seed
 from decoy_engine.execution.out_of_core._mask_group_c import text_mask_sub_floor_warning
 from decoy_engine.execution.out_of_core._memory_estimate import resolve_phase_memory_limits
@@ -396,7 +397,7 @@ def stream_table(
                 if edge.orphan_policy is OrphanPolicy.FAIL:
                     total = joiner.total_orphans()
                     if total:
-                        raise orphan_fk_error(edge, total)
+                        raise orphan_fk_violation_error(edge, total)
                 rows = joiner.run_ordered_join(
                     batch_rows, run_bytes_cap=run_bytes_cap, merge_fan_in=merge_fan_in
                 )
