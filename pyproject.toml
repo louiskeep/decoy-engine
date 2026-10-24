@@ -360,7 +360,7 @@ packages = ["src/decoy_engine"]
 # also VCS-ignored (the root-cause fix); this exclude is belt-and-suspenders and
 # also drops the few tracked .claude/ dev-tooling files, which a source dist
 # does not need.
-exclude = [".claude", ".hypothesis"]
+exclude = [".claude", ".hypothesis", "tests"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
