@@ -125,10 +125,11 @@ def sorted_warnings(warnings: Any) -> list[tuple[object, ...]]:
     return sorted(warning_keys(warnings), key=repr)
 
 
-def raised(fn: Any) -> tuple[type[BaseException], str | None, str]:
+def raised(fn: Any) -> tuple[type[Exception], str | None, str]:
+    """`(type, code, message)` of the exception `fn()` raises; fails if it does not raise."""
     try:
         fn()
-    except BaseException as exc:
+    except Exception as exc:
         return type(exc), getattr(exc, "code", None), str(exc)
     raise AssertionError("expected a raise")
 

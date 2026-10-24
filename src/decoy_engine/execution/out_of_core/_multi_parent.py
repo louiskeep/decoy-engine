@@ -26,7 +26,7 @@ before any output exists; the job runs on the sequential route instead.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 import pyarrow.parquet as pq
@@ -47,39 +47,44 @@ _RANK = "__decoy_edge_rank"
 
 def resolve_incoming(
     incoming_edges: Sequence[RelationshipEdge],
-    parent_relations: Mapping[RelationshipEdge, ParentKeyRelation],
+    parent_relations: dict[RelationshipEdge, ParentKeyRelation],
     *,
     temp_dir: Path,
     memory_limit: str | None,
-) -> tuple[tuple[RelationshipEdge, ...], dict[RelationshipEdge, ParentKeyRelation]]:
-    """One joinable edge per child tuple, with its relation.
+) -> tuple[RelationshipEdge, ...]:
+    """One joinable edge per child tuple, its relation bound in `parent_relations`.
 
     Edges sharing `child_columns` are one multi-parent group, in the order they arrive
-    (`graph.edges` order, the oracle's precedence). The group's first edge represents it,
-    bound to the merged relation, so every downstream consumer (REMAP seeds, the WARN and
-    FAIL identity, the per-column component map) reads the first parent exactly as the
-    oracle does. A singleton group passes through untouched, and `parent_relations` is
-    never mutated: a parent's own relation still serves its other children.
+    (`graph.edges` order, the oracle's precedence). The group's first edge represents it:
+    `parent_relations[first]` is rebound to the merged relation, so every downstream
+    consumer (REMAP seeds, the WARN and FAIL identity, the per-column component map) reads
+    the first parent exactly as the oracle does, and the other members' entries are removed
+    together with their files, which no later table reads (a relation is keyed by its edge,
+    and each edge serves one child). A singleton group passes through untouched.
     """
     groups: dict[tuple[str, ...], list[RelationshipEdge]] = {}
     for edge in incoming_edges:
         groups.setdefault(edge.child_columns, []).append(edge)
     representatives: list[RelationshipEdge] = []
-    table_relations: dict[RelationshipEdge, ParentKeyRelation] = {}
     merged_count = 0
     for members in groups.values():
         first = members[0]
         representatives.append(first)
         if len(members) == 1:
-            table_relations[first] = parent_relations[first]
             continue
-        table_relations[first] = merge_parent_relations(
-            tuple(parent_relations[edge] for edge in members),
+        member_relations = tuple(parent_relations[edge] for edge in members)
+        parent_relations[first] = merge_parent_relations(
+            member_relations,
             temp_dir=temp_dir / f"group_{merged_count}",
             memory_limit=memory_limit,
         )
         merged_count += 1
-    return tuple(representatives), table_relations
+        for edge, relation in zip(members, member_relations, strict=True):
+            if edge is not first:
+                del parent_relations[edge]
+            # The merged copy supersedes the member on disk; keep the spill footprint to one.
+            relation.path.unlink(missing_ok=True)
+    return tuple(representatives)
 
 
 def merge_parent_relations(
@@ -109,16 +114,19 @@ def merge_parent_relations(
                     "Run it with execution_mode='sequential'."
                 ),
             )
-    temp_dir.mkdir(parents=True, exist_ok=True)
+    # Scratch lives under the same `duckdb/` subtree as the connection's spill, exactly as
+    # `_relation._build_relation` lays out its own staged and winners files.
+    duckdb_dir = temp_dir / "duckdb"
+    duckdb_dir.mkdir(parents=True, exist_ok=True)
     out_path = temp_dir / "merged_key_relation.parquet"
-    staged_path = temp_dir / "merged_key_staged.parquet"
-    winners_path = temp_dir / "merged_key_winners.parquet"
+    staged_path = duckdb_dir / "merged_key_staged.parquet"
+    winners_path = duckdb_dir / "merged_key_winners.parquet"
     columns = ", ".join([first.join_key_column, *masked_columns])
     members_sql = " UNION ALL ".join(
         f"SELECT {rank} AS {_RANK}, {columns} FROM read_parquet({_sql_string(str(r.path))})"
         for rank, r in enumerate(relations)
     )
-    conn = connect_duckdb(temp_dir=temp_dir / "duckdb", memory_limit=memory_limit)
+    conn = connect_duckdb(temp_dir=duckdb_dir, memory_limit=memory_limit)
     try:
         conn.execute(f"COPY ({members_sql}) TO {_sql_string(str(staged_path))} (FORMAT PARQUET)")
         staged_sql = f"read_parquet({_sql_string(str(staged_path))})"
