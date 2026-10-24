@@ -39,6 +39,23 @@ pinned strictly against the oracle (`tests/parity/test_phase_d_dcomp_composite_o
 the pre-existing route-level differences they surfaced are recorded in
 `tests/parity/SEMANTIC_DIFFERENCES.md` (Dcomp-OOC section).
 
+### Added (parity E2a: shared bounded reader, 2026-10-24)
+
+`decoy_engine.io` is the bounded source reader both the CLI and the platform now
+share, promoted verbatim from the platform's `api/jobs/native_reader.py` +
+`csv_record_framer.py` so a source is chunked the same way in both products.
+`csv_framer` frames CSV logical records by bytes before any parser sees them;
+`bounded_reader` cuts Parquet and CSV into owned Arrow chunks within a
+`ChunkBudget` (decoded-input bytes plus a per-row output allowance per chunk, a
+row cap, a per-row byte cap, the Parquet batch size). Established patterns cited
+in the module docstring: Arrow's row-group/batch reading with `read_dictionary`,
+Spark's `maxPartitionBytes`, Hadoop record framing. Credentials, pricing and
+fingerprints stay with the caller; the reader takes a local path and a budget
+only. `PANDAS_DEFAULT_NA_VALUES` pins the CSV null set to pandas' default so the
+chunked and full-frame CSV reads agree byte-for-byte. Coded failures
+`RowExceedsMaxRowBytes`, `CsvRecordExceedsMaxRowBytes`, `CsvMalformed` carry
+identifiers and positions, never row data.
+
 ### Added (parity E1: progress contract, 2026-10-24)
 
 `decoy_engine.progress` is the engine's value-free run-event stream for callers'
