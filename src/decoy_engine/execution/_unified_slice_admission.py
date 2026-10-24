@@ -220,9 +220,9 @@ def cheap_admission(
         # adapter and stamp its own provenance telemetry (executed_substrate,
         # boundary conversion timings), so admitting it would diverge on the
         # caller-consumed quality_metrics. Decline to the unchanged old route.
-        # `resolved_substrate` is post-resolve_substrate; pandas is the only
-        # substrate that resolves (any other value already raised
-        # invalid_substrate upstream), so this stays a defence-in-depth guard.
+        # `resolved_substrate` is the one adapter label `run_pipeline` sets;
+        # anything else can only come from a hand-built plan, so this stays a
+        # defence-in-depth guard.
         return None
     if source_loader is not None:
         # A source_loader signals lazy/relationship loading (a different output

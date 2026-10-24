@@ -379,8 +379,6 @@ def test_plan_hash_digest_construction_is_pinned(tmp_path: Path) -> None:
         inputs.use_byte_estimate_routing,
         inputs.use_probe_routing,
         inputs.fpe_chunk_count,
-        inputs.max_workers,
-        inputs.fallback_to_pandas,
         inputs.registry_fingerprint(),
         tuple(sorted(inputs.table_kinds.items())),
         facts.compatible,
@@ -730,14 +728,6 @@ def test_capture_raises_invalid_execution_knob_for_non_positive_chunk_size(
     with pytest.raises(ExecutionError) as exc:
         _flat_inputs(tmp_path, chunk_size_rows=0)
     assert exc.value.code == "invalid_execution_knob"
-
-
-def test_capture_raises_invalid_substrate(tmp_path: Path) -> None:
-    from decoy_engine.execution._errors import ExecutionError
-
-    with pytest.raises(ExecutionError) as exc:
-        _flat_inputs(tmp_path, substrate="not_a_real_substrate")
-    assert exc.value.code == "invalid_substrate"
 
 
 def test_capture_matches_live_run_pipeline_rejection_for_invalid_knob(tmp_path: Path) -> None:

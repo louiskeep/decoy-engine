@@ -56,10 +56,7 @@ def capture_physical_plan_inputs(
     execution_mode: str = "auto",
     sink: TransactionalSink | None = None,
     source_loader: Callable[[str], pa.Table] | None = None,
-    substrate: str | None = _pipeline_finalize.SUBSTRATE_DEFAULT,
     fpe_chunk_count: int = _pipeline_finalize.FPE_CHUNK_COUNT_DEFAULT,
-    max_workers: int = _pipeline_finalize.MAX_WORKERS_DEFAULT,
-    fallback_to_pandas: bool = _pipeline_finalize.FALLBACK_TO_PANDAS_DEFAULT,
     auto_chunk: bool = _pipeline_finalize.AUTO_CHUNK_DEFAULT,
     chunk_size_rows: int = _pipeline_finalize.CHUNK_SIZE_ROWS_DEFAULT,
     auto_chunk_threshold_rows: int = AUTO_CHUNK_THRESHOLD_ROWS_DEFAULT,
@@ -80,9 +77,9 @@ def capture_physical_plan_inputs(
     from decoy_engine.execution._pipeline_routing_fk_dtype import fk_out_of_core_dtype_hazard
     from decoy_engine.execution._pipeline_routing_signals import out_of_core_routing_signals
     from decoy_engine.execution._substrate import (
+        SUBSTRATE,
         require_bool,
         require_positive_int,
-        resolve_substrate,
         select_execution_adapter,
     )
     from decoy_engine.execution._transforms_admission import admission_signals, routing_profile
@@ -114,13 +111,8 @@ def capture_physical_plan_inputs(
     # construction is cheap and side-effect-free (it does not execute), so
     # calling it purely for its validation side effect matches production's
     # own "adapter selection runs up front" comment.
-    resolved_substrate = resolve_substrate(substrate)
-    select_execution_adapter(
-        substrate=resolved_substrate,
-        fpe_chunk_count=fpe_chunk_count,
-        max_workers=max_workers,
-        fallback_to_pandas=fallback_to_pandas,
-    )
+    resolved_substrate = SUBSTRATE
+    select_execution_adapter(fpe_chunk_count=fpe_chunk_count)
     require_bool("auto_chunk", auto_chunk)
     require_positive_int("chunk_size_rows", chunk_size_rows)
     require_positive_int("auto_chunk_threshold_rows", auto_chunk_threshold_rows)
@@ -263,8 +255,6 @@ def capture_physical_plan_inputs(
         use_byte_estimate_routing=use_byte_estimate_routing,
         use_probe_routing=use_probe_routing,
         fpe_chunk_count=fpe_chunk_count,
-        max_workers=max_workers,
-        fallback_to_pandas=fallback_to_pandas,
         out_of_core_facts=out_of_core_facts,
         native_companion_reason=native_companion_reason,
         engine_version=engine_version,

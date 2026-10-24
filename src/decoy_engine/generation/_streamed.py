@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING, Any
 import pyarrow as pa
 import pyarrow.compute as pc
 
+from decoy_engine.progress import get_active_channel
 from decoy_engine.generation._admission import PlanAdmission, classify_plan
 from decoy_engine.generation._bounds import (
     accumulator_bytes,
@@ -417,6 +418,8 @@ def run_generation(
                 widths[c["name"]] = width
         consume(name, schema, _table_batches(t, schema, lay.sizes(), streams, widths, collectors))
 
+    _pg = get_active_channel()
+
     def generate(consume: Callable[[str, pa.Schema, Iterator[pa.RecordBatch]], None]) -> None:
         with ExitStack() as run_stack:
             if layout_bytes:
@@ -454,7 +457,9 @@ def run_generation(
                                 f"accumulator:{name}", accumulator_bytes(rows, payloads)
                             ).release
                         )
+                    _pg_started = _pg.phase_start("generate", table=name, rows_in=rows)
                     _consume_table(t, schema, layout[name], collectors, consume, stage)
+                    _pg.phase_finish("generate", _pg_started, table=name, rows_out=rows)
                 for col_name, pool in collectors.items():
                     key_pools[(name, col_name)] = pool.seal()
                 counts[name] = rows
@@ -464,12 +469,12 @@ def run_generation(
 
         with OutputPublish(sink, True, False) as publish:
             publish.open()
-            generate(lambda n, s, b: sink.write_batches(n, b, schema=s))
+            generate(lambda n, s, b: sink.write_batches(n, _pg.count_rows(n, b), schema=s))
             publish.commit()
         return GenerationResult("streamed", reason, counts, None, ledger.peak_bytes)
 
     def accumulate(name: str, schema: pa.Schema, batches: Iterator[pa.RecordBatch]) -> None:
-        batch_list = list(batches)
+        batch_list = list(_pg.count_rows(name, batches))
         out[name] = (
             pa.Table.from_batches(batch_list, schema=schema) if batch_list else schema.empty_table()
         )

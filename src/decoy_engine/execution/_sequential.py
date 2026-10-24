@@ -139,6 +139,7 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
+from decoy_engine.progress import get_active_channel
 from decoy_engine.errors import RowErrorsFailedError
 from decoy_engine.execution._adapter import ExecutionResult, StrategyContext
 from decoy_engine.execution._errors import ExecutionError
@@ -376,6 +377,9 @@ def run_sequential(
         with use_collector(collector):
             for table in table_order:
                 src = source_loader(table)
+                _pg = get_active_channel()
+                _pg_rows_in = src.num_rows
+                _pg_started = _pg.phase_start("mask", table=table, rows_in=_pg_rows_in)
                 # Same guard as run(), table-local (FK children exempt via graph).
                 reject_null_bearing_int(plan, {table: src}, registry, graph)
                 reject_gated_hash_on_integer(plan, {table: src.schema}, registry, graph)
@@ -522,6 +526,9 @@ def run_sequential(
                 else:
                     outputs[table] = out
 
+                _pg.phase_finish(
+                    "mask", _pg_started, table=table, rows_in=_pg_rows_in, rows_out=out.num_rows
+                )
                 # Evict this table's wide frame + its pre-mask snapshots (the narrow
                 # maps it produced stay cached for downstream children).
                 del frames[table]

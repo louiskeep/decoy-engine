@@ -9,14 +9,12 @@ Public API (the contract CLI and platform code depend on):
     ExecutionContext  caller-provided runtime context (logger + telemetry)
     Logger            Protocol satisfied by stdlib loggers and Rich/DB-backed loggers
     TelemetryClient   Protocol for optional telemetry sinks
-    SchemaInspector   connector schema introspection (stub, Phase 2)
-    LicenseVerifier   license verification (stub)
     compile_plan      compile a validated config + Profile into a frozen Plan
                       (decoy_engine.plan)
     ExecutionAdapter / PandasExecutionAdapter /
     select_execution_adapter / get_default_executor:
                       the plan-to-data execution boundary; the pandas adapter is
-                      the default substrate. The caller runs
+                      the parity oracle (native kernels are route-chosen). The caller runs
                       `select_execution_adapter().run(plan, source) -> ExecutionResult`.
     generate_tables   (decoy_engine.generation.synthesize) table-from-schema
                       synthesis for generate-mode configs.
@@ -156,7 +154,6 @@ from decoy_engine.keyprovider import (
     SeedKeyProvider,
     WeakMaskSecret,
 )
-from decoy_engine.license import LicenseVerifier
 from decoy_engine.plan import compile_plan, job_seed_for_config, run_config_only_checks
 from decoy_engine.plan.validate import (
     PlanCheckError,
@@ -218,7 +215,16 @@ from decoy_engine.relationships import (
     check_orphan_fk_policy_completeness,
 )
 from decoy_engine.release import RELEASE_PHASE, ReleasePhase, is_pre_ga
-from decoy_engine.schema import SchemaInspector
+from decoy_engine.progress import (
+    CallbackSink,
+    PhaseEvent,
+    ProgressSink,
+    RateSample,
+    RouteEvent,
+    StructuredEventsSink,
+    TerminalEvent,
+    WarningEvent,
+)
 
 # Connector SDK.
 from decoy_engine.sdk import (
@@ -297,6 +303,14 @@ __all__ = [
     "CAP_SIGNED_URL",
     "CAP_STREAMING",
     "RELEASE_PHASE",
+    "CallbackSink",
+    "PhaseEvent",
+    "ProgressSink",
+    "RateSample",
+    "RouteEvent",
+    "StructuredEventsSink",
+    "TerminalEvent",
+    "WarningEvent",
     "SDK_VERSION",
     "SEED_PROTOCOL_VERSION",
     "VALIDATION_CODES",
@@ -343,7 +357,6 @@ __all__ = [
     "KeyedStrategyRequiresSecret",
     "LicenseError",
     "LicenseExpiredError",
-    "LicenseVerifier",
     "Logger",
     "MaskSecretError",
     "MissingMaskSecret",
@@ -372,7 +385,6 @@ __all__ = [
     "RelationshipEdge",
     "RelationshipGraph",
     "ReleasePhase",
-    "SchemaInspector",
     "SecretKeyProvider",
     "SeedKeyProvider",
     "SentinelFlag",

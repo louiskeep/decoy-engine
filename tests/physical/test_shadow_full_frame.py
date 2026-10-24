@@ -127,7 +127,6 @@ def _capture(config: dict[str, Any], sources: dict[str, pa.Table]) -> tuple[Any,
         engine_version=ENGINE_VERSION,
         execution_mode="full_frame",
         auto_chunk=False,
-        substrate="pandas",
     )
     plan = compile_physical_plan(inputs)
     return inputs, plan
@@ -150,7 +149,7 @@ def _build_ctx(
     ns_registry = build_namespace_registry(config, inputs.profile)
     projection_policy = resolve_unconfigured_column_policy(config)
     resolved_adapter = (
-        adapter if adapter is not None else select_execution_adapter(substrate="pandas")
+        adapter if adapter is not None else select_execution_adapter()
     )
     return ShadowContext.from_key_provider(
         plan=plan_override if plan_override is not None else inputs.plan,
@@ -350,7 +349,6 @@ def test_oracle_parity_outputs_warnings_row_errors(tmp_path: Path) -> None:
         config,
         sources,
         engine_version=ENGINE_VERSION,
-        substrate="pandas",
         execution_mode="full_frame",
         auto_chunk=False,
         key_provider=None,
@@ -390,7 +388,6 @@ def test_extra_resident_source_preserved_and_projection_warning_parity(tmp_path:
         config,
         sources,
         engine_version=ENGINE_VERSION,
-        substrate="pandas",
         execution_mode="full_frame",
         auto_chunk=False,
         key_provider=None,

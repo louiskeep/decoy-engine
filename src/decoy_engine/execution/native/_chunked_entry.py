@@ -31,6 +31,7 @@ from typing import Any
 
 import pyarrow as pa
 
+from decoy_engine.progress import get_active_channel
 from decoy_engine.execution import _chunked, _chunked_oracle
 from decoy_engine.execution import _chunked_bucket_perturb as bucket_perturb_gate
 from decoy_engine.execution import _chunked_dgrn as dgrn
@@ -654,7 +655,11 @@ def run_mask_chunked(
     chunk and typed later raises `ExecutionError(code="chunked_leading_null_type")`.
     """
     _validate_native_threads(native_threads)
-    return _run_chunked(
+    # Progress: account every yielded chunk on the active channel (bound by the
+    # caller, e.g. `run_pipeline(progress=...)`); a no-op when nothing is bound.
+    return get_active_channel().count_rows(
+        table,
+        _run_chunked(
         config,
         chunks,
         table=table,
@@ -668,6 +673,7 @@ def run_mask_chunked(
         native_threads=native_threads,
         route_evidence_sink=route_evidence_sink,
         pool_cache=pool_cache,
+        ),
     )
 
 
