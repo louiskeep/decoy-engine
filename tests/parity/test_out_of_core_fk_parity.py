@@ -662,8 +662,8 @@ def _build_fanout(
     refs_b: list[int | None],
 ) -> tuple[Any, dict[str, pa.Table], RelationshipGraph]:
     """One parent, two DISTINCT child tables each with their own FK edge to it
-    (not the `out_of_core_multi_parent_child_unsupported` shape, which is two
-    parents for one child)."""
+    (not the multi-parent shape, which is two parents for one child and is
+    merged first-hit-wins by `_multi_parent.resolve_incoming`)."""
     ns = "ns_fanout"
     seed = _seed_for(strategy, ns)
     parent = pa.table({"pk": pa.array([f"p{i}" for i in range(parent_rows)], type=pa.string())})

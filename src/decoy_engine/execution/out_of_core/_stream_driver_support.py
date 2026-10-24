@@ -40,8 +40,8 @@ def _fk_component_map(
 ) -> dict[str, tuple[StreamFkJoiner, int]]:
     """Map each FK child column to (its joiner, component index).
 
-    Well-defined because the compatibility gate rejects multiple parents for
-    one child FK tuple.
+    Well-defined because the runner resolves one representative edge per child
+    FK tuple (`_multi_parent.resolve_incoming`).
     """
     components: dict[str, tuple[StreamFkJoiner, int]] = {}
     for edge, joiner in zip(incoming_edges, joiners, strict=True):
