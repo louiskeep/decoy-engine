@@ -463,3 +463,39 @@ def finalize_validators_and_quarantine(
             quality_metrics["quarantine"] = quarantine_manifest(q_summary)
 
     return outputs, quarantine_removed
+
+
+def compute_storm_postmask(
+    execution_result: ExecutionResult,
+    *,
+    config: Mapping[str, Any],
+    sources: Mapping[str, pa.Table],
+) -> None:
+    """`run_storm: true` (E3b): run the STORM post-mask integrity checks over every
+    mask table and stamp the report under `quality_metrics["storm_postmask"]`.
+
+    The config key was accepted by the schema for a long time but nothing in the
+    spine honoured it, so a user who asked for the in-run check silently got
+    none. Report-only: findings never fail the run (the CLI's `--post-validate-
+    enforce` and `report integrity` are the enforcing surfaces). Runs only on the
+    full-frame finalize branch, which routing guarantees for an opted-in job
+    (see `_sequential_eligible`), so the whole output is resident here.
+    """
+    if not config.get("run_storm"):
+        return
+    from decoy_engine.storm.postmask import run_storm_post_mask
+
+    table_kinds = execution_result.table_kinds or {}
+    mask_tables = [
+        name
+        for name, table in execution_result.outputs.items()
+        if table_kinds.get(name, "mask") == "mask" and name in sources
+    ]
+    if not mask_tables:
+        return
+    report = run_storm_post_mask(
+        source_frames={name: sources[name].to_pandas() for name in mask_tables},
+        output_frames={name: execution_result.outputs[name].to_pandas() for name in mask_tables},
+        config=dict(config),
+    )
+    execution_result.quality_metrics["storm_postmask"] = report
