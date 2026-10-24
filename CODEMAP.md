@@ -113,7 +113,6 @@ Shared Python data engine for Decoy masking, generation, plan-compile execution,
 | `src/decoy_engine/reference_tables/data/us_zip3_population.parquet` | HHS-restricted 3-digit ZIP prefix table (SP-08). Schema: `id` (int64) + `zip3` (str). Contains the 17 3-digit ZIP prefixes whose geographic units have population below 20,000 per the Census-based determination (45 CFR 164.514(b)(2)(i)(B)). Loaded by `geo_generalize` via `load_table("us_zip3_population")`. |
 | `src/decoy_engine/generators/` | `columns.py` and `derivation.py` kept for V2 reuse; `generation/synthesize.py` imports `ColumnGenerator`. `derivation.py` exports `GenDeriveContext` (v6 per-column generation derivation) and `strategy_config_fingerprint`. `_distribution.py` holds distribution-snapshot sampler methods and `_formula.py` holds formula evaluation methods, both private mixins folded into `ColumnGenerator` (split from `columns.py`, F11a). |
 | `src/decoy_engine/walks/` | Cross-file / drift / inference helpers; consumed by `tests/integration/test_walks_*`. Not part of the public API. |
-| `src/decoy_engine/forecast/` | Empty (only `__pycache__`); the V1 FORECAST recommender was removed in S22. Safe to delete. |
 | `tests/` | `unit/`, `integration/golden/`, `integration/compat_corpus/`, `parity/`, `perf/`, `perf_fixtures/`, `benchmark/`, `privacy/`, `security/`, `sentry/`, `connectors/`, `snapshots/` |
 | `tests/integration/compat_corpus/` | Cross-version compatibility corpus: locked artifacts a later engine must still read (compatibility-contract section 3.1/3.2); `regenerate.py` mints the baseline |
 | `scripts/` | Dev/CI scripts; includes `check_compat_preflight.py` (compat pre-flight gate) and `prove_regression.py` (bugfix regression-proof gate) |
@@ -221,5 +220,4 @@ Shared Python data engine for Decoy masking, generation, plan-compile execution,
 | `.pytest_cache/`, `__pycache__/`, `.mypy_cache/`, `.ruff_cache/` | Generated |
 | `logs/`, `mappings/` | Runtime output |
 | `docs/_build/` | Generated docs |
-| `src/decoy_engine/forecast/` | Empty post-S22 (only `__pycache__`); pending deletion |
 | `tests/benchmark/calibration/results.md` | Read only for benchmark tasks |

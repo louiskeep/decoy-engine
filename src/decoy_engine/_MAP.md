@@ -1,47 +1,38 @@
-# decoy_engine Package Map
+# decoy_engine package map
 
-## One-Line Summary
+One line per package or module. The full navigation map with history is
+`CODEMAP.md` at the repo root; this file is the quick in-package index and a
+sentry (`tests/sentry/test_package_map_paths.py`) asserts every path here exists.
 
-Core data library used by the CLI and platform for masking, generation, graph execution, connectors, STORM, and FORECAST.
-
-## Package Map
-
-| Path | What Lives Here |
+| Path | What lives here |
 |---|---|
-| `__init__.py` | Public exports |
-| `context.py` | ExecutionContext, Logger protocol, structured event helpers |
-| `validation.py` | Public validation facade |
-| `exceptions.py` | Engine exception types |
-| `graph/` | Graph runtime, conversion, op registry, op modules |
-| `transforms/` | Masking strategies and registry |
-| `generators/` | Legacy generator, column generation, relationships |
-| `connectors/` | Legacy IO handlers and cloud/file connectors |
-| `storm/` | Profiling, detectors, sentinels, types |
-| `forecast/` | Recommendation types and recommender |
-| `walks/` | Schema walk/diff/hazard logic |
-| `disguises/` | Disguise YAML and loader |
-| `internal/` | Private validators, helpers, memory, and integrity support |
-| `schema/`, `license/` | Public-ish stubs; verify capability before using |
-
-## Hot Paths
-
-| Task | Start Here |
-|---|---|
-| Run graph | `graph/runner.py` |
-| Add graph op | `graph/ops/` and `graph/ops/__init__.py` |
-| Convert substrates | `graph/conversion.py` |
-| Validate config | `validation.py`, `internal/validator.py` |
-| Apply masks | `graph/ops/mask_op.py`, `transforms/registry.py` |
-| Source/target files | `graph/ops/source_file.py`, `target_file.py`, `_cloud_io.py` |
-| Cloud sources/targets | `graph/ops/source_s3.py`, `source_gcs.py`, `source_sftp.py`, targets |
-| STORM scan | `storm/profiler.py`, `storm/detectors.py` |
-| FORECAST recommend | `forecast/recommender.py` |
-
-## Gotchas
-
-| Gotcha | Note |
-|---|---|
-| Private internals | `internal/` can change; avoid external imports |
-| Hidden context coupling | Some graph exports use context state; inspect runner before changing |
-| Native engine declarations | Invalid declarations should become validation failures |
-| Row-wise paths | Generation/formula/STORM hot paths may need benchmarks |
+| `__init__.py` | Public API (`__all__` is the contract) |
+| `config/` | `PipelineConfig` and the source/target/table/relationship models |
+| `plan/` | `compile_plan` -> frozen `Plan`, seed envelope, plan-time checks |
+| `execution/` | `run_pipeline` spine, routes (full-frame oracle, unified slice, chunked dispatcher, sequential and out-of-core FK), strategy handlers, native companion bridge, transactional sink, capacity |
+| `progress.py` | Progress contract: `ProgressSink`, value-free events, `use_progress` |
+| `generation/` | The generation core (resident and streamed), pinned generation, pools |
+| `generators/` | `ColumnGenerator` (formula and cardinality bounds the V2 core reuses) |
+| `kernel/` | Backend-neutral Arrow masking kernels (hash, redact, truncate, passthrough) |
+| `transforms/` | Transform implementations the strategy handlers reuse (fpe, text_mask, code_set, derived, joint_mask, geo_generalize, group_key, windowed_date) |
+| `expressions/` | Closed-grammar parsers (`derived`, `when`) and the `formula` safe-eval |
+| `storm/` | Profiling, detectors, post-mask integrity checks, ML model pack |
+| `profile/` | Source profiling, readers (CSV, Parquet, fixed-width), fixed-width writer |
+| `quality/` | Fidelity report, distribution snapshot, DP fit |
+| `validators/` | Job-level validators (`validators:` block) |
+| `quarantine.py` | Quarantine-row routing (`quarantine:` block) |
+| `validation/`, `validation_result.py` | `validate_config` and the validation wire shape |
+| `relationships/` | Relationship graph, namespace registry, orphan policy |
+| `subset/` | FK-aware subsetting (preflight, plan, run) |
+| `providers_v2/`, `providers.py` | Provider registry and identifier adapters |
+| `identifiers.py`, `checksums.py`, `codesets/`, `reference_tables/` | Identifier families, check digits, code corpora, reference datasets |
+| `disguises/` | Compliance disguise bundles |
+| `determinism/`, `keyprovider.py`, `_reference_date.py` | Seed protocol, key derivation, reference-date anchoring |
+| `vault.py`, `unmask.py` | Token vault write and unmask |
+| `connectors/`, `sdk.py` | Connector SDK and in-tree file connectors (S3, GCS, SFTP, Postgres snapshot) |
+| `data_discovery.py` | Read-only SQL over output (DuckDB) |
+| `context.py`, `instrumentation/` | Caller context and `Logger` protocol; opt-in timing collector |
+| `errors.py` | Engine exception types |
+| `release.py` | `RELEASE_PHASE` / `is_pre_ga` |
+| `walks/` | Cross-file drift/inference helpers (platform-consumed, not public API) |
+| `internal/` | Private helpers (regex sentry enforces the boundary) |
