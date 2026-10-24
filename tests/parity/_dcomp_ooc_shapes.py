@@ -134,6 +134,46 @@ def strict(oracle: Any, run: OocRun) -> dict[str, dict[str, bool]]:
     return {t: sc.compare_strict(oracle.outputs[t], run.outputs[t]) for t in oracle.outputs}
 
 
+def without_pandas_key(table: pa.Table) -> pa.Table:
+    """`table` with ONLY the permitted D0-G1 `pandas` schema key removed; every other schema
+    key and every per-field key stays, so the strict comparator still sees them."""
+    metadata = dict(table.schema.metadata or {})
+    metadata.pop(b"pandas", None)
+    return table.replace_schema_metadata(metadata or None)
+
+
+def strict_modulo_pandas(oracle: Any, run: OocRun) -> dict[str, dict[str, bool]]:
+    """Per-table strict report with the oracle's `pandas` key removed and nothing else exempt:
+    the remaining schema metadata and the per-field metadata must be byte-equal."""
+    assert set(oracle.outputs) == set(run.outputs)
+    return {
+        t: sc.compare_strict(without_pandas_key(oracle.outputs[t]), run.outputs[t])
+        for t in oracle.outputs
+    }
+
+
+def assert_agrees(oracle: Any, run: OocRun) -> None:
+    """The D0-G1 contract exactly: the raw report differs on `field_metadata` alone, and with
+    the one permitted key removed every dimension, metadata included, agrees. The raw report
+    on its own would let unexpected per-field or schema metadata through, because the whole
+    dimension reads False either way."""
+    assert strict(oracle, run) == {t: METADATA_ONLY for t in oracle.outputs}
+    assert strict_modulo_pandas(oracle, run) == {t: ALL_TRUE for t in oracle.outputs}
+    for t in oracle.outputs:
+        assert sc.metadata_keys(oracle.outputs[t]) == ORACLE_META, t
+        assert sc.metadata_keys(run.outputs[t]) == OOC_META, t
+
+
+def assert_lane(run: OocRun, mode: str) -> None:
+    """The joiner `mode` must have constructed, so a lane comparison is never vacuous: the
+    resident path and the sink-batch lane build `ChildFkBatchJoiner` only, the forced reorder
+    lane builds `StreamFkJoiner` only."""
+    if mode == "sink-reorder":
+        assert (run.batch_joiners, run.reorder_joiners > 0) == (0, True), mode
+    else:
+        assert (run.batch_joiners > 0, run.reorder_joiners) == (True, 0), mode
+
+
 def warning_keys(warnings: Any) -> list[tuple[object, ...]]:
     return [(w.code, w.provider, w.column, w.detail) for w in warnings]
 
@@ -240,6 +280,11 @@ def bool_component_shape(policy: OrphanPolicy) -> s.Shape:
         child_k=["a", "b", "q"],
         child_n=[True, False, True],
     )
+
+
+def scalar_bool_orphan_shape(policy: OrphanPolicy) -> s.Shape:
+    """A scalar bool key WITH an orphan: the parent holds one of the two values only."""
+    return scalar_control_shape(policy, pa.bool_(), parent_n=[True], child_n=[True, False])
 
 
 def uint64_component_shape(policy: OrphanPolicy, *, values: tuple[int, int, int]) -> s.Shape:

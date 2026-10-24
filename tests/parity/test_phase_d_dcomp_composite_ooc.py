@@ -13,6 +13,7 @@ Resident path only; the sink path and the reorder lane are `test_phase_d_dcomp_c
 
 from __future__ import annotations
 
+import dataclasses
 from types import SimpleNamespace
 from typing import Any
 
@@ -29,7 +30,7 @@ from tests.parity import _d2b_shapes as s
 from tests.parity import _dcomp_ooc_shapes as o
 from tests.parity import _dcomp_shapes as d
 from tests.parity import _strict_compare as sc
-from tests.parity._d1a_hash_data import install_companion
+from tests.parity._d1a_hash_data import PythonReferenceKernel, install_companion
 from tests.parity._kernel_witness import force_companion_unavailable
 from tests.parity.test_out_of_core_fk_parity import _build_single_edge, _run_ooc, _run_oracle
 
@@ -55,13 +56,10 @@ SCALAR_CHILD_CODE = "out_of_core_composite_fk_scalar_child_unsupported"
 
 
 def _agree(shape: s.Shape, **kw: Any) -> tuple[Any, o.OocRun]:
-    """Both routes succeed and differ on `field_metadata` alone, by the D0-G1 literal."""
+    """Both routes succeed and differ on the oracle's `pandas` schema key alone (D0-G1)."""
     oracle = s.run_full(shape)
     run = o.run_ooc(shape, **kw)
-    assert o.strict(oracle, run) == {t: o.METADATA_ONLY for t in oracle.outputs}
-    for t in oracle.outputs:
-        assert sc.metadata_keys(oracle.outputs[t]) == o.ORACLE_META, t
-        assert sc.metadata_keys(run.outputs[t]) == o.OOC_META, t
+    o.assert_agrees(oracle, run)
     # The same warning objects; their cross-table ORDER is route-dependent (G9 below).
     assert o.sorted_warnings(run.warnings) == o.sorted_warnings(oracle.warnings)
     return oracle, run
@@ -111,16 +109,75 @@ def test_o3_output_is_independent_of_the_batch_size(
     _agree(s.composite_shape(policy), batch_rows=batch_rows)
 
 
-def test_o3_output_is_independent_of_the_native_thread_count(
+class _ThreadRecorder(PythonReferenceKernel):
+    """The stand-in, recording the `native_threads` each `derive_batch` call received."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.threads: set[int | None] = set()
+
+    def derive_batch(self, values: Any, *, native_threads: int | None = None, **kw: Any) -> Any:
+        self.threads.add(native_threads)
+        return super().derive_batch(values, native_threads=native_threads, **kw)
+
+
+def test_o3_native_threads_reach_the_kernel_and_the_stand_in_output_is_thread_invariant(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    install_companion(monkeypatch)
+    """Plumbing only: the stand-in ignores the thread count, so this proves `native_threads`
+    reaches every `derive_batch` call and the route's own output does not depend on it. Thread
+    invariance of the COMPILED kernel's tokens is `test_phase_d_dcomp_composite_ooc_real.py`."""
     shape = s.composite_shape(R)
-    one = o.run_ooc(shape, native_threads=1)
-    four = o.run_ooc(shape, native_threads=4)
+    runs: dict[int, o.OocRun] = {}
+    for threads in (1, 4):
+        kernel = _ThreadRecorder()
+        install_companion(monkeypatch, kernel)
+        runs[threads] = o.run_ooc(shape, native_threads=threads)
+        assert kernel.threads == {threads}
     for t in shape.sources:
-        assert four.outputs[t].equals(one.outputs[t], check_metadata=True), t
-    assert o.strict(s.run_full(shape), four) == {t: o.METADATA_ONLY for t in shape.sources}
+        assert runs[4].outputs[t].equals(runs[1].outputs[t], check_metadata=True), t
+    o.assert_agrees(s.run_full(shape), runs[4])
+
+
+# Contract controls: the metadata exemption is exactly the oracle's `pandas` schema key.
+
+
+def _with_outputs(run: o.OocRun, **tables: pa.Table) -> o.OocRun:
+    return dataclasses.replace(run, outputs={**run.outputs, **tables})
+
+
+_FIELD_METADATA_ONLY = {**d.ALL_TRUE, "field_metadata": False}
+_UNEXPECTED = {b"decoy_unexpected": b"1"}
+
+
+def test_the_metadata_contract_rejects_unexpected_field_metadata() -> None:
+    """Negative control: per-field metadata on a parent key column is outside the exemption.
+    The raw report alone is blind to it (the dimension reads False either way)."""
+    oracle, run = _agree(s.composite_shape(P))
+    table = run.outputs["P"]
+    idx = table.schema.get_field_index("k")
+    schema = table.schema.set(idx, table.schema.field(idx).with_metadata(_UNEXPECTED))
+    injected = _with_outputs(run, P=pa.Table.from_arrays(table.columns, schema=schema))
+    assert o.strict(oracle, injected)["P"] == o.METADATA_ONLY
+    assert o.strict_modulo_pandas(oracle, injected) == {"P": _FIELD_METADATA_ONLY, "C": d.ALL_TRUE}
+    with pytest.raises(AssertionError):
+        o.assert_agrees(oracle, injected)
+
+
+def test_the_metadata_contract_rejects_unexpected_schema_metadata() -> None:
+    """Negative control: a schema key other than the oracle's `pandas`, on either side."""
+    oracle, run = _agree(s.composite_shape(P))
+    injected = _with_outputs(run, P=run.outputs["P"].replace_schema_metadata(_UNEXPECTED))
+    assert o.strict(oracle, injected)["P"] == o.METADATA_ONLY
+    assert o.strict_modulo_pandas(oracle, injected) == {"P": _FIELD_METADATA_ONLY, "C": d.ALL_TRUE}
+    with pytest.raises(AssertionError):
+        o.assert_agrees(oracle, injected)
+    parent = oracle.outputs["P"]
+    extra = parent.replace_schema_metadata({**parent.schema.metadata, **_UNEXPECTED})
+    oracle_extra = SimpleNamespace(outputs={**oracle.outputs, "P": extra}, warnings=oracle.warnings)
+    assert o.strict_modulo_pandas(oracle_extra, run) == {"P": _FIELD_METADATA_ONLY, "C": d.ALL_TRUE}
+    with pytest.raises(AssertionError):
+        o.assert_agrees(oracle_extra, run)
 
 
 # O4 to O10: one key component per admitted dtype beside a hashed string component.
@@ -287,6 +344,7 @@ def test_d0_g2_nan_in_a_parent_key_component_is_null_on_the_oracle_and_nan_out_o
     oracle, run = s.run_full(shape), o.run_ooc(shape)
     report = o.strict(oracle, run)
     assert report == {"P": _NAN_PARENT_DIMS, "C": o.METADATA_ONLY}
+    assert o.strict_modulo_pandas(oracle, run)["C"] == d.ALL_TRUE
     assert oracle.outputs["P"].column("n").to_pylist() == [1.0, None]
     got = run.outputs["P"].column("n").to_pylist()
     assert got[0] == 1.0 and got[1] != got[1]  # NaN
@@ -301,6 +359,7 @@ def test_g5_zero_row_parent_is_typed_double_by_the_oracle_and_string_out_of_core
 ) -> None:
     oracle, run = s.run_full(o.empty_parent_shape(policy)), o.run_ooc(o.empty_parent_shape(policy))
     assert o.strict(oracle, run) == {"P": _WIDTH_DIMS, "C": o.METADATA_ONLY}
+    assert o.strict_modulo_pandas(oracle, run)["C"] == d.ALL_TRUE
     assert _signatures(oracle, run, "P") == ("k:double,j:double", "k:string,j:string")
     assert oracle.outputs["P"].num_rows == run.outputs["P"].num_rows == 0
     # Scalar control: a zero-row single-column parent shows the same oracle typing.
@@ -333,6 +392,7 @@ def test_g6_timestamp_child_component_is_widened_to_nanoseconds_by_the_oracle_on
     shape = o.timestamp_component_shape(policy)
     oracle, run = s.run_full(shape), o.run_ooc(shape)
     assert o.strict(oracle, run) == {"P": o.METADATA_ONLY, "C": _TS_CHILD_DIMS}
+    assert o.strict_modulo_pandas(oracle, run)["P"] == d.ALL_TRUE
     assert _signatures(oracle, run, "C") == ("k:string,n:timestamp[ns]", "k:string,n:timestamp[us]")
     # Same instants: the difference is the unit the oracle's pandas write-back picked.
     assert (
@@ -355,6 +415,7 @@ def test_g7_large_string_parent_component_keeps_its_width_out_of_core_only(
     shape = o.large_string_component_shape(policy)
     oracle, run = s.run_full(shape), o.run_ooc(shape)
     assert o.strict(oracle, run) == {"P": _WIDTH_DIMS, "C": o.METADATA_ONLY}
+    assert o.strict_modulo_pandas(oracle, run)["C"] == d.ALL_TRUE
     assert _signatures(oracle, run, "P") == ("k:string,n:string", "k:string,n:large_string")
     control = o.scalar_control_shape(
         policy, pa.large_string(), parent_n=["x", "y"], child_n=["x", "w"]
@@ -409,23 +470,51 @@ def test_g9_warning_order_across_tables_is_route_dependent_while_the_warning_set
     ]
 
 
+# G8 is route-level, not composite-specific: the scalar control (a bool key whose parent holds
+# one of the two values) reproduces both routes' behaviour exactly.
+_G8_ORPHAN_SHAPES = {"composite": o.bool_component_shape, "scalar": o.scalar_bool_orphan_shape}
+
+
+@pytest.mark.parametrize("kind", sorted(_G8_ORPHAN_SHAPES))
 @pytest.mark.parametrize("policy", [P, R])
-def test_g8_bool_component_fails_closed_out_of_core(policy: OrphanPolicy) -> None:
-    shape = o.bool_component_shape(policy)
+def test_g8_bool_key_with_an_orphan_fails_closed_out_of_core(
+    policy: OrphanPolicy, kind: str
+) -> None:
+    shape = _G8_ORPHAN_SHAPES[kind](policy)
     assert o.raised(lambda: o.run_ooc(shape))[:2] == (ExecutionError, o.FK_DTYPE_CODE)
 
 
 @pytest.mark.xfail(
     strict=True,
     raises=pa.ArrowInvalid,
-    reason="G8: the oracle crashes uncoded on a preserved orphan bool component (fk_key_value's "
-    "bool-to-int fold); an owner decision item. Fixing the oracle turns this XPASS and the "
-    "test is then deleted with the SEMANTIC_DIFFERENCES row.",
+    reason="G8: the oracle crashes uncoded on a preserved orphan bool key, scalar or composite "
+    "(fk_key_value's bool-to-int fold); an owner decision item. Fixing the oracle turns this "
+    "XPASS and the test is then deleted with the SEMANTIC_DIFFERENCES row.",
 )
+@pytest.mark.parametrize("kind", sorted(_G8_ORPHAN_SHAPES))
 @pytest.mark.parametrize("policy", [P, R])
-def test_g8_the_oracle_raises_a_coded_error_on_a_bool_component(policy: OrphanPolicy) -> None:
+def test_g8_the_oracle_raises_a_coded_error_on_a_bool_key_with_an_orphan(
+    policy: OrphanPolicy, kind: str
+) -> None:
     with pytest.raises(ExecutionError):
-        s.run_full(o.bool_component_shape(policy))
+        s.run_full(_G8_ORPHAN_SHAPES[kind](policy))
+
+
+@pytest.mark.parametrize("policy", [P, R])
+def test_g8_control_a_fully_matched_bool_key_agrees_on_both_routes(policy: OrphanPolicy) -> None:
+    """The quirk is the orphan, not the type: matched bool keys agree strictly on both shapes."""
+    oracle, run = _agree(
+        o.component_shape(
+            policy, pa.bool_(), parent_n=[True, False], child_k=["a", "b"], child_n=[True, False]
+        )
+    )
+    assert _signatures(oracle, run, "C") == ("k:string,n:bool", "k:string,n:bool")
+    control = o.scalar_control_shape(
+        policy, pa.bool_(), parent_n=[True, False], child_n=[True, False]
+    )
+    co, cr = s.run_full(control), o.run_ooc(control)
+    o.assert_agrees(co, cr)
+    assert _signatures(co, cr, "C") == ("n:bool", "n:bool")
 
 
 # Section 6: declines, coded and caller-visible.

@@ -27,8 +27,8 @@ P, R, W = OrphanPolicy.PRESERVE, OrphanPolicy.REMAP, OrphanPolicy.WARN
 def _both_lanes(shape: s.Shape, tmp_path: Path, **kw: object) -> tuple[o.OocRun, o.OocRun]:
     batch = o.run_ooc(shape, "sink-batch", tmp_path=tmp_path / "batch", **kw)  # type: ignore[arg-type]
     reorder = o.run_ooc(shape, "sink-reorder", tmp_path=tmp_path / "reorder", **kw)  # type: ignore[arg-type]
-    assert (batch.batch_joiners > 0, batch.reorder_joiners) == (True, 0)
-    assert (reorder.batch_joiners, reorder.reorder_joiners > 0) == (0, True)
+    o.assert_lane(batch, "sink-batch")
+    o.assert_lane(reorder, "sink-reorder")
     return batch, reorder
 
 
@@ -44,7 +44,7 @@ def _lanes_agree_with_the_oracle(shape: s.Shape, tmp_path: Path, **kw: object) -
     batch, reorder = _both_lanes(shape, tmp_path, **kw)
     _lanes_equal(batch, reorder)
     for run in (batch, reorder):
-        assert o.strict(oracle, run) == {t: o.METADATA_ONLY for t in oracle.outputs}
+        o.assert_agrees(oracle, run)
         assert o.sorted_warnings(run.warnings) == o.sorted_warnings(oracle.warnings)
 
 
@@ -95,3 +95,4 @@ def test_o12_empty_and_all_null_children_take_the_fixed_string_type_on_the_sink_
     assert sc.schema_signature(batch.outputs["C"]) == "k:string,j:string"
     assert batch.outputs["C"].to_pydict() == oracle.outputs["C"].to_pydict()
     assert o.strict(oracle, batch)["P"] == o.METADATA_ONLY
+    assert o.strict_modulo_pandas(oracle, batch)["P"] == d.ALL_TRUE

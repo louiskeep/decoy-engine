@@ -1,17 +1,24 @@
 """Phase D / Dcomp-OOC: the compiled companion on composite FK out-of-core (companion present).
 
-The stand-in suites prove routing; this one proves the real kernel's tokens on composite
-parent key components are the Python tokens byte for byte, on all three run modes, so the
-strict agreement with the oracle holds with the shipped kernel and not only with a double.
-Skipped where the companion is not installed.
+The stand-in suites prove routing and consumption: the native-TAGGED result is the array the
+batch carries. The tag there is applied by the harness around a Python stand-in, so it is not
+proof that a compiled kernel executed. This file is that proof: the loaded kernel is the
+compiled wrapper at the ABI the engine requires, the route's evidence names `rust_companion`,
+and the kernel's tokens on composite parent key components equal the oracle's and the
+companion-hidden Python route's byte for byte, on every run mode, at 1 and 4 native threads
+and at every batch size the resident suite pins, with the lane each mode must build asserted.
+Skipped where the companion is not installed or does not load at the engine's ABI.
 """
 
 from __future__ import annotations
 
+import functools
 from pathlib import Path
+from typing import Any
 
 import pytest
 
+from decoy_engine.execution.native import _crypto_ext
 from decoy_engine.execution.native._crypto_ext import (
     CryptoExtensionUnavailableError,
     load_compiled_crypto_kernel,
@@ -20,9 +27,14 @@ from decoy_engine.relationships._graph import OrphanPolicy
 from tests.parity import _d2b_shapes as s
 from tests.parity import _dcomp_ooc_shapes as o
 from tests.parity import _dcomp_shapes as d
+from tests.parity._d1a_hash_data import PythonReferenceKernel
 from tests.parity._kernel_witness import force_companion_unavailable
 
 P, R, W = OrphanPolicy.PRESERVE, OrphanPolicy.REMAP, OrphanPolicy.WARN
+ENGINE_ABI = "decoy-native-abi-3"
+BATCH_SIZES = [1, 2, 3, None]
+BATCH_IDS = ["rows1", "rows2", "rows3", "default"]
+THREADS = [1, 4]
 
 
 def _companion_loads() -> bool:
@@ -33,7 +45,9 @@ def _companion_loads() -> bool:
     return True
 
 
-pytestmark = pytest.mark.skipif(not _companion_loads(), reason="compiled companion not installed")
+pytestmark = pytest.mark.skipif(
+    not _companion_loads(), reason="compiled companion not installed at the engine's ABI"
+)
 
 _SHAPES = {
     "composite-remap": lambda: s.composite_shape(R),
@@ -45,19 +59,47 @@ _SHAPES = {
 }
 
 
+@functools.cache
+def _oracle(name: str) -> Any:
+    """The oracle does not see the run mode, thread count or batch size: one run per shape."""
+    return s.run_full(_SHAPES[name]())
+
+
+def test_the_loaded_companion_is_the_compiled_kernel_at_the_engine_abi() -> None:
+    """The evidence below is proof of the compiled kernel only if the loaded object IS the
+    compiled wrapper (never the stand-in) and the binary reports the ABI the engine requires."""
+    from decoy_engine_native import _kernel
+
+    kernel = load_compiled_crypto_kernel()
+    assert type(kernel).__name__ == "_CompiledKeyedDerivationKernel"
+    assert not isinstance(kernel, PythonReferenceKernel)
+    assert _kernel.abi_version() == _crypto_ext._EXPECTED_ABI_VERSION == ENGINE_ABI
+
+
+@pytest.mark.parametrize("batch_rows", BATCH_SIZES, ids=BATCH_IDS)
+@pytest.mark.parametrize("native_threads", THREADS, ids=["threads1", "threads4"])
 @pytest.mark.parametrize("mode", o.MODES)
 @pytest.mark.parametrize("name", sorted(_SHAPES))
 def test_real_kernel_equals_the_oracle_and_the_python_route(
-    name: str, mode: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    name: str,
+    mode: str,
+    native_threads: int,
+    batch_rows: int | None,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     shape = _SHAPES[name]()
-    native = o.run_ooc(shape, mode, tmp_path=tmp_path / "native", batch_rows=2)
+    kw: dict[str, Any] = {"batch_rows": batch_rows, "native_threads": native_threads}
+    native = o.run_ooc(shape, mode, tmp_path=tmp_path / "native", **kw)
+    o.assert_lane(native, mode)
     backends = {e["executed_backend"] for e in o.hash_evidence(native) if e["path"] == "mask_batch"}
     assert backends == {"rust_companion"}
-    oracle = s.run_full(shape)
-    assert o.strict(oracle, native) == {t: o.METADATA_ONLY for t in oracle.outputs}
+    oracle = _oracle(name)
+    o.assert_agrees(oracle, native)
     assert o.sorted_warnings(native.warnings) == o.sorted_warnings(oracle.warnings)
     force_companion_unavailable(monkeypatch)
-    python = o.run_ooc(shape, mode, tmp_path=tmp_path / "python", batch_rows=2)
+    python = o.run_ooc(shape, mode, tmp_path=tmp_path / "python", **kw)
+    o.assert_lane(python, mode)
     for table in shape.sources:
         assert native.outputs[table].equals(python.outputs[table], check_metadata=True), table
+    assert o.sorted_warnings(python.warnings) == o.sorted_warnings(native.warnings)

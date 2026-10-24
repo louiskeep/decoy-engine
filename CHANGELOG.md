@@ -14,7 +14,9 @@ minimum engine version it was tested against via its
 The out-of-core FK route's `orphan_fk_violation` error (orphan policy `fail` with a genuine
 orphan) now carries the same message as the full-frame and sequential routes ("N orphan
 row(s) in <child>.<columns> reference no parent key in <parent>.<columns>
-(orphan_policy=fail)."); the code is unchanged. A composite FK chain (a composite child
+(orphan_policy=fail)."); the code is unchanged, and every route (full-frame, sequential, both
+out-of-core lanes, the mixed generate-parent bridge) now builds it through the one producer
+`_fk_resolve.orphan_fk_violation_error`. A composite FK chain (a composite child
 used as a parent key) is declined out-of-core with the new code
 `out_of_core_composite_fk_chain_unsupported` instead of `out_of_core_parent_seed_missing`;
 the job runs on the sequential route as before. Composite FK groups out-of-core are now
