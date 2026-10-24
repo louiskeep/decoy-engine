@@ -96,3 +96,19 @@ No difference. An admitted SEQ `fpe` payload column (exact `pa.string()`, no `ch
 ## Phase D / D2c-ii: SEQ `categorical` on the compiled index kernel
 
 Same accepted NFC divergence as hash, now on the SEQ route. An admitted deterministic SEQ `categorical` payload column (string source, namespaced, buildable CDF, not an FK key) is byte-identical to the Python handler on every strict dimension EXCEPT that, like hash and like categorical on the OOC/chunked routes, the keyed index derives from the NFC-normalized source value, so source text with a codepoint newer than the running Python's Unicode version can select a different category on the companion (canonical) than on Python. This is the pre-existing categorical divergence extended to the sequential route, not a new one. A non-deterministic / non-string / non-namespaced / unbuildable-CDF config, and a `categorical` FK key, decline to Python. Pinned by `test_phase_d_d2c_ii_cat_real.py` (`test_post_python_version_text_follows_the_native_normalization`, `test_the_python_handler_keeps_the_older_normalization`, strict-dimension parity).
+
+## Phase D / Dcomp-OOC: composite FK on the out-of-core route (strict)
+
+Plan: `docs/plans/2026-10-24-phase-d-dcomp-composite-ooc.md`. Pinned by `tests/parity/test_phase_d_dcomp_composite_ooc*.py`. The canonical `composite_fk_group` shape is strictly equal to the oracle on every dimension but `field_metadata` (D0-G1) across the orphan policies, batch sizes, both lanes, both output paths and thread counts; the `orphan_fk_violation` raise now carries the oracle's message on the out-of-core route too (one producer, `_fk_resolve.orphan_fk_violation_error`). The differences below are pre-existing and route-level (each has a scalar single-column control beside it); none is fixed by Dcomp-OOC and each needs its own resolve-or-accept decision like the D0 gaps.
+
+| Gap | Strict delta today | Pinned by |
+|---|---|---|
+| G5 zero-row parent | the oracle types a zero-row hashed parent key column `double` (pandas empty-frame default), OOC `string`; the child agrees | `test_g5_*` |
+| G6 timestamp child component | a `timestamp[us]` key component comes back `timestamp[ns]` on the oracle's child (pandas write-back) and `timestamp[us]` out-of-core; the parent agrees; the instants are equal | `test_g6_*` |
+| G7 large_string parent component | a `large_string` passthrough parent key keeps its width out-of-core and narrows to `string` on the oracle; the child is `string` on both | `test_g7_*` |
+| G8 bool component | a preserved orphan bool component (reachable only through a composite tuple) crashes the oracle with an uncoded `pyarrow.ArrowInvalid`; OOC fails closed with `out_of_core_fk_key_dtype_unsupported` | `test_g8_*` |
+| G9 warning order | the same warning objects, emitted in a route-dependent order across tables on all three routes (oracle: node warnings then projection warnings in source order; SEQ and OOC: per table in topological order, and differently within a table) | `test_g9_*` |
+
+Sanctioned out-of-core rejections for a composite component (oracle succeeds, SEQ handles the job): any `uint64` component and any `decimal` component raise `out_of_core_fk_key_dtype_unsupported` at joiner construction, because `_batch_join._python_roundtrip_type` has no value-independent fixed type for them. The static gate cannot see dtypes, so a job routed out-of-core by size fails with that code and nothing is published; the caller runs it with `execution_mode="sequential"`.
+
+Declines: the scalar-child double-masking shape stays `out_of_core_composite_fk_scalar_child_unsupported`; a composite CHAIN (a composite child used as a parent key) is now `out_of_core_composite_fk_chain_unsupported` instead of the misleading `out_of_core_parent_seed_missing`, and routes to the sequential route.

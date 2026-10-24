@@ -438,12 +438,28 @@ def _check_edge(
     for parent_column in edge.parent_columns:
         parent_seed = _column_seed(plan, edge.parent_table, parent_column)
         if parent_seed is None:
-            rejections.append(
-                OutOfCoreRejection(
-                    "out_of_core_parent_seed_missing",
-                    f"parent key {edge.parent_table}.{parent_column} is not in the plan.",
+            if _is_composite_group_member(plan, edge.parent_table, parent_column):
+                # A composite CHAIN: this parent key is itself a composite FK child, so the
+                # planner compiled it into a group with no scalar seed per member. The route
+                # mints REMAP keys from the parent member's own seed, which does not exist,
+                # and admitting matched-only chains would let the orphan policy pick the
+                # route. The sequential route runs matched-only chains natively.
+                rejections.append(
+                    OutOfCoreRejection(
+                        "out_of_core_composite_fk_chain_unsupported",
+                        f"parent key {edge.parent_table}.{parent_column} is a member of a "
+                        "composite FK group (a composite child used as a parent key); the "
+                        "out-of-core route has no per-member seed to resolve a composite "
+                        "chain from. Falls back to sequential.",
+                    )
                 )
-            )
+            else:
+                rejections.append(
+                    OutOfCoreRejection(
+                        "out_of_core_parent_seed_missing",
+                        f"parent key {edge.parent_table}.{parent_column} is not in the plan.",
+                    )
+                )
         elif parent_seed.strategy not in _INITIAL_SUPPORTED_STRATEGIES:
             rejections.append(
                 OutOfCoreRejection(
@@ -469,3 +485,11 @@ def _column_seed(plan: Plan, table: str, column: str) -> ColumnSeed | None:
             if col_name == column:
                 return col_seed
     return None
+
+
+def _is_composite_group_member(plan: Plan, table: str, column: str) -> bool:
+    for table_name, table_seed in plan.seed_envelope.per_table:
+        if table_name != table:
+            continue
+        return any(column in group.coherent_columns for _key, group in table_seed.per_group)
+    return False

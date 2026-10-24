@@ -1,0 +1,116 @@
+Status: plan (Phase D / Dcomp build-slice 2 of 2: composite FK on the OUT-OF-CORE route to the strict section-6 contract. rev 1, pre-gate. Written by the remote-agent engine track (ROADMAP A-9); built tests-first on `feat/phase-d-dcomp`; the owner's two-model plan gate runs on this document and its findings are folded as later revisions.)
+
+# Phase D / Dcomp-OOC: composite FK strict parity on the out-of-core route
+
+Rules consulted: dev-rules `00-universal.md`, `risk-and-exceptions.md`, `development-loop.md`, `documentation.md`, `reuse-first.md`, `testing.md`; engine `CLAUDE.md` (established methodology, 600/700 LOC census, `internal/` boundary, comments explain why, pre-GA hard delete, no em-dashes); `docs/compatibility-contract.md` (section 3 frozen surfaces, section 9 checklist). Grounding: the Phase D program plan `docs/plans/2026-10-10-phase-d-fk-routes-program.md` (section 3 invariants, section 4 "Composite / multi-col" row, section 6 per-executor contract, section 7 Dcomp ID); the shipped Dcomp SEQ slice `docs/plans/2026-10-13-phase-d-dcomp-composite-seq.md` (sections 3 and 8 hand this OOC cell off explicitly); the D0 strict baseline `tests/parity/test_phase_d_d0_baseline.py` and its gaps in `tests/parity/SEMANTIC_DIFFERENCES.md`; a probe run of every shape below against BOTH routes at `origin/main @ 0b8219f` (2026-10-24). Base: `origin/main @ 0b8219f`. Branch: `feat/phase-d-dcomp`.
+
+## 0. What is already true on main, and what this slice is
+
+Composite FK (`composite_fk_group`, `_fk_keys.py:210`, planner-compiled as one `GroupSeed` over the child key) is DONE on the sequential and full-frame routes: D2b (#242) made every composite parent key component hash-native with the child inheriting the tuple and REMAP minting per component on the kernel; #251 extended the key-native set to fpe; the Dcomp SEQ slice (#249) proved SEQ equals the oracle strictly across orphan policies, the errored-parent cascade, wide integers, empty/all-null inputs and production routing. Its section 8 left exactly one Dcomp program cell open: **strict (non-normalized) composite acceptance on the out-of-core route**, which today is covered only by the value-normalized harness (`test_out_of_core_fk_parity.py::test_composite_fk_group_orphan_and_partial_null_parity`, folds NaN, width and metadata).
+
+This slice closes that cell. It is the "cross-chunk / cross-batch composite tuple keying" item the program flags HIGHEST risk, because the out-of-core route is the only one that never holds a whole child table: a composite tuple is keyed across batch boundaries, through DuckDB, against a parent relation deduplicated across the parent's own batches. The claim to prove is that the per-row injective tuple encoding (`fk_join_key_tuple`, length-prefixed components) plus DuckDB's hash join reproduce the oracle's in-memory dict lookup exactly, for every batch size, both OOC lanes (`_batch_join` and the external-reorder driver), both output paths (resident and sink), with the companion kernel producing the parent key tokens.
+
+Not a new-kernel slice. Program section 0 is explicit: FK key resolution on OOC is DuckDB's join, payload and parent-key masking are the Rust kernels (D1a). The composite tuple is composed in Python/Arrow outside the kernel on every route today; a Rust tuple-keying kernel would be a throughput item, not a parity one, and is recorded in section 9, not built.
+
+## 1. Risk
+
+R2 (privacy/RI-critical: composite FK key correctness is GATE-TQ0 100% crypto/RI; a wrong tuple match leaks a raw key or breaks a join). Per program section 3 each HIGH slice gets its own adversarial gate. Acceptance cases are adversarial by construction: OOC versus the pandas oracle on the strict nine-dimension comparator (`_strict_compare`), with warnings, errors, quality evidence and native provenance each asserted on its own channel, every expectation a literal.
+
+## 2. Guarantee and non-goals
+
+**Guarantee.** For every composite FK job the out-of-core gate admits, the out-of-core route's output is strictly identical to the full-frame oracle's on `schema_structure`, `type_width`, `column_order`, `row_count`, `row_set`, `row_order`, `cellwise_values` and `null_vs_nan`, its warnings are the same multiset of byte-identical objects (their cross-table ORDER is a pinned pre-existing route difference, G9), its `orphan_fk_violation` raise carries the oracle's code AND message, and where the oracle raises the route raises the same code. The one strict dimension that differs is `field_metadata`, by exactly the D0-G1 `pandas` schema-metadata key, pinned as a literal and never widened. Every input class below either meets that guarantee or is a coded decline (section 6) or a pinned pre-existing gap (section 5) with an owner decision item; nothing is a silent fallback.
+
+Invariance proven: batch size (1, 2, 3, default 65 536), lane (`_batch_join`, forced external reorder), output path (resident, sink), `native_threads` (1, 4), companion present vs hidden (Python kernels), and partial-null tuples straddling batch boundaries.
+
+**Non-goals.** No change to `_fk_resolve` precedence, `_parent_map`, the compat gate's admitted strategy sets, `_batch_join` typing rules, or routing. No OOC REMAP-native minting (section 9). No fix to any D0 gap or to the new pre-existing gaps in section 5 (each is an owner decision). No SEQ or FF change. No multi-parent (that is Dmp, the next slice). No Rust change.
+
+## 3. FRAME: how a composite tuple is keyed out-of-core today (verified at 0b8219f)
+
+- Parent side: `mask_batch` masks each composite parent key component as an ordinary column (hash on the companion via `OocHashRun.prepare_table`, D1a); after the table is emitted, `build_parent_key_relation_aligned` (`_relation.py`) stages `(row_nr, fk_join_key_tuple(source_tuple), masked_components...)` in bounded batches and DuckDB dedups last-write-wins through the three-step STAGE / `max(row_nr) GROUP BY key` / JOIN-BACK form (fixed-size spillable state). A parent tuple with any null component never enters the relation.
+- Child side, batch lane: `ChildFkBatchJoiner` (`_batch_join.py`) encodes each child batch's tuples with the SAME `fk_join_key_tuple` (a tuple with a null component gets a null join key), LEFT JOINs the materialized relation per batch, and `_append_output_batch` (`_join.py`) applies the policy per row from the match indicator. Output types are fixed up front from schemas (`_resolve_output_types`), fail-closed where no byte-identical fixed type exists.
+- Child side, reorder lane: `StreamFkJoiner` (`_stream_join.py`) stages the same encoded keys to an Arrow IPC spill in phase 1, runs one unordered plan-verified join per edge, restores order through `BoundedExternalSorter`, and resolves with the same `_append_output_batch`. Its contract is "equals `_batch_join` exactly" (`test_out_of_core_route_seam_parity.py`).
+- Oracle: `_resolve_fk_node` builds `child_keys` as tuples of `fk_key_value` per component (any null component makes the row null) and resolves through the dict `parent_map` with `resolve_fk_keys`. REMAP mints through the FIRST edge's parent seeds per component (`make_remap_fn`); OOC mints per batch with `mask_column` over the fk_key_value-normalized component (`_batch_remap_values`), Python hash, recorded as `fk_key_hash_remap_native_deferred`.
+- Admission: `check_out_of_core_compatibility` admits a `composite_fk_group` whose columns are all covered by an edge (`_composite_group_join_covered`), declines the scalar-child double-masking shape (`out_of_core_composite_fk_scalar_child_unsupported`, CF2, a recorded raw-value leak), and declines a composite CHAIN (a composite child that is also a parent) with `out_of_core_parent_seed_missing` because the group has no scalar seed per member (so REMAP could not mint). Routing (`decide_execution_route`) then sends a declined job to SEQ.
+- Established pattern (cited in the implementing modules): the single surrogate join key built from length-prefixed components is the composite-key surrogate pattern (Kimball dimensional modelling; `dbt_utils.generate_surrogate_key`), executed by DuckDB's grace/hybrid hash join with graceful spill; nothing is re-implemented here.
+
+## 4. Probe-grounded acceptance ledger (every literal was run at 0b8219f on both routes)
+
+`AGREE` = all nine strict dimensions equal except `field_metadata` (oracle `[b"pandas"]`, OOC `[]`, the D0-G1 literal). Shapes reuse `tests/parity/_d2b_shapes.py` (`composite_shape`, `mixed_composite_shape`, `composite_chain_shape`) and `tests/parity/_dcomp_shapes.py` (`int_component_shape`, `float_int_orphan_shape`, `float_parent_int_child_shape`, `golden_composite_shape`, `composite_tables`, `key_table`); this slice adds the OOC runner (resident / sink-batch / sink-reorder) and the component-dtype builders.
+
+| ID | Shape (P.(k, j or n) -> C group) | Policies | Oracle | OOC | Pinned result |
+|---|---|---|---|---|---|
+| O1 | string hash x string hash, matched + orphan + partial-null row | PRESERVE, REMAP, WARN | ok | ok | AGREE; WARN emits the identical `orphan_fk` warning object (`column="k,j"`, `orphan_rows=1`, parent/child identifiers) |
+| O2 | same, FAIL with one genuine orphan | FAIL | raise | raise | both `orphan_fk_violation`; messages DIFFER today (section 7, P1 unifies them) |
+| O3 | O1 at `batch_rows` 1, 2, 3; `native_threads` 4 | REMAP | ok | ok | AGREE on every setting; output independent of batch size and thread count |
+| O4 | hash string + INTEGER passthrough component, null-bearing parent and child `n`, `int64` | PRESERVE, REMAP, WARN | ok | ok | AGREE, `n:int64` on both tables |
+| O5 | O4 with `n = 2**62 + 1` beside a matched `2**62 + 1` | all three | ok | ok | AGREE, exact int64, no float rounding |
+| O6 | `int32` / `int16` component | all three | ok | ok | AGREE; parent keeps its width, child FK component is `int64` on BOTH routes |
+| O7 | FLOAT component, whole-valued small orphan (5.0) and fractional orphan (2.5) | all three | ok | ok | AGREE, `n:double` |
+| O8 | FLOAT component, whole-valued orphan `2**62` beside a matched float | all three | raise | raise | both `out_of_core_fk_key_dtype_unsupported` (DE-10 symmetric fail-closed) |
+| O9 | float parent, int64 child, orphan `2**53 + 1` | all three | raise | raise | both `out_of_core_fk_key_dtype_unsupported`; the small-orphan control (7) is AGREE `n:double` |
+| O10 | `date32` component | PRESERVE, REMAP | ok | ok | AGREE, `date32[day]` on both |
+| O11 | `composite_key` golden (3-column hash key, `termination_date` date32 passthrough payload) with one injected orphan | PRESERVE, REMAP, WARN | ok | ok | AGREE; FAIL on the orphan-free fixture AGREE; FAIL with the orphan both raise |
+| O12 | empty child (0 rows), all-null child | PRESERVE, REMAP, WARN | ok | ok | resident: AGREE, child key columns `null`-typed on both; sink path: `string` (fixed type), the documented `_batch_join` divergence, pinned |
+| O13 | partial-null tuple straddling a batch boundary (`batch_rows=2`), sink-batch vs sink-reorder | PRESERVE, REMAP | ok | ok | AGREE vs oracle; the two lanes equal on all nine dimensions INCLUDING metadata |
+| O14 | native witness: parent key components consumed from the compiled kernel; child group columns never masked by a kernel | REMAP, PRESERVE | n/a | ok | `out_of_core_hash` evidence literal: `P.k`/`P.j` `mask_batch` `rust_companion` (companion present) or `python_scalar` (hidden); under REMAP two `fk_remap` entries `python_scalar` with reason `fk_key_hash_remap_native_deferred:batch_join` (`:stream_join` on the reorder lane) |
+
+Routing dispositions for the composite shape (estimate-fit -> FF, non-fit -> OOC when admitted, flag-off threshold, explicit overrides, scalar-child -> SEQ) are already pinned by `test_phase_d_dcomp_composite_route.py` and stay green unchanged; this slice adds the composite-chain disposition (section 6, D-3).
+
+## 5. Pre-existing strict gaps this slice PINS and does not fix (owner decision items)
+
+G5 was reproduced with a SCALAR (single-column) FK control at plan time; G6 to G8 get the same scalar control in the tests, so each is classified as a route-level (not composite-specific) difference or, if a control disagrees, reported as a composite-specific finding. Each looks like a pandas round-trip artifact of the oracle or a documented fixed-schema rule of the sink path. Pinned as literals so a later slice cannot widen them unnoticed; each needs a resolve-or-accept decision like the D0 gaps.
+
+| Gap | Literal | Note |
+|---|---|---|
+| D0-G1 (carried) | every success table: oracle schema metadata `[b"pandas"]`, OOC `[]` | unchanged from D0 |
+| D0-G2 (carried) | a float NaN in a PARENT key component: oracle `[1.0, None]`, OOC `[1.0, nan]`; the child agrees (`None`) | unchanged class |
+| G5 (new) | zero-row PARENT, non-empty child: oracle hashed parent key columns typed `double` (pandas empty-frame default), OOC `string`; zero rows on both; child AGREE | scalar control: `pk:double,payload:null` vs `pk:string,payload:string` |
+| G6 (new) | `timestamp[us]` key component: oracle child FK component `timestamp[ns]` (pandas write-back), OOC `timestamp[us]` (the source unit); parent `timestamp[us]` on both; values equal | the oracle widens, OOC preserves |
+| G7 (new) | `large_string` passthrough PARENT key component: oracle `string`, OOC `large_string`; child `string` on both | the Arrow-width class of `SEMANTIC_DIFFERENCES.md` row v1 |
+| G8 (new) | bool key component: the ORACLE raises an uncoded `pyarrow.ArrowInvalid`; OOC raises the coded `out_of_core_fk_key_dtype_unsupported` | reachable only through a composite tuple (a scalar bool key cannot be an orphan); the mechanism is `fk_key_value`'s bool-to-int fold on a preserved orphan component, generic; oracle hygiene item |
+| G9 (new, found by O11) | the WARNING ORDER across tables is route-dependent on all three routes: the oracle emits node warnings in dispatch order then projection warnings last in source order; SEQ per table in topological order, projection warning first; OOC per table in topological order, the orphan aggregate after the stream. The multiset of warning objects is identical | scalar control: the D0 single-edge chain orders the same way; a canonical order is a cross-route decision, not this slice's |
+
+## 6. Declines kept or added (coded, caller-visible, routed to SEQ or fail-closed)
+
+- D-1 `out_of_core_composite_fk_scalar_child_unsupported` (`_compat.py`): composite child columns masked as independent scalar seeds STAY DECLINED (CF2 raw-value leak). Retained regression; re-asserted at the gate and at the runner preflight.
+- D-2 `out_of_core_fk_key_dtype_unsupported` for a composite component whose fixed type cannot be guaranteed byte-identical: any `uint64` component (even small values; oracle succeeds, SEQ handles it), a `decimal` component (`mixed_composite_shape`; oracle succeeds). Sanctioned "reject rather than drift" (`_batch_join._python_roundtrip_type`); pinned as the two oracle-success/OOC-reject rows. Consequence stated honestly: the static gate cannot see dtypes, so a job routed to OOC by size fails with this code at the joiner's construction (the transactional sink aborts, nothing is published) and the caller must set `execution_mode="sequential"`.
+- D-3 composite CHAIN on OOC (`A.(k,j) -> B.(k,j) -> C.(k,j)`): today declined at the gate with `out_of_core_parent_seed_missing`, whose message ("parent key B.k is not in the plan") is misleading because B.k IS in the plan as a group member. This slice adds the dedicated code `out_of_core_composite_fk_chain_unsupported` (identifiers only) in `_check_edge` for a parent column that is a `composite_fk_group` member rather than absent; the job routes to SEQ, which runs matched-only chains natively and declines a REMAP orphan on the chain with its own code (D2b). Intractable in this slice on OOC: REMAP minting needs a scalar seed per parent member that the group does not carry, and a matched-only admission would make the policy decide the route.
+
+## 7. Production changes (small, each kill-proven: the test fails before, passes after)
+
+- P1 **one producer for the `orphan_fk_violation` message.** `_join.orphan_fk_error` builds "N orphan FK row(s) found for C.cols." while `_fk_resolve.resolve_fk_keys` (SEQ and FF) builds "N orphan row(s) in C.cols reference no parent key in P.cols (orphan_policy=fail)." Same code, different text: an error-channel parity gap the handoff lists as an invariant. Move the message into one helper in `_fk_resolve.py` (`orphan_fk_violation_error(edge, count)`), used by both. The R3 failure-trace baseline (`tests/unit/execution/r3_failure_trace_baseline.json`, scenario `f_ooc_orphan_fail`) pins the old OOC text and is regenerated with `R3_WRITE_BASELINES=1`; that regeneration changes ONE field and is called out for reviewer approval in the PR, per that file's own rule.
+- P2 **`out_of_core_composite_fk_chain_unsupported`** at the gate (section 6, D-3). Additive: a job that was already declined now carries an accurate code.
+- No other `src/` change is expected. Any divergence a test surfaces beyond sections 4 to 6 is a finding reported to the owner, never a literal adjusted to pass.
+
+Module budget: `_compat.py` 471, `_join.py` 477, `_fk_resolve.py` 198: all well under 600 after P1/P2. `_runner.py` (683, at census) and `_stream_join.py` (709, legacy over-max) are not touched.
+
+## 8. Acceptance tests (authored first; must fail where they pin a change, then pass)
+
+New files under `tests/parity/`, helpers in a `_dcomp_ooc_shapes.py` (OOC runner for the three modes, component-dtype builders, scalar controls):
+
+- `test_phase_d_dcomp_composite_ooc.py`: O1 to O12 strict parity on the resident path (per policy, per batch size), WARN warning-object identity, O2 FAIL code + message identity (P1), O8/O9 symmetric fail-closed codes, D-2 oracle-success/OOC-reject literals, section 5 gap literals with their scalar controls, `native_threads` invariance, quality-evidence literals (O14), D-1/D-3 gate + runner declines and the SEQ routing consequence for D-3.
+- `test_phase_d_dcomp_composite_ooc_sink.py`: sink-batch vs forced sink-reorder exact equality (all nine dimensions, metadata included) for O1, O4, O11, O13; the O12 sink fixed-type literal; the anti-vacuity witness (a forced-reorder run constructs `StreamFkJoiner` and never `ChildFkBatchJoiner`).
+- `test_phase_d_dcomp_composite_ooc_witness.py`: `KernelWitness` over the three modes with the stand-in companion: both composite parent key components native-consumed at the insertion boundary, child group columns carry no kernel observation, companion hidden -> legacy-only; a discarded-native control fails the witness.
+- `test_phase_d_dcomp_composite_ooc_real.py`: with the compiled companion present (skipped otherwise), O1/O4/O11 strict parity against the oracle AND against the companion-hidden OOC run, so the kernel's tokens are the Python tokens byte for byte on these shapes.
+
+Retained regression that must stay green unchanged: `test_out_of_core_fk_parity.py` (normalized harness), `test_phase_d_d0_baseline.py`, `test_out_of_core_route_seam_parity.py`, `test_phase_d_dcomp_composite_seq*.py`, `test_phase_d_dcomp_composite_route.py`, `test_phase_d_d2b_seq_shapes.py`, `tests/unit/execution/test_out_of_core_relation.py`, every sentry.
+
+## 9. Open program cells this slice does NOT close (honest hand-off)
+
+- **OOC REMAP minting runs the Python hash** (`fk_key_hash_remap_native_deferred`, D1a disposition) for every FK shape, composite included. Making it native needs a per-column pinned remap decision (the fk_key_value round-trip type, not per-batch inference, so a column never splits backends) threaded through `_batch_join._batch_remap_values` AND `_stream_join._batch_remap_values`; `_stream_join.py` is legacy over-max (709 LOC, shrink-only), so the change requires a decomposition first. Cross-shape, not composite-specific; recommended as its own small slice.
+- **Section 5 gaps G5 to G8** (and the carried D0 gaps): resolve-or-accept decisions, oracle-side pandas artifacts.
+- **Rust tuple-keying kernel** for `fk_join_key_tuple` (per-row Python today on both OOC lanes): a throughput item; byte-identity with the Python encoding (Decimal normalization, exact float expansion) is the risk; not built.
+- **Composite chain on OOC** (D-3): intractable in-slice, declined with an accurate code.
+
+## 10. Verification
+
+Local, in this session: `ruff check` + `ruff format --check` (src tests testflight scripts), `mypy src/decoy_engine testflight`, the sentries (`tests/sentry/`), the new and retained suites above with the companion present (built here with maturin) and with it hidden, then the full default suite (`pytest tests -m "not benchmark and not packaging and not codspeed"`) on this branch AND on `origin/main` to report the regression-gate delta (main is baseline-red on roughly six pre-existing failures). Required CI checks on the PR: `ruff`, `mypy`, `packaging-gate`, `compat-preflight` (no frozen path touched: `_fk_resolve.py`, `out_of_core/`, `tests/`, `docs/` are outside `FROZEN_PREFIXES`), `dp-certified-gate`, `ml-gate`; `regression-gate` must add no failure versus the main baseline.
+
+## 11. Done when
+
+- [ ] O1 to O14 pass as literals on the resident path and the sink path, on both lanes, at every batch size and thread count listed; no literal was derived from the output under test.
+- [ ] P1 makes the OOC `orphan_fk_violation` message byte-identical to the oracle's; the R3 baseline regeneration is a one-field diff called out in the PR.
+- [ ] P2 declines a composite chain with `out_of_core_composite_fk_chain_unsupported`; the job routes to SEQ; the scalar-child decline is unchanged.
+- [ ] Section 5 gaps are pinned with scalar controls and recorded in `tests/parity/SEMANTIC_DIFFERENCES.md`; section 9 cells are recorded; the shipped Dcomp SEQ plan's section 8 points here.
+- [ ] Retained regression green; sentries green; required CI green; regression-gate delta versus main is zero new failures.
+- [ ] PR open against `main` with what changed, the parity evidence, the decline boundaries and codes, the delta, and a status note; not merged by the agent.

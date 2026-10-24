@@ -9,6 +9,19 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Changed (Phase D / Dcomp-OOC: composite FK on the out-of-core route, 2026-10-24)
+
+The out-of-core FK route's `orphan_fk_violation` error (orphan policy `fail` with a genuine
+orphan) now carries the same message as the full-frame and sequential routes ("N orphan
+row(s) in <child>.<columns> reference no parent key in <parent>.<columns>
+(orphan_policy=fail)."); the code is unchanged. A composite FK chain (a composite child
+used as a parent key) is declined out-of-core with the new code
+`out_of_core_composite_fk_chain_unsupported` instead of `out_of_core_parent_seed_missing`;
+the job runs on the sequential route as before. Composite FK groups out-of-core are now
+pinned strictly against the oracle (`tests/parity/test_phase_d_dcomp_composite_ooc*.py`);
+the pre-existing route-level differences they surfaced are recorded in
+`tests/parity/SEMANTIC_DIFFERENCES.md` (Dcomp-OOC section).
+
 ### Added (§CSV-PARAMS: declare headerless and non-comma delimited sources, 2026-10-23)
 
 `FileSource` (format `csv`) grows three optional delimited-dialect fields:

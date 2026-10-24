@@ -22,6 +22,7 @@ from decoy_engine.execution._fk_keys import (
     fk_join_key_tuple,
     fk_key_value,
 )
+from decoy_engine.execution._fk_resolve import orphan_fk_violation_error
 from decoy_engine.execution.out_of_core._duckdb import connect_duckdb
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.relationships._graph import OrphanPolicy, RelationshipEdge
@@ -41,13 +42,13 @@ _JOIN_BATCH_ROWS: Final = 65_536
 
 
 def orphan_fk_error(edge: RelationshipEdge, orphan_count: int) -> ExecutionError:
-    """The FAIL-policy error, shared so every join surface reports one shape."""
-    return ExecutionError(
-        code="orphan_fk_violation",
-        message=(
-            f"{orphan_count} orphan FK row(s) found for {edge.child_table}.{edge.child_columns}."
-        ),
-    )
+    """The FAIL-policy error: the same code and message the pandas routes raise.
+
+    Delegates to `_fk_resolve.orphan_fk_violation_error` so a caller sees one
+    error whichever route ran the job; every out-of-core join surface raises
+    through this one name.
+    """
+    return orphan_fk_violation_error(edge, orphan_count)
 
 
 def orphan_fk_warning(edge: RelationshipEdge, orphan_count: int) -> QualityWarning:

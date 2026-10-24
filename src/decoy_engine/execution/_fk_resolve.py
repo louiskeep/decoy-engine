@@ -44,7 +44,31 @@ if TYPE_CHECKING:
 _KeyTuple = tuple[object, ...]
 _NodeKey = tuple[str, tuple[str, ...]]
 
-__all__ = ["cascade_row_errors", "gather_errored_parent_keys", "resolve_fk_keys"]
+__all__ = [
+    "cascade_row_errors",
+    "gather_errored_parent_keys",
+    "orphan_fk_violation_error",
+    "resolve_fk_keys",
+]
+
+
+def orphan_fk_violation_error(edge: RelationshipEdge, orphan_count: int) -> ExecutionError:
+    """The FAIL-policy raise, built in one place for every route.
+
+    The full-frame and sequential routes raise it from `resolve_fk_keys`; the
+    out-of-core route raises it from its join surfaces (`out_of_core/_join.py`).
+    One producer keeps the code AND the message identical across routes, which
+    the Phase D error-channel parity contract requires. Identifiers only: the
+    message names tables and columns, never a key value.
+    """
+    return ExecutionError(
+        code="orphan_fk_violation",
+        message=(
+            f"{orphan_count} orphan row(s) in "
+            f"{edge.child_table}.{edge.child_columns} reference no parent key in "
+            f"{edge.parent_table}.{edge.parent_columns} (orphan_policy=fail)."
+        ),
+    )
 
 
 def resolve_fk_keys(
@@ -120,14 +144,7 @@ def resolve_fk_keys(
 
     policy = edge.orphan_policy
     if policy is OrphanPolicy.FAIL:
-        raise ExecutionError(
-            code="orphan_fk_violation",
-            message=(
-                f"{len(orphan_positions)} orphan row(s) in "
-                f"{edge.child_table}.{edge.child_columns} reference no parent key in "
-                f"{edge.parent_table}.{edge.parent_columns} (orphan_policy=fail)."
-            ),
-        )
+        raise orphan_fk_violation_error(edge, len(orphan_positions))
 
     if policy is OrphanPolicy.REMAP:
         remapped = remap_fn(orphan_keys)
