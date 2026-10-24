@@ -9,6 +9,53 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (§CSV-PARAMS: declare headerless and non-comma delimited sources, 2026-10-23)
+
+`FileSource` (format `csv`) grows three optional delimited-dialect fields:
+`has_header` (default `true`), `column_names` (a list, for headerless files), and
+`delimiter` (default `","`). A headerless file is read by setting
+`has_header: false` and supplying `column_names` (the names mask rules key on);
+`delimiter: "\t"` reads a TSV, `"|"` a pipe-delimited file. The profiler
+(`scan` / STORM) honours all three, so a headerless file profiles under its
+supplied names rather than pandas' positional `0,1,2...`. Additive and
+hash-neutral: the three fields default to today's behaviour (a comma file with a
+header row) and are omitted from the config dump at their defaults, so an
+existing `format: csv` source validates, serializes, and fingerprints exactly as
+before. The fields are csv-only; setting any on a `parquet` / `fixed_width`
+source is a validation error, as is `has_header: false` without `column_names`
+(including an empty list), `column_names` with a header, blank or duplicate
+`column_names`, or a delimiter that is not a single printable character or a tab
+(a line terminator or other control character, including NUL, is rejected at
+config so the reader never meets a delimiter it cannot tokenize). The reader
+additionally validates every consumed record's field count against `column_names`
+with the stdlib `csv` parser, configured to agree with the pandas read it guards
+(BOM stripped, no field-size cap, and the same blank-line rule, so a valid file is
+never falsely rejected): a short/ragged row, an over-wide row, or an empty file
+fails closed with a coded `PipelineValidationError`
+(`source_file.column_count_mismatch`) naming the path, line and counts but never
+a cell value, instead of pandas silently padding or shifting columns. Two byte classes that the
+`csv` parser and pandas tokenize differently (so no sanitize step could keep the
+two in agreement) are rejected outright before tokenizing, each with its own coded
+error: a NUL byte (`source_file.nul_byte` -- not valid in a text delimited file;
+pandas keeps it, so a NUL before a quote makes the quote literal), and a lone CR
+(`source_file.lone_cr` -- a carriage return not part of a CRLF pair, i.e. an
+old-Mac line ending or a CR inside a record, which the two readers treat as a row
+boundary differently and so can shift a value into the wrong column without
+changing the frame width). Only LF and CRLF line endings are supported. Because NUL and lone CR are rejected,
+the scan and pandas agree on line boundaries for every admitted file; a residual
+within-line disagreement (an unterminated quote the stdlib `csv` parser tolerates
+but pandas rejects) is caught by the pandas read as a coded error
+(`EmptyDataError`/`ParserError`, or the `frame.shape[1]` backstop), so no frame or
+misaligned value escapes. Documented limitation: a line whose sole
+field is quoted-empty, quoted-whitespace (`" "`, `"\t"`), or a bare/quoted
+non-breaking space is treated as blank by the scan and not width-checked; pandas
+pads it to a blank-equivalent row whose only non-NaN value is that single
+whitespace field in its correct leading column (the rest NaN). This is accepted
+because such a line carries no real field-aligned data, so no real value misaligns
+and no cell leaks. Reuses the reserved `CODES.SOURCE_FILE_*` semantics
+(no_header_columns, column_names_with_header, bad_delimiter, csv_param_on_non_csv)
+and adds `column_count_mismatch`, `nul_byte`, and `lone_cr`.
+
 ### Fixed (§PANDAS-RANGE-ERROR: coded error when the full-frame pandas oracle meets an unrepresentable value, 2026-10-22)
 
 The full-frame pandas route converts every source column to pandas up front, so a

@@ -279,6 +279,22 @@ class CODES:
     SOURCE_FILE_BAD_ROW_LIMIT = "source_file.bad_row_limit"
     SOURCE_FILE_MISSING_FW_COLUMNS = "source_file.missing_fw_columns"
     SOURCE_FILE_CSV_PARAM_ON_NON_CSV = "source_file.csv_param_on_non_csv"
+    # A headerless delimited file whose per-record field count does not match the
+    # declared column_names (a short/ragged row, an over-wide row, or an empty
+    # file). Raised at read time by the profiler, never with a cell value.
+    SOURCE_FILE_COLUMN_COUNT_MISMATCH = "source_file.column_count_mismatch"
+    # A headerless delimited file containing a NUL byte. NUL is not valid in a
+    # text delimited file; the csv width scan and pandas tokenize it differently
+    # (pandas keeps it, csv rejects it), so the two cannot be reconciled. Fail
+    # closed at read rather than sanitize-and-guess. Never raised with a cell value.
+    SOURCE_FILE_NUL_BYTE = "source_file.nul_byte"
+    # A headerless delimited file containing a lone CR (a carriage return not part
+    # of a CRLF pair): an old-Mac line ending, or an unquoted/quoted CR in a record.
+    # The csv width scan and pandas treat a lone CR as a row boundary differently,
+    # which can shift a value into the wrong column without changing the frame
+    # width. Only LF and CRLF are reconcilable, so a lone CR fails closed at read.
+    # Never raised with a cell value.
+    SOURCE_FILE_LONE_CR = "source_file.lone_cr"
 
     # R3.10 generation key policy. Platform-only preflight codes -- the
     # engine doesn't know about admin settings, but the codes live in
