@@ -78,11 +78,11 @@ G5 was reproduced with a SCALAR (single-column) FK control at plan time; G6 to G
 
 ## 7. Production changes (small, each kill-proven: the test fails before, passes after)
 
-- P1 **one producer for the `orphan_fk_violation` message.** `_join.orphan_fk_error` builds "N orphan FK row(s) found for C.cols." while `_fk_resolve.resolve_fk_keys` (SEQ and FF) builds "N orphan row(s) in C.cols reference no parent key in P.cols (orphan_policy=fail)." Same code, different text: an error-channel parity gap the handoff lists as an invariant. Move the message into one helper in `_fk_resolve.py` (`orphan_fk_violation_error(edge, count)`), used by both. The R3 failure-trace baseline (`tests/unit/execution/r3_failure_trace_baseline.json`, scenario `f_ooc_orphan_fail`) pins the old OOC text and is regenerated with `R3_WRITE_BASELINES=1`; that regeneration changes ONE field and is called out for reviewer approval in the PR, per that file's own rule.
-- P2 **`out_of_core_composite_fk_chain_unsupported`** at the gate (section 6, D-3). Additive: a job that was already declined now carries an accurate code.
+- P1 **one producer for the `orphan_fk_violation` message.** `_join.orphan_fk_error` built "N orphan FK row(s) found for C.cols." while `_fk_resolve.resolve_fk_keys` (SEQ and FF) builds "N orphan row(s) in C.cols reference no parent key in P.cols (orphan_policy=fail)." Same code, different text: an error-channel parity gap the handoff lists as an invariant. Move the message into one helper in `_fk_resolve.py` (`orphan_fk_violation_error(edge, count)`); every out-of-core raise site imports it directly and the route-local wrapper is deleted (one name for one error). The two out-of-core unit pins of the old text (`test_out_of_core_batch_join.py`, `test_out_of_core_join_chunked.py`) move to the unified text. The R3 failure-trace baseline (`tests/unit/execution/r3_failure_trace_baseline.json`, scenario `f_ooc_orphan_fail`) pins the old OOC text and is regenerated with `R3_WRITE_BASELINES=1`; that regeneration changes ONE field and is called out for reviewer approval in the PR, per that file's own rule.
+- P2 **`out_of_core_composite_fk_chain_unsupported`** at the gate (section 6, D-3), one rejection per EDGE naming `parent_table.(parent_columns)`. Additive: a job that was already declined now carries an accurate code. The runtime seed lookups behind the gate (`_open_joiner`, `build_parent_key_relation`) keep their `out_of_core_parent_seed_missing`; they are unreachable for a gate-declined plan because the runner's preflight re-runs the gate, and unifying the five seed lookups into one shared helper is recorded in section 9 rather than widened into this slice.
 - No other `src/` change is expected. Any divergence a test surfaces beyond sections 4 to 6 is a finding reported to the owner, never a literal adjusted to pass.
 
-Module budget: `_compat.py` 471, `_join.py` 477, `_fk_resolve.py` 198: all well under 600 after P1/P2. `_runner.py` (683, at census) and `_stream_join.py` (709, legacy over-max) are not touched.
+Module budget after P1/P2 (measured on the branch): `_compat.py` 502, `_join.py` 468, `_fk_resolve.py` 214, all well under 600. `_runner.py`, `_stream_driver.py` and `_batch_join.py` change only by importing the one error producer; `_stream_join.py` (709, legacy over-max) is not touched.
 
 ## 8. Acceptance tests (authored first; must fail where they pin a change, then pass)
 
@@ -101,6 +101,7 @@ Retained regression that must stay green unchanged: `test_out_of_core_fk_parity.
 - **Section 5 gaps G5 to G8** (and the carried D0 gaps): resolve-or-accept decisions, oracle-side pandas artifacts.
 - **Rust tuple-keying kernel** for `fk_join_key_tuple` (per-row Python today on both OOC lanes): a throughput item; byte-identity with the Python encoding (Decimal normalization, exact float expansion) is the risk; not built.
 - **Composite chain on OOC** (D-3): intractable in-slice, declined with an accurate code.
+- **One seed lookup for `out_of_core/`**: `_column_seed` is copied in `_compat.py`, `_relation.py`, `_runner.py` and `_stream_driver.py`, and the chain disposition now lives only in the gate; a shared `parent_key_seed(plan, table, column)` that returns the chain disposition for every caller is the clean follow-up.
 
 ## 10. Verification
 

@@ -410,13 +410,22 @@ def test_g9_warning_order_across_tables_is_route_dependent_while_the_warning_set
 
 
 @pytest.mark.parametrize("policy", [P, R])
-def test_g8_bool_component_crashes_the_oracle_uncoded_and_fails_closed_out_of_core(
-    policy: OrphanPolicy,
-) -> None:
+def test_g8_bool_component_fails_closed_out_of_core(policy: OrphanPolicy) -> None:
     shape = o.bool_component_shape(policy)
-    oracle_type, oracle_code, _ = o.raised(lambda: s.run_full(shape))
-    assert oracle_type is pa.ArrowInvalid and oracle_code is None
     assert o.raised(lambda: o.run_ooc(shape))[:2] == (ExecutionError, o.FK_DTYPE_CODE)
+
+
+@pytest.mark.xfail(
+    strict=True,
+    raises=pa.ArrowInvalid,
+    reason="G8: the oracle crashes uncoded on a preserved orphan bool component (fk_key_value's "
+    "bool-to-int fold); an owner decision item. Fixing the oracle turns this XPASS and the "
+    "test is then deleted with the SEMANTIC_DIFFERENCES row.",
+)
+@pytest.mark.parametrize("policy", [P, R])
+def test_g8_the_oracle_raises_a_coded_error_on_a_bool_component(policy: OrphanPolicy) -> None:
+    with pytest.raises(ExecutionError):
+        s.run_full(o.bool_component_shape(policy))
 
 
 # Section 6: declines, coded and caller-visible.
@@ -481,12 +490,10 @@ def test_d3_composite_chain_declines_with_its_own_code_and_routes_to_sequential(
     policy: OrphanPolicy,
 ) -> None:
     shape = s.composite_chain_shape(policy)
-    codes = _gate_codes(shape)
-    assert codes == [CHAIN_CODE, CHAIN_CODE]  # one per member of B's group used as a parent key
-    assert "out_of_core_parent_seed_missing" not in codes
+    assert _gate_codes(shape) == [CHAIN_CODE]  # once per edge, not once per key column
     kind, code, message = o.raised(lambda: o.run_ooc(shape))
     assert (kind, code) == (ExecutionError, CHAIN_CODE)
-    assert "B" in message and "k" in message
+    assert "B.('k', 'j')" in message
     for cell in ("a", "b", "x", "y"):
         assert f"'{cell}'" not in message
     assert _route(shape) == ("sequential", "pure_mask_fk")

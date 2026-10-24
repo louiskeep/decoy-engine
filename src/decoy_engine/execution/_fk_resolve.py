@@ -56,10 +56,9 @@ def orphan_fk_violation_error(edge: RelationshipEdge, orphan_count: int) -> Exec
     """The FAIL-policy raise, built in one place for every route.
 
     The full-frame and sequential routes raise it from `resolve_fk_keys`; the
-    out-of-core route raises it from its join surfaces (`out_of_core/_join.py`).
-    One producer keeps the code AND the message identical across routes, which
-    the Phase D error-channel parity contract requires. Identifiers only: the
-    message names tables and columns, never a key value.
+    out-of-core joiners raise it at their orphan precount. One producer keeps
+    the code AND the message identical whichever route ran the job. Identifiers
+    only: the message names tables and columns, never a key value.
     """
     return ExecutionError(
         code="orphan_fk_violation",

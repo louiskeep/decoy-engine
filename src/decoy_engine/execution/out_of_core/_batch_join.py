@@ -63,6 +63,7 @@ import pyarrow.parquet as pq
 
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._fk_keys import FK_KEY_DTYPE_UNSUPPORTED_CODE, NULL_FK_KEY, fk_key_value
+from decoy_engine.execution._fk_resolve import orphan_fk_violation_error
 from decoy_engine.execution.out_of_core._duckdb import connect_duckdb
 from decoy_engine.execution.out_of_core._join import (
     _append_output_batch,
@@ -72,7 +73,6 @@ from decoy_engine.execution.out_of_core._join import (
     _sql_string,
     _unified_chunk_type,
     cast_fk_chunk,
-    orphan_fk_error,
 )
 from decoy_engine.execution.out_of_core._mask import mask_column, masked_output_type
 from decoy_engine.relationships._graph import OrphanPolicy
@@ -323,7 +323,7 @@ class ChildFkBatchJoiner:
         # holds an orphan, so a transactional sink never stages doomed output.
         fail_count = self._batch_orphan_count()
         if fail_count:
-            raise orphan_fk_error(self._edge, fail_count)
+            raise orphan_fk_violation_error(self._edge, fail_count)
 
     def _batch_remap_values(self, batch: pa.RecordBatch) -> tuple[pa.Array, ...] | None:
         if self._edge.orphan_policy is not OrphanPolicy.REMAP:

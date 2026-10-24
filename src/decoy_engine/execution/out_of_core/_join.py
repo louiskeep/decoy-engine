@@ -41,16 +41,6 @@ if TYPE_CHECKING:
 _JOIN_BATCH_ROWS: Final = 65_536
 
 
-def orphan_fk_error(edge: RelationshipEdge, orphan_count: int) -> ExecutionError:
-    """The FAIL-policy error: the same code and message the pandas routes raise.
-
-    Delegates to `_fk_resolve.orphan_fk_violation_error` so a caller sees one
-    error whichever route ran the job; every out-of-core join surface raises
-    through this one name.
-    """
-    return orphan_fk_violation_error(edge, orphan_count)
-
-
 def orphan_fk_warning(edge: RelationshipEdge, orphan_count: int) -> QualityWarning:
     """The WARN-policy warning, shared so every join surface reports one shape."""
     return QualityWarning(
@@ -138,7 +128,7 @@ def mask_child_fk(
                 """
             ).fetchone()[0]
             if fail_count:
-                raise orphan_fk_error(edge, fail_count)
+                raise orphan_fk_violation_error(edge, fail_count)
         select_list = [f"c.{_q('__decoy_row_nr')}", f"c.{_q('__decoy_fk_join_key')}"]
         select_list += [f"c.{_q(f'__decoy_src_{idx}')}" for idx in range(len(edge.child_columns))]
         # Explicit LEFT JOIN match indicator: parent_keys only ever holds rows
