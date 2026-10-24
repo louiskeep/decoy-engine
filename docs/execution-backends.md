@@ -102,9 +102,13 @@ These run their own Python handler by design, not the generic fallback:
 
 - `code_set`: no kernel on any route (backlog: kernelize as a named-Arrow dict-map).
 - NER (the `ner` config of `text_redact` / `text_mask`): Python by design (spaCy inference).
-- `faker` falls to its per-row live-provider path (rather than compiled index selection) when
-  a pooling precondition fails: the provider is not on the allowlist, the source type or locale
-  is unsupported, the table's row count is under the pool threshold, or the companion is absent.
+- `faker` masking runs as compiled index selection only on its native legs (deterministic REUSE
+  and positional REUSE). It stays on its Python handler when the provider is not on the native
+  allowlist, when a deterministic config is not the REUSE variant or carries no namespace (the
+  oracle rejects it), when a non-deterministic mode other than REUSE is used (UNIQUE, MATCH, and
+  SCALE need whole-column RNG state), or when the source column is not an exact `string`. A faker
+  column that stays on Python is still pool-backed: the handler builds and caches one value pool
+  and samples it, not per-row live-provider calls.
 - out-of-core `text_mask`: the per-cell loop; the SEQ and native-chunked routes already use the
   Rust span kernel (backlog: route OOC through it too).
 - the shared SEQ handlers listed in the sequential table (`bucketize`, `shuffle`, `top_code`,
