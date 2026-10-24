@@ -11,7 +11,8 @@ path:
    column, and the whole-child contract is that each edge joins the RAW child,
    with later edges overwriting the shared column. Edges sharing one child
    tuple (a multi-parent child) join ONE relation merged first-hit-wins in
-   edge order (`_multi_parent.resolve_incoming`), through the first edge. The rewritten batches flow straight
+   edge order (`_multi_parent.resolve_incoming`), through the first edge.
+   The rewritten batches flow straight
    into `TransactionalSink.write_batches` under one analytically fixed
    schema, because an Arrow ParquetWriter writes a single-schema file (the
    same constraint pyarrow.dataset resolves by unifying fragment schemas up
@@ -79,7 +80,10 @@ from decoy_engine.execution.out_of_core._memory_estimate import (
 )
 from decoy_engine.execution.out_of_core._multi_parent import resolve_incoming
 from decoy_engine.execution.out_of_core._preflight import run_preflight
-from decoy_engine.execution.out_of_core._relation import build_parent_key_relation_aligned
+from decoy_engine.execution.out_of_core._relation import (
+    _column_seed,
+    build_parent_key_relation_aligned,
+)
 from decoy_engine.execution.out_of_core._route_policy import (
     _edge_indexes,
     _table_order,
@@ -222,13 +226,12 @@ def run_fk_out_of_core(
             if table_name not in sources:
                 continue
             # The merge runs before any joiner opens, so it takes the undivided build cap.
-            table_incoming_edges, table_relations = resolve_incoming(
+            table_incoming_edges = resolve_incoming(
                 incoming[table_name],
                 parent_relations,
                 temp_dir=root / "relations" / table_name / "merged",
                 memory_limit=memory_limit_for(budget_bytes, 1) if budget_bytes else memory_limit,
             )
-            parent_relations.update(table_relations)
             table_outgoing_edges = tuple(outgoing[table_name])
             # Route-independent gate: both drivers raise the same coded error (not a bare KeyError).
             validate_outgoing_parent_columns(table_outgoing_edges, sources[table_name].schema)
@@ -650,16 +653,6 @@ def _fixed_output_schema(
         else:
             fields.append(field)
     return pa.schema(fields, metadata=source_schema.metadata)
-
-
-def _column_seed(plan: Plan, table: str, column: str) -> ColumnSeed | None:
-    for table_name, candidate_seed in plan.seed_envelope.per_table:
-        if table_name != table:
-            continue
-        for col_name, col_seed in candidate_seed.per_column:
-            if col_name == column:
-                return col_seed
-    return None
 
 
 __all__ = ["run_fk_out_of_core"]

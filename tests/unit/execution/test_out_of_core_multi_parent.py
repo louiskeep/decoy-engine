@@ -133,7 +133,8 @@ def test_merge_refuses_differing_masked_key_types(tmp_path: Path) -> None:
     with pytest.raises(ExecutionError) as exc:
         merge_parent_relations((ints, floats), temp_dir=tmp_path / "m", memory_limit=None)
     assert exc.value.code == "out_of_core_fk_key_dtype_unsupported"
-    assert "P1" not in str(exc.value) or "int64" in str(exc.value)  # identifiers and types only
+    assert "int64" in str(exc.value) and "double" in str(exc.value)  # the types, never a value
+    assert "1" not in str(exc.value).replace("int64", "").replace("sequential", "")
     assert not (tmp_path / "m").exists() or not list((tmp_path / "m").rglob("*.parquet"))
 
 
@@ -144,20 +145,21 @@ def test_resolve_incoming_passes_singletons_through_and_groups_by_child_tuple(
     b = _relation_tagged(tmp_path, "B", ["z"])
     e_a1, e_a2, e_b = _edge("A1", ("ref",)), _edge("A2", ("ref",)), _edge("B", ("other",))
     relations = {e_a1: a1, e_a2: a2, e_b: b}
-    edges, table_relations = resolve_incoming(
+    edges = resolve_incoming(
         (e_a1, e_b, e_a2), relations, temp_dir=tmp_path / "m", memory_limit=None
     )
     assert edges == (e_a1, e_b)  # the first edge represents its group; relative order kept
-    assert table_relations[e_b] is b  # a singleton is untouched
-    assert set(_rows(table_relations[e_a1]).values()) == {"A1:x", "A2:y"}
-    assert relations[e_a1] is a1  # the shared mapping is never mutated
+    assert relations[e_b] is b  # a singleton is untouched
+    assert set(_rows(relations[e_a1]).values()) == {"A1:x", "A2:y"}  # rebound to the merge
+    assert e_a2 not in relations  # the other member is gone from the mapping ...
+    assert not a1.path.exists() and not a2.path.exists()  # ... and both member files from disk
+    assert b.path.exists()
 
 
 def test_resolve_incoming_with_no_multi_parent_group_builds_nothing(tmp_path: Path) -> None:
     b = _relation_tagged(tmp_path, "B", ["z"])
     e_b = _edge("B")
-    edges, table_relations = resolve_incoming(
-        (e_b,), {e_b: b}, temp_dir=tmp_path / "m", memory_limit=None
-    )
-    assert edges == (e_b,) and table_relations == {e_b: b}
+    relations = {e_b: b}
+    assert resolve_incoming((e_b,), relations, temp_dir=tmp_path / "m", memory_limit=None) == (e_b,)
+    assert relations == {e_b: b} and b.path.exists()
     assert not (tmp_path / "m").exists()

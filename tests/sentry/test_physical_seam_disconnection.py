@@ -321,6 +321,12 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         # Both import nothing from `execution.physical`.
         "src/decoy_engine/execution/out_of_core/_join.py",
         "src/decoy_engine/execution/out_of_core/_batch_join.py",
+        # Dmp (multi-parent FK out-of-core): the merged first-hit-wins relation module, the
+        # routing hazard for mixed parent key types, and the test-only remap oracle moved into
+        # `_batch_join.py` (already permitted above). None imports `execution.physical`.
+        "src/decoy_engine/execution/_pipeline_routing_fk_dtype.py",
+        "src/decoy_engine/execution/out_of_core/_multi_parent.py",
+        "src/decoy_engine/execution/out_of_core/_stream_driver_support.py",
         "src/decoy_engine/execution/out_of_core/_null_int_guard.py",
         # D3b (token vault on the bounded out-of-core route): the vault collector the two
         # out-of-core drivers call. It imports nothing from `execution.physical`.

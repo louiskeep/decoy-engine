@@ -187,6 +187,19 @@ def test_m11_heterogeneous_masked_key_types_fail_closed_before_any_output(
     assert not list((tmp_path / "out").rglob("*.parquet"))  # the sink aborted, nothing published
 
 
+@pytest.mark.parametrize("policy", POLICIES)
+def test_m11_routing_keeps_the_heterogeneous_shape_off_out_of_core(policy: OrphanPolicy) -> None:
+    """The static gate cannot see dtypes, but the router's schema-aware hazard can: differing
+    masked key types across the parents of one child tuple divert the job to the sequential
+    route before any parent is written, while same-typed parents stay out-of-core-eligible."""
+    from decoy_engine.execution._pipeline_routing_fk_dtype import fk_out_of_core_dtype_hazard
+
+    mixed = m.int_passthrough_shape(policy, p2_type=pa.float64())
+    same = m.int_passthrough_shape(policy)
+    assert fk_out_of_core_dtype_hazard(mixed.plan, mixed.graph, caller_sources=mixed.sources)
+    assert not fk_out_of_core_dtype_hazard(same.plan, same.graph, caller_sources=same.sources)
+
+
 # M14: compute provenance.
 
 _PARENTS = [ExpectedMask("P1", "k", "hash_array"), ExpectedMask("P2", "k", "hash_array")]
