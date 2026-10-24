@@ -84,10 +84,13 @@ declined (`out_of_core_composite_fk_scalar_child_unsupported`); the canonical
 `tests/parity/SEMANTIC_DIFFERENCES.md`). A composite chain, a composite child used as a parent
 key, is declined (`out_of_core_composite_fk_chain_unsupported`) and runs on the sequential
 route; a `uint64` or `decimal` key component fails closed at the joiner
-(`out_of_core_fk_key_dtype_unsupported`). Multi-parent is declined only when more than one parent
-targets the same child FK column tuple (`out_of_core_multi_parent_child_unsupported`); distinct
-child keys referencing different parents are supported. Native support for the declined shapes
-is a scheduled V1 engine track (A-9).
+(`out_of_core_fk_key_dtype_unsupported`). A multi-parent child (more than one parent targeting
+the same child FK column tuple) is admitted: the parents' key relations are merged
+first-hit-wins in relationship order and the child is joined once, matching the full-frame
+oracle (`tests/parity/test_phase_d_dmp_multi_parent_ooc*.py`); parents whose masked key types
+differ fail closed (`out_of_core_fk_key_dtype_unsupported`) and the router keeps such a job on
+the sequential route. Distinct child keys referencing different parents are supported as before.
+Native support for the declined shapes is a scheduled V1 engine track (A-9).
 
 ### Native-chunked route (single-table, chunked)
 
