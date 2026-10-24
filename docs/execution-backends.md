@@ -79,7 +79,12 @@ The FK key surface here is only `hash`, `redact`, `truncate`, `passthrough`.
 
 On this route a composite FK whose child columns would be masked independently as scalars is
 declined (`out_of_core_composite_fk_scalar_child_unsupported`); the canonical
-`composite_fk_group` unit is admitted. Multi-parent is declined only when more than one parent
+`composite_fk_group` unit is admitted and pinned strictly against the full-frame oracle
+(`tests/parity/test_phase_d_dcomp_composite_ooc*.py`; the recorded differences are in
+`tests/parity/SEMANTIC_DIFFERENCES.md`). A composite chain, a composite child used as a parent
+key, is declined (`out_of_core_composite_fk_chain_unsupported`) and runs on the sequential
+route; a `uint64` or `decimal` key component fails closed at the joiner
+(`out_of_core_fk_key_dtype_unsupported`). Multi-parent is declined only when more than one parent
 targets the same child FK column tuple (`out_of_core_multi_parent_child_unsupported`); distinct
 child keys referencing different parents are supported. Native support for the declined shapes
 is a scheduled V1 engine track (A-9).
