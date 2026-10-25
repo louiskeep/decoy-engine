@@ -69,6 +69,11 @@ def fk_out_of_core_dtype_hazard(
     # hazard and diverts to sequential, which carries the propagated type correctly.
     # Depth-1 star schemas are unaffected: their parent keys are never child keys.
     child_key_cols = {(e.child_table, c) for e in graph.edges for c in e.child_columns}
+    # A multi-parent child tuple joins ONE relation merged from its parents
+    # (`out_of_core/_multi_parent.py`), which needs one masked key type across them;
+    # the oracle types that column from its values instead, so differing members are a
+    # hazard the run would otherwise hit after the parents were already written.
+    masked_by_child: dict[tuple[str, tuple[str, ...]], set[tuple[str, ...]]] = {}
     for edge in graph.edges:
         if any((edge.parent_table, c) in child_key_cols for c in edge.parent_columns):
             return True
@@ -101,6 +106,10 @@ def fk_out_of_core_dtype_hazard(
             )
             matched = tuple(_python_roundtrip_type(t) for t in masked)
         except ExecutionError:
+            return True
+        seen = masked_by_child.setdefault((edge.child_table, edge.child_columns), set())
+        seen.add(tuple(str(t) for t in masked))
+        if len(seen) > 1:
             return True
         # A fixed type that an orphan or remapped candidate changed (bool with int64,
         # int64 with float64), or a float type fed by integer keys, is exact only while

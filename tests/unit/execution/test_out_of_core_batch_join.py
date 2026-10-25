@@ -26,6 +26,7 @@ import pytest
 
 from decoy_engine.execution import ExecutionError
 from decoy_engine.execution._fk_keys import fk_join_key_tuple
+from decoy_engine.execution.out_of_core import _batch_join as _batch_join_mod
 from decoy_engine.execution.out_of_core import _batch_join as batch_join_mod
 from decoy_engine.execution.out_of_core import _runner as runner_mod
 from decoy_engine.execution.out_of_core._batch_join import ChildFkBatchJoiner
@@ -114,7 +115,7 @@ def _relation_for(plan: Any, edge: RelationshipEdge, parent: pa.Table, temp_dir)
 
 def _whole_child_oracle(plan, edge, relation, child, temp_dir):
     remap_values = (
-        runner_mod._remap_values(plan, edge, child)
+        _batch_join_mod._remap_values(plan, edge, child)
         if edge.orphan_policy is OrphanPolicy.REMAP
         else None
     )
@@ -441,7 +442,15 @@ def test_fail_policy_raises_on_orphaned_batch_before_output(tmp_path) -> None:
 def test_remap_masks_per_batch_not_per_child(tmp_path, monkeypatch) -> None:
     # Residency bound for the streaming remap path: orphan values are minted
     # from the batch's own keys, so no kernel call is sized by total child
-    # cardinality (C2's runner-precomputed `_remap_values` is whole-child).
+    # cardinality. The whole-child oracle (`_remap_values`, deliberately
+    # whole-child) runs before the spy is installed so only the joiner is measured.
+    plan = _two_table_plan(_col("hash", namespace="cust"), "customers", "orders", "customer_id")
+    edge = _edge(OrphanPolicy.REMAP)
+    parent = pa.table({"customer_id": ["c1", "c2"]})
+    child = pa.table({"customer_id": _CROSS_BATCH_IDS})
+    relation = _relation_for(plan, edge, parent, tmp_path / "rel")
+    whole, _warnings = _whole_child_oracle(plan, edge, relation, child, tmp_path / "whole")
+
     lengths: list[int] = []
     real_mask_column = batch_join_mod.mask_column
 
@@ -450,14 +459,9 @@ def test_remap_masks_per_batch_not_per_child(tmp_path, monkeypatch) -> None:
         return real_mask_column(values, *args, **kwargs)
 
     monkeypatch.setattr(batch_join_mod, "mask_column", spy)
+    rebuilt, _orphans = _batched_output(plan, edge, relation, child, tmp_path / "batched")
 
-    plan = _two_table_plan(_col("hash", namespace="cust"), "customers", "orders", "customer_id")
-    edge = _edge(OrphanPolicy.REMAP)
-    parent = pa.table({"customer_id": ["c1", "c2"]})
-    child = pa.table({"customer_id": _CROSS_BATCH_IDS})
-
-    _assert_parity(plan, edge, parent, child, tmp_path)
-
+    assert rebuilt.equals(whole)
     assert lengths
     assert max(lengths) <= _BATCH
 

@@ -13,6 +13,7 @@ import pytest
 from decoy_engine.execution import ExecutionError, PandasExecutionAdapter, ParquetTransactionalSink
 from decoy_engine.execution._fk_keys import fk_join_key_tuple
 from decoy_engine.execution._runner import build_work_list, order_work
+from decoy_engine.execution.out_of_core import _batch_join as _batch_join_mod
 from decoy_engine.execution.out_of_core import _runner as _out_of_core_runner
 from decoy_engine.execution.out_of_core import (
     build_parent_key_relation,
@@ -1026,8 +1027,8 @@ def test_run_fk_out_of_core_self_referential_fk_fails_closed(tmp_path) -> None:
 
 def _same_column_multi_parent_plan() -> Any:
     """A child whose ONE FK column points at TWO different parents (Dmp multi-parent,
-    distinct from a junction's two separate FK columns). The full-frame oracle resolves
-    it first-hit-wins; the out-of-core route declines it (one child key, N parents)."""
+    distinct from a junction's two separate FK columns). Every route resolves it
+    first-hit-wins in edge order; the out-of-core route merges the parent relations first."""
     return _plan_from_columns(
         {
             "p1": [("k", "p1")],
@@ -1039,51 +1040,48 @@ def _same_column_multi_parent_plan() -> Any:
 
 def _same_column_multi_parent_graph() -> RelationshipGraph:
     # Both edges target the SAME (child_table, child_columns) = ("x", ("ref",)); same policy so
-    # the graph-build orphan-policy-agreement guard passes and only the OOC decline is exercised.
+    # the graph-build orphan-policy-agreement guard passes.
     e1 = _rel("p1", "k", "x", "ref", "p1", OrphanPolicy.PRESERVE)
     e2 = _rel("p2", "k", "x", "ref", "p2", OrphanPolicy.PRESERVE)
     return RelationshipGraph(edges=(e1, e2), ordering=())
 
 
-def test_check_out_of_core_compatibility_rejects_same_column_multi_parent_child() -> None:
-    """Pin the Dmp decline: a single child FK column targeting multiple parents is declined
-    out-of-core (`_compat.py` child_targets count > 1). The shape masks fine full-frame and on
-    SEQ; only the streaming route reroutes, and that reroute was asserted by no test before."""
+def test_check_out_of_core_compatibility_admits_same_column_multi_parent_child() -> None:
+    """Dmp: a single child FK column targeting multiple parents is admitted out-of-core (the
+    former `out_of_core_multi_parent_child_unsupported` decline is gone, pre-GA hard delete)."""
     plan = _same_column_multi_parent_plan()
     graph = _same_column_multi_parent_graph()
     work = order_work(build_work_list(plan, _REG), graph)
 
     result = check_out_of_core_compatibility(plan, work, graph)
 
-    assert not result.accepted
-    assert "out_of_core_multi_parent_child_unsupported" in {r.code for r in result.rejections}
+    assert result.accepted
+    assert result.rejections == ()
 
 
-def test_run_fk_out_of_core_same_column_multi_parent_fails_closed(tmp_path) -> None:
-    """The gate rejection must actually stop `run_fk_out_of_core` with the same fail-closed
-    code, on a config the full-frame oracle runs successfully."""
+def test_run_fk_out_of_core_same_column_multi_parent_matches_the_oracle(tmp_path) -> None:
+    """The out-of-core route resolves the same-column multi-parent shape exactly like the
+    full-frame oracle: first declared parent wins, orphan only when absent from both."""
     plan = _same_column_multi_parent_plan()
     graph = _same_column_multi_parent_graph()
     sources = {
-        "p1": pa.table({"k": pa.array(["p1a", "p1b"], type=pa.string())}),
-        "p2": pa.table({"k": pa.array(["p2a", "p2b"], type=pa.string())}),
-        "x": pa.table({"ref": pa.array(["p1a", "p2a", "nowhere"], type=pa.string())}),
+        "p1": pa.table({"k": pa.array(["p1a", "p1b", "shared"], type=pa.string())}),
+        "p2": pa.table({"k": pa.array(["p2a", "p2b", "shared"], type=pa.string())}),
+        "x": pa.table({"ref": pa.array(["p1a", "p2a", "shared", "nowhere"], type=pa.string())}),
     }
 
-    # The oracle resolves the same-column multi-parent shape first-hit-wins.
-    PandasExecutionAdapter().run(
+    oracle = PandasExecutionAdapter().run(
         plan, sources, registry=_REG, relationship_graph=graph, namespace_registry=_NS
     )
-
-    with pytest.raises(ExecutionError) as exc:
-        run_fk_out_of_core(
-            plan,
-            sources,
-            registry=_REG,
-            relationship_graph=graph,
-            temp_dir=tmp_path / "work",
-        )
-    assert exc.value.code == "out_of_core_multi_parent_child_unsupported"
+    ooc = run_fk_out_of_core(
+        plan, sources, registry=_REG, relationship_graph=graph, temp_dir=tmp_path / "work"
+    )
+    for table in oracle.outputs:
+        assert ooc.outputs[table].to_pydict() == oracle.outputs[table].to_pydict(), table
+    ref = ooc.outputs["x"].column("ref").to_pylist()
+    assert ref[2] == ooc.outputs["p1"].column("k").to_pylist()[2]
+    assert ref[2] != ooc.outputs["p2"].column("k").to_pylist()[2]
+    assert ref[3] == "nowhere"
 
 
 @pytest.mark.parametrize("policy", [OrphanPolicy.PRESERVE, OrphanPolicy.WARN])
@@ -1232,7 +1230,7 @@ def test_child_fk_join_normalizes_decimal_parent_against_numeric_child(
     relation = build_parent_key_relation(plan=plan, parent=parent, edge=edge, temp_dir=tmp_path)
     remap_values = None
     if policy is OrphanPolicy.REMAP:
-        remap_values = _out_of_core_runner._remap_values(plan, edge, child)
+        remap_values = _batch_join_mod._remap_values(plan, edge, child)
     out, warnings = mask_child_fk(
         child=child,
         edge=edge,
@@ -1304,7 +1302,7 @@ def test_child_fk_join_fractional_float_parent_matches_fractional_decimal_child(
     relation = build_parent_key_relation(plan=plan, parent=parent, edge=edge, temp_dir=tmp_path)
     remap_values = None
     if policy is OrphanPolicy.REMAP:
-        remap_values = _out_of_core_runner._remap_values(plan, edge, child)
+        remap_values = _batch_join_mod._remap_values(plan, edge, child)
     out, warnings = mask_child_fk(
         child=child,
         edge=edge,
@@ -1396,7 +1394,7 @@ def test_child_fk_join_bool_parent_matches_int_child(tmp_path, policy: OrphanPol
     relation = build_parent_key_relation(plan=plan, parent=parent, edge=edge, temp_dir=tmp_path)
     remap_values = None
     if policy is OrphanPolicy.REMAP:
-        remap_values = _out_of_core_runner._remap_values(plan, edge, child)
+        remap_values = _batch_join_mod._remap_values(plan, edge, child)
     out, warnings = mask_child_fk(
         child=child,
         edge=edge,
