@@ -466,3 +466,254 @@ def test_non_str_or_empty_put_return_fails_closed(bad: Any) -> None:
         _run(df, vault=_BadReturnVault(bad))
     assert getattr(exc.value, "code", "") == "tokenize_vault_error"
     assert "secret-value" not in str(exc.value)
+
+
+# --- B-6 batch seam: BatchTokenVaultWriter (lookup_existing_many / put_many) ---
+
+
+class FakeBatchVault:
+    """BatchTokenVaultWriter: one namespace-scoped batched lookup + one bulk put per
+    column, recording each batch call so a test can prove the per-cell round-trip
+    is gone. Deliberately exposes NO per-row methods, so any per-row call fails."""
+
+    def __init__(self, preloaded: dict[tuple[str, str], str] | None = None) -> None:
+        self.map: dict[tuple[str, str], str] = dict(preloaded or {})
+        self.lookup_batches: list[tuple[str, list[str]]] = []
+        self.put_batches: list[tuple[str, dict[str, str]]] = []
+
+    def lookup_existing_many(self, namespace: str, plaintexts: Any) -> dict[str, str]:
+        self.lookup_batches.append((namespace, list(plaintexts)))
+        return {p: self.map[(namespace, p)] for p in plaintexts if (namespace, p) in self.map}
+
+    def put_many(self, namespace: str, pairs: Any) -> dict[str, str]:
+        self.put_batches.append((namespace, dict(pairs)))
+        out: dict[str, str] = {}
+        for p, t in pairs.items():
+            out[p] = self.map.setdefault((namespace, p), t)
+        return out
+
+
+def test_batch_path_one_lookup_one_put_over_distinct() -> None:
+    # Repeats + distinct values resolve in exactly ONE lookup and ONE bulk put,
+    # the put carrying only the distinct misses (no per-cell round-trip).
+    df = pd.DataFrame({"pan": ["a", "b", "a", "c", "b"]})
+    vault = FakeBatchVault()
+    out = _run(df, vault=vault)
+    assert vault.lookup_batches == [("pan_ns", ["a", "b", "c"])]  # distinct, order-stable
+    assert len(vault.put_batches) == 1
+    assert vault.put_batches[0][0] == "pan_ns"
+    assert set(vault.put_batches[0][1]) == {"a", "b", "c"}  # only distinct misses
+    assert out["pan"][0] == out["pan"][2]  # repeats share one token
+    assert out["pan"][1] == out["pan"][4]
+    for tok in out["pan"]:
+        assert tok.startswith("tok_") and len(tok) == len("tok_") + 32
+
+
+def test_batch_path_authoritative_reuse_excludes_hits_from_put() -> None:
+    vault = FakeBatchVault(preloaded={("pan_ns", "x"): "tok_PREEXISTING"})
+    out = _run(pd.DataFrame({"pan": ["x", "y"]}), vault=vault)
+    assert out["pan"][0] == "tok_PREEXISTING"  # stored token wins verbatim
+    assert out["pan"][1].startswith("tok_") and out["pan"][1] != "tok_PREEXISTING"
+    assert len(vault.lookup_batches) == 1
+    assert set(vault.put_batches[0][1]) == {"y"}  # only the miss is written
+
+
+def test_batch_path_nulls_preserved_and_never_vaulted() -> None:
+    vault = FakeBatchVault()
+    out = _run(pd.DataFrame({"pan": ["abc", None, "def"]}), vault=vault)
+    assert out["pan"][1] is None
+    assert vault.lookup_batches == [("pan_ns", ["abc", "def"])]  # null never reached the vault
+    assert set(vault.put_batches[0][1]) == {"abc", "def"}
+
+
+def test_batch_path_all_null_does_no_vault_io() -> None:
+    vault = FakeBatchVault()
+    out = _run(pd.DataFrame({"pan": [None, None]}), vault=vault)
+    assert out["pan"] == [None, None]
+    assert vault.lookup_batches == [] and vault.put_batches == []
+
+
+def test_batch_and_per_cell_produce_identical_tokens() -> None:
+    # The token for a value must not depend on which seam the writer exposes:
+    # the batch path mints the same deterministic surrogate as the per-cell path.
+    df = pd.DataFrame({"pan": ["x", "y", "z"]})
+    per_cell = _run(df, vault=FakeVault())
+    batched = _run(df, vault=FakeBatchVault())
+    assert per_cell == batched
+
+
+def test_batch_path_scopes_both_calls_by_namespace() -> None:
+    # One shared vault, two namespaces: both batch calls carry their namespace,
+    # and the same plaintext yields two distinct entries with two distinct tokens.
+    vault = FakeBatchVault()
+    a = _run(pd.DataFrame({"pan": ["same"]}), namespace="ns_a", vault=vault)
+    b = _run(pd.DataFrame({"pan": ["same"]}), namespace="ns_b", vault=vault)
+    assert a["pan"][0] != b["pan"][0]
+    assert [ns for ns, _ in vault.lookup_batches] == ["ns_a", "ns_b"]
+    assert [ns for ns, _ in vault.put_batches] == ["ns_a", "ns_b"]
+    assert set(vault.map) == {("ns_a", "same"), ("ns_b", "same")}
+
+
+def test_batch_path_nfc_normalizes_before_the_lookup() -> None:
+    composed, decomposed = "café", "café"
+    vault = FakeBatchVault()
+    out = _run(pd.DataFrame({"pan": [composed, decomposed]}), vault=vault)
+    assert out["pan"][0] == out["pan"][1]
+    assert vault.lookup_batches == [("pan_ns", [composed])]  # one distinct, NFC form
+    assert list(vault.put_batches[0][1]) == [composed]
+
+
+class _RacedBatchVault(FakeBatchVault):
+    """``put_many`` reports a concurrent winner's token for every miss."""
+
+    WINNER = "tok_" + "cd" * 16
+
+    def put_many(self, namespace: str, pairs: Any) -> dict[str, str]:
+        self.put_batches.append((namespace, dict(pairs)))
+        return dict.fromkeys(pairs, self.WINNER)
+
+
+def test_batch_path_emits_the_authoritative_tokens_put_many_returns() -> None:
+    vault = _RacedBatchVault()
+    out = _run(pd.DataFrame({"pan": ["4111111111111111", "5500000000000004"]}), vault=vault)
+    assert out["pan"] == [_RacedBatchVault.WINNER, _RacedBatchVault.WINNER]
+    assert all(t != _RacedBatchVault.WINNER for t in vault.put_batches[0][1].values())
+
+
+class _BadPutManyVault(FakeBatchVault):
+    def __init__(self, shape: str) -> None:
+        super().__init__()
+        self._shape = shape
+
+    def put_many(self, namespace: str, pairs: Any) -> Any:
+        self.put_batches.append((namespace, dict(pairs)))
+        if self._shape == "missing_key":
+            return {}
+        if self._shape == "not_a_mapping":
+            return list(pairs)
+        if self._shape == "extra_key":
+            return {**pairs, "never-asked": "tok_" + "ee" * 16}
+        return dict.fromkeys(
+            pairs, {"none": None, "empty": "", "int": 123, "bytes": b"tok_x"}[self._shape]
+        )
+
+
+@pytest.mark.parametrize(
+    "shape", ["missing_key", "not_a_mapping", "extra_key", "none", "empty", "int", "bytes"]
+)
+def test_batch_put_many_bad_return_fails_closed_without_leaking(shape: str) -> None:
+    df = pd.DataFrame({"pan": ["secret-value"]})
+    with pytest.raises(ExecutionError) as exc:
+        _run(df, vault=_BadPutManyVault(shape))
+    assert getattr(exc.value, "code", "") == "tokenize_vault_error"
+    assert "secret-value" not in str(exc.value)
+
+
+class _BadLookupManyVault(FakeBatchVault):
+    def __init__(self, shape: str) -> None:
+        super().__init__()
+        self._shape = shape
+
+    def lookup_existing_many(self, namespace: str, plaintexts: Any) -> Any:
+        if self._shape == "not_a_mapping":
+            return [(p, "tok_x") for p in plaintexts]
+        if self._shape == "extra_key":
+            return {"never-asked": "tok_" + "ee" * 16}
+        return dict.fromkeys(plaintexts, {"none": None, "empty": "", "int": 7}[self._shape])
+
+
+@pytest.mark.parametrize("shape", ["not_a_mapping", "extra_key", "none", "empty", "int"])
+def test_batch_lookup_many_bad_return_fails_closed_without_leaking(shape: str) -> None:
+    df = pd.DataFrame({"pan": ["secret-value"]})
+    with pytest.raises(ExecutionError) as exc:
+        _run(df, vault=_BadLookupManyVault(shape))
+    assert getattr(exc.value, "code", "") == "tokenize_vault_error"
+    assert "secret-value" not in str(exc.value)
+
+
+class _RaisingBatchVault(FakeBatchVault):
+    def __init__(self, *, raise_on: str) -> None:
+        super().__init__()
+        self._raise_on = raise_on
+
+    def lookup_existing_many(self, namespace: str, plaintexts: Any) -> dict[str, str]:
+        if self._raise_on == "lookup_existing_many":
+            raise RuntimeError(f"vault lookup boom for {list(plaintexts)}")
+        return super().lookup_existing_many(namespace, plaintexts)
+
+    def put_many(self, namespace: str, pairs: Any) -> dict[str, str]:
+        if self._raise_on == "put_many":
+            raise RuntimeError(f"vault put boom for {dict(pairs)}")
+        return super().put_many(namespace, pairs)
+
+
+@pytest.mark.parametrize("raise_on", ["lookup_existing_many", "put_many"])
+def test_batch_writer_raising_is_a_coded_error_that_names_no_value(raise_on: str) -> None:
+    df = pd.DataFrame({"pan": ["secret-value", "other-secret"]})
+    with pytest.raises(ExecutionError) as exc:
+        _run(df, vault=_RaisingBatchVault(raise_on=raise_on))
+    assert getattr(exc.value, "code", "") == "tokenize_vault_error"
+    text = (
+        repr(exc.value) + str(exc.value) + repr(exc.value.__cause__) + repr(exc.value.__context__)
+    )
+    assert "secret-value" not in text and "other-secret" not in text and "tok_" not in text
+
+
+class _HalfBatchVault(FakeVault):
+    """A per-row writer that grew only ``lookup_existing_many``: not a batch writer."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.batch_lookups = 0
+
+    def lookup_existing_many(self, namespace: str, plaintexts: Any) -> dict[str, str]:
+        self.batch_lookups += 1
+        return {}
+
+
+def test_half_implemented_batch_writer_takes_the_per_row_path_whole() -> None:
+    # Either both batch methods are used or neither: a writer that exposes one
+    # of them must not get a mixed batch-lookup / per-row-put shape.
+    vault = _HalfBatchVault()
+    out = _run(pd.DataFrame({"pan": ["x", "y"]}), vault=vault)
+    assert vault.batch_lookups == 0
+    assert [p for _ns, p, _t in vault.puts] == ["x", "y"]
+    assert len(out["pan"]) == 2
+
+
+@pytest.mark.parametrize("raise_on", ["lookup_existing", "put"])
+def test_per_row_writer_raising_leaves_no_value_on_the_exception_chain(raise_on: str) -> None:
+    # `raise ... from None` clears __cause__ but Python still attaches the
+    # writer's exception as __context__; anything that walks the chain (a
+    # structured error serializer, a crash reporter) would see the plaintext.
+    df = pd.DataFrame({"pan": ["secret-value", "other-secret"]})
+    with pytest.raises(ExecutionError) as exc:
+        _run(df, vault=_RaisingVault(raise_on=raise_on))
+    assert getattr(exc.value, "code", "") == "tokenize_vault_error"
+    chain: list[BaseException] = []
+    seen: BaseException | None = exc.value
+    while seen is not None and seen not in chain:
+        chain.append(seen)
+        seen = seen.__cause__ or seen.__context__
+    text = "".join(repr(e) + str(e) + repr(getattr(e, "args", ())) for e in chain)
+    assert "secret-value" not in text and "other-secret" not in text and "tok_" not in text
+
+
+class _BadLookupVault(FakeVault):
+    def __init__(self, bad: Any) -> None:
+        super().__init__()
+        self._bad = bad
+
+    def lookup_existing(self, namespace: str, plaintext: str) -> Any:
+        return self._bad
+
+
+@pytest.mark.parametrize("bad", ["", 123, b"tok_x", ["tok_x"]])
+def test_per_row_lookup_returning_a_non_token_fails_closed(bad: Any) -> None:
+    # Same untrusted-producer rule as put(): a lookup hit must be a non-empty str
+    # or the run aborts with the coded, value-free error (never publishes it).
+    df = pd.DataFrame({"pan": ["secret-value"]})
+    with pytest.raises(ExecutionError) as exc:
+        _run(df, vault=_BadLookupVault(bad))
+    assert getattr(exc.value, "code", "") == "tokenize_vault_error"
+    assert "secret-value" not in str(exc.value)

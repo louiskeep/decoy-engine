@@ -9,6 +9,31 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (B-6: batch token vault writer seam, 2026-10-31)
+
+`BatchTokenVaultWriter` (`decoy_engine.execution._adapter`, beside `TokenVaultWriter`):
+an optional pair of methods, `lookup_existing_many(namespace, plaintexts) -> {plaintext:
+token}` and `put_many(namespace, pairs) -> {plaintext: authoritative_token}`, that a
+platform writer may add so a tokenize column is resolved in one lookup and one bulk
+write over its DISTINCT NFC-normalized plaintexts instead of a `lookup_existing` +
+`put` round-trip per cell. The strategy uses the batch seam only when BOTH methods are
+present; otherwise it takes the per-row path, now also over distinct plaintexts (a
+repeated value is looked up and written once). Row output is unchanged either way:
+a hit is the vault's stored token and a miss is the token the vault returns for the
+proposed HKDF surrogate. Additive; no signature of `run_pipeline` or
+`PandasExecutionAdapter.run` changes. The platform contract is in
+`docs/handoffs/inputs/b6-engine-api-note.md`.
+
+Fail-closed rules extend to the batch calls and tighten the per-row lookup: a batch
+result that is not a mapping, carries a plaintext that was not requested, omits a
+requested plaintext (`put_many`), or holds a non-`str` / empty token, and a
+`lookup_existing` hit that is not a non-empty `str`, all abort the run with the coded,
+value-free `tokenize_vault_error`. A writer exception now leaves nothing on the
+exception chain at all: the coded error is raised after the `except` block exits, so
+the writer's exception is neither `__cause__` nor `__context__` (previously `from
+None` cleared only `__cause__`, and a database error quoting the plaintext stayed
+reachable as `__context__`).
+
 ### Added (F29: stable machine-readable errors and progress, engine slices, 2026-10-29)
 
 New public `decoy_engine.reasons`: one engine-owned, versioned registry of reason codes (`registry_version`

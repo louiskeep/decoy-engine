@@ -117,6 +117,47 @@ class TokenVaultWriter(Protocol):
         ...
 
 
+class BatchTokenVaultWriter(Protocol):
+    """Optional batch extension of ``TokenVaultWriter`` (B-6 perf): one lookup and
+    one write per column instead of a ``lookup_existing`` + ``put`` round-trip per
+    cell (a million-row column is otherwise a million synchronous vault calls
+    inside the job transaction).
+
+    The ``tokenize`` strategy uses these when the injected writer provides BOTH;
+    with neither it takes the per-row path, so an existing writer keeps working
+    unchanged (additive). A writer that provides only one is treated as a
+    per-row writer (never a mixed batch-lookup / per-row-put shape).
+
+    Every contract of the per-row methods carries over unchanged: identity is
+    the ``(namespace, plaintext)`` pair, the vault is authoritative (a stored
+    plaintext keeps its original token; a concurrent writer's committed token
+    wins and is what ``put_many`` must return), a raised error aborts the run
+    with a coded, value-free ``tokenize_vault_error``, and a result that is not
+    a ``{plaintext: non-empty str}`` mapping over the requested plaintexts fails
+    closed the same way. Only the I/O shape differs.
+    """
+
+    def lookup_existing_many(self, namespace: str, plaintexts: Sequence[str]) -> Mapping[str, str]:
+        """Tokens already stored under ``namespace`` for these plaintexts, as
+        ``{plaintext: token}``.
+
+        A plaintext with no stored token is simply absent from the result (never
+        raised, never None). The input holds distinct plaintexts; the result's
+        keys must be a subset of it. Raises on failure."""
+        ...
+
+    def put_many(self, namespace: str, pairs: Mapping[str, str]) -> Mapping[str, str]:
+        """Persist proposed ``{plaintext: token}`` pairs under ``namespace`` in one
+        bulk write and return the AUTHORITATIVE stored token for EVERY key.
+
+        Each ``token`` is only a proposal, exactly as with ``put``: a plaintext a
+        concurrent writer committed first keeps the vault's token, and the
+        returned mapping must carry that one so the strategy emits it (a
+        published token must always have a reverse mapping). Raises on failure;
+        never returns None, never omits a key."""
+        ...
+
+
 @dataclass(frozen=True)
 class StrategyContext:
     """Shared per-job dependencies threaded into every strategy handler.

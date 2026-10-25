@@ -519,7 +519,12 @@ namespace: `lookup_existing(namespace, plaintext)` and
 `put(namespace, plaintext, token)` both take the column namespace, so a vault
 keys identity by `(namespace, plaintext)`, not plaintext alone. A platform
 implementation must key its store the same way, or the same value under two
-namespaces would collapse to one token. tokenize is an always-keyed strategy,
+namespaces would collapse to one token. A writer may additionally implement the
+`BatchTokenVaultWriter` protocol (`lookup_existing_many(namespace, plaintexts)` and
+`put_many(namespace, pairs)`, both namespace-scoped, `put_many` returning the
+authoritative token per plaintext); the strategy uses it only when both methods
+are present and takes the per-row path otherwise, so the batch seam is additive
+under §4.1. tokenize is an always-keyed strategy,
 so at GA it requires a resolved >=32-byte secret like every other keyed
 surface (`keyed_strategy_requires_secret`); it never derives tokens from the
 public job seed.
