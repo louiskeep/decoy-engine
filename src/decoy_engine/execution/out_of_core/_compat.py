@@ -296,7 +296,13 @@ def check_out_of_core_compatibility(
             rejections.append(
                 OutOfCoreRejection(
                     "out_of_core_cross_row_strategy_unsupported",
-                    f"strategy {node.strategy!r} needs a bounded relational lowering.",
+                    f"{node.table}.{node.columns}: strategy {node.strategy!r} depends on "
+                    "state the per-column streaming kernel has no channel for (other "
+                    "columns of the same row for group_key, a durable global row ordinal "
+                    "for windowed_date, a per-group sequential stream for grouped_series, "
+                    "an intra-table aggregate for derived_aggregate, or a reference-table "
+                    "row for joint_mask); admitting it needs a bounded relational lowering "
+                    "not yet built. Falls back to sequential/full-frame.",
                 )
             )
         elif node.strategy in _DEFERRED_GROUP_B:

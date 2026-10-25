@@ -135,6 +135,43 @@ OOC also declines when predicates, unsupported non-scalar work, self-referential
 and table-level cycles. The public supported-strategy set is only a coarse payload list. It does
 not establish job admission or native dtype support.
 
+#### Why the out-of-core route declines some payload strategies (known limitations, never a silent no-op)
+
+Every decline above is a caller-visible coded reason, and the job runs the strategy on the
+full-frame (or sequential) oracle instead; the out-of-core route never silently passes a column
+through or drops a strategy. Some declines are inherent to a single-pass, per-column batch
+stream and are not a near-term wiring gap:
+
+- `faker` (`out_of_core_faker_pool_unsupported`): realistic name/address/value replacement draws
+  from a registry-backed value pool plus a cross-batch pool cache, which the registry-free
+  streaming kernel has no channel for. So realistic replacement does **not** run at out-of-core
+  scale today; this is a known limitation, not a silent no-op. A streamable value-pool design is
+  a separate V2 item.
+- `geo_generalize` (`out_of_core_whole_column_aggregation_unsupported`): its k-anonymity cascade
+  thresholds each row's generalization level on whole-dataset counts (ZIP5/ZIP3/state or H3
+  resolutions), which a single chunk cannot see.
+- `group_key`, `windowed_date`, `grouped_series`, `derived_aggregate`, `joint_mask`
+  (`out_of_core_cross_row_strategy_unsupported`): each needs state the per-column kernel does not
+  receive -- other columns of the same row (`group_key`), a durable global row ordinal
+  (`windowed_date`), a per-group sequential stream (`grouped_series`), an intra-table aggregate
+  (`derived_aggregate`), or a reference-table row (`joint_mask`). Admitting them needs a bounded
+  relational lowering not yet built.
+- `shuffle` (`out_of_core_strategy_unsupported`): a whole-column keyed permutation is
+  order-sensitive and non-partitionable by construction, so it cannot stream per batch.
+- `bucketize` / `date_shift` (`out_of_core_row_error_strategy_unsupported`): row-local in value,
+  but they record per-value format errors that the full-frame path removes via a quarantine
+  pass; the streaming route has no row-error/quarantine channel (`date_shift` without an
+  explicit `date_format` also needs whole-column format detection). `top_code` is in the same
+  class and declines through the generic surface for the same missing channel.
+- `formula` / `derived` (`out_of_core_dynamic_output_type_unsupported`) and `nested`
+  (`out_of_core_child_dispatch_unsupported`): their output Arrow type is not knowable from the
+  plan alone (or they re-enter the full pandas child-strategy dispatch), which the fixed-schema
+  streaming writer cannot satisfy.
+
+These verdicts are pinned by `tests/parity/test_out_of_core_group_b_parity.py` and
+`tests/parity/test_out_of_core_group_c_parity.py` (each asserts the exact coded reason), so a
+future change that silently admitted one would fail the suite rather than leak a divergence.
+
 ### Native-chunked route (single-table, chunked)
 
 FK-participating tables on either side reroute to the oracle
@@ -172,7 +209,13 @@ Masked nullable integer columns under `truncate` or `categorical` can fail with
 
 These run their own Python handler by design, not the generic fallback:
 
-- `code_set`: no kernel on any route (backlog: kernelize as a named-Arrow dict-map).
+- `code_set`: no native kernel on any route. It remaps each value through a required corpus
+  state table (a keyed corpus lookup), which no per-value Arrow/Rust kernel carries today, so it
+  runs its dedicated Python handler everywhere; backlog: kernelize as a named-Arrow dict-map that
+  threads the corpus. Its chunked and out-of-core support is this same mask-mode handler, admitted
+  for mask mode without `chapter_preserve`; `gen` mode and `chapter_preserve` decline
+  (`out_of_core_code_set_shape_unsupported`, pinned by
+  `tests/parity/test_out_of_core_group_c_parity.py`).
 - NER (the `ner` config of `text_redact` / `text_mask`): Python by design (spaCy inference).
 - `faker` masking runs as compiled index selection only on its native legs. Providers are
   person_first_name and person_last_name on these native paths. SEQ admits an exact-`string`
