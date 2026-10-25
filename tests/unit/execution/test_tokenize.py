@@ -44,6 +44,24 @@ class FakeVault:
         self.map[plaintext] = token
 
 
+class FakeBatchVault:
+    """BatchTokenVaultWriter: serves one batched lookup + one bulk put, and
+    counts each batch call so a test can prove the per-cell round-trip is gone."""
+
+    def __init__(self, preloaded: dict[str, str] | None = None) -> None:
+        self.map: dict[str, str] = dict(preloaded or {})
+        self.lookup_batches: list[list[str]] = []
+        self.put_batches: list[dict[str, str]] = []
+
+    def lookup_existing_many(self, plaintexts):
+        self.lookup_batches.append(list(plaintexts))
+        return {p: self.map[p] for p in plaintexts if p in self.map}
+
+    def put_many(self, pairs) -> None:
+        self.put_batches.append(dict(pairs))
+        self.map.update(pairs)
+
+
 def _col(df: pd.DataFrame, name: str) -> ColumnProfile:
     return ColumnProfile(
         name=name,
@@ -158,6 +176,58 @@ def test_fails_closed_without_a_namespace() -> None:
         "tokenize_requires_namespace" in str(exc.value)
         or getattr(exc.value, "code", "") == "tokenize_requires_namespace"
     )
+
+
+# --- MG-5 V1 perf: batched vault I/O (BatchTokenVaultWriter) ----------------
+
+
+def test_batch_path_one_lookup_one_put_over_distinct() -> None:
+    # Repeats + distinct values resolve in exactly ONE lookup and ONE bulk put,
+    # the put carrying only the distinct misses (no per-cell round-trip).
+    df = pd.DataFrame({"pan": ["a", "b", "a", "c", "b"]})
+    vault = FakeBatchVault()
+    out = _run(df, vault=vault)
+    assert len(vault.lookup_batches) == 1
+    assert vault.lookup_batches[0] == ["a", "b", "c"]  # distinct, order-stable
+    assert len(vault.put_batches) == 1
+    assert set(vault.put_batches[0]) == {"a", "b", "c"}  # only distinct misses
+    assert out["pan"][0] == out["pan"][2]  # repeats share one token
+    assert out["pan"][1] == out["pan"][4]
+    for tok in out["pan"]:
+        assert tok.startswith("tok_") and len(tok) == len("tok_") + 32
+
+
+def test_batch_path_authoritative_reuse_excludes_hits_from_put() -> None:
+    vault = FakeBatchVault(preloaded={"x": "tok_PREEXISTING"})
+    out = _run(pd.DataFrame({"pan": ["x", "y"]}), vault=vault)
+    assert out["pan"][0] == "tok_PREEXISTING"  # stored token wins verbatim
+    assert out["pan"][1].startswith("tok_") and out["pan"][1] != "tok_PREEXISTING"
+    assert len(vault.lookup_batches) == 1
+    assert set(vault.put_batches[0]) == {"y"}  # only the miss is written
+
+
+def test_batch_path_nulls_preserved_and_never_vaulted() -> None:
+    vault = FakeBatchVault()
+    out = _run(pd.DataFrame({"pan": ["abc", None, "def"]}), vault=vault)
+    assert out["pan"][1] is None
+    assert vault.lookup_batches[0] == ["abc", "def"]  # null never reached the vault
+    assert set(vault.put_batches[0]) == {"abc", "def"}
+
+
+def test_batch_path_all_null_does_no_vault_io() -> None:
+    vault = FakeBatchVault()
+    out = _run(pd.DataFrame({"pan": [None, None]}), vault=vault)
+    assert out["pan"] == [None, None]
+    assert vault.lookup_batches == [] and vault.put_batches == []
+
+
+def test_batch_and_per_cell_produce_identical_tokens() -> None:
+    # The token for a value must not depend on which seam the writer exposes:
+    # the batch path mints the same deterministic surrogate as the per-cell path.
+    df = pd.DataFrame({"pan": ["x", "y", "z"]})
+    per_cell = _run(df, vault=FakeVault())
+    batched = _run(df, vault=FakeBatchVault())
+    assert per_cell == batched
 
 
 # --- V0b: run_pipeline exposure + full-frame routing ------------------------

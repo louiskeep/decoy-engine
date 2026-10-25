@@ -106,6 +106,37 @@ class TokenVaultWriter(Protocol):
         ...
 
 
+class BatchTokenVaultWriter(Protocol):
+    """Optional batch extension of ``TokenVaultWriter`` (MG-5 V1 perf).
+
+    A writer MAY also implement these so the ``tokenize`` strategy collapses its
+    per-cell vault I/O into one lookup and one write per column, instead of a
+    ``lookup_existing`` + ``put`` round-trip for every row (pathological at the
+    million-row counts the product advertises). The strategy feature-detects
+    them and falls back to the per-row ``lookup_existing`` / ``put`` when absent,
+    so this is purely additive: an existing writer keeps working unchanged.
+
+    The idempotency contract is identical to the per-row methods: the vault stays
+    authoritative (a plaintext already stored keeps its original token; no
+    duplicate row), only the I/O shape differs.
+    """
+
+    def lookup_existing_many(self, plaintexts: Sequence[str]) -> Mapping[str, str]:
+        """Tokens already stored for these plaintexts, as ``{plaintext: token}``.
+
+        A plaintext with no stored token is simply absent from the result (never
+        raised). The input may contain duplicates; the result keys are distinct."""
+        ...
+
+    def put_many(self, pairs: Mapping[str, str]) -> None:
+        """Persist newly minted ``(plaintext, token)`` pairs in one bulk write.
+
+        Same vault-authoritative idempotency as ``put``: a plaintext already
+        present (e.g. inserted by a concurrent writer since the lookup) is left
+        untouched rather than duplicated."""
+        ...
+
+
 @dataclass(frozen=True)
 class StrategyContext:
     """Shared per-job dependencies threaded into every strategy handler.

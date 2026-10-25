@@ -26,7 +26,7 @@ from __future__ import annotations
 import pandas as pd
 
 from decoy_engine.determinism import derive
-from decoy_engine.execution._adapter import StrategyContext
+from decoy_engine.execution._adapter import StrategyContext, TokenVaultWriter
 from decoy_engine.execution._errors import StrategyError
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.plan._types import ColumnSeed
@@ -69,23 +69,68 @@ class TokenizeStrategyHandler:
                 ),
             )
 
-        out: list[str | None] = []
-        for value in df[column].tolist():
+        values = df[column].tolist()
+        # Distinct non-null plaintexts, order-stable. The column is resolved with
+        # one vault lookup + one write over these distinct values, not a per-cell
+        # round-trip: at the million-row counts the product advertises, per-cell
+        # I/O is 1M+ synchronous DB calls inside the job transaction. Dedup also
+        # means a repeated value is looked up and written exactly once.
+        distinct: list[str] = []
+        seen: set[str] = set()
+        for value in values:
             if pd.isna(value):
-                out.append(None)  # null preserved; nothing to tokenize
                 continue
             plaintext = str(value)
-            existing = vault.lookup_existing(plaintext)
-            if existing is not None:
-                out.append(existing)  # the vault is authoritative for identity
-                continue
-            token = (
-                _TOKEN_PREFIX
-                + derive(ctx.mask_key, plan.namespace, plaintext.encode("utf-8")).hex()[
-                    :_TOKEN_HEX_LEN
-                ]
-            )
-            vault.put(plaintext, token)
-            out.append(token)
-        df[column] = out
+            if plaintext not in seen:
+                seen.add(plaintext)
+                distinct.append(plaintext)
+
+        token_for = self._resolve_tokens(vault, distinct, ctx.mask_key, plan.namespace)
+
+        # Nulls preserved; every non-null maps through the resolved tokens.
+        df[column] = [None if pd.isna(value) else token_for[str(value)] for value in values]
         return df, []
+
+    def _resolve_tokens(
+        self,
+        vault: TokenVaultWriter,
+        distinct: list[str],
+        mask_key: bytes,
+        namespace: str,
+    ) -> dict[str, str]:
+        """``{plaintext: token}`` for every distinct plaintext, reusing any token
+        the vault already holds (the vault is authoritative) and minting the rest.
+
+        Uses the optional ``BatchTokenVaultWriter`` seam when the injected writer
+        provides it (one lookup + one bulk write); falls back to the per-row
+        ``lookup_existing`` / ``put`` otherwise, so a writer that predates the
+        batch seam still works. Either way the row-level result is identical: a
+        hit reuses the stored token, a miss gets the deterministic surrogate."""
+        token_for: dict[str, str] = {}
+        if not distinct:
+            return token_for
+
+        lookup_many = getattr(vault, "lookup_existing_many", None)
+        if callable(lookup_many):
+            token_for.update(lookup_many(distinct))
+        else:
+            for plaintext in distinct:
+                existing = vault.lookup_existing(plaintext)
+                if existing is not None:
+                    token_for[plaintext] = existing
+
+        minted = {
+            plaintext: _TOKEN_PREFIX
+            + derive(mask_key, namespace, plaintext.encode("utf-8")).hex()[:_TOKEN_HEX_LEN]
+            for plaintext in distinct
+            if plaintext not in token_for
+        }
+        if minted:
+            put_many = getattr(vault, "put_many", None)
+            if callable(put_many):
+                put_many(minted)
+            else:
+                for plaintext, token in minted.items():
+                    vault.put(plaintext, token)
+            token_for.update(minted)
+        return token_for
