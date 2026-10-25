@@ -87,7 +87,10 @@ from decoy_engine.execution.out_of_core._payload_store import (
     SpillPayloadStore,
 )
 from decoy_engine.execution.out_of_core._relation import build_parent_key_relation_aligned
-from decoy_engine.execution.out_of_core._row_error_bridge import fail_closed_on_row_errors
+from decoy_engine.execution.out_of_core._row_error_bridge import (
+    bridge_column_dtypes_for_table,
+    fail_closed_on_row_errors,
+)
 from decoy_engine.execution.out_of_core._source import LazySource
 from decoy_engine.execution.out_of_core._stream_driver_support import (
     _code_set_records_and_evidence_for_table,
@@ -189,6 +192,12 @@ def stream_table(
         batch_rows = _join_ooc._JOIN_BATCH_ROWS
     source_schema = raw.schema
     skip_columns = frozenset(col for edge in incoming_edges for col in edge.child_columns)
+    # F2: whole-source-column pandas dtype per row-error-bridge column, resolved
+    # once so every Phase-1 batch takes the same top_code/bucketize branch as the
+    # full-frame oracle (same reasoning as the batch driver's `_stream_table`).
+    bridge_column_dtypes = bridge_column_dtypes_for_table(
+        raw, source_schema, table_seed(plan, table_name), skip_columns, batch_rows
+    )
     # Hash columns are decided once here, before any row is read (a column never changes backend).
     hash_plan = (hash_run or OocHashRun()).prepare_table(
         plan, table_name, source_schema, skip_columns, incoming_edges, site="stream_join"
@@ -360,6 +369,7 @@ def stream_table(
                 registry=registry,
                 row_offset=row_offset,
                 row_error_sink=batch_row_errors,
+                bridge_column_dtypes=bridge_column_dtypes,
             )
             # Fail closed on the first batch with a row error (chunked H1 contract;
             # neither non-full-frame lane quarantines). Phase 1 masks in source

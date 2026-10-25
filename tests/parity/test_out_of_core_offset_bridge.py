@@ -101,7 +101,11 @@ def _job(anchor_seed: ColumnSeed) -> tuple[Any, dict[str, pa.Table], Relationshi
         ),
         ordering=(),
     )
-    return plan, {"parent": tbl("pk", _ANCHORS), "child": tbl("fk", list(reversed(_ANCHORS)))}, graph
+    return (
+        plan,
+        {"parent": tbl("pk", _ANCHORS), "child": tbl("fk", list(reversed(_ANCHORS)))},
+        graph,
+    )
 
 
 def _gate(plan: Any, graph: RelationshipGraph):
@@ -157,6 +161,84 @@ def test_masked_anchor_declines() -> None:
     assert "out_of_core_windowed_date_masked_anchor_unsupported" in {
         r.code for r in verdict.rejections
     }
+
+
+def _fk_anchor_job() -> tuple[Any, dict[str, pa.Table], RelationshipGraph]:
+    """A windowed_date whose anchor column `dob` is itself a child FK column
+    referencing a parent column masked (redacted) to a different value.
+
+    FK resolution rewrites the child's `dob` to the parent's masked value, and
+    the full-frame oracle reads that FK-resolved anchor for windowed_date
+    whenever the child table is ordered after the parent (so the FK-resolve of
+    `dob` runs before the windowed_date node). The out-of-core offset bridge
+    reads the RAW anchor off the batch, so the two routes diverge on the event
+    value -- a wrong value, not a type nicety.
+    """
+    wd = _seed("windowed_date", pc=(("anchor", "dob"), ("max_days", 0)))
+    redact = _seed("redact", pc=(("redact_with", "2000-01-01"),))
+    # Parent/child table names chosen so the child sorts AFTER the parent: the
+    # work ordering then resolves the child's FK anchor before the windowed_date
+    # node, which is the shape where the oracle reads the FK-resolved anchor.
+    parent = pa.table({"pdate": pa.array(["2020-01-01", "2019-06-15"], type=pa.string())})
+    child = pa.table(
+        {
+            "dob": pa.array(["2020-01-01", "2019-06-15"], type=pa.string()),
+            "event": pa.array([None, None], type=pa.string()),
+        }
+    )
+    plan = SimpleNamespace(
+        seed_envelope=SeedEnvelope(
+            job_seed=_JOB_SEED,
+            per_table=(
+                ("aparent", TableSeed(per_column=(("pdate", redact),), per_group=())),
+                (
+                    "bchild",
+                    TableSeed(per_column=(("dob", _PASSTHROUGH), ("event", wd)), per_group=()),
+                ),
+            ),
+        )
+    )
+    graph = RelationshipGraph(
+        edges=(
+            RelationshipEdge(
+                parent_table="aparent",
+                parent_columns=("pdate",),
+                child_table="bchild",
+                child_columns=("dob",),
+                namespace="kns",
+                orphan_policy=OrphanPolicy.PRESERVE,
+            ),
+        ),
+        ordering=(),
+    )
+    return plan, {"aparent": parent, "bchild": child}, graph
+
+
+def test_fk_rewritten_anchor_declines() -> None:
+    """F1 remediation: a windowed_date whose anchor is an FK-rewritten column is
+    a gate MISS, so the job falls back to the full-frame oracle rather than let
+    the offset bridge read the raw anchor where the oracle reads the resolved one.
+
+    The gate must decline this shape. When (and only when) the gate still admits
+    it -- i.e. on the pre-fix branch -- the test also proves the divergence is
+    real by running the route directly against the oracle; post-fix the route's
+    own preflight refuses the plan, so that demonstration is skipped.
+    """
+    plan, sources, graph = _fk_anchor_job()
+    verdict = _gate(plan, graph)
+    if verdict.accepted:
+        oracle = PandasExecutionAdapter().run(
+            plan, sources, registry=_REG, relationship_graph=graph, namespace_registry=_NS
+        )
+        direct = run_fk_out_of_core(plan, sources, registry=_REG, relationship_graph=graph)
+        assert (
+            oracle.outputs["bchild"].to_pydict()["event"]
+            != direct.outputs["bchild"].to_pydict()["event"]
+        ), "fixture no longer reproduces the raw-vs-resolved anchor divergence"
+    assert not verdict.accepted, "gate must decline a windowed_date over an FK-rewritten anchor"
+    assert "out_of_core_windowed_date_fk_anchor_unsupported" in {
+        r.code for r in verdict.rejections
+    }, [r.code for r in verdict.rejections]
 
 
 def _run_sink(plan: Any, sources: Any, graph: Any, target: Path) -> bool:

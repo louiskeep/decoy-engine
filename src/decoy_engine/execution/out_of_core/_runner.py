@@ -90,7 +90,10 @@ from decoy_engine.execution.out_of_core._route_policy import (
     decide_route,
     validate_outgoing_parent_columns,
 )
-from decoy_engine.execution.out_of_core._row_error_bridge import fail_closed_on_row_errors
+from decoy_engine.execution.out_of_core._row_error_bridge import (
+    bridge_column_dtypes_for_table,
+    fail_closed_on_row_errors,
+)
 from decoy_engine.execution.out_of_core._source import LazySource
 from decoy_engine.execution.out_of_core._stream_driver import stream_table
 from decoy_engine.execution.out_of_core._stream_driver_support import (
@@ -375,6 +378,15 @@ def _stream_table(
         batch_rows = _join_ooc._JOIN_BATCH_ROWS
     source_schema = raw.schema
     skip_columns = frozenset(col for edge in incoming_edges for col in edge.child_columns)
+    # F2: the pandas dtype each row-error-bridge column (bucketize/top_code) must
+    # be forced to, resolved ONCE here from the whole source column so every
+    # batch converts to the same dtype the full-frame oracle does (a null-free
+    # batch of a null-bearing boolean/int column otherwise infers a different
+    # dtype and a different handler branch). Only null-unstable columns are in
+    # the map, and only those pay a whole-column null scan.
+    bridge_column_dtypes = bridge_column_dtypes_for_table(
+        raw, source_schema, table_seed(plan, table_name), skip_columns, batch_rows
+    )
     # Hash columns are decided once here, before any row is read (a column never changes backend).
     hash_plan = (hash_run or OocHashRun()).prepare_table(
         plan, table_name, source_schema, skip_columns, incoming_edges, site="batch_join"
@@ -475,6 +487,7 @@ def _stream_table(
                     registry=registry,
                     row_offset=row_offset,
                     row_error_sink=batch_row_errors,
+                    bridge_column_dtypes=bridge_column_dtypes,
                 )
                 # Fail closed on the first batch with a row error, mirroring the
                 # chunked route's H1 contract (`_chunked_oracle`): neither

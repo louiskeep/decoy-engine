@@ -72,10 +72,16 @@ def _bridge_own_column(
     mask_key: bytes,
     registry: ProviderRegistry | None,
     row_offset: int,
+    column_pandas_dtype: Any | None = None,
 ) -> tuple[pa.Array, tuple[RowErrorRecord, ...]]:
     """Mask one own-column row-erroring column (bucketize/top_code) via the
     oracle-handler bridge, failing closed on a missing registry (a wiring bug:
-    the runner always threads its registry, so this guards a direct caller)."""
+    the runner always threads its registry, so this guards a direct caller).
+
+    `column_pandas_dtype` (F2) forces every batch's input conversion to the
+    whole-source-column dtype, so a null-free batch takes the same handler branch
+    as the oracle; None leaves the natural per-batch inference (correct for the
+    whole-table `mask_table` path, which sees the whole column at once)."""
     if registry is None:
         raise ExecutionError(
             code="out_of_core_row_error_registry_missing",
@@ -93,6 +99,7 @@ def _bridge_own_column(
         job_seed=plan.seed_envelope.job_seed,
         mask_key=mask_key,
         row_offset=row_offset,
+        column_pandas_dtype=column_pandas_dtype,
     )
 
 
@@ -454,6 +461,7 @@ def mask_batch(
     registry: ProviderRegistry | None = None,
     row_offset: int = 0,
     row_error_sink: list[RowErrorRecord] | None = None,
+    bridge_column_dtypes: dict[str, Any] | None = None,
 ) -> pa.RecordBatch:
     """Mask one RecordBatch's non-FK columns per the plan.
 
@@ -499,7 +507,15 @@ def mask_batch(
             if idx < 0:
                 continue
             masked, row_error_records = _bridge_own_column(
-                plan, table_name, column, column_seed, arrays[idx], key, registry, row_offset
+                plan,
+                table_name,
+                column,
+                column_seed,
+                arrays[idx],
+                key,
+                registry,
+                row_offset,
+                column_pandas_dtype=(bridge_column_dtypes or {}).get(column),
             )
             if row_error_sink is not None:
                 row_error_sink.extend(row_error_records)

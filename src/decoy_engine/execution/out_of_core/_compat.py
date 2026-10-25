@@ -321,9 +321,10 @@ def check_out_of_core_compatibility(
             )
         elif node.strategy in _ROW_OFFSET_BRIDGE_STRATEGIES:
             # windowed_date is admitted via the row-offset bridge only when its
-            # anchor is unmasked or passthrough (so the raw anchor the bridge
-            # reads matches the oracle's column-order read); a masked anchor MISSes.
-            offset_rejection = _windowed_date_rejection(node, plan)
+            # anchor is unmasked or passthrough AND is not an FK-rewritten column
+            # (so the raw anchor the bridge reads matches the oracle's read); a
+            # masked or FK-rewritten anchor MISSes.
+            offset_rejection = _windowed_date_rejection(node, plan, relationship_graph)
             if offset_rejection is not None:
                 rejections.append(offset_rejection)
         elif node.strategy not in _SUPPORTED_WORK_STRATEGIES:
@@ -367,16 +368,28 @@ def _group_c_conditional_rejection(node: WorkNode) -> OutOfCoreRejection | None:
     return None
 
 
-def _windowed_date_rejection(node: WorkNode, plan: Plan) -> OutOfCoreRejection | None:
-    """Reject a windowed_date node whose anchor column is masked by a
-    value-changing strategy; None admits it.
+def _windowed_date_rejection(
+    node: WorkNode, plan: Plan, relationship_graph: RelationshipGraph
+) -> OutOfCoreRejection | None:
+    """Reject a windowed_date node whose anchor the out-of-core bridge cannot
+    read oracle-identically; None admits it.
 
     The out-of-core bridge reads the RAW anchor from the batch and keys each row
     on its durable global ordinal. That is byte-identical to the full-frame
-    oracle only when the oracle also reads the raw anchor, i.e. the anchor is
-    unmasked or `passthrough`. A masked anchor would make the oracle's read
-    depend on the column masking order, which the per-column bridge does not
-    reproduce, so it falls back to full-frame rather than risk a divergence.
+    oracle only when the oracle also reads that same raw value. Two shapes break
+    it, both rejected here so the job falls back to full-frame:
+
+    1. A MASKED anchor (not unmasked or `passthrough`): the oracle's read would
+       depend on the column masking order, which the per-column bridge does not
+       reproduce.
+    2. An FK-REWRITTEN anchor: the anchor is itself a child FK column on this
+       table, so FK resolution rewrites it to the (possibly masked) parent value.
+       The oracle reads that FK-resolved anchor whenever the resolve is ordered
+       before the windowed_date node (e.g. the child table sorts after its
+       parent), while the bridge reads the raw pre-resolution value -- a
+       wrong-value divergence. Declining is the conservative choice (the resolved
+       anchor is not available on the per-column bridge path); see F1 in the OOC
+       strategy-coverage remediation.
     """
     cfg = dict(getattr(node.plan_slice, "provider_config", ()) or ())
     anchor = cfg.get("anchor")
@@ -385,7 +398,8 @@ def _windowed_date_rejection(node: WorkNode, plan: Plan) -> OutOfCoreRejection |
             "out_of_core_windowed_date_anchor_missing",
             f"{node.table}.{node.columns}: windowed_date has no anchor column configured.",
         )
-    anchor_seed = _column_seed(plan, node.table, str(anchor))
+    anchor = str(anchor)
+    anchor_seed = _column_seed(plan, node.table, anchor)
     if anchor_seed is not None and anchor_seed.strategy != "passthrough":
         return OutOfCoreRejection(
             "out_of_core_windowed_date_masked_anchor_unsupported",
@@ -394,7 +408,24 @@ def _windowed_date_rejection(node: WorkNode, plan: Plan) -> OutOfCoreRejection |
             "with an unmasked or passthrough anchor, so the anchor read matches the full-frame "
             "oracle's column order. Falls back to full-frame.",
         )
+    if _is_fk_child_column(relationship_graph, node.table, anchor):
+        return OutOfCoreRejection(
+            "out_of_core_windowed_date_fk_anchor_unsupported",
+            f"{node.table}.{node.columns}: windowed_date anchor column {anchor!r} is a child FK "
+            "column rewritten by FK resolution; the full-frame oracle reads the FK-resolved "
+            "value while the out-of-core bridge reads the raw pre-resolution value, a wrong-value "
+            "divergence. Falls back to full-frame.",
+        )
     return None
+
+
+def _is_fk_child_column(relationship_graph: RelationshipGraph, table: str, column: str) -> bool:
+    """True if `column` on `table` is a child FK column of some edge (so FK
+    resolution rewrites it to the parent value)."""
+    return any(
+        edge.child_table == table and column in edge.child_columns
+        for edge in relationship_graph.edges
+    )
 
 
 def _is_deterministic(plan_slice: object) -> bool:

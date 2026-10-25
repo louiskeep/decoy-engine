@@ -76,7 +76,7 @@ The FK key surface here is only `hash`, `redact`, `truncate`, `passthrough`.
 | `text_mask` | dedicated Python (per-cell loop; backlog: route through the span kernel) | excluded (off the key surface) |
 | `code_set` (mask mode) | dedicated Python (no kernel on any route; backlog: Arrow dict-map) | excluded (off the key surface) |
 | `bucketize`, `top_code` | dedicated Python (per-batch oracle-handler bridge; row-error channel, fails closed on an uncoercible cell) | excluded (off the key surface) |
-| `windowed_date` | dedicated Python (per-batch oracle-handler bridge; row-offset channel, keyed on the durable global row ordinal; needs an unmasked/passthrough anchor) | excluded (off the key surface) |
+| `windowed_date` | dedicated Python (per-batch oracle-handler bridge; row-offset channel, keyed on the durable global row ordinal; needs an unmasked/passthrough anchor that is not FK-rewritten) | excluded (off the key surface) |
 | `faker`, `date_shift`, `geo_generalize`, `formula`, `derived`, `nested`, and the rest | declined (caller-visible reason) | excluded (off the key surface) |
 
 On this route a composite FK whose child columns would be masked independently as scalars is
@@ -113,7 +113,10 @@ quarantines):
   threads a durable global row ordinal (the cumulative Phase-1 source-order row count, equal to
   the row's whole-source position on both drivers) so each row keys identically regardless of the
   batch boundary. Admitted only with an unmasked or passthrough anchor
-  (`out_of_core_windowed_date_masked_anchor_unsupported` otherwise).
+  (`out_of_core_windowed_date_masked_anchor_unsupported` otherwise) that is not itself a child FK
+  column: an FK-rewritten anchor is read post-resolution by the oracle but pre-resolution by the
+  bridge, a wrong-value divergence, so it declines
+  (`out_of_core_windowed_date_fk_anchor_unsupported`).
 
 Some declines remain inherent to a single-pass, per-column batch stream and are not a near-term
 wiring gap:

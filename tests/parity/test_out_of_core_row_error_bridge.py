@@ -88,8 +88,64 @@ def _job(
         seed_envelope=SeedEnvelope(
             job_seed=_JOB_SEED,
             per_table=(
-                ("parent", TableSeed(per_column=(("pk", key), ("pay", payload_seed)), per_group=())),
-                ("child", TableSeed(per_column=(("fk", key), ("cpay", payload_seed)), per_group=())),
+                (
+                    "parent",
+                    TableSeed(per_column=(("pk", key), ("pay", payload_seed)), per_group=()),
+                ),
+                (
+                    "child",
+                    TableSeed(per_column=(("fk", key), ("cpay", payload_seed)), per_group=()),
+                ),
+            ),
+        )
+    )
+    graph = RelationshipGraph(
+        edges=(
+            RelationshipEdge(
+                parent_table="parent",
+                parent_columns=("pk",),
+                child_table="child",
+                child_columns=("fk",),
+                namespace="kns",
+                orphan_policy=OrphanPolicy.PRESERVE,
+            ),
+        ),
+        ordering=(),
+    )
+    return plan, {"parent": parent, "child": child}, graph
+
+
+def _bool_job(
+    payload_seed: ColumnSeed, parent_vals: list[bool | None], child_vals: list[bool | None]
+) -> tuple[Any, dict[str, pa.Table], RelationshipGraph]:
+    """Same shape as `_job` but with BOOLEAN payload columns, so the batch-vs-
+    whole-column pyarrow dtype flip (bool with no nulls -> numpy `bool`; with a
+    null -> `object`) is exercised."""
+    key = _key_seed()
+    parent = pa.table(
+        {
+            "pk": pa.array([f"p{i}" for i in range(len(parent_vals))], type=pa.string()),
+            "pay": pa.array(parent_vals, type=pa.bool_()),
+        }
+    )
+    child = pa.table(
+        {
+            "fk": pa.array([f"p{i}" for i in range(len(child_vals))], type=pa.string()),
+            "cpay": pa.array(child_vals, type=pa.bool_()),
+        }
+    )
+    plan = SimpleNamespace(
+        seed_envelope=SeedEnvelope(
+            job_seed=_JOB_SEED,
+            per_table=(
+                (
+                    "parent",
+                    TableSeed(per_column=(("pk", key), ("pay", payload_seed)), per_group=()),
+                ),
+                (
+                    "child",
+                    TableSeed(per_column=(("fk", key), ("cpay", payload_seed)), per_group=()),
+                ),
             ),
         )
     )
@@ -191,6 +247,40 @@ def test_row_error_index_is_absolute(batch_rows: int | None) -> None:
     pay_errors = [r for r in exc.value.records if r.column == "pay"]
     assert [r.row_index for r in pay_errors] == [4], [r.row_index for r in pay_errors]
     assert pay_errors[0].table == "parent"
+
+
+@pytest.mark.parametrize("batch_rows", [None, 3, 2, 1])
+def test_top_code_boolean_column_is_batch_size_invariant(batch_rows: int | None) -> None:
+    """F2 remediation: a boolean top_code column fails closed identically at
+    every batch size.
+
+    A nullable Arrow boolean column `[True, None, False]` converts to pandas
+    `object` under the oracle's whole-frame conversion, so top_code treats each
+    bool cell as a `format_error` and the out-of-core route fails closed (the H1
+    contract). Pre-fix, a null-free single-row batch (`batch_rows=1`) inferred
+    pandas `bool` instead, took top_code's numeric branch, coerced True/False to
+    1/0 and SUCCEEDED with `["1", None, "0"]` -- a wrong-value divergence that
+    depended purely on the batch boundary. `batch_rows` must be output-transparent,
+    so every size must fail closed, and the whole-frame size names rows 0 and 2.
+    """
+    payload_seed = _seed("top_code", provider_config=(("cap", 89), ("over_label", "90+")))
+    plan, sources, graph = _bool_job(payload_seed, [True, None, False], [None, True, False])
+    assert _gate_admits(plan, graph)
+    with pytest.raises(RowErrorsFailedError) as exc:
+        run_fk_out_of_core(
+            plan, sources, registry=_REG, relationship_graph=graph, batch_rows=batch_rows
+        )
+    pay_errors = [r for r in exc.value.records if r.column == "pay"]
+    assert pay_errors, f"batch={batch_rows}: expected a format_error on the boolean pay column"
+    assert {r.trigger for r in pay_errors} == {"format_error"}, pay_errors
+    assert {r.table for r in pay_errors} == {"parent"}
+    # Row 0 (True) is always the first failing cell. The whole-frame batch sizes
+    # see both failing cells in one slice and name rows 0 and 2; smaller batches
+    # fail fast on the first offending batch, so their reported set is a prefix.
+    reported = {r.row_index for r in pay_errors}
+    assert reported <= {0, 2} and 0 in reported, reported
+    if batch_rows in (None, 3):
+        assert reported == {0, 2}, reported
 
 
 # ---------------------------------------------------------------------------
