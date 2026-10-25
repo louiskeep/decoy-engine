@@ -118,8 +118,10 @@ Recommended scope split (the gate and Cam refine; pre-release, nothing locked):
    regression this plan fixes.
 2. A derived column reads the driver's MASKED value deterministically (e.g. `full_name = concat(first,
    last)` with first/last redacted yields redacted-based output regardless of name order).
-3. `joint_mask` `key_by` reads deterministically under the ordering edge (the declared masked value via the
-   live frame, or the source value via the pre-mask snapshot), not by lexicographic luck.
+3. `joint_mask` `key_by` reads the SOURCE key deterministically via the pre-mask snapshot (the `date_shift`
+   group-anchor precedent), not the live masked frame and not by lexicographic luck; the emitted tuple is
+   the same for the same source key. Separately, `group_key.group_by` reads the MASKED group value
+   deterministically under the ordering edge (per its docstring), not by lexicographic luck.
 4. A derived-to-derived dependency cycle is rejected at PLAN time with the coded error. A cycle routed
    through `group_key`/`joint_mask` edges is also rejected: at plan time if `check_derived_column_refs` is
    extended, otherwise by the runtime `cyclic_work_ordering` backstop. Assert whichever the chosen design
@@ -167,12 +169,20 @@ Recommended scope split (the gate and Cam refine; pre-release, nothing locked):
   test 1), ahead of the feature surface.
 - Driver-set: INFER from the expression's column refs (`check_derived_column_refs`); add an explicit config
   key only if a case is ambiguous.
-- Driver-read assignment per strategy (SETTLED engineering default; the builder uses this, not a guess):
-  `derived` (any expression, including `case_when`) reads its drivers MASKED, since the intent is to line
-  up with the masked output and acceptance test 1 pins it. `group_key`'s `group_by` and `joint_mask`'s
-  `key_by` read SOURCE: they SELECT a synthetic value / reference row by identity, and identity stability
-  means the same source group or key maps to the same output, so read them from the EXTENDED pre-mask
-  `source_snapshots` set. Both are the deterministic replacement for today's lexicographic-accident read.
+- Driver-read assignment per strategy (SETTLED, grounded in each strategy's own documented contract, not a
+  guess; a build-time code read corrected `group_key` below):
+  - `derived` (any expression, including `case_when`): MASKED. Read drivers from the LIVE frame under the
+    ordering edge (acceptance test 1 pins "stable output equals the MASKED-driver result").
+  - `group_key`'s `group_by`: MASKED. Its own docstring is explicit ("masked group_by read post-mask ...
+    NOT a pre-mask snapshot"), so align the code to that intent: read the masked group_by from the LIVE
+    frame under the ordering edge. (This CORRECTS an earlier draft that said SOURCE; the build-time read
+    caught it against the docstring. Keep the chunked `group_key` admission on effective driver types
+    correct, `_chunked_group_key.py:218`.)
+  - `joint_mask`'s `key_by`: SOURCE. Its docstring says "key_by: Source column" and it is the FK-key
+    identity analogy (same source entity -> same reference tuple), so read the SOURCE key from a PRE-MASK
+    snapshot, reusing the `date_shift` group_by precedent (`ctx.group_anchor_snapshots`, the same FK-snapshot
+    machinery) rather than the live frame. "Deterministic under the ordering edge" here means via that
+    snapshot, not a masked live read.
   `when:` predicate refs stay OUT of PR 1 (they interact with the pinned `when_predicate_reads_masked_column`
   compat behavior, `docs/compatibility-contract.md:446`).
 - `when:` scope *: OUT of V1. It has the same latent order-dependent read and interacts with the pinned
