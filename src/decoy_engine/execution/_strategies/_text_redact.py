@@ -39,10 +39,12 @@ from __future__ import annotations
 
 import pandas as pd
 
-from decoy_engine import reasons
 from decoy_engine.detection.detectors import Span, iter_spans
 from decoy_engine.execution._adapter import StrategyContext, provider_config_to_dict
-from decoy_engine.execution._errors import StrategyError
+from decoy_engine.execution._strategies._ner_config import (
+    enforce_ner_model_version,
+    resolve_ner_config,
+)
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.plan._types import ColumnSeed
 
@@ -69,48 +71,22 @@ class TextRedactHandler:
         if not isinstance(token, str):
             return df, []
 
-        # WS2 (2026-06-12): opt-in NER spans for person_name/location --
-        # the categories the regex catalog deliberately cannot cover.
-        # `ner: true` or `ner: {model: ..., entities: [...]}`. Off by
-        # default: model load + per-cell inference is a real cost.
-        ner_cfg = cfg.get("ner")
-        ner_model: str | None = None
-        ner_entities: list[str] | None = None
-        if ner_cfg:
-            from decoy_engine.detection.ner import DEFAULT_NER_MODEL
-
-            if isinstance(ner_cfg, dict):
-                ner_model = str(ner_cfg.get("model") or DEFAULT_NER_MODEL)
-                raw_entities = ner_cfg.get("entities")
-                if isinstance(raw_entities, (list, tuple)) and raw_entities:
-                    ner_entities = [str(e) for e in raw_entities]
-            else:
-                ner_model = DEFAULT_NER_MODEL
-
-        # F14b (2026-06-26): a spaCy model update between plan compile and run
-        # silently changes redaction output for the same config + seed -- a
-        # determinism break on the highest false-negative strategy, with no
-        # error today. If the installed model version no longer matches the
-        # version stamped at compile (plan.ner_model_version), fail loudly
-        # rather than emit different redactions. Runs before iter_ner_spans, so
-        # it needs no spaCy pipeline; skipped when no version was stamped.
-        if ner_model is not None and plan.ner_model_version is not None:
-            from decoy_engine.detection.ner import installed_model_version
-
-            current_version = installed_model_version(ner_model)
-            if current_version is not None and current_version != plan.ner_model_version:
-                raise StrategyError(
-                    code=reasons.runtime.NER_MODEL_VERSION_MISMATCH,
-                    strategy="text_redact",
-                    message=(
-                        f"column {column!r}: NER model {ner_model!r} is installed at "
-                        f"version {current_version!r} but the plan was compiled against "
-                        f"{plan.ner_model_version!r}. spaCy model updates change redaction "
-                        f"output for the same config + seed; recompile the plan against the "
-                        f"installed model (or pin the model version) to keep redactions "
-                        f"reproducible."
-                    ),
-                )
+        # WS2 (2026-06-12): opt-in NER spans for person_name/location, the
+        # categories the regex catalog deliberately cannot cover. F14b
+        # (2026-06-26): a spaCy model update between plan compile and run
+        # silently changes redaction output for the same config + seed, so fail
+        # closed when the installed model version no longer matches the version
+        # stamped at compile. Both steps are shared with the out-of-core route
+        # through `_ner_config` so the two routes cannot drift (2026-10-25
+        # de-duplication); the version guard needs no spaCy pipeline and is a
+        # no-op when NER is off or no version was stamped.
+        ner_model, ner_entities = resolve_ner_config(cfg)
+        enforce_ner_model_version(
+            ner_model=ner_model,
+            plan_ner_model_version=plan.ner_model_version,
+            column=column,
+            strategy="text_redact",
+        )
 
         detector_ids: list[str] | None
         if detectors_cfg is None:

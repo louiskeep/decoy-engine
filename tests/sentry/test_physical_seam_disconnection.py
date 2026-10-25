@@ -508,6 +508,12 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
             # seam, like faker and categorical. The SEQ modules were already permitted; nothing here
             # imports `execution.physical`.
             "src/decoy_engine/execution/_strategies/_text_redact.py",
+            # text_redact NER de-duplication: the `ner` config resolution and the
+            # `ner_model_version_mismatch` guard the full-frame handler and the out-of-core
+            # kernel each carried move into one shared parent-level `_strategies/_ner_config.py`
+            # (new). It imports only the detection package, the reasons registry and
+            # `_errors`; nothing from `execution.physical`.
+            "src/decoy_engine/execution/_strategies/_ner_config.py",
             # C6b-ii slice a: text_mask joins the SEQ-native seam the same way. The handler offers its
             # resolved config, and the operator descriptor lives in its own module so
             # `_sequential_native_ops.py` stays under the size policy. Neither imports

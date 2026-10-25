@@ -121,13 +121,23 @@ def ensure_ner_available(model: str = DEFAULT_NER_MODEL) -> None:
 # inference for throughput; this is the size of the C-level work unit `.pipe`
 # hands the model, independent of how many texts a caller collects at once.
 _NER_PIPE_BATCH_SIZE = 256
-# A microbatch window for FULL-FRAME callers (oracle text_mask/text_redact)
-# that hold a whole column in memory: collecting/inferring/applying this many
-# rows at a time bounds peak RSS on a wide column instead of materializing
-# every span list for the whole column before applying any of them. A
-# multiple of `_NER_PIPE_BATCH_SIZE` so one window is an integer number of
-# pipe batches. Out-of-core callers (group b/c) are already batch-local and
-# do not need this window.
+# A microbatch window: collecting/inferring/applying this many rows at a time
+# bounds peak RSS instead of materializing every span list (and every
+# collected cell string) before applying any of them. A multiple of
+# `_NER_PIPE_BATCH_SIZE` so one window is an integer number of pipe batches.
+# Used by both the FULL-FRAME callers (oracle text_mask/text_redact, which hold
+# a whole column in memory) and the OUT-OF-CORE text_redact kernel
+# (`out_of_core/_mask_group_b.text_redact_array`). An out-of-core batch is
+# "batch-local", but `batch_rows` is sized by the memory budget and routinely
+# far above this window, so batch-locality alone does not bound the NER working
+# set; windowing does. The NER working set (the window's cell strings + span
+# lists, plus one loaded spaCy pipeline per process) is Python/Arrow-side, not
+# DuckDB buffer-manager memory, so it is covered by the out-of-core budget's
+# reserve (`out_of_core/_budget.py`, `_OOC_RESERVE_*`) rather than by a
+# per-strategy term in the row-linear build-floor model
+# (`out_of_core/_memory_estimate.py`); this bounded window is what keeps that
+# true. (Out-of-core text_mask, group c, does not window yet; tracked as a
+# follow-up alongside sharing this config/version plumbing.)
 _NER_APPLY_WINDOW = 2048
 
 # One loaded pipeline per model name per process. Model load is ~1s. Handlers

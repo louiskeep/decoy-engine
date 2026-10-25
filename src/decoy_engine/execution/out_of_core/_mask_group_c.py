@@ -18,14 +18,18 @@ out-of-core output is byte-identical rather than merely similar.
   NIST SP 800-38G FF1 keyed per detector (Task 5.2 plan P3-final), not this
   HMAC. Either way it is a pure function of (job_seed, cell), with no
   cross-row state, so it chunks cleanly.
-  TX-2 (2026-07-20): the `ner` opt-in mirrors `text_redact`'s OOC NER handling
-  (`_text_redact_ner` above) -- resolve model/entities from cfg, enforce the
-  same `ner_model_version_mismatch` fail-closed drift guard against
-  `ColumnSeed.ner_model_version`, then call `storm.ner.iter_ner_spans_batch`
-  once per record batch and forward each cell's spans as `mask_cell`'s
-  `extra_spans`. NER is a pure per-value function of (text, model, entities)
-  with no cross-row state, so a batch's spans are identical to per-cell calls
-  and the kernel chunks cleanly the same way the rest of this module does.
+  TX-2 (2026-07-20): the `ner` opt-in resolves model/entities from cfg
+  (`_text_mask_ner` below), enforces the same `ner_model_version_mismatch`
+  fail-closed drift guard against `ColumnSeed.ner_model_version`, then calls
+  `detection.ner.iter_ner_spans_batch` once per record batch and forwards each
+  cell's spans as `mask_cell`'s `extra_spans`. NER is a pure per-value function
+  of (text, model, entities) with no cross-row state, so a batch's spans are
+  identical to per-cell calls and the kernel chunks cleanly the same way the
+  rest of this module does. Follow-up (2026-10-25): `text_redact`'s OOC kernel
+  moved its config resolution + version guard to the shared
+  `_strategies/_ner_config` module and windows its apply at `_NER_APPLY_WINDOW`
+  rows (F6); this `text_mask` path still carries its own mirrored copy and does
+  not yet window, tracked for the same treatment.
 - code_set (mask mode, no chapter_preserve): reuses
   `transforms.code_set.apply_code_set` (HMAC-SHA256-keyed modular selection over
   the code-sorted corpus). Mask mode is `HMAC(salt, value) % candidate_count`, a
@@ -303,9 +307,14 @@ def _text_mask_array(
 
 
 def _text_mask_ner(cfg: dict[str, Any], plan: ColumnSeed) -> tuple[str | None, list[str] | None]:
-    """Resolve NER config + enforce the compile-vs-runtime model-version pin,
-    mirroring `_mask_group_b._text_redact_ner` (same `ner_model_version_mismatch`
-    code, `strategy="text_mask"` instead of `"text_redact"`)."""
+    """Resolve NER config + enforce the compile-vs-runtime model-version pin
+    (same `ner_model_version_mismatch` code as text_redact, `strategy="text_mask"`).
+
+    Follow-up (2026-10-25): text_redact's OOC kernel moved this exact logic to
+    the shared `_strategies/_ner_config` module (F6). This `text_mask` copy can
+    adopt it too (`resolve_ner_config` + `enforce_ner_model_version(...,
+    strategy="text_mask")`); kept separate for now to hold F6's stated scope to
+    the text_redact pair."""
     ner_cfg = cfg.get("ner")
     if not ner_cfg:
         return None, None
