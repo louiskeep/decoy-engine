@@ -234,10 +234,27 @@ ROUTE_INELIGIBLE_MARKERS: dict[str, tuple[str, ...]] = {
 _ALL_ROUTE_MARKERS: tuple[str, ...] = tuple(
     dict.fromkeys(marker for markers in ROUTE_INELIGIBLE_MARKERS.values() for marker in markers)
 )
+# Registered, data-free ExecutionError codes raised by the knob, substrate and memory-detection
+# checks (the physical catalog's PRECOMPILATION_EXCLUDED_CODES). They are fixed engine literals
+# with no message or user text, so echoing them restores the diagnostic parity the direct path
+# already has (OBS-1b: the isolated run must surface the same code the direct run does). Spelled
+# out here rather than imported from `execution.physical._reasons`, because production modules
+# must not import the physical seam; `test_isolated_safe_error` pins this set against that catalog.
+_EXECUTION_CODES: frozenset[str] = frozenset(
+    {
+        "invalid_substrate",
+        "invalid_execution_knob",
+        "out_of_core_reorder_threshold_invalid",
+        "out_of_core_memory_detection_failed",
+    }
+)
 # A code is echoed only if the engine registered it. Character shape is not trust: an exception
 # from a parser or user callback can carry a data-derived `code` that is still lowercase/digits.
-_TRUSTED_CODES: frozenset[str] = frozenset(
-    value for name, value in vars(CODES).items() if name.isupper() and isinstance(value, str)
+_TRUSTED_CODES: frozenset[str] = (
+    frozenset(
+        value for name, value in vars(CODES).items() if name.isupper() and isinstance(value, str)
+    )
+    | _EXECUTION_CODES
 )
 
 
@@ -251,7 +268,7 @@ def exception_error_text(exc: BaseException) -> str:
 
     Messages from parsers, validators and Arrow echo the cell, expression or file text they
     choked on, and this string reaches the job's user-visible error. Keep the class name, the
-    `code` when it is a registered `validation_result.CODES` value, and the governor's route markers (matched
+    `code` when it is a registered `validation_result.CODES` value or a registered execution code, and the governor's route markers (matched
     against the original message, emitted as engine constants).
     """
     head = type(exc).__name__
