@@ -70,6 +70,49 @@ def test_per_table_seed_multiple_budget(tmp_path) -> None:
     assert not out_dir.exists()
 
 
+def test_edgeless_total_budget_attributes_to_no_edge(tmp_path) -> None:
+    # A single-table subset with no relationships has no fan-out edges, so
+    # edge_stats is empty. The budget check must still raise a structured
+    # SubsetBudgetExceededError (edge_id None) rather than crash on max() of an
+    # empty sequence. Regression: the overshoot has no contributing edge.
+    customers_path = make_parquet(tmp_path, "customers", {"id": list(range(50))})
+    sources = {"customers": SubsetSource(path=customers_path, format="parquet")}
+    seeds = (SeedSpec(table="customers", mode="sample", key_columns=("id",), fraction=1.0),)
+    with pytest.raises(SubsetBudgetExceededError) as excinfo:
+        plan_subset(
+            sources=sources,
+            relationships=(),
+            seeds=seeds,
+            policy=FanOutPolicy(budget=FanOutBudget(max_total_rows=10)),
+            job_seed=JOB_SEED,
+            engine_version="test",
+        )
+    err = excinfo.value
+    assert err.scope == "total"
+    assert err.edge_id is None
+    assert err.actual > 10
+    assert "no fan-out edge contributed" in str(err)
+
+
+def test_edgeless_per_table_budget_attributes_to_no_edge(tmp_path) -> None:
+    customers_path = make_parquet(tmp_path, "customers", {"id": list(range(50))})
+    sources = {"customers": SubsetSource(path=customers_path, format="parquet")}
+    seeds = (SeedSpec(table="customers", mode="sample", key_columns=("id",), fraction=1.0),)
+    with pytest.raises(SubsetBudgetExceededError) as excinfo:
+        plan_subset(
+            sources=sources,
+            relationships=(),
+            seeds=seeds,
+            policy=FanOutPolicy(budget=FanOutBudget(max_table_seed_multiple=0.1)),
+            job_seed=JOB_SEED,
+            engine_version="test",
+        )
+    err = excinfo.value
+    assert err.scope == "table"
+    assert err.table == "customers"
+    assert err.edge_id is None
+
+
 def test_no_budget_caps_passes(tmp_path) -> None:
     sources, relationships, seeds = _fixture(tmp_path)
     plan = plan_subset(
