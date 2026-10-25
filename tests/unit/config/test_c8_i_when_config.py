@@ -149,8 +149,11 @@ def test_a_validated_config_with_when_runs_end_to_end_on_the_chunked_native_rout
 
 # Pinned on engine main before `when` existed: a config without `when` must keep hashing
 # byte-identically, so adding the field changes no fingerprint for existing jobs.
+# The canonical SHA was re-pinned after config-schema fields were added since the first pin
+# (fixed-width `layout`, CSV params, `reference_date`): they serialize into the default-filled
+# full dump and shifted it. The pipeline determinism hash below is unchanged and byte-identical.
 _PRE_WHEN_PIPELINE_HASH = "9af1bc73bf23b67df77fe643f60028ac19407f7f18f67ea46ab5f374e9390cd1"
-_PRE_WHEN_CANONICAL_SHA = "79edebace4df538a6e9cc1bf0749a0f713b40d7bb5ac3e3fcdead052f43290c1"
+_PRE_WHEN_CANONICAL_SHA = "802af7ea25d6f91eef4f8c9488e3e782f5e6a171b78105c8f860a65a9182b63c"
 
 
 def _hash_fixture(**column_extra: object) -> dict:
