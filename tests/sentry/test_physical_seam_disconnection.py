@@ -331,6 +331,17 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         # D3b (token vault on the bounded out-of-core route): the vault collector the two
         # out-of-core drivers call. It imports nothing from `execution.physical`.
         "src/decoy_engine/execution/out_of_core/_vault_collect.py",
+        # F2/F3/F6 (OOC strategy coverage): the row-error channel bridge and the row-offset
+        # channel bridge run the full-frame handlers per bounded batch on the out-of-core route;
+        # `_emit.py` threads the operator `registry=` through the empty-output path; and the
+        # shared NER config/version resolver both the full-frame and out-of-core text routes
+        # import. All four import nothing from `execution.physical` (the import-direction sweeps
+        # above stay green), so these are additive out-of-core/strategy modules, not a physical
+        # seam loosening.
+        "src/decoy_engine/execution/out_of_core/_row_error_bridge.py",
+        "src/decoy_engine/execution/out_of_core/_offset_bridge.py",
+        "src/decoy_engine/execution/out_of_core/_emit.py",
+        "src/decoy_engine/execution/_strategies/_ner_config.py",
         # Reorder parent-size guard (2026-10-15): `decide_route` demotes a large-parent
         # reorder-eligible table to the bounded batch lane (`_route_policy.py`), using the
         # budget-derived `safe_parent_key_ceiling` (`_reorder_budget.py`). Both are

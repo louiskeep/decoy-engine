@@ -521,7 +521,9 @@ def _stream_table(
             table_out = (
                 assemble_resident(batches, fk_components)
                 if batches
-                else empty_output_table(plan, table_name, source_schema, fk_components, registry=registry)
+                else empty_output_table(
+                    plan, table_name, source_schema, fk_components, registry=registry
+                )
             )
             outputs[table_name] = table_out
             for edge in outgoing_edges:
