@@ -62,7 +62,8 @@ def test_compatibility_contract_records_the_signature_and_the_output_cutover() -
 
 def test_changelog_unreleased_states_the_output_change_and_the_kill_switch() -> None:
     changelog = (REPO / "CHANGELOG.md").read_text(encoding="utf-8")
-    unreleased = _section(changelog, "## [Unreleased]", "\n## [0.")
+    # These entries were unreleased when written; the 0.9.0 changelog cut moved them.
+    unreleased = _section(changelog, "## [0.9.0]", "\n## [0.")
     for needle in ("chunked_dispatcher_enabled", "native_threads", "pre-GA", "Faker"):
         assert needle in unreleased, needle
 
