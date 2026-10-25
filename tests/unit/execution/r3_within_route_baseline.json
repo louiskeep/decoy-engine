@@ -790,7 +790,35 @@
      "kind": "frame",
      "row_count": 20
     },
-    "warnings": []
+    "warnings": [
+     {
+      "code": "gof_unavailable",
+      "detail": {
+       "column": "h",
+       "metric": "chi_cramers_v",
+       "reason": "insufficient_identifiable_support"
+      },
+      "source": "fidelity"
+     },
+     {
+      "code": "gof_unavailable",
+      "detail": {
+       "column": "r",
+       "metric": "chi_cramers_v",
+       "reason": "insufficient_identifiable_support"
+      },
+      "source": "fidelity"
+     },
+     {
+      "code": "gof_unavailable",
+      "detail": {
+       "column": "tr",
+       "metric": "chi_cramers_v",
+       "reason": "insufficient_identifiable_support"
+      },
+      "source": "fidelity"
+     }
+    ]
    }
   },
   "quality_metrics": {
@@ -954,7 +982,35 @@
       "kind": "frame",
       "row_count": 20
      },
-     "warnings": []
+     "warnings": [
+      {
+       "code": "gof_unavailable",
+       "detail": {
+        "column": "h",
+        "metric": "chi_cramers_v",
+        "reason": "insufficient_identifiable_support"
+       },
+       "source": "fidelity"
+      },
+      {
+       "code": "gof_unavailable",
+       "detail": {
+        "column": "r",
+        "metric": "chi_cramers_v",
+        "reason": "insufficient_identifiable_support"
+       },
+       "source": "fidelity"
+      },
+      {
+       "code": "gof_unavailable",
+       "detail": {
+        "column": "tr",
+        "metric": "chi_cramers_v",
+        "reason": "insufficient_identifiable_support"
+       },
+       "source": "fidelity"
+      }
+     ]
     }
    }
   },
@@ -1246,7 +1302,26 @@
      "kind": "frame",
      "row_count": 20
     },
-    "warnings": []
+    "warnings": [
+     {
+      "code": "gof_unavailable",
+      "detail": {
+       "column": "cid",
+       "metric": "chi_cramers_v",
+       "reason": "insufficient_identifiable_support"
+      },
+      "source": "fidelity"
+     },
+     {
+      "code": "gof_unavailable",
+      "detail": {
+       "column": "parent_id",
+       "metric": "chi_cramers_v",
+       "reason": "insufficient_identifiable_support"
+      },
+      "source": "fidelity"
+     }
+    ]
    },
    "parent": {
     "diagnostic": {
@@ -1359,7 +1434,26 @@
      "kind": "frame",
      "row_count": 20
     },
-    "warnings": []
+    "warnings": [
+     {
+      "code": "gof_unavailable",
+      "detail": {
+       "column": "id",
+       "metric": "chi_cramers_v",
+       "reason": "insufficient_identifiable_support"
+      },
+      "source": "fidelity"
+     },
+     {
+      "code": "gof_unavailable",
+      "detail": {
+       "column": "note",
+       "metric": "chi_cramers_v",
+       "reason": "insufficient_identifiable_support"
+      },
+      "source": "fidelity"
+     }
+    ]
    }
   },
   "quality_metrics": {
@@ -1483,7 +1577,26 @@
       "kind": "frame",
       "row_count": 20
      },
-     "warnings": []
+     "warnings": [
+      {
+       "code": "gof_unavailable",
+       "detail": {
+        "column": "cid",
+        "metric": "chi_cramers_v",
+        "reason": "insufficient_identifiable_support"
+       },
+       "source": "fidelity"
+      },
+      {
+       "code": "gof_unavailable",
+       "detail": {
+        "column": "parent_id",
+        "metric": "chi_cramers_v",
+        "reason": "insufficient_identifiable_support"
+       },
+       "source": "fidelity"
+      }
+     ]
     },
     "parent": {
      "diagnostic": {
@@ -1596,7 +1709,26 @@
       "kind": "frame",
       "row_count": 20
      },
-     "warnings": []
+     "warnings": [
+      {
+       "code": "gof_unavailable",
+       "detail": {
+        "column": "id",
+        "metric": "chi_cramers_v",
+        "reason": "insufficient_identifiable_support"
+       },
+       "source": "fidelity"
+      },
+      {
+       "code": "gof_unavailable",
+       "detail": {
+        "column": "note",
+        "metric": "chi_cramers_v",
+        "reason": "insufficient_identifiable_support"
+       },
+       "source": "fidelity"
+      }
+     ]
     }
    }
   },

@@ -62,9 +62,13 @@ def test_compatibility_contract_records_the_signature_and_the_output_cutover() -
 
 def test_changelog_unreleased_states_the_output_change_and_the_kill_switch() -> None:
     changelog = (REPO / "CHANGELOG.md").read_text(encoding="utf-8")
-    unreleased = _section(changelog, "## [Unreleased]", "\n## [0.")
+    # This entry was unreleased when written; the changelog cut moved it into 0.8.0rc1. Bind the
+    # specific auto-chunk sub-section (not the whole version), so deleting that entry empties the
+    # slice and fails the test. The 0.9.0 section satisfies these keywords only by coincidence,
+    # from unrelated entries, so binding to a version section would be false-green.
+    entry = _section(changelog, "### Changed (auto-chunk runs on the chunked dispatcher", "\n### ")
     for needle in ("chunked_dispatcher_enabled", "native_threads", "pre-GA", "Faker"):
-        assert needle in unreleased, needle
+        assert needle in entry, needle
 
 
 def test_codemap_has_the_ownership_row_for_the_new_module() -> None:

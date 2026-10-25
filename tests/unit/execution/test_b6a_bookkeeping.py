@@ -65,7 +65,8 @@ def test_compatibility_contract_records_the_knob_and_the_sink_meaning() -> None:
 
 def test_changelog_unreleased_names_the_knob_and_the_streamed_result_shape() -> None:
     changelog = (REPO / "CHANGELOG.md").read_text(encoding="utf-8")
-    unreleased = _section(changelog, "## [Unreleased]", "\n## [0.")
+    # These entries were unreleased when written; the 0.9.0 changelog cut moved them.
+    unreleased = _section(changelog, "## [0.9.0]", "\n## [0.")
     for needle in ("stream_chunked_output", "TransactionalSink", "outputs"):
         assert needle in unreleased, needle
 
