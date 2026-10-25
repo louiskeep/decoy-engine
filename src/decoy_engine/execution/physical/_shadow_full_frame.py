@@ -10,13 +10,16 @@ deferred, and this dispatch stays DORMANT (never wired into production
 activation -- a full-frame wrap has no per-node native evidence for
 `_unified_slice.py`'s contract; that is a separate design).
 
-Scope: the deterministic GLOBAL strategies (`native/_capabilities.py`'s
-`is_global=True` set, minus `formula`, which stays deferred) -- shuffle,
-top_code, grouped_series, derived_aggregate. "Global" does not mean "always
-full_frame" (`top_code` is CHUNK_SAFE and the planner can route an eligible
-table to auto-chunk instead), so admission keys on the COMPILED DRIVER being
-exactly `{FULL_FRAME}`, never on a strategy name alone (Codex plan-gate
-round 1).
+Scope: the deterministic strategies this dispatch wraps full-frame because they
+have no native per-node kernel -- shuffle, top_code, grouped_series,
+derived_aggregate. Three are genuinely global/order-sensitive
+(`native/_capabilities.py`'s `is_global=True` set minus `formula`, which stays
+deferred); `top_code` is NOT global -- it is row-local (and CHUNK_SAFE), and is
+in this set only because it, too, lacks a native kernel and runs full-frame. So
+"full_frame" never means "always full_frame" for these (`top_code` especially:
+the planner can route an eligible table to auto-chunk instead), and admission
+keys on the COMPILED DRIVER being exactly `{FULL_FRAME}`, never on a strategy
+name alone (Codex plan-gate round 1).
 
 Reuse, never re-add: `FullFrameAdapter` already exists and already delegates,
 unchanged, to whichever `ExecutionAdapter` `select_execution_adapter` chose
@@ -107,9 +110,12 @@ if TYPE_CHECKING:
 
 __all__ = ["dispatch_full_frame_if_applicable"]
 
-# Item 3: the deterministic GLOBAL strategy set this slice admits
-# (native/_capabilities.py's is_global=True set, minus `formula`, which
-# stays deferred -- see the module docstring's Scope paragraph).
+# Item 3: the deterministic strategies this slice wraps full-frame because they
+# have no native per-node kernel. shuffle/grouped_series/derived_aggregate are
+# the is_global=True set minus `formula` (deferred); top_code is row-local
+# (CHUNK_SAFE), included only for the same no-native-kernel reason -- see the
+# module docstring's Scope paragraph. The name is historical; membership is
+# "no native kernel, dispatched full-frame", not "is_global".
 ADMITTED_GLOBAL_STRATEGIES = frozenset(
     {"shuffle", "top_code", "grouped_series", "derived_aggregate"}
 )

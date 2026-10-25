@@ -278,6 +278,28 @@ _MASK: dict[str, _Ortho] = {
         True,
         row_error_modes=("format_error",),
     ),
+    "top_code": _Ortho(
+        True,
+        False,
+        False,
+        False,
+        True,
+        row_error_modes=("format_error",),
+        warning_codes=("top_code_generalized",),
+        notes=(
+            "Top/bottom-codes a numeric tail into a fixed label. The cap/floor "
+            "are config literals or a named preset (_strategies/_top_code.py "
+            "_resolve_top_bound / _resolve_bottom_bound); there is NO percentile "
+            "or column-statistic path, so each row's output is a pure function of "
+            "its own value: row-local, not global. (It is a CHUNK_SAFE strategy "
+            "for the same reason.) Excluded from the native route for lack of a "
+            "native kernel (no_native_kernel), not for being global; its "
+            "format_error needs the quarantine channel the streaming routes do "
+            "not have. The top_code_generalized warning's row indices are "
+            "frame-local -- an evidence sidecar, not a data dependence on other "
+            "rows."
+        ),
+    ),
     # -- row-context expression (indeterminate output type) ------------------
     "derived": _Ortho(
         True,
@@ -288,16 +310,6 @@ _MASK: dict[str, _Ortho] = {
         notes="Closed-grammar row-context expression; output type depends on the data.",
     ),
     # -- global / order-sensitive strategies ---------------------------------
-    "top_code": _Ortho(
-        False,
-        False,
-        True,
-        False,
-        True,
-        row_error_modes=("format_error",),
-        warning_codes=("top_code_generalized",),
-        notes="The cap can be a column percentile, so a row's output can depend on a column-global bound.",
-    ),
     "derived_aggregate": _Ortho(
         False,
         False,
