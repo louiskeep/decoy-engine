@@ -9,6 +9,13 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+## [0.14.2] - 2026-10-25
+
+### Fixed
+
+- Subset single-table over-budget now returns a typed structured error instead of a
+  `max()`-on-empty crash when a table has no edges (#312).
+
 ### Changed (Phase D / Dmp: multi-parent FK admitted on the out-of-core route, 2026-10-24)
 
 A child FK column tuple that references several parent tables (the polymorphic
