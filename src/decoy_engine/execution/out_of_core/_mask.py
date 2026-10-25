@@ -39,6 +39,11 @@ from decoy_engine.execution.out_of_core._mask_group_c import (
     group_c_array,
     group_c_output_type,
 )
+from decoy_engine.execution.out_of_core._offset_bridge import (
+    OFFSET_BRIDGE_STRATEGIES,
+    bridge_windowed_date,
+    windowed_date_anchor,
+)
 from decoy_engine.execution.out_of_core._row_error_bridge import (
     OWN_COLUMN_ROW_ERROR_STRATEGIES,
     bridge_own_column,
@@ -84,6 +89,42 @@ def _bridge_own_column(
         column,
         seed,
         source_array,
+        registry=registry,
+        job_seed=plan.seed_envelope.job_seed,
+        mask_key=mask_key,
+        row_offset=row_offset,
+    )
+
+
+def _bridge_windowed_date(
+    plan: Plan,
+    table: str,
+    column: str,
+    seed: ColumnSeed,
+    source_frame: pa.RecordBatch | pa.Table,
+    mask_key: bytes,
+    registry: ProviderRegistry | None,
+    row_offset: int,
+) -> pa.Array:
+    """Mask one windowed_date column via the row-offset bridge, reading the raw
+    anchor from `source_frame` (the gate restricts the anchor to unmasked /
+    passthrough, so the raw value is what the oracle reads)."""
+    anchor_name = windowed_date_anchor(seed)
+    anchor_idx = source_frame.schema.get_field_index(anchor_name) if anchor_name else -1
+    if anchor_name is None or anchor_idx < 0:
+        raise ExecutionError(
+            code="out_of_core_windowed_date_anchor_missing",
+            message=(
+                f"{table}.{column}: windowed_date anchor column {anchor_name!r} is not in "
+                "the source."
+            ),
+        )
+    return bridge_windowed_date(
+        table,
+        column,
+        seed,
+        anchor_name,
+        source_frame.column(anchor_idx),
         registry=registry,
         job_seed=plan.seed_envelope.job_seed,
         mask_key=mask_key,
@@ -280,6 +321,10 @@ def masked_output_type(seed: ColumnSeed, source_type: pa.DataType | None = None)
         # column is string. An all-null or empty column infers null-typed and
         # the fixed-schema sink reconciles it, exactly as `redact` does below.
         return pa.string()
+    if seed.strategy in OFFSET_BRIDGE_STRATEGIES:
+        # windowed_date emits a formatted ISO date string per non-null anchor;
+        # an all-null/empty column infers null-typed and the sink reconciles it.
+        return pa.string()
     if seed.strategy == "hash":
         return pa.string()
     if seed.strategy == "truncate":
@@ -371,6 +416,14 @@ def mask_table(
                 row_error_sink.extend(row_error_records)
             out = out.set_column(out.schema.get_field_index(column), column, masked_array)
             continue
+        if column_seed.strategy in OFFSET_BRIDGE_STRATEGIES:
+            # Whole-table row_offset is 0; the anchor is read from the raw input
+            # `table` (unmasked/passthrough per the gate), not progressively-masked `out`.
+            masked_array = _bridge_windowed_date(
+                plan, table_name, column, column_seed, table, key, registry, 0
+            )
+            out = out.set_column(out.schema.get_field_index(column), column, masked_array)
+            continue
         notices = (
             sub_floor_totals.setdefault(column, {})
             if sub_floor_totals is not None and column_seed.strategy == "text_mask"
@@ -450,6 +503,19 @@ def mask_batch(
             )
             if row_error_sink is not None:
                 row_error_sink.extend(row_error_records)
+            arrays[idx] = masked
+            fields[idx] = pa.field(column, masked.type)
+            continue
+        if column_seed.strategy in OFFSET_BRIDGE_STRATEGIES:
+            idx = batch.schema.get_field_index(column)
+            if idx < 0:
+                continue
+            # The anchor is read RAW (not the progressively-masked `arrays`): the
+            # compat gate admits windowed_date only when its anchor is unmasked or
+            # passthrough, so the raw value equals what the oracle reads.
+            masked = _bridge_windowed_date(
+                plan, table_name, column, column_seed, batch, key, registry, row_offset
+            )
             arrays[idx] = masked
             fields[idx] = pa.field(column, masked.type)
             continue

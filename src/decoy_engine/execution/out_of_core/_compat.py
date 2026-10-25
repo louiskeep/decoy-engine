@@ -19,12 +19,18 @@ if TYPE_CHECKING:
 _CROSS_ROW_STRATEGIES = frozenset(
     {
         "grouped_series",
-        "windowed_date",
         "derived_aggregate",
         "group_key",
         "joint_mask",
     }
 )
+# F3 row-offset channel: position-keyed strategies admitted via the durable
+# global row ordinal the runner now threads into `mask_batch` (see
+# `_offset_bridge.py`). windowed_date is admitted only when its anchor column is
+# unmasked or passthrough (`_windowed_date_rejection`), so the raw anchor the
+# bridge reads matches the full-frame oracle's reading. Payload only; an
+# offset-keyed FK key stays a MISS.
+_ROW_OFFSET_BRIDGE_STRATEGIES = frozenset({"windowed_date"})
 _INITIAL_SUPPORTED_STRATEGIES = frozenset({"hash", "redact", "truncate", "passthrough"})
 # SC3 Group (b): per-value / source-conditioned strategies ported onto the
 # out-of-core kernel with proven byte-parity (see `_mask_group_b.py`). Admitted
@@ -56,6 +62,7 @@ _SUPPORTED_WORK_STRATEGIES = (
     | _GROUP_B_SUPPORTED_STRATEGIES
     | _GROUP_C_SUPPORTED_STRATEGIES
     | _ROW_ERROR_BRIDGE_STRATEGIES
+    | _ROW_OFFSET_BRIDGE_STRATEGIES
 )
 # SC3 deferred Group (b): investigated and NOT ported, each for a concrete
 # reason that would otherwise cause a route-dependent divergence. A MISS here
@@ -282,11 +289,10 @@ def check_out_of_core_compatibility(
                     "out_of_core_cross_row_strategy_unsupported",
                     f"{node.table}.{node.columns}: strategy {node.strategy!r} depends on "
                     "state the per-column streaming kernel has no channel for (other "
-                    "columns of the same row for group_key, a durable global row ordinal "
-                    "for windowed_date, a per-group sequential stream for grouped_series, "
-                    "an intra-table aggregate for derived_aggregate, or a reference-table "
-                    "row for joint_mask); admitting it needs a bounded relational lowering "
-                    "not yet built. Falls back to sequential/full-frame.",
+                    "columns of the same row for group_key, a per-group sequential stream "
+                    "for grouped_series, an intra-table aggregate for derived_aggregate, or "
+                    "a reference-table row for joint_mask); admitting it needs a bounded "
+                    "relational lowering not yet built. Falls back to sequential/full-frame.",
                 )
             )
         elif node.strategy in _DEFERRED_GROUP_B:
@@ -313,6 +319,13 @@ def check_out_of_core_compatibility(
                     "categorical is out-of-core-supported. Falls back to full-frame.",
                 )
             )
+        elif node.strategy in _ROW_OFFSET_BRIDGE_STRATEGIES:
+            # windowed_date is admitted via the row-offset bridge only when its
+            # anchor is unmasked or passthrough (so the raw anchor the bridge
+            # reads matches the oracle's column-order read); a masked anchor MISSes.
+            offset_rejection = _windowed_date_rejection(node, plan)
+            if offset_rejection is not None:
+                rejections.append(offset_rejection)
         elif node.strategy not in _SUPPORTED_WORK_STRATEGIES:
             rejections.append(
                 OutOfCoreRejection(
@@ -350,6 +363,36 @@ def _group_c_conditional_rejection(node: WorkNode) -> OutOfCoreRejection | None:
             f"{node.table}.{node.columns}: out-of-core bucket_perturb requires an "
             "explicit date_format; whole-column format auto-detection does not chunk. "
             "Falls back to full-frame.",
+        )
+    return None
+
+
+def _windowed_date_rejection(node: WorkNode, plan: Plan) -> OutOfCoreRejection | None:
+    """Reject a windowed_date node whose anchor column is masked by a
+    value-changing strategy; None admits it.
+
+    The out-of-core bridge reads the RAW anchor from the batch and keys each row
+    on its durable global ordinal. That is byte-identical to the full-frame
+    oracle only when the oracle also reads the raw anchor, i.e. the anchor is
+    unmasked or `passthrough`. A masked anchor would make the oracle's read
+    depend on the column masking order, which the per-column bridge does not
+    reproduce, so it falls back to full-frame rather than risk a divergence.
+    """
+    cfg = dict(getattr(node.plan_slice, "provider_config", ()) or ())
+    anchor = cfg.get("anchor")
+    if not anchor:
+        return OutOfCoreRejection(
+            "out_of_core_windowed_date_anchor_missing",
+            f"{node.table}.{node.columns}: windowed_date has no anchor column configured.",
+        )
+    anchor_seed = _column_seed(plan, node.table, str(anchor))
+    if anchor_seed is not None and anchor_seed.strategy != "passthrough":
+        return OutOfCoreRejection(
+            "out_of_core_windowed_date_masked_anchor_unsupported",
+            f"{node.table}.{node.columns}: windowed_date anchor column {anchor!r} is masked "
+            f"with {anchor_seed.strategy!r}; the out-of-core route admits windowed_date only "
+            "with an unmasked or passthrough anchor, so the anchor read matches the full-frame "
+            "oracle's column order. Falls back to full-frame.",
         )
     return None
 
