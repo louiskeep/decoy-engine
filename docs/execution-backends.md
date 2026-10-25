@@ -75,7 +75,9 @@ The FK key surface here is only `hash`, `redact`, `truncate`, `passthrough`.
 | `passthrough` | no-op | no-op |
 | `text_mask` | dedicated Python (per-cell loop; backlog: route through the span kernel) | excluded (off the key surface) |
 | `code_set` (mask mode) | dedicated Python (no kernel on any route; backlog: Arrow dict-map) | excluded (off the key surface) |
-| `faker`, `date_shift`, `bucketize`, `geo_generalize`, `formula`, `derived`, `nested`, and the rest | declined (caller-visible reason) | excluded (off the key surface) |
+| `bucketize`, `top_code` | dedicated Python (per-batch oracle-handler bridge; row-error channel, fails closed on an uncoercible cell) | excluded (off the key surface) |
+| `windowed_date` | dedicated Python (per-batch oracle-handler bridge; row-offset channel, keyed on the durable global row ordinal; needs an unmasked/passthrough anchor) | excluded (off the key surface) |
+| `faker`, `date_shift`, `geo_generalize`, `formula`, `derived`, `nested`, and the rest | declined (caller-visible reason) | excluded (off the key surface) |
 
 On this route a composite FK whose child columns would be masked independently as scalars is
 declined (`out_of_core_composite_fk_scalar_child_unsupported`); the canonical
@@ -94,10 +96,27 @@ Native support for the declined shapes is a scheduled V1 engine track (A-9).
 
 #### Why the out-of-core route declines some payload strategies (known limitations, never a silent no-op)
 
-Every decline above is a caller-visible coded reason, and the job runs the strategy on the
+Every decline below is a caller-visible coded reason, and the job runs the strategy on the
 full-frame (or sequential) oracle instead; the out-of-core route never silently passes a column
-through or drops a strategy. Some declines are inherent to a single-pass, per-column batch
-stream and are not a near-term wiring gap:
+through or drops a strategy.
+
+Two channels admit strategies that were previously declined, each running the SAME full-frame
+handler on a bounded batch (byte-identical to the oracle), with the runner failing closed on a
+row error rather than quarantining (the chunked route's contract; neither non-full-frame lane
+quarantines):
+
+- **Row-error channel** (`_row_error_bridge.py`): `bucketize` and `top_code`. Row-local in
+  value, they emit per-value `format_error` RowErrors; the runner collects them with an absolute
+  (whole-source) row index and fails the job closed via `RowErrorsFailedError` on the first batch
+  that reports one.
+- **Row-offset channel** (`_offset_bridge.py`): `windowed_date`. Position-keyed; the runner
+  threads a durable global row ordinal (the cumulative Phase-1 source-order row count, equal to
+  the row's whole-source position on both drivers) so each row keys identically regardless of the
+  batch boundary. Admitted only with an unmasked or passthrough anchor
+  (`out_of_core_windowed_date_masked_anchor_unsupported` otherwise).
+
+Some declines remain inherent to a single-pass, per-column batch stream and are not a near-term
+wiring gap:
 
 - `faker` (`out_of_core_faker_pool_unsupported`): realistic name/address/value replacement draws
   from a registry-backed value pool plus a cross-batch pool cache, which the registry-free
@@ -107,19 +126,19 @@ stream and are not a near-term wiring gap:
 - `geo_generalize` (`out_of_core_whole_column_aggregation_unsupported`): its k-anonymity cascade
   thresholds each row's generalization level on whole-dataset counts (ZIP5/ZIP3/state or H3
   resolutions), which a single chunk cannot see.
-- `group_key`, `windowed_date`, `grouped_series`, `derived_aggregate`, `joint_mask`
+- `group_key`, `grouped_series`, `derived_aggregate`, `joint_mask`
   (`out_of_core_cross_row_strategy_unsupported`): each needs state the per-column kernel does not
-  receive -- other columns of the same row (`group_key`), a durable global row ordinal
-  (`windowed_date`), a per-group sequential stream (`grouped_series`), an intra-table aggregate
-  (`derived_aggregate`), or a reference-table row (`joint_mask`). Admitting them needs a bounded
-  relational lowering not yet built.
+  receive -- other columns of the same row (`group_key`), a per-group sequential stream
+  (`grouped_series`), an intra-table aggregate (`derived_aggregate`), or a reference-table row
+  (`joint_mask`). `group_key` is a near-term extension of the row-error bridge (a sibling-column
+  read restricted to an unmasked/passthrough group_by); the rest need a bounded relational
+  lowering not yet built.
+- `date_shift` (`out_of_core_row_error_strategy_unsupported`): row-local in value and a row-error
+  strategy like bucketize, but it also needs whole-column format detection without an explicit
+  `date_format`, and its `group_by` mode anchors on a whole-table snapshot; admitting it with an
+  explicit format and no group_by on the row-error bridge is a near-term extension.
 - `shuffle` (`out_of_core_strategy_unsupported`): a whole-column keyed permutation is
   order-sensitive and non-partitionable by construction, so it cannot stream per batch.
-- `bucketize` / `date_shift` (`out_of_core_row_error_strategy_unsupported`): row-local in value,
-  but they record per-value format errors that the full-frame path removes via a quarantine
-  pass; the streaming route has no row-error/quarantine channel (`date_shift` without an
-  explicit `date_format` also needs whole-column format detection). `top_code` is in the same
-  class and declines through the generic surface for the same missing channel.
 - `formula` / `derived` (`out_of_core_dynamic_output_type_unsupported`) and `nested`
   (`out_of_core_child_dispatch_unsupported`): their output Arrow type is not knowable from the
   plan alone (or they re-enter the full pandas child-strategy dispatch), which the fixed-schema
@@ -127,7 +146,10 @@ stream and are not a near-term wiring gap:
 
 These verdicts are pinned by `tests/parity/test_out_of_core_group_b_parity.py` and
 `tests/parity/test_out_of_core_group_c_parity.py` (each asserts the exact coded reason), so a
-future change that silently admitted one would fail the suite rather than leak a divergence.
+future change that silently admitted one would fail the suite rather than leak a divergence. The
+admitted bridges are pinned by `tests/parity/test_out_of_core_row_error_bridge.py` (byte-parity +
+fail-closed) and `tests/parity/test_out_of_core_offset_bridge.py` (byte-parity + batch-size
+invariance + the masked-anchor decline).
 
 ### Native-chunked route (single-table, chunked)
 

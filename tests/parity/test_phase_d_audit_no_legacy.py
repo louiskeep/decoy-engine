@@ -145,8 +145,13 @@ def test_ooc_cells_match_the_support_sets() -> None:
         ("bucket_perturb", mx.PAYLOAD): mx.COMPILED_RUST,
         ("text_mask", mx.PAYLOAD): mx.DEDICATED_PYTHON,
         ("code_set", mx.PAYLOAD): mx.DEDICATED_PYTHON,
+        # Row-error channel (bucketize/top_code) + row-offset channel (windowed_date):
+        # the full-frame handler per batch via the oracle-handler bridges.
+        ("bucketize", mx.PAYLOAD): mx.DEDICATED_PYTHON,
+        ("top_code", mx.PAYLOAD): mx.DEDICATED_PYTHON,
+        ("windowed_date", mx.PAYLOAD): mx.DEDICATED_PYTHON,
     }
-    for strategy in ("faker", "date_shift", "bucketize", "group_key", "shuffle"):
+    for strategy in ("faker", "date_shift", "group_key", "shuffle"):
         assert matrix[(mx.OOC, strategy, mx.PAYLOAD)] == mx.EXCLUDED, strategy
 
 
@@ -184,10 +189,16 @@ def test_native_chunked_reroutes_either_side_of_a_declared_fk_edge(side: str) ->
 def test_ooc_gate_excludes_the_deferred_strategies_with_a_reason() -> None:
     from decoy_engine.execution.out_of_core import _compat
 
-    for strategy in ("faker", "date_shift", "bucketize"):
+    for strategy in ("faker", "date_shift"):
         assert strategy in _compat._DEFERRED_GROUP_B
     for strategy in ("geo_generalize", "formula", "derived", "nested"):
         assert strategy in _compat._DEFERRED_GROUP_C
+    # bucketize/top_code (row-error channel) and windowed_date (row-offset channel)
+    # are now ADMITTED, so they are no longer deferred misses.
+    assert "bucketize" not in _compat._DEFERRED_GROUP_B
+    assert "bucketize" in _compat._ROW_ERROR_BRIDGE_STRATEGIES
+    assert "top_code" in _compat._ROW_ERROR_BRIDGE_STRATEGIES
+    assert "windowed_date" in _compat._ROW_OFFSET_BRIDGE_STRATEGIES
 
 
 # ---------------------------------------------------------------------------

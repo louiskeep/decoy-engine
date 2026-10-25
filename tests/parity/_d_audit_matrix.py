@@ -91,6 +91,13 @@ def _ooc_payload(strategy: str) -> str:
     if strategy in _OOC_PYTHON_RESIDUE:
         return DEDICATED_PYTHON
     if strategy in (
+        _compat._ROW_ERROR_BRIDGE_STRATEGIES | _compat._ROW_OFFSET_BRIDGE_STRATEGIES
+    ):
+        # bucketize/top_code (row-error channel) and windowed_date (row-offset channel) run the
+        # full-frame handler per batch through the oracle-handler bridges (`_row_error_bridge.py`
+        # / `_offset_bridge.py`), byte-identical to the oracle: dedicated Python by design.
+        return DEDICATED_PYTHON
+    if strategy in (
         _compat._INITIAL_SUPPORTED_STRATEGIES
         | _compat._GROUP_B_SUPPORTED_STRATEGIES
         | _compat._GROUP_C_SUPPORTED_STRATEGIES

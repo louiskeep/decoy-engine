@@ -561,6 +561,28 @@ def _payload_column_seed(strategy: str) -> tuple[ColumnSeed, list[str | None]]:
             ),
             values,
         )
+    if strategy in ("bucketize", "top_code"):
+        # Row-error bridge strategies: numeric source, clean (fully coercible) so
+        # the run completes rather than failing closed.
+        cfg = (
+            (("width", 10),)
+            if strategy == "bucketize"
+            else (("cap", 89), ("over_label", "90+"))
+        )
+        return (
+            ColumnSeed(
+                namespace=None,
+                strategy=strategy,
+                provider=strategy,
+                backend_type="faker",
+                backend_version="v",
+                cardinality_mode="reuse",
+                deterministic=False,
+                provider_config=cfg,
+                coherent_with=(),
+            ),
+            ["25", "95", "40", None, "72"],
+        )
     # hash, redact, passthrough: no config needed (hash still needs a namespace).
     return (
         ColumnSeed(
@@ -578,7 +600,10 @@ def _payload_column_seed(strategy: str) -> tuple[ColumnSeed, list[str | None]]:
     )
 
 
-@pytest.mark.parametrize("strategy", sorted(SUPPORTED_STRATEGIES))
+# windowed_date needs a sibling anchor column, which this single-payload-column
+# fixture cannot supply; its byte-parity (both drivers, all batch sizes) is
+# covered by tests/parity/test_out_of_core_offset_bridge.py instead.
+@pytest.mark.parametrize("strategy", sorted(SUPPORTED_STRATEGIES - {"windowed_date"}))
 def test_every_admitted_payload_strategy_parity(strategy: str) -> None:
     """Deterministic coverage of every PAYLOAD (non-FK) strategy `_compat.
     SUPPORTED_STRATEGIES` admits, on a table that also carries one FK edge."""
