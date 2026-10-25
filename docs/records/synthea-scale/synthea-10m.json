@@ -1,0 +1,132 @@
+{
+  "schema": "synthea-scale/v1",
+  "completed": true,
+  "failure": null,
+  "run_date_utc": "2026-10-25T18:17:35+00:00",
+  "machine": {
+    "node": "vm",
+    "platform": "Linux-6.18.44-fc-v153-x86_64-with-glibc2.39",
+    "processor": "x86_64",
+    "cpu_count": 4,
+    "total_ram_mb": 16091,
+    "python": "3.12.3"
+  },
+  "requested": {
+    "execution_mode": "auto",
+    "route_forced": false,
+    "budget_mb": null,
+    "rss_ceiling_mb": 8192.0,
+    "mem_cap_mb": null,
+    "mem_cap_kind": null,
+    "native_threads": 1,
+    "timeout_s": null,
+    "repeats": 1
+  },
+  "rows": {
+    "patients": 500000,
+    "encounters": 2500000,
+    "observations": 7000000
+  },
+  "total_rows": 10000000,
+  "table_count": 3,
+  "column_count": 40,
+  "native_companion": {
+    "present": true,
+    "kernel": "/home/user/decoy-engine/decoy-engine-native/decoy_engine_native/_kernel.cpython-312-x86_64-linux-gnu.so"
+  },
+  "route": {
+    "execution_mode": "out_of_core",
+    "route_reason": "byte_estimate_bounded_out_of_core",
+    "forced": false
+  },
+  "reorder": {
+    "taken": true,
+    "driver_by_table": {
+      "patients": "batch",
+      "encounters": "batch",
+      "observations": "reorder"
+    }
+  },
+  "sizing": {
+    "memory_limit": "10941MB",
+    "batch_rows": 65536,
+    "budget_bytes": 11473505485,
+    "temp_disk_budget_bytes": 26423130931,
+    "out_of_core_reorder_threshold_rows": null
+  },
+  "spill": {
+    "sorters": 1,
+    "runs_written": 1,
+    "spilled_bytes": 560880178,
+    "merge_groups": 0,
+    "spilled_and_merged": false,
+    "detail": [
+      {
+        "run_bytes_cap": 1721025823,
+        "merge_fan_in": 16,
+        "runs_written": 1,
+        "spilled_bytes": 560880178,
+        "merge_groups": 0,
+        "peak_buffered_bytes": 1123500000,
+        "peak_merge_resident_bytes": 0,
+        "resident_envelope_bytes": 3786256810
+      }
+    ],
+    "temp_disk_peak_mb": 3162.0
+  },
+  "disposition": {
+    "columns_total": 37,
+    "native_columns": 37,
+    "by_backend": {
+      "rust_companion": 37
+    },
+    "non_native": []
+  },
+  "rowcount_match": true,
+  "parity": {
+    "status": "ok",
+    "edges": {
+      "patients->encounters": {
+        "status": "ok",
+        "resolved_fk": 6000,
+        "masking": {
+          "sampled": 2000,
+          "distinct": 2000,
+          "still_source_format": 0
+        }
+      },
+      "encounters->observations": {
+        "status": "ok",
+        "resolved_fk": 6000,
+        "masking": {
+          "sampled": 2000,
+          "distinct": 2000,
+          "still_source_format": 0
+        }
+      }
+    }
+  },
+  "committed_output_mb": 1390.2,
+  "mask_s": 255.64,
+  "mask_s_p50": 255.64,
+  "mask_s_p95": 255.64,
+  "mask_s_runs": [
+    255.64
+  ],
+  "throughput_rows_per_s": 39118,
+  "peak_rss_mb": 1956.2,
+  "peak_rss_poll_mb": 1956.2,
+  "rss_method": "wait4_ru_maxrss",
+  "rss_within_ceiling": true,
+  "runs": [
+    {
+      "completed": true,
+      "failure": null,
+      "wall_s": 257.83,
+      "peak_rss_mb": 1956.2,
+      "peak_rss_poll_mb": 1956.2,
+      "returncode": 0,
+      "signal": null
+    }
+  ]
+}
