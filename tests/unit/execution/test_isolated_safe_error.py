@@ -361,3 +361,23 @@ class TestGovernorStillReroutes:
         assert not _is_route_ineligible_error("full_frame", genuine)
         assert not _is_route_ineligible_error("out_of_core", genuine)
         assert not _is_route_ineligible_error("sequential", genuine)
+
+
+def test_registered_execution_codes_are_echoed_and_an_unregistered_code_is_not():
+    from decoy_engine.execution._errors import ExecutionError
+
+    kept = exception_error_text(
+        ExecutionError(code="out_of_core_reorder_threshold_invalid", message=_SENTINEL)
+    )
+    assert kept == "ExecutionError [out_of_core_reorder_threshold_invalid]"
+    scrubbed = exception_error_text(ExecutionError(code=f"row_{_SENTINEL}", message=_SENTINEL))
+    assert scrubbed == "ExecutionError"
+
+
+def test_trusted_execution_codes_match_the_physical_reasons_catalog():
+    # The production set is spelled out (production must not import the physical seam), so a
+    # code added to the catalog but not here would silently lose isolated/direct parity.
+    from decoy_engine.execution._isolated_common import _EXECUTION_CODES
+    from decoy_engine.execution.physical._reasons import PRECOMPILATION_EXCLUDED_CODES
+
+    assert _EXECUTION_CODES == PRECOMPILATION_EXCLUDED_CODES
