@@ -39,17 +39,56 @@ from decoy_engine.execution.out_of_core._mask_group_c import (
     group_c_array,
     group_c_output_type,
 )
+from decoy_engine.execution.out_of_core._row_error_bridge import (
+    OWN_COLUMN_ROW_ERROR_STRATEGIES,
+    bridge_own_column,
+)
 from decoy_engine.execution.out_of_core._text_redact_native import native_text_redact_array
 from decoy_engine.kernel import hash_array, passthrough_array, redact_array, truncate_array
 
 if TYPE_CHECKING:
+    from decoy_engine.execution._row_errors import RowErrorRecord
     from decoy_engine.execution.out_of_core._bucket_native import NativeBucket
     from decoy_engine.execution.out_of_core._categorical_native import NativeCategorical
     from decoy_engine.execution.out_of_core._fpe_native import NativeFpe
     from decoy_engine.execution.out_of_core._hash_run import TableHashPlan
     from decoy_engine.execution.out_of_core._text_redact_native import NativeTextRedact
     from decoy_engine.plan._types import ColumnSeed, Plan, TableSeed
+    from decoy_engine.providers_v2 import ProviderRegistry
     from decoy_engine.transforms._codeset_loader import _CorpusRecord
+
+
+def _bridge_own_column(
+    plan: Plan,
+    table: str,
+    column: str,
+    seed: ColumnSeed,
+    source_array: pa.Array | pa.ChunkedArray,
+    mask_key: bytes,
+    registry: ProviderRegistry | None,
+    row_offset: int,
+) -> tuple[pa.Array, tuple[RowErrorRecord, ...]]:
+    """Mask one own-column row-erroring column (bucketize/top_code) via the
+    oracle-handler bridge, failing closed on a missing registry (a wiring bug:
+    the runner always threads its registry, so this guards a direct caller)."""
+    if registry is None:
+        raise ExecutionError(
+            code="out_of_core_row_error_registry_missing",
+            message=(
+                f"{table}.{column}: out-of-core {seed.strategy!r} needs a provider registry "
+                "for its handler bridge, but none was threaded."
+            ),
+        )
+    return bridge_own_column(
+        table,
+        column,
+        seed,
+        source_array,
+        registry=registry,
+        job_seed=plan.seed_envelope.job_seed,
+        mask_key=mask_key,
+        row_offset=row_offset,
+    )
 
 
 def table_seed(plan: Plan, table_name: str) -> TableSeed | None:
@@ -235,6 +274,12 @@ def masked_output_type(seed: ColumnSeed, source_type: pa.DataType | None = None)
         return group_b_output_type(seed, cfg, source_type)
     if seed.strategy in GROUP_C_STRATEGIES:
         return group_c_output_type(seed, cfg)
+    if seed.strategy in OWN_COLUMN_ROW_ERROR_STRATEGIES:
+        # bucketize/top_code render every coercible cell to a canonical string
+        # (a bucket label or a generalized/aggregate label), so a value-bearing
+        # column is string. An all-null or empty column infers null-typed and
+        # the fixed-schema sink reconciles it, exactly as `redact` does below.
+        return pa.string()
     if seed.strategy == "hash":
         return pa.string()
     if seed.strategy == "truncate":
@@ -275,6 +320,8 @@ def mask_table(
     mask_key: bytes | None = None,
     code_set_corpus_records: dict[str, _CorpusRecord] | None = None,
     sub_floor_totals: dict[str, dict[str, int]] | None = None,
+    registry: ProviderRegistry | None = None,
+    row_error_sink: list[RowErrorRecord] | None = None,
 ) -> pa.Table:
     """Whole-table, whole-column masking.
 
@@ -314,6 +361,16 @@ def mask_table(
             continue
         if column not in out.column_names:
             continue
+        if column_seed.strategy in OWN_COLUMN_ROW_ERROR_STRATEGIES:
+            # Whole-table row_offset is 0: this single-shot path is the parity
+            # reference, and a row-error index here is whole-table absolute.
+            masked_array, row_error_records = _bridge_own_column(
+                plan, table_name, column, column_seed, out.column(column), key, registry, 0
+            )
+            if row_error_sink is not None:
+                row_error_sink.extend(row_error_records)
+            out = out.set_column(out.schema.get_field_index(column), column, masked_array)
+            continue
         notices = (
             sub_floor_totals.setdefault(column, {})
             if sub_floor_totals is not None and column_seed.strategy == "text_mask"
@@ -341,6 +398,9 @@ def mask_batch(
     code_set_corpus_records: dict[str, _CorpusRecord] | None = None,
     sub_floor_totals: dict[str, dict[str, int]] | None = None,
     hash_plan: TableHashPlan | None = None,
+    registry: ProviderRegistry | None = None,
+    row_offset: int = 0,
+    row_error_sink: list[RowErrorRecord] | None = None,
 ) -> pa.RecordBatch:
     """Mask one RecordBatch's non-FK columns per the plan.
 
@@ -380,6 +440,18 @@ def mask_batch(
     arrays = list(batch.columns)
     for column, column_seed in seed.per_column:
         if column in skip_columns:
+            continue
+        if column_seed.strategy in OWN_COLUMN_ROW_ERROR_STRATEGIES:
+            idx = batch.schema.get_field_index(column)
+            if idx < 0:
+                continue
+            masked, row_error_records = _bridge_own_column(
+                plan, table_name, column, column_seed, arrays[idx], key, registry, row_offset
+            )
+            if row_error_sink is not None:
+                row_error_sink.extend(row_error_records)
+            arrays[idx] = masked
+            fields[idx] = pa.field(column, masked.type)
             continue
         hash_kernel = (
             hash_plan.kernel_for(column, batch)

@@ -42,36 +42,43 @@ _GROUP_B_SUPPORTED_STRATEGIES = frozenset({"fpe", "text_redact", "categorical"})
 _GROUP_C_ALWAYS_SUPPORTED = frozenset({"text_mask"})
 _GROUP_C_CONDITIONAL = frozenset({"code_set", "bucket_perturb"})
 _GROUP_C_SUPPORTED_STRATEGIES = _GROUP_C_ALWAYS_SUPPORTED | _GROUP_C_CONDITIONAL
+# F2 row-error channel: own-column strategies that are row-local in VALUE but
+# emit per-value `format_error` RowErrors. Ported onto the out-of-core route via
+# the per-batch oracle-handler bridge (`_row_error_bridge.py`), byte-identical to
+# the pandas oracle, with the runner failing closed on the first batch that
+# reports a row error (the chunked route's H1 contract; neither non-full-frame
+# lane quarantines, `_pipeline_routing.py`). Admitted for masked (payload)
+# columns only; the PARENT-KEY surface (`_check_edge`) stays
+# `_INITIAL_SUPPORTED_STRATEGIES`, so a row-error-bridge FK key is a MISS.
+_ROW_ERROR_BRIDGE_STRATEGIES = frozenset({"bucketize", "top_code"})
 _SUPPORTED_WORK_STRATEGIES = (
-    _INITIAL_SUPPORTED_STRATEGIES | _GROUP_B_SUPPORTED_STRATEGIES | _GROUP_C_SUPPORTED_STRATEGIES
+    _INITIAL_SUPPORTED_STRATEGIES
+    | _GROUP_B_SUPPORTED_STRATEGIES
+    | _GROUP_C_SUPPORTED_STRATEGIES
+    | _ROW_ERROR_BRIDGE_STRATEGIES
 )
 # SC3 deferred Group (b): investigated and NOT ported, each for a concrete
 # reason that would otherwise cause a route-dependent divergence. A MISS here
 # means the job falls back to sequential/full-frame (which handle them), never a
 # wrong output. `faker` needs a registry-backed ValuePool + a cross-batch pool
-# cache the registry-free out-of-core kernel has no channel for. `bucketize` and
-# `date_shift` record per-value format errors (uncoercible numeric / unparseable
-# date) that the full-frame path removes via the D8 quarantine pass, but the
-# out-of-core route returns before that pass and has no row-error channel;
-# `date_shift` additionally needs whole-column format detection that does not
-# chunk. See docs/plans/2026-07-07-next-up-roadmap.md (SC3) + `_mask_group_b.py`.
+# cache the registry-free out-of-core kernel has no channel for. `date_shift`
+# records per-value format errors AND, without an explicit `date_format`, needs
+# whole-column format detection that does not chunk; admitting it on the row-error
+# bridge WITH an explicit format is a later slice. (`bucketize` and `top_code`
+# are now admitted via `_ROW_ERROR_BRIDGE_STRATEGIES` above and the per-batch
+# oracle-handler bridge in `_row_error_bridge.py`.)
+# See docs/plans/2026-07-07-next-up-roadmap.md (SC3) + `_row_error_bridge.py`.
 _DEFERRED_GROUP_B: dict[str, tuple[str, str]] = {
     "faker": (
         "out_of_core_faker_pool_unsupported",
         "faker needs a registry-backed value pool + cross-batch pool cache the "
         "out-of-core kernel has no channel for; falls back to sequential/full-frame.",
     ),
-    "bucketize": (
-        "out_of_core_row_error_strategy_unsupported",
-        "bucketize records per-value format errors that full-frame quarantines "
-        "(D8) but the out-of-core route has no row-error/quarantine channel; "
-        "falls back to sequential/full-frame.",
-    ),
     "date_shift": (
         "out_of_core_row_error_strategy_unsupported",
-        "date_shift records per-value format errors (D8-quarantined full-frame) "
-        "and needs whole-column format detection that does not chunk; the "
-        "out-of-core route has neither, so it falls back to sequential/full-frame.",
+        "date_shift records per-value format errors and, without an explicit date_format, "
+        "needs whole-column format detection that does not chunk; the out-of-core route "
+        "does not yet admit it, so it falls back to sequential/full-frame.",
     ),
 }
 

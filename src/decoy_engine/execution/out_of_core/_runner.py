@@ -90,6 +90,7 @@ from decoy_engine.execution.out_of_core._route_policy import (
     decide_route,
     validate_outgoing_parent_columns,
 )
+from decoy_engine.execution.out_of_core._row_error_bridge import fail_closed_on_row_errors
 from decoy_engine.execution.out_of_core._source import LazySource
 from decoy_engine.execution.out_of_core._stream_driver import stream_table
 from decoy_engine.execution.out_of_core._stream_driver_support import (
@@ -105,6 +106,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
     from typing import TypeAlias
 
+    from decoy_engine.execution._row_errors import RowErrorRecord
     from decoy_engine.execution.out_of_core._relation import ParentKeyRelation
     from decoy_engine.generation.pool._events import QualityWarning
     from decoy_engine.keyprovider import KeyProvider
@@ -267,6 +269,7 @@ def run_fk_out_of_core(
                 "vault_writer": vault_writer,
                 "vault_config": config,
                 "validators": validators,
+                "registry": registry,
             }
             # `reorder_caps is not None` (not `route.use_reorder`) is the branch
             # condition so this narrows for mypy directly, matching `RouteDecision`'s
@@ -343,6 +346,7 @@ def _stream_table(
     vault_writer: Any = None,
     vault_config: Mapping[str, Any] | None = None,
     validators: Any = None,
+    registry: ProviderRegistry | None = None,
 ) -> None:
     """Rewrite pass for one table: mask + join per batch, then emit.
 
@@ -436,6 +440,11 @@ def _stream_table(
         orphan_totals = [0] * len(joiners)
 
         def rewritten() -> Iterator[pa.RecordBatch]:
+            # Durable global row ordinal (F3): the cumulative count of rows this
+            # table has streamed in SOURCE order so far. mask_batch runs before
+            # any join/reorder, so this equals the row's position in the whole,
+            # unchunked source, matching the full-frame oracle's row numbering.
+            row_offset = 0
             for raw_batch in _iter_source_batches(raw, batch_rows):
                 for column, seen in code_set_null_seen.items():
                     if seen:
@@ -453,6 +462,7 @@ def _stream_table(
                         n_missing += pc.sum(pc.is_nan(col)).as_py() or 0  # type: ignore[attr-defined, unused-ignore]
                     if n_missing < raw_batch.num_rows:
                         code_set_null_seen[column] = True
+                batch_row_errors: list[RowErrorRecord] = []
                 out = mask_batch(
                     plan,
                     table_name,
@@ -462,7 +472,15 @@ def _stream_table(
                     code_set_corpus_records=code_set_corpus_records,
                     sub_floor_totals=text_mask_sub_floor_totals,
                     hash_plan=hash_plan,
+                    registry=registry,
+                    row_offset=row_offset,
+                    row_error_sink=batch_row_errors,
                 )
+                # Fail closed on the first batch with a row error, mirroring the
+                # chunked route's H1 contract (`_chunked_oracle`): neither
+                # non-full-frame lane quarantines row errors (`_pipeline_routing`).
+                fail_closed_on_row_errors(batch_row_errors)
+                row_offset += raw_batch.num_rows
                 # Before the join: FK child keys are not yet remapped here (they decline admission).
                 collect_batch_vault(vault_config, table_name, raw_batch, out, vault_writer)
                 _validate_batch.collect_batch_validation(validators, table_name, out)
@@ -496,13 +514,14 @@ def _stream_table(
                 sink=sink,
                 source_schema=source_schema,
                 on_stream_consumed=_release_joiners,
+                registry=registry,
             )
         else:
             batches = list(rewritten())
             table_out = (
                 assemble_resident(batches, fk_components)
                 if batches
-                else empty_output_table(plan, table_name, source_schema, fk_components)
+                else empty_output_table(plan, table_name, source_schema, fk_components, registry=registry)
             )
             outputs[table_name] = table_out
             for edge in outgoing_edges:

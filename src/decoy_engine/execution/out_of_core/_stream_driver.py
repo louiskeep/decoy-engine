@@ -87,6 +87,7 @@ from decoy_engine.execution.out_of_core._payload_store import (
     SpillPayloadStore,
 )
 from decoy_engine.execution.out_of_core._relation import build_parent_key_relation_aligned
+from decoy_engine.execution.out_of_core._row_error_bridge import fail_closed_on_row_errors
 from decoy_engine.execution.out_of_core._source import LazySource
 from decoy_engine.execution.out_of_core._stream_driver_support import (
     _code_set_records_and_evidence_for_table,
@@ -109,11 +110,13 @@ if TYPE_CHECKING:
     from pathlib import Path
     from typing import TypeAlias
 
+    from decoy_engine.execution._row_errors import RowErrorRecord
     from decoy_engine.execution._transactional_sink import TransactionalSink
     from decoy_engine.execution.out_of_core._relation import ParentKeyRelation, ParentSource
     from decoy_engine.execution.out_of_core._reorder_budget import ReorderCaps
     from decoy_engine.generation.pool._events import QualityWarning
     from decoy_engine.plan._types import ColumnSeed, Plan
+    from decoy_engine.providers_v2 import ProviderRegistry
     from decoy_engine.relationships._graph import RelationshipEdge
 
     # One source per table: a resident Arrow table (back-compat) or a
@@ -148,6 +151,7 @@ def stream_table(
     vault_writer: Any = None,
     vault_config: Mapping[str, Any] | None = None,
     validators: Any = None,
+    registry: ProviderRegistry | None = None,
 ) -> None:
     """Rewrite one table via the three-phase sequential reorder driver.
 
@@ -313,6 +317,7 @@ def stream_table(
                 extra_known=frozenset(fk_components),
             )
         )
+        row_offset = 0
         for raw_batch in _iter_source_batches(raw, batch_rows):
             for joiner in joiners:
                 joiner.stage_batch(raw_batch)
@@ -342,6 +347,7 @@ def stream_table(
                     n_missing += pc.sum(pc.is_nan(col)).as_py() or 0  # type: ignore[attr-defined, unused-ignore]
                 if n_missing < raw_batch.num_rows:
                     code_set_null_seen[column] = True
+            batch_row_errors: list[RowErrorRecord] = []
             masked_batch = mask_batch(
                 plan,
                 table_name,
@@ -351,7 +357,15 @@ def stream_table(
                 code_set_corpus_records=code_set_corpus_records,
                 sub_floor_totals=text_mask_sub_floor_totals,
                 hash_plan=hash_plan,
+                registry=registry,
+                row_offset=row_offset,
+                row_error_sink=batch_row_errors,
             )
+            # Fail closed on the first batch with a row error (chunked H1 contract;
+            # neither non-full-frame lane quarantines). Phase 1 masks in source
+            # order, so `row_offset` is the batch's durable global row ordinal.
+            fail_closed_on_row_errors(batch_row_errors)
+            row_offset += raw_batch.num_rows
             # Aligned source/masked pair, before the reorder and the type reconcile.
             collect_batch_vault(vault_config, table_name, raw_batch, masked_batch, vault_writer)
             collect_batch_validation(validators, table_name, masked_batch)
@@ -464,13 +478,16 @@ def stream_table(
                     source_schema=source_schema,
                     on_stream_consumed=_release_joiners,
                     masked_observed_types=payload_masked_observed,
+                    registry=registry,
                 )
             else:
                 batches = list(rewritten())
                 table_out = (
                     assemble_resident(batches, fk_components)
                     if batches
-                    else empty_output_table(plan, table_name, source_schema, fk_components)
+                    else empty_output_table(
+                        plan, table_name, source_schema, fk_components, registry=registry
+                    )
                 )
                 outputs[table_name] = table_out
                 for edge in outgoing_edges:

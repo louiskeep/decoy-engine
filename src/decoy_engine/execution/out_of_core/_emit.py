@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     from decoy_engine.execution._transactional_sink import TransactionalSink
     from decoy_engine.execution.out_of_core._relation import ParentKeyRelation, ParentSource
     from decoy_engine.plan._types import Plan
+    from decoy_engine.providers_v2 import ProviderRegistry
     from decoy_engine.relationships._graph import RelationshipEdge
 
     class _FkOutputComponents(Protocol):
@@ -69,6 +70,7 @@ def emit_to_sink(
     source_schema: pa.Schema,
     on_stream_consumed: Callable[[], None] | None = None,
     masked_observed_types: Mapping[str, set[pa.DataType]] | None = None,
+    registry: ProviderRegistry | None = None,
 ) -> None:
     """Stream the rewritten batches to the sink, then build outgoing relations.
 
@@ -141,7 +143,7 @@ def emit_to_sink(
         return
     # A zero-row parent has no data-derived types; the empty whole-table
     # output carries the exact types a whole-table build would.
-    empty = empty_output_table(plan, table_name, source_schema, fk_components)
+    empty = empty_output_table(plan, table_name, source_schema, fk_components, registry=registry)
     for edge in outgoing_edges:
         parent_relations[edge] = build_parent_key_relation_aligned(
             source_parent=raw_parent_source,
@@ -185,6 +187,8 @@ def empty_output_table(
     table_name: str,
     source_schema: pa.Schema,
     fk_components: Mapping[str, tuple[_FkOutputComponents, int]],
+    *,
+    registry: ProviderRegistry | None = None,
 ) -> pa.Table:
     """Zero-row output with whole-table column types.
 
@@ -192,12 +196,17 @@ def empty_output_table(
     fixed schema is NOT what a whole-table build yields: value-inferring
     kernels type an empty column null, and an FK column concatenates zero
     chunks into a null-typed empty array. Reproduce both exactly.
+
+    `registry` is threaded to `mask_table` for an own-column row-erroring
+    payload strategy (bucketize/top_code), whose empty column the oracle
+    handler types null, matching the value-inferring kernels above.
     """
     table = mask_table(
         plan,
         table_name,
         source_schema.empty_table(),
         skip_columns=frozenset(fk_components),
+        registry=registry,
     )
     for col in fk_components:
         idx = table.schema.get_field_index(col)

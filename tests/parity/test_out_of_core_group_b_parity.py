@@ -404,7 +404,10 @@ def test_nondeterministic_categorical_is_gate_miss() -> None:
 @pytest.mark.parametrize(
     ("strategy", "provider_config", "code"),
     [
-        ("bucketize", (("width", 10),), "out_of_core_row_error_strategy_unsupported"),
+        # bucketize and top_code are now ADMITTED via the F2 row-error bridge
+        # (see test_out_of_core_row_error_bridge.py); date_shift stays deferred
+        # (needs an explicit date_format + more handler context) and faker needs
+        # a streamable value pool.
         (
             "date_shift",
             (("min_days", -5), ("max_days", 5)),
