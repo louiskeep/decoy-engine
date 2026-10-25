@@ -70,10 +70,9 @@ _COUNT_METHODS = frozenset({"count", "nunique", "sum", "size", "__len__"})
 # (module path relative to decoy_engine, qualified function name, variable) -> (count, reason).
 ALLOWLIST: dict[tuple[str, str, str], tuple[int, str]] = {
     # System errors whose text names a path or an OS condition, not data.
-    ("disguises/loader.py", "load_disguises", "exc"): (1, "OSError reading a packaged file"),
+    ("disguises/loader.py", "_load_from", "exc"): (1, "OSError reading a packaged file"),
     ("internal/logging.py", "_configure_logger", "exc"): (1, "OSError opening the log file"),
     ("internal/memory.py", "MemoryMonitor.monitor_memory_usage", "e"): (1, "psutil failure"),
-    ("quarantine.py", "publish_staged_jsonl", "exc"): (1, "OSError removing a staging link"),
     # Package or environment configuration text, no customer data.
     ("storm/model_pack/loader.py", "ModelPackLoader.load_with_fallback", "exc"): (
         2,

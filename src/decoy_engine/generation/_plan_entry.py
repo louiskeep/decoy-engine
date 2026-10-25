@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
+from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.generation._streamed import GenerationResult, run_generation
 from decoy_engine.generation.statistical import spec_from_dict
 from decoy_engine.plan._types import unfreeze_json
@@ -142,6 +143,7 @@ def _prepare_pinned(generation_plan: Any, caller: str) -> _PreparedPlan:
     return _prepare_generation(generation_plan, caller)
 
 
+@entry_point
 def generate_tables(
     plan: Any,
     derive_key: Any = None,
@@ -149,6 +151,7 @@ def generate_tables(
     *,
     provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None = None,
     budget_bytes: int | None = None,
+    file_access: FileAccess | None = None,
 ) -> dict[str, pa.Table]:
     """Build one Arrow table per generate table in the compiled ``Plan``.
 

@@ -31,8 +31,11 @@ from collections.abc import Mapping
 
 import polars as pl
 
+from decoy_engine.fileaccess import FileAccess, entry_point
+from decoy_engine.fileaccess.adapters import polars as polars_adapter
 from decoy_engine.plan._types import PlanRelationship
 from decoy_engine.subset._edges import build_subset_edges
+from decoy_engine.subset._io import open_input
 from decoy_engine.subset._keys import RI
 from decoy_engine.subset._types import (
     FkPreflightEdgeReport,
@@ -51,11 +54,13 @@ def _key_dtypes_compatible(pdt: pl.DataType, cdt: pl.DataType) -> bool:
     return pdt.is_integer() and cdt.is_integer()
 
 
+@entry_point
 def run_subset_preflight(
     *,
     sources: Mapping[str, SubsetSource],
     relationships: tuple[PlanRelationship, ...],
     seeds: tuple[SeedSpec, ...] = (),
+    file_access: FileAccess | None = None,
 ) -> FkPreflightReport:
     """Run every SS1 fail-closed check. Never raises on a check failure.
 
@@ -115,9 +120,12 @@ def run_subset_preflight(
             passed=False, failures=tuple(failures), warnings=tuple(warnings), edges=()
         )
 
-    schemas: dict[str, pl.Schema] = {
-        table: pl.scan_parquet(sources[table].path).collect_schema() for table in tables_referenced
-    }
+    schemas: dict[str, pl.Schema] = {}
+    for table in tables_referenced:
+        with open_input(sources[table], table) as handle:
+            schemas[table] = polars_adapter.collect_schema(
+                handle, polars_adapter.scan_parquet(handle)
+            )
 
     # 5.1: dangling column / duplicate column / reserved column, per edge end.
     schema_ok_edges: list[SubsetEdge] = []
@@ -206,16 +214,19 @@ def run_subset_preflight(
     # 5.4: key-level source-orphan pre-scan. The `run_fk_validity` reuse.
     edge_reports: list[FkPreflightEdgeReport] = []
     for edge in compat_edges:
-        parent_frame = pl.scan_parquet(sources[edge.parent_table].path).select(
-            list(edge.parent_columns)
-        )
-        child_frame = pl.scan_parquet(sources[edge.child_table].path).select(
-            list(edge.child_columns)
-        )
-        child_keys = child_frame.collect()
+        with open_input(sources[edge.child_table], edge.child_table) as child_handle:
+            child_keys = polars_adapter.collect(
+                child_handle,
+                polars_adapter.scan_parquet(child_handle).select(list(edge.child_columns)),
+            )
         child_row_count = child_keys.height
         non_null = child_keys.drop_nulls()  # any-null component = null key, per P3.
-        parent_keys = parent_frame.collect().drop_nulls().unique()
+        with open_input(sources[edge.parent_table], edge.parent_table) as parent_handle:
+            parent_frame = polars_adapter.collect(
+                parent_handle,
+                polars_adapter.scan_parquet(parent_handle).select(list(edge.parent_columns)),
+            )
+        parent_keys = parent_frame.drop_nulls().unique()
         orphans = non_null.join(
             parent_keys,
             left_on=list(edge.child_columns),

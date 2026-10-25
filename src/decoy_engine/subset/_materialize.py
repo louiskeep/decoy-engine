@@ -23,7 +23,11 @@ from pathlib import Path
 
 import polars as pl
 
+from decoy_engine import fileaccess
+from decoy_engine.fileaccess import FileRequest, FileRole, OutputTxn
+from decoy_engine.fileaccess.adapters import polars as polars_adapter
 from decoy_engine.subset._errors import SubsetConfigError, SubsetInternalError
+from decoy_engine.subset._io import open_input
 from decoy_engine.subset._keys import RI
 from decoy_engine.subset._types import SubsetSource
 
@@ -33,41 +37,48 @@ def materialize_subset(
     sources: Mapping[str, SubsetSource],
     survivors: Mapping[str, frozenset[int]],
     output_dir: Path,
-) -> tuple[tuple[str, str], ...]:
-    """Write one filtered Parquet file per table under `output_dir`.
+) -> tuple[OutputTxn, tuple[tuple[str, str], ...]]:
+    """Stage one filtered Parquet file per table for `output_dir`; the caller publishes.
 
     Precondition (enforced by `_api.py`'s call ordering; asserted here
     defensively): the budget check and `verify_closure` have already passed.
-    `output_dir` is created here, and only here -- refusing to reuse an
+    The output directory is created here, and only here -- refusing to reuse an
     existing non-empty directory is what makes "no partial Parquet was
-    written" testable when an earlier stage raises.
+    written" testable when an earlier stage raises. Files land in a private
+    stage and become visible with one rename when the caller publishes, so a
+    failure partway leaves no partial directory either.
     """
-    output_dir = Path(output_dir)
-    if output_dir.exists() and any(output_dir.iterdir()):
+    out = fileaccess.current().output_dir(
+        FileRequest(FileRole.TARGET_OUTPUT, "write", str(output_dir), "subset.output_dir")
+    )
+    if not out.is_empty_or_absent():
         raise SubsetConfigError(
             code="subset_output_dir_exists",
-            message=f"output_dir {str(output_dir)!r} already exists and is not empty; "
+            message=f"output_dir {out.display!r} already exists and is not empty; "
             "subsetting refuses to write into a non-empty directory",
         )
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    written: list[tuple[str, str]] = []
-    for table in sorted(survivors):
-        out_path = output_dir / f"{table}.parquet"
-        idx = sorted(survivors[table])
-        frame = (
-            pl.scan_parquet(sources[table].path)
-            .with_row_index(RI)
-            .filter(pl.col(RI).is_in(idx))
-            .drop(RI)
-            .collect()
-        )
-        if frame.height != len(idx):
-            raise SubsetInternalError(
-                code="subset_materialize_count_mismatch",
-                message=f"table {table!r}: wrote {frame.height} rows but expected "
-                f"{len(idx)} survivors",
-            )
-        frame.write_parquet(out_path)
-        written.append((table, str(out_path)))
-    return tuple(written)
+    txn = out.begin("dir", "exclusive", label="subset")
+    try:
+        written: list[tuple[str, str]] = []
+        for table in sorted(survivors):
+            idx = sorted(survivors[table])
+            with open_input(sources[table], table) as handle:
+                frame = polars_adapter.collect(
+                    handle,
+                    polars_adapter.scan_parquet(handle)
+                    .with_row_index(RI)
+                    .filter(pl.col(RI).is_in(idx))
+                    .drop(RI),
+                )
+            if frame.height != len(idx):
+                raise SubsetInternalError(
+                    code="subset_materialize_count_mismatch",
+                    message=f"table {table!r}: wrote {frame.height} rows but expected "
+                    f"{len(idx)} survivors",
+                )
+            polars_adapter.write_parquet(frame, txn, f"{table}.parquet")
+            written.append((table, str(Path(output_dir) / f"{table}.parquet")))
+    except BaseException:
+        txn.abort()
+        raise
+    return txn, tuple(written)

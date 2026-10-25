@@ -61,6 +61,7 @@ References:
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import hmac as _hmac_mod
 import json
@@ -68,6 +69,8 @@ import logging
 import os
 from pathlib import Path
 
+from decoy_engine import fileaccess
+from decoy_engine.storm.model_pack import _packio
 from decoy_engine.storm.model_pack.types import ModelPackManifest
 
 _log = logging.getLogger(__name__)
@@ -149,16 +152,31 @@ def sign_pack(pack_dir: Path, key: bytes) -> str:
     """
     if not key:
         raise ValueError("sign_pack: key must be non-empty bytes")
-    manifest_path = pack_dir / "manifest.json"
+    shown = _packio.member_display(pack_dir)
     try:
-        raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+        data = _packio.read_member(pack_dir, "manifest.json")
+        if data is None:
+            raise FileNotFoundError(
+                errno.ENOENT, os.strerror(errno.ENOENT), f"{shown}/manifest.json"
+            )
+        raw = json.loads(data.decode("utf-8"))
         manifest = ModelPackManifest.from_dict(raw)
     except (OSError, json.JSONDecodeError, TypeError, KeyError) as exc:
-        raise ValueError(f"sign_pack: cannot read manifest in {pack_dir}: {exc}") from exc
+        # X3: a policy decision or a resource failure (denial, memory, ENOSPC/EDQUOT/ENOMEM, read
+        # error) keeps its class and errno rather than becoming a plain ValueError that would lose
+        # OOM/disk-quota handling. X2: the pack is named by its config position under a strict
+        # policy; the CLI still sees the path.
+        if fileaccess.keeps_class(exc):
+            raise
+        raise ValueError(f"sign_pack: cannot read manifest in {shown}: {exc}") from exc
     digest = sign_manifest(manifest, key)
     raw["manifest_hmac"] = digest
     # Write canonically (sort_keys) so the on-disk manifest is stable across signings.
-    manifest_path.write_text(json.dumps(raw, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    _packio.write_member(
+        pack_dir,
+        "manifest.json",
+        (json.dumps(raw, indent=2, sort_keys=True) + "\n").encode("utf-8"),
+    )
     return digest
 
 

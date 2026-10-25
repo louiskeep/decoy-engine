@@ -31,9 +31,9 @@ runner; the runner imports it through the re-export shim at its old path.
 from __future__ import annotations
 
 import csv
-import os
+import io
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
@@ -41,8 +41,12 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from decoy_engine import fileaccess
 from decoy_engine.errors import PipelineValidationError
-from decoy_engine.profile._fixed_width_reader import read_fixed_width
+from decoy_engine.fileaccess import FileAccess, FileHandle, FileRequest, FileRole
+from decoy_engine.fileaccess.adapters import arrow as arrow_adapter
+from decoy_engine.fileaccess.adapters import pandas as pandas_adapter
+from decoy_engine.profile._fixed_width_reader import read_fixed_width_handle
 from decoy_engine.validation_result import CODES
 
 # The headerless width scan (see CsvFileSource._assert_record_widths) tokenizes
@@ -171,8 +175,17 @@ class OpenedLazyBatches:
     validates is what it reads. `close()` is idempotent and safe to call from a `finally`
     on any exit, including one before the first batch."""
 
-    def __init__(self, parquet_file: pq.ParquetFile, batch_rows: int, use_threads: bool) -> None:
+    def __init__(
+        self,
+        parquet_file: pq.ParquetFile,
+        batch_rows: int,
+        use_threads: bool,
+        handle: FileHandle | None = None,
+    ) -> None:
         self._parquet_file = parquet_file
+        # The authorized handle lives as long as the batches do, through early failure and
+        # interrupted consumption, because a strict handle's descriptor is the file.
+        self._handle = handle
         self._closed = False
         self.facts = footer_facts_of(parquet_file)
         self.batches = self._read(batch_rows, use_threads)
@@ -198,32 +211,61 @@ class OpenedLazyBatches:
         # Returning the C-level iterator raw makes a downstream `yield from` raise
         # `RuntimeError: generator raised StopIteration` on Python 3.10 for an empty file:
         # the iterator's StopIteration escapes the consuming generator frame (PEP 479).
-        yield from self._parquet_file.iter_batches(batch_size=batch_rows, use_threads=use_threads)
+        if self._handle is not None:
+            yield from arrow_adapter.iter_batches(
+                self._handle, self._parquet_file, batch_size=batch_rows, use_threads=use_threads
+            )
+        else:
+            yield from self._parquet_file.iter_batches(
+                batch_size=batch_rows, use_threads=use_threads
+            )
 
     def close(self) -> None:
         if not self._closed:
             self._closed = True
-            self._parquet_file.close()
+            try:
+                self._parquet_file.close()
+            finally:
+                if self._handle is not None:
+                    self._handle.close()
 
 
 @dataclass(frozen=True)
 class LazySource:
     """A batch-readable handle onto one on-disk Parquet file.
 
-    Holds only a path: every read (batches, schema, row count) opens the file
-    fresh, so passing a `LazySource` around never pins a resident Arrow table.
-    Reading is delegated to `pyarrow.parquet.ParquetFile.iter_batches`, which
-    decodes one `batch_size` chunk at a time rather than the whole file; schema
-    and row count come from the Parquet footer, which parsing does not touch
-    column data.
+    Holds only a path and the policy it was built under: every read (batches, schema, row
+    count) asks that policy for the file fresh, so passing a `LazySource` around never pins
+    a resident Arrow table and a later read is judged by the policy that created the source
+    even after the entry point returned. Reading is delegated to
+    `pyarrow.parquet.ParquetFile.iter_batches`, which decodes one `batch_size` chunk at a
+    time rather than the whole file; schema and row count come from the Parquet footer,
+    which parsing does not touch column data.
     """
 
     path: Path
+    access: FileAccess | None = field(default=None, compare=False, repr=False)
+    field_key: str = field(default="source.path", compare=False)
+
+    def __post_init__(self) -> None:
+        if self.access is None:
+            object.__setattr__(self, "access", fileaccess.capture())
+
+    def _handle(self) -> FileHandle:
+        if self.access is None:  # pragma: no cover - set in __post_init__
+            raise fileaccess.FileAccessUnavailable("no file access policy")
+        return self.access.open_read(
+            FileRequest(FileRole.SOURCE, "read", str(self.path), self.field_key)
+        )
 
     def iter_batches(self, batch_rows: int) -> Iterator[pa.RecordBatch]:
         """Yield the file's rows as batches of at most `batch_rows` each."""
-        parquet_file = pq.ParquetFile(self.path)
-        yield from parquet_file.iter_batches(batch_size=batch_rows)
+        handle = self._handle()
+        try:
+            parquet_file = arrow_adapter.parquet_file(handle)
+            yield from arrow_adapter.iter_batches(handle, parquet_file, batch_size=batch_rows)
+        finally:
+            handle.close()
 
     def open_batches(
         self,
@@ -247,11 +289,17 @@ class LazySource:
             options["pre_buffer"] = pre_buffer
         if buffer_size:
             options["buffer_size"] = buffer_size
-        parquet_file = pq.ParquetFile(self.path, **options)
+        handle = self._handle()
         try:
-            return OpenedLazyBatches(parquet_file, batch_rows, use_threads)
+            parquet_file = arrow_adapter.parquet_file(handle, **options)
+        except BaseException:
+            handle.close()
+            raise
+        try:
+            return OpenedLazyBatches(parquet_file, batch_rows, use_threads, handle)
         except BaseException:
             parquet_file.close()
+            handle.close()
             raise
 
     def footer_facts(self) -> FooterFacts:
@@ -259,21 +307,33 @@ class LazySource:
 
         The `schema`, `num_rows` and `column_null_counts` accessors each reopen the file; a
         caller that needs the facts to agree with one another reads them here."""
-        parquet_file = pq.ParquetFile(self.path)
+        handle = self._handle()
         try:
-            return footer_facts_of(parquet_file)
+            parquet_file = arrow_adapter.parquet_file(handle)
+            try:
+                return footer_facts_of(parquet_file)
+            finally:
+                parquet_file.close()
         finally:
-            parquet_file.close()
+            handle.close()
 
     @property
     def schema(self) -> pa.Schema:
         """The file's Arrow schema, read from the Parquet footer only."""
-        return pq.ParquetFile(self.path).schema_arrow
+        handle = self._handle()
+        try:
+            return arrow_adapter.parquet_file(handle).schema_arrow
+        finally:
+            handle.close()
 
     @property
     def num_rows(self) -> int:
         """The file's total row count, read from the Parquet footer only."""
-        return pq.read_metadata(self.path).num_rows
+        handle = self._handle()
+        try:
+            return int(arrow_adapter.read_metadata(handle).num_rows)
+        finally:
+            handle.close()
 
     def column_null_counts(self) -> dict[str, int | None]:
         """Exact null count per flat top-level column, from footer statistics only.
@@ -282,15 +342,38 @@ class LazySource:
         written off), so the caller must not read it as "no nulls". A file with no
         rows (no row groups, or only empty ones) has none. Nested columns have no single leaf and are omitted.
         """
-        return _footer_null_counts(pq.read_metadata(self.path))
+        handle = self._handle()
+        try:
+            return _footer_null_counts(arrow_adapter.read_metadata(handle))
+        finally:
+            handle.close()
 
     def to_table(self) -> pa.Table:
         """Read the whole file into memory. Fallback for small jobs only."""
-        return pq.read_table(self.path)
+        handle = self._handle()
+        try:
+            return arrow_adapter.read_table(handle)
+        finally:
+            handle.close()
+
+
+class _PolicyBound:
+    """What a file source needs to ask the policy it was built under for its file."""
+
+    path: Path
+    access: FileAccess | None
+    field_key: str
+
+    def _handle(self) -> FileHandle:
+        if self.access is None:  # pragma: no cover - set in __post_init__
+            raise fileaccess.FileAccessUnavailable("no file access policy")
+        return self.access.open_read(
+            FileRequest(FileRole.SOURCE, "read", str(self.path), self.field_key)
+        )
 
 
 @dataclass(frozen=True)
-class ParquetFileSource:
+class ParquetFileSource(_PolicyBound):
     """`ProfileSource` for a local Parquet file, backed by `LazySource`.
 
     row_count/schema come from the footer; the bounded sample is the first
@@ -299,9 +382,15 @@ class ParquetFileSource:
     """
 
     path: Path
+    access: FileAccess | None = field(default=None, compare=False, repr=False)
+    field_key: str = field(default="source.path", compare=False)
+
+    def __post_init__(self) -> None:
+        if self.access is None:
+            object.__setattr__(self, "access", fileaccess.capture())
 
     def _lazy(self) -> LazySource:
-        return LazySource(self.path)
+        return LazySource(self.path, self.access, self.field_key)
 
     def row_count(self) -> RowCount:
         return RowCount(self._lazy().num_rows, exact=True)
@@ -319,7 +408,7 @@ class ParquetFileSource:
 
 
 @dataclass(frozen=True)
-class FixedWidthFileSource:
+class FixedWidthFileSource(_PolicyBound):
     """`ProfileSource` for a local fixed-width file.
 
     Row count is O(1) and exact: `filesize // bytes-per-record`, where the
@@ -329,11 +418,18 @@ class FixedWidthFileSource:
 
     path: Path
     layout: Any
+    access: FileAccess | None = field(default=None, compare=False, repr=False)
+    field_key: str = field(default="source.path", compare=False)
+
+    def __post_init__(self) -> None:
+        if self.access is None:
+            object.__setattr__(self, "access", fileaccess.capture())
 
     def row_count(self) -> RowCount:
-        size = os.path.getsize(self.path)
-        with open(self.path, "rb") as fh:
-            first_line = fh.readline()
+        with self._handle() as handle:
+            size = handle.stat().st_size
+            with handle.open_binary() as fh:
+                first_line = fh.readline()
         if not first_line:
             return RowCount(0, exact=True)
         # A fixed-width file has uniform record bytes (columns + terminator);
@@ -341,18 +437,21 @@ class FixedWidthFileSource:
         return RowCount(size // len(first_line), exact=True)
 
     def schema(self) -> pa.Schema:
-        one_row = read_fixed_width(str(self.path), self.layout, max_records=1)
+        with self._handle() as handle:
+            one_row = read_fixed_width_handle(handle, self.layout, max_records=1)
         return pa.Table.from_pandas(one_row, preserve_index=False).schema
 
     def sample_frame(self, sample_rows: int) -> pd.DataFrame:
-        return read_fixed_width(str(self.path), self.layout, max_records=sample_rows)
+        with self._handle() as handle:
+            return read_fixed_width_handle(handle, self.layout, max_records=sample_rows)
 
     def to_frame(self) -> pd.DataFrame:
-        return read_fixed_width(str(self.path), self.layout)
+        with self._handle() as handle:
+            return read_fixed_width_handle(handle, self.layout)
 
 
 @dataclass(frozen=True)
-class CsvFileSource:
+class CsvFileSource(_PolicyBound):
     """`ProfileSource` for a local CSV file.
 
     CSV has no footer, so the row count is an O(1) byte-size estimate:
@@ -369,10 +468,17 @@ class CsvFileSource:
     has_header: bool = True
     column_names: list[str] | None = None
     delimiter: str = ","
+    access: FileAccess | None = field(default=None, compare=False, repr=False)
+    field_key: str = field(default="source.path", compare=False)
+
+    def __post_init__(self) -> None:
+        if self.access is None:
+            object.__setattr__(self, "access", fileaccess.capture())
 
     def _read(self, nrows: int | None = None) -> pd.DataFrame:
         if self.has_header:
-            return pd.read_csv(self.path, nrows=nrows, sep=self.delimiter)
+            with self._handle() as handle:
+                return pandas_adapter.read_csv(handle, nrows=nrows, sep=self.delimiter)
         # Headerless: pandas cannot fail closed on a mis-sized file. A too-short
         # row is silently padded (and earlier values shift into the wrong column);
         # a too-long row is dropped or shifts. Frame-width alone does not catch a
@@ -385,10 +491,16 @@ class CsvFileSource:
         names = self.column_names or []
         self._assert_record_widths(len(names), nrows)
         try:
-            frame = pd.read_csv(self.path, nrows=nrows, sep=self.delimiter, header=None)
+            with self._handle() as handle:
+                frame = pandas_adapter.read_csv(
+                    handle, nrows=nrows, sep=self.delimiter, header=None
+                )
         except (pd.errors.EmptyDataError, pd.errors.ParserError):
             # The width scan above already rejects the known mis-size cases with a
             # coded error; this is a fail-closed backstop for any parser disagreement.
+            # (Under a strict policy the adapter resurfaces a read failure as a
+            # FileAccessReadError before this; under the ambient policy the library
+            # error passes through and is caught here, as before the policy port.)
             raise PipelineValidationError(
                 f"headerless file {self.path.name!r} could not be read against its "
                 f"{len(names)} declared column_names",
@@ -415,11 +527,12 @@ class CsvFileSource:
         Scans only the records the read will consume (`nrows`), so a huge file is
         not walked in full for a bounded sample, and raises a coded
         PipelineValidationError naming the physical line and the two counts, never
-        a cell value. The scan is configured to agree with the pandas reader it
-        guards: `utf-8-sig` strips the BOM pandas strips; the field-size cap is
-        lifted (module top); and a line is skipped only when it is empty or a
-        single whitespace-only field with no delimiter, which is exactly what
-        pandas' skip_blank_lines does (a whitespace line that contains the
+        a cell value. The scan reads through the policy-issued file handle (so a
+        strict policy still vouches for the file), configured to agree with the
+        pandas reader it guards: `utf-8-sig` strips the BOM pandas strips; the
+        field-size cap is lifted (module top); and a line is skipped only when it is
+        empty or a single whitespace-only field with no delimiter, which is exactly
+        what pandas' skip_blank_lines does (a whitespace line that contains the
         delimiter, or an empty-field line like ",", is a real row to both).
 
         Two byte classes are rejected outright (coded error) rather than sanitized,
@@ -455,7 +568,8 @@ class CsvFileSource:
         thing that slips is a leading whitespace-only cell in its own correct
         column."""
         consumed = 0
-        with open(self.path, encoding="utf-8-sig", newline="") as handle:
+        with self._handle() as source, source.open_binary() as raw:
+            text = io.TextIOWrapper(raw, encoding="utf-8-sig", newline="")
 
             def _reject_unreconcilable(lines: Iterable[str]) -> Iterator[str]:
                 # NUL and a lone CR are not reconcilable between the csv scan and
@@ -480,7 +594,7 @@ class CsvFileSource:
                         )
                     yield line
 
-            reader = csv.reader(_reject_unreconcilable(handle), delimiter=self.delimiter)
+            reader = csv.reader(_reject_unreconcilable(text), delimiter=self.delimiter)
             for record in reader:
                 if len(record) <= 1 and (not record or not record[0].strip()):
                     continue
@@ -501,19 +615,20 @@ class CsvFileSource:
             )
 
     def row_count(self) -> RowCount:
-        total = os.path.getsize(self.path)
         header_bytes = 0
         line_bytes: list[int] = []
-        with open(self.path, "rb") as fh:
-            if self.has_header:
-                # A header row is not a data row; its bytes are excluded from
-                # the per-row mean. A headerless file has no such line to skip.
-                header_bytes = len(fh.readline())
-            for _ in range(_CSV_ESTIMATE_LINES):
-                line = fh.readline()
-                if not line:
-                    break
-                line_bytes.append(len(line))
+        with self._handle() as handle:
+            total = handle.stat().st_size
+            with handle.open_binary() as fh:
+                if self.has_header:
+                    # A header row is not a data row; its bytes are excluded from
+                    # the per-row mean. A headerless file has no such line to skip.
+                    header_bytes = len(fh.readline())
+                for _ in range(_CSV_ESTIMATE_LINES):
+                    line = fh.readline()
+                    if not line:
+                        break
+                    line_bytes.append(len(line))
         return estimate_csv_rows(total, header_bytes, line_bytes)
 
     def schema(self) -> pa.Schema:
@@ -580,8 +695,11 @@ def estimate_csv_rows(total_bytes: int, header_bytes: int, line_bytes: list[int]
 # ---------------------------------------------------------------------
 
 
-def build_profile_source(descriptor: dict[str, Any]) -> ProfileSource:
-    """Build the `ProfileSource` for one validated source descriptor.
+def build_profile_source(
+    descriptor: dict[str, Any], *, field_key: str = "source.path"
+) -> ProfileSource:
+    """Build the `ProfileSource` for one validated source descriptor. A local file is
+    read through the installed policy under `field_key`, the config position it came from.
 
     Dispatches on `type` (file/s3/gcs) exactly as the old eager loader did.
     Cloud readers are imported lazily so the boto3 / google-cloud SDKs stay
@@ -589,7 +707,7 @@ def build_profile_source(descriptor: dict[str, Any]) -> ProfileSource:
     """
     src_type = descriptor.get("type")
     if src_type == "file":
-        return _build_file_source(descriptor)
+        return _build_file_source(descriptor, field_key)
     if src_type == "s3":
         from decoy_engine.profile._cloud_readers import build_s3_profile_source
 
@@ -604,7 +722,7 @@ def build_profile_source(descriptor: dict[str, Any]) -> ProfileSource:
     )
 
 
-def _build_file_source(descriptor: dict[str, Any]) -> ProfileSource:
+def _build_file_source(descriptor: dict[str, Any], field_key: str) -> ProfileSource:
     fmt = descriptor.get("format")
     path = descriptor.get("path")
     if not isinstance(path, str):
@@ -615,16 +733,17 @@ def _build_file_source(descriptor: dict[str, Any]) -> ProfileSource:
             has_header=descriptor.get("has_header", True),
             column_names=descriptor.get("column_names"),
             delimiter=descriptor.get("delimiter", ","),
+            field_key=field_key,
         )
     if fmt == "parquet":
-        return ParquetFileSource(Path(path))
+        return ParquetFileSource(Path(path), field_key=field_key)
     if fmt == "fixed_width":
         layout = descriptor.get("layout")
         if not isinstance(layout, dict):
             raise ValueError(
                 f"profile_source: fixed_width file source missing `layout`, got {layout!r}"
             )
-        return FixedWidthFileSource(Path(path), layout)
+        return FixedWidthFileSource(Path(path), layout, field_key=field_key)
     raise NotImplementedError(
         f"profile_source: unsupported file format {fmt!r}. "
         "V1 supports csv | parquet | fixed_width only."

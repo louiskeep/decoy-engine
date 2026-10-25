@@ -1,0 +1,842 @@
+{
+ "companion": {
+  "auto_chunk_resident": {
+   "metrics": {
+    "auto_chunk": {
+     "chunk_count": 3,
+     "chunk_size_rows": 16,
+     "input": {
+      "mode": "resident",
+      "reason": "resident_source"
+     },
+     "lane": "dispatcher",
+     "lane_reason": null,
+     "mode": "chunked",
+     "native_threads": 1,
+     "output": {
+      "mode": "resident",
+      "reason": "no_sink"
+     },
+     "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 40 rows, at or above the auto-chunk threshold (10), with chunk-stable dtypes.",
+     "source_rows": 40,
+     "threshold_rows": 10
+    },
+    "chunked_route": {
+     "columns": [
+      {
+       "calls": 3,
+       "column": "h",
+       "executed_backend": "rust_companion",
+       "planned_backend": "rust_companion",
+       "strategy": "hash"
+      },
+      {
+       "calls": 3,
+       "column": "r",
+       "executed_backend": "arrow_python",
+       "planned_backend": "arrow_python",
+       "strategy": "redact"
+      }
+     ],
+     "native_admitted": true,
+     "pandas_read_passthrough": [],
+     "reroute_reason": null,
+     "table": "t"
+    },
+    "execution": {
+     "eviction": "none",
+     "execution_mode": "full_frame",
+     "loaded_fully_in_memory": true,
+     "outputs_streamed": false,
+     "route_reason": "no_relationships"
+    }
+   },
+   "outputs": {
+    "t": "36c5725d7939890c53c647cceab629d791d53a8517968e42d863afc804aec904"
+   },
+   "row_errors": 0
+  },
+  "full_frame": {
+   "metrics": {
+    "auto_chunk": {
+     "chunk_count": null,
+     "chunk_size_rows": 16,
+     "mode": "full_frame",
+     "reason": "auto_chunk disabled; full-frame path forced by the kill switch",
+     "source_rows": 40,
+     "threshold_rows": 10
+    },
+    "execution": {
+     "eviction": "none",
+     "execution_mode": "full_frame",
+     "loaded_fully_in_memory": true,
+     "outputs_streamed": false,
+     "route_reason": "no_relationships"
+    }
+   },
+   "outputs": {
+    "t": "39fdf3815874c5fdcd669c17c3d589e6c0cda704d3c6f0092f20b282b90f675e"
+   },
+   "row_errors": 0
+  },
+  "generate_only": {
+   "config_error": "ValidationError"
+  },
+  "holdback_spill": {
+   "metrics": {
+    "auto_chunk": {
+     "chunk_count": 10,
+     "chunk_size_rows": 16,
+     "input": {
+      "mode": "resident",
+      "reason": "resident_source"
+     },
+     "lane": "dispatcher",
+     "lane_reason": null,
+     "mode": "chunked",
+     "native_threads": 1,
+     "output": {
+      "byte_cut_row_groups": 0,
+      "held_back_chunks": 4,
+      "mode": "streamed",
+      "reason": "eligible",
+      "row_groups": 8,
+      "spilled_chunks": 4
+     },
+     "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 160 rows, at or above the auto-chunk threshold (10), with chunk-stable dtypes.",
+     "source_rows": 160,
+     "threshold_rows": 10
+    },
+    "chunked_route": {
+     "columns": [
+      {
+       "calls": 10,
+       "column": "h",
+       "executed_backend": "rust_companion",
+       "planned_backend": "rust_companion",
+       "strategy": "hash"
+      },
+      {
+       "calls": 10,
+       "column": "val",
+       "executed_backend": "rust_companion",
+       "planned_backend": "rust_companion",
+       "strategy": "bucket_perturb"
+      }
+     ],
+     "native_admitted": true,
+     "pandas_read_passthrough": [],
+     "reroute_reason": null,
+     "table": "t"
+    },
+    "execution": {
+     "eviction": "none",
+     "execution_mode": "full_frame",
+     "loaded_fully_in_memory": true,
+     "outputs_streamed": true,
+     "route_reason": "no_relationships"
+    }
+   },
+   "outputs": {},
+   "published": {
+    "t.parquet": "0cddb28743c184585bd953fbc7bfc97f980f7f97462d09b93c450914e982e4bc"
+   },
+   "row_errors": 0,
+   "spilled": true
+  },
+  "multi_table_dispatch": {
+   "metrics": {
+    "auto_chunk": {
+     "chunk_count": null,
+     "chunk_size_rows": 16,
+     "lane": "dispatcher",
+     "lane_reason": null,
+     "mode": "chunked",
+     "native_threads": 1,
+     "reason": "multi_table_split: 1 of 2 mask tables dispatched (big)",
+     "source_rows": null,
+     "tables": [
+      {
+       "chunk_count": 3,
+       "dispatched": true,
+       "input": {
+        "mode": "resident",
+        "reason": "resident_source"
+       },
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "resident",
+        "reason": "split_full_frame_present"
+       },
+       "reason": "single mask table 'big' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 40 rows, at or above the auto-chunk threshold (10), with chunk-stable dtypes.",
+       "source_rows": 40,
+       "table": "big"
+      },
+      {
+       "chunk_count": null,
+       "dispatched": false,
+       "reason": "source holds 5 rows, below the auto-chunk threshold (10); full-frame is cheaper than streaming at this size",
+       "source_rows": 5,
+       "table": "small"
+      }
+     ],
+     "threshold_rows": 10
+    },
+    "chunked_route_by_table": {
+     "big": {
+      "columns": [
+       {
+        "calls": 3,
+        "column": "h",
+        "executed_backend": "rust_companion",
+        "planned_backend": "rust_companion",
+        "strategy": "hash"
+       },
+       {
+        "calls": 3,
+        "column": "r",
+        "executed_backend": "arrow_python",
+        "planned_backend": "arrow_python",
+        "strategy": "redact"
+       }
+      ],
+      "native_admitted": true,
+      "pandas_read_passthrough": [],
+      "reroute_reason": null,
+      "table": "big"
+     }
+    },
+    "execution": {
+     "eviction": "none",
+     "execution_mode": "full_frame",
+     "loaded_fully_in_memory": true,
+     "outputs_streamed": false,
+     "route_reason": "no_relationships"
+    }
+   },
+   "outputs": {
+    "big": "e88a57b155ba55dfc9186b62789a0ca6e2e5978084211c420d2f1f179d573e50",
+    "small": "da5aabab5c8fbb7667618e973ef0aa1678041ce429191be859bac27723025588"
+   },
+   "row_errors": 0
+  },
+  "native_when": {
+   "metrics": {
+    "auto_chunk": {
+     "chunk_count": null,
+     "chunk_size_rows": 16,
+     "mode": "full_frame",
+     "reason": "when_predicate_not_chunk_stable: column(s) val carry a `when` predicate, which is evaluated per frame; per-chunk evaluation is a different scope than the whole frame",
+     "source_rows": 40,
+     "threshold_rows": 10
+    },
+    "execution": {
+     "eviction": "none",
+     "execution_mode": "full_frame",
+     "loaded_fully_in_memory": true,
+     "outputs_streamed": false,
+     "route_reason": "no_relationships"
+    }
+   },
+   "outputs": {
+    "tbl": "276d90c6ec8fe2e1b168c094d6c37da9dc20e201329fc0e971f7e1f0ad638a08"
+   },
+   "row_errors": 0
+  },
+  "out_of_core_fk": {
+   "metrics": {
+    "execution": {
+     "eviction": "per_table",
+     "execution_mode": "out_of_core",
+     "loaded_fully_in_memory": true,
+     "outputs_streamed": true,
+     "route_reason": "override_out_of_core"
+    }
+   },
+   "outputs": {},
+   "published": {
+    "child.parquet": "aa6b37f66753b0e5755d33dd844fc3a23d82ecb442506a7d342fcdb98e54f5ba",
+    "parent.parquet": "35e9c4577d3e02fc37df8f14efbc8feb29e8b1b72ebf66f1489c309f4dd94fea"
+   },
+   "row_errors": 0
+  },
+  "sequential_fk": {
+   "metrics": {
+    "execution": {
+     "eviction": "per_table",
+     "execution_mode": "sequential",
+     "loaded_fully_in_memory": true,
+     "outputs_streamed": true,
+     "route_reason": "pure_mask_fk"
+    }
+   },
+   "outputs": {},
+   "published": {
+    "child.parquet": "155f87792101b589e4ea23c8241049b8889acc45dbdd49d848b51aecde70f15d",
+    "parent.parquet": "259299981b209d48a798967db1f8d66baba77f15443b8c27b8ce8c4bac3c7d96"
+   },
+   "row_errors": 0
+  },
+  "streamed_lazy_source": {
+   "metrics": {
+    "auto_chunk": {
+     "chunk_count": 3,
+     "chunk_size_rows": 16,
+     "input": {
+      "mode": "lazy",
+      "reason": "eligible",
+      "source_max_row_group_rows": 40,
+      "source_row_groups": 1
+     },
+     "lane": "dispatcher",
+     "lane_reason": null,
+     "mode": "chunked",
+     "native_threads": 1,
+     "output": {
+      "byte_cut_row_groups": 0,
+      "held_back_chunks": 0,
+      "mode": "streamed",
+      "reason": "eligible",
+      "row_groups": 1,
+      "spilled_chunks": 0
+     },
+     "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 40 rows, at or above the auto-chunk threshold (10), with chunk-stable dtypes.",
+     "source_rows": 40,
+     "threshold_rows": 10
+    },
+    "chunked_route": {
+     "columns": [
+      {
+       "calls": 3,
+       "column": "h",
+       "executed_backend": "rust_companion",
+       "planned_backend": "rust_companion",
+       "strategy": "hash"
+      },
+      {
+       "calls": 3,
+       "column": "r",
+       "executed_backend": "arrow_python",
+       "planned_backend": "arrow_python",
+       "strategy": "redact"
+      }
+     ],
+     "native_admitted": true,
+     "pandas_read_passthrough": [],
+     "reroute_reason": null,
+     "table": "t"
+    },
+    "execution": {
+     "eviction": "none",
+     "execution_mode": "full_frame",
+     "loaded_fully_in_memory": false,
+     "outputs_streamed": true,
+     "route_reason": "no_relationships"
+    }
+   },
+   "outputs": {},
+   "published": {
+    "t.parquet": "36c5725d7939890c53c647cceab629d791d53a8517968e42d863afc804aec904"
+   },
+   "row_errors": 0
+  },
+  "streamed_to_sink": {
+   "metrics": {
+    "auto_chunk": {
+     "chunk_count": 3,
+     "chunk_size_rows": 16,
+     "input": {
+      "mode": "resident",
+      "reason": "resident_source"
+     },
+     "lane": "dispatcher",
+     "lane_reason": null,
+     "mode": "chunked",
+     "native_threads": 1,
+     "output": {
+      "byte_cut_row_groups": 0,
+      "held_back_chunks": 0,
+      "mode": "streamed",
+      "reason": "eligible",
+      "row_groups": 1,
+      "spilled_chunks": 0
+     },
+     "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 40 rows, at or above the auto-chunk threshold (10), with chunk-stable dtypes.",
+     "source_rows": 40,
+     "threshold_rows": 10
+    },
+    "chunked_route": {
+     "columns": [
+      {
+       "calls": 3,
+       "column": "h",
+       "executed_backend": "rust_companion",
+       "planned_backend": "rust_companion",
+       "strategy": "hash"
+      },
+      {
+       "calls": 3,
+       "column": "r",
+       "executed_backend": "arrow_python",
+       "planned_backend": "arrow_python",
+       "strategy": "redact"
+      }
+     ],
+     "native_admitted": true,
+     "pandas_read_passthrough": [],
+     "reroute_reason": null,
+     "table": "t"
+    },
+    "execution": {
+     "eviction": "none",
+     "execution_mode": "full_frame",
+     "loaded_fully_in_memory": true,
+     "outputs_streamed": true,
+     "route_reason": "no_relationships"
+    }
+   },
+   "outputs": {},
+   "published": {
+    "t.parquet": "36c5725d7939890c53c647cceab629d791d53a8517968e42d863afc804aec904"
+   },
+   "row_errors": 0
+  },
+  "transform_bearing_lazy": {
+   "metrics": {
+    "execution": {
+     "eviction": "none",
+     "execution_mode": "full_frame",
+     "loaded_fully_in_memory": true,
+     "outputs_streamed": false,
+     "route_reason": "no_relationships"
+    }
+   },
+   "outputs": {
+    "t": "cddc538eceb3bc38c78d00f6fb7ebd1c27544947f44100083592d06d2f30ac89"
+   },
+   "row_errors": 0
+  }
+ },
+ "no_companion": {
+  "auto_chunk_resident": {
+   "metrics": {
+    "auto_chunk": {
+     "chunk_count": 3,
+     "chunk_size_rows": 16,
+     "input": {
+      "mode": "resident",
+      "reason": "resident_source"
+     },
+     "lane": "dispatcher",
+     "lane_reason": null,
+     "mode": "chunked",
+     "native_threads": 1,
+     "output": {
+      "mode": "resident",
+      "reason": "no_sink"
+     },
+     "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 40 rows, at or above the auto-chunk threshold (10), with chunk-stable dtypes.",
+     "source_rows": 40,
+     "threshold_rows": 10
+    },
+    "chunked_route": {
+     "columns": [
+      {
+       "calls": 3,
+       "column": "h",
+       "executed_backend": "pandas_oracle",
+       "planned_backend": "rust_companion",
+       "strategy": "hash"
+      },
+      {
+       "calls": 3,
+       "column": "r",
+       "executed_backend": "pandas_oracle",
+       "planned_backend": "arrow_python",
+       "strategy": "redact"
+      }
+     ],
+     "native_admitted": false,
+     "pandas_read_passthrough": [],
+     "reroute_reason": "crypto_extension_unavailable",
+     "table": "t"
+    },
+    "execution": {
+     "eviction": "none",
+     "execution_mode": "full_frame",
+     "loaded_fully_in_memory": true,
+     "outputs_streamed": false,
+     "route_reason": "no_relationships"
+    }
+   },
+   "outputs": {
+    "t": "36c5725d7939890c53c647cceab629d791d53a8517968e42d863afc804aec904"
+   },
+   "row_errors": 0
+  },
+  "full_frame": {
+   "metrics": {
+    "auto_chunk": {
+     "chunk_count": null,
+     "chunk_size_rows": 16,
+     "mode": "full_frame",
+     "reason": "auto_chunk disabled; full-frame path forced by the kill switch",
+     "source_rows": 40,
+     "threshold_rows": 10
+    },
+    "execution": {
+     "eviction": "none",
+     "execution_mode": "full_frame",
+     "loaded_fully_in_memory": true,
+     "outputs_streamed": false,
+     "route_reason": "no_relationships"
+    }
+   },
+   "outputs": {
+    "t": "39fdf3815874c5fdcd669c17c3d589e6c0cda704d3c6f0092f20b282b90f675e"
+   },
+   "row_errors": 0
+  },
+  "generate_only": {
+   "config_error": "ValidationError"
+  },
+  "holdback_spill": {
+   "metrics": {
+    "auto_chunk": {
+     "chunk_count": 10,
+     "chunk_size_rows": 16,
+     "input": {
+      "mode": "resident",
+      "reason": "resident_source"
+     },
+     "lane": "dispatcher",
+     "lane_reason": null,
+     "mode": "chunked",
+     "native_threads": 1,
+     "output": {
+      "byte_cut_row_groups": 0,
+      "held_back_chunks": 4,
+      "mode": "streamed",
+      "reason": "eligible",
+      "row_groups": 8,
+      "spilled_chunks": 4
+     },
+     "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 160 rows, at or above the auto-chunk threshold (10), with chunk-stable dtypes.",
+     "source_rows": 160,
+     "threshold_rows": 10
+    },
+    "chunked_route": {
+     "columns": [
+      {
+       "calls": 10,
+       "column": "h",
+       "executed_backend": "pandas_oracle",
+       "planned_backend": "rust_companion",
+       "strategy": "hash"
+      },
+      {
+       "calls": 10,
+       "column": "val",
+       "executed_backend": "pandas_oracle",
+       "planned_backend": "rust_companion",
+       "strategy": "bucket_perturb"
+      }
+     ],
+     "native_admitted": false,
+     "pandas_read_passthrough": [],
+     "reroute_reason": "crypto_extension_unavailable",
+     "table": "t"
+    },
+    "execution": {
+     "eviction": "none",
+     "execution_mode": "full_frame",
+     "loaded_fully_in_memory": true,
+     "outputs_streamed": true,
+     "route_reason": "no_relationships"
+    }
+   },
+   "outputs": {},
+   "published": {
+    "t.parquet": "0cddb28743c184585bd953fbc7bfc97f980f7f97462d09b93c450914e982e4bc"
+   },
+   "row_errors": 0,
+   "spilled": true
+  },
+  "multi_table_dispatch": {
+   "metrics": {
+    "auto_chunk": {
+     "chunk_count": null,
+     "chunk_size_rows": 16,
+     "lane": "dispatcher",
+     "lane_reason": null,
+     "mode": "chunked",
+     "native_threads": 1,
+     "reason": "multi_table_split: 1 of 2 mask tables dispatched (big)",
+     "source_rows": null,
+     "tables": [
+      {
+       "chunk_count": 3,
+       "dispatched": true,
+       "input": {
+        "mode": "resident",
+        "reason": "resident_source"
+       },
+       "lane": "dispatcher",
+       "lane_reason": null,
+       "native_threads": 1,
+       "output": {
+        "mode": "resident",
+        "reason": "split_full_frame_present"
+       },
+       "reason": "single mask table 'big' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 40 rows, at or above the auto-chunk threshold (10), with chunk-stable dtypes.",
+       "source_rows": 40,
+       "table": "big"
+      },
+      {
+       "chunk_count": null,
+       "dispatched": false,
+       "reason": "source holds 5 rows, below the auto-chunk threshold (10); full-frame is cheaper than streaming at this size",
+       "source_rows": 5,
+       "table": "small"
+      }
+     ],
+     "threshold_rows": 10
+    },
+    "chunked_route_by_table": {
+     "big": {
+      "columns": [
+       {
+        "calls": 3,
+        "column": "h",
+        "executed_backend": "pandas_oracle",
+        "planned_backend": "rust_companion",
+        "strategy": "hash"
+       },
+       {
+        "calls": 3,
+        "column": "r",
+        "executed_backend": "pandas_oracle",
+        "planned_backend": "arrow_python",
+        "strategy": "redact"
+       }
+      ],
+      "native_admitted": false,
+      "pandas_read_passthrough": [],
+      "reroute_reason": "crypto_extension_unavailable",
+      "table": "big"
+     }
+    },
+    "execution": {
+     "eviction": "none",
+     "execution_mode": "full_frame",
+     "loaded_fully_in_memory": true,
+     "outputs_streamed": false,
+     "route_reason": "no_relationships"
+    }
+   },
+   "outputs": {
+    "big": "e88a57b155ba55dfc9186b62789a0ca6e2e5978084211c420d2f1f179d573e50",
+    "small": "da5aabab5c8fbb7667618e973ef0aa1678041ce429191be859bac27723025588"
+   },
+   "row_errors": 0
+  },
+  "native_when": {
+   "metrics": {
+    "auto_chunk": {
+     "chunk_count": null,
+     "chunk_size_rows": 16,
+     "mode": "full_frame",
+     "reason": "when_predicate_not_chunk_stable: column(s) val carry a `when` predicate, which is evaluated per frame; per-chunk evaluation is a different scope than the whole frame",
+     "source_rows": 40,
+     "threshold_rows": 10
+    },
+    "execution": {
+     "eviction": "none",
+     "execution_mode": "full_frame",
+     "loaded_fully_in_memory": true,
+     "outputs_streamed": false,
+     "route_reason": "no_relationships"
+    }
+   },
+   "outputs": {
+    "tbl": "276d90c6ec8fe2e1b168c094d6c37da9dc20e201329fc0e971f7e1f0ad638a08"
+   },
+   "row_errors": 0
+  },
+  "out_of_core_fk": {
+   "metrics": {
+    "execution": {
+     "eviction": "per_table",
+     "execution_mode": "out_of_core",
+     "loaded_fully_in_memory": true,
+     "outputs_streamed": true,
+     "route_reason": "override_out_of_core"
+    }
+   },
+   "outputs": {},
+   "published": {
+    "child.parquet": "aa6b37f66753b0e5755d33dd844fc3a23d82ecb442506a7d342fcdb98e54f5ba",
+    "parent.parquet": "35e9c4577d3e02fc37df8f14efbc8feb29e8b1b72ebf66f1489c309f4dd94fea"
+   },
+   "row_errors": 0
+  },
+  "sequential_fk": {
+   "metrics": {
+    "execution": {
+     "eviction": "per_table",
+     "execution_mode": "sequential",
+     "loaded_fully_in_memory": true,
+     "outputs_streamed": true,
+     "route_reason": "pure_mask_fk"
+    }
+   },
+   "outputs": {},
+   "published": {
+    "child.parquet": "155f87792101b589e4ea23c8241049b8889acc45dbdd49d848b51aecde70f15d",
+    "parent.parquet": "259299981b209d48a798967db1f8d66baba77f15443b8c27b8ce8c4bac3c7d96"
+   },
+   "row_errors": 0
+  },
+  "streamed_lazy_source": {
+   "metrics": {
+    "auto_chunk": {
+     "chunk_count": 3,
+     "chunk_size_rows": 16,
+     "input": {
+      "mode": "lazy",
+      "reason": "eligible",
+      "source_max_row_group_rows": 40,
+      "source_row_groups": 1
+     },
+     "lane": "dispatcher",
+     "lane_reason": null,
+     "mode": "chunked",
+     "native_threads": 1,
+     "output": {
+      "byte_cut_row_groups": 0,
+      "held_back_chunks": 0,
+      "mode": "streamed",
+      "reason": "eligible",
+      "row_groups": 1,
+      "spilled_chunks": 0
+     },
+     "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 40 rows, at or above the auto-chunk threshold (10), with chunk-stable dtypes.",
+     "source_rows": 40,
+     "threshold_rows": 10
+    },
+    "chunked_route": {
+     "columns": [
+      {
+       "calls": 3,
+       "column": "h",
+       "executed_backend": "pandas_oracle",
+       "planned_backend": "rust_companion",
+       "strategy": "hash"
+      },
+      {
+       "calls": 3,
+       "column": "r",
+       "executed_backend": "pandas_oracle",
+       "planned_backend": "arrow_python",
+       "strategy": "redact"
+      }
+     ],
+     "native_admitted": false,
+     "pandas_read_passthrough": [],
+     "reroute_reason": "crypto_extension_unavailable",
+     "table": "t"
+    },
+    "execution": {
+     "eviction": "none",
+     "execution_mode": "full_frame",
+     "loaded_fully_in_memory": false,
+     "outputs_streamed": true,
+     "route_reason": "no_relationships"
+    }
+   },
+   "outputs": {},
+   "published": {
+    "t.parquet": "36c5725d7939890c53c647cceab629d791d53a8517968e42d863afc804aec904"
+   },
+   "row_errors": 0
+  },
+  "streamed_to_sink": {
+   "metrics": {
+    "auto_chunk": {
+     "chunk_count": 3,
+     "chunk_size_rows": 16,
+     "input": {
+      "mode": "resident",
+      "reason": "resident_source"
+     },
+     "lane": "dispatcher",
+     "lane_reason": null,
+     "mode": "chunked",
+     "native_threads": 1,
+     "output": {
+      "byte_cut_row_groups": 0,
+      "held_back_chunks": 0,
+      "mode": "streamed",
+      "reason": "eligible",
+      "row_groups": 1,
+      "spilled_chunks": 0
+     },
+     "reason": "single mask table 't' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 40 rows, at or above the auto-chunk threshold (10), with chunk-stable dtypes.",
+     "source_rows": 40,
+     "threshold_rows": 10
+    },
+    "chunked_route": {
+     "columns": [
+      {
+       "calls": 3,
+       "column": "h",
+       "executed_backend": "pandas_oracle",
+       "planned_backend": "rust_companion",
+       "strategy": "hash"
+      },
+      {
+       "calls": 3,
+       "column": "r",
+       "executed_backend": "pandas_oracle",
+       "planned_backend": "arrow_python",
+       "strategy": "redact"
+      }
+     ],
+     "native_admitted": false,
+     "pandas_read_passthrough": [],
+     "reroute_reason": "crypto_extension_unavailable",
+     "table": "t"
+    },
+    "execution": {
+     "eviction": "none",
+     "execution_mode": "full_frame",
+     "loaded_fully_in_memory": true,
+     "outputs_streamed": true,
+     "route_reason": "no_relationships"
+    }
+   },
+   "outputs": {},
+   "published": {
+    "t.parquet": "36c5725d7939890c53c647cceab629d791d53a8517968e42d863afc804aec904"
+   },
+   "row_errors": 0
+  },
+  "transform_bearing_lazy": {
+   "metrics": {
+    "execution": {
+     "eviction": "none",
+     "execution_mode": "full_frame",
+     "loaded_fully_in_memory": true,
+     "outputs_streamed": false,
+     "route_reason": "no_relationships"
+    }
+   },
+   "outputs": {
+    "t": "cddc538eceb3bc38c78d00f6fb7ebd1c27544947f44100083592d06d2f30ac89"
+   },
+   "row_errors": 0
+  }
+ }
+}

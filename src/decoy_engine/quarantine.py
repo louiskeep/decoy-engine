@@ -42,15 +42,22 @@ from __future__ import annotations
 import dataclasses
 import errno
 import json
-import logging
 import os
-import tempfile
 from collections import defaultdict
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
+from decoy_engine import fileaccess
+from decoy_engine.fileaccess import (
+    FileAccess,
+    FileRequest,
+    FileRole,
+    OutputDir,
+    OutputTxn,
+    entry_point,
+)
 from decoy_engine.validators._types import QuarantineSummary
 
 if TYPE_CHECKING:
@@ -58,8 +65,6 @@ if TYPE_CHECKING:
 
     from decoy_engine.execution._row_errors import RowErrorRecord
     from decoy_engine.validators._types import ValidationReport
-
-_logger = logging.getLogger(__name__)
 
 # errnos os.link raises when the destination filesystem cannot create a hardlink
 # at all: a cross-device stage->final pair (EXDEV) or a filesystem with no
@@ -209,12 +214,14 @@ def compute_quarantine(
     return filtered_outputs, quarantine_entries, dict(counts_by_trigger), total
 
 
+@entry_point
 def apply_quarantine(
     outputs: dict[str, pa.Table],
     report: ValidationReport | None,
     quarantine_config: dict[str, Any],
     *,
     row_errors: tuple[RowErrorRecord, ...] = (),
+    file_access: FileAccess | None = None,
 ) -> tuple[dict[str, pa.Table], QuarantineSummary]:
     """Route failing rows to the quarantine output; return filtered main outputs.
 
@@ -301,27 +308,40 @@ def quarantine_row_mask(
     return dict(rows_to_remove)
 
 
+def _quarantine_dir(path: str) -> OutputDir:
+    """The output capability for `quarantine.output_path`, named by config position only."""
+    return fileaccess.current().output_dir(
+        FileRequest(FileRole.QUARANTINE_OUTPUT, "write", path, "quarantine.output_path")
+    )
+
+
+def _write_records(fh: Any, records: list[dict[str, Any]]) -> None:
+    for record in records:
+        fh.write(json.dumps(record, default=_json_default) + "\n")
+
+
 def _write_jsonl(path: str, records: list[dict[str, Any]]) -> None:
     """Write ``records`` to a JSON-lines file at ``path``.
 
     Each record is one line of JSON. The parent directory is created if it
     does not exist. Values that are not JSON-serialisable (e.g. ``pyarrow``
-    scalars, ``None``) are converted via the ``_json_default`` fallback.
+    scalars, ``None``) are converted via the ``_json_default`` fallback. An existing
+    file is replaced, as it always was; a special file such as ``/dev/null`` is
+    written through.
 
     Args:
         path: Absolute or relative path for the output file.
         records: List of dicts to serialise.
     """
-    out_path = Path(path)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    with out_path.open("w", encoding="utf-8") as fh:
-        for record in records:
-            fh.write(json.dumps(record, default=_json_default) + "\n")
+    with _quarantine_dir(path).begin("file", "replace", label="quarantine_direct") as txn:
+        with os.fdopen(txn.create_file("sidecar"), "w", encoding="utf-8") as fh:
+            _write_records(fh, records)
+        txn.publish()
 
 
-def write_jsonl_staged(final_path: str, records: list[dict[str, Any]]) -> Path:
+def write_jsonl_staged(final_path: str, records: list[dict[str, Any]]) -> OutputTxn:
     """Write ``records`` as JSONL to a private staging file beside ``final_path``,
-    returning the staging path. Never touches ``final_path`` itself.
+    returning the opaque stage. Never touches ``final_path`` itself.
 
     DE-08 (HIGH data-safety finding): a transactional caller (``run_sequential``
     with a ``TransactionalSink``) must not publish the quarantine sidecar to its
@@ -353,33 +373,29 @@ def write_jsonl_staged(final_path: str, records: list[dict[str, Any]]) -> Path:
     Returns:
         Path to the private staging file.
     """
-    out_path = Path(final_path)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_name = tempfile.mkstemp(
-        prefix="_decoy_quarantine_stage_", suffix=".jsonl", dir=out_path.parent
-    )
-    staged = Path(tmp_name)
+    txn = _quarantine_dir(final_path).begin("file", "exclusive", label="quarantine")
+    try:
+        fd = txn.create_file("sidecar")
+    except BaseException:
+        txn.abort()
+        raise
     try:
         fh = os.fdopen(fd, "w", encoding="utf-8")
     except BaseException:
-        # fdopen wraps the raw mkstemp fd in a file object; if it raises
+        # fdopen wraps the raw stage fd in a file object; if it raises
         # before doing so, the bare fd has no destructor and would leak.
-        # Close/unlink are best-effort so a cleanup failure cannot mask the
+        # Close/discard are best-effort so a cleanup failure cannot mask the
         # real fdopen error via the bare raise.
         try:
             os.close(fd)
         except OSError:
             pass
-        try:
-            staged.unlink(missing_ok=True)
-        except OSError:
-            pass
+        txn.abort()
         raise
     try:
-        for record in records:
-            fh.write(json.dumps(record, default=_json_default) + "\n")
+        _write_records(fh, records)
     except BaseException:
-        # Mirrors ParquetTransactionalSink.write_batches: close/unlink are
+        # Mirrors ParquetTransactionalSink.write_batches: close/discard are
         # best-effort cleanup for a stage that must never be left behind
         # with a raw record in it, and neither may mask the original
         # write/serialize error propagating via the bare raise.
@@ -387,10 +403,7 @@ def write_jsonl_staged(final_path: str, records: list[dict[str, Any]]) -> Path:
             fh.close()
         except Exception:
             pass
-        try:
-            staged.unlink(missing_ok=True)
-        except OSError:
-            pass
+        txn.abort()
         raise
     try:
         fh.close()
@@ -398,18 +411,15 @@ def write_jsonl_staged(final_path: str, records: list[dict[str, Any]]) -> Path:
         # The write loop above finished, but the terminal close (a buffered
         # flush to disk) can still fail, e.g. ENOSPC. Left unguarded, this
         # raise would skip `return staged` entirely -- the caller never gets
-        # a staged path to pass to `discard_staged_jsonl`, so the raw-PII
-        # temp file would leak. Best-effort unlink mirrors the write-loop
+        # a stage to pass to `discard_staged_jsonl`, so the raw-PII
+        # temp file would leak. Best-effort discard mirrors the write-loop
         # cleanup above.
-        try:
-            staged.unlink(missing_ok=True)
-        except OSError:
-            pass
+        txn.abort()
         raise
-    return staged
+    return txn
 
 
-def publish_staged_jsonl(staged_path: Path, final_path: str) -> None:
+def publish_staged_jsonl(staged_path: OutputTxn, final_path: str) -> None:
     """Exclusively publish a staged quarantine JSONL to ``final_path``.
 
     Uses ``os.link`` (creates a hardlink; atomic and, since
@@ -459,17 +469,13 @@ def publish_staged_jsonl(staged_path: Path, final_path: str) -> None:
             published; ``staged_path`` is left for the caller to discard.
             Never falls back to a plain overwrite.
     """
-    final = Path(final_path)
+    shown = final_path if not staged_path.strict else staged_path.display
     try:
-        os.link(staged_path, final)
+        staged_path.publish()
     except FileExistsError:
-        try:
-            staged_path.unlink(missing_ok=True)
-        except OSError:
-            pass
         raise ValueError(
             f"refusing to publish quarantine: a file already exists at "
-            f"quarantine.output_path {final_path!r}; transactional publish "
+            f"quarantine.output_path {shown!r}; transactional publish "
             "will not overwrite it"
         ) from None
     except OSError as exc:
@@ -480,29 +486,13 @@ def publish_staged_jsonl(staged_path: Path, final_path: str) -> None:
             raise
         raise RuntimeError(
             f"cannot publish quarantine sidecar to quarantine.output_path "
-            f"{final_path!r}: the destination filesystem does not support "
+            f"{shown!r}: the destination filesystem does not support "
             f"hardlinks ({os.strerror(exc.errno) if exc.errno else exc}), which "
             "the transactional (fail-closed) publish requires. Point "
             "quarantine.output_path at a filesystem that supports hardlinks "
             "(e.g. a local ext4/xfs/apfs path), or disable transactional "
             "quarantine publishing."
-        ) from exc
-    # Best-effort cleanup of the now-published stage: the hardlink succeeded, so
-    # the sidecar IS durably published (final path and stage share one inode). A
-    # failure to remove the extra stage link must not be reported as a publish/run
-    # failure -- mirrors the swallowed best-effort cleanup elsewhere in this
-    # module -- so we log and move on rather than raise.
-    try:
-        os.unlink(staged_path)
-    except OSError as exc:
-        _logger.warning(
-            "quarantine sidecar published to %r but failed to remove the "
-            "staging link %s (%s); the sidecar is intact -- the leftover "
-            "staging file is harmless and can be removed manually",
-            final_path,
-            staged_path,
-            exc,
-        )
+        ) from (exc if not staged_path.strict else None)
 
 
 def guard_quarantine_not_aliasing_committed_table(
@@ -550,14 +540,17 @@ def guard_quarantine_not_aliasing_committed_table(
     resolver = getattr(sink, "committed_table_path", None)
     if not callable(resolver):
         return
-    target = Path(output_path).resolve()
+    # Lexical comparison: no file-system access, and the exclusive publish still refuses an
+    # aliasing leaf that only a symlink would reveal.
+    target = Path(os.path.abspath(output_path))
     for table in written_tables:
-        committed = Path(resolver(table)).resolve()
+        committed = Path(os.path.abspath(resolver(table)))
         if committed == target:
             raise ValueError(
-                f"quarantine.output_path {output_path!r} aliases the output "
+                f"quarantine.output_path {fileaccess.shown(output_path, 'quarantine.output_path')!r}"
+                f" aliases the output "
                 f"artifact this run just committed for table {table!r} "
-                f"({committed}); refusing to overwrite a masked table with "
+                f"({fileaccess.shown(str(committed), 'targets.path')}); refusing to overwrite a masked table with "
                 "the raw-PII quarantine sidecar. Point quarantine.output_path "
                 "at a different file."
             )
@@ -612,7 +605,7 @@ def finalize_committed_quarantine(
     )
 
 
-def discard_staged_jsonl(staged_path: Path | None) -> None:
+def discard_staged_jsonl(staged_path: OutputTxn | None) -> None:
     """Best-effort delete of a staged quarantine file that must never be
     published (mirrors ``TransactionalSink.abort``'s best-effort staging
     cleanup: errors are swallowed so a cleanup failure cannot mask the
@@ -621,7 +614,7 @@ def discard_staged_jsonl(staged_path: Path | None) -> None:
     if staged_path is None:
         return
     try:
-        staged_path.unlink(missing_ok=True)
+        staged_path.abort()
     except OSError:
         pass
 

@@ -17,45 +17,41 @@ from pathlib import Path
 from typing import Any
 
 import pyarrow as pa
-import pyarrow.parquet as pq
 
+from decoy_engine import fileaccess
+from decoy_engine.fileaccess import (
+    FileAccess,
+    FileAccessDenied,
+    FileAccessReadError,
+    FileHandle,
+    FileRequest,
+    FileRole,
+)
+from decoy_engine.fileaccess.adapters import arrow as arrow_adapter
+from decoy_engine.reference_tables._registry import SHIPPED_TABLES, shipped_path
 from decoy_engine.reference_tables._types import ReferenceTable
 
 _LOG = logging.getLogger(__name__)
 
-# Directory holding the shipped Parquet files.
-_DATA_DIR = Path(__file__).parent / "data"
-
-# Expected version for each shipped table. Files that carry a
-# ``decoy_table_version`` metadata key are checked against this map.
-# Increment when the table data or schema changes in a breaking way.
-_SHIPPED_VERSIONS: dict[str, str] = {
-    "us_zip5_city_state": "1.0",
-    "vehicle_make_model_year": "1.0",
-    # SP-08: restricted ZIP3 prefix list for geo_generalize Safe Harbor cascade.
-    # Source: 45 CFR 164.514(b)(2)(i)(B) HHS HIPAA Safe Harbor guidance.
-    "us_zip3_population": "1.0",
-    # SP-08b: NDC labeler/drug/strength/dosage-form table.
-    # Source: FDA NDC Database (public domain); abbreviated public seed set.
-    # Operators may swap in a full FDA export via the customer: path prefix.
-    "ndc_labeler_drug_strength": "1.0",
-    # SP-08b: MCC merchant category code table.
-    # Source: ISO 18245 merchant category codes (public standard); abbreviated seed set.
-    # Operators may swap in a complete MCC list via the customer: path prefix.
-    "mcc_category_description": "1.0",
-}
+# Expected version for each shipped table, from the one shipped-table registry. Files that
+# carry a ``decoy_table_version`` metadata key are checked against this map.
+_SHIPPED_VERSIONS: dict[str, str] = {t.name: t.version for t in SHIPPED_TABLES.values()}
 
 
 _CUSTOMER_PREFIX = "customer:"
 
 
-def load_table(name: str, path: Path | None = None) -> ReferenceTable:
+@fileaccess.entry_point
+def load_table(
+    name: str, path: Path | None = None, *, file_access: FileAccess | None = None
+) -> ReferenceTable:
     """Load a reference table by name.
 
-    When ``path`` is omitted, loads the shipped table from the ``data/``
-    sub-directory. When provided, loads that file instead (customer-provided
+    When ``path`` is omitted, loads the shipped table of that name; a bare name that is not
+    in the shipped-table registry is refused without any file access (it is a lookup key,
+    never a path). When ``path`` is provided, loads that file instead (customer-provided
     swap-in hook -- the file must follow the same schema convention: an ``id``
-    column plus domain columns).
+    column plus domain columns), through the file-access policy.
 
     Customer-provided tables can also be specified by prefixing the ``name``
     with ``"customer:"`` (e.g. ``"customer:/path/to/my_table.parquet"``). This
@@ -67,6 +63,7 @@ def load_table(name: str, path: Path | None = None) -> ReferenceTable:
             ``"customer:/path/to/file.parquet"`` reference (SP-08b).
         path: Optional override path to a Parquet file. Takes precedence over
             any ``"customer:"`` prefix in ``name``.
+        file_access: The policy that decides which files may be read (default: ambient CLI).
 
     Returns:
         A :class:`~decoy_engine.reference_tables._types.ReferenceTable`.
@@ -83,40 +80,69 @@ def load_table(name: str, path: Path | None = None) -> ReferenceTable:
         # Use the basename (without extension) as the logical name for version checking.
         name = path.stem
 
+    handle: FileHandle
     if path is None:
-        path = _DATA_DIR / f"{name}.parquet"
-        if not path.exists():
+        if name not in SHIPPED_TABLES:
+            if not fileaccess.is_ambient():
+                # A rejected name may be a path a caller handed in as the lookup key, so under a
+                # strict policy the message names nothing (X4). Membership is checked before any
+                # file access, so this is a lookup miss, never an existence oracle.
+                raise FileNotFoundError(
+                    "no shipped reference table of that name. Provide a path= override or a "
+                    "'customer:' reference."
+                )
             raise FileNotFoundError(
                 f"no shipped reference table {name!r}. "
                 f"Provide a path= override, a 'customer:/path/to/file.parquet' reference, "
                 f"or check the table name."
             )
+        handle = fileaccess.engine_handle(shipped_path(name))
+    else:
+        handle = fileaccess.current().open_read(
+            FileRequest(
+                FileRole.REFERENCE,
+                "read",
+                str(path),
+                fileaccess.position_key("joint_mask.reference"),
+            )
+        )
 
     try:
-        arrow_table = pq.read_table(str(path))  # type: ignore[no-untyped-call, unused-ignore]
-    except Exception as exc:
-        raise ValueError(f"failed to read Parquet at {path}: {exc}") from exc
+        try:
+            arrow_table = arrow_adapter.read_table(handle)
+        except (FileAccessDenied, FileAccessReadError):
+            raise
+        except Exception as exc:
+            if fileaccess.keeps_class(exc):
+                raise
+            raise ValueError(f"failed to read Parquet at {handle.display}: {exc}") from exc
+    finally:
+        handle.close()
+    shown = handle.display
 
     if "id" not in arrow_table.schema.names:
         raise ValueError(
-            f"reference table at {path} is missing required 'id' column. "
+            f"reference table at {shown} is missing required 'id' column. "
             f"All reference tables must have a stable 'id' column."
         )
 
     id_type = arrow_table.schema.field("id").type
     if id_type != pa.int64():
         raise ValueError(
-            f"reference table at {path} has 'id' column of type {id_type!r}; "
+            f"reference table at {shown} has 'id' column of type {id_type!r}; "
             f"expected int64. All reference tables must have a stable int64 'id' column "
             f"(schema convention -- see reference_tables/__init__.py)."
         )
 
-    _check_version(name, arrow_table, path)
+    _check_version(name, arrow_table, shown)
     return ReferenceTable(arrow_table, name=name)
 
 
-def _check_version(name: str, table: Any, path: Path) -> None:
-    """Emit a WARNING when file version metadata does not match expected."""
+def _check_version(name: str, table: Any, shown: str) -> None:
+    """Emit a WARNING when file version metadata does not match expected.
+
+    `shown` is the display the caller already resolved (the path under the ambient CLI, the
+    config position otherwise), so these diagnostics never carry a raw locator."""
     expected = _SHIPPED_VERSIONS.get(name)
     if expected is None:
         return  # Unknown table name: no version expectation, skip check.
@@ -128,7 +154,7 @@ def _check_version(name: str, table: Any, path: Path) -> None:
             "reference table %r at %s has no decoy_table_version metadata "
             "(expected %r). Continuing with loaded data.",
             name,
-            path,
+            shown,
             expected,
         )
         return
@@ -143,5 +169,5 @@ def _check_version(name: str, table: Any, path: Path) -> None:
             name,
             actual,
             expected,
-            path,
+            shown,
         )

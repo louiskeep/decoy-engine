@@ -29,6 +29,7 @@ from typing import Any
 import yaml
 
 from decoy_engine.expressions._when_parser import validate_envelope_when
+from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.plan._checks import check_statistical_columns
 from decoy_engine.plan._checks_dp import verify_dp_snapshots
 from decoy_engine.plan._errors import PlanCompileError
@@ -58,7 +59,8 @@ def plan_to_yaml(plan: Plan) -> str:
     return rendered
 
 
-def plan_from_yaml(s: str) -> Plan:
+@entry_point
+def plan_from_yaml(s: str, *, file_access: FileAccess | None = None) -> Plan:
     """Deserialize a YAML string back into a Plan."""
     data = yaml.safe_load(s)
     if not isinstance(data, dict):

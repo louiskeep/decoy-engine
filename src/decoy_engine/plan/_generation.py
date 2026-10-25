@@ -27,6 +27,8 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any
 
+from decoy_engine import fileaccess
+from decoy_engine.fileaccess import FileRole
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.plan._types import (
     DpVerification,
@@ -76,7 +78,13 @@ def _iter_statistical_snapshot_paths(config: dict[str, Any]) -> list[str]:
     """Every distinct `snapshot_file` path referenced by a `type:
     statistical` generate column, in declared order (tables then columns),
     de-duplicated by path string while preserving first-seen order."""
-    seen: dict[str, None] = {}
+    return list(_snapshot_field_keys(config))
+
+
+def _snapshot_field_keys(config: dict[str, Any]) -> dict[str, str]:
+    """`{path: config position}` for the same paths, first-seen position kept, so a
+    denial names where the path was written and never the path."""
+    seen: dict[str, str] = {}
     tables = config.get("tables", []) if isinstance(config.get("tables"), list) else []
     for table_entry in tables:
         if not isinstance(table_entry, dict):
@@ -86,8 +94,9 @@ def _iter_statistical_snapshot_paths(config: dict[str, Any]) -> list[str]:
                 continue
             path = col_entry.get("snapshot_file")
             if path:
-                seen.setdefault(str(path), None)
-    return list(seen)
+                key = f"tables.{table_entry.get('name')}.generate_columns.{col_entry.get('name')}.snapshot_file"
+                seen.setdefault(str(path), key)
+    return seen
 
 
 def read_and_pin_snapshots(
@@ -114,22 +123,35 @@ def read_and_pin_snapshots(
 
     pinned: dict[str, ReadSnapshot] = {}
     failures: dict[str, Any] = {}
-    for path in _iter_statistical_snapshot_paths(config):
+    for path, field_key in _snapshot_field_keys(config).items():
+        shown = fileaccess.shown(path, field_key)
+        failure: str | None = None
         try:
-            with open(path, "rb") as fh:
-                raw = fh.read()
+            raw = fileaccess.read_all(FileRole.SNAPSHOT, path, field_key)
         except OSError as exc:
+            if fileaccess.keeps_class(exc):
+                raise
+            if fileaccess.is_ambient():
+                failures[path] = StatisticalSpecError(
+                    code="statistical_snapshot_unreadable",
+                    message=f"snapshot_file {shown!r} could not be read: {exc}",
+                )
+                continue
+            failure = fileaccess.redact_locators(str(exc), [(path, shown)])
+        if failure is not None:
+            # Strict: the failure is recorded after the handler closes, with no library error
+            # attached (its text can name the file).
             failures[path] = StatisticalSpecError(
                 code="statistical_snapshot_unreadable",
-                message=f"snapshot_file {path!r} could not be read: {exc}",
+                message=f"snapshot_file {shown!r} could not be read: {failure}",
             )
             continue
         if len(raw) > EMBEDDED_SNAPSHOT_MAX_BYTES:
             raise PlanCompileError(
                 code="dp_snapshot_embedded_artifact_too_large",
-                path=f"<snapshot_file={path}>",
+                path=f"<snapshot_file={shown}>",
                 message=(
-                    f"snapshot_file {path!r} is {len(raw)} bytes, exceeding the "
+                    f"snapshot_file {shown!r} is {len(raw)} bytes, exceeding the "
                     f"{EMBEDDED_SNAPSHOT_MAX_BYTES} byte (16 MiB) embedded-artifact cap "
                     "(HC-5 high-cardinality precedent, quality/snapshot.py). Pinning the "
                     "full artifact bytes into the Plan is required for generation to never "
@@ -143,7 +165,7 @@ def read_and_pin_snapshots(
         except json.JSONDecodeError as exc:
             failures[path] = StatisticalSpecError(
                 code="statistical_snapshot_unreadable",
-                message=f"snapshot_file {path!r} could not be read: {exc}",
+                message=f"snapshot_file {shown!r} could not be read: {exc}",
             )
             continue
         guard = snapshot_content_guard.get()
@@ -154,7 +176,7 @@ def read_and_pin_snapshots(
             failures[path] = StatisticalSpecError(
                 code="statistical_snapshot_schema_mismatch",
                 message=(
-                    f"snapshot_file {path!r} declares schema {version!r}; this engine "
+                    f"snapshot_file {shown!r} declares schema {version!r}; this engine "
                     f"consumes {DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION!r}."
                 ),
             )
@@ -193,7 +215,8 @@ def resolve_pinned_snapshot(
             StatisticalSpecError(
                 code="statistical_snapshot_unreadable",
                 message=(
-                    f"snapshot_file {snapshot_file!r} has no pinned content and no "
+                    f"snapshot_file {fileaccess.shown(snapshot_file, 'snapshot_file')!r} has no "
+                    "pinned content and no "
                     "recorded read failure from this compile's read-once pass; "
                     "refusing rather than reopening the path."
                 ),

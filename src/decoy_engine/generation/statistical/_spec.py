@@ -48,7 +48,9 @@ from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from typing import Any
 
+from decoy_engine import fileaccess
 from decoy_engine.errors import DecoyError
+from decoy_engine.fileaccess import FileRole
 from decoy_engine.quality.snapshot import DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION
 
 _SUPPORTED_KINDS = ("numeric", "categorical", "datetime", "freetext")
@@ -147,36 +149,49 @@ def spec_from_dict(data: Mapping[str, Any]) -> StatisticalSpec:
 # takes the already-parsed snapshot mapping as an explicit argument. This
 # function remains for compile-time callers that still need to read a
 # path (the compiler's read-once pass) and for tests building fixtures.
-def _load_snapshot(path: str) -> tuple[str, dict[str, Any]]:
+def _load_snapshot(path: str, field_key: str = "snapshot_file") -> tuple[str, dict[str, Any]]:
     """Read + parse a snapshot artifact. Returns `(content_sha256, parsed)`.
     No caching: every call is a fresh read + hash + parse."""
+    key = fileaccess.position_key(field_key)
+    shown = fileaccess.shown(path, key)
+    failure: str | None = None
     try:
-        with open(path, "rb") as fh:
-            raw = fh.read()
+        raw = fileaccess.read_all(FileRole.SNAPSHOT, path, key)
     except OSError as exc:
+        if fileaccess.keeps_class(exc):
+            raise
+        if fileaccess.is_ambient():
+            raise StatisticalSpecError(
+                code="statistical_snapshot_unreadable",
+                message=f"snapshot_file {shown!r} could not be read: {exc}",
+            ) from exc
+        failure = fileaccess.redact_locators(str(exc), [(path, shown)])
+    if failure is not None:
+        # Strict: raised after the handler closes, so the library error is neither cause nor
+        # context (its text can name the file).
         raise StatisticalSpecError(
             code="statistical_snapshot_unreadable",
-            message=f"snapshot_file {path!r} could not be read: {exc}",
-        ) from exc
+            message=f"snapshot_file {shown!r} could not be read: {failure}",
+        )
     digest = hashlib.sha256(raw).hexdigest()
     try:
         snap = json.loads(raw)
     except json.JSONDecodeError as exc:
         raise StatisticalSpecError(
             code="statistical_snapshot_unreadable",
-            message=f"snapshot_file {path!r} could not be read: {exc}",
+            message=f"snapshot_file {shown!r} could not be read: {exc}",
         ) from exc
     if not isinstance(snap, dict):
         raise StatisticalSpecError(
             code="statistical_snapshot_schema_mismatch",
-            message=f"snapshot_file {path!r} does not contain a JSON object at the top level.",
+            message=f"snapshot_file {shown!r} does not contain a JSON object at the top level.",
         )
     version = snap.get("schema_version")
     if version != DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION:
         raise StatisticalSpecError(
             code="statistical_snapshot_schema_mismatch",
             message=(
-                f"snapshot_file {path!r} declares schema {version!r}; this engine "
+                f"snapshot_file {shown!r} declares schema {version!r}; this engine "
                 f"consumes {DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION!r}."
             ),
         )

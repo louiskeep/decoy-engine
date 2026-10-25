@@ -52,6 +52,7 @@ Source references:
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -89,6 +90,7 @@ from decoy_engine.storm.eval.fixtures import NO_DETECTOR
 from decoy_engine.storm.eval.harness import run_baseline
 from decoy_engine.storm.eval.split import held_out_split
 from decoy_engine.storm.features import build_column_features
+from decoy_engine.storm.model_pack import _packio
 from decoy_engine.storm.model_pack.featurizer import flatten_features
 from decoy_engine.storm.model_pack.types import (
     FEATURE_SCHEMA_VERSION,
@@ -536,15 +538,15 @@ def train_and_evaluate(
     )
 
     # ── 8. Serialise the pack ─────────────────────────────────────────────────
-    out_dir.mkdir(parents=True, exist_ok=True)
-    model_path = out_dir / "model.joblib"
-
     # Persist the (vectorizer, classifier) pair so the loader can run inference.
     pack_obj = {"vec": vec, "clf": clf, "classes": classes}
-    joblib.dump(pack_obj, model_path, compress=3)
+    weights = io.BytesIO()
+    joblib.dump(pack_obj, weights, compress=3)
+    model_bytes = weights.getvalue()
+    _packio.write_member(out_dir, "model.joblib", model_bytes)
 
     # Compute SHA-256 of the serialised weights (§B.7).
-    sha256 = hashlib.sha256(model_path.read_bytes()).hexdigest()
+    sha256 = hashlib.sha256(model_bytes).hexdigest()
 
     manifest = ModelPackManifest(
         pack_id="lgbm-v1",
@@ -560,10 +562,7 @@ def train_and_evaluate(
     )
 
     # Write manifest (without report hash first, then update below).
-    manifest_path = out_dir / "manifest.json"
-    manifest_path.write_text(
-        json.dumps(manifest.to_dict(), sort_keys=True, indent=2), encoding="utf-8"
-    )
+    _packio.write_json(out_dir, "manifest.json", manifest.to_dict())
 
     # Assemble the report.
     report = EvalReport(
@@ -593,9 +592,7 @@ def train_and_evaluate(
     report_blob = json.dumps(report_dict, sort_keys=True, indent=2, default=str).encode("utf-8")
     report_hash = hashlib.sha256(report_blob).hexdigest()
     manifest.eval_report_hash = report_hash
-    manifest_path.write_text(
-        json.dumps(manifest.to_dict(), sort_keys=True, indent=2), encoding="utf-8"
-    )
+    _packio.write_json(out_dir, "manifest.json", manifest.to_dict())
 
     return report
 
@@ -626,14 +623,14 @@ def load_pack(pack_dir: Path) -> dict[str, Any]:
     ValueError
         If the SHA-256 of model.joblib does not match the manifest.
     """
-    manifest_path = pack_dir / "manifest.json"
-    model_path = pack_dir / "model.joblib"
-    if not manifest_path.exists():
-        raise FileNotFoundError(f"Missing manifest.json in {pack_dir}")
-    if not model_path.exists():
-        raise FileNotFoundError(f"Missing model.joblib in {pack_dir}")
+    manifest_bytes = _packio.read_member(pack_dir, "manifest.json")
+    if manifest_bytes is None:
+        raise FileNotFoundError(f"Missing manifest.json in {_packio.member_display(pack_dir)}")
+    model_bytes = _packio.read_member(pack_dir, "model.joblib")
+    if model_bytes is None:
+        raise FileNotFoundError(f"Missing model.joblib in {_packio.member_display(pack_dir)}")
 
-    manifest = ModelPackManifest.from_dict(json.loads(manifest_path.read_text(encoding="utf-8")))
+    manifest = ModelPackManifest.from_dict(json.loads(manifest_bytes.decode("utf-8")))
     if manifest.format_version != PACK_FORMAT:
         raise ValueError(
             f"Unsupported pack format {manifest.format_version!r}; expected {PACK_FORMAT!r}"
@@ -644,13 +641,13 @@ def load_pack(pack_dir: Path) -> dict[str, Any]:
             f"engine={FEATURE_SCHEMA_VERSION!r}"
         )
 
-    actual_sha = hashlib.sha256(model_path.read_bytes()).hexdigest()
+    actual_sha = hashlib.sha256(model_bytes).hexdigest()
     if actual_sha != manifest.sha256:
         raise ValueError(
             f"model.joblib SHA-256 mismatch: expected {manifest.sha256!r}, got {actual_sha!r}"
         )
 
-    pack_obj = joblib.load(model_path)
+    pack_obj = joblib.load(io.BytesIO(model_bytes))
     pack_obj["manifest"] = manifest
     return pack_obj
 

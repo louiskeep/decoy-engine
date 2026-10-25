@@ -37,6 +37,7 @@ from decoy_engine.config._transforms import DeriveOp, DropColumnOp, TransformOp
 from decoy_engine.execution import _transforms
 from decoy_engine.execution._fk_keys import to_pandas_fk_safe
 from decoy_engine.execution._transforms_gate import find_table_config
+from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.profile._readers import LazySource
 
 __all__ = [
@@ -133,7 +134,14 @@ def apply_resident_table(config: Mapping[str, Any], table_name: str, table: pa.T
     return _apply_ops(table, _transform_ops(config, table_name))
 
 
-def apply_table_transforms(config: Mapping[str, Any], table_name: str, table: pa.Table) -> pa.Table:
+@entry_point
+def apply_table_transforms(
+    config: Mapping[str, Any],
+    table_name: str,
+    table: pa.Table,
+    *,
+    file_access: FileAccess | None = None,
+) -> pa.Table:
     """Apply `table_name`'s configured transforms to `table` and return the result.
 
     `config` is the validated pipeline config dump. The table is returned as the

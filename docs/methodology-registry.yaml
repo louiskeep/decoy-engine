@@ -187,6 +187,27 @@ modules:
     pattern: spaCy NER
     source: explosion/spaCy (MIT); en_core_web_sm pretrained pipeline
 
+  # File-access policy (E1, 2026-10-07): object capabilities and descriptor-relative I/O.
+  - path: src/decoy_engine/fileaccess/_types.py
+    pattern: object capabilities
+    source: Miller, Robust Composition (2006); Capsicum (Watson et al., USENIX Security 2010); WASI preopens
+
+  - path: src/decoy_engine/fileaccess/_openat2.py
+    pattern: cap-std
+    source: Bytecode Alliance cap-std (Apache-2.0); Go 1.24 os.Root; Linux openat2(2)
+
+  - path: src/decoy_engine/fileaccess/_rooted.py
+    pattern: Capsicum and WASI preopens
+    source: Capsicum (Watson et al., 2010); wasmtime preopened_dir (Apache-2.0)
+
+  - path: src/decoy_engine/fileaccess/_output.py
+    pattern: cap-std
+    source: cap-std Dir; Spark FileOutputCommitter (Apache-2.0); POSIX renameat and linkat
+
+  - path: src/decoy_engine/fileaccess/_entry.py
+    pattern: contextvars (PEP 567)
+    source: Python PEP 567 (contextvars), PEP 3134 exception chaining
+
   # Removed 2026-06-02: the entire `forecast/` module (Recommender +
   # ForecastReport + DisguiseRecommendation + FieldRecommendation +
   # RiskFlag) was deleted under the storm-reframe-C clean break

@@ -1,0 +1,39 @@
+# The exact modules a sink call may live in without a registry entry (plan D9). Being inside
+# `decoy_engine/fileaccess/` grants nothing: every other file there, and `_local.py` (whose
+# ambient opens each carry their own registry entry), is judged call by call.
+
+# Rule 1: adapters hand a third-party library only a capability's descriptor or library path.
+adapter_modules = [
+  "decoy_engine/fileaccess/adapters/arrow.py",
+  "decoy_engine/fileaccess/adapters/pandas.py",
+  "decoy_engine/fileaccess/adapters/polars.py",
+  "decoy_engine/fileaccess/adapters/duckdb.py",
+  "decoy_engine/fileaccess/adapters/serial.py",
+]
+
+# Rule 2: raw fd-relative primitives only, with a held descriptor and a validated name.
+capability_modules = [
+  "decoy_engine/fileaccess/_rooted.py",
+  "decoy_engine/fileaccess/_output.py",
+  "decoy_engine/fileaccess/_preopened.py",
+  "decoy_engine/fileaccess/_openat2.py",
+]
+
+# The only module that may construct `LocalFileAccess`.
+local_constructors = [
+  "decoy_engine/fileaccess/_entry.py",
+]
+
+# Modules whose registry entries may be `ambient_only`: they act on a caller path only after
+# the entry point refused every policy but the ambient CLI one.
+ambient_only_modules = [
+  "decoy_engine/execution/_isolated_commit.py",
+  "decoy_engine/execution/_isolated_run.py",
+  "decoy_engine/execution/out_of_core/_scratch.py",
+]
+
+# Modules that must call `fileaccess.require_ambient`, the guard the ambient-only entries rely on.
+ambient_guards = [
+  "decoy_engine/execution/_isolated_run.py",
+  "decoy_engine/execution/out_of_core/_scratch.py",
+]

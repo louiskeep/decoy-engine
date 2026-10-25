@@ -70,12 +70,14 @@ different directory than `decoy run` still evaluates the identical files.
 
 from __future__ import annotations
 
+import os
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 import pyarrow as pa
 
+from decoy_engine import fileaccess
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._pipeline import classify_table_kinds
 from decoy_engine.execution._pipeline_route_exec import (
@@ -94,6 +96,7 @@ from decoy_engine.execution.out_of_core._capacity_eval import (
     CapacityVerdict,
     evaluate_capacity,
 )
+from decoy_engine.fileaccess import FileAccess, entry_point
 
 __all__ = ["estimate_job_capacity"]
 
@@ -150,7 +153,9 @@ def _resolve_source_path(raw_path: str, base_dir: Path) -> Path:
     passes through unchanged. Kept as a private mirror rather than an
     import across repos -- the CLI and engine are separate packages."""
     p = Path(raw_path)
-    return p if p.is_absolute() else (base_dir / p).resolve()
+    # Lexical, not `Path.resolve()`: making the path absolute needs no file-system access, and
+    # which file is read is decided later, at the open, by the file-access policy.
+    return p if p.is_absolute() else Path(os.path.abspath(base_dir / p))
 
 
 def _resolved_config_copy(config_dump: dict[str, Any], base_dir: Path) -> dict[str, Any]:
@@ -195,11 +200,13 @@ def _not_applicable(route: str, message: str) -> CapacityEstimate:
     )
 
 
+@entry_point
 def estimate_job_capacity(
     config_dump: dict[str, Any],
     base_dir: Path | str,
     *,
     budget_bytes: int | None = None,
+    file_access: FileAccess | None = None,
 ) -> CapacityEstimate:
     """Estimate the out-of-core-FK route's memory feasibility for `config_dump`,
     WITHOUT running the pipeline.
@@ -269,6 +276,8 @@ def estimate_job_capacity(
     try:
         profile = profile_source(config, seed=job_seed)
     except (pa.lib.ArrowException, OSError, ValueError) as exc:
+        if fileaccess.keeps_class(exc):
+            raise
         # A present-but-corrupt/wrong-format source (or one that became
         # unreadable between the CLI's own file check and now) fails HERE, in
         # the profile read. Re-raise as a typed, expected condition so the

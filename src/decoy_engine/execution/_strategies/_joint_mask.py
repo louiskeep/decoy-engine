@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import pandas as pd
 
+from decoy_engine import fileaccess
 from decoy_engine.execution._adapter import StrategyContext, provider_config_to_dict
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.plan._types import ColumnSeed
@@ -47,7 +48,10 @@ class JointMaskHandler:
     ) -> tuple[pd.DataFrame, list[QualityWarning]]:
         cfg = provider_config_to_dict(plan.provider_config)
         mode = str(cfg.get("mode", "mask"))
-        joint_cfg = JointMaskConfig.from_dict(cfg)
+        with fileaccess.at_position(
+            f"tables.{ctx.current_table}.columns.{ctx.nested_outer_column or column}"
+        ):
+            joint_cfg = JointMaskConfig.from_dict(cfg)
         updated_df = apply_joint_mask(
             df, joint_cfg, mode=mode, job_seed=ctx.mask_key, namespace=plan.namespace
         )

@@ -40,9 +40,7 @@ pandas-oracle parity suite pins.
 
 from __future__ import annotations
 
-import os
 import shutil
-import tempfile
 from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -90,6 +88,7 @@ from decoy_engine.execution.out_of_core._route_policy import (
     decide_route,
     validate_outgoing_parent_columns,
 )
+from decoy_engine.execution.out_of_core._scratch import scratch_root
 from decoy_engine.execution.out_of_core._source import LazySource
 from decoy_engine.execution.out_of_core._stream_driver import stream_table
 from decoy_engine.execution.out_of_core._stream_driver_support import (
@@ -98,6 +97,7 @@ from decoy_engine.execution.out_of_core._stream_driver_support import (
 from decoy_engine.execution.out_of_core._vault_collect import (
     collect_batch_vault,
 )
+from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.plan._types import ColumnSeed
 from decoy_engine.relationships._graph import OrphanPolicy
 
@@ -118,6 +118,7 @@ if TYPE_CHECKING:
     TableSource: TypeAlias = pa.Table | LazySource
 
 
+@entry_point
 def run_fk_out_of_core(
     plan: Plan,
     sources: Mapping[str, pa.Table | LazySource],
@@ -136,6 +137,7 @@ def run_fk_out_of_core(
     vault_writer: Any = None,
     config: Mapping[str, Any] | None = None,
     native_threads: int = 1,
+    file_access: FileAccess | None = None,
 ) -> ExecutionResult:
     """Run the out-of-core FK relationship route as a batch stream.
 
@@ -203,9 +205,7 @@ def run_fk_out_of_core(
         config, plan, relationship_graph, sources
     )
     owned_temp = temp_dir is None
-    root = Path(tempfile.mkdtemp(prefix="decoy-ooc-")) if temp_dir is None else temp_dir
-    root.mkdir(parents=True, exist_ok=True)
-    os.chmod(root, 0o700)
+    root = scratch_root(temp_dir)
     committed = False
     try:
         incoming, outgoing = _edge_indexes(relationship_graph)
@@ -222,14 +222,14 @@ def run_fk_out_of_core(
         # job's evidence list matches the pandas oracle's shape byte-for-byte.
         code_set_corpora: dict[tuple[str, str], dict[str, Any]] = {}
         hash_run = OocHashRun(native_threads=native_threads)
-        for table_name in _table_order(plan, relationship_graph, sources):
+        for index, table_name in enumerate(_table_order(plan, relationship_graph, sources)):
             if table_name not in sources:
                 continue
             # The merge runs before any joiner opens, so it takes the undivided build cap.
             table_incoming_edges = resolve_incoming(
                 incoming[table_name],
                 parent_relations,
-                temp_dir=root / "relations" / table_name / "merged",
+                temp_dir=root / "relations" / f"t{index:04d}" / "merged",
                 memory_limit=memory_limit_for(budget_bytes, 1) if budget_bytes else memory_limit,
             )
             table_outgoing_edges = tuple(outgoing[table_name])
@@ -251,9 +251,9 @@ def run_fk_out_of_core(
                 "incoming_edges": table_incoming_edges,
                 "outgoing_edges": table_outgoing_edges,
                 "parent_relations": parent_relations,
-                "temp_dir": root / "joins" / table_name,
-                "relation_dir": root / "relations" / table_name,
-                "staging_path": root / "staged" / table_name / "masked_keys.parquet",
+                "temp_dir": root / "joins" / f"t{index:04d}",
+                "relation_dir": root / "relations" / f"t{index:04d}",
+                "staging_path": root / "staged" / f"t{index:04d}" / "masked_keys.parquet",
                 "memory_limit": memory_limit,
                 "batch_rows": batch_rows,
                 "budget_bytes": budget_bytes,

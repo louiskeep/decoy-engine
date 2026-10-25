@@ -68,12 +68,22 @@ import hmac
 import json
 from collections.abc import Iterable, Mapping
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import pyarrow as pa
 
+from decoy_engine import fileaccess
 from decoy_engine.determinism import SEED_PROTOCOL_VERSION, derive
 from decoy_engine.errors import DecoyError
+from decoy_engine.fileaccess import (
+    FileAccess,
+    FileAccessUnavailable,
+    FileHandle,
+    FileRequest,
+    FileRole,
+    OutputDir,
+)
+from decoy_engine.fileaccess.adapters import serial
 
 if TYPE_CHECKING:
     from decoy_engine.keyprovider import KeyProvider
@@ -208,10 +218,13 @@ class VaultWriter:
     before encryption.
     """
 
-    def __init__(self, mask_key: bytes) -> None:
+    def __init__(self, mask_key: bytes, *, file_access: FileAccess | None = None) -> None:
         # DE-02: the vault's keyed-mask IKM (job_seed when no secret is present).
         self._mask_key = mask_key
         self._entries: set[tuple[str, str, str]] = set()
+        # The writer writes after the entry point that built it returned, so it keeps the
+        # policy it was built under and never looks one up later.
+        self._access = fileaccess.capture(file_access)
 
     def assert_keyed_with(self, mask_key: bytes) -> None:
         """Fail closed if this writer's key does not match `mask_key`.
@@ -237,8 +250,13 @@ class VaultWriter:
         """Accumulate `(namespace, masked, source)` triples."""
         self._entries.update(entries)
 
-    def write(self, path: str | Path) -> int:
+    def write(self, path: str | Path | OutputDir) -> int:
         """Encrypt and write the vault file. Returns the entry count written.
+
+        `path` is an `OutputDir` the policy issued (the file is created exclusively,
+        refusing an existing leaf), or, under the ambient CLI policy only, a path that is
+        overwritten as it always was. A path under any other policy raises
+        `FileAccessUnavailable`.
 
         Conflicting sources for one `(namespace, masked)` key are
         dropped (see the module docstring's ambiguity policy); the
@@ -297,7 +315,23 @@ class VaultWriter:
             pq.write_table(chunk_table, buf)
             # Encrypt this chunk and drop its plaintext before the next one.
             parts.append(_frame(fernet.encrypt(buf.getvalue().to_pybytes())))
-        Path(path).write_bytes(b"".join(parts))
+        out: OutputDir
+        if isinstance(path, (str, Path)):
+            if not fileaccess.is_ambient(self._access):
+                raise FileAccessUnavailable(
+                    "a vault path string is accepted only under the ambient policy; "
+                    "pass an OutputDir issued by the policy"
+                )
+            out = self._access.output_dir(FileRequest(FileRole.VAULT, "write", str(path), "vault"))
+            mode: Literal["exclusive", "replace"] = "replace"
+            label: Literal["vault", "vault_direct"] = "vault_direct"
+        else:
+            out = path
+            mode = "exclusive"
+            label = "vault"
+        with out.begin("file", mode, label=label) as txn:
+            serial.write_bytes(txn, "vault", b"".join(parts))
+            txn.publish()
         return len(rows)
 
     def _fernet(self) -> Any:
@@ -326,8 +360,12 @@ def assert_vault_writer_keyed(vault_writer: object, mask_key: bytes) -> None:
     vault_writer.assert_keyed_with(mask_key)
 
 
+@fileaccess.entry_point
 def vault_writer_for_config(
-    config: dict[str, Any], *, key_provider: KeyProvider | None = None
+    config: dict[str, Any],
+    *,
+    key_provider: KeyProvider | None = None,
+    file_access: FileAccess | None = None,
 ) -> VaultWriter:
     """Build a `VaultWriter` keyed by the run's mask key.
 
@@ -347,14 +385,25 @@ def vault_writer_for_config(
         if ref:
             provider = key_provider_from_ref(ref)
     mask_key = provider.mask_key() if provider is not None else job_seed
-    return VaultWriter(mask_key)
+    return VaultWriter(mask_key, file_access=file_access)
 
 
-def load_vault(path: str | Path, mask_key: bytes) -> tuple[dict[tuple[str, str], str], int]:
+@fileaccess.entry_point
+def load_vault(
+    path: str | Path | None,
+    mask_key: bytes,
+    *,
+    vault: FileHandle | None = None,
+    file_access: FileAccess | None = None,
+) -> tuple[dict[tuple[str, str], str], int]:
     """Decrypt a vault file into `{(namespace, masked): source}`.
 
     DE-02: `mask_key` is the keyed-mask IKM the vault was written under (the
     8-byte `job_seed` when no secret, or a 32-byte KeyProvider root).
+
+    `vault` is a handle the policy issued for the vault file and takes the place of `path`;
+    a path string is accepted only under the ambient CLI policy and raises
+    `FileAccessUnavailable` under any other.
 
     Returns the map plus the recorded `ambiguous_dropped` count.
 
@@ -375,17 +424,33 @@ def load_vault(path: str | Path, mask_key: bytes) -> tuple[dict[tuple[str, str],
     # pre-streaming ordering the absent-dep contract test pins). Building the
     # object only derives the key; it does not decrypt.
     fernet = _fernet(mask_key)
+    handle = vault
+    if handle is None:
+        if path is None or not fileaccess.is_ambient():
+            raise FileAccessUnavailable(
+                "load_vault needs a vault handle from the policy; a path string is accepted "
+                "only under the ambient policy"
+            )
+        handle = fileaccess.current().open_read(
+            FileRequest(FileRole.VAULT, "read", str(path), "vault")
+        )
+    shown = handle.display
     try:
-        blob = Path(path).read_bytes()
+        blob = handle.read_all()
     except OSError as exc:
+        if fileaccess.keeps_class(exc):
+            raise
         raise VaultError(
             code="vault_unreadable",
-            message=f"vault file {str(path)!r} could not be read: {exc}",
+            message=f"vault file {shown!r} could not be read: {exc}",
         ) from exc
+    finally:
+        if vault is None:
+            handle.close()
     if not blob.startswith(_MAGIC):
         raise VaultError(
             code="vault_unreadable",
-            message=f"{str(path)!r} is not a decoy vault file (bad magic header).",
+            message=f"{shown!r} is not a decoy vault file (bad magic header).",
         )
 
     # Parse + validate the UNENCRYPTED header before any decrypt, so a
@@ -398,14 +463,14 @@ def load_vault(path: str | Path, mask_key: bytes) -> tuple[dict[tuple[str, str],
         header = json.loads(header_bytes)
     except (ValueError, UnicodeDecodeError) as exc:
         raise VaultError(
-            code="vault_unreadable", message=f"vault {str(path)!r} has an unreadable header"
+            code="vault_unreadable", message=f"vault {shown!r} has an unreadable header"
         ) from exc
     fmt = header.get("format")
     if fmt != VAULT_FORMAT_VERSION:
         raise VaultError(
             code="vault_format_unsupported",
             message=(
-                f"vault {str(path)!r} declares format {fmt!r}; this engine "
+                f"vault {shown!r} declares format {fmt!r}; this engine "
                 f"consumes {VAULT_FORMAT_VERSION!r}."
             ),
         )
@@ -414,7 +479,7 @@ def load_vault(path: str | Path, mask_key: bytes) -> tuple[dict[tuple[str, str],
         raise VaultError(
             code="vault_protocol_version_mismatch",
             message=(
-                f"vault {str(path)!r} was written under seed protocol version "
+                f"vault {shown!r} was written under seed protocol version "
                 f"{vault_version!r}; this engine runs version {SEED_PROTOCOL_VERSION!r}. "
                 f"Cross-version unmask is not supported; re-mask under this engine "
                 f"or use an engine at protocol version {vault_version!r}."

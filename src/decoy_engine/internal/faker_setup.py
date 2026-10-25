@@ -23,6 +23,7 @@ import inspect as _inspect
 import json
 import logging
 import os
+import stat
 import threading
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -30,6 +31,9 @@ from types import MappingProxyType
 from typing import Any
 
 from faker import Faker
+
+from decoy_engine import fileaccess
+from decoy_engine.fileaccess import DirHandle, FileAccess, FileRequest, FileRole
 
 _log = logging.getLogger(__name__)
 
@@ -193,8 +197,9 @@ def has_custom_faker_override(
         return faker_type in _CUSTOM_FAKER_PROVIDERS
 
 
+@fileaccess.entry_point
 def load_custom_providers(
-    custom_dir: Path | None = None,
+    custom_dir: Path | None = None, *, file_access: FileAccess | None = None
 ) -> dict[str, list[str]]:
     """Scan *custom_dir* for user-supplied word lists and register them as
     custom Faker providers under the ``custom.<stem>`` namespace.
@@ -207,7 +212,9 @@ def load_custom_providers(
     pipelines can reference the lists via ``faker_type: custom.<stem>``.
 
     Default directory comes from the ``CUSTOM_PROVIDERS_DIR`` env-var,
-    falling back to ``custom_providers`` relative to the cwd.
+    falling back to ``custom_providers`` relative to the cwd. The directory is a
+    directory capability the file-access policy issues for the custom-provider role; a
+    child is opened only beneath that already-open directory.
 
     Returns a {provider_name: values} mapping for callers that want to
     inspect or log what was registered.
@@ -216,38 +223,50 @@ def load_custom_providers(
         custom_dir = Path(os.getenv("CUSTOM_PROVIDERS_DIR", "custom_providers"))
 
     custom_dir = Path(custom_dir)
+    policy = fileaccess.current()
+    request = FileRequest(
+        FileRole.CUSTOM_PROVIDER_ROOT, "read_dir", str(custom_dir), "custom_providers"
+    )
+    shown_dir = fileaccess.shown(str(custom_dir), "custom_providers")
 
-    if not custom_dir.exists():
-        _log.debug("custom_providers: directory %s does not exist; skipping", custom_dir)
+    try:
+        status = policy.stat(request)
+    except (FileNotFoundError, NotADirectoryError):
+        _log.debug("custom_providers: directory %s does not exist; skipping", shown_dir)
         return {}
 
-    if not custom_dir.is_dir():
-        _log.warning("custom_providers: %s exists but is not a directory; skipping", custom_dir)
+    if not stat.S_ISDIR(status.st_mode):
+        _log.warning("custom_providers: %s exists but is not a directory; skipping", shown_dir)
         return {}
 
     loaded: dict[str, list[str]] = {}
 
-    for path in sorted(custom_dir.iterdir()):
-        if path.suffix.lower() == ".txt":
-            values = _load_txt(path)
-        elif path.suffix.lower() == ".json":
-            values = _load_json(path)
-        else:
-            continue
+    directory = policy.open_dir(request)
+    try:
+        for entry in sorted(directory.entries(), key=lambda e: e.name):
+            path = Path(entry.name)
+            if path.suffix.lower() == ".txt":
+                values = _load_txt(directory, entry.name)
+            elif path.suffix.lower() == ".json":
+                values = _load_json(directory, entry.name)
+            else:
+                continue
 
-        if not values:
-            _log.warning("custom_providers: %s produced no values; skipping", path.name)
-            continue
+            if not values:
+                _log.warning("custom_providers: %s produced no values; skipping", path.name)
+                continue
 
-        provider_name = f"custom.{path.stem}"
-        _register_list_provider(provider_name, values)
-        loaded[provider_name] = values
-        _log.info(
-            "custom_providers: registered '%s' with %d values from %s",
-            provider_name,
-            len(values),
-            path.name,
-        )
+            provider_name = f"custom.{path.stem}"
+            _register_list_provider(provider_name, values)
+            loaded[provider_name] = values
+            _log.info(
+                "custom_providers: registered '%s' with %d values from %s",
+                provider_name,
+                len(values),
+                path.name,
+            )
+    finally:
+        directory.close()
 
     return loaded
 
@@ -255,30 +274,42 @@ def load_custom_providers(
 # ── Internal: loaders + list-provider registration shared helper ──
 
 
-def _load_txt(path: Path) -> list[str]:
+def _read_child(directory: DirHandle, name: str) -> str:
+    handle = directory.open_file(name)
+    try:
+        return handle.read_all().decode("utf-8")
+    finally:
+        handle.close()
+
+
+def _load_txt(directory: DirHandle, name: str) -> list[str]:
     """Read a .txt file; one value per line. Ignores blank lines and comments."""
     try:
-        lines = path.read_text(encoding="utf-8").splitlines()
+        lines = _read_child(directory, name).splitlines()
         return [line.strip() for line in lines if line.strip() and not line.strip().startswith("#")]
     except Exception as exc:
-        _log.warning("custom_providers: failed to read %s: %s", path.name, type(exc).__name__)
+        if fileaccess.keeps_class(exc):
+            raise
+        _log.warning("custom_providers: failed to read %s: %s", name, exc)
         return []
 
 
-def _load_json(path: Path) -> list[str]:
+def _load_json(directory: DirHandle, name: str) -> list[str]:
     """Read a .json file containing a JSON array of strings."""
     try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
+        raw = json.loads(_read_child(directory, name))
         if not isinstance(raw, list):
             _log.warning(
                 "custom_providers: %s must contain a JSON array; got %s",
-                path.name,
+                name,
                 type(raw).__name__,
             )
             return []
         return [str(v) for v in raw if v is not None]
     except Exception as exc:
-        _log.warning("custom_providers: failed to parse %s: %s", path.name, type(exc).__name__)
+        if fileaccess.keeps_class(exc):
+            raise
+        _log.warning("custom_providers: failed to parse %s: %s", name, exc)
         return []
 
 

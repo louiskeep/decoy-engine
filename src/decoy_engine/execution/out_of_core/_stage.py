@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from decoy_engine.execution.out_of_core._scratch import scratch_access_for
 from decoy_engine.execution.out_of_core._source import LazySource
 
 if TYPE_CHECKING:
@@ -66,6 +67,7 @@ class MaskedKeyStager:
         self._path = path
         self._schema = schema
         self._writer = pq.ParquetWriter(path, schema)
+        self._reader = scratch_access_for(path.parent)
         if masked_observed_types is None:
             self.observed: dict[str, set[pa.DataType]] = {col: set() for col in columns}
             self._track_observed = True
@@ -90,7 +92,7 @@ class MaskedKeyStager:
         self._writer.close()
 
     def source(self) -> LazySource:
-        return LazySource(self._path)
+        return LazySource(self._path, access=self._reader, field_key="engine.scratch")
 
 
 __all__ = ["MaskedKeyStager"]

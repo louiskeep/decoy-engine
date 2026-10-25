@@ -38,7 +38,9 @@ import os
 from collections.abc import Callable
 from typing import Any
 
+from decoy_engine import fileaccess
 from decoy_engine.determinism import SEED_PROTOCOL_VERSION
+from decoy_engine.fileaccess import FileAccess, FileRole, entry_point
 
 # Fields that are intentionally excluded from the fingerprint. ``name``
 # is the rename surface R3.10 is severing. ``null_probability`` is a
@@ -75,7 +77,14 @@ _EXCLUDED_FROM_FINGERPRINT = frozenset(
 _SNAPSHOT_FILE_KEY = "snapshot_file"
 
 
-def _snapshot_content_digest(path: str) -> str:
+_UNREADABLE = (
+    "strategy_config_fingerprint: snapshot_file {!r} is missing or unreadable ({}); cannot "
+    "derive a stable content-based seed. Fix the path or file rather than falling back "
+    "to the path string (which would silently change synthetic output)."
+)
+
+
+def _snapshot_content_digest(path: str, field_key: str = "snapshot_file") -> str:
     """SHA-256 hex of a snapshot file's raw bytes, for use in the fingerprint.
 
     Content, not path: the same snapshot at any location fingerprints
@@ -83,21 +92,30 @@ def _snapshot_content_digest(path: str) -> str:
     or unreadable rather than silently falling back to the path string,
     which would reintroduce the path-coupling bug.
     """
+    key = fileaccess.position_key(field_key)
+    shown = fileaccess.shown(path, key)
+    failure: str | None = None
     try:
-        with open(path, "rb") as fh:
-            data = fh.read()
+        data = fileaccess.read_all(FileRole.SNAPSHOT, path, key)
     except OSError as exc:
-        raise RuntimeError(
-            f"strategy_config_fingerprint: snapshot_file {path!r} is missing or "
-            f"unreadable ({type(exc).__name__}: {exc}); cannot derive a stable "
-            f"content-based seed. Fix the path or file rather than falling back "
-            f"to the path string (which would silently change synthetic output)."
-        ) from exc
+        if fileaccess.keeps_class(exc):
+            raise
+        if fileaccess.is_ambient():
+            raise RuntimeError(_UNREADABLE.format(shown, f"{type(exc).__name__}: {exc}")) from exc
+        failure = f"{type(exc).__name__}: {fileaccess.redact_locators(str(exc), [(path, shown)])}"
+    if failure is not None:
+        # Strict: raised after the handler closes, so the library error is neither cause nor
+        # context (its text can name the file).
+        raise RuntimeError(_UNREADABLE.format(shown, failure))
     return "sha256:" + hashlib.sha256(data).hexdigest()
 
 
+@entry_point
 def strategy_config_fingerprint(
-    column_config: dict[str, Any], *, snapshot_content_digest: str | None = None
+    column_config: dict[str, Any],
+    *,
+    snapshot_content_digest: str | None = None,
+    file_access: FileAccess | None = None,
 ) -> str:
     """SHA-256 hex of canonical JSON of the strategy-relevant config.
 

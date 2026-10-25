@@ -37,10 +37,12 @@ from __future__ import annotations
 import base64
 import os
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, NoReturn, Protocol, runtime_checkable
 
+from decoy_engine import fileaccess
 from decoy_engine.determinism._hkdf import hkdf_sha256
 from decoy_engine.errors import DecoyError
+from decoy_engine.fileaccess import FileAccess, FileRole
 from decoy_engine.release import is_pre_ga
 
 if TYPE_CHECKING:
@@ -201,6 +203,74 @@ def _decode_secret_material(text: str) -> bytes:
         ) from exc
 
 
+def _decode_secret_code(text: str) -> tuple[bytes, str]:
+    """`_decode_secret_material` without raising: `(bytes, "")`, or `(b"", reason)` with a
+    fixed reason code. No exception is created, so none can carry the text."""
+    stripped = "".join(text.split())
+    if not stripped:
+        return b"", "empty"
+    try:
+        return bytes.fromhex(stripped), ""
+    except ValueError:
+        pass
+    try:
+        return base64.b64decode(stripped, validate=True), ""
+    except (base64.binascii.Error, ValueError):  # type: ignore[attr-defined]
+        return b"", "not_hex_or_base64"
+
+
+_STRICT_SECRET_MESSAGES = {
+    "unreadable": "could not be read.",
+    "not_utf8": "is not valid UTF-8.",
+    "empty": "holds no secret material.",
+    "not_hex_or_base64": "is neither valid hex nor base64.",
+}
+
+
+def raise_clean(exc: MaskSecretError) -> NoReturn:
+    """Raise `exc` with nothing inherited. A caller may be handling another exception (a
+    secret-bearing decode error, say) when this runs, and that exception would become the
+    context; so `exc` is caught, its cause and context cleared, and re-raised bare. The
+    traceback keeps no frame that holds the secret text."""
+    try:
+        raise exc
+    except MaskSecretError as fresh:
+        fresh.__cause__ = None
+        fresh.__context__ = None
+        fresh.__suppress_context__ = True
+        raise
+
+
+def _strict_secret_from_file(path: str) -> bytes:
+    """Read AND decode a secret file under a strict policy in one function.
+
+    A failure is recorded as a fixed reason code, the handlers close, and only then is a fresh
+    error built from the config position and that code, so no decoder error (whose `.object`
+    holds the file) is its cause or context. Policy and resource classes (denial, memory,
+    ENOSPC/EDQUOT/ENOMEM) propagate unchanged. A plain function with a flag, not a context
+    manager, because a context manager would re-enter the original exception."""
+    reason = ""
+    secret = b""
+    text = ""
+    try:
+        text = fileaccess.read_text(FileRole.SECRET, path, _SECRET_FIELD_KEY)
+    except OSError as exc:
+        if fileaccess.keeps_class(exc):
+            raise
+        reason = "unreadable"
+    except UnicodeDecodeError:
+        reason = "not_utf8"
+    if not reason:
+        secret, reason = _decode_secret_code(text)
+    text = ""
+    if reason:
+        message = f"mask secret file ({_SECRET_FIELD_KEY}) {_STRICT_SECRET_MESSAGES[reason]}"
+        if reason == "unreadable":
+            raise_clean(MissingMaskSecret(message))
+        raise_clean(MaskSecretError(code="bad_secret_ref", message=message))
+    return secret
+
+
 def _redact_ref(ref: str) -> str:
     """A safe rendering of a ref for error messages (Codex MEDIUM 7).
 
@@ -213,7 +283,11 @@ def _redact_ref(ref: str) -> str:
     return f"<redacted ref, {len(ref)} chars>"
 
 
-def resolve_mask_secret_ref(ref: str) -> bytes:
+_SECRET_FIELD_KEY = "global_settings.mask_secret_ref"  # noqa: S105 - a config position, not a credential
+
+
+@fileaccess.entry_point
+def resolve_mask_secret_ref(ref: str, *, file_access: FileAccess | None = None) -> bytes:
     """Resolve a `mask_secret_ref` (`env:NAME` or `file:/PATH`) to raw bytes.
 
     The ref is a REFERENCE, never the secret itself. Supported kinds:
@@ -237,25 +311,23 @@ def resolve_mask_secret_ref(ref: str) -> bytes:
         path = ref[len("file:") :]
         if not path:
             raise MaskSecretError(code="bad_secret_ref", message="file ref has no path.")
+        if not fileaccess.is_ambient():
+            return _strict_secret_from_file(path)
         try:
-            with open(path, encoding="utf-8") as handle:
-                raw = handle.read()
+            raw = fileaccess.read_text(FileRole.SECRET, path, _SECRET_FIELD_KEY)
         except OSError as exc:
             raise MissingMaskSecret(
                 f"mask secret file {path!r} (from mask_secret_ref) could not be read: {exc}."
             ) from exc
         except UnicodeDecodeError as exc:
-            # The file exists and is readable, but is not valid UTF-8 text --
-            # a distinct failure mode from "missing" (bad_secret_ref, not
-            # MissingMaskSecret), and it must not escape as a raw
-            # UnicodeDecodeError (an uncaught crash instead of a clean,
-            # typed gate error the CLI maps to EXIT_USAGE). Read stays TEXT
-            # (not bytes) -- switching to a raw-bytes read would change key
-            # derivation for existing file-based secrets, a determinism/
-            # compat break outside this fix's scope (see PR body follow-up).
+            # The file is readable but not UTF-8: a distinct, typed failure the CLI maps to
+            # EXIT_USAGE. Read stays TEXT; bytes would change key derivation for existing
+            # file-backed secrets.
             raise MaskSecretError(
                 code="bad_secret_ref",
-                message=f"mask secret file {path!r} (from mask_secret_ref) is not valid UTF-8: {exc}.",
+                message=(
+                    f"mask secret file {path!r} (from mask_secret_ref) is not valid UTF-8: {exc}."
+                ),
             ) from exc
         return _decode_secret_material(raw)
     raise MaskSecretError(
@@ -264,9 +336,21 @@ def resolve_mask_secret_ref(ref: str) -> bytes:
     )
 
 
-def key_provider_from_ref(ref: str, *, key_version: str = "v1") -> SecretKeyProvider:
+@fileaccess.entry_point
+def key_provider_from_ref(
+    ref: str, *, key_version: str = "v1", file_access: FileAccess | None = None
+) -> SecretKeyProvider:
     """Build a SecretKeyProvider from a `mask_secret_ref`. Validates >=32 bytes."""
-    return SecretKeyProvider(resolve_mask_secret_ref(ref), key_version=key_version)
+    secret = resolve_mask_secret_ref(ref)
+    if ref.startswith("file:") and not fileaccess.is_ambient() and len(secret) < MIN_SECRET_BYTES:
+        # Strict: the length check is part of the secret path, so it too must not inherit a
+        # caller's active exception, and its frame must not keep the weak secret.
+        got = len(secret)
+        secret = b""
+        raise_clean(
+            WeakMaskSecret(f"mask secret must be at least {MIN_SECRET_BYTES} bytes; got {got}.")
+        )
+    return SecretKeyProvider(secret, key_version=key_version)
 
 
 # Strategies whose handlers always feed the mask key (re-identification surface

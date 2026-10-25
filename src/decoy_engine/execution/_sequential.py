@@ -167,6 +167,7 @@ from decoy_engine.execution._transactional_sink import (
     TransactionalSink,
     _CallableSinkAdapter,
 )
+from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.generation.pool._cache import PoolCache
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.instrumentation.timing import TimingCollector, use_collector
@@ -209,6 +210,7 @@ def _has_transactional_write_contract(sink: object) -> bool:
     )
 
 
+@entry_point
 def run_sequential(
     adapter: PandasExecutionAdapter,
     plan: Plan,
@@ -223,6 +225,7 @@ def run_sequential(
     unconfigured_column_policy: UnconfiguredColumnPolicy | None = None,
     key_provider: KeyProvider | None = None,
     native_threads: int = 1,
+    file_access: FileAccess | None = None,
 ) -> ExecutionResult:
     """Mask an FK-related job table by table in FK-topological order.
 

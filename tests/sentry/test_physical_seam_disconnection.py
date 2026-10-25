@@ -337,6 +337,10 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         # intra-OOC routing/budget math and import nothing from `execution.physical`.
         "src/decoy_engine/execution/out_of_core/_route_policy.py",
         "src/decoy_engine/execution/out_of_core/_reorder_budget.py",
+        # E1: opaque scratch identifiers for config-derived table/edge/relation names
+        # (X4). The reorder/batch relation paths are built from per-run ids, not names,
+        # and import nothing from execution.physical.
+        "src/decoy_engine/execution/out_of_core/_relation.py",
         "src/decoy_engine/execution/native/_chunk_masking.py",
         # R1b: the resolved per-operator parameters and the shared kernel step both native
         # routes call; `_chunk_masking.py` and `_chunked_entry.py` above only rewire to them.
@@ -744,6 +748,27 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         "src/decoy_engine/execution/_sequential_composite_chain.py",
         "src/decoy_engine/execution/_strategies/_hash.py",
         "src/decoy_engine/execution/_strategies/_fpe.py",
+        # E1 (the FileAccess policy, 2026-10-07): every file the engine opens goes through
+        # `decoy_engine.fileaccess`. These modules gain a policy-bound reader, a stage or a
+        # propagated context and import nothing from `execution.physical`: the governor and its
+        # RSS monitor thread (`run_in_context`), the FPE thread pool (`map_in_context`), the
+        # capacity estimate (a lexical path join), the DuckDB connection helper (the adapter),
+        # the spill estimate's output-device probe (a policy `stat`), the out-of-core key
+        # stager's scratch `LazySource`, and the new scratch-root helper. Also the chunked
+        # code_set resolver and the code_set and joint_mask handlers and the shared
+        # out-of-core resolver, which name the column a corpus read belongs to (`at_position`).
+        # (`_strategies/_fpe.py` is already permitted above.)
+        "src/decoy_engine/execution/_governor.py",
+        "src/decoy_engine/execution/_governor_monitor.py",
+        "src/decoy_engine/execution/capacity.py",
+        "src/decoy_engine/execution/out_of_core/_duckdb.py",
+        "src/decoy_engine/execution/out_of_core/_scratch.py",
+        "src/decoy_engine/execution/out_of_core/_spill_estimate.py",
+        "src/decoy_engine/execution/out_of_core/_stage.py",
+        "src/decoy_engine/execution/_chunked_code_set.py",
+        "src/decoy_engine/execution/_strategies/_code_set.py",
+        "src/decoy_engine/execution/out_of_core/_stream_driver_support.py",
+        "src/decoy_engine/execution/_strategies/_joint_mask.py",
     }
     unexpected = [
         name

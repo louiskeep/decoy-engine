@@ -48,14 +48,17 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, NoReturn
 
 import numpy as np
 import pandas as pd
 
+from decoy_engine import fileaccess
 from decoy_engine.determinism import derive
+from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.reference_tables import ReferenceTable, load_table
+from decoy_engine.reference_tables._registry import JOINT_MASK_TABLES
 
 # DE-02: source label for the secret-derived HMAC key of the mask-mode keyed
 # row selection. `derive(mask_key, namespace, _KEYED_ROW_SOURCE)` yields a
@@ -66,16 +69,8 @@ _DEFAULT_NAMESPACE = "joint_mask"
 
 _LOG = logging.getLogger(__name__)
 
-# Shipped table names that joint_mask can use out of the box.
-# SP-08b: ndc_labeler_drug_strength + mcc_category_description added.
-_KNOWN_TABLES = frozenset(
-    {
-        "us_zip5_city_state",
-        "vehicle_make_model_year",
-        "ndc_labeler_drug_strength",
-        "mcc_category_description",
-    }
-)
+# Shipped table names that joint_mask can use out of the box (the shipped-table registry owns them).
+_KNOWN_TABLES = JOINT_MASK_TABLES
 
 # Prefix that identifies a customer-provided reference table path (SP-08b).
 _CUSTOMER_PREFIX = "customer:"
@@ -134,7 +129,24 @@ class JointMaskConfig:
         return self._table
 
 
-def validate_joint_mask_config(cfg: dict[str, Any]) -> None:
+def _raise_without_chain(err: PlanCompileError) -> NoReturn:
+    """Raise `err` with no cause or context. The rejected `load_table` error is still being
+    handled here, so a plain raise would attach it as `__context__` and its traceback would
+    carry the raw reference (X2). Caught, cleared and re-raised bare, mirroring the keyprovider's
+    `raise_clean`."""
+    try:
+        raise err
+    except PlanCompileError as fresh:
+        fresh.__cause__ = None
+        fresh.__context__ = None
+        fresh.__suppress_context__ = True
+        raise
+
+
+@entry_point
+def validate_joint_mask_config(
+    cfg: dict[str, Any], *, file_access: FileAccess | None = None
+) -> None:
     """Validate a joint_mask config dict; raise PlanCompileError on any failure.
 
     Checks:
@@ -185,23 +197,33 @@ def validate_joint_mask_config(cfg: dict[str, Any]) -> None:
             ),
         )
 
+    shown_ref = fileaccess.shown(ref_name, fileaccess.position_key("joint_mask.reference"))
     try:
         tbl = load_table(ref_name)
     except FileNotFoundError:
-        raise PlanCompileError(
-            code="joint_mask_reference_not_found",
-            path="joint_masks.reference",
-            message=(
-                f"reference table {ref_name!r} not found. "
-                f"Known shipped tables: {sorted(_KNOWN_TABLES)}. "
-                f"To use a customer-provided table, set reference: customer:/path/to/file.parquet."
-            ),
+        # Clear the chain: the rejected `FileNotFoundError` names the config position under a
+        # strict policy, but its traceback would otherwise surface the raw reference as the
+        # PlanCompileError's `__context__` (X2). `from None` only suppresses display, so the
+        # context is nulled outright.
+        _raise_without_chain(
+            PlanCompileError(
+                code="joint_mask_reference_not_found",
+                path="joint_masks.reference",
+                message=(
+                    f"reference table {shown_ref!r} not found. "
+                    f"Known shipped tables: {sorted(_KNOWN_TABLES)}. "
+                    "To use a customer-provided table, set reference: "
+                    "customer:/path/to/file.parquet."
+                ),
+            )
         )
     except ValueError as exc:
-        raise PlanCompileError(
-            code="joint_mask_reference_invalid",
-            path="joint_masks.reference",
-            message=f"reference table {ref_name!r} failed to load: {exc}",
+        _raise_without_chain(
+            PlanCompileError(
+                code="joint_mask_reference_invalid",
+                path="joint_masks.reference",
+                message=f"reference table {shown_ref!r} failed to load: {exc}",
+            )
         )
 
     ref_cols = set(tbl.column_names) - {"id"}

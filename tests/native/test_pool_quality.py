@@ -336,7 +336,7 @@ class TestBoundedAggregation:
         # file), so check for ANY leftover parquet file, not one literal
         # stale name -- a glob check that only matched the old fixed name
         # would trivially pass without proving anything was cleaned up.
-        assert list(tmp_path.glob("pairs_FIRST*.parquet")) == []
+        assert list(tmp_path.glob("pairs_*.parquet")) == []
         assert measurement.distinct_sources == 6
 
     def test_hand_computed_collision_rate_oracle(self, tmp_path: Path) -> None:
@@ -1057,7 +1057,7 @@ class TestExceptionalCleanupSeams:
 
         assert len(tracking_conns) == 1
         assert tracking_conns[0].close_called is True
-        assert list(tmp_path.glob("pairs_FIRST*.parquet")) == []
+        assert list(tmp_path.glob("pairs_*.parquet")) == []
 
     def test_execute_failure_still_unlinks_spool_and_closes_connection(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -1089,7 +1089,7 @@ class TestExceptionalCleanupSeams:
         # write_table ran for real here (only execute is faulted), so a real
         # spool WAS written before the fault -- proving unlink actually had
         # something to clean up, not just a no-op on an absent file.
-        assert list(tmp_path.glob("pairs_FIRST*.parquet")) == []
+        assert list(tmp_path.glob("pairs_*.parquet")) == []
 
     def test_close_failure_propagates_but_spool_is_already_unlinked(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -1121,7 +1121,7 @@ class TestExceptionalCleanupSeams:
         # unlink runs in the inner `try`, BEFORE `conn.close()` in the inner
         # `finally`, so the spool is gone even though close() itself went on
         # to raise.
-        assert list(tmp_path.glob("pairs_FIRST*.parquet")) == []
+        assert list(tmp_path.glob("pairs_*.parquet")) == []
 
 
 class TestConnectDuckdbDirectUsage:

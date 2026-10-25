@@ -164,6 +164,7 @@ from typing import Any
 
 import pyarrow as pa
 
+from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.plan._errors import PlanCompileError
 
 from . import _chunked_bucket_perturb as bucket_perturb_gate
@@ -365,6 +366,7 @@ def check_chunked_compatibility(config: dict[str, Any], *, table: str, registry:
         )
 
 
+@entry_point
 def run_mask_pipeline_chunked(
     config: dict[str, Any],
     chunks: Iterable[pa.Table],
@@ -377,6 +379,7 @@ def run_mask_pipeline_chunked(
     chunk_result_sink: list[Any] | None = None,
     key_provider: Any = None,
     base_row_offset: int = 0,
+    file_access: FileAccess | None = None,
 ) -> Iterator[pa.Table]:
     """Mask `table`'s rows chunk-by-chunk under `config`.
 

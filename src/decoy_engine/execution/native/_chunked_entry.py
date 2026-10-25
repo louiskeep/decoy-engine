@@ -82,6 +82,7 @@ from decoy_engine.execution.native._route_decline_codes import (
     table_decline,
 )
 from decoy_engine.execution.native._when_mask import plan_when_masks
+from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.generation.pool import PoolCache, ValuePool
 from decoy_engine.instrumentation.timing import StrategyTimingRecord
 
@@ -596,6 +597,7 @@ def _run_chunked(
     )
 
 
+@entry_point
 def run_mask_chunked(
     config: dict[str, Any],
     chunks: Iterable[pa.Table],
@@ -611,6 +613,7 @@ def run_mask_chunked(
     native_threads: int = 1,
     route_evidence_sink: list[NativeRouteEvidence] | None = None,
     pool_cache: PoolCache | None = None,
+    file_access: FileAccess | None = None,
 ) -> Iterator[pa.Table]:
     """Mask `table` chunk-by-chunk, natively when the whole table admits.
 
