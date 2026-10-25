@@ -269,18 +269,39 @@ def source_anchor_columns(plan: Plan, registry: ProviderRegistry) -> dict[str, s
     return out
 
 
+def _writer_output_columns(node: WorkNode) -> tuple[str, ...]:
+    """Every column `node` WRITES, for the writer map (not its dispatch identity).
+
+    A composite bundle and a composite-FK group already carry their full output
+    set in `node.columns`. A scalar node writes its single column EXCEPT
+    `joint_mask`: it is a multi-column transform (`apply_joint_mask` writes every
+    column in its `columns` config in one pass), yet its work node keys on just
+    the dispatch column (the first sorted output). Register all of its configured
+    outputs so a dependent on a NON-dispatch output (e.g. a `derived` reading one
+    of zip/city/state) still resolves to the joint_mask node and gets its edge.
+    """
+    if node.strategy == "joint_mask" and isinstance(node.plan_slice, ColumnSeed):
+        from decoy_engine.execution._adapter import provider_config_to_dict
+
+        cols = provider_config_to_dict(node.plan_slice.provider_config).get("columns")
+        if cols:
+            return tuple(cols)
+    return node.columns
+
+
 def _writer_node_map(work: list[WorkNode]) -> dict[tuple[str, str], _NodeKey]:
     """Map each written (table, column) to the key of the node that WRITES it.
 
     Not column=node (the cross-column ordering trap): a composite provider is a
     bundle node whose `columns` holds several outputs, so every one of them maps
-    to that ONE bundle key; a scalar node (`derived`/`group_key`/`joint_mask`)
-    maps its single output column to itself. A dependent's driver ref resolves
-    through this map to the node that must run first.
+    to that ONE bundle key; a scalar node (`derived`/`group_key`) maps its single
+    output column to itself, and a `joint_mask` node maps EVERY column it writes
+    (`_writer_output_columns`), not only its dispatch column. A dependent's driver
+    ref resolves through this map to the node that must run first.
     """
     writer: dict[tuple[str, str], _NodeKey] = {}
     for node in work:
-        for col in node.columns:
+        for col in _writer_output_columns(node):
             writer[(node.table, col)] = node.key
     return writer
 
