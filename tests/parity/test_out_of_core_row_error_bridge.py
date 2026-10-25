@@ -15,6 +15,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
@@ -25,6 +26,7 @@ from decoy_engine.execution._runner import build_work_list, order_work
 from decoy_engine.execution.out_of_core import run_fk_out_of_core
 from decoy_engine.execution.out_of_core._batch_join import ChildFkBatchJoiner
 from decoy_engine.execution.out_of_core._compat import check_out_of_core_compatibility
+from decoy_engine.execution.out_of_core._source import LazySource
 from decoy_engine.execution.out_of_core._stream_join import StreamFkJoiner
 from decoy_engine.plan._types import ColumnSeed, SeedEnvelope, TableSeed
 from decoy_engine.providers_v2 import get_default_registry
@@ -133,6 +135,68 @@ def _bool_job(
             "fk": pa.array([f"p{i}" for i in range(len(child_vals))], type=pa.string()),
             "cpay": pa.array(child_vals, type=pa.bool_()),
         }
+    )
+    plan = SimpleNamespace(
+        seed_envelope=SeedEnvelope(
+            job_seed=_JOB_SEED,
+            per_table=(
+                (
+                    "parent",
+                    TableSeed(per_column=(("pk", key), ("pay", payload_seed)), per_group=()),
+                ),
+                (
+                    "child",
+                    TableSeed(per_column=(("fk", key), ("cpay", payload_seed)), per_group=()),
+                ),
+            ),
+        )
+    )
+    graph = RelationshipGraph(
+        edges=(
+            RelationshipEdge(
+                parent_table="parent",
+                parent_columns=("pk",),
+                child_table="child",
+                child_columns=("fk",),
+                namespace="kns",
+                orphan_policy=OrphanPolicy.PRESERVE,
+            ),
+        ),
+        ordering=(),
+    )
+    return plan, {"parent": parent, "child": child}, graph
+
+
+def _ext_job(
+    payload_seed: ColumnSeed,
+    parent_vals: list[Any],
+    child_vals: list[Any],
+    pandas_dtype: str,
+) -> tuple[Any, dict[str, pa.Table], RelationshipGraph]:
+    """Same shape as `_job`, but the payload columns are built from a pandas
+    extension-dtype Series via `pa.Table.from_pandas`, so the source Arrow table
+    carries the pandas schema metadata (`numpy_type`) the whole-frame oracle
+    reads to restore the extension dtype. A nullable `boolean`/`Int64`/`Float64`
+    column keeps that dtype under the oracle regardless of null content, so the
+    per-batch bridge must force each batch to the SAME dtype rather than the
+    metadata-less Arrow->pandas default (which would drop a null-bearing boolean
+    to `object` and misread each bool cell as a format error)."""
+    key = _key_seed()
+    parent = pa.Table.from_pandas(
+        pd.DataFrame(
+            {
+                "pk": pd.array([f"p{i}" for i in range(len(parent_vals))], dtype="string"),
+                "pay": pd.array(parent_vals, dtype=pandas_dtype),
+            }
+        )
+    )
+    child = pa.Table.from_pandas(
+        pd.DataFrame(
+            {
+                "fk": pd.array([f"p{i}" for i in range(len(child_vals))], dtype="string"),
+                "cpay": pd.array(child_vals, dtype=pandas_dtype),
+            }
+        )
     )
     plan = SimpleNamespace(
         seed_envelope=SeedEnvelope(
@@ -281,6 +345,98 @@ def test_top_code_boolean_column_is_batch_size_invariant(batch_rows: int | None)
     assert reported <= {0, 2} and 0 in reported, reported
     if batch_rows in (None, 3):
         assert reported == {0, 2}, reported
+
+
+@pytest.mark.parametrize("batch_rows", [None, 3, 2, 1])
+def test_top_code_nullable_boolean_matches_oracle(batch_rows: int | None) -> None:
+    """Round-2 regression: a pandas-nullable `boolean` top_code column must be
+    byte-identical to the oracle (NOT fail closed) at every batch size.
+
+    `pd.array([True, None, False], dtype="boolean")` through `pa.Table.from_pandas`
+    carries the pandas schema metadata, so the oracle's whole-frame conversion
+    restores `BooleanDtype` and top_code coerces True/None/False to the strings
+    ["1", None, "0"] with NO row errors. The F2 dtype fix derived the per-batch
+    forcing dtype from a metadata-LESS representative array, which drops to
+    `object`, so every batch misread each bool cell as a format error and the
+    route failed closed where the oracle succeeds -- a NEW divergence this round
+    closes by deriving the forcing dtype from the source's own pandas metadata.
+    Distinct from `test_top_code_boolean_column_is_batch_size_invariant`, which
+    covers a PLAIN Arrow boolean (no pandas metadata) that the oracle DOES fail
+    closed on; both directions must hold at once.
+    """
+    payload_seed = _seed("top_code", provider_config=(("cap", 89), ("over_label", "90+")))
+    plan, sources, graph = _ext_job(
+        payload_seed, [True, None, False], [None, True, False], "boolean"
+    )
+    assert _gate_admits(plan, graph)
+    oracle = PandasExecutionAdapter().run(
+        plan, sources, registry=_REG, relationship_graph=graph, namespace_registry=_NS
+    )
+    assert oracle.outputs["parent"].to_pydict()["pay"] == ["1", None, "0"]
+    ooc = run_fk_out_of_core(
+        plan, sources, registry=_REG, relationship_graph=graph, batch_rows=batch_rows
+    )
+    for table in oracle.outputs:
+        _assert_value_equal(
+            oracle.outputs[table], ooc.outputs[table], f"nullable-bool/batch={batch_rows}"
+        )
+
+
+@pytest.mark.parametrize("batch_rows", [None, 2, 1])
+def test_top_code_nullable_boolean_parquet_matches_oracle(
+    batch_rows: int | None, tmp_path: Path
+) -> None:
+    """The same nullable-`boolean` parity, but sourced from a pandas-produced
+    Parquet file (its footer carries the pandas metadata), so the LazySource
+    read path is covered alongside the resident one above."""
+    payload_seed = _seed("top_code", provider_config=(("cap", 89), ("over_label", "90+")))
+    plan, sources, graph = _ext_job(
+        payload_seed, [True, None, False], [None, True, False], "boolean"
+    )
+    oracle = PandasExecutionAdapter().run(
+        plan, sources, registry=_REG, relationship_graph=graph, namespace_registry=_NS
+    )
+    lazy_sources: dict[str, Any] = {}
+    for name, table in sources.items():
+        path = tmp_path / f"{name}.parquet"
+        pq.write_table(table, path)
+        lazy_sources[name] = LazySource(str(path))
+    ooc = run_fk_out_of_core(
+        plan, lazy_sources, registry=_REG, relationship_graph=graph, batch_rows=batch_rows
+    )
+    for table in oracle.outputs:
+        _assert_value_equal(
+            oracle.outputs[table], ooc.outputs[table], f"nullable-bool-parquet/batch={batch_rows}"
+        )
+
+
+@pytest.mark.parametrize(
+    ("pandas_dtype", "vals"),
+    [
+        ("Int64", [25, None, 95]),
+        ("Float64", [25.0, None, 95.0]),
+    ],
+)
+@pytest.mark.parametrize("batch_rows", [None, 2, 1])
+def test_top_code_nullable_numeric_matches_oracle(
+    pandas_dtype: str, vals: list[Any], batch_rows: int | None
+) -> None:
+    """Nullable Int/Float extension dtypes also keep their dtype under the oracle
+    regardless of null content; the per-batch route must match (25 in range, 95
+    over the cap, null passthrough) at every batch size."""
+    payload_seed = _seed("top_code", provider_config=(("cap", 89), ("over_label", "90+")))
+    plan, sources, graph = _ext_job(payload_seed, vals, list(reversed(vals)), pandas_dtype)
+    assert _gate_admits(plan, graph)
+    oracle = PandasExecutionAdapter().run(
+        plan, sources, registry=_REG, relationship_graph=graph, namespace_registry=_NS
+    )
+    ooc = run_fk_out_of_core(
+        plan, sources, registry=_REG, relationship_graph=graph, batch_rows=batch_rows
+    )
+    for table in oracle.outputs:
+        _assert_value_equal(
+            oracle.outputs[table], ooc.outputs[table], f"{pandas_dtype}/batch={batch_rows}"
+        )
 
 
 # ---------------------------------------------------------------------------
