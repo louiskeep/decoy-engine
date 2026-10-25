@@ -13,8 +13,10 @@ Config keys accepted via ``plan.provider_config``:
   bounds             dict  Optional. {"min": <num>, "max": <num>} clips
                            numeric output.
 
-Mask mode: derived evaluates the expression against the source table's existing
-column values passed in the DataFrame. Gen mode: generation/synthesize._derived_generate
+Mask mode: derived evaluates the expression against the live per-table frame. A
+cross-column ordering edge (order_work) runs a masked driver column BEFORE this
+one, so a referenced sibling is read at its MASKED value deterministically (a
+never-masked sibling reads its unchanged source value). Gen mode: generation/synthesize._derived_generate
 evaluates against already-generated sibling columns declared before this one in
 generate_columns (declared-order sequential semantics). Both modes call apply_derived
 from decoy_engine.transforms.derived with a complete row context dict.
