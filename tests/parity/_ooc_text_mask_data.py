@@ -81,9 +81,7 @@ class MarkingTextMask:
         self.calls: list[KernelCall] = []
         self.results: list[pa.Array] = []
 
-    def __call__(
-        self, array: Any, *, mask_key: Any, column: str, detectors: Any, **kw: Any
-    ) -> Any:
+    def __call__(self, array: Any, *, mask_key: Any, column: str, detectors: Any, **kw: Any) -> Any:
         self.calls.append(KernelCall(column, detectors, len(array)))
         if len(self.calls) == self.fail_on_call:
             raise RuntimeError("injected text_mask kernel fault")
@@ -92,7 +90,9 @@ class MarkingTextMask:
         return out, notices
 
 
-def install_marking(monkeypatch: pytest.MonkeyPatch, *, fail_on_call: int | None = None) -> MarkingTextMask:
+def install_marking(
+    monkeypatch: pytest.MonkeyPatch, *, fail_on_call: int | None = None
+) -> MarkingTextMask:
     """Route the OOC adapter's kernel call through a marker."""
     marker = MarkingTextMask(fail_on_call)
     monkeypatch.setattr(_text_mask_native, "native_text_mask", marker)

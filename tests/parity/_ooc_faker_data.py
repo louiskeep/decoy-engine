@@ -125,7 +125,9 @@ class MarkingFaker:
         return out
 
 
-def install_marking(monkeypatch: pytest.MonkeyPatch, *, fail_on_call: int | None = None) -> MarkingFaker:
+def install_marking(
+    monkeypatch: pytest.MonkeyPatch, *, fail_on_call: int | None = None
+) -> MarkingFaker:
     marker = MarkingFaker(fail_on_call)
     monkeypatch.setattr(_faker_native, "sample_faker_array", marker)
     return marker

@@ -144,9 +144,7 @@ def test_all_three_drivers_agree_with_the_oracle_byte_for_byte(tmp_path: Path) -
             .column("a")
             .combine_chunks()
         )
-        report = sc.compare_strict(
-            pa.table({"a": oracle}), pa.table({"a": got})
-        )
+        report = sc.compare_strict(pa.table({"a": oracle}), pa.table({"a": got}))
         assert {dim for dim, agree in report.items() if not agree} <= {"field_metadata"}, mode
 
 
