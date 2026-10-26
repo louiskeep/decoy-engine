@@ -136,6 +136,7 @@ def run_full_frame_route(
                 registry=ctx.registry,
                 adapter=ctx.adapter,
                 vault_writer=ctx.vault_writer,
+                token_vault_writer=ctx.token_vault_writer,
                 chunk_size_rows=ctx.chunk_size_rows,
                 native_threads=ctx.native_threads,
                 pool_cache=pool_cache,

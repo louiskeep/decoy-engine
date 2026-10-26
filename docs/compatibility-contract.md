@@ -505,6 +505,25 @@ formats are identical (documented in `docs/strategies.md`, bucket_perturb).
 - **Config:** the `pipeline.yaml` schema. An old config must keep validating and
   running, or be deprecated through §4.4.
 
+`run_pipeline` gained `token_vault_writer` on 2026-10-26 (B-6 tokenization
+write-seam). It is keyword-only, defaults to `None`, and is additive under §4.1:
+a caller that does not pass it sees no change, and the `tokenize` strategy only
+runs when it is supplied (the job fails closed with `tokenize_requires_vault`
+otherwise). Passing it forces the full-frame route and disables auto-chunk when
+the route is left on `auto`; an explicitly bounded `execution_mode` is left as
+set and the job fails closed instead, since the bounded routes do not thread the
+writer. The frozen-signature table in
+`tests/unit/execution/test_r3_public_signature_freeze.py` records the new
+parameter. The platform-facing `TokenVaultWriter` protocol is scoped by
+namespace: `lookup_existing(namespace, plaintext)` and
+`put(namespace, plaintext, token)` both take the column namespace, so a vault
+keys identity by `(namespace, plaintext)`, not plaintext alone. A platform
+implementation must key its store the same way, or the same value under two
+namespaces would collapse to one token. tokenize is an always-keyed strategy,
+so at GA it requires a resolved >=32-byte secret like every other keyed
+surface (`keyed_strategy_requires_secret`); it never derives tokens from the
+public job seed.
+
 ### 3.5 Disguises
 
 Disguises are dated/versioned specs (`disguises/`, `disguises/loader.py`,

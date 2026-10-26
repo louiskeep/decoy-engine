@@ -116,6 +116,10 @@ class PipelineRunContext:
     sink: TransactionalSink | None
     source_loader: Callable[[str], pa.Table] | None
     vault_writer: Any
+    # MG-5: platform-injected token vault for the `tokenize` strategy. Threaded
+    # only to the full-frame adapter (run_pipeline forces full-frame for a
+    # tokenize job). None for every non-tokenize run.
+    token_vault_writer: Any
     derive_key: Any
     instance_default_locale: str | None
     provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None
@@ -168,6 +172,7 @@ def build_run_context(
     derive_key: Any,
     instance_default_locale: str | None,
     vault_writer: Any,
+    token_vault_writer: Any = None,
     fidelity_report: bool,
     post_validation: bool,
     post_validation_skip: list[str] | None,
@@ -358,6 +363,7 @@ def build_run_context(
         sink=sink,
         source_loader=source_loader,
         vault_writer=vault_writer,
+        token_vault_writer=token_vault_writer,
         derive_key=derive_key,
         instance_default_locale=instance_default_locale,
         provider_snapshot=provider_snapshot,

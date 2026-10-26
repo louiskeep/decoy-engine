@@ -119,6 +119,7 @@ def run_pipeline(
     derive_key: Any = None,
     instance_default_locale: str | None = None,
     vault_writer: Any = None,
+    token_vault_writer: Any = None,
     fidelity_report: bool = False,
     post_validation: bool = False,
     post_validation_skip: list[str] | None = None,
@@ -251,6 +252,18 @@ def run_pipeline(
     oracle call to the SAME registry snapshot as its own coordinator-side call.
     `None` (every real caller) resolves against the live registry.
     """
+    # MG-5: the `tokenize` strategy masks per-cell through a platform-injected
+    # token vault. That writer is threaded only to the FULL-FRAME adapter (the
+    # bounded sequential / out-of-core / chunked routes build their own
+    # StrategyContext without it), so a tokenize job MUST run full-frame or it
+    # would fail closed with `tokenize_requires_vault` on a bounded route. A
+    # token vault is passed only for a tokenize job, so its presence is the
+    # signal: force full-frame and disable auto-chunk when the caller left the
+    # route on `auto`. An explicit execution_mode is left untouched (a caller
+    # that forces a bounded route for a tokenize job gets the honest fail-closed).
+    if token_vault_writer is not None and execution_mode == "auto":
+        execution_mode = "full_frame"
+        auto_chunk = False
     with (
         use_progress(progress, interval_s=progress_interval_s) as _progress,
         _progress.run_scope(),
@@ -264,6 +277,7 @@ def run_pipeline(
                 derive_key=derive_key,
                 instance_default_locale=instance_default_locale,
                 vault_writer=vault_writer,
+                token_vault_writer=token_vault_writer,
                 fidelity_report=fidelity_report,
                 post_validation=post_validation,
                 post_validation_skip=post_validation_skip,

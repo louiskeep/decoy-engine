@@ -26,8 +26,12 @@ def test_module_sizes_hold_their_bars() -> None:
     assert f"src/decoy_engine/execution/{NEW}" not in size_sentry.ALLOWLIST
     assert size_sentry._loc(EXEC / "_planner.py") <= 600
     # R3 (run-context refactor) restructured _pipeline.py; the B2/B6a/B6b no-net-change pin is superseded by the census sentry.
+    # B-6 vault write-seam added the token_vault_writer param + force-full-frame wiring (308 -> 322).
     assert "src/decoy_engine/execution/_pipeline.py" not in size_sentry.ALLOWLIST
-    assert size_sentry._loc(EXEC / "_pipeline.py") == 318
+    # _pipeline.py: 308 (R3) -> 322 (B-6 token_vault_writer + force-full-frame)
+    # -> 332 (E1 progress scope + E3a knob deletion). Superseded by the census sentry.
+    assert "src/decoy_engine/execution/_pipeline.py" not in size_sentry.ALLOWLIST
+    assert size_sentry._loc(EXEC / "_pipeline.py") == 332
 
 
 def test_the_new_module_is_guarded_by_the_seam_disconnection_sentry() -> None:

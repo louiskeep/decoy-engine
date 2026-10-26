@@ -27,6 +27,10 @@ FROZEN_PARAMETERS: tuple[tuple[str, str, str, str], ...] = (
     ("derive_key", "KEYWORD_ONLY", "None", "Any"),
     ("instance_default_locale", "KEYWORD_ONLY", "None", "str | None"),
     ("vault_writer", "KEYWORD_ONLY", "None", "Any"),
+    # token_vault_writer: additive keyword-only param for the B-6 tokenization
+    # write-seam (2026-10-26). Backward compatible (optional, keyword-only);
+    # recorded in docs/compatibility-contract.md section 3.4.
+    ("token_vault_writer", "KEYWORD_ONLY", "None", "Any"),
     ("fidelity_report", "KEYWORD_ONLY", "False", "bool"),
     ("post_validation", "KEYWORD_ONLY", "False", "bool"),
     ("post_validation_skip", "KEYWORD_ONLY", "None", "list[str] | None"),
@@ -84,7 +88,7 @@ def test_run_pipeline_return_annotation_is_frozen() -> None:
 
 def test_the_frozen_table_covers_every_parameter_once() -> None:
     names = [row[0] for row in FROZEN_PARAMETERS]
-    assert len(names) == len(set(names)) == 36
+    assert len(names) == len(set(names)) == 37
     positional = [r[0] for r in FROZEN_PARAMETERS if r[1] == "POSITIONAL_OR_KEYWORD"]
     assert positional == ["config", "sources"]
 

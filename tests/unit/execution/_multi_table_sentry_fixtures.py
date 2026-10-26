@@ -24,6 +24,14 @@ def _s(fmt: str) -> pa.Array:
 
 
 EXTRA_FIXTURES: dict[str, tuple[list[dict[str, Any]], dict[str, pa.Array]]] = {
+    # tokenize is full-frame-only and fails closed without a vault, so the sentry
+    # loop threads a fresh in-memory token vault and a fixed key for this fixture
+    # (see test_multi_table_gates). The token is a function of key, namespace and
+    # plaintext, not of vault state, so two independent calls agree.
+    "tokenize:deterministic": (
+        [_col("val", "tokenize", namespace="tok_ns")],
+        {"val": _s("pan{i}")},
+    ),
     "shuffle:deterministic": (
         [_col("val", "shuffle", deterministic=True, namespace="sh_ns")],
         {"val": _s("x{i}")},

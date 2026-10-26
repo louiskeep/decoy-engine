@@ -157,6 +157,13 @@ TECHNIQUE_CLASS_BY_STRATEGY: dict[str, TechniqueClass] = {
     # is the sensitive region, or use a strategy that transforms every value if
     # the whole column is identifying.
     "top_code": "anonymisation",
+    # tokenize (MG-5, 2026-10-23): reversible tokenization. Each value maps to a
+    # surrogate token whose original is recoverable by an authorized party via
+    # the vault (the (plaintext, token) map held separately, under access
+    # control). This is the textbook Art 4(5) GDPR pseudonymisation case --
+    # linkage broken but reversible with separately-held information -- and the
+    # strongest instance of it. Same class as hash/fpe.
+    "tokenize": "pseudonymisation",
     # `nested` (MG-3 M2, 2026-05-31) is intentionally absent. It is a
     # wrapper -- its GDPR posture is the child strategy's posture, not
     # its own. Until the FE surfaces the child-strategy badge for

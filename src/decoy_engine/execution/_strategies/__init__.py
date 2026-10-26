@@ -36,6 +36,7 @@ from decoy_engine.execution._strategies._redact import RedactHandler
 from decoy_engine.execution._strategies._shuffle import ShuffleStrategyHandler
 from decoy_engine.execution._strategies._text_mask import TextMaskHandler
 from decoy_engine.execution._strategies._text_redact import TextRedactHandler
+from decoy_engine.execution._strategies._tokenize import TokenizeStrategyHandler
 from decoy_engine.execution._strategies._top_code import TopCodeStrategyHandler
 from decoy_engine.execution._strategies._truncate import TruncateHandler
 from decoy_engine.execution._strategies._windowed_date import WindowedDateStrategyHandler
@@ -67,6 +68,7 @@ SCALAR_HANDLERS: dict[str, StrategyHandler] = {
         GroupedSeriesStrategyHandler(),
         WindowedDateStrategyHandler(),
         GroupKeyStrategyHandler(),
+        TokenizeStrategyHandler(),
     )
 }
 
@@ -93,6 +95,7 @@ __all__ = [
     "ShuffleStrategyHandler",
     "TextMaskHandler",
     "TextRedactHandler",
+    "TokenizeStrategyHandler",
     "TopCodeStrategyHandler",
     "TruncateHandler",
     "WindowedDateStrategyHandler",
