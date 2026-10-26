@@ -64,9 +64,9 @@ from decoy_engine.execution._row_errors import RowErrorRecord, drain_row_errors
 from decoy_engine.execution._runner import (
     WorkNode,
     build_work_list,
-    date_shift_group_columns,
     group_key_group_by_columns,
     order_work,
+    source_anchor_columns,
     top_code_columns,
 )
 from decoy_engine.execution._sequential import run_sequential as _run_sequential
@@ -208,8 +208,10 @@ class PandasExecutionAdapter:
         # HC-3a (Codex R1 P1 #2): a date_shift group_by anchor column has the
         # same lossless requirement -- an int+null entity id must not widen to
         # float64, or `_canonicalize_source` rejects the valid id -- so union
-        # those columns into the FK-safe set per table.
-        group_anchor_cols = date_shift_group_columns(plan, registry)
+        # those columns into the FK-safe set per table. Cross-column V1 folds
+        # `joint_mask` key_by source keys into the same set (`source_anchor_columns`):
+        # both read an immutable source sibling through the pre-mask snapshot below.
+        group_anchor_cols = source_anchor_columns(plan, registry)
         # HC-3b (Codex R2): a top_code column has the same lossless-typing need
         # as an FK key -- an int+null column must not widen to float64, or a
         # value >= 2**53 rounds and the masked output becomes chunk-boundary
