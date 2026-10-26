@@ -82,6 +82,34 @@ feed the primary similarity, `overall_score`, or the grade. See
 `_distribution_gof.py` for the formulas, source patterns
 (`scipy.stats.ks_2samp` / `scipy.stats.chisquare`), and guards.
 
+DI1 (2026-10): the GOF extras are extended to the remaining comparable
+column classes so the measurement report does not silently cover only a
+subset of types. Both reuse the EXISTING two-sample KS-complement method
+(`ks_complement_binned`); no new statistic is introduced.
+
+  - datetime gains `extra_metrics.ks_complement` computed on the yearly
+    empirical CDF: the snapshot's `year_bins` are the ordinal binned
+    numeric representation the primary datetime similarity already uses, so
+    the year counts are re-expressed as a contiguous unit-width (one bin
+    per calendar year) histogram and handed to `ks_complement_binned`. KS
+    on the yearly ECDF is the natural ordinal two-sample GOF; it respects
+    the temporal ordering a categorical chi-square would discard. Source
+    pattern: `scipy.stats.ks_2samp` / SDV `QualityReport` KSComplement
+    (same prior art as the numeric case, applied to the year grid).
+  - freetext gains `extra_metrics.ks_complement` computed on the string
+    LENGTH distribution, never the raw text: the snapshot already derives a
+    `length_bin_edges` / `length_bin_counts` histogram (the same length
+    signal the primary `length_mean_diff` similarity summarizes), so it
+    feeds `ks_complement_binned` directly. Source pattern: identical to the
+    numeric KS case.
+
+A class that cannot support the method with the data on hand (e.g. a
+freetext snapshot predating the length histogram, or a datetime column
+with no year bins) does NOT fabricate a statistic: `ks_complement_binned`
+returns its coded `comparable: false` + `reason` marker, which the report
+surfaces as a `gof_unavailable` warning. `empty` and kind-mismatched
+columns are still never given a GOF entry.
+
 Out of scope (later sub-sprints own these):
   - Grade letter (A / B / C / D / F): D1d report assembly owns the
     mapping from score to grade.
@@ -205,6 +233,60 @@ def _finalize_gof(result: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _datetime_gof_inputs(
+    src_stats: dict[str, Any],
+    out_stats: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Adapt each side's datetime `year_bins` into the `{bin_edges,
+    bin_counts}` shape `ks_complement_binned` reads, so the yearly ECDF KS
+    reuses the numeric method unchanged. A side with no year bins yields an
+    empty dict, which the KS primitive reports as `missing_histogram`
+    (coded, honest -- never a fabricated statistic)."""
+    return _year_histogram(src_stats), _year_histogram(out_stats)
+
+
+def _year_histogram(stats: dict[str, Any]) -> dict[str, Any]:
+    """`year_bins` (a list of `{year, count}`) -> a contiguous unit-width
+    histogram, one bin per calendar year across the observed span, with
+    zero-count bins for years with no mass. Each bin `[y, y + 1)` is a
+    normal (non-degenerate) interval, so the ECDF ramps continuously within
+    a year and jumps only across years."""
+    bins = stats.get("year_bins") or []
+    counts_by_year: dict[int, int] = {}
+    for b in bins:
+        try:
+            counts_by_year[int(b["year"])] = int(b["count"])
+        except (KeyError, TypeError, ValueError):
+            return {}
+    if not counts_by_year:
+        return {}
+    y_min, y_max = min(counts_by_year), max(counts_by_year)
+    bin_edges = list(range(y_min, y_max + 2))
+    bin_counts = [counts_by_year.get(y, 0) for y in range(y_min, y_max + 1)]
+    return {"bin_edges": bin_edges, "bin_counts": bin_counts}
+
+
+def _freetext_gof_inputs(
+    src_stats: dict[str, Any],
+    out_stats: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Map each side's freetext LENGTH histogram
+    (`length_bin_edges` / `length_bin_counts`) onto the generic
+    `{bin_edges, bin_counts}` keys `ks_complement_binned` reads. A snapshot
+    without a length histogram yields an empty dict -> coded
+    `missing_histogram`, never a fabricated statistic. The raw text is never
+    read; only the length distribution crosses into the GOF."""
+    return _length_histogram(src_stats), _length_histogram(out_stats)
+
+
+def _length_histogram(stats: dict[str, Any]) -> dict[str, Any]:
+    edges = stats.get("length_bin_edges") or []
+    counts = stats.get("length_bin_counts") or []
+    if not edges or not counts:
+        return {}
+    return {"bin_edges": edges, "bin_counts": counts}
+
+
 # ── per-kind comparators ────────────────────────────────────────────────────
 
 
@@ -251,9 +333,29 @@ def _column_similarity(
         }
         return result
     if src_kind == "datetime":
-        return _datetime_similarity(src_stats, out_stats)
+        result = _datetime_similarity(src_stats, out_stats)
+        # DI1: KS-complement on the yearly ECDF (the ordinal binned-numeric
+        # representation the primary datetime similarity already uses). Reuses
+        # the numeric KS method; no new statistic. Computed from its own inputs
+        # independently of the primary's comparability (same rationale as the
+        # numeric branch above).
+        result["extra_metrics"] = {
+            "ks_complement": _finalize_gof(
+                ks_complement_binned(*_datetime_gof_inputs(src_stats, out_stats))
+            ),
+        }
+        return result
     if src_kind == "freetext":
-        return _freetext_similarity(src_stats, out_stats)
+        result = _freetext_similarity(src_stats, out_stats)
+        # DI1: KS-complement on the string-LENGTH distribution (never the raw
+        # text), reading the snapshot's own length histogram. Reuses the
+        # numeric KS method; no new statistic.
+        result["extra_metrics"] = {
+            "ks_complement": _finalize_gof(
+                ks_complement_binned(*_freetext_gof_inputs(src_stats, out_stats))
+            ),
+        }
+        return result
     return {
         "similarity": None,
         "method": f"unknown_kind:{src_kind}",
