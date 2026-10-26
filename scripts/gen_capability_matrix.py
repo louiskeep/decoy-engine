@@ -29,6 +29,9 @@ HEADER = """# Engine capability matrix
 This is the authoritative list of what the engine can do, read straight from
 the registries in `src/decoy_engine/`. Narrative guides (strategies, connector
 support, disguises) must agree with this file; the drift-guard test enforces it.
+
+This inventory lists strategies and provider capabilities, not route eligibility. See
+[`execution-backends.md`](execution-backends.md) for route and dtype restrictions.
 """
 
 
@@ -170,9 +173,18 @@ def render() -> str:
     gen = _generation_strategies()
     w(f"\n## Generation strategies ({len(gen)})\n\n")
     w(", ".join(f"`{g}`" for g in gen) + "\n")
+    w(
+        "\nThis enumeration combines V2 configuration types and legacy ColumnGenerator keys. "
+        "`distribution` is a legacy entry, not a streamed-generation promise.\n"
+    )
 
     prov = _providers()
     w(f"\n## Synthetic providers ({len(prov)})\n\n")
+    w(
+        "Provider backend names identify adapters. `decoy_native` identifies the engine's "
+        "Python identifier providers, not the Rust companion. The Deterministic column "
+        "describes provider capability, not deterministic pool-backed masking.\n\n"
+    )
     w("| Provider | Backend | Deterministic | Unique |\n| --- | --- | --- | --- |\n")
     for name, backend, det, uniq in prov:
         w(f"| `{name}` | {backend} | {det} | {uniq} |\n")
