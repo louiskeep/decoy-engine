@@ -46,10 +46,10 @@ from decoy_engine.execution._adapter import (
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._exact_int_sources import register_exact_int_sources
 from decoy_engine.execution._faker_degenerate_pin import apply_degenerate_faker_pin
+from decoy_engine.execution._fk_key_compat import _fk_key_value
 from decoy_engine.execution._fk_keys import (
     fk_all_null_array,
     fk_columns_for_table,
-    fk_key_value,
     fk_nullable_int_array,
     lossless_fk_int_values,
     to_pandas_fk_safe,
@@ -99,19 +99,6 @@ _KeyTuple = tuple[object, ...]
 # matter to `_parent_map`, but every drained record is folded (cheap; `_parent_map`
 # intersects with `edge.parent_columns`).
 _KeyErrorRows = dict[str, dict[str, dict[int, str]]]
-
-
-def _fk_key_value(value: object) -> object:
-    """Compatibility wrapper for tests and older internal imports.
-
-    Delegates to `decoy_engine.execution._fk_keys.fk_key_value`, the single
-    normalization shared by this adapter and the out-of-core route (SC1
-    port), so equal logical keys match across the int/float dtype split
-    pandas introduces (an int64 parent column vs a float64-because-null child
-    column read by `to_pandas()`). Both call sites in this module filter
-    nulls before calling this, so the null/NaN sentinel branch in
-    `fk_key_value` is unreachable here -- a superset, not a divergence."""
-    return fk_key_value(value)
 
 
 class PandasExecutionAdapter:

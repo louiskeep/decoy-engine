@@ -108,14 +108,23 @@ emitted as `.hex()[:truncate]`. Joinability-preserving. Null/NaN rows emit null
 and consume no derivation.
 
 ### mask.tokenize
-`execution/_strategies/_tokenize.py:84` (MG-5 reversible tokenization). A fresh
-surrogate is drawn exactly as `mask.hash` does: `derive(mask_key, namespace,
-plaintext)`, emitted as `'tok_' + .hex()[:32]`. The `(plaintext, token)` pair is
-then recorded in the platform token vault; the vault is EXTERNAL STATE and its
-`lookup_existing` may override the freshly drawn token with a previously stored
-one (the vault is the identity boundary). Null/NaN rows emit null and consume no
-derivation. `tokenize` is never native-routed (no compiled kernel; per-cell vault
-callback), so this site is catalogued for totality/audit, not a native draw.
+`execution/_strategies/_tokenize.py:122` (MG-5 reversible tokenization). V0 is
+string-only: a coded, value-free `tokenize_requires_string_dtype` preflight rejects
+any source column that is not string/object dtype, which sidesteps every OTHER
+`mask.hash` canonicalization branch (int-null-widening, float, tz-naive datetime)
+entirely -- none of those dtypes ever reaches this handler. Within that string-only
+domain, the fresh surrogate is drawn from an NFC-normalized value, like `mask.hash`'s
+own string branch (`_canonicalize_source`), not a raw `str(value)`:
+`derive(mask_key, namespace, nfc_normalize(str(value)).encode())`, emitted as
+`'tok_' + .hex()[:32]`. The `(plaintext, token)` pair -- `plaintext` is the SAME
+NFC-normalized string the token derives from -- is then recorded in the platform
+token vault; the vault is EXTERNAL STATE and its `lookup_existing` may override the
+freshly drawn token with a previously stored one (the vault is the identity
+boundary). Null/NaN rows emit null and consume no derivation. `tokenize` is never
+native-routed (no compiled kernel; per-cell vault callback), so this site is
+catalogued for totality/audit, not a native draw. Wiring the full per-value
+`_canonicalize_source` dispatch (lifting the string-only restriction) is a tracked
+V1 follow-up.
 
 ### mask.categorical_deterministic
 `execution/_strategies/_categorical.py:198`. Uniform path:

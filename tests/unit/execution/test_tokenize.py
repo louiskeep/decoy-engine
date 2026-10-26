@@ -160,6 +160,59 @@ def test_fails_closed_without_a_namespace() -> None:
     )
 
 
+# --- HIGH-1: V0 canonicalization guard (string/object dtype only) ----------
+
+
+def test_fails_closed_on_an_int_dtype_column() -> None:
+    # A plain int64 column (no nulls, so pandas has not even widened it) is still
+    # not string/object dtype; V0 tokenize must reject it rather than canonicalize
+    # a raw str(value) non-deterministically relative to mask.hash's contract.
+    df = pd.DataFrame({"pan": [1, 2, 3]})
+    with pytest.raises(ExecutionError) as exc:
+        _run(df, vault=FakeVault())
+    assert (
+        "tokenize_requires_string_dtype" in str(exc.value)
+        or getattr(exc.value, "code", "") == "tokenize_requires_string_dtype"
+    )
+
+
+def test_fails_closed_on_a_null_widened_int_column() -> None:
+    # The exact hazard HIGH-1 names: an int column with a null widens to float64
+    # under pandas. Pre-fix this would have silently tokenized "123.0"; V0 fails
+    # closed on the dtype instead of ever reaching a raw str(value) on it.
+    df = pd.DataFrame({"pan": pd.array([123, None, 456], dtype="Int64")})
+    with pytest.raises(ExecutionError) as exc:
+        _run(df, vault=FakeVault())
+    assert (
+        "tokenize_requires_string_dtype" in str(exc.value)
+        or getattr(exc.value, "code", "") == "tokenize_requires_string_dtype"
+    )
+
+
+def test_fails_closed_on_a_datetime_column() -> None:
+    df = pd.DataFrame({"pan": pd.to_datetime(["2026-01-01", "2026-01-02"])})
+    with pytest.raises(ExecutionError) as exc:
+        _run(df, vault=FakeVault())
+    assert (
+        "tokenize_requires_string_dtype" in str(exc.value)
+        or getattr(exc.value, "code", "") == "tokenize_requires_string_dtype"
+    )
+
+
+def test_unicode_equivalent_strings_tokenize_identically() -> None:
+    # "e" + combining acute (NFD) vs the precomposed "e-acute" (NFC) are the same
+    # logical string; mask.hash's canonicalizer NFC-normalizes before deriving, and
+    # tokenize must match so the SAME plaintext is never vaulted under two different
+    # byte forms (breaking idempotency and FK joinability for a reversible primitive).
+    nfd = "café"  # "café" with a combining acute accent (NFD-ish)
+    nfc = "café"  # "café" precomposed (NFC)
+    assert nfd != nfc  # distinct byte forms of the same logical string
+    vault = FakeVault()
+    out = _run(pd.DataFrame({"pan": [nfd, nfc]}), vault=vault)
+    assert out["pan"][0] == out["pan"][1]
+    assert len(vault.puts) == 1  # one canonical plaintext, one vault write
+
+
 # --- V0b: run_pipeline exposure + full-frame routing ------------------------
 
 
@@ -201,6 +254,83 @@ def test_run_pipeline_threads_vault_and_forces_full_frame(tmp_path: Any) -> None
     assert out[0] == out[2]  # idempotent surrogate for the repeated value
     assert len(vault.puts) == 2  # two distinct plaintexts written
     assert res.quality_metrics["execution"]["execution_mode"] == "full_frame"
+
+
+# --- MEDIUM-1: writer-raises fail-closed (R2 persistence-seam contract) ----
+
+
+class _RaisingVault(FakeVault):
+    """A FakeVault whose `put` or `lookup_existing` raises, to prove a writer
+    failure aborts the whole run rather than leaking a partial result."""
+
+    def __init__(self, *, raise_on: str) -> None:
+        super().__init__()
+        self._raise_on = raise_on
+
+    def lookup_existing(self, plaintext: str) -> str | None:
+        if self._raise_on == "lookup_existing":
+            raise RuntimeError("vault lookup_existing boom")
+        return super().lookup_existing(plaintext)
+
+    def put(self, plaintext: str, token: str) -> None:
+        if self._raise_on == "put":
+            raise RuntimeError("vault put boom")
+        super().put(plaintext, token)
+
+
+def _run_through_transactional_sink(df: pd.DataFrame, vault: Any, target_dir: Any) -> None:
+    """Mirror `run_sequential`'s own commit discipline: write + commit the sink
+    only AFTER masking succeeds; abort (and re-raise) if it does not. A sink
+    that aborts without ever writing or committing is the proof that a writer
+    failure mid-mask never reaches the point of publishing a partial output."""
+    from decoy_engine.execution._transactional_sink import ParquetTransactionalSink
+
+    sink = ParquetTransactionalSink(target_dir)
+    profile = Profile(
+        schema_version=1,
+        tables=(TableProfile(name="t", row_count=len(df), columns=(_col(df, "pan"),)),),
+        relationships=(),
+        profiled_at=datetime(2026, 10, 23),
+        decoy_engine_version=_VERSION,
+    )
+    config = {
+        "global_settings": {"seed": 7},
+        "tables": [
+            {"name": "t", "columns": [{"name": "pan", "strategy": "tokenize", "namespace": "ns"}]}
+        ],
+    }
+    plan = compile_plan(config, profile, decoy_engine_version=_VERSION)
+    ns = build_namespace_registry(config, profile)
+    try:
+        res = PandasExecutionAdapter().run(
+            plan,
+            {"t": pa.Table.from_pandas(df, preserve_index=False)},
+            registry=get_default_registry(),
+            relationship_graph=RelationshipGraph(edges=(), ordering=()),
+            namespace_registry=ns,
+            token_vault_writer=vault,
+        )
+    except Exception:
+        sink.abort()
+        raise
+    for name, table in res.outputs.items():
+        sink.write(name, table)
+    sink.commit()
+
+
+@pytest.mark.parametrize("raise_on", ["put", "lookup_existing"])
+def test_vault_writer_raising_aborts_the_run_with_no_partial_output(
+    raise_on: str, tmp_path: Any
+) -> None:
+    df = pd.DataFrame({"pan": ["4111111111111111", "5500000000000004"]})
+    vault = _RaisingVault(raise_on=raise_on)
+    target_dir = tmp_path / "out"
+    with pytest.raises(RuntimeError, match="vault .* boom"):
+        _run_through_transactional_sink(df, vault, target_dir)
+    # No output table was produced (the adapter.run() call never returned), and the
+    # transactional sink never committed -- its target directory was never created,
+    # so there is no partial output to find.
+    assert not target_dir.exists()
 
 
 def test_run_pipeline_without_vault_fails_closed(tmp_path: Any) -> None:

@@ -10,15 +10,13 @@ reproduce each entry's byte sequence exactly, so accuracy of ``seed_derivation``
 This module is pure data plus small helpers. It imports nothing from the
 masking or generation hot paths and changes no behavior.
 
-Partitionability rule (the property the native batched executor cares
-about): a site is ``partitionable`` when a partitioned or batched pass can
-reproduce the exact same value for a given output row as a single serial
-pass. Per-row source-keyed derivations are partitionable (row output is a
-pure function of that row's key). Whole-column ``permutation(n)`` /
-``choices(k=n)`` streams and per-group sequential streams are NOT: a row's
-value depends on the position of every earlier draw in the stream, which a
-partition boundary breaks. Per-row-reseeded streams are partitionable when
-the reseed key is a stable per-row identity (row index or source value).
+Partitionability rule (the property the native batched executor cares about): a site is
+``partitionable`` when a partitioned or batched pass can reproduce the exact same value for a
+given output row as a single serial pass. Per-row source-keyed derivations are partitionable (row
+output is a pure function of that row's key). Whole-column ``permutation(n)`` / ``choices(k=n)``
+streams and per-group sequential streams are NOT: a row's value depends on the position of every
+earlier draw in the stream, which a partition boundary breaks. Per-row-reseeded streams are
+partitionable when the reseed key is a stable per-row identity (row index or source value).
 """
 
 from __future__ import annotations
@@ -149,29 +147,6 @@ DRAW_SITES: tuple[DrawSite, ...] = (
         config_fingerprint_source="namespace_registry(namespace)+truncate",
         provider_version=_V6,
         notes="The HMAC digest IS the output; no RNG object. Joinability-preserving.",
-    ),
-    DrawSite(
-        draw_site_id="mask.tokenize",
-        family="source_keyed_hmac",
-        call_site="execution/_strategies/_tokenize.py:84",
-        entropy_root="mask_key",
-        seed_derivation="derive(mask_key, namespace, plaintext.encode())",
-        api_operation="determinism.derive -> HMAC-SHA256 digest hex",
-        call_shape="'tok_' + derive(...).hex()[:32]  # per value, then vault-recorded",
-        consumes_variable_draws=False,
-        identity="source_value",
-        null_draw_behavior="null/NaN rows emit null and consume no derivation",
-        partitionable=True,
-        config_fingerprint_source="namespace_registry(namespace)",
-        provider_version=_V6,
-        notes=(
-            "The HMAC digest seeds a fresh surrogate token; the (plaintext, token) "
-            "pair is then recorded in the PLATFORM vault. The vault is external "
-            "state: lookup_existing may override the freshly drawn token with a "
-            "previously stored one (the vault is the identity boundary). tokenize is "
-            "never native-routed (no compiled kernel; per-cell vault callback), so "
-            "this site is catalogued for totality/audit, not for a native draw."
-        ),
     ),
     DrawSite(
         draw_site_id="mask.categorical_deterministic",
@@ -908,8 +883,9 @@ _MASK_FORMULA = DrawSite(
 )
 
 from decoy_engine.execution.native._draw_sites_gen_pool import GEN_POOL_DRAW_SITES  # noqa: E402
+from decoy_engine.execution.native._draw_sites_tokenize import TOKENIZE_DRAW_SITES  # noqa: E402
 
-DRAW_SITES = (*DRAW_SITES, _MASK_FORMULA, *GEN_POOL_DRAW_SITES)
+DRAW_SITES = (*DRAW_SITES, _MASK_FORMULA, *GEN_POOL_DRAW_SITES, *TOKENIZE_DRAW_SITES)
 
 
 def draw_site_by_id(draw_site_id: str) -> DrawSite:
