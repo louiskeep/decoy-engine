@@ -53,8 +53,13 @@ Spark's `maxPartitionBytes`, Hadoop record framing. Credentials, pricing and
 fingerprints stay with the caller; the reader takes a local path and a budget
 only. `PANDAS_DEFAULT_NA_VALUES` pins the CSV null set to pandas' default so the
 chunked and full-frame CSV reads agree byte-for-byte. Coded failures
-`RowExceedsMaxRowBytes`, `CsvRecordExceedsMaxRowBytes`, `CsvMalformed` carry
-identifiers and positions, never row data.
+`RowExceedsMaxRowBytes`, `CsvRecordExceedsMaxRowBytes`, `CsvMalformed`,
+`UnsupportedColumnType` carry identifiers and positions, never row data. Per-row
+byte accounting is conservative (over-estimating, never under) so a chunk can
+never exceed the budget: large_string/large_binary are priced at their 8-byte
+offset (not 4), and a type whose per-row size is not fixed by its schema (a nested
+list/struct/map, a string/binary view) is rejected with `UnsupportedColumnType`
+before any chunk is yielded rather than priced at a flat guess.
 
 ### Added (parity E1: progress contract, 2026-10-24)
 
@@ -85,8 +90,13 @@ integrity checks (`storm.postmask.run_storm_post_mask`) over every mask table on
 the full-frame finalize branch and stamps the report under
 `quality_metrics["storm_postmask"]`. Report-only: findings never fail the run and
 output bytes are unchanged. Like `post_validation`, an opted-in job is declined
-from the sequential and out-of-core routes (`run_storm_requested`) so the whole
-output is resident when the checks run.
+from the sequential, out-of-core, mixed and unified-slice routes
+(`run_storm_requested`) so the whole output is resident when the checks run. The
+chunked full-frame route's streamed output mode now declines run_storm too
+(`decide_output_mode` reason `run_storm`): a streamed run leaves `result.outputs`
+empty, so a `run_storm: true` job on a chunked sink route had silently produced no
+report; it now stays resident (masked values are chunk-invariant, so the resident
+chunked output is STORM-correct).
 
 ### Removed (parity E3a: caller-chosen substrate and no-op adapter knobs, 2026-10-24)
 

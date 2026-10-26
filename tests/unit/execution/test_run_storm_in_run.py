@@ -110,6 +110,50 @@ def test_fk_job_with_run_storm_takes_the_full_frame_branch(tmp_path) -> None:
     assert routes == ["full_frame"]
 
 
+def test_run_storm_on_a_chunked_sink_job_still_produces_the_report(tmp_path) -> None:
+    # Codex HIGH (parity E3b): a `run_storm: true` job on the streamed chunked sink
+    # route silently skipped the STORM post-mask report. The streamed output leaves
+    # `result.outputs` empty, so `compute_storm_postmask` saw no mask tables and
+    # stamped nothing -- a silent no-op of the requested check. `decide_output_mode`
+    # now declines streaming for run_storm (like the other whole-output consumers:
+    # validators, quarantine, fidelity, post_validation), keeping the output resident
+    # so the report is produced. Masked values are chunk-invariant, so the resident
+    # chunked output is STORM-correct.
+    from tests.unit.execution import _auto_chunk_support as support
+    from tests.unit.execution import _b6a_support as b6a
+
+    src = pa.table(
+        {
+            "h": pa.array([f"u{i}@x.example" for i in range(support.ROWS)]),
+            "r": pa.array([f"s{i}" for i in range(support.ROWS)]),
+        }
+    )
+    path = support.write_source(src, tmp_path / "s.parquet")
+    raw = {
+        "version": 1,
+        "global_settings": {"seed": 42},
+        "run_storm": True,
+        "sources": {"t": {"type": "file", "format": "parquet", "path": path}},
+        "tables": [{"name": "t", "columns": [support.hash_col("h"), support.redact_col("r")]}],
+        "targets": {"t": {"type": "file", "format": "parquet", "path": "/dev/null"}},
+    }
+    cfg = PipelineConfig.model_validate(raw).model_dump()
+    sink = b6a.RecordingSink()
+    result = b6a.run_streamed(cfg, src, sink, auto_chunk_threshold_rows=1, chunk_size_rows=2)
+
+    # The whole point: the requested check ran, instead of a silent no-op.
+    report = result.quality_metrics.get("storm_postmask")
+    assert isinstance(report, dict) and "fail_count" in report
+    # Root cause: streaming is declined for run_storm, so the run stays resident.
+    assert result.quality_metrics["auto_chunk"]["output"] == {
+        "mode": "resident",
+        "reason": "run_storm",
+    }
+    assert result.quality_metrics["execution"]["outputs_streamed"] is False
+    assert sink.calls == []  # a resident run never touches the streaming sink
+    assert set(result.outputs) == {"t"}
+
+
 def test_generate_mask_job_with_run_storm_declines_the_mixed_route(tmp_path) -> None:
     # A generate+mask job mixed-admitted under `auto` routes to the chunked "mixed"
     # lane, which never runs the post-mask STORM report. With `run_storm: true` it

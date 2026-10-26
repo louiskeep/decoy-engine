@@ -13,10 +13,12 @@ import pytest
 
 from decoy_engine.io import (
     PANDAS_DEFAULT_NA_VALUES,
+    BoundedReadError,
     ChunkBudget,
     CsvMalformed,
     CsvRecordExceedsMaxRowBytes,
     RowExceedsMaxRowBytes,
+    cut_batch,
     iter_csv_chunks,
     iter_parquet_chunks,
     own_array,
@@ -74,6 +76,45 @@ def test_oversized_parquet_row_fails_closed_after_the_rows_before_it(tmp_path: P
         for c in iter_parquet_chunks(str(path), _budget(), table="o"):
             seen += c.num_rows
     assert seen == 10 and exc.value.detail["row"] == 10
+
+
+def test_a_nested_column_is_rejected_before_the_bound_can_be_exceeded(tmp_path: Path) -> None:
+    # Codex HIGH (parity E2a): a nested (list/struct) column was priced at a flat
+    # 9 bytes regardless of its payload, so a list holding a 10,000-byte string
+    # passed max_row_bytes=100 and the reader yielded a 10,008-byte row -- the
+    # bounded-memory contract of this public reader silently broken. A nested
+    # column cannot be priced per row from its type alone, so it is rejected with
+    # a coded error BEFORE any chunk is yielded.
+    big = "z" * 10_000
+    table = pa.table({"vals": pa.array([["ok"], [big], ["ok"]], pa.list_(pa.string()))})
+    path = tmp_path / "nested.parquet"
+    pq.write_table(table, path)
+    budget = _budget(chunk_budget_bytes=100, max_row_bytes=100)
+    seen: list[pa.Table] = []
+    with pytest.raises(BoundedReadError) as exc:
+        for c in iter_parquet_chunks(str(path), budget, table="n"):
+            seen.append(c)
+    assert seen == []  # rejected before any chunk (and its oversized row) was yielded
+    assert exc.value.code == "unsupported_column_type"
+    assert "list" in str(exc.value.detail.get("arrow_type", ""))
+
+
+def test_cut_batch_counts_eight_byte_offsets_for_large_string() -> None:
+    # Codex HIGH (parity E2a): large_string/large_binary use 8-byte offsets, but the
+    # per-row accounting charged only the 4-byte-offset overhead, so 40 empty
+    # large_string values produced a single 40-row chunk whose offset buffer alone is
+    # 320+ bytes under a 100-byte chunk budget. `cut_batch` is public (`decoy_engine.io`)
+    # and `own_array` keeps the large_string type, so the chunk really does hold 8-byte
+    # offsets. The accounting now counts them.
+    batch = pa.RecordBatch.from_arrays([pa.array([""] * 40, pa.large_string())], names=["s"])
+    budget = _budget(chunk_budget_bytes=100, max_chunk_rows=1000, max_row_bytes=1024)
+    chunks = list(cut_batch(batch, budget, table="ls"))
+    assert sum(c.num_rows for c in chunks) == 40
+    for c in chunks:
+        assert pa.types.is_large_string(c.schema.field("s").type)  # own_array kept the type
+        # The offset buffer alone is 8 bytes per row; counting it, no multi-row chunk
+        # may exceed the byte budget.
+        assert c.num_rows * 8 <= budget.chunk_budget_bytes or c.num_rows == 1
 
 
 def test_csv_chunks_keep_the_pandas_null_contract_and_string_types(tmp_path: Path) -> None:

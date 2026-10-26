@@ -56,12 +56,18 @@ PANDAS_DEFAULT_NA_VALUES: tuple[str, ...] = (
     "null",
 )
 
-# 4 bytes of offset plus one validity byte per variable-width value; one validity
-# byte per fixed-width value. Conservative against Arrow's bit-packed validity so
-# the budget is never under-counted.
+# Per-row offset + validity overhead. A 32-bit-offset value (string/binary) carries a
+# 4-byte offset; a 64-bit-offset value (large_string/large_binary) carries an 8-byte one.
+# Plus one validity byte per value (conservative against Arrow's bit-packed validity so
+# the budget is never under-counted), and one validity byte for a fixed-width value.
 _VAR_OVERHEAD = 5
+_LARGE_VAR_OVERHEAD = 9
 _FIXED_OVERHEAD = 1
-_STRING_TYPES = ("string", "large_string", "binary", "large_binary")
+# 32-bit vs 64-bit offset string/binary types, split because they are priced differently.
+_STRING_TYPES_32 = ("string", "binary")
+_STRING_TYPES_64 = ("large_string", "large_binary")
+# `iter_parquet_chunks` reads these as dictionaries; both offset widths qualify.
+_STRING_TYPES = _STRING_TYPES_32 + _STRING_TYPES_64
 _pc: Any = pc
 
 
@@ -87,6 +93,10 @@ class CsvRecordExceedsMaxRowBytes(BoundedReadError):  # noqa: N818 - coded condi
 
 class CsvMalformed(BoundedReadError):  # noqa: N818 - coded condition
     code = "csv_malformed"
+
+
+class UnsupportedColumnType(BoundedReadError):  # noqa: N818 - coded condition
+    code = "unsupported_column_type"
 
 
 @dataclass(frozen=True)
@@ -128,19 +138,51 @@ def own_array(array: pa.Array) -> pa.Array:
     return pa.concat_arrays([array])
 
 
-def _column_costs(column: pa.Array) -> np.ndarray:
-    """Exact decoded bytes per row for one column of a read batch."""
+def _var_overhead(arrow_type: pa.DataType) -> int | None:
+    """The per-value offset + validity overhead for a variable-width string/binary
+    type, or None if `arrow_type` is not one. large_string/large_binary carry 8-byte
+    offsets, so under-counting them (the bug this guards) is what broke the bound."""
+    name = str(arrow_type)
+    if name in _STRING_TYPES_32:
+        return _VAR_OVERHEAD
+    if name in _STRING_TYPES_64:
+        return _LARGE_VAR_OVERHEAD
+    return None
+
+
+def _column_costs(column: pa.Array, *, table: str) -> np.ndarray:
+    """Conservative (over-estimating, never under) decoded bytes per row for one column.
+
+    A type whose per-row size is not a function of the schema -- a nested list/struct/map,
+    or a view/other variable-width type this reader does not price explicitly -- is
+    rejected (`UnsupportedColumnType`) rather than guessed, so a chunk can never exceed the
+    caller's byte bound. `cut_batch` sums this across the batch BEFORE yielding any chunk,
+    so the reject lands before a row is handed on."""
     if isinstance(column, pa.DictionaryArray):
+        # A dictionary decodes to its value type (`own_array`); price by the decoded value
+        # length plus that value type's own offset + validity overhead (8-byte for large_*).
+        overhead = _var_overhead(column.type.value_type)
+        if overhead is None:
+            raise UnsupportedColumnType(table=table, arrow_type=str(column.type))
         lengths = pc.take(_binary_length(column.dictionary), column.indices)
         costs = pc.fill_null(lengths, 0).to_numpy(zero_copy_only=False).astype(np.int64)
-        return costs + _VAR_OVERHEAD
-    if str(column.type) in _STRING_TYPES:
+        return costs + overhead
+    overhead = _var_overhead(column.type)
+    if overhead is not None:
         costs = pc.fill_null(_binary_length(column), 0).to_numpy(zero_copy_only=False)
-        return costs.astype(np.int64) + _VAR_OVERHEAD
+        return costs.astype(np.int64) + overhead
+    if pa.types.is_nested(column.type):
+        # A list/struct/map/union row's size is its payload, not its type, so it cannot be
+        # priced per row from the schema alone; reject before the bound can be exceeded.
+        raise UnsupportedColumnType(table=table, arrow_type=str(column.type))
+    if pa.types.is_null(column.type):
+        return np.full(len(column), _FIXED_OVERHEAD, dtype=np.int64)  # validity only, no payload
     try:
         width = max(1, column.type.bit_width // 8)
     except ValueError:
-        width = 8
+        # A non-nested variable-width type we do not price explicitly (string_view,
+        # binary_view, ...). Reject rather than guess a width and risk under-counting.
+        raise UnsupportedColumnType(table=table, arrow_type=str(column.type)) from None
     return np.full(len(column), width + _FIXED_OVERHEAD, dtype=np.int64)
 
 
@@ -154,7 +196,7 @@ def cut_batch(
         return
     in_cost = np.zeros(rows, dtype=np.int64)
     for column in batch.columns:
-        in_cost += _column_costs(column)
+        in_cost += _column_costs(column, table=table)
     oversized = np.flatnonzero(in_cost > budget.max_row_bytes)
     limit = int(oversized[0]) if len(oversized) else rows
     total = in_cost + budget.out_row_bound
@@ -272,6 +314,7 @@ __all__ = [
     "CsvMalformed",
     "CsvRecordExceedsMaxRowBytes",
     "RowExceedsMaxRowBytes",
+    "UnsupportedColumnType",
     "csv_convert_options",
     "cut_batch",
     "iter_csv_chunks",
