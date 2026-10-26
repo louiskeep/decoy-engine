@@ -24,9 +24,7 @@ import pyarrow.compute as pc
 from decoy_engine.kernel._scalar import _array_to_pylist, _is_missing
 
 
-def code_set_map(
-    values: pa.Array | pa.ChunkedArray, select: Callable[[str], str]
-) -> pa.Array:
+def code_set_map(values: pa.Array | pa.ChunkedArray, select: Callable[[str], str]) -> pa.Array:
     """Map each non-null cell of `values` through `select`, calling it once per distinct value.
 
     `select(code) -> code` is the pure per-value corpus selection. The input is coerced to the
