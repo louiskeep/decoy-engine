@@ -96,6 +96,8 @@ _SEQ_NATIVE_PAYLOAD = {
     "faker": mx.COMPILED_SELECTION,
     "text_redact": mx.COMPILED_RUST,
     "text_mask": mx.COMPILED_RUST,
+    # B7: SEQ group_key derives through the compiled raw-hex kernel (sibling-gated).
+    "group_key": mx.COMPILED_RUST,
     "redact": mx.NAMED_ARROW,
     "truncate": mx.NAMED_ARROW,
     "passthrough": mx.NOOP,

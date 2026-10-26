@@ -1,58 +1,37 @@
-"""Native routing for payload masks on the sequential (SEQ) FK route: `hash`, and `fpe`.
+"""Native routing for payload masks on the sequential (SEQ) FK route.
 
-`run_sequential` masks one table at a time in pandas. For a hash column whose Arrow type the
-compiled companion canonicalizes identically, the hash handler asks this module for the
-tokens and gets them from the SAME keyed-derivation kernel the out-of-core route calls
-(`out_of_core/_hash_native.py`: `native_hash_array`, `decline_reason`, reused unchanged), so no
-keyed derivation is re-implemented here. The handler keeps its pandas orchestration; only the
-token computation moves.
+`run_sequential` masks one table at a time in pandas. This module is the dispatcher that lets a
+handler ask for a native result instead of computing it in Python, reusing the SAME keyed
+kernels the out-of-core route calls (no keyed derivation is re-implemented here); the handler
+keeps its pandas orchestration. The per-strategy parts (kernel load, admission, kernel call,
+error channel, warnings) are one `NativeOp` descriptor each in `_sequential_native_ops.py`,
+looked up by the column's strategy; a strategy with no descriptor runs in Python. Kernel state
+is kept per strategy. Two strategies keep their seam in a sibling module because their shape
+does not fit the per-value descriptor: `text_mask` (`_sequential_native_text_mask.py`) and
+`group_key` (`_sequential_native_group_key.py`, whose admission reads a sibling column).
 
-The per-strategy parts (kernel load, admission, kernel call, error channel, warnings) are one
-`NativeOp` descriptor each (`_sequential_native_ops.py`), looked up by the column's strategy; a
-strategy with no descriptor runs in Python. Kernel state is kept per strategy. Only hash and fpe
-may be native FK keys on this route (`_KEY_STRATEGIES`): both are injective, deterministic
-per-value maps whose orphan REMAP minting re-runs the PARENT's handler through the same kernel.
-Any other native-capable strategy's column that is an FK parent or child key stays Python and
-records a reporting-only decline (`REASON_KEY_NOT_INJECTIVE`), because its output is not
-guaranteed to be a unique key. The REMAP and inherited-child machinery below therefore serves
-the key strategies, and each entry is attributed to the parent's strategy.
+Only hash and fpe may be native FK keys on this route (`_KEY_STRATEGIES`): both are injective,
+deterministic per-value maps whose orphan REMAP minting re-runs the PARENT's handler through the
+same kernel. Any other native-capable strategy's column that is an FK parent or child key stays
+Python with a reporting-only decline (`REASON_KEY_NOT_INJECTIVE`), because its output is not a
+guaranteed unique key. The REMAP and inherited-child machinery serves the key strategies, each
+entry attributed to the parent's strategy. Three FK paths stay distinct, because only one calls
+the kernel at the scalar seam: (1) parent/payload derivation, masked at the handler and native
+when the input type was admitted at table prep; (2) a matched child, handed the parent's
+already-masked value by `resolve_fk_keys` (no kernel call, reported as inherited); (3) REMAP,
+which mints an orphan key by re-running the parent's handler (`make_remap_fn`), admitted on its
+own from the orphan keys' type and only when the parent's REMAP decision is native, so one
+column never mixes two Unicode normalizations. A column thus has up to two decisions (execution
+and REMAP); both come from the same pinned type and admission predicate.
 
-Three FK paths stay distinct, because only one of them calls the kernel at the scalar seam:
-
-1. Parent or payload derivation: a hash column is masked at the handler. Native when its
-   input type was admitted at table prep.
-2. Matched child: `resolve_fk_keys` hands the child the parent's already-masked value. No
-   kernel call and no re-derivation; the disposition reports the child as inherited, with the
-   parent it came from.
-3. REMAP: an orphan key is minted by running the PARENT's handler again (`make_remap_fn`).
-   That call is admitted on its own, from the type of the orphan keys it actually holds, and
-   only when the parent column's REMAP decision is native, so one column never mixes two
-   Unicode normalizations.
-
-A column has up to two decisions, because it can play two roles. The execution decision covers
-hashing the column's own rows and exists only for a column that is not an FK child (a child
-inherits). The REMAP decision covers re-deriving orphan keys for a child edge and exists for
-every column that is the parent key of some edge, including a chain's middle column that is
-also an FK child. Both come from the same pinned type and the same admission predicate, so a
-middle column mints its orphans on the kernel without ever being rehashed as a matched child.
-
-Boundary with pandas. The kernel is Arrow in, Arrow out; the handler holds a pandas column.
+Boundary with pandas: the kernel is Arrow in, Arrow out, but the handler holds a pandas column.
 Input is rebuilt as an Arrow array of the column's PINNED source type (read from the Arrow
-source at table prep), never inferred from pandas: inference would turn `large_string` into
-`string` and an all-null column into `null`, which are expected representation changes and
-not drift. Output is a plain list assigned positionally, exactly what the Python handler
-assigns, so a `when` selection with a gapped index lands on the right rows and an empty
-selection leaves the dtype the handler leaves today. An integer column that holds a null never
-reaches here: `reject_null_bearing_int` still refuses it before conversion.
-
-There is no fallback. A kernel fault, or a column that stops converting to its pinned type,
-propagates and aborts the run, so no column is ever part native and part Python and no
-Python retry follows a native selection. Whether an abort leaves earlier tables behind
-depends on the sink (see `_sequential.py`): a transactional sink discards them, a callable
-sink has already delivered them.
-
-Reason codes carry the strategy outcome, the column name and the Arrow type only, never a
-cell, key or derived value.
+source at table prep), never inferred from pandas (inference would turn `large_string` into
+`string` and an all-null column into `null`); output is a plain list assigned positionally, so a
+`when` selection with a gapped index lands on the right rows. There is no fallback: a kernel
+fault, or a column that stops converting, aborts the run, so no column is ever part native and
+part Python. Reason codes carry the strategy outcome, the column and the Arrow type only, never
+a cell, key or derived value.
 """
 
 from __future__ import annotations
@@ -73,6 +52,12 @@ from decoy_engine.execution._sequential_native_decisions import (
     PATH_SCALAR,
     ColumnDecision,
     RemapRecord,
+)
+from decoy_engine.execution._sequential_native_group_key import (
+    GROUP_KEY,
+    decide_group_key,
+    group_key_op,
+    load_raw_hex,
 )
 from decoy_engine.execution._sequential_native_ops import (
     BUCKET_PERTURB,
@@ -187,6 +172,7 @@ _OPS: dict[str, NativeOp] = {
     FAKER: faker_op(_load_index),
     TEXT_REDACT: text_redact_op(_load_text_redact),
     TEXT_MASK: text_mask_op(_load_text_redact),
+    GROUP_KEY: group_key_op(load_raw_hex),
 }
 
 
@@ -260,13 +246,29 @@ class SeqNativeRun:
             is_child = column in fk_children
             input_type = source_schema.field(column).type
             if op.strategy not in _KEY_STRATEGIES:
-                if column not in fk_children and column not in parent_keys:
+                if column in fk_children or column in parent_keys:
+                    reason = f"{REASON_KEY_NOT_INJECTIVE}:{op.strategy}:{column}:{input_type}"
+                    self._key_declines.append((op.strategy, _declined_entry(table, column, reason)))
+                elif op.strategy == GROUP_KEY:
+                    # group_key's admission reads the SIBLING column's type and role, which the
+                    # per-target `admit` cannot see; decide it from the source schema. The
+                    # companion load stays shared across ops through `self._kernel`.
+                    self._decisions[(table, column)] = decide_group_key(
+                        self._kernel(op),
+                        op.strategy,
+                        table,
+                        column,
+                        input_type,
+                        seed,
+                        source_schema,
+                        columns,
+                        fk_children,
+                        parent_keys,
+                    )
+                else:
                     self._decisions[(table, column)] = self._decide(
                         op, table, column, input_type, seed
                     )
-                else:
-                    reason = f"{REASON_KEY_NOT_INJECTIVE}:{op.strategy}:{column}:{input_type}"
-                    self._key_declines.append((op.strategy, _declined_entry(table, column, reason)))
                 continue
             if is_child:
                 self._inherited_columns.add((table, column))
@@ -392,7 +394,7 @@ class SeqNativeRun:
         Order matters: the sentinel mask comes from the original column first, the range check
         sees only the rows the kernel will see, and the preserved count is recorded once, only
         by the native path, so a declined column's count is left to the Python handler."""
-        gate = self._admitted(ctx, column, BUCKET_PERTURB, len(df))
+        gate = self.admitted(ctx, column, BUCKET_PERTURB, len(df))
         if gate is None:
             return None
         decision, bound = gate
@@ -425,7 +427,7 @@ class SeqNativeRun:
         hit for the Python assembly. Admission saw only the seed; whether the BUILT pool holds
         strings is known now, and a caller-overridden registry binding of an allowlisted name
         may not, so that is the last decline before the kernel."""
-        gate = self._admitted(ctx, column, FAKER, len(df))
+        gate = self.admitted(ctx, column, FAKER, len(df))
         if gate is None:
             return None
         decision, bound = gate
@@ -462,7 +464,7 @@ class SeqNativeRun:
 
         The handler's resolved config is the payload (None detectors = all, never `()`);
         `native_text_redact` replays lookaround and non-ASCII cells itself, byte for byte."""
-        gate = self._admitted(ctx, column, TEXT_REDACT, len(df))
+        gate = self.admitted(ctx, column, TEXT_REDACT, len(df))
         if gate is None:
             return None
         decision, bound = gate
@@ -479,7 +481,7 @@ class SeqNativeRun:
         `config` is the handler's resolved `TextMaskCall` fields (None detectors = all, never
         `()`). The warning is built from the counts the one native call returned, not by
         re-masking."""
-        gate = self._admitted(ctx, column, TEXT_MASK, len(df))
+        gate = self.admitted(ctx, column, TEXT_MASK, len(df))
         if gate is None:
             return None
         decision, bound = gate
@@ -495,7 +497,7 @@ class SeqNativeRun:
             )
         return result.values.to_pylist(), warnings
 
-    def _admitted(
+    def admitted(
         self, ctx: StrategyContext, column: str, strategy: str, rows: int
     ) -> tuple[ColumnDecision, Any] | None:
         """The column's decision and bound kernel when this call may run native, else None.
@@ -531,7 +533,7 @@ class SeqNativeRun:
         Unparseable cells keep their text and are appended to `ctx.row_errors` as the handler
         does; the pipeline decides fail versus quarantine. Positions need no rebasing: the
         kernel rebases past sentinel rows and the `when` gate maps back to table positions."""
-        gate = self._admitted(ctx, column, DATE_SHIFT, len(df))
+        gate = self.admitted(ctx, column, DATE_SHIFT, len(df))
         if gate is None:
             return None
         decision, bound = gate
@@ -575,7 +577,7 @@ class SeqNativeRun:
 
         A kernel error channel is checked before any value leaves: a strategy that declares
         errors raises its coded exception, so the failed table publishes nothing."""
-        gate = self._admitted(ctx, column, strategy, len(df))
+        gate = self.admitted(ctx, column, strategy, len(df))
         if gate is None:
             return None
         decision, bound = gate

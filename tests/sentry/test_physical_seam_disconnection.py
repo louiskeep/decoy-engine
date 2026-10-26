@@ -757,6 +757,14 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         # helpers and the operator registry; nothing from `execution.physical`.
         "src/decoy_engine/execution/out_of_core/_faker_native.py",
         "src/decoy_engine/execution/out_of_core/_faker_pool.py",
+        # B7 (native group_key payload on the sequential route): `_sequential_native_group_key.py`
+        # is new -- group_key's admission reads a SIBLING column, so its decision + derivation live
+        # in a sibling module (like `_sequential_native_text_mask.py`) rather than the per-value op
+        # seam; the oracle handler (`_strategies/_group_key.py`) offers the seam its resolved
+        # config via a lazy import. Both reuse the shared raw-hex kernel and import nothing from
+        # `execution.physical`.
+        "src/decoy_engine/execution/_sequential_native_group_key.py",
+        "src/decoy_engine/execution/_strategies/_group_key.py",
     }
     unexpected = [
         name

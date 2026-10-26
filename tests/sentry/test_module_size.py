@@ -110,9 +110,10 @@ ALLOWLIST: dict[str, int] = {
     # entry points, so the chunked and sequential routes cannot drift); move the type resolution
     # into its own module with the next operator gate.
     "src/decoy_engine/execution/native/_requirements.py": 657,
-    # SeqNativeRun: one bespoke per-strategy seam method per tenant (7 now) around a shared
-    # admit/pin/apply core; cohesive, the descriptors and decision types are already split out.
-    "src/decoy_engine/execution/_sequential_native.py": 697,
+    # SeqNativeRun: one bespoke per-strategy seam method per tenant around a shared admit/pin/apply
+    # core; cohesive, the descriptors and decision types are already split out, and text_mask +
+    # group_key keep their seam in sibling modules (_sequential_native_text_mask/_group_key).
+    "src/decoy_engine/execution/_sequential_native.py": 699,
     # sequential FK route threading; split the per-table mask/quarantine loop.
     # cross-column V1 folds joint_mask key_by into the source-anchor build (a comment, no new logic).
     "src/decoy_engine/execution/_sequential.py": 684,
