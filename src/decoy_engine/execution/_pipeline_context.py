@@ -125,11 +125,8 @@ class PipelineRunContext:
     provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None
     # Knobs.
     execution_mode: str
-    substrate: str | None
     resolved_substrate: str
     fpe_chunk_count: int
-    max_workers: int
-    fallback_to_pandas: bool
     explain_plan: bool
     auto_chunk: bool
     chunk_size_rows: int
@@ -185,10 +182,7 @@ def build_run_context(
     execution_mode: str,
     sink: TransactionalSink | None,
     source_loader: Callable[[str], pa.Table] | None,
-    substrate: str | None,
     fpe_chunk_count: int,
-    max_workers: int,
-    fallback_to_pandas: bool,
     explain_plan: bool,
     auto_chunk: bool,
     chunk_size_rows: int,
@@ -216,9 +210,9 @@ def build_run_context(
     """
     from decoy_engine.execution._output_projection import resolve_unconfigured_column_policy
     from decoy_engine.execution._substrate import (
+        SUBSTRATE,
         require_bool,
         require_positive_int,
-        resolve_substrate,
         select_execution_adapter,
     )
     from decoy_engine.execution.out_of_core._route_policy import resolve_reorder_threshold_rows
@@ -237,13 +231,8 @@ def build_run_context(
     # time with a typed error instead of after the expensive stages.
     # Construction is cheap and side-effect free for both adapters, so
     # pure-generate jobs (which never use it) lose nothing.
-    resolved_substrate = resolve_substrate(substrate)
-    adapter = select_execution_adapter(
-        substrate=resolved_substrate,
-        fpe_chunk_count=fpe_chunk_count,
-        max_workers=max_workers,
-        fallback_to_pandas=fallback_to_pandas,
-    )
+    resolved_substrate = SUBSTRATE
+    adapter = select_execution_adapter(fpe_chunk_count=fpe_chunk_count)
     # Auto-chunk knobs share the substrate knobs' fail-early contract.
     require_bool("auto_chunk", auto_chunk)
     require_positive_int("chunk_size_rows", chunk_size_rows)
@@ -379,11 +368,8 @@ def build_run_context(
         instance_default_locale=instance_default_locale,
         provider_snapshot=provider_snapshot,
         execution_mode=execution_mode,
-        substrate=substrate,
         resolved_substrate=resolved_substrate,
         fpe_chunk_count=fpe_chunk_count,
-        max_workers=max_workers,
-        fallback_to_pandas=fallback_to_pandas,
         explain_plan=explain_plan,
         auto_chunk=auto_chunk,
         chunk_size_rows=chunk_size_rows,

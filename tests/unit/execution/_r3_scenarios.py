@@ -677,8 +677,8 @@ def f_forced_ooc_incompatible(tmp: Path) -> dict[str, Any]:
         return _trace(exc, sink, out)
 
 
-def f_invalid_substrate_before_profile(tmp: Path) -> dict[str, Any]:
-    _, exc = _attempt(lambda: _go({"tables": []}, {}, substrate="not-a-substrate"))
+def f_invalid_knob_before_profile(tmp: Path) -> dict[str, Any]:
+    _, exc = _attempt(lambda: _go({"tables": []}, {}, fpe_chunk_count=0))
     return _trace(exc)
 
 
@@ -686,7 +686,7 @@ def f_knob_precedence(tmp: Path) -> dict[str, Any]:
     """Several invalid knobs at once: which one the entry reports pins validation order."""
     out: dict[str, Any] = {}
     cases: dict[str, dict[str, Any]] = {
-        "substrate_then_chunk": {"substrate": "zzz", "chunk_size_rows": -1},
+        "chunk_count_then_chunk": {"fpe_chunk_count": 0, "chunk_size_rows": -1},
         "chunk_then_threshold": {"chunk_size_rows": -1, "auto_chunk_threshold_rows": 0},
         "auto_chunk_type": {"auto_chunk": "yes"},
         "ooc_threshold": {"out_of_core_threshold_rows": 0},
@@ -700,15 +700,13 @@ def f_knob_precedence(tmp: Path) -> dict[str, Any]:
         "multi_table_flag": {"multi_table_dispatch_enabled": 1},
         "stream_flag": {"stream_chunked_output": 1},
         "reorder_threshold": {"out_of_core_reorder_threshold_rows": -5},
-        "stream_then_substrate": {"stream_chunked_output": 1, "substrate": "zzz"},
+        "stream_then_chunk_count": {"stream_chunked_output": 1, "fpe_chunk_count": 0},
         "native_threads": {"native_threads": 0},
     }
     # Every knob alone, then every adjacent pair with BOTH invalid and the later knob listed
     # first, so swapping the order of any two neighbouring checks changes the recorded error.
     ordered: list[tuple[str, Any]] = [
-        ("substrate", "zzz"),
         ("fpe_chunk_count", 0),
-        ("max_workers", 0),
         ("auto_chunk", 1),
         ("chunk_size_rows", 0),
         ("auto_chunk_threshold_rows", 0),
@@ -953,7 +951,7 @@ FAILURE_SCENARIOS: dict[str, Callable[[Path], dict[str, Any]]] = {
     for f in (
         f_reject_before_read,
         f_forced_ooc_incompatible,
-        f_invalid_substrate_before_profile,
+        f_invalid_knob_before_profile,
         f_knob_precedence,
         f_seq_sink_success,
         f_seq_sink_write_failure,

@@ -182,6 +182,7 @@ def _sequential_eligible(
     vault_writer: Any,
     post_validation: bool = False,
     resolved_substrate: str = "pandas",
+    run_storm: bool = False,
 ) -> tuple[bool, str]:
     """Decide whether a mask job may take the bounded-memory sequential path.
 
@@ -225,6 +226,9 @@ def _sequential_eligible(
         return False, "fidelity_report_requested"
     if post_validation:
         return False, "post_validation_requested"
+    if run_storm:
+        # STORM post-mask checks need the resident output (full-frame), like post_validation.
+        return False, "run_storm_requested"
     if vault_writer is not None:
         return False, "vault_writer_requested"
     if resolved_substrate != "pandas":
@@ -287,6 +291,7 @@ def decide_execution_route(
     execution_mode: str,
     graph: RelationshipGraph,
     post_validation: bool = False,
+    run_storm: bool = False,
     resolved_substrate: str = "pandas",
     out_of_core_compatible: bool = False,
     out_of_core_reject_code: str | None = None,
@@ -441,6 +446,7 @@ def decide_execution_route(
         vault_writer=vault_writer,
         post_validation=post_validation,
         resolved_substrate=resolved_substrate,
+        run_storm=run_storm,
     )
     cyclic = _has_cross_table_fk_cycle(graph)
     # D3b: the vault is the ONLY disqualifier lifted, and only onto out-of-core.
@@ -459,6 +465,7 @@ def decide_execution_route(
             vault_writer=None,
             post_validation=post_validation,
             resolved_substrate=resolved_substrate,
+            run_storm=run_storm,
         )[0]
     )
     # D3a: validators are the only disqualifier lifted here, and only onto out-of-core.
@@ -477,6 +484,7 @@ def decide_execution_route(
             vault_writer=vault_writer,
             post_validation=post_validation,
             resolved_substrate=resolved_substrate,
+            run_storm=run_storm,
         )[0]
     )
     # `eligible` is a job-SHAPE check and stays true for a cross-table cycle, so
@@ -530,7 +538,8 @@ def decide_execution_route(
         reject_explicit_sequential(eligible, route_reason, cyclic, has_mask_table)
         return "sequential", route_reason
 
-    if mixed_admitted:
+    # `not run_storm`: STORM needs the resident full-frame output, so a storm job declines mixed here.
+    if mixed_admitted and not run_storm:
         return "mixed", "mixed_generate_mask_chunked"
 
     if lazy_transform_bearing and has_relationships and has_mask_table:

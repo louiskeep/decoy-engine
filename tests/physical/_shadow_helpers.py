@@ -242,7 +242,6 @@ def run_shadow_and_oracle(
         config,
         resolved_sources,
         engine_version=ENGINE_VERSION,
-        substrate="pandas",
         execution_mode="full_frame",
         auto_chunk=auto_chunk,
         # The oracle is the pinned pandas lane. B2 made the dispatcher the default
@@ -717,7 +716,6 @@ def run_generation_shadow_and_oracle(
             config,
             {},
             engine_version=ENGINE_VERSION,
-            substrate="pandas",
             execution_mode="full_frame",
             derive_key=derive_key,
             instance_default_locale=instance_default_locale,
@@ -965,7 +963,6 @@ def run_mixed_shadow_and_oracle(
             config,
             resolved_sources,
             engine_version=ENGINE_VERSION,
-            substrate="pandas",
             execution_mode="full_frame",
             derive_key=derive_key,
             instance_default_locale=instance_default_locale,

@@ -217,6 +217,17 @@ whole-table synthesize. Resident and streamed materialization produce byte-ident
 admitted streamed generation shapes; this does not imply that every legacy whole-table
 statistical family streams.
 
+## Progress events
+
+Every route reports the same value-free event stream when the caller passes
+`run_pipeline(progress=sink)` (or wraps another entry point in
+`decoy_engine.progress.use_progress(sink)`): a resolve phase, one route event naming
+the layer-1 route and the lane, per-table mask or generate phases with row counts, rate
+samples (rows done and rows/s, time-throttled) from the chunked dispatcher, the
+out-of-core batch stream and generation batches, and a terminal event. The full-frame
+oracle reports its mask step once, not per table, because it has no finer boundary.
+Output bytes never depend on the sink.
+
 ## What this means for a caller
 
 - If a job lands on a native route, the strategies marked compiled Rust / compiled index

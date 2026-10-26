@@ -80,9 +80,9 @@ def test_forced_out_of_core_on_an_ineligible_job_is_a_config_error_before_any_wr
     assert got["sink_calls"] == []
 
 
-def test_a_bad_substrate_fails_before_profiling(tmp_path: Path) -> None:
-    got = _run("f_invalid_substrate_before_profile", tmp_path)
-    assert got["exception"]["code"] == "invalid_substrate"
+def test_a_bad_knob_fails_before_profiling(tmp_path: Path) -> None:
+    got = _run("f_invalid_knob_before_profile", tmp_path)
+    assert got["exception"]["code"] == "invalid_execution_knob"
 
 
 @pytest.mark.parametrize(

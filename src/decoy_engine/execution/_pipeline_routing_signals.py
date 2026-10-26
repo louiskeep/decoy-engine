@@ -601,6 +601,7 @@ def resolve_execution_route(
         validators=validators,
         fidelity_report=fidelity_report,
         post_validation=post_validation,
+        run_storm=bool(config.get("run_storm")),
         vault_writer=vault_writer,
         execution_mode=execution_mode,
         graph=graph,

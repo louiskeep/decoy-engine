@@ -715,3 +715,24 @@ R3 (2026-10-10): the `locals()` forwarding (`run_from_pipeline_locals`, its two 
 import-time `_assert_forwarding_covers_signature`) was deleted when `maybe_run_unified_slice` began
 taking the typed run context and routing decision, taking the file from 605 to 469 LOC. At or under
 GOAL the entry is deleted.
+
+
+## `src/decoy_engine/execution/_pipeline_routing.py` (census 691 -> 700)
+
+E3b/E2a-review (2026-10-24): 691 -> 700 threading `run_storm` into
+`decide_execution_route`. `_sequential_eligible` declines the sequential and
+out-of-core routes when `run_storm` is set (STORM needs the resident full-frame
+output, like `post_validation`), and the mixed generate+mask branch declines the
+same way (the chunked mixed route never calls `compute_storm_postmask`). This
+leaves the module at the 700-LOC hard cap with no headroom. Decomposition target:
+extract the forced-mode handling (`execution_mode == "out_of_core" | "sequential"`)
+and the B1b byte-estimate block into siblings next time this module is touched; no
+further routing logic may land here until it is decomposed.
+
+
+## `src/decoy_engine/execution/_pipeline_routing_signals.py` (census 609 -> 610)
+
+E3b (2026-10-24): +1 line passing `run_storm=bool(config.get("run_storm"))` into
+the single `decide_execution_route` call site. Decomposition target unchanged:
+split the probe-recovery resolver into its own module when next touched.
+

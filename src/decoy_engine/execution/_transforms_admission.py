@@ -97,6 +97,7 @@ def check_rejections_before_preparation(
         vault_writer=vault_writer,
         post_validation=post_validation,
         resolved_substrate=resolved_substrate,
+        run_storm=bool(config.get("run_storm")),
     )
     cyclic = _has_cross_table_fk_cycle(graph)
     if execution_mode == "sequential":

@@ -140,15 +140,12 @@ def _execute_admitted(
     use_byte_estimate_routing: bool,
     use_probe_routing: bool,
     fpe_chunk_count: int,
-    max_workers: int,
-    fallback_to_pandas: bool,
     adapter: ExecutionAdapter,
     out_of_core_reorder_threshold_rows: int | None,
     out_of_core_budget_bytes: int | None,
     engine_version: str,
     key_provider: KeyProvider | None,
     route_reason: str,
-    substrate: str | None,
     resolved_substrate: str,
     explain_plan: bool,
     execution_plan_decision: ExecutionPlan | None,
@@ -161,12 +158,8 @@ def _execute_admitted(
     through the 4.4 coordinator and assemble the returned `ExecutionResult`.
     First `execution.physical` reach in this module's call chain.
 
-    Accepts `resolved_substrate` from the caller rather than re-deriving it:
-    `run_pipeline` resolves the substrate exactly ONCE (`_pipeline.py`'s own
-    `resolved_substrate = resolve_substrate(substrate)`), and a second
-    `resolve_substrate(substrate)` call here would re-read `DECOY_SUBSTRATE`
-    from the process environment a second time -- a TOCTOU window where an
-    env change mid-run could disagree with what admission already gated on.
+    Accepts `resolved_substrate` from the caller (`run_pipeline` sets it once
+    on the context) so admission and execution agree on one adapter label.
     `adapter` is `run_pipeline`'s own up-front selection, reused for
     `stamp_execution_metrics` parity rather than selected a second time.
     """
@@ -213,8 +206,6 @@ def _execute_admitted(
             use_byte_estimate_routing=use_byte_estimate_routing,
             use_probe_routing=use_probe_routing,
             fpe_chunk_count=fpe_chunk_count,
-            max_workers=max_workers,
-            fallback_to_pandas=fallback_to_pandas,
             out_of_core_reorder_threshold_rows=out_of_core_reorder_threshold_rows,
             out_of_core_budget_bytes=out_of_core_budget_bytes,
             engine_version=engine_version,
@@ -307,11 +298,8 @@ def _execute_admitted(
         _pipeline_finalize.stamp_execution_metrics(
             quality_metrics,
             adapter=adapter,
-            substrate=substrate,
             resolved_substrate=resolved_substrate,
             fpe_chunk_count=fpe_chunk_count,
-            max_workers=max_workers,
-            fallback_to_pandas=fallback_to_pandas,
             route_chunked=False,
             auto_chunk=auto_chunk,
             chunk_size_rows=chunk_size_rows,
@@ -408,12 +396,7 @@ def maybe_run_unified_slice(
     if not (ctx.has_mask_table and ctx.unified_slice_enabled):
         return None
 
-    # D1 (Codex final-gate BLOCKER): `ctx.resolved_substrate` is `run_pipeline`'s ONE resolution
-    # of the substrate, carried on the context -- never re-read here. A second
-    # `resolve_substrate(substrate)` call in this module would re-read
-    # `DECOY_SUBSTRATE` from the process environment a second time, opening a
-    # TOCTOU window where an env change between `run_pipeline`'s resolution
-    # and this admission gate could disagree with what was already decided.
+    # `ctx.resolved_substrate` is set once by `run_pipeline`; admission reads it, never re-derives.
     candidate = _admission.cheap_admission(
         route=decision.route,
         route_chunked=decision.route_chunked,
@@ -452,15 +435,12 @@ def maybe_run_unified_slice(
         use_byte_estimate_routing=ctx.use_byte_estimate_routing,
         use_probe_routing=ctx.use_probe_routing,
         fpe_chunk_count=ctx.fpe_chunk_count,
-        max_workers=ctx.max_workers,
-        fallback_to_pandas=ctx.fallback_to_pandas,
         adapter=ctx.adapter,
         out_of_core_reorder_threshold_rows=ctx.out_of_core_reorder_threshold_rows,
         out_of_core_budget_bytes=ctx.out_of_core_budget_bytes,
         engine_version=ctx.engine_version,
         key_provider=ctx.key_provider,
         route_reason=decision.route_reason,
-        substrate=ctx.substrate,
         resolved_substrate=ctx.resolved_substrate,
         explain_plan=ctx.explain_plan,
         execution_plan_decision=decision.execution_plan_decision,
