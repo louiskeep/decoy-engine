@@ -72,6 +72,12 @@ _STATIC_BEHAVIOR: dict[str, DistributionBehavior] = {
     "shuffle": "preserves_all",
     "hash": "preserves_cardinality_only",
     "fpe": "preserves_cardinality_only",
+    # tokenize (B-6): keyed deterministic vault substitution. One distinct
+    # canonical plaintext (NFC-normalized) maps to one token within a namespace;
+    # the 128-bit digest makes collisions negligible but is not collision-resolved.
+    # So cardinality and value frequencies are preserved up to canonicalization
+    # while the values themselves change, the same class as hash and fpe.
+    "tokenize": "preserves_cardinality_only",
     "faker": "destroys_frequency",
     "categorical": "destroys_frequency",  # overridden by the dynamic resolver
     "bucketize": "coarsens",

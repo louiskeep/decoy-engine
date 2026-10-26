@@ -28,13 +28,14 @@ class TestPerStrategyLabel:
         [
             # Full _STATIC_BEHAVIOR map pinned per-value (TQ finding #9: mutmut does
             # not mutate the module-level constant, so every strategy->label mapping
-            # is pinned here as a hardcoded golden). All 23 statically-resolved
+            # is pinned here as a hardcoded golden). All 24 statically-resolved
             # strategies covered; `categorical` is resolved dynamically (see
             # TestCategoricalDynamicResolution) and returns before the static lookup.
             ("passthrough", "preserves_all"),
             ("shuffle", "preserves_all"),
             ("hash", "preserves_cardinality_only"),
             ("fpe", "preserves_cardinality_only"),
+            ("tokenize", "preserves_cardinality_only"),
             ("group_key", "preserves_cardinality_only"),
             ("faker", "destroys_frequency"),
             ("grouped_series", "destroys_frequency"),
@@ -70,6 +71,7 @@ class TestPerStrategyLabel:
             "shuffle",
             "hash",
             "fpe",
+            "tokenize",
             "group_key",
             "faker",
             "grouped_series",

@@ -771,6 +771,21 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         # `execution.physical`.
         "src/decoy_engine/execution/_sequential_native_group_key.py",
         "src/decoy_engine/execution/_strategies/_group_key.py",
+        # MG-5 (tokenize on the vault write seam): the new handler, its registration in the
+        # strategy registry, and its GDPR technique-class label. None imports `execution.physical`.
+        "src/decoy_engine/execution/_strategies/__init__.py",
+        "src/decoy_engine/execution/_strategies/_tokenize.py",
+        "src/decoy_engine/execution/_technique_class.py",
+        # MG-5 follow-up (B-6 regression-gate green-up): tokenize's distribution-behavior
+        # label (preserves_cardinality_only, like hash and fpe) in the static behavior map.
+        # A pure label addition; imports nothing from `execution.physical`.
+        "src/decoy_engine/execution/_distribution_behavior.py",
+        # MG-5 module-size remediation: the `_fk_key_value` compat wrapper split out of
+        # `_pandas_adapter.py`, and the `mask.tokenize` DrawSite + provider-primitive data
+        # siblings split out of the capped `native/_determinism_protocol.py` /
+        # `native/_draw_site_providers.py`. Pure moves; none imports `execution.physical`.
+        "src/decoy_engine/execution/_fk_key_compat.py",
+        "src/decoy_engine/execution/native/_draw_sites_tokenize.py",
     }
     unexpected = [
         name
