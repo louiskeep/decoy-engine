@@ -128,6 +128,7 @@ _DEFAULT_TIMEOUT_S = 1800.0
 # in-process today. See module docstring's "Deliberately NOT in scope" note.
 _NOT_SERIALIZABLE_KWARGS: tuple[str, ...] = (
     "sink",
+    "progress",
     "source_loader",
     "vault_writer",
     "registry",
@@ -183,7 +184,7 @@ def run_pipeline_isolated(
             safety bound, not a tuned per-job budget; pass `None` only if
             you have deliberately decided an unbounded hang is acceptable.
         **run_pipeline_kwargs: forwarded to `run_pipeline` (e.g.
-            `engine_version`, `execution_mode`, `substrate`). See
+            `engine_version`, `execution_mode`, `native_threads`). See
             `_NOT_SERIALIZABLE_KWARGS` for the excluded subset.
 
         file_access: the file-access policy. A child process cannot inherit a policy and

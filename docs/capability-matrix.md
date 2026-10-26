@@ -7,6 +7,9 @@ This is the authoritative list of what the engine can do, read straight from
 the registries in `src/decoy_engine/`. Narrative guides (strategies, connector
 support, disguises) must agree with this file; the drift-guard test enforces it.
 
+This inventory lists strategies and provider capabilities, not route eligibility. See
+[`execution-backends.md`](execution-backends.md) for route and dtype restrictions.
+
 ## Mask strategies (24)
 
 | Strategy | GDPR technique class |
@@ -42,7 +45,11 @@ support, disguises) must agree with this file; the drift-guard test enforces it.
 
 `categorical`, `derived`, `derived_aggregate`, `distribution`, `faker`, `formula`, `group_key`, `grouped_series`, `reference`, `sequence`, `statistical`, `windowed_date`
 
+This enumeration combines V2 configuration types and legacy ColumnGenerator keys. `distribution` is a legacy entry, not a streamed-generation promise.
+
 ## Synthetic providers (34)
+
+Provider backend names identify adapters. `decoy_native` identifies the engine's Python identifier providers, not the Rust companion. The Deterministic column describes provider capability, not deterministic pool-backed masking.
 
 | Provider | Backend | Deterministic | Unique |
 | --- | --- | --- | --- |

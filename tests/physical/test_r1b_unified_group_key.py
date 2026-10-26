@@ -21,6 +21,7 @@ from decoy_engine.execution.native._chunked_evidence import RUST_COMPANION
 from tests.physical.test_unified_route_evidence import (
     NEEDS_COMPANION,
     OPERATORS,
+    STRATEGY_BY_OPERATOR,
     _evidence_for,
     assert_exact_evidence,
     lane_nodes,
@@ -58,5 +59,8 @@ def test_group_key_job_runs_on_the_unified_route_and_reads_the_sibling(
         planned=RUST_COMPANION,
         executed=RUST_COMPANION,
         calls=1,
+        table="t",
+        columns=[OPERATORS["native_group_key"][1]],
+        strategy=STRATEGY_BY_OPERATOR["native_group_key"],
     )
     assert pa.int64() in judged

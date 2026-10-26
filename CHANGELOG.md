@@ -9,6 +9,27 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (parity E2a: shared bounded reader + progress stream, 2026-10-26)
+
+New public `decoy_engine.io` package (`bounded_reader`, `csv_framer`): the memory-bounded chunked
+source reader plus CSV record framer, promoted so the CLI and platform chunk a source identically.
+The reader takes a local path and a `ChunkBudget` only; credentials, pricing and fingerprints stay
+with the caller. Chunk sizing is priced by the physical Arrow buffer bytes (offset spans including
+null-slot payloads, the terminal offset, validity, large_* widths); extension-wrapped Arrow columns
+are priced by their underlying storage, or rejected with `UnsupportedColumnType` when they cannot be
+bounded (extension-over-dictionary, nested, run-end-encoded, union, and view storages), so an owned
+chunk can never exceed the caller's declared byte budget. New public `decoy_engine.progress` package:
+a value-free run-event stream (`ProgressSink`, `PhaseEvent`, `RateSample`, `RouteEvent`,
+`WarningEvent`, `TerminalEvent`) via `run_pipeline(progress=, progress_interval_s=)`; observation
+only, output bytes are identical with or without a sink. `run_storm: true` now runs in-run (it
+declines to the full-frame finalize branch on the chunked and mixed routes instead of being dropped).
+
+### Removed (pre-GA hard deletes, 2026-10-26)
+
+The inert execution knobs `substrate`, `max_workers`, and `fallback_to_pandas`, and the stub
+`decoy_engine.license` (`LicenseVerifier`) and `decoy_engine.schema` (`SchemaInspector`) packages,
+are removed (pre-GA hard delete; no consumer in the CLI or platform). `DECOY_SUBSTRATE` stays
+pandas-only.
 ### Added (B-6: tokenization write-seam, 2026-10-26)
 
 A `tokenize` strategy writes a deterministic surrogate token for each source
@@ -69,6 +90,78 @@ the job runs on the sequential route as before. Composite FK groups out-of-core 
 pinned strictly against the oracle (`tests/parity/test_phase_d_dcomp_composite_ooc*.py`);
 the pre-existing route-level differences they surfaced are recorded in
 `tests/parity/SEMANTIC_DIFFERENCES.md` (Dcomp-OOC section).
+
+### Added (parity E2a: shared bounded reader, 2026-10-24)
+
+`decoy_engine.io` is the bounded source reader both the CLI and the platform now
+share, promoted verbatim from the platform's `api/jobs/native_reader.py` +
+`csv_record_framer.py` so a source is chunked the same way in both products.
+`csv_framer` frames CSV logical records by bytes before any parser sees them;
+`bounded_reader` cuts Parquet and CSV into owned Arrow chunks within a
+`ChunkBudget` (decoded-input bytes plus a per-row output allowance per chunk, a
+row cap, a per-row byte cap, the Parquet batch size). Established patterns cited
+in the module docstring: Arrow's row-group/batch reading with `read_dictionary`,
+Spark's `maxPartitionBytes`, Hadoop record framing. Credentials, pricing and
+fingerprints stay with the caller; the reader takes a local path and a budget
+only. `PANDAS_DEFAULT_NA_VALUES` pins the CSV null set to pandas' default so the
+chunked and full-frame CSV reads agree byte-for-byte. Coded failures
+`RowExceedsMaxRowBytes`, `CsvRecordExceedsMaxRowBytes`, `CsvMalformed`,
+`UnsupportedColumnType` carry identifiers and positions, never row data. Per-row
+byte accounting is conservative (over-estimating, never under) so a chunk can
+never exceed the budget: large_string/large_binary are priced at their 8-byte
+offset (not 4), and a type whose per-row size is not fixed by its schema (a nested
+list/struct/map, a string/binary view) is rejected with `UnsupportedColumnType`
+before any chunk is yielded rather than priced at a flat guess.
+
+### Added (parity E1: progress contract, 2026-10-24)
+
+`decoy_engine.progress` is the engine's value-free run-event stream for callers'
+monitors (pattern: dbt's structured events; binding: the thread-local channel the
+timing collector already uses). `run_pipeline(progress=<ProgressSink>,
+progress_interval_s=1.0)` emits `PhaseEvent`s (resolve; `mask` per table on the
+sequential and out-of-core routes and once on the full-frame step; `generate` per
+table; finalize is covered by the terminal event), one `RouteEvent` (layer-1 route
+and lane), `RateSample`s (rows done and rows/s per table, at most once per interval
+plus a final sample, from the chunked dispatcher, the out-of-core batch stream and
+generation batches), `WarningEvent`s and a `TerminalEvent` (ok / error with the
+exception class name). Any other entry point reports to the same sink when called
+inside `with decoy_engine.progress.use_progress(sink):`. Events carry table and
+column names and counts only, never cell values, expression text or `str(exc)`.
+Observation only: output bytes are identical with or without a sink, a raising sink
+is counted and reported once at the terminal event, and `run_pipeline_isolated`
+refuses a sink (it cannot cross the process boundary). `StructuredEventsSink`
+adapts events onto the optional `StructuredEvents` logger surface so a logger such
+as the platform's `JobLogger` receives `step` / `throughput_sample` calls unchanged.
+Four over-600-LOC route modules grew by their emit lines (census updated).
+
+### Fixed (parity E3b: `run_storm: true` was inert, 2026-10-24)
+
+`PipelineConfig.run_storm` was accepted by the schema but nothing in the
+execution spine honoured it. `run_pipeline` now runs the STORM post-mask
+integrity checks (`storm.postmask.run_storm_post_mask`) over every mask table on
+the full-frame finalize branch and stamps the report under
+`quality_metrics["storm_postmask"]`. Report-only: findings never fail the run and
+output bytes are unchanged. Like `post_validation`, an opted-in job is declined
+from the sequential, out-of-core, mixed and unified-slice routes
+(`run_storm_requested`) so the whole output is resident when the checks run. The
+chunked full-frame route's streamed output mode now declines run_storm too
+(`decide_output_mode` reason `run_storm`): a streamed run leaves `result.outputs`
+empty, so a `run_storm: true` job on a chunked sink route had silently produced no
+report; it now stays resident (masked values are chunk-invariant, so the resident
+chunked output is STORM-correct).
+
+### Removed (parity E3a: caller-chosen substrate and no-op adapter knobs, 2026-10-24)
+
+`run_pipeline` no longer accepts `substrate`, `max_workers` or `fallback_to_pandas`;
+`select_execution_adapter` takes only `fpe_chunk_count`; `resolve_substrate`,
+`VALID_SUBSTRATES` and the `DECOY_SUBSTRATE` environment variable are gone. Pandas is
+the only adapter (the parity oracle); which compute backend runs a strategy is decided
+by the routing layers and the native operator registry (see
+`docs/execution-backends.md`), never by the caller. The `execution_adapter` evidence
+block, stamped only when `fpe_chunk_count` is non-default, drops its
+`requested_substrate`, `max_workers` and `fallback_to_pandas` keys. The never-implemented
+`SchemaInspector` and always-free `LicenseVerifier` stubs are deleted from the public API.
+Pre-GA hard delete: a caller passing a removed kwarg gets a `TypeError`.
 
 ### Added (§CSV-PARAMS: declare headerless and non-comma delimited sources, 2026-10-23)
 

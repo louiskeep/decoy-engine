@@ -297,6 +297,12 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         "src/decoy_engine/execution/_pipeline_routing.py",
         "src/decoy_engine/execution/_pipeline_routing_signals.py",
         "src/decoy_engine/execution/_pipeline_sources.py",
+        # E3b (run_storm honoured in-run): `capacity.py` passes
+        # `run_storm=bool(config.get("run_storm"))` into its two `decide_execution_route`
+        # calls so the capacity probe sees the same storm-forces-full-frame decision the
+        # production route makes. Pure kwarg threading; imports nothing from
+        # `execution.physical` (the import-direction sweeps above stay green).
+        "src/decoy_engine/execution/capacity.py",
         # R3 (run context + route executors, 2026-10-10): `run_pipeline`'s resolve and route
         # phases move into the new `_pipeline_context.py` (a frozen `PipelineRunContext` and
         # `RouteDecision`) and the two bounded layer-1 routes get context-driven entry points in
@@ -716,6 +722,12 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         # the existing `native_text_redact` wrapper and the shared config predicate; nothing from
         # `execution.physical`.
         "src/decoy_engine/execution/out_of_core/_text_redact_native.py",
+        # B5 (out-of-core text_mask on the compiled span kernel): `_text_mask_native.py` (per-column
+        # decision, the native call and its disposition) is new; `_hash_run.py` carries its
+        # per-table plan, `_mask.py` dispatches it and `_mask_group_c.py` (both already permitted)
+        # delegate the admitted non-NER column to it. It imports the existing `native_text_mask`
+        # wrapper and the shared config/source predicates; nothing from `execution.physical`.
+        "src/decoy_engine/execution/out_of_core/_text_mask_native.py",
         "src/decoy_engine/execution/out_of_core/_mask.py",
         "src/decoy_engine/execution/out_of_core/_stream_driver.py",
         # OOC spill-reader mmap->OSFile memory fix (2026-10-16): the reorder-lane spill readers
@@ -774,6 +786,22 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         "src/decoy_engine/execution/_strategies/_code_set.py",
         "src/decoy_engine/execution/out_of_core/_stream_driver_support.py",
         "src/decoy_engine/execution/_strategies/_joint_mask.py",
+        # B4 (deterministic-REUSE faker payload on the out-of-core route): `_faker_pool.py` (the
+        # run-scoped pool context + budget gate) and `_faker_native.py` (per-column decision, the
+        # compiled pool-select call and its disposition) are new; `_compat.py` admits the shape and
+        # `_pipeline_routing_signals.py`/`_preflight.py` thread the source type, `_mask.py` /
+        # `_hash_run.py` / `_runner.py` dispatch it. They import the shared pool/index-kernel
+        # helpers and the operator registry; nothing from `execution.physical`.
+        "src/decoy_engine/execution/out_of_core/_faker_native.py",
+        "src/decoy_engine/execution/out_of_core/_faker_pool.py",
+        # B7 (native group_key payload on the sequential route): `_sequential_native_group_key.py`
+        # is new -- group_key's admission reads a SIBLING column, so its decision + derivation live
+        # in a sibling module (like `_sequential_native_text_mask.py`) rather than the per-value op
+        # seam; the oracle handler (`_strategies/_group_key.py`) offers the seam its resolved
+        # config via a lazy import. Both reuse the shared raw-hex kernel and import nothing from
+        # `execution.physical`.
+        "src/decoy_engine/execution/_sequential_native_group_key.py",
+        "src/decoy_engine/execution/_strategies/_group_key.py",
         # MG-5 (tokenize on the vault write seam): the new handler, its registration in the
         # strategy registry, and its GDPR technique-class label. None imports `execution.physical`.
         "src/decoy_engine/execution/_strategies/__init__.py",

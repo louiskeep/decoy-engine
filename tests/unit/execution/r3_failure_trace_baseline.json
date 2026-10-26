@@ -72,10 +72,10 @@
   "sink_dir_exists": false,
   "source_loader_calls": null
  },
- "f_invalid_substrate_before_profile": {
+ "f_invalid_knob_before_profile": {
   "exception": {
-   "code": "invalid_substrate",
-   "message": "substrate override must be one of ('pandas',); got 'not-a-substrate'.",
+   "code": "invalid_execution_knob",
+   "message": "fpe_chunk_count must be a positive int; got 0.",
    "module": "decoy_engine.execution._errors",
    "type": "ExecutionError"
   },
@@ -100,6 +100,12 @@
   "byte_flag": {
    "code": "invalid_execution_knob",
    "message": "use_byte_estimate_routing must be a bool; got 1.",
+   "module": "decoy_engine.execution._errors",
+   "type": "ExecutionError"
+  },
+  "chunk_count_then_chunk": {
+   "code": "invalid_execution_knob",
+   "message": "fpe_chunk_count must be a positive int; got 0.",
    "module": "decoy_engine.execution._errors",
    "type": "ExecutionError"
   },
@@ -151,7 +157,7 @@
    "module": "decoy_engine.execution._errors",
    "type": "ExecutionError"
   },
-  "pair:fpe_chunk_count+max_workers": {
+  "pair:fpe_chunk_count+auto_chunk": {
    "code": "invalid_execution_knob",
    "message": "fpe_chunk_count must be a positive int; got 0.",
    "module": "decoy_engine.execution._errors",
@@ -160,12 +166,6 @@
   "pair:full_frame_reject_rows+out_of_core_budget_bytes": {
    "code": "invalid_execution_knob",
    "message": "full_frame_reject_rows must be a positive int; got 0.",
-   "module": "decoy_engine.execution._errors",
-   "type": "ExecutionError"
-  },
-  "pair:max_workers+auto_chunk": {
-   "code": "invalid_execution_knob",
-   "message": "max_workers must be a positive int; got 0.",
    "module": "decoy_engine.execution._errors",
    "type": "ExecutionError"
   },
@@ -214,12 +214,6 @@
   "pair:stream_chunked_output+multi_table_dispatch_enabled": {
    "code": "invalid_execution_knob",
    "message": "stream_chunked_output must be a bool; got 1.",
-   "module": "decoy_engine.execution._errors",
-   "type": "ExecutionError"
-  },
-  "pair:substrate+fpe_chunk_count": {
-   "code": "invalid_substrate",
-   "message": "substrate override must be one of ('pandas',); got 'zzz'.",
    "module": "decoy_engine.execution._errors",
    "type": "ExecutionError"
   },
@@ -277,15 +271,9 @@
    "module": "decoy_engine.execution._errors",
    "type": "ExecutionError"
   },
-  "stream_then_substrate": {
-   "code": "invalid_substrate",
-   "message": "substrate override must be one of ('pandas',); got 'zzz'.",
-   "module": "decoy_engine.execution._errors",
-   "type": "ExecutionError"
-  },
-  "substrate_then_chunk": {
-   "code": "invalid_substrate",
-   "message": "substrate override must be one of ('pandas',); got 'zzz'.",
+  "stream_then_chunk_count": {
+   "code": "invalid_execution_knob",
+   "message": "fpe_chunk_count must be a positive int; got 0.",
    "module": "decoy_engine.execution._errors",
    "type": "ExecutionError"
   },

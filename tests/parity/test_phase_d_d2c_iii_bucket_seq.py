@@ -713,6 +713,7 @@ def test_the_registry_holds_the_native_strategies() -> None:
         "faker",
         "text_redact",
         "text_mask",
+        "group_key",
     }
 
 

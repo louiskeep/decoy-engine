@@ -14,12 +14,12 @@ The cell set comes from the constants each route consults, not from observed dis
 
 | Class | Meaning |
 |---|---|
-| compiled Rust kernel | companion kernel owns the compute. text_redact and text_mask are Rust span detection with the splice in Python. |
+| compiled Rust kernel | companion kernel owns the compute. text_redact is Rust span detection with the splice in Python; text_mask is Rust span detection, with native splice/FPE paths for admitted configurations and Python splice fallback. |
 | compiled index selection | faker admitted payload: values are selected through the compiled index kernel. Only pool construction is Python. |
 | named-Arrow kernel | `redact_array`, `truncate_array` (`kernel/_scalar.py`) |
 | no-op | passthrough |
 | dedicated Python | a named handler or primitive with no Rust or Arrow kernel. Not the generic pandas masking fallback for an admitted kernel cell. |
-| excluded | not admitted on that route; native-chunked FK cells and the full-frame oracle |
+| excluded | not admitted on that route; native-chunked FK cells and the full-frame oracle. Route exclusion is distinct from a caller-visible route decline (rerouted) and from a native-kernel decline (route retained, reference implementation used). |
 
 ## Matrix
 
@@ -30,7 +30,7 @@ Sequential route (every scalar strategy runs through its shared handler):
 | hash, fpe | compiled Rust | compiled Rust |
 | categorical, bucket_perturb, date_shift | compiled Rust | dedicated Python (key declined, reporting only) |
 | faker | compiled index selection | dedicated Python (key declined) |
-| text_redact, text_mask | compiled Rust spans, Python splice | dedicated Python (key declined) |
+| text_redact, text_mask | compiled Rust spans; text_redact Python splice, text_mask native splice/FPE for admitted configs with Python splice fallback | dedicated Python (key declined) |
 | redact, truncate | named-Arrow | named-Arrow |
 | passthrough | no-op | no-op |
 | code_set | dedicated Python | dedicated Python |
@@ -41,12 +41,23 @@ Out-of-core route (payload; FK key surface is hash, redact, truncate, passthroug
 | Strategy | Payload | FK key |
 |---|---|---|
 | hash | compiled Rust | compiled Rust |
-| fpe, categorical, text_redact, bucket_perturb | compiled Rust | excluded |
+| fpe, text_redact | compiled Rust | excluded |
+| categorical (deterministic) | compiled Rust | excluded |
+| bucket_perturb (explicit date_format) | compiled Rust | excluded |
 | redact, truncate | named-Arrow | named-Arrow |
 | passthrough | no-op | no-op |
 | text_mask | dedicated Python (`mask_cell` per-cell loop) | excluded |
-| code_set (mask mode) | dedicated Python | excluded |
-| faker, date_shift, bucketize, geo_generalize, formula, derived, nested, and the rest | excluded (declined with a caller-visible reason) | excluded |
+| code_set (mask mode without chapter_preserve) | dedicated Python | excluded |
+| faker (deterministic REUSE, exact-string, person-name) | compiled index selection | excluded |
+| date_shift, bucketize | declined (`out_of_core_row_error_strategy_unsupported`) | excluded |
+| categorical (non-deterministic) | declined (`out_of_core_categorical_nondeterministic_unsupported`) | excluded |
+| geo_generalize | declined (`out_of_core_whole_column_aggregation_unsupported`) | excluded |
+| formula, derived | declined (`out_of_core_dynamic_output_type_unsupported`) | excluded |
+| nested | declined (`out_of_core_child_dispatch_unsupported`) | excluded |
+| grouped_series, windowed_date, derived_aggregate, group_key, joint_mask | declined (`out_of_core_cross_row_strategy_unsupported`) | excluded |
+| shuffle, top_code | declined (`out_of_core_strategy_unsupported`) | excluded |
+
+Per-strategy native admission guards are tabulated in [execution-backends.md, Native admission qualifications](../execution-backends.md#native-admission-qualifications). These OOC cells describe main; a later slice (B1) changes the date_shift/bucketize cells after its own merge.
 
 Native-chunked route: FK-participating tables on either side reroute to the oracle (`fk_relationship_not_native_route`), so no FK cell is admitted. Non-FK payload follows the operator registry: Rust kernels, faker as compiled index selection, redact and truncate as named-Arrow, passthrough as a no-op. Because this route admits no FK cell, its non-FK cells carry no fresh witness in this audit; they are covered by native-chunked-route suites (each drives `run_mask_chunked` and imports nothing from `out_of_core`). What those suites prove differs by cell. For the scalar compiled and selection cells (hash, categorical, bucket_perturb, date_shift, fpe, group_key, faker) the suites witness compiled consumption directly: the column reports a `rust_companion` / `rust_pool_select` backend and `compiled_kernel_executed` is True. For text_redact and text_mask the chunked route runs the compiled span kernel behind an `arrow_python` operator whose per-cell Python fallback is byte-identical, and the cited suites assert only parity with the oracle plus `executed_backend == "arrow_python"` and `compiled_kernel_executed is False`. They therefore prove the native chunked arrow_python route is taken and matches the oracle byte for byte; they do NOT prove the compiled span candidates are consumed, because a Python span recompute would pass the same parity and backend assertions. The compiled-span-consumption witness for text is the SEQ witness `tests/parity/test_phase_d_audit_no_legacy.py::test_seq_text_operator_runs_compiled_spans_and_never_the_handler_loop` (and, for text_redact, the out-of-core `tests/parity/test_ooc_text_redact_native_real.py`), not a chunked one. `test_native_chunked_compiled_cells_cite_their_real_kernel_suite` asserts the cited strategy set equals the derived compiled and selection set (nine cells), so a new chunked compiled cell fails until it cites a suite: hash `tests/native/test_chunked_entry_parity_matrix.py`, categorical `test_chunked_categorical_parity.py`, bucket_perturb `test_chunked_bucket_perturb_parity.py`, date_shift `test_chunked_date_shift_parity.py`, fpe `test_c6a_fpe_chunked.py`, group_key `test_chunked_group_key_parity.py`, faker `test_chunked_nondet_faker_parity.py`, text_mask `test_c6b_i_text_mask_chunked.py`, text_redact `test_c6c_i_text_redact_chunked.py` (all under `tests/native/`). Hash has no dedicated chunked parity suite; its chunked coverage is the shared entry parity matrix.
 
@@ -57,7 +68,7 @@ Native-chunked route: FK-participating tables on either side reroute to the orac
 - faker cells admission declines (provider outside the allowlist, non-string source, whole-column cardinality modes, no companion) and faker FK-key cells.
 - Non-injective native-capable strategies configured as an FK key on SEQ: declined with a reporting-only entry, the Python handler runs.
 - out-of-core text_mask: the shared `mask_cell` per-cell loop, no Rust span path on that route. Found by this audit; the program did not list it. Backlog item: route it through the same span kernel the SEQ and native-chunked routes use. Byte-parity for the OOC text_mask and code_set dedicated-Python cells is proven by `tests/parity/test_out_of_core_group_c_parity.py`.
-- The remaining shared SEQ handlers listed above run on the full-frame handler by design; none has native admission on any route.
+- The remaining shared SEQ handlers listed above have no SEQ native admission. group_key has native implementations on chunked and eligible unified full-frame execution.
 
 ## Qualification of program section 5
 

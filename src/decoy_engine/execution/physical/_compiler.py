@@ -36,7 +36,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from decoy_engine.execution.physical import _reasons
 from decoy_engine.execution.physical._plan import (
@@ -91,6 +91,7 @@ def layer1_route(inputs: PhysicalPlanInputs) -> tuple[str, str]:
         validators=list(inputs.validators),
         fidelity_report=inputs.fidelity_report,
         vault_writer=vault_writer_sentinel,
+        run_storm=_run_storm(inputs),
         execution_mode=inputs.execution_mode,
         graph=inputs.graph,
         resolved_substrate=inputs.resolved_substrate,
@@ -173,6 +174,7 @@ def out_of_core_not_ready_reason(inputs: PhysicalPlanInputs) -> str:
         fidelity_report=inputs.fidelity_report,
         vault_writer=vault_writer_sentinel,
         resolved_substrate=inputs.resolved_substrate,
+        run_storm=_run_storm(inputs),
     )
     if not eligible:
         return eligibility_reason
@@ -429,3 +431,13 @@ def compile_physical_plan(inputs: PhysicalPlanInputs) -> PhysicalPlan:
         synthesis=synthesis,
         tables=tuple(tables),
     )
+
+
+def _run_storm(inputs: Any) -> bool:
+    """`run_storm: true` from the frozen config (a routing disqualifier, E3b)."""
+    from decoy_engine.execution.physical._inputs import thaw_config
+
+    try:
+        return bool(thaw_config(inputs.config).get("run_storm"))
+    except Exception:
+        return False
