@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -115,6 +116,88 @@ def test_cut_batch_counts_eight_byte_offsets_for_large_string() -> None:
         # The offset buffer alone is 8 bytes per row; counting it, no multi-row chunk
         # may exceed the byte budget.
         assert c.num_rows * 8 <= budget.chunk_budget_bytes or c.num_rows == 1
+
+
+def _null_slot_spanning(arrow_type: pa.DataType, payload_bytes: int) -> pa.Array:
+    """A two-value string/binary array whose first slot is NULL yet physically spans
+    `payload_bytes` (offsets [0, payload_bytes, payload_bytes + 1]); the second slot is a
+    1-byte value. Arrow permits a null slot to cover a nonzero offset range, so this is a
+    legal physical layout that `own_array` preserves."""
+    width = 8 if "large" in str(arrow_type) else 4
+    dtype = np.int64 if width == 8 else np.int32
+    data = pa.py_buffer(b"X" * (payload_bytes + 1))
+    offsets = pa.py_buffer(np.array([0, payload_bytes, payload_bytes + 1], dtype=dtype).tobytes())
+    validity = pa.py_buffer(bytes([0b10]))  # slot 0 null, slot 1 valid
+    return pa.Array.from_buffers(arrow_type, 2, [validity, offsets, data], null_count=1)
+
+
+@pytest.mark.parametrize("arrow_type", [pa.string(), pa.large_string()])
+def test_null_slot_spanning_a_payload_is_priced_by_its_physical_span(
+    arrow_type: pa.DataType,
+) -> None:
+    # Codex HIGH (round 2): a null string/large_string/binary slot can still carry its
+    # payload bytes in the physical buffer, and own_array preserves them. The reader priced
+    # the LOGICAL value (null -> ~0), so a null slot spanning a 10,000-byte payload slipped
+    # under max_row_bytes=100 and the reader yielded a ~10 KB row -- the public bound broken.
+    # Pricing by the physical offset span (offsets[i+1] - offsets[i]) fails the row closed.
+    arr = _null_slot_spanning(arrow_type, 10_000)
+    batch = pa.RecordBatch.from_arrays([arr], names=["s"])
+    budget = _budget(chunk_budget_bytes=10**9, max_row_bytes=100)
+    seen: list[pa.Table] = []
+    with pytest.raises(RowExceedsMaxRowBytes) as exc:
+        for c in cut_batch(batch, budget, table="s"):
+            seen.append(c)
+    assert seen == []  # the oversized null slot is row 0, so nothing is yielded
+    assert exc.value.detail["row"] == 0
+
+
+def test_terminal_offset_is_reserved_for_empty_large_strings() -> None:
+    # Codex MEDIUM (round 2): an offset buffer for N values holds N+1 offsets, but the
+    # per-value accounting never reserved the terminal (N+1th) offset. Two empty
+    # large_strings were priced 18 while their owned offset buffer is 3 * 8 = 24 bytes, so a
+    # 24-byte two-row chunk slipped under an 18-byte budget. The terminal offset is now
+    # reserved once per column per chunk, so no multi-row chunk exceeds the byte budget.
+    batch = pa.RecordBatch.from_arrays([pa.array([""] * 2, pa.large_string())], names=["s"])
+    budget = _budget(chunk_budget_bytes=18, max_chunk_rows=1000, max_row_bytes=1024)
+    chunks = list(cut_batch(batch, budget, table="s"))
+    assert sum(c.num_rows for c in chunks) == 2
+    for c in chunks:
+        assert c.get_total_buffer_size() <= 18 or c.num_rows == 1
+
+
+def test_computed_cost_never_undercounts_the_physical_chunk_size() -> None:
+    # The bound is a public contract (`decoy_engine.io`): a produced chunk's TRUE physical
+    # size -- `get_total_buffer_size()` on the owned chunk, which counts the terminal
+    # offset, null-slot payloads, validity and the 8-byte offsets of large_* types -- must
+    # never exceed the caller's chunk budget. (A sliced view shares the parent buffers and
+    # reports the whole batch, so the owned chunk is the real ground truth.) Driving a dtype
+    # matrix through several budgets makes any future per-type under-count yield a multi-row
+    # chunk over budget and fail here loudly.
+    n = 50
+    columns = {
+        "string": pa.array([("a" * (i % 7)) if i % 5 else None for i in range(n)], pa.string()),
+        "large_string": pa.array(["b" * (i % 9) for i in range(n)], pa.large_string()),
+        "binary": pa.array([b"c" * (i % 4) for i in range(n)], pa.binary()),
+        "large_binary": pa.array(
+            [(b"d" * (i % 6)) if i % 3 else None for i in range(n)], pa.large_binary()
+        ),
+        "fixed_int64": pa.array(list(range(n)), pa.int64()),
+        "fixed_int32_nulls": pa.array([i if i % 4 else None for i in range(n)], pa.int32()),
+        "fixed_float64": pa.array([float(i) for i in range(n)], pa.float64()),
+        "null_heavy": pa.array([None] * n, pa.null()),
+        "dict": pa.array(["e" * (i % 11) for i in range(n)]).dictionary_encode(),
+    }
+    batches = [pa.RecordBatch.from_arrays([a], names=[k]) for k, a in columns.items()]
+    batches.append(pa.RecordBatch.from_arrays(list(columns.values()), names=list(columns.keys())))
+    for batch in batches:
+        for chunk_budget in (8, 24, 64, 256, 1024):
+            budget = _budget(
+                chunk_budget_bytes=chunk_budget, max_chunk_rows=1000, max_row_bytes=10**9
+            )
+            chunks = list(cut_batch(batch, budget, table="m"))
+            assert sum(c.num_rows for c in chunks) == n
+            for c in chunks:
+                assert c.get_total_buffer_size() <= chunk_budget or c.num_rows == 1
 
 
 def test_csv_chunks_keep_the_pandas_null_contract_and_string_types(tmp_path: Path) -> None:

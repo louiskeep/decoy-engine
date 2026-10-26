@@ -56,12 +56,14 @@ PANDAS_DEFAULT_NA_VALUES: tuple[str, ...] = (
     "null",
 )
 
-# Per-row offset + validity overhead. A 32-bit-offset value (string/binary) carries a
-# 4-byte offset; a 64-bit-offset value (large_string/large_binary) carries an 8-byte one.
-# Plus one validity byte per value (conservative against Arrow's bit-packed validity so
-# the budget is never under-counted), and one validity byte for a fixed-width value.
-_VAR_OVERHEAD = 5
-_LARGE_VAR_OVERHEAD = 9
+# Offset-buffer widths. A 32-bit-offset value (string/binary) carries a 4-byte offset;
+# a 64-bit-offset value (large_string/large_binary) carries an 8-byte one. An offset
+# buffer for N values holds N+1 offsets, so the terminal (N+1th) offset is reserved once
+# per column per chunk on top of the per-value offset.
+_OFFSET_WIDTH_32 = 4
+_OFFSET_WIDTH_64 = 8
+# One validity byte per value, conservative against Arrow's bit-packed validity (ceil(N/8))
+# so the budget is never under-counted; also the per-row charge for a fixed-width value.
 _FIXED_OVERHEAD = 1
 # 32-bit vs 64-bit offset string/binary types, split because they are priced differently.
 _STRING_TYPES_32 = ("string", "binary")
@@ -138,52 +140,67 @@ def own_array(array: pa.Array) -> pa.Array:
     return pa.concat_arrays([array])
 
 
-def _var_overhead(arrow_type: pa.DataType) -> int | None:
-    """The per-value offset + validity overhead for a variable-width string/binary
-    type, or None if `arrow_type` is not one. large_string/large_binary carry 8-byte
-    offsets, so under-counting them (the bug this guards) is what broke the bound."""
+def _offset_width(arrow_type: pa.DataType) -> int | None:
+    """Offset width in bytes for a variable-width string/binary type (4 for 32-bit
+    string/binary, 8 for large_string/large_binary), or None if `arrow_type` is not one.
+    large_* carry 8-byte offsets, so under-counting them is one way the bound broke."""
     name = str(arrow_type)
     if name in _STRING_TYPES_32:
-        return _VAR_OVERHEAD
+        return _OFFSET_WIDTH_32
     if name in _STRING_TYPES_64:
-        return _LARGE_VAR_OVERHEAD
+        return _OFFSET_WIDTH_64
     return None
 
 
-def _column_costs(column: pa.Array, *, table: str) -> np.ndarray:
-    """Conservative (over-estimating, never under) decoded bytes per row for one column.
+def _physical_spans(column: pa.Array, width: int) -> np.ndarray:
+    """Per-row PHYSICAL payload bytes `offsets[i+1] - offsets[i]`, read straight off the
+    offset buffer rather than from the logical (null-aware) value length. Arrow permits a
+    null slot to span a nonzero offset range, and `own_array` (concat) preserves that
+    payload in the yielded chunk, so pricing a null slot at zero under-counts the buffer."""
+    dtype = np.int32 if width == _OFFSET_WIDTH_32 else np.int64
+    raw = np.frombuffer(column.buffers()[1], dtype=dtype)
+    base = column.offset  # a sliced array shares the parent offset buffer
+    offsets = raw[base : base + len(column) + 1].astype(np.int64)
+    return offsets[1:] - offsets[:-1]
 
-    A type whose per-row size is not a function of the schema -- a nested list/struct/map,
-    or a view/other variable-width type this reader does not price explicitly -- is
-    rejected (`UnsupportedColumnType`) rather than guessed, so a chunk can never exceed the
-    caller's byte bound. `cut_batch` sums this across the batch BEFORE yielding any chunk,
-    so the reject lands before a row is handed on."""
+
+def _column_costs(column: pa.Array, *, table: str) -> tuple[np.ndarray, int]:
+    """Conservative (over-estimating, never under) PHYSICAL decoded bytes for one column:
+    a per-row cost array plus the terminal-offset reserve the chunk owes once for this
+    column. Costs are read from the physical buffers, not a per-type formula, so null-slot
+    payloads, the terminal offset, validity and padding are all covered.
+
+    A type whose size is not a function of the schema -- a nested list/struct/map, or a
+    view/other variable-width type this reader does not price explicitly -- is rejected
+    (`UnsupportedColumnType`) rather than guessed, so a chunk can never exceed the caller's
+    byte bound. `cut_batch` sums this across the batch BEFORE yielding any chunk, so the
+    reject lands before a row is handed on."""
     if isinstance(column, pa.DictionaryArray):
-        # A dictionary decodes to its value type (`own_array`); price by the decoded value
-        # length plus that value type's own offset + validity overhead (8-byte for large_*).
-        overhead = _var_overhead(column.type.value_type)
-        if overhead is None:
+        # A dictionary decodes to its value type (`own_array`) in freshly built buffers, so
+        # a null slot there spans no payload; the decoded value length is the physical span.
+        # Price it plus the value type's per-value offset and validity (8-byte for large_*).
+        width = _offset_width(column.type.value_type)
+        if width is None:
             raise UnsupportedColumnType(table=table, arrow_type=str(column.type))
         lengths = pc.take(_binary_length(column.dictionary), column.indices)
         costs = pc.fill_null(lengths, 0).to_numpy(zero_copy_only=False).astype(np.int64)
-        return costs + overhead
-    overhead = _var_overhead(column.type)
-    if overhead is not None:
-        costs = pc.fill_null(_binary_length(column), 0).to_numpy(zero_copy_only=False)
-        return costs.astype(np.int64) + overhead
+        return costs + width + _FIXED_OVERHEAD, width
+    width = _offset_width(column.type)
+    if width is not None:
+        return _physical_spans(column, width) + width + _FIXED_OVERHEAD, width
     if pa.types.is_nested(column.type):
         # A list/struct/map/union row's size is its payload, not its type, so it cannot be
         # priced per row from the schema alone; reject before the bound can be exceeded.
         raise UnsupportedColumnType(table=table, arrow_type=str(column.type))
     if pa.types.is_null(column.type):
-        return np.full(len(column), _FIXED_OVERHEAD, dtype=np.int64)  # validity only, no payload
+        return np.full(len(column), _FIXED_OVERHEAD, dtype=np.int64), 0  # validity only
     try:
-        width = max(1, column.type.bit_width // 8)
+        byte_width = max(1, column.type.bit_width // 8)
     except ValueError:
         # A non-nested variable-width type we do not price explicitly (string_view,
         # binary_view, ...). Reject rather than guess a width and risk under-counting.
         raise UnsupportedColumnType(table=table, arrow_type=str(column.type)) from None
-    return np.full(len(column), width + _FIXED_OVERHEAD, dtype=np.int64)
+    return np.full(len(column), byte_width + _FIXED_OVERHEAD, dtype=np.int64), 0
 
 
 def cut_batch(
@@ -195,16 +212,23 @@ def cut_batch(
     if rows == 0:
         return
     in_cost = np.zeros(rows, dtype=np.int64)
+    terminal = 0  # the (N+1th) offset each produced chunk owns once per variable-width column
     for column in batch.columns:
-        in_cost += _column_costs(column, table=table)
-    oversized = np.flatnonzero(in_cost > budget.max_row_bytes)
+        costs, reserve = _column_costs(column, table=table)
+        in_cost += costs
+        terminal += reserve
+    # The terminal offset is a fixed per-chunk cost: charge it against every row's ceiling
+    # and reserve it out of the chunk budget, so neither a single row nor a multi-row chunk
+    # can exceed its bound once the chunk owns that extra offset entry.
+    oversized = np.flatnonzero(in_cost + terminal > budget.max_row_bytes)
     limit = int(oversized[0]) if len(oversized) else rows
+    effective_budget = budget.chunk_budget_bytes - terminal
     total = in_cost + budget.out_row_bound
     cumulative = np.cumsum(total)
     start = 0
     while start < limit:
         base = int(cumulative[start - 1]) if start else 0
-        end = int(np.searchsorted(cumulative, base + budget.chunk_budget_bytes, side="right"))
+        end = int(np.searchsorted(cumulative, base + effective_budget, side="right"))
         end = min(end, start + budget.max_chunk_rows, limit)
         if end <= start:
             end = start + 1  # a single row over the budget, within max_row_bytes
