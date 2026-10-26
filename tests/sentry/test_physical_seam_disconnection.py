@@ -452,6 +452,11 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         # Both import nothing from execution.physical.
         "src/decoy_engine/execution/_strategies/_nested.py",
         "src/decoy_engine/execution/_strategies/_windowed_date.py",
+        # Cross-column dependency PR1: joint_mask reads its key_by driver from the pre-mask
+        # source snapshot (ctx.group_anchor_snapshots), and derived gains a docstring note for
+        # the new dependent-after-driver ordering edge. Neither imports execution.physical.
+        "src/decoy_engine/execution/_strategies/_joint_mask.py",
+        "src/decoy_engine/execution/_strategies/_derived.py",
         # C8-iii-d-2: the shared per-chunk string-type guard for a positional draw under `when:`,
         # installed in `_oracle_preflight` so both chunked entries enforce string target/references
         # per chunk. Parent-level module; imports only the two config-classification helpers and

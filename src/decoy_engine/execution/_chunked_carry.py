@@ -219,6 +219,12 @@ def adapter_fk_safe_columns(plan: Any, registry: Any, graph: Any, table: str) ->
         top_code_columns,
     )
 
+    # joint_mask key_by source columns are deliberately NOT unioned here. The stock adapter
+    # now ingests them losslessly via source_anchor_columns, but joint_mask is not chunk
+    # admitted (hash/redact/truncate/passthrough only) and is not native eligible
+    # (output_type_is_static is False), so a chunked or native diagnosis never sees a
+    # joint_mask key_by column on this path. If joint_mask ever becomes chunk or native
+    # eligible, union joint_mask_key_by_columns here to keep this mirror exact.
     return (
         set(fk_columns_for_table(graph.edges, table))
         | date_shift_group_columns(plan, registry).get(table, set())

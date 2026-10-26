@@ -227,6 +227,7 @@ def apply_joint_mask(
     mode: str = "mask",
     job_seed: bytes,
     namespace: str | None = None,
+    key_series: pd.Series | None = None,
 ) -> pd.DataFrame:
     """Apply joint_mask to ``df``, writing all target columns in one pass.
 
@@ -239,6 +240,14 @@ def apply_joint_mask(
         mode: ``"mask"`` (keyed HMAC) or ``"gen"`` (seeded random).
         job_seed: 32-byte entropy input. Same seed -> same output for a given
             input (mask mode) or DataFrame length (gen mode).
+        key_series: cross-column V1 SOURCE-key override (mask mode). When given,
+            the HMAC key per row comes from this pre-mask snapshot of
+            ``config.key_by`` instead of the live (possibly masked) frame, so the
+            same SOURCE entity always selects the same reference row regardless
+            of masking order. The execution handler passes it from
+            ``ctx.group_anchor_snapshots`` (the date_shift group-anchor
+            precedent). None keeps the legacy direct-frame read for callers that
+            drive this transform without an adapter.
 
     Returns:
         A copy of ``df`` with ``config.columns`` replaced by reference-table rows.
@@ -246,7 +255,7 @@ def apply_joint_mask(
     result = df.copy()
 
     if mode == "mask":
-        rows = _pick_rows_mask(df, config, job_seed, namespace=namespace)
+        rows = _pick_rows_mask(df, config, job_seed, namespace=namespace, key_series=key_series)
     elif mode == "gen":
         rows = _pick_rows_gen(len(df), config, job_seed)
     else:
@@ -264,6 +273,7 @@ def _pick_rows_mask(
     job_seed: bytes,
     *,
     namespace: str | None = None,
+    key_series: pd.Series | None = None,
 ) -> list[dict[str, Any]]:
     """Pick one reference row per DataFrame row using HMAC-keyed selection.
 
@@ -282,7 +292,13 @@ def _pick_rows_mask(
     SP-06 cross-version caveat: modular index shifts if row_count changes.
     """
     tbl = config.table
-    key_col = df[config.key_by] if config.key_by in df.columns else pd.Series([None] * len(df))
+    # Cross-column V1: a provided pre-mask snapshot of key_by is the SOURCE key
+    # (same source entity -> same reference row); otherwise fall back to the live
+    # frame for direct (non-adapter) callers.
+    if key_series is not None:
+        key_col = key_series
+    else:
+        key_col = df[config.key_by] if config.key_by in df.columns else pd.Series([None] * len(df))
     hmac_key = derive(job_seed, namespace or _DEFAULT_NAMESPACE, _KEYED_ROW_SOURCE)
 
     rows: list[dict[str, Any]] = []

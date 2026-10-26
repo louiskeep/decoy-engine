@@ -156,9 +156,9 @@ from decoy_engine.execution._row_errors import RowErrorRecord, drain_row_errors
 from decoy_engine.execution._runner import (
     WorkNode,
     build_work_list,
-    date_shift_group_columns,
     group_key_group_by_columns,
     order_work,
+    source_anchor_columns,
     top_code_columns,
 )
 from decoy_engine.execution._sequential_composite_chain import decline_composite_chain
@@ -290,10 +290,12 @@ def run_sequential(
 
     table_order = table_topo_order(plan, graph)
 
-    # HC-3a: per-table date_shift group_by anchor columns (Codex R1 P1 #1/#2).
-    # Unioned into each table's FK-safe column set at load (lossless int+null)
-    # and snapshotted pre-mask into ctx.group_anchor_snapshots below.
-    group_anchor_cols = date_shift_group_columns(plan, registry)
+    # HC-3a: per-table date_shift group_by anchor columns (Codex R1 P1 #1/#2),
+    # plus cross-column V1 joint_mask key_by source keys (`source_anchor_columns`):
+    # both read an immutable source sibling. Unioned into each table's FK-safe
+    # column set at load (lossless int+null) and snapshotted pre-mask into
+    # ctx.group_anchor_snapshots below.
+    group_anchor_cols = source_anchor_columns(plan, registry)
     # HC-3b (Codex R2): top_code columns need the same lossless int+null typing
     # so a value >= 2**53 is not rounded by a float64 widen (chunk-safety).
     top_code_cols = top_code_columns(plan, registry)

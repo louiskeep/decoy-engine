@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import heapq
 from collections import defaultdict
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, TypeVar
 
@@ -230,7 +230,158 @@ def group_key_group_by_columns(plan: Plan, registry: ProviderRegistry) -> dict[s
     return out
 
 
-def order_work(work: list[WorkNode], relationship_graph: RelationshipGraph) -> list[WorkNode]:
+def joint_mask_key_by_columns(plan: Plan, registry: ProviderRegistry) -> dict[str, set[str]]:
+    """Per-table set of `joint_mask` `key_by` SOURCE-key columns (cross-column V1).
+
+    `key_by` selects the reference tuple off the SOURCE key value (its docstring:
+    "key_by: Source column"; the FK-key identity analogy -- same source entity ->
+    same reference row), so it must read a PRE-MASK snapshot, never the mutable
+    frame. This set is unioned into the group-anchor snapshot build + the
+    lossless-ingest column set on the full-frame and sequential routes, EXACTLY
+    as `date_shift` `group_by` is (`source_anchor_columns`): the reused precedent,
+    not a new snapshot stage. Empty when no `joint_mask` column configures
+    `key_by`.
+    """
+    from decoy_engine.execution._adapter import provider_config_to_dict
+
+    out: dict[str, set[str]] = {}
+    for node in build_work_list(plan, registry):
+        if node.strategy != "joint_mask" or not isinstance(node.plan_slice, ColumnSeed):
+            continue
+        key_by = provider_config_to_dict(node.plan_slice.provider_config).get("key_by")
+        if isinstance(key_by, str) and key_by:
+            out.setdefault(node.table, set()).add(key_by)
+    return out
+
+
+def source_anchor_columns(plan: Plan, registry: ProviderRegistry) -> dict[str, set[str]]:
+    """All columns a strategy reads at their immutable SOURCE value through the
+    pre-mask `ctx.group_anchor_snapshots`: `date_shift` `group_by` anchors plus
+    `joint_mask` `key_by` source keys. Both read a sibling's source value via the
+    same pre-mask snapshot machinery, so they share one build set (the
+    `date_shift` precedent reused for `joint_mask`; see the plan's §5 no-fork
+    checklist). `group_key`'s `group_by` is NOT here: it reads the MASKED value
+    under an ordering edge, not a source snapshot.
+    """
+    out = date_shift_group_columns(plan, registry)
+    for table, cols in joint_mask_key_by_columns(plan, registry).items():
+        out.setdefault(table, set()).update(cols)
+    return out
+
+
+def _writer_output_columns(node: WorkNode) -> tuple[str, ...]:
+    """Every column `node` WRITES, for the writer map (not its dispatch identity).
+
+    A composite bundle and a composite-FK group already carry their full output
+    set in `node.columns`. A scalar node writes its single column EXCEPT
+    `joint_mask`: it is a multi-column transform (`apply_joint_mask` writes every
+    column in its `columns` config in one pass), yet its work node keys on just
+    the dispatch column (the first sorted output). Register all of its configured
+    outputs so a dependent on a NON-dispatch output (e.g. a `derived` reading one
+    of zip/city/state) still resolves to the joint_mask node and gets its edge.
+    """
+    if node.strategy == "joint_mask" and isinstance(node.plan_slice, ColumnSeed):
+        from decoy_engine.execution._adapter import provider_config_to_dict
+
+        cols = provider_config_to_dict(node.plan_slice.provider_config).get("columns")
+        if cols:
+            return tuple(cols)
+    return node.columns
+
+
+def _writer_node_map(work: list[WorkNode]) -> dict[tuple[str, str], set[_NodeKey]]:
+    """Map each written (table, column) to the keys of ALL nodes that WRITE it.
+
+    Not column=node (the cross-column ordering trap): a composite provider is a
+    bundle node whose `columns` holds several outputs, so every one of them maps
+    to that ONE bundle key; a scalar node (`derived`/`group_key`) maps its single
+    output column to itself, and a `joint_mask` node maps EVERY column it writes
+    (`_writer_output_columns`), not only its dispatch column.
+
+    The value is a SET, not a single key: the production compiler emits a
+    joint_mask group as one per-output-column node, each carrying the full
+    `columns` config, so several nodes write the SAME output column. A plain
+    last-write-wins map kept only the last node in CONFIG order, leaving a
+    dependent ordered after one arbitrary writer while the OTHER writers (and so
+    the column's final value) still ran later -- a stale read under a non-trivial
+    execution order. Recording every writer makes a dependent wait on all of
+    them, so it reads the column's final value whichever writer the topo sort
+    places last. A dependent's driver ref resolves through this map to the nodes
+    that must all run first.
+    """
+    writer: dict[tuple[str, str], set[_NodeKey]] = defaultdict(set)
+    for node in work:
+        for col in _writer_output_columns(node):
+            writer[(node.table, col)].add(node.key)
+    return writer
+
+
+def _masked_driver_columns(node: WorkNode) -> frozenset[str]:
+    """The same-table sibling columns `node` reads for their MASKED value, so it
+    must be ordered AFTER them (the cross-column V1 ordering edge).
+
+    `derived` (any expression, including the `case_when` construct): the
+    expression's column refs, the same set `check_derived_column_refs` extracts.
+    `group_key`: its `group_by` sibling (its docstring pins a post-mask read).
+    Every other node (including `joint_mask`, whose `key_by` is a SOURCE read via
+    snapshot, so it imposes no ordering edge) reads no masked driver here.
+    """
+    plan_slice = node.plan_slice
+    if not isinstance(plan_slice, ColumnSeed):
+        return frozenset()
+    from decoy_engine.execution._adapter import provider_config_to_dict
+
+    if node.strategy == "derived":
+        from decoy_engine.expressions import compile_expr
+        from decoy_engine.transforms.derived import _get_column_refs
+
+        expr = provider_config_to_dict(plan_slice.provider_config).get("expression")
+        if not expr:
+            return frozenset()
+        try:
+            return _get_column_refs(compile_expr(str(expr)))
+        except Exception:
+            # Invalid syntax surfaces as a ValidationError at execution time
+            # (DerivedConfig.from_dict); no edge, no double-report.
+            return frozenset()
+    if node.strategy == "group_key":
+        group_by = provider_config_to_dict(plan_slice.provider_config).get("group_by")
+        if isinstance(group_by, str) and group_by:
+            return frozenset({group_by})
+    return frozenset()
+
+
+def column_dependency_edges(work: list[WorkNode]) -> dict[_NodeKey, set[_NodeKey]]:
+    """The cross-column ordering channel for `order_work`: dependent-node key ->
+    the keys of the nodes that write its MASKED driver columns.
+
+    A driver column ref resolves to its writer node(s) through `_writer_node_map`
+    (per-provider representation, not column=node). A ref whose column no node
+    writes (an unmasked passthrough source) imposes no edge -- its live value is
+    already its source value -- and a self-ref is skipped. A column written by a
+    MULTI-ENTRY joint_mask group has several writers; the dependent waits on all
+    of them so it reads the final value, not whichever writer a lexicographic
+    accident ran before it. SOURCE-read drivers (`joint_mask` `key_by`) are
+    deliberately absent: they read a pre-mask snapshot, so they need no ordering
+    edge. Reusing `order_work`'s own topo sort + cycle backstop (no parallel
+    scheduler); derived-derived cycles are still caught at plan time by
+    `check_derived_column_refs`.
+    """
+    writer = _writer_node_map(work)
+    deps: dict[_NodeKey, set[_NodeKey]] = defaultdict(set)
+    for node in work:
+        for col in _masked_driver_columns(node):
+            for writer_key in writer.get((node.table, col), ()):
+                if writer_key != node.key:
+                    deps[node.key].add(writer_key)
+    return deps
+
+
+def order_work(
+    work: list[WorkNode],
+    relationship_graph: RelationshipGraph,
+    column_deps: Mapping[_NodeKey, set[_NodeKey]] | None = None,
+) -> list[WorkNode]:
     """Order the work list (S9 spec §6.2).
 
     Dependency edges come from `relationship_graph.edges` (FK parent -> child),
@@ -238,6 +389,15 @@ def order_work(work: list[WorkNode], relationship_graph: RelationshipGraph) -> l
     columns are a superset of an FK's parent_columns (R17: the composite writes
     the whole bundle before any child reads a masked parent column). Topo-sorted
     with a sorted tie-break for byte-stable ordering.
+
+    `column_deps` is the cross-column V1 channel: dependent-node key -> the keys
+    of the nodes writing its MASKED driver columns (`derived` expression refs,
+    `group_key` `group_by`), so a dependent reads its drivers' masked values
+    under an explicit edge instead of by lexicographic-sort accident. None means
+    derive them from `work` via `column_dependency_edges` (so every route gets
+    the fix); a caller/test may pass an explicit map. These edges only ADD
+    constraints, so FK ordering stays dominant; a cross-column edge that
+    contradicts an FK edge is a genuine cycle and raises `cyclic_work_ordering`.
     """
     by_key: dict[_NodeKey, WorkNode] = {w.key: w for w in work}
     deps: dict[_NodeKey, set[_NodeKey]] = defaultdict(set)
@@ -270,6 +430,17 @@ def order_work(work: list[WorkNode], relationship_graph: RelationshipGraph) -> l
                 child_k = (edge.child_table, edge.child_columns)
                 if child_k in by_key:
                     deps[child_k].add(node.key)
+
+    # Cross-column V1: a dependent waits on the node(s) writing its MASKED
+    # drivers, so the read is intentional (not lexicographic luck). FK edges
+    # above stay dominant: these only add constraints.
+    col_deps = column_dependency_edges(work) if column_deps is None else column_deps
+    for dependent, drivers in col_deps.items():
+        if dependent not in by_key:
+            continue
+        for driver in drivers:
+            if driver in by_key:
+                deps[dependent].add(driver)
 
     return _kahn_sorted(by_key, deps)
 
