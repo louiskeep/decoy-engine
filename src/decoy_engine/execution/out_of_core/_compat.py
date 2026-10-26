@@ -6,8 +6,11 @@ operator so routing has one decision surface: out-of-core or oracle/rejection.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
+
+import pyarrow as pa
 
 from decoy_engine.execution.native._real_type_admission import C1_PROVIDER_ALLOWLIST
 from decoy_engine.execution.native._requirements import faker_pool_precondition_met
@@ -169,12 +172,24 @@ def check_out_of_core_compatibility(
     plan: Plan,
     work: list[WorkNode],
     relationship_graph: RelationshipGraph,
+    *,
+    source_types: Mapping[tuple[str, str], pa.DataType] | None = None,
 ) -> OutOfCoreCompatibility:
     """Return the current Option 4 compatibility decision.
 
     Acceptance covers kernelized per-value parent key strategies; a child FK tuple
     with several parents is admitted and resolved first-hit-wins by the runner
     (`_multi_parent.py`).
+
+    `source_types` maps `(table, column)` to the declared source Arrow type, when
+    a caller has the schema (routing with resident/lazy sources, and the runner's
+    preflight). It gates the one strategy whose admitted scope depends on the
+    source type the plan does not carry: a `faker` column with a non-`string`
+    source declines here, so a job with such a column reroutes to full-frame
+    instead of being admitted and then failing closed inside the run. When it is
+    None (a pure plan read, e.g. the capacity estimator), faker is admitted on its
+    plan shape alone, and the exact-`string` requirement is enforced fail-closed
+    by the per-table mask planner as a backstop.
     """
     rejections: list[OutOfCoreRejection] = []
     if not relationship_graph.edges:
@@ -297,9 +312,10 @@ def check_out_of_core_compatibility(
             if conditional is not None:
                 rejections.append(conditional)
         elif node.strategy in _FAKER_CONDITIONAL:
-            # faker is ported only for the deterministic-REUSE allowlisted shape;
-            # other shapes fall back to sequential/full-frame.
-            faker_rej = _faker_conditional_rejection(node)
+            # faker is ported only for the deterministic-REUSE allowlisted shape
+            # with an exact-string source; other shapes and, when the schema is in
+            # hand, non-string sources fall back to sequential/full-frame.
+            faker_rej = _faker_conditional_rejection(node, source_types)
             if faker_rej is not None:
                 rejections.append(faker_rej)
         elif node.strategy == "categorical" and not _is_deterministic(node.plan_slice):
@@ -325,26 +341,44 @@ def check_out_of_core_compatibility(
     return OutOfCoreCompatibility(accepted=not rejections, rejections=tuple(rejections))
 
 
-def _faker_conditional_rejection(node: WorkNode) -> OutOfCoreRejection | None:
+def _faker_conditional_rejection(
+    node: WorkNode, source_types: Mapping[tuple[str, str], pa.DataType] | None
+) -> OutOfCoreRejection | None:
     """Reject a faker node whose plan shape is not the admitted deterministic-REUSE
-    person-name variant; None admits it.
+    person-name variant, or (when `source_types` is in hand) whose source is not an
+    exact `string`; None admits it.
 
     The admitted shape is the one `_faker_native` runs: a provider on the native
     allowlist, `deterministic` with `cardinality_mode=reuse`, a namespace, and an
-    explicit pool_size. The exact-`string` source requirement is NOT checked here:
-    the source type is not known at routing (the gate sees only the plan), so it
-    is enforced fail-closed by the preflight and the per-table mask planner once a
-    schema is in hand. Non-deterministic/positional REUSE and UNIQUE/MATCH/SCALE
-    decline, so the job keeps the sequential/full-frame route that handles them.
+    explicit pool_size. Non-deterministic/positional REUSE and UNIQUE/MATCH/SCALE
+    decline on the shape alone, so the job keeps the sequential/full-frame route.
+
+    The exact-`string` source gate is the no-regression fix: a non-string source
+    (int/bool/large_string/float/temporal) still produces a correct column on
+    full-frame/sequential, so it MUST reroute, not be admitted and then abort
+    mid-run (faker has no in-route Python reference). When `source_types` is known
+    (routing with resident/lazy sources; the runner preflight), a non-string
+    source declines here with a caller-visible code so the job reroutes. When it
+    is None, admission is shape-only and the per-table mask planner enforces the
+    source type fail-closed as a backstop.
     """
-    if node.provider in C1_PROVIDER_ALLOWLIST and faker_pool_precondition_met(node):
-        return None
-    return OutOfCoreRejection(
-        "out_of_core_faker_pool_unsupported",
-        f"{node.table}.{node.columns}: out-of-core faker admits only deterministic REUSE with a "
-        "person-name provider, a namespace, and an explicit pool_size; other shapes fall back to "
-        "sequential/full-frame.",
-    )
+    if node.provider not in C1_PROVIDER_ALLOWLIST or not faker_pool_precondition_met(node):
+        return OutOfCoreRejection(
+            "out_of_core_faker_pool_unsupported",
+            f"{node.table}.{node.columns}: out-of-core faker admits only deterministic REUSE with "
+            "a person-name provider, a namespace, and an explicit pool_size; other shapes fall "
+            "back to sequential/full-frame.",
+        )
+    if source_types is not None:
+        for column in node.columns:
+            source_type = source_types.get((node.table, column))
+            if source_type is not None and source_type != pa.string():
+                return OutOfCoreRejection(
+                    "out_of_core_faker_source_type_unsupported",
+                    f"{node.table}.{column}: out-of-core faker admits an exact-string source only; "
+                    f"a {source_type} source reroutes to sequential/full-frame, which masks it.",
+                )
+    return None
 
 
 def _group_c_conditional_rejection(node: WorkNode) -> OutOfCoreRejection | None:

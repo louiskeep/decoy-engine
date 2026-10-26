@@ -15,12 +15,16 @@ inside the route. Two things keep that safe:
 - The compiled index kernel's pure-Python reference (`reference_index_derivation`)
   is byte-identical to the compiled one (INDEX_KAT), so a box without the
   companion still selects correctly; it is recorded as a non-compiled backend.
-- The admitted scope is exact-`string`. A non-`string` source fails the job
-  closed in `decide_table` (below), before that table's first batch is masked, so
-  the raw source value is never leaked; the runner's all-or-nothing publish then
-  aborts any sink and releases spill, leaving no partial output. Float/temporal
-  sources would raise the oracle's own canonicalization error anyway, so the two
-  routes agree on the failure.
+- The admitted scope is exact-`string`. A non-`string` source (int, bool,
+  large_string, float, temporal) still masks correctly on full-frame/sequential,
+  so it must REROUTE, never be admitted here and then abort. The compat gate
+  declines it at routing when the schema is in hand (`_compat.
+  _faker_conditional_rejection` with `source_types`), so an auto-routed job
+  reroutes to full-frame/sequential with no regression; a forced out-of-core job
+  refuses at the runner preflight, before any scratch or sink write. `decide_table`
+  below keeps the same check as a fail-closed backstop, so a raw source value is
+  never leaked even if a non-string column slips past both gates; the runner's
+  all-or-nothing publish then aborts any sink and releases spill.
 
 Reason codes carry the strategy outcome, the column name and the Arrow type
 only, never a cell, key, or generated value.
@@ -50,7 +54,6 @@ if TYPE_CHECKING:
     from decoy_engine.generation.pool._value_pool import ValuePool
     from decoy_engine.plan._types import ColumnSeed
 
-REASON_UNAVAILABLE = "faker_index_extension_unavailable"
 _NO_BACKEND_RAN = "none"
 _REASON_NO_SELECT_CALLS = "no_native_kernel_calls"
 
@@ -197,9 +200,10 @@ def decide_table(
     reserves its memory before allocating the provider and reuses an identical
     pool across tables). A faker column whose shape or source the admitted subset
     excludes aborts the run fail-closed: faker has no in-route Python reference,
-    so leaving such a column unmasked would leak its raw source value. The
-    preflight already fails a non-string faker source closed before any batch, so
-    this path is the defensive backstop, not the primary gate.
+    so leaving such a column unmasked would leak its raw source value. The compat
+    gate reroutes a non-string faker source at routing (auto) and the runner
+    preflight refuses it (forced), both with the schema in hand, so this path is
+    the defensive backstop that fires only if a non-string column slips past both.
     """
     decisions: dict[str, FakerColumnDecision] = {}
     for column, seed in seeds.items():
@@ -287,7 +291,6 @@ def native_faker_array(
 
 
 __all__ = [
-    "REASON_UNAVAILABLE",
     "BoundFakerKernel",
     "FakerColumnDecision",
     "NativeFaker",

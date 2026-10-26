@@ -150,13 +150,52 @@ def test_all_three_drivers_agree_with_the_oracle_byte_for_byte(tmp_path: Path) -
         assert {dim for dim, agree in report.items() if not agree} <= {"field_metadata"}, mode
 
 
-def test_nonstring_source_fails_closed_before_any_output(tmp_path: Path) -> None:
+def test_forced_ooc_nonstring_source_refuses_before_any_output(tmp_path: Path) -> None:
+    # run_chain forces the out-of-core route; the preflight refuses a non-string
+    # faker source before any scratch/sink write (a FORCED route checks refusal).
     seeds = _seeds()  # admitted shape, but the source column is int
     payload = pa.table({"a": pa.array([1, 2, 1, 4, 5, None, 7, 2, None, 10], pa.int64())})
     with pytest.raises(ExecutionError) as exc:
         run_chain(payload, seeds, out_dir=tmp_path / "out")
     assert exc.value.code == "out_of_core_faker_source_type_unsupported"
     assert not (tmp_path / "out" / "t.parquet").exists()  # no partial publication
+    # The full-frame oracle masks this exact int-source faker to names WITHOUT
+    # error, so it is a real config: a forced out-of-core job refuses it, but an
+    # auto-routed job MUST reroute to the oracle (next test), never abort. This
+    # assertion fails if the oracle also raised (which would make the refusal a
+    # non-regression) -- it does not, which is why the routing gate below matters.
+    oracle = _oracle_col(payload, seeds)
+    assert oracle.type == pa.string()
+    assert oracle.to_pylist()[0] is not None  # a real masked name, not a null/raw value
+
+
+def test_routing_reroutes_a_nonstring_faker_source_instead_of_admitting_it() -> None:
+    # The no-regression fix: with the schema in hand, routing declines a
+    # non-string faker source so the job reroutes to full-frame/sequential (which
+    # masks it) rather than being admitted to OOC and aborting mid-run.
+    from decoy_engine.execution._pipeline_routing_signals import out_of_core_admission
+    from decoy_engine.providers_v2 import get_default_registry
+
+    plan = chain_plan(_seeds())
+    graph = chain_graph()
+    reg = get_default_registry()
+    ok_string, _ = out_of_core_admission(
+        plan, registry=reg, graph=graph, source_types={("t", "a"): pa.string()}
+    )
+    assert ok_string  # exact-string source is admitted to OOC
+    ok_int, code_int = out_of_core_admission(
+        plan, registry=reg, graph=graph, source_types={("t", "a"): pa.int64()}
+    )
+    assert not ok_int  # non-string reroutes
+    assert code_int == "out_of_core_faker_source_type_unsupported"
+    ok_large, code_large = out_of_core_admission(
+        plan, registry=reg, graph=graph, source_types={("t", "a"): pa.large_string()}
+    )
+    assert not ok_large  # large_string is not exact string -> reroute, not abort
+    assert code_large == "out_of_core_faker_source_type_unsupported"
+    # With no schema (the capacity estimator), admission is shape-only.
+    ok_blind, _ = out_of_core_admission(plan, registry=reg, graph=graph, source_types=None)
+    assert ok_blind
 
 
 @pytest.mark.parametrize(
