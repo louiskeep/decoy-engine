@@ -1,13 +1,23 @@
 # Record: Synthea scale characterization (RW-A / A-2)
 
-Measured 2026-10-25, refreshed 2026-10-26 (config honesty fixes below). Engine at
-commit `195fab1`. At that commit BOTH version literals (`pyproject.toml` version and
-the in-tree `decoy_engine.__version__` constant) read `0.7.0`, frozen on `main`; the
-`0.14.2` version appears only on the release commit/tag `ec9be3fc` that includes this
-code. The real discriminators are the `faker==40.23.0` pin and the commit SHA; the
-numbers here were produced by the code that ships in the v0.14.2 release line.
-Built with the Rust native companion from `decoy-engine-native`
-(`maturin develop --release`). Harness:
+Measured 2026-10-26, on the engine rebased onto current `main`. Engine code under
+test is `origin/main` @ `e3abfdf` (the vault write-seam + tokenize registration +
+route-coverage phase-1 B3-B7 OOC/SEQ); the branch adds only the harness, this record
+and the reader guide on top and touches no `src/` engine code, so the numbers come
+from unmodified `main`. (The runs executed with the working tree at `a39c648`; the
+only `main` change since is ruff-formatting of test files under `tests/parity/`, so
+`src/decoy_engine` is byte-identical and the engine runtime is the same.) (These
+figures are also stable across the route-coverage merge itself: a run against the
+prior `bbe4dce` base measured within noise, see the trend notes.) At that commit
+BOTH version literals
+(`pyproject.toml` version and the in-tree `decoy_engine.__version__` constant) read
+`0.7.0`, frozen on `main`; the `0.14.2` version is cut on the release branch and is
+not reachable from this checkout, so it is NOT asserted here (an earlier draft named
+a release-tag SHA that does not resolve in this repo; dropped). The real
+discriminators for reproducing these numbers are the commit SHA and the
+`faker==40.23.0` pin. Config digest (sha256 of the structural mask config, source
+and target paths excluded): `fb5abdb7e64a`. Built with the Rust native companion
+from `decoy-engine-native` (`maturin develop --release`, CPython 3.12). Harness:
 [`scripts/synthea-scale/`](../../scripts/synthea-scale/README.md). Reader table:
 [`docs/guides/sizing-and-hardware.md`](../guides/sizing-and-hardware.md).
 
@@ -35,9 +45,10 @@ benchmarks come from the prodsim work, not a one-off 100M masking job.
 
 A development cloud container, **not** a dedicated reference host:
 
-- 4 vCPU, ~16 GB RAM (`total_ram_mb` 16091), x86-64, Linux 6.18.
-- Python 3.12.3, engine v0.14.2 (`__version__` literal reads 0.7.0; see header),
-  Rust companion present (`_kernel.cpython-312`).
+- 4 vCPU, ~16 GB RAM (`total_ram_mb` 16091), x86-64, Linux 6.18
+  (`node: vm`, `platform: Linux-6.18.44-fc-v153-x86_64-with-glibc2.39`).
+- Python 3.12.3, engine at `origin/main` @ `e3abfdf` (`__version__` reads 0.7.0; see
+  header), Rust companion present (`_kernel.cpython-312`).
 - Single native thread (`--native-threads 1`).
 
 The worker stamps `machine` and `run_date_utc` into every record, so a run on any
@@ -136,32 +147,41 @@ harness's order-independent referential-integrity sample), row counts preserved.
 
 Wall time below is the median (p50) over the runs; throughput is `total rows ÷
 that wall`, so the two are on one basis. The raw per-run detail (including the
-per-run throughput field) is in the JSON records.
+per-run throughput field, which the worker stamps from the last run) is in the JSON
+records. Config digest for every row: `fb5abdb7e64a` (see header).
 
 | Tier | Route | Native cols | Wall (mask) | Throughput | Peak RSS (ext.) | Spill (temp disk) | Reorder lane | Parity |
 |---|---|:---:|---:|---:|---:|---:|---|:---:|
-| 1M | out_of_core | 37/37 | 38.0 s p50 (38.7 s p95, 3 runs) | ~26,000 rows/s | 542.3 MB | 52.6 MB | not taken (all batch) | ok |
-| 10M | out_of_core | 37/37 | 428.4 s (~7 min 8 s, 1 run) | ~23,300 rows/s | 1996.9 MB | 3162.1 MB | taken for `observations` | ok |
-| 100M | out_of_core | (extrapolated) | ~71 min (extrap.) | ~23,000 rows/s (extrap.) | ~7 GB (extrap.) | ~31 GB (extrap.) | `encounters` + `observations` (expected) | -- |
+| 1M | out_of_core | 37/37 | 25.4 s p50 (26.2 s p95, 3 runs) | ~39,000 rows/s | 509.2 MB | 59.4 MB | not taken (all batch) | ok |
+| 10M | out_of_core | 37/37 | 274.0 s (~4 min 34 s, 1 run) | ~36,500 rows/s | 1983.5 MB | 3162.0 MB | taken for `observations` | ok |
+| 100M | out_of_core | (extrapolated) | ~46 min (extrap.) | ~36,500 rows/s (extrap.) | ~7.7 GB (extrap.) | ~31 GB (extrap.) | `encounters` + `observations` (expected) | -- |
 
 Peak RSS is measured **externally** by the supervisor (`wait4` `ru_maxrss`,
 cross-checked against polled `VmHWM`), not in-process.
 
 Observations on the trend (the honest reading, no flattering):
 
-- **Throughput is roughly constant** (~23-26k rows/s single-threaded on this
-  instance), so wall-clock is about linear in rows. NOTE on box variance: an
-  earlier A-2 run of the same code on a faster container instance measured ~24 s /
-  ~43k rows/s at 1M and ~256 s at 10M. The config change (names/addresses moved
-  from `text_redact` to `categorical`) is NOT the cause -- a back-to-back A/B on
-  this instance measured the old `text_redact` config at 39.3 s and the new
-  `categorical` config at 38.7 s for the same 1M fixture (within noise). The
-  slowdown is the instance's lower measured single-thread throughput; wall-clock
-  is an order-of-magnitude reference, not an SLA.
+- **Throughput is roughly constant** across the two tiers (~36-39k rows/s
+  single-threaded on this instance; 10M came in marginally below 1M, within
+  instance noise), so wall-clock is about linear in rows. NOTE on box variance:
+  wall-clock throughput varies widely between container instances even on this same
+  image. Earlier A-2 runs of the same code measured ~24 s / ~43k rows/s at 1M on a
+  fast instance and ~38 s / ~26k rows/s at 1M with ~428 s at 10M on a slow one; this
+  re-run (engine rebased onto current `main`) landed near the fast end (~25 s at 1M,
+  ~274 s at 10M). The config shape is not the variable: a back-to-back A/B on one
+  instance measured the old `text_redact` names/address config at 39.3 s and the
+  current `categorical` config at 38.7 s for the same 1M fixture (within noise).
+  Wall-clock is an order-of-magnitude reference, not an SLA; the memory and spill
+  figures (next bullets) are the stable signal.
 - **Peak RSS grows sub-linearly, not flat**: 0.5 GB at 1M, 2.0 GB at 10M (10x
   rows, under 4x memory). The growth is the FK join bookkeeping, which scales with
-  the number of distinct keys, not a per-chunk cost. These memory figures are
-  deterministic and reproduce closely across instances.
+  the number of distinct keys, not a per-chunk cost. These memory figures reproduce
+  closely across instances AND across the route-coverage merge: the 10M peak held at
+  1983.5 MB on `a39c648` against 1992.7 MB on the prior `bbe4dce` base and 1996.9 MB
+  on an earlier instance (all within ~0.7%); the 1M peak held at ~509 MB on both
+  recent runs; and the 10M spill reproduced to within 0.1 MB across all three. The
+  route-coverage phase-1 changes to the out-of-core path did not move the memory or
+  spill numbers.
 - **Routing shifts with scale**: inside the out-of-core route, a non-root table
   takes the bounded external-sort (reorder) lane when its **largest incoming FK
   edge's deduped parent-key count** reaches ~2M (`out_of_core_reorder_threshold_rows`,
@@ -173,21 +193,26 @@ Observations on the trend (the honest reading, no flattering):
   batch). At 100M (extrapolated) both `encounters` (parent 5M keys) and
   `observations` (parent 25M keys) cross the threshold while `patients` stays
   batch.
-- **Spill scales with the data** once the reorder lane is active: ~53 MB at 1M (no
-  reorder), 3.2 GB at 10M, so a 100M run needs tens of GB of fast temp disk
-  (extrapolated ~31 GB).
+- **Spill scales with the data** once the reorder lane is active: ~59 MB at 1M (no
+  reorder, a small staging high-water mark), 3.2 GB at 10M, so a 100M run needs tens
+  of GB of fast temp disk (extrapolated ~31 GB).
 
 ### How the 100M row is extrapolated (not measured)
 
 The 100M row in both tables is a projection from the two measured points, not a
 run:
 
-- **Wall / throughput:** hold throughput at the 10M figure (~23,300 rows/s, the
-  point closest to 100M behaviour); 100,000,000 ÷ 23,300 ≈ 4,290 s ≈ ~71 min.
-- **Peak RSS:** fit `peak_rss ≈ a · rows^b` to (1M, 542 MB) and (10M, 1997 MB),
-  giving `b ≈ 0.57`; extended to 100M that is ~7 GB. (Higher than the 6.5 GiB an
-  earlier draft "declared"; the honest fit from the measured curve is ~7 GB, and
-  only a real run settles it.)
+- **Wall / throughput:** hold throughput at the 10M figure (~36,500 rows/s, the
+  point closest to 100M behaviour); 100,000,000 ÷ 36,500 ≈ 2,740 s ≈ ~46 min. This
+  is faster than an earlier draft's ~71 min because that projection held a slower
+  instance's ~23,300 rows/s; the wall projection tracks whatever instance measured
+  the 10M point, which is exactly why it is labelled order-of-magnitude, not an SLA.
+- **Peak RSS:** fit `peak_rss ≈ a · rows^b` to (1M, 509 MB) and (10M, 1984 MB),
+  giving `b ≈ 0.59`; extended to 100M that is ~7.7 GB. This is a touch above the
+  earlier draft's ~7 GB fit: this run's 1M peak (509 MB) came in below that draft's
+  542 MB while the 10M anchor held, which steepens the slope. A two-point power-law
+  fit is fragile; both drafts agree the 100M peak is in the 7-8 GB band, and only a
+  real run settles it.
 - **Temp disk:** scale the 10M spill (~3.2 GB) roughly linearly with rows (the
   reorder lane is active at both 10M and 100M), giving ~31 GB.
 

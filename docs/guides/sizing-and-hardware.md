@@ -38,24 +38,24 @@ config (HIPAA Safe-Harbor style):
 ## Size-to-time
 
 > **Hardware for the measured rows below: a 4-vCPU / 16 GB x86-64 Linux cloud
-> container (the development reference box), single native thread, engine v0.14.2
-> (Faker 40.23.0 pin) with the Rust companion.** These are a development-box
+> container (the development reference box), single native thread, engine built from
+> `main` (Faker 40.23.0 pin) with the Rust companion.** These are a development-box
 > reference point, not a production SLA. Throughput varies between container
 > instances even on the same image (see the caveats); treat the wall-clock
-> numbers as order-of-magnitude.
+> numbers as order-of-magnitude. Measured 2026-10-26; config digest `fb5abdb7e64a`.
 
 | Total rows | Tables | Columns | Wall time | Throughput | Peak memory | Temp disk (spill) | Native columns |
 |---:|:---:|:---:|---:|---:|---:|---:|:---:|
-| 1,000,000 | 3 | 40 | ~38 s (p50 38.0 s, p95 38.7 s; 3 runs) | ~26,000 rows/s | ~0.5 GB | ~0.05 GB | 37 / 37 |
-| 10,000,000 | 3 | 40 | ~7 min 8 s (1 run) | ~23,000 rows/s | ~2.0 GB | ~3.2 GB | 37 / 37 |
-| 100,000,000 | 3 | 40 | _~71 min (extrapolated)_ | _~23,000 rows/s (extrap.)_ | _~7 GB (extrapolated)_ | _~31 GB (extrapolated)_ | _37 / 37 (expected)_ |
+| 1,000,000 | 3 | 40 | ~25 s (p50 25.4 s, p95 26.2 s; 3 runs) | ~39,000 rows/s | ~0.5 GB | ~0.06 GB | 37 / 37 |
+| 10,000,000 | 3 | 40 | ~4 min 34 s (1 run) | ~36,500 rows/s | ~2.0 GB | ~3.2 GB | 37 / 37 |
+| 100,000,000 | 3 | 40 | _~46 min (extrapolated)_ | _~36,500 rows/s (extrap.)_ | _~7.7 GB (extrapolated)_ | _~31 GB (extrapolated)_ | _37 / 37 (expected)_ |
 
 Throughput in each row is `total rows ÷ the wall time shown`, so wall and
 throughput are on one basis (an earlier version of this table mixed the median
 wall with the fastest run's throughput). Read the first row as: *a one-million-row
-job across three related tables and 40 masked columns finishes in about 38
-seconds and needs about half a gigabyte of memory, on a modest 4-core
-development container.*
+job across three related tables and 40 masked columns finishes in about half a
+minute and needs about half a gigabyte of memory, on a modest 4-core development
+container.*
 
 ### How the 100M row is extrapolated (not measured)
 
@@ -64,15 +64,18 @@ can check it rather than take it on faith. **It is not a measured number.** The
 true large-scale numbers come from the prodsim benchmarking work; this harness
 deliberately does not run a paid 100M job.
 
-- **Wall / throughput:** measured throughput is roughly flat with scale (~26k
-  rows/s at 1M, ~23k rows/s at 10M), so the projection holds throughput at the
-  10M figure (~23,000 rows/s, the point closest to 100M behaviour) and divides:
-  100,000,000 ÷ 23,000 ≈ 4,300 s ≈ **~71 min** on this class of box.
+- **Wall / throughput:** measured throughput is roughly flat with scale (~39k
+  rows/s at 1M, ~36.5k rows/s at 10M), so the projection holds throughput at the
+  10M figure (~36,500 rows/s, the point closest to 100M behaviour) and divides:
+  100,000,000 ÷ 36,500 ≈ 2,740 s ≈ **~46 min** on this instance. (An earlier draft
+  projected ~71 min from a slower instance's ~23,000 rows/s; the wall projection
+  tracks whatever instance measured the 10M point, which is why it is labelled
+  order-of-magnitude, not an SLA.)
 - **Peak memory:** the two measured points (0.5 GB at 1M, 2.0 GB at 10M) fit a
-  sub-linear power law `peak_rss ≈ a · rows^b` with `b ≈ 0.57`. Extended to 100M
-  that gives **~7 GB**. (This is higher than the 6.5 GiB figure an earlier draft
-  "declared"; the honest fit from the measured curve is ~7 GB, and only a real
-  run settles it.)
+  sub-linear power law `peak_rss ≈ a · rows^b` with `b ≈ 0.59`. Extended to 100M
+  that gives **~7.7 GB**. (A touch above an earlier draft's ~7 GB fit, because this
+  run's 1M peak came in a little lower while the 10M anchor held; a two-point fit is
+  fragile, and only a real run settles it.)
 - **Temp disk:** spill is driven by the external-sort (reorder) lane, which is
   active from the 10M tier. Scaling the 10M spill (~3.2 GB) roughly linearly with
   rows gives **~31 GB** at 100M, so budget tens of GB of fast temp disk.
@@ -80,9 +83,9 @@ deliberately does not run a paid 100M job.
 ## What to take from this
 
 - **Time scales about linearly with rows.** Measured throughput is roughly
-  constant (~23-26k rows/s single-threaded on this box), so wall-clock grows with
-  total rows: ~38 s at 1M and ~7 minutes at 10M (measured), extrapolating to the
-  order of ~71 minutes at 100M on this class of hardware. All runs here use a
+  constant (~36-39k rows/s single-threaded on this box), so wall-clock grows with
+  total rows: ~25 s at 1M and ~4.5 minutes at 10M (measured), extrapolating to the
+  order of ~46 minutes at 100M on this instance. All runs here use a
   single native thread (`--native-threads 1`); multi-thread scaling was not
   measured, so this page makes no claim about it.
 - **Memory grows much more slowly than the data (sub-linear), not in proportion
@@ -90,7 +93,7 @@ deliberately does not run a paid 100M job.
   in rows for under a 4x increase in memory -- because the engine streams the job
   out-of-core and spills to disk rather than loading whole tables. It is **not
   flat**: the join bookkeeping grows with the number of distinct keys. The
-  extrapolated ~7 GB at 100M follows that same sub-linear curve; only a real run
+  extrapolated ~7.7 GB at 100M follows that same sub-linear curve; only a real run
   confirms it.
 - **Plan for temp disk.** Out-of-core spill scales with the data once the reorder
   lane is active: ~3.2 GB of scratch at 10M, extrapolating to tens of GB at 100M
@@ -113,8 +116,10 @@ deliberately does not run a paid 100M job.
   measured on a 4-vCPU / 16 GB development container. The *memory* and *spill*
   numbers are deterministic and reproduce closely run to run; the *wall-clock /
   throughput* numbers vary noticeably between container instances even on the same
-  image (an earlier A-2 run of the same code measured ~24 s / ~43k rows/s at 1M on
-  a faster instance). Treat wall-clock as order-of-magnitude, not an SLA.
+  image. Runs of the same code have measured anywhere from ~24 s / ~43k rows/s at 1M
+  on a fast instance to ~38 s / ~26k rows/s on a slow one; the numbers in the table
+  above (~25 s at 1M) sit near the fast end. Treat wall-clock as order-of-magnitude,
+  not an SLA.
 - **Synthetic data.** The dataset is generated to be Synthea-shaped and
   FK-consistent; values are drawn from fixed pools, so cardinality is realistic
   but not identical to a specific hospital export.
