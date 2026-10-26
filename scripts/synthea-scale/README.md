@@ -14,13 +14,13 @@ A three-table FK chain with realistic PHI columns and strategies:
 
 | Table | ~cols | FK | PHI strategies a hospital would use |
 |---|---|---|---|
-| `patients` | 15 | (root) | FPE on SSN/licenses, keyed date-shift on birth/death dates, Faker on names + address, categorical remap on marital/race/gender/state, ZIP truncated to the HIPAA 3-digit prefix, keyed hash on the patient id |
-| `encounters` | 15 | `patient` -> `patients.id` | keyed hash on the encounter/provider/payer/code ids, keyed date-shift on start/stop, FPE on the cost fields, categorical on encounter class, text-redaction on descriptions |
-| `observations` | 10 | `encounter` -> `encounters.id` | keyed hash on code + the FK, keyed date-shift on the date, FPE on the value, categorical on category/units/type, text-redaction on description |
+| `patients` | 15 | (root) | FPE on SSN/licenses, month bucket-perturb on birth/death dates, deterministic categorical remap on names/address/city and marital/race/gender/state, ZIP truncated to the HIPAA 3-digit prefix, keyed hash on the patient id |
+| `encounters` | 15 | `patient` -> `patients.id` | keyed hash on the encounter/org/provider/payer/code ids, month bucket-perturb on start/stop, FPE on the cost fields, categorical on encounter class, text-redaction on the free-text descriptions |
+| `observations` | 10 | `encounter` -> `encounters.id` | keyed hash on code/provider + the FKs, month bucket-perturb on the date, FPE on the value, categorical on category/units/type, text-redaction on the free-text description |
 
 Row counts are TOTAL across the chain, split `patients : encounters : observations
-= 1 : 5 : 14`. The `1m` / `10m` / `100m` tiers are presets; the 100M run is the
-same code path with a larger input.
+= 1 : 5 : 14`. The `1m` / `10m` / `100m` tiers are presets. Only 1M and 10M are
+measured; the 100M tier is extrapolated, not run (see below).
 
 ## Reproduce the 1M and 10M results (one command each)
 
@@ -42,16 +42,21 @@ python scripts/synthea-scale/bench_worker_synthea.py  --data-dir /tmp/synthea10m
 Each worker run prints one `BENCH_JSON {...}` line and, with `--out`, writes the
 same record as indented JSON.
 
-## The 100M run (orchestrator, on GCP)
+## The 100M tier (extrapolated, not run)
 
-Build with explicit per-table counts and run the same worker; the orchestrator
-owns the paid GCP run, not this harness:
+There is **no paid 100M GCP run** (Cam, 2026-10-26) and no `synthea` battery is
+wired into the GCP harness. The 100M row in the sizing guide and the measurement
+record is an extrapolation from the measured 1M/10M curve (method shown in the
+record); authoritative large-scale numbers come from the prodsim work.
+
+The builder does take explicit per-table counts, so a real 100M run is the same
+code path with a larger input if one is ever scoped as a separate work item:
 
 ```bash
 python scripts/synthea-scale/build_synthea_dataset.py --out-dir /data/synthea100m \
     --patients 5000000 --encounters 25000000 --observations 70000000
 python scripts/synthea-scale/bench_worker_synthea.py --data-dir /data/synthea100m \
-    --rss-ceiling-mb 6656 --out /data/results/synthea-100m.json
+    --rss-ceiling-mb 8192 --out /data/results/synthea-100m.json
 ```
 
 ## How it measures (honestly)

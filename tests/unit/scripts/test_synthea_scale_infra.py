@@ -115,9 +115,10 @@ def test_config_validates_against_pipeline_config(chain: dict[str, Path], tmp_pa
 
 def test_config_covers_the_phi_strategy_families() -> None:
     strategies = cfg.declared_strategies()
-    # The hospital PHI families: FPE identifiers, bucket-generalized dates, redacted
-    # names/address/text, categorical codes, ZIP truncation, and hashed FK keys/ids.
-    # All are out-of-core-supported so the job scales to 100M on the bounded route.
+    # The hospital PHI families: FPE identifiers, bucket-generalized dates, categorical
+    # remap (names/address/city and the coded fields), text-redaction on the free-text
+    # descriptions, ZIP truncation, and hashed FK keys/ids. All are out-of-core-supported
+    # so the job runs on the bounded route.
     for required in (
         "fpe",
         "bucket_perturb",
@@ -293,3 +294,68 @@ def test_error_record_reports_frames_without_message_or_source() -> None:
     assert any(f.endswith(":_thrower") for f in record["frames"])
     assert all(f.count(":") == 2 for f in record["frames"])
     assert secret not in json.dumps(record)
+
+
+# -------------------------------------------------- A-2 remediation acceptance (F1/F2/F3)
+
+
+def test_names_and_addresses_are_genuinely_transformed_on_ooc(
+    chain: dict[str, Path], tmp_path: Path
+) -> None:
+    """F1: the direct-identifier name/address columns are GENUINELY transformed on the
+    out-of-core route. They used to be `text_redact`, a free-text span pass that finds no
+    spans in a single-token name cell and leaves it UNCHANGED; they are now a deterministic
+    `categorical` remap onto a synthetic pool. The masked pools are disjoint from the source
+    generation pools, so a correctly-masked column shares no value with its source."""
+    import decoy_engine
+    from decoy_engine.config import PipelineConfig
+    from decoy_engine.execution import ParquetTransactionalSink, run_pipeline
+    from decoy_engine.profile._readers import LazySource
+
+    config = cfg.build_config(chain, tmp_path / "cfg-out")
+    PipelineConfig.model_validate(config)
+    committed = tmp_path / "committed"
+    result = run_pipeline(
+        config,
+        {t: LazySource(path=p) for t, p in chain.items()},
+        engine_version=decoy_engine.__version__,
+        execution_mode="out_of_core",  # the route this harness characterizes
+        sink=ParquetTransactionalSink(committed),
+    )
+    assert result.quality_metrics["execution"]["execution_mode"] == "out_of_core"
+    src = pq.read_table(chain["patients"])
+    out = pq.read_table(committed / "patients.parquet")
+    for col in ("first", "last", "address", "city"):
+        src_vals = set(src.column(col).to_pylist())
+        out_vals = set(out.column(col).to_pylist())
+        # Transformed: no source value survives into the masked output.
+        assert src_vals.isdisjoint(out_vals), f"{col!r} not transformed: {src_vals & out_vals}"
+        # And the output is name-shaped (drawn from the column's synthetic pool), not blanked.
+        assert out_vals and all(isinstance(v, str) and v for v in out_vals)
+
+
+def test_config_does_not_claim_post_validation(chain: dict[str, Path], tmp_path: Path) -> None:
+    """F2: the engine's `post_validation` scan is a run_pipeline runtime kwarg, not a
+    `global_settings` field, and turning it on forces the job off the out-of-core route this
+    harness measures. The config must not carry the inert/misleading `post_validation` flag,
+    and the worker must not pass the kwarg; the harness's own `_synthea_parity` sample is the
+    FK check."""
+    config = cfg.build_config(chain, tmp_path / "out")
+    assert "post_validation" not in config["global_settings"]
+    worker_src = (_SCRIPTS / "bench_worker_synthea.py").read_text()
+    assert "post_validation=True" not in worker_src
+
+
+def test_sizing_guide_labels_100m_as_extrapolation() -> None:
+    """F3: doc-lint. The reader-facing guide must present 1M/10M as measured and the 100M
+    row as a clearly-labelled extrapolation, and must not carry a blanket "every number is
+    measured" claim."""
+    guide = (_ROOT / "docs" / "guides" / "sizing-and-hardware.md").read_text().lower()
+    assert "extrapolat" in guide  # the 100M method is shown as an extrapolation
+    # The 100M table row is labelled extrapolated, on the same line as the row.
+    row_100m = next(ln for ln in guide.splitlines() if "100,000,000" in ln)
+    assert "extrapolat" in row_100m
+    # No blanket "measured, not estimated or extrapolated" claim remains.
+    assert "not estimated or extrapolated" not in guide
+    # prodsim is named as the source of real large-scale benchmarks.
+    assert "prodsim" in guide

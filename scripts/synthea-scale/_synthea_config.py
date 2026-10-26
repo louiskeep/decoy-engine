@@ -3,16 +3,21 @@
 Derived entirely from the one column spec in `_synthea_layout.COLUMNS`, so the
 dataset shape and the mask rule never drift. The strategies are the ones a
 hospital customer would reach for on a Synthea export: FPE on the format-bearing
-identifiers (SSN, licenses, ZIP, costs), keyed date-shift on every date, Faker
-replacement on names and address lines, categorical replacement on the small
-coded fields, keyed hash on the UUID/code identifiers and the FK keys, and
-text-redaction on the free-text descriptions.
+identifiers (SSN, licenses, costs), bucket-perturb (month generalization) on the
+dates, deterministic `categorical` remap onto a synthetic pool for the
+direct-identifier name/address cells and the small coded fields, keyed hash on
+the UUID/code identifiers and the FK keys, truncation on ZIP, and text-redaction
+on the free-text description columns.
 
 The two FK edges mask their key and child columns with `hash` under one shared
 namespace each (`NS_PATIENT`, `NS_ENCOUNTER`), and the relationship declares that
 namespace, so the same source id masks to the same value on both ends and the FK
-join survives. `post_validation` is on so the engine runs its own FK-join check
-in addition to the harness parity sample.
+join survives. FK referential integrity is checked by the harness's own
+order-independent parity sample (`_synthea_parity`); the engine's built-in
+`post_validation` FK-join scan is NOT run here, because it requires the full
+frame resident and is declined on the out-of-core route this harness measures
+(it diverts the job to full-frame, defeating the out-of-core characterization),
+so it is deliberately left off. See the measurement record for the full note.
 """
 
 from __future__ import annotations
@@ -73,7 +78,10 @@ def build_config(src_paths: dict[str, Path], out_dir: Path, seed: int = 7) -> di
         )
     return {
         "version": 1,
-        "global_settings": {"seed": seed, "post_validation": True},
+        # NOTE: `post_validation` is a run_pipeline runtime kwarg, not a
+        # global_settings field -- setting it here would be inert. It is left off
+        # on purpose (it forces the full-frame route; see the module docstring).
+        "global_settings": {"seed": seed},
         "sources": {
             t: {"type": "file", "format": "parquet", "path": str(src_paths[t])} for t in TABLE_NAMES
         },

@@ -2,7 +2,7 @@
   "schema": "synthea-scale/v1",
   "completed": true,
   "failure": null,
-  "run_date_utc": "2026-10-25T18:12:56+00:00",
+  "run_date_utc": "2026-10-26T04:11:51+00:00",
   "machine": {
     "node": "vm",
     "platform": "Linux-6.18.44-fc-v153-x86_64-with-glibc2.39",
@@ -51,7 +51,7 @@
     "memory_limit": "10941MB",
     "batch_rows": 65536,
     "budget_bytes": 11473505485,
-    "temp_disk_budget_bytes": 26053683609,
+    "temp_disk_budget_bytes": 26638401945,
     "out_of_core_reorder_threshold_rows": null
   },
   "spill": {
@@ -61,7 +61,7 @@
     "merge_groups": 0,
     "spilled_and_merged": false,
     "detail": [],
-    "temp_disk_peak_mb": 42.6
+    "temp_disk_peak_mb": 52.6
   },
   "disposition": {
     "columns_total": 37,
@@ -77,7 +77,7 @@
     "edges": {
       "patients->encounters": {
         "status": "ok",
-        "resolved_fk": 5648,
+        "resolved_fk": 6000,
         "masking": {
           "sampled": 2000,
           "distinct": 2000,
@@ -96,44 +96,44 @@
     }
   },
   "committed_output_mb": 139.1,
-  "mask_s": 23.15,
-  "mask_s_p50": 23.72,
-  "mask_s_p95": 24.75,
+  "mask_s": 38.68,
+  "mask_s_p50": 38.02,
+  "mask_s_p95": 38.68,
   "mask_s_runs": [
-    24.75,
-    23.72,
-    23.15
+    37.71,
+    38.02,
+    38.68
   ],
-  "throughput_rows_per_s": 43196,
-  "peak_rss_mb": 502.6,
-  "peak_rss_poll_mb": 503.0,
+  "throughput_rows_per_s": 25852,
+  "peak_rss_mb": 542.3,
+  "peak_rss_poll_mb": 542.3,
   "rss_method": "wait4_ru_maxrss",
   "rss_within_ceiling": true,
   "runs": [
     {
       "completed": true,
       "failure": null,
-      "wall_s": 26.34,
-      "peak_rss_mb": 502.6,
-      "peak_rss_poll_mb": 503.0,
+      "wall_s": 39.84,
+      "peak_rss_mb": 521.5,
+      "peak_rss_poll_mb": 521.5,
       "returncode": 0,
       "signal": null
     },
     {
       "completed": true,
       "failure": null,
-      "wall_s": 25.3,
-      "peak_rss_mb": 488.8,
-      "peak_rss_poll_mb": 488.8,
+      "wall_s": 40.35,
+      "peak_rss_mb": 542.3,
+      "peak_rss_poll_mb": 542.3,
       "returncode": 0,
       "signal": null
     },
     {
       "completed": true,
       "failure": null,
-      "wall_s": 24.8,
-      "peak_rss_mb": 493.5,
-      "peak_rss_poll_mb": 493.5,
+      "wall_s": 40.86,
+      "peak_rss_mb": 530.0,
+      "peak_rss_poll_mb": 530.5,
       "returncode": 0,
       "signal": null
     }

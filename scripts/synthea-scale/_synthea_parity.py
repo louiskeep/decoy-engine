@@ -16,9 +16,12 @@ masking -- without any order assumption:
      source-id format and keep their cardinality (no collapse to a constant).
 
 (2)+(3) together are the honest statement of "FK parity on the edge": every child
-reference still points at a parent, and both ends were genuinely masked. The
-engine's own `post_validation: true` FK-join check runs alongside this as an
-independent second opinion.
+reference still points at a parent, and both ends were genuinely masked. This is
+the ONLY FK check the harness runs: the engine's built-in `post_validation`
+fk_validity scan is not used, because it needs the full frame resident and is
+declined on the out-of-core route this harness measures (it would divert the job
+to full-frame). This sample verifies the same referential-integrity property
+directly on the committed out-of-core output.
 """
 
 from __future__ import annotations

@@ -2,7 +2,7 @@
   "schema": "synthea-scale/v1",
   "completed": true,
   "failure": null,
-  "run_date_utc": "2026-10-25T18:17:35+00:00",
+  "run_date_utc": "2026-10-26T04:21:08+00:00",
   "machine": {
     "node": "vm",
     "platform": "Linux-6.18.44-fc-v153-x86_64-with-glibc2.39",
@@ -51,7 +51,7 @@
     "memory_limit": "10941MB",
     "batch_rows": 65536,
     "budget_bytes": 11473505485,
-    "temp_disk_budget_bytes": 26423130931,
+    "temp_disk_budget_bytes": 26406306201,
     "out_of_core_reorder_threshold_rows": null
   },
   "spill": {
@@ -72,7 +72,7 @@
         "resident_envelope_bytes": 3786256810
       }
     ],
-    "temp_disk_peak_mb": 3162.0
+    "temp_disk_peak_mb": 3162.1
   },
   "disposition": {
     "columns_total": 37,
@@ -106,25 +106,25 @@
       }
     }
   },
-  "committed_output_mb": 1390.2,
-  "mask_s": 255.64,
-  "mask_s_p50": 255.64,
-  "mask_s_p95": 255.64,
+  "committed_output_mb": 1390.1,
+  "mask_s": 428.43,
+  "mask_s_p50": 428.43,
+  "mask_s_p95": 428.43,
   "mask_s_runs": [
-    255.64
+    428.43
   ],
-  "throughput_rows_per_s": 39118,
-  "peak_rss_mb": 1956.2,
-  "peak_rss_poll_mb": 1956.2,
+  "throughput_rows_per_s": 23341,
+  "peak_rss_mb": 1996.9,
+  "peak_rss_poll_mb": 1996.9,
   "rss_method": "wait4_ru_maxrss",
   "rss_within_ceiling": true,
   "runs": [
     {
       "completed": true,
       "failure": null,
-      "wall_s": 257.83,
-      "peak_rss_mb": 1956.2,
-      "peak_rss_poll_mb": 1956.2,
+      "wall_s": 431.49,
+      "peak_rss_mb": 1996.9,
+      "peak_rss_poll_mb": 1996.9,
       "returncode": 0,
       "signal": null
     }

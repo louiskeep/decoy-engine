@@ -4,12 +4,13 @@ Row counts are TOTAL across the three tables; the per-table split follows a
 realistic healthcare fan-out of patients : encounters : observations = 1 : 5 : 14
 (each patient ~5 encounters, each encounter ~2.8 observations). The 1M/10M/100M
 tiers are named presets; `--patients/--encounters/--observations` override them,
-so the orchestrator's paid 100M run is this exact code path with a larger input.
-No table is ever resident: peak memory is one `--chunk-rows` chunk.
+so a real 100M run (none is planned; the 100M tier is extrapolated) would be this
+exact code path with a larger input. No table is ever resident: peak memory is one
+`--chunk-rows` chunk.
 
     # named tier
     python scripts/synthea-scale/build_synthea_dataset.py --tier 10m --out-dir /data/synthea10m
-    # explicit per-table counts (what the 100M run uses)
+    # explicit per-table counts (a larger-than-10M run would use these)
     python scripts/synthea-scale/build_synthea_dataset.py --out-dir /data/synthea100m \\
         --patients 5000000 --encounters 25000000 --observations 70000000
 """

@@ -87,6 +87,36 @@ def _fpe(charset: str) -> dict[str, Any]:
     return {"charset": charset}
 
 
+# Synthetic replacement pools for the deterministic `categorical` remap of the
+# direct-identifier name/address columns. These are the MASKED output values (the
+# source names are drawn from the separate `_FIRST` / `_LAST` / `_STREET` / `_CITY`
+# generation pools below). Kept DISJOINT from those source pools on purpose: the
+# masked addresses carry a house number and the names/cities share no entry with
+# the source sets, so a masked cell is always a different string from its source --
+# which is the property the "names/addresses are genuinely transformed" acceptance
+# test (tests/unit/scripts/test_synthea_scale_infra.py) asserts on the out-of-core
+# route. The remap is deterministic (same source value -> same synthetic value
+# within the column namespace), so it is consistent pseudonymization, not a reshuffle.
+_FIRST_POOL = [
+    "Olivia", "Liam", "Emma", "Noah", "Ava", "Ethan", "Sophia", "Mason",
+    "Isabella", "Logan", "Mia", "Lucas", "Amelia", "Jackson", "Harper", "Aiden",
+]  # fmt: skip
+_LAST_POOL = [
+    "Bennett", "Coleman", "Fletcher", "Hayes", "Ingram", "Keller", "Mercer", "Novak",
+    "Osborne", "Pratt", "Reeves", "Sutton", "Vance", "Whitaker", "Yates", "Abbott",
+]  # fmt: skip
+# Every entry carries a house number, so none can collide with a bare source street
+# name ("Main St", ...) -- the masked value is always distinct from the source.
+_ADDRESS_POOL = [
+    "128 Birch Ter", "47 Willow Ct", "953 Sycamore Way", "12 Juniper Pl",
+    "604 Aspen Loop", "8 Magnolia Row", "275 Dogwood Path", "1120 Spruce Walk",
+]  # fmt: skip
+_CITY_POOL = [
+    "Austin", "Denver", "Seattle", "Portland", "Nashville", "Raleigh", "Madison",
+    "Boulder", "Tucson", "Fresno", "Dayton", "Akron",
+]  # fmt: skip
+
+
 PATIENTS: tuple[ColumnSpec, ...] = (
     ColumnSpec("id", "key", "hash", role="key", namespace=NS_PATIENT),
     ColumnSpec("ssn", "ssn", "fpe", namespace="synthea_ssn", provider_config=_fpe("digits")),
@@ -96,12 +126,19 @@ PATIENTS: tuple[ColumnSpec, ...] = (
     ColumnSpec(
         "passport", "license", "fpe", namespace="synthea_pp", provider_config=_fpe("ALPHANUM")
     ),
-    # Names are suppressed by text-redaction, the HIPAA Safe-Harbor treatment for
-    # direct identifiers. (Synthetic replacement via `faker` is the other common
-    # choice but is not out-of-core-supported, so it would force the unbounded
-    # sequential route -- see docs/records and _compat.py.)
-    ColumnSpec("first", "first_name", "text_redact"),
-    ColumnSpec("last", "last_name", "text_redact"),
+    # Direct-identifier name cells are replaced by a deterministic `categorical`
+    # remap onto a synthetic name pool: the same source name maps to the same
+    # synthetic name within the column's namespace (consistent pseudonymization),
+    # and the compiled native categorical kernel runs it on the bounded out-of-core
+    # route. `text_redact` is a free-text SPAN pass (it removes detected PII spans
+    # inside a cell); on a single-token name cell with no NER model configured it
+    # detects nothing and leaves the value UNCHANGED, so it is the wrong tool for a
+    # structured identifier column. Synthetic replacement via `faker` would also fit
+    # but is not out-of-core-supported, so it would force the unbounded sequential
+    # route (see docs/records and _compat.py); deterministic `categorical` is the
+    # only native, name-shaped strategy on the out-of-core route.
+    ColumnSpec("first", "first_name", "categorical", provider_config={"categories": _FIRST_POOL}),
+    ColumnSpec("last", "last_name", "categorical", provider_config={"categories": _LAST_POOL}),
     # Dates generalized to the month via keyed bucket-perturb (a Safe-Harbor style
     # date reduction, and out-of-core-supported, unlike per-value date_shift).
     ColumnSpec(
@@ -131,8 +168,10 @@ PATIENTS: tuple[ColumnSpec, ...] = (
         provider_config={"categories": ["white", "black", "asian", "hispanic", "native", "other"]},
     ),
     ColumnSpec("gender", "cat_gender", "categorical", provider_config={"categories": ["M", "F"]}),
-    ColumnSpec("address", "address", "text_redact"),
-    ColumnSpec("city", "city", "text_redact"),
+    # Street address and city: same deterministic `categorical` remap onto a
+    # synthetic pool as the name columns above (native on the out-of-core route).
+    ColumnSpec("address", "address", "categorical", provider_config={"categories": _ADDRESS_POOL}),
+    ColumnSpec("city", "city", "categorical", provider_config={"categories": _CITY_POOL}),
     ColumnSpec(
         "state",
         "cat_state",
