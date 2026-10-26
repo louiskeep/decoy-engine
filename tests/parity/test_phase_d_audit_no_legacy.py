@@ -146,7 +146,7 @@ def test_ooc_cells_match_the_support_sets() -> None:
         ("text_redact", mx.PAYLOAD): mx.COMPILED_RUST,
         ("bucket_perturb", mx.PAYLOAD): mx.COMPILED_RUST,
         ("text_mask", mx.PAYLOAD): mx.COMPILED_RUST,
-        ("code_set", mx.PAYLOAD): mx.DEDICATED_PYTHON,
+        ("code_set", mx.PAYLOAD): mx.ARROW_DICT_MAP,
         # B4: deterministic-REUSE person-name faker selects from its prepared pool
         # through the compiled index kernel; its parent-key surface stays excluded.
         ("faker", mx.PAYLOAD): mx.COMPILED_SELECTION,

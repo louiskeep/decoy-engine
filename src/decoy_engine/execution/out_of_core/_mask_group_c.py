@@ -84,6 +84,7 @@ from decoy_engine.execution._strategies._code_set import _PER_VALUE_CODE_SET_ERR
 from decoy_engine.execution.out_of_core._bucket_native import native_bucket_perturb_array
 from decoy_engine.execution.out_of_core._text_mask_native import native_text_mask_array
 from decoy_engine.generation.pool._events import QualityWarning
+from decoy_engine.kernel._code_set import code_set_map
 from decoy_engine.kernel._scalar import _array_to_pylist, _is_missing
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.storm.detectors import Span
@@ -381,34 +382,32 @@ def _code_set_array(
             "(gate should reject).",
         )
     code_cfg = CodeSetConfig.from_dict(cfg)
-    out: list[Any] = []
-    for value in _array_to_pylist(values):
-        if _is_missing(value):
-            out.append(None)
-            continue
-        try:
-            out.append(
-                apply_code_set(
-                    str(value),
-                    code_cfg,
-                    mode=mode,
-                    job_seed=job_seed,
-                    namespace=namespace,
-                    corpus_record=corpus_record,
-                )
-            )
-        except PlanCompileError as exc:
-            # Defense-in-depth: the admitted shape cannot raise a per-value code
-            # (those need chapter_preserve, which the gate rejects). If one ever
-            # surfaced, fail closed rather than leak the raw value.
-            if exc.code in _PER_VALUE_CODE_SET_ERRORS:
-                raise ExecutionError(
-                    code="out_of_core_code_set_row_error_unreachable",
-                    message=f"code_set raised a per-value defect ({exc.code}) on a shape the "
-                    "gate should have rejected; failing closed.",
-                ) from exc
-            raise  # corpus/config-level defect: job-fatal, same as the oracle.
-    return pa.array(out, type=pa.string())
+
+    def _select(code: str) -> str:
+        return apply_code_set(
+            code,
+            code_cfg,
+            mode=mode,
+            job_seed=job_seed,
+            namespace=namespace,
+            corpus_record=corpus_record,
+        )
+
+    # B6: select once per DISTINCT non-null value and expand with an Arrow take (`code_set_map`),
+    # byte-identical to the former per-cell loop (the selection is a pure function of the value).
+    try:
+        return code_set_map(values, _select)
+    except PlanCompileError as exc:
+        # Defense-in-depth: the admitted shape cannot raise a per-value code (those need
+        # chapter_preserve, which the gate rejects). If one ever surfaced, fail closed rather than
+        # leak the raw value.
+        if exc.code in _PER_VALUE_CODE_SET_ERRORS:
+            raise ExecutionError(
+                code="out_of_core_code_set_row_error_unreachable",
+                message=f"code_set raised a per-value defect ({exc.code}) on a shape the "
+                "gate should have rejected; failing closed.",
+            ) from exc
+        raise  # corpus/config-level defect: job-fatal, same as the oracle.
 
 
 # ---------------------------------------------------------------------------
