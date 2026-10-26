@@ -513,9 +513,7 @@ def test_explicit_out_of_core_on_a_deterministic_faker_job_is_honoured() -> None
 
 def test_explicit_out_of_core_on_a_positional_faker_job_fails_closed() -> None:
     # A positional faker is not out-of-core-eligible, so the explicit mode still fails closed.
-    shape = payload_shape(
-        {"f": (strs(SRC), positional_seed()), "p": (strs(SRC), PASSTHROUGH)}
-    )
+    shape = payload_shape({"f": (strs(SRC), positional_seed()), "p": (strs(SRC), PASSTHROUGH)})
     with pytest.raises(ConfigError, match=_OOC_CODE):
         _route(shape, execution_mode="out_of_core")
 

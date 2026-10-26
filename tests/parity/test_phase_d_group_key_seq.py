@@ -106,14 +106,19 @@ def _col(result: Any, table: str, column: str) -> list[Any]:
 # --- parity: SEQ native == the full-frame oracle, across sibling types -------------------------
 
 _STRING_SIB = strs(["grp-a", "grp-b", "grp-a", "", "héllo", None, "grp-b", "日本語"])
-_INT_SIB = pa.array([1, 2, 1, 2**53 + 7, 5, None, 2, None], pa.int64())  # nulls -> Int64, not float64
+_INT_SIB = pa.array(
+    [1, 2, 1, 2**53 + 7, 5, None, 2, None], pa.int64()
+)  # nulls -> Int64, not float64
 _BOOL_SIB = pa.array([True, False, True, None, False, True, None, False], pa.bool_())
 
 
 @pytest.mark.parametrize(
     "sib",
-    [pytest.param(_STRING_SIB, id="string"), pytest.param(_INT_SIB, id="int64-with-nulls"),
-     pytest.param(_BOOL_SIB, id="bool")],
+    [
+        pytest.param(_STRING_SIB, id="string"),
+        pytest.param(_INT_SIB, id="int64-with-nulls"),
+        pytest.param(_BOOL_SIB, id="bool"),
+    ],
 )
 def test_seq_native_group_key_is_byte_identical_to_the_oracle(sib: pa.Array) -> None:
     shape = _shape(sib)
@@ -152,11 +157,20 @@ class _MarkingRawHexKernel:
         self.calls: list[int] = []
 
     def derive_hex_raw_batch(
-        self, values: Any, *, mask_key: Any, namespace: str, hex_chars: int, native_threads: Any = None
+        self,
+        values: Any,
+        *,
+        mask_key: Any,
+        namespace: str,
+        hex_chars: int,
+        native_threads: Any = None,
     ) -> pa.Array:
         self.calls.append(len(values))
         base = self.real.derive_hex_raw_batch(
-            values, mask_key=mask_key, namespace=namespace, hex_chars=hex_chars,
+            values,
+            mask_key=mask_key,
+            namespace=namespace,
+            hex_chars=hex_chars,
             native_threads=native_threads,
         )
         return pa.array([_GK_MARK + v for v in base.to_pylist()], pa.string())
@@ -166,7 +180,9 @@ def _install_marking(monkeypatch: pytest.MonkeyPatch) -> _MarkingRawHexKernel:
     kernel = _MarkingRawHexKernel(load_compiled_raw_hex_kernel())
     # `load_raw_hex` resolves `load_compiled_raw_hex_kernel` against the group_key sibling module's
     # globals, so the witness patches it there (not on `_sequential_native`, which no longer imports it).
-    monkeypatch.setattr(_sequential_native_group_key, "load_compiled_raw_hex_kernel", lambda: kernel)
+    monkeypatch.setattr(
+        _sequential_native_group_key, "load_compiled_raw_hex_kernel", lambda: kernel
+    )
     return kernel
 
 
@@ -188,7 +204,9 @@ def test_disposition_records_the_native_backend(monkeypatch: pytest.MonkeyPatch)
 # --- declines: unsupported sibling shapes stay on the Python handler (and still match) ----------
 
 
-def test_companion_absent_runs_python_and_matches_the_oracle(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_companion_absent_runs_python_and_matches_the_oracle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     def unavailable() -> Any:
         raise CryptoExtensionUnavailableError("raw-hex companion hidden for a Python-only control")
 
