@@ -66,6 +66,10 @@ FROZEN_PARAMETERS: tuple[tuple[str, str, str, str], ...] = (
     ("out_of_core_reorder_threshold_rows", "KEYWORD_ONLY", "None", "int | None"),
     ("unified_slice_enabled", "KEYWORD_ONLY", "True", "bool"),
     ("_provider_snapshot", "KEYWORD_ONLY", "None", "Mapping[str, Callable[[Faker], Any]] | None"),
+    # file_access: additive keyword-only param for the E1 file-access policy seam. Backward
+    # compatible (optional, keyword-only); the engine's single file-access gate (compatibility
+    # contract section 4.1).
+    ("file_access", "KEYWORD_ONLY", "None", "FileAccess | None"),
 )
 FROZEN_RETURN = "ExecutionResult"
 

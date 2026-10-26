@@ -23,6 +23,7 @@ from typing import Any
 
 import pyarrow as pa
 
+from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.generation._pinned_compile import refuse_live_tokens, reject_unpinnable
 from decoy_engine.generation._pinned_plan import (
     PinnedModeError,
@@ -158,7 +159,10 @@ _PANDAS_OPTIONS = (
 )
 
 
-def execute_pinned(plan: PinnedPlan, seed: int) -> dict[str, pa.Table]:
+@entry_point
+def execute_pinned(
+    plan: PinnedPlan, seed: int, *, file_access: FileAccess | None = None
+) -> dict[str, pa.Table]:
     """Generate every table of ``plan`` under ``seed``; byte-identical for equal inputs."""
     import warnings
 

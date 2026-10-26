@@ -33,6 +33,7 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.compute as pc
 
+from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.generation._window_admission import (
     CODE_NOT_CLASS_A,
     CODE_TIMEOUT,
@@ -234,6 +235,7 @@ def _row_bytes(tbl: pa.Table) -> np.ndarray:
     return total
 
 
+@entry_point
 def generate_rows(
     plan: Any,
     *,
@@ -248,6 +250,7 @@ def generate_rows(
     derive_key: Any = None,
     instance_default_locale: str | None = None,
     provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None = None,
+    file_access: FileAccess | None = None,
 ) -> GeneratedWindow:
     """Rows `[offset, offset + count)` of `table`, identical to a full run at those positions.
 
