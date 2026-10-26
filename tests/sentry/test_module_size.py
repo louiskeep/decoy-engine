@@ -68,8 +68,8 @@ ALLOWLIST: dict[str, int] = {
     "src/decoy_engine/execution/_isolated_run.py": 607,
     # bounded-eligible fit rule, the fk-dtype retention branch and the D3a validator admission in decide_execution_route; split the route-priority docstring into the plan doc.
     "src/decoy_engine/execution/_pipeline_routing.py": 691,
-    # wiring of the fk-dtype hazard and D3a validator signals into the one routing call site; split the probe-recovery resolver into its own module.
-    "src/decoy_engine/execution/_pipeline_routing_signals.py": 609,
+    # wiring of the fk-dtype hazard, the row-error-bridge dtype schemas and D3a validator signals into the one routing call site; split the probe-recovery resolver into its own module.
+    "src/decoy_engine/execution/_pipeline_routing_signals.py": 634,
     # fan-in guard on the budget resolver; split the disk-preflight helpers into _disk_budget.py.
     "src/decoy_engine/execution/out_of_core/_budget.py": 608,
     # float FK key token pricing; split the disk-width helpers into _spill_widths.py.
@@ -114,10 +114,10 @@ ALLOWLIST: dict[str, int] = {
     "src/decoy_engine/execution/_sequential.py": 682,
     # transactional publish hardening and row mask; split the publish cluster.
     "src/decoy_engine/quarantine.py": 645,
-    # code_set provenance, FF1 notice plumbing, and the F2 per-column bridge-dtype resolution.
-    "src/decoy_engine/execution/out_of_core/_runner.py": 692,
-    # D3a validator mask-step hook and the F2 bridge-dtype resolution threaded through the reorder driver.
-    "src/decoy_engine/execution/out_of_core/_stream_driver.py": 635,
+    # code_set provenance and FF1 notice plumbing on the batch driver; split the per-table setup out.
+    "src/decoy_engine/execution/out_of_core/_runner.py": 681,
+    # D3a validator mask-step hook threaded through the reorder driver; split the Phase-1 setup out.
+    "src/decoy_engine/execution/out_of_core/_stream_driver.py": 627,
     # corpus schema checks and verify_corpus; split into _codeset_verify.py when next touched.
     "src/decoy_engine/transforms/_codeset_loader.py": 606,
     # DRAW_SITES catalogue; split into _draw_sites_mask.py / _draw_sites_gen.py if it grows.
@@ -130,6 +130,9 @@ ALLOWLIST: dict[str, int] = {
     "src/decoy_engine/internal/faker_setup.py": 637,
     # FF1 span path and sub-floor policy; split into _text_mask_sub_floor.py when next touched.
     "src/decoy_engine/transforms/text_mask.py": 708,
+    # the OOC admission decision surface: per-edge/per-node gates plus the F1 windowed_date
+    # anchor decline and the row-error-bridge dtype decline; split the per-node checks out next.
+    "src/decoy_engine/execution/out_of_core/_compat.py": 640,
 }
 
 

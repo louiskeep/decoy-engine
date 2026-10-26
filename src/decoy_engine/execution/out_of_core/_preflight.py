@@ -15,7 +15,10 @@ import pyarrow as pa
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._runner import build_work_list, order_work
 from decoy_engine.execution.out_of_core import _mask_group_c
-from decoy_engine.execution.out_of_core._compat import check_out_of_core_compatibility
+from decoy_engine.execution.out_of_core._compat import (
+    _ROW_ERROR_BRIDGE_STRATEGIES,
+    check_out_of_core_compatibility,
+)
 from decoy_engine.execution.out_of_core._null_int_guard import reject_null_bearing_int_ooc
 from decoy_engine.execution.out_of_core._route_policy import resolve_reorder_threshold_rows
 from decoy_engine.execution.out_of_core._source import LazySource
@@ -61,7 +64,20 @@ def run_preflight(
     mask_key = require_mask_key(plan, key_provider)
     assert_vault_inputs(vault_writer, config, mask_key)
     work = order_work(build_work_list(plan, registry), relationship_graph)
-    compat = check_out_of_core_compatibility(plan, work, relationship_graph)
+    # Pass the real source schemas so the row-error-bridge dtype decline is
+    # enforced before any row is read: a bucketize/top_code column that is not
+    # provably batch-stable is refused here (routing already prefers the oracle
+    # for it), never run on a bare per-batch conversion that could diverge. Read
+    # the schemas only when the plan has such a node, so an ordinary job pays no
+    # footer read.
+    source_schemas = (
+        {name: source.schema for name, source in sources.items()}
+        if any(node.strategy in _ROW_ERROR_BRIDGE_STRATEGIES for node in work)
+        else None
+    )
+    compat = check_out_of_core_compatibility(
+        plan, work, relationship_graph, source_schemas=source_schemas
+    )
     if not compat.accepted:
         raise ExecutionError(
             code=compat.primary_code or "out_of_core_rejected",

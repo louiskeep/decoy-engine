@@ -22,10 +22,14 @@ import pytest
 
 from decoy_engine.errors import RowErrorsFailedError
 from decoy_engine.execution import PandasExecutionAdapter, ParquetTransactionalSink
+from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._runner import build_work_list, order_work
 from decoy_engine.execution.out_of_core import run_fk_out_of_core
 from decoy_engine.execution.out_of_core._batch_join import ChildFkBatchJoiner
-from decoy_engine.execution.out_of_core._compat import check_out_of_core_compatibility
+from decoy_engine.execution.out_of_core._compat import (
+    OutOfCoreCompatibility,
+    check_out_of_core_compatibility,
+)
 from decoy_engine.execution.out_of_core._source import LazySource
 from decoy_engine.execution.out_of_core._stream_join import StreamFkJoiner
 from decoy_engine.plan._types import ColumnSeed, SeedEnvelope, TableSeed
@@ -229,9 +233,21 @@ def _ext_job(
     return plan, {"parent": parent, "child": child}, graph
 
 
-def _gate_admits(plan: Any, graph: RelationshipGraph) -> bool:
+_DTYPE_DECLINE_CODE = "out_of_core_row_error_dtype_unsupported"
+
+
+def _gate_verdict(
+    plan: Any, sources: dict[str, pa.Table], graph: RelationshipGraph
+) -> OutOfCoreCompatibility:
+    """The compat verdict WITH the real source schemas, so the row-error-bridge
+    dtype decline is exercised (the gate skips it when no schemas are passed)."""
     work = order_work(build_work_list(plan, _REG), graph)
-    return check_out_of_core_compatibility(plan, work, graph).accepted
+    schemas = {name: table.schema for name, table in sources.items()}
+    return check_out_of_core_compatibility(plan, work, graph, source_schemas=schemas)
+
+
+def _gate_admits(plan: Any, sources: dict[str, pa.Table], graph: RelationshipGraph) -> bool:
+    return _gate_verdict(plan, sources, graph).accepted
 
 
 def _assert_value_equal(oracle: pa.Table, ooc: pa.Table, label: str) -> None:
@@ -267,7 +283,7 @@ def test_row_error_bridge_payload_parity(kind: str, batch_rows: int | None) -> N
     change a canonical rendering -- the CHUNK_SAFE property these handlers have)."""
     payload_seed, vals = _CLEAN[kind]
     plan, sources, graph = _job(payload_seed, vals, list(reversed(vals)))
-    assert _gate_admits(plan, graph), f"{kind}: expected gate to admit"
+    assert _gate_admits(plan, sources, graph), f"{kind}: expected gate to admit"
     oracle = PandasExecutionAdapter().run(
         plan, sources, registry=_REG, relationship_graph=graph, namespace_registry=_NS
     )
@@ -288,7 +304,7 @@ def test_row_error_fails_closed(strategy: str) -> None:
         else _seed("top_code", provider_config=(("cap", 89), ("over_label", "90+")))
     )
     plan, sources, graph = _job(seed, ["25", "nope", "40"], ["25", "40", "10"])
-    assert _gate_admits(plan, graph)
+    assert _gate_admits(plan, sources, graph)
     with pytest.raises(RowErrorsFailedError) as exc:
         run_fk_out_of_core(plan, sources, registry=_REG, relationship_graph=graph)
     triggers = {r.trigger for r in exc.value.records}
@@ -313,101 +329,129 @@ def test_row_error_index_is_absolute(batch_rows: int | None) -> None:
     assert pay_errors[0].table == "parent"
 
 
-@pytest.mark.parametrize("batch_rows", [None, 3, 2, 1])
-def test_top_code_boolean_column_is_batch_size_invariant(batch_rows: int | None) -> None:
-    """F2 remediation: a boolean top_code column fails closed identically at
-    every batch size.
+# ---------------------------------------------------------------------------
+# Dtype decline (Option B): a row-error-bridge column whose per-batch pandas
+# conversion is not provably identical to the oracle's whole-frame conversion is
+# DECLINED off the OOC route (coded `out_of_core_row_error_dtype_unsupported`)
+# and runs on the full-frame oracle, which is correct. The route's own preflight
+# refuses such a plan too, so a bare per-batch conversion can never run and emit
+# a value that differs from the oracle. Admitting only the provably-stable set
+# replaces the round-2/3 per-batch dtype-forcing machinery.
+# ---------------------------------------------------------------------------
 
-    A nullable Arrow boolean column `[True, None, False]` converts to pandas
-    `object` under the oracle's whole-frame conversion, so top_code treats each
-    bool cell as a `format_error` and the out-of-core route fails closed (the H1
-    contract). Pre-fix, a null-free single-row batch (`batch_rows=1`) inferred
-    pandas `bool` instead, took top_code's numeric branch, coerced True/False to
-    1/0 and SUCCEEDED with `["1", None, "0"]` -- a wrong-value divergence that
-    depended purely on the batch boundary. `batch_rows` must be output-transparent,
-    so every size must fail closed, and the whole-frame size names rows 0 and 2.
-    """
+
+def _typed_job(
+    payload_seed: ColumnSeed, parent_vals: list[Any], child_vals: list[Any], arrow_type: pa.DataType
+) -> tuple[Any, dict[str, pa.Table], RelationshipGraph]:
+    """`_job` with PLAIN (no pandas metadata) payload columns of `arrow_type`."""
+    key = _key_seed()
+    parent = pa.table(
+        {
+            "pk": pa.array([f"p{i}" for i in range(len(parent_vals))], type=pa.string()),
+            "pay": pa.array(parent_vals, type=arrow_type),
+        }
+    )
+    child = pa.table(
+        {
+            "fk": pa.array([f"p{i}" for i in range(len(child_vals))], type=pa.string()),
+            "cpay": pa.array(child_vals, type=arrow_type),
+        }
+    )
+    plan = SimpleNamespace(
+        seed_envelope=SeedEnvelope(
+            job_seed=_JOB_SEED,
+            per_table=(
+                (
+                    "parent",
+                    TableSeed(per_column=(("pk", key), ("pay", payload_seed)), per_group=()),
+                ),
+                (
+                    "child",
+                    TableSeed(per_column=(("fk", key), ("cpay", payload_seed)), per_group=()),
+                ),
+            ),
+        )
+    )
+    graph = RelationshipGraph(
+        edges=(
+            RelationshipEdge(
+                parent_table="parent",
+                parent_columns=("pk",),
+                child_table="child",
+                child_columns=("fk",),
+                namespace="kns",
+                orphan_policy=OrphanPolicy.PRESERVE,
+            ),
+        ),
+        ordering=(),
+    )
+    return plan, {"parent": parent, "child": child}, graph
+
+
+def _assert_declines_and_preflight_refuses(
+    plan: Any, sources: dict[str, Any], graph: RelationshipGraph
+) -> None:
+    """The gate declines the job with the dtype code, and `run_fk_out_of_core`'s
+    own preflight refuses the same plan (never a bare per-batch run)."""
+    verdict = _gate_verdict(plan, sources, graph)
+    assert not verdict.accepted, "gate must decline a non-batch-stable row-error column"
+    assert _DTYPE_DECLINE_CODE in {r.code for r in verdict.rejections}, [
+        r.code for r in verdict.rejections
+    ]
+    with pytest.raises(ExecutionError) as exc:
+        run_fk_out_of_core(plan, sources, registry=_REG, relationship_graph=graph)
+    assert exc.value.code == _DTYPE_DECLINE_CODE, exc.value.code
+
+
+def test_plain_arrow_boolean_top_code_declines_oracle_correct() -> None:
+    """A PLAIN Arrow boolean top_code column is null-UNSTABLE (numpy `bool` with
+    no nulls, `object` with any null), so a batch split could change the handler
+    branch: a null-free sub-batch infers numpy `bool` and takes top_code's numeric
+    branch (True/False -> "1"/"0"), while the null-bearing whole column is `object`
+    and the oracle passes the raw booleans through. That divergence is exactly why
+    the column is declined off OOC. The full-frame oracle's whole-column result
+    (`[True, None, False]`, passed through) is the correct one, and the preflight
+    refuses the OOC route so the batch-split coercion can never run."""
     payload_seed = _seed("top_code", provider_config=(("cap", 89), ("over_label", "90+")))
     plan, sources, graph = _bool_job(payload_seed, [True, None, False], [None, True, False])
-    assert _gate_admits(plan, graph)
-    with pytest.raises(RowErrorsFailedError) as exc:
-        run_fk_out_of_core(
-            plan, sources, registry=_REG, relationship_graph=graph, batch_rows=batch_rows
-        )
-    pay_errors = [r for r in exc.value.records if r.column == "pay"]
-    assert pay_errors, f"batch={batch_rows}: expected a format_error on the boolean pay column"
-    assert {r.trigger for r in pay_errors} == {"format_error"}, pay_errors
-    assert {r.table for r in pay_errors} == {"parent"}
-    # Row 0 (True) is always the first failing cell. The whole-frame batch sizes
-    # see both failing cells in one slice and name rows 0 and 2; smaller batches
-    # fail fast on the first offending batch, so their reported set is a prefix.
-    reported = {r.row_index for r in pay_errors}
-    assert reported <= {0, 2} and 0 in reported, reported
-    if batch_rows in (None, 3):
-        assert reported == {0, 2}, reported
+    _assert_declines_and_preflight_refuses(plan, sources, graph)
+    oracle = PandasExecutionAdapter().run(
+        plan, sources, registry=_REG, relationship_graph=graph, namespace_registry=_NS
+    )
+    assert oracle.outputs["parent"].to_pydict()["pay"] == [True, None, False]
 
 
-@pytest.mark.parametrize("batch_rows", [None, 3, 2, 1])
-def test_top_code_nullable_boolean_matches_oracle(batch_rows: int | None) -> None:
-    """Round-2 regression: a pandas-nullable `boolean` top_code column must be
-    byte-identical to the oracle (NOT fail closed) at every batch size.
-
-    `pd.array([True, None, False], dtype="boolean")` through `pa.Table.from_pandas`
-    carries the pandas schema metadata, so the oracle's whole-frame conversion
-    restores `BooleanDtype` and top_code coerces True/None/False to the strings
-    ["1", None, "0"] with NO row errors. The F2 dtype fix derived the per-batch
-    forcing dtype from a metadata-LESS representative array, which drops to
-    `object`, so every batch misread each bool cell as a format error and the
-    route failed closed where the oracle succeeds -- a NEW divergence this round
-    closes by deriving the forcing dtype from the source's own pandas metadata.
-    Distinct from `test_top_code_boolean_column_is_batch_size_invariant`, which
-    covers a PLAIN Arrow boolean (no pandas metadata) that the oracle DOES fail
-    closed on; both directions must hold at once.
-    """
+def test_top_code_nullable_boolean_declines_oracle_correct() -> None:
+    """Round-2 case, now DECLINED: a pandas-nullable `boolean` source carries the
+    schema metadata the oracle restores to `BooleanDtype` whole-frame but a bare
+    per-batch array drops to `object`, so per-batch parity cannot be proven. The
+    job declines off OOC and runs on the full-frame oracle, which coerces
+    True/None/False to `["1", None, "0"]` with no row errors."""
     payload_seed = _seed("top_code", provider_config=(("cap", 89), ("over_label", "90+")))
     plan, sources, graph = _ext_job(
         payload_seed, [True, None, False], [None, True, False], "boolean"
     )
-    assert _gate_admits(plan, graph)
+    _assert_declines_and_preflight_refuses(plan, sources, graph)
     oracle = PandasExecutionAdapter().run(
         plan, sources, registry=_REG, relationship_graph=graph, namespace_registry=_NS
     )
     assert oracle.outputs["parent"].to_pydict()["pay"] == ["1", None, "0"]
-    ooc = run_fk_out_of_core(
-        plan, sources, registry=_REG, relationship_graph=graph, batch_rows=batch_rows
-    )
-    for table in oracle.outputs:
-        _assert_value_equal(
-            oracle.outputs[table], ooc.outputs[table], f"nullable-bool/batch={batch_rows}"
-        )
 
 
-@pytest.mark.parametrize("batch_rows", [None, 2, 1])
-def test_top_code_nullable_boolean_parquet_matches_oracle(
-    batch_rows: int | None, tmp_path: Path
-) -> None:
-    """The same nullable-`boolean` parity, but sourced from a pandas-produced
-    Parquet file (its footer carries the pandas metadata), so the LazySource
-    read path is covered alongside the resident one above."""
+def test_top_code_nullable_boolean_parquet_declines(tmp_path: Path) -> None:
+    """The same nullable-`boolean` decline, sourced from a pandas-produced Parquet
+    file whose footer carries the pandas metadata, so the LazySource schema path
+    (used by the gate and preflight) is covered alongside the resident one."""
     payload_seed = _seed("top_code", provider_config=(("cap", 89), ("over_label", "90+")))
     plan, sources, graph = _ext_job(
         payload_seed, [True, None, False], [None, True, False], "boolean"
-    )
-    oracle = PandasExecutionAdapter().run(
-        plan, sources, registry=_REG, relationship_graph=graph, namespace_registry=_NS
     )
     lazy_sources: dict[str, Any] = {}
     for name, table in sources.items():
         path = tmp_path / f"{name}.parquet"
         pq.write_table(table, path)
         lazy_sources[name] = LazySource(str(path))
-    ooc = run_fk_out_of_core(
-        plan, lazy_sources, registry=_REG, relationship_graph=graph, batch_rows=batch_rows
-    )
-    for table in oracle.outputs:
-        _assert_value_equal(
-            oracle.outputs[table], ooc.outputs[table], f"nullable-bool-parquet/batch={batch_rows}"
-        )
+    _assert_declines_and_preflight_refuses(plan, lazy_sources, graph)
 
 
 @pytest.mark.parametrize(
@@ -417,16 +461,41 @@ def test_top_code_nullable_boolean_parquet_matches_oracle(
         ("Float64", [25.0, None, 95.0]),
     ],
 )
-@pytest.mark.parametrize("batch_rows", [None, 2, 1])
-def test_top_code_nullable_numeric_matches_oracle(
-    pandas_dtype: str, vals: list[Any], batch_rows: int | None
+def test_top_code_nullable_numeric_declines_oracle_correct(
+    pandas_dtype: str, vals: list[Any]
 ) -> None:
-    """Nullable Int/Float extension dtypes also keep their dtype under the oracle
-    regardless of null content; the per-batch route must match (25 in range, 95
-    over the cap, null passthrough) at every batch size."""
+    """Nullable Int/Float extension sources carry restoring metadata too, so they
+    are declined off OOC (the Arrow->pandas dtype surface is not proven batch
+    stable). The full-frame oracle produces the correct result (25 in range, 95
+    over the cap, null passthrough)."""
     payload_seed = _seed("top_code", provider_config=(("cap", 89), ("over_label", "90+")))
     plan, sources, graph = _ext_job(payload_seed, vals, list(reversed(vals)), pandas_dtype)
-    assert _gate_admits(plan, graph)
+    _assert_declines_and_preflight_refuses(plan, sources, graph)
+    oracle = PandasExecutionAdapter().run(
+        plan, sources, registry=_REG, relationship_graph=graph, namespace_registry=_NS
+    )
+    assert oracle.outputs["parent"].to_pydict()["pay"] == ["25", None, "90+"]
+
+
+@pytest.mark.parametrize("arrow_type", [pa.int64(), pa.float64()])
+@pytest.mark.parametrize("batch_rows", [None, 3, 2, 1])
+def test_plain_numeric_top_code_admitted_and_matches_oracle(
+    arrow_type: pa.DataType, batch_rows: int | None
+) -> None:
+    """The common path must STAY on OOC: a PLAIN int64/float64 top_code column
+    (no pandas metadata) is null-stable under top_code's lossless nullable-int
+    conversion (int64 -> Int64, float64 -> float64 on every batch), so the gate
+    ADMITS it and the OOC route byte-matches the oracle at every batch size. This
+    guards against over-declining the fast streaming route."""
+    payload_seed = _seed("top_code", provider_config=(("cap", 89), ("over_label", "90+")))
+    vals: list[Any] = [25, None, 95, 10, 90, 40]
+    typed_vals = [
+        None if v is None else (float(v) if arrow_type == pa.float64() else v) for v in vals
+    ]
+    plan, sources, graph = _typed_job(
+        payload_seed, typed_vals, list(reversed(typed_vals)), arrow_type
+    )
+    assert _gate_admits(plan, sources, graph), f"{arrow_type}: expected gate to admit plain numeric"
     oracle = PandasExecutionAdapter().run(
         plan, sources, registry=_REG, relationship_graph=graph, namespace_registry=_NS
     )
@@ -435,8 +504,34 @@ def test_top_code_nullable_numeric_matches_oracle(
     )
     for table in oracle.outputs:
         _assert_value_equal(
-            oracle.outputs[table], ooc.outputs[table], f"{pandas_dtype}/batch={batch_rows}"
+            oracle.outputs[table], ooc.outputs[table], f"{arrow_type}/b={batch_rows}"
         )
+
+
+def test_dtype_decline_is_a_reroute_signal_not_fatal() -> None:
+    """The decline reaches the router as `out_of_core_compatible=False` with the
+    coded reason (via `out_of_core_admission`, exactly the signal the auto router
+    turns into a fall-back to full-frame/sequential), NOT as an exception. A
+    plain-numeric column stays `compatible=True`, so the router keeps it on OOC.
+    This guards the reroute contract: a regression that treated the dtype code as
+    fatal at routing would flip `compatible` without raising here."""
+    from decoy_engine.execution._pipeline_routing_signals import out_of_core_admission
+
+    seed = _seed("top_code", provider_config=(("cap", 89), ("over_label", "90+")))
+    declined_plan, declined_sources, declined_graph = _ext_job(
+        seed, [25, None, 95], [95, None, 25], "Int64"
+    )
+    compatible, code = out_of_core_admission(
+        declined_plan, registry=_REG, graph=declined_graph, caller_sources=declined_sources
+    )
+    assert compatible is False and code == _DTYPE_DECLINE_CODE, (compatible, code)
+
+    admitted_plan, admitted_sources, admitted_graph = _typed_job(
+        seed, [25, None, 95], [95, None, 25], pa.int64()
+    )
+    assert out_of_core_admission(
+        admitted_plan, registry=_REG, graph=admitted_graph, caller_sources=admitted_sources
+    ) == (True, None)
 
 
 # ---------------------------------------------------------------------------

@@ -52,22 +52,39 @@ def out_of_core_admission(
     *,
     registry: ProviderRegistry,
     graph: RelationshipGraph,
+    caller_sources: Mapping[str, pa.Table | LazySource] | None = None,
 ) -> tuple[bool, str | None]:
     """Static out-of-core compatibility check: `(compatible, primary_code)`.
 
     Delegates to `check_out_of_core_compatibility` (the same fail-closed gate
     SC1/SC2-part-1 hardened and the parity harness pins) so routing and the
-    runner's own pre-flight guard cannot disagree on the admitted surface. Pure
-    and cheap: a static read of the compiled plan + relationship graph (no
-    per-row work), safe to call on the dispatch path. `primary_code` names the
-    first rejection so the reject-before-read message and the forced-mode error
-    can explain WHY the route declined.
+    runner's own pre-flight guard cannot disagree on the admitted surface. A
+    static read of the compiled plan + relationship graph (no per-row work),
+    safe to call on the dispatch path. `primary_code` names the first rejection
+    so the reject-before-read message and the forced-mode error can explain WHY
+    the route declined.
+
+    `caller_sources` feeds the gate's row-error-bridge dtype decline, which needs
+    each bucketize/top_code column's Arrow type to prove per-batch parity. The
+    source schemas are read ONLY when the plan actually has a bucketize/top_code
+    node, so a job without one pays no `LazySource.schema` footer read on the
+    dispatch path; a table absent from `caller_sources` (a lazy source not
+    resident at routing time) is then declined conservatively by the gate, like
+    the FK-key dtype hazard. `None` (a schema-less caller) skips the dtype check.
     """
     from decoy_engine.execution._runner import build_work_list, order_work
-    from decoy_engine.execution.out_of_core._compat import check_out_of_core_compatibility
+    from decoy_engine.execution.out_of_core._compat import (
+        _ROW_ERROR_BRIDGE_STRATEGIES,
+        check_out_of_core_compatibility,
+    )
 
     work = order_work(build_work_list(plan, registry), graph)
-    compat = check_out_of_core_compatibility(plan, work, graph)
+    source_schemas: dict[str, pa.Schema] | None = None
+    if caller_sources is not None and any(
+        node.strategy in _ROW_ERROR_BRIDGE_STRATEGIES for node in work
+    ):
+        source_schemas = {name: src.schema for name, src in caller_sources.items()}
+    compat = check_out_of_core_compatibility(plan, work, graph, source_schemas=source_schemas)
     return compat.accepted, compat.primary_code
 
 
@@ -231,7 +248,15 @@ def out_of_core_routing_signals(
     """
     if not (getattr(profile, "relationships", None) and has_mask_table):
         return False, None, None, True
-    compatible, reject_code = out_of_core_admission(plan, registry=registry, graph=graph)
+    # Pass the caller sources so the gate's row-error-bridge dtype decline can
+    # read each bucketize/top_code column's Arrow type; admission reads the
+    # schemas only when the plan has such a node, so a job without one pays no
+    # footer read here. A lazy table absent from the sources is declined
+    # conservatively by the gate, like the FK-key dtype hazard; the preflight
+    # re-checks with the fully-resolved sources.
+    compatible, reject_code = out_of_core_admission(
+        plan, registry=registry, graph=graph, caller_sources=caller_sources
+    )
     if config is not None:
         compatible, reject_code = decline_out_of_core(config, compatible, reject_code)
     rows, exact = _resolve_largest_mask_table_rows(

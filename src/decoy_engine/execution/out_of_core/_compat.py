@@ -10,6 +10,10 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+    import pyarrow as pa
+
     from decoy_engine.execution._runner import WorkNode
     from decoy_engine.plan._types import ColumnSeed, Plan
     from decoy_engine.relationships import RelationshipGraph
@@ -175,12 +179,22 @@ def check_out_of_core_compatibility(
     plan: Plan,
     work: list[WorkNode],
     relationship_graph: RelationshipGraph,
+    *,
+    source_schemas: Mapping[str, pa.Schema] | None = None,
 ) -> OutOfCoreCompatibility:
     """Return the current Option 4 compatibility decision.
 
     Acceptance covers kernelized per-value parent key strategies; a child FK tuple
     with several parents is admitted and resolved first-hit-wins by the runner
     (`_multi_parent.py`).
+
+    `source_schemas` (the row-error-bridge dtype decline), keyed by table name:
+    when provided, a `bucketize`/`top_code` column is admitted only when its
+    per-batch conversion is provably identical to the oracle's whole-frame one
+    (`_row_error_dtype_rejection`); otherwise the job falls back to the oracle.
+    `None` (the coarse SC5 proxy, which cannot see schemas) skips the check; the
+    route's preflight re-runs this gate WITH real schemas, so a dtype-unsupported
+    job is still refused before it runs (never a wrong value).
     """
     rejections: list[OutOfCoreRejection] = []
     if not relationship_graph.edges:
@@ -327,6 +341,15 @@ def check_out_of_core_compatibility(
             offset_rejection = _windowed_date_rejection(node, plan, relationship_graph)
             if offset_rejection is not None:
                 rejections.append(offset_rejection)
+        elif node.strategy in _ROW_ERROR_BRIDGE_STRATEGIES:
+            # bucketize/top_code run per batch through the oracle-handler bridge
+            # (`_row_error_bridge.py`), which is byte-identical to the full-frame
+            # oracle only for a column whose per-batch Arrow->pandas conversion
+            # matches the oracle's whole-frame one for every batch split. Decline
+            # (to the oracle) the columns that cannot be proven batch-stable.
+            dtype_rejection = _row_error_dtype_rejection(node, source_schemas)
+            if dtype_rejection is not None:
+                rejections.append(dtype_rejection)
         elif node.strategy not in _SUPPORTED_WORK_STRATEGIES:
             rejections.append(
                 OutOfCoreRejection(
@@ -365,6 +388,43 @@ def _group_c_conditional_rejection(node: WorkNode) -> OutOfCoreRejection | None:
             "explicit date_format; whole-column format auto-detection does not chunk. "
             "Falls back to full-frame.",
         )
+    return None
+
+
+def _row_error_dtype_rejection(
+    node: WorkNode, source_schemas: Mapping[str, pa.Schema] | None
+) -> OutOfCoreRejection | None:
+    """Decline a bucketize/top_code node whose column the per-batch bridge cannot
+    convert identically to the oracle's whole-frame conversion; None admits it.
+
+    `source_schemas=None` means the caller has no source schemas (the coarse SC5
+    proxy); the dtype check is skipped and the route's own preflight re-runs this
+    gate with real schemas before any row is read. With schemas present, a column
+    whose table or field is unknown is declined conservatively (parity cannot be
+    proven), and a column that is not provably batch-stable
+    (`row_error_bridge_batch_stable`) is declined. The code is value-free and
+    names the strategy and column only.
+    """
+    if source_schemas is None:
+        return None
+    from decoy_engine.execution.out_of_core._row_error_bridge import row_error_bridge_batch_stable
+
+    schema = source_schemas.get(node.table)
+    for column in node.columns:
+        stable = (
+            schema is not None
+            and column in schema.names
+            and row_error_bridge_batch_stable(schema, column, node.strategy)
+        )
+        if not stable:
+            return OutOfCoreRejection(
+                "out_of_core_row_error_dtype_unsupported",
+                f"{node.table}.{column}: out-of-core {node.strategy!r} is admitted only for a "
+                "column whose per-batch pandas conversion is provably identical to the "
+                "full-frame oracle's (a null-stable plain numpy numeric or string column); this "
+                "column's dtype is not provably batch-stable, so the job falls back to the "
+                "full-frame oracle, which converts the whole column at once.",
+            )
     return None
 
 

@@ -108,7 +108,17 @@ quarantines):
 - **Row-error channel** (`_row_error_bridge.py`): `bucketize` and `top_code`. Row-local in
   value, they emit per-value `format_error` RowErrors; the runner collects them with an absolute
   (whole-source) row index and fails the job closed via `RowErrorsFailedError` on the first batch
-  that reports one.
+  that reports one. Admitted for a column ONLY when its per-batch Arrow-to-pandas conversion is
+  provably identical to the oracle's whole-frame conversion for every batch split
+  (`row_error_bridge_batch_stable`): a null-stable plain numpy numeric or string column. A column
+  whose pandas dtype depends on null presence or batch content -- a pandas nullable extension
+  dtype (`boolean`, `Int64`, `Float64`, ...), a dictionary/categorical type, a null-unstable plain
+  numpy bool/int that widens to object/float under nulls, or a decimal/large-offset type -- is
+  declined (`out_of_core_row_error_dtype_unsupported`) and runs on the full-frame oracle, which
+  converts the whole column at once and is correct. The decline is conservative by construction:
+  when per-batch parity cannot be proven, the job never runs on a bare per-batch conversion that
+  could emit a value differing from the oracle (if such a job is also too large to fit in memory,
+  the standard reject-before-read applies, which is correct -- the alternative is a wrong value).
 - **Row-offset channel** (`_offset_bridge.py`): `windowed_date`. Position-keyed; the runner
   threads a durable global row ordinal (the cumulative Phase-1 source-order row count, equal to
   the row's whole-source position on both drivers) so each row keys identically regardless of the
@@ -151,8 +161,10 @@ These verdicts are pinned by `tests/parity/test_out_of_core_group_b_parity.py` a
 `tests/parity/test_out_of_core_group_c_parity.py` (each asserts the exact coded reason), so a
 future change that silently admitted one would fail the suite rather than leak a divergence. The
 admitted bridges are pinned by `tests/parity/test_out_of_core_row_error_bridge.py` (byte-parity +
-fail-closed) and `tests/parity/test_out_of_core_offset_bridge.py` (byte-parity + batch-size
-invariance + the masked-anchor decline).
+fail-closed + the plain-numeric column stays admitted and the extension/null-unstable columns
+decline with `out_of_core_row_error_dtype_unsupported`) and
+`tests/parity/test_out_of_core_offset_bridge.py` (byte-parity + batch-size invariance + the
+masked-anchor decline).
 
 ### Native-chunked route (single-table, chunked)
 

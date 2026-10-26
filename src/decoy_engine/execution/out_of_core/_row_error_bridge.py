@@ -7,10 +7,21 @@ out-of-core kernels have no channel to record. Rather than re-port their
 coercion plus the subtle chunk-boundary canonical-rendering their handlers
 already solved (`_strategies/_top_code.py`, `_strategies/_bucketize.py`) to a
 new Arrow kernel, this bridge runs the SAME full-frame pandas handler on each
-bounded record batch. That is byte-identical to the pandas oracle by
-construction, the way the chunked route already runs the oracle per chunk
-(`_chunked_oracle._oracle_masked`), and a batch is bounded by `batch_rows`, so
-peak residency stays bounded.
+bounded record batch. That is byte-identical to the pandas oracle ONLY when a
+batch's Arrow->pandas conversion reproduces the oracle's whole-frame conversion,
+which is not true for every column: a null-free sub-batch of a null-bearing
+plain int column infers numpy int64 where the whole column widens to float64,
+and a pandas-metadata-bearing extension column (nullable boolean/Int64/...)
+restores its extension dtype whole-frame but drops to object/float64 per bare
+batch. Forcing each batch to the oracle's whole-frame dtype was tried and
+abandoned (the Arrow->pandas dtype surface is too large to prove parity over);
+instead the compat gate ADMITS a column on this bridge only when its batched
+conversion is PROVABLY identical to the oracle's for every batch split
+(`row_error_bridge_batch_stable`), and DECLINES the rest to the full-frame
+oracle (`_compat.check_out_of_core_compatibility`,
+`out_of_core_row_error_dtype_unsupported`). So an admitted column needs no
+forcing: its bare per-batch conversion already matches the oracle. A batch is
+bounded by `batch_rows`, so peak residency stays bounded.
 
 It collects the handler's RowErrors with an ABSOLUTE row index (the batch's
 durable Phase-1 source offset plus the handler's batch-local index, so the
@@ -39,7 +50,6 @@ from decoy_engine.execution._adapter import StrategyContext
 from decoy_engine.execution._fk_keys import to_pandas_fk_safe
 from decoy_engine.execution._row_errors import RowErrorRecord
 from decoy_engine.execution._strategies import SCALAR_HANDLERS
-from decoy_engine.execution.out_of_core._source import LazySource
 from decoy_engine.generation.pool import PoolCache
 from decoy_engine.relationships import RelationshipGraph
 from decoy_engine.relationships._namespace import NamespaceRegistry
@@ -47,7 +57,7 @@ from decoy_engine.relationships._namespace import NamespaceRegistry
 if TYPE_CHECKING:
     from typing import Any
 
-    from decoy_engine.plan._types import ColumnSeed, TableSeed
+    from decoy_engine.plan._types import ColumnSeed
     from decoy_engine.providers_v2 import ProviderRegistry
 
 # Own-column row-erroring strategies: value row-local, emit `format_error`, read
@@ -62,144 +72,93 @@ OWN_COLUMN_ROW_ERROR_STRATEGIES = frozenset({"bucketize", "top_code"})
 # adapter's per-strategy conversion choice is what keeps this byte-identical.
 _LOSSLESS_BRIDGE_STRATEGIES = frozenset({"top_code"})
 
+# The Arrow types whose pandas conversion carries no batch-content-dependent
+# state: a plain (non-dictionary) numpy integer/floating column, or a string
+# column (-> object). A dictionary/categorical column's categories depend on the
+# values present in a batch, a decimal/temporal/binary column is not a value we
+# admit, and a plain boolean column null-widens; all fall outside this tuple and
+# are declined. Integer/floating null-widening is still caught by the stability
+# check below, so this allowlist is necessary but not sufficient on its own.
+_BATCH_STABLE_ARROW_PREDICATES = (
+    pa.types.is_integer,
+    pa.types.is_floating,
+    pa.types.is_string,
+    pa.types.is_large_string,
+)
+
 _EMPTY_GRAPH = RelationshipGraph(edges=(), ordering=())
 _EMPTY_NS = NamespaceRegistry(bindings=())
 
 
 def _representative_pandas_dtype(
-    source_schema: pa.Schema, column: str, *, has_null: bool, fk_safe: bool
+    arrow_type: pa.DataType, column: str, *, has_null: bool, metadata: Any, fk_safe: bool
 ) -> Any:
-    """The pandas dtype `to_pandas_fk_safe` yields for a WHOLE source column of
-    `column` with or without nulls.
+    """The pandas dtype a column of `arrow_type` named `column` converts to
+    through the SAME `to_pandas_fk_safe` conversion the oracle and bridge use.
 
-    Derived from a one-element representative array (all-null for the has-null
-    case, empty for the no-null case) converted through the SAME conversion the
-    oracle and the per-batch bridge both use, so it reproduces the oracle's
-    whole-frame dtype exactly without reimplementing pyarrow's null-widening
-    rules and without materializing the real column.
+    Value-free: built from a one-element representative (all-null for the
+    has-null case, empty otherwise), so it reproduces pyarrow's null-widening and
+    (when `metadata` carries the source schema's `pandas` block) its
+    extension-dtype restoration WITHOUT reimplementing either and without
+    materializing the real column. `metadata=None` is the bare Arrow default (no
+    pandas metadata) a per-batch array carries; the source schema metadata is the
+    metadata-aware path the whole-frame oracle takes. `fk_safe` selects the
+    lossless nullable-int `types_mapper` (top_code) vs the plain default
+    (bucketize), matching each strategy's own conversion.
+    """
+    rep = pa.array([None], type=arrow_type) if has_null else pa.array([], type=arrow_type)
+    rep_table = pa.table({column: rep})
+    if metadata is not None:
+        rep_table = rep_table.replace_schema_metadata(metadata)
+    return to_pandas_fk_safe(rep_table, {column} if fk_safe else set())[column].dtype
 
-    The representative table carries the SOURCE schema's metadata
-    (`replace_schema_metadata`), which is load-bearing: `pa.Table.from_pandas`
-    stores each column's origin pandas dtype in the schema's `pandas` metadata
-    (`numpy_type`), and `table.to_pandas()` reads it back to RESTORE a pandas
-    extension dtype (`boolean`, the nullable `Int*`/`Float*` dtypes, ...)
-    regardless of null content. A metadata-LESS representative array drops that
-    signal, so a nullable `boolean` column would infer plain `object` on the
-    null-bearing case and diverge from the oracle's whole-frame conversion
-    (round-2 regression). An all-null numpy-backed array still yields the dtype
-    pyarrow assigns any null-bearing column of the type (object for a plain bool,
-    float64 for a non-lossless int, ...); an empty array yields the null-free
-    dtype. When the source has no pandas metadata (a plain Arrow table), the
-    metadata is `None` and the behavior is the metadata-less default unchanged.
+
+def row_error_bridge_batch_stable(source_schema: pa.Schema, column: str, strategy: str) -> bool:
+    """True when `column`'s per-batch Arrow->pandas conversion on this bridge is
+    PROVABLY identical to the oracle's whole-frame conversion for every possible
+    batch split; False means DECLINE the OOC route for the job (run the oracle).
+
+    Three conditions, each value-free (a function of the Arrow type + the source
+    schema's pandas metadata, never the data):
+
+    1. The Arrow type is a plain numpy integer/floating or a string type (no
+       dictionary/categorical, decimal, temporal, binary, or plain boolean). A
+       dictionary column's categories are batch-content-dependent; the others are
+       not a value this bridge admits.
+    2. No load-bearing pandas-extension metadata: the metadata-aware conversion
+       (what the oracle sees) equals the bare conversion (what a per-batch array
+       sees) for both null states. A nullable `boolean`/`Int64`/`Float64`/string
+       extension source restores its extension dtype whole-frame but not per bare
+       batch, so it is declined even when a strategy's fk-safe `types_mapper`
+       would later normalize it -- compared on the PLAIN path (`fk_safe=False`)
+       so the metadata signal is read directly, not masked by the mapper.
+    3. Null-stable under the strategy's own conversion: a null-free batch and a
+       null-bearing batch infer the same dtype, so no batch boundary moves a cell
+       into a different handler branch. A plain int/uint column widens to float64
+       under the plain (bucketize) path but stays its own nullable extension
+       dtype under the lossless (top_code) path, so this is strategy-aware.
     """
     arrow_type = source_schema.field(column).type
-    rep = pa.array([None], type=arrow_type) if has_null else pa.array([], type=arrow_type)
-    rep_table = pa.table({column: rep}).replace_schema_metadata(source_schema.metadata)
-    df = to_pandas_fk_safe(rep_table, {column} if fk_safe else set())
-    return df[column].dtype
-
-
-def _bridge_column_dtype_pair(
-    source_schema: pa.Schema, column: str, strategy: str
-) -> tuple[Any, Any]:
-    """The (no-null, has-null) whole-column pandas dtypes for a bridge column.
-
-    pyarrow's `to_pandas` is null-content dependent for some Arrow types (a plain
-    boolean column is numpy `bool` with no nulls but `object` with any null; a
-    non-lossless integer is `int64` vs `float64`), so a bounded batch that
-    happens to be null-free infers a different dtype -- and a different top_code
-    handler branch -- than the oracle's whole-column conversion. When the pair
-    differs the column is null-UNSTABLE and the whole-column null presence must
-    be scanned to pick which dtype the oracle produces; when it is equal the
-    dtype is null-stable (a pandas extension dtype, or a type with no
-    null-widening) and no scan is paid. Either way the resolved dtype is the
-    forcing target: the per-batch bridge converts from a bare Arrow array that
-    carries no pandas metadata, so it does not reproduce an extension dtype on
-    its own even when that dtype is null-stable -- the force is what makes each
-    batch match the metadata-aware oracle.
-    """
+    if not any(predicate(arrow_type) for predicate in _BATCH_STABLE_ARROW_PREDICATES):
+        return False
+    metadata = source_schema.metadata
+    for has_null in (False, True):
+        bare = _representative_pandas_dtype(
+            arrow_type, column, has_null=has_null, metadata=None, fk_safe=False
+        )
+        meta = _representative_pandas_dtype(
+            arrow_type, column, has_null=has_null, metadata=metadata, fk_safe=False
+        )
+        if bare != meta:
+            return False
     fk_safe = strategy in _LOSSLESS_BRIDGE_STRATEGIES
-    return (
-        _representative_pandas_dtype(source_schema, column, has_null=False, fk_safe=fk_safe),
-        _representative_pandas_dtype(source_schema, column, has_null=True, fk_safe=fk_safe),
+    no_null = _representative_pandas_dtype(
+        arrow_type, column, has_null=False, metadata=None, fk_safe=fk_safe
     )
-
-
-def _columns_with_null(raw: Any, columns: list[str], batch_rows: int) -> set[str]:
-    """The subset of `columns` whose WHOLE source column holds any null, read as
-    cheaply as the source allows: O(1) metadata for a resident table, Parquet
-    footer statistics for a `LazySource`, and a SINGLE bounded batch scan (not one
-    per column) only for the columns whose footer has no null-count statistic
-    (statistics written off), stopping as soon as all are decided."""
-    if not isinstance(raw, LazySource):
-        return {c for c in columns if _resident_has_null(raw, c)}
-    footer = raw.column_null_counts()
-    result: set[str] = set()
-    unknown: list[str] = []
-    for column in columns:
-        count = footer.get(column)
-        if count is None:
-            unknown.append(column)
-        elif count > 0:
-            result.add(column)
-    if unknown:
-        for batch in raw.iter_batches(batch_rows):
-            pending = [c for c in unknown if c not in result]
-            if not pending:
-                break
-            for column in pending:
-                idx = batch.schema.get_field_index(column)
-                if idx >= 0 and batch.column(idx).null_count > 0:
-                    result.add(column)
-    return result
-
-
-def _resident_has_null(raw: Any, column: str) -> bool:
-    idx = raw.schema.get_field_index(column)
-    return idx >= 0 and raw.column(idx).null_count > 0
-
-
-def bridge_column_dtypes_for_table(
-    raw: Any,
-    source_schema: pa.Schema,
-    table_column_seed: TableSeed | None,
-    skip_columns: frozenset[str],
-    batch_rows: int,
-) -> dict[str, Any]:
-    """Map each own-column row-erroring column of a table to the pandas dtype its
-    batches must be forced to for whole-frame parity -- the dtype the oracle's
-    whole-column conversion produces. Computed ONCE per table, before the batch
-    stream, so every batch converts consistently (F2).
-
-    Every bridge column is forced (not only the null-unstable ones): the
-    per-batch bridge converts from a bare Arrow array with no pandas metadata, so
-    it does not reproduce a pandas extension dtype on its own even when that
-    dtype is null-stable (a nullable `boolean`/`Int*`/`Float*` column converts to
-    `boolean`/`Int*`/`Float*` whole-frame but to `object`/`float64` per bare
-    batch) -- the force is what closes that gap.
-
-    A column's dtype is read metadata-aware, and only a null-UNSTABLE column (its
-    no-null and has-null dtypes differ -- a plain numpy type with no extension
-    backing) needs its whole-column null presence scanned to pick between the
-    two. Those scans share ONE pass over the source (or footer stats), so a
-    stable column costs no scan and N unstable columns cost one scan, not N."""
-    if table_column_seed is None:
-        return {}
-    pairs: dict[str, tuple[Any, Any]] = {}
-    for column, seed in table_column_seed.per_column:
-        if column in skip_columns or seed.strategy not in OWN_COLUMN_ROW_ERROR_STRATEGIES:
-            continue
-        if source_schema.get_field_index(column) < 0:
-            continue
-        pairs[column] = _bridge_column_dtype_pair(source_schema, column, seed.strategy)
-    if not pairs:
-        return {}
-    unstable = [column for column, (nn, hn) in pairs.items() if nn != hn]
-    has_null = _columns_with_null(raw, unstable, batch_rows) if unstable else set()
-    return {
-        column: (has_null_dtype if column in has_null else no_null_dtype)
-        for column, (no_null_dtype, has_null_dtype) in pairs.items()
-    }
+    has_null = _representative_pandas_dtype(
+        arrow_type, column, has_null=True, metadata=None, fk_safe=fk_safe
+    )
+    return no_null == has_null
 
 
 def bridge_own_column(
@@ -212,7 +171,6 @@ def bridge_own_column(
     job_seed: bytes,
     mask_key: bytes,
     row_offset: int,
-    column_pandas_dtype: Any | None = None,
 ) -> tuple[pa.Array, tuple[RowErrorRecord, ...]]:
     """Mask one own-column row-erroring column of a batch via its oracle handler.
 
@@ -226,23 +184,17 @@ def bridge_own_column(
     come back as absolute-indexed `RowErrorRecord`s (`row_offset` + the handler's
     batch-local index), so a fail-closed report names the whole-frame position.
 
-    `column_pandas_dtype` (F2), when given, is the pandas dtype the whole source
-    column converts to under the oracle (`bridge_column_dtypes_for_table`). The
-    per-batch Arrow->pandas conversion here starts from a bare Arrow array that
-    carries no pandas metadata, so it neither reproduces a pandas extension dtype
-    (a nullable `boolean`/`Int*`/`Float*` column drops to `object`/`float64`) nor
-    stays null-content stable (a null-free batch of a null-bearing plain column
-    infers a narrower dtype and a different handler branch); forcing the INPUT
-    column to the oracle's whole-column dtype makes every batch take the same
-    branch and produce the same values as the oracle. None is passed only for a
-    non-bridge call (every bridge column has a resolved dtype) and skips the
-    force.
+    The per-batch Arrow->pandas conversion here starts from a bare single-column
+    Arrow table that carries no pandas metadata. That is byte-identical to the
+    oracle's whole-frame conversion only for a batch-stable column, which is the
+    only shape the compat gate admits onto this bridge
+    (`row_error_bridge_batch_stable`); a metadata-bearing extension column or a
+    null-unstable plain column is DECLINED to the full-frame oracle before it
+    reaches here, so no per-batch dtype forcing is needed.
     """
     one_col = pa.table({column: source_array})
     fk_safe = {column} if seed.strategy in _LOSSLESS_BRIDGE_STRATEGIES else set()
     df = to_pandas_fk_safe(one_col, fk_safe)
-    if column_pandas_dtype is not None:
-        df[column] = df[column].astype(column_pandas_dtype)
     ctx = StrategyContext(
         registry=registry,
         pool_cache=PoolCache(),
@@ -286,7 +238,7 @@ def fail_closed_on_row_errors(records: Sequence[RowErrorRecord]) -> None:
 
 __all__ = [
     "OWN_COLUMN_ROW_ERROR_STRATEGIES",
-    "bridge_column_dtypes_for_table",
     "bridge_own_column",
     "fail_closed_on_row_errors",
+    "row_error_bridge_batch_stable",
 ]
