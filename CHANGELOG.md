@@ -9,6 +9,8 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-10-26
+
 ### Added (B-6: tokenization write-seam, 2026-10-26)
 
 A `tokenize` strategy writes a deterministic surrogate token for each source
