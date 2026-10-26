@@ -48,6 +48,7 @@ if TYPE_CHECKING:
     from decoy_engine.execution.out_of_core._categorical_native import NativeCategorical
     from decoy_engine.execution.out_of_core._fpe_native import NativeFpe
     from decoy_engine.execution.out_of_core._hash_run import TableHashPlan
+    from decoy_engine.execution.out_of_core._text_mask_native import NativeTextMask
     from decoy_engine.execution.out_of_core._text_redact_native import NativeTextRedact
     from decoy_engine.plan._types import ColumnSeed, Plan, TableSeed
     from decoy_engine.transforms._codeset_loader import _CorpusRecord
@@ -117,6 +118,7 @@ def mask_column(
     bucket_native: NativeBucket | None = None,
     fpe_native: NativeFpe | None = None,
     text_redact_native: NativeTextRedact | None = None,
+    text_mask_native: NativeTextMask | None = None,
     faker_native: NativeFaker | None = None,
 ) -> pa.Array:
     """Apply one admitted strategy to one column (or column slice).
@@ -188,6 +190,7 @@ def mask_column(
             corpus_record=corpus_record,
             sub_floor_notices=sub_floor_notices,
             bucket_native=bucket_native,
+            text_mask_native=text_mask_native,
         )
     if seed.strategy == "faker":
         # faker has no in-route Python reference (a pool must be built from the
@@ -430,6 +433,11 @@ def mask_batch(
             if hash_plan is not None and column_seed.strategy == "text_redact"
             else None
         )
+        text_mask_native = (
+            hash_plan.text_mask_for(column, batch)
+            if hash_plan is not None and column_seed.strategy == "text_mask"
+            else None
+        )
         faker_native = (
             hash_plan.faker_for(column, batch)
             if hash_plan is not None and column_seed.strategy == "faker"
@@ -455,6 +463,7 @@ def mask_batch(
             bucket_native=bucket_native,
             fpe_native=fpe_native,
             text_redact_native=text_redact_native,
+            text_mask_native=text_mask_native,
             faker_native=faker_native,
         )
         arrays[idx] = masked

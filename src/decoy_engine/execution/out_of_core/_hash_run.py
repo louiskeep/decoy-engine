@@ -67,6 +67,14 @@ from decoy_engine.execution.out_of_core._hash_native import (
     decline_reason,
 )
 from decoy_engine.execution.out_of_core._mask import table_seed
+from decoy_engine.execution.out_of_core._text_mask_native import (
+    BoundTextMaskKernel,
+    NativeTextMask,
+    TableTextMaskPlan,
+)
+from decoy_engine.execution.out_of_core._text_mask_native import (
+    decide_table as decide_text_mask_table,
+)
 from decoy_engine.execution.out_of_core._text_redact_native import (
     BoundTextRedactKernel,
     NativeTextRedact,
@@ -87,6 +95,7 @@ CATEGORICAL_DISPOSITION_KEY = "out_of_core_categorical"
 BUCKET_DISPOSITION_KEY = "out_of_core_bucket_perturb"
 FPE_DISPOSITION_KEY = "out_of_core_fpe"
 TEXT_REDACT_DISPOSITION_KEY = "out_of_core_text_redact"
+TEXT_MASK_DISPOSITION_KEY = "out_of_core_text_mask"
 FAKER_DISPOSITION_KEY = "out_of_core_faker"
 REMAP_DEFERRED = "fk_key_hash_remap_native_deferred"
 _NO_KERNEL_RAN = "none"
@@ -135,6 +144,7 @@ class TableHashPlan:
         bucket: TableBucketPlan | None = None,
         fpe: TableFpePlan | None = None,
         text_redact: TableTextRedactPlan | None = None,
+        text_mask: TableTextMaskPlan | None = None,
         faker: TableFakerPlan | None = None,
     ) -> None:
         self._decisions = dict(decisions)
@@ -143,6 +153,7 @@ class TableHashPlan:
         self.bucket = bucket
         self.fpe = fpe
         self.text_redact = text_redact
+        self.text_mask = text_mask
         self.faker = faker
 
     @property
@@ -164,6 +175,10 @@ class TableHashPlan:
     def text_redact_for(self, column: str, batch: pa.RecordBatch) -> NativeTextRedact | None:
         """The native handle for text_redact `column` in `batch`, or None (see `gate`)."""
         return self.text_redact.gate(column, batch) if self.text_redact is not None else None
+
+    def text_mask_for(self, column: str, batch: pa.RecordBatch) -> NativeTextMask | None:
+        """The native handle for text_mask `column` in `batch`, or None (see `gate`)."""
+        return self.text_mask.gate(column, batch) if self.text_mask is not None else None
 
     def faker_for(self, column: str, batch: pa.RecordBatch) -> NativeFaker | None:
         """The native handle for faker `column` in `batch`, or None (see `gate`)."""
@@ -230,6 +245,8 @@ class OocHashRun:
         self._fpe_bound: BoundFpeKernel | None = None
         self._text_redact_loaded = False
         self._text_redact_bound: BoundTextRedactKernel | None = None
+        self._text_mask_loaded = False
+        self._text_mask_bound: BoundTextMaskKernel | None = None
         self._plans: list[TableHashPlan] = []
         self._remap: list[dict[str, Any]] = []
 
@@ -293,6 +310,14 @@ class OocHashRun:
             kernel = load_text_redact_kernel()
             self._text_redact_bound = None if kernel is None else BoundTextRedactKernel(kernel)
         return self._text_redact_bound
+
+    def _text_mask_kernel(self) -> BoundTextMaskKernel | None:
+        """Companion presence for text_mask; it shares the text_redact span kernel loader."""
+        if not self._text_mask_loaded:
+            self._text_mask_loaded = True
+            kernel = load_text_redact_kernel()
+            self._text_mask_bound = None if kernel is None else BoundTextMaskKernel(kernel)
+        return self._text_mask_bound
 
     def prepare_table(
         self,
@@ -390,6 +415,23 @@ class OocHashRun:
             if text_redact_seeds
             else None
         )
+        text_mask_seeds = {
+            column: column_seed
+            for column, column_seed in (seed.per_column if seed is not None else ())
+            if column_seed.strategy == "text_mask"
+            and column not in skip_columns
+            and source_schema.get_field_index(column) >= 0
+        }
+        text_mask = (
+            decide_text_mask_table(
+                table_name,
+                source_schema,
+                text_mask_seeds,
+                self._text_mask_kernel() if text_mask_seeds else None,
+            )
+            if text_mask_seeds
+            else None
+        )
         faker_seeds = {
             column: column_seed
             for column, column_seed in (seed.per_column if seed is not None else ())
@@ -409,7 +451,7 @@ class OocHashRun:
             else None
         )
         table_plan = TableHashPlan(
-            decisions, self._bound, categorical, bucket, fpe, text_redact, faker
+            decisions, self._bound, categorical, bucket, fpe, text_redact, text_mask, faker
         )
         self._plans.append(table_plan)
         self._remap.extend(_remap_entries(plan, table_name, incoming_edges, site))
@@ -440,6 +482,12 @@ class OocHashRun:
             if p.text_redact is not None
             for d in p.text_redact.decisions.values()
         ]
+        text_mask = [
+            d.entry()
+            for p in self._plans
+            if p.text_mask is not None
+            for d in p.text_mask.decisions.values()
+        ]
         faker = [
             d.entry()
             for p in self._plans
@@ -452,6 +500,7 @@ class OocHashRun:
             **({BUCKET_DISPOSITION_KEY: bucket} if bucket else {}),
             **({FPE_DISPOSITION_KEY: fpe} if fpe else {}),
             **({TEXT_REDACT_DISPOSITION_KEY: text_redact} if text_redact else {}),
+            **({TEXT_MASK_DISPOSITION_KEY: text_mask} if text_mask else {}),
             **({FAKER_DISPOSITION_KEY: faker} if faker else {}),
         }
 

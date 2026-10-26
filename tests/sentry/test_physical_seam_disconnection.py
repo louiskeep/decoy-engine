@@ -712,6 +712,12 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         # the existing `native_text_redact` wrapper and the shared config predicate; nothing from
         # `execution.physical`.
         "src/decoy_engine/execution/out_of_core/_text_redact_native.py",
+        # B5 (out-of-core text_mask on the compiled span kernel): `_text_mask_native.py` (per-column
+        # decision, the native call and its disposition) is new; `_hash_run.py` carries its
+        # per-table plan, `_mask.py` dispatches it and `_mask_group_c.py` (both already permitted)
+        # delegate the admitted non-NER column to it. It imports the existing `native_text_mask`
+        # wrapper and the shared config/source predicates; nothing from `execution.physical`.
+        "src/decoy_engine/execution/out_of_core/_text_mask_native.py",
         "src/decoy_engine/execution/out_of_core/_mask.py",
         "src/decoy_engine/execution/out_of_core/_stream_driver.py",
         # OOC spill-reader mmap->OSFile memory fix (2026-10-16): the reorder-lane spill readers

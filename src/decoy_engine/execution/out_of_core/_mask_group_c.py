@@ -82,6 +82,7 @@ from decoy_engine.execution._adapter import provider_config_to_dict
 from decoy_engine.execution._errors import ExecutionError, StrategyError
 from decoy_engine.execution._strategies._code_set import _PER_VALUE_CODE_SET_ERRORS
 from decoy_engine.execution.out_of_core._bucket_native import native_bucket_perturb_array
+from decoy_engine.execution.out_of_core._text_mask_native import native_text_mask_array
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.kernel._scalar import _array_to_pylist, _is_missing
 from decoy_engine.plan._errors import PlanCompileError
@@ -101,6 +102,7 @@ if TYPE_CHECKING:
     import pandas as pd
 
     from decoy_engine.execution.out_of_core._bucket_native import NativeBucket
+    from decoy_engine.execution.out_of_core._text_mask_native import NativeTextMask
     from decoy_engine.plan._types import ColumnSeed
     from decoy_engine.transforms._codeset_loader import _CorpusRecord
 
@@ -148,6 +150,7 @@ def group_c_array(
     corpus_record: _CorpusRecord | None = None,
     sub_floor_notices: dict[str, int] | None = None,
     bucket_native: NativeBucket | None = None,
+    text_mask_native: NativeTextMask | None = None,
 ) -> pa.Array:
     """Dispatch one admitted Group (c) strategy to its per-value kernel.
 
@@ -167,6 +170,7 @@ def group_c_array(
             cfg=cfg,
             column=column,
             sub_floor_notices=sub_floor_notices,
+            text_mask_native=text_mask_native,
         )
     if seed.strategy == "code_set":
         return _code_set_array(
@@ -199,6 +203,7 @@ def _text_mask_array(
     cfg: dict[str, Any],
     column: str | None = None,
     sub_floor_notices: dict[str, int] | None = None,
+    text_mask_native: NativeTextMask | None = None,
 ) -> pa.Array:
     """Span-level PII mask each non-null cell, byte-identical to the oracle.
 
@@ -222,6 +227,14 @@ def _text_mask_array(
     warning channel while `outputs` stays byte-identical either way, since
     `mask_cell`'s per-span log line at WARNING was always emitted regardless.
     """
+    # B5: a column the per-table plan admitted (non-NER, exact-string source, companion present)
+    # runs through the compiled span path instead of this per-cell loop. native_text_mask returns
+    # its own notice dict, merged into the per-table accumulator inside native_text_mask_array, and
+    # raises the identical fail-closed StrategyError itself, so this stays byte-identical.
+    if text_mask_native is not None:
+        return native_text_mask_array(
+            values, native=text_mask_native, mask_key=job_seed, sub_floor_notices=sub_floor_notices
+        )
     detectors_raw = cfg.get("detectors")
     detector_ids: list[str] | None
     if isinstance(detectors_raw, (list, tuple)):
