@@ -9,7 +9,7 @@ config strings.
 
 One declaration per surface, registered in `SURFACE_DECLARATIONS`:
 
-- `scalar:<strategy>`: the 24 entries of `SCALAR_HANDLERS`.
+- `scalar:<strategy>`: the 25 entries of `SCALAR_HANDLERS`.
 - `composite:<provider>`: the providers `CompositeHandler` builds. The provider decides
   the surface (as in `build_work_list`), whatever `strategy` or `when:` say, because
   `_dispatch_mask_node` sends composite nodes to the handler without the when gate.
@@ -251,6 +251,7 @@ _SCALAR_STRATEGIES: tuple[str, ...] = (
     "grouped_series",
     "windowed_date",
     "group_key",
+    "tokenize",
 )
 _FIXED_COMPOSITES: tuple[str, ...] = (
     "composite_name_email",

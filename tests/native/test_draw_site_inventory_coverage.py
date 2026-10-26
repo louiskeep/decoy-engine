@@ -238,6 +238,12 @@ _ALLOWLIST = frozenset(
         # Same reason as that module's own entry: these are DrawSite literals whose
         # seed_derivation/notes strings quote the call shapes the scan looks for.
         "execution/native/_draw_sites_gen_pool.py",
+        # MG-5 (vault V0): the mask.tokenize DrawSite + provider-primitive data
+        # siblings split out of _determinism_protocol.py / _draw_site_providers.py's
+        # own recorded LOC ceiling. Same non-output-draw rationale as the GP2
+        # siblings above: these are DrawSite literals whose seed_derivation/notes
+        # strings quote the call shape the scan looks for.
+        "execution/native/_draw_sites_tokenize.py",
         # Task 0.3 protocol plumbing: reproduces the catalogued draws off the
         # hot path (one provider per DRAW_SITES entry). Not a new output site.
         "execution/native/_draw_site_providers.py",

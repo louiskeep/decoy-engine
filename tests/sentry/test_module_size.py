@@ -103,7 +103,8 @@ ALLOWLIST: dict[str, int] = {
     "src/decoy_engine/execution/_chunked_fk.py": 970,
     # fail-closed output projection and corpus pinning on the mask route; split the FK-resolution helpers.
     # cross-column V1 folds joint_mask key_by into the source-anchor snapshot build (a comment, no new logic).
-    "src/decoy_engine/execution/_pandas_adapter.py": 699,
+    # MG-5 vault: the _fk_key_value compat wrapper moved to _fk_key_compat.py (pure move, zero behavior change).
+    "src/decoy_engine/execution/_pandas_adapter.py": 689,
     # resident Arrow type resolution and the faker seed/node precondition pair (one predicate, two
     # entry points, so the chunked and sequential routes cannot drift); move the type resolution
     # into its own module with the next operator gate.
