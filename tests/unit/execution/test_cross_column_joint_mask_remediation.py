@@ -14,6 +14,23 @@ PR1 branch, each with a reproduction that FAILS before the root-cause fix:
      the key_by snapshot spanned the full table; the equal-length check raised
      `joint_mask_key_by_snapshot_misaligned` on a valid partial selection.
 
+Round 2 (Codex re-gate) reproduced two more bugs that the round-1 tests missed
+because they used the simplified single-entry / single-output shapes instead of
+the production plan shapes:
+
+  F1b (multi-entry stale read): the real compiler emits a joint_mask group as one
+     per-output-column node, each carrying the full `columns` config, so several
+     nodes write the SAME output column. The writer map kept only the last node
+     in CONFIG order, so a dependent waited on one arbitrary writer and read an
+     intermediate value while the writer producing the FINAL value ran later. The
+     F1 round-1 test used a single joint_mask node, so it had only one writer and
+     missed this. Fixed by recording every writer (`_writer_node_map` -> a set).
+  F3b (gated partial writeback): the `when` gate copied only the dispatch column
+     back into the full frame, leaving a multi-output joint_mask's OTHER outputs
+     unmasked for the selected rows. The F3 round-1 test configured a single
+     output, so it missed this. Fixed by stitching back every declared output
+     column (`gated_output_columns`).
+
 Each run goes through the real plan -> PandasExecutionAdapter path and is compared
 to the full-frame oracle, matching the acceptance suite's construction in
 test_cross_column_ordering.py.
@@ -196,3 +213,122 @@ class TestFinding3WhenGatedPartialSelectionAligns:
         assert out["city"][0] != "x"
         # And the matched row keys off its OWN source pid, matching the oracle.
         assert out["city"][0] == oracle_city
+
+
+class TestFinding1bMultiEntryWriterGroupStaleRead:
+    """F1b: the production multi-entry shape (one per-output-column joint_mask
+    node, each carrying the full `columns` config) makes SEVERAL nodes write the
+    same output column. A `derived` dependent must wait on ALL of them so it
+    reads the column's FINAL value, not whichever writer a lexicographic accident
+    placed before it. Distinct per-column namespaces make each node select a
+    DIFFERENT reference row for the same source key, so an intermediate read is
+    observably wrong (it disagrees with the final column value)."""
+
+    def test_derived_waits_on_every_writer_in_multi_entry_group(self) -> None:
+        pids = ["P0001", "P0002", "P0003", "P0004"]
+        n = len(pids)
+        # One per-output-column joint_mask node per zip/city/state, each with the
+        # full columns config and its OWN namespace (the real compiler assigns a
+        # per-column namespace), in config order zip, state, city. Pre-fix the
+        # writer map kept only the config-last node (city), so "a_out" waited on
+        # the city node alone and ran before the state/zip nodes -- reading the
+        # city namespace's zip, which differs from the final zip (the zip node's
+        # namespace, which the topo sort runs last).
+        out = _run(
+            {
+                "pid": _str(pids),
+                "zip": _str(["x"] * n),
+                "city": _str(["x"] * n),
+                "state": _str(["x"] * n),
+                "a_out": _str(["x"] * n),
+            },
+            [
+                ("pid", _col("passthrough")),
+                ("zip", _col("joint_mask", provider_config=_joint_cfg("pid"), namespace="ns_zip")),
+                (
+                    "state",
+                    _col("joint_mask", provider_config=_joint_cfg("pid"), namespace="ns_state"),
+                ),
+                (
+                    "city",
+                    _col("joint_mask", provider_config=_joint_cfg("pid"), namespace="ns_city"),
+                ),
+                ("a_out", _col("derived", provider_config=(("expression", 'concat(zip, "!")'),))),
+            ],
+        )
+        # The derived output must equal the MASKED FINAL zip, not an intermediate
+        # from a different-namespace writer. Pre-fix a_out read the city node's
+        # zip and disagreed with the final zip for every row.
+        assert out["a_out"] == [z + "!" for z in out["zip"]]
+        # The zips were really masked (not the source placeholder), so the
+        # equality above is a genuine masked-value read, not a stale "x!".
+        assert out["zip"] != ["x"] * n
+        assert all(z != "x" for z in out["zip"])
+        # The distinct namespaces genuinely diverge: the pre-fix intermediate
+        # (the city namespace's zip) is NOT the final zip, so the test actually
+        # exercises the multi-writer ordering and is not satisfied by accident.
+        city_ns_zip = _run(
+            {
+                "pid": _str(pids),
+                "zip": _str(["x"] * n),
+                "city": _str(["x"] * n),
+                "state": _str(["x"] * n),
+            },
+            [
+                ("pid", _col("passthrough")),
+                (
+                    "city",
+                    _col("joint_mask", provider_config=_joint_cfg("pid"), namespace="ns_city"),
+                ),
+            ],
+        )["zip"]
+        assert city_ns_zip != out["zip"]
+
+
+class TestFinding3bGatedMultiOutputWritesBackAllColumns:
+    """F3b: a `when`-gated MULTI-OUTPUT joint_mask (`[zip, city, state]`) must
+    write back EVERY configured output for the selected rows, not just the
+    dispatch column. Pre-fix the gate copied back only the dispatch column, so
+    the selected rows' other outputs stayed at their source value."""
+
+    def test_gated_joint_mask_masks_all_outputs_for_selected_rows(self) -> None:
+        pids = ["P0001", "P0002"]
+        # Ungated oracle on just the matched row's source key: the consistent
+        # (zip, city, state) reference tuple the gated run must emit for that row.
+        oracle = _run(
+            {"pid": _str(["P0001"]), "zip": _str(["x"]), "city": _str(["x"]), "state": _str(["x"])},
+            [
+                ("pid", _col("passthrough")),
+                ("city", _col("joint_mask", provider_config=_joint_cfg("pid"))),
+            ],
+        )
+        oracle_tuple = (oracle["zip"][0], oracle["city"][0], oracle["state"][0])
+
+        out = _run(
+            {
+                "pid": _str(pids),
+                "zip": _str(["x", "x"]),
+                "city": _str(["x", "x"]),
+                "state": _str(["x", "x"]),
+                "keep": pa.array([1, 0], type=pa.int64()),
+            },
+            [
+                ("pid", _col("passthrough")),
+                ("keep", _col("passthrough")),
+                (
+                    "city",
+                    _col("joint_mask", provider_config=_joint_cfg("pid"), when="keep == 1"),
+                ),
+            ],
+        )
+        # Selected row (keep == 1): EVERY configured output is masked. Pre-fix
+        # only the dispatch column ("city") was written back, so zip and state
+        # stayed "x" for this row.
+        for c in _ZIP_COLS:
+            assert out[c][0] != "x", f"selected row left {c!r} unmasked"
+        # Non-selected row (keep == 0): untouched passthrough on every output.
+        for c in _ZIP_COLS:
+            assert out[c][1] == "x", f"non-selected row had {c!r} mutated"
+        # The selected row's full tuple keys off its own source pid and matches
+        # the ungated oracle -- a consistent reference row, not a per-column mix.
+        assert (out["zip"][0], out["city"][0], out["state"][0]) == oracle_tuple

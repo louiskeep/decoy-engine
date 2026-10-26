@@ -289,20 +289,30 @@ def _writer_output_columns(node: WorkNode) -> tuple[str, ...]:
     return node.columns
 
 
-def _writer_node_map(work: list[WorkNode]) -> dict[tuple[str, str], _NodeKey]:
-    """Map each written (table, column) to the key of the node that WRITES it.
+def _writer_node_map(work: list[WorkNode]) -> dict[tuple[str, str], set[_NodeKey]]:
+    """Map each written (table, column) to the keys of ALL nodes that WRITE it.
 
     Not column=node (the cross-column ordering trap): a composite provider is a
     bundle node whose `columns` holds several outputs, so every one of them maps
     to that ONE bundle key; a scalar node (`derived`/`group_key`) maps its single
     output column to itself, and a `joint_mask` node maps EVERY column it writes
-    (`_writer_output_columns`), not only its dispatch column. A dependent's driver
-    ref resolves through this map to the node that must run first.
+    (`_writer_output_columns`), not only its dispatch column.
+
+    The value is a SET, not a single key: the production compiler emits a
+    joint_mask group as one per-output-column node, each carrying the full
+    `columns` config, so several nodes write the SAME output column. A plain
+    last-write-wins map kept only the last node in CONFIG order, leaving a
+    dependent ordered after one arbitrary writer while the OTHER writers (and so
+    the column's final value) still ran later -- a stale read under a non-trivial
+    execution order. Recording every writer makes a dependent wait on all of
+    them, so it reads the column's final value whichever writer the topo sort
+    places last. A dependent's driver ref resolves through this map to the nodes
+    that must all run first.
     """
-    writer: dict[tuple[str, str], _NodeKey] = {}
+    writer: dict[tuple[str, str], set[_NodeKey]] = defaultdict(set)
     for node in work:
         for col in _writer_output_columns(node):
-            writer[(node.table, col)] = node.key
+            writer[(node.table, col)].add(node.key)
     return writer
 
 
@@ -345,22 +355,25 @@ def column_dependency_edges(work: list[WorkNode]) -> dict[_NodeKey, set[_NodeKey
     """The cross-column ordering channel for `order_work`: dependent-node key ->
     the keys of the nodes that write its MASKED driver columns.
 
-    A driver column ref resolves to its writer node through `_writer_node_map`
+    A driver column ref resolves to its writer node(s) through `_writer_node_map`
     (per-provider representation, not column=node). A ref whose column no node
     writes (an unmasked passthrough source) imposes no edge -- its live value is
-    already its source value -- and a self-ref is skipped. SOURCE-read drivers
-    (`joint_mask` `key_by`) are deliberately absent: they read a pre-mask
-    snapshot, so they need no ordering edge. Reusing `order_work`'s own topo sort
-    + cycle backstop (no parallel scheduler); derived-derived cycles are still
-    caught at plan time by `check_derived_column_refs`.
+    already its source value -- and a self-ref is skipped. A column written by a
+    MULTI-ENTRY joint_mask group has several writers; the dependent waits on all
+    of them so it reads the final value, not whichever writer a lexicographic
+    accident ran before it. SOURCE-read drivers (`joint_mask` `key_by`) are
+    deliberately absent: they read a pre-mask snapshot, so they need no ordering
+    edge. Reusing `order_work`'s own topo sort + cycle backstop (no parallel
+    scheduler); derived-derived cycles are still caught at plan time by
+    `check_derived_column_refs`.
     """
     writer = _writer_node_map(work)
     deps: dict[_NodeKey, set[_NodeKey]] = defaultdict(set)
     for node in work:
         for col in _masked_driver_columns(node):
-            writer_key = writer.get((node.table, col))
-            if writer_key is not None and writer_key != node.key:
-                deps[node.key].add(writer_key)
+            for writer_key in writer.get((node.table, col), ()):
+                if writer_key != node.key:
+                    deps[node.key].add(writer_key)
     return deps
 
 
