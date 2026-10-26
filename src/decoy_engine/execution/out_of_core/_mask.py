@@ -25,6 +25,7 @@ import pyarrow as pa
 from decoy_engine.execution._adapter import provider_config_to_dict
 from decoy_engine.execution._errors import ExecutionError, StrategyError
 from decoy_engine.execution.out_of_core._categorical_native import native_categorical_array
+from decoy_engine.execution.out_of_core._faker_native import NativeFaker, native_faker_array
 from decoy_engine.execution.out_of_core._fpe_native import native_fpe_array
 from decoy_engine.execution.out_of_core._hash_native import BoundHashKernel, native_hash_array
 from decoy_engine.execution.out_of_core._mask_group_b import (
@@ -116,6 +117,7 @@ def mask_column(
     bucket_native: NativeBucket | None = None,
     fpe_native: NativeFpe | None = None,
     text_redact_native: NativeTextRedact | None = None,
+    faker_native: NativeFaker | None = None,
 ) -> pa.Array:
     """Apply one admitted strategy to one column (or column slice).
 
@@ -187,6 +189,23 @@ def mask_column(
             sub_floor_notices=sub_floor_notices,
             bucket_native=bucket_native,
         )
+    if seed.strategy == "faker":
+        # faker has no in-route Python reference (a pool must be built from the
+        # provider registry), so it runs ONLY through the per-table context the
+        # run-scoped plan prepared. A faker column that reaches here without that
+        # handle is a routing/preflight gap, not a column to pass through raw:
+        # fail closed rather than leak the source value.
+        if faker_native is None or seed.namespace is None:
+            raise ExecutionError(
+                code="out_of_core_faker_pool_unsupported",
+                message=(
+                    "faker reached the out-of-core mask without a prepared pool; the route "
+                    "admits only the deterministic-REUSE native shape, decided per table."
+                ),
+            )
+        return native_faker_array(
+            values, native=faker_native, mask_key=job_seed, namespace=seed.namespace
+        )
     if seed.strategy == "passthrough":
         return passthrough_array(values)
     if seed.strategy == "redact":
@@ -236,6 +255,11 @@ def masked_output_type(seed: ColumnSeed, source_type: pa.DataType | None = None)
     if seed.strategy in GROUP_C_STRATEGIES:
         return group_c_output_type(seed, cfg)
     if seed.strategy == "hash":
+        return pa.string()
+    if seed.strategy == "faker":
+        # The native allowlist is person-name providers, whose pools are string
+        # values, so the admitted faker payload always emits string (nulls
+        # preserved). A schema-less consumer can pin this before any batch.
         return pa.string()
     if seed.strategy == "truncate":
         # Validate fail-closed (raises on an invalid config, exactly as the
@@ -406,6 +430,11 @@ def mask_batch(
             if hash_plan is not None and column_seed.strategy == "text_redact"
             else None
         )
+        faker_native = (
+            hash_plan.faker_for(column, batch)
+            if hash_plan is not None and column_seed.strategy == "faker"
+            else None
+        )
         idx = batch.schema.get_field_index(column)
         if idx < 0:
             continue
@@ -426,6 +455,7 @@ def mask_batch(
             bucket_native=bucket_native,
             fpe_native=fpe_native,
             text_redact_native=text_redact_native,
+            faker_native=faker_native,
         )
         arrays[idx] = masked
         # Same field semantics as Table.set_column with a bare name: the field

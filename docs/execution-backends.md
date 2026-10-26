@@ -95,7 +95,7 @@ The FK key surface here is only `hash`, `redact`, `truncate`, `passthrough`.
 | `passthrough` | no-op | no-op |
 | `text_mask` | dedicated Python (per-cell loop; backlog: route through the span kernel) | excluded (off the key surface) |
 | `code_set` (mask mode without `chapter_preserve`) | dedicated Python (no kernel on any route; backlog: Arrow dict-map) | excluded (off the key surface) |
-| `faker` | declined (`out_of_core_faker_pool_unsupported`) | excluded (off the key surface) |
+| `faker` (deterministic REUSE, exact-string, person-name provider) | compiled index selection | excluded (off the key surface) |
 | `date_shift`, `bucketize` | declined (`out_of_core_row_error_strategy_unsupported`) | excluded (off the key surface) |
 | `categorical` (non-deterministic) | declined (`out_of_core_categorical_nondeterministic_unsupported`) | excluded (off the key surface) |
 | `geo_generalize` | declined (`out_of_core_whole_column_aggregation_unsupported`) | excluded (off the key surface) |
@@ -159,7 +159,7 @@ Each cell is further qualified by the guards below.
 | `categorical` | SEQ/OOC native selection requires deterministic mode, namespace, exact-string source, string categories, and a buildable weighted CDF. Seeded positional categorical is separately native on chunked. OOC rejects its non-deterministic mode. |
 | `bucket_perturb` | OOC requires explicit `date_format` at route admission. Native execution further requires exact string, namespace, supported bucket and format, no timezone or special pandas format, and valid preserve_values. Runtime range guards still apply. |
 | `date_shift` | Native SEQ/chunked requires exact string, namespace, explicit non-special timezone-free format, no group_by, integer day bounds within the accepted range, and valid preserve_values. Main OOC rejects the entire strategy. |
-| `faker` | Providers are person_first_name and person_last_name on these native paths. SEQ admits exact string with deterministic REUSE or positional REUSE. Chunked additionally admits bool/integer deterministic REUSE with its fixed-schema producer guarantee and accepted conversion metadata. Positional bool/integer/float REUSE requires explicit pool_size. Other modes and providers use their existing Python path. Main OOC rejects faker. |
+| `faker` | Providers are person_first_name and person_last_name on these native paths. SEQ admits exact string with deterministic REUSE or positional REUSE. Chunked additionally admits bool/integer deterministic REUSE with its fixed-schema producer guarantee and accepted conversion metadata. Positional bool/integer/float REUSE requires explicit pool_size. Other modes and providers use their existing Python path. OOC admits the deterministic-REUSE person-name variant with an exact-string source through the compiled index selection (run-scoped pool); other faker shapes, and a non-string source, decline. |
 | `text_redact` / `text_mask` | Native paths have source/configuration guards. NER remains Python. OOC text_mask currently uses its dedicated loop, including batched NER inference. |
 | `code_set` | OOC admits mask mode without chapter_preserve. Gen mode and chapter_preserve remain route declines. There is no named Arrow code-set kernel on main. |
 | `group_key` | SEQ has no native admission. Native chunked requires an exact string/int64/bool sibling, an unmasked non-self sibling, and valid even length in [8,64]. Unified full-frame also has a native implementation. |
@@ -183,8 +183,12 @@ These run their own Python handler by design, not the generic fallback:
   when a non-deterministic mode other than REUSE is used (UNIQUE, MATCH, and SCALE need
   whole-column RNG state), or when the source type is outside the native leg's domain. A faker
   column that stays on Python is still pool-backed: the handler builds and caches one value pool
-  and samples it, not per-row live-provider calls. Main OOC rejects faker
-  (`out_of_core_faker_pool_unsupported`).
+  and samples it, not per-row live-provider calls. OOC admits the
+  deterministic-REUSE person-name variant with an exact-string source through the
+  compiled index selection, drawing from a run-scoped pool; other faker shapes and
+  a non-string source decline (`out_of_core_faker_pool_unsupported` at routing, or
+  a fail-closed `out_of_core_faker_source_type_unsupported` for a non-string
+  source once the schema is seen).
 - out-of-core `text_mask`: the per-cell loop; the SEQ and native-chunked routes already use the
   Rust span kernel (backlog: route OOC through it too).
 - the shared SEQ handlers listed in the sequential table (`bucketize`, `shuffle`, `top_code`,

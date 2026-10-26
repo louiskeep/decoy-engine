@@ -9,6 +9,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from decoy_engine.execution.native._real_type_admission import C1_PROVIDER_ALLOWLIST
+from decoy_engine.execution.native._requirements import faker_pool_precondition_met
+
 if TYPE_CHECKING:
     from decoy_engine.execution._runner import WorkNode
     from decoy_engine.plan._types import ColumnSeed, Plan
@@ -42,25 +45,30 @@ _GROUP_B_SUPPORTED_STRATEGIES = frozenset({"fpe", "text_redact", "categorical"})
 _GROUP_C_ALWAYS_SUPPORTED = frozenset({"text_mask"})
 _GROUP_C_CONDITIONAL = frozenset({"code_set", "bucket_perturb"})
 _GROUP_C_SUPPORTED_STRATEGIES = _GROUP_C_ALWAYS_SUPPORTED | _GROUP_C_CONDITIONAL
+# B4: `faker` is admitted only for the deterministic-REUSE person-name variant the
+# run-scoped pool context (B3) selects natively through the compiled index kernel
+# (`_faker_conditional_rejection` below; see `_faker_native.py`). Payload only; the
+# PARENT-KEY surface stays `_INITIAL_SUPPORTED_STRATEGIES`, so a faker FK key is a
+# fail-closed MISS. The exact-`string` source requirement is enforced later
+# (preflight + mask planner), since the source type is not known at routing.
+_FAKER_CONDITIONAL = frozenset({"faker"})
 _SUPPORTED_WORK_STRATEGIES = (
-    _INITIAL_SUPPORTED_STRATEGIES | _GROUP_B_SUPPORTED_STRATEGIES | _GROUP_C_SUPPORTED_STRATEGIES
+    _INITIAL_SUPPORTED_STRATEGIES
+    | _GROUP_B_SUPPORTED_STRATEGIES
+    | _GROUP_C_SUPPORTED_STRATEGIES
+    | _FAKER_CONDITIONAL
 )
 # SC3 deferred Group (b): investigated and NOT ported, each for a concrete
 # reason that would otherwise cause a route-dependent divergence. A MISS here
 # means the job falls back to sequential/full-frame (which handle them), never a
-# wrong output. `faker` needs a registry-backed ValuePool + a cross-batch pool
-# cache the registry-free out-of-core kernel has no channel for. `bucketize` and
+# wrong output. (`faker` moved to the B4 conditional set above once the run-scoped
+# pool context gave it the cross-batch channel it lacked.) `bucketize` and
 # `date_shift` record per-value format errors (uncoercible numeric / unparseable
 # date) that the full-frame path removes via the D8 quarantine pass, but the
 # out-of-core route returns before that pass and has no row-error channel;
 # `date_shift` additionally needs whole-column format detection that does not
 # chunk. See docs/plans/2026-07-07-next-up-roadmap.md (SC3) + `_mask_group_b.py`.
 _DEFERRED_GROUP_B: dict[str, tuple[str, str]] = {
-    "faker": (
-        "out_of_core_faker_pool_unsupported",
-        "faker needs a registry-backed value pool + cross-batch pool cache the "
-        "out-of-core kernel has no channel for; falls back to sequential/full-frame.",
-    ),
     "bucketize": (
         "out_of_core_row_error_strategy_unsupported",
         "bucketize records per-value format errors that full-frame quarantines "
@@ -288,6 +296,12 @@ def check_out_of_core_compatibility(
             conditional = _group_c_conditional_rejection(node)
             if conditional is not None:
                 rejections.append(conditional)
+        elif node.strategy in _FAKER_CONDITIONAL:
+            # faker is ported only for the deterministic-REUSE allowlisted shape;
+            # other shapes fall back to sequential/full-frame.
+            faker_rej = _faker_conditional_rejection(node)
+            if faker_rej is not None:
+                rejections.append(faker_rej)
         elif node.strategy == "categorical" and not _is_deterministic(node.plan_slice):
             # Non-deterministic categorical is keyed by the row ordinal of the frame the
             # handler sees; the out-of-core kernel has no such ordinal yet, so only the
@@ -309,6 +323,28 @@ def check_out_of_core_compatibility(
             )
 
     return OutOfCoreCompatibility(accepted=not rejections, rejections=tuple(rejections))
+
+
+def _faker_conditional_rejection(node: WorkNode) -> OutOfCoreRejection | None:
+    """Reject a faker node whose plan shape is not the admitted deterministic-REUSE
+    person-name variant; None admits it.
+
+    The admitted shape is the one `_faker_native` runs: a provider on the native
+    allowlist, `deterministic` with `cardinality_mode=reuse`, a namespace, and an
+    explicit pool_size. The exact-`string` source requirement is NOT checked here:
+    the source type is not known at routing (the gate sees only the plan), so it
+    is enforced fail-closed by the preflight and the per-table mask planner once a
+    schema is in hand. Non-deterministic/positional REUSE and UNIQUE/MATCH/SCALE
+    decline, so the job keeps the sequential/full-frame route that handles them.
+    """
+    if node.provider in C1_PROVIDER_ALLOWLIST and faker_pool_precondition_met(node):
+        return None
+    return OutOfCoreRejection(
+        "out_of_core_faker_pool_unsupported",
+        f"{node.table}.{node.columns}: out-of-core faker admits only deterministic REUSE with a "
+        "person-name provider, a namespace, and an explicit pool_size; other shapes fall back to "
+        "sequential/full-frame.",
+    )
 
 
 def _group_c_conditional_rejection(node: WorkNode) -> OutOfCoreRejection | None:

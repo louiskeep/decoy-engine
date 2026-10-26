@@ -88,6 +88,13 @@ def _ooc_payload(strategy: str) -> str:
         return NAMED_ARROW
     if strategy in NOOP_STRATEGIES:
         return NOOP
+    if strategy == FAKER:
+        # B4: deterministic-REUSE person-name faker selects from its prepared pool
+        # through the compiled index kernel (`_faker_native`), the same selection
+        # class SEQ and native-chunked use. The exact-string source and the
+        # companion-absent reference kernel are runtime qualifications, not a
+        # different compute class.
+        return COMPILED_SELECTION
     if strategy in _OOC_PYTHON_RESIDUE:
         return DEDICATED_PYTHON
     if strategy in (

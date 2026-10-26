@@ -67,6 +67,7 @@ from decoy_engine.execution.out_of_core._emit import (
     emit_to_sink,
     empty_output_table,
 )
+from decoy_engine.execution.out_of_core._faker_pool import OocFakerPoolContext
 from decoy_engine.execution.out_of_core._hash_run import OocHashRun
 from decoy_engine.execution.out_of_core._join import orphan_fk_warning
 from decoy_engine.execution.out_of_core._mask import (
@@ -207,6 +208,17 @@ def run_fk_out_of_core(
     root.mkdir(parents=True, exist_ok=True)
     os.chmod(root, 0o700)
     committed = False
+    # B4: the run-scoped faker pool lifecycle. Pools are Python/object memory
+    # outside DuckDB's accounting, so bound them well inside the run budget and
+    # never past the pool cache's own 256 MiB default. Constructed once per run
+    # (cheap: a cache plus a registry-bound builder, no kernel load); OocHashRun
+    # only consults it when a table carries an admitted faker column.
+    _faker_pool_cap = 256 * 1024 * 1024
+    faker_pool = OocFakerPoolContext(
+        registry=registry,
+        job_seed=plan.seed_envelope.job_seed,
+        max_pool_bytes=min(budget_bytes, _faker_pool_cap) if budget_bytes else _faker_pool_cap,
+    )
     try:
         incoming, outgoing = _edge_indexes(relationship_graph)
         parent_relations: dict[RelationshipEdge, ParentKeyRelation] = {}
@@ -221,7 +233,7 @@ def run_fk_out_of_core(
         # the first's. Same shape as the full-frame sink, so a multi-table
         # job's evidence list matches the pandas oracle's shape byte-for-byte.
         code_set_corpora: dict[tuple[str, str], dict[str, Any]] = {}
-        hash_run = OocHashRun(native_threads=native_threads)
+        hash_run = OocHashRun(native_threads=native_threads, faker_pool=faker_pool)
         for table_name in _table_order(plan, relationship_graph, sources):
             if table_name not in sources:
                 continue
@@ -317,6 +329,9 @@ def run_fk_out_of_core(
         shutil.rmtree(root / "staged", ignore_errors=True)
         if owned_temp:
             shutil.rmtree(root, ignore_errors=True)
+        # Release the run's faker pools (in-memory numpy arrays) and reset the
+        # reservation ledger; nothing survives the run.
+        faker_pool.close()
 
 
 def _stream_table(

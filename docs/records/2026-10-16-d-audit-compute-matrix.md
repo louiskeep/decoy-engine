@@ -48,7 +48,7 @@ Out-of-core route (payload; FK key surface is hash, redact, truncate, passthroug
 | passthrough | no-op | no-op |
 | text_mask | dedicated Python (`mask_cell` per-cell loop) | excluded |
 | code_set (mask mode without chapter_preserve) | dedicated Python | excluded |
-| faker | declined (`out_of_core_faker_pool_unsupported`) | excluded |
+| faker (deterministic REUSE, exact-string, person-name) | compiled index selection | excluded |
 | date_shift, bucketize | declined (`out_of_core_row_error_strategy_unsupported`) | excluded |
 | categorical (non-deterministic) | declined (`out_of_core_categorical_nondeterministic_unsupported`) | excluded |
 | geo_generalize | declined (`out_of_core_whole_column_aggregation_unsupported`) | excluded |
