@@ -45,10 +45,7 @@ FROZEN_PARAMETERS: tuple[tuple[str, str, str, str], ...] = (
     ),
     ("sink", "KEYWORD_ONLY", "None", "TransactionalSink | None"),
     ("source_loader", "KEYWORD_ONLY", "None", "Callable[[str], pa.Table] | None"),
-    ("substrate", "KEYWORD_ONLY", "'pandas'", "str | None"),
     ("fpe_chunk_count", "KEYWORD_ONLY", "4", "int"),
-    ("max_workers", "KEYWORD_ONLY", "4", "int"),
-    ("fallback_to_pandas", "KEYWORD_ONLY", "True", "bool"),
     ("explain_plan", "KEYWORD_ONLY", "False", "bool"),
     ("auto_chunk", "KEYWORD_ONLY", "True", "bool"),
     ("chunk_size_rows", "KEYWORD_ONLY", "50000", "int"),
@@ -65,6 +62,8 @@ FROZEN_PARAMETERS: tuple[tuple[str, str, str, str], ...] = (
     ("key_provider", "KEYWORD_ONLY", "None", "KeyProvider | None"),
     ("out_of_core_reorder_threshold_rows", "KEYWORD_ONLY", "None", "int | None"),
     ("unified_slice_enabled", "KEYWORD_ONLY", "True", "bool"),
+    ("progress", "KEYWORD_ONLY", "None", "ProgressSink | None"),
+    ("progress_interval_s", "KEYWORD_ONLY", "1.0", "float"),
     ("_provider_snapshot", "KEYWORD_ONLY", "None", "Mapping[str, Callable[[Faker], Any]] | None"),
 )
 FROZEN_RETURN = "ExecutionResult"
@@ -89,7 +88,7 @@ def test_run_pipeline_return_annotation_is_frozen() -> None:
 
 def test_the_frozen_table_covers_every_parameter_once() -> None:
     names = [row[0] for row in FROZEN_PARAMETERS]
-    assert len(names) == len(set(names)) == 38
+    assert len(names) == len(set(names)) == 37
     positional = [r[0] for r in FROZEN_PARAMETERS if r[1] == "POSITIONAL_OR_KEYWORD"]
     assert positional == ["config", "sources"]
 

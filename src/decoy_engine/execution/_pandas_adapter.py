@@ -669,15 +669,14 @@ _DEFAULT_EXECUTORS: dict[str, ExecutionAdapter] = {}
 def get_default_executor() -> ExecutionAdapter:
     """Return the cached default execution adapter for the current substrate.
 
-    S12 (M2): the engine reads its own DECOY_SUBSTRATE contract here and resolves
-    the adapter via `select_execution_adapter`, so a caller (the platform job
-    runner) routes a full job through the selected substrate by calling this; it
-    does not re-implement substrate selection (best-practices section 3.3). One
-    cached instance per substrate value (the singleton holds for a fixed env).
+    The engine constructs the adapter via `select_execution_adapter`, so a
+    caller routes a full job through it by calling this rather than
+    re-implementing adapter construction (best-practices section 3.3). One
+    cached instance per adapter label.
     """
-    from decoy_engine.execution._substrate import resolve_substrate, select_execution_adapter
+    from decoy_engine.execution._substrate import SUBSTRATE, select_execution_adapter
 
-    substrate = resolve_substrate()
+    substrate = SUBSTRATE
     cached = _DEFAULT_EXECUTORS.get(substrate)
     if cached is None:
         cached = select_execution_adapter()

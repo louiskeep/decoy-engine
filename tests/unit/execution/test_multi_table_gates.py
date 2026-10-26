@@ -235,27 +235,6 @@ def test_kill_switches_keep_the_full_frame_call(
     assert mt.dispatched_tables(got[1]) == []
 
 
-def test_a_forced_substrate_reaches_the_same_outcome_with_the_split_on_and_off(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The substrate is resolved before routing, so a non-pandas substrate fails the same way
-    with the split on and off, and an env-resolved pandas substrate splits as usual."""
-    cfg, sources = _two_big(tmp_path)
-    calls = mt.spy_split(monkeypatch)
-    got = mt.outcome(lambda: run_pipeline(cfg, sources=sources, **mt.kw(substrate="polars")))
-    off = mt.outcome(
-        lambda: run_pipeline(
-            cfg, sources=sources, **mt.kw(**{**mt.off_kw(), "substrate": "polars"})
-        )
-    )
-    mt.assert_same_outcome(got, off, expect="err")
-    assert got[1].code == "invalid_substrate"
-    assert calls == []
-    monkeypatch.setenv("DECOY_SUBSTRATE", "pandas")
-    env_run = run_pipeline(cfg, sources=sources, **mt.kw(substrate=None))
-    assert mt.dispatched_tables(env_run) == ["a", "b"]
-
-
 def test_no_table_passing_the_table_gate_is_a_golden_no_split(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

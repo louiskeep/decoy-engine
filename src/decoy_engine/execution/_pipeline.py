@@ -55,10 +55,9 @@ Out of scope for FC-1 (deferred to V2.1):
   when a generate column's `reference_table` points at a mask-kind
   parent. Operators see a clear "deferred to V2.1" error up front
   instead of a hung job at runtime.
-- Non-pandas substrates. Pandas is the only masking substrate. `run_pipeline`
-  defaults its `substrate` knob to `"pandas"` (also the `DECOY_SUBSTRATE`
-  default); any other value raises `invalid_substrate`. The knob and the
-  adapter seam are retained as fail-closed defence for a future substrate.
+- Caller-chosen substrates. Pandas is the only masking adapter (the parity
+  oracle); native kernels are route-chosen, never caller-chosen. The adapter
+  seam is retained as the single construction point.
 - Per-node preview on mixed configs. Covered by F5 at the platform
   layer (`run_v2_pipeline_preview`).
 
@@ -87,6 +86,7 @@ from decoy_engine.execution._planner import (
 )
 from decoy_engine.execution._transforms_prepare import prepare_transform_sources
 from decoy_engine.profile._readers import LazySource
+from decoy_engine.progress import ProgressChannel, ProgressSink, use_progress
 
 if TYPE_CHECKING:
     from faker import Faker
@@ -129,10 +129,7 @@ def run_pipeline(
     execution_mode: Literal["auto", "sequential", "full_frame", "out_of_core"] = "auto",
     sink: TransactionalSink | None = None,
     source_loader: Callable[[str], pa.Table] | None = None,
-    substrate: str | None = _pipeline_finalize.SUBSTRATE_DEFAULT,
     fpe_chunk_count: int = _pipeline_finalize.FPE_CHUNK_COUNT_DEFAULT,
-    max_workers: int = _pipeline_finalize.MAX_WORKERS_DEFAULT,
-    fallback_to_pandas: bool = _pipeline_finalize.FALLBACK_TO_PANDAS_DEFAULT,
     explain_plan: bool = False,
     auto_chunk: bool = _pipeline_finalize.AUTO_CHUNK_DEFAULT,
     chunk_size_rows: int = _pipeline_finalize.CHUNK_SIZE_ROWS_DEFAULT,
@@ -149,6 +146,8 @@ def run_pipeline(
     key_provider: KeyProvider | None = None,
     out_of_core_reorder_threshold_rows: int | None = None,
     unified_slice_enabled: bool = True,
+    progress: ProgressSink | None = None,
+    progress_interval_s: float = 1.0,
     _provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None = None,
 ) -> ExecutionResult:
     """Execute a mixed mask + generate config end-to-end.
@@ -228,18 +227,14 @@ def run_pipeline(
     always run the synthesize path; the sequential route is pandas-only
     regardless of this knob -- see `_pipeline_routing`):
 
-    - `substrate`: which execution adapter masks the mask-kind tables.
-      Default `"pandas"` keeps the original hardcoded pandas route
-      byte-identical; pandas is the only substrate, so any other value
-      raises `invalid_substrate`. `None` defers to the `DECOY_SUBSTRATE`
-      env contract.
-    - `fpe_chunk_count`: FPE per-value chunk parallelism.
-    - `max_workers` / `fallback_to_pandas`: reserved no-op knobs, passed
-      through untouched; the pandas adapter ignores them.
+    - `fpe_chunk_count`: FPE per-value chunk parallelism on the pandas adapter.
+    - `progress` / `progress_interval_s`: an optional `decoy_engine.progress.ProgressSink`
+      that receives value-free run events (phases, route, per-table rate samples at most
+      once per interval, terminal). Observation only: output bytes never depend on it and
+      a raising sink is counted, never propagated.
 
-    All four forward to `select_execution_adapter`, which validates them
-    up front: an unknown substrate raises `ExecutionError`
-    (``code='invalid_substrate'``), a non-positive-int count knob raises
+    It forwards to `select_execution_adapter`, which validates it
+    up front: a non-positive-int count knob raises `ExecutionError`
     ``code='invalid_execution_knob'``, both BEFORE any profiling or plan
     compilation. When any knob is non-default the selected adapter
     identity and every knob value are stamped under
@@ -269,54 +264,69 @@ def run_pipeline(
     if token_vault_writer is not None and execution_mode == "auto":
         execution_mode = "full_frame"
         auto_chunk = False
-    ctx = _ctx.build_run_context(
-        config,
-        sources,
-        engine_version=engine_version,
-        registry=registry,
-        derive_key=derive_key,
-        instance_default_locale=instance_default_locale,
-        vault_writer=vault_writer,
-        token_vault_writer=token_vault_writer,
-        fidelity_report=fidelity_report,
-        post_validation=post_validation,
-        post_validation_skip=post_validation_skip,
-        post_validation_sample_size=post_validation_sample_size,
-        post_validation_enforce=post_validation_enforce,
-        now_iso=now_iso,
-        execution_mode=execution_mode,
-        sink=sink,
-        source_loader=source_loader,
-        substrate=substrate,
-        fpe_chunk_count=fpe_chunk_count,
-        max_workers=max_workers,
-        fallback_to_pandas=fallback_to_pandas,
-        explain_plan=explain_plan,
-        auto_chunk=auto_chunk,
-        chunk_size_rows=chunk_size_rows,
-        auto_chunk_threshold_rows=auto_chunk_threshold_rows,
-        native_threads=native_threads,
-        chunked_dispatcher_enabled=chunked_dispatcher_enabled,
-        stream_chunked_output=stream_chunked_output,
-        multi_table_dispatch_enabled=multi_table_dispatch_enabled,
-        out_of_core_threshold_rows=out_of_core_threshold_rows,
-        full_frame_reject_rows=full_frame_reject_rows,
-        out_of_core_budget_bytes=out_of_core_budget_bytes,
-        use_byte_estimate_routing=use_byte_estimate_routing,
-        use_probe_routing=use_probe_routing,
-        key_provider=key_provider,
-        out_of_core_reorder_threshold_rows=out_of_core_reorder_threshold_rows,
-        unified_slice_enabled=unified_slice_enabled,
-        provider_snapshot=_provider_snapshot,
-        prepare_sources=prepare_transform_sources,
-    )
-    decision = _ctx.decide_route(ctx)
+    with (
+        use_progress(progress, interval_s=progress_interval_s) as _progress,
+        _progress.run_scope(),
+    ):
+        with _progress.phase("resolve"):
+            ctx = _ctx.build_run_context(
+                config,
+                sources,
+                engine_version=engine_version,
+                registry=registry,
+                derive_key=derive_key,
+                instance_default_locale=instance_default_locale,
+                vault_writer=vault_writer,
+                token_vault_writer=token_vault_writer,
+                fidelity_report=fidelity_report,
+                post_validation=post_validation,
+                post_validation_skip=post_validation_skip,
+                post_validation_sample_size=post_validation_sample_size,
+                post_validation_enforce=post_validation_enforce,
+                now_iso=now_iso,
+                execution_mode=execution_mode,
+                sink=sink,
+                source_loader=source_loader,
+                fpe_chunk_count=fpe_chunk_count,
+                explain_plan=explain_plan,
+                auto_chunk=auto_chunk,
+                chunk_size_rows=chunk_size_rows,
+                auto_chunk_threshold_rows=auto_chunk_threshold_rows,
+                native_threads=native_threads,
+                chunked_dispatcher_enabled=chunked_dispatcher_enabled,
+                stream_chunked_output=stream_chunked_output,
+                multi_table_dispatch_enabled=multi_table_dispatch_enabled,
+                out_of_core_threshold_rows=out_of_core_threshold_rows,
+                full_frame_reject_rows=full_frame_reject_rows,
+                out_of_core_budget_bytes=out_of_core_budget_bytes,
+                use_byte_estimate_routing=use_byte_estimate_routing,
+                use_probe_routing=use_probe_routing,
+                key_provider=key_provider,
+                out_of_core_reorder_threshold_rows=out_of_core_reorder_threshold_rows,
+                unified_slice_enabled=unified_slice_enabled,
+                provider_snapshot=_provider_snapshot,
+                prepare_sources=prepare_transform_sources,
+            )
+        decision = _ctx.decide_route(ctx)
+        _emit_route(_progress, decision)
 
-    # Layer-1 dispatch: every route is an executor over the same (ctx, decision).
-    if ctx.has_mask_table and decision.route == "sequential":
-        return _dispatch.execute_sequential_route(ctx, decision)
-    if ctx.has_mask_table and decision.route == "out_of_core":
-        return _dispatch.execute_out_of_core_route(ctx, decision)
-    if ctx.has_mask_table and decision.route == "mixed":
-        return _dispatch.execute_mixed_route(ctx, decision)
-    return _full_frame.run_full_frame_route(ctx, decision)
+        # Layer-1 dispatch: every route is an executor over the same (ctx, decision).
+        if ctx.has_mask_table and decision.route == "sequential":
+            return _dispatch.execute_sequential_route(ctx, decision)
+        if ctx.has_mask_table and decision.route == "out_of_core":
+            return _dispatch.execute_out_of_core_route(ctx, decision)
+        if ctx.has_mask_table and decision.route == "mixed":
+            return _dispatch.execute_mixed_route(ctx, decision)
+        return _full_frame.run_full_frame_route(ctx, decision)
+
+
+def _emit_route(channel: ProgressChannel, decision: Any) -> None:
+    """One route event per run: the layer-1 route and, when the planner picked a
+    lane below it, that lane's mode (identifiers only, no sizes or paths)."""
+    plan_decision = getattr(decision, "execution_plan_decision", None)
+    lane = getattr(plan_decision, "mode", None)
+    if getattr(decision, "route_chunked", False):
+        lane = "chunked"
+    channel.route(
+        str(getattr(decision, "route", "unknown")), lane=None if lane is None else str(lane)
+    )
