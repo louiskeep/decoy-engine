@@ -42,7 +42,7 @@ config (HIPAA Safe-Harbor style):
 > `main` (Faker 40.23.0 pin) with the Rust companion.** These are a development-box
 > reference point, not a production SLA. Throughput varies between container
 > instances even on the same image (see the caveats); treat the wall-clock
-> numbers as order-of-magnitude. Measured 2026-10-26; config digest `fb5abdb7e64a`.
+> numbers as order-of-magnitude. Measured 2026-10-26; config built deterministically from the harness `_synthea_config.py`.
 
 | Total rows | Tables | Columns | Wall time | Throughput | Peak memory | Temp disk (spill) | Native columns |
 |---:|:---:|:---:|---:|---:|---:|---:|:---:|

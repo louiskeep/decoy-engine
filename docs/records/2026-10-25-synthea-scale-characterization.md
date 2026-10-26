@@ -3,8 +3,12 @@
 Measured 2026-10-26, on the engine rebased onto current `main`. Engine code under
 test is `origin/main` @ `e3abfdf` (the vault write-seam + tokenize registration +
 route-coverage phase-1 B3-B7 OOC/SEQ); the branch adds only the harness, this record
-and the reader guide on top and touches no `src/` engine code, so the numbers come
-from unmodified `main`. (The runs executed with the working tree at `a39c648`; the
+and the reader guide on top and touches no `src/` engine code, so the numbers were
+measured on `main` as it stood at `e3abfdf`, now an ancestor of current `main` `17c0bdeb`.
+(`main` has since advanced through #309, which added per-batch progress-sink calls to the
+out-of-core streaming loop; those calls early-return when no sink is attached, and this
+harness attaches none, so they are inert here and the recorded numbers stand unchanged and
+were not re-measured.) (The runs executed with the working tree at `a39c648`; the
 only `main` change since is ruff-formatting of test files under `tests/parity/`, so
 `src/decoy_engine` is byte-identical and the engine runtime is the same.) (These
 figures are also stable across the route-coverage merge itself: a run against the
@@ -15,8 +19,9 @@ BOTH version literals
 not reachable from this checkout, so it is NOT asserted here (an earlier draft named
 a release-tag SHA that does not resolve in this repo; dropped). The real
 discriminators for reproducing these numbers are the commit SHA and the
-`faker==40.23.0` pin. Config digest (sha256 of the structural mask config, source
-and target paths excluded): `fb5abdb7e64a`. Built with the Rust native companion
+`faker==40.23.0` pin. The mask config is built deterministically from
+`scripts/synthea-scale/_synthea_config.py` (reproducible via its `declared_strategies()`),
+so it regenerates exactly from that module plus the pin. Built with the Rust native companion
 from `decoy-engine-native` (`maturin develop --release`, CPython 3.12). Harness:
 [`scripts/synthea-scale/`](../../scripts/synthea-scale/README.md). Reader table:
 [`docs/guides/sizing-and-hardware.md`](../guides/sizing-and-hardware.md).
@@ -148,7 +153,7 @@ harness's order-independent referential-integrity sample), row counts preserved.
 Wall time below is the median (p50) over the runs; throughput is `total rows ÷
 that wall`, so the two are on one basis. The raw per-run detail (including the
 per-run throughput field, which the worker stamps from the last run) is in the JSON
-records. Config digest for every row: `fb5abdb7e64a` (see header).
+records. The mask config is deterministic from `_synthea_config.py` (see header).
 
 | Tier | Route | Native cols | Wall (mask) | Throughput | Peak RSS (ext.) | Spill (temp disk) | Reorder lane | Parity |
 |---|---|:---:|---:|---:|---:|---:|---|:---:|

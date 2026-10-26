@@ -53,7 +53,7 @@ def _column_rule(table: str, spec: Any) -> dict[str, Any]:
         rule["namespace"] = namespace
     # Deterministic categorical remap (same source value -> same masked value) is a
     # normal masking choice and lets the compiled native categorical kernel run on
-    # the bounded sequential route instead of the Python oracle.
+    # the out-of-core route instead of the Python oracle.
     if spec.strategy == "categorical":
         rule["deterministic"] = True
     if spec.provider:
