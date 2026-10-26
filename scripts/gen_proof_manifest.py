@@ -348,9 +348,16 @@ def _all_changed(col, i, o):
 
 
 # Strategies intentionally not given a standalone card. `passthrough` is the
-# no-op (shown in the hero instead). Every other registry mask strategy MUST
-# have a CAPABILITY_PROOFS entry, enforced by the completeness sentry.
-WAIVED_MASK_STRATEGIES = {"passthrough"}
+# no-op (shown in the hero instead). `tokenize` (B-6) masks through a
+# platform-supplied token vault, and the engine-only proof harness supplies
+# none. A throwaway in-memory vault would only re-demonstrate the deterministic
+# opaque-surrogate property already proven by the `hash` card; the parts that
+# make tokenize distinct (vault-backed reversibility, key custody) are
+# platform-owned and outside engine proof scope. Its determinism and
+# fail-closed behavior are covered by tests/unit/execution/test_tokenize.py and
+# the vault write-seam gate. Every other registry mask strategy MUST have a
+# CAPABILITY_PROOFS entry, enforced by the completeness sentry.
+WAIVED_MASK_STRATEGIES = {"passthrough", "tokenize"}
 
 
 CAPABILITY_PROOFS: list[CapabilityProof] = [

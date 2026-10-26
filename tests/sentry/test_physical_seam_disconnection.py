@@ -718,6 +718,12 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         # the existing `native_text_redact` wrapper and the shared config predicate; nothing from
         # `execution.physical`.
         "src/decoy_engine/execution/out_of_core/_text_redact_native.py",
+        # B5 (out-of-core text_mask on the compiled span kernel): `_text_mask_native.py` (per-column
+        # decision, the native call and its disposition) is new; `_hash_run.py` carries its
+        # per-table plan, `_mask.py` dispatches it and `_mask_group_c.py` (both already permitted)
+        # delegate the admitted non-NER column to it. It imports the existing `native_text_mask`
+        # wrapper and the shared config/source predicates; nothing from `execution.physical`.
+        "src/decoy_engine/execution/out_of_core/_text_mask_native.py",
         "src/decoy_engine/execution/out_of_core/_mask.py",
         "src/decoy_engine/execution/out_of_core/_stream_driver.py",
         # OOC spill-reader mmap->OSFile memory fix (2026-10-16): the reorder-lane spill readers
@@ -755,11 +761,31 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         "src/decoy_engine/execution/_sequential_composite_chain.py",
         "src/decoy_engine/execution/_strategies/_hash.py",
         "src/decoy_engine/execution/_strategies/_fpe.py",
+        # B4 (deterministic-REUSE faker payload on the out-of-core route): `_faker_pool.py` (the
+        # run-scoped pool context + budget gate) and `_faker_native.py` (per-column decision, the
+        # compiled pool-select call and its disposition) are new; `_compat.py` admits the shape and
+        # `_pipeline_routing_signals.py`/`_preflight.py` thread the source type, `_mask.py` /
+        # `_hash_run.py` / `_runner.py` dispatch it. They import the shared pool/index-kernel
+        # helpers and the operator registry; nothing from `execution.physical`.
+        "src/decoy_engine/execution/out_of_core/_faker_native.py",
+        "src/decoy_engine/execution/out_of_core/_faker_pool.py",
+        # B7 (native group_key payload on the sequential route): `_sequential_native_group_key.py`
+        # is new -- group_key's admission reads a SIBLING column, so its decision + derivation live
+        # in a sibling module (like `_sequential_native_text_mask.py`) rather than the per-value op
+        # seam; the oracle handler (`_strategies/_group_key.py`) offers the seam its resolved
+        # config via a lazy import. Both reuse the shared raw-hex kernel and import nothing from
+        # `execution.physical`.
+        "src/decoy_engine/execution/_sequential_native_group_key.py",
+        "src/decoy_engine/execution/_strategies/_group_key.py",
         # MG-5 (tokenize on the vault write seam): the new handler, its registration in the
         # strategy registry, and its GDPR technique-class label. None imports `execution.physical`.
         "src/decoy_engine/execution/_strategies/__init__.py",
         "src/decoy_engine/execution/_strategies/_tokenize.py",
         "src/decoy_engine/execution/_technique_class.py",
+        # MG-5 follow-up (B-6 regression-gate green-up): tokenize's distribution-behavior
+        # label (preserves_cardinality_only, like hash and fpe) in the static behavior map.
+        # A pure label addition; imports nothing from `execution.physical`.
+        "src/decoy_engine/execution/_distribution_behavior.py",
         # MG-5 module-size remediation: the `_fk_key_value` compat wrapper split out of
         # `_pandas_adapter.py`, and the `mask.tokenize` DrawSite + provider-primitive data
         # siblings split out of the capped `native/_determinism_protocol.py` /

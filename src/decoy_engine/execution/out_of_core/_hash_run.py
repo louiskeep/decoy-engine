@@ -33,7 +33,10 @@ from decoy_engine.execution.native._crypto_ext import (
     load_compiled_crypto_kernel,
 )
 from decoy_engine.execution.native._fpe_ext import load_compiled_fpe_kernel
-from decoy_engine.execution.native._index_ext import load_compiled_index_kernel
+from decoy_engine.execution.native._index_ext import (
+    load_compiled_index_kernel,
+    reference_index_derivation,
+)
 from decoy_engine.execution.native._text_redact_kernel import load_text_redact_kernel
 from decoy_engine.execution.out_of_core._bucket_native import (
     NativeBucket,
@@ -46,6 +49,12 @@ from decoy_engine.execution.out_of_core._categorical_native import (
     TableCategoricalPlan,
     decide_table,
 )
+from decoy_engine.execution.out_of_core._faker_native import (
+    BoundFakerKernel,
+    NativeFaker,
+    TableFakerPlan,
+)
+from decoy_engine.execution.out_of_core._faker_native import decide_table as decide_faker_table
 from decoy_engine.execution.out_of_core._fpe_native import (
     BoundFpeKernel,
     NativeFpe,
@@ -58,6 +67,14 @@ from decoy_engine.execution.out_of_core._hash_native import (
     decline_reason,
 )
 from decoy_engine.execution.out_of_core._mask import table_seed
+from decoy_engine.execution.out_of_core._text_mask_native import (
+    BoundTextMaskKernel,
+    NativeTextMask,
+    TableTextMaskPlan,
+)
+from decoy_engine.execution.out_of_core._text_mask_native import (
+    decide_table as decide_text_mask_table,
+)
 from decoy_engine.execution.out_of_core._text_redact_native import (
     BoundTextRedactKernel,
     NativeTextRedact,
@@ -69,6 +86,7 @@ from decoy_engine.execution.out_of_core._text_redact_native import (
 from decoy_engine.relationships._graph import OrphanPolicy
 
 if TYPE_CHECKING:
+    from decoy_engine.execution.out_of_core._faker_pool import OocFakerPoolContext
     from decoy_engine.plan._types import Plan
     from decoy_engine.relationships._graph import RelationshipEdge
 
@@ -77,6 +95,8 @@ CATEGORICAL_DISPOSITION_KEY = "out_of_core_categorical"
 BUCKET_DISPOSITION_KEY = "out_of_core_bucket_perturb"
 FPE_DISPOSITION_KEY = "out_of_core_fpe"
 TEXT_REDACT_DISPOSITION_KEY = "out_of_core_text_redact"
+TEXT_MASK_DISPOSITION_KEY = "out_of_core_text_mask"
+FAKER_DISPOSITION_KEY = "out_of_core_faker"
 REMAP_DEFERRED = "fk_key_hash_remap_native_deferred"
 _NO_KERNEL_RAN = "none"
 _REASON_NO_ROWS = "no_rows_hashed"
@@ -124,6 +144,8 @@ class TableHashPlan:
         bucket: TableBucketPlan | None = None,
         fpe: TableFpePlan | None = None,
         text_redact: TableTextRedactPlan | None = None,
+        text_mask: TableTextMaskPlan | None = None,
+        faker: TableFakerPlan | None = None,
     ) -> None:
         self._decisions = dict(decisions)
         self._bound = bound
@@ -131,6 +153,8 @@ class TableHashPlan:
         self.bucket = bucket
         self.fpe = fpe
         self.text_redact = text_redact
+        self.text_mask = text_mask
+        self.faker = faker
 
     @property
     def decisions(self) -> Mapping[str, HashColumnDecision]:
@@ -151,6 +175,14 @@ class TableHashPlan:
     def text_redact_for(self, column: str, batch: pa.RecordBatch) -> NativeTextRedact | None:
         """The native handle for text_redact `column` in `batch`, or None (see `gate`)."""
         return self.text_redact.gate(column, batch) if self.text_redact is not None else None
+
+    def text_mask_for(self, column: str, batch: pa.RecordBatch) -> NativeTextMask | None:
+        """The native handle for text_mask `column` in `batch`, or None (see `gate`)."""
+        return self.text_mask.gate(column, batch) if self.text_mask is not None else None
+
+    def faker_for(self, column: str, batch: pa.RecordBatch) -> NativeFaker | None:
+        """The native handle for faker `column` in `batch`, or None (see `gate`)."""
+        return self.faker.gate(column, batch) if self.faker is not None else None
 
     def kernel_for(self, column: str, batch: pa.RecordBatch) -> BoundHashKernel | None:
         """The native kernel for `column` in `batch`, or None when it stays on Python.
@@ -193,16 +225,28 @@ class OocHashRun:
     needs a decision; a plan with no hash column never touches it.
     """
 
-    def __init__(self, *, native_threads: int | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        native_threads: int | None = None,
+        faker_pool: OocFakerPoolContext | None = None,
+    ) -> None:
         self._native_threads = native_threads
+        # The run-scoped faker pool lifecycle (B3). None when the run builds no
+        # faker column; present, it owns the one pool each faker column reuses
+        # across batches and bounds that pool against the run budget.
+        self._faker_pool = faker_pool
         self._loaded = False
         self._bound: BoundHashKernel | None = None
         self._index_loaded = False
         self._index_bound: BoundIndexKernel | None = None
+        self._faker_bound: BoundFakerKernel | None = None
         self._fpe_loaded = False
         self._fpe_bound: BoundFpeKernel | None = None
         self._text_redact_loaded = False
         self._text_redact_bound: BoundTextRedactKernel | None = None
+        self._text_mask_loaded = False
+        self._text_mask_bound: BoundTextMaskKernel | None = None
         self._plans: list[TableHashPlan] = []
         self._remap: list[dict[str, Any]] = []
 
@@ -226,6 +270,30 @@ class OocHashRun:
                 self._index_bound = None
         return self._index_bound
 
+    def _faker_kernel(self) -> BoundFakerKernel:
+        """The faker index kernel for the run: the compiled companion when present,
+        else the pure-Python reference (`reference_index_derivation`).
+
+        Unlike the other strategies, faker never degrades to None: it has no
+        in-route Python handler to fall back to, and the reference kernel is
+        byte-identical to the compiled one (INDEX_KAT), so a box without the
+        companion still selects correctly. The `compiled` flag only records which
+        backend ran. Reuses the already-loaded compiled index kernel so a run
+        with both categorical and faker pays the companion load once.
+        """
+        bound = self._faker_bound
+        if bound is None:
+            index = self._index_kernel()
+            bound = (
+                BoundFakerKernel(index.kernel, index.native_threads, compiled=True)
+                if index is not None
+                else BoundFakerKernel(
+                    reference_index_derivation(), self._native_threads, compiled=False
+                )
+            )
+            self._faker_bound = bound
+        return bound
+
     def _fpe_kernel(self) -> BoundFpeKernel | None:
         if not self._fpe_loaded:
             self._fpe_loaded = True
@@ -242,6 +310,14 @@ class OocHashRun:
             kernel = load_text_redact_kernel()
             self._text_redact_bound = None if kernel is None else BoundTextRedactKernel(kernel)
         return self._text_redact_bound
+
+    def _text_mask_kernel(self) -> BoundTextMaskKernel | None:
+        """Companion presence for text_mask; it shares the text_redact span kernel loader."""
+        if not self._text_mask_loaded:
+            self._text_mask_loaded = True
+            kernel = load_text_redact_kernel()
+            self._text_mask_bound = None if kernel is None else BoundTextMaskKernel(kernel)
+        return self._text_mask_bound
 
     def prepare_table(
         self,
@@ -339,7 +415,44 @@ class OocHashRun:
             if text_redact_seeds
             else None
         )
-        table_plan = TableHashPlan(decisions, self._bound, categorical, bucket, fpe, text_redact)
+        text_mask_seeds = {
+            column: column_seed
+            for column, column_seed in (seed.per_column if seed is not None else ())
+            if column_seed.strategy == "text_mask"
+            and column not in skip_columns
+            and source_schema.get_field_index(column) >= 0
+        }
+        text_mask = (
+            decide_text_mask_table(
+                table_name,
+                source_schema,
+                text_mask_seeds,
+                self._text_mask_kernel() if text_mask_seeds else None,
+            )
+            if text_mask_seeds
+            else None
+        )
+        faker_seeds = {
+            column: column_seed
+            for column, column_seed in (seed.per_column if seed is not None else ())
+            if column_seed.strategy == "faker"
+            and column not in skip_columns
+            and source_schema.get_field_index(column) >= 0
+        }
+        faker = (
+            decide_faker_table(
+                table_name,
+                source_schema,
+                faker_seeds,
+                self._faker_kernel(),
+                self._faker_pool,
+            )
+            if faker_seeds
+            else None
+        )
+        table_plan = TableHashPlan(
+            decisions, self._bound, categorical, bucket, fpe, text_redact, text_mask, faker
+        )
         self._plans.append(table_plan)
         self._remap.extend(_remap_entries(plan, table_name, incoming_edges, site))
         return table_plan
@@ -369,12 +482,26 @@ class OocHashRun:
             if p.text_redact is not None
             for d in p.text_redact.decisions.values()
         ]
+        text_mask = [
+            d.entry()
+            for p in self._plans
+            if p.text_mask is not None
+            for d in p.text_mask.decisions.values()
+        ]
+        faker = [
+            d.entry()
+            for p in self._plans
+            if p.faker is not None
+            for d in p.faker.decisions.values()
+        ]
         return {
             **({HASH_DISPOSITION_KEY: entries} if entries else {}),
             **({CATEGORICAL_DISPOSITION_KEY: categorical} if categorical else {}),
             **({BUCKET_DISPOSITION_KEY: bucket} if bucket else {}),
             **({FPE_DISPOSITION_KEY: fpe} if fpe else {}),
             **({TEXT_REDACT_DISPOSITION_KEY: text_redact} if text_redact else {}),
+            **({TEXT_MASK_DISPOSITION_KEY: text_mask} if text_mask else {}),
+            **({FAKER_DISPOSITION_KEY: faker} if faker else {}),
         }
 
 
@@ -407,6 +534,7 @@ def _remap_entries(
 __all__ = [
     "BUCKET_DISPOSITION_KEY",
     "CATEGORICAL_DISPOSITION_KEY",
+    "FAKER_DISPOSITION_KEY",
     "FPE_DISPOSITION_KEY",
     "HASH_DISPOSITION_KEY",
     "REMAP_DEFERRED",
