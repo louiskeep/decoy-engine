@@ -175,6 +175,20 @@ def _column_costs(column: pa.Array, *, table: str) -> tuple[np.ndarray, int]:
     (`UnsupportedColumnType`) rather than guessed, so a chunk can never exceed the caller's
     byte bound. `cut_batch` sums this across the batch BEFORE yielding any chunk, so the
     reject lands before a row is handed on."""
+    if isinstance(column, pa.ExtensionArray):
+        # An extension type WRAPS a storage array, and its `bit_width` delegates to the
+        # storage (a dictionary storage reports its 32-bit index width), so the fixed-width
+        # branch below would price the facade at the index width while the real payload is
+        # the storage. Price the storage itself. `own_array` (concat) does NOT decode an
+        # extension's storage the way it decodes a top-level DictionaryArray, so an
+        # extension over dictionary storage retains the WHOLE dictionary in every chunk no
+        # matter how few rows it holds -- unbounded per the schema -- and must be rejected
+        # rather than priced by referenced-value lengths. For any other storage the physical
+        # buffers compact with the slice exactly as the plain type does, so pricing the
+        # storage recursively is conservative (and rejects nested/view storage in turn).
+        if isinstance(column.storage, pa.DictionaryArray):
+            raise UnsupportedColumnType(table=table, arrow_type=str(column.type))
+        return _column_costs(column.storage, table=table)
     if isinstance(column, pa.DictionaryArray):
         # A dictionary decodes to its value type (`own_array`) in freshly built buffers, so
         # a null slot there spans no payload; the decoded value length is the physical span.

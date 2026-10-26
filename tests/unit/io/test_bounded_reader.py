@@ -19,6 +19,7 @@ from decoy_engine.io import (
     CsvMalformed,
     CsvRecordExceedsMaxRowBytes,
     RowExceedsMaxRowBytes,
+    UnsupportedColumnType,
     cut_batch,
     iter_csv_chunks,
     iter_parquet_chunks,
@@ -198,6 +199,108 @@ def test_computed_cost_never_undercounts_the_physical_chunk_size() -> None:
             assert sum(c.num_rows for c in chunks) == n
             for c in chunks:
                 assert c.get_total_buffer_size() <= chunk_budget or c.num_rows == 1
+
+
+def _opaque_over(storage: pa.Array) -> pa.Array:
+    """`storage` wrapped in Arrow's built-in `opaque` extension type. `pa.opaque`
+    is a C++-native extension (an `ExtensionArray` subclass whose type is NOT a
+    `pa.ExtensionType`), so it exercises the array-level detection the fix uses."""
+    return pa.ExtensionArray.from_storage(pa.opaque(storage.type, "t", "v"), storage)
+
+
+def test_opaque_extension_over_dictionary_cannot_blow_the_memory_bound() -> None:
+    # Codex BLOCKER (round 3): an extension type can WRAP dictionary storage. The
+    # extension's bit_width delegates to the storage (a dictionary reports its 32-bit
+    # index width), so the fixed-width branch priced the column at the index width (5
+    # bytes/row) while own_array -- which does NOT decode an extension's storage the way
+    # it decodes a top-level DictionaryArray -- keeps the extension over the un-decoded
+    # dictionary and retains the full ~2 KB payload. Two rows referencing 1,000-byte
+    # values thus produced a ~2 KB owned chunk under a 32-byte chunk_budget AND bypassed
+    # max_row_bytes=100: the public memory bound broken with num_rows > 1.
+    storage = pa.DictionaryArray.from_arrays(
+        pa.array([0, 1], pa.int32()), pa.array(["A" * 1000, "B" * 1000], pa.string())
+    )
+    ext = _opaque_over(storage)
+    batch = pa.RecordBatch.from_arrays([ext], names=["c"])
+    budget = _budget(chunk_budget_bytes=32, max_chunk_rows=1000, max_row_bytes=100)
+    seen: list[pa.Table] = []
+    try:
+        for c in cut_batch(batch, budget, table="x"):
+            seen.append(c)
+    except UnsupportedColumnType:
+        assert seen == []  # rejected before any chunk: conservative-correct
+        return
+    # If the reader claims it can price the column, the bound it advertises MUST hold on
+    # the REAL owned chunk (get_total_buffer_size, not a sliced view): no multi-row chunk
+    # over chunk_budget, and max_row_bytes enforced.
+    for c in seen:
+        assert c.get_total_buffer_size() <= budget.chunk_budget_bytes or c.num_rows == 1
+        assert c.get_total_buffer_size() <= budget.max_row_bytes or c.num_rows == 1
+
+
+def test_arrow_wrappers_never_undercount_the_real_retained_bytes() -> None:
+    # Codex round 3, per-wrapper matrix: every Arrow wrapper that could bypass the
+    # per-type branches must EITHER reject (UnsupportedColumnType) OR price at/above the
+    # real retained bytes so no multi-row chunk exceeds the budget. None may under-count.
+    big = "W" * 1000
+
+    def ext_over_dict() -> pa.Array:
+        storage = pa.DictionaryArray.from_arrays(
+            pa.array([0, 1], pa.int32()), pa.array([big, big + "x"], pa.string())
+        )
+        return _opaque_over(storage)
+
+    def run_end_encoded() -> pa.Array:
+        return pa.RunEndEncodedArray.from_arrays(
+            pa.array([1, 2], pa.int32()), pa.array([big, big], pa.string())
+        )
+
+    def dense_union() -> pa.Array:
+        return pa.UnionArray.from_dense(
+            pa.array([0, 0], pa.int8()),
+            pa.array([0, 1], pa.int32()),
+            [pa.array([big, big]), pa.array([1], pa.int64())],
+        )
+
+    def nested_list() -> pa.Array:
+        return pa.array([[big], [big]], pa.list_(pa.string()))
+
+    def nested_struct() -> pa.Array:
+        return pa.array([{"a": big}, {"a": big}], pa.struct([("a", pa.string())]))
+
+    builders = {
+        "ext_over_dict": ext_over_dict,
+        "run_end_encoded": run_end_encoded,
+        "dense_union": dense_union,
+        "list": nested_list,
+        "struct": nested_struct,
+    }
+    budget = _budget(chunk_budget_bytes=32, max_chunk_rows=1000, max_row_bytes=100)
+    for name, build in builders.items():
+        batch = pa.RecordBatch.from_arrays([build()], names=["c"])
+        seen: list[pa.Table] = []
+        try:
+            for c in cut_batch(batch, budget, table=name):
+                seen.append(c)
+        except UnsupportedColumnType:
+            continue  # rejected: conservative-correct, no under-count possible
+        for c in seen:
+            assert c.get_total_buffer_size() <= budget.chunk_budget_bytes or c.num_rows == 1, name
+
+
+def test_extension_over_a_priced_storage_type_is_admitted_via_its_storage() -> None:
+    # The fix prices an extension by its UNDERLYING storage, so an opaque extension over
+    # plain string storage (which own_array compacts to the slice) is admitted and
+    # bounded, not over-rejected. This locks price-via-storage in: a tiny budget forces
+    # several bounded chunks rather than one rejection or one over-budget blob.
+    ext = _opaque_over(pa.array(["a" * 20] * 40, pa.string()))
+    batch = pa.RecordBatch.from_arrays([ext], names=["s"])
+    budget = _budget(chunk_budget_bytes=200, max_chunk_rows=1000, max_row_bytes=10**9)
+    chunks = list(cut_batch(batch, budget, table="s"))
+    assert sum(c.num_rows for c in chunks) == 40
+    assert len(chunks) > 1
+    for c in chunks:
+        assert c.get_total_buffer_size() <= budget.chunk_budget_bytes or c.num_rows == 1
 
 
 def test_csv_chunks_keep_the_pandas_null_contract_and_string_types(tmp_path: Path) -> None:
