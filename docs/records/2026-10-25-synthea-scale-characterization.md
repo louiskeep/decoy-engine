@@ -1,10 +1,11 @@
 # Record: Synthea scale characterization (RW-A / A-2)
 
 Measured 2026-10-25, refreshed 2026-10-26 (config honesty fixes below). Engine at
-commit `195fab1`, which ships in the **v0.14.2** release line (`pyproject.toml`
-version `0.14.2`, `faker==40.23.0` pin). The in-tree `decoy_engine.__version__`
-constant still reads `0.7.0` -- that literal lags on `main` and is bumped on the
-release tags; the engine code that produced these numbers is the v0.14.2 code.
+commit `195fab1`. At that commit BOTH version literals (`pyproject.toml` version and
+the in-tree `decoy_engine.__version__` constant) read `0.7.0`, frozen on `main`; the
+`0.14.2` version appears only on the release commit/tag `ec9be3fc` that includes this
+code. The real discriminators are the `faker==40.23.0` pin and the commit SHA; the
+numbers here were produced by the code that ships in the v0.14.2 release line.
 Built with the Rust native companion from `decoy-engine-native`
 (`maturin develop --release`). Harness:
 [`scripts/synthea-scale/`](../../scripts/synthea-scale/README.md). Reader table:

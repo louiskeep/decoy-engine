@@ -78,9 +78,11 @@ def build_config(src_paths: dict[str, Path], out_dir: Path, seed: int = 7) -> di
         )
     return {
         "version": 1,
-        # NOTE: `post_validation` is a run_pipeline runtime kwarg, not a
-        # global_settings field -- setting it here would be inert. It is left off
-        # on purpose (it forces the full-frame route; see the module docstring).
+        # NOTE: `post_validation` IS a declared global_settings field, but the
+        # engine's run_pipeline path does not read it. Post-validation is driven
+        # only by the run_pipeline kwarg, which this harness never passes, so the
+        # global_settings entry was inert here. It is left off on purpose: passing
+        # the kwarg would force the full-frame route (see the module docstring).
         "global_settings": {"seed": seed},
         "sources": {
             t: {"type": "file", "format": "parquet", "path": str(src_paths[t])} for t in TABLE_NAMES
