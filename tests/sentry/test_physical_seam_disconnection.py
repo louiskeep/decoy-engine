@@ -749,6 +749,14 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         "src/decoy_engine/execution/_sequential_composite_chain.py",
         "src/decoy_engine/execution/_strategies/_hash.py",
         "src/decoy_engine/execution/_strategies/_fpe.py",
+        # B4 (deterministic-REUSE faker payload on the out-of-core route): `_faker_pool.py` (the
+        # run-scoped pool context + budget gate) and `_faker_native.py` (per-column decision, the
+        # compiled pool-select call and its disposition) are new; `_compat.py` admits the shape and
+        # `_pipeline_routing_signals.py`/`_preflight.py` thread the source type, `_mask.py` /
+        # `_hash_run.py` / `_runner.py` dispatch it. They import the shared pool/index-kernel
+        # helpers and the operator registry; nothing from `execution.physical`.
+        "src/decoy_engine/execution/out_of_core/_faker_native.py",
+        "src/decoy_engine/execution/out_of_core/_faker_pool.py",
     }
     unexpected = [
         name
