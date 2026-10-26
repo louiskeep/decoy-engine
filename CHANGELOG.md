@@ -9,6 +9,28 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (parity E2a: shared bounded reader + progress stream, 2026-10-26)
+
+New public `decoy_engine.io` package (`bounded_reader`, `csv_framer`): the memory-bounded chunked
+source reader plus CSV record framer, promoted so the CLI and platform chunk a source identically.
+The reader takes a local path and a `ChunkBudget` only; credentials, pricing and fingerprints stay
+with the caller. Chunk sizing is priced by the physical Arrow buffer bytes (offset spans including
+null-slot payloads, the terminal offset, validity, large_* widths); extension-wrapped Arrow columns
+are priced by their underlying storage, or rejected with `UnsupportedColumnType` when they cannot be
+bounded (extension-over-dictionary, nested, run-end-encoded, union, and view storages), so an owned
+chunk can never exceed the caller's declared byte budget. New public `decoy_engine.progress` package:
+a value-free run-event stream (`ProgressSink`, `PhaseEvent`, `RateSample`, `RouteEvent`,
+`WarningEvent`, `TerminalEvent`) via `run_pipeline(progress=, progress_interval_s=)`; observation
+only, output bytes are identical with or without a sink. `run_storm: true` now runs in-run (it
+declines to the full-frame finalize branch on the chunked and mixed routes instead of being dropped).
+
+### Removed (pre-GA hard deletes, 2026-10-26)
+
+The inert execution knobs `substrate`, `max_workers`, and `fallback_to_pandas`, and the stub
+`decoy_engine.license` (`LicenseVerifier`) and `decoy_engine.schema` (`SchemaInspector`) packages,
+are removed (pre-GA hard delete; no consumer in the CLI or platform). `DECOY_SUBSTRATE` stays
+pandas-only.
+
 ### Changed (Phase D / Dmp: multi-parent FK admitted on the out-of-core route, 2026-10-24)
 
 A child FK column tuple that references several parent tables (the polymorphic
