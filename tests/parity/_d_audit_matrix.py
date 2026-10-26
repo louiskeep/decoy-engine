@@ -52,7 +52,6 @@ PYTHON_WHY: Final = {
     "ner": "Python-by-design (spaCy inference); a config of text_redact/text_mask, not a strategy",
     "faker_declined": "faker cells admission declines (config/type) or FK-key cells; Python pool",
     "key_declined": "native-capable non-injective strategy on an FK key stays Python, reporting only",
-    "ooc_text_mask": "out-of-core text_mask runs the shared per-cell mask_cell loop; backlog",
     "other_handler": "shared full-frame handler with no native admission on any route",
 }
 
@@ -75,12 +74,13 @@ def _seq_key(strategy: str) -> str:
     return _seq_payload(strategy)
 
 
-# The out-of-core Group (c) members with no streaming kernel: both run per-cell Python on this
-# route (text_mask -> `_mask_group_c._text_mask_array` mask_cell loop; code_set -> apply_code_set),
-# though SEQ/native-chunked kernelize text_mask. This is the only hand-named OOC fact, and it is a
-# genuine compute property, not a duplication of an admission rule -- everything else admitted on
-# this route has a proven out-of-core kernel.
-_OOC_PYTHON_RESIDUE: Final = frozenset({TEXT_MASK, "code_set"})
+# The out-of-core Group (c) member with no streaming kernel: code_set runs per-cell Python on this
+# route (`_mask_group_c._code_set_array` -> apply_code_set). text_mask joined the compiled span path
+# here (B5, `_text_mask_native` calls the shared native_text_mask on mask_batch), as SEQ and
+# native-chunked already had it, so only code_set remains hand-named. This is the only hand-named
+# OOC fact, and a genuine compute property, not a duplication of an admission rule -- everything
+# else admitted on this route has a proven out-of-core kernel.
+_OOC_PYTHON_RESIDUE: Final = frozenset({"code_set"})
 
 
 def _ooc_payload(strategy: str) -> str:
