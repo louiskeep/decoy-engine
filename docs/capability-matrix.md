@@ -7,7 +7,7 @@ This is the authoritative list of what the engine can do, read straight from
 the registries in `src/decoy_engine/`. Narrative guides (strategies, connector
 support, disguises) must agree with this file; the drift-guard test enforces it.
 
-## Mask strategies (23)
+## Mask strategies (24)
 
 | Strategy | GDPR technique class |
 | --- | --- |
@@ -31,6 +31,7 @@ support, disguises) must agree with this file; the drift-guard test enforces it.
 | `shuffle` | anonymisation |
 | `text_mask` | pseudonymisation |
 | `text_redact` | anonymisation |
+| `tokenize` | pseudonymisation |
 | `top_code` | anonymisation |
 | `truncate` | anonymisation |
 | `windowed_date` | pseudonymisation |

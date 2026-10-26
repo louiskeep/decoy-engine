@@ -37,10 +37,15 @@ Mask mode and gen mode both evaluate the same closed expression against the
 row context. Determinism is inherent: same row context -> same output, no RNG
 involved. There is no code branching between mask and gen.
 
-In mask mode the row context is built from the source table's existing column
-values. In generate mode the row context is built from already-generated sibling
-columns (declared-order sequential semantics, same as the statistical/condition_on
-pattern). Both modes call apply_derived with a complete row context dict.
+In mask mode the row context is read from the live per-table frame. Cross-column
+V1 adds an explicit ordering edge (dependent -> its driver columns) into
+`order_work`, so a referenced sibling that is itself masked has ALREADY been
+masked when this column reads it: a driver's MASKED value is read, deterministically,
+not its source value and not by lexicographic-sort accident. A referenced column
+that is never masked reads its (unchanged) source value. In generate mode the row
+context is built from already-generated sibling columns (declared-order sequential
+semantics, same as the statistical/condition_on pattern). Both modes call
+apply_derived with a complete row context dict.
 
 Error handling:
   Per-row evaluation errors (e.g. ZeroDivisionError, TypeError) are wrapped in

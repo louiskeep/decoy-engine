@@ -456,6 +456,11 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         # Both import nothing from execution.physical.
         "src/decoy_engine/execution/_strategies/_nested.py",
         "src/decoy_engine/execution/_strategies/_windowed_date.py",
+        # Cross-column dependency PR1: joint_mask reads its key_by driver from the pre-mask
+        # source snapshot (ctx.group_anchor_snapshots), and derived gains a docstring note for
+        # the new dependent-after-driver ordering edge. Neither imports execution.physical.
+        "src/decoy_engine/execution/_strategies/_joint_mask.py",
+        "src/decoy_engine/execution/_strategies/_derived.py",
         # C8-iii-d-2: the shared per-chunk string-type guard for a positional draw under `when:`,
         # installed in `_oracle_preflight` so both chunked entries enforce string target/references
         # per chunk. Parent-level module; imports only the two config-classification helpers and
@@ -769,6 +774,21 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         "src/decoy_engine/execution/_strategies/_code_set.py",
         "src/decoy_engine/execution/out_of_core/_stream_driver_support.py",
         "src/decoy_engine/execution/_strategies/_joint_mask.py",
+        # MG-5 (tokenize on the vault write seam): the new handler, its registration in the
+        # strategy registry, and its GDPR technique-class label. None imports `execution.physical`.
+        "src/decoy_engine/execution/_strategies/__init__.py",
+        "src/decoy_engine/execution/_strategies/_tokenize.py",
+        "src/decoy_engine/execution/_technique_class.py",
+        # MG-5 follow-up (B-6 regression-gate green-up): tokenize's distribution-behavior
+        # label (preserves_cardinality_only, like hash and fpe) in the static behavior map.
+        # A pure label addition; imports nothing from `execution.physical`.
+        "src/decoy_engine/execution/_distribution_behavior.py",
+        # MG-5 module-size remediation: the `_fk_key_value` compat wrapper split out of
+        # `_pandas_adapter.py`, and the `mask.tokenize` DrawSite + provider-primitive data
+        # siblings split out of the capped `native/_determinism_protocol.py` /
+        # `native/_draw_site_providers.py`. Pure moves; none imports `execution.physical`.
+        "src/decoy_engine/execution/_fk_key_compat.py",
+        "src/decoy_engine/execution/native/_draw_sites_tokenize.py",
     }
     unexpected = [
         name

@@ -102,7 +102,9 @@ ALLOWLIST: dict[str, int] = {
     # scale-aware chunked-FK dtype family and rootness check; split the FK helpers.
     "src/decoy_engine/execution/_chunked_fk.py": 970,
     # fail-closed output projection and corpus pinning on the mask route; split the FK-resolution helpers.
-    "src/decoy_engine/execution/_pandas_adapter.py": 697,
+    # cross-column V1 folds joint_mask key_by into the source-anchor snapshot build (a comment, no new logic).
+    # MG-5 vault: the _fk_key_value compat wrapper moved to _fk_key_compat.py (pure move, zero behavior change).
+    "src/decoy_engine/execution/_pandas_adapter.py": 689,
     # resident Arrow type resolution and the faker seed/node precondition pair (one predicate, two
     # entry points, so the chunked and sequential routes cannot drift); move the type resolution
     # into its own module with the next operator gate.
@@ -111,7 +113,8 @@ ALLOWLIST: dict[str, int] = {
     # admit/pin/apply core; cohesive, the descriptors and decision types are already split out.
     "src/decoy_engine/execution/_sequential_native.py": 697,
     # sequential FK route threading; split the per-table mask/quarantine loop.
-    "src/decoy_engine/execution/_sequential.py": 685,
+    # cross-column V1 source-anchor build plus the file-access position seam.
+    "src/decoy_engine/execution/_sequential.py": 687,
     # transactional publish hardening and row mask; split the publish cluster.
     "src/decoy_engine/quarantine.py": 638,
     # code_set provenance and FF1 notice plumbing through the streaming runner.

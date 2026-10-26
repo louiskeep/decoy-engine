@@ -9,6 +9,37 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (B-6: tokenization write-seam, 2026-10-26)
+
+A `tokenize` strategy writes a deterministic surrogate token for each source
+value and records the plaintext-to-token mapping in a caller-supplied vault, so
+the mapping can be reversed later by an authorized reader. `run_pipeline` grows
+a keyword-only `token_vault_writer` parameter (default `None`, additive, recorded
+in the compatibility contract section 3.4): the platform passes the vault through
+it. A tokenize job runs full-frame only, so supplying the writer forces the
+full-frame route and disables auto-chunk; the bounded routes do not thread the
+writer and a bounded route with a vault fails closed with `tokenize_requires_vault`.
+The token is derived from the mask key, the column namespace, and the
+NFC-normalized source string (the same canonicalization as `mask.hash`'s string
+branch), and the same string is stored as the vault plaintext, so round-trip and
+determinism hold. tokenize accepts only string or object dtype columns and fails
+closed on any other dtype with `tokenize_requires_string_dtype`; it also requires
+a namespace (`tokenize_requires_namespace`).
+
+The token is always derived from the secret mask key, never the public job seed:
+tokenize is an always-keyed strategy, so at GA a tokenize job with no resolved
+secret fails closed with `keyed_strategy_requires_secret` rather than minting
+seed-derived, dictionary-attackable tokens. The `TokenVaultWriter` seam is scoped
+by namespace: `lookup_existing(namespace, plaintext)` and
+`put(namespace, plaintext, token)` take the column namespace, so the same plaintext
+under two namespaces is two distinct vault entries with two distinct tokens and the
+namespaces cannot be linked through a shared token. A vault callback that raises is
+translated to a coded, run-aborting `tokenize_vault_error` whose message carries
+neither the source value nor the token, with the original exception chain
+suppressed, so a vault error that echoes the value cannot leak the plaintext
+through the pipeline's exception. The run aborts with no output table and no
+partial sink commit.
+
 ### Changed (Phase D / Dmp: multi-parent FK admitted on the out-of-core route, 2026-10-24)
 
 A child FK column tuple that references several parent tables (the polymorphic
