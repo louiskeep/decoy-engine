@@ -94,15 +94,18 @@ class TokenVaultWriter(Protocol):
     re-identification map for ``vault: true`` columns.
     """
 
-    def lookup_existing(self, plaintext: str) -> str | None:
-        """The token already stored for ``plaintext`` in this vault, or None.
+    def lookup_existing(self, namespace: str, plaintext: str) -> str | None:
+        """The token already stored for ``(namespace, plaintext)``, or None.
 
         When one exists the strategy REUSES it, so a value's token is stable
-        across jobs and key rotations (the vault is the identity boundary)."""
+        across jobs and key rotations (the vault is the identity boundary). The
+        identity is scoped by ``namespace``: the same ``plaintext`` under two
+        namespaces is two distinct entries with two distinct tokens, never one,
+        so namespaces cannot be linked through a shared token."""
         ...
 
-    def put(self, plaintext: str, token: str) -> None:
-        """Persist a newly minted ``(plaintext, token)`` pair."""
+    def put(self, namespace: str, plaintext: str, token: str) -> None:
+        """Persist a newly minted ``(plaintext, token)`` pair under ``namespace``."""
         ...
 
 

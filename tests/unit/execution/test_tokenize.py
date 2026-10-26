@@ -28,20 +28,23 @@ _VERSION = "0.1.0"
 
 
 class FakeVault:
-    """In-memory TokenVaultWriter: records puts, serves lookups."""
+    """In-memory TokenVaultWriter: records puts, serves lookups, scoped by namespace.
 
-    def __init__(self, preloaded: dict[str, str] | None = None) -> None:
-        self.map: dict[str, str] = dict(preloaded or {})
-        self.puts: list[tuple[str, str]] = []
-        self.lookups: list[str] = []
+    Identity is the ``(namespace, plaintext)`` pair, so the same plaintext under
+    two namespaces is two distinct entries with two distinct tokens."""
 
-    def lookup_existing(self, plaintext: str) -> str | None:
-        self.lookups.append(plaintext)
-        return self.map.get(plaintext)
+    def __init__(self, preloaded: dict[tuple[str, str], str] | None = None) -> None:
+        self.map: dict[tuple[str, str], str] = dict(preloaded or {})
+        self.puts: list[tuple[str, str, str]] = []
+        self.lookups: list[tuple[str, str]] = []
 
-    def put(self, plaintext: str, token: str) -> None:
-        self.puts.append((plaintext, token))
-        self.map[plaintext] = token
+    def lookup_existing(self, namespace: str, plaintext: str) -> str | None:
+        self.lookups.append((namespace, plaintext))
+        return self.map.get((namespace, plaintext))
+
+    def put(self, namespace: str, plaintext: str, token: str) -> None:
+        self.puts.append((namespace, plaintext, token))
+        self.map[(namespace, plaintext)] = token
 
 
 def _col(df: pd.DataFrame, name: str) -> ColumnProfile:
@@ -94,10 +97,10 @@ def test_tokens_have_expected_shape_and_are_vaulted() -> None:
     out = _run(df, vault=vault)
     for tok in out["pan"]:
         assert tok.startswith("tok_") and len(tok) == len("tok_") + 32
-    # every (plaintext, token) pair was recorded in the vault
-    assert dict(vault.puts) == {
-        "4111111111111111": out["pan"][0],
-        "5500000000000004": out["pan"][1],
+    # every (namespace, plaintext) -> token pair was recorded in the vault
+    assert {(ns, p): t for ns, p, t in vault.puts} == {
+        ("pan_ns", "4111111111111111"): out["pan"][0],
+        ("pan_ns", "5500000000000004"): out["pan"][1],
     }
 
 
@@ -106,7 +109,7 @@ def test_null_is_preserved_and_not_vaulted() -> None:
     vault = FakeVault()
     out = _run(df, vault=vault)
     assert out["pan"][1] is None
-    assert [p for p, _ in vault.puts] == ["abc", "def"]  # null never reached the vault
+    assert [p for _ns, p, _t in vault.puts] == ["abc", "def"]  # null never reached the vault
 
 
 def test_repeated_plaintext_is_idempotent_one_vault_write() -> None:
@@ -119,11 +122,11 @@ def test_repeated_plaintext_is_idempotent_one_vault_write() -> None:
 
 def test_vault_is_authoritative_existing_token_reused() -> None:
     # A token already stored for "x" must be reused verbatim, not recomputed.
-    vault = FakeVault(preloaded={"x": "tok_PREEXISTING"})
+    vault = FakeVault(preloaded={("pan_ns", "x"): "tok_PREEXISTING"})
     out = _run(pd.DataFrame({"pan": ["x", "y"]}), vault=vault)
     assert out["pan"][0] == "tok_PREEXISTING"
     assert out["pan"][1].startswith("tok_") and out["pan"][1] != "tok_PREEXISTING"
-    assert vault.puts == [("y", out["pan"][1])]  # only the new value was written
+    assert vault.puts == [("pan_ns", "y", out["pan"][1])]  # only the new value was written
 
 
 def test_namespace_changes_the_token() -> None:
@@ -131,6 +134,19 @@ def test_namespace_changes_the_token() -> None:
     a = _run(df, namespace="ns_a", vault=FakeVault())["pan"][0]
     b = _run(df, namespace="ns_b", vault=FakeVault())["pan"][0]
     assert a != b  # keyed on namespace -> different vault/namespace tokenizes apart
+
+
+def test_one_shared_vault_does_not_collide_across_namespaces() -> None:
+    # The same plaintext under two namespaces, through ONE shared vault, must get
+    # two distinct tokens: a plaintext-only vault key would make the second lookup
+    # reuse the first namespace's token and link the namespaces (Codex HIGH-2).
+    vault = FakeVault()
+    x = "4111111111111111"
+    a = _run(pd.DataFrame({"pan": [x]}), namespace="ns_a", vault=vault)["pan"][0]
+    b = _run(pd.DataFrame({"pan": [x]}), namespace="ns_b", vault=vault)["pan"][0]
+    assert a != b  # no cross-namespace collision through the shared vault
+    # both entries are recorded, each scoped by its own namespace
+    assert {(ns, p): t for ns, p, t in vault.puts} == {("ns_a", x): a, ("ns_b", x): b}
 
 
 def test_deterministic_across_runs_same_seed() -> None:
@@ -267,15 +283,17 @@ class _RaisingVault(FakeVault):
         super().__init__()
         self._raise_on = raise_on
 
-    def lookup_existing(self, plaintext: str) -> str | None:
+    def lookup_existing(self, namespace: str, plaintext: str) -> str | None:
         if self._raise_on == "lookup_existing":
-            raise RuntimeError("vault lookup_existing boom")
-        return super().lookup_existing(plaintext)
+            # echo the plaintext, as a real database error would, to prove the
+            # engine does not forward it into run_pipeline's exception.
+            raise RuntimeError(f"vault lookup_existing boom for {plaintext}")
+        return super().lookup_existing(namespace, plaintext)
 
-    def put(self, plaintext: str, token: str) -> None:
+    def put(self, namespace: str, plaintext: str, token: str) -> None:
         if self._raise_on == "put":
-            raise RuntimeError("vault put boom")
-        super().put(plaintext, token)
+            raise RuntimeError(f"vault put boom for {plaintext} -> {token}")
+        super().put(namespace, plaintext, token)
 
 
 def _run_through_transactional_sink(df: pd.DataFrame, vault: Any, target_dir: Any) -> None:
@@ -325,12 +343,20 @@ def test_vault_writer_raising_aborts_the_run_with_no_partial_output(
     df = pd.DataFrame({"pan": ["4111111111111111", "5500000000000004"]})
     vault = _RaisingVault(raise_on=raise_on)
     target_dir = tmp_path / "out"
-    with pytest.raises(RuntimeError, match="vault .* boom"):
+    with pytest.raises(ExecutionError) as exc:
         _run_through_transactional_sink(df, vault, target_dir)
+    # Fail-closed with a coded, run-aborting error (not the raw vault exception).
+    assert getattr(exc.value, "code", "") == "tokenize_vault_error"
     # No output table was produced (the adapter.run() call never returned), and the
     # transactional sink never committed -- its target directory was never created,
     # so there is no partial output to find.
     assert not target_dir.exists()
+    # The raw vault error echoed the plaintext (and token); the engine must not
+    # forward it. The coded error carries neither the source value nor the token,
+    # and the original exception chain is suppressed (Codex HIGH-3).
+    msg = str(exc.value)
+    assert "4111111111111111" not in msg and "5500000000000004" not in msg
+    assert "boom" not in msg
 
 
 def test_run_pipeline_without_vault_fails_closed(tmp_path: Any) -> None:
@@ -360,3 +386,40 @@ def test_run_pipeline_without_vault_fails_closed(tmp_path: Any) -> None:
         "tokenize_requires_vault" in str(exc.value)
         or getattr(exc.value, "code", "") == "tokenize_requires_vault"
     )
+
+
+def test_tokenize_at_ga_requires_a_secret_key(tmp_path: Any) -> None:
+    # tokenize persists a reversible mapping, so its token must come from the
+    # secret mask key, never the public job seed. At GA a tokenize job with no
+    # secret must be rejected (keyed_strategy_requires_secret), not derive
+    # dictionary-attackable tokens from the seed (Codex BLOCKER-1).
+    from unittest.mock import patch
+
+    import pyarrow.parquet as pq
+
+    import decoy_engine
+    from decoy_engine.config import PipelineConfig
+    from decoy_engine.keyprovider import KeyedStrategyRequiresSecret
+
+    tbl = pa.table({"pan": ["4111", "5500"]})
+    src = tmp_path / "in.parquet"
+    pq.write_table(tbl, src)
+    raw = {
+        "version": 1,
+        "global_settings": {"seed": 7},
+        "sources": {"t": {"type": "file", "format": "parquet", "path": str(src)}},
+        "targets": {
+            "t": {"type": "file", "format": "parquet", "path": str(tmp_path / "o.parquet")}
+        },
+        "tables": [
+            {"name": "t", "columns": [{"name": "pan", "strategy": "tokenize", "namespace": "ns"}]}
+        ],
+    }
+    cfg = PipelineConfig.model_validate(raw).model_dump()
+    # GA (not pre-GA), a vault present but NO secret key provider.
+    with patch("decoy_engine.keyprovider.is_pre_ga", return_value=False):
+        with pytest.raises(KeyedStrategyRequiresSecret) as exc:
+            decoy_engine.run_pipeline(
+                cfg, {"t": tbl}, engine_version="ga", token_vault_writer=FakeVault()
+            )
+    assert getattr(exc.value, "code", "") == "keyed_strategy_requires_secret"

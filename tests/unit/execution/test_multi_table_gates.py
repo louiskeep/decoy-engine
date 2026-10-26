@@ -30,13 +30,13 @@ class _MemTokenVault:
     and plaintext, not from vault state, so two runs with fresh vaults agree."""
 
     def __init__(self) -> None:
-        self._m: dict[str, str] = {}
+        self._m: dict[tuple[str, str], str] = {}
 
-    def lookup_existing(self, plaintext: str) -> str | None:
-        return self._m.get(plaintext)
+    def lookup_existing(self, namespace: str, plaintext: str) -> str | None:
+        return self._m.get((namespace, plaintext))
 
-    def put(self, plaintext: str, token: str) -> None:
-        self._m[plaintext] = token
+    def put(self, namespace: str, plaintext: str, token: str) -> None:
+        self._m[(namespace, plaintext)] = token
 
 
 def _two_tables(tmp_path: Path, **extra: Any) -> tuple[dict[str, Any], dict[str, pa.Table]]:

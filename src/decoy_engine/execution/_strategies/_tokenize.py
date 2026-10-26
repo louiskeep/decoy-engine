@@ -11,8 +11,12 @@ Token shape: ``tok_`` + 32 hex chars of ``derive(mask_key, namespace,
 nfc_normalize(str(value)).encode())``, keyed on the run's mask key AND the
 column namespace, so the same value tokenizes differently in a different
 namespace/vault. The token is deterministic, but the VAULT is the identity
-boundary: if a token is already stored for a plaintext it is REUSED, so a
-value's token is stable across jobs and across key rotations.
+boundary: if a token is already stored for a ``(namespace, plaintext)`` pair it
+is REUSED, so a value's token is stable across jobs and across key rotations.
+The vault lookup and write are both scoped by namespace, so the same plaintext
+under two namespaces is two distinct entries with two distinct tokens, never
+one (namespaces cannot be linked through a shared token, and execution order
+does not decide the token).
 
 Established methodology: reuses the engine's HKDF-SHA256 ``derive`` (the same
 keyed derivation every re-identification-protecting strategy draws from), not a
@@ -101,6 +105,24 @@ class TokenizeStrategyHandler:
                 ),
             )
 
+        namespace = plan.namespace
+
+        def _vault_error(op: str) -> StrategyError:
+            # A vault callback error must become a fixed, coded, run-aborting error
+            # that names neither the source value nor the token: a raw callback
+            # exception (e.g. a database error echoing the plaintext) would otherwise
+            # leak the value it is meant to protect through run_pipeline's exception.
+            return StrategyError(
+                code="tokenize_vault_error",
+                strategy="tokenize",
+                message=(
+                    f"column {column!r}: the token vault raised during {op}; the run "
+                    "is aborted so no partial or unrecorded output is written. The "
+                    "underlying vault error is suppressed to avoid leaking the source "
+                    "value or token."
+                ),
+            )
+
         out: list[str | None] = []
         for value in col.tolist():
             if pd.isna(value):
@@ -111,17 +133,21 @@ class TokenizeStrategyHandler:
             # The vault's plaintext key and the derive input are the SAME string, so
             # lookup/reversal and the token stay consistent with each other.
             plaintext = unicodedata.normalize("NFC", str(value))
-            existing = vault.lookup_existing(plaintext)
+            try:
+                existing = vault.lookup_existing(namespace, plaintext)
+            except Exception:
+                raise _vault_error("lookup") from None
             if existing is not None:
                 out.append(existing)  # the vault is authoritative for identity
                 continue
             token = (
                 _TOKEN_PREFIX
-                + derive(ctx.mask_key, plan.namespace, plaintext.encode("utf-8")).hex()[
-                    :_TOKEN_HEX_LEN
-                ]
+                + derive(ctx.mask_key, namespace, plaintext.encode("utf-8")).hex()[:_TOKEN_HEX_LEN]
             )
-            vault.put(plaintext, token)
+            try:
+                vault.put(namespace, plaintext, token)
+            except Exception:
+                raise _vault_error("write") from None
             out.append(token)
         df[column] = out
         return df, []
