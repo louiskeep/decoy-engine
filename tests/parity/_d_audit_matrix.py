@@ -51,8 +51,9 @@ TEXT_STRATEGIES: Final = frozenset({"text_redact", TEXT_MASK})
 
 # The documented dedicated-Python compute. `why` is what the Phase D close records.
 PYTHON_WHY: Final = {
-    "code_set": "SEQ and native-chunked code_set run per-cell apply_code_set; out-of-core selects "
-    "per distinct value via an Arrow dict-map (B6). Backlog: the SEQ/chunked consumers.",
+    "code_set": "SEQ code_set runs per-cell apply_code_set and native-chunked reroutes an FK table "
+    "to the full-frame oracle (also per-cell); out-of-core selects per distinct value via an Arrow "
+    "dict-map (B6). Backlog: the SEQ and chunked consumers.",
     "ner": "Python-by-design (spaCy inference); a config of text_redact/text_mask, not a strategy",
     "faker_declined": "faker cells admission declines (config/type) or FK-key cells; Python pool",
     "key_declined": "native-capable non-injective strategy on an FK key stays Python, reporting only",

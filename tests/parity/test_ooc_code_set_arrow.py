@@ -190,3 +190,47 @@ def test_gen_and_chapter_preserve_stay_declined(
     cfg = _cfg(_customer_corpus(tmp_path, [f"C{i:03d}" for i in range(8)]), **overrides)
     with pytest.raises(ExecutionError, match="out_of_core_code_set_shape_unsupported"):
         _run(["a", "b"], cfg)
+
+
+# --- fail closed through the dedup path, never a partial publish ------------------------------
+
+
+def test_a_corpus_defect_raises_job_fatal_through_the_dedup_path(tmp_path: pathlib.Path) -> None:
+    # A one-code corpus whose only code equals the input cannot differ: the oracle's
+    # code_set_single_row_corpus must surface through code_set_map (from the first select call)
+    # and abort, exactly as the per-cell loop did, rather than publish a partial or raw column.
+    cfg = _cfg(_customer_corpus(tmp_path, ["C000"]))
+    with pytest.raises(PlanCompileError) as caught:
+        _run(["C000", "C000"], cfg)
+    assert caught.value.code == "code_set_single_row_corpus"
+
+
+def test_a_per_value_defect_remaps_to_a_value_free_fail_closed_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    # The admitted shape cannot raise a per-value code (those need chapter_preserve, gate-rejected),
+    # but if one ever surfaced the route must fail closed with a value-free ExecutionError rather
+    # than leak the raw value. Force one through the closure's resolution point.
+    def boom(value: str, *_: Any, **__: Any) -> str:
+        raise PlanCompileError(
+            code="code_set_sole_member_bucket", path="provider_config.code_set", message=value
+        )
+
+    monkeypatch.setattr(_mask_group_c, "apply_code_set", boom)
+    cfg = _cfg(_customer_corpus(tmp_path, [f"C{i:03d}" for i in range(8)]))
+    with pytest.raises(ExecutionError) as caught:
+        _run(["secret-raw-value"], cfg)
+    assert caught.value.code == "out_of_core_code_set_row_error_unreachable"
+    assert "secret-raw-value" not in str(caught.value)
+
+
+def test_a_chunked_array_input_masks_byte_identically(tmp_path: pathlib.Path) -> None:
+    # The route streams Arrow; a multi-chunk column (null at a chunk boundary) must round-trip
+    # exactly as the flattened per-cell reference, with nulls in place.
+    cfg = _cfg(_customer_corpus(tmp_path, [f"C{i:03d}" for i in range(8)]))
+    chunked = pa.chunked_array(
+        [pa.array(["a", "b", None], pa.string()), pa.array(["a", None, "c"], pa.string())]
+    )
+    out = _mask_group_c._code_set_array(chunked, job_seed=_JOB_SEED, namespace=_NS, cfg=cfg)
+    assert out.type == pa.string()
+    assert out.to_pylist() == _reference(["a", "b", None, "a", None, "c"], cfg)
