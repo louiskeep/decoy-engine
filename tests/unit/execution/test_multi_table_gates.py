@@ -24,6 +24,21 @@ from tests.unit.execution import _multi_table_support as mt
 pytestmark = pytest.mark.filterwarnings("ignore")
 
 
+class _MemTokenVault:
+    """In-memory TokenVaultWriter for the tokenize sentry fixture. The write-seam
+    fails closed without a vault; the token itself is derived from key, namespace
+    and plaintext, not from vault state, so two runs with fresh vaults agree."""
+
+    def __init__(self) -> None:
+        self._m: dict[str, str] = {}
+
+    def lookup_existing(self, plaintext: str) -> str | None:
+        return self._m.get(plaintext)
+
+    def put(self, plaintext: str, token: str) -> None:
+        self._m[plaintext] = token
+
+
 def _two_tables(tmp_path: Path, **extra: Any) -> tuple[dict[str, Any], dict[str, pa.Table]]:
     return mt.build_job(
         tmp_path,
@@ -651,8 +666,26 @@ def test_two_calls_of_every_repeatable_fixture_agree_and_unseeded_ones_differ(
         reported = {col for _t, col, _s in pmt.unseeded_random_nodes(plan)}
         deferred = {col for _t, col, _s in pmt.position_keyed_deferred_nodes(plan)}
         assert not reported & deferred, "a column cannot be both fresh-generator and seeded"
-        a = run_pipeline(cfg, sources={"t": table}, **mt.kw(auto_chunk=False))
-        b = run_pipeline(cfg, sources={"t": table}, **mt.kw(auto_chunk=False))
+        tokenize_job = any(c.get("strategy") == "tokenize" for c in columns)
+        run_kw = mt.kw(auto_chunk=False)
+        if tokenize_job:
+            from decoy_engine.keyprovider import SecretKeyProvider
+
+            run_kw["key_provider"] = SecretKeyProvider(secret=bytes(range(32)), key_version="v1")
+        # tokenize forces full-frame and fails closed without a vault; give each
+        # call its own writer (None is the default for every other strategy).
+        a = run_pipeline(
+            cfg,
+            sources={"t": table},
+            token_vault_writer=_MemTokenVault() if tokenize_job else None,
+            **run_kw,
+        )
+        b = run_pipeline(
+            cfg,
+            sources={"t": table},
+            token_vault_writer=_MemTokenVault() if tokenize_job else None,
+            **run_kw,
+        )
         for name in a.outputs["t"].column_names:
             same = (
                 a.outputs["t"].column(name).to_pylist() == b.outputs["t"].column(name).to_pylist()
