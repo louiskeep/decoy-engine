@@ -1,0 +1,214 @@
+# Native companion RELEASE pipeline (CLI-launch S1).
+#
+# The CI workflow native-companion.yml proves the four-target wheel matrix green on
+# every change but uploads only 14-day artifacts. A release needs DURABLE, SIGNED,
+# VERSIONED wheels the bundle assembler (decoy CLI repo, packaging_tools/build_bundle.py)
+# and the version endpoint can consume. This workflow is that pipeline: it is
+# tag-triggered, reuses the SAME proven build recipe (PyO3/maturin-action, same pinned
+# action SHA + maturin-version + --locked --compatibility pypi, the same parity_smoke.py
+# on every produced wheel -- no new build method, cibuildwheel is still never used), then
+# signs every wheel and a SHA256SUMS manifest and attaches them to a GitHub Release.
+#
+# Signing: Ed25519 via `openssl pkeyutl -sign -rawin` against the release private key
+# (repo secret DECOY_RELEASE_KEY_PEM), producing a detached raw signature per file. This
+# is the SAME key, algorithm, and raw-signature bytes the CLI verifies with openssl
+# (install.sh) and with decoy.distribution.signing (`decoy upgrade`) -- the established
+# in-repo Ed25519 pattern (decoy-platform/api/crypto/signed_envelope.py), reused, never a
+# hand-rolled scheme and never a second signer. The signing job runs ONCE and is the only
+# place the key is used, so key exposure is confined to one short job.
+#
+# A missing signing key on a real tag is a HARD FAILURE: the release does not publish
+# unsigned artifacts.
+#
+# Additive: this adds a workflow file only. It does not touch engine source, the CI
+# workflow, or the build logic those already prove.
+
+name: native-companion-release
+
+on:
+  push:
+    tags:
+      # Native companion release tags, e.g. native-v0.1.0. Kept distinct from the
+      # engine's own version tags so cutting a companion release is an explicit act.
+      - "native-v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Companion version to build + sign (must match pyproject)."
+        required: true
+
+permissions:
+  contents: write  # create the GitHub Release + upload assets
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+        target: [x86_64, aarch64]
+        include:
+          - target: x86_64
+            container: "quay.io/pypa/manylinux_2_28_x86_64@sha256:53390351aeb4688114b02c36a23b3e6ce1166ee9b7afc5df1a4f776354fc764c"
+            smoke-image: "quay.io/pypa/manylinux_2_28_x86_64@sha256:53390351aeb4688114b02c36a23b3e6ce1166ee9b7afc5df1a4f776354fc764c"
+            docker-platform: linux/amd64
+          - target: aarch64
+            container: "ghcr.io/rust-cross/manylinux_2_28-cross:aarch64@sha256:ca53fa07ecf1c3e6408c51fbca64c036d9d29af832d3f8bb954910e89097f275"
+            smoke-image: "quay.io/pypa/manylinux_2_28_aarch64@sha256:ad74e53b713f3b07d8c889c526dc0c6500da9827b45e38739570875fef52e28f"
+            docker-platform: linux/arm64
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Set up QEMU (aarch64 smoke)
+        if: matrix.target == 'aarch64'
+        uses: docker/setup-qemu-action@v3
+      - name: Build companion wheel (manylinux_2_28, ${{ matrix.target }})
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
+        with:
+          working-directory: decoy-engine-native
+          target: ${{ matrix.target }}
+          manylinux: "2_28"
+          container: ${{ matrix.container }}
+          maturin-version: v1.15.0
+          args: --release --out dist --locked --compatibility pypi -i python${{ matrix.python-version }}
+      - name: Assert compiled _kernel present + parity smoke (inside manylinux_2_28)
+        run: |
+          set -euo pipefail
+          wheel="$(find decoy-engine-native/dist -name '*.whl' | head -n1)"
+          test -n "$wheel" || { echo "no wheel produced"; exit 1; }
+          python -m zipfile -l "$wheel" | grep -qE 'decoy_engine_native/_kernel[^/]*\.(so|pyd)' \
+            || { echo "MISSING compiled _kernel in $wheel"; exit 1; }
+          cptag="cp${python_version//./}"
+          docker run --rm --platform ${{ matrix.docker-platform }} \
+            -v "$PWD/decoy-engine-native:/w" "${{ matrix.smoke-image }}" bash -c "
+              set -euo pipefail
+              pybin=/opt/python/${cptag}-${cptag}/bin
+              \"\$pybin/pip\" install --quiet \"/w/dist/$(basename "$wheel")\" 'pyarrow>=14'
+              \"\$pybin/python\" /w/scripts/parity_smoke.py
+            "
+        env:
+          python_version: ${{ matrix.python-version }}
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-wheel-linux-${{ matrix.python-version }}-${{ matrix.target }}
+          path: decoy-engine-native/dist/*.whl
+          retention-days: 90
+
+  build-windows:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Build companion wheel (Windows x86-64)
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
+        with:
+          working-directory: decoy-engine-native
+          target: x86_64-pc-windows-msvc
+          maturin-version: v1.15.0
+          args: --release --out dist --locked --compatibility pypi -i python
+      - name: Assert compiled _kernel present + parity smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          wheel="$(find decoy-engine-native/dist -name '*.whl' | head -n1)"
+          test -n "$wheel" || { echo "no wheel produced"; exit 1; }
+          python -m zipfile -l "$wheel" | grep -qE 'decoy_engine_native/_kernel[^/]*\.(so|pyd)' \
+            || { echo "MISSING compiled _kernel in $wheel"; exit 1; }
+          python -m pip install "$wheel" "pyarrow>=14"
+          python decoy-engine-native/scripts/parity_smoke.py
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-wheel-windows-${{ matrix.python-version }}
+          path: decoy-engine-native/dist/*.whl
+          retention-days: 90
+
+  build-macos:
+    runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Build companion wheel (macOS arm64)
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
+        with:
+          working-directory: decoy-engine-native
+          target: aarch64-apple-darwin
+          maturin-version: v1.15.0
+          args: --release --out dist --locked --compatibility pypi -i python
+      - name: Assert compiled _kernel present + parity smoke
+        run: |
+          set -euo pipefail
+          wheel="$(find decoy-engine-native/dist -name '*.whl' | head -n1)"
+          test -n "$wheel" || { echo "no wheel produced"; exit 1; }
+          python -m zipfile -l "$wheel" | grep -qE 'decoy_engine_native/_kernel[^/]*\.(so|pyd)' \
+            || { echo "MISSING compiled _kernel in $wheel"; exit 1; }
+          python -m pip install "$wheel" "pyarrow>=14"
+          python decoy-engine-native/scripts/parity_smoke.py
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-wheel-macos-${{ matrix.python-version }}
+          path: decoy-engine-native/dist/*.whl
+          retention-days: 90
+
+  sign-publish:
+    needs: [build-linux, build-windows, build-macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: release-wheel-*
+          merge-multiple: true
+          path: wheels
+      - name: Collect wheels + SHA256SUMS
+        run: |
+          set -euo pipefail
+          cd wheels
+          ls -1 *.whl | sort
+          sha256sum *.whl | sort -k2 > SHA256SUMS
+          cat SHA256SUMS
+      - name: Sign wheels + manifest (detached Ed25519 via openssl)
+        env:
+          DECOY_RELEASE_KEY_PEM: ${{ secrets.DECOY_RELEASE_KEY_PEM }}
+        run: |
+          set -euo pipefail
+          test -n "${DECOY_RELEASE_KEY_PEM:-}" \
+            || { echo "FATAL: DECOY_RELEASE_KEY_PEM not set; refusing to publish unsigned release"; exit 1; }
+          key="$(mktemp)"; printf '%s' "$DECOY_RELEASE_KEY_PEM" > "$key"
+          cd wheels
+          sign() {
+            # raw detached Ed25519, base64-encoded into <file>.sig (matches
+            # decoy.distribution.signing.sign_bytes / what install.sh verifies).
+            openssl pkeyutl -sign -inkey "$key" -rawin -in "$1" -out "$1.sig.raw"
+            openssl base64 -A -in "$1.sig.raw" -out "$1.sig"
+            rm -f "$1.sig.raw"
+          }
+          for f in *.whl SHA256SUMS; do sign "$f"; echo "signed $f"; done
+          rm -f "$key"
+      - name: Publish GitHub Release (durable, versioned)
+        uses: softprops/action-gh-release@c95fe1489396fe8a9eb87c0abf8aa5b2ef267fda # v2.4.1
+        with:
+          files: |
+            wheels/*.whl
+            wheels/*.sig
+            wheels/SHA256SUMS
+          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || format('native-v{0}', inputs.version) }}
+          fail_on_unmatched_files: true
+          body: |
+            Signed `decoy-engine-native` companion wheels (four-target matrix, cp310-cp312).
+            Each wheel has a detached Ed25519 `.sig`; `SHA256SUMS` is signed too. Verify with
+            the published Decoy release public key before consuming into a CLI bundle.
