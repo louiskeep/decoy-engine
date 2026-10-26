@@ -217,12 +217,12 @@ is that an entire row erroring on ANY parent-key column should exclude it from
 ALL parent maps on that table. An audit + fix is needed; see
 `docs/backlog/s2-fk-leak-remediation-r3-guide.md` section 7.
 
-**Cross-table FK cycles support (Cam decision pending).** A mutual cycle
+**Cross-table FK cycles support (DECIDED 2026-10-26: denied for V1, a V2 item).** A mutual cycle
 (A references B, B references A) ran successfully under full-frame before S2.
-`run_pipeline`'s S2 routing now detects such cycles and falls back to full-frame
-automatically (non-regressing via the `execution_mode="auto"` heuristic). However,
-the question of whether cross-table FK cycles should be a *supported* topology
-at all is unresolved: they are neither forbidden by the schema validation layer
-nor embraced by the sequential execution path. Deciding on support/rejection is a
-product call; until then, the auto fallback keeps behavior stable. See
-`docs/backlog/s2-fk-leak-remediation-r3-guide.md` section 6.
+`run_pipeline`'s S2 routing detects such cycles and falls back to full-frame
+automatically (non-regressing via the `execution_mode="auto"` heuristic), and that
+auto fallback is the stable V1 behavior. Making cross-table FK cycles a first-class
+*supported* topology (schema-layer embrace plus a sequential / out-of-core path) is
+DENIED for V1 (Cam) and tracked as a V2 item (`decoy-platform/docs/ROADMAP.md`, V2
+Tier 4, "bounded cross-table FK cycles"); the auto full-frame fallback stays in the
+meantime. See `docs/backlog/s2-fk-leak-remediation-r3-guide.md` section 6.
