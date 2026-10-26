@@ -91,7 +91,9 @@ def test_each_distinct_non_null_value_is_selected_exactly_once(
     values = ["x", "y", "x", None, "z", "x", "y", None, "z"]
     got = _run(values, cfg)
     assert sorted(counter.calls) == ["x", "y", "z"]  # once per distinct non-null, never per row
-    assert got == _reference(values, cfg)  # and the expansion is byte-identical to the per-cell loop
+    assert got == _reference(
+        values, cfg
+    )  # and the expansion is byte-identical to the per-cell loop
 
 
 # --- byte-parity across input shapes, shipped and customer corpora ----------------------------

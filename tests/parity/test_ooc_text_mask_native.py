@@ -86,7 +86,11 @@ def _assert_strict_equal_to_oracle(ooc: dict[str, pa.Table], oracle: dict[str, p
 @pytest.mark.parametrize("mode", MODES)
 @pytest.mark.parametrize("batch_rows", [None, 1, 5])
 def test_native_output_is_the_oracle_and_is_consumed(
-    config_id: str, mode: str, batch_rows: int | None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    config_id: str,
+    mode: str,
+    batch_rows: int | None,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     seeds = _seeds(_CONFIGS[config_id])
     payload = _payload(list(CORPUS))
