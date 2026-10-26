@@ -16,7 +16,7 @@ from typing import Any
 import pyarrow as pa
 import pytest
 
-from decoy_engine.execution._errors import StrategyError
+from decoy_engine.execution._errors import ExecutionError, StrategyError
 from decoy_engine.execution._operator_registry import RUST_COMPANION
 from decoy_engine.execution.out_of_core import _text_mask_native
 from tests.native._c6b_i_support import CORPUS, SUB_FLOOR_TEXTS
@@ -34,6 +34,14 @@ from tests.parity._ooc_text_mask_data import (
 )
 from tests.parity.test_out_of_core_fk_parity import _run_oracle
 from tests.parity.test_phase_d_d1a_hash_baseline import mode_kwargs
+from tests.parity.test_phase_d_d1a_hash_pinning import (
+    _DRIVERS,
+    RecordingSink,
+    _as_large,
+    _assert_aborted,
+    _without_a,
+    mutate_second_batch,
+)
 
 pytestmark = pytest.mark.skipif(
     not kernel_loads(),
@@ -166,3 +174,108 @@ def test_ner_and_non_string_sources_stay_on_the_python_path() -> None:
     int_schema = pa.schema([pa.field("a", pa.int64())])
     config, reason = _text_mask_native.decline_reason("a", int_schema, tm_seed())
     assert config is None and reason is not None and reason.startswith("text_mask")
+
+
+# --- fault, pinning, the invalid-result guard and the witness negative control ----------------
+# The fail-closed / abort / no-partial-output surface, ported from the text_redact routing suite.
+
+
+@pytest.mark.parametrize(("mode", "module"), _DRIVERS)
+def test_a_mid_run_kernel_fault_aborts_without_a_python_switch_or_partial_output(
+    mode: str, module: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The second batch's kernel call raises. The route must abort (never silently switch to the
+    # per-cell loop, which forbid_old_loop would catch) and commit nothing.
+    install_marking(monkeypatch, fail_on_call=2)
+    forbid_old_loop(monkeypatch)
+    out_dir = tmp_path / "out"
+    sink = RecordingSink(out_dir)
+    with pytest.raises(RuntimeError, match="injected text_mask kernel fault"):
+        run_chain(
+            _payload(),
+            _seeds(_CONFIGS["redact"]),
+            sink=sink,
+            out_dir=out_dir,
+            batch_rows=2,
+            reorder=mode.endswith("reorder"),
+        )
+    _assert_aborted(sink, out_dir)
+
+
+@pytest.mark.parametrize(
+    ("change", "code"),
+    [
+        (_as_large, "out_of_core_text_mask_source_type_drift"),
+        (_without_a, "out_of_core_text_mask_column_missing"),
+    ],
+    ids=["type-drift", "missing-column"],
+)
+@pytest.mark.parametrize(("mode", "module"), _DRIVERS)
+def test_a_pinned_native_column_that_changes_or_vanishes_aborts_the_sink(
+    mode: str,
+    module: Any,
+    change: Any,
+    code: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A native column is pinned to its prep-time string type; a batch that retypes or drops it
+    # aborts rather than changing path mid-column or masking the wrong shape.
+    install_marking(monkeypatch)
+    forbid_old_loop(monkeypatch)
+    mutate_second_batch(monkeypatch, module, change)
+    out_dir = tmp_path / "out"
+    sink = RecordingSink(out_dir)
+    with pytest.raises(ExecutionError) as caught:
+        run_chain(
+            _payload(),
+            _seeds(_CONFIGS["redact"]),
+            sink=sink,
+            out_dir=out_dir,
+            batch_rows=2,
+            reorder=mode.endswith("reorder"),
+        )
+    assert caught.value.code == code
+    _assert_aborted(sink, out_dir)
+
+
+def test_a_native_result_of_the_wrong_row_count_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A kernel that returns fewer rows than the batch must abort, never silently truncate a column.
+    def short(array: Any, **_: Any) -> Any:
+        return pa.array(["x"], pa.string()), {}
+
+    monkeypatch.setattr(_text_mask_native, "native_text_mask", short)
+    with pytest.raises(ExecutionError) as caught:
+        run_chain(_payload(), _seeds(_CONFIGS["redact"]), batch_rows=4)
+    assert caught.value.code == "out_of_core_text_mask_native_result_invalid"
+
+
+def test_the_consumption_witness_is_a_live_trap(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Negative control for the consumption witness: with the companion hidden the column runs the
+    # per-cell loop, so forbid_old_loop MUST fire. This proves the positive witness's pass is
+    # meaningful (the trap is live, not dead code that would pass on a no-op).
+    hide_text_mask_companion(monkeypatch)
+    forbid_old_loop(monkeypatch)
+    with pytest.raises(AssertionError, match="per-cell mask_cell loop ran"):
+        run_chain(_payload(), _seeds(_CONFIGS["redact"]), batch_rows=4)
+
+
+@pytest.mark.parametrize(
+    "config",
+    [{}, {"detectors": None}, {"detectors": []}, {"detectors": ()}],
+    ids=["absent", "none", "empty-list", "empty-tuple"],
+)
+def test_an_empty_or_absent_detector_selection_reaches_the_kernel_as_none(
+    config: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # None means EVERY detector; () would mean ZERO detectors (a silent PII leak). The resolver
+    # must send None for an absent, null, empty-list or empty-tuple selection.
+    kernel = install_marking(monkeypatch)
+    # CORPUS holds PII but no value that drives an fpe span below the FF1 floor, so masking with
+    # every detector does not fail closed here; the assertion is on the detector selection sent.
+    payload = _payload(list(CORPUS))
+    run = run_chain(payload, _seeds(config), batch_rows=8)
+    assert kernel.calls and {c.detectors for c in kernel.calls} == {None}
+    _assert_strict_equal_to_oracle(run.tables, _oracle_tables(payload, _seeds(config)).outputs)
