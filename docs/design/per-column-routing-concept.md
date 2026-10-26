@@ -93,3 +93,46 @@ methodology rule.
 The risk is building a general per-column router on the assumption of a speedup that the memory
 accounting and reassembly cost have not yet proven. The mitigation is: foundation first, prototype
 and measure one job, survey prior art, then decide.
+
+## Cross-model review (Codex, 2026-10-26): pursue with changes
+
+A cross-model review sharpened the concept. Fold these in before gate-planning:
+
+1. **Reframe as selective (late) materialization, not a general per-column router.** The right prior
+   art is DuckDB's selective-late-materialization work and runtime-statistics-informed planning, not
+   Acero (Acero has no planner/optimizer, it executes supplied plans). Start with one batch
+   coordinator plus a materialized side result, or global-state preparation then batch application,
+   and reuse the engine's existing ordered payload assembly before introducing any route scheduler.
+2. **Parity is conditional, not "by construction."** Computing a column once makes its OUTPUT SLICING
+   split-invariant; it does NOT prove the computation matches the oracle. Counterexample: with a
+   `when` predicate the oracle samples only the SELECTED subset, so computing over the whole column
+   then selecting rows changes UNIQUE assignments and MATCH/SCALE mappings. The resident lane must
+   match the oracle's logical input subset, pool identity, seed/key, null handling, and conversion
+   semantics. Start with INDEPENDENT, UNGATED payload columns only.
+3. **Reassembly is cheaper than first stated.** The OOC stream driver already restores join results
+   to source order and aligns them with payload batches (`out_of_core/_stream_driver.py`,
+   `_stream_join.py`). A resident result can be sliced into that ordered stream; a new per-batch
+   relational join is not inherently required.
+4. **Fourth hard problem: execution lifecycle and shared-resource coordination.** Whole-column ops
+   create a completion barrier (earlier streaming results must be staged/retained/recomputed, and a
+   non-replayable source cannot simply be re-scanned); concurrent lanes need bounded queues,
+   backpressure, and one shared thread budget (independent "fastest" choices can oversubscribe);
+   seeds, pool identities, warnings, row errors, cancellation, and commit/abort must stay coherent
+   across lanes. Dependency analysis must also cover `when` predicates (read siblings) and handlers
+   that write multiple columns, keyed on read/write deps and the correct input version.
+5. **Memory budget = peak SIMULTANEOUS live allocations** (input/output copies, pools, dictionaries,
+   permutation arrays, join buffers, sink buffers), not just per-column footprints.
+6. **Smaller alternative for MATCH/SCALE:** a resident distinct-value map plus streamed application,
+   not a full resident output column (the sampler already builds that map). Lower memory than the
+   full-column lane.
+7. **Sequencing:** keep phases 1+2 where they independently help, but the blanket "all strategies on
+   all routes" is neither necessary nor sufficient for the resident-column experiment. Identify the
+   representative job and baseline NOW; prototype once its specific prerequisites exist; compare
+   against the best route AND the simpler shared-coordinator approach. One job gives an initial
+   go/no-go, not a justification for a general router; before generalizing, vary width, cardinality,
+   batch size, and memory pressure and measure end-to-end time, peak RSS, spill I/O, and parity
+   including failure behavior.
+
+Net of the review: the direction holds, reframed as selective materialization with explicit parity
+conditions; the general router stays deferred behind a measured experiment that must beat the simpler
+distinct-value-map and shared-coordinator alternatives.
