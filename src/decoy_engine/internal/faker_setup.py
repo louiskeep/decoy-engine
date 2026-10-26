@@ -290,7 +290,7 @@ def _load_txt(directory: DirHandle, name: str) -> list[str]:
     except Exception as exc:
         if fileaccess.keeps_class(exc):
             raise
-        _log.warning("custom_providers: failed to read %s: %s", name, exc)
+        _log.warning("custom_providers: failed to read %s: %s", name, type(exc).__name__)
         return []
 
 
@@ -309,7 +309,7 @@ def _load_json(directory: DirHandle, name: str) -> list[str]:
     except Exception as exc:
         if fileaccess.keeps_class(exc):
             raise
-        _log.warning("custom_providers: failed to parse %s: %s", name, exc)
+        _log.warning("custom_providers: failed to parse %s: %s", name, type(exc).__name__)
         return []
 
 
