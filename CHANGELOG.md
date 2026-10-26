@@ -9,6 +9,18 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+## [0.15.1] - 2026-10-26
+
+### Added (DI1: datetime and free-text goodness-of-fit measurement, 2026-10-26)
+
+Report-only generation-output goodness-of-fit (GOF) measurement now covers datetime and free-text
+columns. Datetime runs a KS-complement on the yearly ECDF; free-text runs it on the string-length
+histogram. Both reuse the existing `ks_complement_binned` statistic, so no new statistical primitive
+is introduced. The values are reported as additive `extra_metrics`: they are not folded into any
+per-section similarity score or the overall score, and they make no distribution-preserving,
+differential-privacy, or utility claim. An absent histogram reports `comparable: false` with a coded
+reason rather than a fabricated statistic.
+
 ### Added (parity E2a: shared bounded reader + progress stream, 2026-10-26)
 
 New public `decoy_engine.io` package (`bounded_reader`, `csv_framer`): the memory-bounded chunked
