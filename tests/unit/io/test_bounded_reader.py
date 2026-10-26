@@ -4,6 +4,8 @@ on an oversized row."""
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 import numpy as np
@@ -12,6 +14,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
+from decoy_engine.fileaccess import FileHandle, FileRequest, FileRole, LocalFileAccess
 from decoy_engine.io import (
     PANDAS_DEFAULT_NA_VALUES,
     BoundedReadError,
@@ -39,6 +42,18 @@ def _budget(**kw) -> ChunkBudget:
     return ChunkBudget(**base)
 
 
+@contextmanager
+def _handle(path: Path) -> Iterator[FileHandle]:
+    """A policy-issued read handle onto `path`, as a caller passes to the bounded reader."""
+    handle = LocalFileAccess().open_read(
+        FileRequest(FileRole.SOURCE, "read", str(path), "source.path")
+    )
+    try:
+        yield handle
+    finally:
+        handle.close()
+
+
 def test_budget_validates_its_fields() -> None:
     with pytest.raises(ValueError):
         ChunkBudget(chunk_budget_bytes=0, max_chunk_rows=1, max_row_bytes=1)
@@ -50,7 +65,8 @@ def test_parquet_chunks_cover_every_row_within_budget(tmp_path: Path) -> None:
     table = pa.table({"id": list(range(5000)), "txt": ["x" * 40] * 5000})
     path = tmp_path / "t.parquet"
     pq.write_table(table, path, row_group_size=1200)
-    chunks = list(iter_parquet_chunks(str(path), _budget(), table="t"))
+    with _handle(path) as h:
+        chunks = list(iter_parquet_chunks(h, _budget(), table="t"))
     assert len(chunks) > 1
     assert sum(c.num_rows for c in chunks) == 5000
     assert pa.concat_tables(chunks).equals(table)
@@ -63,7 +79,8 @@ def test_dictionary_columns_are_decoded_and_owned(tmp_path: Path) -> None:
     table = pa.table({"k": pa.array(["a", "b"] * 500).dictionary_encode()})
     path = tmp_path / "d.parquet"
     pq.write_table(table, path)
-    chunks = list(iter_parquet_chunks(str(path), _budget(), table="d"))
+    with _handle(path) as h:
+        chunks = list(iter_parquet_chunks(h, _budget(), table="d"))
     assert all(not pa.types.is_dictionary(c.schema.field("k").type) for c in chunks)
     assert pa.concat_tables(chunks).column("k").to_pylist() == ["a", "b"] * 500
     assert own_array(pa.array([1, 2]).slice(1, 1)).to_pylist() == [2]
@@ -74,8 +91,8 @@ def test_oversized_parquet_row_fails_closed_after_the_rows_before_it(tmp_path: P
     path = tmp_path / "o.parquet"
     pq.write_table(table, path)
     seen = 0
-    with pytest.raises(RowExceedsMaxRowBytes) as exc:
-        for c in iter_parquet_chunks(str(path), _budget(), table="o"):
+    with pytest.raises(RowExceedsMaxRowBytes) as exc, _handle(path) as h:
+        for c in iter_parquet_chunks(h, _budget(), table="o"):
             seen += c.num_rows
     assert seen == 10 and exc.value.detail["row"] == 10
 
@@ -93,8 +110,8 @@ def test_a_nested_column_is_rejected_before_the_bound_can_be_exceeded(tmp_path: 
     pq.write_table(table, path)
     budget = _budget(chunk_budget_bytes=100, max_row_bytes=100)
     seen: list[pa.Table] = []
-    with pytest.raises(BoundedReadError) as exc:
-        for c in iter_parquet_chunks(str(path), budget, table="n"):
+    with pytest.raises(BoundedReadError) as exc, _handle(path) as h:
+        for c in iter_parquet_chunks(h, budget, table="n"):
             seen.append(c)
     assert seen == []  # rejected before any chunk (and its oversized row) was yielded
     assert exc.value.code == "unsupported_column_type"
@@ -307,7 +324,8 @@ def test_csv_chunks_keep_the_pandas_null_contract_and_string_types(tmp_path: Pat
     df = pd.DataFrame({"a": ["1", "NA", "x", ""], "b": ["NULL", "y", "n/a", "z"]})
     path = tmp_path / "c.csv"
     df.to_csv(path, index=False)
-    chunks = list(iter_csv_chunks(str(path), _budget(max_chunk_rows=2), table="c"))
+    with _handle(path) as h:
+        chunks = list(iter_csv_chunks(h, _budget(max_chunk_rows=2), table="c"))
     assert [c.num_rows for c in chunks] == [2, 2]
     out = pa.concat_tables(chunks)
     assert all(pa.types.is_string(f.type) for f in out.schema)
@@ -320,9 +338,9 @@ def test_csv_chunks_keep_the_pandas_null_contract_and_string_types(tmp_path: Pat
 def test_csv_record_over_the_cap_and_malformed_header_fail_closed(tmp_path: Path) -> None:
     big = tmp_path / "big.csv"
     big.write_bytes(b"a,b\n1," + b"x" * 5000 + b"\n")
-    with pytest.raises(CsvRecordExceedsMaxRowBytes):
-        list(iter_csv_chunks(str(big), _budget(), table="big"))
+    with pytest.raises(CsvRecordExceedsMaxRowBytes), _handle(big) as h:
+        list(iter_csv_chunks(h, _budget(), table="big"))
     bad = tmp_path / "bad.csv"
     bad.write_bytes(b'"open,b\n1,2\n')
-    with pytest.raises(CsvMalformed):
-        list(iter_csv_chunks(str(bad), _budget(), table="bad"))
+    with pytest.raises(CsvMalformed), _handle(bad) as h:
+        list(iter_csv_chunks(h, _budget(), table="bad"))

@@ -235,12 +235,18 @@ class LazySource:
             FileRequest(FileRole.SOURCE, "read", str(self.path), self.field_key)
         )
 
-    def iter_batches(self, batch_rows: int) -> Iterator[pa.RecordBatch]:
-        """Yield the file's rows as batches of at most `batch_rows` each."""
+    def iter_batches(
+        self, batch_rows: int, columns: list[str] | None = None
+    ) -> Iterator[pa.RecordBatch]:
+        """Yield the file's rows as batches of at most `batch_rows` each, optionally
+        projecting only `columns` (read through the policy, never a second raw open)."""
         handle = self._handle()
         try:
             parquet_file = arrow_adapter.parquet_file(handle)
-            yield from arrow_adapter.iter_batches(handle, parquet_file, batch_size=batch_rows)
+            extra = {"columns": columns} if columns is not None else {}
+            yield from arrow_adapter.iter_batches(
+                handle, parquet_file, batch_size=batch_rows, **extra
+            )
         finally:
             handle.close()
 
@@ -325,13 +331,19 @@ class LazySource:
         finally:
             handle.close()
 
-    def to_table(self) -> pa.Table:
-        """Read the whole file into memory. Fallback for small jobs only."""
+    def read_table(self, columns: list[str] | None = None) -> pa.Table:
+        """Read the file through the policy, optionally only `columns`. The projection
+        touches only those columns; the whole-file read is `to_table`."""
         handle = self._handle()
         try:
-            return arrow_adapter.read_table(handle)
+            extra = {"columns": columns} if columns is not None else {}
+            return arrow_adapter.read_table(handle, **extra)
         finally:
             handle.close()
+
+    def to_table(self) -> pa.Table:
+        """Read the whole file into memory. Fallback for small jobs only."""
+        return self.read_table()
 
 
 @dataclass(frozen=True)

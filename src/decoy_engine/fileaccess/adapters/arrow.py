@@ -38,6 +38,10 @@ def read_metadata(handle: FileHandle) -> pq.FileMetaData:
     return guarded(handle.display, _strict(handle), pq.read_metadata, handle.library_path())
 
 
+def read_schema(handle: FileHandle) -> pa.Schema:
+    return guarded(handle.display, _strict(handle), pq.read_schema, handle.library_path())
+
+
 class _FileBacked:
     """A writer plus the file object it writes to; closing the writer closes both."""
 

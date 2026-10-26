@@ -48,14 +48,15 @@ from __future__ import annotations
 
 import numbers
 import os
-import tempfile
 from math import copysign, isnan
 from typing import Any
 
 import pandas as pd
 
+from decoy_engine import fileaccess
 from decoy_engine.config._fixed_width import FixedWidthColumn, FixedWidthLayout
 from decoy_engine.errors import FixedWidthWriteError
+from decoy_engine.fileaccess import FileAccess, FileRequest, FileRole
 from decoy_engine.profile._fixed_width_reader import (
     _cast_value,
     _render_path,
@@ -191,9 +192,19 @@ def write_fixed_width(
     frame: pd.DataFrame,
     layout: FixedWidthLayout | dict[str, Any],
     path: str | os.PathLike[str],
+    *,
+    file_access: FileAccess | None = None,
+    role: FileRole = FileRole.TARGET_OUTPUT,
+    field_key: str = "target.path",
 ) -> str:
     """Write `frame` to a fixed-width file at `path` per `layout`, inverting
     `read_fixed_width`.
+
+    The file is created through the `file_access` policy (default: the installed one, else the
+    ambient CLI policy): an output transaction stages the file beside its leaf and publishes it
+    with one rename, so a pre-existing file is replaced atomically and a failed write leaves it
+    untouched. A strict policy opens the leaf beneath its own output root; the ambient policy
+    writes through to `path` exactly as before.
 
     Args:
         frame: a pandas DataFrame carrying (at least) every column the layout
@@ -222,10 +233,14 @@ def write_fixed_width(
             null/NaN, type mismatch, embedded newline, unencodable). Nothing is
             published in this case. The message is PII-safe (position + column +
             length, never the value).
-        OSError: `path`'s directory does not exist or cannot be written, or the
-            write fails part-way (passed through unwrapped; a mid-write OS
-            failure is outside the data-error guarantee and its traceback frames
-            may hold already-rendered records -- see the security doc).
+        FileAccessDenied / FileAccessUnavailable: a strict policy refuses the
+            leaf (outside its output root), or no policy is available where one
+            is required.
+        OSError: the output directory cannot be written, or the write fails
+            part-way (passed through unwrapped; a mid-write OS failure is
+            outside the data-error guarantee and its traceback frames may hold
+            already-rendered records -- see the security doc). Missing parent
+            directories of `path` are created, as for every other engine output.
     """
     if not isinstance(frame, pd.DataFrame):
         raise TypeError(f"frame must be a pandas DataFrame, got {type(frame).__name__}")
@@ -244,11 +259,11 @@ def write_fixed_width(
     if schema_message is not None:
         raise FixedWidthWriteError(schema_message)
 
-    failure = _write_all(frame, spec, path)
+    policy = fileaccess.capture(file_access)
+    failure = _write_all(frame, spec, path, policy, role, field_key)
     if failure is not None:
-        # Raised here, after `_write_all` has returned and removed any temp file:
-        # this frame holds only the message and path, never a cell value, and no
-        # file was published.
+        # Raised here, after `_write_all` has returned and aborted the stage: this frame holds
+        # only the message and path, never a cell value, and no file was published.
         raise FixedWidthWriteError(failure)
     return path
 
@@ -290,39 +305,31 @@ def _check_columns(frame: pd.DataFrame, spec: FixedWidthLayout) -> str | None:
     return None
 
 
-def _fsync_dir(directory: str) -> None:
-    """Best-effort fsync of the directory so the os.replace rename survives a crash.
-    A no-op where a directory fd cannot be opened or fsynced (e.g. Windows)."""
-    try:
-        fd = os.open(directory, os.O_RDONLY)
-    except OSError:
-        return
-    try:
-        os.fsync(fd)
-    except OSError:
-        pass
-    finally:
-        try:
-            os.close(fd)
-        except OSError:
-            pass
+def _write_all(
+    frame: pd.DataFrame,
+    spec: FixedWidthLayout,
+    path: str,
+    policy: FileAccess,
+    role: FileRole,
+    field_key: str,
+) -> str | None:
+    """Atomically write every record through a policy-issued output transaction, or return a
+    PII-safe failure message with nothing published. Raises only for genuine I/O errors.
 
-
-def _write_all(frame: pd.DataFrame, spec: FixedWidthLayout, path: str) -> str | None:
-    """Atomically write every record, or return a PII-safe failure message with
-    nothing published. Raises only for genuine I/O errors (OSError)."""
+    The transaction stages the file beside its leaf; `publish()` renames it into place on full
+    success, and the context manager aborts the stage (publishing nothing) on a data failure or
+    any exception, so a pre-existing file is never left half-written."""
     # `.tolist()` normalizes numpy scalars to Python types (int64 -> int, NaN ->
     # float('nan')), so the per-type `isinstance` checks in `_render_value` see
     # plain Python values.
     columns = {column.name: frame[column.name].tolist() for column in spec.columns}
     row_count = len(frame.index)
     rendered = _render_path(path)
-    directory = os.path.dirname(os.path.abspath(path)) or "."
-
-    fd, tmp_path = tempfile.mkstemp(dir=directory, prefix=".decoy-fw-", suffix=".tmp")
-    try:
+    out = policy.output_dir(FileRequest(role, "write", path, field_key))
+    leaf = os.path.basename(path)
+    with out.begin("file", "replace", label="table_sink") as txn:
         failure: str | None = None
-        with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
+        with os.fdopen(txn.create_file(leaf), "w", encoding="utf-8", newline="") as handle:
             for row_index in range(row_count):
                 row = {name: values[row_index] for name, values in columns.items()}
                 line, message = _build_record(row, spec, row_index)
@@ -340,24 +347,10 @@ def _write_all(frame: pd.DataFrame, spec: FixedWidthLayout, path: str) -> str | 
                 handle.flush()
                 os.fsync(handle.fileno())
         if failure is not None:
-            # A data failure: drop the partial temp file and publish nothing.
-            _silent_unlink(tmp_path)
+            # A data failure: the transaction aborts on block exit; nothing is published.
             return failure
-        os.replace(tmp_path, path)
-        _fsync_dir(directory)
+        txn.publish()
         return None
-    except BaseException:
-        _silent_unlink(tmp_path)
-        raise
-
-
-def _silent_unlink(tmp_path: str) -> None:
-    """Remove a temp file, ignoring a missing-file error (best-effort cleanup;
-    never masks the original exception being propagated)."""
-    try:
-        os.unlink(tmp_path)
-    except OSError:
-        pass
 
 
 __all__ = ["write_fixed_width"]

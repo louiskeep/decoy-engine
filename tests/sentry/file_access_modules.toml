@@ -30,10 +30,12 @@ ambient_only_modules = [
   "decoy_engine/execution/_isolated_commit.py",
   "decoy_engine/execution/_isolated_run.py",
   "decoy_engine/execution/out_of_core/_scratch.py",
+  "decoy_engine/connectors/postgres_snapshot.py",
 ]
 
 # Modules that must call `fileaccess.require_ambient`, the guard the ambient-only entries rely on.
 ambient_guards = [
   "decoy_engine/execution/_isolated_run.py",
   "decoy_engine/execution/out_of_core/_scratch.py",
+  "decoy_engine/connectors/postgres_snapshot.py",
 ]

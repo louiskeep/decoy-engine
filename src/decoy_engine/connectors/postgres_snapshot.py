@@ -55,6 +55,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 
+from decoy_engine import fileaccess
+from decoy_engine.fileaccess.adapters import duckdb as duckdb_adapter
 from decoy_engine.sdk import PermanentError
 
 __all__ = [
@@ -213,14 +215,13 @@ def _lit(text: str) -> str:
 
 
 def _open_connection(config: PostgresSnapshotConfig, spill_dir: Path) -> Any:
-    import duckdb
-
     spill_dir.mkdir(parents=True, exist_ok=True)
     os.chmod(spill_dir, 0o700)
     try:
-        conn = duckdb.connect(
-            database=":memory:",
-            config={
+        # The engine-internal DuckDB connection (external access on; never given caller SQL
+        # text) comes from the one adapter that may create a connection.
+        conn = duckdb_adapter.connect_internal(
+            {
                 "temp_directory": str(spill_dir),
                 "memory_limit": config.memory_limit,
                 "threads": config.threads,
@@ -234,7 +235,7 @@ def _open_connection(config: PostgresSnapshotConfig, spill_dir: Path) -> Any:
                 # reorder spilled chunks and break the byte-identical snapshot
                 # (guarantee 2).
                 "preserve_insertion_order": True,
-            },
+            }
         )
     except Exception as exc:
         raise PostgresSnapshotError("duckdb_unavailable", cause_type=type(exc).__name__) from None
@@ -441,6 +442,12 @@ def snapshot_tables_to_parquet(
     keys = [s.key for s in selections]
     if len(set(keys)) != len(keys):
         raise PostgresSnapshotError("duplicate_relation")
+
+    # A DuckDB connector writes caller- and config-supplied paths (dest_dir, the spill dir)
+    # that a strict fd-confined policy cannot vouch for, and DuckDB opens them by path, not
+    # through a descriptor; the route runs only under the ambient CLI policy and fails closed
+    # otherwise (the D6 fail-closed fallback, as for the subprocess route).
+    fileaccess.require_ambient("postgres snapshot to a caller-supplied destination")
 
     run_id = uuid.uuid4().hex
     dest_dir.mkdir(parents=True, exist_ok=True)

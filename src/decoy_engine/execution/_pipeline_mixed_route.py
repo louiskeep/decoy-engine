@@ -40,7 +40,6 @@ import dataclasses
 from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
-import pyarrow.parquet as pq
 
 from decoy_engine.execution import (
     _chunked_input,
@@ -116,7 +115,8 @@ def _read_key_column(source: pa.Table | LazySource, column: str) -> pa.Array:
     """The child key column alone, from the same prepared source the payload stream
     reads (a lazy source projects one column from its file)."""
     if isinstance(source, LazySource):
-        table = pq.read_table(source.path, columns=[column])
+        # Read the one column through the source's own policy, never a second raw open.
+        table = source.read_table(columns=[column])
     else:
         table = source
     return table.column(column).combine_chunks()

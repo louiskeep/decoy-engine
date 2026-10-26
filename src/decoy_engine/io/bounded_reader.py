@@ -27,9 +27,10 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.compute as pc
 import pyarrow.csv as pa_csv
-import pyarrow.parquet as pq
 
 from decoy_engine.errors import DecoyError
+from decoy_engine.fileaccess import FileHandle
+from decoy_engine.fileaccess.adapters import arrow as arrow_adapter
 from decoy_engine.io import csv_framer as framer
 
 # pandas' default `na_values`, the set the full-frame CSV read (`read_csv(dtype=str)`)
@@ -255,11 +256,14 @@ def cut_batch(
         raise RowExceedsMaxRowBytes(table=table, row=row_base + limit)
 
 
-def iter_parquet_chunks(path: str, budget: ChunkBudget, *, table: str) -> Iterator[pa.Table]:
-    """Owned chunks of a Parquet file within `budget`, row group by row group."""
-    schema = pq.read_schema(path)
+def iter_parquet_chunks(
+    handle: FileHandle, budget: ChunkBudget, *, table: str
+) -> Iterator[pa.Table]:
+    """Owned chunks of a Parquet file within `budget`, row group by row group. The file is read
+    through the policy-issued `handle`, which the caller keeps open for the whole iteration."""
+    schema = arrow_adapter.read_schema(handle)
     dictionary_columns = [f.name for f in schema if str(f.type) in _STRING_TYPES]
-    parquet_file = pq.ParquetFile(path, read_dictionary=dictionary_columns or None)
+    parquet_file = arrow_adapter.parquet_file(handle, read_dictionary=dictionary_columns or None)
     row_base = 0
     for group in range(parquet_file.num_row_groups):
         for batch in parquet_file.iter_batches(
@@ -279,11 +283,12 @@ def csv_convert_options(names: list[str]) -> pa_csv.ConvertOptions:
     )
 
 
-def iter_csv_chunks(path: str, budget: ChunkBudget, *, table: str) -> Iterator[pa.Table]:
+def iter_csv_chunks(handle: FileHandle, budget: ChunkBudget, *, table: str) -> Iterator[pa.Table]:
     """Owned string-typed chunks of a CSV file within `budget`, framed record by
-    record so no record larger than `max_row_bytes` ever reaches the parser."""
+    record so no record larger than `max_row_bytes` ever reaches the parser. The file is read
+    through the policy-issued `handle`, which the caller keeps open for the whole iteration."""
     parse_options = pa_csv.ParseOptions(newlines_in_values=True)
-    with open(path, "rb") as fh:
+    with handle.open_binary() as fh:
         records = framer.iter_csv_records(fh, max_record_bytes=budget.max_row_bytes)
         record_index = 0
         try:
