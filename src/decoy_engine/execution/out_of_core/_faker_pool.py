@@ -43,6 +43,15 @@ from decoy_engine.providers_v2 import ProviderRegistry
 # `pool_size * _RESERVE_BYTES_PER_VALUE` is always at least the pool's measured
 # size: the run cache therefore never has to evict an in-allowance workload, and
 # the "one build per identity across batches" guarantee holds.
+#
+# This bound holds for every pool the stock PoolBuilder produces, which are
+# object-dtype arrays of exactly `size` elements (PoolBuilder.build forces
+# dtype=object), so estimate_pool_bytes takes its object branch and each element
+# contributes at most 4096 bytes. It would NOT bound a non-standard builder that
+# returned more than `size` elements or a fixed-width dtype wider than 4096 bytes
+# per item; the route only ever builds through the stock builder, and PoolCache
+# itself still fails closed (pool_exceeds_cache_budget) on any single pool larger
+# than the whole allowance.
 _RESERVE_BYTES_PER_VALUE = 4096
 
 
@@ -156,6 +165,14 @@ class OocFakerPoolContext:
         ``out_of_core_faker_pool_budget_exceeded`` and no pool is built. The
         reservation is sized from ``pool_size`` alone, never a batch or source
         row count.
+
+        A provider-primitive failure (e.g. ``PoolCapacityError`` with
+        ``provider_not_poolable`` for a provider the builder cannot pool)
+        propagates unwrapped rather than being reshaped into an
+        ``out_of_core_faker_pool_*`` code: it is a real provider error, surfaced
+        not swallowed. The route admission that reaches this context restricts
+        the provider to the poolable faker allowlist, so that path is not taken
+        in practice.
         """
         cached = self._cache.get(prepared.identity)
         if cached is not None:
@@ -200,9 +217,10 @@ class OocFakerPoolContext:
         return self._cache.stats().entries
 
     def close(self) -> None:
-        """Release this run's pools and reset the reservation ledger."""
+        """Release this run's pools and reset all run-scoped state."""
         self._cache.clear()
         self._reserved_bytes = 0
+        self._builds = 0
 
     def __enter__(self) -> OocFakerPoolContext:
         return self

@@ -106,24 +106,28 @@ def test_identical_identity_shares_one_pool(registry):
         pytest.param({"cfg": {"pool_size": 32}}, id="config_pool_size"),
     ],
 )
-def test_distinct_identity_does_not_share(registry, mutate):
-    builder = _CountingPoolBuilder(registry)
-    ctx = _context(registry, builder=builder)
+def test_distinct_inputs_give_distinct_identity(registry, mutate):
+    # prepare() resolves the identity WITHOUT building, so this proves the keying
+    # across every dimension (provider/namespace/locale/config) with no
+    # dependence on whether the changed provider or locale can actually be built.
+    ctx = _context(registry)
     base_kwargs = {"provider": _PROVIDER, "namespace": "ns", "cfg": dict(_CFG)}
     changed_kwargs = {**base_kwargs, **mutate}
-    if "poolable" in dir(registry):
-        # person_last_name must be poolable for the provider-change case.
-        if changed_kwargs["provider"] != _PROVIDER and not registry.get_capabilities(
-            changed_kwargs["provider"]
-        ).poolable:
-            pytest.skip(f"{changed_kwargs['provider']} is not poolable here")
-
     base = ctx.prepare(**base_kwargs)
     changed = ctx.prepare(**changed_kwargs)
-
     assert base.identity != changed.identity
-    ctx.get_pool(base)
-    ctx.get_pool(changed)
+
+
+def test_distinct_identities_build_separately(registry):
+    # A namespace change keeps the same poolable provider and locale, so both
+    # pools build safely; two distinct identities must each build and be cached.
+    builder = _CountingPoolBuilder(registry)
+    ctx = _context(registry, builder=builder)
+    a = ctx.prepare(provider=_PROVIDER, namespace="ns", cfg=dict(_CFG))
+    b = ctx.prepare(provider=_PROVIDER, namespace="other_ns", cfg=dict(_CFG))
+    assert a.identity != b.identity
+    ctx.get_pool(a)
+    ctx.get_pool(b)
     assert builder.build_calls == 2
     assert ctx.pool_count == 2
 
