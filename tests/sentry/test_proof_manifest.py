@@ -58,7 +58,8 @@ def test_surface_counts_match_capability_matrix():
     # SP-10b (2026-06-28): added derived_aggregate -> 18 + 1 = 19.
     # SP-10c (2026-06-29): added grouped_series, windowed_date, group_key -> 19 + 3 = 22.
     # HC-3b (2026-07-17): added top_code (age 90+ generalization) -> 22 + 1 = 23.
-    assert surface["mask"] == 23
+    # B-6 (2026-10-26): added tokenize (keyed vault substitution) -> 23 + 1 = 24.
+    assert surface["mask"] == 24
     # SP-10 remediation (2026-06-28): derived wired into generate path -> 7 + 1 = 8.
     # SP-10b (2026-06-28): derived_aggregate wired into generate path -> 8 + 1 = 9.
     # SP-10c (2026-06-29): grouped_series, windowed_date, group_key -> 9 + 3 = 12.
