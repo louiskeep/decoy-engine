@@ -109,9 +109,11 @@ quarantines):
   value, they emit per-value `format_error` RowErrors; the runner collects them with an absolute
   (whole-source) row index and fails the job closed via `RowErrorsFailedError` on the first batch
   that reports one. Admitted for a column ONLY when its per-batch Arrow-to-pandas conversion is
-  provably identical to the oracle's whole-frame conversion for every batch split
-  (`row_error_bridge_batch_stable`): a null-stable plain numpy numeric or string column. A column
-  whose pandas dtype depends on null presence or batch content -- a pandas nullable extension
+  provably identical to the oracle's whole-frame conversion for every batch split AND the strategy
+  reads that column batch-stably (`row_error_bridge_batch_stable`): a null-stable plain numpy
+  numeric column for either strategy, plus a plain string column for `top_code` only (it parses
+  each cell exactly), since `bucketize` coerces a string column to numbers batch-dependently. A
+  column whose pandas dtype depends on null presence or batch content -- a pandas nullable extension
   dtype (`boolean`, `Int64`, `Float64`, ...), a dictionary/categorical type, a null-unstable plain
   numpy bool/int that widens to object/float under nulls, or a decimal/large-offset type -- is
   declined (`out_of_core_row_error_dtype_unsupported`) and runs on the full-frame oracle, which

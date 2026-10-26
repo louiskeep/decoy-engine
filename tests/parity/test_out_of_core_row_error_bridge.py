@@ -30,6 +30,10 @@ from decoy_engine.execution.out_of_core._compat import (
     OutOfCoreCompatibility,
     check_out_of_core_compatibility,
 )
+from decoy_engine.execution.out_of_core._row_error_bridge import (
+    bridge_own_column,
+    row_error_bridge_batch_stable,
+)
 from decoy_engine.execution.out_of_core._source import LazySource
 from decoy_engine.execution.out_of_core._stream_join import StreamFkJoiner
 from decoy_engine.plan._types import ColumnSeed, SeedEnvelope, TableSeed
@@ -259,11 +263,14 @@ def _assert_value_equal(oracle: pa.Table, ooc: pa.Table, label: str) -> None:
         )
 
 
+# STRING payload fixtures: only top_code admits a plain string column onto the
+# bridge (it parses each object cell exactly; see `_row_error_bridge.py`). The
+# bucketize string case is NOT here because bucketize numerically coerces a
+# string column batch-dependently and is declined off OOC
+# (`test_bucketize_string_declines_oracle_correct`); bucketize's own clean-parity
+# coverage runs on a plain float64 column
+# (`test_plain_float64_bucketize_admitted_and_matches_oracle`).
 _CLEAN = {
-    "bucketize": (
-        _seed("bucketize", provider_config=(("width", 10),)),
-        ["25", "95", "40", None, "10", "72"],
-    ),
     "top_code": (
         _seed("top_code", provider_config=(("cap", 89), ("over_label", "90+"))),
         ["25", "95", "40", None, "10", "72"],
@@ -278,7 +285,7 @@ _CLEAN = {
 @pytest.mark.parametrize("kind", list(_CLEAN))
 @pytest.mark.parametrize("batch_rows", [None, 3, 2, 1])
 def test_row_error_bridge_payload_parity(kind: str, batch_rows: int | None) -> None:
-    """A clean (fully coercible) bucketize/top_code payload on parent + child is
+    """A clean (fully coercible) top_code string payload on parent + child is
     byte-identical to the oracle, at every batch size (a batch boundary must not
     change a canonical rendering -- the CHUNK_SAFE property these handlers have)."""
     payload_seed, vals = _CLEAN[kind]
@@ -294,15 +301,17 @@ def test_row_error_bridge_payload_parity(kind: str, batch_rows: int | None) -> N
         _assert_value_equal(oracle.outputs[table], ooc.outputs[table], f"{kind}/batch={batch_rows}")
 
 
-@pytest.mark.parametrize("strategy", ["bucketize", "top_code"])
-def test_row_error_fails_closed(strategy: str) -> None:
-    """An uncoercible cell fails the job closed with RowErrorsFailedError rather
-    than silently keeping the raw value, mirroring the chunked route."""
-    seed = (
-        _seed("bucketize", provider_config=(("width", 10),))
-        if strategy == "bucketize"
-        else _seed("top_code", provider_config=(("cap", 89), ("over_label", "90+")))
-    )
+def test_row_error_fails_closed() -> None:
+    """An uncoercible cell on an ADMITTED bridge column fails the job closed with
+    RowErrorsFailedError rather than silently keeping the raw value, mirroring the
+    chunked route. top_code is the only bridged strategy that can reach this path
+    on OOC: it admits a string column (parsed exactly), so an uncoercible cell is
+    a bridge-collected RowError. bucketize's only row-error shape is a string
+    column too, but bucketize DECLINES strings off OOC
+    (`test_bucketize_string_declines_oracle_correct`), so its uncoercible-cell
+    fail-closed rides the full-frame oracle after reroute, not this bridge; an
+    admitted bucketize column is plain float64, which has no uncoercible cell."""
+    seed = _seed("top_code", provider_config=(("cap", 89), ("over_label", "90+")))
     plan, sources, graph = _job(seed, ["25", "nope", "40"], ["25", "40", "10"])
     assert _gate_admits(plan, sources, graph)
     with pytest.raises(RowErrorsFailedError) as exc:
@@ -316,8 +325,11 @@ def test_row_error_fails_closed(strategy: str) -> None:
 def test_row_error_index_is_absolute(batch_rows: int | None) -> None:
     """The reported row index is the uncoercible cell's position in the WHOLE
     source, not batch-local: the bad cell at parent row 4 must report row_index 4
-    even when it lands in a later batch (the durable Phase-1 row offset)."""
-    seed = _seed("bucketize", provider_config=(("width", 10),))
+    even when it lands in a later batch (the durable Phase-1 row offset). Exercised
+    on top_code (a string column, bridge-admitted); bucketize declines strings off
+    OOC, so its absolute-index reporting runs through the full-frame oracle, which
+    already indexes in the whole source."""
+    seed = _seed("top_code", provider_config=(("cap", 89), ("over_label", "90+")))
     parent_vals = ["10", "20", "30", "40", "bad", "60"]  # uncoercible at index 4
     plan, sources, graph = _job(seed, parent_vals, ["10", "20", "30", "40", "50", "60"])
     with pytest.raises(RowErrorsFailedError) as exc:
@@ -534,6 +546,119 @@ def test_dtype_decline_is_a_reroute_signal_not_fatal() -> None:
     ) == (True, None)
 
 
+@pytest.mark.parametrize("batch_rows", [None, 3, 2, 1])
+def test_plain_float64_bucketize_admitted_and_matches_oracle(batch_rows: int | None) -> None:
+    """The common bucketize path must STAY on OOC: a PLAIN float64 bucketize
+    column (already numeric, and float64 does not null-widen -- it stays float64
+    with or without nulls) is the one shape whose `pd.to_numeric` is a
+    batch-independent identity, so the gate ADMITS it and the OOC route byte-
+    matches the oracle at every batch size. Guards against the string-admit
+    tightening over-declining bucketize to nothing."""
+    payload_seed = _seed("bucketize", provider_config=(("width", 10),))
+    vals: list[Any] = [25.0, 95.0, 40.0, None, 10.0, 72.0]
+    plan, sources, graph = _typed_job(payload_seed, vals, list(reversed(vals)), pa.float64())
+    assert _gate_admits(plan, sources, graph), "expected gate to admit plain float64 bucketize"
+    oracle = PandasExecutionAdapter().run(
+        plan, sources, registry=_REG, relationship_graph=graph, namespace_registry=_NS
+    )
+    ooc = run_fk_out_of_core(
+        plan, sources, registry=_REG, relationship_graph=graph, batch_rows=batch_rows
+    )
+    for table in oracle.outputs:
+        _assert_value_equal(oracle.outputs[table], ooc.outputs[table], f"float64/b={batch_rows}")
+
+
+# ---------------------------------------------------------------------------
+# bucketize string admit tightening (Codex counterexample). A plain string /
+# large_string column passes the Arrow->pandas batch-stability check (string
+# always converts to `object`), but bucketize REINTERPRETS that object column
+# through `pd.to_numeric`, whose int-vs-float choice depends on the batch's own
+# contents, so the masked VALUE can differ across a batch split. top_code reads
+# an object column by exact per-cell parse and stays batch-stable, so only
+# bucketize declines string/large_string; `top_code` admission is unchanged.
+# ---------------------------------------------------------------------------
+
+_BUCKETIZE_COUNTEREXAMPLE = ["18014398509481993", "0.5"]  # Codex: width=1, splits diverge
+
+
+@pytest.mark.parametrize("arrow_type", [pa.string(), pa.large_string()])
+def test_bucketize_string_batch_split_diverges_counterexample(arrow_type: pa.DataType) -> None:
+    """Codex counterexample proving a string column is NOT batch-stable for
+    bucketize (the reason it must be declined). The per-batch bridge handler runs
+    the column through `pd.to_numeric`, whose int-vs-float choice depends on the
+    batch's contents: the whole batch `["18014398509481993", "0.5"]` coerces to
+    float64 (the "0.5" forces it) and rounds the first value to 18014398509481996,
+    while a lone `["18014398509481993"]` batch stays int64 and renders the exact
+    18014398509481992 -- the SAME value, a different masked output across a batch
+    boundary. The divergence is a property of the handler + data (it exists
+    regardless of the gate); the gate's job is to keep such a column OFF the
+    bridge, which `test_bucketize_string_declines_oracle_correct` asserts."""
+    seed = _seed("bucketize", provider_config=(("width", 1),))
+    masked_whole, _ = bridge_own_column(
+        "t",
+        "c",
+        seed,
+        pa.array(_BUCKETIZE_COUNTEREXAMPLE, type=arrow_type),
+        registry=_REG,
+        job_seed=_JOB_SEED,
+        mask_key=b"\x22" * 8,
+        row_offset=0,
+    )
+    split: list[Any] = []
+    for i, value in enumerate(_BUCKETIZE_COUNTEREXAMPLE):
+        masked, _ = bridge_own_column(
+            "t",
+            "c",
+            seed,
+            pa.array([value], type=arrow_type),
+            registry=_REG,
+            job_seed=_JOB_SEED,
+            mask_key=b"\x22" * 8,
+            row_offset=i,
+        )
+        split.extend(masked.to_pylist())
+    assert masked_whole.to_pylist() != split, (
+        "expected the string bucketize column to diverge across a batch split "
+        f"(the counterexample): whole={masked_whole.to_pylist()} split={split}"
+    )
+
+
+@pytest.mark.parametrize("arrow_type", [pa.string(), pa.large_string()])
+def test_bucketize_string_declines_oracle_correct(arrow_type: pa.DataType) -> None:
+    """The fix: a string/large_string bucketize column is DECLINED off OOC (the
+    gate rejects it with the dtype code and `run_fk_out_of_core`'s preflight
+    refuses the plan), so the batch-split divergence proven above can never run on
+    OOC. The job reroutes to the full-frame oracle, which converts the whole
+    column at once and yields the single correct result at ANY batch size. Fails
+    pre-fix (the gate admitted strings for bucketize and OOC diverged by batch
+    size); passes post-fix."""
+    payload_seed = _seed("bucketize", provider_config=(("width", 1),))
+    vals = _BUCKETIZE_COUNTEREXAMPLE
+    plan, sources, graph = _typed_job(payload_seed, vals, list(reversed(vals)), arrow_type)
+
+    # Admit rule: string/large_string is no longer batch-stable for bucketize.
+    assert not row_error_bridge_batch_stable(sources["parent"].schema, "pay", "bucketize")
+
+    # Job level: declines with the dtype code; the route's preflight refuses it.
+    _assert_declines_and_preflight_refuses(plan, sources, graph)
+
+    # The decline is a reroute signal (fall back to full-frame), not fatal.
+    from decoy_engine.execution._pipeline_routing_signals import out_of_core_admission
+
+    compatible, code = out_of_core_admission(
+        plan, registry=_REG, graph=graph, caller_sources=sources
+    )
+    assert compatible is False and code == _DTYPE_DECLINE_CODE, (compatible, code)
+
+    # The full-frame oracle (what the reroute runs) gives the one correct result,
+    # independent of any batch size.
+    oracle = PandasExecutionAdapter().run(
+        plan, sources, registry=_REG, relationship_graph=graph, namespace_registry=_NS
+    )
+    assert oracle.outputs["parent"].to_pydict()["pay"] == ["18014398509481996", "0"]
+    assert oracle.outputs["child"].to_pydict()["cpay"] == ["0", "18014398509481996"]
+
+
 # ---------------------------------------------------------------------------
 # Reorder driver (sink path): the child's payload masks through the reorder
 # driver's own Phase-1 bridge, the parent's through the batch driver.
@@ -572,13 +697,20 @@ def _run_sink(plan: Any, sources: Any, graph: Any, target: Path) -> dict[str, bo
     return saw
 
 
-@pytest.mark.parametrize("kind", ["bucketize", "top_code"])
+@pytest.mark.parametrize("kind", ["bucketize_float64", "top_code"])
 def test_row_error_bridge_reorder_driver_parity(kind: str, tmp_path: Path) -> None:
     """The child payload masks through the REORDER driver's Phase-1 bridge
     (threshold_rows=0 forces it); its sink output stays byte-identical to the
-    oracle, and the parent's payload (batch driver) does too."""
-    payload_seed, vals = _CLEAN[kind]
-    plan, sources, graph = _job(payload_seed, vals, list(reversed(vals)))
+    oracle, and the parent's payload (batch driver) does too. bucketize runs on a
+    plain float64 column (its only OOC-admitted shape); top_code on a string
+    column (bridge-admitted by exact parse)."""
+    if kind == "bucketize_float64":
+        payload_seed = _seed("bucketize", provider_config=(("width", 10),))
+        fvals: list[Any] = [25.0, 95.0, 40.0, None, 10.0, 72.0]
+        plan, sources, graph = _typed_job(payload_seed, fvals, list(reversed(fvals)), pa.float64())
+    else:
+        payload_seed, vals = _CLEAN["top_code"]
+        plan, sources, graph = _job(payload_seed, vals, list(reversed(vals)))
     oracle = PandasExecutionAdapter().run(
         plan, sources, registry=_REG, relationship_graph=graph, namespace_registry=_NS
     )
@@ -591,8 +723,10 @@ def test_row_error_bridge_reorder_driver_parity(kind: str, tmp_path: Path) -> No
 
 
 def test_row_error_bridge_reorder_driver_fails_closed(tmp_path: Path) -> None:
-    """A bad cell in the CHILD payload fails closed on the reorder driver too."""
-    seed = _seed("bucketize", provider_config=(("width", 10),))
+    """A bad cell in the CHILD payload fails closed on the reorder driver too.
+    top_code on a string column (bridge-admitted); bucketize declines strings off
+    OOC, so a bad bucketize cell cannot reach the bridge's fail-closed path."""
+    seed = _seed("top_code", provider_config=(("cap", 89), ("over_label", "90+")))
     plan, sources, graph = _job(seed, ["10", "20", "30"], ["10", "nope", "30"])
     with pytest.raises(RowErrorsFailedError) as exc:
         _run_sink(plan, sources, graph, tmp_path / "out")

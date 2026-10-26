@@ -72,19 +72,45 @@ OWN_COLUMN_ROW_ERROR_STRATEGIES = frozenset({"bucketize", "top_code"})
 # adapter's per-strategy conversion choice is what keeps this byte-identical.
 _LOSSLESS_BRIDGE_STRATEGIES = frozenset({"top_code"})
 
-# The Arrow types whose pandas conversion carries no batch-content-dependent
-# state: a plain (non-dictionary) numpy integer/floating column, or a string
-# column (-> object). A dictionary/categorical column's categories depend on the
-# values present in a batch, a decimal/temporal/binary column is not a value we
-# admit, and a plain boolean column null-widens; all fall outside this tuple and
-# are declined. Integer/floating null-widening is still caught by the stability
-# check below, so this allowlist is necessary but not sufficient on its own.
-_BATCH_STABLE_ARROW_PREDICATES = (
+# Plain (non-dictionary) numpy integer/floating columns: their bare pandas
+# conversion carries no batch-content-dependent state, and no bridged strategy
+# reinterprets the VALUE in a batch-dependent way (both reach it through
+# `pd.to_numeric`, which is a no-op identity on an already-numeric column). A
+# dictionary/categorical column's categories depend on the values present in a
+# batch, a decimal/temporal/binary column is not a value we admit, and a plain
+# boolean column null-widens; all fall outside and are declined. Integer/floating
+# null-widening is still caught by the stability check below, so this is
+# necessary but not sufficient on its own.
+_NUMERIC_BATCH_STABLE_PREDICATES = (
     pa.types.is_integer,
     pa.types.is_floating,
+)
+
+# A plain (non-dictionary) string/large_string column always converts to pandas
+# `object`, which is itself batch-stable -- but whether the STRATEGY reads that
+# object column batch-stably is strategy-specific. top_code parses each object
+# cell EXACTLY (`_strategies/_top_code.py::_classify_object_column`, a Decimal
+# per cell, no float coercion), so its reading is a pure per-cell function and a
+# string column IS batch-stable for it. bucketize runs the column through
+# `pd.to_numeric` (`_strategies/_bucketize.py`), which chooses int64 vs float64
+# from the BATCH's own contents -- e.g. `["18014398509481993", "0.5"]` coerces to
+# float64 and rounds the first value, while a lone `["18014398509481993"]` batch
+# stays int64 and does not -- so a string column is NOT batch-stable for
+# bucketize. Only top_code admits string/large_string.
+_STRING_BATCH_STABLE_PREDICATES = (
     pa.types.is_string,
     pa.types.is_large_string,
 )
+
+# Condition 1's admit allowlist, per strategy. Every bridged strategy admits
+# plain numeric; only top_code additionally admits plain string (see above). A
+# strategy absent from this map admits nothing (declines every type), the
+# conservative-correct default for any own-column row-error strategy added later
+# before its batch-stability has been proven.
+_BATCH_STABLE_ARROW_PREDICATES_BY_STRATEGY = {
+    "bucketize": _NUMERIC_BATCH_STABLE_PREDICATES,
+    "top_code": _NUMERIC_BATCH_STABLE_PREDICATES + _STRING_BATCH_STABLE_PREDICATES,
+}
 
 _EMPTY_GRAPH = RelationshipGraph(edges=(), ordering=())
 _EMPTY_NS = NamespaceRegistry(bindings=())
@@ -121,10 +147,15 @@ def row_error_bridge_batch_stable(source_schema: pa.Schema, column: str, strateg
     Three conditions, each value-free (a function of the Arrow type + the source
     schema's pandas metadata, never the data):
 
-    1. The Arrow type is a plain numpy integer/floating or a string type (no
-       dictionary/categorical, decimal, temporal, binary, or plain boolean). A
-       dictionary column's categories are batch-content-dependent; the others are
-       not a value this bridge admits.
+    1. The Arrow type is in this strategy's admit allowlist: a plain numpy
+       integer/floating column for either strategy, plus a plain string type for
+       top_code ONLY (no dictionary/categorical, decimal, temporal, binary, or
+       plain boolean). bucketize DECLINES string/large_string because it runs the
+       column through `pd.to_numeric`, whose int-vs-float choice is
+       batch-content-dependent (so a value's rounding can differ across a batch
+       split); top_code parses each object cell exactly, so a string column is
+       batch-stable for it. A dictionary column's categories are
+       batch-content-dependent; the others are not a value this bridge admits.
     2. No load-bearing pandas-extension metadata: the metadata-aware conversion
        (what the oracle sees) equals the bare conversion (what a per-batch array
        sees) for both null states. A nullable `boolean`/`Int64`/`Float64`/string
@@ -139,7 +170,8 @@ def row_error_bridge_batch_stable(source_schema: pa.Schema, column: str, strateg
        dtype under the lossless (top_code) path, so this is strategy-aware.
     """
     arrow_type = source_schema.field(column).type
-    if not any(predicate(arrow_type) for predicate in _BATCH_STABLE_ARROW_PREDICATES):
+    predicates = _BATCH_STABLE_ARROW_PREDICATES_BY_STRATEGY.get(strategy, ())
+    if not any(predicate(arrow_type) for predicate in predicates):
         return False
     metadata = source_schema.metadata
     for has_null in (False, True):

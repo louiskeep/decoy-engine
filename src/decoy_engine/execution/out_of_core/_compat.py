@@ -420,10 +420,10 @@ def _row_error_dtype_rejection(
             return OutOfCoreRejection(
                 "out_of_core_row_error_dtype_unsupported",
                 f"{node.table}.{column}: out-of-core {node.strategy!r} is admitted only for a "
-                "column whose per-batch pandas conversion is provably identical to the "
-                "full-frame oracle's (a null-stable plain numpy numeric or string column); this "
-                "column's dtype is not provably batch-stable, so the job falls back to the "
-                "full-frame oracle, which converts the whole column at once.",
+                "column whose per-batch conversion AND this strategy's reading match the oracle's "
+                "(a null-stable plain numpy numeric column, plus a plain string type for top_code "
+                "only -- bucketize coerces strings to numbers batch-dependently); this column is "
+                "not provably batch-stable, so the job falls back to the full-frame oracle.",
             )
     return None
 
