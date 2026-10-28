@@ -20,8 +20,10 @@ from decoy_engine.execution.native._text_redact_kernel import load_text_redact_k
 from decoy_engine.storm.detectors import _SPAN_DETECTORS, iter_spans
 
 # All eleven built-in detectors now run in Rust on an eligible cell: the eight original
-# lookaround-free ones plus the three lookaround detectors ported to fancy-regex. Nothing but an
-# ineligible cell (non-ASCII / 0x1c-0x1f / surrogate / non-string) now declines to Python.
+# lookaround-free ones (`regex` crate) plus the three lookaround detectors ported as hand-written
+# ASCII byte scanners (`fancy-regex` was tried and rejected on perf; see the text_redact.rs module
+# doc). Nothing but an ineligible cell (non-ASCII / 0x1c-0x1f / surrogate / non-string) now
+# declines to Python.
 RUST_DETECTORS = (
     "email",
     "us_phone",

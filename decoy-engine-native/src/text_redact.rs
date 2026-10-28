@@ -836,6 +836,26 @@ fn text_redact_supported_ids() -> Vec<String> {
     SUPPORTED_IDS.iter().map(|s| (*s).to_string()).collect()
 }
 
+/// The scanner's hand-copied USPS street-suffix vocabulary, in ordered-alternation order, for the
+/// vocabulary-agreement test (plan 7). Exposed so the test can assert ordered list-equality against
+/// the Python oracle's `_USPS_STREET_SUFFIXES`; a one-sided edit (add "pike"/"run") then fails CI
+/// instead of silently diverging on the native path.
+#[cfg(feature = "extension-module")]
+#[pyfunction]
+fn text_redact_street_suffixes() -> Vec<String> {
+    STREET_SUFFIXES.iter().map(|s| (*s).to_string()).collect()
+}
+
+/// The scanner's hand-copied secondary-unit designators (Pub 28 C2; `#` is a literal), in pattern
+/// order, for the vocabulary-agreement test (plan 7). The oracle embeds these directly inside
+/// `_STREET_ADDRESS_RE`, so the test ties this list back to that pattern body rather than to a
+/// separately copied Python list.
+#[cfg(feature = "extension-module")]
+#[pyfunction]
+fn text_redact_street_units() -> Vec<String> {
+    STREET_UNITS.iter().map(|s| (*s).to_string()).collect()
+}
+
 /// Run one ported validator by name, for the validator KATs (plan 7.3).
 #[cfg(feature = "extension-module")]
 #[pyfunction]
@@ -877,6 +897,8 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(text_redact_candidates, m)?)?;
     m.add_function(wrap_pyfunction!(text_redact_catalog_version, m)?)?;
     m.add_function(wrap_pyfunction!(text_redact_supported_ids, m)?)?;
+    m.add_function(wrap_pyfunction!(text_redact_street_suffixes, m)?)?;
+    m.add_function(wrap_pyfunction!(text_redact_street_units, m)?)?;
     m.add_function(wrap_pyfunction!(text_redact_validate, m)?)?;
     m.add_function(wrap_pyfunction!(text_redact_is_eligible, m)?)?;
     m.add_function(wrap_pyfunction!(text_redact_class_members, m)?)?;

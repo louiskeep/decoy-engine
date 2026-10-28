@@ -3,8 +3,9 @@
 The oracle's `iter_spans` runs eleven detectors in Python per cell. C6c-ii moved the eight
 lookaround-free detectors (`email`, `us_phone`, `pan`, `iban`, `ipv4`, `icd10`, `npi`, `url`)
 into the compiled companion for cells in the ASCII-safe domain; the lookaround port then added the
-remaining three (`ssn`, `us_zip`, `street_address`, which use lookahead/lookbehind) via
-fancy-regex, so all eleven built-ins run in Rust on an eligible cell. On that domain Python's
+remaining three (`ssn`, `us_zip`, `street_address`, which use lookahead/lookbehind) as hand-written
+ASCII byte scanners (`fancy-regex` was tried and rejected on measured perf; see the text_redact.rs
+module doc), so all eleven built-ins run in Rust on an eligible cell. On that domain Python's
 `\\d`/`\\s`/`\\w`/`\\b`/ASCII case-fold classes and the Rust `(?-u)` classes coincide
 code-point-for-code-point (plan 2.1/2.2). Every other cell (non-ASCII, a 0x1c-0x1f separator, a
 lone surrogate, a non-string) still stays on the unchanged Python path, so the spliced output is
@@ -40,8 +41,8 @@ if TYPE_CHECKING:
 # The eleven Rust-supported detector ids, in catalog order. The index returned by the Rust kernel
 # is a position in this tuple; it maps back to the id (and its `[REDACTED:<id>]` label) here. The
 # first eight are the lookaround-free detectors (regex crate); the last three are the lookaround
-# detectors ported to fancy-regex, appended so the first eight keep their indices. Keep in sync
-# with `decoy-engine-native/src/text_redact.rs::SUPPORTED_IDS`.
+# detectors ported as hand-written ASCII byte scanners, appended so the first eight keep their
+# indices. Keep in sync with `decoy-engine-native/src/text_redact.rs::SUPPORTED_IDS`.
 SUPPORTED_IDS: tuple[str, ...] = (
     "email",
     "us_phone",
