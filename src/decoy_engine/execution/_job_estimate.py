@@ -58,14 +58,21 @@ class JobEstimate:
     notes: tuple[str, ...] = field(default_factory=tuple)
 
 
-def _generation_rows(config: dict[str, Any]) -> int:
-    """Total declared generate-table row count, 0 if none/undeclared."""
+def _generation_rows(config: dict[str, Any]) -> tuple[int, bool]:
+    """Total declared generate-table row count, and whether any count was declared.
+
+    An explicit row_count of 0 is declared zero-work, distinct from an undeclared
+    count: the caller prices the former and flags the latter unpriceable."""
     total = 0
+    declared = False
     for table in config.get("tables", []) or []:
-        rows = table.get("row_count") or table.get("rows")
-        if isinstance(rows, int) and rows > 0:
+        rows = table.get("row_count")
+        if rows is None:
+            rows = table.get("rows")
+        if isinstance(rows, int) and not isinstance(rows, bool) and rows >= 0:
             total += rows
-    return total
+            declared = True
+    return total, declared
 
 
 def estimate_job(config_dump: dict[str, Any], base_dir: Path | str) -> JobEstimate:
@@ -77,10 +84,12 @@ def estimate_job(config_dump: dict[str, Any], base_dir: Path | str) -> JobEstima
     try:
         return _estimate(config_dump, base_dir)
     except Exception as exc:
+        # Name only the exception TYPE: formatting `exc` itself can raise (a broken
+        # __str__), which would escape the advisory contract's never-raises guarantee.
         return JobEstimate(
             route="unknown",
             priceable=False,
-            notes=(f"estimate unavailable ({type(exc).__name__}: {exc})",),
+            notes=(f"estimate unavailable ({type(exc).__name__})",),
         )
 
 
@@ -156,8 +165,8 @@ def _estimate(config_dump: dict[str, Any], base_dir: Path | str) -> JobEstimate:
     # priced here (v1 scopes byte-pricing to mask tables), so priceable=True with
     # peak_bytes=None is intentional.
     if has_generate and not has_mask:
-        rows = _generation_rows(config)
-        if rows <= 0:
+        rows, declared = _generation_rows(config)
+        if not declared:
             return JobEstimate(route, priceable=False, notes=("generate row count undeclared",))
         return JobEstimate(route, priceable=True, runtime=estimate_generation_runtime_band(rows))
 

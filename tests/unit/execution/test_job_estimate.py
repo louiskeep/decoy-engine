@@ -96,6 +96,15 @@ def test_generate_job_gets_a_rows_based_runtime_band(tmp_path: Path) -> None:
     assert large.runtime.high_seconds > small.runtime.high_seconds
 
 
+def test_generate_job_with_declared_zero_rows_is_priceable_zero_work(tmp_path: Path) -> None:
+    # An explicit row_count of 0 is declared zero-work, distinct from an undeclared
+    # count: it prices to the fixed-overhead floor band, it is not UNPRICEABLE.
+    est = estimate_job(_generate_config(tmp_path, 0), tmp_path)
+    assert est.priceable is True, est
+    assert est.runtime is not None
+    assert est.runtime.low_seconds > 0
+
+
 def test_mixed_mask_and_generate_is_unpriceable(tmp_path: Path) -> None:
     table = pa.table({"n": pa.array(list(range(50)), type=pa.int64())})
     cfg = _single_table_config(tmp_path, table, {"name": "n", "strategy": "redact"})
@@ -154,18 +163,49 @@ def test_router_rejection_returns_unknown_unpriceable(
     assert cfg == before
 
 
+def test_estimate_never_raises_even_when_the_error_str_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The advisory fallback names only the exception TYPE: formatting the exception
+    # itself must not be able to escape the never-raises contract.
+    from decoy_engine.execution import _pipeline_routing as routing
+
+    class BrokenStrError(Exception):
+        def __str__(self) -> str:
+            raise RuntimeError("str boom")
+
+    def boom(*args: Any, **kwargs: Any) -> Any:
+        raise BrokenStrError()
+
+    monkeypatch.setattr(routing, "decide_execution_route", boom)
+    table = pa.table({"n": pa.array(list(range(50)), type=pa.int64())})
+    cfg = _single_table_config(tmp_path, table, {"name": "n", "strategy": "redact"})
+    est = estimate_job(cfg, tmp_path)  # must not raise
+    assert est.route == "unknown"
+    assert est.priceable is False
+    assert est.notes and "BrokenStrError" in est.notes[0]
+
+
 def test_estimate_reads_a_bounded_sample_never_the_whole_table(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from decoy_engine.profile import _readers
 
-    def forbidden(self: Any) -> Any:
-        raise AssertionError("estimate_job must not full-read the source")
+    to_frame_calls = 0
+    real_to_frame = _readers.ParquetFileSource.to_frame
 
-    monkeypatch.setattr(_readers.ParquetFileSource, "to_frame", forbidden)
+    def counting_to_frame(self: Any, *args: Any, **kwargs: Any) -> Any:
+        nonlocal to_frame_calls
+        to_frame_calls += 1
+        return real_to_frame(self, *args, **kwargs)
+
+    monkeypatch.setattr(_readers.ParquetFileSource, "to_frame", counting_to_frame)
     table = pa.table({"n": pa.array(list(range(30_000)), type=pa.int64())})
     cfg = _single_table_config(tmp_path, table, {"name": "n", "strategy": "redact"})
     est = estimate_job(cfg, tmp_path)
+    # Prove the full-read seam is never hit directly, not merely that a hit would
+    # be swallowed into priceable=False.
+    assert to_frame_calls == 0
     assert est.priceable is True, est
 
 
