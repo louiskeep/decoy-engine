@@ -1,4 +1,5 @@
-Status: record (HEAD START — awaiting human review; no cross-model review run)
+Status: record (completion slice done; awaiting the orchestrator's code-level Dennis -> Codex gate on
+the pushed branch — no cross-model CODE review run here)
 
 # C6c-ii follow-up build record: porting the three lookaround detectors into the Rust kernel
 
@@ -6,6 +7,15 @@ Plan: `docs/plans/2026-10-09-c6c-ii-text-redact-rust-kernel.md` (the lookaround 
 later slice" named in plan section 2). Builds on the C6c-ii record
 `docs/records/2026-10-09-c6c-ii-text-redact-rust-kernel-build.md`.
 Branch `claude/text-redact-detection-speedup` off engine main `b63be00`.
+
+**Completion (A-7 remote slice, 2026-10-28, plan
+`docs/plans/2026-10-28-a7-text-redact-speedup-completion-remote.md`).** Rebased onto current engine
+`main` (the physical-seam sentry's allowlist for the changed native modules preserved; the sentry
+RAN and PASSED). Rebuilt the companion and re-ran the byte-parity gate with an explicit
+companion-present preflight (0 skips). Added the vocabulary + pattern-agreement test (plan 7) and
+fixed the perf harness to measure the SHIPPED 8-detector kernel vs the 11-detector port with
+run-to-run variance + tail (plan 4.1). Detection is unchanged (byte-identical, perf-only); the
+Byte-parity evidence and Perf matrix sections below are updated accordingly.
 
 ## Goal
 
@@ -98,7 +108,8 @@ output is unchanged.
   word/number tokens rejected, zip+4), and street_address (house number + USPS suffix + trailing
   punctuation, abbreviated case-insensitive forms, the `\.?` dot consumption).
 - **Python differential vs the oracle** (`tests/native/test_c6c_ii_text_redact_rust.py`, companion
-  present): 181 pass. New tests added by this slice:
+  present): 187 pass, 0 skipped (the completion slice added the preflight + vocabulary/pattern-
+  agreement tests below). New tests:
   - `test_lookaround_raw_candidates_match_python_on_an_adversarial_corpus`: 4,000 generated
     ASCII cells stressing each ported detector's boundary semantics (reserved SSN blocks, optional
     hyphens, zip word/decimal guards, house-number/suffix/unit/punctuation shapes, plus raw random
@@ -106,6 +117,20 @@ output is unchanged.
     span-for-span on every cell — before any merge.
   - `test_lookaround_merged_output_matches_oracle_on_the_adversarial_corpus`: 3,000 cells, the
     lookaround-only and all-detector selections, labeled and unlabeled, end-to-end vs the oracle.
+  - `test_preflight_companion_present_kernel_loads_with_expected_catalog` (completion-plan 9): a
+    companion-present preflight that shares the exact `load_text_redact_kernel()` condition every
+    `@NEEDS_TR_KERNEL` test guards on, so a loaded kernel here proves the byte-parity gate RAN and
+    did not silently skip. With `DECOY_REQUIRE_TR_KERNEL=1` an absent/old/catalog-skewed companion
+    is a FAILURE, not a skip; it pins the expected `CATALOG_VERSION` + ordered `SUPPORTED_IDS` on
+    both the Python and the compiled side.
+  - `test_the_oracle_patterns_and_flags_match_the_pinned_scanner_contract` +
+    `test_the_rust_street_vocabularies_reconstruct_the_oracle_pattern` + per-alternative
+    differentials (completion-plan 7): a frozen snapshot of every detector's oracle regex body +
+    flags (a one-sided boundary/quantifier/lookahead/flag edit fails CI and forces a coordinated
+    `CATALOG_VERSION` bump), the Rust `STREET_SUFFIXES`/`STREET_UNITS` vocabularies exposed from the
+    companion and asserted to reconstruct the oracle's suffix/unit alternations, and targeted
+    differentials for every suffix + unit alternative (plain and optional-dot) and street-name
+    repetition backtracking (the random corpus draws mostly from fixed examples).
   - The existing per-detector raw-candidate differential (`RUST_DETECTORS` now = all eleven) and the
     full corpus × selection × label matrix re-run byte-identical.
 - **Shared-kernel regression (text_mask / FPE / parity / physical / e2e), companion present**: the
@@ -115,61 +140,84 @@ output is unchanged.
   contract (ssn/us_zip/street_address now reach the Rust candidate call / detect-splice path); their
   byte-parity assertions are unchanged and still green.
 
-## Perf matrix (plan 7.7), `scripts/bench_text_redact.py`
+## Perf matrix (plan 7.7 / completion-plan 4.1), `scripts/bench_text_redact.py`
 
-Paired baseline (forced-Python path) vs new (compiled kernel) on identical fixtures, isolated
-subprocesses, release build. Latency floor `median_new <= 1.05 * median_baseline` and peak-RSS
-budget `peak_rss_new <= 1.20 * peak_rss_baseline` enforced every row; R-representative speedup
-reported.
+**Baseline correction (completion-plan 4.1).** The earlier harness forced
+`load_text_redact_kernel = lambda: None`, so its "baseline" was FULL PYTHON, not the shipped kernel;
+the numbers it printed (R-representative 3.69x) were a full-Python comparison mislabelled as a
+shipped-kernel one. A regression against what actually ships could have hidden under a green run. The
+harness now measures three paths on an identical fixture, host and release build, each in its own
+subprocess for isolated peak RSS:
 
-Before (the shipped C6c-ii 8-detector kernel) vs after (this slice's 11-detector scanner kernel),
-200,000 rows, 5 reps + 1 warmup, same host:
+- **baseline8** — the SHIPPED path: the eight lookaround-free detectors in the compiled kernel, with
+  `ssn`/`us_zip`/`street_address` on the per-cell Python scan. Reproduced from the same build by
+  narrowing the Rust-supported set to the eight (so the three lookaround ids route to
+  `merge_text_redact_spans`'s Python `finditer`), exactly the pre-port routing. This is the baseline
+  the port must not regress against.
+- **new11** — the lookaround-port path: all eleven detectors in the compiled kernel.
+- **python** — full Python. REPORTED ONLY, never gated.
+
+The acceptance guard (latency floor `median_new11 <= 1.05 * median_baseline8`, RSS budget
+`peak_rss_new11 <= 1.20 * peak_rss_baseline8`) is applied to **new11 vs baseline8** every row. Before
+timing, the driver asserts baseline8, new11 and full Python redact BYTE-IDENTICALLY on a 3,000-cell
+representative + 3,000-cell lookaround-only sample, so the three paths are measured doing the same
+work.
+
+200,000 rows, 10 reps + 1 warmup (the completion plan sanctions 200k with >= 5 reps over 1M with 3,
+because a credible run-to-run stdev/tail needs reps, and per-cell throughput extrapolates linearly to
+1M). Variance is RUN-TO-RUN (stdev over reps / median), NOT per-cell; tail is the observed max/median
+(a handful of reps cannot support a reliable p95/p99, so an observed tail is reported instead):
 
 ```
-row                 before speedup    after speedup   after gates
-R-representative         1.94x            3.68x        lat OK / rss OK   (hit 95.0%)
-R-all-ineligible         0.98x            1.01x        lat OK / rss OK   (hit  0.0%)
-R-python-only            0.99x            2.97x        lat OK / rss OK   (hit 95.0%)
-R-short-no-match         1.35x            2.25x        lat OK / rss OK   (hit 100.0%)
+row                base8 med(s)  new11 med(s)  x vs base8  x vs py  lat<=1.05  rss<=1.20  new11 stdev  new11 tail  hit%
+R-representative        12.3042        7.1499      1.72x     3.94x        OK         OK         8.3%       1.23x   95.0%
+R-all-ineligible        28.7167       27.9805      1.03x     1.00x        OK         OK         6.3%       1.14x    0.0%
+R-python-only            8.9844        3.1344      2.87x     2.83x        OK         OK         7.6%       1.14x   95.0%
+R-short-no-match         0.8898        0.6934      1.28x     1.95x        OK         OK        12.8%       1.22x  100.0%
 ```
 
-Headline: `R-representative` roughly doubled (1.94x -> 3.68x) and `R-python-only` went from no gain
-(0.99x) to 2.97x — that row is the direct measure of the port, since it selects only the three
-lookaround detectors, which previously ran entirely in Python even on the native path. All rows pass
-the latency floor and the RSS budget (no regression). The rejected fancy-regex variant, for
-contrast, measured R-representative 1.08x and R-python-only 0.45x (FAIL).
+Headline, honestly scoped: against the SHIPPED 8-detector kernel the representative workload is
+**1.72x** and the lookaround-only selection (the direct measure of the port — those three detectors
+previously ran in Python even on the native path) is **2.87x**. The full-Python speedup, reported for
+context only, is 3.94x representative. `R-all-ineligible` (every cell non-ASCII, 0% hit) is 1.03x:
+the port adds no measurable overhead on the worst-case routing path, well inside the latency floor.
+RSS stays within budget every row (representative: new11 460 MB vs baseline8 442 MB = 1.04x). The
+rejected fancy-regex variant, for contrast, measured R-representative 1.08x and R-python-only 0.45x
+(FAIL) against full Python.
 
-Acceptance scale, the plan's pinned 1,000,000 rows, 3 reps + 1 warmup (same methodology as the
-original C6c-ii record), this slice's scanner kernel:
+Variance/tail: run-to-run stdev is 6.3–12.8% and the observed tail (max/median) is 1.14–1.23x on this
+shared cloud container; the fixed-overhead rows (short-no-match) show the widest relative spread, as
+expected for sub-second medians. The gate margins (1.72x / 2.87x headroom over a 1.05x floor) are far
+larger than this dispersion, so the PASS verdicts are not noise-sensitive. At this rate new11 runs the
+representative workload at ~28.0k rows/s single-thread (200,000 / 7.15 s); linear extrapolation puts
+1M at ~35.7 s (the earlier 1M figure of 25.97 s was measured on a less-contended host and against the
+mislabelled full-Python baseline, so it is not directly comparable).
 
-```
-row                base med(s)  new med(s)  speedup  lat<=1.05  rss<=1.20   hit%
-R-representative       95.8068     25.9686    3.69x         OK         OK  95.0%
-R-all-ineligible      100.5248     99.9790    1.01x         OK         OK   0.0%
-R-python-only          33.1778     11.1822    2.97x         OK         OK  95.0%
-R-short-no-match        4.5558      1.9964    2.28x         OK         OK 100.0%
-```
-
-Versus the original C6c-ii 1M record (the 8-detector kernel: R-representative 2.09x, R-python-only
-0.95x): R-representative improved 2.09x -> 3.69x and R-python-only 0.95x -> 2.97x. The new path runs
-R-representative at ~38.5k rows/s single-thread (1,000,000 / 25.97s). All rows pass the latency floor
-and the RSS budget.
+Reproduce with `python scripts/bench_text_redact.py --rows 200000 --reps 10` (or `--rows 1000000
+--reps 10` where time allows); `--equivalence-check` runs just the byte-parity pre-check.
 
 ### ASCII-hit-rate assumptions
 
 The value depends on the ASCII-cell hit rate of real free text. The representative fixture
 (clinical-notes-style, ~5% non-ASCII fraction) measures a 95.0% hit rate; at that rate 95% of cells
 take the all-Rust path and 5% fall back to Python. The latency floor guarantees no regression even
-at a 0% hit rate (R-all-ineligible: 1.01x). The reported speedup scales with the hit rate.
+at a 0% hit rate (R-all-ineligible: 1.03x vs the shipped kernel). The reported speedup scales with
+the hit rate.
 
 ## Companion build in this environment
 
 The compiled companion builds and loads here. Toolchain: `python3.12` venv with `pip install -e
-.[dev]`; Rust pinned `1.98.0` (per `rust-toolchain.toml`) installed via rustup; built with
-`maturin develop --release` into the venv. `cargo test --no-default-features`, `cargo fmt --check`,
-and `cargo clippy --all-targets -- -D warnings` are green. `ruff check src tests`, `ruff format
---check`, and `mypy` on the three changed native modules are green (mypy's repo-wide run has
-pre-existing import errors for the optional google-cloud / tomli extras, unrelated to this change).
+.[dev]`; Rust pinned `1.98.0` (per `rust-toolchain.toml`) installed via rustup; `maturin` 1.15.0;
+built with `maturin develop --release` into the venv. `cargo test --no-default-features` (109 lib +
+integration tests), `cargo fmt --check`, and `cargo clippy --all-targets -- -D warnings` are green.
+The full byte-parity acceptance (`DECOY_REQUIRE_TR_KERNEL=1 pytest tests/native/
+test_c6c_ii_text_redact_rust.py -m "perf or not perf"`) ran 187 passed / 0 skipped, and the
+physical-seam sentry `test_production_execution_modules_are_byte_identical_to_origin_main` RAN and
+PASSED (not skipped — `origin/main` was fetched first). `ruff check`/`ruff format --check` are green;
+`mypy src/decoy_engine testflight` is green (597 files). A freshly-resolved newer numpy/`deprecated`
+ships PEP 695 `type` stubs that the pinned 3.10 mypy target rejects before reaching project code, so
+the local run used `--python-version 3.12` to get past third-party stubs; CI pins compatible versions
+and runs at 3.10.
 
 ## Judgment calls / for the reviewer to scrutinise
 
@@ -180,8 +228,13 @@ pre-existing import errors for the optional google-cloud / tomli extras, unrelat
   end. The 4,000-cell raw-candidate differential + the 3,000-cell merged differential + the golden
   clinical notes are the empirical gate; a cold read of `scan_street`/`street_rest`/`street_unit`
   against `_STREET_ADDRESS_RE` is still worth it. If a divergence is ever found, the fail-closed
-  move is to drop that one detector back out of `SUPPORTED_IDS` (bump the catalog version) so it
-  runs in Python again — the merge/routing already handle a supported-set change.
+  move is to REVERT the port (or force the full-Python path for all three ported detectors), NOT a
+  surgical single-detector drop (completion-plan 6): `scan_lookaround` dispatches FIXED indices
+  (8 -> ssn, 9 -> us_zip, 10 -> street), so dropping `ssn` or `us_zip` from `SUPPORTED_IDS` shifts
+  the later indices without changing that dispatch and a remaining detector then invokes the wrong
+  scanner while the catalog-agreement test still passes. A kept selective fallback must, in one
+  change, update the index dispatch, update BOTH `SUPPORTED_IDS` arrays (Rust + Python), bump
+  `CATALOG_VERSION`, and re-verify the remaining detectors AND `text_mask` against their oracles.
 - `SUPPORTED_IDS` appends the three (indices 8/9/10) rather than reordering, so the existing eight
   keep their indices; only the catalog version and the supported set changed.
 - The u32-offset deferral from the original C6c-ii record still applies (a single > 2^32-code-point
