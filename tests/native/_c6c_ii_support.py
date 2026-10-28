@@ -99,13 +99,13 @@ SHAPES: dict[str, list[str | None]] = {
     "ragged": [None, "a@b.com", "", None, "x 123-45-6789 y", "café", None],
 }
 
-# Detector-selection permutations: None (all), supported-only, python-only, mixed, and the two
+# Detector-selection permutations: None (all), supported-only, lookaround-only, mixed, and the two
 # tie-sensitive orderings over npi/us_phone (both Rust-run).
 DETECTOR_SELECTIONS: dict[str, tuple[str, ...] | None] = {
     "all": None,
     "email_only": ("email",),
     "rust_subset": ("email", "ipv4", "pan"),
-    "python_only": ("ssn", "us_zip", "street_address"),
+    "lookaround": ("ssn", "us_zip", "street_address"),
     "mixed": ("ssn", "email", "us_zip", "ipv4"),
     "tie_npi_then_phone": ("npi", "us_phone"),
     "tie_phone_then_npi": ("us_phone", "npi"),

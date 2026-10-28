@@ -23,9 +23,10 @@
 //! caller passes one `token`; they stay separate decisions here.
 //!
 //! Established methodology: no new algorithm. Detection is `text_redact::candidates_for_cell`
-//! (the `regex` crate for the lookaround-free detectors, `fancy-regex` for the three lookaround
-//! ones); the merge is the stable-sort plus sweep that `merge_text_redact_spans` uses. Cells are
-//! ASCII-only by construction, where byte offsets equal the code-point offsets Python slices with.
+//! (the `regex` crate for the lookaround-free eight, hand-written ASCII byte scanners for the
+//! three lookaround ones); the merge is the stable-sort plus sweep that `merge_text_redact_spans`
+//! uses. Cells are ASCII-only by construction, where byte offsets equal the code-point offsets
+//! Python slices with.
 
 use crate::text_redact::{candidates_for_cell, is_eligible, CATALOG_LEN};
 
