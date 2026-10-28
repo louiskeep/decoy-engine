@@ -12,6 +12,10 @@ It composes three existing pieces plus the new runtime band:
   peak    -- `estimate_peak_bytes` over the job's size specs
   runtime -- `_throughput_calibration` (coarse, host-caveated, confidence-banded)
 
+Input is a BOUNDED SAMPLE, not metadata-only and not a full read: `profile_source`
+reads up to ~10k rows per source. The reported route is a coarse layer-1 prediction
+(it omits later chunk/native dispatch and mixed admission).
+
 Pre-run string pricing: like the engine's own byte-estimate router, a variable-
 width column with no resident sample is UNPRICEABLE (the profile carries no
 string-length statistic). Such a job returns `priceable=False` with the route
@@ -136,10 +140,21 @@ def _estimate(config_dump: dict[str, Any], base_dir: Path | str) -> JobEstimate:
         # run-time concern. Advisory estimate, so this is the honest coarse route.
         use_byte_estimate_routing=False,
         use_probe_routing=False,
+        # STORM needs the resident output, so it disqualifies sequential/out-of-core.
+        run_storm=bool(config.get("run_storm")),
     )
 
+    # A mixed job's generated volume is not priced; refuse rather than under-price.
+    if has_generate and has_mask:
+        return JobEstimate(
+            route,
+            priceable=False,
+            notes=("mixed mask+generate job: generated volume is not priced",),
+        )
+
     # Generate-only: runtime is row/provider-bound; peak from generation is not
-    # priced here (v1 scopes byte-pricing to mask tables).
+    # priced here (v1 scopes byte-pricing to mask tables), so priceable=True with
+    # peak_bytes=None is intentional.
     if has_generate and not has_mask:
         rows = _generation_rows(config)
         if rows <= 0:

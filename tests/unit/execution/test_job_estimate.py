@@ -8,12 +8,15 @@ runtime band, and a broken config returns a flagged result rather than crashing.
 
 from __future__ import annotations
 
+import copy
 from pathlib import Path
+from typing import Any
 
 import pyarrow as pa
 import pyarrow.parquet as pq
+import pytest
 
-from decoy_engine import estimate_job
+from decoy_engine import PipelineConfig, estimate_job
 
 _PATHS = {"full_frame", "out_of_core", "sequential"}
 
@@ -28,7 +31,7 @@ def _single_table_config(tmp_path: Path, table: pa.Table, column: dict) -> dict:
     src = _write_parquet(tmp_path, table, "t")
     return {
         "version": 1,
-        "global_settings": {"job_name": "estimate-test", "seed": 7},
+        "global_settings": {"seed": 7},
         "sources": {"t": {"type": "file", "path": src, "format": "parquet"}},
         "targets": {
             "t": {"type": "file", "path": str(tmp_path / "t.out.parquet"), "format": "parquet"}
@@ -61,10 +64,10 @@ def test_string_without_sample_is_unpriceable_not_a_raise(tmp_path: Path) -> Non
     assert est.notes  # a reason is given
 
 
-def test_generate_job_gets_a_rows_based_runtime_band(tmp_path: Path) -> None:
-    cfg = {
+def _generate_config(tmp_path: Path, rows: int) -> dict:
+    raw = {
         "version": 1,
-        "global_settings": {"job_name": "gen-test", "seed": 7},
+        "global_settings": {"seed": 7},
         "sources": {},
         "targets": {
             "g": {"type": "file", "path": str(tmp_path / "g.out.parquet"), "format": "parquet"}
@@ -72,18 +75,98 @@ def test_generate_job_gets_a_rows_based_runtime_band(tmp_path: Path) -> None:
         "tables": [
             {
                 "name": "g",
-                "mode": "generate",
-                "row_count": 1_000_000,
-                "columns": [{"name": "x", "strategy": "faker", "provider": "first_name"}],
+                "row_count": rows,
+                "generate_columns": [{"name": "x", "type": "sequence", "start": 1}],
             }
         ],
     }
+    return PipelineConfig.model_validate(raw).model_dump()
+
+
+def test_generate_job_gets_a_rows_based_runtime_band(tmp_path: Path) -> None:
+    small = estimate_job(_generate_config(tmp_path, 1_000_000), tmp_path)
+    large = estimate_job(_generate_config(tmp_path, 100_000_000), tmp_path)
+    for est in (small, large):
+        assert est.priceable is True, est
+        assert est.peak_bytes is None  # generate-only: intentionally unpriced peak
+        assert est.runtime is not None
+        assert 0 < est.runtime.low_seconds <= est.runtime.high_seconds
+        assert "generat" in est.runtime.basis.lower()
+    assert small.runtime is not None and large.runtime is not None
+    assert large.runtime.high_seconds > small.runtime.high_seconds
+
+
+def test_mixed_mask_and_generate_is_unpriceable(tmp_path: Path) -> None:
+    table = pa.table({"n": pa.array(list(range(50)), type=pa.int64())})
+    cfg = _single_table_config(tmp_path, table, {"name": "n", "strategy": "redact"})
+    gen = _generate_config(tmp_path, 1_000_000)
+    cfg["tables"].extend(gen["tables"])
+    cfg["targets"].update(gen["targets"])
+    cfg = PipelineConfig.model_validate(cfg).model_dump()
     est = estimate_job(cfg, tmp_path)
-    # Generation may or may not classify as a priceable generate-only job depending
-    # on config normalization; the contract is only that it never raises and, when
-    # priced, gives an ordered band.
-    if est.priceable and est.runtime is not None:
-        assert est.runtime.low_seconds <= est.runtime.high_seconds
+    assert est.priceable is False
+    assert est.runtime is None and est.peak_bytes is None
+    assert any("mixed" in n for n in est.notes)
+
+
+def test_run_storm_is_forwarded_to_the_router(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from decoy_engine.execution import _pipeline_routing as routing
+
+    seen: list[bool] = []
+    real = routing.decide_execution_route
+
+    def spy(*args: Any, **kwargs: Any) -> Any:
+        seen.append(bool(kwargs.get("run_storm")))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(routing, "decide_execution_route", spy)
+    table = pa.table({"n": pa.array(list(range(50)), type=pa.int64())})
+    cfg = _single_table_config(tmp_path, table, {"name": "n", "strategy": "redact"})
+    estimate_job(cfg, tmp_path)
+    estimate_job({**cfg, "run_storm": True}, tmp_path)
+    assert seen == [False, True]
+
+
+def test_router_rejection_returns_unknown_unpriceable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from decoy_engine.execution import _pipeline_routing as routing
+    from decoy_engine.execution._errors import ExecutionError
+
+    captured: dict[str, Any] = {}
+
+    def reject(*args: Any, **kwargs: Any) -> Any:
+        captured.update(kwargs)
+        raise ExecutionError(code="fk_full_frame_oom_risk_rejected", message="rejected")
+
+    monkeypatch.setattr(routing, "decide_execution_route", reject)
+    table = pa.table({"n": pa.array(list(range(50)), type=pa.int64())})
+    cfg = _single_table_config(tmp_path, table, {"name": "n", "strategy": "redact"})
+    before = copy.deepcopy(cfg)
+    est = estimate_job(cfg, tmp_path)
+    assert est.route == "unknown"
+    assert est.priceable is False
+    assert est.notes and "ExecutionError" in est.notes[0]
+    assert captured["use_byte_estimate_routing"] is False
+    assert captured["use_probe_routing"] is False
+    assert cfg == before
+
+
+def test_estimate_reads_a_bounded_sample_never_the_whole_table(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from decoy_engine.profile import _readers
+
+    def forbidden(self: Any) -> Any:
+        raise AssertionError("estimate_job must not full-read the source")
+
+    monkeypatch.setattr(_readers.ParquetFileSource, "to_frame", forbidden)
+    table = pa.table({"n": pa.array(list(range(30_000)), type=pa.int64())})
+    cfg = _single_table_config(tmp_path, table, {"name": "n", "strategy": "redact"})
+    est = estimate_job(cfg, tmp_path)
+    assert est.priceable is True, est
 
 
 def test_unprofilable_source_returns_unknown_never_raises(tmp_path: Path) -> None:
@@ -91,7 +174,7 @@ def test_unprofilable_source_returns_unknown_never_raises(tmp_path: Path) -> Non
     # estimate must return a flagged "unknown", never propagate the error.
     cfg = {
         "version": 1,
-        "global_settings": {"job_name": "broken", "seed": 1},
+        "global_settings": {"seed": 1},
         "sources": {
             "t": {"type": "file", "path": str(tmp_path / "missing.parquet"), "format": "parquet"}
         },
