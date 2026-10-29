@@ -10,6 +10,7 @@ New to Decoy? Start with the quickstart, then the recipes.
 - [Recipes](recipes.md): five runnable recipes (CSV, folder + FKs, generate, detect PII, CI).
 - [Strategy catalog](strategies.md): every mask and generation strategy.
 - [Free-text NER](guides/free-text-ner.md): activating spaCy person-name/location detection on `text_redact`.
+- [Retention contract](retention-contract.md): the policy/report vocabulary shared by the platform sweeper and `decoy local-cleanup`.
 - [Relationships](relationships.md): foreign-key and referential-integrity preservation.
 - [Determinism](determinism.md): the seed and key protocol; what is and is not deterministic.
 - [CLI](cli.md): the `decoy` command surface.
