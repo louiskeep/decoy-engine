@@ -646,12 +646,7 @@ def _commit(
     prepared_dir = _validated_child(envelope, assigned, output_dir, publish)
     staging_output_dir = prepared_dir.staging_dir
     # Verify the child's claim structurally BEFORE reading any of it.
-    _pub.verify_child_envelope(
-        prepared_dir,
-        _pub.PublicationRequest(
-            destination=output_dir or staging_output_dir, operation_id=publish.operation_id or ""
-        ),
-    )
+    _pub.verify_child_envelope(prepared_dir, publish.request_for(output_dir or staging_output_dir))
     try:
         outputs = {
             table: pq.read_table(  # type: ignore[no-untyped-call, unused-ignore]

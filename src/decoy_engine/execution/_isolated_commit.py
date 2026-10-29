@@ -47,10 +47,29 @@ _STAGING_DIR_PREFIX = "_decoy_isolated_stage_"
 
 @dataclass(frozen=True)
 class PublishContext:
-    """Caller-fixed identity for the parent's one publication (stable across retries)."""
+    """Caller-fixed publication request for the parent's one publication (stable across
+    retries). `request_for` is the ONLY place the parent builds a request, so the child
+    gate and the promotion can never see different checks, tables, unit or overwrite."""
 
     operation_id: str | None = None
     cancelled: Callable[[], bool] | None = None
+    checks: tuple[_pub.CheckResult, ...] = ()
+    validation_policy_fingerprint: str | None = None
+    expected_tables: tuple[str, ...] | None = None
+    unit: str = _pub.UNIT_IMMUTABLE_DIRECTORY
+    overwrite: _pub.OverwritePolicy = _pub.ErrorIfDifferent()  # noqa: RUF009
+
+    def request_for(self, destination: Path) -> _pub.PublicationRequest:
+        return _pub.PublicationRequest(
+            destination=destination,
+            operation_id=self.operation_id or uuid.uuid4().hex,
+            unit=self.unit,
+            cancelled=self.cancelled,
+            checks=self.checks,
+            validation_policy_fingerprint=self.validation_policy_fingerprint,
+            expected_tables=self.expected_tables,
+            overwrite=self.overwrite,
+        )
 
 
 def sibling_staging_dir(output_dir: Path) -> Path:
@@ -89,11 +108,7 @@ def atomic_commit(
         raise TypeError("atomic_commit promotes only a validated ChildPreparationEnvelope")
     staging_dir = envelope.staging_dir
     publish = publish or PublishContext()
-    request = _pub.PublicationRequest(
-        destination=output_dir,
-        operation_id=publish.operation_id or uuid.uuid4().hex,
-        cancelled=publish.cancelled,
-    )
+    request = publish.request_for(output_dir)
     output_dir.parent.mkdir(parents=True, exist_ok=True)
     receipt = _pub.promote_child_envelope(envelope, request)
     if receipt.outcome == "already_committed":

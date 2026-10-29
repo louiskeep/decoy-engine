@@ -13,6 +13,9 @@ import stat
 from pathlib import Path
 from typing import Any
 
+import pyarrow as pa
+import pyarrow.parquet as pq
+
 from decoy_engine.errors import DecoyError
 from decoy_engine.publication._local_directory import _refuse, gate_request
 from decoy_engine.publication._types import ChildPreparationEnvelope, PublicationRequest
@@ -79,7 +82,7 @@ def verify_child_envelope(envelope: ChildPreparationEnvelope, request: Publicati
     directory, every declared table is a regular `<table>.parquet`, the row-count keys
     equal the declared tables exactly, and no undeclared `.parquet` file is present.
     """
-    gate_request(request)
+    gate_request(request)  # admission + required-check rejection before ANY filesystem read
 
     def invalid() -> Exception:
         return _refuse(request, "rejected", "child_envelope_invalid")
@@ -106,3 +109,13 @@ def verify_child_envelope(envelope: ChildPreparationEnvelope, request: Publicati
         raise invalid() from exc
     if present != {f"{t}.parquet" for t in declared}:
         raise invalid()
+    if request.expected_tables is not None and set(request.expected_tables) != declared:
+        raise invalid()
+    # Footers only: the claimed row counts are checked without deserializing any payload.
+    for table, expected_rows in envelope.row_counts:
+        try:
+            meta = pq.read_metadata(root / f"{table}.parquet")
+        except (OSError, pa.ArrowException) as exc:
+            raise invalid() from exc
+        if meta.num_rows != expected_rows:
+            raise invalid()

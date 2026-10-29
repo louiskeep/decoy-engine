@@ -151,12 +151,23 @@ class _ParquetStager:
         self._failed = False
         self._sealed = False
         self._aborted = False
+        self._uncertain = False
+        self._reason: str | None = None  # set by a refusal; never cleared
+        self.receipt: _pub.CommitReceipt | None = None
         self.abort_report: _ret.AbortReport | None = None
 
     def _require_open(self) -> None:
-        if self._failed or self._sealed or self._aborted:
+        """Writes, sidecars, validation changes and the child seal are legal only while the
+        attempt is OPEN. The machine is OPEN -> SEALED | REFUSED | FAILED | ABORTED, one way."""
+        if (
+            self._failed
+            or self._sealed
+            or self._aborted
+            or self._reason is not None
+            or self.receipt is not None
+        ):
             raise _pub.PublicationRefusedError(
-                "sink can no longer accept writes (a write failed, it was aborted, or the unit is sealed)"
+                "sink is no longer open (a write failed, it was refused, aborted, or sealed)"
             )
 
     def write(self, table: str, data: pa.Table) -> None:
@@ -274,7 +285,8 @@ class _ParquetStager:
         directory has been renamed into place (it no longer exists at the staged path).
         The typed outcome is left in ``abort_report``; an aborted sink can never commit.
         """
-        self._aborted = True
+        if self.receipt is None and not self._uncertain:
+            self._aborted = True  # a committed or possibly-committed attempt stays SEALED
         if self._staging is not None:
             try:
                 self.abort_report = self._dispose_staging(self._staging)
@@ -300,8 +312,7 @@ class ParquetPreparationSink(_ParquetStager):
     """
 
     def commit(self) -> _pub.ChildPreparationEnvelope:
-        if self._failed:
-            raise _pub.PublicationRefusedError("a write failed; the preparation cannot be sealed")
+        self._require_open()
         if self._staging is None:
             self._target.mkdir(parents=True, exist_ok=True)
         else:
@@ -344,8 +355,6 @@ class _PublishingSink(_ParquetStager):
             raise ValueError(
                 f"{type(self).__name__} publishes {self._unit}, not {self._request.unit}"
             )
-        self.receipt: _pub.CommitReceipt | None = None
-        self._reason: str | None = None
 
     def _dispose_staging(self, staging: Path) -> _ret.AbortReport:
         reason = self._reason or ("write_failed" if self._failed else "aborted")
@@ -385,8 +394,10 @@ class _PublishingSink(_ParquetStager):
         self, checks: Iterable[_pub.CheckResult], *, policy_fingerprint: str | None = None
     ) -> None:
         """Bind completed validation to the unit. A required fail/inconclusive check
-        makes commit() refuse; there is no silent downgrade."""
+        makes commit() refuse; there is no silent downgrade. Only legal while OPEN."""
         from dataclasses import replace
+
+        self._require_open()
 
         self._request = replace(
             self._request,
@@ -397,13 +408,30 @@ class _PublishingSink(_ParquetStager):
     def _enter_publication(self) -> None:
         """The one entry gate for lookup, reconcile, staging and commit: admission through
         the publication layer's single authority plus the acceptance gate, latching the
-        refusal so every path leaves the attempt in the same terminal state."""
+        refusal so every path leaves the attempt in the same terminal state. A failed,
+        aborted or refused attempt is refused here, so none of the four entry points can
+        emit a receipt (cached or fresh) from a dead attempt."""
+        self._terminal_guard()
         try:
             _proto.admit_request(self._request, self)
             _pub.reject_failed_checks(self._request)
         except _pub.PublicationRefusedError as exc:
             self._reason = exc.receipt.reason_code if exc.receipt else "refused"
             raise
+
+    def _terminal_guard(self) -> None:
+        for dead, reason in (
+            (self._aborted, "attempt_aborted"),
+            (self._failed, "attempt_invalid"),
+            (self._reason is not None, "attempt_rejected"),
+        ):
+            if dead:
+                raise _pub.PublicationRefusedError(
+                    f"this attempt is terminal ({reason}) and can never publish or report",
+                    _pub.CommitReceipt(
+                        "rejected", str(self._target), self._request.operation_id, reason
+                    ),
+                )
 
     def _before_first_stage(self) -> None:
         self._enter_publication()
@@ -437,45 +465,32 @@ class _PublishingSink(_ParquetStager):
             CommitUncertainError: the binding may be visible but sync/reread failed; the
                 possible committed generation is preserved, never deleted.
         """
+        self._enter_publication()  # admission + acceptance + terminal latch, ALWAYS first
         if self.receipt is not None:
             return self.receipt
-        if self._aborted:
+        if self._uncertain:
             raise _pub.PublicationRefusedError(
-                "this attempt was aborted and can never commit",
+                "the commit is uncertain: reconcile() instead of committing again",
                 _pub.CommitReceipt(
-                    "rejected", str(self._target), self._request.operation_id, "attempt_aborted"
+                    "rejected", str(self._target), self._request.operation_id, "commit_uncertain"
                 ),
             )
-        if self._failed:
-            raise _pub.PublicationRefusedError(
-                "a write failed; this attempt can never commit",
-                _pub.CommitReceipt(
-                    "rejected", str(self._target), self._request.operation_id, "attempt_invalid"
-                ),
-            )
-        if self._reason is not None:
-            raise _pub.PublicationRefusedError(
-                "this attempt was already refused and can never commit",
-                _pub.CommitReceipt(
-                    "rejected", str(self._target), self._request.operation_id, "attempt_rejected"
-                ),
-            )
-        self._enter_publication()
+        self._sealed = True  # every resolution below is a decision; nothing may mutate after
         if self._staging is None and self._request.expected_result_id is not None:
             found = self._latched(_pub.lookup_committed)
             if found is not None:
                 self.receipt = found
                 return found
         stage = self._ensure_staging()
-        self._sealed = True
         try:
             prepared = _pub.prepare_directory(stage, self._request, producer_rows=self._rows)
             receipt = _pub.commit_prepared(prepared)
         except _pub.CommitUncertainError:
             self._staging = None  # renamed into place: never delete a possible commit
+            self._uncertain = True
             raise
         except _pub.PublicationRefusedError as exc:
-            self._reason = exc.receipt.reason_code if exc.receipt else None
+            self._reason = exc.receipt.reason_code if exc.receipt else "refused"
             raise
         if receipt.outcome == "already_committed":
             receipt = _pub.with_cleanup(receipt, _pub.cleanup_staging(stage))
