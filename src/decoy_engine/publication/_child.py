@@ -8,11 +8,14 @@ and only then promotes it. Anything else is refused and left untouched.
 
 from __future__ import annotations
 
+import os
+import stat
 from pathlib import Path
 from typing import Any
 
 from decoy_engine.errors import DecoyError
-from decoy_engine.publication._types import ChildPreparationEnvelope
+from decoy_engine.publication._local_directory import _refuse, gate_request
+from decoy_engine.publication._types import ChildPreparationEnvelope, PublicationRequest
 
 CHILD_SCHEMA = "decoy-child-preparation/v1"
 _KEYS = {"schema", "staging_dir", "tables", "row_counts"}
@@ -67,3 +70,39 @@ def parse_child_envelope(doc: object, assigned: Path) -> ChildPreparationEnvelop
     if Path(assigned).is_symlink() or not Path(assigned).is_dir():
         raise ChildEnvelopeError("assigned staging directory is not a plain directory")
     return ChildPreparationEnvelope(Path(assigned), tables, tuple(sorted(counts)))
+
+
+def verify_child_envelope(envelope: ChildPreparationEnvelope, request: PublicationRequest) -> None:
+    """Structural check of a child's sealed directory BEFORE any Parquet read or measure.
+
+    Raises `child_envelope_invalid` (touching nothing) unless the directory is a real
+    directory, every declared table is a regular `<table>.parquet`, the row-count keys
+    equal the declared tables exactly, and no undeclared `.parquet` file is present.
+    """
+    gate_request(request)
+
+    def invalid() -> Exception:
+        return _refuse(request, "rejected", "child_envelope_invalid")
+
+    root = envelope.staging_dir
+    if root.is_symlink() or not root.is_dir():
+        raise invalid()
+    declared = set(envelope.tables)
+    if len(declared) != len(envelope.tables):
+        raise invalid()
+    if {name for name, _ in envelope.row_counts} != declared or len(envelope.row_counts) != len(
+        declared
+    ):
+        raise invalid()
+    for table in envelope.tables:
+        try:
+            if not stat.S_ISREG(os.lstat(root / f"{table}.parquet").st_mode):
+                raise invalid()
+        except OSError as exc:
+            raise invalid() from exc
+    try:
+        present = {p.name for p in root.iterdir() if p.suffix == ".parquet"}
+    except OSError as exc:
+        raise invalid() from exc
+    if present != {f"{t}.parquet" for t in declared}:
+        raise invalid()

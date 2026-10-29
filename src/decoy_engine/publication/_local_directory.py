@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from decoy_engine.publication import _codec
+from decoy_engine.publication import _protocol as _proto
 from decoy_engine.publication._lock import DestinationLock, LockTimeoutError, LockUnavailableError
 from decoy_engine.publication._measure import (
     MeasureError,
@@ -94,8 +95,15 @@ def _refuse(request: PublicationRequest, outcome: Outcome, reason: str) -> Publi
     )
 
 
+def gate_request(request: PublicationRequest) -> None:
+    """Line 1 of every request-taking operation: admission, then the acceptance gate."""
+    _proto.admit_request(request)
+    reject_failed_checks(request)
+
+
 def validate_request(request: PublicationRequest) -> None:
     """Everything decidable before the first output write; refuses, never degrades."""
+    gate_request(request)
     if request.required_free_bytes is not None:
         parent = request.destination.parent
         probe = parent
@@ -150,7 +158,7 @@ def prepare_directory(
     *,
     producer_rows: Mapping[str, int] | None = None,
 ) -> PreparedPublication:
-    reject_failed_checks(request)
+    gate_request(request)
     try:
         entries = measure_directory(stage, producer_rows=producer_rows)
     except MeasureError as exc:
@@ -269,7 +277,7 @@ def lookup_committed(request: PublicationRequest) -> CommitReceipt | None:
     Without `expected_result_id` only the same `operation_id` can be claimed before
     staging; equality of fresh content is judged after measuring, under the lock.
     """
-    reject_failed_checks(request)
+    gate_request(request)
     ex = inspect_destination(request.destination)
     if ex.kind != "committed" or ex.doc is None:
         return None
@@ -319,8 +327,7 @@ def _judge_existing(
 def commit_directory(prepared: PreparedPublication) -> CommitReceipt:
     """`immutable_directory/v1` commit; raises for every non-success outcome."""
     request, target = prepared.request, prepared.request.destination
-    if isinstance(request.overwrite, Replace):  # immutable directories are never replaced
-        raise _refuse(request, "unsupported", "replace_unsupported_for_unit")
+    gate_request(request)
     target.parent.mkdir(parents=True, exist_ok=True)
     try:
         lock = DestinationLock(target)
@@ -389,17 +396,12 @@ def _rename_and_sync(prepared: PreparedPublication) -> CommitReceipt:
 
 
 def reconcile(request: PublicationRequest) -> CommitReceipt | None:
-    """After `commit_uncertain`: take the lock, verify the binding, finish the sync."""
+    """After `commit_uncertain`: `lookup_committed` under the destination lock, so it can
+    never drift from the lookup's identity, context and admission rules."""
+    gate_request(request)
     try:
         with DestinationLock(request.destination):
-            ex = inspect_destination(request.destination)
-            if ex.kind != "committed" or ex.doc is None:
-                return None
-            if ex.doc["operation_id"] != request.operation_id and (
-                request.expected_result_id != ex.doc["result_id"]
-            ):
-                return None
-            return _existing_receipt(request, ex, durable=_sync_parent(request.destination))
+            return lookup_committed(request)
     except LockUnavailableError as exc:
         raise _refuse(request, "unsupported", "lock_unavailable") from exc
 

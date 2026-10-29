@@ -9,17 +9,20 @@ from decoy_engine.publication._child import (
     ChildEnvelopeError,
     child_envelope_to_doc,
     parse_child_envelope,
+    verify_child_envelope,
 )
 from decoy_engine.publication._dispatch import (
     commit_prepared,
     lookup_committed,
+    prepare_directory,
+    promote_child_envelope,
     reconcile,
     validate_request,
 )
 from decoy_engine.publication._local_directory import (
     cleanup_staging,
     inspect_destination,
-    prepare_directory,
+    reject_failed_checks,
     with_cleanup,
     write_private_file,
 )
@@ -34,6 +37,7 @@ from decoy_engine.publication._managed import (
 from decoy_engine.publication._protocol import (
     CommitProtocolDeclaration,
     admit,
+    admit_request,
     capability_rows,
     declaration_for,
     violations,
@@ -92,6 +96,7 @@ __all__ = [
     "RetentionPolicy",
     "add_hold",
     "admit",
+    "admit_request",
     "capability_rows",
     "child_envelope_to_doc",
     "cleanup_retained",
@@ -105,11 +110,14 @@ __all__ = [
     "parse_child_envelope",
     "pin_reader",
     "prepare_directory",
+    "promote_child_envelope",
     "reconcile",
+    "reject_failed_checks",
     "remove_hold",
     "resolve_current",
     "restore_backup",
     "validate_request",
+    "verify_child_envelope",
     "violations",
     "with_cleanup",
     "write_private_file",

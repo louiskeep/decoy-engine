@@ -227,9 +227,10 @@ def test_runtime_staging_and_retained_data_never_resolve_as_committed(tmp_path: 
     dest = tmp_path / "out"
     sink = ParquetTransactionalSink(
         dest,
-        request=pub.PublicationRequest(destination=dest, checks=(pub.CheckResult("c", "fail"),)),
+        request=pub.PublicationRequest(destination=dest),
     )
     sink.write("t", pa.table({"x": [1]}))
+    sink.record_validation([pub.CheckResult("c", "fail")])
     with pytest.raises(pub.PublicationRefusedError):
         sink.commit()
     (staged,) = tmp_path.glob("_decoy_stage_*")

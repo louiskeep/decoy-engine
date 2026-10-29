@@ -30,11 +30,11 @@ def rejected_sink(
     request = pub.PublicationRequest(
         destination=target,
         operation_id=op,
-        checks=(pub.CheckResult("fk", "fail"),),
         retention=policy,
     )
     sink = ParquetTransactionalSink(target, request=request)
     sink.write("alpha", sup.table_a())
+    sink.record_validation([pub.CheckResult("fk", "fail")])
     with pytest.raises(pub.PublicationRefusedError):
         sink.commit()
     return sink
@@ -96,9 +96,10 @@ def test_abort_deletion_failure_is_reported_and_recoverable(
     other = tmp_path / "out2"
     sink = ParquetTransactionalSink(
         other,
-        request=pub.PublicationRequest(destination=other, checks=(pub.CheckResult("c", "fail"),)),
+        request=pub.PublicationRequest(destination=other),
     )
     sink.write("alpha", sup.table_a())
+    sink.record_validation([pub.CheckResult("c", "fail")])
     with pytest.raises(pub.PublicationRefusedError):
         sink.commit()
     monkeypatch.setattr(shutil, "rmtree", lambda *a, **k: None)

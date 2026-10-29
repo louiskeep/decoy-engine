@@ -91,13 +91,11 @@ def atomic_commit(
     publish = publish or PublishContext()
     request = _pub.PublicationRequest(
         destination=output_dir,
-        expected_tables=envelope.tables,
         operation_id=publish.operation_id or uuid.uuid4().hex,
         cancelled=publish.cancelled,
     )
     output_dir.parent.mkdir(parents=True, exist_ok=True)
-    prepared = _pub.prepare_directory(staging_dir, request, producer_rows=dict(envelope.row_counts))
-    receipt = _pub.commit_prepared(prepared)
+    receipt = _pub.promote_child_envelope(envelope, request)
     if receipt.outcome == "already_committed":
         receipt = _pub.with_cleanup(receipt, _pub.cleanup_staging(staging_dir))
     return receipt

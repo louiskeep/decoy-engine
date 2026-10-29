@@ -31,9 +31,9 @@ from decoy_engine.publication._local_directory import (
     _reverify_staged_claim,
     context_matches,
     fsync_dir,
+    gate_request,
     inspect_destination,
     prepare_directory,
-    reject_failed_checks,
     write_private_file,
 )
 from decoy_engine.publication._lock import DestinationLock, LockUnavailableError
@@ -201,7 +201,7 @@ def _sync(root: Path) -> bool:
 
 def lookup_committed_managed(request: PublicationRequest) -> CommitReceipt | None:
     root = request.destination
-    reject_failed_checks(request)
+    gate_request(request)
     try:
         cur = resolve_current(root)
     except ResolveError:
@@ -216,6 +216,7 @@ def lookup_committed_managed(request: PublicationRequest) -> CommitReceipt | Non
             return None
         ev = cur.doc["evidence"]["sha256"]
         _require_context(request, cur.path, ev)
+        _check_lineage(request, cur.doc, cur.descriptor_digest, root)
         return _receipt_for(request, cur.doc, cur.descriptor_digest, current=True, ev=ev)
     if request.expected_result_id is not None:
         return None
@@ -223,7 +224,31 @@ def lookup_committed_managed(request: PublicationRequest) -> CommitReceipt | Non
     if found is None:
         return None
     _require_context(request, root / GENERATIONS / found[1], found[0]["evidence"]["sha256"])
+    _check_lineage(request, found[0], found[1], root)
     return _historical_receipt(request, *found)
+
+
+def _check_lineage(
+    request: PublicationRequest, doc: Mapping[str, Any], digest: str, root: Path
+) -> None:
+    """A replacement request may only be answered `already_committed` by a result that was
+    committed over the predecessor it authorized, with the backup it required."""
+    ow = request.overwrite
+    if not isinstance(ow, Replace):
+        return
+    lineage = doc.get("lineage", {})
+    if digest == ow.expected_descriptor_digest:
+        return  # replacing a result with identical content: the CAS is satisfied, nothing to do
+    if lineage.get("predecessor_digest") != ow.expected_descriptor_digest:
+        raise _refuse(request, "conflict", "stale_predecessor")
+    if isinstance(ow.backup, ProtectedBackup):
+        held = inspect_destination(root / BACKUPS / ow.expected_descriptor_digest)
+        if (
+            lineage.get("backup_ref") != ow.backup.policy_ref
+            or held.kind != "committed"
+            or held.descriptor_digest != ow.expected_descriptor_digest
+        ):
+            raise _refuse(request, "conflict", "backup_missing")
 
 
 def _require_context(request: PublicationRequest, directory: Path, evidence_sha: str) -> None:
@@ -255,6 +280,7 @@ def _judge(
     cur_ev = cur.doc["evidence"]["sha256"]
     same_content = cur.result_id == prepared.result_id and cur_ev == prepared.evidence_digest
     if same_content:
+        _check_lineage(request, cur.doc, cur.descriptor_digest, root)
         return _receipt_for(request, cur.doc, cur.descriptor_digest, current=True, ev=cur_ev)
     if cur.doc["operation_id"] == request.operation_id:
         return _refuse(request, "conflict", "operation_conflict")
@@ -318,6 +344,7 @@ def ensure_protected_backup(root: Path, prior: ResolvedGeneration, policy_ref: s
 
 def commit_managed(prepared: PreparedPublication) -> CommitReceipt:
     request, root = prepared.request, prepared.request.destination
+    gate_request(request)
     _private_dir(root)
     try:
         lock = DestinationLock(root)
@@ -427,6 +454,7 @@ def resolve_pointer_digest(root: Path) -> str | None:
 
 
 def reconcile_managed(request: PublicationRequest) -> CommitReceipt | None:
+    gate_request(request)
     root = request.destination
     try:
         with DestinationLock(root):
@@ -454,6 +482,7 @@ def restore_backup(
         operation_id=operation_id or uuid.uuid4().hex,
         overwrite=Replace(expected_current_digest, backup),
     )
+    gate_request(request)
     src = root / BACKUPS / backup_digest
     state = inspect_destination(src)
     if state.kind != "committed" or state.descriptor_digest != backup_digest:

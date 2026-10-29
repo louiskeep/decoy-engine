@@ -34,7 +34,7 @@ from __future__ import annotations
 
 import os
 import tempfile
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
@@ -394,21 +394,39 @@ class _PublishingSink(_ParquetStager):
             validation_policy_fingerprint=policy_fingerprint,
         )
 
-    def _admit(self) -> None:
-        """Enforce this sink's own protocol declaration before any lookup or staging."""
-        _proto.admit(self, self._request)
+    def _enter_publication(self) -> None:
+        """The one entry gate for lookup, reconcile, staging and commit: admission through
+        the publication layer's single authority plus the acceptance gate, latching the
+        refusal so every path leaves the attempt in the same terminal state."""
+        try:
+            _proto.admit_request(self._request, self)
+            _pub.reject_failed_checks(self._request)
+        except _pub.PublicationRefusedError as exc:
+            self._reason = exc.receipt.reason_code if exc.receipt else "refused"
+            raise
 
     def _before_first_stage(self) -> None:
-        self._admit()
+        self._enter_publication()
         _pub.validate_request(self._request)
 
     def lookup_committed(self) -> _pub.CommitReceipt | None:
         """Receipt for an already committed result this request names, else None."""
-        return _pub.lookup_committed(self._request)
+        self._enter_publication()
+        return self._latched(_pub.lookup_committed)
 
     def reconcile(self) -> _pub.CommitReceipt | None:
         """Resolve a `commit_uncertain` outcome to the authoritative committed state."""
-        return _pub.reconcile(self._request)
+        self._enter_publication()
+        return self._latched(_pub.reconcile)
+
+    def _latched(
+        self, op: Callable[[_pub.PublicationRequest], _pub.CommitReceipt | None]
+    ) -> _pub.CommitReceipt | None:
+        try:
+            return op(self._request)
+        except _pub.PublicationRefusedError as exc:
+            self._reason = exc.receipt.reason_code if exc.receipt else "refused"
+            raise
 
     def commit(self) -> _pub.CommitReceipt:
         """Publish the staged unit and return the receipt.
@@ -442,19 +460,12 @@ class _PublishingSink(_ParquetStager):
                     "rejected", str(self._target), self._request.operation_id, "attempt_rejected"
                 ),
             )
-        try:
-            self._admit()
-            found = (
-                _pub.lookup_committed(self._request)
-                if self._staging is None and self._request.expected_result_id is not None
-                else None
-            )
-        except _pub.PublicationRefusedError as exc:
-            self._reason = exc.receipt.reason_code if exc.receipt else "refused"
-            raise
-        if found is not None:
-            self.receipt = found
-            return found
+        self._enter_publication()
+        if self._staging is None and self._request.expected_result_id is not None:
+            found = self._latched(_pub.lookup_committed)
+            if found is not None:
+                self.receipt = found
+                return found
         stage = self._ensure_staging()
         self._sealed = True
         try:

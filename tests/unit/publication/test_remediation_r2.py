@@ -165,9 +165,8 @@ def test_h2_the_backend_itself_refuses_replace_on_the_immutable_unit(tmp_path: P
     stage.mkdir()
     pq.write_table(sup.table_a(), stage / "alpha.parquet")
     request = pub.PublicationRequest(destination=tmp_path / "out", overwrite=pub.Replace("0" * 64))
-    prepared = pub.prepare_directory(stage, request)
     with pytest.raises(pub.PublicationRefusedError) as exc:
-        pub.commit_prepared(prepared)
+        pub.commit_prepared(pub.prepare_directory(stage, request))  # refused at line 1 of prepare
     assert exc.value.receipt.reason_code == "replace_unsupported_for_unit"
     assert not (tmp_path / "out").exists()
 

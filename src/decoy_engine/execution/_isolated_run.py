@@ -645,12 +645,30 @@ def _commit(
     """
     prepared_dir = _validated_child(envelope, assigned, output_dir, publish)
     staging_output_dir = prepared_dir.staging_dir
-    outputs = {
-        table: pq.read_table(  # type: ignore[no-untyped-call, unused-ignore]
-            staging_output_dir / f"{table}.parquet"
-        )
-        for table in prepared_dir.tables
-    }
+    # Verify the child's claim structurally BEFORE reading any of it.
+    _pub.verify_child_envelope(
+        prepared_dir,
+        _pub.PublicationRequest(
+            destination=output_dir or staging_output_dir, operation_id=publish.operation_id or ""
+        ),
+    )
+    try:
+        outputs = {
+            table: pq.read_table(  # type: ignore[no-untyped-call, unused-ignore]
+                staging_output_dir / f"{table}.parquet"
+            )
+            for table in prepared_dir.tables
+        }
+    except (OSError, pa.ArrowException) as exc:
+        raise _pub.PublicationRefusedError(
+            "child preparation refused: a declared table is unreadable",
+            _pub.CommitReceipt(
+                "rejected",
+                str(output_dir or staging_output_dir),
+                publish.operation_id or "",
+                "child_envelope_invalid",
+            ),
+        ) from exc
     row_errors = read_staged_row_errors(staging_output_dir)
     if output_dir is None:
         shutil.rmtree(staging_output_dir, ignore_errors=True)
@@ -658,7 +676,9 @@ def _commit(
 
     try:
         receipt = atomic_commit(prepared_dir, output_dir, publish=publish)
-    except CommitError:
-        shutil.rmtree(staging_output_dir, ignore_errors=True)
-        raise
+    except CommitError as exc:
+        rcpt = getattr(exc, "receipt", None)
+        if getattr(rcpt, "reason_code", None) != "child_envelope_invalid":
+            shutil.rmtree(staging_output_dir, ignore_errors=True)
+        raise  # an invalid child claim leaves the directory exactly as found
     return outputs, str(output_dir), row_errors, receipt

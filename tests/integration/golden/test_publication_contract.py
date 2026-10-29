@@ -145,7 +145,8 @@ def test_pre_binding_failures_never_release_a_new_result(tmp_path: Path) -> None
     ]
     for label, extra in attempts:
         kw: dict[str, object] = {"overwrite": replace, **extra}
-        request_checks = kw.pop("checks", CHECKS)
+        kw.pop("checks", None)
+        request_checks = CHECKS
         request = pub.PublicationRequest(
             destination=dest,
             operation_id=f"op-{label}",
@@ -156,6 +157,8 @@ def test_pre_binding_failures_never_release_a_new_result(tmp_path: Path) -> None
         sink = ManagedDatasetSink(dest, request=request)
         sink.write("orders", changed)
         sink.write("customers", CUSTOMERS)
+        if label == "required check failed":
+            sink.record_validation(failing_check["checks"])  # type: ignore[arg-type]
         with pytest.raises(pub.PublicationRefusedError):
             sink.commit()
         sink.abort()
@@ -163,8 +166,10 @@ def test_pre_binding_failures_never_release_a_new_result(tmp_path: Path) -> None
         assert current is not None and current.descriptor_digest == a.descriptor_digest, label
         assert _oracle(current.path) == a_facts, label
         if label == "required check failed":  # recovery is denied up front for failed checks
+            from dataclasses import replace as _replace
+
             with pytest.raises(pub.PublicationRefusedError):
-                pub.lookup_committed(request)
+                pub.lookup_committed(_replace(request, checks=failing_check["checks"]))  # type: ignore[arg-type]
         else:
             assert pub.lookup_committed(request) is None, label
 

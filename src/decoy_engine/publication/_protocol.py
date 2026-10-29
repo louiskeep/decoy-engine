@@ -197,5 +197,44 @@ def admit(sink: Any, request: PublicationRequest | None = None) -> CommitProtoco
     return decl
 
 
+def _unit_declaration(unit: str) -> CommitProtocolDeclaration | None:
+    return {
+        UNIT_IMMUTABLE_DIRECTORY: IMMUTABLE_DIRECTORY,
+        UNIT_MANAGED_DATASET: MANAGED_DATASET,
+    }.get(unit)
+
+
+def admit_request(request: PublicationRequest, sink: Any = None) -> None:
+    """The ONE admission authority for a publication request.
+
+    Every public request-taking operation (module level or through a sink) calls this on
+    its first line. A sink, when given, must pass its own declaration; the request's unit
+    declaration is ALWAYS validated, so a caller with no sink cannot skip admission.
+    """
+    decls: list[CommitProtocolDeclaration] = []
+    if sink is not None:
+        decls.append(declaration_for(sink))
+    unit_decl = _unit_declaration(request.unit)
+    if unit_decl is None:
+        problems = ["unknown_publication_unit"]
+        decl_name = request.unit
+    else:
+        decls.append(unit_decl)
+        problems = []
+        decl_name = unit_decl.name
+    for decl in decls:
+        problems.extend(p for p in violations(decl, request) if p not in problems)
+    if problems:
+        raise PublicationRefusedError(
+            f"publication request is not admitted for {decl_name!r}: {', '.join(problems)}",
+            CommitReceipt(
+                "unsupported",
+                str(request.destination),
+                request.operation_id,
+                problems[0],
+            ),
+        )
+
+
 def capability_rows() -> list[tuple[str, CommitProtocolDeclaration]]:
     return [(d.name, d) for d in REGISTERED]

@@ -150,10 +150,6 @@ def test_a4_failure_before_the_switch_leaves_a_current_and_byte_identical(
     a = put(root, "op-A", [1, 2])
     before = snapshot(root)
     request = _req(root, "op-B", pub.Replace(a.descriptor_digest))
-    if boundary == "checks":
-        request = _req(
-            root, "op-B", pub.Replace(a.descriptor_digest), checks=(pub.CheckResult("c", "fail"),)
-        )
     if boundary == "cancel":
         request = _req(root, "op-B", pub.Replace(a.descriptor_digest), cancelled=lambda: True)
     sink = ManagedDatasetSink(root, request=request)
@@ -169,6 +165,8 @@ def test_a4_failure_before_the_switch_leaves_a_current_and_byte_identical(
             sink.commit()
     else:
         sink.write("alpha", pa.table({"id": [5]}))
+        if boundary == "checks":
+            sink.record_validation([pub.CheckResult("c", "fail")])
         real = os.replace
         if boundary == "generation_rename":
             monkeypatch.setattr(_managed.os, "replace", _boom)

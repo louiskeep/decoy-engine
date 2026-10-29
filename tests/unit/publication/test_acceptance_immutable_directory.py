@@ -478,9 +478,10 @@ def test_a8_a_required_failed_or_inconclusive_check_binds_nothing(
     tmp_path: Path, disposition: str
 ) -> None:
     target = tmp_path / "out"
-    request = _req(target, checks=(pub.CheckResult("fk_integrity", disposition),))  # type: ignore[arg-type]
-    sink = ParquetTransactionalSink(target, request=request)
+    sink = ParquetTransactionalSink(target, request=_req(target))
     sink.write("alpha", sup.table_a())
+    # Validation completes after the stream: the failed check arrives via record_validation.
+    sink.record_validation([pub.CheckResult("fk_integrity", disposition)])  # type: ignore[list-item]
     with pytest.raises(pub.PublicationRefusedError) as exc:
         sink.commit()
     assert exc.value.receipt.reason_code == "required_check_failed"
