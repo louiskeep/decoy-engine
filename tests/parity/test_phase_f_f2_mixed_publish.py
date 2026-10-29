@@ -18,6 +18,7 @@ from decoy_engine.execution import ExecutionError
 from decoy_engine.execution import _chunked_output_sink as output_sink
 from decoy_engine.execution._transactional_sink import ParquetTransactionalSink
 from decoy_engine.execution.native import _chunked_entry
+from decoy_engine.publication import PublicationRefusedError
 from tests.parity._f2_mixed_support import (
     CHILD,
     PARENT,
@@ -109,7 +110,13 @@ def test_the_real_sink_publishes_both_tables_atomically(tmp_path: Path) -> None:
     config, child = _job(tmp_path)
     target = tmp_path / "published"
     run(config, {CHILD: child}, sink=ParquetTransactionalSink(target))
-    assert sorted(p.name for p in target.iterdir()) == [f"{CHILD}.parquet", f"{PARENT}.parquet"]
+    # The unit is the tables plus the F22 descriptor and evidence core, nothing else.
+    assert sorted(p.name for p in target.iterdir()) == [
+        "_decoy_evidence_core.json",
+        "_decoy_publication.json",
+        f"{CHILD}.parquet",
+        f"{PARENT}.parquet",
+    ]
     want = oracle(config, {CHILD: child}).outputs
     got = {name: pq.read_table(target / f"{name}.parquet") for name in want}
     assert_outputs_identical(got, want)
@@ -141,7 +148,9 @@ def test_the_real_sink_commit_failure_leaves_the_target_untouched(tmp_path: Path
     target = tmp_path / "published"
     target.mkdir()
     (target / "keep.txt").write_text("existing")
-    with pytest.raises(OSError):
+    with pytest.raises(PublicationRefusedError) as refused:
         run(config, {CHILD: child}, sink=ParquetTransactionalSink(target))
+    assert refused.value.receipt is not None
+    assert refused.value.receipt.reason_code == "target_occupied_legacy"
     assert [p.name for p in target.iterdir()] == ["keep.txt"]
     assert not [p for p in tmp_path.iterdir() if p.name.startswith("_decoy_stage_")]

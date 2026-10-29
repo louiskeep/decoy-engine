@@ -262,7 +262,11 @@ def run_mixed_route(ctx: PipelineRunContext, decision: RouteDecision) -> Executi
             row_errors=(),
         )
         publish.commit()
-        return result
+        return (
+            dataclasses.replace(result, publication_receipt=publish.receipt)
+            if publish.receipt
+            else result
+        )
 
 
 def _edge_block(static: MixedStaticPlan) -> dict[str, Any] | None:

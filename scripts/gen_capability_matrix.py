@@ -198,6 +198,26 @@ def render() -> str:
         cells = ["yes" if caps.get(c) else "-" for c in cap_order]
         w(f"| `{cls_name}` | " + " | ".join(cells) + " |\n")
 
+    from decoy_engine.publication import capability_rows
+
+    pub_rows = capability_rows()
+    w(f"\n## Publication protocols ({len(pub_rows)})\n\n")
+    w(
+        "Generated from each sink's `CommitProtocolDeclaration`; a sink without a passing "
+        "declaration is refused for F22 publication. `publishes = no` means the object "
+        "cannot bind a committed result.\n\n"
+    )
+    w(
+        "| Protocol | Publishes | Atomic scope | Fencing | Durability | Retry horizon | Backup | Reader |\n"
+    )
+    w("| --- | --- | --- | --- | --- | --- | --- | --- |\n")
+    for name, d in pub_rows:
+        w(
+            f"| `{name}` | {'yes' if d.publishes else 'no'} | {d.atomic_scope} | {d.fencing} | "
+            f"{d.durability} | {d.retry_horizon} | {'yes' if d.supports_backup else '-'} | "
+            f"{d.reader_protocol} |\n"
+        )
+
     det = _detectors()
     w(f"\n## STORM detectors ({len(det)})\n\n")
     w("| Detector | Match kind |\n| --- | --- |\n")

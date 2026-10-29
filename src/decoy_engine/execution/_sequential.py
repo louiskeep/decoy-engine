@@ -139,6 +139,7 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
+from decoy_engine import quarantine as _quarantine
 from decoy_engine.errors import RowErrorsFailedError
 from decoy_engine.execution._adapter import ExecutionResult, StrategyContext
 from decoy_engine.execution._errors import ExecutionError
@@ -172,6 +173,7 @@ from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.instrumentation.timing import TimingCollector, use_collector
 from decoy_engine.keyprovider import require_mask_key
 from decoy_engine.progress import get_active_channel
+from decoy_engine.publication import CommitReceipt
 from decoy_engine.quarantine import compute_quarantine, finalize_committed_quarantine
 
 if TYPE_CHECKING:
@@ -367,6 +369,8 @@ def run_sequential(
     else:
         _tsink = None
 
+    _quarantine.preflight_unit_sidecar(_tsink, q_output_path)  # F22: refuse before masking
+
     # DE-08 (+ reland fix, Codex #2): tracks whether `_tsink.commit()` has
     # already returned successfully. Once True, the except clause below must
     # NEVER call `_tsink.abort()` -- a custom sink's abort() could otherwise
@@ -374,6 +378,7 @@ def run_sequential(
     # only ever runs after this flag is set, so any failure past that point
     # is a sidecar-publish failure, not a run failure to undo.
     _committed = False
+    _receipt: object = None
 
     try:
         with use_collector(collector):
@@ -581,8 +586,9 @@ def run_sequential(
         # ENOTEMPTY. Committing first means the sink's target directory
         # already exists (from its own successful rename) by the time
         # anything is staged beside it, so there is nothing left to collide.
+        _in_unit = _quarantine.stage_unit_sidecar(_tsink, q_output_path, quarantine_entries)
         if _tsink is not None:
-            _tsink.commit()
+            _receipt = _tsink.commit()
             # Past this point abort() must never run (Codex finding #2): a
             # custom sink's abort() could delete tables it just durably
             # committed. Any failure below is a quarantine-sidecar problem,
@@ -614,6 +620,7 @@ def run_sequential(
             output_path=q_output_path,
             entries=quarantine_entries,
             counts_by_trigger=counts_by_trigger,
+            already_in_unit=_in_unit,
         )
         if quarantine_metrics is not None:
             quality_metrics["quarantine"] = quarantine_metrics
@@ -633,6 +640,7 @@ def run_sequential(
         raise
 
     return ExecutionResult(
+        publication_receipt=_receipt if isinstance(_receipt, CommitReceipt) else None,
         outputs=outputs,
         timings=tuple(collector.records),
         boundary_conversion_ms=conversion_ms,

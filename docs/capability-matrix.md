@@ -99,6 +99,18 @@ Provider backend names identify adapters. `decoy_native` identifies the engine's
 | `SFTPFileSource` | - | yes | - | - | - | yes |
 | `SFTPFileSink` | - | - | - | - | - | yes |
 
+## Publication protocols (5)
+
+Generated from each sink's `CommitProtocolDeclaration`; a sink without a passing declaration is refused for F22 publication. `publishes = no` means the object cannot bind a committed result.
+
+| Protocol | Publishes | Atomic scope | Fencing | Durability | Retry horizon | Backup | Reader |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `parquet_immutable_directory` | yes | directory | process_lock | directory_sync | destination_lifetime | - | directory_listing |
+| `parquet_managed_dataset` | yes | dataset | process_lock | directory_sync | destination_lifetime | yes | resolve_current |
+| `parquet_preparation_only` | no | none | none | none | none | - | none |
+| `callable_sink` | no | none | none | none | none | - | none |
+| `file_sink_transfer` | no | object | none | provider | none | - | provider |
+
 ## STORM detectors (25)
 
 | Detector | Match kind |

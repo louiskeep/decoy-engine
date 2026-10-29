@@ -13,6 +13,7 @@ reads.
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
@@ -240,4 +241,8 @@ def run_full_frame_route(
         )
         _pipeline_finalize.compute_storm_postmask(result, config=ctx.config, sources=step.sources)
         publish.commit()  # B6a: the run's last action; inert unless this run streamed
-        return result
+        return (
+            dataclasses.replace(result, publication_receipt=publish.receipt)
+            if publish.receipt
+            else result
+        )

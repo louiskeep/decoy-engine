@@ -563,6 +563,41 @@ def guard_quarantine_not_aliasing_committed_table(
             )
 
 
+def _unit_sidecar_name(sink: Any, output_path: str) -> str | None:
+    """The in-unit file name for ``output_path`` when ``sink`` is in complete-unit mode
+    (F22), else None. A path outside the sink's destination cannot participate in the
+    unit and is refused up front (``unsupported``), never published unbound."""
+    if not getattr(sink, "sidecars_in_unit", False):
+        return None
+    destination = Path(sink.request.destination).resolve()
+    path = Path(output_path).resolve()
+    if path.parent != destination:
+        from decoy_engine.publication import CommitReceipt, PublicationRefusedError
+
+        raise PublicationRefusedError(
+            "quarantine.output_path must be directly inside the publication destination "
+            "when sidecars_in_unit is set; an external sidecar cannot be bound by the descriptor",
+            CommitReceipt("unsupported", str(destination), "", "sidecar_outside_unit"),
+        )
+    return path.name
+
+
+def preflight_unit_sidecar(sink: Any, output_path: str) -> None:
+    """Refuse before any masking when the quarantine sidecar cannot join the unit."""
+    if output_path:
+        _unit_sidecar_name(sink, output_path)
+
+
+def stage_unit_sidecar(sink: Any, output_path: str, entries: list[dict[str, Any]]) -> bool:
+    """Stage the quarantine JSONL INSIDE the sink's unit, before commit. True if staged."""
+    name = _unit_sidecar_name(sink, output_path)
+    if name is None or not entries:
+        return False
+    payload = "".join(json.dumps(r, default=_json_default) + "\n" for r in entries)
+    sink.stage_sidecar(name, payload.encode("utf-8"))
+    return True
+
+
 def finalize_committed_quarantine(
     *,
     sink: object,
@@ -571,6 +606,7 @@ def finalize_committed_quarantine(
     output_path: str,
     entries: list[dict[str, Any]],
     counts_by_trigger: dict[str, int],
+    already_in_unit: bool = False,
 ) -> dict[str, Any] | None:
     """Publish the quarantine sidecar; return its evidence-manifest entry.
 
@@ -589,7 +625,9 @@ def finalize_committed_quarantine(
     """
     if not entries:
         return None
-    if is_genuine_transactional_sink:
+    if already_in_unit:
+        pass  # staged and bound by the descriptor before commit; only the evidence entry remains
+    elif is_genuine_transactional_sink:
         guard_quarantine_not_aliasing_committed_table(sink, written_tables, output_path)
         staged = write_jsonl_staged(output_path, entries)
         try:

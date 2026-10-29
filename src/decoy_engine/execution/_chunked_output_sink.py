@@ -48,6 +48,7 @@ from decoy_engine.execution.native._chunked_evidence import (
     copy_strategy_branch_calls,
     merge_executed_backend,
 )
+from decoy_engine.publication import CommitReceipt
 
 if TYPE_CHECKING:
     from decoy_engine.execution._pipeline_multi_table import MultiTableSplit
@@ -142,6 +143,7 @@ class OutputPublish:
         self.post_validation = post_validation
         self.is_open = False
         self._finished = False
+        self.receipt: Any = None  # F22: the sink's CommitReceipt once the session commits
 
     @property
     def active_sink(self) -> Any:
@@ -154,8 +156,10 @@ class OutputPublish:
     def commit(self) -> None:
         if not self.is_open or self._finished:
             return
-        self.sink.commit()
+        outcome = self.sink.commit()
         self._finished = True
+        if isinstance(outcome, CommitReceipt):
+            self.receipt = outcome
 
     def __enter__(self) -> OutputPublish:
         return self

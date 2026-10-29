@@ -27,6 +27,7 @@ from decoy_engine.execution._transactional_sink import (
     TransactionalSink,
     _CallableSinkAdapter,
 )
+from decoy_engine.publication import PublicationRefusedError
 from decoy_engine.relationships._graph import OrphanPolicy
 from tests.perf_fixtures.fk_relational import build_fk_relational
 
@@ -248,8 +249,14 @@ def test_commit_failure_publishes_nothing(tmp_path: Path, monkeypatch: pytest.Mo
 
     monkeypatch.setattr(os, "replace", _fail_replace)
 
-    with pytest.raises(OSError, match="simulated commit failure"):
+    with pytest.raises(PublicationRefusedError) as refused:
         sink.commit()
+    assert refused.value.receipt is not None
+    assert refused.value.receipt.outcome == "rejected"
+    assert refused.value.receipt.reason_code is not None
+    assert refused.value.receipt.reason_code.startswith("rename_failed")
+    assert isinstance(refused.value.__cause__, OSError)
+    assert "simulated commit failure" in str(refused.value.__cause__)
 
     # Target must not exist after a failed commit -- not even an empty directory.
     # (The old per-file commit created the target dir before the rename loop,

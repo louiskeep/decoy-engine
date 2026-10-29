@@ -280,12 +280,21 @@ def exception_error_text(exc: BaseException) -> str:
 
 
 def commit_error_text(exc: BaseException) -> str:
-    """Safe text for a failed output commit; the message holds the output path and OS text."""
+    """Safe text for a failed output commit; the message holds the output path and OS text.
+
+    Carries only the stable publication reason token (never the path or OS text) and the
+    errno name when a rename failed, under the constant `CommitError` label consumers match.
+    """
     cause = exc.__cause__
     code = cause.errno if isinstance(cause, OSError) else None
     errno_name = errno.errorcode.get(code, "") if code is not None else ""
-    detail = f" (errno={errno_name})" if errno_name else ""
-    return f"{type(exc).__name__}: staged output could not be committed{detail}"
+    receipt = getattr(exc, "receipt", None)
+    reason = (getattr(receipt, "reason_code", None) or "").split(":")[0]
+    details = [f"errno={errno_name}"] if errno_name else []
+    if reason:
+        details.append(f"reason={reason}")
+    detail = f" ({', '.join(details)})" if details else ""
+    return f"CommitError: staged output could not be committed{detail}"
 
 
 def abnormal_exit_reason(returncode: int, stderr: str) -> str:
@@ -406,6 +415,10 @@ class IsolatedRunResult:
     # staging contract is that nothing lands here unless the run completed
     # cleanly (spec §12 ruling 3).
     committed_output_dir: str | None = None
+    # F22: the parent's publication receipt (published / already_committed, or the
+    # refusal/uncertain receipt that accompanies a `crashed` commit failure). None when
+    # nothing was published to an `output_dir`. `committed_output_dir` alone is not proof.
+    publication_receipt: Any = None
     # MED-4: table-attributed per-row strategy failures, carried across the
     # process boundary (see docstring above). Empty on any non-`completed`
     # outcome -- there is nothing to attribute a row error to.

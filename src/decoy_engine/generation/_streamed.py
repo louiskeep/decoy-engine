@@ -85,6 +85,8 @@ class GenerationResult:
     tables: dict[str, pa.Table] | None
     peak_reserved_bytes: int
     declines: tuple[str, ...] = field(default=())
+    # F22: the sink's receipt for a streamed run's committed output (None when resident).
+    publication_receipt: Any = None
 
 
 def is_bounded_sink(sink: Any) -> bool:
@@ -471,7 +473,9 @@ def run_generation(
             publish.open()
             generate(lambda n, s, b: sink.write_batches(n, _pg.count_rows(n, b), schema=s))
             publish.commit()
-        return GenerationResult("streamed", reason, counts, None, ledger.peak_bytes)
+        return GenerationResult(
+            "streamed", reason, counts, None, ledger.peak_bytes, publication_receipt=publish.receipt
+        )
 
     def accumulate(name: str, schema: pa.Schema, batches: Iterator[pa.RecordBatch]) -> None:
         batch_list = list(_pg.count_rows(name, batches))

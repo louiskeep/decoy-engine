@@ -35,6 +35,7 @@ if TYPE_CHECKING:
     from decoy_engine.keyprovider import KeyProvider
     from decoy_engine.plan._types import ColumnSeed, Plan
     from decoy_engine.providers_v2 import ProviderRegistry
+    from decoy_engine.publication import CommitReceipt
     from decoy_engine.relationships import NamespaceRegistry, RelationshipGraph
 
 
@@ -68,6 +69,10 @@ class ExecutionResult:
     # table-attributed by the adapter's drain point. Additive; default empty
     # tuple leaves every existing ExecutionResult construction unchanged.
     row_errors: tuple[RowErrorRecord, ...] = ()
+    # F22: the publication receipt for outputs a transactional sink committed. `outputs == {}`
+    # alone never proves a commit; strict consumers read this receipt. None when the run
+    # published nothing through a receipt-issuing sink (resident results, legacy sinks).
+    publication_receipt: CommitReceipt | None = None
 
     @property
     def output(self) -> pa.Table:

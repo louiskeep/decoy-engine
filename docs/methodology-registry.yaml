@@ -19,6 +19,18 @@
 # Multi-line additions (design notes, deferral rationale) follow.
 
 modules:
+  # F22 (2026-10-29): atomic and idempotent publication.
+  - path: src/decoy_engine/publication/_codec.py
+    pattern: Git content addressing + RFC 8785 canonical JSON
+    source: Git objects (content-addressed names); RFC 8785 (JSON canonicalization)
+
+  - path: src/decoy_engine/publication/_local_directory.py
+    pattern: rename(2) atomic replace + fsync(2) ordering + Delta transaction-identifier retry
+    source: POSIX.1-2008 rename/fsync; Delta Lake PROTOCOL.md transaction identifiers (Apache-2.0)
+
+  - path: src/decoy_engine/publication/_managed.py
+    pattern: Iceberg atomic metadata-pointer switch over immutable files
+    source: Apache Iceberg specification (Apache-2.0)
   # S22-CL-V1GRAPHRUNNER (2026-05-30): removed transforms/hash.py +
   # transforms/faker_based.py + transforms/format_preservation.py from
   # the registry. Those V1 transform modules were deleted alongside the

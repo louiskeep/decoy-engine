@@ -52,6 +52,7 @@ link to GitHub rather than into the rendered API reference.
 - [Capability matrix](capability-matrix.md): what the engine can and cannot do, by strategy and route.
 - [Execution backends and route coverage](execution-backends.md): which backend (compiled Rust, Arrow, or Python) computes each masking strategy per route, and where a shape is declined with a caller-visible reason; generation is Python/NumPy by design.
 - [Compatibility contract](compatibility-contract.md): the frozen public surface and what changing it means.
+- [Atomic and idempotent publication](publication.md): the descriptor commit truth, the two local publication units, outcomes, overwrite and backup, retention, and what is not claimed.
 - [Supported production matrix](native/supported-matrix.md): supported Python/OS/arch combinations for the core, the compiled native companion's prebuilt wheels, and the official production image.
 
 ## Development & planning
@@ -87,6 +88,7 @@ acceptance-test-flight
 capability-matrix
 execution-backends
 compatibility-contract
+publication
 native/supported-matrix
 ```
 

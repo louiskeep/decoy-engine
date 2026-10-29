@@ -7,28 +7,32 @@ lifecycle logic of their own, shared by both the isolated (subprocess) path
 and the `isolate=False` in-process fallback so the two modes commit with
 identical discipline (dennis review HIGH-2).
 
-Same same-parent-directory staging + single-rename discipline
-`ParquetTransactionalSink.commit` uses, reused here rather than re-derived
-(spec §12 ruling 3).
+F22: the parent is the only publisher. The child returns a prepared directory
+(`ParquetPreparationSink`); `atomic_commit` re-measures it, builds the descriptor and
+binds it through the one `decoy_engine.publication` backend, so this path and
+`ParquetTransactionalSink.commit` share one commit implementation.
 """
 
 from __future__ import annotations
 
 import json
-import os
 import signal
 import uuid
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from decoy_engine.errors import DecoyError
+from decoy_engine import publication as _pub
 from decoy_engine.execution._row_errors import RowErrorRecord
+from decoy_engine.publication import CommitError
 
 __all__ = [
     "CommitError",
+    "PublishContext",
     "atomic_commit",
     "read_envelope",
     "read_staged_row_errors",
@@ -41,16 +45,12 @@ __all__ = [
 _STAGING_DIR_PREFIX = "_decoy_isolated_stage_"
 
 
-class CommitError(DecoyError):
-    """The atomic staging -> output_dir rename failed (dennis review MED-1).
+@dataclass(frozen=True)
+class PublishContext:
+    """Caller-fixed identity for the parent's one publication (stable across retries)."""
 
-    Raised by `atomic_commit` so both callers (the isolated path's commit
-    step and the in-process fallback's own commit step) can catch it and
-    turn a raw `OSError` -- most commonly a pre-existing non-empty target,
-    which `os.replace` on a directory refuses with ENOTEMPTY -- into a
-    classified `crashed` `IsolatedRunResult` instead of letting it escape as
-    an unhandled exception with staging orphaned outside `work_root`.
-    """
+    operation_id: str | None = None
+    cancelled: Callable[[], bool] | None = None
 
 
 def sibling_staging_dir(output_dir: Path) -> Path:
@@ -70,20 +70,31 @@ def stage_tables(outputs: dict[str, pa.Table], staging_dir: Path) -> None:
         )
 
 
-def atomic_commit(staging_dir: Path, output_dir: Path) -> None:
-    """Single-rename commit (spec §12 ruling 3), wrapped per MED-1: a
-    pre-existing non-empty target makes `os.replace` raise (ENOTEMPTY on
-    Linux); that must surface as a classified failure, not propagate as a
-    raw `OSError` that also leaves staging orphaned outside `work_root`.
+def atomic_commit(
+    staging_dir: Path,
+    output_dir: Path,
+    *,
+    publish: PublishContext | None = None,
+    producer_rows: Mapping[str, int] | None = None,
+) -> _pub.CommitReceipt:
+    """Re-measure the prepared directory and bind it to `output_dir` (§12 ruling 3).
+
+    A different or legacy occupant raises a classified `CommitError` (never a raw
+    `OSError`, with staging left for the caller to discard); an identical committed
+    result is returned as `already_committed` and its redundant staging is removed.
     """
+    publish = publish or PublishContext()
+    request = _pub.PublicationRequest(
+        destination=output_dir,
+        operation_id=publish.operation_id or uuid.uuid4().hex,
+        cancelled=publish.cancelled,
+    )
     output_dir.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        os.replace(staging_dir, output_dir)
-    except OSError as exc:
-        raise CommitError(
-            f"could not commit staged output to {output_dir} (a pre-existing "
-            f"non-empty target is the common cause): {exc}"
-        ) from exc
+    prepared = _pub.prepare_directory(staging_dir, request, producer_rows=producer_rows)
+    receipt = _pub.commit_prepared(prepared)
+    if receipt.outcome == "already_committed":
+        receipt = _pub.with_cleanup(receipt, _pub.cleanup_staging(staging_dir))
+    return receipt
 
 
 def resolve_staging_output_dir(work_root: Path, output_dir: Path | None) -> Path:

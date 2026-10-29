@@ -264,8 +264,9 @@ class TestCommitErrorBranches:
         assert result.committed_output_dir is None
         assert result.outputs is None
         assert result.error == (
-            "CommitError: staged output could not be committed (errno=ENOTEMPTY)"
+            "CommitError: staged output could not be committed (reason=target_occupied_legacy)"
         )
+        assert result.publication_receipt.outcome == "conflict"
         assert _SENTINEL not in result.error
         assert str(tmp_path) not in result.error
         # Behavior unchanged: the target is untouched and no staging is left behind.

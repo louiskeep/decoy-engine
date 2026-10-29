@@ -78,6 +78,7 @@ import pyarrow.parquet as pq
 
 from decoy_engine.execution._isolated_commit import (
     CommitError,
+    PublishContext,
     atomic_commit,
     read_envelope,
     read_staged_row_errors,
@@ -145,6 +146,8 @@ def run_pipeline_isolated(
     isolate: bool = True,
     on_spawn: Callable[[int], None] | None = None,
     timeout_s: float | None = _DEFAULT_TIMEOUT_S,
+    operation_id: str | None = None,
+    cancel_check: Callable[[], bool] | None = None,
     **run_pipeline_kwargs: Any,
 ) -> IsolatedRunResult:
     """Run one pipeline job in a fresh child process; return a clean result.
@@ -179,6 +182,10 @@ def run_pipeline_isolated(
             `_DEFAULT_TIMEOUT_S` (30 minutes, MED-2) -- an unconditional
             safety bound, not a tuned per-job budget; pass `None` only if
             you have deliberately decided an unbounded hang is acceptable.
+        operation_id: stable publication identity for `output_dir`; a retry that keeps it
+            gets `already_committed` instead of a failed non-empty-target commit.
+        cancel_check: polled by the parent under the destination lock immediately before
+            the final rename; True refuses publication (`cancelled_before_commit`).
         **run_pipeline_kwargs: forwarded to `run_pipeline` (e.g.
             `engine_version`, `execution_mode`, `native_threads`). See
             `_NOT_SERIALIZABLE_KWARGS` for the excluded subset.
@@ -195,6 +202,7 @@ def run_pipeline_isolated(
             spawned.
     """
     _reject_unserializable_kwargs(run_pipeline_kwargs)
+    publish = PublishContext(operation_id=operation_id, cancelled=cancel_check)
     if mem_cap_bytes is not None and rlimit_kind not in RLIMIT_KINDS:
         raise ValueError(f"rlimit_kind={rlimit_kind!r} is not one of {sorted(RLIMIT_KINDS)}")
 
@@ -224,7 +232,7 @@ def run_pipeline_isolated(
                 "per-job sample; do not feed it into telemetry recalibration."
             )
         output_dir_path = Path(output_dir) if output_dir is not None else None
-        return _run_in_process(config, sources, run_pipeline_kwargs, output_dir_path)
+        return _run_in_process(config, sources, run_pipeline_kwargs, output_dir_path, publish)
 
     return _run_isolated(
         config,
@@ -236,6 +244,7 @@ def run_pipeline_isolated(
         on_spawn=on_spawn,
         timeout_s=timeout_s,
         run_pipeline_kwargs=run_pipeline_kwargs,
+        publish=publish,
     )
 
 
@@ -256,6 +265,7 @@ def _run_in_process(
     sources: dict[str, pa.Table] | None,
     run_pipeline_kwargs: dict[str, Any],
     output_dir: Path | None,
+    publish: PublishContext = PublishContext(),  # noqa: B008
 ) -> IsolatedRunResult:
     try:
         result = run_pipeline(config, sources, **run_pipeline_kwargs)
@@ -274,6 +284,7 @@ def _run_in_process(
         )
 
     committed_dir: str | None = None
+    receipt = None
     if output_dir is not None:
         # HIGH-2: honor output_dir in the fallback too, with the same
         # stage-then-atomic-rename discipline as the isolated path (MED-1)
@@ -282,7 +293,12 @@ def _run_in_process(
         staging_dir = sibling_staging_dir(output_dir)
         try:
             stage_tables(result.outputs, staging_dir)
-            atomic_commit(staging_dir, output_dir)
+            receipt = atomic_commit(
+                staging_dir,
+                output_dir,
+                publish=publish,
+                producer_rows={t: tbl.num_rows for t, tbl in result.outputs.items()},
+            )
         except CommitError as exc:
             shutil.rmtree(staging_dir, ignore_errors=True)
             return IsolatedRunResult(
@@ -295,6 +311,7 @@ def _run_in_process(
                 signal_number=None,
                 error=commit_error_text(exc),
                 isolated=False,
+                publication_receipt=exc.receipt,
             )
         committed_dir = str(output_dir)
 
@@ -310,6 +327,7 @@ def _run_in_process(
         isolated=False,
         committed_output_dir=committed_dir,
         row_errors=tuple(result.row_errors),
+        publication_receipt=receipt,
     )
 
 
@@ -324,6 +342,7 @@ def _run_isolated(
     on_spawn: Callable[[int], None] | None,
     timeout_s: float | None,
     run_pipeline_kwargs: dict[str, Any],
+    publish: PublishContext,
 ) -> IsolatedRunResult:
     owns_work_root = staging_dir is None
     work_root = (
@@ -349,6 +368,7 @@ def _run_isolated(
             payload_path,
             staging_output_dir,
             output_dir_path,
+            publish,
             on_spawn=on_spawn,
             timeout_s=timeout_s,
             mem_cap_bytes=mem_cap_bytes,
@@ -404,6 +424,7 @@ def _spawn_and_classify(
     payload_path: Path,
     staging_output_dir: Path,
     output_dir: Path | None,
+    publish: PublishContext,
     *,
     on_spawn: Callable[[int], None] | None,
     timeout_s: float | None,
@@ -485,7 +506,7 @@ def _spawn_and_classify(
             "crashed",
         )
     ):
-        result = _result_from_envelope(envelope, output_dir, proc.pid, staging_output_dir)
+        result = _result_from_envelope(envelope, output_dir, proc.pid, staging_output_dir, publish)
         return replace(result, memory_evidence=evidence_of(finished, abnormal=False))
 
     # The child died too hard to self-report (a harder rlimit trip the
@@ -519,7 +540,11 @@ def _spawn_and_classify(
 
 
 def _result_from_envelope(
-    envelope: dict[str, Any], output_dir: Path | None, pid: int, staging_output_dir: Path
+    envelope: dict[str, Any],
+    output_dir: Path | None,
+    pid: int,
+    staging_output_dir: Path,
+    publish: PublishContext = PublishContext(),  # noqa: B008
 ) -> IsolatedRunResult:
     outcome = envelope["outcome"]
     peak = envelope.get("peak_rss_mb")
@@ -540,7 +565,7 @@ def _result_from_envelope(
         )
 
     try:
-        outputs, committed_dir, row_errors = _commit(envelope, output_dir)
+        outputs, committed_dir, row_errors, receipt = _commit(envelope, output_dir, publish)
     except CommitError as exc:
         # MED-1: the rename failed (pre-existing non-empty target is the
         # common case) -- a classified `crashed` result, not a driver-side
@@ -556,6 +581,7 @@ def _result_from_envelope(
             error=commit_error_text(exc),
             isolated=True,
             pid=pid,
+            publication_receipt=exc.receipt,
         )
     return IsolatedRunResult(
         outcome="completed",
@@ -570,12 +596,13 @@ def _result_from_envelope(
         pid=pid,
         committed_output_dir=committed_dir,
         row_errors=row_errors,
+        publication_receipt=receipt,
     )
 
 
 def _commit(
-    envelope: dict[str, Any], output_dir: Path | None
-) -> tuple[dict[str, pa.Table], str | None, tuple[RowErrorRecord, ...]]:
+    envelope: dict[str, Any], output_dir: Path | None, publish: PublishContext
+) -> tuple[dict[str, pa.Table], str | None, tuple[RowErrorRecord, ...], Any]:
     """Read the child's staged tables + row_errors, then commit-or-discard
     per §12 ruling 3.
 
@@ -598,11 +625,16 @@ def _commit(
     row_errors = read_staged_row_errors(staging_output_dir)
     if output_dir is None:
         shutil.rmtree(staging_output_dir, ignore_errors=True)
-        return outputs, None, row_errors
+        return outputs, None, row_errors, None
 
     try:
-        atomic_commit(staging_output_dir, output_dir)
+        receipt = atomic_commit(
+            staging_output_dir,
+            output_dir,
+            publish=publish,
+            producer_rows=envelope.get("row_counts"),
+        )
     except CommitError:
         shutil.rmtree(staging_output_dir, ignore_errors=True)
         raise
-    return outputs, str(output_dir), row_errors
+    return outputs, str(output_dir), row_errors, receipt
