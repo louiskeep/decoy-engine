@@ -78,7 +78,11 @@ def unscale(value: Any, scale: int, precision: int) -> tuple[int, bool] | CastOu
 
 
 def int_bounds(signed: bool, bit_width: int) -> tuple[int, int]:
-    return (-(1 << (bit_width - 1)), (1 << (bit_width - 1)) - 1) if signed else (0, (1 << bit_width) - 1)
+    return (
+        (-(1 << (bit_width - 1)), (1 << (bit_width - 1)) - 1)
+        if signed
+        else (0, (1 << bit_width) - 1)
+    )
 
 
 def parse_integer(spec: Any, raw: Any) -> CastOutcome:
@@ -206,7 +210,7 @@ def parse_currency(spec: Any, raw: Any) -> CastOutcome:
             body, negative = body[1:], True
     elif body.startswith("(") and body.endswith(")"):
         body, negative = body[1:-1], True
-    if spec.token_position == "prefix":
+    if spec.token_position == "prefix":  # noqa: S105 -- a currency-symbol position, not a credential
         if not body.startswith(spec.token):
             return fail(bad)
         number = body[len(spec.token) :]
@@ -226,7 +230,7 @@ def format_currency(spec: Any, value: Any) -> CastOutcome:
         return got
     unscaled, negative = got
     number = render_number(unscaled, spec.scale, spec.radix, spec.group)
-    body = spec.token + number if spec.token_position == "prefix" else number + spec.token
+    body = spec.token + number if spec.token_position == "prefix" else number + spec.token  # noqa: S105
     if not negative:
         return succeed(body)
     return succeed("-" + body if spec.sign_style == "leading_minus" else "(" + body + ")")

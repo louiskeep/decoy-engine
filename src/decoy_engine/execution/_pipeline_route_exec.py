@@ -154,6 +154,11 @@ def run_sequential_route(
     classification at all for exactly the jobs where "why didn't this take
     a faster mode" (relationship-route DEFERRED) is most informative.
     """
+    from decoy_engine.declared_casting._eligibility import declared_route_guard
+
+    # F06: a declared-casting job runs only where the casting boundary exists.
+    declared_route_guard("sequential", plan=plan, raise_on_decline=True)
+
     seq_result = run_sequential(
         PandasExecutionAdapter(fpe_chunk_count=fpe_chunk_count),
         plan,
@@ -306,6 +311,11 @@ def run_out_of_core_route(
     this route); the runner's own bounded `batch_rows` streaming -- its actual
     peak-memory guarantee during masking/join -- is unaffected either way.
     """
+    from decoy_engine.declared_casting._eligibility import declared_route_guard
+
+    # F06: a declared-casting job runs only where the casting boundary exists.
+    declared_route_guard("out_of_core", plan=plan, raise_on_decline=True)
+
     from decoy_engine.execution._sequential import table_topo_order
     from decoy_engine.execution.out_of_core import resolve_ooc_memory_limit, run_fk_out_of_core
     from decoy_engine.execution.out_of_core._capacity_eval import enforce_ooc_memory_preflight
@@ -595,6 +605,11 @@ def run_mask_chunked(
 def run_mixed_route(ctx: Any, decision: Any) -> ExecutionResult:
     """Execute a statically admitted generate+mask job; a delegate to
     `_pipeline_mixed_route`, which owns the route (kept apart to hold the module-size cap)."""
+    from decoy_engine.declared_casting._eligibility import declared_route_guard
+
+    # F06: a declared-casting job runs only where the casting boundary exists.
+    declared_route_guard("mixed", plan=ctx.plan, raise_on_decline=True)
+
     from decoy_engine.execution import _pipeline_mixed_route
 
     return _pipeline_mixed_route.run_mixed_route(ctx, decision)

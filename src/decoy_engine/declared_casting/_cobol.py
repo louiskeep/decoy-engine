@@ -18,7 +18,10 @@ from decoy_engine.declared_casting._types import CastOutcome, fail, succeed
 _R = reasons.runtime
 POSITIVE = "{ABCDEFGHI"
 NEGATIVE = "}JKLMNOPQR"
-_OVERPUNCH = {**{c: (d, False) for d, c in enumerate(POSITIVE)}, **{c: (d, True) for d, c in enumerate(NEGATIVE)}}
+_OVERPUNCH = {
+    **{c: (d, False) for d, c in enumerate(POSITIVE)},
+    **{c: (d, True) for d, c in enumerate(NEGATIVE)},
+}
 _ZONED_POSITIVE = frozenset({0xA, 0xC, 0xE})
 _ZONED_NEGATIVE = frozenset({0xB, 0xD})
 _BAD = _R.DECLARED_COBOL_INVALID
@@ -39,7 +42,9 @@ def parse_overpunch(spec: Any, raw: Any) -> CastOutcome:
         return fail(_BAD)
     body, last = raw[:-1], raw[-1]
     mapped = _OVERPUNCH.get(last)
-    if mapped is None or not (body.isascii() and (body == "" or body.isdigit())):  # guard:cobol_digit
+    if mapped is None or not (
+        body.isascii() and (body == "" or body.isdigit())
+    ):  # guard:cobol_digit
         return fail(_BAD)
     digit, negative = mapped
     return _digits_value(body + str(digit), spec, negative)

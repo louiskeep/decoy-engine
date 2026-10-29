@@ -41,12 +41,30 @@ def test_a2_zero_pad_formats_and_never_truncates() -> None:
 @pytest.mark.parametrize(
     ("spec", "value"),
     [
-        ({**DEC_5_2, "width": 5, "width_unit": "code_points", "pad": " ", "align": "right"}, Decimal("-99.99")),
-        ({**USD, "width": 6, "width_unit": "code_points", "pad": " ", "align": "right"}, Decimal("123.50")),
-        ({**EUR, "width": 6, "width_unit": "code_points", "pad": " ", "align": "right"}, Decimal("1.50")),
         (
-            {"id": "decimal/grouped/v1", "precision": 8, "scale": 2, "radix": ".", "group": ",",
-             "width": 6, "width_unit": "code_points", "pad": " ", "align": "right"},
+            {**DEC_5_2, "width": 5, "width_unit": "code_points", "pad": " ", "align": "right"},
+            Decimal("-99.99"),
+        ),
+        (
+            {**USD, "width": 6, "width_unit": "code_points", "pad": " ", "align": "right"},
+            Decimal("123.50"),
+        ),
+        (
+            {**EUR, "width": 6, "width_unit": "code_points", "pad": " ", "align": "right"},
+            Decimal("1.50"),
+        ),
+        (
+            {
+                "id": "decimal/grouped/v1",
+                "precision": 8,
+                "scale": 2,
+                "radix": ".",
+                "group": ",",
+                "width": 6,
+                "width_unit": "code_points",
+                "pad": " ",
+                "align": "right",
+            },
             Decimal("1234.50"),
         ),
     ],
@@ -73,7 +91,9 @@ def test_integer_bit_width_boundaries(bit_width: int, signed: bool) -> None:
         assert _code(parse(spec, "-1")) == "declared_integer_overflow"
 
 
-@pytest.mark.parametrize("bad", ["", " 1", "1 ", "1_0", "1e3", "０１", "--1", "+", "0x10", "1.0"])
+@pytest.mark.parametrize(
+    "bad", ["", " 1", "1 ", "1_0", "1e3", "\uff10\uff11", "--1", "+", "0x10", "1.0"]
+)
 def test_integer_grammar_is_strict(bad: str) -> None:
     parse, _ = _api()
     assert _code(parse(INT64, bad)) == "declared_integer_invalid"
@@ -151,7 +171,15 @@ STRFTIME_MDY = {"id": "date/strftime/v1", "format": "%m/%d/%Y"}
 def test_a4_dates_are_explicit() -> None:
     parse, fmt = _api()
     assert parse(ISO_DATE, "2026-02-01").value == date(2026, 2, 1)
-    for bad in ("2026-2-1", "20260201", "2026-02-01 ", "2026-02-30", "2026-02-01T00:00", " 2026-02-01", "２０２６-02-01"):
+    for bad in (
+        "2026-2-1",
+        "20260201",
+        "2026-02-01 ",
+        "2026-02-30",
+        "2026-02-01T00:00",
+        " 2026-02-01",
+        "\uff12\uff10\uff12\uff16-02-01",
+    ):
         assert _code(parse(ISO_DATE, bad)) == "declared_date_invalid", bad
     assert parse(STRPTIME_MDY, "01/02/2026").value == date(2026, 1, 2)
     assert fmt(STRFTIME_MDY, date(2026, 1, 2)).value == "01/02/2026"
@@ -160,7 +188,9 @@ def test_a4_dates_are_explicit() -> None:
     assert fmt(ISO_DATE, date(1, 1, 1)).value == "0001-01-01"
 
 
-@pytest.mark.parametrize("directive", ["%b", "%B", "%c", "%x", "%X", "%Z", "%y", "%j", "%-d", "%a", "%p"])
+@pytest.mark.parametrize(
+    "directive", ["%b", "%B", "%c", "%x", "%X", "%Z", "%y", "%j", "%-d", "%a", "%p"]
+)
 def test_a4_locale_and_platform_directives_are_rejected(directive: str) -> None:
     from decoy_engine.declared_casting import validate_format_spec
 
@@ -193,7 +223,12 @@ def test_a5_locale_independence(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         locale,
         "localeconv",
-        lambda: {"decimal_point": ",", "thousands_sep": ".", "grouping": [2, 0], "currency_symbol": "¥"},
+        lambda: {
+            "decimal_point": ",",
+            "thousands_sep": ".",
+            "grouping": [2, 0],
+            "currency_symbol": "¥",
+        },
     )
     monkeypatch.setattr(calendar, "month_name", ["", *("X" * i for i in range(1, 13))])
     monkeypatch.setattr(calendar, "day_name", ["Z"] * 7)
@@ -215,7 +250,15 @@ def test_a6_currency() -> None:
     assert parse(USD, "$1,234.50").value == Decimal("1234.50")
     assert parse(EUR, "1.234,50 EUR").value == Decimal("1234.50")
     assert parse(USD, "-$1,234.50").value == Decimal("-1234.50")
-    for bad in ("12,34.56", "1,234.50$", "(1,234.50)", "1,234.50", "$1,23.50", "$,234.50", "$1234,567.00"):
+    for bad in (
+        "12,34.56",
+        "1,234.50$",
+        "(1,234.50)",
+        "1,234.50",
+        "$1,23.50",
+        "$,234.50",
+        "$1234,567.00",
+    ):
         assert _code(parse(USD, bad)) == "declared_currency_invalid", bad
     assert _code(parse(USD, "$1234.50")) == "declared_currency_invalid"  # grouping is canonical
     assert fmt(USD, Decimal("1234.5")).value == "$1,234.50"
@@ -232,7 +275,12 @@ def test_a6_currency_code_is_mandatory_and_validated() -> None:
     from decoy_engine.declared_casting import validate_format_spec
 
     missing = {k: v for k, v in USD.items() if k != "currency_code"}
-    for bad in (missing, {**USD, "currency_code": "usd"}, {**USD, "currency_code": "US"}, {**USD, "currency_code": "US1"}):
+    for bad in (
+        missing,
+        {**USD, "currency_code": "usd"},
+        {**USD, "currency_code": "US"},
+        {**USD, "currency_code": "US1"},
+    ):
         with pytest.raises(Exception) as exc:
             validate_format_spec(bad)
         assert getattr(exc.value, "code", None) == "declared_cast_currency_code_invalid"
@@ -251,7 +299,9 @@ def test_b5_unicode_currency_width_is_unit_aware() -> None:
     # width holds fewer code points and the statically derived worst case differs per unit.
     from decoy_engine.declared_casting import max_rendered_width
 
-    assert max_rendered_width({**euro, "width": 20, "width_unit": "bytes", "pad": " ", "align": "right"}) > max_rendered_width(
+    assert max_rendered_width(
+        {**euro, "width": 20, "width_unit": "bytes", "pad": " ", "align": "right"}
+    ) > max_rendered_width(
         {**euro, "width": 20, "width_unit": "code_points", "pad": " ", "align": "right"}
     )
 
@@ -329,7 +379,9 @@ def test_a7_comp3() -> None:
         bytes([0x12, 0x34, 0x5C, 0x00]),  # long
     ):
         assert _code(parse(COMP3_ODD, bad)) == "declared_cobol_invalid", bad
-    assert _code(parse(COMP3_EVEN, bytes([0x11, 0x23, 0x4C]))) == "declared_cobol_invalid"  # unused nibble
+    assert (
+        _code(parse(COMP3_EVEN, bytes([0x11, 0x23, 0x4C]))) == "declared_cobol_invalid"
+    )  # unused nibble
     assert _code(parse(COMP3_U, bytes([0x12, 0x3C]))) == "declared_cobol_invalid"
     assert fmt(COMP3_ODD, Decimal(12345)).value == bytes([0x12, 0x34, 0x5C])
     assert fmt(COMP3_ODD, Decimal(-12345)).value == bytes([0x12, 0x34, 0x5D])
@@ -405,10 +457,18 @@ def test_catalog_every_descriptor_declares_an_inverse_and_width() -> None:
     assert manifest["catalog_version"] == 1
     ids = {f["id"] for f in manifest["formats"]}
     assert {
-        "string/exact/v1", "integer/ascii/v1", "integer/zero-pad/v1", "decimal/plain/v1",
-        "decimal/grouped/v1", "date/iso8601/v1", "date/strptime/v1", "date/strftime/v1",
-        "currency/explicit/v1", "cobol/overpunch-ascii-trailing/v1",
-        "cobol/zoned-ebcdic-trailing/v1", "cobol/comp-3/v1",
+        "string/exact/v1",
+        "integer/ascii/v1",
+        "integer/zero-pad/v1",
+        "decimal/plain/v1",
+        "decimal/grouped/v1",
+        "date/iso8601/v1",
+        "date/strptime/v1",
+        "date/strftime/v1",
+        "currency/explicit/v1",
+        "cobol/overpunch-ascii-trailing/v1",
+        "cobol/zoned-ebcdic-trailing/v1",
+        "cobol/comp-3/v1",
     } <= ids
     for f in manifest["formats"]:
         assert f["has_inverse"] is True

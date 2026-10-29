@@ -71,6 +71,7 @@ from decoy_engine.plan._checks_date_shift import (
     check_date_preserve_values,
     check_date_shift_group_by_refs,
 )
+from decoy_engine.plan._checks_declared_casting import compile_declared_casting_contract
 from decoy_engine.plan._checks_derived_aggregate import check_derived_aggregate_refs
 from decoy_engine.plan._checks_dp import (
     check_dp_generate_contract,
@@ -99,11 +100,13 @@ from decoy_engine.plan._types import (
 from decoy_engine.profile._hash import profile_hash
 from decoy_engine.profile._types import Profile
 
+# F06: bumped 2 -> 3 for the pinned `declared_casting` payload. A version-2 YAML loads with
+# `declared_casting=None` (it never declared any) and runs exactly as before.
 # DPS Scope B (guide 4.7): bumped 1 -> 2 for the pinned `GenerationPlan`
 # payload. A plan_version 1 YAML predates `generation` entirely and
 # deserializes with `generation=None` -- the correct pre-GA hard-delete
 # behavior (`generate_tables` raises the moment it's asked to generate).
-PLAN_VERSION = 2
+PLAN_VERSION = 3
 
 
 def compile_plan(
@@ -466,6 +469,7 @@ def compile_plan(
             + freetext_advisory_warnings,
         ),
         generation=generation_plan,
+        declared_casting=compile_declared_casting_contract(config),
     )
 
 
@@ -563,6 +567,13 @@ def run_config_only_checks(config: dict[str, Any]) -> tuple[str, ...]:
     check_fpe_charset_config(config)
     # Row 26 (DE-03 sibling): faker-without-provider rejection. Config-only.
     check_faker_requires_provider(config)
+    # F06: declared parsing/casting contracts. Reported only when a config declares any, so a
+    # legacy config's list is unchanged.
+    declared = (
+        ("declared_casting_contract",)
+        if compile_declared_casting_contract(config) is not None
+        else ()
+    )
     return (
         "unknown_provider",
         "when_with_coherent_with",
@@ -596,6 +607,7 @@ def run_config_only_checks(config: dict[str, Any]) -> tuple[str, ...]:
         "fpe_charset_config",
         # Row 26 (DE-03 sibling): faker-without-provider rejection.
         "faker_requires_provider",
+        *declared,
     )
 
 

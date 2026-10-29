@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import stat
 import traceback
 from pathlib import Path
@@ -46,10 +45,17 @@ def _kp(byte: bytes = b"q"):
     return SecretKeyProvider(secret=byte * 32)
 
 
-def _runtime(root: Path, clock: Clock | None = None, key_provider: Any = None, owner: str = "tenant-1"):
-    from decoy_engine.declared_casting import LocalProtectedQuarantineSink, ProtectedQuarantineRuntime
+def _runtime(
+    root: Path, clock: Clock | None = None, key_provider: Any = None, owner: str = "tenant-1"
+):
+    from decoy_engine.declared_casting import (
+        LocalProtectedQuarantineSink,
+        ProtectedQuarantineRuntime,
+    )
 
-    sink = LocalProtectedQuarantineSink(root, key_provider=key_provider or _kp(), clock=clock or Clock())
+    sink = LocalProtectedQuarantineSink(
+        root, key_provider=key_provider or _kp(), clock=clock or Clock()
+    )
     return ProtectedQuarantineRuntime(sink=sink, owner=owner)
 
 
@@ -63,7 +69,13 @@ def _cfg(tmp_path: Path, **top: Any) -> dict[str, Any]:
     src = write_csv(tmp_path / "people.csv", ["id", "start"], [["1", "2026-02-01"]])
     cols = [
         column("id"),
-        column("start", logical_type="date", parse_format=ISO_DATE, error_policy="quarantine", output_format=DATE_OUT),
+        column(
+            "start",
+            logical_type="date",
+            parse_format=ISO_DATE,
+            error_policy="quarantine",
+            output_format=DATE_OUT,
+        ),
     ]
     return config(cols, source_path=src, top={"protected_quarantine": PROTECTED_QUARANTINE, **top})
 
@@ -84,7 +96,9 @@ def _walk(root: Path) -> list[Path]:
 # -- C1 ---------------------------------------------------------------------------------------
 
 
-def test_c1_quarantine_policy_without_a_sink_fails_before_the_source_is_read(tmp_path: Path) -> None:
+def test_c1_quarantine_policy_without_a_sink_fails_before_the_source_is_read(
+    tmp_path: Path,
+) -> None:
     from decoy_engine.execution._errors import ExecutionError
     from decoy_engine.profile._readers import LazySource
 
@@ -102,7 +116,14 @@ def test_c1_quarantine_policy_without_a_sink_fails_before_the_source_is_read(tmp
 def test_c1_legacy_quarantine_output_path_does_not_satisfy_the_capability(tmp_path: Path) -> None:
     from decoy_engine.execution._errors import ExecutionError
 
-    cfg = _cfg(tmp_path, quarantine={"enabled": True, "output_path": str(tmp_path / "legacy.jsonl"), "triggers": ["format_error"]})
+    cfg = _cfg(
+        tmp_path,
+        quarantine={
+            "enabled": True,
+            "output_path": str(tmp_path / "legacy.jsonl"),
+            "triggers": ["format_error"],
+        },
+    )
     with pytest.raises(ExecutionError) as exc:
         run(cfg, {"people": text_table(id=["1"], start=["bad"])})
     assert exc.value.code == "protected_quarantine_unavailable"
@@ -157,7 +178,11 @@ def test_c1_seed_only_key_provider_is_rejected_before_source_read(tmp_path: Path
 
     runtime = _runtime(tmp_path / "q", key_provider=SeedKeyProvider(job_seed=b"\x01" * 8))
     with pytest.raises(ExecutionError) as exc:
-        run(_cfg(tmp_path), {"people": LazySource(path=tmp_path / "missing.parquet")}, quarantine_runtime=runtime)
+        run(
+            _cfg(tmp_path),
+            {"people": LazySource(path=tmp_path / "missing.parquet")},
+            quarantine_runtime=runtime,
+        )
     assert exc.value.code == "protected_quarantine_unavailable"
 
 
@@ -167,7 +192,15 @@ def test_c1_sink_protocol_conformance_and_missing_capability_rejected(tmp_path: 
 
     runtime = _runtime(tmp_path / "q")
     assert isinstance(runtime.sink, ProtectedQuarantineSink)
-    for name in ("begin", "write_row", "seal", "abort", "get_retrieval_token", "open", "purge_expired"):
+    for name in (
+        "begin",
+        "write_row",
+        "seal",
+        "abort",
+        "get_retrieval_token",
+        "open",
+        "purge_expired",
+    ):
         assert callable(getattr(runtime.sink, name))
 
     class NoExpiry:  # a sink missing purge_expired / get_retrieval_token is not qualified
@@ -217,7 +250,10 @@ def test_c2_symlinked_root_and_symlinked_artifact_are_refused(tmp_path: Path) ->
     runtime = _runtime(link)
     with pytest.raises(ExecutionError) as exc:
         _quarantine_run(tmp_path, runtime)
-    assert exc.value.code in {"protected_quarantine_unavailable", "protected_quarantine_write_failed"}
+    assert exc.value.code in {
+        "protected_quarantine_unavailable",
+        "protected_quarantine_write_failed",
+    }
     assert not list(real.rglob("*"))
 
 
@@ -249,7 +285,9 @@ def test_c2_partial_files_are_not_receipts_and_abort_leaves_nothing(tmp_path: Pa
     sink = runtime.sink
     policy = QuarantinePolicy(**PROTECTED_QUARANTINE)
     session = sink.begin(QuarantineRun(owner="tenant-1", run_id="r1"), policy)
-    sink.write_row(session, QuarantineEnvelope(table="t", row_position=0, reasons=(), row={"a": f"x{MARKER}"}))
+    sink.write_row(
+        session, QuarantineEnvelope(table="t", row_position=0, reasons=(), row={"a": f"x{MARKER}"})
+    )
     assert not [p for p in _walk(root) if p.suffix == ".dqa"]  # unsealed: no readable artifact
     sink.abort(session)
     assert not [p for p in _walk(root) if p.is_file()]
@@ -262,12 +300,20 @@ def test_c2_budgets_fail_closed(tmp_path: Path) -> None:
     cfg["protected_quarantine"] = {**PROTECTED_QUARANTINE, "max_rows": 1}
     runtime = _runtime(tmp_path / "q")
     with pytest.raises(ExecutionError) as exc:
-        run(cfg, {"people": text_table(id=["1", "2", "3"], start=["a", "b", "2026-01-01"])}, quarantine_runtime=runtime)
+        run(
+            cfg,
+            {"people": text_table(id=["1", "2", "3"], start=["a", "b", "2026-01-01"])},
+            quarantine_runtime=runtime,
+        )
     assert exc.value.code == "protected_quarantine_write_failed"
     assert not [p for p in _walk(tmp_path / "q") if p.suffix == ".dqa"]
     cfg["protected_quarantine"] = {**PROTECTED_QUARANTINE, "max_bytes": 64}
     with pytest.raises(ExecutionError) as exc2:
-        run(cfg, {"people": text_table(id=["1"], start=["x" * 500])}, quarantine_runtime=_runtime(tmp_path / "q2"))
+        run(
+            cfg,
+            {"people": text_table(id=["1"], start=["x" * 500])},
+            quarantine_runtime=_runtime(tmp_path / "q2"),
+        )
     assert exc2.value.code == "protected_quarantine_write_failed"
 
 
@@ -304,7 +350,9 @@ def test_c3_get_retrieval_token_is_issued_from_the_receipt(tmp_path: Path) -> No
     assert len(runtime.sink.open(again, _ctx())) == 1
 
 
-def test_c3_expiry_uses_the_injected_clock_and_purge_removes_only_owned_artifacts(tmp_path: Path) -> None:
+def test_c3_expiry_uses_the_injected_clock_and_purge_removes_only_owned_artifacts(
+    tmp_path: Path,
+) -> None:
     from decoy_engine.errors import DecoyError
 
     clock = Clock()
@@ -330,7 +378,9 @@ def test_c3_expiry_uses_the_injected_clock_and_purge_removes_only_owned_artifact
 # -- C4 publication failure -------------------------------------------------------------------
 
 
-def test_c4_write_failure_aborts_the_run_and_leaves_no_readable_partial(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_c4_write_failure_aborts_the_run_and_leaves_no_readable_partial(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from decoy_engine.declared_casting import LocalProtectedQuarantineSink
     from decoy_engine.execution._errors import ExecutionError
 
@@ -343,11 +393,15 @@ def test_c4_write_failure_aborts_the_run_and_leaves_no_readable_partial(tmp_path
     with pytest.raises(ExecutionError) as exc:
         _quarantine_run(tmp_path, runtime)
     assert exc.value.code == "protected_quarantine_write_failed"
-    assert MARKER not in str(exc.value) and MARKER not in "".join(traceback.format_exception(exc.value))
+    assert MARKER not in str(exc.value) and MARKER not in "".join(
+        traceback.format_exception(exc.value)
+    )
     assert not [p for p in _walk(tmp_path / "q") if p.suffix == ".dqa"]
 
 
-def test_c4_seal_failure_and_cleanup_failure_are_distinct(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_c4_seal_failure_and_cleanup_failure_are_distinct(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from decoy_engine.declared_casting import LocalProtectedQuarantineSink
     from decoy_engine.execution._errors import ExecutionError
 
@@ -363,7 +417,9 @@ def test_c4_seal_failure_and_cleanup_failure_are_distinct(tmp_path: Path, monkey
     monkeypatch.setattr(LocalProtectedQuarantineSink, "_remove_partial", fail_cleanup)
     with pytest.raises(ExecutionError) as exc:
         _quarantine_run(tmp_path, runtime)
-    assert exc.value.code == "protected_quarantine_seal_failed"  # the original failure is not masked
+    assert (
+        exc.value.code == "protected_quarantine_seal_failed"
+    )  # the original failure is not masked
     assert exc.value.cleanup_state == "failed"  # cleanup failure reported as its own outcome
 
 
@@ -389,8 +445,17 @@ def _blob(*objs: Any) -> str:
         ("date", ISO_DATE, f"2026-{MARKER}"),
         (
             "currency",
-            {"id": "currency/explicit/v1", "currency_code": "USD", "token": "$", "token_position": "prefix",
-             "sign_style": "leading_minus", "precision": 12, "scale": 2, "radix": ".", "group": ","},
+            {
+                "id": "currency/explicit/v1",
+                "currency_code": "USD",
+                "token": "$",
+                "token_position": "prefix",
+                "sign_style": "leading_minus",
+                "precision": 12,
+                "scale": 2,
+                "radix": ".",
+                "group": ",",
+            },
             f"${MARKER}",
         ),
         ("decimal", {"id": "decimal/plain/v1", "precision": 5, "scale": 2}, f"1.{MARKER}"),
@@ -424,13 +489,18 @@ def test_c5_marker_never_reaches_an_ordinary_channel(
     try:
         result = run(cfg, {"people": table}, **kwargs)
     except DecoyError as exc:
-        exc_blob = _blob(str(exc), repr(exc), "".join(traceback.format_exception(exc)), capture_failure(exc))
+        exc_blob = _blob(
+            str(exc), repr(exc), "".join(traceback.format_exception(exc)), capture_failure(exc)
+        )
         evidence = getattr(exc, "declared_casting_counts", None)
         exc_blob += json.dumps(evidence, default=str)
     channels = _blob(
         exc_blob,
         caplog.text,
-        [type(e).__name__ + repr(vars(e)) if hasattr(e, "__dict__") else repr(e) for e in progress.events],
+        [
+            type(e).__name__ + repr(vars(e)) if hasattr(e, "__dict__") else repr(e)
+            for e in progress.events
+        ],
         json.dumps(result.quality_metrics, default=str) if result is not None else "",
         repr(result) if result is not None else "",
     )
@@ -449,27 +519,52 @@ def test_c5_cobol_bytes_marker(tmp_path: Path) -> None:
 
     src = write_csv(tmp_path / "s.csv", ["id", "v"], [["1", "1"]])
     spec = {"id": "cobol/zoned-ebcdic-trailing/v1", "precision": 3, "scale": 0, "signed": True}
-    cfg = config([column("id"), column("v", logical_type="decimal", parse_format=spec, error_policy="fail")], source_path=src)
+    cfg = config(
+        [column("id"), column("v", logical_type="decimal", parse_format=spec, error_policy="fail")],
+        source_path=src,
+    )
     bad = MARKER.encode()[:3]
     table = pa.table({"id": ["1"], "v": pa.array([bad], pa.binary())})
     with pytest.raises(DecoyError) as exc:
         run(cfg, {"people": table})
-    assert MARKER not in _blob(str(exc.value), repr(exc.value), "".join(traceback.format_exception(exc.value)))
+    assert MARKER not in _blob(
+        str(exc.value), repr(exc.value), "".join(traceback.format_exception(exc.value))
+    )
 
 
-def test_c5_configured_sentinel_may_live_in_config_but_not_in_diagnostics(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+def test_c5_configured_sentinel_may_live_in_config_but_not_in_diagnostics(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
     sentinel = f"SENT-{MARKER}"
     src = write_csv(tmp_path / "s.csv", ["id", "v"], [["1", "1"]])
     cfg = config(
-        [column("id"), column("v", logical_type="date", parse_format=ISO_DATE, error_policy="fail",
-                              sentinel_to_null={"id": "sentinel/exact/v1", "values": [sentinel]})],
+        [
+            column("id"),
+            column(
+                "v",
+                logical_type="date",
+                parse_format=ISO_DATE,
+                error_policy="fail",
+                sentinel_to_null={"id": "sentinel/exact/v1", "values": [sentinel]},
+            ),
+        ],
         source_path=src,
     )
     caplog.set_level(logging.DEBUG)
     progress = _Capture()
-    result = run(cfg, {"people": text_table(id=["1", "2"], v=[sentinel, "2026-01-01"])}, progress=progress, explain_plan=True)
+    result = run(
+        cfg,
+        {"people": text_table(id=["1", "2"], v=[sentinel, "2026-01-01"])},
+        progress=progress,
+        explain_plan=True,
+    )
     assert sentinel in json.dumps(cfg)  # the privileged contract reproduces the rule
-    ordinary = _blob(caplog.text, json.dumps(result.quality_metrics, default=str), repr(result), [repr(e) for e in progress.events])
+    ordinary = _blob(
+        caplog.text,
+        json.dumps(result.quality_metrics, default=str),
+        repr(result),
+        [repr(e) for e in progress.events],
+    )
     assert sentinel not in ordinary and MARKER not in ordinary
 
 
@@ -477,27 +572,43 @@ def test_c5_configured_sentinel_may_live_in_config_but_not_in_diagnostics(tmp_pa
 
 F06_CODES = {
     "plan": [
-        "declared_cast_contract_invalid", "declared_cast_precision_invalid", "declared_cast_scale_invalid",
-        "declared_cast_sentinel_config_invalid", "declared_cast_currency_code_invalid",
-        "declared_cast_format_unknown", "declared_cast_directive_unsupported",
-        "declared_output_width_unknown", "declared_type_strategy_incompatible",
+        "declared_cast_contract_invalid",
+        "declared_cast_precision_invalid",
+        "declared_cast_scale_invalid",
+        "declared_cast_sentinel_config_invalid",
+        "declared_cast_currency_code_invalid",
+        "declared_cast_format_unknown",
+        "declared_cast_directive_unsupported",
+        "declared_output_width_unknown",
+        "declared_type_strategy_incompatible",
     ],
     "route": [
-        "declared_cast_route_unsupported", "declared_cast_input_type_incompatible",
+        "declared_cast_route_unsupported",
+        "declared_cast_input_type_incompatible",
         "protected_quarantine_unavailable",
     ],
     "runtime": [
-        "declared_integer_invalid", "declared_integer_overflow", "declared_decimal_invalid",
-        "declared_decimal_precision_loss", "declared_decimal_overflow", "declared_date_invalid",
-        "declared_currency_invalid", "declared_cobol_invalid", "declared_output_width_overflow",
-        "protected_quarantine_write_failed", "protected_quarantine_seal_failed",
-        "protected_quarantine_access_denied", "protected_quarantine_expired",
+        "declared_integer_invalid",
+        "declared_integer_overflow",
+        "declared_decimal_invalid",
+        "declared_decimal_precision_loss",
+        "declared_decimal_overflow",
+        "declared_date_invalid",
+        "declared_currency_invalid",
+        "declared_cobol_invalid",
+        "declared_output_width_overflow",
+        "protected_quarantine_write_failed",
+        "protected_quarantine_seal_failed",
+        "protected_quarantine_access_denied",
+        "protected_quarantine_expired",
         "fixed_width_record_overlong",
     ],
 }
 
 
-@pytest.mark.parametrize(("namespace", "code"), [(ns, c) for ns, cs in F06_CODES.items() for c in cs])
+@pytest.mark.parametrize(
+    ("namespace", "code"), [(ns, c) for ns, cs in F06_CODES.items() for c in cs]
+)
 def test_c6_every_reason_is_registered_once_with_safe_semantics(namespace: str, code: str) -> None:
     from decoy_engine import reasons
 
@@ -507,11 +618,17 @@ def test_c6_every_reason_is_registered_once_with_safe_semantics(namespace: str, 
     assert len(matches) == 1
     assert spec.summary.endswith(".") and MARKER not in spec.summary
     assert spec.symbol == code.upper()
-    record = reasons.ReasonRecord.for_reason(getattr(getattr(reasons, namespace), spec.symbol), phase=spec.default_rule.phase)
+    record = reasons.ReasonRecord.for_reason(
+        getattr(getattr(reasons, namespace), spec.symbol), phase=spec.default_rule.phase
+    )
     assert record.code == code
     assert reasons.check_integrity() == []
     if namespace == "runtime" and code.startswith("protected_quarantine"):
-        assert spec.default_rule.retry in {reasons.RetryClass.UNKNOWN, reasons.RetryClass.ENVIRONMENT_REPAIR, reasons.RetryClass.NEVER}
+        assert spec.default_rule.retry in {
+            reasons.RetryClass.UNKNOWN,
+            reasons.RetryClass.ENVIRONMENT_REPAIR,
+            reasons.RetryClass.NEVER,
+        }
 
 
 def test_c6_registry_version_bumped_and_append_only_vs_the_v1_fixture() -> None:
@@ -519,10 +636,18 @@ def test_c6_registry_version_bumped_and_append_only_vs_the_v1_fixture() -> None:
 
     manifest = json.loads(json.dumps(reasons.manifest()))
     assert manifest["registry_version"].split(".")[:2] == ["1", "1"]
-    pinned = json.loads((Path(__file__).resolve().parents[1] / "fixtures" / "f29" / "reason-manifest-v1.json").read_text())
+    pinned = json.loads(
+        (
+            Path(__file__).resolve().parents[1] / "fixtures" / "f29" / "reason-manifest-v1.json"
+        ).read_text()
+    )
     live_ids = {(e["namespace"], e["code"]) for e in manifest["entries"]}
     assert {(e["namespace"], e["code"]) for e in pinned["entries"]} <= live_ids
-    fixture = Path(__file__).resolve().parents[1] / "fixtures" / "f29" / "reason-manifest-v1.1-f06.json"
+    fixture = (
+        Path(__file__).resolve().parents[1] / "fixtures" / "f29" / "reason-manifest-v1.1-f06.json"
+    )
     assert fixture.is_file(), "the F06 additions are pinned in their own fixture"
     f06 = json.loads(fixture.read_text())
-    assert {(e["namespace"], e["code"]) for e in f06["entries"]} == {(ns, c) for ns, cs in F06_CODES.items() for c in cs}
+    assert {(e["namespace"], e["code"]) for e in f06["entries"]} == {
+        (ns, c) for ns, cs in F06_CODES.items() for c in cs
+    }

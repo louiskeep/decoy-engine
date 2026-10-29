@@ -271,6 +271,11 @@ def run_sequential(
     docstring's "Quarantine sidecar shares the sink's commit-or-discard fate"
     section.
     """
+    from decoy_engine.declared_casting._eligibility import declared_route_guard
+
+    # F06: a declared-casting job runs only where the casting boundary exists.
+    declared_route_guard("sequential", plan=plan, raise_on_decline=True)
+
     q_cfg: dict[str, Any] = quarantine_config or {}
     q_enabled = bool(q_cfg.get("enabled", False))
     q_triggers: list[str] = list(q_cfg.get("triggers") or [])

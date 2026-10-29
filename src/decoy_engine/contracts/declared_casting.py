@@ -15,11 +15,21 @@ locale profile), and the IBM overpunch / zoned / packed-decimal conventions for 
 
 from __future__ import annotations
 
+import itertools
 import re
 from typing import Annotated, Any, ClassVar, Literal, Union
 
-from pydantic import BaseModel, ConfigDict, Discriminator, Field, Tag, TypeAdapter, ValidationError
-from pydantic import field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Discriminator,
+    Field,
+    Tag,
+    TypeAdapter,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 from pydantic_core import PydanticCustomError
 
 from decoy_engine import reasons
@@ -166,7 +176,8 @@ class DecimalGrouped(_Precision, _Separators):
     def _needs_group(self) -> DecimalGrouped:
         if self.group is None:
             raise violation(
-                _P.DECLARED_CAST_DIRECTIVE_UNSUPPORTED, "decimal/grouped/v1 requires a group separator."
+                _P.DECLARED_CAST_DIRECTIVE_UNSUPPORTED,
+                "decimal/grouped/v1 requires a group separator.",
             )
         return self
 
@@ -203,7 +214,7 @@ def date_pattern(fmt: str) -> list[str]:
         raise violation(
             _P.DECLARED_CAST_DIRECTIVE_UNSUPPORTED, "date format needs each of %Y, %m and %d once."
         )
-    for a, b in zip(parts, parts[1:], strict=False):
+    for a, b in itertools.pairwise(parts):
         if a.startswith("%") and b.startswith("%"):
             raise violation(
                 _P.DECLARED_CAST_DIRECTIVE_UNSUPPORTED, "date fields need a separator between them."
@@ -260,9 +271,17 @@ class Currency(_Precision, _Separators):
                 _P.DECLARED_CAST_CONTRACT_INVALID,
                 f"currency token must be 1..{MAX_TOKEN_BYTES} UTF-8 bytes.",
             )
-        if not v.isprintable() or any(c.isdigit() for c in v) or v.strip(" ") == "" or "-" in v or "(" in v or ")" in v:
+        if (
+            not v.isprintable()
+            or any(c.isdigit() for c in v)
+            or v.strip(" ") == ""
+            or "-" in v
+            or "(" in v
+            or ")" in v
+        ):
             raise violation(
-                _P.DECLARED_CAST_CONTRACT_INVALID, "currency token must not contain digits or signs."
+                _P.DECLARED_CAST_CONTRACT_INVALID,
+                "currency token must not contain digits or signs.",
             )
         return v
 
@@ -271,7 +290,8 @@ class Currency(_Precision, _Separators):
     def _code_required(cls, data: Any) -> Any:
         if isinstance(data, dict) and "currency_code" not in data:
             raise violation(
-                _P.DECLARED_CAST_CURRENCY_CODE_INVALID, "currency_code is required (a symbol is not an identity)."
+                _P.DECLARED_CAST_CURRENCY_CODE_INVALID,
+                "currency_code is required (a symbol is not an identity).",
             )
         return data
 
@@ -316,7 +336,9 @@ class _Padded(_Model):
             raise violation(_P.DECLARED_OUTPUT_WIDTH_UNKNOWN, "output width is required.")
         if width is not None:
             if isinstance(width, bool) or not isinstance(width, int) or not 1 <= width <= 1_000_000:
-                raise violation(_P.DECLARED_OUTPUT_WIDTH_UNKNOWN, "output width must be a positive integer.")
+                raise violation(
+                    _P.DECLARED_OUTPUT_WIDTH_UNKNOWN, "output width must be a positive integer."
+                )
         if (width is not None or unit is not None) and unit not in ("code_points", "bytes"):
             raise violation(
                 _P.DECLARED_CAST_DIRECTIVE_UNSUPPORTED, "width_unit must be code_points or bytes."
@@ -327,17 +349,23 @@ class _Padded(_Model):
     @classmethod
     def _pad(cls, v: Any) -> str:
         if not (isinstance(v, str) and len(v) == 1 and v.isprintable()):
-            raise violation(_P.DECLARED_CAST_DIRECTIVE_UNSUPPORTED, "pad must be one printable character.")
+            raise violation(
+                _P.DECLARED_CAST_DIRECTIVE_UNSUPPORTED, "pad must be one printable character."
+            )
         return v
 
     @model_validator(mode="after")
     def _pad_is_one_unit(self) -> _Padded:
         if self.width_unit == "bytes" and len(self.pad.encode("utf-8")) != 1:
-            raise violation(_P.DECLARED_CAST_DIRECTIVE_UNSUPPORTED, "a byte-width pad must be one byte.")
+            raise violation(
+                _P.DECLARED_CAST_DIRECTIVE_UNSUPPORTED, "a byte-width pad must be one byte."
+            )
         # Stripping the pad is how the exact-inverse oracle recovers the value; a digit pad
         # would eat significant digits (only integer/zero-pad/v1 pads with 0 and strips nothing).
         if self.pad.isdigit() and getattr(self, "id", "") != "integer/zero-pad/v1":
-            raise violation(_P.DECLARED_CAST_DIRECTIVE_UNSUPPORTED, "a numeric pad would hide digits.")
+            raise violation(
+                _P.DECLARED_CAST_DIRECTIVE_UNSUPPORTED, "a numeric pad would hide digits."
+            )
         return self
 
     _width_required: ClassVar[bool] = False
@@ -368,7 +396,8 @@ class IntegerZeroPad(_Padded):
     def _zero_right(self) -> IntegerZeroPad:
         if self.pad != "0" or self.align != "right":
             raise violation(
-                _P.DECLARED_CAST_DIRECTIVE_UNSUPPORTED, "integer/zero-pad/v1 pads with 0 on the left."
+                _P.DECLARED_CAST_DIRECTIVE_UNSUPPORTED,
+                "integer/zero-pad/v1 pads with 0 on the left.",
             )
         return self
 
@@ -385,7 +414,9 @@ class DateIsoOut(_Padded, DateIso):
     @model_validator(mode="after")
     def _static(self) -> DateIsoOut:
         if self.width is not None and self.width < 10:
-            raise violation(_P.DECLARED_OUTPUT_WIDTH_UNKNOWN, "date/iso8601/v1 renders 10 characters.")
+            raise violation(
+                _P.DECLARED_OUTPUT_WIDTH_UNKNOWN, "date/iso8601/v1 renders 10 characters."
+            )
         return self
 
 
@@ -403,7 +434,8 @@ class DateStrftime(_Padded):
     def _static(self) -> DateStrftime:
         if self.width is not None and self.width < date_width(self.format):
             raise violation(
-                _P.DECLARED_OUTPUT_WIDTH_UNKNOWN, "declared width is narrower than the rendered date."
+                _P.DECLARED_OUTPUT_WIDTH_UNKNOWN,
+                "declared width is narrower than the rendered date.",
             )
         return self
 
@@ -417,15 +449,32 @@ class CurrencyOut(_Padded, Currency):
 PARSE_MODELS: dict[str, type[_Model]] = {
     m.model_fields["id"].annotation.__args__[0]: m  # type: ignore[union-attr]
     for m in (
-        StringExact, IntegerAscii, DecimalPlain, DecimalGrouped, DateIso, DateStrptime, Currency,
-        Overpunch, Zoned, Comp3,
+        StringExact,
+        IntegerAscii,
+        DecimalPlain,
+        DecimalGrouped,
+        DateIso,
+        DateStrptime,
+        Currency,
+        Overpunch,
+        Zoned,
+        Comp3,
     )
 }
 OUTPUT_MODELS: dict[str, type[_Model]] = {
     m.model_fields["id"].annotation.__args__[0]: m  # type: ignore[union-attr]
     for m in (
-        StringExactOut, IntegerAsciiOut, IntegerZeroPad, DecimalPlainOut, DecimalGroupedOut,
-        DateIsoOut, DateStrftime, CurrencyOut, Overpunch, Zoned, Comp3,
+        StringExactOut,
+        IntegerAsciiOut,
+        IntegerZeroPad,
+        DecimalPlainOut,
+        DecimalGroupedOut,
+        DateIsoOut,
+        DateStrftime,
+        CurrencyOut,
+        Overpunch,
+        Zoned,
+        Comp3,
     )
 }
 
@@ -448,7 +497,8 @@ def _tagger(models: dict[str, type[_Model]]):
 
 
 def _union(models: dict[str, type[_Model]]) -> Any:
-    members = tuple(Annotated[m, Tag(i)] for i, m in models.items()) + (
+    members = (
+        *(Annotated[m, Tag(i)] for i, m in models.items()),
         Annotated[_UnknownFormat, Tag("__unknown__")],
     )
     return Annotated[Union[members], Discriminator(_tagger(models))]  # noqa: UP007
@@ -473,7 +523,9 @@ def first_code(exc: ValidationError) -> tuple[str, str]:
 def validate_format_spec(spec: Any, *, direction: Direction = "parse") -> Any:
     """Validate one parse/output format spec; raise ``DeclaredCastContractError`` with a registered code."""
     if not isinstance(spec, (dict, _Model)):
-        raise DeclaredCastContractError(str(_P.DECLARED_CAST_CONTRACT_INVALID), "format spec must be a mapping.")
+        raise DeclaredCastContractError(
+            str(_P.DECLARED_CAST_CONTRACT_INVALID), "format spec must be a mapping."
+        )
     try:
         return _ADAPTERS[direction].validate_python(spec)
     except ValidationError as exc:
@@ -513,7 +565,8 @@ class ExactSentinelSetV1(_Model):
             if binary:
                 if len(token) % 2 or not re.fullmatch(r"[0-9a-fA-F]*", token):
                     raise violation(
-                        _P.DECLARED_CAST_SENTINEL_CONFIG_INVALID, "binary sentinels are hex strings."
+                        _P.DECLARED_CAST_SENTINEL_CONFIG_INVALID,
+                        "binary sentinels are hex strings.",
                     )
                 raw: Any = bytes.fromhex(token)
             else:
@@ -526,7 +579,9 @@ class ExactSentinelSetV1(_Model):
                 )
             out.append(raw)
         if binary and len({t.lower() for t in self.values}) != len(self.values):
-            raise violation(_P.DECLARED_CAST_SENTINEL_CONFIG_INVALID, "sentinel values must be unique.")
+            raise violation(
+                _P.DECLARED_CAST_SENTINEL_CONFIG_INVALID, "sentinel values must be unique."
+            )
         return tuple(out)
 
 
@@ -548,8 +603,11 @@ _LOGICAL_FOR = {
     "string": {"string/exact/v1"},
     "integer": {"integer/ascii/v1"},
     "decimal": {
-        "decimal/plain/v1", "decimal/grouped/v1", "cobol/overpunch-ascii-trailing/v1",
-        "cobol/zoned-ebcdic-trailing/v1", "cobol/comp-3/v1",
+        "decimal/plain/v1",
+        "decimal/grouped/v1",
+        "cobol/overpunch-ascii-trailing/v1",
+        "cobol/zoned-ebcdic-trailing/v1",
+        "cobol/comp-3/v1",
     },
     "date": {"date/iso8601/v1", "date/strptime/v1"},
     "currency": {"currency/explicit/v1"},
@@ -588,15 +646,22 @@ class DeclaredColumnContractV1(BaseModel):
     def _cohesive(self) -> DeclaredColumnContractV1:
         if self.parse_format.id not in _LOGICAL_FOR[self.logical_type]:
             raise violation(
-                _P.DECLARED_CAST_CONTRACT_INVALID, "parse_format does not produce the declared logical_type."
+                _P.DECLARED_CAST_CONTRACT_INVALID,
+                "parse_format does not produce the declared logical_type.",
             )
         if self.output_format is not None:
             if self.output_format.id not in _OUTPUT_LOGICAL[self.logical_type]:
                 raise violation(
-                    _P.DECLARED_CAST_CONTRACT_INVALID, "output_format does not render the declared logical_type."
+                    _P.DECLARED_CAST_CONTRACT_INVALID,
+                    "output_format does not render the declared logical_type.",
                 )
-            if self.output_format.logical != self.parse_format.logical and self.logical_type != "currency":
-                raise violation(_P.DECLARED_CAST_CONTRACT_INVALID, "output_format changes the logical type.")
+            if (
+                self.output_format.logical != self.parse_format.logical
+                and self.logical_type != "currency"
+            ):
+                raise violation(
+                    _P.DECLARED_CAST_CONTRACT_INVALID, "output_format changes the logical type."
+                )
             self._same_numeric_domain()
         if self.sentinel_to_null is not None:
             try:
@@ -610,7 +675,8 @@ class DeclaredColumnContractV1(BaseModel):
         for attr in ("precision", "scale", "currency_code"):
             if hasattr(p, attr) and hasattr(o, attr) and getattr(p, attr) != getattr(o, attr):
                 raise violation(
-                    _P.DECLARED_CAST_CONTRACT_INVALID, f"output_format {attr} differs from parse_format."
+                    _P.DECLARED_CAST_CONTRACT_INVALID,
+                    f"output_format {attr} differs from parse_format.",
                 )
 
     @property
@@ -622,9 +688,13 @@ class DeclaredColumnContractV1(BaseModel):
         return {
             "logical_type": self.logical_type,
             "parse_format": self.parse_format.model_dump(),
-            "sentinel_to_null": None if self.sentinel_to_null is None else self.sentinel_to_null.model_dump(),
+            "sentinel_to_null": None
+            if self.sentinel_to_null is None
+            else self.sentinel_to_null.model_dump(),
             "error_policy": self.error_policy,
-            "output_format": None if self.output_format is None else self.output_format.model_dump(),
+            "output_format": None
+            if self.output_format is None
+            else self.output_format.model_dump(),
         }
 
 
@@ -637,7 +707,13 @@ def build_contract(fields: dict[str, Any]) -> DeclaredColumnContractV1:
         raise DeclaredCastContractError(code, message) from None
 
 
-CONTRACT_FIELDS = ("logical_type", "parse_format", "sentinel_to_null", "error_policy", "output_format")
+CONTRACT_FIELDS = (
+    "logical_type",
+    "parse_format",
+    "sentinel_to_null",
+    "error_policy",
+    "output_format",
+)
 
 
 class ProtectedQuarantineConfig(BaseModel):

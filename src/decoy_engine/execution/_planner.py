@@ -204,6 +204,17 @@ def classify_job(
     contributes only Arrow metadata (row/null counts, schema types); a `LazySource`
     contributes its footer facts (the `source_facts` snapshot, else one footer read).
     """
+    from decoy_engine.declared_casting._eligibility import declared_route_guard
+
+    # F06: a declared-casting job runs only where the casting boundary exists.
+    _decl = declared_route_guard("chunked", plan=plan)
+    if not _decl.admitted:
+        return ExecutionPlan(
+            mode="pandas_fallback",
+            rejections={"chunked": "declared_cast_route_unsupported"},
+            reason="declared parsing and casting run on the full-frame route only.",
+        )
+
     from decoy_engine.execution._pipeline import classify_table_kinds
     from decoy_engine.execution._runner import build_work_list, order_work
 

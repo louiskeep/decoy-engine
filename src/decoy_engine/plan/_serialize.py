@@ -36,6 +36,7 @@ from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.plan._generation import ReadSnapshot, build_generation_plan
 from decoy_engine.plan._types import (
     ColumnSeed,
+    DeclaredCastingPlan,
     DpVerification,
     GenerationPlan,
     GroupSeed,
@@ -45,10 +46,12 @@ from decoy_engine.plan._types import (
     PinnedStatisticalSpec,
     Plan,
     PlanCompileResult,
+    PlanDeclaredColumn,
     PlanRelationship,
     PlanRelationshipEnd,
     SeedEnvelope,
     TableSeed,
+    freeze_json,
     unfreeze_json,
 )
 
@@ -93,7 +96,67 @@ def _plan_to_dict(plan: Plan) -> dict[str, Any]:
     # versions' YAML shape identical for that case.
     if plan.generation is not None:
         out["generation"] = _generation_plan_to_dict(plan.generation)
+    # F06 (plan_version 3): omitted when empty, so a plan with no declared columns differs from
+    # its version-2 form only by the version line.
+    if plan.declared_casting is not None:
+        out["declared_casting"] = _declared_casting_to_dict(plan.declared_casting)
     return out
+
+
+def _declared_casting_to_dict(block: DeclaredCastingPlan) -> dict[str, Any]:
+    out: dict[str, Any] = {
+        "catalog_version": block.catalog_version,
+        "columns": [
+            {
+                "table": c.table,
+                "column": c.column,
+                "strategy": c.strategy,
+                "contract": unfreeze_json(c.contract),
+            }
+            for c in block.columns
+        ],
+    }
+    if block.quarantine is not None:
+        out["quarantine"] = unfreeze_json(block.quarantine)
+    return out
+
+
+def _declared_casting_from_dict(data: dict[str, Any]) -> DeclaredCastingPlan:
+    """Load and re-validate a stored block: a stored plan is untrusted input, and a plan that
+    names an unknown format or catalog version must never reach a run."""
+    from decoy_engine.contracts.declared_casting import (
+        CATALOG_VERSION,
+        DeclaredCastContractError,
+        build_contract,
+    )
+
+    if data.get("catalog_version") != CATALOG_VERSION:
+        raise PlanCompileError(
+            code=reasons.plan.DECLARED_CAST_FORMAT_UNKNOWN,
+            path="<declared_casting.catalog_version>",
+            message="The stored declared-casting catalog version is not supported by this engine.",
+        )
+    columns: list[PlanDeclaredColumn] = []
+    for raw in data.get("columns") or ():
+        path = f"<declared_casting {raw.get('table')!s}.{raw.get('column')!s}>"
+        try:
+            contract = build_contract(dict(raw["contract"]))
+        except DeclaredCastContractError as exc:
+            raise PlanCompileError(code=exc.code, path=path, message=exc.message) from None
+        columns.append(
+            PlanDeclaredColumn(
+                table=raw["table"],
+                column=raw["column"],
+                strategy=raw["strategy"],
+                contract=freeze_json(contract.to_payload()),
+            )
+        )
+    quarantine = data.get("quarantine")
+    return DeclaredCastingPlan(
+        catalog_version=data["catalog_version"],
+        columns=tuple(columns),
+        quarantine=freeze_json(quarantine) if quarantine is not None else None,
+    )
 
 
 def _seed_envelope_to_dict(env: SeedEnvelope) -> dict[str, Any]:
@@ -269,6 +332,11 @@ def _plan_from_dict(data: dict[str, Any]) -> Plan:
         plan_compile=_plan_compile_from_dict(data.get("plan_compile", {})),
         generation=(
             _generation_plan_from_dict(generation_raw) if generation_raw is not None else None
+        ),
+        declared_casting=(
+            _declared_casting_from_dict(data["declared_casting"])
+            if data.get("declared_casting") is not None
+            else None
         ),
     )
 

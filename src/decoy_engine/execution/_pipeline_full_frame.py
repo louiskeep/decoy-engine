@@ -83,6 +83,23 @@ def _raise_if_source_value_unrepresentable(
                     ) from exc
 
 
+def _remap_row_errors(records: Any, kept: Mapping[str, list[int]]) -> Any:
+    """Row errors keep pointing at the same rows after declared quarantine removed some."""
+    import dataclasses
+
+    if not kept:
+        return records
+    new_index = {t: {old: new for new, old in enumerate(rows)} for t, rows in kept.items()}
+    out = []
+    for rec in records:
+        table_map = new_index.get(rec.table)
+        if table_map is None:
+            out.append(rec)
+        elif rec.row_index in table_map:
+            out.append(dataclasses.replace(rec, row_index=table_map[rec.row_index]))
+    return tuple(out)
+
+
 def run_full_frame_route(
     ctx: PipelineRunContext,
     decision: RouteDecision,
@@ -90,7 +107,34 @@ def run_full_frame_route(
     pregenerated: dict[str, pa.Table] | None = None,
 ) -> ExecutionResult:
     """`pregenerated` hands over generate outputs a prior route already built (the mixed
-    route's runtime decline), so generation is never run twice."""
+    route's runtime decline), so generation is never run twice.
+
+    A job with declared columns applies the F06 boundary here (pre-mask cast, post-mask format);
+    any failure aborts the protected-quarantine session so no partial artifact survives."""
+    from decoy_engine.declared_casting._boundary import DeclaredCastRun
+    from decoy_engine.declared_casting._eligibility import declared_route_guard
+
+    declared_route_guard("full_frame", plan=ctx.plan, raise_on_decline=False)
+    cast_run = (
+        DeclaredCastRun(ctx.plan.declared_casting, ctx.quarantine_runtime)
+        if ctx.plan.declared_casting is not None
+        else None
+    )
+    try:
+        return _run_full_frame(ctx, decision, pregenerated=pregenerated, cast_run=cast_run)
+    except BaseException:
+        if cast_run is not None:
+            cast_run.abort()
+        raise
+
+
+def _run_full_frame(
+    ctx: PipelineRunContext,
+    decision: RouteDecision,
+    *,
+    pregenerated: dict[str, pa.Table] | None,
+    cast_run: Any,
+) -> ExecutionResult:
     # TB-1: only full_frame / auto-chunk below needs every source resident, and a loader-backed
     # job diverted here must still get its mask tables through the loader. A lazy route or
     # split candidate stays lazy (`keep_lazy`); the unified slice sees the rest as tables.
@@ -102,6 +146,9 @@ def run_full_frame_route(
         prepared=ctx.prepared.prepared,
         keep_lazy=decision.keep_lazy,
     )
+    if cast_run is not None:
+        # F06 pre-mask boundary: the one place a declared lexeme becomes a typed value.
+        resident_sources = cast_run.pre_mask(resident_sources)
     caller_sources = {k: v for k, v in resident_sources.items() if k in ctx.caller_sources}
 
     pool_cache = PoolCache()
@@ -161,6 +208,16 @@ def run_full_frame_route(
         except _ingest_conversion_errors() as exc:
             _raise_if_source_value_unrepresentable(resident_sources, ctx.graph, exc)
             raise
+        if cast_run is not None:
+            import dataclasses
+
+            outs, srcs, kept = cast_run.post_mask(step.mask_outputs, step.sources)
+            step = dataclasses.replace(
+                step,
+                mask_outputs=outs,
+                sources=srcs,
+                mask_row_errors=_remap_row_errors(step.mask_row_errors, kept),
+            )
         # Step 3: stitch the outputs together via the shared helper both this
         # oracle and the shadow coordinator's mixed dispatch call, so "mask wins
         # ties" cannot drift between the two (Task 4.6 slice 5b-i).
@@ -173,6 +230,9 @@ def run_full_frame_route(
         # Additive + default-OFF: when the flag is off, fidelity_reports is
         # empty and quality_metrics is untouched.
         quality_metrics: dict[str, Any] = dict(step.mask_quality_metrics)
+        quarantine_token = None
+        if cast_run is not None:
+            quality_metrics["declared_casting"], quarantine_token = cast_run.finish()
         if step.fidelity_reports:
             quality_metrics["fidelity_reports"] = step.fidelity_reports
 
@@ -219,6 +279,7 @@ def run_full_frame_route(
             quality_metrics=quality_metrics,
             table_kinds=ctx.table_kinds,
             row_errors=step.mask_row_errors,
+            quarantine_access=quarantine_token,
         )
 
         # A1: opt-in post-execution scan suite. Runs only on this full-frame finalize

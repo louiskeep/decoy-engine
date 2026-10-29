@@ -172,7 +172,10 @@ def test_arbitrary_bytes_are_valid_comp3_only_if_canonical(raw: bytes) -> None:
 
 
 @SETTINGS
-@given(st.text(alphabet=string.printable, max_size=10), st.lists(st.text(max_size=5), min_size=1, max_size=4, unique=True))
+@given(
+    st.text(alphabet=string.printable, max_size=10),
+    st.lists(st.text(max_size=5), min_size=1, max_size=4, unique=True),
+)
 def test_sentinel_matches_only_exact_members(raw: str, values: list[str]) -> None:
     from decoy_engine.declared_casting import match_sentinel
 

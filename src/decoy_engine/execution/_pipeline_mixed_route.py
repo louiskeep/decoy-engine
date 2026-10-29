@@ -146,6 +146,11 @@ def _build_carrier(
 
 
 def run_mixed_route(ctx: PipelineRunContext, decision: RouteDecision) -> ExecutionResult:
+    from decoy_engine.declared_casting._eligibility import declared_route_guard
+
+    # F06: a declared-casting job runs only where the casting boundary exists.
+    declared_route_guard("mixed", plan=ctx.plan, raise_on_decline=True)
+
     static = decision.mixed
     if static is None:  # pragma: no cover - the router sets both together
         raise AssertionError("run_mixed_route reached without a static admission")

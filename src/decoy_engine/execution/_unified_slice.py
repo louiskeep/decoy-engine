@@ -389,6 +389,11 @@ def maybe_run_unified_slice(
     populated only on the admitted-and-executed path), so there is no
     second value for a report object to carry.
     """
+    from decoy_engine.declared_casting._eligibility import declared_route_guard
+
+    # F06: this lane has no declared-casting boundary, so a job with declared columns declines.
+    if not declared_route_guard("unified_slice", plan=ctx.plan).admitted:
+        return None
     # D1: checked before this module reaches for anything under
     # `decoy_engine.execution.physical` -- that package's `__init__.py`
     # imports eagerly, so even a "just import one submodule" reach would

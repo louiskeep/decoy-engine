@@ -148,6 +148,7 @@ def run_pipeline(
     unified_slice_enabled: bool = True,
     progress: ProgressSink | None = None,
     progress_interval_s: float = 1.0,
+    quarantine_runtime: Any = None,
     _provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None = None,
 ) -> ExecutionResult:
     """Execute a mixed mask + generate config end-to-end.
@@ -242,6 +243,12 @@ def run_pipeline(
     is reproducible from its manifest; the all-default path stamps
     nothing, keeping golden fixtures byte-identical.
 
+    `quarantine_runtime` (F06): a `decoy_engine.declared_casting.ProtectedQuarantineRuntime`
+    (sink + owner). Required, and checked before the source is read, by any column with
+    `error_policy: quarantine`; the run returns its portable retrieval token on
+    `ExecutionResult.quarantine_access`. A job with declared columns runs on the one route that
+    applies the declared-casting boundary and refuses any other explicit `execution_mode`.
+
     `unified_slice_enabled` (default True since 2026-09-20; admission is the safety
     gate, pass False for legacy): see `_unified_slice.maybe_run_unified_slice`.
 
@@ -306,6 +313,7 @@ def run_pipeline(
                 unified_slice_enabled=unified_slice_enabled,
                 provider_snapshot=_provider_snapshot,
                 prepare_sources=prepare_transform_sources,
+                quarantine_runtime=quarantine_runtime,
             )
         decision = _ctx.decide_route(ctx)
         _emit_route(_progress, decision)

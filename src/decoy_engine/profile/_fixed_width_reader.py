@@ -55,7 +55,9 @@ import pandas as pd
 from pydantic import ValidationError as PydanticValidationError
 
 from decoy_engine.config._fixed_width import FixedWidthColumn, FixedWidthLayout
-from decoy_engine.errors import ConfigError, FixedWidthParseError
+from decoy_engine.errors import ConfigError, FixedWidthParseError, FixedWidthRecordOverlongError
+
+_OVERLONG_PREFIX = "[overlong] "
 
 _CASTERS: dict[str, type] = {
     "str": str,
@@ -203,6 +205,9 @@ def read_fixed_width(
     spec = _resolve_layout(layout, path=path)
 
     records, failure = _parse_records(path, spec, max_records)
+    if failure is not None and failure.startswith(_OVERLONG_PREFIX):
+        # Raised from a frame holding no line or value, like the other parse failures.
+        raise FixedWidthRecordOverlongError(failure[len(_OVERLONG_PREFIX) :])
     if failure is not None:
         # Raised here, after `_parse_records` has returned: this frame holds
         # no line, value or parsed record, so nothing reachable from the
@@ -245,6 +250,11 @@ def _parse_records(
             line = raw_line.rstrip("\r\n")
             if line == "":
                 continue
+            if spec.exact_record_width and len(line) > required_width:
+                return None, (
+                    f"{_OVERLONG_PREFIX}{rendered}: line {line_no}: record is {len(line)} chars, "
+                    f"longer than the layout's exact {required_width} chars (framing error)"
+                )
             if len(line) < required_width:
                 return None, (
                     f"{rendered}: line {line_no}: record is {len(line)} chars, "

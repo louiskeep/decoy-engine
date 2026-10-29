@@ -110,6 +110,13 @@ def admit_mixed_static(
 ) -> tuple[MixedStaticPlan | None, str]:
     """`(plan, "admitted")` or `(None, reason)`; the reason is a stable token for
     telemetry and tests, with a detail after the colon where one helps."""
+    from decoy_engine.declared_casting._eligibility import declared_route_guard
+
+    # F06: a declared-casting job runs only where the casting boundary exists.
+    _decl = declared_route_guard("mixed", plan=plan)
+    if not _decl.admitted:
+        return None, "declared_casting"
+
     generate = tuple(n for n, k in table_kinds.items() if k == "generate")
     masks = tuple(n for n, k in table_kinds.items() if k == "mask")
     if not generate or not masks:

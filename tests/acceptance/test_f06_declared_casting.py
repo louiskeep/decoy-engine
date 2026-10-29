@@ -8,9 +8,6 @@ from __future__ import annotations
 
 import copy
 import json
-import threading
-from datetime import date
-from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -55,7 +52,10 @@ def _counts(result: Any, table: str = "people", col: str = "start") -> dict[str,
 
 
 def _local_runtime(tmp_path: Path, clock: Any = None) -> Any:
-    from decoy_engine.declared_casting import LocalProtectedQuarantineSink, ProtectedQuarantineRuntime
+    from decoy_engine.declared_casting import (
+        LocalProtectedQuarantineSink,
+        ProtectedQuarantineRuntime,
+    )
     from decoy_engine.keyprovider import SecretKeyProvider
 
     kwargs = {"clock": clock} if clock is not None else {}
@@ -91,7 +91,9 @@ def test_a1_fixed_width_age_reaches_bucketize_as_int_and_is_rendered_back(
     cfg = {
         "version": 1,
         "global_settings": {"seed": 7},
-        "sources": {"people": {"type": "file", "format": "fixed_width", "path": str(path), "layout": layout}},
+        "sources": {
+            "people": {"type": "file", "format": "fixed_width", "path": str(path), "layout": layout}
+        },
         "tables": [
             {
                 "name": "people",
@@ -111,7 +113,12 @@ def test_a1_fixed_width_age_reaches_bucketize_as_int_and_is_rendered_back(
             }
         ],
         "targets": {
-            "people": {"type": "file", "format": "fixed_width", "path": str(tmp_path / "out.txt"), "layout": layout}
+            "people": {
+                "type": "file",
+                "format": "fixed_width",
+                "path": str(tmp_path / "out.txt"),
+                "layout": layout,
+            }
         },
         "relationships": [],
         "namespaces": {},
@@ -119,7 +126,7 @@ def test_a1_fixed_width_age_reaches_bucketize_as_int_and_is_rendered_back(
     seen: list[list[Any]] = []
     original = BucketizeStrategyHandler.run
 
-    def spy(self, df, column_name, plan, ctx):  # noqa: ANN001
+    def spy(self, df, column_name, plan, ctx):
         seen.append(list(df[column_name]))
         return original(self, df, column_name, plan, ctx)
 
@@ -145,7 +152,9 @@ def test_a1_unmodified_legacy_fixed_width_int_layout_still_casts(tmp_path: Path)
 
     path = tmp_path / "legacy.txt"
     path.write_text("042\n", encoding="utf-8")
-    frame = read_fixed_width(path, {"columns": [{"name": "a", "start": 0, "width": 3, "type": "int"}]})
+    frame = read_fixed_width(
+        path, {"columns": [{"name": "a", "start": 0, "width": 3, "type": "int"}]}
+    )
     assert frame["a"].tolist() == [42]
 
 
@@ -167,7 +176,11 @@ def test_a8_sentinel_precedes_parse_and_is_counted_separately(tmp_path: Path) ->
     )
     result = run(cfg, {"people": table})
     assert result.outputs["people"].column("start").to_pylist() == [
-        "2026-02-01", None, None, None, "2026-03-05",
+        "2026-02-01",
+        None,
+        None,
+        None,
+        "2026-03-05",
     ]
     counts = _counts(result)
     assert counts["sentinel_to_null"] == 2  # TBD and "" — the physical null is not a substitution
@@ -181,7 +194,10 @@ def test_a8_sentinel_case_variant_does_not_match(tmp_path: Path) -> None:
 
     src = write_csv(tmp_path / "p.csv", ["id", "start"], [["1", "2026-02-01"]])
     cfg = config(
-        [column("id"), _date_col("fail", sentinel_to_null={"id": "sentinel/exact/v1", "values": ["TBD"]})],
+        [
+            column("id"),
+            _date_col("fail", sentinel_to_null={"id": "sentinel/exact/v1", "values": ["TBD"]}),
+        ],
         source_path=src,
     )
     with pytest.raises(ExecutionError) as exc:
@@ -192,7 +208,9 @@ def test_a8_sentinel_case_variant_does_not_match(tmp_path: Path) -> None:
 # -- A9 framing vs value ---------------------------------------------------------------------
 
 
-def test_a9_overlong_fixed_width_row_is_a_framing_error_not_a_misleading_cast_error(tmp_path: Path) -> None:
+def test_a9_overlong_fixed_width_row_is_a_framing_error_not_a_misleading_cast_error(
+    tmp_path: Path,
+) -> None:
     from decoy_engine import read_fixed_width
     from decoy_engine.errors import FixedWidthParseError
 
@@ -221,7 +239,9 @@ def test_a9_layout_without_exact_width_is_unchanged_for_legacy_files(tmp_path: P
     assert read_fixed_width(path, layout)["a"].tolist() == ["ab"]
 
 
-def test_fixed_width_source_with_declared_columns_requires_exact_record_width(tmp_path: Path) -> None:
+def test_fixed_width_source_with_declared_columns_requires_exact_record_width(
+    tmp_path: Path,
+) -> None:
     from decoy_engine.plan._errors import PlanCompileError
 
     layout = {"columns": [{"name": "age", "start": 0, "width": 3, "type": "str"}]}
@@ -230,8 +250,23 @@ def test_fixed_width_source_with_declared_columns_requires_exact_record_width(tm
     cfg = {
         "version": 1,
         "global_settings": {"seed": 7},
-        "sources": {"t": {"type": "file", "format": "fixed_width", "path": str(path), "layout": layout}},
-        "tables": [{"name": "t", "columns": [column("age", logical_type="integer", parse_format=INT64, error_policy="fail", output_format=zero_pad(3))]}],
+        "sources": {
+            "t": {"type": "file", "format": "fixed_width", "path": str(path), "layout": layout}
+        },
+        "tables": [
+            {
+                "name": "t",
+                "columns": [
+                    column(
+                        "age",
+                        logical_type="integer",
+                        parse_format=INT64,
+                        error_policy="fail",
+                        output_format=zero_pad(3),
+                    )
+                ],
+            }
+        ],
         "targets": {"t": {"type": "file", "format": "csv", "path": str(tmp_path / "o.csv")}},
         "relationships": [],
         "namespaces": {},
@@ -256,7 +291,9 @@ def test_b1_fail_policy_aborts_without_publishing(tmp_path: Path) -> None:
 
 
 def test_b1_null_policy_nulls_only_the_field(tmp_path: Path) -> None:
-    result = run(_people(tmp_path, "null"), {"people": text_table(id=["1", "2", "3"], start=_BAD_DATES)})
+    result = run(
+        _people(tmp_path, "null"), {"people": text_table(id=["1", "2", "3"], start=_BAD_DATES)}
+    )
     out = result.outputs["people"]
     assert out.column("id").to_pylist() == ["1", "2", "3"]
     assert out.column("start").to_pylist() == ["2026-02-01", None, "2026-03-05"]
@@ -297,8 +334,20 @@ def test_b2_two_failing_fields_one_quarantined_row_two_reasons(tmp_path: Path) -
     cfg = config(
         [
             column("id"),
-            column("a", logical_type="date", parse_format=ISO_DATE, error_policy="quarantine", output_format=DATE_OUT),
-            column("b", logical_type="integer", parse_format=INT64, error_policy="quarantine", output_format={"id": "integer/ascii/v1", "signed": True, "bit_width": 64}),
+            column(
+                "a",
+                logical_type="date",
+                parse_format=ISO_DATE,
+                error_policy="quarantine",
+                output_format=DATE_OUT,
+            ),
+            column(
+                "b",
+                logical_type="integer",
+                parse_format=INT64,
+                error_policy="quarantine",
+                output_format={"id": "integer/ascii/v1", "signed": True, "bit_width": 64},
+            ),
         ],
         source_path=src,
         top={"protected_quarantine": PROTECTED_QUARANTINE},
@@ -313,7 +362,10 @@ def test_b2_two_failing_fields_one_quarantined_row_two_reasons(tmp_path: Path) -
 
     records = runtime.sink.open(result.quarantine_access, QuarantineAccessContext(owner="tenant-1"))
     assert len(records) == 1
-    assert sorted(str(r) for r in records[0].reasons) == ["declared_date_invalid", "declared_integer_invalid"]
+    assert sorted(str(r) for r in records[0].reasons) == [
+        "declared_date_invalid",
+        "declared_integer_invalid",
+    ]
 
 
 # -- B3 route parity --------------------------------------------------------------------------
@@ -322,7 +374,10 @@ def test_b2_two_failing_fields_one_quarantined_row_two_reasons(tmp_path: Path) -
 def _golden(tmp_path: Path) -> tuple[dict[str, Any], pa.Table]:
     src = write_csv(tmp_path / "g.csv", ["id", "start"], [["1", "2026-02-01"]])
     cfg = config(
-        [column("id"), _date_col("null", sentinel_to_null={"id": "sentinel/exact/v1", "values": ["TBD"]})],
+        [
+            column("id"),
+            _date_col("null", sentinel_to_null={"id": "sentinel/exact/v1", "values": ["TBD"]}),
+        ],
         source_path=src,
     )
     rows = [f"{i}" for i in range(1, 8)]
@@ -334,7 +389,9 @@ def _golden(tmp_path: Path) -> tuple[dict[str, Any], pa.Table]:
 def test_b3_auto_chunk_never_changes_declared_results(tmp_path: Path, chunk: int) -> None:
     cfg, table = _golden(tmp_path)
     base = run(cfg, {"people": table}, execution_mode="full_frame", auto_chunk=False)
-    got = run(cfg, {"people": table}, auto_chunk=True, chunk_size_rows=chunk, auto_chunk_threshold_rows=1)
+    got = run(
+        cfg, {"people": table}, auto_chunk=True, chunk_size_rows=chunk, auto_chunk_threshold_rows=1
+    )
     assert got.outputs["people"].equals(base.outputs["people"])
     assert got.outputs["people"].schema.equals(base.outputs["people"].schema)
     assert got.quality_metrics["declared_casting"] == base.quality_metrics["declared_casting"]
@@ -359,9 +416,14 @@ def test_b3_explicit_incapable_route_refuses_before_reading(tmp_path: Path, mode
 def test_b3_fk_parent_042_joins_child_42_after_both_become_integer(tmp_path: Path) -> None:
     par = write_csv(tmp_path / "par.csv", ["id"], [["1"]])
     chi = write_csv(tmp_path / "chi.csv", ["cid", "pid"], [["1", "1"]])
-    int_col = lambda n, **k: column(  # noqa: E731
-        n, "hash", namespace="ns", logical_type="integer", parse_format=INT64, error_policy="fail",
-        output_format={"id": "integer/ascii/v1", "signed": True, "bit_width": 64}, **k,
+    int_col = lambda n, **k: column(
+        n,
+        "hash",
+        namespace="ns",
+        logical_type="integer",
+        parse_format=INT64,
+        error_policy="fail",
+        **k,
     )
     cfg = {
         "version": 1,
@@ -390,7 +452,10 @@ def test_b3_fk_parent_042_joins_child_42_after_both_become_integer(tmp_path: Pat
     }
     result = run(
         cfg,
-        {"parent": text_table(id=["042", "7"]), "child": text_table(cid=["a", "b"], pid=["42", "0007"])},
+        {
+            "parent": text_table(id=["042", "7"]),
+            "child": text_table(cid=["a", "b"], pid=["42", "0007"]),
+        },
     )
     masked_parent = result.outputs["parent"].column("id").to_pylist()
     masked_child = result.outputs["child"].column("pid").to_pylist()
@@ -405,21 +470,96 @@ _BASE_INT = {"logical_type": "integer", "parse_format": INT64, "error_policy": "
 @pytest.mark.parametrize(
     ("fields", "code"),
     [
-        ({**_BASE_INT, "output_format": {"id": "integer/zero-pad/v1", "width_unit": "code_points", "pad": "0", "align": "right"}}, "declared_output_width_unknown"),
-        ({**_BASE_INT, "output_format": {"id": "integer/zero-pad/v1", "width": 3, "pad": "0", "align": "right"}}, "declared_cast_directive_unsupported"),
-        ({**_BASE_INT, "output_format": {"id": "integer/zero-pad/v1", "width": 3, "width_unit": "furlongs", "pad": "0", "align": "right"}}, "declared_cast_directive_unsupported"),
-        ({**_BASE_INT, "output_format": {"id": "integer/mystery/v9"}}, "declared_cast_format_unknown"),
-        ({**_BASE_INT, "parse_format": {"id": "integer/mystery/v9"}}, "declared_cast_format_unknown"),
-        ({"logical_type": "date", "parse_format": {"id": "date/strptime/v1", "format": "%Y-%m-%d %H"}, "error_policy": "fail"}, "declared_cast_directive_unsupported"),
-        ({"logical_type": "date", "parse_format": ISO_DATE, "error_policy": "fail", "output_format": {"id": "date/strftime/v1", "format": "%Y/%m/%d", "width": 11, "width_unit": "code_points"}}, "declared_output_width_unknown"),
-        ({"logical_type": "integer", "parse_format": ISO_DATE, "error_policy": "fail"}, "declared_cast_contract_invalid"),
-        ({"logical_type": "decimal", "parse_format": {"id": "decimal/plain/v1", "precision": 39, "scale": 0}, "error_policy": "fail"}, "declared_cast_precision_invalid"),
-        ({**_BASE_INT, "sentinel_to_null": {"id": "sentinel/exact/v1", "values": []}}, "declared_cast_sentinel_config_invalid"),
+        (
+            {
+                **_BASE_INT,
+                "output_format": {
+                    "id": "integer/zero-pad/v1",
+                    "width_unit": "code_points",
+                    "pad": "0",
+                    "align": "right",
+                },
+            },
+            "declared_output_width_unknown",
+        ),
+        (
+            {
+                **_BASE_INT,
+                "output_format": {
+                    "id": "integer/zero-pad/v1",
+                    "width": 3,
+                    "pad": "0",
+                    "align": "right",
+                },
+            },
+            "declared_cast_directive_unsupported",
+        ),
+        (
+            {
+                **_BASE_INT,
+                "output_format": {
+                    "id": "integer/zero-pad/v1",
+                    "width": 3,
+                    "width_unit": "furlongs",
+                    "pad": "0",
+                    "align": "right",
+                },
+            },
+            "declared_cast_directive_unsupported",
+        ),
+        (
+            {**_BASE_INT, "output_format": {"id": "integer/mystery/v9"}},
+            "declared_cast_format_unknown",
+        ),
+        (
+            {**_BASE_INT, "parse_format": {"id": "integer/mystery/v9"}},
+            "declared_cast_format_unknown",
+        ),
+        (
+            {
+                "logical_type": "date",
+                "parse_format": {"id": "date/strptime/v1", "format": "%Y-%m-%d %H"},
+                "error_policy": "fail",
+            },
+            "declared_cast_directive_unsupported",
+        ),
+        (
+            {
+                "logical_type": "date",
+                "parse_format": ISO_DATE,
+                "error_policy": "fail",
+                "output_format": {
+                    "id": "date/strftime/v1",
+                    "format": "%Y/%m/%d",
+                    "width": 9,
+                    "width_unit": "code_points",
+                },
+            },
+            "declared_output_width_unknown",
+        ),
+        (
+            {"logical_type": "integer", "parse_format": ISO_DATE, "error_policy": "fail"},
+            "declared_cast_contract_invalid",
+        ),
+        (
+            {
+                "logical_type": "decimal",
+                "parse_format": {"id": "decimal/plain/v1", "precision": 39, "scale": 0},
+                "error_policy": "fail",
+            },
+            "declared_cast_precision_invalid",
+        ),
+        (
+            {**_BASE_INT, "sentinel_to_null": {"id": "sentinel/exact/v1", "values": []}},
+            "declared_cast_sentinel_config_invalid",
+        ),
         ({**_BASE_INT, "error_policy": "explode"}, "declared_cast_contract_invalid"),
         ({"parse_format": INT64}, "declared_cast_contract_invalid"),
     ],
 )
-def test_b5_bad_contracts_fail_config_validation_with_a_registered_code(tmp_path: Path, fields: dict, code: str) -> None:
+def test_b5_bad_contracts_fail_config_validation_with_a_registered_code(
+    tmp_path: Path, fields: dict, code: str
+) -> None:
     from pydantic import ValidationError
 
     cfg = config([column("age", **fields)], source_path=str(tmp_path / "never-read.csv"))
@@ -432,7 +572,9 @@ def test_b5_preflight_runs_before_profiling_or_reading(tmp_path: Path) -> None:
     from decoy_engine.plan._errors import PlanCompileError
     from decoy_engine.profile._readers import LazySource
 
-    cfg = validate(config([column("age", **_BASE_INT)], source_path=str(tmp_path / "never-read.csv")))
+    cfg = validate(
+        config([column("age", **_BASE_INT)], source_path=str(tmp_path / "never-read.csv"))
+    )
     # a dump that bypasses the pydantic layer (hand-built dict) must still hit the same choke point
     cfg["tables"][0]["columns"][0]["parse_format"] = {"id": "integer/mystery/v9"}
     from decoy_engine.execution._pipeline import run_pipeline
@@ -446,10 +588,18 @@ def test_b5_preflight_runs_before_profiling_or_reading(tmp_path: Path) -> None:
 def test_b5_text_target_requires_an_explicit_output_format(tmp_path: Path) -> None:
     from decoy_engine.plan._errors import PlanCompileError
 
-    layout = {"exact_record_width": True, "columns": [{"name": "age", "start": 0, "width": 3, "type": "str"}]}
+    layout = {
+        "exact_record_width": True,
+        "columns": [{"name": "age", "start": 0, "width": 3, "type": "str"}],
+    }
     src = write_csv(tmp_path / "s.csv", ["age"], [["1"]])
     cfg = config([column("age", **_BASE_INT)], source_path=src)
-    cfg["targets"]["people"] = {"type": "file", "format": "fixed_width", "path": str(tmp_path / "o.txt"), "layout": layout}
+    cfg["targets"]["people"] = {
+        "type": "file",
+        "format": "fixed_width",
+        "path": str(tmp_path / "o.txt"),
+        "layout": layout,
+    }
     with pytest.raises(PlanCompileError) as exc:
         run(cfg, {"people": text_table(age=["1"])})
     assert exc.value.code == "declared_output_width_unknown"
@@ -460,7 +610,18 @@ def test_b5_strategy_whose_output_type_is_not_proven_is_rejected(tmp_path: Path)
 
     src = write_csv(tmp_path / "s.csv", ["age"], [["1"]])
     for provider_config in ({"width": 10, "format": "range"}, {"width": 10, "format": "midpoint"}):
-        cfg = config([column("age", "bucketize", provider_config=provider_config, **_BASE_INT, output_format=zero_pad(3))], source_path=src)
+        cfg = config(
+            [
+                column(
+                    "age",
+                    "bucketize",
+                    provider_config=provider_config,
+                    **_BASE_INT,
+                    output_format=zero_pad(3),
+                )
+            ],
+            source_path=src,
+        )
         with pytest.raises(PlanCompileError) as exc:
             run(cfg, {"people": text_table(age=["1"])})
         assert exc.value.code == "declared_type_strategy_incompatible"
@@ -475,7 +636,16 @@ def test_b5_dtype_conflict_and_duplicate_date_format_are_rejected(tmp_path: Path
         run(cfg, {"people": text_table(age=["1"])})
     assert exc.value.code == "declared_type_strategy_incompatible"
     cfg = config(
-        [column("d", "date_shift", provider_config={"days": 3, "date_format": "%d/%m/%Y"}, logical_type="date", parse_format=ISO_DATE, error_policy="fail")],
+        [
+            column(
+                "d",
+                "date_shift",
+                provider_config={"days": 3, "date_format": "%d/%m/%Y"},
+                logical_type="date",
+                parse_format=ISO_DATE,
+                error_policy="fail",
+            )
+        ],
         source_path=src,
     )
     with pytest.raises(PlanCompileError) as exc2:
@@ -523,12 +693,25 @@ def test_b6_fail_policy_marks_partial_before_abort(tmp_path: Path) -> None:
 def test_b6_output_failure_counts_as_output_quarantine(tmp_path: Path) -> None:
     src = write_csv(tmp_path / "p.csv", ["id", "n"], [["1", "5"]])
     cfg = config(
-        [column("id"), column("n", "bucketize", provider_config={"width": 1000, "format": "lower"}, logical_type="integer", parse_format=INT64, error_policy="quarantine", output_format=zero_pad(3))],
+        [
+            column("id"),
+            column(
+                "n",
+                "bucketize",
+                provider_config={"width": 1000, "format": "lower"},
+                logical_type="integer",
+                parse_format=INT64,
+                error_policy="quarantine",
+                output_format=zero_pad(3),
+            ),
+        ],
         source_path=src,
         top={"protected_quarantine": PROTECTED_QUARANTINE},
     )
     runtime = _local_runtime(tmp_path)
-    result = run(cfg, {"people": text_table(id=["1", "2"], n=["5", "2500"])}, quarantine_runtime=runtime)
+    result = run(
+        cfg, {"people": text_table(id=["1", "2"], n=["5", "2500"])}, quarantine_runtime=runtime
+    )
     assert result.outputs["people"].column("id").to_pylist() == ["1"]
     assert _counts(result, col="n")["output_quarantine"] == 1
 
@@ -544,7 +727,10 @@ def test_b7_plan_version_is_3_and_v2_plans_still_load() -> None:
 
 def test_b7_legacy_run_outputs_are_unchanged(tmp_path: Path) -> None:
     src = write_csv(tmp_path / "s.csv", ["age"], [["42"]])
-    cfg = config([column("age", "bucketize", provider_config={"width": 10, "format": "lower"})], source_path=src)
+    cfg = config(
+        [column("age", "bucketize", provider_config={"width": 10, "format": "lower"})],
+        source_path=src,
+    )
     result = run(cfg, {"people": pa.table({"age": [42, 7, None]})})
     assert result.outputs["people"].column("age").to_pylist() == ["40", "0", None]
     assert "declared_casting" not in result.quality_metrics
@@ -557,7 +743,12 @@ def test_b7_legacy_plan_yaml_differs_only_by_the_documented_version_line(tmp_pat
     from decoy_engine.profile._source import profile_source
 
     src = write_csv(tmp_path / "s.csv", ["age"], [["42"], ["7"]])
-    cfg = validate(config([column("age", "bucketize", provider_config={"width": 10, "format": "lower"})], source_path=src))
+    cfg = validate(
+        config(
+            [column("age", "bucketize", provider_config={"width": 10, "format": "lower"})],
+            source_path=src,
+        )
+    )
     plan = compile_plan(cfg, profile_source(cfg, seed=7), decoy_engine_version="t")
     text = plan_to_yaml(plan)
     assert "plan_version: 3" in text
