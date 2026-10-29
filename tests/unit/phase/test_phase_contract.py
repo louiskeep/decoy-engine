@@ -134,3 +134,71 @@ def test_post_validation_runner_does_not_capture_exception_text_or_mutate_result
     assert "4111" not in repr(summary)
     assert summary.quality_warnings[0].detail == {"error_type": "ValueError"}
     assert "quality_summary" not in result.quality_metrics
+
+
+# ---- construction-time immutability and lossless freeze/thaw (round 2) --------------------------
+
+
+def test_mutating_constructor_inputs_cannot_change_canonical_bytes():
+    scope = ["t1", "t2"]
+    limits = ["row_cap"]
+    ident = [("source", "abc")]
+    reasons_in = [ReasonRef("post_scan", "check_error")]
+    payload = {"a": [1, 2]}
+    res = phase.PhaseResult(
+        phase="post_scan",
+        check_id="integrity",
+        status="error",
+        method="m",
+        method_version="1",
+        coverage=phase.PhaseCoverage(requested_scope=scope, limits=limits),  # type: ignore[arg-type]
+        reasons=reasons_in,  # type: ignore[arg-type]
+        identity=ident,  # type: ignore[arg-type]
+        payload=payload,  # type: ignore[arg-type]
+    )
+    before = phase.canonical_bytes(res)
+    scope.append("t3")
+    limits.clear()
+    ident.append(("x", "y"))
+    reasons_in.clear()
+    payload["a"].append(3)
+    payload["b"] = 1
+    assert phase.canonical_bytes(res) == before
+    for value in (res.reasons, res.identity, res.coverage.requested_scope, res.coverage.limits):
+        assert isinstance(value, tuple)
+
+
+def test_event_and_coverage_collections_are_tuples_after_construction():
+    cov = phase.PhaseCoverage(observed_scope=["a"], omissions=["b"])  # type: ignore[arg-type]
+    assert cov.observed_scope == ("a",) and cov.omissions == ("b",)
+
+
+def test_freeze_thaw_round_trip_is_lossless_and_unambiguous():
+    # a JSON list of pairs stays a list; an object stays an object
+    assert phase.to_wire(_result(payload=phase.freeze([["a", 1], ["b", 2]])))["payload"] == [
+        ["a", 1],
+        ["b", 2],
+    ]
+    assert phase.to_wire(_result(payload=phase.freeze({"a": 1, "b": 2})))["payload"] == {
+        "a": 1,
+        "b": 2,
+    }
+    # empty object and empty list are distinct
+    assert phase.to_wire(_result(payload=phase.freeze({})))["payload"] == {}
+    assert phase.to_wire(_result(payload=phase.freeze([])))["payload"] == []
+    # nested mix
+    mixed = {"rows": [{"k": [1, {"z": None}]}], "pairs": [["x", 1]]}
+    assert phase.to_wire(_result(payload=phase.freeze(mixed)))["payload"] == mixed
+
+
+def test_freeze_refuses_keys_that_would_collide_or_be_rewritten():
+    with pytest.raises(phase.PhaseContractError):
+        phase.freeze({1: "a", "1": "b"})
+    with pytest.raises(phase.PhaseContractError):
+        phase.freeze({1: "a"})
+
+
+def test_freeze_refuses_non_finite_numbers():
+    for bad in (float("nan"), float("inf")):
+        with pytest.raises(phase.PhaseContractError):
+            phase.freeze({"x": bad})

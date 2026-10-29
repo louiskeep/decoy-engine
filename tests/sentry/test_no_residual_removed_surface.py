@@ -1,4 +1,7 @@
-"""Manifest-driven residual sentry for the removed STORM concept.
+"""Manifest-driven residual sentry for the removed STORM concept (this repository only).
+
+Each consumer repo (platform, CLI, site) carries its own copy of this sentry for its own tree;
+this one cannot see them, so a green run here says nothing about the other repos.
 
 Scans every tracked path and file content, case-insensitively, for the `storm`
 token, then checks an exact list of forbidden old symbols, schema strings,
@@ -67,7 +70,7 @@ EXCEPTIONS: tuple[Allowed, ...] = (
     Allowed("docs/decisions/*", "immutable ADRs", False),
     Allowed("docs/records/*", "immutable build/audit records", False),
     Allowed("CHANGELOG.md", "release history", True),
-    Allowed("tests/sentry/test_cross_repo_no_residual.py", "sentry definition", False),
+    Allowed("tests/sentry/test_no_residual_removed_surface.py", "sentry definition", False),
 )
 
 

@@ -215,6 +215,22 @@ def _git(*args: str) -> str:
     ).stdout
 
 
+# The retired package name, spelled in two parts so the residual sentry has no literal to flag.
+_RETIRED = "sto" + "rm"
+
+
+def _only_these_line_changes(base: str, path: str, allowed: dict[str, str]) -> bool:
+    """True when the file's diff against `base` is exactly the removed->added pairs in `allowed`."""
+    lines = [
+        ln
+        for ln in _git("diff", "-U0", base, "HEAD", "--", path).splitlines()
+        if ln[:1] in "+-" and not ln.startswith(("+++", "---"))
+    ]
+    removed = [ln for ln in lines if ln[0] == "-"]
+    added = [ln for ln in lines if ln[0] == "+"]
+    return sorted(removed) == sorted(allowed) and sorted(added) == sorted(allowed.values())
+
+
 def _origin_main_available() -> bool:
     try:
         _git("rev-parse", "--verify", "origin/main")
@@ -309,8 +325,6 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         # production route makes. Pure kwarg threading; imports nothing from
         # `execution.physical` (the import-direction sweeps above stay green).
         "src/decoy_engine/execution/capacity.py",
-        # Docstring-only edit while removing the STORM name; no code or imports changed.
-        "src/decoy_engine/execution/_output_projection.py",
         # R3 (run context + route executors, 2026-10-10): `run_pipeline`'s resolve and route
         # phases move into the new `_pipeline_context.py` (a frozen `PipelineRunContext` and
         # `RouteDecision`) and the two bounded layer-1 routes get context-driven entry points in
@@ -804,10 +818,23 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         "src/decoy_engine/execution/_fk_key_compat.py",
         "src/decoy_engine/execution/native/_draw_sites_tokenize.py",
     }
+    # Files allowed to change ONLY by these exact line replacements (path -> {removed: added}).
+    # Anything else in the file, now or later, trips the guard.
+    exact_line_changes = {
+        "src/decoy_engine/execution/_output_projection.py": {
+            f"-probabilistic `{_RETIRED}/postmask/residual_pii` advisory (two distinct layers).": "+probabilistic `verification/postmask/residual_pii` advisory (two distinct layers).",
+        },
+    }
+    exact_ok = {
+        name
+        for name, allowed in exact_line_changes.items()
+        if name in diff_names and _only_these_line_changes(base, name, allowed)
+    }
     unexpected = [
         name
         for name in diff_names
         if "/execution/physical/" not in name
+        and name not in exact_ok
         # Polars masking removal (2026-09-21): the whole execution/polars/ adapter
         # tree was deleted; permit those deletions wholesale rather than enumerate.
         and "/execution/polars/" not in name

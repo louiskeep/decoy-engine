@@ -19,6 +19,7 @@ between analyses that inspect input and transforms that change it, applied as
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -39,13 +40,68 @@ STATUSES: frozenset[str] = frozenset(
     {"completed", "passed", "failed", "error", "unavailable", "skipped", "not_applicable"}
 )
 
-# Frozen JSON: scalars, tuples of frozen values, and mappings as sorted key/value pair tuples.
+# Frozen JSON: scalars, tuples of frozen values, and `FrozenMap` (a tuple of key/value pairs).
+# A mapping is a `FrozenMap`, never a plain tuple, so thawing never guesses list vs object.
 FrozenScalar = str | int | float | bool | None
 FrozenValue = FrozenScalar | tuple["FrozenValue", ...]
 
 
+class FrozenMap(tuple):  # type: ignore[type-arg]
+    """An immutable JSON object: a tuple of `(str, FrozenValue)` pairs sorted by key."""
+
+    __slots__ = ()
+
+
 class PhaseContractError(DecoyError, ValueError):
     """A phase envelope that is malformed, unsafe to export, or of an unknown version."""
+
+
+def _str_tuple(value: Any, name: str) -> tuple[str, ...]:
+    items = tuple(value)
+    if not all(isinstance(i, str) for i in items):
+        raise PhaseContractError(f"{name} must contain only str")
+    return items
+
+
+def freeze(value: Any) -> FrozenValue:
+    """Deep-copy plain JSON-like data into the immutable representation.
+
+    Lossless for JSON: objects become `FrozenMap`, arrays become tuples. Mapping keys must
+    already be `str` (JSON object keys are strings; coercing `1` to `"1"` could silently merge
+    two entries). Sets freeze to a sorted tuple because JSON has no set. NaN/inf are refused
+    because they have no canonical JSON form.
+    """
+    if value is None or isinstance(value, (str, bool, int)):
+        return value
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise PhaseContractError("non-finite number in phase evidence")
+        return value
+    if isinstance(value, FrozenMap):
+        return FrozenMap((k, freeze(v)) for k, v in value)
+    if isinstance(value, Mapping):
+        if not all(isinstance(k, str) for k in value):
+            raise PhaseContractError("phase evidence mapping keys must be str")
+        return FrozenMap((k, freeze(v)) for k, v in sorted(value.items()))
+    if isinstance(value, (set, frozenset)):
+        return tuple(freeze(v) for v in sorted(value, key=repr))
+    if isinstance(value, (list, tuple)):
+        return tuple(freeze(v) for v in value)
+    raise PhaseContractError(f"cannot freeze {type(value).__name__} into phase evidence")
+
+
+def _thaw(value: Any) -> Any:
+    if value is None or isinstance(value, (str, bool, int)):
+        return value
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise PhaseContractError("non-finite number in phase evidence")
+        return value
+    if isinstance(value, FrozenMap):
+        return {k: _thaw(v) for k, v in value}
+    if isinstance(value, tuple):
+        return [_thaw(v) for v in value]
+    raise PhaseContractError(f"unsafe value {type(value).__name__} in phase evidence")
 
 
 @dataclass(frozen=True)
@@ -57,6 +113,10 @@ class PhaseCoverage:
     sampling_method: str | None = None
     limits: tuple[str, ...] = ()
     omissions: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        for name in ("requested_scope", "observed_scope", "limits", "omissions"):
+            object.__setattr__(self, name, _str_tuple(getattr(self, name), name))
 
 
 @dataclass(frozen=True)
@@ -72,6 +132,15 @@ class PhaseResult:
     payload: FrozenValue = None
     schema_version: str = RESULT_SCHEMA
 
+    def __post_init__(self) -> None:
+        # Coerce at construction so a caller's list/dict can never alias evidence that was
+        # already hashed: frozen dataclass fields alone only block re-assignment.
+        object.__setattr__(self, "reasons", tuple(self.reasons))
+        ident = self.identity.items() if isinstance(self.identity, Mapping) else self.identity
+        pairs = tuple((str(k), str(v)) for k, v in ident)
+        object.__setattr__(self, "identity", pairs)
+        object.__setattr__(self, "payload", freeze(self.payload))
+
 
 @dataclass(frozen=True)
 class PhaseEvent:
@@ -80,36 +149,6 @@ class PhaseEvent:
     status: Status
     reason: ReasonRef | None = None
     schema_version: str = EVENT_SCHEMA
-
-
-def freeze(value: Any) -> FrozenValue:
-    """Deep-copy plain JSON-like data into the immutable representation."""
-    if value is None or isinstance(value, (str, bool, int, float)):
-        return value
-    if isinstance(value, Mapping):
-        return tuple(
-            (str(k), freeze(v)) for k, v in sorted(value.items(), key=lambda kv: str(kv[0]))
-        )
-    if isinstance(value, (list, tuple, set, frozenset)):
-        items = sorted(value, key=repr) if isinstance(value, (set, frozenset)) else value
-        return tuple(freeze(v) for v in items)
-    raise PhaseContractError(f"cannot freeze {type(value).__name__} into phase evidence")
-
-
-def _is_pair_tuple(value: tuple[Any, ...]) -> bool:
-    return bool(value) and all(
-        isinstance(p, tuple) and len(p) == 2 and isinstance(p[0], str) for p in value
-    )
-
-
-def _thaw(value: Any) -> Any:
-    if value is None or isinstance(value, (str, bool, int, float)):
-        return value
-    if isinstance(value, tuple):
-        if _is_pair_tuple(value):
-            return {k: _thaw(v) for k, v in value}
-        return [_thaw(v) for v in value]
-    raise PhaseContractError(f"unsafe value {type(value).__name__} in phase evidence")
 
 
 def _check_header(phase: str, status: str, schema: str, expected: str) -> None:
