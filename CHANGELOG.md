@@ -9,6 +9,23 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (F06: declared parsing, casting and quarantine, 2026-10-29)
+
+A column can now declare `logical_type`, `parse_format`, `sentinel_to_null`, `error_policy` (`fail`, `null`,
+`quarantine`) and `output_format`. The engine owns one versioned contract (`decoy_engine.contracts.declared_casting`,
+catalog version 1) and one casting boundary (`decoy_engine.declared_casting`): exact strings, strict integers,
+exact `Decimal` (precision 1..38, no float, no rounding, a pinned `decimal` context), restricted dates
+(`%Y %m %d`, no locale), explicit currency, ASCII overpunch, EBCDIC zoned decimal and COMP-3. Sentinels become
+null before parsing and are counted apart from source nulls; counts and every failure are value-free and use
+registered F29 reasons (`registry_version` 1.1.0, 27 new identities). Fixed-width layouts gain
+`exact_record_width` (default off) so an over-length record is a framing error.
+`run_pipeline(quarantine_runtime=...)` takes a protected-quarantine runtime; the local reference sink writes
+Fernet-encrypted, `0700`/`0600`, finite-retention artifacts and the run returns a portable
+`ExecutionResult.quarantine_access` token. `PLAN_VERSION` is now 3 (the only YAML change for configs that do not
+use the feature is the version line; a version-2 plan still loads). Declared columns run on the full-frame route;
+other routes refuse before reading the source. See `docs/declared-casting.md` and
+`docs/security/protected-quarantine.md`.
+
 ### Added (F29: stable machine-readable errors and progress, engine slices, 2026-10-29)
 
 New public `decoy_engine.reasons`: one engine-owned, versioned registry of reason codes (`registry_version`

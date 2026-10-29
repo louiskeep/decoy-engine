@@ -135,15 +135,19 @@ def compile_declared_casting_contract(config: Mapping[str, Any]) -> DeclaredCast
     needs_quarantine = False
     sources, targets = config.get("sources") or {}, config.get("targets") or {}
     for table in config.get("tables") or ():
+        if not isinstance(table, Mapping):
+            continue
         tname = table.get("name", "?")
         for gen in table.get("generate_columns") or ():
-            if any(gen.get(k) is not None for k in C.CONTRACT_FIELDS):
+            if isinstance(gen, Mapping) and any(gen.get(k) is not None for k in C.CONTRACT_FIELDS):
                 raise _fail(
                     _P.DECLARED_CAST_CONTRACT_INVALID,
                     f"tables.{tname}",
                     "Generation columns cannot declare parsing.",
                 )
         for col in table.get("columns") or ():
+            if not isinstance(col, Mapping):
+                continue
             fields = _declared_fields(col)
             if not fields:
                 continue

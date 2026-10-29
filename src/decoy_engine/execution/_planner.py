@@ -67,7 +67,7 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
-from decoy_engine.declared_casting._eligibility import declared_route_guard
+from decoy_engine.declared_casting._eligibility import declared_rejection
 from decoy_engine.execution import _chunked_input as _ci
 from decoy_engine.profile._readers import LazySource
 
@@ -205,13 +205,6 @@ def classify_job(
     contributes only Arrow metadata (row/null counts, schema types); a `LazySource`
     contributes its footer facts (the `source_facts` snapshot, else one footer read).
     """
-    _decl = declared_route_guard("chunked", plan=plan)
-    if not _decl.admitted:
-        return ExecutionPlan(
-            mode="pandas_fallback",
-            rejections={"chunked": "declared_cast_route_unsupported"},
-            reason="declared parsing and casting run on the full-frame route only.",
-        )
     from decoy_engine.execution._pipeline import classify_table_kinds
     from decoy_engine.execution._runner import build_work_list, order_work
 
@@ -240,7 +233,7 @@ def classify_job(
         auto_chunk_threshold_rows=auto_chunk_threshold_rows,
         registry=registry,
         source_facts=facts,
-    )
+    ) or declared_rejection("chunked", plan=plan)  # F06: declared casting is full-frame only
     if chunked_rejection is None:
         reason = (
             f"single mask table {mask_tables[0]!r} with only chunk-safe "

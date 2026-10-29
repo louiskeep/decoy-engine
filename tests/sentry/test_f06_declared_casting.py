@@ -73,7 +73,7 @@ def missing_evaluator(owners: set[tuple[str, str]], read) -> list[tuple[str, str
     for rel, fn in sorted(owners):
         node = _functions(read(rel)).get(fn)
         if node is None or not _calls_name(
-            node, {"evaluate_declared_casting", "declared_route_guard"}
+            node, {"evaluate_declared_casting", "declared_route_guard", "declared_rejection"}
         ):
             bad.append((rel, fn))
     return bad

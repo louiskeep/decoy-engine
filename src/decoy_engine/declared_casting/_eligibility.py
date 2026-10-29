@@ -60,15 +60,15 @@ class CastRouteDecision:
 
 
 def _columns(source: Any) -> tuple[Any, ...]:
+    """Declared columns of a Plan, a DeclaredCastingPlan or a plain sequence; () for anything
+    else (test doubles and pre-F06 plans carry none)."""
     if source is None:
         return ()
-    if hasattr(source, "declared_casting"):  # a Plan
-        source = source.declared_casting
-        if source is None:
-            return ()
-    if hasattr(source, "columns"):  # a DeclaredCastingPlan
-        return tuple(source.columns)
-    return tuple(source)
+    if isinstance(source, (list, tuple)):
+        return tuple(source)
+    block = getattr(source, "declared_casting", source)
+    columns = getattr(block, "columns", None) if block is not None else None
+    return tuple(columns) if columns is not None else ()
 
 
 def has_contracts(plan: Any) -> bool:
@@ -208,6 +208,12 @@ def declared_route_guard(
             message=f"route {route!r} declined: {', '.join(decision.missing) or 'contract'}",
         )
     return decision
+
+
+def declared_rejection(route: str, *, plan: Any = None) -> str | None:
+    """The registered rejection code when ``route`` cannot run ``plan``'s declared contracts."""
+    decision = declared_route_guard(route, plan=plan)
+    return None if decision.admitted else str(decision.rejection)
 
 
 def _columns_from_config(config: Mapping[str, Any] | None) -> tuple[Any, ...]:
