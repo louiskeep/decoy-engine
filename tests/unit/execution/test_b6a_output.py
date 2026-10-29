@@ -51,7 +51,10 @@ def _check_case(cfg: dict[str, Any], src: pa.Table, tmp_path: Path, **extra: Any
     b6a.assert_streamed_equals(sink, expected)
     published = (target / f"{support.TABLE}.parquet").read_bytes()
     assert published == b6a.parquet_bytes(expected, tmp_path / "reference.parquet")
-    assert sorted(p.name for p in target.iterdir()) == [f"{support.TABLE}.parquet"]
+    assert sorted(p.name for p in target.iterdir() if not p.name.startswith("_decoy_")) == [
+        f"{support.TABLE}.parquet"
+    ]
+    assert (target / "_decoy_publication.json").exists()
 
 
 # ---------------------------------------------------------------------------

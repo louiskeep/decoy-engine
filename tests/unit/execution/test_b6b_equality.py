@@ -108,7 +108,9 @@ def _check_case(
         assert never_read_whole, "a streamed lazy run read a whole file"
         published = ltarget / f"{b6b.TABLE}.parquet"
         assert published.read_bytes() == (twin_target / f"{b6b.TABLE}.parquet").read_bytes()
-        assert sorted(p.name for p in ltarget.iterdir()) == [f"{b6b.TABLE}.parquet"]
+        assert sorted(p.name for p in ltarget.iterdir() if not p.name.startswith("_decoy_")) == [
+            f"{b6b.TABLE}.parquet"
+        ]
 
 
 # ---------------------------------------------------------------------------

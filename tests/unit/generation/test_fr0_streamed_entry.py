@@ -16,6 +16,7 @@ from decoy_engine.generation import _column_streams
 from decoy_engine.generation import _plan_entry as plan_entry
 from decoy_engine.generation._plan_entry import generate_tables, generate_tables_streamed
 from decoy_engine.generation._streamed import is_bounded_sink
+from decoy_engine.publication import PublicationRefusedError
 from tests.parity import _f0_fixtures as fx
 from tests.parity._fr0_support import fingerprints, plan_of
 
@@ -142,15 +143,15 @@ def test_writer_close_failure_aborts_and_preserves_the_error(
 def test_commit_failure_aborts_and_preserves_the_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from decoy_engine.execution import _transactional_sink as ts
 
     def failing_replace(src: Any, dst: Any) -> None:
         raise OSError("commit failed")
 
-    monkeypatch.setattr(ts.os, "replace", failing_replace)
+    monkeypatch.setattr("decoy_engine.publication._local_directory.os.replace", failing_replace)
     target = tmp_path / "out"
-    with pytest.raises(OSError, match="commit failed"):
+    with pytest.raises(PublicationRefusedError) as refused:
         generate_tables_streamed(_relational_plan(), sink=ParquetTransactionalSink(target))
+    assert "commit failed" in str(refused.value.__cause__)  # the original error is preserved
     assert not target.exists() and _staging_dirs(tmp_path) == []
 
 
