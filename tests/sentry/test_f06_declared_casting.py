@@ -308,7 +308,10 @@ def _mutants(source: str) -> list[tuple[str, str]]:
 
 
 def test_every_numeric_guard_is_tagged_and_a_mutant_is_killed_by_the_vectors() -> None:
-    from decoy_engine.declared_casting._mutation_battery import run_battery
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from _f06_mutation_battery import run_battery
 
     src = (CASTING / "_numeric.py").read_text()
     mutants = _mutants(src)
@@ -316,7 +319,7 @@ def test_every_numeric_guard_is_tagged_and_a_mutant_is_killed_by_the_vectors() -
     assert {"integer_range", "decimal_precision", "decimal_scale_loss", "width_overflow", "decimal_trap"} <= names
     survivors = []
     for name, text in mutants:
-        if not run_battery(textwrap.dedent(text)):
+        if run_battery(textwrap.dedent(text)):  # the battery still passes: the mutant survived
             survivors.append(name)
     assert survivors == []
     assert run_battery(src) is True  # the unmutated module passes the same battery
