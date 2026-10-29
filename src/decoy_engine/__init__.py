@@ -9,14 +9,12 @@ Public API (the contract CLI and platform code depend on):
     ExecutionContext  caller-provided runtime context (logger + telemetry)
     Logger            Protocol satisfied by stdlib loggers and Rich/DB-backed loggers
     TelemetryClient   Protocol for optional telemetry sinks
-    SchemaInspector   connector schema introspection (stub, Phase 2)
-    LicenseVerifier   license verification (stub)
     compile_plan      compile a validated config + Profile into a frozen Plan
                       (decoy_engine.plan)
     ExecutionAdapter / PandasExecutionAdapter /
     select_execution_adapter / get_default_executor:
                       the plan-to-data execution boundary; the pandas adapter is
-                      the default substrate. The caller runs
+                      the parity oracle (native kernels are route-chosen). The caller runs
                       `select_execution_adapter().run(plan, source) -> ExecutionResult`.
     generate_tables   (decoy_engine.generation.synthesize) table-from-schema
                       synthesis for generate-mode configs.
@@ -75,6 +73,7 @@ from decoy_engine.data_discovery import (
     DiscoverySqlError,
     run_discovery_sql,
 )
+from decoy_engine.detection import DetectorMatch
 from decoy_engine.determinism import (
     SEED_PROTOCOL_VERSION,
     DeterminismError,
@@ -103,9 +102,11 @@ from decoy_engine.execution import (
     ExecutionError,
     ExecutionEvent,
     ExecutionResult,
+    JobEstimate,
     PandasExecutionAdapter,
     StrategyError,
     classify_table_kinds,
+    estimate_job,
     estimate_job_capacity,
     get_default_executor,
     run_pipeline,
@@ -156,7 +157,6 @@ from decoy_engine.keyprovider import (
     SeedKeyProvider,
     WeakMaskSecret,
 )
-from decoy_engine.license import LicenseVerifier
 from decoy_engine.plan import compile_plan, job_seed_for_config, run_config_only_checks
 from decoy_engine.plan.validate import (
     PlanCheckError,
@@ -165,6 +165,17 @@ from decoy_engine.plan.validate import (
 )
 from decoy_engine.profile._fixed_width_reader import read_fixed_width
 from decoy_engine.profile._fixed_width_writer import write_fixed_width
+from decoy_engine.profiling import ColumnProfile, FieldStats, SentinelFlag, profile_columns
+from decoy_engine.progress import (
+    CallbackSink,
+    PhaseEvent,
+    ProgressSink,
+    RateSample,
+    RouteEvent,
+    StructuredEventsSink,
+    TerminalEvent,
+    WarningEvent,
+)
 from decoy_engine.providers import (
     atomic_swap_db_providers,
     list_generate_faker_providers,
@@ -218,7 +229,6 @@ from decoy_engine.relationships import (
     check_orphan_fk_policy_completeness,
 )
 from decoy_engine.release import RELEASE_PHASE, ReleasePhase, is_pre_ga
-from decoy_engine.schema import SchemaInspector
 
 # Connector SDK.
 from decoy_engine.sdk import (
@@ -238,7 +248,6 @@ from decoy_engine.sdk import (
     TransientError,
     WriteResult,
 )
-from decoy_engine.storm import DetectorMatch, FieldStats, SentinelFlag, StormProfile, run_storm
 from decoy_engine.unmask import UnmaskColumnReport, UnmaskResult, unmask_pipeline
 from decoy_engine.validation import validate_config
 from decoy_engine.validation.post import (
@@ -302,11 +311,13 @@ __all__ = [
     "VALIDATION_CODES",
     "AdapterError",
     "BackendAdapter",
+    "CallbackSink",
     "CapabilityMatrix",
     "CapacityEstimate",
     "CapacityVerdict",
     "CardinalityMode",
     "CheckResult",
+    "ColumnProfile",
     "CompositeAdapter",
     "CompositeCoherenceReport",
     "CompositeCustom",
@@ -339,11 +350,11 @@ __all__ = [
     "FlagPauseSignal",
     "GenerationError",
     "IdentityDomain",
+    "JobEstimate",
     "KeyProvider",
     "KeyedStrategyRequiresSecret",
     "LicenseError",
     "LicenseExpiredError",
-    "LicenseVerifier",
     "Logger",
     "MaskSecretError",
     "MissingMaskSecret",
@@ -355,6 +366,7 @@ __all__ = [
     "OrphanPolicy",
     "PandasExecutionAdapter",
     "PermanentError",
+    "PhaseEvent",
     "PipelineConfig",
     "PipelineValidationError",
     "PlanCheckError",
@@ -364,22 +376,25 @@ __all__ = [
     "PoolCapacityError",
     "PoolSampler",
     "PostValidationRunner",
+    "ProgressSink",
     "ProviderError",
     "ProviderRegistry",
     "ProviderSpec",
     "QualitySummary",
     "QualityWarning",
+    "RateSample",
     "RelationshipEdge",
     "RelationshipGraph",
     "ReleasePhase",
-    "SchemaInspector",
+    "RouteEvent",
     "SecretKeyProvider",
     "SeedKeyProvider",
     "SentinelFlag",
-    "StormProfile",
     "StrategyError",
     "StructuredEvents",
+    "StructuredEventsSink",
     "TelemetryClient",
+    "TerminalEvent",
     "TransientError",
     "UnmaskColumnReport",
     "UnmaskResult",
@@ -389,6 +404,7 @@ __all__ = [
     "ValuePool",
     "VaultError",
     "VaultWriter",
+    "WarningEvent",
     "WeakMaskSecret",
     "WriteResult",
     "apply_table_transforms",
@@ -411,6 +427,7 @@ __all__ = [
     "emit_quarantine",
     "emit_step",
     "emit_throughput_sample",
+    "estimate_job",
     "estimate_job_capacity",
     "generate_tables",
     "get_default_executor",
@@ -423,6 +440,7 @@ __all__ = [
     "load_vault",
     "make_key_resolver",
     "native_companion_status",
+    "profile_columns",
     "read_fixed_width",
     "register_faker_list_provider",
     "register_faker_provider",
@@ -432,7 +450,6 @@ __all__ = [
     "run_mask_chunked",
     "run_mask_pipeline_chunked",
     "run_pipeline",
-    "run_storm",
     "select_execution_adapter",
     "unmask_pipeline",
     "unregister_faker_provider",

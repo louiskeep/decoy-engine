@@ -41,7 +41,7 @@ use `PyO3/maturin-action` (pinned by commit SHA and exact `maturin-version`, wit
 
 Every row runs the same reusable script,
 [`decoy-engine-native/scripts/parity_smoke.py`](https://github.com/louiskeep/decoy-engine/blob/main/decoy-engine-native/scripts/parity_smoke.py),
-against the built wheel: it asserts `abi_version() == "decoy-native-abi-2"`, then the
+against the built wheel: it asserts `abi_version() == "decoy-native-abi-3"`, then the
 hash KAT and the index KAT (both below), including the exact Arrow return type.
 
 **Hash KAT** (`derive_batch`, `people.ssn` namespace):
@@ -107,7 +107,7 @@ enforces five rules:
 
 1. **Binary compatibility is exact ABI-tag equality.** The companion's
    `abi_version()` must equal the core's pinned `_EXPECTED_ABI_VERSION`
-   (`"decoy-native-abi-2"`) exactly. There is no partial or range compatibility.
+   (`"decoy-native-abi-3"`) exactly. There is no partial or range compatibility.
 2. **ABI match is necessary but not sufficient.** Past the tag check, the loader also
    requires the needed symbol/callable to exist and be callable, and a known-answer
    test to pass. A companion that reports the right ABI tag but fails its KAT is still

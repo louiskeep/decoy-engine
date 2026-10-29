@@ -22,7 +22,7 @@ def open_path_safe(path, shown):  # noqa
     raise FileNotFoundError(f"could not open {shown} (basename {path.name}).")
 
 
-# Shape 2: storm/name_hints/loader.py "does not exist" built from target / fname.
+# Shape 2: detection/name_hints/loader.py "does not exist" built from target / fname.
 def name_hint_leak(manifest_path, fname, file_path):  # noqa
     raise E(f"{manifest_path} lists {fname!r} but {file_path} does not exist.")
 
@@ -31,7 +31,7 @@ def name_hint_safe(file_display):  # noqa
     raise E(f"the manifest lists a file ({file_display}) that does not exist.")
 
 
-# Shape 3: storm/model_pack/provenance.py handler naming pack_dir.
+# Shape 3: profiling/model_pack/provenance.py handler naming pack_dir.
 def model_pack_leak(pack_dir, exc):  # noqa
     raise ValueError(f"sign_pack: cannot read manifest in {pack_dir}: {exc}")
 
@@ -40,7 +40,7 @@ def model_pack_safe(shown, exc):  # noqa
     raise ValueError(f"sign_pack: cannot read manifest in {shown}: {exc}")
 
 
-# Shape 4: storm/model_pack/trainer.py load_pack naming pack_dir (reached only because the module
+# Shape 4: profiling/model_pack/trainer.py load_pack naming pack_dir (reached only because the module
 # imports the _packio capability-reader helper, not because it names the policy).
 def trainer_pack_leak(pack_dir):  # noqa
     raise FileNotFoundError(f"Missing manifest.json in {pack_dir}")

@@ -50,6 +50,7 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
+from decoy_engine.detection.detectors import Span, iter_spans
 from decoy_engine.determinism import derive, derive_index
 from decoy_engine.errors import FpeChecksumError, FpeUnencryptableError
 from decoy_engine.execution._adapter import provider_config_to_dict
@@ -63,7 +64,6 @@ from decoy_engine.execution._strategies._fpe import (
 from decoy_engine.execution._strategies._text_redact import _DEFAULT_TOKEN, _splice
 from decoy_engine.generation.pool._canonicalize import _canonicalize_source
 from decoy_engine.kernel._scalar import _array_to_pylist, _is_missing
-from decoy_engine.storm.detectors import Span, iter_spans
 from decoy_engine.transforms.fpe import (
     FF1_TWEAK_SCOPE_COLUMN,
     FF1_TWEAK_SCOPE_JOIN_GROUP,
@@ -247,7 +247,7 @@ def text_redact_array(values: pa.Array | pa.ChunkedArray, *, plan: ColumnSeed) -
 
     ner_spans_by_pos: list[list[Span]] | None = None
     if ner_model is not None:
-        from decoy_engine.storm.ner import iter_ner_spans_batch
+        from decoy_engine.detection.ner import iter_ner_spans_batch
 
         ner_spans_by_pos = iter_ner_spans_batch(texts, model=ner_model, entities=ner_entities)
 
@@ -265,7 +265,7 @@ def _text_redact_ner(cfg: dict[str, Any], plan: ColumnSeed) -> tuple[str | None,
     ner_cfg = cfg.get("ner")
     if not ner_cfg:
         return None, None
-    from decoy_engine.storm.ner import DEFAULT_NER_MODEL
+    from decoy_engine.detection.ner import DEFAULT_NER_MODEL
 
     ner_model: str
     ner_entities: list[str] | None = None
@@ -278,7 +278,7 @@ def _text_redact_ner(cfg: dict[str, Any], plan: ColumnSeed) -> tuple[str | None,
         ner_model = DEFAULT_NER_MODEL
 
     if plan.ner_model_version is not None:
-        from decoy_engine.storm.ner import installed_model_version
+        from decoy_engine.detection.ner import installed_model_version
 
         current_version = installed_model_version(ner_model)
         if current_version is not None and current_version != plan.ner_model_version:

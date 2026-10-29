@@ -40,7 +40,6 @@ import dataclasses
 from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
-import pyarrow.parquet as pq
 
 from decoy_engine.execution import (
     _chunked_input,
@@ -116,7 +115,7 @@ def _read_key_column(source: pa.Table | LazySource, column: str) -> pa.Array:
     """The child key column alone, from the same prepared source the payload stream
     reads (a lazy source projects one column from its file)."""
     if isinstance(source, LazySource):
-        table = pq.read_table(source.path, columns=[column])
+        table = source.to_table(columns=[column])
     else:
         table = source
     return table.column(column).combine_chunks()
@@ -233,11 +232,8 @@ def run_mixed_route(ctx: PipelineRunContext, decision: RouteDecision) -> Executi
         _pipeline_finalize.stamp_execution_metrics(
             quality_metrics,
             adapter=ctx.adapter,
-            substrate=ctx.substrate,
             resolved_substrate=ctx.resolved_substrate,
             fpe_chunk_count=ctx.fpe_chunk_count,
-            max_workers=ctx.max_workers,
-            fallback_to_pandas=ctx.fallback_to_pandas,
             route_chunked=False,
             auto_chunk=_pipeline_finalize.AUTO_CHUNK_DEFAULT,
             chunk_size_rows=_pipeline_finalize.CHUNK_SIZE_ROWS_DEFAULT,

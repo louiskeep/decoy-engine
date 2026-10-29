@@ -42,7 +42,7 @@ class TestLoaderShipsBundles:
 
     def test_every_disguise_field_rule_references_known_detectors(self):
         """Guard: all detector IDs in field_rules must be known to detectors.py."""
-        from decoy_engine.storm.detectors import REGISTERED_DETECTORS
+        from decoy_engine.detection.detectors import REGISTERED_DETECTORS
 
         # Extract the id from each detector function's closure.
         known_ids: set[str] = set()
@@ -74,7 +74,7 @@ class TestLoaderShipsBundles:
     def test_every_expected_field_references_known_detectors(self):
         """Detection sprint (V1): same guard as field_rules, applied to
         expected_fields (which can be nested any-of groups)."""
-        from decoy_engine.storm.detectors import REGISTERED_DETECTORS
+        from decoy_engine.detection.detectors import REGISTERED_DETECTORS
 
         known_ids = {fn.__name__.replace("detect_", "", 1) for fn in REGISTERED_DETECTORS}
         for d in load_disguises():

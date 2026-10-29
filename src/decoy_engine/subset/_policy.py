@@ -72,9 +72,16 @@ def make_budget_check(budget: FanOutBudget, total_seed_rows: int) -> BudgetCheck
         if budget.max_total_rows is not None:
             total = sum(len(s) for s in survivors.values())
             if total > budget.max_total_rows:
-                top = max(
-                    edge_stats,
-                    key=lambda s: (s.rows_added_downward + s.rows_added_upward, s.edge_id),
+                # An edgeless subset (single table, no relationships) has no
+                # edge_stats, so there is no top contributor: max() of an empty
+                # sequence would raise. Attribute to None instead of crashing.
+                top = (
+                    max(
+                        edge_stats,
+                        key=lambda s: (s.rows_added_downward + s.rows_added_upward, s.edge_id),
+                    )
+                    if edge_stats
+                    else None
                 )
                 raise SubsetBudgetExceededError(
                     scope="total",
@@ -82,17 +89,23 @@ def make_budget_check(budget: FanOutBudget, total_seed_rows: int) -> BudgetCheck
                     cap=budget.max_total_rows,
                     actual=total,
                     seed_total=total_seed_rows,
-                    edge_id=top.edge_id,
+                    edge_id=top.edge_id if top is not None else None,
                 )
         if budget.max_table_seed_multiple is not None:
             cap = ceil(budget.max_table_seed_multiple * total_seed_rows)
             for table in sorted(survivors):
                 actual = len(survivors[table])
                 if actual > cap:
-                    # Offending edge: the top contributor of rows INTO this table.
-                    top = max(
-                        edge_stats,
-                        key=partial(_rows_added_into_sort_key, table=table),
+                    # Offending edge: the top contributor of rows INTO this
+                    # table. An edgeless subset has none, so attribute to None
+                    # rather than let max() raise on an empty sequence.
+                    top = (
+                        max(
+                            edge_stats,
+                            key=partial(_rows_added_into_sort_key, table=table),
+                        )
+                        if edge_stats
+                        else None
                     )
                     raise SubsetBudgetExceededError(
                         scope="table",
@@ -100,7 +113,7 @@ def make_budget_check(budget: FanOutBudget, total_seed_rows: int) -> BudgetCheck
                         cap=cap,
                         actual=actual,
                         seed_total=total_seed_rows,
-                        edge_id=top.edge_id,
+                        edge_id=top.edge_id if top is not None else None,
                     )
 
     return check

@@ -34,7 +34,9 @@ def _run(tmp_path: Path, body: str):  # type: ignore[no-untyped-def]
 
 
 def _opened(window: list[str], token: str) -> bool:
-    return any(re.match(r"\d+ (open|openat|openat2|creat)\(", ln) and token in ln for ln in window)
+    return any(
+        re.match(r"\d+\s+(open|openat|openat2|creat)\(", ln) and token in ln for ln in window
+    )
 
 
 def test_an_in_process_open_is_seen(tmp_path: Path) -> None:
@@ -43,7 +45,7 @@ def test_an_in_process_open_is_seen(tmp_path: Path) -> None:
     target.write_bytes(b"x" * 64)
     window = _run(tmp_path, f"open({str(target)!r}, 'rb').read(8)")
     assert _opened(window, token)
-    assert [ln for ln in window if re.match(r"\d+ p?read", ln) and token in ln]
+    assert [ln for ln in window if re.match(r"\d+\s+p?read", ln) and token in ln]
 
 
 def test_an_open_by_a_child_process_is_seen(tmp_path: Path) -> None:
@@ -122,7 +124,7 @@ def test_a_library_read_is_seen(tmp_path: Path, lib: str) -> None:
     pq.write_table(pa.table({"a": [1, 2, 3]}), target)
     window = _run(tmp_path, READERS[lib].format(p=str(target)))
     assert mentions_at_all(window, token), f"{lib}: the read was not attributed to the sentinel"
-    assert [ln for ln in window if re.match(r"\d+ (openat|open)", ln) and token in ln], lib
+    assert [ln for ln in window if re.match(r"\d+\s+(openat|open)", ln) and token in ln], lib
 
 
 def test_a_duckdb_write_is_seen(tmp_path: Path) -> None:
@@ -133,5 +135,5 @@ def test_a_duckdb_write_is_seen(tmp_path: Path) -> None:
     assert [
         ln
         for ln in window
-        if re.match(r"\d+ (openat|open)", ln) and token in ln and "O_CREAT" in ln
+        if re.match(r"\d+\s+(openat|open)", ln) and token in ln and "O_CREAT" in ln
     ]

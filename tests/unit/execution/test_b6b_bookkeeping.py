@@ -26,8 +26,12 @@ def test_module_sizes_hold_their_bars() -> None:
     assert f"src/decoy_engine/execution/{NEW}" not in size_sentry.ALLOWLIST
     assert size_sentry._loc(EXEC / "_planner.py") <= 600
     # R3 (run-context refactor) restructured _pipeline.py; the B2/B6a/B6b no-net-change pin is superseded by the census sentry.
+    # B-6 vault write-seam added the token_vault_writer param + force-full-frame wiring (308 -> 322).
     assert "src/decoy_engine/execution/_pipeline.py" not in size_sentry.ALLOWLIST
-    assert size_sentry._loc(EXEC / "_pipeline.py") == 308
+    # _pipeline.py: 308 (R3) -> 322 (B-6 token_vault_writer + force-full-frame)
+    # -> 332 (E1 progress scope + E3a knob deletion). Superseded by the census sentry.
+    assert "src/decoy_engine/execution/_pipeline.py" not in size_sentry.ALLOWLIST
+    assert size_sentry._loc(EXEC / "_pipeline.py") == 332
 
 
 def test_the_new_module_is_guarded_by_the_seam_disconnection_sentry() -> None:
@@ -83,7 +87,8 @@ def test_spill_parent_is_not_part_of_the_transactional_sink_protocol() -> None:
 
 def test_changelog_unreleased_names_the_lazy_input() -> None:
     changelog = (REPO / "CHANGELOG.md").read_text(encoding="utf-8")
-    unreleased = _section(changelog, "## [Unreleased]", "\n## [0.")
+    # These entries were unreleased when written; the 0.9.0 changelog cut moved them.
+    unreleased = _section(changelog, "## [0.9.0]", "\n## [0.")
     for needle in ("LazySource", "lazy_source_changed", "spill_parent"):
         assert needle in unreleased, needle
 

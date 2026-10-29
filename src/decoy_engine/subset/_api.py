@@ -142,7 +142,9 @@ def plan_subset(
     engine_version: str,
     file_access: FileAccess | None = None,
 ) -> SubsetPlan:
-    """The dry-run. Never writes anything; never reads non-key columns."""
+    """The dry-run. Never writes anything; reads only key columns plus any
+    columns named in a filter seed's predicates (needed to evaluate the
+    predicate), never ordinary payload columns."""
     plan, _key_frames, _edges, _directions, _closure = _compute(
         sources=sources,
         relationships=relationships,

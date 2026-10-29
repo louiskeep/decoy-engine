@@ -113,7 +113,7 @@ class DistributionSnapshotError(DecoyError):
 _FLOAT_PRECISION = 12
 
 # Fallback bin count when the caller does not override. 10 matches the
-# storm/profiler histogram so the snapshot and the existing per-column
+# profiling/profiler histogram so the snapshot and the existing per-column
 # profile visualization line up at the bin level.
 _DEFAULT_NUMERIC_BINS = 10
 
@@ -421,7 +421,7 @@ def _numeric_stats(
     mean = float(finite.mean())
     # std with ddof=0 matches pandas describe()'s "population" semantics
     # only when explicitly requested; we use ddof=1 to align with
-    # pandas defaults and storm/profiler precedent.
+    # pandas defaults and profiling/profiler precedent.
     std = float(finite.std(ddof=1)) if finite.size > 1 else 0.0
 
     quantiles_idx = [0.05, 0.25, 0.50, 0.75, 0.95]

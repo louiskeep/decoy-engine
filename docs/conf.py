@@ -208,6 +208,8 @@ nitpick_ignore = [
     ("py:class", "StrategyDefault"),
     ("py:class", "ExpectedField"),
     ("py:class", "ReleasePhase"),
+    ("py:class", "ProgressEvent"),
+    ("py:class", "decoy_engine.progress.ProgressEvent"),
     ("py:obj", "DecoyError"),
     # `ConfigError` is re-exported by `decoy_engine.sdk` from
     # `decoy_engine.exceptions`. autoapi records both targets, so any
@@ -218,17 +220,17 @@ nitpick_ignore = [
     # Raises cross-reference from the public unmask module has no
     # documented target to land on. Same class of issue as ConfigError.
     ("py:exc", "ExecutionError"),
-    # `pd.Series` appears as a parameter type in storm.model_pack.trainer
+    # `pd.Series` appears as a parameter type in profiling.model_pack.trainer
     # (pandas imported lazily under TYPE_CHECKING). Intersphinx resolves
     # `pandas.Series` but not the `pd.` alias; adding the alias form here
     # rather than renaming all occurrences in the docstring.
     ("py:class", "pd.Series"),
-    # `Band` is a Literal type alias in storm.eval.bands; autoapi renders
+    # `Band` is a Literal type alias in profiling.eval.bands; autoapi renders
     # its return annotation as a :class: cross-reference but there is no
     # documented class page for a Literal alias.
     ("py:class", "Band"),
-    # `ColumnFeatures` is a public dataclass in storm.features.types; the
-    # bare (unqualified) :class:`ColumnFeatures` in storm.features.builder's
+    # `ColumnFeatures` is a public dataclass in profiling.features.types; the
+    # bare (unqualified) :class:`ColumnFeatures` in profiling.features.builder's
     # module docstring cannot be resolved by autoapi without a full dotted
     # path. Adding to ignore rather than expanding every bare reference.
     ("py:class", "ColumnFeatures"),
@@ -287,7 +289,7 @@ nitpick_ignore = [
     # CODES is defined in validation_result.py as a class used as a data
     # namespace; autoapi renders the bare :data:`CODES` reference from that
     # module's own docstring as unresolvable. PACK_SIGNING_INFO is defined in
-    # storm.model_pack.provenance; same class of bare-name resolution issue.
+    # profiling.model_pack.provenance; same class of bare-name resolution issue.
     ("py:data", "CODES"),
     ("py:data", "PACK_SIGNING_INFO"),
 ]

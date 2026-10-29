@@ -41,14 +41,15 @@ from decoy_engine.execution._adapter import (
     ExecutionResult,
     StrategyContext,
     StrategyHandler,
+    TokenVaultWriter,
 )
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._exact_int_sources import register_exact_int_sources
 from decoy_engine.execution._faker_degenerate_pin import apply_degenerate_faker_pin
+from decoy_engine.execution._fk_key_compat import _fk_key_value
 from decoy_engine.execution._fk_keys import (
     fk_all_null_array,
     fk_columns_for_table,
-    fk_key_value,
     fk_nullable_int_array,
     lossless_fk_int_values,
     to_pandas_fk_safe,
@@ -64,9 +65,9 @@ from decoy_engine.execution._row_errors import RowErrorRecord, drain_row_errors
 from decoy_engine.execution._runner import (
     WorkNode,
     build_work_list,
-    date_shift_group_columns,
     group_key_group_by_columns,
     order_work,
+    source_anchor_columns,
     top_code_columns,
 )
 from decoy_engine.execution._sequential import run_sequential as _run_sequential
@@ -98,19 +99,6 @@ _KeyTuple = tuple[object, ...]
 # matter to `_parent_map`, but every drained record is folded (cheap; `_parent_map`
 # intersects with `edge.parent_columns`).
 _KeyErrorRows = dict[str, dict[str, dict[int, str]]]
-
-
-def _fk_key_value(value: object) -> object:
-    """Compatibility wrapper for tests and older internal imports.
-
-    Delegates to `decoy_engine.execution._fk_keys.fk_key_value`, the single
-    normalization shared by this adapter and the out-of-core route (SC1
-    port), so equal logical keys match across the int/float dtype split
-    pandas introduces (an int64 parent column vs a float64-because-null child
-    column read by `to_pandas()`). Both call sites in this module filter
-    nulls before calling this, so the null/NaN sentinel branch in
-    `fk_key_value` is unreachable here -- a superset, not a divergence."""
-    return fk_key_value(value)
 
 
 class PandasExecutionAdapter:
@@ -186,6 +174,7 @@ class PandasExecutionAdapter:
         row_offset: int = 0,
         code_set_records: Mapping[tuple[str, str], object] | None = None,
         pin_degenerate_faker: bool = False,
+        token_vault_writer: TokenVaultWriter | None = None,
     ) -> ExecutionResult:
         """Mask every table in `sources`; inputs must already be transformed (a Plan has none).
 
@@ -208,8 +197,10 @@ class PandasExecutionAdapter:
         # HC-3a (Codex R1 P1 #2): a date_shift group_by anchor column has the
         # same lossless requirement -- an int+null entity id must not widen to
         # float64, or `_canonicalize_source` rejects the valid id -- so union
-        # those columns into the FK-safe set per table.
-        group_anchor_cols = date_shift_group_columns(plan, registry)
+        # those columns into the FK-safe set per table. Cross-column V1 folds
+        # `joint_mask` key_by source keys into the same set (`source_anchor_columns`):
+        # both read an immutable source sibling through the pre-mask snapshot below.
+        group_anchor_cols = source_anchor_columns(plan, registry)
         # HC-3b (Codex R2): a top_code column has the same lossless-typing need
         # as an FK key -- an int+null column must not widen to float64, or a
         # value >= 2**53 rounds and the masked output becomes chunk-boundary
@@ -257,6 +248,7 @@ class PandasExecutionAdapter:
             # `_chunked_code_set.py`'s corpus-pinning contract). Empty dict
             # (the field default) for every pre-existing caller.
             code_set_records=dict(code_set_records) if code_set_records else {},
+            vault_writer=token_vault_writer,
         )
 
         ordered = order_work(build_work_list(plan, registry), relationship_graph)
@@ -677,15 +669,14 @@ _DEFAULT_EXECUTORS: dict[str, ExecutionAdapter] = {}
 def get_default_executor() -> ExecutionAdapter:
     """Return the cached default execution adapter for the current substrate.
 
-    S12 (M2): the engine reads its own DECOY_SUBSTRATE contract here and resolves
-    the adapter via `select_execution_adapter`, so a caller (the platform job
-    runner) routes a full job through the selected substrate by calling this; it
-    does not re-implement substrate selection (best-practices section 3.3). One
-    cached instance per substrate value (the singleton holds for a fixed env).
+    The engine constructs the adapter via `select_execution_adapter`, so a
+    caller routes a full job through it by calling this rather than
+    re-implementing adapter construction (best-practices section 3.3). One
+    cached instance per adapter label.
     """
-    from decoy_engine.execution._substrate import resolve_substrate, select_execution_adapter
+    from decoy_engine.execution._substrate import SUBSTRATE, select_execution_adapter
 
-    substrate = resolve_substrate()
+    substrate = SUBSTRATE
     cached = _DEFAULT_EXECUTORS.get(substrate)
     if cached is None:
         cached = select_execution_adapter()

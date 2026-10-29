@@ -13,17 +13,17 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from decoy_engine.execution._errors import StrategyError
-from decoy_engine.execution._strategies._text_mask import TextMaskHandler
-from decoy_engine.plan._errors import PlanCompileError
-from decoy_engine.plan._types import ColumnSeed
-from decoy_engine.storm.detectors import Span
-from decoy_engine.storm.ner import (
+from decoy_engine.detection.detectors import Span
+from decoy_engine.detection.ner import (
     DEFAULT_NER_MODEL,
     installed_model_version,
     model_installed,
     spacy_installed,
 )
+from decoy_engine.execution._errors import StrategyError
+from decoy_engine.execution._strategies._text_mask import TextMaskHandler
+from decoy_engine.plan._errors import PlanCompileError
+from decoy_engine.plan._types import ColumnSeed
 
 needs_ner = pytest.mark.skipif(
     not (spacy_installed() and model_installed(DEFAULT_NER_MODEL)),
@@ -60,7 +60,7 @@ class TestCallerWindowsTheBatch:
     def test_oracle_text_mask_windows_the_ner_batch(self, monkeypatch) -> None:
         import math
 
-        from decoy_engine.storm.ner import _NER_APPLY_WINDOW
+        from decoy_engine.detection.ner import _NER_APPLY_WINDOW
 
         window_sizes: list[int] = []
 
@@ -68,7 +68,7 @@ class TestCallerWindowsTheBatch:
             window_sizes.append(len(texts))
             return [[] for _ in texts]
 
-        monkeypatch.setattr("decoy_engine.storm.ner.iter_ner_spans_batch", _spy)
+        monkeypatch.setattr("decoy_engine.detection.ner.iter_ner_spans_batch", _spy)
         n_rows = _NER_APPLY_WINDOW * 2 + 5  # two full windows plus a partial
         df = pd.DataFrame({"notes": [f"row {i} plain text" for i in range(n_rows)]})
         TextMaskHandler().run(df.copy(), "notes", _seed({"ner": True}), _FakeCtx())
@@ -91,7 +91,7 @@ class TestNerRouting:
             Span("person_name", text.index("Jane Doe"), text.index("Jane Doe") + 8, "Jane Doe")
         ]
         monkeypatch.setattr(
-            "decoy_engine.storm.ner.iter_ner_spans_batch",
+            "decoy_engine.detection.ner.iter_ner_spans_batch",
             lambda texts, *, model=None, entities=None: [fake_span for _ in texts],
         )
         df = pd.DataFrame({"notes": [text]})
@@ -107,7 +107,7 @@ class TestNerRouting:
         text = "Seen in Chicago last week."
         fake_span = [Span("location", text.index("Chicago"), text.index("Chicago") + 7, "Chicago")]
         monkeypatch.setattr(
-            "decoy_engine.storm.ner.iter_ner_spans_batch",
+            "decoy_engine.detection.ner.iter_ner_spans_batch",
             lambda texts, *, model=None, entities=None: [fake_span for _ in texts],
         )
         df = pd.DataFrame({"notes": [text]})
@@ -126,7 +126,7 @@ class TestNerRouting:
     def test_no_ner_config_never_calls_iter_ner_spans(self, monkeypatch) -> None:
         calls: list[object] = []
         monkeypatch.setattr(
-            "decoy_engine.storm.ner.iter_ner_spans_batch",
+            "decoy_engine.detection.ner.iter_ner_spans_batch",
             lambda texts, *, model=None, entities=None: calls.append(1) or [[] for _ in texts],
         )
         df = pd.DataFrame({"notes": ["ssn 123-45-6789 on file"]})
@@ -143,7 +143,7 @@ class TestNerRouting:
             return [[] for _ in texts]
 
         monkeypatch.setattr(
-            "decoy_engine.storm.ner.iter_ner_spans_batch",
+            "decoy_engine.detection.ner.iter_ner_spans_batch",
             _fake_iter_ner_spans_batch,
         )
         df = pd.DataFrame({"notes": ["hello"]})
@@ -166,7 +166,7 @@ class TestNerRouting:
             seen["entities"] = entities
             return [[] for _ in texts]
 
-        monkeypatch.setattr("decoy_engine.storm.ner.iter_ner_spans_batch", _fake)
+        monkeypatch.setattr("decoy_engine.detection.ner.iter_ner_spans_batch", _fake)
         return seen
 
     def test_ner_dict_nondefault_model_is_forwarded(self, monkeypatch) -> None:
@@ -226,7 +226,7 @@ class TestNerVersionGuard:
     spans mask_cell synthesizes for the same config + seed."""
 
     def test_version_mismatch_raises(self, monkeypatch) -> None:
-        import decoy_engine.storm.ner as ner_mod
+        import decoy_engine.detection.ner as ner_mod
 
         monkeypatch.setattr(ner_mod, "installed_model_version", lambda model=None: "2.0.0")
         df = pd.DataFrame({"notes": ["Contact Jane Doe"]})
@@ -242,7 +242,7 @@ class TestNerVersionGuard:
         # installed_model_version must be called with the RESOLVED ner_model, not
         # a hard-coded None: a mutant passing None would look up the wrong model.
         # Here only the resolved custom model reports a drifted version.
-        import decoy_engine.storm.ner as ner_mod
+        import decoy_engine.detection.ner as ner_mod
 
         monkeypatch.setattr(
             ner_mod,
@@ -260,11 +260,11 @@ class TestNerVersionGuard:
         assert exc.value.code == "ner_model_version_mismatch"
 
     def test_version_match_does_not_fire_guard(self, monkeypatch) -> None:
-        import decoy_engine.storm.ner as ner_mod
+        import decoy_engine.detection.ner as ner_mod
 
         monkeypatch.setattr(ner_mod, "installed_model_version", lambda model=None: "1.0.0")
         monkeypatch.setattr(
-            "decoy_engine.storm.ner.iter_ner_spans_batch",
+            "decoy_engine.detection.ner.iter_ner_spans_batch",
             lambda texts, *, model=None, entities=None: [[] for _ in texts],
         )
         df = pd.DataFrame({"notes": ["ssn 123-45-6789"]})
@@ -276,11 +276,11 @@ class TestNerVersionGuard:
         assert "123-45-6789" not in out["notes"].iloc[0]
 
     def test_no_stamped_version_skips_guard(self, monkeypatch) -> None:
-        import decoy_engine.storm.ner as ner_mod
+        import decoy_engine.detection.ner as ner_mod
 
         monkeypatch.setattr(ner_mod, "installed_model_version", lambda model=None: "9.9.9")
         monkeypatch.setattr(
-            "decoy_engine.storm.ner.iter_ner_spans_batch",
+            "decoy_engine.detection.ner.iter_ner_spans_batch",
             lambda texts, *, model=None, entities=None: [[] for _ in texts],
         )
         df = pd.DataFrame({"notes": ["ssn 123-45-6789"]})
@@ -315,7 +315,7 @@ class TestCompileTimeNerAvailability:
     def test_text_mask_ner_missing_spacy_fails_at_compile(self, monkeypatch) -> None:
         from decoy_engine.plan._checks import check_text_mask_ner_available
 
-        monkeypatch.setattr("decoy_engine.storm.ner.spacy_installed", lambda: False)
+        monkeypatch.setattr("decoy_engine.detection.ner.spacy_installed", lambda: False)
         with pytest.raises(PlanCompileError) as exc:
             check_text_mask_ner_available(self._cfg({"ner": True}))
         assert exc.value.code == "ner_spacy_not_installed"
@@ -386,7 +386,7 @@ class TestTextMaskNerModelVersionStamp:
 
         if stub_version is not None:
             monkeypatch.setattr(
-                "decoy_engine.storm.ner.installed_model_version", lambda model: stub_version
+                "decoy_engine.detection.ner.installed_model_version", lambda model: stub_version
             )
         # Row 30 hard-fails when the model is absent; bypass it for the stamp
         # test (the stamp is independent of availability, exactly as the
@@ -553,7 +553,7 @@ class TestOutputSeries:
 
 class TestNerBatchWindowing:
     def test_wide_column_calls_batch_helper_once_per_window(self, monkeypatch) -> None:
-        import decoy_engine.storm.ner as ner_mod
+        import decoy_engine.detection.ner as ner_mod
 
         window = ner_mod._NER_APPLY_WINDOW
         call_sizes: list[int] = []
@@ -569,7 +569,7 @@ class TestNerBatchWindowing:
         assert call_sizes == [window, window, 5]
 
     def test_null_rows_excluded_from_windows_and_stay_null(self, monkeypatch) -> None:
-        import decoy_engine.storm.ner as ner_mod
+        import decoy_engine.detection.ner as ner_mod
 
         seen_texts: list[list[str]] = []
 
@@ -588,7 +588,7 @@ class TestNerBatchWindowing:
         # The SAME coerced string must reach both iter_ner_spans_batch and
         # mask_cell -- a second, independent str() call risks disagreeing for
         # a value whose repr is not idempotent-looking.
-        import decoy_engine.storm.ner as ner_mod
+        import decoy_engine.detection.ner as ner_mod
 
         seen_texts: list[str] = []
 

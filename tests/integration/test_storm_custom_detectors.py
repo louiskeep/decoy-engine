@@ -8,11 +8,12 @@ without engine changes. The spec list is passed to run_storm via the
 
 import pandas as pd
 
-from decoy_engine.storm import CustomDetectorSpec, run_storm
+from decoy_engine.detection import CustomDetectorSpec
+from decoy_engine.profiling import profile_columns
 
 
 def _profile(field_name: str, df: pd.DataFrame, custom=None):
-    profile = run_storm(df, "test.csv", custom_detectors=custom)
+    profile = profile_columns(df, "test.csv", custom_detectors=custom)
     return next(f for f in profile.fields if f.name == field_name)
 
 
@@ -149,7 +150,7 @@ class TestCustomDetectorSafety:
         )
         df = pd.DataFrame({"col": ["x", "y", "z"] * 10})
         # Profile should still be produced; bad detector silently dropped.
-        profile = run_storm(df, "t.csv", custom_detectors=[spec])
+        profile = profile_columns(df, "t.csv", custom_detectors=[spec])
         assert len(profile.fields) == 1
         f = profile.fields[0]
         assert all(m.detector_id != "custom__bad" for m in f.detector_matches)

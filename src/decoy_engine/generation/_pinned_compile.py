@@ -19,7 +19,9 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+from decoy_engine import fileaccess
 from decoy_engine._reference_date import normalize_reference_date
+from decoy_engine.fileaccess import FileAccess
 from decoy_engine.generation._pinned_plan import (
     PINNED_PLAN_SCHEMA,
     PinnedColumn,
@@ -202,8 +204,12 @@ class PinnedCompilation:
     generation: Any  # GenerationPlan; plan types are imported lazily in this module
 
 
+@fileaccess.entry_point
 def compile_pinned_plan(
-    config: dict[str, Any], reference_date: datetime | str | None = None
+    config: dict[str, Any],
+    reference_date: datetime | str | None = None,
+    *,
+    file_access: FileAccess | None = None,
 ) -> PinnedPlan:
     """Resolve ``config`` into a ``PinnedPlan`` bound to ``reference_date``.
 
@@ -216,8 +222,12 @@ def compile_pinned_plan(
     return compile_pinned_plan_with_generation(config, reference_date).pinned
 
 
+@fileaccess.entry_point
 def compile_pinned_plan_with_generation(
-    config: dict[str, Any], reference_date: datetime | str | None = None
+    config: dict[str, Any],
+    reference_date: datetime | str | None = None,
+    *,
+    file_access: FileAccess | None = None,
 ) -> PinnedCompilation:
     """``compile_pinned_plan`` that also returns the ``GenerationPlan`` of the same compile.
 

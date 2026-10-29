@@ -71,18 +71,26 @@ class SubsetBudgetExceededError(SubsetError):
         cap: int,
         actual: int,
         seed_total: int,
-        edge_id: str,
+        edge_id: str | None,
     ) -> None:
         self.scope = scope
         self.table = table
         self.cap = cap
         self.actual = actual
         self.seed_total = seed_total
+        # None when no fan-out edge contributed: a single-table (or otherwise
+        # edgeless) subset whose seed selection alone exceeds the cap. There is
+        # then no "top contributing edge" to attribute the overshoot to.
         self.edge_id = edge_id
         scope_desc = f"table {table!r} has" if scope == "table" else "subset output has"
+        edge_desc = (
+            f"top contributing edge: {edge_id}"
+            if edge_id is not None
+            else "no fan-out edge contributed (the seed selection alone exceeds the cap)"
+        )
         message = (
             f"fan-out budget exceeded: {scope_desc} {actual} rows > cap {cap} "
-            f"(seed total {seed_total}); top contributing edge: {edge_id}. "
+            f"(seed total {seed_total}); {edge_desc}. "
             "No output was written. Raise the budget, disable traversal on the "
             "offending edge, or shrink the seed."
         )

@@ -83,6 +83,39 @@ class ExecutionResult:
         return next(iter(self.outputs.values()))
 
 
+class TokenVaultWriter(Protocol):
+    """Platform-provided persistence callback for the ``tokenize`` strategy (MG-5).
+
+    The engine produces a deterministic surrogate (the token) and hands the
+    ``(plaintext, token)`` pair to this writer; the platform owns persistence,
+    access control, and key custody. The engine treats it as opaque and holds no
+    vault itself (library code does not know its callers). Distinct from
+    ``decoy_engine.vault.VaultWriter``, which is the file-based one-way
+    re-identification map for ``vault: true`` columns.
+    """
+
+    def lookup_existing(self, namespace: str, plaintext: str) -> str | None:
+        """The token already stored for ``(namespace, plaintext)``, or None.
+
+        When one exists the strategy REUSES it, so a value's token is stable
+        across jobs and key rotations (the vault is the identity boundary). The
+        identity is scoped by ``namespace``: the same ``plaintext`` under two
+        namespaces is two distinct entries with two distinct tokens, never one,
+        so namespaces cannot be linked through a shared token."""
+        ...
+
+    def put(self, namespace: str, plaintext: str, token: str) -> str:
+        """Persist ``(plaintext, token)`` under ``namespace`` and return the
+        AUTHORITATIVE stored token.
+
+        ``token`` is only a proposal: when a concurrent writer committed the same
+        ``(namespace, plaintext)`` first, the vault keeps ITS token and this
+        returns that one, which may differ from ``token``. The strategy emits the
+        return value, never its proposal, so a published token always has a reverse
+        mapping. Raises on failure; never returns None."""
+        ...
+
+
 @dataclass(frozen=True)
 class StrategyContext:
     """Shared per-job dependencies threaded into every strategy handler.
@@ -211,6 +244,11 @@ class StrategyContext:
     # D2a: the sequential route's per-run hash decisions. Set only by `run_sequential`; every
     # other caller leaves it None, so the hash handler stays the Python path there.
     seq_native: SeqNativeRun | None = None
+    # MG-5: the platform-injected token vault for the `tokenize` strategy. None
+    # (every caller but a vault-backed platform runner) makes `tokenize` fail
+    # closed at run with `tokenize_requires_vault`. Additive; leaves every
+    # existing construction byte-identical.
+    vault_writer: TokenVaultWriter | None = None
 
     def __post_init__(self) -> None:
         # A frozen dataclass forbids attribute assignment; object.__setattr__ is
@@ -316,6 +354,9 @@ class ExecutionAdapter(Protocol):
         # C5c-ii: full-frame callers pin an admitted deterministic-Faker column's degenerate
         # output to `string`. Default False keeps every pre-existing caller unchanged.
         pin_degenerate_faker: bool = False,
+        # MG-5: platform-injected token vault for the `tokenize` strategy. None
+        # keeps every pre-existing caller unchanged (and makes tokenize fail closed).
+        token_vault_writer: TokenVaultWriter | None = None,
     ) -> ExecutionResult: ...
 
     def supports_strategy(self, strategy_name: str) -> bool: ...

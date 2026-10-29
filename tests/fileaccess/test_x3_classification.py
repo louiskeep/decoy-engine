@@ -134,7 +134,7 @@ def _site_digest(world: XWorld, mp: pytest.MonkeyPatch, factory: Any) -> Callabl
 
 
 def _site_pack_fallback(world: XWorld, mp: pytest.MonkeyPatch, factory: Any) -> Callable[[], Any]:
-    from decoy_engine.storm.model_pack.loader import ModelPackLoader
+    from decoy_engine.profiling.model_pack.loader import ModelPackLoader
 
     pack = world.sub / "pack"
     pack.mkdir()
@@ -144,7 +144,7 @@ def _site_pack_fallback(world: XWorld, mp: pytest.MonkeyPatch, factory: Any) -> 
 
 
 def _site_pack_weights(world: XWorld, mp: pytest.MonkeyPatch, factory: Any) -> Callable[[], Any]:
-    from decoy_engine.storm.model_pack.loader import ModelPackLoader
+    from decoy_engine.profiling.model_pack.loader import ModelPackLoader
 
     pack = world.sub / "pack2"
     pack.mkdir()
@@ -153,7 +153,7 @@ def _site_pack_weights(world: XWorld, mp: pytest.MonkeyPatch, factory: Any) -> C
 
 
 def _site_sign_pack(world: XWorld, mp: pytest.MonkeyPatch, factory: Any) -> Callable[[], Any]:
-    from decoy_engine.storm.model_pack import _packio, provenance
+    from decoy_engine.profiling.model_pack import _packio, provenance
 
     pack = world.sub / "pack"
     pack.mkdir()

@@ -65,6 +65,7 @@ from decoy_engine.execution.out_of_core._emit import (
     emit_to_sink,
     empty_output_table,
 )
+from decoy_engine.execution.out_of_core._faker_pool import OocFakerPoolContext
 from decoy_engine.execution.out_of_core._hash_run import OocHashRun
 from decoy_engine.execution.out_of_core._join import orphan_fk_warning
 from decoy_engine.execution.out_of_core._mask import (
@@ -99,6 +100,7 @@ from decoy_engine.execution.out_of_core._vault_collect import (
 )
 from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.plan._types import ColumnSeed
+from decoy_engine.progress import get_active_channel
 from decoy_engine.relationships._graph import OrphanPolicy
 
 if TYPE_CHECKING:
@@ -207,6 +209,17 @@ def run_fk_out_of_core(
     owned_temp = temp_dir is None
     root = scratch_root(temp_dir)
     committed = False
+    # B4: the run-scoped faker pool lifecycle. Pools are Python/object memory
+    # outside DuckDB's accounting, so bound them well inside the run budget and
+    # never past the pool cache's own 256 MiB default. Constructed once per run
+    # (cheap: a cache plus a registry-bound builder, no kernel load); OocHashRun
+    # only consults it when a table carries an admitted faker column.
+    _faker_pool_cap = 256 * 1024 * 1024
+    faker_pool = OocFakerPoolContext(
+        registry=registry,
+        job_seed=plan.seed_envelope.job_seed,
+        max_pool_bytes=min(budget_bytes, _faker_pool_cap) if budget_bytes else _faker_pool_cap,
+    )
     try:
         incoming, outgoing = _edge_indexes(relationship_graph)
         parent_relations: dict[RelationshipEdge, ParentKeyRelation] = {}
@@ -221,7 +234,7 @@ def run_fk_out_of_core(
         # the first's. Same shape as the full-frame sink, so a multi-table
         # job's evidence list matches the pandas oracle's shape byte-for-byte.
         code_set_corpora: dict[tuple[str, str], dict[str, Any]] = {}
-        hash_run = OocHashRun(native_threads=native_threads)
+        hash_run = OocHashRun(native_threads=native_threads, faker_pool=faker_pool)
         for index, table_name in enumerate(_table_order(plan, relationship_graph, sources)):
             if table_name not in sources:
                 continue
@@ -233,6 +246,8 @@ def run_fk_out_of_core(
                 memory_limit=memory_limit_for(budget_bytes, 1) if budget_bytes else memory_limit,
             )
             table_outgoing_edges = tuple(outgoing[table_name])
+            _pg = get_active_channel()
+            _pg_started = _pg.phase_start("mask", table=table_name)
             # Route-independent gate: both drivers raise the same coded error (not a bare KeyError).
             validate_outgoing_parent_columns(table_outgoing_edges, sources[table_name].schema)
             route = decide_route(
@@ -280,6 +295,8 @@ def run_fk_out_of_core(
                 )
             else:
                 _stream_table(**table_kwargs)
+            _pg.flush(table_name)
+            _pg.phase_finish("mask", _pg_started, table=table_name)
             if temp_disk_budget_bytes is not None:
                 # Table boundaries are the natural checkpoints: the spill
                 # footprint peaks with each table's relation/join staging, and
@@ -317,6 +334,9 @@ def run_fk_out_of_core(
         shutil.rmtree(root / "staged", ignore_errors=True)
         if owned_temp:
             shutil.rmtree(root, ignore_errors=True)
+        # Release the run's faker pools (in-memory numpy arrays) and reset the
+        # reservation ledger; nothing survives the run.
+        faker_pool.close()
 
 
 def _stream_table(
@@ -437,6 +457,7 @@ def _stream_table(
 
         def rewritten() -> Iterator[pa.RecordBatch]:
             for raw_batch in _iter_source_batches(raw, batch_rows):
+                get_active_channel().rows(table_name, raw_batch.num_rows)
                 for column, seen in code_set_null_seen.items():
                     if seen:
                         continue

@@ -61,7 +61,18 @@ def run_preflight(
     mask_key = require_mask_key(plan, key_provider)
     assert_vault_inputs(vault_writer, config, mask_key)
     work = order_work(build_work_list(plan, registry), relationship_graph)
-    compat = check_out_of_core_compatibility(plan, work, relationship_graph)
+    # Schema-only read (a LazySource's schema is cached), so a forced out-of-core
+    # job with a non-string faker source refuses here, before any scratch dir or
+    # sink write, rather than aborting mid-run (B4).
+    source_types = {
+        (table_name, field.name): field.type
+        for table_name, source in sources.items()
+        if getattr(source, "schema", None) is not None
+        for field in source.schema
+    }
+    compat = check_out_of_core_compatibility(
+        plan, work, relationship_graph, source_types=source_types
+    )
     if not compat.accepted:
         raise ExecutionError(
             code=compat.primary_code or "out_of_core_rejected",

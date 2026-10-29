@@ -14,7 +14,7 @@ False under sampling (H6 invariant; enforced by ColumnProfile).
 Full-scan distinct_count uses pandas Series.nunique on dropna'd values.
 
 PII detection: opt-in via run_pii_detection=True. When enabled, the
-walker calls STORM (decoy_engine.storm.run_storm) on the full DataFrame
+walker calls the column profiler (decoy_engine.profiling.profile_columns) on the full DataFrame
 once and maps high-confidence detector matches to the closed PIIClass
 enum. Default off: pii_class stays None on every column. Slice 3 of S1.
 
@@ -176,7 +176,7 @@ def _walk_column(
     # distinct_count by the full-frame non-null count (see
     # plan/_checks_freetext_advisory.py), which under active sampling makes
     # the ratio a conservative lower bound -- intentional for a warn-only
-    # advisory. Mirrors storm/profiler.py's FieldStats.avg_length computation.
+    # advisory. Mirrors profiling/profiler.py's FieldStats.avg_length computation.
     # None for non-string dtypes; None when the sample has no non-null
     # values (an all-null or empty column).
     avg_length: float | None = None

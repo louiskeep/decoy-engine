@@ -13,7 +13,7 @@ systems. Longer codes (7-character episode-of-care extensions) are
 out of scope for the synthetic generator -- they require domain
 context that this lightweight provider does not carry.
 
-Validation (mirrors decoy_engine.storm.detectors._icd10_valid):
+Validation (mirrors decoy_engine.detection.detectors._icd10_valid):
 - 3-7 alphanumeric chars (dots stripped).
 - Position 0 is a letter belonging to a real ICD-10 chapter.
 - Positions 1-2 (category) fall within the chapter's valid range.
@@ -36,12 +36,12 @@ from typing import Any
 
 import numpy as np
 
+from decoy_engine.detection.detectors import _ICD10_CHAPTERS, _icd10_valid
 from decoy_engine.determinism import derive_value
 from decoy_engine.generation.pool._canonicalize import _canonicalize_source
 from decoy_engine.providers_v2._adapter import CapabilityMatrix, ProviderSpec
 from decoy_engine.providers_v2._errors import ProviderError
 from decoy_engine.providers_v2.identifiers._errors import IdentifierError
-from decoy_engine.storm.detectors import _ICD10_CHAPTERS, _icd10_valid
 
 # Chapter letters as a stable list so deterministic byte->code maps
 # pick the same chapter for the same input every time. Order matches

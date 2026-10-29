@@ -131,7 +131,7 @@ class TestProfile:
 
 class TestPIIClass:
     def test_storm_built_in_detectors_are_represented(self) -> None:
-        # Mirrors decoy_engine.storm.detectors.REGISTERED_DETECTORS exactly.
+        # Mirrors decoy_engine.detection.detectors.REGISTERED_DETECTORS exactly.
         # The cross-module symmetry test in test_pii_storm_sync.py is the
         # authoritative guard; this set is a local human-readable copy.
         # Update both lists together when STORM adds a new detector.

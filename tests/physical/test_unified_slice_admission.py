@@ -322,7 +322,7 @@ def test_cheap_admission_declines_quarantine_configured(tmp_path: Path) -> None:
     assert _cheap_ok(config, profile, source) is None
 
 
-def test_cheap_admission_declines_run_storm(tmp_path: Path) -> None:
+def test_cheap_admission_declines_profile_columns(tmp_path: Path) -> None:
     source = pa.table({"c": pa.array(["a", "b", "c"], type=pa.string())})
     config, source = _build(tmp_path, [{"name": "c", "strategy": "passthrough"}], source)
     config = dict(config)
@@ -459,8 +459,6 @@ def _compile(config: dict, profile, plan, source: pa.Table):
         use_byte_estimate_routing=True,
         use_probe_routing=True,
         fpe_chunk_count=4,
-        max_workers=4,
-        fallback_to_pandas=True,
         out_of_core_reorder_threshold_rows=None,
         out_of_core_budget_bytes=None,
         engine_version=ENGINE_VERSION,

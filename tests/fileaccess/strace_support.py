@@ -42,12 +42,13 @@ class Trace:
     def window(self, begin: str, end: str) -> list[str]:
         """The syscalls between the two marker `stat` calls the traced script makes."""
 
-        # The execve line prints the whole script, so match the marker's own stat call.
-        def marker(name: str) -> str:
-            return f'stat("/{name}"'
+        # The execve line prints the whole script, so match the marker's own stat call: glibc
+        # reports `os.stat` as `stat`, `newfstatat` or `fstatat64` depending on its version.
+        def marker(name: str) -> re.Pattern[str]:
+            return re.compile(rf'^\d+\s+\w*stat\w*\(.*"/{name}"')
 
-        start = next(i for i, ln in enumerate(self.lines) if marker(begin) in ln)
-        stop = next(i for i, ln in enumerate(self.lines) if marker(end) in ln and i > start)
+        start = next(i for i, ln in enumerate(self.lines) if marker(begin).search(ln))
+        stop = next(i for i, ln in enumerate(self.lines) if marker(end).search(ln) and i > start)
         return self.lines[start + 1 : stop]
 
 

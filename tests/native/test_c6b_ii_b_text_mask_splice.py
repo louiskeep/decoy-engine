@@ -188,8 +188,11 @@ def test_b1_all_rust_detectors_use_the_one_call_detect_splice(paths: _Paths) -> 
     assert paths.splice_spans_cells == 0
 
 
-def test_b1_lookaround_detector_is_spliced_from_merged_spans(paths: _Paths) -> None:
-    """`ssn` is detected in Python. A splice over raw Rust candidates would leave it in place."""
+def test_b1_ported_lookaround_detector_uses_detect_splice(paths: _Paths) -> None:
+    """`ssn` is now Rust-detected (the lookaround port), so an ssn-redact config takes the one-call
+    detect-splice path -- not the merged-span path it used when ssn was Python-only -- and the
+    output still equals the oracle. Every built-in span detector is Rust-supported now, so the
+    merged-span path (`text_mask_splice_spans`) is retained only for a future Python-only detector."""
     cfg = {
         "detectors": ("ssn",),
         "per_detector_strategy": {"ssn": "redact"},
@@ -197,9 +200,9 @@ def test_b1_lookaround_detector_is_spliced_from_merged_spans(paths: _Paths) -> N
     }
     got = _native(["123-45-6789"], **cfg)
     assert got == _oracle(["123-45-6789"], **cfg) == ["[REDACTED]"]
-    assert paths.splice_spans_cells == 1 and paths.detect_splice_cells == 0
+    assert paths.detect_splice_cells == 1 and paths.splice_spans_cells == 0
     assert paths.python_splice_cells == 0
-    # The same input with a hybrid selection (Rust + lookaround interleaved).
+    # A hybrid selection (lookaround-ported + lookaround-free interleaved) stays byte-identical.
     mixed = {**cfg, "detectors": ("email", "ssn", "ipv4")}
     cells = ["mail a@b.com ssn 123-45-6789 at 10.0.0.1"]
     assert _native(cells, **mixed) == _oracle(cells, **mixed)
@@ -253,7 +256,9 @@ def test_b1_plan_resolves_the_complete_detector_set_first() -> None:
     # A non-string token cannot be joined by the splice; the oracle normalizes it.
     assert plan_native_splice(["email"], None, "redact", 5) is None
     plan = plan_native_splice(["email", "ssn"], {"ssn": "redact"}, "redact", "[R]")
-    assert plan is not None and plan.rust_ids is None, "ssn is Python-detected: merged-span mode"
+    # ssn is Rust-supported now (the lookaround port), so under a redact strategy the whole set
+    # resolves to the one-call detect-splice path rather than the merged-span path.
+    assert plan is not None and plan.rust_ids == ("email", "ssn")
 
 
 def test_b1_crash_class_configs_decline_to_the_oracle() -> None:

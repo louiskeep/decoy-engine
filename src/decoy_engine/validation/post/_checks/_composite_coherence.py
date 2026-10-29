@@ -188,7 +188,7 @@ def _audit_provider(out_table: pa.Table) -> CompositeCoherenceReport:
     change to the joining logic; that change is a regression and the
     composite_provider unit cells catch it.
     """
-    from decoy_engine.storm.detectors import _npi_valid
+    from decoy_engine.detection.detectors import _npi_valid
 
     cols = ("npi", "provider_name", "practice_address")
     npis, _names, _addresses = (column_values(out_table, c) for c in cols)

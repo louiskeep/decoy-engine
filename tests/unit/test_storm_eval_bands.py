@@ -9,8 +9,8 @@ Validates:
 Gate reference: ml-benchmarking-and-privacy.md §A.4; ml0.3-confidence-bands.md.
 """
 
-from decoy_engine.storm.eval import build_fixtures
-from decoy_engine.storm.eval.bands import (
+from decoy_engine.profiling.eval import build_fixtures
+from decoy_engine.profiling.eval.bands import (
     HIGH_PRECISION_FLOOR,
     LATENCY_BUDGET_MS,
     REVIEW_PRECISION_FLOOR,
@@ -59,7 +59,7 @@ class TestBaselineBands:
     """Classify the regex-baseline precision scores into bands."""
 
     def test_perfect_types_are_high_band(self):
-        from decoy_engine.storm.eval import run_baseline
+        from decoy_engine.profiling.eval import run_baseline
 
         rep = run_baseline()
         for type_id in ["ssn", "email", "pan", "iban", "cvv", "npi", "icd10", "iso_date"]:
@@ -71,7 +71,7 @@ class TestBaselineBands:
     def test_mrn_is_review_band(self):
         # mrn precision = 0.5 -- below review floor, but the point is it is NOT high.
         # With the current corpus mrn.precision=0.5 -> "low" band.
-        from decoy_engine.storm.eval import run_baseline
+        from decoy_engine.profiling.eval import run_baseline
 
         rep = run_baseline()
         m = rep.by_field_type["mrn"]
@@ -83,7 +83,7 @@ class TestBaselineBands:
     def test_health_plan_id_is_review_band(self):
         # health_plan_id precision=1.0, recall=0.5 -> high band on precision
         # (the miss is a FN, not an FP -- precision stays 1.0 but F2 is lower).
-        from decoy_engine.storm.eval import run_baseline
+        from decoy_engine.profiling.eval import run_baseline
 
         rep = run_baseline()
         m = rep.by_field_type["health_plan_id"]

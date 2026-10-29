@@ -25,6 +25,7 @@ from decoy_engine.keyprovider import resolve_mask_secret_ref
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.plan._generation import read_and_pin_snapshots
 from decoy_engine.profile import profile_source
+from decoy_engine.profile._fixed_width_writer import write_fixed_width
 from decoy_engine.quarantine import write_jsonl_staged
 from decoy_engine.reference_tables import load_table
 from decoy_engine.transforms._codeset_loader import load_corpus
@@ -204,6 +205,22 @@ def test_v5_quarantine_output_is_confined_to_the_root(world: World) -> None:
     assert not target.exists()
     assert json.loads((world.root / "sub" / "q.jsonl").read_text()) == {"a": 1}
     assert list(world.outside.iterdir()) == []
+
+
+def test_fixed_width_write_is_confined_to_the_root(world: World) -> None:
+    import pandas as pd
+
+    layout = {"columns": [{"name": "a", "start": 0, "width": 3, "type": "str"}]}
+    frame = pd.DataFrame({"a": ["xyz"]})
+    target = world.outside / f"{TOKEN}.txt"
+    with scope(world.policy):
+        with pytest.raises(FileAccessDenied) as info:
+            write_fixed_width(frame, layout, str(target))
+        _assert_denial(info.value, "target.path")
+        write_fixed_width(frame, layout, str(world.root / "fw.txt"))
+    assert not target.exists()
+    assert list(world.outside.iterdir()) == []
+    assert (world.root / "fw.txt").read_text().strip() == "xyz"
 
 
 DUCKDB_CASES = [

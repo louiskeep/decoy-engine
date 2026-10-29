@@ -90,8 +90,9 @@ def decide_output_mode(
     """`(mode, reason)`, decided once before the first chunk is masked.
 
     The first failing condition names the reason and the run stays resident. The
-    consumers declined last (validators, quarantine, fidelity, post-validation) read the
-    whole output after the mask step, so a run that has one cannot stream."""
+    consumers declined last (validators, quarantine, fidelity, post-validation,
+    run_storm) read the whole output after the mask step, so a run that has one cannot
+    stream."""
     if not stream_chunked_output:
         return "resident", "streaming_disabled"
     if sink is None:
@@ -113,6 +114,13 @@ def decide_output_mode(
         return "resident", "fidelity_report"
     if post_validation:
         return "resident", "post_validation"
+    if config.get("run_storm"):
+        # STORM post-mask (`compute_storm_postmask`) reads `result.outputs`; a streamed
+        # run leaves it empty, so the requested check would silently no-op. Keep the
+        # output resident -- masked values are chunk-invariant, so the resident chunked
+        # output is STORM-correct, matching how run_storm declines the sequential, mixed,
+        # out-of-core and unified-slice routes for the same whole-output reason.
+        return "resident", "run_storm"
     return "streamed", REASON_ELIGIBLE
 
 

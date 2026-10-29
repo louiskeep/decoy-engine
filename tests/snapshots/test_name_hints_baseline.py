@@ -1,9 +1,9 @@
 """Snapshot harness for STORM detector name-hint coverage.
 
 Per engineering-best-practices §1.1 (snapshot before extraction): the
-``_NAME_HINTS`` dict in ``decoy_engine/storm/detectors.py`` is being
+``_NAME_HINTS`` dict in ``decoy_engine/detection/detectors.py`` is being
 moved from a hard-coded Python dict into versioned YAML files under
-``decoy_engine/storm/name_hints/v1/``. This snapshot captures the
+``decoy_engine/detection/name_hints/v1/``. This snapshot captures the
 ``hits_name_hint(detector_id, col_name)`` matrix BEFORE the refactor;
 the post-refactor run must produce the same digest.
 
@@ -45,7 +45,7 @@ from pathlib import Path
 
 import pytest
 
-from decoy_engine.storm.detectors import _NAME_HINTS, hits_name_hint
+from decoy_engine.detection.detectors import _NAME_HINTS, hits_name_hint
 
 GOLDEN = Path(__file__).parent / "golden" / "name_hints"
 

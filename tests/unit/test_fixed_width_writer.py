@@ -415,11 +415,6 @@ def test_io_failure_on_replace_propagates_and_cleans_temp(
     assert list(tmp_path.iterdir()) == []
 
 
-def test_silent_unlink_ignores_missing_file(tmp_path: Path) -> None:
-    # Best-effort cleanup never raises on an already-gone temp file.
-    _fixed_width_writer._silent_unlink(str(tmp_path / "does-not-exist.tmp"))
-
-
 # --------------------------------------------------------------------------- #
 # Codex final-gate regressions: record-breaking pad, duplicate columns,       #
 # directory-fsync close guard.                                                #
@@ -455,23 +450,6 @@ def test_duplicate_frame_columns_rejected_as_coded_error(tmp_path: Path) -> None
         write_fixed_width(frame, layout, str(path))
     assert "duplicate" in str(exc.value)
     assert not path.exists()
-
-
-def test_fsync_dir_survives_close_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """The best-effort directory fsync must not raise out of a successful write:
-    an os.close fault after os.replace would otherwise surface as a spurious
-    failure on an already-published file."""
-    import os
-
-    real_close = os.close
-
-    def raising_close(fd: int) -> None:
-        real_close(fd)
-        raise OSError("EIO on close")
-
-    monkeypatch.setattr(os, "close", raising_close)
-    # Must return cleanly despite the close fault.
-    _fixed_width_writer._fsync_dir(str(tmp_path))
 
 
 def test_negative_zero_sign_preserved_on_round_trip(tmp_path: Path) -> None:

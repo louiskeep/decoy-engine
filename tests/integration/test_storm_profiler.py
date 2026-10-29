@@ -1,10 +1,10 @@
 """Integration tests for run_storm - exercises the full profiler against
-realistic sample DataFrames and asserts the StormProfile that comes out.
+realistic sample DataFrames and asserts the ColumnProfile that comes out.
 """
 
 import pandas as pd
 
-from decoy_engine.storm import run_storm
+from decoy_engine.profiling import profile_columns
 
 
 def _hipaa_like_dataframe() -> pd.DataFrame:
@@ -137,18 +137,18 @@ def _hipaa_like_dataframe() -> pd.DataFrame:
 class TestProfileShape:
     def test_returns_one_field_per_column(self):
         df = _hipaa_like_dataframe()
-        profile = run_storm(df, "test.csv")
+        profile = profile_columns(df, "test.csv")
         assert len(profile.fields) == len(df.columns)
         assert {f.name for f in profile.fields} == set(df.columns)
 
     def test_source_label_preserved(self):
         df = _hipaa_like_dataframe()
-        profile = run_storm(df, "patients_2026Q1.csv")
+        profile = profile_columns(df, "patients_2026Q1.csv")
         assert profile.source_label == "patients_2026Q1.csv"
 
     def test_row_count_matches(self):
         df = _hipaa_like_dataframe()
-        profile = run_storm(df, "x")
+        profile = profile_columns(df, "x")
         assert profile.row_count == len(df)
 
     def test_json_serializable(self):
@@ -156,7 +156,7 @@ class TestProfileShape:
         import json
 
         df = _hipaa_like_dataframe()
-        profile = run_storm(df, "x")
+        profile = profile_columns(df, "x")
         as_dict = profile.to_dict()
         payload = json.dumps(as_dict)
         assert json.loads(payload) == as_dict
@@ -164,26 +164,26 @@ class TestProfileShape:
 
 class TestPIIDetection:
     def test_email_column_flagged_pii(self):
-        profile = run_storm(_hipaa_like_dataframe(), "x")
+        profile = profile_columns(_hipaa_like_dataframe(), "x")
         email = next(f for f in profile.fields if f.name == "email")
         assert email.pii_score >= 0.9
         assert any(m.detector_id == "email" for m in email.detector_matches)
 
     def test_ssn_column_flagged_pii(self):
-        profile = run_storm(_hipaa_like_dataframe(), "x")
+        profile = profile_columns(_hipaa_like_dataframe(), "x")
         ssn = next(f for f in profile.fields if f.name == "ssn")
         assert ssn.pii_score >= 0.9
         assert any(m.detector_id == "ssn" for m in ssn.detector_matches)
 
     def test_first_name_flagged_pii(self):
-        profile = run_storm(_hipaa_like_dataframe(), "x")
+        profile = profile_columns(_hipaa_like_dataframe(), "x")
         fn = next(f for f in profile.fields if f.name == "first_name")
         assert fn.pii_score >= 0.9
         assert any(m.detector_id == "first_name" for m in fn.detector_matches)
 
     def test_gender_not_flagged_high_pii(self):
         # Gender alone is not high-PII (binary categorical) - should be low.
-        profile = run_storm(_hipaa_like_dataframe(), "x")
+        profile = profile_columns(_hipaa_like_dataframe(), "x")
         gender = next(f for f in profile.fields if f.name == "gender")
         assert gender.pii_score < 0.5
 
@@ -197,7 +197,7 @@ class TestQuasiIdentifierGroup:
     """
 
     def test_qi_groups_include_dob_zip_gender_when_jointly_identifying(self):
-        profile = run_storm(_hipaa_like_dataframe(), "x")
+        profile = profile_columns(_hipaa_like_dataframe(), "x")
         assert profile.quasi_identifier_groups, (
             "expected at least one quasi-id combo from data-driven k-anonymity"
         )
@@ -212,7 +212,7 @@ class TestQuasiIdentifierGroup:
 
     def test_dropping_gender_still_produces_qi_combos_from_remaining_columns(self):
         df = _hipaa_like_dataframe().drop(columns=["gender"])
-        profile = run_storm(df, "x")
+        profile = profile_columns(df, "x")
         # With gender gone, the winning combos can't include it.
         for group in profile.quasi_identifier_groups:
             assert "gender" not in group
@@ -220,7 +220,7 @@ class TestQuasiIdentifierGroup:
 
 class TestSentinelsSurface:
     def test_dob_year_sentinels_surface(self):
-        profile = run_storm(_hipaa_like_dataframe(), "x")
+        profile = profile_columns(_hipaa_like_dataframe(), "x")
         dob = next(f for f in profile.fields if f.name == "dob")
         kinds = {f.kind for f in dob.sentinels}
         assert "date_sentinel" in kinds
@@ -229,7 +229,7 @@ class TestSentinelsSurface:
         assert "0001-01-01" in values and "9999-12-31" in values
 
     def test_string_sentinels_surface_in_notes_column(self):
-        profile = run_storm(_hipaa_like_dataframe(), "x")
+        profile = profile_columns(_hipaa_like_dataframe(), "x")
         notes = next(f for f in profile.fields if f.name == "notes")
         kinds = {f.kind for f in notes.sentinels}
         assert "string_sentinel" in kinds
@@ -245,14 +245,14 @@ class TestReidRiskScore:
     def test_reid_score_reflects_quasi_identifier_linkage(self):
         # With 12 rows and dob/zip/gender forming low-k combos, at
         # least one combo achieves k <= 2 -> reid_risk_score >= 50.
-        profile = run_storm(_hipaa_like_dataframe(), "x")
+        profile = profile_columns(_hipaa_like_dataframe(), "x")
         assert profile.k_anonymity is not None
         assert profile.reid_risk_score >= 50.0
 
     def test_direct_identifiers_not_in_quasi_id_columns(self):
         # ssn / email / phone are direct identifiers (unique -> above
         # the unique_rate cap -> filtered out of QI candidates).
-        profile = run_storm(_hipaa_like_dataframe(), "x")
+        profile = profile_columns(_hipaa_like_dataframe(), "x")
         assert "ssn" not in profile.reid_risk_columns
         assert "email" not in profile.reid_risk_columns
         assert "phone" not in profile.reid_risk_columns
@@ -260,7 +260,7 @@ class TestReidRiskScore:
     def test_quasi_id_columns_drawn_from_winning_combos(self):
         # gender / dob / zip have the right cardinality for QI combos
         # in this fixture; at least one should show up.
-        profile = run_storm(_hipaa_like_dataframe(), "x")
+        profile = profile_columns(_hipaa_like_dataframe(), "x")
         assert profile.reid_risk_columns
         assert set(profile.reid_risk_columns).issubset(
             # everything we'd accept as a QI candidate in this fixture
@@ -270,6 +270,6 @@ class TestReidRiskScore:
 
 class TestDateFormatSignal:
     def test_iso_format_detected_on_dob(self):
-        profile = run_storm(_hipaa_like_dataframe(), "x")
+        profile = profile_columns(_hipaa_like_dataframe(), "x")
         dob = next(f for f in profile.fields if f.name == "dob")
         assert dob.date_format == "iso_date"

@@ -2,7 +2,7 @@
 
 import pandas as pd
 
-from decoy_engine.storm.sentinels import detect_sentinels
+from decoy_engine.profiling.sentinels import detect_sentinels
 
 
 class TestDateSentinels:

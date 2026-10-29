@@ -2,7 +2,7 @@
 
 Pins mod-97 check digit computation + per-country length coverage
 + adapter contracts. The country list shared with
-decoy_engine.storm.detectors._IBAN_COUNTRIES; the per-country
+decoy_engine.detection.detectors._IBAN_COUNTRIES; the per-country
 length table is the IBAN-specific risk Dennis flagged.
 """
 
@@ -11,6 +11,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from decoy_engine.detection.detectors import _IBAN_COUNTRIES, _iban_valid
 from decoy_engine.providers_v2._adapter import ProviderSpec
 from decoy_engine.providers_v2._errors import ProviderError
 from decoy_engine.providers_v2.identifiers._iban import (
@@ -23,7 +24,6 @@ from decoy_engine.providers_v2.identifiers._iban import (
     _letter_to_digits,
     generate_random,
 )
-from decoy_engine.storm.detectors import _IBAN_COUNTRIES, _iban_valid
 
 _SEED = (0x0123456789).to_bytes(8, "big")
 
@@ -44,7 +44,7 @@ def _spec(
 
 class TestCountryCoverage:
     """The length table must cover every country in
-    decoy_engine.storm.detectors._IBAN_COUNTRIES, since the detector
+    decoy_engine.detection.detectors._IBAN_COUNTRIES, since the detector
     rejects IBANs whose country code isn't in that set."""
 
     def test_length_table_covers_every_detector_country(self):

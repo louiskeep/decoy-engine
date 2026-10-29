@@ -1,6 +1,6 @@
 """Pure name-hint recognizer for clinical/claims free-text columns (HC-7).
 
-Reuses the token-boundary matching style of `storm/detectors.py`'s
+Reuses the token-boundary matching style of `detection/detectors.py`'s
 `_hint()` (case-insensitive, `._-`-delimited token boundaries), with one
 deliberate divergence: `_hint()` allows a matched term to sit anywhere in
 the name (prefix, infix, or suffix), which is right for STORM's PII

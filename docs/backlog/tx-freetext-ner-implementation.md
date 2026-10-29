@@ -6,7 +6,7 @@
 
 **Goal:** Bring the already-built spaCy NER capability from `text_redact` to `text_mask` so free-text named entities **synthesize** (person names → faker, etc.) instead of being blunt-redacted, and formally activate + document the existing `text_redact` NER path.
 
-**Architecture:** A full spaCy adapter (`storm/ner.py`) and the span-injection contract (`Span`, `iter_spans(extra_spans=...)`) already exist and are wired end-to-end for `text_redact` — config flag, compile-time availability check, determinism version-pin, out-of-core parity, and tests. TX copies that proven pattern into the `text_mask` handler and its out-of-core twin, adds the version guard, and fixes the one missing default (`location`). No new NER machinery is invented.
+**Architecture:** A full spaCy adapter (`detection/ner.py`) and the span-injection contract (`Span`, `iter_spans(extra_spans=...)`) already exist and are wired end-to-end for `text_redact` — config flag, compile-time availability check, determinism version-pin, out-of-core parity, and tests. TX copies that proven pattern into the `text_mask` handler and its out-of-core twin, adds the version guard, and fixes the one missing default (`location`). No new NER machinery is invented.
 
 **Tech Stack:** spaCy `>=3.7,<4` (already an optional `ner` extra in `pyproject.toml:160`), `en_core_web_sm`, the existing `Span`/`iter_spans`/`iter_ner_spans` plumbing.
 
@@ -21,8 +21,8 @@
 - **Gate.** Dennis review before merge; this is de-identification-critical (a missed entity is a PII leak), so a Codex cross-model pass on TX-2 is warranted.
 
 **Where things live today (reconcile against these):**
-- `src/decoy_engine/storm/ner.py` — `iter_ner_spans(text, *, model, entities)` `:132-155`; `NER_ENTITY_MAP` `:22-27`,`:49-55` (emits `person_name`, `location`; DATE/ORG/address deliberately excluded).
-- `src/decoy_engine/storm/detectors.py` — `Span(detector_id, start, end, matched_text)` `:872-884`; `iter_spans(text, detector_ids, *, extra_spans=None)` `:988`.
+- `src/decoy_engine/detection/ner.py` — `iter_ner_spans(text, *, model, entities)` `:132-155`; `NER_ENTITY_MAP` `:22-27`,`:49-55` (emits `person_name`, `location`; DATE/ORG/address deliberately excluded).
+- `src/decoy_engine/detection/detectors.py` — `Span(detector_id, start, end, matched_text)` `:872-884`; `iter_spans(text, detector_ids, *, extra_spans=None)` `:988`.
 - `src/decoy_engine/transforms/text_mask.py` — `mask_cell(..., extra_spans=None)` `:340`,`:404`; `DETECTOR_DEFAULTS` `:102-133` (**no `location` key** → location spans fall to the `redact` default at `:416`).
 - `src/decoy_engine/execution/_strategies/_text_mask.py` — handler `:41-93` (reads `detectors`/`per_detector_strategy`/`unmatched_span_policy`/`token`/`min_days`/`max_days` — **no `ner` key**).
 - `src/decoy_engine/execution/out_of_core/_mask_group_c.py` — `text_mask` OOC twin `:130-170` (**no NER**). (`text_redact` OOC lives in group_b.)
@@ -106,7 +106,7 @@ git commit -m "docs(ner): activation guide + text_redact NER smoke test (TX-1)"
 ```python
 # tests/unit/transforms/test_text_mask.py  (add)
 from decoy_engine.transforms.text_mask import mask_cell
-from decoy_engine.storm.detectors import Span
+from decoy_engine.detection.detectors import Span
 
 def test_injected_location_span_uses_location_default_not_redact():
     text = "Seen in Chicago last week."
@@ -149,7 +149,7 @@ Mirror the `text_redact` handler pattern into `_strategies/_text_mask.py`.
 - Test: `tests/unit/execution/test_text_mask_ner.py`
 
 **Interfaces:**
-- Consumes: `provider_config["ner"]` — `True` or `{model, entities}`, mirroring `_text_redact.py:71-88`; `iter_ner_spans` from `storm/ner.py:132`.
+- Consumes: `provider_config["ner"]` — `True` or `{model, entities}`, mirroring `_text_redact.py:71-88`; `iter_ner_spans` from `detection/ner.py:132`.
 - Produces: the handler forwards NER spans through the existing `mask_cell(..., extra_spans=...)` param.
 
 - [ ] **Step 1: Write the failing test (deterministic via stubbed NER)**
@@ -157,7 +157,7 @@ Mirror the `text_redact` handler pattern into `_strategies/_text_mask.py`.
 ```python
 # tests/unit/execution/test_text_mask_ner.py
 from unittest.mock import patch
-from decoy_engine.storm.detectors import Span
+from decoy_engine.detection.detectors import Span
 
 def test_text_mask_routes_ner_person_to_faker():
     text = "Call Jane Doe today."
@@ -179,7 +179,7 @@ Copy the shape from `_text_redact.py:71-88,154-158`:
 
 ```python
 # _text_mask.py handler
-from decoy_engine.storm.ner import iter_ner_spans
+from decoy_engine.detection.ner import iter_ner_spans
 ner_cfg = provider_config.get("ner")
 def _spans_for(cell):
     if not ner_cfg:

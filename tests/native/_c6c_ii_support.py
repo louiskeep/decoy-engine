@@ -15,13 +15,30 @@ from typing import Any
 
 import pytest
 
+from decoy_engine.detection.detectors import _SPAN_DETECTORS, iter_spans
 from decoy_engine.execution._strategies._text_redact import _DEFAULT_TOKEN, _splice
 from decoy_engine.execution.native._text_redact_kernel import load_text_redact_kernel
-from decoy_engine.storm.detectors import _SPAN_DETECTORS, iter_spans
 
-# The eight Rust-supported detectors and the three that always stay Python (plan 2).
-RUST_DETECTORS = ("email", "us_phone", "pan", "iban", "ipv4", "icd10", "npi", "url")
-PYTHON_DETECTORS = ("ssn", "us_zip", "street_address")
+# All eleven built-in detectors now run in Rust on an eligible cell: the eight original
+# lookaround-free ones (`regex` crate) plus the three lookaround detectors ported as hand-written
+# ASCII byte scanners (`fancy-regex` was tried and rejected on perf; see the text_redact.rs module
+# doc). Nothing but an ineligible cell (non-ASCII / 0x1c-0x1f / surrogate / non-string) now
+# declines to Python.
+RUST_DETECTORS = (
+    "email",
+    "us_phone",
+    "pan",
+    "iban",
+    "ipv4",
+    "icd10",
+    "npi",
+    "url",
+    "ssn",
+    "us_zip",
+    "street_address",
+)
+# The lookaround detectors ported in this slice -- kept as a named group for targeted parity tests.
+LOOKAROUND_DETECTORS = ("ssn", "us_zip", "street_address")
 
 _COMPANION_PRESENT = importlib.util.find_spec("decoy_engine_native") is not None
 _TR_KERNEL = load_text_redact_kernel()
@@ -82,13 +99,13 @@ SHAPES: dict[str, list[str | None]] = {
     "ragged": [None, "a@b.com", "", None, "x 123-45-6789 y", "café", None],
 }
 
-# Detector-selection permutations: None (all), supported-only, python-only, mixed, and the two
+# Detector-selection permutations: None (all), supported-only, lookaround-only, mixed, and the two
 # tie-sensitive orderings over npi/us_phone (both Rust-run).
 DETECTOR_SELECTIONS: dict[str, tuple[str, ...] | None] = {
     "all": None,
     "email_only": ("email",),
     "rust_subset": ("email", "ipv4", "pan"),
-    "python_only": ("ssn", "us_zip", "street_address"),
+    "lookaround": ("ssn", "us_zip", "street_address"),
     "mixed": ("ssn", "email", "us_zip", "ipv4"),
     "tie_npi_then_phone": ("npi", "us_phone"),
     "tie_phone_then_npi": ("us_phone", "npi"),

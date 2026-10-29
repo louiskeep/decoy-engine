@@ -1,4 +1,4 @@
-"""Smoke tests for decoy_engine.storm.postmask (Reframe-A, 2026-05-31).
+"""Smoke tests for decoy_engine.verification.postmask (Reframe-A, 2026-05-31).
 
 Covers the orchestrator + the 3 check categories at the seam level.
 The detailed per-check assertions live in the per-check modules' own
@@ -11,9 +11,9 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from decoy_engine.storm.postmask import (
+from decoy_engine.verification.postmask import (
     SCHEMA_VERSION,
-    run_storm_post_mask,
+    run_post_mask,
 )
 
 
@@ -24,7 +24,7 @@ class TestSchemaVersion:
 
 class TestRunStormPostMask:
     def test_empty_config_produces_empty_report(self):
-        report = run_storm_post_mask(
+        report = run_post_mask(
             source_frames={},
             output_frames={},
             config={"version": 1, "tables": []},
@@ -41,9 +41,9 @@ class TestRunStormPostMask:
 
     def test_wrong_argument_types_raise_typeerror(self):
         with pytest.raises(TypeError):
-            run_storm_post_mask("not a dict", {}, config={})  # type: ignore[arg-type]
+            run_post_mask("not a dict", {}, config={})  # type: ignore[arg-type]
         with pytest.raises(TypeError):
-            run_storm_post_mask({}, {}, config="not a dict")  # type: ignore[arg-type]
+            run_post_mask({}, {}, config="not a dict")  # type: ignore[arg-type]
 
     def test_text_redact_residual_pii_classified_as_fail(self):
         """QA-4 F1 (2026-06-01): text_redact must be in
@@ -66,7 +66,7 @@ class TestRunStormPostMask:
                 }
             ],
         }
-        report = run_storm_post_mask(
+        report = run_post_mask(
             source_frames={"users": src},
             output_frames={"users": out},
             config=config,
@@ -90,7 +90,7 @@ class TestRunStormPostMask:
                 }
             ],
         }
-        report = run_storm_post_mask(
+        report = run_post_mask(
             source_frames={"users": src},
             output_frames={"users": out},
             config=config,
@@ -115,7 +115,7 @@ class TestRunStormPostMask:
                 }
             ],
         }
-        report = run_storm_post_mask(
+        report = run_post_mask(
             source_frames={"users": src},
             output_frames={"users": out},
             config=config,
@@ -130,7 +130,7 @@ class TestRunStormPostMask:
         src = pd.DataFrame({"id": [1, 2, 3]})
         out = src.copy()
         config = {"tables": [{"name": "users", "columns": []}]}
-        report = run_storm_post_mask(
+        report = run_post_mask(
             source_frames={"users": src},
             output_frames={"users": out},
             config=config,
@@ -155,7 +155,7 @@ class TestRunStormPostMask:
                 }
             ],
         }
-        report = run_storm_post_mask(
+        report = run_post_mask(
             source_frames={"users": users, "orders": orders},
             output_frames={"users": users, "orders": orders},
             config=config,
@@ -184,7 +184,7 @@ class TestRunStormPostMask:
                 }
             ],
         }
-        report = run_storm_post_mask(
+        report = run_post_mask(
             source_frames={"users": users, "orders": orders},
             output_frames={"users": users, "orders": orders},
             config=config,

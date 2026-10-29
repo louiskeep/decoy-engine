@@ -100,7 +100,7 @@ def test_lightgbm_report_matches_golden() -> None:
     if os.environ.get("UPDATE_SNAPSHOTS") == "1":
         import dataclasses
 
-        from decoy_engine.storm.model_pack.trainer import train_and_evaluate
+        from decoy_engine.profiling.model_pack.trainer import train_and_evaluate
 
         # _REPORT_PATH.parent == docs/v2/ml; packs/ lives alongside the report.
         pack_dir = _REPORT_PATH.parent / "packs" / "lgbm-v1"
@@ -260,7 +260,7 @@ def test_lightgbm_regression_retrain(tmp_path: Path) -> None:
     if not _REPORT_PATH.exists():
         pytest.skip(f"lightgbm-report.json not found at {_REPORT_PATH}")
 
-    from decoy_engine.storm.model_pack.trainer import TRAIN_SEED, train_and_evaluate
+    from decoy_engine.profiling.model_pack.trainer import TRAIN_SEED, train_and_evaluate
 
     # Re-train to a temp directory (does not touch the committed pack).
     report = train_and_evaluate(out_dir=tmp_path / "lgbm-retrain", random_state=TRAIN_SEED)
@@ -337,11 +337,11 @@ def test_predict_column_band_accuracy() -> None:
     if not _LIVE_PACK.exists():
         pytest.skip("lgbm-v1 pack not found; run UPDATE_SNAPSHOTS=1 first")
 
-    from decoy_engine.storm.eval.bands import HIGH_PRECISION_FLOOR, REVIEW_PRECISION_FLOOR
-    from decoy_engine.storm.eval.corpus import build_extended_fixtures
-    from decoy_engine.storm.eval.fixtures import NO_DETECTOR
-    from decoy_engine.storm.eval.split import held_out_split
-    from decoy_engine.storm.model_pack.trainer import (
+    from decoy_engine.profiling.eval.bands import HIGH_PRECISION_FLOOR, REVIEW_PRECISION_FLOOR
+    from decoy_engine.profiling.eval.corpus import build_extended_fixtures
+    from decoy_engine.profiling.eval.fixtures import NO_DETECTOR
+    from decoy_engine.profiling.eval.split import held_out_split
+    from decoy_engine.profiling.model_pack.trainer import (
         TRAIN_SEED,
         _build_feature_inputs,
         load_pack,

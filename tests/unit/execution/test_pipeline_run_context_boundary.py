@@ -48,7 +48,6 @@ _REAL_CHEAP = admission.cheap_admission
 _SECRET_ENV = "R3_BOUNDARY_TEST_MASK_SECRET"
 _KNOBS: dict[str, Any] = {
     "fpe_chunk_count": 7,
-    "max_workers": 3,
     "chunk_size_rows": 1234,
     "auto_chunk_threshold_rows": 987_654,
     "native_threads": 2,
@@ -191,7 +190,7 @@ def test_knobs_reach_the_lane_unchanged(tmp_path: Path, monkeypatch: pytest.Monk
         assert kw[name] == value, name
     assert kw["execution_mode"] == "auto"
     assert kw["engine_version"] == sc.ENGINE_VERSION
-    assert kw["substrate"] == "pandas" and kw["resolved_substrate"] == "pandas"
+    assert kw["resolved_substrate"] == "pandas"
     assert kw["fidelity_report"] is False and kw["vault_writer"] is None
 
 

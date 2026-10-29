@@ -262,15 +262,48 @@ def run_with_when_gate(
     if len(ctx.row_errors) > err_start:
         # `.tolist()` (only on the rare error path) gives a plain Sequence.
         _remap_gated_row_errors(ctx, err_start, positions.tolist())
-    if column in df.columns:  # a handler may create a new column (e.g. group_key)
-        reject_gated_string_on_numeric(
-            df[column],
-            sub_df[column],
-            mask,
-            table=getattr(ctx, "current_table", ""),  # test doubles may omit it
-            column=column,
-            strategy=plan.strategy,
-        )
-        widen_numeric_target_for_strings(df, column, sub_df[column])
-    df.loc[mask, column] = sub_df[column]
+    # Stitch every column the handler WROTE back into the full frame for the
+    # selected rows, not just the dispatch `column`. A multi-column handler
+    # (joint_mask writes its whole `columns` config in one pass) declares them
+    # via `gated_output_columns`; a single-column handler leaves `out_cols` as
+    # just the dispatch column, byte-identical to the prior single-column write.
+    # Copying only the dispatch column left the handler's OTHER outputs at their
+    # source value for the gated rows (a silent partial mask).
+    for out_col in _gated_output_columns(handler, plan, column):
+        if out_col not in sub_df.columns:
+            continue
+        if out_col in df.columns:  # a handler may create a new column (e.g. group_key)
+            reject_gated_string_on_numeric(
+                df[out_col],
+                sub_df[out_col],
+                mask,
+                table=getattr(ctx, "current_table", ""),  # test doubles may omit it
+                column=out_col,
+                strategy=plan.strategy,
+            )
+            widen_numeric_target_for_strings(df, out_col, sub_df[out_col])
+        # Index-aligned: sub_df carries the gated rows' source index labels, so
+        # each retained row writes back to its own row in the full frame.
+        df.loc[mask, out_col] = sub_df[out_col]
     return df, warnings
+
+
+def _gated_output_columns(
+    handler: StrategyHandler, plan: ColumnSeed, column: str
+) -> tuple[str, ...]:
+    """The columns `run_with_when_gate` must stitch back for the gated rows.
+
+    The dispatch `column` plus any extra outputs a multi-column handler declares
+    through an optional `gated_output_columns(plan) -> tuple[str, ...]` method
+    (duck-typed like `preflight`). A handler without that method writes only its
+    dispatch column, so the result is `(column,)` -- the pre-fix behavior. The
+    dispatch column leads and duplicates are dropped while order is preserved, so
+    the single-column path stays byte-identical.
+    """
+    hook = getattr(handler, "gated_output_columns", None)
+    declared = tuple(hook(plan)) if hook is not None else ()
+    out: list[str] = []
+    for col in (column, *declared):
+        if col not in out:
+            out.append(col)
+    return tuple(out)

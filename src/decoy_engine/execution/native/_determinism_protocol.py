@@ -10,15 +10,13 @@ reproduce each entry's byte sequence exactly, so accuracy of ``seed_derivation``
 This module is pure data plus small helpers. It imports nothing from the
 masking or generation hot paths and changes no behavior.
 
-Partitionability rule (the property the native batched executor cares
-about): a site is ``partitionable`` when a partitioned or batched pass can
-reproduce the exact same value for a given output row as a single serial
-pass. Per-row source-keyed derivations are partitionable (row output is a
-pure function of that row's key). Whole-column ``permutation(n)`` /
-``choices(k=n)`` streams and per-group sequential streams are NOT: a row's
-value depends on the position of every earlier draw in the stream, which a
-partition boundary breaks. Per-row-reseeded streams are partitionable when
-the reseed key is a stable per-row identity (row index or source value).
+Partitionability rule (the property the native batched executor cares about): a site is
+``partitionable`` when a partitioned or batched pass can reproduce the exact same value for a
+given output row as a single serial pass. Per-row source-keyed derivations are partitionable (row
+output is a pure function of that row's key). Whole-column ``permutation(n)`` / ``choices(k=n)``
+streams and per-group sequential streams are NOT: a row's value depends on the position of every
+earlier draw in the stream, which a partition boundary breaks. Per-row-reseeded streams are
+partitionable when the reseed key is a stable per-row identity (row index or source value).
 """
 
 from __future__ import annotations
@@ -809,6 +807,7 @@ MASK_STRATEGY_TO_SITE: dict[str, str] = {
     "text_redact": DETERMINISTIC_NO_DRAW,
     "nested": DETERMINISTIC_NO_DRAW,  # delegates to a child handler; no own draw
     "hash": "mask.hash",
+    "tokenize": "mask.tokenize",
     "shuffle": "mask.shuffle",
     "categorical": "mask.categorical_deterministic",  # + mask.categorical_nondeterministic (seeded)
     "fpe": "mask.fpe",
@@ -884,8 +883,9 @@ _MASK_FORMULA = DrawSite(
 )
 
 from decoy_engine.execution.native._draw_sites_gen_pool import GEN_POOL_DRAW_SITES  # noqa: E402
+from decoy_engine.execution.native._draw_sites_tokenize import TOKENIZE_DRAW_SITES  # noqa: E402
 
-DRAW_SITES = (*DRAW_SITES, _MASK_FORMULA, *GEN_POOL_DRAW_SITES)
+DRAW_SITES = (*DRAW_SITES, _MASK_FORMULA, *GEN_POOL_DRAW_SITES, *TOKENIZE_DRAW_SITES)
 
 
 def draw_site_by_id(draw_site_id: str) -> DrawSite:

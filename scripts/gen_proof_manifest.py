@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
@@ -50,11 +51,32 @@ def _surface() -> dict:
     }
 
 
-# Frozen stamp values. These are passed in (not read from the clock) so the
-# generator is deterministic and the sentry diff is stable. Bump GENERATED_AT
-# by hand when refreshing benchmarks or samples; bump ENGINE_VERSION to match
-# the engine release being documented.
-ENGINE_VERSION = "0.2.0"
+_CHANGELOG_PATH = Path(__file__).resolve().parent.parent / "CHANGELOG.md"
+# A released section heading starts with a digit ("## [0.14.1] - ..."), which
+# excludes the "## [Unreleased]" heading above it without a special case.
+_RELEASED_SECTION = re.compile(r"^## \[(?P<version>\d[^\]]*)\]")
+
+
+def _released_engine_version() -> str:
+    # Authoritative release signal: the newest released section in CHANGELOG.md
+    # (the first "## [X.Y.Z]" heading below [Unreleased]). It is in-repo and
+    # deterministic, so the stamp tracks the real release and cannot silently rot
+    # the way a hand-maintained constant did. pyproject `version` is a stale
+    # placeholder (hatch-vcs stamps the real version at the release cut), and
+    # git describe / importlib.metadata are not available or not deterministic in
+    # every run context (sdist build, CI without tags, uninstalled checkout).
+    for line in _CHANGELOG_PATH.read_text(encoding="utf-8").splitlines():
+        m = _RELEASED_SECTION.match(line)
+        if m:
+            return m.group("version")
+    raise RuntimeError(f"no released version section found in {_CHANGELOG_PATH}")
+
+
+# Stamp values held as module constants so the generator is deterministic and
+# the sentry diff is stable. GENERATED_AT is bumped by hand when refreshing
+# benchmarks or samples; ENGINE_VERSION is derived from the CHANGELOG release
+# section (see _released_engine_version) so it follows the real release.
+ENGINE_VERSION = _released_engine_version()
 GENERATED_AT = "2026-06-14"
 
 OUT = Path(__file__).resolve().parent.parent / "docs" / "proof-manifest.json"
@@ -326,9 +348,16 @@ def _all_changed(col, i, o):
 
 
 # Strategies intentionally not given a standalone card. `passthrough` is the
-# no-op (shown in the hero instead). Every other registry mask strategy MUST
-# have a CAPABILITY_PROOFS entry, enforced by the completeness sentry.
-WAIVED_MASK_STRATEGIES = {"passthrough"}
+# no-op (shown in the hero instead). `tokenize` (B-6) masks through a
+# platform-supplied token vault, and the engine-only proof harness supplies
+# none. A throwaway in-memory vault would only re-demonstrate the deterministic
+# opaque-surrogate property already proven by the `hash` card; the parts that
+# make tokenize distinct (vault-backed reversibility, key custody) are
+# platform-owned and outside engine proof scope. Its determinism and
+# fail-closed behavior are covered by tests/unit/execution/test_tokenize.py and
+# the vault write-seam gate. Every other registry mask strategy MUST have a
+# CAPABILITY_PROOFS entry, enforced by the completeness sentry.
+WAIVED_MASK_STRATEGIES = {"passthrough", "tokenize"}
 
 
 CAPABILITY_PROOFS: list[CapabilityProof] = [

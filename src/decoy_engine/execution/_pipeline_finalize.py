@@ -53,13 +53,8 @@ __all__ = [
 # non-default booleans computed there too) needed no cross-module import,
 # but computing the booleans here instead does, and importing a bare literal
 # back across that boundary would create exactly the drift risk the old
-# comment warned against. `substrate` pins "pandas" (NOT None): pinning it
-# keeps run_pipeline's default route byte-identical to the original hardcoded
-# pandas path regardless of any DECOY_SUBSTRATE the environment sets.
-SUBSTRATE_DEFAULT = "pandas"
+# comment warned against.
 FPE_CHUNK_COUNT_DEFAULT = 4
-MAX_WORKERS_DEFAULT = 4
-FALLBACK_TO_PANDAS_DEFAULT = True
 # Auto-chunk defaults. Default-ON is safe because masked values are chunk-invariant
 # and the lane's join never guesses: the planner's fail-closed gates admit only jobs
 # whose every per-column output is a pure function of (value, config, seed) with all
@@ -82,11 +77,8 @@ def stamp_execution_metrics(
     mask_quality_metrics: dict[str, Any],
     *,
     adapter: Any,
-    substrate: str | None,
     resolved_substrate: str,
     fpe_chunk_count: int,
-    max_workers: int,
-    fallback_to_pandas: bool,
     route_chunked: bool,
     auto_chunk: bool,
     chunk_size_rows: int,
@@ -112,12 +104,7 @@ def stamp_execution_metrics(
     non-default. All-default full-frame runs stamp nothing (the P1
     golden `quality_metrics == {}` contract).
     """
-    adapter_non_default = (substrate, fpe_chunk_count, max_workers, fallback_to_pandas) != (
-        SUBSTRATE_DEFAULT,
-        FPE_CHUNK_COUNT_DEFAULT,
-        MAX_WORKERS_DEFAULT,
-        FALLBACK_TO_PANDAS_DEFAULT,
-    )
+    adapter_non_default = fpe_chunk_count != FPE_CHUNK_COUNT_DEFAULT
     auto_chunk_non_default = (auto_chunk, chunk_size_rows, auto_chunk_threshold_rows) != (
         AUTO_CHUNK_DEFAULT,
         CHUNK_SIZE_ROWS_DEFAULT,
@@ -127,11 +114,8 @@ def stamp_execution_metrics(
         mask_quality_metrics["execution_adapter"] = {
             "adapter_name": adapter.adapter_name,
             "adapter_version": adapter.adapter_version,
-            "requested_substrate": substrate,
             "resolved_substrate": resolved_substrate,
             "fpe_chunk_count": fpe_chunk_count,
-            "max_workers": max_workers,
-            "fallback_to_pandas": fallback_to_pandas,
         }
 
     if multi_table_split is not None:
@@ -479,3 +463,39 @@ def finalize_validators_and_quarantine(
             quality_metrics["quarantine"] = quarantine_manifest(q_summary)
 
     return outputs, quarantine_removed
+
+
+def compute_storm_postmask(
+    execution_result: ExecutionResult,
+    *,
+    config: Mapping[str, Any],
+    sources: Mapping[str, pa.Table],
+) -> None:
+    """`run_storm: true` (E3b): run the STORM post-mask integrity checks over every
+    mask table and stamp the report under `quality_metrics["storm_postmask"]`.
+
+    The config key was accepted by the schema for a long time but nothing in the
+    spine honoured it, so a user who asked for the in-run check silently got
+    none. Report-only: findings never fail the run (the CLI's `--post-validate-
+    enforce` and `report integrity` are the enforcing surfaces). Runs only on the
+    full-frame finalize branch, which routing guarantees for an opted-in job
+    (see `_sequential_eligible`), so the whole output is resident here.
+    """
+    if not config.get("run_storm"):
+        return
+    from decoy_engine.verification import run_post_mask
+
+    table_kinds = execution_result.table_kinds or {}
+    mask_tables = [
+        name
+        for name, table in execution_result.outputs.items()
+        if table_kinds.get(name, "mask") == "mask" and name in sources
+    ]
+    if not mask_tables:
+        return
+    report = run_post_mask(
+        source_frames={name: sources[name].to_pandas() for name in mask_tables},
+        output_frames={name: execution_result.outputs[name].to_pandas() for name in mask_tables},
+        config=dict(config),
+    )
+    execution_result.quality_metrics["storm_postmask"] = report

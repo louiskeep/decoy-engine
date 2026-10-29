@@ -2,7 +2,7 @@
 # `ordinal` is the index of the call among identical sinks in the function. An entry may be
 # removed freely; adding one needs a `rule` (how the path is built), an `owner` and a `reason`.
 # `ambient_only` marks a caller-derived path that is reached only after `require_ambient`.
-# Count: 164 (asserted by the sentry).
+# Count: 189 (asserted by the sentry).
 
 [[entry]]
 module = "decoy_engine/connectors/sftp.py"
@@ -1406,7 +1406,7 @@ owner = "cam"
 reason = "package data"
 
 [[entry]]
-module = "decoy_engine/storm/model_pack/classify.py"
+module = "decoy_engine/profiling/model_pack/classify.py"
 function = "_default_pack_dir"
 sink = "Path.is_dir"
 ordinal = 0
@@ -1415,7 +1415,7 @@ owner = "cam"
 reason = "locating the shipped default model pack"
 
 [[entry]]
-module = "decoy_engine/storm/model_pack/classify.py"
+module = "decoy_engine/profiling/model_pack/classify.py"
 function = "_default_pack_dir"
 sink = "Path.is_file"
 ordinal = 0
@@ -1424,7 +1424,7 @@ owner = "cam"
 reason = "locating the shipped default model pack"
 
 [[entry]]
-module = "decoy_engine/storm/model_pack/classify.py"
+module = "decoy_engine/profiling/model_pack/classify.py"
 function = "classify_fields"
 sink = "engine_dir_handle"
 ordinal = 0
@@ -1433,7 +1433,7 @@ owner = "cam"
 reason = "locating the shipped default model pack"
 
 [[entry]]
-module = "decoy_engine/storm/model_pack/loader.py"
+module = "decoy_engine/profiling/model_pack/loader.py"
 function = "ModelPackLoader._deserialise"
 sink = "joblib.load"
 ordinal = 0
@@ -1442,7 +1442,7 @@ owner = "cam"
 reason = "joblib over an in-memory buffer; the file itself goes through the pack directory capability"
 
 [[entry]]
-module = "decoy_engine/storm/model_pack/trainer.py"
+module = "decoy_engine/profiling/model_pack/trainer.py"
 function = "train_and_evaluate"
 sink = "joblib.dump"
 ordinal = 0
@@ -1451,7 +1451,7 @@ owner = "cam"
 reason = "joblib over an in-memory buffer; the file itself goes through the pack directory capability"
 
 [[entry]]
-module = "decoy_engine/storm/model_pack/trainer.py"
+module = "decoy_engine/profiling/model_pack/trainer.py"
 function = "load_pack"
 sink = "joblib.load"
 ordinal = 0
@@ -1460,7 +1460,7 @@ owner = "cam"
 reason = "joblib over an in-memory buffer; the file itself goes through the pack directory capability"
 
 [[entry]]
-module = "decoy_engine/storm/name_hints/loader.py"
+module = "decoy_engine/detection/name_hints/loader.py"
 function = "load_name_hint_terms"
 sink = "engine_dir_handle"
 ordinal = 0
@@ -1503,3 +1503,236 @@ ordinal = 0
 rule = "in-memory Arrow buffer (`pa.BufferOutputStream` or `pa.BufferReader`) of one encrypted chunk"
 owner = "cam"
 reason = "serializes a chunk to bytes; the file itself goes through the OutputDir or FileHandle"
+
+[[entry]]
+module = "decoy_engine/connectors/postgres_snapshot.py"
+function = "_open_connection"
+sink = "Path.mkdir"
+ordinal = 0
+rule = "path derived from the caller's dest_dir or the config's temp_directory; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
+owner = "cam"
+reason = "the Postgres snapshot child stages Parquet beside a platform-chosen destination and cannot carry a strict policy (D6 fail-closed fallback), so a strict policy never gets here"
+ambient_only = true
+
+[[entry]]
+module = "decoy_engine/connectors/postgres_snapshot.py"
+function = "_open_connection"
+sink = "os.chmod"
+ordinal = 0
+rule = "path derived from the caller's dest_dir or the config's temp_directory; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
+owner = "cam"
+reason = "the Postgres snapshot child stages Parquet beside a platform-chosen destination and cannot carry a strict policy (D6 fail-closed fallback), so a strict policy never gets here"
+ambient_only = true
+
+[[entry]]
+module = "decoy_engine/connectors/postgres_snapshot.py"
+function = "snapshot_tables_to_parquet"
+sink = "Path.mkdir"
+ordinal = 0
+rule = "path derived from the caller's dest_dir or the config's temp_directory; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
+owner = "cam"
+reason = "the Postgres snapshot child stages Parquet beside a platform-chosen destination and cannot carry a strict policy (D6 fail-closed fallback), so a strict policy never gets here"
+ambient_only = true
+
+[[entry]]
+module = "decoy_engine/connectors/postgres_snapshot.py"
+function = "snapshot_tables_to_parquet"
+sink = "Path.mkdir"
+ordinal = 1
+rule = "path derived from the caller's dest_dir or the config's temp_directory; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
+owner = "cam"
+reason = "the Postgres snapshot child stages Parquet beside a platform-chosen destination and cannot carry a strict policy (D6 fail-closed fallback), so a strict policy never gets here"
+ambient_only = true
+
+[[entry]]
+module = "decoy_engine/connectors/postgres_snapshot.py"
+function = "snapshot_tables_to_parquet"
+sink = "os.replace"
+ordinal = 0
+rule = "path derived from the caller's dest_dir or the config's temp_directory; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
+owner = "cam"
+reason = "the Postgres snapshot child stages Parquet beside a platform-chosen destination and cannot carry a strict policy (D6 fail-closed fallback), so a strict policy never gets here"
+ambient_only = true
+
+[[entry]]
+module = "decoy_engine/connectors/postgres_snapshot.py"
+function = "snapshot_tables_to_parquet"
+sink = "shutil.rmtree"
+ordinal = 0
+rule = "path derived from the caller's dest_dir or the config's temp_directory; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
+owner = "cam"
+reason = "the Postgres snapshot child stages Parquet beside a platform-chosen destination and cannot carry a strict policy (D6 fail-closed fallback), so a strict policy never gets here"
+ambient_only = true
+
+[[entry]]
+module = "decoy_engine/connectors/postgres_snapshot.py"
+function = "snapshot_tables_to_parquet"
+sink = "shutil.rmtree"
+ordinal = 1
+rule = "path derived from the caller's dest_dir or the config's temp_directory; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
+owner = "cam"
+reason = "the Postgres snapshot child stages Parquet beside a platform-chosen destination and cannot carry a strict policy (D6 fail-closed fallback), so a strict policy never gets here"
+ambient_only = true
+
+[[entry]]
+module = "decoy_engine/connectors/postgres_snapshot.py"
+function = "snapshot_tables_to_parquet"
+sink = "shutil.rmtree"
+ordinal = 2
+rule = "path derived from the caller's dest_dir or the config's temp_directory; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
+owner = "cam"
+reason = "the Postgres snapshot child stages Parquet beside a platform-chosen destination and cannot carry a strict policy (D6 fail-closed fallback), so a strict policy never gets here"
+ambient_only = true
+
+[[entry]]
+module = "decoy_engine/execution/_isolated_memwatch.py"
+function = "read_vm_fields"
+sink = "open"
+ordinal = 0
+rule = "`/proc/<pid>/status` for an integer pid, a constant procfs path; the sampler thread reads nothing else"
+owner = "cam"
+reason = "process memory readout for the isolated run; no caller or config value reaches the path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_multi_parent.py"
+function = "resolve_incoming"
+sink = "Path.unlink"
+ordinal = 0
+rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+owner = "cam"
+reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_multi_parent.py"
+function = "merge_parent_relations"
+sink = "Path.mkdir"
+ordinal = 0
+rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+owner = "cam"
+reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_multi_parent.py"
+function = "merge_parent_relations"
+sink = "duckdb.connection.execute"
+ordinal = 0
+rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+owner = "cam"
+reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_multi_parent.py"
+function = "merge_parent_relations"
+sink = "duckdb.connection.execute"
+ordinal = 1
+rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+owner = "cam"
+reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_multi_parent.py"
+function = "merge_parent_relations"
+sink = "duckdb.connection.execute"
+ordinal = 2
+rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+owner = "cam"
+reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_multi_parent.py"
+function = "merge_parent_relations"
+sink = "Path.unlink"
+ordinal = 0
+rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+owner = "cam"
+reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_multi_parent.py"
+function = "merge_parent_relations"
+sink = "Path.unlink"
+ordinal = 1
+rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+owner = "cam"
+reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_multi_parent.py"
+function = "merge_parent_relations"
+sink = "Path.unlink"
+ordinal = 2
+rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+owner = "cam"
+reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_multi_parent.py"
+function = "_masked_types"
+sink = "pyarrow.parquet.read_metadata"
+ordinal = 0
+rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+owner = "cam"
+reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_payload_store.py"
+function = "SpillPayloadStore.iter_batches"
+sink = "pyarrow.OSFile"
+ordinal = 0
+rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+owner = "cam"
+reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_payload_store.py"
+function = "RawParentKeySpill.__iter__"
+sink = "pyarrow.OSFile"
+ordinal = 0
+rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+owner = "cam"
+reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_payload_store.py"
+function = "SpillChildKeys.open_reader"
+sink = "pyarrow.OSFile"
+ordinal = 0
+rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+owner = "cam"
+reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
+module = "decoy_engine/io/bounded_reader.py"
+function = "csv_convert_options"
+sink = "pyarrow.csv.ConvertOptions"
+ordinal = 0
+rule = "in-memory bytes buffer (`io.BytesIO` of records the framer already read through a policy handle); the option constructors name no file"
+owner = "cam"
+reason = "the CSV chunk parse never opens a path; the source file is opened through `open_read` above it"
+
+[[entry]]
+module = "decoy_engine/io/bounded_reader.py"
+function = "iter_csv_chunks"
+sink = "pyarrow.csv.ParseOptions"
+ordinal = 0
+rule = "in-memory bytes buffer (`io.BytesIO` of records the framer already read through a policy handle); the option constructors name no file"
+owner = "cam"
+reason = "the CSV chunk parse never opens a path; the source file is opened through `open_read` above it"
+
+[[entry]]
+module = "decoy_engine/io/bounded_reader.py"
+function = "iter_csv_chunks.flush"
+sink = "pyarrow.csv.ReadOptions"
+ordinal = 0
+rule = "in-memory bytes buffer (`io.BytesIO` of records the framer already read through a policy handle); the option constructors name no file"
+owner = "cam"
+reason = "the CSV chunk parse never opens a path; the source file is opened through `open_read` above it"
+
+[[entry]]
+module = "decoy_engine/io/bounded_reader.py"
+function = "iter_csv_chunks.flush"
+sink = "pyarrow.csv.read_csv"
+ordinal = 0
+rule = "in-memory bytes buffer (`io.BytesIO` of records the framer already read through a policy handle); the option constructors name no file"
+owner = "cam"
+reason = "the CSV chunk parse never opens a path; the source file is opened through `open_read` above it"

@@ -89,7 +89,12 @@ def _datetime_col(year_counts: list[tuple[int, int]]) -> dict[str, object]:
     }
 
 
-def _freetext_col(mean: float, max_len: int) -> dict[str, object]:
+def _freetext_col(
+    mean: float,
+    max_len: int,
+    length_bin_edges: list[int] | None = None,
+    length_bin_counts: list[int] | None = None,
+) -> dict[str, object]:
     return {
         "dtype": "object",
         "kind": "freetext",
@@ -98,8 +103,8 @@ def _freetext_col(mean: float, max_len: int) -> dict[str, object]:
         "distinct_count": 50,
         "stats": {
             "length": {"min": 1, "max": max_len, "mean": mean, "std": 5.0},
-            "length_bin_edges": [],
-            "length_bin_counts": [],
+            "length_bin_edges": length_bin_edges if length_bin_edges is not None else [],
+            "length_bin_counts": length_bin_counts if length_bin_counts is not None else [],
         },
     }
 
@@ -447,10 +452,12 @@ def test_categorical_column_carries_chi_cramers_v_extra_metric() -> None:
     assert extra["method"] == "chi_square_common_partition_cramers_v"
 
 
-def test_extra_metrics_absent_for_non_gof_kinds() -> None:
-    # A2 is scoped to numeric (ks_complement) and categorical/bool
-    # (chi_cramers_v) only; datetime, freetext, empty, and kind-mismatch
-    # entries are untouched -- no extra_metrics key at all.
+def test_extra_metrics_absent_for_empty_and_kind_mismatch() -> None:
+    # DI1: GOF now covers numeric (ks_complement), categorical/bool
+    # (chi_cramers_v), datetime (ks_complement on year ECDF) and freetext
+    # (ks_complement on length distribution). `empty` and kind-mismatched
+    # entries remain untouched -- no extra_metrics key at all (there is no
+    # comparable distribution to fit).
     empty = {
         "dtype": "object",
         "kind": "empty",
@@ -459,20 +466,97 @@ def test_extra_metrics_absent_for_non_gof_kinds() -> None:
         "distinct_count": 0,
         "stats": {},
     }
-    src = _snap(
-        {
-            "d": _datetime_col([(2022, 50), (2023, 50)]),
-            "notes": _freetext_col(mean=20.0, max_len=40),
-            "empty_col": empty,
-        }
-    )
-    out_mismatch = _snap({"d": _numeric_col(quantiles={"p50": 50.0})})
-    fid_same_kind = compute_fidelity(src, src)
-    for col in fid_same_kind["marginal"]["columns"]:
-        assert "extra_metrics" not in col, col["column"]
+    fid_empty = compute_fidelity(_snap({"empty_col": empty}), _snap({"empty_col": empty}))
+    assert "extra_metrics" not in fid_empty["marginal"]["columns"][0]
 
+    out_mismatch = _snap({"d": _numeric_col(quantiles={"p50": 50.0})})
     fid_mismatch = compute_fidelity(_snap({"d": _datetime_col([(2022, 100)])}), out_mismatch)
     assert "extra_metrics" not in fid_mismatch["marginal"]["columns"][0]
+
+
+def test_datetime_carries_ks_complement_on_year_ecdf() -> None:
+    # DI1: datetime GOF reuses the KS method on the yearly ECDF. Identity
+    # (same year distribution) -> D == 0, complement 1.0.
+    same = _datetime_col([(2022, 50), (2023, 50)])
+    fid = compute_fidelity(_snap({"d": same}), _snap({"d": same}))
+    extra = fid["marginal"]["columns"][0]["extra_metrics"]["ks_complement"]
+    assert extra["comparable"] is True
+    assert extra["method"] == "ks_complement_binned_cdf"
+    assert extra["value"] == pytest.approx(1.0)
+    assert extra["d_statistic"] == pytest.approx(0.0)
+
+
+def test_datetime_ks_complement_detects_year_shift() -> None:
+    # All mass in 2022 vs all mass in 2024: disjoint single-year point
+    # distributions across a three-year span -> maximal ECDF gap.
+    src = _snap({"d": _datetime_col([(2022, 100)])})
+    out = _snap({"d": _datetime_col([(2024, 100)])})
+    extra = compute_fidelity(src, out)["marginal"]["columns"][0]["extra_metrics"]["ks_complement"]
+    assert extra["comparable"] is True
+    assert extra["d_statistic"] == pytest.approx(1.0)
+    assert extra["value"] == pytest.approx(0.0)
+    # Symmetric: swapping the two sides leaves the statistic unchanged.
+    swapped = compute_fidelity(out, src)["marginal"]["columns"][0]["extra_metrics"]["ks_complement"]
+    assert swapped == extra
+
+
+def test_datetime_gof_declines_without_year_bins() -> None:
+    # A datetime snapshot with no year bins cannot support the fit: coded
+    # decline, never a fabricated statistic.
+    no_years = {
+        "dtype": "datetime64[ns]",
+        "kind": "datetime",
+        "null_count": 0,
+        "non_null_count": 0,
+        "distinct_count": 0,
+        "stats": {"year_bins": []},
+    }
+    fid = compute_fidelity(_snap({"d": no_years}), _snap({"d": no_years}))
+    extra = fid["marginal"]["columns"][0]["extra_metrics"]["ks_complement"]
+    assert extra == {
+        "value": None,
+        "method": "ks_complement_binned_cdf",
+        "comparable": False,
+        "reason": "missing_histogram",
+    }
+
+
+def test_freetext_carries_ks_complement_on_length_distribution() -> None:
+    # DI1: freetext GOF reuses the KS method on the string-length histogram.
+    hist = _freetext_col(
+        mean=20.0, max_len=40, length_bin_edges=[0, 20, 40], length_bin_counts=[25, 25]
+    )
+    fid = compute_fidelity(_snap({"notes": hist}), _snap({"notes": hist}))
+    col = fid["marginal"]["columns"][0]
+    # Primary similarity is still the length-mean diff; GOF is additive.
+    assert col["method"] == "length_mean_diff"
+    extra = col["extra_metrics"]["ks_complement"]
+    assert extra["comparable"] is True
+    assert extra["method"] == "ks_complement_binned_cdf"
+    assert extra["value"] == pytest.approx(1.0)
+
+
+def test_freetext_ks_complement_detects_length_shift() -> None:
+    src = _snap(
+        {"notes": _freetext_col(5.0, 40, length_bin_edges=[0, 20, 40], length_bin_counts=[50, 0])}
+    )
+    out = _snap(
+        {"notes": _freetext_col(30.0, 40, length_bin_edges=[0, 20, 40], length_bin_counts=[0, 50])}
+    )
+    extra = compute_fidelity(src, out)["marginal"]["columns"][0]["extra_metrics"]["ks_complement"]
+    assert extra["comparable"] is True
+    assert extra["value"] < 1.0
+
+
+def test_freetext_gof_declines_without_length_histogram() -> None:
+    # The default freetext fixture carries an empty length histogram (an
+    # older snapshot): coded decline, no fabricated statistic.
+    plain = _freetext_col(mean=20.0, max_len=40)
+    fid = compute_fidelity(_snap({"notes": plain}), _snap({"notes": plain}))
+    extra = fid["marginal"]["columns"][0]["extra_metrics"]["ks_complement"]
+    assert extra["comparable"] is False
+    assert extra["reason"] == "missing_histogram"
+    assert extra["value"] is None
 
 
 def test_extra_metrics_do_not_change_similarity_or_overall_score() -> None:

@@ -28,6 +28,9 @@ from decoy_engine.execution.out_of_core import _compat
 COMPILED_RUST: Final = "compiled_rust_kernel"
 COMPILED_SELECTION: Final = "compiled_index_selection"
 NAMED_ARROW: Final = "named_arrow_kernel"
+# Python per-distinct-value selection expanded with an Arrow dict-encode + take (NOT a pure Arrow
+# or Rust kernel): the out-of-core code_set map (`kernel/_code_set.py`).
+ARROW_DICT_MAP: Final = "arrow_dict_map"
 NOOP: Final = "noop"
 DEDICATED_PYTHON: Final = "dedicated_python"
 EXCLUDED: Final = "excluded"
@@ -48,11 +51,12 @@ TEXT_STRATEGIES: Final = frozenset({"text_redact", TEXT_MASK})
 
 # The documented dedicated-Python compute. `why` is what the Phase D close records.
 PYTHON_WHY: Final = {
-    "code_set": "no kernel on any route; backlog: kernelize as a named-Arrow dict-map",
+    "code_set": "SEQ code_set runs per-cell apply_code_set and native-chunked reroutes an FK table "
+    "to the full-frame oracle (also per-cell); out-of-core selects per distinct value via an Arrow "
+    "dict-map (B6). Backlog: the SEQ and chunked consumers.",
     "ner": "Python-by-design (spaCy inference); a config of text_redact/text_mask, not a strategy",
     "faker_declined": "faker cells admission declines (config/type) or FK-key cells; Python pool",
     "key_declined": "native-capable non-injective strategy on an FK key stays Python, reporting only",
-    "ooc_text_mask": "out-of-core text_mask runs the shared per-cell mask_cell loop; backlog",
     "other_handler": "shared full-frame handler with no native admission on any route",
 }
 
@@ -75,12 +79,12 @@ def _seq_key(strategy: str) -> str:
     return _seq_payload(strategy)
 
 
-# The out-of-core Group (c) members with no streaming kernel: both run per-cell Python on this
-# route (text_mask -> `_mask_group_c._text_mask_array` mask_cell loop; code_set -> apply_code_set),
-# though SEQ/native-chunked kernelize text_mask. This is the only hand-named OOC fact, and it is a
-# genuine compute property, not a duplication of an admission rule -- everything else admitted on
-# this route has a proven out-of-core kernel.
-_OOC_PYTHON_RESIDUE: Final = frozenset({TEXT_MASK, "code_set"})
+# code_set is the one out-of-core Group (c) member whose compute is neither a Rust kernel nor a
+# pure Arrow op: B6 selects each distinct non-null value once through `apply_code_set` and expands
+# with an Arrow dict-map + take (`kernel/_code_set.py`), so it is ARROW_DICT_MAP, not DEDICATED_
+# PYTHON (per-cell) and not COMPILED_RUST. text_mask joined the compiled span path here too (B5),
+# so this is the only hand-named OOC compute fact left; everything else admitted on this route has
+# a proven out-of-core kernel.
 
 
 def _ooc_payload(strategy: str) -> str:
@@ -88,8 +92,15 @@ def _ooc_payload(strategy: str) -> str:
         return NAMED_ARROW
     if strategy in NOOP_STRATEGIES:
         return NOOP
-    if strategy in _OOC_PYTHON_RESIDUE:
-        return DEDICATED_PYTHON
+    if strategy == FAKER:
+        # B4: deterministic-REUSE person-name faker selects from its prepared pool
+        # through the compiled index kernel (`_faker_native`), the same selection
+        # class SEQ and native-chunked use. The exact-string source and the
+        # companion-absent reference kernel are runtime qualifications, not a
+        # different compute class.
+        return COMPILED_SELECTION
+    if strategy == "code_set":
+        return ARROW_DICT_MAP
     if strategy in (
         _compat._INITIAL_SUPPORTED_STRATEGIES
         | _compat._GROUP_B_SUPPORTED_STRATEGIES

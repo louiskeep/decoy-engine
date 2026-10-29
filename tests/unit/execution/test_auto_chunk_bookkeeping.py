@@ -23,8 +23,12 @@ EXEC = REPO / "src" / "decoy_engine" / "execution"
 
 def test_pipeline_stays_at_its_exact_ratchet_and_the_new_module_under_the_goal() -> None:
     # R3 (run-context refactor) restructured _pipeline.py; the B2/B6a/B6b no-net-change pin is superseded by the census sentry.
+    # B-6 vault write-seam added the token_vault_writer param + force-full-frame wiring (308 -> 322).
     assert "src/decoy_engine/execution/_pipeline.py" not in size_sentry.ALLOWLIST
-    assert size_sentry._loc(EXEC / "_pipeline.py") == 308
+    # _pipeline.py: 308 (R3) -> 322 (B-6 token_vault_writer + force-full-frame)
+    # -> 332 (E1 progress scope + E3a knob deletion). Superseded by the census sentry.
+    assert "src/decoy_engine/execution/_pipeline.py" not in size_sentry.ALLOWLIST
+    assert size_sentry._loc(EXEC / "_pipeline.py") == 332
     assert size_sentry._loc(EXEC / "_pipeline_auto_chunk.py") <= 600
     assert "src/decoy_engine/execution/_pipeline_auto_chunk.py" not in size_sentry.ALLOWLIST
 
@@ -62,9 +66,13 @@ def test_compatibility_contract_records_the_signature_and_the_output_cutover() -
 
 def test_changelog_unreleased_states_the_output_change_and_the_kill_switch() -> None:
     changelog = (REPO / "CHANGELOG.md").read_text(encoding="utf-8")
-    unreleased = _section(changelog, "## [Unreleased]", "\n## [0.")
+    # This entry was unreleased when written; the changelog cut moved it into 0.8.0rc1. Bind the
+    # specific auto-chunk sub-section (not the whole version), so deleting that entry empties the
+    # slice and fails the test. The 0.9.0 section satisfies these keywords only by coincidence,
+    # from unrelated entries, so binding to a version section would be false-green.
+    entry = _section(changelog, "### Changed (auto-chunk runs on the chunked dispatcher", "\n### ")
     for needle in ("chunked_dispatcher_enabled", "native_threads", "pre-GA", "Faker"):
-        assert needle in unreleased, needle
+        assert needle in entry, needle
 
 
 def test_codemap_has_the_ownership_row_for_the_new_module() -> None:

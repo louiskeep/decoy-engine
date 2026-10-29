@@ -387,17 +387,33 @@ class TestCodeSetJointMaskRekey:
                 "key_by": "anchor",
             },
         )
-        df = lambda: pd.DataFrame(
+        frame = pd.DataFrame(
             {
                 "city": ["Boston", "Miami", "Boston", "Reno", "Miami"],
                 "state": ["MA", "FL", "MA", "NV", "FL"],
                 "anchor": ["c1", "c2", "c3", "c4", "c5"],
             }
         )
-        base = _handler_output(h, df, "city", seed, _JOB_SEED)
-        secret = _handler_output(h, df, "city", seed, _SECRET.mask_key())
+
+        def run(mask_key):
+            # key_by reads the immutable pre-mask SOURCE snapshot (PR1 cross-column
+            # contract), which the adapter wires via ctx.group_anchor_snapshots; a
+            # direct handler call supplies the same snapshot (current_table is "").
+            ctx = StrategyContext(
+                registry=_REG,
+                pool_cache=PoolCache(),
+                relationship_graph=_GRAPH,
+                namespace_registry=_NS,
+                job_seed=_JOB_SEED,
+                mask_key=mask_key,
+                group_anchor_snapshots={("", "anchor"): frame["anchor"].copy()},
+            )
+            return h.run(frame.copy(), "city", seed, ctx)[0]["city"].tolist()
+
+        base = run(_JOB_SEED)
+        secret = run(_SECRET.mask_key())
         assert base != secret, "joint_mask must rekey off the secret"
-        assert base == _handler_output(h, df, "city", seed, _JOB_SEED), "deterministic"
+        assert base == run(_JOB_SEED), "deterministic"
 
 
 # --------------------------------------------------------------------------

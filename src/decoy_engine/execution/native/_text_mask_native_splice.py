@@ -8,15 +8,18 @@ companion without the symbols, a non-ASCII cell) is declined and runs slice a's 
 output stays byte-identical to the oracle.
 
 Two kernel calls, picked per config:
-- every requested detector is one of the eight Rust detectors: `text_mask_detect_splice` does
-  detection, the oracle's merge, and the splice in one call per batch.
-- otherwise (a lookaround detector such as `ssn` is requested): detection and the merge stay in
-  `merge_text_redact_spans`, which already holds the Python-detected spans, and
-  `text_mask_splice_spans` splices those RESOLVED MERGED spans. Splicing raw Rust candidates here
-  would miss the lookaround spans.
+- every requested detector is one of the Rust-supported detectors: `text_mask_detect_splice` does
+  detection, the oracle's merge, and the splice in one call per batch. Since the lookaround port
+  all eleven built-in span detectors are Rust-supported, so this is the path for every built-in
+  config now.
+- otherwise (a span detector not in the Rust catalog is requested): detection and the merge stay
+  in `merge_text_redact_spans`, which runs that detector in Python, and `text_mask_splice_spans`
+  splices those RESOLVED MERGED spans. No built-in triggers this today; it is retained for a
+  hypothetical future Python-only detector, so splicing raw Rust candidates can never miss a span.
 
-Established methodology: no new detection or splice algorithm. The kernels reuse the `regex` crate
-detectors from `text_redact.rs` and the stable-sort plus leftmost-longest sweep of
+Established methodology: no new detection or splice algorithm. The kernels reuse the detectors
+from `text_redact.rs` (the `regex` crate for the lookaround-free eight, hand-written scanners for
+the three lookaround ones) and the stable-sort plus leftmost-longest sweep of
 `merge_text_redact_spans`; see `decoy-engine-native/src/text_mask.rs`.
 """
 
@@ -27,13 +30,13 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from decoy_engine.detection.detectors import _SPAN_DETECTORS, Span, iter_spans
 from decoy_engine.execution.native._text_redact_kernel import (
     CATALOG_VERSION,
     SUPPORTED_IDS,
     TextRedactKernel,
     merge_text_redact_spans,
 )
-from decoy_engine.storm.detectors import _SPAN_DETECTORS, Span, iter_spans
 from decoy_engine.transforms._text_mask_splice import warn_passthrough_unmatched
 from decoy_engine.transforms.text_mask import DETECTOR_DEFAULTS
 

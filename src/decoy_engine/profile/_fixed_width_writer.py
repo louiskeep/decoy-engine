@@ -48,14 +48,15 @@ from __future__ import annotations
 
 import numbers
 import os
-import tempfile
 from math import copysign, isnan
 from typing import Any
 
 import pandas as pd
 
+from decoy_engine import fileaccess
 from decoy_engine.config._fixed_width import FixedWidthColumn, FixedWidthLayout
 from decoy_engine.errors import FixedWidthWriteError
+from decoy_engine.fileaccess import FileAccess, FileRequest, FileRole
 from decoy_engine.profile._fixed_width_reader import (
     _cast_value,
     _render_path,
@@ -187,10 +188,13 @@ def _build_record(
     return "".join(buffer), None
 
 
+@fileaccess.entry_point
 def write_fixed_width(
     frame: pd.DataFrame,
     layout: FixedWidthLayout | dict[str, Any],
     path: str | os.PathLike[str],
+    *,
+    file_access: FileAccess | None = None,
 ) -> str:
     """Write `frame` to a fixed-width file at `path` per `layout`, inverting
     `read_fixed_width`.
@@ -208,6 +212,8 @@ def write_fixed_width(
             the same directory and `os.replace`d into place on full success, so
             a pre-existing file at `path` is replaced atomically and is left
             untouched if the write fails closed.
+        file_access: the policy the write is judged by; default is the installed
+            policy, else the ambient CLI policy.
 
     Returns:
         The `path` written (as `str`), for caller convenience.
@@ -290,24 +296,6 @@ def _check_columns(frame: pd.DataFrame, spec: FixedWidthLayout) -> str | None:
     return None
 
 
-def _fsync_dir(directory: str) -> None:
-    """Best-effort fsync of the directory so the os.replace rename survives a crash.
-    A no-op where a directory fd cannot be opened or fsynced (e.g. Windows)."""
-    try:
-        fd = os.open(directory, os.O_RDONLY)
-    except OSError:
-        return
-    try:
-        os.fsync(fd)
-    except OSError:
-        pass
-    finally:
-        try:
-            os.close(fd)
-        except OSError:
-            pass
-
-
 def _write_all(frame: pd.DataFrame, spec: FixedWidthLayout, path: str) -> str | None:
     """Atomically write every record, or return a PII-safe failure message with
     nothing published. Raises only for genuine I/O errors (OSError)."""
@@ -317,12 +305,15 @@ def _write_all(frame: pd.DataFrame, spec: FixedWidthLayout, path: str) -> str | 
     columns = {column.name: frame[column.name].tolist() for column in spec.columns}
     row_count = len(frame.index)
     rendered = _render_path(path)
-    directory = os.path.dirname(os.path.abspath(path)) or "."
+    out = fileaccess.current().output_dir(
+        FileRequest(FileRole.TARGET_OUTPUT, "write", path, "target.path")
+    )
 
-    fd, tmp_path = tempfile.mkstemp(dir=directory, prefix=".decoy-fw-", suffix=".tmp")
-    try:
+    # The stage publishes by atomic rename and aborts on any exception, so a data
+    # failure or an I/O error leaves no partial file and a prior file untouched.
+    with out.begin("file", "replace", label="table_sink") as txn:
         failure: str | None = None
-        with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
+        with os.fdopen(txn.create_file("fixed_width"), "w", encoding="utf-8", newline="") as handle:
             for row_index in range(row_count):
                 row = {name: values[row_index] for name, values in columns.items()}
                 line, message = _build_record(row, spec, row_index)
@@ -340,24 +331,9 @@ def _write_all(frame: pd.DataFrame, spec: FixedWidthLayout, path: str) -> str | 
                 handle.flush()
                 os.fsync(handle.fileno())
         if failure is not None:
-            # A data failure: drop the partial temp file and publish nothing.
-            _silent_unlink(tmp_path)
             return failure
-        os.replace(tmp_path, path)
-        _fsync_dir(directory)
-        return None
-    except BaseException:
-        _silent_unlink(tmp_path)
-        raise
-
-
-def _silent_unlink(tmp_path: str) -> None:
-    """Remove a temp file, ignoring a missing-file error (best-effort cleanup;
-    never masks the original exception being propagated)."""
-    try:
-        os.unlink(tmp_path)
-    except OSError:
-        pass
+        txn.publish()
+    return None
 
 
 __all__ = ["write_fixed_width"]

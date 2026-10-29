@@ -19,11 +19,11 @@ from __future__ import annotations
 
 import pytest
 
+from decoy_engine.detection.detectors import _iban_valid, _icd10_valid
 from decoy_engine.providers_v2 import get_default_registry
 from decoy_engine.providers_v2._adapter import ProviderSpec
 from decoy_engine.providers_v2.identifiers._cusip import _is_valid_cusip
 from decoy_engine.providers_v2.identifiers._pan import _is_valid_pan
-from decoy_engine.storm.detectors import _iban_valid, _icd10_valid
 
 _NEW_PROVIDERS_MG1_S4 = (
     "synthetic_pan",

@@ -265,7 +265,7 @@ def _build_seed_envelope(
                 ):
                     ner_cfg = provider_config_raw.get("ner")
                     if ner_cfg:
-                        from decoy_engine.storm.ner import (
+                        from decoy_engine.detection.ner import (
                             DEFAULT_NER_MODEL,
                             installed_model_version,
                         )

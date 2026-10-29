@@ -79,7 +79,7 @@ pieces most callers need:
 | `compile_plan(config, profile, decoy_engine_version=...)`                         | Compile a validated config + Profile into a frozen `Plan` (the lower-level path).                   |
 | `select_execution_adapter()` / `PandasExecutionAdapter`                           | Plan-to-data execution. Pandas is the only masking substrate. |
 | `generate_tables(...)`                                                            | Table-from-schema synthesis for `mode: generate` configs.                    |
-| `run_storm(...)`                                                                  | Source profiling: distributions, PII detectors, sentinels.                   |
+| `profile_columns(...)`                                                                  | Source profiling: distributions, PII detectors, sentinels.                   |
 | `validate_config(...)`                                                            | Validation report without raising. Returns a `ValidationResult`.             |
 
 Anything not in `__all__`, and anything under `decoy_engine.internal/`,
@@ -95,7 +95,7 @@ is private and may change without a version bump.
 | `src/decoy_engine/generation/`             | `generate_tables`, composite providers, value pools.                     |
 | `src/decoy_engine/providers_v2/`           | Provider registry + identifier adapters (NPI, SSN, EIN, MRN, NDC).        |
 | `src/decoy_engine/relationships/`          | Relationship graph, namespace registry, orphan-FK policy.                 |
-| `src/decoy_engine/storm/`                  | Source profiling and PII detectors.                                       |
+| `src/decoy_engine/detection/`, `profiling/`, `verification/` | Source profiling, PII detectors, post-mask checks. |
 | `src/decoy_engine/sdk.py`                  | Public Connector SDK (`FileSource`, `FileSink`, capability flags).        |
 | `src/decoy_engine/connectors/`             | In-tree file connectors (`s3.py`, `gcs.py`, `sftp.py`).                   |
 | `tests/integration/golden/`                | Canonical end-to-end caller examples.                                    |

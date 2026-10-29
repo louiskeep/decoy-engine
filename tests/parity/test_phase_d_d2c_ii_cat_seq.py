@@ -501,6 +501,7 @@ def test_an_unwired_strategy_has_no_descriptor_and_runs_in_python(strategy: str)
         "faker",
         "text_redact",
         "text_mask",
+        "group_key",
     }
 
 

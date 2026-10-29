@@ -17,6 +17,8 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
+from decoy_engine.detection import detectors as detectors_mod
+from decoy_engine.detection import ner as ner_mod
 from decoy_engine.execution import _sequential_native
 from decoy_engine.execution._pipeline import run_pipeline
 from decoy_engine.execution._pipeline_routing import decide_execution_route
@@ -30,8 +32,6 @@ from decoy_engine.execution._sequential_native_ops import (
 )
 from decoy_engine.execution.native import _text_redact_kernel
 from decoy_engine.relationships._graph import OrphanPolicy
-from decoy_engine.storm import detectors as detectors_mod
-from decoy_engine.storm import ner as ner_mod
 from tests.parity import _d2b_shapes as s
 from tests.parity._d2b_shapes import make_plan, run_full, run_seq, table_seed
 from tests.parity._d2c_cat_data import payload_shape
@@ -264,10 +264,11 @@ def _route(shape: s.Shape, **kw: Any) -> tuple[str, str]:
     )
 
 
-# text_redact IS out-of-core compatible (group b), so unlike faker a text_redact-only FK job
-# that does not fit, is unpriceable, or reaches the row threshold goes OUT-OF-CORE, not to SEQ.
-# SEQ is where it lands below the threshold, on an explicit override, or beside a strategy the
-# out-of-core route cannot take (faker here), which is the case this slice accelerates.
+# text_redact IS out-of-core compatible (group b), so a text_redact FK job that does not fit, is
+# unpriceable, or reaches the row threshold goes OUT-OF-CORE, not to SEQ; SEQ is where it lands
+# below the threshold or on an explicit override. Beside the deterministic-REUSE faker column this
+# slice pairs it with, the job stays out-of-core compatible: B4 ported that faker shape onto the
+# out-of-core route, so the mixed job routes exactly like the text_redact-only one.
 _OOC_BOUNDED = ("out_of_core", "byte_estimate_bounded_out_of_core")
 _OOC_LARGE_FK = ("out_of_core", "out_of_core_large_fk")
 
@@ -300,24 +301,22 @@ def test_t6_byte_estimate_routing_for_a_text_redact_only_job(
 
 
 @pytest.mark.parametrize(
-    ("estimate", "expected"),
-    [
-        (True, _SEQUENTIAL),
-        (False, _SEQUENTIAL),
-        (None, _SEQUENTIAL),
-    ],
+    "estimate",
+    [True, False, None],
     ids=["fits", "does-not-fit", "unpriceable"],
 )
-def test_t6_byte_estimate_routing_for_text_redact_beside_faker_reaches_sequential(
-    estimate: bool | None, expected: Any
+def test_t6_byte_estimate_routing_for_text_redact_beside_faker_reaches_out_of_core(
+    estimate: bool | None,
 ) -> None:
+    # B4 ported the deterministic-REUSE faker, so the mixed job is bounded-eligible and byte-estimate
+    # routing sends it out-of-core like the text_redact-only job, not to SEQ.
     got = _route(
         _mixed_shape(),
         use_byte_estimate_routing=True,
         use_probe_routing=False,
         full_frame_fits_estimate=estimate,
     )
-    assert got == expected
+    assert got == _OOC_BOUNDED
 
 
 @pytest.mark.parametrize(
@@ -333,8 +332,9 @@ def test_t6_flag_off_row_threshold_routing(rows: int, expected: Any) -> None:
         "out_of_core_threshold_rows": 5_000_000,
     }
     assert _route(_shape(), **kw) == expected
-    # Beside faker the out-of-core route is unavailable, so both sides of the threshold are SEQ.
-    assert _route(_mixed_shape(), **kw) == _SEQUENTIAL
+    # Beside the deterministic-REUSE faker the job stays out-of-core compatible (B4), so the mixed
+    # job routes by size exactly like the text_redact-only one.
+    assert _route(_mixed_shape(), **kw) == expected
 
 
 @pytest.mark.parametrize(

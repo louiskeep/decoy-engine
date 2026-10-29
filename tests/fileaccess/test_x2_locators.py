@@ -301,7 +301,7 @@ def test_model_pack_diagnostics_name_no_locator(
     xworld: XWorld,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    from decoy_engine.storm.model_pack.loader import ModelPackLoader, ModelPackLoadError
+    from decoy_engine.profiling.model_pack.loader import ModelPackLoader, ModelPackLoadError
 
     pack = xworld.sub / "pack"
     pack.mkdir()
@@ -330,7 +330,7 @@ def test_model_pack_refusals_log_no_locator(
 ) -> None:
     import hashlib
 
-    from decoy_engine.storm.model_pack import loader as pack_loader
+    from decoy_engine.profiling.model_pack import loader as pack_loader
 
     pack = xworld.sub / "pack"
     pack.mkdir()
@@ -367,7 +367,7 @@ def test_trainer_load_pack_names_no_locator(
     pytest.importorskip("sklearn")
 
     from decoy_engine.execution._isolated_common import is_memory_failure
-    from decoy_engine.storm.model_pack import _packio, trainer
+    from decoy_engine.profiling.model_pack import _packio, trainer
 
     pack = xworld.sub / "pack"
     pack.mkdir()
@@ -395,7 +395,7 @@ def _read_failure_raiser(exc: Exception):  # type: ignore[no-untyped-def]
 
 
 def test_name_hint_diagnostics_name_no_locator(xworld: XWorld) -> None:
-    from decoy_engine.storm.name_hints.loader import NameHintLoaderError, load_name_hint_terms
+    from decoy_engine.detection.name_hints.loader import NameHintLoaderError, load_name_hint_terms
 
     folder = xworld.sub / "hints"
     folder.mkdir()
@@ -425,7 +425,7 @@ def test_sign_pack_malformed_manifest_names_no_locator(xworld: XWorld) -> None:
     """`sign_pack`'s translating handler names the pack by its config position under a strict
     policy, not by `pack_dir`; a malformed manifest's own parse text may appear (authorized
     content, D5) but the directory locator may not."""
-    from decoy_engine.storm.model_pack.provenance import sign_pack
+    from decoy_engine.profiling.model_pack.provenance import sign_pack
 
     pack = xworld.sub / "pack"
     pack.mkdir()
@@ -573,7 +573,7 @@ def test_name_hint_absolute_listed_file_preserves_denial_and_names_no_path(
     `DirHandle` the listed open is denied (deny-by-default, no existence oracle): the denial is
     preserved, not laundered into a locator-bearing "does not exist" message built from
     `target / fname`."""
-    from decoy_engine.storm.name_hints.loader import load_name_hint_terms
+    from decoy_engine.detection.name_hints.loader import load_name_hint_terms
 
     hints = xworld.sub / "hints"
     hints.mkdir()

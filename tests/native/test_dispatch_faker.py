@@ -716,7 +716,6 @@ def _run_oracle(config: dict, source: pa.Table, key_provider: SecretKeyProvider)
         config,
         {"t": source},
         engine_version=_ENGINE_VERSION,
-        substrate="pandas",
         execution_mode="full_frame",
         auto_chunk=False,
         key_provider=key_provider,

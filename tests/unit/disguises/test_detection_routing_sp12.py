@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from decoy_engine.storm.detectors import (
+from decoy_engine.detection.detectors import (
     detect_device_id,
     detect_email,
     detect_ssn,
@@ -258,7 +258,7 @@ class TestPcDetectionRouting:
         assert m is not None, "Column 'vehicle_id' must fire detect_vehicle_id."
         assert m.detector_id == "vehicle_id"
         # Confirm it does NOT also fire device_id (separate detector).
-        from decoy_engine.storm.detectors import detect_device_id as _d
+        from decoy_engine.detection.detectors import detect_device_id as _d
 
         device_match = _d(self._VIN_SERIES, "vehicle_id")
         assert device_match is None, (

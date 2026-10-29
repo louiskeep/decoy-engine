@@ -19,7 +19,7 @@ import logging
 from collections.abc import Callable, Sequence
 from typing import Any
 
-from decoy_engine.storm.detectors import Span
+from decoy_engine.detection.detectors import Span
 
 UNMATCHED_TOKEN: str = "[UNMATCHED]"  # noqa: S105 - sentinel for replace_with_token policy
 

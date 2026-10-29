@@ -24,8 +24,8 @@ slice ships is observable in operations rather than silent.
 
 from __future__ import annotations
 
+from decoy_engine.detection.detectors import REGISTERED_DETECTORS
 from decoy_engine.profile import PIIClass
-from decoy_engine.storm.detectors import REGISTERED_DETECTORS
 
 
 def test_every_storm_built_in_detector_has_pii_class_member() -> None:

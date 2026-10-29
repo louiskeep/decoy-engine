@@ -77,15 +77,17 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
+from decoy_engine.detection.detectors import Span
 from decoy_engine.errors import FpeUnencryptableError
 from decoy_engine.execution._adapter import provider_config_to_dict
 from decoy_engine.execution._errors import ExecutionError, StrategyError
 from decoy_engine.execution._strategies._code_set import _PER_VALUE_CODE_SET_ERRORS
 from decoy_engine.execution.out_of_core._bucket_native import native_bucket_perturb_array
+from decoy_engine.execution.out_of_core._text_mask_native import native_text_mask_array
 from decoy_engine.generation.pool._events import QualityWarning
+from decoy_engine.kernel._code_set import code_set_map
 from decoy_engine.kernel._scalar import _array_to_pylist, _is_missing
 from decoy_engine.plan._errors import PlanCompileError
-from decoy_engine.storm.detectors import Span
 from decoy_engine.transforms.bucket_perturb import (
     apply_bucket_perturb,
     validate_bucket_perturb_config,
@@ -101,6 +103,7 @@ if TYPE_CHECKING:
     import pandas as pd
 
     from decoy_engine.execution.out_of_core._bucket_native import NativeBucket
+    from decoy_engine.execution.out_of_core._text_mask_native import NativeTextMask
     from decoy_engine.plan._types import ColumnSeed
     from decoy_engine.transforms._codeset_loader import _CorpusRecord
 
@@ -148,6 +151,7 @@ def group_c_array(
     corpus_record: _CorpusRecord | None = None,
     sub_floor_notices: dict[str, int] | None = None,
     bucket_native: NativeBucket | None = None,
+    text_mask_native: NativeTextMask | None = None,
 ) -> pa.Array:
     """Dispatch one admitted Group (c) strategy to its per-value kernel.
 
@@ -167,6 +171,7 @@ def group_c_array(
             cfg=cfg,
             column=column,
             sub_floor_notices=sub_floor_notices,
+            text_mask_native=text_mask_native,
         )
     if seed.strategy == "code_set":
         return _code_set_array(
@@ -199,6 +204,7 @@ def _text_mask_array(
     cfg: dict[str, Any],
     column: str | None = None,
     sub_floor_notices: dict[str, int] | None = None,
+    text_mask_native: NativeTextMask | None = None,
 ) -> pa.Array:
     """Span-level PII mask each non-null cell, byte-identical to the oracle.
 
@@ -222,6 +228,14 @@ def _text_mask_array(
     warning channel while `outputs` stays byte-identical either way, since
     `mask_cell`'s per-span log line at WARNING was always emitted regardless.
     """
+    # B5: a column the per-table plan admitted (non-NER, exact-string source, companion present)
+    # runs through the compiled span path instead of this per-cell loop. native_text_mask returns
+    # its own notice dict, merged into the per-table accumulator inside native_text_mask_array, and
+    # raises the identical fail-closed StrategyError itself, so this stays byte-identical.
+    if text_mask_native is not None:
+        return native_text_mask_array(
+            values, native=text_mask_native, mask_key=job_seed, sub_floor_notices=sub_floor_notices
+        )
     detectors_raw = cfg.get("detectors")
     detector_ids: list[str] | None
     if isinstance(detectors_raw, (list, tuple)):
@@ -254,7 +268,7 @@ def _text_mask_array(
 
     ner_spans_by_pos: list[list[Span]] | None = None
     if ner_model is not None:
-        from decoy_engine.storm.ner import iter_ner_spans_batch
+        from decoy_engine.detection.ner import iter_ner_spans_batch
 
         ner_spans_by_pos = iter_ner_spans_batch(texts, model=ner_model, entities=ner_entities)
 
@@ -294,7 +308,7 @@ def _text_mask_ner(cfg: dict[str, Any], plan: ColumnSeed) -> tuple[str | None, l
     ner_cfg = cfg.get("ner")
     if not ner_cfg:
         return None, None
-    from decoy_engine.storm.ner import DEFAULT_NER_MODEL
+    from decoy_engine.detection.ner import DEFAULT_NER_MODEL
 
     ner_model: str
     ner_entities: list[str] | None = None
@@ -307,7 +321,7 @@ def _text_mask_ner(cfg: dict[str, Any], plan: ColumnSeed) -> tuple[str | None, l
         ner_model = DEFAULT_NER_MODEL
 
     if plan.ner_model_version is not None:
-        from decoy_engine.storm.ner import installed_model_version
+        from decoy_engine.detection.ner import installed_model_version
 
         current_version = installed_model_version(ner_model)
         if current_version is not None and current_version != plan.ner_model_version:
@@ -368,34 +382,32 @@ def _code_set_array(
             "(gate should reject).",
         )
     code_cfg = CodeSetConfig.from_dict(cfg)
-    out: list[Any] = []
-    for value in _array_to_pylist(values):
-        if _is_missing(value):
-            out.append(None)
-            continue
-        try:
-            out.append(
-                apply_code_set(
-                    str(value),
-                    code_cfg,
-                    mode=mode,
-                    job_seed=job_seed,
-                    namespace=namespace,
-                    corpus_record=corpus_record,
-                )
-            )
-        except PlanCompileError as exc:
-            # Defense-in-depth: the admitted shape cannot raise a per-value code
-            # (those need chapter_preserve, which the gate rejects). If one ever
-            # surfaced, fail closed rather than leak the raw value.
-            if exc.code in _PER_VALUE_CODE_SET_ERRORS:
-                raise ExecutionError(
-                    code="out_of_core_code_set_row_error_unreachable",
-                    message=f"code_set raised a per-value defect ({exc.code}) on a shape the "
-                    "gate should have rejected; failing closed.",
-                ) from exc
-            raise  # corpus/config-level defect: job-fatal, same as the oracle.
-    return pa.array(out, type=pa.string())
+
+    def _select(code: str) -> str:
+        return apply_code_set(
+            code,
+            code_cfg,
+            mode=mode,
+            job_seed=job_seed,
+            namespace=namespace,
+            corpus_record=corpus_record,
+        )
+
+    # B6: select once per DISTINCT non-null value and expand with an Arrow take (`code_set_map`),
+    # byte-identical to the former per-cell loop (the selection is a pure function of the value).
+    try:
+        return code_set_map(values, _select)
+    except PlanCompileError as exc:
+        # Defense-in-depth: the admitted shape cannot raise a per-value code (those need
+        # chapter_preserve, which the gate rejects). If one ever surfaced, fail closed rather than
+        # leak the raw value.
+        if exc.code in _PER_VALUE_CODE_SET_ERRORS:
+            raise ExecutionError(
+                code="out_of_core_code_set_row_error_unreachable",
+                message=f"code_set raised a per-value defect ({exc.code}) on a shape the "
+                "gate should have rejected; failing closed.",
+            ) from exc
+        raise  # corpus/config-level defect: job-fatal, same as the oracle.
 
 
 # ---------------------------------------------------------------------------

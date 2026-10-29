@@ -17,7 +17,7 @@ per cell when NER is on, then `iter_spans`), and splices span replacements via
   and `iter_ner_spans` are BOUNDARIES the tests monkeypatch (as
   `test_version_mismatch_raises` already did), so the handler's NER logic
   (model/entities resolution, the version guard, the call-site args) is fully
-  gradeable off-spaCy. Only mutations INSIDE the real `storm.ner` primitives
+  gradeable off-spaCy. Only mutations INSIDE the real `detection.ner` primitives
   would need a real model, and those live in that module, not here. Mirrors the
   sibling `_text_mask.py` grade (batch-3 dennis P2: these are not "spaCy-gated").
 
@@ -49,7 +49,7 @@ tq-findings.md #7.)
 ## LOGIC (37): killed by new tests in this pass
 
 All killing tests live in `tests/unit/execution/test_text_redact.py`. The NER and
-`iter_spans` forwarding tests use spies monkeypatched over the `storm.ner`
+`iter_spans` forwarding tests use spies monkeypatched over the `detection.ner`
 boundaries (`iter_ner_spans`, `installed_model_version`) and the module-level
 `iter_spans`, capturing the forwarded args. Asserting a forwarded value kills both
 the value mutants (wrong key / forced default / None) and the kwarg-drop mutants

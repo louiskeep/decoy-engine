@@ -34,8 +34,9 @@ KEY = "out_of_core_text_redact"
 UNAVAILABLE = "text_redact_extension_unavailable"
 
 # One PII shape per detector family plus plain text, nulls, empties and repeats.
-#   Rust-eligible: email, us_phone, pan, iban, ipv4, url.   Lookaround (replayed in Python by the
-#   kernel): ssn, us_zip, street_address.   Non-ASCII cells take the per-cell Python path.
+#   All eleven built-in detectors run in Rust on an ASCII-safe cell now (the lookaround port moved
+#   ssn/us_zip/street_address into the kernel as hand-written scanners). Non-ASCII cells take the
+#   per-cell Python path.
 SOURCE = [
     "mail alice@example.com now",
     "call 415-555-0132 today",

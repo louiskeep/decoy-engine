@@ -1,4 +1,4 @@
-"""Per-detector unit tests for decoy_engine.storm.detectors.
+"""Per-detector unit tests for decoy_engine.detection.detectors.
 
 Each detector gets at minimum:
   - a positive case (clean data -> fires with high match_rate)
@@ -11,7 +11,7 @@ Plus a small registry-level test for the orchestrator.
 import pandas as pd
 import pytest
 
-from decoy_engine.storm.detectors import (
+from decoy_engine.detection.detectors import (
     REGISTERED_DETECTORS,
     detect_address,
     detect_cvv,

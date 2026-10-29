@@ -10,6 +10,7 @@ run on the Python path alone.
 
 from __future__ import annotations
 
+import os
 import random
 import re
 import statistics
@@ -21,6 +22,15 @@ from typing import Any
 import pyarrow as pa
 import pytest
 
+from decoy_engine.detection import detectors as storm_detectors
+from decoy_engine.detection._validators import (
+    _iban_valid,
+    _icd10_valid,
+    _ipv4_valid,
+    _luhn_valid,
+    _npi_valid,
+)
+from decoy_engine.detection.detectors import Span, iter_spans
 from decoy_engine.execution.native import _kernels_scalar
 from decoy_engine.execution.native._kernels_scalar import native_text_redact
 from decoy_engine.execution.native._text_redact_kernel import (
@@ -32,26 +42,24 @@ from decoy_engine.execution.native._text_redact_kernel import (
     merge_text_redact_spans,
     requested_rust_ids,
 )
-from decoy_engine.storm import detectors as storm_detectors
-from decoy_engine.storm._validators import (
-    _iban_valid,
-    _icd10_valid,
-    _ipv4_valid,
-    _luhn_valid,
-    _npi_valid,
-)
-from decoy_engine.storm.detectors import Span, iter_spans
 from tests.native._c6c_ii_support import (
+    _COMPANION_PRESENT,
     CORPUS,
     DETECTOR_SELECTIONS,
     ELIGIBLE_TEXTS,
     INELIGIBLE_TEXTS,
+    LOOKAROUND_DETECTORS,
     NEEDS_TR_KERNEL,
     RUST_DETECTORS,
     SHAPES,
     oracle_text_redact,
     python_raw_candidates,
 )
+
+# The eight original lookaround-free detectors (`regex` crate) vs the three lookaround ones
+# (hand-written ASCII byte scanners; `fancy-regex` was tried and rejected on perf -- see the
+# text_redact.rs module doc). The split is the index boundary in the Rust catalog.
+LOOKAROUND_FREE_DETECTORS = tuple(d for d in RUST_DETECTORS if d not in LOOKAROUND_DETECTORS)
 
 
 def _kernel() -> Any:
@@ -138,6 +146,106 @@ def test_raw_candidates_match_python_per_detector_on_eligible_cells(text: str) -
     for det_id in RUST_DETECTORS:
         rust = [(s, e) for (idx, s, e) in per_cell if idx == index_of[det_id]]
         assert rust == python_raw_candidates(text, det_id), det_id
+
+
+def _lookaround_adversarial_corpus(seed: int, n: int) -> list[str]:
+    """ASCII-only cells stressing the three lookaround detectors' boundary semantics: SSA reserved
+    blocks and optional hyphens (ssn), the non-word lookbehind/lookahead and decimal guard
+    (us_zip), and the house-number + USPS-suffix + unit + trailing-punctuation anchor
+    (street_address). Every cell is eligible, so the kernel must match Python span-for-span."""
+    rng = random.Random(seed)
+    ssn_ish = [
+        "123-45-6789",
+        "123456789",
+        "000-12-3456",
+        "666-12-3456",
+        "912-34-5678",
+        "123-00-4567",
+        "123-45-0000",
+        "078-05-1120",
+        "1234567890",
+        "12-345-6789",
+    ]
+    zip_ish = [
+        "12345",
+        "90210-1234",
+        "12345mg",
+        "12345.6",
+        "x12345",
+        "123456",
+        "12345-678",
+        "00000",
+        "12345-67890",
+        "a12345b",
+        "12345,",
+        " 12345 ",
+        "12345-1234x",
+    ]
+    street_ish = [
+        "12 Main Street",
+        "742 Evergreen Terrace.",
+        "1 A St",
+        "100 oak AVE here",
+        "350 Fifth Ave, Suite 200",
+        "1600 Pennsylvania Ave NW",
+        "42 2nd St Apt 3B",
+        "no number Main Street",
+        "12 Main",
+        "5 Elm Rd; next",
+        "9 Birch Ln.",
+        "1234567 Long St",
+        "10 Main Street#5",
+        "7 A B C D E Blvd",
+    ]
+    punct = ["", " ", ",", ". ", "; ", ": ", "! ", "? ", ")", '"', "'", " - ", "/", "x", "0"]
+    fillers = ["patient", "note", "seen", "on", "re", "visit", "and", "the", "id", "addr", "mrn"]
+    pools = ssn_ish + zip_ish + street_ish + fillers
+    out: list[str] = []
+    for _ in range(n):
+        parts: list[str] = []
+        for _ in range(rng.randint(0, 7)):
+            parts.append(rng.choice(pools))
+            parts.append(rng.choice(punct))
+        # Also emit raw random ASCII runs so the scanners meet shapes no fixture anticipated.
+        if rng.random() < 0.3:
+            alphabet = "0123456789- .,#/abcdefXYZ"
+            parts.append("".join(rng.choice(alphabet) for _ in range(rng.randint(1, 25))))
+        out.append("".join(parts))
+    return out
+
+
+@NEEDS_TR_KERNEL
+def test_lookaround_raw_candidates_match_python_on_an_adversarial_corpus() -> None:
+    """Byte-parity gate for the ported detectors: the kernel's raw per-detector candidate list for
+    ssn/us_zip/street_address must equal Python `finditer`+validator span-for-span on a large
+    randomized ASCII corpus, before any merge. A divergence here is the regression the port must
+    not introduce."""
+    kern = _kernel()
+    index_of = {det_id: i for i, det_id in enumerate(SUPPORTED_IDS)}
+    corpus = _lookaround_adversarial_corpus(seed=20261022, n=4000)
+    # Every generated cell must be eligible (ASCII, no 0x1c-0x1f); otherwise the kernel returns
+    # None and the comparison would be vacuous.
+    for text in corpus:
+        assert is_ascii_safe(text), repr(text)
+    per_cell_all = kern.text_redact_candidates(corpus, list(SUPPORTED_IDS), CATALOG_VERSION)
+    for text, per_cell in zip(corpus, per_cell_all, strict=True):
+        assert per_cell is not None, repr(text)
+        for det_id in LOOKAROUND_DETECTORS:
+            rust = [(s, e) for (idx, s, e) in per_cell if idx == index_of[det_id]]
+            assert rust == python_raw_candidates(text, det_id), (det_id, repr(text))
+
+
+@NEEDS_TR_KERNEL
+def test_lookaround_merged_output_matches_oracle_on_the_adversarial_corpus() -> None:
+    """End-to-end: the native wrapper's spliced output equals the oracle on the same adversarial
+    corpus, for the lookaround-only selection and for the all-detector selection, labeled and not."""
+    corpus = _lookaround_adversarial_corpus(seed=7, n=3000)
+    for detectors in (LOOKAROUND_DETECTORS, None):
+        for label in (False, True):
+            got = _native(corpus, detectors=detectors, token="<X>", label_token=label)
+            assert got == oracle_text_redact(
+                corpus, detectors=detectors, token="<X>", label_token=label
+            )
 
 
 @NEEDS_TR_KERNEL
@@ -340,14 +448,31 @@ def test_rust_and_python_ascii_classes_agree_and_0x1c_0x1f_is_the_only_gap() -> 
     assert python_unicode_s - rust_s == {0x1C, 0x1D, 0x1E, 0x1F}
 
 
-@NEEDS_TR_KERNEL
-def test_the_eight_patterns_use_only_d_s_and_ascii_case_fold() -> None:
-    # None of the eight use \w or \b (those live in the Python-only lookaround detectors), so the
+def test_the_lookaround_free_patterns_use_only_d_s_and_ascii_case_fold() -> None:
+    # The eight lookaround-free detectors use neither \w/\b nor any lookaround, so their
     # class-equivalence proof needs only \d, \s and ASCII case folding.
-    for det_id in RUST_DETECTORS:
+    for det_id in LOOKAROUND_FREE_DETECTORS:
         pattern = storm_detectors._SPAN_DETECTORS[det_id][0].pattern
         assert r"\w" not in pattern, det_id
         assert r"\b" not in pattern, det_id
+        for lookaround in (r"(?=", r"(?!", r"(?<=", r"(?<!"):
+            assert lookaround not in pattern, (det_id, lookaround)
+
+
+def test_the_lookaround_patterns_use_only_classes_whose_ascii_membership_is_proven() -> None:
+    # The three ported detectors add lookaround and the \w/\b constructs. Their byte parity rests
+    # on (a) the ASCII membership of \d, \s and \w (proven equal to Python's by the class test
+    # below), (b) \b being derived purely from \w, and (c) the eligibility predicate excluding the
+    # one \s divergence (0x1c-0x1f). Assert they introduce no OTHER class escape that would need
+    # its own proof (e.g. \D, \S, \W, a Unicode property \p{...}).
+    # \d/\s/\w are the classes; \b is derived from \w; the rest are escaped literals (dot,
+    # hyphen, quote, backslash) that carry no Unicode-vs-ASCII ambiguity.
+    allowed_escapes = {r"\d", r"\s", r"\w", r"\b", r"\.", r"\-", r"\\", '\\"'}
+    for det_id in LOOKAROUND_DETECTORS:
+        pattern = storm_detectors._SPAN_DETECTORS[det_id][0].pattern
+        escapes = {pattern[i : i + 2] for i in range(len(pattern) - 1) if pattern[i] == "\\"}
+        unexpected = escapes - allowed_escapes
+        assert not unexpected, (det_id, unexpected)
 
 
 # ---------------------------------------------------------------------------
@@ -521,8 +646,16 @@ def test_empty_selection_redacts_nothing_but_all_selection_redacts() -> None:
 
 def test_requested_rust_ids_filters_dedupes_and_expands_none() -> None:
     assert requested_rust_ids(None) == list(SUPPORTED_IDS)
-    assert requested_rust_ids(["ssn", "email", "us_zip", "ipv4"]) == ["email", "ipv4"]
-    assert requested_rust_ids(["email", "email", "ssn"]) == ["email"]
+    # ssn/us_zip are supported now, so they survive the filter in requested order; only ids
+    # outside the catalog (and duplicates) are dropped.
+    assert requested_rust_ids(["ssn", "email", "us_zip", "ipv4"]) == [
+        "ssn",
+        "email",
+        "us_zip",
+        "ipv4",
+    ]
+    assert requested_rust_ids(["email", "email", "ssn"]) == ["email", "ssn"]
+    assert requested_rust_ids(["person_name", "mrn", "email"]) == ["email"]  # unsupported dropped
     assert requested_rust_ids(["no_such"]) == []
 
 
@@ -569,3 +702,219 @@ def test_corpus_round_trips_identically_on_whichever_path_is_active() -> None:
     # corpus -- the one invariant that holds in every environment.
     got = _native(list(CORPUS), detectors=None, token="<X>", label_token=True)
     assert got == oracle_text_redact(list(CORPUS), detectors=None, token="<X>", label_token=True)
+
+
+# ---------------------------------------------------------------------------
+# 7.7 Companion-present preflight (plan section 9): prove the correctness gate RAN, not skipped.
+# ---------------------------------------------------------------------------
+
+# Every @NEEDS_TR_KERNEL test above (raw differential, merged differential, golden clinical-notes,
+# routing, catalog agreement, vocabulary agreement) skips when `load_text_redact_kernel()` returns
+# None -- which happens not only when the companion is absent but also on a silent catalog skew or
+# an old companion without the span symbol. So the whole byte-parity gate can SKIP while the
+# ordinary fallback tests pass, giving false confidence. This preflight shares that exact load
+# condition, so a loaded kernel here means none of those tests skipped.
+_REQUIRE_TR_KERNEL = os.environ.get("DECOY_REQUIRE_TR_KERNEL") == "1"
+
+# The plan's frozen catalog surface (CATALOG_VERSION 1->2; SUPPORTED_IDS 8->11, appended so the
+# original eight keep their indices). Pinned as literals so the preflight catches a one-sided drift
+# in the Python-side constants too, not only Python<->Rust disagreement.
+_EXPECTED_CATALOG_VERSION = 2
+_EXPECTED_SUPPORTED_IDS = (
+    "email",
+    "us_phone",
+    "pan",
+    "iban",
+    "ipv4",
+    "icd10",
+    "npi",
+    "url",
+    "ssn",
+    "us_zip",
+    "street_address",
+)
+
+
+def test_preflight_companion_present_kernel_loads_with_expected_catalog() -> None:
+    """Acceptance preflight: assert the span kernel actually loaded, so the NEEDS_TR_KERNEL gate
+    above RAN and did not silently skip (plan section 9).
+
+    With DECOY_REQUIRE_TR_KERNEL=1 (the acceptance run), an absent/old/skewed companion is a
+    FAILURE, not a skip. Without it, the preflight skips only when the companion is genuinely
+    absent (the companion-absent regression-gate run), but still FAILS if the companion package is
+    importable yet the kernel will not load -- the catalog-skew trap, which would otherwise make
+    every NEEDS_TR_KERNEL test skip while ordinary fallback tests stay green.
+    """
+    kernel = load_text_redact_kernel()
+    if kernel is None:
+        if _REQUIRE_TR_KERNEL:
+            pytest.fail(
+                "DECOY_REQUIRE_TR_KERNEL=1 but the text_redact span kernel did not load "
+                "(companion absent, old symbol, or catalog skew): the byte-parity acceptance "
+                "gate did NOT run -- build the companion (`maturin develop --release`) before "
+                "the acceptance run."
+            )
+        if not _COMPANION_PRESENT:
+            pytest.skip("companion absent; the byte-parity gate's fallback runs on the Python path")
+        pytest.fail(
+            "the decoy_engine_native package is importable but the text_redact span kernel did "
+            "not load (old symbol or catalog skew): every @NEEDS_TR_KERNEL test would silently "
+            "skip. Rebuild the companion and reconcile CATALOG_VERSION / SUPPORTED_IDS."
+        )
+    # Kernel loaded: pin both the Python-side catalog and the compiled catalog to the plan's values.
+    from decoy_engine_native import _kernel as compiled
+
+    assert SUPPORTED_IDS == _EXPECTED_SUPPORTED_IDS
+    assert CATALOG_VERSION == _EXPECTED_CATALOG_VERSION
+    assert tuple(compiled.text_redact_supported_ids()) == _EXPECTED_SUPPORTED_IDS
+    assert compiled.text_redact_catalog_version() == _EXPECTED_CATALOG_VERSION
+
+
+# ---------------------------------------------------------------------------
+# 7.8 Vocabulary + pattern agreement (plan section 7): one-sided drift fails CI.
+# ---------------------------------------------------------------------------
+
+# The Rust kernel hand-copies the oracle's detection surface: the eight lookaround-free detectors as
+# ASCII-restricted `regex`-crate translations of their Python bodies, and ssn/us_zip/street_address
+# as byte scanners replaying their Python bodies (including the 47-entry USPS suffix vocabulary and
+# the secondary-unit designators embedded in `_STREET_ADDRESS_RE`). No existing test fails when a
+# pattern body, a flag, or a vocabulary entry is edited on only ONE side: the catalog-version /
+# supported-set checks and the ASCII-class test do not cover the bodies or the vocabularies, and the
+# random differential corpus draws mostly from fixed examples. So pin the oracle contract here.
+#
+# These frozen literals ARE the scanner contract. They were copied from the live `_SPAN_DETECTORS`
+# at CATALOG_VERSION 2. A failure means an oracle pattern/flag drifted from what the Rust kernel was
+# built against; the fix is NOT to re-snapshot in isolation but, in ONE change (plan section 6): (a)
+# re-review the affected Rust scanner/translation in text_redact.rs, (b) extend the differential
+# corpus to cover the change, (c) bump CATALOG_VERSION in BOTH text_redact.rs and
+# _text_redact_kernel.py, and (d) update this snapshot.
+_U = re.UNICODE
+_UI = re.UNICODE | re.IGNORECASE
+_FROZEN_ORACLE_PATTERNS: dict[str, tuple[str, int]] = {
+    "email": ("[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", _U),
+    "ssn": ("(?!000|666|9\\d{2})\\d{3}-?(?!00)\\d{2}-?(?!0000)\\d{4}", _U),
+    "us_phone": ("(?:\\+?1[\\s.-]?)?\\(?[2-9]\\d{2}\\)?[\\s.-]?[2-9]\\d{2}[\\s.-]?\\d{4}", _U),
+    "us_zip": ("(?<!\\w)\\d{5}(?:-\\d{4})?(?!\\w)(?!\\.\\d)", _U),
+    "pan": ("\\d{4}[\\s-]?\\d{4}[\\s-]?\\d{4}[\\s-]?\\d{1,7}", _U),
+    "iban": ("[A-Z]{2}\\d{2}[\\sA-Z0-9]{11,34}", _U),
+    "ipv4": ("(?:\\d{1,3}\\.){3}\\d{1,3}", _U),
+    "icd10": ("[A-Z]\\d{2}(?:\\.?[A-Z0-9]{1,4})?", _UI),
+    "npi": ("\\d{10}", _U),
+    "url": ("https?://[A-Za-z0-9\\-._~:/?#\\[\\]@!$&'()*+,;=%]{4,}", _U),
+    "street_address": (
+        "\\b\\d{1,6}\\s+(?:[A-Za-z0-9][A-Za-z0-9'.\\-]*\\s+){1,4}"
+        "(?:street|st|avenue|ave|boulevard|blvd|road|rd|drive|dr|lane|ln|court|ct|circle|cir|"
+        "place|pl|terrace|ter|trail|trl|parkway|pkwy|highway|hwy|way|plaza|plz|square|sq|"
+        "expressway|expy|freeway|fwy|crossing|xing|loop|alley|aly|bend|cove|cv|point|pt|ridge|rdg)"
+        "\\.?(?:\\s+(?:apt|apartment|suite|ste|unit|#)\\.?\\s*[\\w\\-]+)?(?=[\\s,.;:!?)\\\"']|$)",
+        _UI,
+    ),
+}
+
+
+def test_the_oracle_patterns_and_flags_match_the_pinned_scanner_contract() -> None:
+    """Pin every detector's oracle regex BODY + FLAGS (runs without the companion -- the Python
+    oracle is the source of truth). A one-sided edit to a boundary, quantifier, lookahead, or the
+    IGNORECASE flag leaves CATALOG_VERSION and the supported-set unchanged, so only this snapshot
+    catches it."""
+    assert set(_FROZEN_ORACLE_PATTERNS) == set(SUPPORTED_IDS), (
+        "a detector was added/removed from _SPAN_DETECTORS without updating the pinned scanner "
+        "contract (and the Rust catalog + CATALOG_VERSION)"
+    )
+    live = {
+        det_id: (rx.pattern, int(rx.flags))
+        for det_id, (rx, _validator) in storm_detectors._SPAN_DETECTORS.items()
+    }
+    expected = {
+        det_id: (pat, int(flags)) for det_id, (pat, flags) in _FROZEN_ORACLE_PATTERNS.items()
+    }
+    assert live == expected, (
+        "a text_redact oracle pattern/flag drifted from the pinned scanner contract. The Rust "
+        "kernel hand-copies these bodies+flags; fix in ONE change (plan section 6): re-review the "
+        "affected Rust scanner/translation, extend the differential corpus, bump CATALOG_VERSION "
+        "in BOTH text_redact.rs and _text_redact_kernel.py, and update this snapshot."
+    )
+
+
+@NEEDS_TR_KERNEL
+def test_the_rust_street_vocabularies_reconstruct_the_oracle_pattern() -> None:
+    """Expose the Rust suffix + unit vocabularies and tie them to the Python oracle (plan section
+    7). List-equality alone is insufficient -- the unit vocabulary is embedded directly in
+    `_STREET_ADDRESS_RE`, so also assert the Rust lists reconstruct the exact alternation substrings
+    the oracle pattern is built from."""
+    from decoy_engine_native import _kernel as compiled
+
+    rust_suffixes = tuple(compiled.text_redact_street_suffixes())
+    # (a) Ordered list-equality against the Python oracle's suffix vocabulary.
+    assert rust_suffixes == storm_detectors._USPS_STREET_SUFFIXES
+    street_pattern = storm_detectors._SPAN_DETECTORS["street_address"][0].pattern
+    # (b) The suffix alternation the oracle builds is exactly join(rust suffixes) + the optional dot.
+    assert "(?:" + "|".join(rust_suffixes) + r")\.?" in street_pattern
+    # (c) The unit designators are embedded in the oracle body, not a standalone list, so tie the
+    #     Rust unit vocabulary back to that body directly.
+    rust_units = list(compiled.text_redact_street_units())
+    assert "(?:" + "|".join(rust_units) + ")" in street_pattern
+
+
+@NEEDS_TR_KERNEL
+def test_every_street_suffix_alternative_matches_like_the_oracle() -> None:
+    """Targeted differential (plan section 7): every USPS suffix, plain AND with the optional
+    trailing dot, drives a real match that equals the oracle span-for-span -- the random corpus
+    draws mostly from fixed examples, so each alternative is exercised explicitly here."""
+    suffixes = storm_detectors._USPS_STREET_SUFFIXES
+    cells: list[str] = []
+    for suf in suffixes:
+        cells.append(f"12 Main {suf} here")  # plain suffix
+        cells.append(f"12 Main {suf}. here")  # optional-dot fallback
+    got = _native(cells, detectors=("street_address",), token="<X>", label_token=False)
+    exp = oracle_text_redact(cells, detectors=("street_address",), token="<X>", label_token=False)
+    assert got == exp
+    # Each plain-suffix frame must actually redact, so the suffix alternation is genuinely exercised
+    # (not a vacuous no-match agreement).
+    for suf in suffixes:
+        plain = f"12 Main {suf} here"
+        assert oracle_text_redact([plain], detectors=("street_address",), token="<X>") != [plain], (
+            suf
+        )
+
+
+@NEEDS_TR_KERNEL
+def test_every_street_unit_alternative_matches_like_the_oracle() -> None:
+    """Targeted differential (plan section 7): every secondary-unit designator, plain AND with the
+    optional dot, equals the oracle span-for-span."""
+    from decoy_engine_native import _kernel as compiled
+
+    units = list(compiled.text_redact_street_units())
+    cells: list[str] = []
+    for un in units:
+        cells.append(f"12 Main Street {un} 5 here")  # unit present
+        cells.append(f"12 Main Street {un}. 5 here")  # optional unit-dot fallback
+    got = _native(cells, detectors=("street_address",), token="<X>", label_token=False)
+    exp = oracle_text_redact(cells, detectors=("street_address",), token="<X>", label_token=False)
+    assert got == exp
+
+
+@NEEDS_TR_KERNEL
+def test_street_name_repetition_backtracks_like_the_oracle() -> None:
+    """Targeted differential (plan section 7): the greedy `(?:WORD\\s+){1,4}` street-name repetition
+    must backtrack over the iteration count (most-first), then the suffix/dot/unit alternatives,
+    exactly in the oracle's order -- including the exhaustion boundary where >4 interior words admit
+    no match."""
+    cells = [
+        "5 Main Street Road here",  # greedy 3 iters fail suffix, backtrack to let 'Road' anchor
+        "10 Oak Elm Pine Maple Street here",  # exactly 4 interior words + suffix (max iterations)
+        "10 Oak Elm Pine Maple Birch Street here",  # 5 interior words > {1,4}: no match
+        "7 A B C D E Blvd here",  # 5 interior words before the suffix: exhaustion, no match
+        "350 Fifth Ave, Suite 200",  # suffix + unit + boundary punctuation
+        "1600 Pennsylvania Ave NW",  # suffix then a trailing non-unit token
+        "42 2nd St Apt 3B",  # ordinal street-name word + abbreviated suffix + unit
+        "9 Birch Ln.",  # optional trailing dot at end of string
+        "1 A St",  # single one-letter street-name word
+    ]
+    got = _native(cells, detectors=("street_address",), token="<X>", label_token=True)
+    exp = oracle_text_redact(cells, detectors=("street_address",), token="<X>", label_token=True)
+    assert got == exp
+    # The fixture must exercise BOTH branches of the backtracking: at least one cell redacts and at
+    # least one does not, per the oracle.
+    assert any(o != c for o, c in zip(exp, cells, strict=True)), "no cell redacted; match untested"
+    assert any(o == c for o, c in zip(exp, cells, strict=True)), "all redacted; exhaustion untested"

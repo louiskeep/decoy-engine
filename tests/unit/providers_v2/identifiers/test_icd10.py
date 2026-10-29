@@ -1,7 +1,7 @@
 """MG-1 S4 (2026-06-01): ICD-10-CM domain generator regression cells.
 
 Pins chapter-range correctness + deterministic generation + adapter
-contracts. The chapter table is shared with storm/detectors via
+contracts. The chapter table is shared with detection/detectors via
 _ICD10_CHAPTERS so the generator + the detector agree on what's
 valid.
 """
@@ -11,6 +11,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from decoy_engine.detection.detectors import _icd10_valid
 from decoy_engine.providers_v2._adapter import ProviderSpec
 from decoy_engine.providers_v2._errors import ProviderError
 from decoy_engine.providers_v2.identifiers._icd10 import (
@@ -20,7 +21,6 @@ from decoy_engine.providers_v2.identifiers._icd10 import (
     Icd10Validator,
     generate_random,
 )
-from decoy_engine.storm.detectors import _icd10_valid
 
 _SEED = (0x0123456789).to_bytes(8, "big")
 

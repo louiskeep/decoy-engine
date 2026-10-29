@@ -11,7 +11,7 @@ Mechanism. A module is strict-reachable when it names the file-access policy (im
 ``FileRequest``/``file_access=``) OR imports a capability-reader helper that opens files through
 the policy on a caller's behalf without the caller naming the policy itself (``_packio``;
 ``fileaccess._read`` importers already carry the ``fileaccess`` name). That second clause is load
-bearing: pre-fix ``storm/model_pack/provenance.py`` read packs through ``_packio`` without the
+bearing: pre-fix ``profiling/model_pack/provenance.py`` read packs through ``_packio`` without the
 word ``fileaccess``, so a name-only scope would have SKIPPED it, and the class could recur in a
 reader module unseen. In those modules every ``raise`` and every logger call is scanned: when its
 message interpolates a local whose name is a known path- or locator-bearing one (``path``,
@@ -359,6 +359,6 @@ def test_the_detector_flags_a_planted_fixture_module() -> None:
 def test_scope_follows_the_capability_reader_helper() -> None:
     """A module that reads through the `_packio` capability helper is strict-reachable even when
     it never names the policy (the pre-fix provenance/trainer hole, MEDIUM-1)."""
-    assert _strict_reachable("from decoy_engine.storm.model_pack import _packio\n")
+    assert _strict_reachable("from decoy_engine.profiling.model_pack import _packio\n")
     assert _strict_reachable("from decoy_engine import fileaccess\n")
     assert not _strict_reachable("import json\n\ndef f():\n    raise ValueError('x')\n")

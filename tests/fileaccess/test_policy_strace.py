@@ -133,7 +133,7 @@ mark("/ATE3-END")
     assert not mentions_at_all(window, outside), "\n".join(mentions_at_all(window, outside))
     # `-yy` decorates each descriptor with its path, so a read of the target would name it;
     # the `read`/`pread64` calls are in the trace set, so this can fail (see the control below).
-    assert not [ln for ln in window if re.match(r"\d+ p?read", ln) and "secret.parquet" in ln]
+    assert not [ln for ln in window if re.match(r"\d+\s+p?read", ln) and "secret.parquet" in ln]
 
 
 def test_cold_import_reads_the_packaged_grammar_and_the_detector_sees_it(tmp_path: Path) -> None:
@@ -156,11 +156,11 @@ mark("/COLD-END")
     assert grammar, "the packaged when_grammar.lark read was not observed at import"
     # Import-time reads that are registered: the shipped name-hint YAML (storm detectors load it
     # at import) and the default log file. Anything else read at import is a new, unregistered one.
-    registered = ("storm/name_hints/v1/", "logs/decoy_engine.log")
+    registered = ("detection/name_hints/v1/", "logs/decoy_engine.log")
     package_data = [
         ln
         for ln in window
-        if re.match(r"\d+ openat", ln)
+        if re.match(r"\d+\s+openat", ln)
         and "decoy_engine" in ln
         and not (re.search(r'"([^"]*)"', ln) or [None, ""])[1].endswith(
             (".py", ".pyc", ".so", ".lark")
@@ -186,6 +186,6 @@ mark("/ATE3-END")
 """
     )
     window = run_traced(script, tmp_path).window("ATE3-BEGIN", "ATE3-END")
-    assert [ln for ln in window if re.match(r"\d+ openat", ln) and "secret.parquet" in ln]
-    assert [ln for ln in window if re.match(r"\d+ p?read", ln) and "secret.parquet" in ln]
-    assert [ln for ln in window if re.match(r"\d+ close", ln) and "secret.parquet" in ln]
+    assert [ln for ln in window if re.match(r"\d+\s+openat", ln) and "secret.parquet" in ln]
+    assert [ln for ln in window if re.match(r"\d+\s+p?read", ln) and "secret.parquet" in ln]
+    assert [ln for ln in window if re.match(r"\d+\s+close", ln) and "secret.parquet" in ln]

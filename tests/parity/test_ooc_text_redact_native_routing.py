@@ -19,6 +19,8 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
+from decoy_engine.detection import detectors as detectors_mod
+from decoy_engine.detection import ner as ner_mod
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._operator_registry import PYTHON_SCALAR, RUST_COMPANION
 from decoy_engine.execution._pipeline import run_pipeline
@@ -26,8 +28,6 @@ from decoy_engine.execution.out_of_core import _mask
 from decoy_engine.execution.out_of_core._hash_run import OocHashRun
 from decoy_engine.execution.out_of_core._mask_group_b import text_redact_array
 from decoy_engine.plan._types import SeedEnvelope, TableSeed
-from decoy_engine.storm import detectors as detectors_mod
-from decoy_engine.storm import ner as ner_mod
 from tests.parity._d1a_hash_data import (
     JOB_SEED,
     chain_plan,
