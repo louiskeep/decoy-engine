@@ -503,7 +503,7 @@ def test_c6_every_reason_is_registered_once_with_safe_semantics(namespace: str, 
     assert len(matches) == 1
     assert spec.summary.endswith(".") and MARKER not in spec.summary
     assert spec.symbol == code.upper()
-    record = reasons.ReasonRecord.from_code(getattr(getattr(reasons, namespace), spec.symbol), phase=spec.default_rule.phase)
+    record = reasons.ReasonRecord.for_reason(getattr(getattr(reasons, namespace), spec.symbol), phase=spec.default_rule.phase)
     assert record.code == code
     assert reasons.check_integrity() == []
     if namespace == "runtime" and code.startswith("protected_quarantine"):
