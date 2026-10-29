@@ -132,6 +132,7 @@ def test_writer_close_failure_aborts_and_preserves_the_error(
             super().close()
             raise OSError("close failed")
 
+    # The sink writes through the file-access arrow adapter, which builds the writer.
     monkeypatch.setattr(arrow_adapter.pq, "ParquetWriter", FailingClose)
     target = tmp_path / "out"
     with pytest.raises(OSError, match="close failed"):

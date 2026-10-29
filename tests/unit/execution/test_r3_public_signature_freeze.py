@@ -65,6 +65,7 @@ FROZEN_PARAMETERS: tuple[tuple[str, str, str, str], ...] = (
     ("progress", "KEYWORD_ONLY", "None", "ProgressSink | None"),
     ("progress_interval_s", "KEYWORD_ONLY", "1.0", "float"),
     ("_provider_snapshot", "KEYWORD_ONLY", "None", "Mapping[str, Callable[[Faker], Any]] | None"),
+    # E1: the one additive keyword the file-access policy adds (compatibility contract section 9).
     ("file_access", "KEYWORD_ONLY", "None", "FileAccess | None"),
 )
 FROZEN_RETURN = "ExecutionResult"
