@@ -1,0 +1,9 @@
+{
+  "release": "DENY",
+  "artifacts": "MISSING",
+  "exit": "INCOMPLETE",
+  "reasons_include": [
+    "EMPTY_OUTPUT_NOT_ALLOWED"
+  ],
+  "note": ""
+}

@@ -1,0 +1,13 @@
+{
+  "schema": "SUPPORTED",
+  "signature": "VALID",
+  "trust": "TRUSTED",
+  "artifacts": "MATCH",
+  "checks": "PASS",
+  "release": "ALLOW",
+  "exit": "OK",
+  "notes_include": [
+    "OPTIONAL_CHECK_INCONCLUSIVE"
+  ],
+  "note": "optional inconclusive stays visible without blocking"
+}

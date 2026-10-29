@@ -1,0 +1,9 @@
+{
+  "release": "DENY",
+  "artifacts": "UNEXPECTED",
+  "exit": "INCOMPLETE",
+  "reasons_include": [
+    "ARTIFACT_NOT_EXPECTED"
+  ],
+  "note": ""
+}

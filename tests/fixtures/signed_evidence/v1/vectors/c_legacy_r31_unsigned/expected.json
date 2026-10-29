@@ -1,0 +1,10 @@
+{
+  "schema": "UNSUPPORTED",
+  "signature": "UNSIGNED",
+  "release": "DENY",
+  "exit": "UNSUPPORTED",
+  "reasons_include": [
+    "LEGACY_INTEGRITY_ONLY"
+  ],
+  "note": "legacy r3.1 manifest: integrity-only, never a signed pass"
+}

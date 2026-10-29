@@ -1,0 +1,27 @@
+{
+  "schema": "decoy.trust-policy/v1",
+  "id": "tp-acme",
+  "version": "1",
+  "issued_at": "2026-10-01T00:00:00Z",
+  "expires_at": "2027-04-01T00:00:00Z",
+  "keys": [
+    {
+      "tenant": "tenant-acme",
+      "signer": "decoy:acme-prod",
+      "kid": "kv-2026-01",
+      "key_version": "2026-01",
+      "alg": "ES256",
+      "jwk_thumbprint": "DdLGLbfiDOzh9No6SIrBSygYqmTDVwjHuam1oeZ4gB4",
+      "jwk": {
+        "kty": "EC",
+        "crv": "P-256",
+        "x": "igsIcGKsrkHZuCX_iSjzk-N0OKDlylkvZpvXEsEVdKM",
+        "y": "Lw6ZxSkH00S124H3MNQ3u4a3UqiBZtWFpGmMd3Wp4jg"
+      },
+      "state": "ACTIVE",
+      "retired_at": null,
+      "revoked_at": null,
+      "compromised_since": null
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "schema": "SUPPORTED",
+  "signature": "VALID",
+  "trust": "TRUSTED",
+  "artifacts": "MATCH",
+  "checks": "PASS",
+  "identity": "BOUND",
+  "release": "ALLOW",
+  "historical": "NOT_APPLICABLE",
+  "exit": "OK",
+  "note": "signed by panva/jose FlattenedSign (independent of the Python implementation)"
+}

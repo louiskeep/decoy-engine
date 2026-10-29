@@ -1,0 +1,9 @@
+{
+  "signature": "INVALID",
+  "release": "DENY",
+  "exit": "MALFORMED",
+  "reasons_include": [
+    "ENVELOPE_DUPLICATE_MEMBER"
+  ],
+  "note": "duplicate member that a last-wins parser would hide"
+}

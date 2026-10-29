@@ -1,0 +1,6 @@
+{
+  "signature": "INVALID",
+  "release": "DENY",
+  "exit": "TAMPERED",
+  "note": "kid/version claim key A, signature is by an attacker key: signature must not verify"
+}

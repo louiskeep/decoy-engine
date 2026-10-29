@@ -1,0 +1,9 @@
+{
+  "signature": "INVALID",
+  "release": "DENY",
+  "exit": "MALFORMED",
+  "reasons_include": [
+    "ENVELOPE_ALG_NOT_ES256"
+  ],
+  "note": "classic key-confusion: HMAC keyed with the public key material"
+}

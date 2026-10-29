@@ -1,0 +1,10 @@
+{
+  "signature": "VALID",
+  "trust": "SCOPE_MISMATCH",
+  "release": "DENY",
+  "exit": "UNTRUSTED",
+  "reasons_include": [
+    "KEY_VERSION_MISMATCH"
+  ],
+  "note": ""
+}

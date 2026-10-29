@@ -1,0 +1,10 @@
+{
+  "schema": "SUPPORTED",
+  "signature": "UNSIGNED",
+  "release": "DENY",
+  "exit": "UNSUPPORTED",
+  "reasons_include": [
+    "SIGNATURE_MISSING"
+  ],
+  "note": ""
+}

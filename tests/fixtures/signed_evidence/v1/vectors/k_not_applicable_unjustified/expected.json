@@ -1,0 +1,13 @@
+{
+  "schema": "SUPPORTED",
+  "signature": "VALID",
+  "trust": "TRUSTED",
+  "artifacts": "MATCH",
+  "checks": "INCONCLUSIVE",
+  "release": "DENY",
+  "exit": "BLOCKED",
+  "reasons_include": [
+    "NOT_APPLICABLE_UNJUSTIFIED"
+  ],
+  "note": "NOT_APPLICABLE needs a catalog rule, not a caller assertion"
+}

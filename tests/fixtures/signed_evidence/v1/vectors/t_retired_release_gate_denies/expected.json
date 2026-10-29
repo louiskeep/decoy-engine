@@ -1,0 +1,11 @@
+{
+  "signature": "VALID",
+  "trust": "RETIRED",
+  "historical": "NOT_APPLICABLE",
+  "release": "DENY",
+  "exit": "UNTRUSTED",
+  "reasons_include": [
+    "SIGNER_NOT_ACTIVE"
+  ],
+  "note": ""
+}

@@ -1,0 +1,11 @@
+{
+  "name": "decoy-signed-evidence-vector-generator",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Independent (non-Python) generator for the F33 signed-evidence conformance corpus. Not run in CI; the committed corpus is frozen.",
+  "type": "module",
+  "dependencies": {
+    "jose": "6.2.14",
+    "canonicalize": "5.1.0"
+  }
+}

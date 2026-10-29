@@ -1,0 +1,10 @@
+{
+  "signature": "NOT_EVALUATED",
+  "trust": "UNKNOWN_KEY",
+  "release": "DENY",
+  "exit": "UNTRUSTED",
+  "reasons_include": [
+    "KEY_UNKNOWN"
+  ],
+  "note": ""
+}

@@ -1,0 +1,7 @@
+{
+  "schema": "decoy.required-catalog/v1",
+  "id": "catalog-strict",
+  "version": "1",
+  "empty_output_allowed": false,
+  "requirements": []
+}

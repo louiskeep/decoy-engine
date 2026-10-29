@@ -1,0 +1,13 @@
+{
+  "schema": "SUPPORTED",
+  "signature": "VALID",
+  "trust": "TRUSTED",
+  "artifacts": "MATCH",
+  "checks": "PASS",
+  "release": "DENY",
+  "exit": "PARTIAL",
+  "reasons_include": [
+    "PURPOSE_HISTORICAL_AUDIT"
+  ],
+  "note": "a clean historical audit is never presented as current clearance"
+}

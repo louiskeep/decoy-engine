@@ -1,0 +1,11 @@
+{
+  "schema": "SUPPORTED",
+  "signature": "VALID",
+  "release": "DENY",
+  "exit": "INCOMPLETE",
+  "artifacts": "UNEXPECTED",
+  "reasons_include": [
+    "ARTIFACT_UNBOUND_FILE"
+  ],
+  "note": ""
+}

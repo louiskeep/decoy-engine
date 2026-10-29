@@ -1,0 +1,9 @@
+{
+  "release": "DENY",
+  "artifacts": "MISMATCH",
+  "exit": "TAMPERED",
+  "reasons_include": [
+    "EXPECTED_DIGEST_MISMATCH"
+  ],
+  "note": "the signed digest disagrees with the digest the trusted caller expects"
+}

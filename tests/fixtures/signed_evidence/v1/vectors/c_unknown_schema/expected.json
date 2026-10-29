@@ -1,0 +1,10 @@
+{
+  "schema": "UNSUPPORTED",
+  "signature": "VALID",
+  "release": "DENY",
+  "exit": "UNSUPPORTED",
+  "reasons_include": [
+    "STATEMENT_SCHEMA_UNSUPPORTED"
+  ],
+  "note": ""
+}

@@ -1,0 +1,6 @@
+{
+  "signature": "INVALID",
+  "release": "DENY",
+  "exit": "TAMPERED",
+  "note": "statement mutated after signing, re-canonicalized"
+}

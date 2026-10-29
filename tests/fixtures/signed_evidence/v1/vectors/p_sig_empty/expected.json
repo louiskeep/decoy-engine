@@ -1,0 +1,9 @@
+{
+  "signature": "INVALID",
+  "release": "DENY",
+  "exit": "MALFORMED",
+  "reasons_include": [
+    "SIGNATURE_ENCODING_INVALID"
+  ],
+  "note": ""
+}

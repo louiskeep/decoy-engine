@@ -1,0 +1,10 @@
+{
+  "schema": "NON_CANONICAL",
+  "signature": "VALID",
+  "release": "DENY",
+  "exit": "MALFORMED",
+  "reasons_include": [
+    "STATEMENT_NOT_CANONICAL"
+  ],
+  "note": "valid JSON escape of an ASCII char is not the JCS form"
+}

@@ -1,0 +1,19 @@
+{
+  "schema": "decoy.required-catalog/v1",
+  "id": "catalog-strict",
+  "version": "1",
+  "empty_output_allowed": false,
+  "requirements": [
+    {
+      "media_types": null,
+      "min_rows_scanned": 0,
+      "require_full_scan": false,
+      "allow_empty_subject": true,
+      "allow_warning": false,
+      "optional": false,
+      "not_applicable_reason_codes": [],
+      "check_id": "source_snapshot_binding",
+      "scope": "snapshot"
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "signature": "VALID",
+  "trust": "REVOKED",
+  "historical": "UNKNOWN",
+  "release": "DENY",
+  "exit": "UNTRUSTED",
+  "reasons_include": [
+    "SIGNER_REVOKED"
+  ],
+  "note": "created_at (2026-10-10) predates revocation but is signer-asserted: history stays UNKNOWN"
+}

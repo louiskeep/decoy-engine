@@ -1,0 +1,9 @@
+{
+  "release": "DENY",
+  "artifacts": "MISSING",
+  "exit": "INCOMPLETE",
+  "reasons_include": [
+    "ARTIFACT_NOT_IN_STATEMENT"
+  ],
+  "note": "producer omitted an artifact the caller expects"
+}

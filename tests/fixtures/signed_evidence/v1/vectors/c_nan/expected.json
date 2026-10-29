@@ -1,0 +1,9 @@
+{
+  "schema": "MALFORMED",
+  "release": "DENY",
+  "exit": "MALFORMED",
+  "reasons_include": [
+    "STATEMENT_NON_FINITE_NUMBER"
+  ],
+  "note": ""
+}

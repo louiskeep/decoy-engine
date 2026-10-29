@@ -1,0 +1,8 @@
+{
+  "signature": "VALID",
+  "trust": "REVOKED",
+  "historical": "ESTABLISHED",
+  "release": "DENY",
+  "exit": "UNTRUSTED",
+  "note": "historical evidence never converts into current acceptance"
+}

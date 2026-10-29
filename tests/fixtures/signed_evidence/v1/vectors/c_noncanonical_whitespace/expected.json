@@ -1,0 +1,10 @@
+{
+  "schema": "NON_CANONICAL",
+  "signature": "VALID",
+  "release": "DENY",
+  "exit": "MALFORMED",
+  "reasons_include": [
+    "STATEMENT_NOT_CANONICAL"
+  ],
+  "note": "signed over pretty-printed bytes: authentic but not canonical"
+}

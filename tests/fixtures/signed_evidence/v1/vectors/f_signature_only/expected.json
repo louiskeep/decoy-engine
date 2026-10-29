@@ -1,0 +1,12 @@
+{
+  "schema": "SUPPORTED",
+  "signature": "VALID",
+  "trust": "TRUSTED",
+  "artifacts": "NOT_EVALUATED",
+  "release": "DENY",
+  "exit": "PARTIAL",
+  "reasons_include": [
+    "ARTIFACTS_NOT_EVALUATED"
+  ],
+  "note": "diagnostic mode never returns full success"
+}

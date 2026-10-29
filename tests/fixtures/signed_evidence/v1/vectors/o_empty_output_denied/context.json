@@ -1,0 +1,23 @@
+{
+  "purpose": "RELEASE_GATE",
+  "evaluation_time": "2026-10-29T12:00:00Z",
+  "artifacts_root": "base",
+  "artifact_ops": [
+    {
+      "op": "delete_all"
+    }
+  ],
+  "signature_only": false,
+  "trust_policy_file": "shared/trust-a-active.json",
+  "trust_policy_sha256": "sha256:5186cbeaf255e57ba4541ac3b8f1bdfce8b27613280e8122e132fc07594eddbd",
+  "catalog_file": "shared/catalog-empty-output-denied.json",
+  "expected": {
+    "tenant": "tenant-acme",
+    "bundle_id": "bundle-001",
+    "job_id": "job-1001",
+    "attempt_id": "attempt-1",
+    "snapshot_id": "snap-001",
+    "artifacts": []
+  },
+  "historical_decisions": []
+}

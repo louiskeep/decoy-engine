@@ -1,0 +1,13 @@
+{
+  "schema": "SUPPORTED",
+  "signature": "VALID",
+  "trust": "TRUSTED",
+  "artifacts": "MATCH",
+  "checks": "INCONCLUSIVE",
+  "release": "DENY",
+  "exit": "BLOCKED",
+  "reasons_include": [
+    "CHECK_SUBJECT_MISSING"
+  ],
+  "note": "empty findings / absent detector never proves completion"
+}

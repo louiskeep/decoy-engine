@@ -1,0 +1,57 @@
+{
+  "schema": "decoy.required-catalog/v1",
+  "id": "catalog-strict",
+  "version": "1",
+  "empty_output_allowed": false,
+  "requirements": [
+    {
+      "media_types": [
+        "text/csv"
+      ],
+      "min_rows_scanned": 1,
+      "require_full_scan": false,
+      "allow_empty_subject": false,
+      "allow_warning": false,
+      "optional": true,
+      "not_applicable_reason_codes": [],
+      "check_id": "leakage_sample",
+      "scope": "each_artifact"
+    },
+    {
+      "media_types": [
+        "text/csv",
+        "application/vnd.apache.parquet"
+      ],
+      "min_rows_scanned": 1,
+      "require_full_scan": true,
+      "allow_empty_subject": false,
+      "allow_warning": false,
+      "optional": false,
+      "not_applicable_reason_codes": [],
+      "check_id": "residual_detection",
+      "scope": "each_artifact"
+    },
+    {
+      "media_types": null,
+      "min_rows_scanned": 0,
+      "require_full_scan": false,
+      "allow_empty_subject": true,
+      "allow_warning": false,
+      "optional": false,
+      "not_applicable_reason_codes": [],
+      "check_id": "source_snapshot_binding",
+      "scope": "snapshot"
+    },
+    {
+      "media_types": null,
+      "min_rows_scanned": 1,
+      "require_full_scan": false,
+      "allow_empty_subject": false,
+      "allow_warning": false,
+      "optional": false,
+      "not_applicable_reason_codes": [],
+      "check_id": "structural_integrity",
+      "scope": "each_artifact"
+    }
+  ]
+}

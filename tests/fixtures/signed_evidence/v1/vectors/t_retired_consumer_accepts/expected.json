@@ -1,0 +1,15 @@
+{
+  "schema": "SUPPORTED",
+  "signature": "VALID",
+  "trust": "RETIRED",
+  "artifacts": "MATCH",
+  "checks": "PASS",
+  "identity": "BOUND",
+  "release": "ALLOW",
+  "historical": "NOT_APPLICABLE",
+  "exit": "OK",
+  "reasons_include": [
+    "SIGNER_RETIRED"
+  ],
+  "note": "routine rotation: old bundle still verifies, reported as retired"
+}

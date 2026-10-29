@@ -1,0 +1,13 @@
+{
+  "schema": "SUPPORTED",
+  "signature": "VALID",
+  "trust": "TRUSTED",
+  "artifacts": "MATCH",
+  "checks": "INCONCLUSIVE",
+  "release": "DENY",
+  "exit": "BLOCKED",
+  "reasons_include": [
+    "POLICY_VERSION_MISMATCH"
+  ],
+  "note": ""
+}

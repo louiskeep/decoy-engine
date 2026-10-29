@@ -1,0 +1,9 @@
+{
+  "schema": "MALFORMED",
+  "release": "DENY",
+  "exit": "MALFORMED",
+  "reasons_include": [
+    "STATEMENT_SCHEMA_INVALID"
+  ],
+  "note": "a count that fits as an integer MUST be an integer: one representation per value"
+}

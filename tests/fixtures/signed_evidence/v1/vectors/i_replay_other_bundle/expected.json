@@ -1,0 +1,12 @@
+{
+  "schema": "SUPPORTED",
+  "signature": "VALID",
+  "trust": "TRUSTED",
+  "identity": "MISMATCH",
+  "release": "DENY",
+  "exit": "BLOCKED",
+  "reasons_include": [
+    "IDENTITY_BUNDLE_MISMATCH"
+  ],
+  "note": ""
+}

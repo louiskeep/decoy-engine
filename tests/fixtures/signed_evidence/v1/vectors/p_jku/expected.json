@@ -1,0 +1,9 @@
+{
+  "signature": "INVALID",
+  "release": "DENY",
+  "exit": "MALFORMED",
+  "reasons_include": [
+    "ENVELOPE_HEADER_MEMBER_FORBIDDEN"
+  ],
+  "note": ""
+}

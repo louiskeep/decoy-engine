@@ -1,0 +1,35 @@
+{
+  "purpose": "RELEASE_GATE",
+  "evaluation_time": "2026-10-29T12:00:00Z",
+  "artifacts_root": "base",
+  "artifact_ops": [],
+  "signature_only": false,
+  "trust_policy_file": "shared/trust-a-active.json",
+  "trust_policy_sha256": "sha256:5186cbeaf255e57ba4541ac3b8f1bdfce8b27613280e8122e132fc07594eddbd",
+  "catalog_file": "shared/catalog-strict.json",
+  "expected": {
+    "tenant": "tenant-acme",
+    "bundle_id": "bundle-001",
+    "job_id": "job-1001",
+    "attempt_id": "attempt-1",
+    "snapshot_id": "snap-001",
+    "artifacts": [
+      {
+        "id": "out_customers",
+        "sha256": "sha256:e33edb5baafcec9c2482a0f86b84d55ec705d3f35eff91edaf61d9a907c84687",
+        "media_type": "text/csv"
+      },
+      {
+        "id": "out_orders",
+        "sha256": "sha256:e512d498fb6f87998221042788c56d7f2a29224cf4616ba189f13560f2f82971",
+        "media_type": "application/vnd.apache.parquet"
+      },
+      {
+        "id": "quarantine",
+        "sha256": "sha256:b0f4305740ac7a42d4f6d53b740e298313e710dd69915b87749727dbcb2249a0",
+        "media_type": "application/x-ndjson"
+      }
+    ]
+  },
+  "historical_decisions": []
+}

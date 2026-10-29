@@ -1,0 +1,9 @@
+{
+  "signature": "INVALID",
+  "release": "DENY",
+  "exit": "MALFORMED",
+  "reasons_include": [
+    "ENVELOPE_BASE64URL_INVALID"
+  ],
+  "note": "standard base64 with padding/alphabet is not base64url"
+}

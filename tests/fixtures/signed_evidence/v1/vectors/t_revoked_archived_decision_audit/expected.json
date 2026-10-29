@@ -1,0 +1,12 @@
+{
+  "signature": "VALID",
+  "trust": "REVOKED",
+  "historical": "ESTABLISHED",
+  "release": "DENY",
+  "exit": "PARTIAL",
+  "reasons_include": [
+    "SIGNER_REVOKED",
+    "HISTORICAL_DECISION_ESTABLISHED"
+  ],
+  "note": "an authenticated archived decision binds this exact statement+signature; current revocation still reported"
+}

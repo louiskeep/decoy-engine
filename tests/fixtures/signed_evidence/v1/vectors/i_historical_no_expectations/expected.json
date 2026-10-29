@@ -1,0 +1,9 @@
+{
+  "schema": "SUPPORTED",
+  "signature": "VALID",
+  "trust": "TRUSTED",
+  "identity": "NOT_ASSERTED",
+  "release": "DENY",
+  "exit": "PARTIAL",
+  "note": ""
+}

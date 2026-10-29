@@ -1,0 +1,13 @@
+{
+  "schema": "SUPPORTED",
+  "signature": "VALID",
+  "trust": "TRUSTED",
+  "artifacts": "MATCH",
+  "checks": "INCONCLUSIVE",
+  "release": "DENY",
+  "exit": "BLOCKED",
+  "reasons_include": [
+    "POLICY_DIGEST_MISMATCH"
+  ],
+  "note": "producer signs an empty catalog; the verifier uses its own independently trusted catalog"
+}

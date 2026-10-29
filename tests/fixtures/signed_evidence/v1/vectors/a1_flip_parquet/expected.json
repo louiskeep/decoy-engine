@@ -1,0 +1,13 @@
+{
+  "release": "DENY",
+  "schema": "SUPPORTED",
+  "signature": "VALID",
+  "trust": "TRUSTED",
+  "artifacts": "MISMATCH",
+  "identity": "BOUND",
+  "exit": "TAMPERED",
+  "reasons_include": [
+    "ARTIFACT_DIGEST_MISMATCH"
+  ],
+  "note": "one byte changed, size unchanged; signature must stay VALID"
+}

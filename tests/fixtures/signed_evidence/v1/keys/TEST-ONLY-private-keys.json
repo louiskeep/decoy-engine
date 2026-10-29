@@ -1,0 +1,33 @@
+{
+  "warning": "SYNTHETIC TEST KEYS. Not production material. Never trust these in a real trust policy.",
+  "keys": {
+    "kv-2026-01": {
+      "kty": "EC",
+      "x": "igsIcGKsrkHZuCX_iSjzk-N0OKDlylkvZpvXEsEVdKM",
+      "y": "Lw6ZxSkH00S124H3MNQ3u4a3UqiBZtWFpGmMd3Wp4jg",
+      "crv": "P-256",
+      "d": "fVPJbDUA4txYCHLTKikcEeo3a8BW-kyVgzG9h_sJNXk"
+    },
+    "kv-2026-02": {
+      "kty": "EC",
+      "x": "lAZkpxuW8oW1Yy3MmBTkJv9m4K-0X76r4r4jNUlMzMw",
+      "y": "xx8jK0e1HZKXOntfC_Wpa7xalE1-Qs0kGy0ocLgT_pM",
+      "crv": "P-256",
+      "d": "-2PdFD4-4FuZ8ATCcMr9cd7cwUBw-v_yjc2ZhLK3VUQ"
+    },
+    "kv-attacker": {
+      "kty": "EC",
+      "x": "ggQVaCejWliR3UdPZ4bOCkeKRD7dUEn_1mYOj06PURo",
+      "y": "nbQIef0fmdD4RfOXKUutMNdshQ8VstjrQgxPonZyWqE",
+      "crv": "P-256",
+      "d": "NbwGjXYaI3l6kndIZ3nKPIpZtikW8JNJXiMNKyqmb8s"
+    },
+    "kv-p384": {
+      "kty": "EC",
+      "x": "_O1BY2Yxna3xSXrv6xNR3UdiISi-xdpKcQeUFwpz_csuoQ27e9OriggqaZutl3mP",
+      "y": "Ln33xb88rMdbjPBcqsXXe2EYZxUksbfH0MFjectVxt6g4-ymVv2hzRohyMxI-o5r",
+      "crv": "P-384",
+      "d": "qoyKzi_M_K5wLI7-Z-CrQyDaYShv4ccG3oXR8GCxSGTqbgQot6V5aJ3CWDX27V2a"
+    }
+  }
+}

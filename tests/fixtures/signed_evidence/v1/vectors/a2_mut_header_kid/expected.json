@@ -1,0 +1,6 @@
+{
+  "signature": "INVALID",
+  "release": "DENY",
+  "exit": "TAMPERED",
+  "note": "protected header swapped after signing"
+}

@@ -1,0 +1,13 @@
+{
+  "schema": "SUPPORTED",
+  "signature": "VALID",
+  "trust": "TRUSTED",
+  "artifacts": "MATCH",
+  "checks": "INCONCLUSIVE",
+  "release": "DENY",
+  "exit": "BLOCKED",
+  "reasons_include": [
+    "CHECK_INCONCLUSIVE"
+  ],
+  "note": "signature valid, state PUBLISHED, yet a required check is inconclusive: no release"
+}

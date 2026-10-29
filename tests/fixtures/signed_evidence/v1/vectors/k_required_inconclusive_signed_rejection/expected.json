@@ -1,0 +1,14 @@
+{
+  "schema": "SUPPORTED",
+  "signature": "VALID",
+  "trust": "TRUSTED",
+  "artifacts": "WITHHELD",
+  "checks": "INCONCLUSIVE",
+  "release": "DENY",
+  "exit": "BLOCKED",
+  "reasons_include": [
+    "CHECK_INCONCLUSIVE",
+    "PUBLICATION_STATE_REJECTED"
+  ],
+  "note": "a signed rejection is exportable for audit and never authorizes a release"
+}

@@ -1,0 +1,11 @@
+{
+  "signature": "VALID",
+  "trust": "SCOPE_MISMATCH",
+  "historical": "NOT_APPLICABLE",
+  "release": "DENY",
+  "exit": "UNTRUSTED",
+  "reasons_include": [
+    "TENANT_MISMATCH"
+  ],
+  "note": ""
+}

@@ -1,0 +1,9 @@
+{
+  "schema": "MALFORMED",
+  "release": "DENY",
+  "exit": "MALFORMED",
+  "reasons_include": [
+    "STATEMENT_ARTIFACT_ID_DUPLICATE"
+  ],
+  "note": ""
+}

@@ -1,0 +1,10 @@
+{
+  "signature": "VALID",
+  "trust": "SCOPE_MISMATCH",
+  "release": "DENY",
+  "exit": "UNTRUSTED",
+  "reasons_include": [
+    "SIGNER_MISMATCH"
+  ],
+  "note": "header signer matches the key but not the signed issuer.signer"
+}

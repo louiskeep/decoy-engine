@@ -1,0 +1,11 @@
+{
+  "signature": "VALID",
+  "trust": "STALE_POLICY",
+  "historical": "UNKNOWN",
+  "release": "DENY",
+  "exit": "UNTRUSTED",
+  "reasons_include": [
+    "TRUST_POLICY_STALE"
+  ],
+  "note": "valid signature; expired trust snapshot grants no current clearance"
+}

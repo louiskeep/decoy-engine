@@ -1,0 +1,11 @@
+{
+  "schema": "SUPPORTED",
+  "signature": "VALID",
+  "release": "DENY",
+  "exit": "INCOMPLETE",
+  "artifacts": "MISSING",
+  "reasons_include": [
+    "ARTIFACT_MISSING"
+  ],
+  "note": ""
+}
