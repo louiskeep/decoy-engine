@@ -82,15 +82,19 @@ class RunOutcome(_Closed):
 
 
 class ExitCode(IntEnum):
-    """Stable process exit codes shared by ``decoy-admin retention-sweep`` and ``decoy local-cleanup``."""
+    """Retention OUTCOME exit codes shared by ``decoy-admin retention-sweep`` and ``decoy local-cleanup``.
+
+    Only outcomes live here. They occupy 10-14 on purpose: a consumer keeps its own usage and
+    runtime-error codes (the CLI's 1/2/3/4/5, argparse's 2) and these can never collide with them.
+    """
 
     SUCCESS = 0
-    ERROR = 1
-    USAGE = 2
     NOOP = 10
     RETAINED = 11
     PARTIAL = 12
     REFUSED = 13
+    # An outcome this build cannot read (a newer producer). Never 0: unknown is not success.
+    INDETERMINATE = 14
 
 
 _OUTCOME_EXIT = {
@@ -103,8 +107,8 @@ _OUTCOME_EXIT = {
 
 
 def exit_code_for(outcome: RunOutcome) -> ExitCode:
-    """Unknown outcomes map to ERROR: a consumer never reports success for a value it cannot read."""
-    return _OUTCOME_EXIT.get(outcome, ExitCode.ERROR)
+    """Unknown outcomes map to INDETERMINATE: never report success for a value that cannot be read."""
+    return _OUTCOME_EXIT.get(outcome, ExitCode.INDETERMINATE)
 
 
 class ReasonCode(_Closed):

@@ -131,14 +131,15 @@ def test_reason_summaries_are_fixed_strings_with_no_format_fields():
 def test_exit_codes_are_stable_and_distinct():
     assert {e.name: int(e) for e in r.ExitCode} == {
         "SUCCESS": 0,
-        "ERROR": 1,
-        "USAGE": 2,
         "NOOP": 10,
         "RETAINED": 11,
         "PARTIAL": 12,
         "REFUSED": 13,
+        "INDETERMINATE": 14,
     }
-    assert r.exit_code_for(r.RunOutcome.UNKNOWN) is r.ExitCode.ERROR
+    # outcome codes sit clear of every consumer's own usage/runtime codes (CLI 1-5, argparse 2)
+    assert all(int(e) == 0 or int(e) >= 10 for e in r.ExitCode)
+    assert r.exit_code_for(r.RunOutcome.UNKNOWN) is r.ExitCode.INDETERMINATE != r.ExitCode.SUCCESS
 
 
 @pytest.mark.parametrize(
