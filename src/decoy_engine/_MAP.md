@@ -34,6 +34,7 @@ sentry (`tests/sentry/test_package_map_paths.py`) asserts every path here exists
 | `vault.py`, `unmask.py` | Token vault write and unmask |
 | `connectors/`, `sdk.py` | Connector SDK and in-tree file connectors (S3, GCS, SFTP, Postgres snapshot) |
 | `data_discovery.py` | Read-only SQL over output (DuckDB) |
+| `scratch/` | F25 protected scratch (Slice 1): ScratchManager choke-point, typed capabilities, SQLite ResourceLedger under an ownership-authority seam, kernel project-quota provider. Disconnected from production execution until later slices |
 | `context.py`, `instrumentation/` | Caller context and `Logger` protocol; opt-in timing collector |
 | `errors.py` | Engine exception types |
 | `release.py` | `RELEASE_PHASE` / `is_pre_ga` |

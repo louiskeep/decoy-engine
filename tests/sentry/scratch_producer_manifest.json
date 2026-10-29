@@ -1,0 +1,146 @@
+{
+  "_comment": "F25 Slice 1 machine-readable producer manifest for the scratch allocation sentry. Seeds the plan 1.3 T01-T17 temporary-path inventory. Every row is status 'unmigrated': the sentry enforces registration on NONE of them yet (they migrate in Slices 2-3). When a row migrates, its status flips to 'migrated' and it gains an allocation_wrapper + witness, at which point the AST scan and syscall trace begin enforcing it. A whole-module exclusion is never allowed; each row names its exact producer module(s).",
+  "format_version": 1,
+  "producers": [
+    {
+      "id": "T01",
+      "module": "execution/out_of_core/_runner.py",
+      "anchors": ["207", "269", "332"],
+      "kinds": ["native_dir", "file"],
+      "status": "unmigrated",
+      "note": "default decoy-ooc-* or caller temp_dir; joins/relations/staged trees. Replace reuse/chmod of a caller root with a fresh owned child + one attempt capability."
+    },
+    {
+      "id": "T02",
+      "module": "execution/out_of_core/_stage.py",
+      "anchors": ["65"],
+      "kinds": ["file"],
+      "status": "unmigrated",
+      "note": "staged/<table>/masked_keys.parquet incremental ParquetWriter."
+    },
+    {
+      "id": "T03",
+      "module": "execution/out_of_core/_relation.py",
+      "anchors": ["448", "459", "513"],
+      "kinds": ["file", "native_dir"],
+      "status": "unmigrated",
+      "note": "per-parent key relation/staged/winners parquet + native dedup spill."
+    },
+    {
+      "id": "T04",
+      "module": "execution/out_of_core/_multi_parent.py",
+      "anchors": ["134", "146"],
+      "kinds": ["file", "native_dir"],
+      "status": "unmigrated",
+      "note": "merged key relation/staged/winners + native merge/dedup spill."
+    },
+    {
+      "id": "T05",
+      "module": "execution/out_of_core/_duckdb.py",
+      "anchors": ["27"],
+      "kinds": ["native_dir"],
+      "status": "unmigrated",
+      "note": "all helper-created DuckDB connections; managed opaque spill-directory handles."
+    },
+    {
+      "id": "T06",
+      "module": "execution/out_of_core/_stream_driver.py",
+      "extra_modules": ["execution/out_of_core/_payload_store.py", "execution/out_of_core/_stream_join.py"],
+      "anchors": ["253", "273"],
+      "kinds": ["file"],
+      "status": "unmigrated",
+      "note": "payload.arrow, raw_parent_keys.arrow, per-edge child_keys.arrow (Arrow IPC)."
+    },
+    {
+      "id": "T07",
+      "module": "execution/out_of_core/_external_sort.py",
+      "extra_modules": ["execution/out_of_core/_stream_join.py"],
+      "anchors": ["352", "380", "420"],
+      "kinds": ["file"],
+      "status": "unmigrated",
+      "note": "reorder runs, initial Arrow runs, merge-pass runs, final run."
+    },
+    {
+      "id": "T08",
+      "module": "execution/native/_pool_quality.py",
+      "anchors": ["244"],
+      "kinds": ["file", "native_dir"],
+      "status": "unmigrated",
+      "note": "pairs_<column>_<uuid>.parquet + helper DuckDB spill."
+    },
+    {
+      "id": "T09",
+      "module": "execution/_transactional_sink.py",
+      "anchors": ["174", "216", "262"],
+      "kinds": ["publication", "file"],
+      "status": "unmigrated",
+      "note": "_decoy_stage_*/<table>.parquet whole-table and streaming writes."
+    },
+    {
+      "id": "T10",
+      "module": "execution/_chunked_output_sink.py",
+      "anchors": ["450", "459"],
+      "kinds": ["file"],
+      "status": "unmigrated",
+      "note": "_decoy_hold_*/00000000.arrow; replace the naked spill-parent capability."
+    },
+    {
+      "id": "T11",
+      "module": "execution/_isolated_run.py",
+      "anchors": ["328", "371", "387", "417"],
+      "kinds": ["native_dir", "file"],
+      "status": "unmigrated",
+      "note": "decoy-isolated-run-*, sources/<name>.parquet, payload.json, result envelope; payload may carry credentials."
+    },
+    {
+      "id": "T12",
+      "module": "execution/_isolated_commit.py",
+      "extra_modules": ["execution/_isolated_worker.py"],
+      "anchors": ["56", "65", "89"],
+      "kinds": ["file", "publication"],
+      "status": "unmigrated",
+      "note": "sibling output stage or work_root/staging_output; row_errors.json, envelope."
+    },
+    {
+      "id": "T13",
+      "module": "connectors/postgres_snapshot.py",
+      "anchors": ["215", "418", "445", "494", "509"],
+      "kinds": ["native_dir", "file"],
+      "status": "unmigrated",
+      "note": "spill-<run_id>, .stage-<run_id>/<schema>.<table>.parquet, snapshot-<run_id>."
+    },
+    {
+      "id": "T14",
+      "module": "subset/_materialize.py",
+      "extra_modules": ["subset/_api.py"],
+      "anchors": ["52", "71"],
+      "kinds": ["file"],
+      "status": "unmigrated",
+      "note": "filtered <table>.parquet + subset-manifest.json; intermediates stay registered."
+    },
+    {
+      "id": "T15",
+      "module": "quarantine.py",
+      "anchors": ["358"],
+      "kinds": ["file"],
+      "status": "unmigrated",
+      "note": "_decoy_quarantine_stage_*.jsonl raw quarantine data in a destination-side arena."
+    },
+    {
+      "id": "T16",
+      "module": "profile/_fixed_width_writer.py",
+      "anchors": ["322", "339"],
+      "kinds": ["file"],
+      "status": "unmigrated",
+      "note": ".decoy-fw-*.tmp; retain fsync/rename discipline."
+    },
+    {
+      "id": "T17",
+      "module": "data_discovery.py",
+      "anchors": ["158", "179"],
+      "kinds": ["native_dir"],
+      "status": "unmigrated",
+      "note": "in-memory DuckDB with no configured spill root; register/configure its native spill path or reject."
+    }
+  ]
+}
