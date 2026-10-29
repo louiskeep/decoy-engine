@@ -24,8 +24,11 @@ Three complementary checks (plan 2):
    checks are the drift guard (plan 2: static analysis is a drift guard, not a
    proof against arbitrary dynamic Python).
 
-Slice 2 state: T01-T08 are ``migrated`` and enforced here; T09-T17 stay
-``unmigrated`` (Slice 3). A whole-module exclusion is never allowed.
+Slice 3 state: T01-T17 are all ``migrated`` and enforced here (Slice 2 migrated
+T01-T08, Slice 3 the rest). A whole-module exclusion is never allowed; the only
+exemptions are the exact durable-output sinks the plan permits (direct
+quarantine JSONL, model-pack output, rotating logs) and the one stage-root
+container call, each named with a rationale in the manifest.
 """
 
 from __future__ import annotations
@@ -49,7 +52,7 @@ MANIFEST_PATH = HERE / "scratch_producer_manifest.json"
 TRACE_CHILD = HERE / "_f25_ooc_trace_child.py"
 
 EXPECTED_T_IDS = tuple(f"T{n:02d}" for n in range(1, 18))
-MIGRATED_IDS = frozenset(f"T{n:02d}" for n in range(1, 9))
+MIGRATED_IDS = frozenset(f"T{n:02d}" for n in range(1, 18))
 
 
 def _load_manifest() -> dict:
@@ -104,6 +107,11 @@ _SEAM_FUNCS: frozenset[str] = frozenset(
         "adopt_file",
         "allocate_file",
         "allocate_native_dir",
+        # Slice 3 generic seam helpers (decoy_engine.scratch._seam).
+        "ensure_native_dir",
+        "ensure_publication_stage",
+        "ensure_publication_file",
+        "ensure_scratch_file",
     }
 )
 
@@ -299,12 +307,14 @@ def test_manifest_entries_point_at_real_modules() -> None:
     assert not missing, f"manifest names modules that do not exist: {missing}"
 
 
-def test_slice2_migrated_set_is_exactly_T01_to_T08() -> None:
+def test_every_producer_is_migrated_T01_to_T17() -> None:
+    """Slice 3 completion: every T row is enforced; no `unmigrated` row remains,
+    so the sentry has teeth over the whole inventory (plan Slice 3 gate)."""
     manifest = _load_manifest()
     status = {p["id"]: p["status"] for p in manifest["producers"]}
     migrated = {tid for tid, s in status.items() if s == "migrated"}
     assert migrated == MIGRATED_IDS, migrated
-    assert all(status[tid] == "unmigrated" for tid in status if tid not in MIGRATED_IDS)
+    assert all(s == "migrated" for s in status.values()), status
 
 
 def test_migrated_rows_carry_allocation_and_witness() -> None:
@@ -409,6 +419,31 @@ def test_hardcoded_path_detector_is_non_vacuous() -> None:
         "    pq.write_table(t, path)\n"
     )
     assert not any(_has_hardcoded_path(p) for _, p in _write_sites(good))
+
+
+def test_seeded_bypass_in_a_migrated_producer_is_caught() -> None:
+    """Non-vacuous proof over the Slice-3 set: inject a raw `mkdtemp` and a
+    hardcoded write path into a newly migrated producer's source and confirm the
+    per-producer drift guard flags both (plan Slice 3: seed a bypass for one
+    migrated producer and confirm the sentry fails)."""
+    rel = "execution/_transactional_sink.py"
+    # The real module passes; a seeded bypass appended to it must not.
+    tree_clean = ast.parse(_module_source(rel))
+    assert not _raw_temp_calls(tree_clean)
+    assert not any(_has_hardcoded_path(p) for _, p in _write_sites(tree_clean))
+
+    bypassed = _module_source(rel) + (
+        "\n\ndef _f25_sentry_bypass(t):\n"
+        "    import tempfile\n"
+        "    _d = tempfile.mkdtemp(prefix='_decoy_stage_')\n"
+        "    import pyarrow.parquet as pq\n"
+        "    pq.write_table(t, '/tmp/f25_sentry_leak.parquet')\n"
+    )
+    tree = ast.parse(bypassed)
+    assert _raw_temp_calls(tree), "seeded raw tempfile call was not caught"
+    assert any(_has_hardcoded_path(p) for _, p in _write_sites(tree)), (
+        "seeded hardcoded write path was not caught"
+    )
 
 
 # ---------------------------------------------------------------------------

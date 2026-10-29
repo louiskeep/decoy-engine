@@ -17,7 +17,6 @@ from __future__ import annotations
 import json
 import os
 import signal
-import uuid
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +25,7 @@ import pyarrow.parquet as pq
 
 from decoy_engine.errors import DecoyError
 from decoy_engine.execution._row_errors import RowErrorRecord
+from decoy_engine.scratch import ArenaLike, PublicationStage, ensure_publication_stage
 
 __all__ = [
     "CommitError",
@@ -53,13 +53,25 @@ class CommitError(DecoyError):
     """
 
 
-def sibling_staging_dir(output_dir: Path) -> Path:
+def sibling_staging_dir(
+    output_dir: Path, *, scratch_arena: ArenaLike | None = None
+) -> tuple[Path, PublicationStage | None]:
     """A scratch dir in `output_dir`'s own parent (same filesystem), so the
     commit's `os.replace` is a single atomic rename, never a cross-device
     copy -- the same discipline `ParquetTransactionalSink.commit` uses.
+
+    F25 T12: with an injected arena this is a registered destination-side
+    publication stage; without one it is the same owned `_decoy_isolated_stage_*`
+    sibling directory as before. Returns `(stage_dir, capability)`; the caller
+    releases the capability when the staged output is discarded.
     """
-    token = uuid.uuid4().hex[:12]
-    return output_dir.parent / f"{_STAGING_DIR_PREFIX}{token}"
+    stage_path, cap = ensure_publication_stage(
+        scratch_arena,
+        output_dir,
+        retention_owner="isolated_commit",
+        fallback_prefix=_STAGING_DIR_PREFIX,
+    )
+    return Path(stage_path), cap
 
 
 def stage_tables(outputs: dict[str, pa.Table], staging_dir: Path) -> None:
@@ -86,18 +98,24 @@ def atomic_commit(staging_dir: Path, output_dir: Path) -> None:
         ) from exc
 
 
-def resolve_staging_output_dir(work_root: Path, output_dir: Path | None) -> Path:
+def resolve_staging_output_dir(
+    work_root: Path, output_dir: Path | None, *, scratch_arena: ArenaLike | None = None
+) -> tuple[Path, PublicationStage | None]:
     """Where the child stages outputs before commit.
 
     When `output_dir` is given, staging must share its filesystem so the
     commit step's `os.replace` is a single atomic rename (never a copy) --
     the same same-parent-directory discipline `ParquetTransactionalSink`
     uses for exactly this reason. Without an `output_dir` there is nothing
-    to rename into, so staging just lives under this run's own scratch root.
+    to rename into, so staging just lives under this run's own scratch root
+    (already registered when the run opened the work root, F25 T11/T12).
+
+    Returns `(staging_dir, capability)`; the capability is `None` when staging
+    lives under the already-registered work root.
     """
     if output_dir is not None:
-        return sibling_staging_dir(output_dir)
-    return work_root / "staging_output"
+        return sibling_staging_dir(output_dir, scratch_arena=scratch_arena)
+    return work_root / "staging_output", None
 
 
 def read_staged_row_errors(staging_output_dir: Path) -> tuple[RowErrorRecord, ...]:

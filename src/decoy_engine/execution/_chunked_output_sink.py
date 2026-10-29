@@ -31,7 +31,6 @@ from __future__ import annotations
 import dataclasses
 import os
 import shutil
-import tempfile
 from collections.abc import Iterable, Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -47,6 +46,12 @@ from decoy_engine.execution.native._chunked_evidence import (
     copy_decline_records,
     copy_strategy_branch_calls,
     merge_executed_backend,
+)
+from decoy_engine.scratch import (
+    ArenaLike,
+    ensure_native_dir,
+    release_resource,
+    route_write_failure,
 )
 
 if TYPE_CHECKING:
@@ -434,13 +439,21 @@ def _cast(chunk: pa.Table, schema: pa.Schema) -> pa.Table:
 
 class _Spill:
     """Held-back chunks beyond one row group, one Arrow IPC file each in a private
-    directory. Read back with `OSFile`, not a memory map, so pages do not stay resident."""
+    directory. Read back with `OSFile`, not a memory map, so pages do not stay resident.
 
-    def __init__(self, stats: StreamStats, sink: Any, table: str) -> None:
+    F25 T10: the hold-back directory is allocated through the capability seam. With an
+    injected ``arena`` it is a registered native directory; without one it is the same
+    owned `_decoy_hold_*` directory beside the sink's staging directory, and the
+    missing-capability failure (`hold_back_spill_unavailable`, a sink with no
+    `spill_parent`) is preserved."""
+
+    def __init__(self, stats: StreamStats, sink: Any, table: str, arena: ArenaLike | None) -> None:
         self.stats = stats
         self.sink = sink
         self.table = table
+        self.arena = arena
         self.directory: str | None = None
+        self._cap: Any = None
         self.paths: list[str] = []
 
     @property
@@ -451,14 +464,22 @@ class _Spill:
         if self.directory is None:
             self.directory = self._make_directory()
         path = os.path.join(self.directory, f"{len(self.paths):08d}.arrow")
-        with pa.OSFile(path, "wb") as sink, pa.ipc.new_file(sink, chunk.schema) as writer:
-            writer.write_table(chunk)
+        try:
+            with pa.OSFile(path, "wb") as sink, pa.ipc.new_file(sink, chunk.schema) as writer:
+                writer.write_table(chunk)
+        except OSError as exc:
+            route_write_failure(self.arena, self._cap, exc)
         self.paths.append(path)
         self.stats.spilled_chunks += 1
 
     def _make_directory(self) -> str:
-        """Create the private spill directory beside the sink's own staging directory, on the
-        output's filesystem; `TMPDIR` is never consulted."""
+        """Allocate the private hold-back directory on the output's filesystem;
+        `TMPDIR` is never consulted."""
+        if self.arena is not None:
+            path, self._cap = ensure_native_dir(
+                self.arena, fallback_parent=Path("."), writer_id="chunked_hold_back"
+            )
+            return str(path)
         parent = getattr(self.sink, "spill_parent", None)
         if parent is None:
             raise ExecutionError(
@@ -468,8 +489,13 @@ class _Spill:
                     "so they must spill to disk, but the sink names no `spill_parent`."
                 ),
             )
-        Path(parent).mkdir(parents=True, exist_ok=True)
-        return tempfile.mkdtemp(prefix="_decoy_hold_", dir=str(parent))
+        path, self._cap = ensure_native_dir(
+            None,
+            fallback_parent=Path(parent),
+            fallback_prefix="_decoy_hold_",
+            writer_id="chunked_hold_back",
+        )
+        return str(path)
 
     def replay(self) -> Iterator[pa.Table]:
         for path in self.paths:
@@ -482,6 +508,8 @@ class _Spill:
         if self.directory is not None:
             shutil.rmtree(self.directory, ignore_errors=True)
             self.directory = None
+        release_resource(self.arena, self._cap)
+        self._cap = None
 
 
 def _hold_back(
@@ -536,16 +564,23 @@ def _row_group_batches(
 
 
 def stream_table(
-    sink: Any, table: str, chunks: Iterable[pa.Table], *, fixed_columns: frozenset[str]
+    sink: Any,
+    table: str,
+    chunks: Iterable[pa.Table],
+    *,
+    fixed_columns: frozenset[str],
+    arena: ArenaLike | None = None,
 ) -> StreamStats:
     """Stream one routed table's masked chunks into `sink.write_batches`.
 
     Masking runs inside the sink's batch loop, so an error in chunk k propagates through
     `write_batches`. Raises `chunked_schema_mismatch` as `join_dispatcher_chunks` does,
-    but at the offending chunk."""
+    but at the offending chunk. `arena` (F25 T10) is the optional attempt-arena capability
+    the hold-back spill allocates its directory from; the default pre-activation path keeps
+    the `_decoy_hold_*`-beside-staging behavior."""
     stats = StreamStats()
     resolver = _Resolver(table, fixed_columns)
-    spill = _Spill(stats, sink, table)
+    spill = _Spill(stats, sink, table, arena)
     live = iter(chunks)
     try:
         pending = _hold_back(live, resolver, spill, stats)

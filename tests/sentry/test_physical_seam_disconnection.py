@@ -801,6 +801,29 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         # `native/_draw_site_providers.py`. Pure moves; none imports `execution.physical`.
         "src/decoy_engine/execution/_fk_key_compat.py",
         "src/decoy_engine/execution/native/_draw_sites_tokenize.py",
+        # F25 protected scratch (plan docs/plans/2026-10-29-f25-protected-scratch-
+        # quotas-orphan.md): every engine temporary-byte producer threads a typed
+        # attempt-arena capability (`decoy_engine.scratch`, pure stdlib + the scratch
+        # package) and reaches its path only through the capability seam. None of
+        # these imports anything under `execution.physical`; the import-direction
+        # sweeps above stay green. Slice 2 migrated the out-of-core producers (T01-T08)
+        # and Slice 3 the remaining surfaces (T09-T17): the transactional / hold-back
+        # sinks, isolated run/commit/worker + its capability-fd transport.
+        "src/decoy_engine/execution/out_of_core/_scratch.py",
+        "src/decoy_engine/execution/out_of_core/_stage.py",
+        "src/decoy_engine/execution/out_of_core/_relation.py",
+        "src/decoy_engine/execution/out_of_core/_duckdb.py",
+        "src/decoy_engine/execution/out_of_core/_emit.py",
+        "src/decoy_engine/execution/out_of_core/_external_sort.py",
+        "src/decoy_engine/execution/out_of_core/_payload_store.py",
+        "src/decoy_engine/execution/out_of_core/_stream_driver.py",
+        "src/decoy_engine/execution/native/_pool_quality.py",
+        "src/decoy_engine/execution/_transactional_sink.py",
+        "src/decoy_engine/execution/_chunked_output_sink.py",
+        "src/decoy_engine/execution/_isolated_run.py",
+        "src/decoy_engine/execution/_isolated_worker.py",
+        "src/decoy_engine/execution/_isolated_commit.py",
+        "src/decoy_engine/execution/_isolated_cap.py",
     }
     unexpected = [
         name

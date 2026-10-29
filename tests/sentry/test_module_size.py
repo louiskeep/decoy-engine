@@ -64,8 +64,8 @@ MAX = 700
 # One-line rationale per entry; the per-file growth history lives in
 # docs/decisions/module-size-census-history.md.
 ALLOWLIST: dict[str, int] = {
-    # sampler start/finish and evidence threading in _spawn_and_classify; split the spawn/classify half into _isolated_spawn.py.
-    "src/decoy_engine/execution/_isolated_run.py": 608,
+    # sampler start/finish and evidence threading in _spawn_and_classify; F25 T11 attempt-arena work-root allocation + capability-fd transport. Split the spawn/classify half into _isolated_spawn.py.
+    "src/decoy_engine/execution/_isolated_run.py": 675,
     # bounded-eligible fit rule, the fk-dtype retention branch and the D3a validator admission in decide_execution_route; split the route-priority docstring into the plan doc.
     "src/decoy_engine/execution/_pipeline_routing.py": 700,
     # wiring of the fk-dtype hazard and D3a validator signals into the one routing call site, plus
@@ -118,8 +118,8 @@ ALLOWLIST: dict[str, int] = {
     # sequential FK route threading; split the per-table mask/quarantine loop.
     # cross-column V1 folds joint_mask key_by into the source-anchor build (a comment, no new logic).
     "src/decoy_engine/execution/_sequential.py": 691,
-    # transactional publish hardening and row mask; split the publish cluster.
-    "src/decoy_engine/quarantine.py": 645,
+    # transactional publish hardening and row mask; F25 T15 staged-quarantine publication arena. Split the publish cluster.
+    "src/decoy_engine/quarantine.py": 678,
     # code_set provenance and FF1 notice plumbing through the streaming runner; F25 attempt-arena threading (T01).
     "src/decoy_engine/execution/out_of_core/_runner.py": 698,
     # D3a validator mask-step hook threaded through the reorder driver; F25 arena threading into the reorder lane (T06).

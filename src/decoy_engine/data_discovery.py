@@ -24,9 +24,11 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from decoy_engine.errors import DecoyError
+from decoy_engine.scratch import ArenaLike, ensure_native_dir, release_resource
 
 
 class DiscoverySqlError(DecoyError):
@@ -160,6 +162,7 @@ def run_discovery_sql(
     tables: Mapping[str, str],
     *,
     row_limit: int = 10_000,
+    scratch_arena: ArenaLike | None = None,
 ) -> DiscoveryResult:
     """Run a SELECT-only SQL statement against on-disk Parquet tables.
 
@@ -169,6 +172,13 @@ def run_discovery_sql(
     number of returned rows -- the query itself is unbounded, but we
     truncate the materialized result to keep the response small.
 
+    F25 T17: this connection used to carry no configured spill root, so a
+    query larger than memory could spill cleartext intermediates to an
+    unprotected temp directory. With an injected ``scratch_arena`` the native
+    spill path is a registered arena directory; without one the connection
+    disables spilling (``temp_directory`` empty) so an over-budget workload is
+    rejected before any unprotected spill, never silently written to ``/tmp``.
+
     Raises ``DiscoverySqlError`` on validation failure or DuckDB
     execution error.
     """
@@ -176,7 +186,17 @@ def run_discovery_sql(
 
     _validate_select_only(sql)
 
-    con = duckdb.connect(":memory:")
+    spill_cap = None
+    config: dict[str, Any]
+    if scratch_arena is not None:
+        spill_path, spill_cap = ensure_native_dir(
+            scratch_arena, fallback_parent=Path("."), writer_id="data_discovery"
+        )
+        config = {"temp_directory": str(spill_path)}
+    else:
+        config = {"temp_directory": ""}
+
+    con = duckdb.connect(":memory:", config=config)
     try:
         for name, path in tables.items():
             # DuckDB rejects `?` parameter binding inside CREATE VIEW
@@ -201,6 +221,7 @@ def run_discovery_sql(
         return DiscoveryResult(columns=cols, rows=rows)
     finally:
         con.close()
+        release_resource(scratch_arena, spill_cap)
 
 
 __all__ = [

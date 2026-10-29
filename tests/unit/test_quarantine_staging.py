@@ -17,14 +17,21 @@ Two problems:
      before wrapping the raw `mkstemp` fd in a file object, that fd (a bare
      int with no destructor) was never closed -- a leaked file descriptor.
 
-The fix separates fdopen from the write loop and makes every cleanup step
-(`os.close`, `fh.close`, `staged.unlink`) best-effort: a cleanup failure is
-swallowed so it can never mask the original exception.
+The fix separates opening from the write loop and makes every cleanup step
+(`fh.close`, `staged.unlink`) best-effort: a cleanup failure is swallowed so it
+can never mask the original exception.
+
+F25 T15: the staging file is now created through the capability seam
+(`ensure_scratch_file`), which creates and closes the `mkstemp` fd itself and
+returns a path; `write_jsonl_staged` opens that path with `open(...)`. The raw
+`mkstemp` fd no longer lives inside this function (so there is no fdopen-on-raw-
+fd leak window), but the leak-safety contract is unchanged: an open or terminal
+close failure must leave no staged file behind and must propagate the original
+error, which is what these tests pin.
 """
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import pytest
@@ -85,13 +92,15 @@ class TestTerminalCloseFailureDoesNotLeakRawPiiStagingFile:
     def test_close_failure_leaves_no_staged_file_and_propagates(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Fails pre-fix (bare `fh.close()`; the staging file survives because
-        the function never returns a path for the caller to discard); passes
-        post-fix (best-effort unlink runs before the close error propagates)."""
+        """A terminal close failure (e.g. a buffered flush hitting ENOSPC) must
+        run the best-effort unlink before the close error propagates, so the
+        raw-PII staging file is never left behind."""
+        import builtins
+
         final_path = str(tmp_path / "out" / "quarantine.jsonl")
         records = [{"a": 1}]
 
-        real_fdopen = os.fdopen
+        real_open = builtins.open
 
         class _CloseBoomFile:
             """Wraps the real file object; write() delegates unchanged, but
@@ -108,10 +117,10 @@ class TestTerminalCloseFailureDoesNotLeakRawPiiStagingFile:
                 self._real.close()  # type: ignore[attr-defined]
                 raise OSError("simulated close failure (e.g. ENOSPC flush)")
 
-        def _boom_close_fdopen(fd: int, *args: object, **kwargs: object) -> _CloseBoomFile:
-            return _CloseBoomFile(real_fdopen(fd, *args, **kwargs))  # type: ignore[arg-type]
+        def _boom_close_open(file: object, *args: object, **kwargs: object) -> object:
+            return _CloseBoomFile(real_open(file, *args, **kwargs))  # type: ignore[arg-type]
 
-        monkeypatch.setattr(os, "fdopen", _boom_close_fdopen)
+        monkeypatch.setattr(builtins, "open", _boom_close_open)
 
         with pytest.raises(OSError, match="simulated close failure"):
             write_jsonl_staged(final_path, records)
@@ -120,34 +129,26 @@ class TestTerminalCloseFailureDoesNotLeakRawPiiStagingFile:
         assert leftovers == [], "a close() failure must not leave the raw-PII staging file behind"
 
 
-class TestFdopenFailureDoesNotLeakRawFd:
-    def test_fdopen_failure_closes_the_raw_mkstemp_fd(
+class TestOpenFailureDoesNotLeakStagingFile:
+    def test_open_failure_unlinks_the_staged_file_and_propagates(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """If os.fdopen() itself raises before wrapping the fd in a file
-        object, the bare int fd from tempfile.mkstemp has no destructor and
-        would leak unless explicitly closed. Spies on os.close (still
-        delegating to the real close) to prove it happened exactly once."""
+        """The seam creates (and closes) the staging file before
+        `write_jsonl_staged` opens it for writing. If that open fails, the
+        best-effort unlink must remove the already-created staging file and the
+        original open error must propagate -- no orphaned raw-PII file remains."""
+        import builtins
+
         final_path = str(tmp_path / "out" / "quarantine.jsonl")
         records = [{"a": 1}]
 
-        closed_fds: list[int] = []
-        original_close = os.close
+        def _boom_open(*_a: object, **_k: object) -> None:
+            raise OSError("simulated open failure")
 
-        def _tracking_close(fd: int) -> None:
-            closed_fds.append(fd)
-            original_close(fd)
+        monkeypatch.setattr(builtins, "open", _boom_open)
 
-        def _boom_fdopen(fd: int, *args: object, **kwargs: object) -> None:
-            raise OSError("simulated fdopen failure")
-
-        monkeypatch.setattr(os, "close", _tracking_close)
-        monkeypatch.setattr(os, "fdopen", _boom_fdopen)
-
-        with pytest.raises(OSError, match="simulated fdopen failure"):
+        with pytest.raises(OSError, match="simulated open failure"):
             write_jsonl_staged(final_path, records)
 
-        assert len(closed_fds) == 1, "the raw mkstemp fd must be explicitly closed, not leaked"
-
         leftovers = list((tmp_path / "out").glob("_decoy_quarantine_stage_*"))
-        assert leftovers == [], "no orphaned staging file left behind after an fdopen failure"
+        assert leftovers == [], "no orphaned staging file left behind after an open failure"

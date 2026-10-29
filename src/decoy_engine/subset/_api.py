@@ -10,12 +10,15 @@ masking itself is UNCHANGED. `subset_inputs_from_config` converts a validated
 from __future__ import annotations
 
 import json
+import os
+import shutil
 from pathlib import Path
 from typing import Any
 
 import polars as pl
 
 from decoy_engine.plan._types import PlanRelationship
+from decoy_engine.scratch import ArenaLike, ensure_publication_stage, release_resource
 from decoy_engine.subset._closure import ClosureResult, compute_closure, verify_closure
 from decoy_engine.subset._edges import build_subset_edges, relationships_from_config
 from decoy_engine.subset._errors import SubsetConfigError, SubsetPreflightError
@@ -161,6 +164,7 @@ def run_subset(
     job_seed: bytes,
     engine_version: str,
     output_dir: str | Path,
+    scratch_arena: ArenaLike | None = None,
 ) -> SubsetResult:
     """Plan, verify, then materialize + write the manifest.
 
@@ -168,6 +172,12 @@ def run_subset(
     sits strictly before `output_dir` is ever touched. `verify_closure`
     (also inside `_compute`, shared with `plan_subset`) is the last line of
     defense on the upward-completeness invariant before any write happens.
+
+    F25 T14: this is the standalone subset publication path. With an injected
+    `scratch_arena` the filtered Parquet and manifest are staged under a
+    registered destination-side publication arena and transferred to
+    `output_dir` with one atomic rename; without one they are written directly
+    under `output_dir`, exactly as before.
     """
     plan, _key_frames, _edges, _directions, closure = _compute(
         sources=sources,
@@ -179,12 +189,44 @@ def run_subset(
     )
 
     output_dir = Path(output_dir)
-    output_paths = materialize_subset(
-        sources=sources, survivors=closure.survivors, output_dir=output_dir
-    )
     manifest = build_manifest(plan, engine_version)
-    (output_dir / "subset-manifest.json").write_text(
-        json.dumps(to_json_dict(manifest), sort_keys=True, indent=2)
+    manifest_json = json.dumps(to_json_dict(manifest), sort_keys=True, indent=2)
+
+    if scratch_arena is None:
+        output_paths = materialize_subset(
+            sources=sources, survivors=closure.survivors, output_dir=output_dir
+        )
+        (output_dir / "subset-manifest.json").write_text(manifest_json)
+        return SubsetResult(plan=plan, manifest=manifest, output_paths=output_paths)
+
+    # Refuse a pre-existing non-empty target before staging (the same guard
+    # `materialize_subset` applies to a direct write), so the transfer never
+    # overwrites existing output.
+    if output_dir.exists() and any(output_dir.iterdir()):
+        raise SubsetConfigError(
+            code="subset_output_dir_exists",
+            message=f"output_dir {str(output_dir)!r} already exists and is not empty; "
+            "subsetting refuses to write into a non-empty directory",
+        )
+    stage_path, stage_cap = ensure_publication_stage(
+        scratch_arena, output_dir, retention_owner="subset", fallback_prefix=".subset-stage-"
+    )
+    stage = Path(stage_path)
+    try:
+        materialize_subset(
+            sources=sources,
+            survivors=closure.survivors,
+            output_dir=stage,
+            scratch_arena=scratch_arena,
+        )
+        (stage / "subset-manifest.json").write_text(manifest_json)
+        os.replace(stage, output_dir)
+    except BaseException:
+        shutil.rmtree(stage, ignore_errors=True)
+        release_resource(scratch_arena, stage_cap)
+        raise
+    output_paths = tuple(
+        (table, str(output_dir / f"{table}.parquet")) for table in sorted(closure.survivors)
     )
     return SubsetResult(plan=plan, manifest=manifest, output_paths=output_paths)
 

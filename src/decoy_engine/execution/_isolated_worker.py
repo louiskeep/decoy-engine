@@ -31,6 +31,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from decoy_engine.execution._adapter import ExecutionResult
+from decoy_engine.execution._isolated_cap import read_inherited_capability
 from decoy_engine.execution._isolated_common import (
     RESULT_FILENAME,
     apply_mem_cap,
@@ -41,6 +42,7 @@ from decoy_engine.execution._isolated_common import (
 from decoy_engine.execution._pipeline import run_pipeline
 from decoy_engine.execution._transactional_sink import ParquetTransactionalSink
 from decoy_engine.profile._readers import LazySource
+from decoy_engine.scratch import native_dir_path
 
 
 def _error_text(exc: BaseException) -> str:
@@ -120,10 +122,14 @@ def _stage_outputs(outputs: dict[str, pa.Table], staging_output_dir: str) -> lis
     # generation work's peak. Left as-is for part-1 (reordering risks other
     # invariants); B5's telemetry consumer should be aware peak_rss_mb is a
     # slight overestimate of the job's own working set for this reason.
-    os.makedirs(staging_output_dir, exist_ok=True)
+    # F25 T12: resolve the parent-chosen staging directory through the capability
+    # seam. The directory is already owned by the parent-registered work root /
+    # publication stage, so this adopts it (0700) rather than minting a fresh
+    # quota -- the child never allocates a second independent arena.
+    staging = native_dir_path(Path(staging_output_dir), writer_id="isolated_worker")
     written = []
     for table, data in outputs.items():
-        dest = f"{staging_output_dir}/{table}.parquet"
+        dest = f"{staging}/{table}.parquet"
         pq.write_table(data, dest)  # type: ignore[no-untyped-call, unused-ignore]
         written.append(table)
     return written
@@ -245,10 +251,18 @@ def main(argv: list[str]) -> int:
     # can never disagree about where the envelope lands.
     payload_path = Path(argv[1])
     result_path = payload_path.parent / RESULT_FILENAME
+    # F25 T11: read the inherited attempt capability exactly once (it is cleared
+    # after this read). The child runs under the parent's attempt capability and
+    # writes only beneath the parent-registered work root, so it never opens a
+    # fresh arena or a second quota domain. The encrypted key material and the
+    # liveness lock that will also ride this channel are Slice 4/5.
+    inherited_cap = read_inherited_capability(dict(os.environ))
     try:
         with open(payload_path, encoding="utf-8") as fh:
             payload = json.load(fh)
         envelope = _run(payload)
+        if inherited_cap is not None:
+            envelope["attempt_arena_id"] = inherited_cap["arena_id"]
     except BaseException as exc:  # payload unreadable, or a failure outside `_run`'s try
         envelope = {
             "outcome": "oom_killed" if is_memory_failure(exc) else "crashed",

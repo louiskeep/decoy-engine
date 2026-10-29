@@ -1,5 +1,5 @@
 {
-  "_comment": "F25 producer manifest for the scratch allocation sentry. Seeds the plan 1.3 T01-T17 temporary-path inventory. Slice 2 migrated T01-T08 onto the ScratchManager capability seam: their status is 'migrated', each carries an allocation wrapper and an acceptance witness, and the AST + syscall checks enforce them. T09-T17 remain 'unmigrated' (Slice 3). A whole-module exclusion is never allowed; each row names its exact producer module(s). Call-site exemptions are explicit, with a rationale, in 'exemptions'.",
+  "_comment": "F25 producer manifest for the scratch allocation sentry. Seeds the plan 1.3 T01-T17 temporary-path inventory. Slice 2 migrated T01-T08 and Slice 3 migrated T09-T17 onto the ScratchManager capability seam: every row's status is 'migrated', each carries an allocation wrapper and an acceptance witness, and the AST (per-producer drift guard) + syscall checks enforce them. A whole-module exclusion is never allowed; each row names its exact producer module(s). Call-site exemptions are explicit, with a rationale, in 'exemptions'. The sanctioned durable-output sinks the plan carves out (direct quarantine JSONL, model-pack output, rotating logs) are listed in 'durable_output_sinks'; they are classified durable writers, not scratch, and a new temporary sibling cannot inherit that classification.",
   "format_version": 2,
   "producers": [
     {
@@ -147,8 +147,10 @@
         "publication",
         "file"
       ],
-      "status": "unmigrated",
-      "note": "_decoy_stage_*/<table>.parquet whole-table and streaming writes (Slice 3)."
+      "status": "migrated",
+      "allocation": "ParquetTransactionalSink resolves its `_decoy_stage_*` staging directory through ensure_publication_stage (a destination-side PublicationStage when an attempt arena is injected); the whole-table write_table and the streamed ParquetWriter both write inside it, and the single commit rename is unchanged.",
+      "witness": "tests/scratch/test_f25_slice3_migration.py::test_t09_transactional_sink_stages_under_injected_arena; tests/scratch/test_f25_slice3_migration.py::test_t09_edquot_on_write_routes_to_shared_report",
+      "note": "_decoy_stage_*/<table>.parquet whole-table and streaming writes."
     },
     {
       "id": "T10",
@@ -160,8 +162,10 @@
       "kinds": [
         "file"
       ],
-      "status": "unmigrated",
-      "note": "_decoy_hold_*/00000000.arrow; replace the naked spill-parent capability (Slice 3)."
+      "status": "migrated",
+      "allocation": "_Spill allocates its hold-back directory through ensure_native_dir (a registered NativeDirectory when an arena is injected, else the same `_decoy_hold_*`-beside-staging directory); the missing-capability failure (hold_back_spill_unavailable) and the schema hold-back replay are preserved.",
+      "witness": "tests/scratch/test_f25_slice3_migration.py::test_t10_chunked_hold_back_spills_under_injected_arena",
+      "note": "_decoy_hold_*/00000000.arrow; the naked spill-parent capability is replaced by manager allocation."
     },
     {
       "id": "T11",
@@ -176,8 +180,10 @@
         "native_dir",
         "file"
       ],
-      "status": "unmigrated",
-      "note": "decoy-isolated-run-*, sources/<name>.parquet, payload.json, result envelope; payload may carry credentials (Slice 3)."
+      "status": "migrated",
+      "allocation": "_run_isolated allocates the work root through ensure_native_dir before _write_payload serializes sources/payload into it (register-before-write); the attempt capability is transported to the child over an inherited fd (_isolated_cap: pipe + CAP_FD_ENV names only the fd number, never argv/env/path for the capability), and the child writes only beneath the parent-registered root, so it never mints a fresh quota.",
+      "witness": "tests/scratch/test_f25_slice3_migration.py::test_t11_isolated_run_registers_work_root_under_arena; tests/scratch/test_f25_slice3_migration.py::test_t11_capability_transport_over_inherited_fd; tests/scratch/test_f25_slice3_migration.py::test_t11_capability_not_in_argv_or_env",
+      "note": "decoy-isolated-run-*, sources/<name>.parquet, payload.json, result envelope; payload may carry credentials."
     },
     {
       "id": "T12",
@@ -194,8 +200,10 @@
         "file",
         "publication"
       ],
-      "status": "unmigrated",
-      "note": "sibling output stage or work_root/staging_output; row_errors.json, envelope (Slice 3)."
+      "status": "migrated",
+      "allocation": "sibling_staging_dir resolves the output stage through ensure_publication_stage (a registered destination-side PublicationStage when an arena is injected); the worker's _stage_outputs resolves its staging directory through native_dir_path. row_errors.json and the envelope ride the same staged commit-or-discard fate, owned after an abnormal child exit.",
+      "witness": "tests/scratch/test_f25_slice3_migration.py::test_t12_isolated_commit_stages_under_injected_arena",
+      "note": "sibling output stage or work_root/staging_output; row_errors.json, envelope."
     },
     {
       "id": "T13",
@@ -211,8 +219,10 @@
         "native_dir",
         "file"
       ],
-      "status": "unmigrated",
-      "note": "spill-<run_id>, .stage-<run_id>/<schema>.<table>.parquet, snapshot-<run_id> (Slice 3)."
+      "status": "migrated",
+      "allocation": "snapshot_tables_to_parquet allocates the DuckDB spill through ensure_native_dir and the Parquet stage through ensure_publication_stage (both registered when an arena is injected); the snapshot transaction, ordered COPY, deadline timer and extension pinning are unchanged, and the final snapshot-<run_id> is published by the same single rename.",
+      "witness": "tests/scratch/test_f25_slice3_migration.py::test_t13_postgres_snapshot_dirs_resolve_through_seam",
+      "note": "spill-<run_id>, .stage-<run_id>/<schema>.<table>.parquet, snapshot-<run_id>."
     },
     {
       "id": "T14",
@@ -227,8 +237,10 @@
       "kinds": [
         "file"
       ],
-      "status": "unmigrated",
-      "note": "filtered <table>.parquet + subset-manifest.json; intermediates stay registered (Slice 3)."
+      "status": "migrated",
+      "allocation": "run_subset stages the filtered Parquet and subset-manifest.json under a registered publication arena (ensure_publication_stage) and transfers ownership to output_dir with one atomic rename; materialize_subset resolves its write directory through native_dir_path. Closure-before-write and the non-empty-output guard are preserved. Without an arena the direct write to output_dir is unchanged.",
+      "witness": "tests/scratch/test_f25_slice3_migration.py::test_t14_subset_publishes_via_staged_transfer",
+      "note": "filtered <table>.parquet + subset-manifest.json; standalone publication stages then transfers ownership."
     },
     {
       "id": "T15",
@@ -239,8 +251,10 @@
       "kinds": [
         "file"
       ],
-      "status": "unmigrated",
-      "note": "_decoy_quarantine_stage_*.jsonl raw quarantine data in a destination-side arena (Slice 3)."
+      "status": "migrated",
+      "allocation": "finalize_committed_quarantine allocates a 0700 destination-side publication arena (ensure_publication_stage) and write_jsonl_staged writes the raw-quarantine `_decoy_quarantine_stage_*.jsonl` inside it through ensure_scratch_file; the stage charge is released once the sidecar's fate (os.link publish, or discard) is decided. Primary-error / cleanup behavior is unchanged. The DIRECT durable quarantine JSONL stays a classified durable sink (see durable_output_sinks), not a scratch exemption.",
+      "witness": "tests/scratch/test_f25_slice3_migration.py::test_t15_quarantine_stage_under_injected_arena",
+      "note": "_decoy_quarantine_stage_*.jsonl raw quarantine data in a destination-side arena."
     },
     {
       "id": "T16",
@@ -252,8 +266,10 @@
       "kinds": [
         "file"
       ],
-      "status": "unmigrated",
-      "note": ".decoy-fw-*.tmp; retain fsync/rename discipline (Slice 3)."
+      "status": "migrated",
+      "allocation": "_write_all allocates the `.decoy-fw-*.tmp` staging file through ensure_publication_file (a registered destination-side stage file when an arena is injected, else the same owned temp in the target directory); the fsync, atomic os.replace and parent fsync are unchanged, and a write/fsync quota trip routes to the shared report.",
+      "witness": "tests/scratch/test_f25_slice3_migration.py::test_t16_fixed_width_writes_under_injected_arena; tests/scratch/test_f25_slice3_migration.py::test_t16_edquot_on_fsync_routes_to_shared_report",
+      "note": ".decoy-fw-*.tmp; fsync/rename discipline retained."
     },
     {
       "id": "T17",
@@ -265,8 +281,10 @@
       "kinds": [
         "native_dir"
       ],
-      "status": "unmigrated",
-      "note": "in-memory DuckDB with no configured spill root; register/configure its native spill path or reject (Slice 3)."
+      "status": "migrated",
+      "allocation": "run_discovery_sql configures the DuckDB connection's temp_directory from a registered native spill directory (ensure_native_dir) when an arena is injected; without one it disables spilling (temp_directory empty) so an over-budget query is rejected before any unprotected spill, never silently written to /tmp.",
+      "witness": "tests/scratch/test_f25_slice3_migration.py::test_t17_discovery_spill_configured_from_arena; tests/scratch/test_f25_slice3_migration.py::test_t17_discovery_disables_spill_without_arena",
+      "note": "in-memory DuckDB; native spill path registered/configured, or spilling disabled and the workload rejected."
     }
   ],
   "exemptions": [
@@ -274,6 +292,23 @@
       "module": "execution/out_of_core/_runner.py",
       "symbol": "tempfile.mkdtemp",
       "rationale": "Stage-root container only (prefix decoy-ooc-*), created when the caller passes no temp_dir. It holds no data directly: the attempt arena is created beneath it (ensure_scratch) and owns every data write, and the local arena is released in the finally. Replaced by the lease local_stage_root when the qualified arena is injected at activation (Slice 6)."
+    }
+  ],
+  "durable_output_sinks": [
+    {
+      "module": "quarantine.py",
+      "symbol": "_write_jsonl",
+      "rationale": "The DIRECT durable quarantine JSONL (plan 1.3 quarantine.py:304) is a classified durable output sink, not scratch. T15 migrates only the staged raw-quarantine path; this direct sink writes the caller's chosen durable path. A new temporary sibling cannot inherit this classification."
+    },
+    {
+      "module": "profiling/model_pack/trainer.py",
+      "symbol": "model_pack_output",
+      "rationale": "Model-pack output (plan 1.3 trainer.py:539) is a durable artifact the caller asked for, not temporary scratch. Not a scratch producer; listed here so the carve-out is explicit."
+    },
+    {
+      "module": "internal/logging.py",
+      "symbol": "rotating_logs",
+      "rationale": "Rotating operational logs (plan 1.3 internal/logging.py:101) are durable operational output, not scratch. Log hygiene (no data/expression text) is enforced separately; not a scratch producer."
     }
   ]
 }

@@ -23,6 +23,7 @@ from pathlib import Path
 
 import polars as pl
 
+from decoy_engine.scratch import ArenaLike, native_dir_path
 from decoy_engine.subset._errors import SubsetConfigError, SubsetInternalError
 from decoy_engine.subset._keys import RI
 from decoy_engine.subset._types import SubsetSource
@@ -33,6 +34,7 @@ def materialize_subset(
     sources: Mapping[str, SubsetSource],
     survivors: Mapping[str, frozenset[int]],
     output_dir: Path,
+    scratch_arena: ArenaLike | None = None,
 ) -> tuple[tuple[str, str], ...]:
     """Write one filtered Parquet file per table under `output_dir`.
 
@@ -41,6 +43,12 @@ def materialize_subset(
     `output_dir` is created here, and only here -- refusing to reuse an
     existing non-empty directory is what makes "no partial Parquet was
     written" testable when an earlier stage raises.
+
+    F25 T14: when `run_subset` injects an attempt arena it passes a registered
+    destination-side publication stage as `output_dir` (and transfers ownership
+    with one rename afterwards); the write directory is then resolved through the
+    capability seam. Without an arena the behavior is unchanged: the filtered
+    Parquet is written straight under the caller's `output_dir`.
     """
     output_dir = Path(output_dir)
     if output_dir.exists() and any(output_dir.iterdir()):
@@ -49,11 +57,15 @@ def materialize_subset(
             message=f"output_dir {str(output_dir)!r} already exists and is not empty; "
             "subsetting refuses to write into a non-empty directory",
         )
-    output_dir.mkdir(parents=True, exist_ok=True)
+    if scratch_arena is not None:
+        write_dir = Path(native_dir_path(output_dir, writer_id="subset_materialize"))
+    else:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        write_dir = output_dir
 
     written: list[tuple[str, str]] = []
     for table in sorted(survivors):
-        out_path = output_dir / f"{table}.parquet"
+        out_path = write_dir / f"{table}.parquet"
         idx = sorted(survivors[table])
         frame = (
             pl.scan_parquet(sources[table].path)

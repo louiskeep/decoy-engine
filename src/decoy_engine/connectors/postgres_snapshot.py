@@ -55,6 +55,12 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 
+from decoy_engine.scratch import (
+    ArenaLike,
+    ensure_native_dir,
+    ensure_publication_stage,
+    release_resource,
+)
 from decoy_engine.sdk import PermanentError
 
 __all__ = [
@@ -428,6 +434,8 @@ def snapshot_tables_to_parquet(
     config: PostgresSnapshotConfig,
     selections: list[RelationSelection],
     dest_dir: Path,
+    *,
+    scratch_arena: ArenaLike | None = None,
 ) -> dict[str, Path]:
     """Stage every selection from ONE snapshot; return ``{schema.table: parquet_path}``.
 
@@ -435,6 +443,14 @@ def snapshot_tables_to_parquet(
     relation. A single-relation snapshot is this same call with one selection.
     On any failure, timeout, or interrupt nothing is published and every
     staged and spill file is removed.
+
+    F25 T13: the DuckDB spill directory and the Parquet staging directory are
+    both allocated through the capability seam. With an injected ``scratch_arena``
+    the spill is a registered native directory and the stage is a registered
+    destination-side publication arena (so the ``os.replace`` into
+    ``snapshot-<run_id>`` is still a same-filesystem rename); without one they are
+    the same owned 0700 directories as before. The snapshot transaction, ordered
+    COPY, and timeout/extension controls are unchanged.
     """
     if not selections:
         raise PostgresSnapshotError("no_selections")
@@ -444,10 +460,18 @@ def snapshot_tables_to_parquet(
 
     run_id = uuid.uuid4().hex
     dest_dir.mkdir(parents=True, exist_ok=True)
-    stage_dir = dest_dir / f".stage-{run_id}"
     final_dir = dest_dir / f"snapshot-{run_id}"
-    spill_dir = config.temp_directory / f"spill-{run_id}"
-    stage_dir.mkdir(mode=0o700)
+    stage_path, stage_cap = ensure_publication_stage(
+        scratch_arena, final_dir, retention_owner="postgres_snapshot", fallback_prefix=".stage-"
+    )
+    stage_dir = Path(stage_path)
+    spill_path, spill_cap = ensure_native_dir(
+        scratch_arena,
+        fallback_parent=config.temp_directory,
+        fallback_prefix="spill-",
+        writer_id="postgres_snapshot",
+    )
+    spill_dir = Path(spill_path)
 
     published = False
     conn: Any = None
@@ -524,5 +548,9 @@ def snapshot_tables_to_parquet(
                 pass
         shutil.rmtree(stage_dir, ignore_errors=True)
         shutil.rmtree(spill_dir, ignore_errors=True)
+        # Release the registered spill/stage ledger charges. On publish the stage
+        # became durable output (its path is gone), so release is a ledger no-op.
+        release_resource(scratch_arena, spill_cap)
         if not published:
+            release_resource(scratch_arena, stage_cap)
             shutil.rmtree(final_dir, ignore_errors=True)

@@ -44,13 +44,19 @@ import errno
 import json
 import logging
 import os
-import tempfile
 from collections import defaultdict
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
+from decoy_engine.scratch import (
+    ArenaLike,
+    PublicationStage,
+    ensure_publication_stage,
+    ensure_scratch_file,
+    release_resource,
+)
 from decoy_engine.validators._types import QuarantineSummary
 
 if TYPE_CHECKING:
@@ -319,9 +325,19 @@ def _write_jsonl(path: str, records: list[dict[str, Any]]) -> None:
             fh.write(json.dumps(record, default=_json_default) + "\n")
 
 
-def write_jsonl_staged(final_path: str, records: list[dict[str, Any]]) -> Path:
+def write_jsonl_staged(
+    final_path: str, records: list[dict[str, Any]], *, staging_dir: Path | None = None
+) -> Path:
     """Write ``records`` as JSONL to a private staging file beside ``final_path``,
     returning the staging path. Never touches ``final_path`` itself.
+
+    F25 T15: the staged file is created through the capability seam
+    (``ensure_scratch_file``) rather than a raw ``tempfile`` call. When
+    ``staging_dir`` is given (the registered destination-side publication stage
+    that ``finalize_committed_quarantine`` allocates from an attempt arena) the
+    file lands there; otherwise it is created in ``final_path``'s own parent, the
+    same owned ``_decoy_quarantine_stage_*`` file as before, so the later
+    same-filesystem ``os.link`` publish is unchanged.
 
     DE-08 (HIGH data-safety finding): a transactional caller (``run_sequential``
     with a ``TransactionalSink``) must not publish the quarantine sidecar to its
@@ -355,21 +371,20 @@ def write_jsonl_staged(final_path: str, records: list[dict[str, Any]]) -> Path:
     """
     out_path = Path(final_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_name = tempfile.mkstemp(
-        prefix="_decoy_quarantine_stage_", suffix=".jsonl", dir=out_path.parent
+    target_dir = staging_dir if staging_dir is not None else out_path.parent
+    staged_path, _ = ensure_scratch_file(
+        None,
+        fallback_dir=target_dir,
+        fallback_prefix="_decoy_quarantine_stage_",
+        fallback_suffix=".jsonl",
     )
-    staged = Path(tmp_name)
+    staged = Path(staged_path)
     try:
-        fh = os.fdopen(fd, "w", encoding="utf-8")
+        fh = open(staged, "w", encoding="utf-8")  # noqa: SIM115 -- handle lifecycle is managed below
     except BaseException:
-        # fdopen wraps the raw mkstemp fd in a file object; if it raises
-        # before doing so, the bare fd has no destructor and would leak.
-        # Close/unlink are best-effort so a cleanup failure cannot mask the
-        # real fdopen error via the bare raise.
-        try:
-            os.close(fd)
-        except OSError:
-            pass
+        # The staged file already exists (the seam created it); if opening it for
+        # writing fails, drop it so no empty stage is left behind. Best-effort so a
+        # cleanup failure cannot mask the real open error via the bare raise.
         try:
             staged.unlink(missing_ok=True)
         except OSError:
@@ -571,6 +586,7 @@ def finalize_committed_quarantine(
     output_path: str,
     entries: list[dict[str, Any]],
     counts_by_trigger: dict[str, int],
+    scratch_arena: ArenaLike | None = None,
 ) -> dict[str, Any] | None:
     """Publish the quarantine sidecar; return its evidence-manifest entry.
 
@@ -591,15 +607,32 @@ def finalize_committed_quarantine(
         return None
     if is_genuine_transactional_sink:
         guard_quarantine_not_aliasing_committed_table(sink, written_tables, output_path)
-        staged = write_jsonl_staged(output_path, entries)
+        # F25 T15: the raw-quarantine JSONL stages inside a registered 0700
+        # destination-side publication arena when an attempt arena is injected;
+        # the stage (and its ledger charge) is released once the sidecar's fate
+        # is decided, whether it publishes or is discarded.
+        stage_dir: Path | None = None
+        stage_cap: PublicationStage | None = None
+        if scratch_arena is not None:
+            stage_path, stage_cap = ensure_publication_stage(
+                scratch_arena,
+                Path(output_path),
+                retention_owner="quarantine",
+                fallback_prefix="_decoy_quarantine_stage_",
+            )
+            stage_dir = Path(stage_path)
         try:
-            publish_staged_jsonl(staged, output_path)
-        except BaseException:
-            # Tables are already committed; this is a bare sidecar-publish
-            # failure, not a run failure -- discard the orphaned staged file
-            # and surface the error.
-            discard_staged_jsonl(staged)
-            raise
+            staged = write_jsonl_staged(output_path, entries, staging_dir=stage_dir)
+            try:
+                publish_staged_jsonl(staged, output_path)
+            except BaseException:
+                # Tables are already committed; this is a bare sidecar-publish
+                # failure, not a run failure -- discard the orphaned staged file
+                # and surface the error.
+                discard_staged_jsonl(staged)
+                raise
+        finally:
+            release_resource(scratch_arena, stage_cap)
     else:
         _write_jsonl(output_path, entries)
     return quarantine_manifest(

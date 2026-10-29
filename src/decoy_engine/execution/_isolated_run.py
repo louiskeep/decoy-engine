@@ -67,7 +67,6 @@ import os
 import shutil
 import subprocess
 import sys
-import tempfile
 from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
@@ -76,6 +75,11 @@ from typing import Any
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from decoy_engine.execution._isolated_cap import (
+    capability_descriptor,
+    child_env_with_cap_fd,
+    open_capability_channel,
+)
 from decoy_engine.execution._isolated_commit import (
     CommitError,
     atomic_commit,
@@ -103,6 +107,12 @@ from decoy_engine.execution._isolated_common import (
 from decoy_engine.execution._isolated_memwatch import error_suffix, evidence_of, start_sampler
 from decoy_engine.execution._pipeline import run_pipeline
 from decoy_engine.execution._row_errors import RowErrorRecord
+from decoy_engine.scratch import (
+    ArenaLike,
+    ensure_native_dir,
+    release_resource,
+    route_write_failure,
+)
 
 __all__ = ["run_pipeline_isolated"]
 
@@ -145,6 +155,7 @@ def run_pipeline_isolated(
     isolate: bool = True,
     on_spawn: Callable[[int], None] | None = None,
     timeout_s: float | None = _DEFAULT_TIMEOUT_S,
+    scratch_arena: ArenaLike | None = None,
     **run_pipeline_kwargs: Any,
 ) -> IsolatedRunResult:
     """Run one pipeline job in a fresh child process; return a clean result.
@@ -224,7 +235,9 @@ def run_pipeline_isolated(
                 "per-job sample; do not feed it into telemetry recalibration."
             )
         output_dir_path = Path(output_dir) if output_dir is not None else None
-        return _run_in_process(config, sources, run_pipeline_kwargs, output_dir_path)
+        return _run_in_process(
+            config, sources, run_pipeline_kwargs, output_dir_path, scratch_arena=scratch_arena
+        )
 
     return _run_isolated(
         config,
@@ -236,6 +249,7 @@ def run_pipeline_isolated(
         on_spawn=on_spawn,
         timeout_s=timeout_s,
         run_pipeline_kwargs=run_pipeline_kwargs,
+        scratch_arena=scratch_arena,
     )
 
 
@@ -256,6 +270,8 @@ def _run_in_process(
     sources: dict[str, pa.Table] | None,
     run_pipeline_kwargs: dict[str, Any],
     output_dir: Path | None,
+    *,
+    scratch_arena: ArenaLike | None = None,
 ) -> IsolatedRunResult:
     try:
         result = run_pipeline(config, sources, **run_pipeline_kwargs)
@@ -279,12 +295,13 @@ def _run_in_process(
         # stage-then-atomic-rename discipline as the isolated path (MED-1)
         # -- otherwise isolate=True/False silently diverge on what actually
         # lands on disk despite reporting the same `completed` outcome.
-        staging_dir = sibling_staging_dir(output_dir)
+        staging_dir, stage_cap = sibling_staging_dir(output_dir, scratch_arena=scratch_arena)
         try:
             stage_tables(result.outputs, staging_dir)
             atomic_commit(staging_dir, output_dir)
         except CommitError as exc:
             shutil.rmtree(staging_dir, ignore_errors=True)
+            release_resource(scratch_arena, stage_cap)
             return IsolatedRunResult(
                 outcome="crashed",
                 peak_rss_mb=round(peak_rss_mb(), 1),
@@ -324,16 +341,29 @@ def _run_isolated(
     on_spawn: Callable[[int], None] | None,
     timeout_s: float | None,
     run_pipeline_kwargs: dict[str, Any],
+    scratch_arena: ArenaLike | None = None,
 ) -> IsolatedRunResult:
     owns_work_root = staging_dir is None
-    work_root = (
-        Path(staging_dir)
-        if staging_dir is not None
-        else Path(tempfile.mkdtemp(prefix="decoy-isolated-run-"))
-    )
+    work_cap = None
+    if staging_dir is not None:
+        work_root = Path(staging_dir)
+    else:
+        # F25 T11: register the work root before any source or payload byte is
+        # serialized into it. With an injected arena it is a registered native
+        # directory; otherwise the seam creates the same owned `decoy-isolated-
+        # run-*` directory under the system temp root as before.
+        work_root_s, work_cap = ensure_native_dir(
+            scratch_arena,
+            fallback_parent=None,
+            fallback_prefix="decoy-isolated-run-",
+            writer_id="isolated_run",
+        )
+        work_root = Path(work_root_s)
     work_root.mkdir(parents=True, exist_ok=True)
     output_dir_path = Path(output_dir) if output_dir is not None else None
-    staging_output_dir = resolve_staging_output_dir(work_root, output_dir_path)
+    staging_output_dir, staging_cap = resolve_staging_output_dir(
+        work_root, output_dir_path, scratch_arena=scratch_arena
+    )
 
     try:
         payload_path = _write_payload(
@@ -344,6 +374,8 @@ def _run_isolated(
             mem_cap_bytes,
             rlimit_kind,
             staging_output_dir,
+            scratch_arena=scratch_arena,
+            work_cap=work_cap,
         )
         return _spawn_and_classify(
             payload_path,
@@ -353,10 +385,13 @@ def _run_isolated(
             timeout_s=timeout_s,
             mem_cap_bytes=mem_cap_bytes,
             rlimit_kind=rlimit_kind,
+            scratch_arena=scratch_arena,
         )
     finally:
         if owns_work_root:
             shutil.rmtree(work_root, ignore_errors=True)
+        release_resource(scratch_arena, work_cap)
+        release_resource(scratch_arena, staging_cap)
 
 
 def _write_payload(
@@ -367,13 +402,21 @@ def _write_payload(
     mem_cap_bytes: int | None,
     rlimit_kind: str,
     staging_output_dir: Path,
+    *,
+    scratch_arena: ArenaLike | None = None,
+    work_cap: Any = None,
 ) -> Path:
     sources_dir = work_root / "sources"
     sources_dir.mkdir(parents=True, exist_ok=True)
     sources_manifest: dict[str, str] = {}
     for name, table in (sources or {}).items():
         dest = sources_dir / f"{name}.parquet"
-        pq.write_table(table, dest)  # type: ignore[no-untyped-call, unused-ignore]
+        try:
+            pq.write_table(table, dest)  # type: ignore[no-untyped-call, unused-ignore]
+        except OSError as exc:
+            # A quota trip while staging a source is the attempt's failure; route
+            # it to the shared report (A02) when the work root is a registered arena.
+            route_write_failure(scratch_arena, work_cap, exc)
         sources_manifest[name] = str(dest)
 
     payload = {
@@ -409,6 +452,7 @@ def _spawn_and_classify(
     timeout_s: float | None,
     mem_cap_bytes: int | None,
     rlimit_kind: str,
+    scratch_arena: ArenaLike | None = None,
 ) -> IsolatedRunResult:
     # HIGH-1: the envelope is a known FILE in work_root (payload_path's own
     # parent), never stdout's last line -- see `_isolated_common.RESULT_
@@ -424,9 +468,32 @@ def _spawn_and_classify(
     # the child's `run_pipeline`) runs in-process instead of spawning a
     # grandchild -- see that marker's docstring for the runaway it prevents.
     env = {**os.environ, **CAPPED_ENV, ISOLATED_WORKER_ENV: "1"}
+    # F25 T11: pass the attempt-arena capability to the child over an inherited
+    # fd, never argv/env/path. Only the fd NUMBER is named in the environment;
+    # the capability bytes travel through the pipe and the child reads them once.
+    pass_fds: tuple[int, ...] = ()
+    cap_read_fd: int | None = None
+    cap_write_fd: int | None = None
+    descriptor = capability_descriptor(scratch_arena)
+    if descriptor is not None:
+        cap_read_fd, cap_write_fd = open_capability_channel(descriptor)
+        env = child_env_with_cap_fd(env, cap_read_fd)
+        pass_fds = (cap_read_fd,)
     proc = subprocess.Popen(  # noqa: S603
-        cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+        cmd,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        pass_fds=pass_fds,
     )
+    # The parent keeps no copy of the capability channel open: close both ends
+    # now that the child has inherited the read end, so the child reads EOF after
+    # the one descriptor and no capability fd lingers in this process.
+    if cap_write_fd is not None:
+        os.close(cap_write_fd)
+    if cap_read_fd is not None:
+        os.close(cap_read_fd)
 
     sampler = None
     try:
