@@ -32,7 +32,8 @@ def test_a2_zero_pad_formats_and_never_truncates() -> None:
     over = fmt(zero_pad(3), 1000)
     assert not over.ok and _code(over) == "declared_output_width_overflow"
     # the sign consumes width
-    assert fmt(zero_pad(3), -42).value is None or not fmt(zero_pad(3), -42).ok
+    assert fmt(zero_pad(3), -42).value == "-42"
+    assert fmt(zero_pad(4), -42).value == "-042"
     assert _code(fmt(zero_pad(3), -420)) == "declared_output_width_overflow"
     assert parse(INT64, "042").value == 42
 
@@ -216,8 +217,9 @@ def test_a6_currency() -> None:
     assert parse(USD, "-$1,234.50").value == Decimal("-1234.50")
     for bad in ("12,34.56", "1,234.50$", "(1,234.50)", "1,234.50", "$1,23.50", "$,234.50", "$1234,567.00"):
         assert _code(parse(USD, bad)) == "declared_currency_invalid", bad
-    assert parse(USD, "$1234.50").ok is False or parse(USD, "$1234.50").value == Decimal("1234.50")
-    assert fmt(USD, Decimal("1234.5")).value is None or not fmt(USD, Decimal("1234.5")).ok
+    assert _code(parse(USD, "$1234.50")) == "declared_currency_invalid"  # grouping is canonical
+    assert fmt(USD, Decimal("1234.5")).value == "$1,234.50"
+    assert _code(fmt(USD, Decimal("1234.567"))) == "declared_decimal_precision_loss"
     assert fmt(USD, Decimal("1234.50")).value == "$1,234.50"
     assert fmt(EUR, Decimal("-1234.50")).value == "-1.234,50 EUR"
     accounting = {**USD, "sign_style": "accounting_parentheses"}
@@ -283,7 +285,7 @@ def test_a7_overpunch_rejections_and_signed_zero() -> None:
     assert fmt(OVERPUNCH, parse(OVERPUNCH, "0000}").value).value == "0000}"
     for bad in ("00123", "0012", "001234{", "00 2{", "0012a", "0012{ ", "12ZZ{"):
         assert _code(parse(OVERPUNCH, bad)) == "declared_cobol_invalid", bad
-    assert _code(fmt(OVERPUNCH, Decimal("1234.56"))) == "declared_decimal_overflow" or True
+    assert _code(fmt(OVERPUNCH, Decimal("1234.56"))) == "declared_decimal_overflow"
 
 
 def test_a7_zoned_ebcdic() -> None:
@@ -339,24 +341,18 @@ def test_a7_comp3() -> None:
 def test_a7_scale_is_applied_with_scaleb_not_ambient_context() -> None:
     parse, _ = _api()
     spec = {"id": "cobol/comp-3/v1", "precision": 20, "scale": 18, "signed": True}
+    raw = bytes.fromhex("0" + "12345678901234567890" + "c")
+    assert len(raw) == 11
     hostile = decimal.Context(prec=3, rounding=decimal.ROUND_HALF_UP, traps=[])
     old = decimal.getcontext().copy()
-    decimal.setcontext(hostile)
-    try:
-        out = parse(spec, bytes.fromhex("00000000000000000000d" + "0")[:11] if False else bytes.fromhex("0123456789012345678c")[:11])
-    finally:
-        decimal.setcontext(old)
-    # 11 bytes = ceil(21/2); build a valid value explicitly instead of the shortcut above.
-    raw = bytes.fromhex("01234567890123456789" + "0c")[:11]
-    assert len(raw) == 11
     decimal.setcontext(hostile)
     try:
         got = parse(spec, raw)
     finally:
         decimal.setcontext(old)
-    assert got.ok or _code(got) == "declared_cobol_invalid"
-    if got.ok:
-        assert got.value == Decimal(12345678901234567890).scaleb(-18) or got.value == Decimal("12.34567890123456789")
+    assert got.ok
+    assert got.value == Decimal("12.345678901234567890")
+    assert str(got.value) == "12.345678901234567890"
 
 
 # -- sentinel --------------------------------------------------------------------------------
