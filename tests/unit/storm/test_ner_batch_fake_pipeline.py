@@ -3,7 +3,7 @@
 branches), via a FAKE `_pipeline` -- no `spacy_installed()`/`model_installed()`
 call at import time, unlike `test_ner_spans.py`'s `needs_ner` line, so this
 module collects and runs cleanly with spaCy absent AND under a mutation harness
-that trampoline-wraps every function in `storm/ner.py` (a module-level call to
+that trampoline-wraps every function in `detection/ner.py` (a module-level call to
 a mutated function during collection reports as a pytest collection error, not
 a test failure -- keeping these tests in their own import-time-clean module is
 what lets `iter_ner_spans_batch` be graded in isolation).

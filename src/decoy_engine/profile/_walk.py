@@ -176,7 +176,7 @@ def _walk_column(
     # distinct_count by the full-frame non-null count (see
     # plan/_checks_freetext_advisory.py), which under active sampling makes
     # the ratio a conservative lower bound -- intentional for a warn-only
-    # advisory. Mirrors storm/profiler.py's FieldStats.avg_length computation.
+    # advisory. Mirrors profiling/profiler.py's FieldStats.avg_length computation.
     # None for non-string dtypes; None when the sample has no non-null
     # values (an all-null or empty column).
     avg_length: float | None = None

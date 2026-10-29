@@ -1,7 +1,7 @@
 """NER-backed text_redact spans (capability-gaps WS2, 2026-06-12).
 
 The regex span catalog deliberately omits person_name/address (no regex
-shape); storm/ner.py fills the hole with spaCy NER under the same Span
+shape); detection/ner.py fills the hole with spaCy NER under the same Span
 contract. Inference cells skip when spacy or en_core_web_sm is absent
 (the `ner` extra is optional); the availability/compile-check cells run
 everywhere.
@@ -260,7 +260,9 @@ class TestModelVersionStamp:
         from decoy_engine.plan import _compile as compile_mod
         from decoy_engine.plan import compile_plan
 
-        monkeypatch.setattr("decoy_engine.detection.ner.installed_model_version", lambda model: "9.9.9")
+        monkeypatch.setattr(
+            "decoy_engine.detection.ner.installed_model_version", lambda model: "9.9.9"
+        )
         cfg = {
             "global_settings": {"seed": 1},
             "tables": [
@@ -297,7 +299,9 @@ class TestModelVersionStamp:
         from decoy_engine.plan import _compile as compile_mod
         from decoy_engine.plan import compile_plan
 
-        monkeypatch.setattr("decoy_engine.detection.ner.installed_model_version", lambda model: None)
+        monkeypatch.setattr(
+            "decoy_engine.detection.ner.installed_model_version", lambda model: None
+        )
         monkeypatch.setattr(compile_mod, "check_text_redact_ner_available", lambda config: None)
         cfg = {
             "global_settings": {"seed": 1},
@@ -331,7 +335,7 @@ class TestModelVersionStamp:
 # tests for the batch helper's own logic live in
 # `test_ner_batch_fake_pipeline.py` -- a separate module so they collect
 # without this file's module-level `spacy_installed()`/`model_installed()`
-# call, which a mutation harness that trampoline-wraps `storm/ner.py` turns
+# call, which a mutation harness that trampoline-wraps `detection/ner.py` turns
 # into a collection error rather than a test result.
 # ---------------------------------------------------------------------------
 

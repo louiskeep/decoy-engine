@@ -422,7 +422,7 @@ class TestAllDetectorsHaveDefaultStrategy:
 
 
 class TestLocationDefault:
-    """TX-2: `location` (the NER GPE/LOC/FAC mapping, storm/ner.py's
+    """TX-2: `location` (the NER GPE/LOC/FAC mapping, detection/ner.py's
     NER_ENTITY_MAP) had no DETECTOR_DEFAULTS entry, so an injected location
     span silently fell to the "redact" fallback at mask_cell's dispatch
     (`effective_map.get(span.detector_id, "redact")`) instead of synthesizing

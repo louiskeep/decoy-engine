@@ -1,7 +1,7 @@
 """MG-1 S4 (2026-06-01): ICD-10-CM domain generator regression cells.
 
 Pins chapter-range correctness + deterministic generation + adapter
-contracts. The chapter table is shared with storm/detectors via
+contracts. The chapter table is shared with detection/detectors via
 _ICD10_CHAPTERS so the generator + the detector agree on what's
 valid.
 """

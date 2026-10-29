@@ -274,7 +274,9 @@ class TestCustomDetectorIdsSkipped:
             fields=[fake_field],
         )
 
-        def _fake_profile_columns(df: pd.DataFrame, source_label: str, **kwargs: object) -> ColumnProfile:
+        def _fake_profile_columns(
+            df: pd.DataFrame, source_label: str, **kwargs: object
+        ) -> ColumnProfile:
             return fake_profile
 
         monkeypatch.setattr(_pii, "profile_columns", _fake_profile_columns)
@@ -324,7 +326,9 @@ class TestCustomDetectorIdsSkipped:
             fields=[fake_field],
         )
 
-        def _fake_profile_columns(df: pd.DataFrame, source_label: str, **kwargs: object) -> ColumnProfile:
+        def _fake_profile_columns(
+            df: pd.DataFrame, source_label: str, **kwargs: object
+        ) -> ColumnProfile:
             return fake_profile
 
         monkeypatch.setattr(_pii, "profile_columns", _fake_profile_columns)

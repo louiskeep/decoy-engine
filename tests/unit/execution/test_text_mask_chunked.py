@@ -166,7 +166,9 @@ def _install_fake_ner(monkeypatch, spans_by_marker: dict[str, str]) -> None:
         return [_find_spans(text) for text in texts]
 
     monkeypatch.setattr("decoy_engine.detection.ner.iter_ner_spans", _fake_iter_ner_spans)
-    monkeypatch.setattr("decoy_engine.detection.ner.iter_ner_spans_batch", _fake_iter_ner_spans_batch)
+    monkeypatch.setattr(
+        "decoy_engine.detection.ner.iter_ner_spans_batch", _fake_iter_ner_spans_batch
+    )
 
 
 def _extract_span(masked_cell: str) -> str:

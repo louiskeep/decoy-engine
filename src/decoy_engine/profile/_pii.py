@@ -81,7 +81,7 @@ def detect_pii_classes(df: pd.DataFrame, table_name: str) -> dict[str, PIIClass]
                     "STORM built-in detector %r fired on column %r (table %r) "
                     "but is not in decoy_engine.profile.PIIClass; tag dropped. "
                     "Add the member to keep the closed enum in sync with "
-                    "storm/detectors.py REGISTERED_DETECTORS.",
+                    "detection/detectors.py REGISTERED_DETECTORS.",
                     best.detector_id,
                     field_stats.name,
                     table_name,
