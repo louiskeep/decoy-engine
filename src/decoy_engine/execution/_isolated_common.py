@@ -34,8 +34,10 @@ from typing import TYPE_CHECKING, Any, Literal
 import duckdb
 
 from decoy_engine import reasons
+from decoy_engine.errors import ConfigError
 from decoy_engine.execution._isolated_memwatch import MemoryEvidence
 from decoy_engine.execution._row_errors import RowErrorRecord
+from decoy_engine.reasons import ReasonRecord
 from decoy_engine.validation_result import CODES
 
 if TYPE_CHECKING:
@@ -276,8 +278,23 @@ def exception_error_text(exc: BaseException) -> str:
     code = getattr(exc, "code", None)
     if isinstance(code, str) and code in _TRUSTED_CODES:
         head = f"{head} [{code}]"
-    markers = preserved_route_markers(str(exc))
+    markers = _trusted_route_markers(exc)
     return f"{head}: {'; '.join(markers)}" if markers else head
+
+
+def _trusted_route_markers(exc: BaseException) -> tuple[str, ...]:
+    """The governor's route markers, read only from an exception the engine itself raised.
+
+    The markers are `ConfigError` messages authored by `decide_execution_route`. The text of any
+    other exception (a parser, a user callback, a hostile `__str__`) is data, and data must never
+    steer the governor's reroute, so it is not searched. A `__str__` that raises costs the markers,
+    never the primary failure."""
+    if not isinstance(exc, ConfigError):
+        return ()
+    try:
+        return preserved_route_markers(str(exc))
+    except Exception:
+        return ()
 
 
 def commit_error_text(exc: BaseException) -> str:
@@ -412,6 +429,9 @@ class IsolatedRunResult:
     # outcome -- there is nothing to attribute a row error to.
     row_errors: tuple[RowErrorRecord, ...] = ()
     extra: dict[str, Any] = field(default_factory=dict)
+    # The structured reason of a failed run (F29): validated registry identity, phase, retry class,
+    # outcome and closed context. `None` for a completed run. Carries no message or class name.
+    reason: ReasonRecord | None = None
     # Driver-side memory sampling of a capped isolated run; a suspicion beside an unchanged
-    # outcome, never a verdict. None for uncapped and in-process runs.
+    # outcome, never a verdict. None for uncapped and in-process runs. Stays the last field.
     memory_evidence: MemoryEvidence | None = None

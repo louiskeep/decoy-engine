@@ -65,7 +65,7 @@ MAX = 700
 # docs/decisions/module-size-census-history.md.
 ALLOWLIST: dict[str, int] = {
     # sampler start/finish and evidence threading in _spawn_and_classify; split the spawn/classify half into _isolated_spawn.py.
-    "src/decoy_engine/execution/_isolated_run.py": 608,
+    "src/decoy_engine/execution/_isolated_run.py": 622,
     # bounded-eligible fit rule, the fk-dtype retention branch and the D3a validator admission in decide_execution_route; split the route-priority docstring into the plan doc.
     "src/decoy_engine/execution/_pipeline_routing.py": 700,
     # wiring of the fk-dtype hazard and D3a validator signals into the one routing call site, plus
@@ -117,11 +117,11 @@ ALLOWLIST: dict[str, int] = {
     "src/decoy_engine/execution/_sequential_native.py": 697,
     # sequential FK route threading; split the per-table mask/quarantine loop.
     # cross-column V1 folds joint_mask key_by into the source-anchor build (a comment, no new logic).
-    "src/decoy_engine/execution/_sequential.py": 692,
+    "src/decoy_engine/execution/_sequential.py": 696,
     # transactional publish hardening and row mask; split the publish cluster.
     "src/decoy_engine/quarantine.py": 645,
     # code_set provenance and FF1 notice plumbing through the streaming runner.
-    "src/decoy_engine/execution/out_of_core/_runner.py": 680,
+    "src/decoy_engine/execution/out_of_core/_runner.py": 681,
     # D3a validator mask-step hook threaded through the reorder driver; all logic lives in _validate_batch.py.
     "src/decoy_engine/execution/out_of_core/_stream_driver.py": 609,
     # corpus schema checks and verify_corpus; split into _codeset_verify.py when next touched.

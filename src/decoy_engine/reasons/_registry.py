@@ -8,7 +8,7 @@ Entries are never removed: a retired code is kept as a tombstone with its replac
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Iterable
+from collections.abc import Iterable
 
 from decoy_engine.reasons._types import (
     Kind,
@@ -180,16 +180,15 @@ def manifest() -> dict[str, object]:
     }
 
 
-def check_integrity(
-    extra: Callable[[ReasonSpec], str | None] | None = None,
-) -> list[str]:
+def check_integrity() -> list[str]:
     """Structural problems in the catalog; an empty list means it is internally consistent."""
     problems: list[str] = []
     for spec in specs():
+        name = f"{spec.namespace}.{spec.code}"
         if not spec.rules:
-            problems.append(f"{spec.namespace}.{spec.code}: no phase rules")
+            problems.append(f"{name}: no phase rules")
+        if spec.replaced_by is not None and spec.deprecated_in is None:
+            problems.append(f"{name}: a replacement is only meaningful on a deprecated entry")
         if spec.replaced_by is not None and spec.replaced_by not in _SPECS:
-            problems.append(f"{spec.namespace}.{spec.code}: replacement {spec.replaced_by} unknown")
-        if extra is not None and (msg := extra(spec)) is not None:
-            problems.append(msg)
+            problems.append(f"{name}: replacement {spec.replaced_by} is not a declared identity")
     return problems

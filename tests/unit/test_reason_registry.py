@@ -72,9 +72,9 @@ def manifest_violations(pinned: dict, live: dict) -> list[str]:
         problems.append("identities were added without a registry minor version bump")
     for entry in live["entries"]:
         link = entry["replaced_by"]
-        if (entry["deprecated_in"] is None) != (link is None):
+        if link is not None and entry["deprecated_in"] is None:
             problems.append(
-                f"{entry['namespace']}.{entry['code']}: deprecation and replacement must pair"
+                f"{entry['namespace']}.{entry['code']}: replacement without deprecation"
             )
         if link is not None and tuple(link) not in live_by_id:
             problems.append(
@@ -122,7 +122,10 @@ def test_public_legacy_surfaces_unchanged() -> None:
             lambda m: m["entries"][3].__setitem__("summary", "Edited."),
             "without a registry version bump",
         ),
-        (lambda m: m["entries"][3].__setitem__("deprecated_in", "1.1.0"), "must pair"),
+        (
+            lambda m: m["entries"][3].__setitem__("replaced_by", ["runtime", "x"]),
+            "without deprecation",
+        ),
         (
             lambda m: m["entries"][3].update(deprecated_in="1.1.0", replaced_by=["nowhere", "x"]),
             "is not an identity",
@@ -134,6 +137,15 @@ def test_manifest_mutants_are_rejected(mutate, expected) -> None:
     live = copy.deepcopy(pinned)
     mutate(live)
     assert any(expected in p for p in manifest_violations(pinned, live))
+
+
+def test_a_deprecated_entry_with_no_replacement_is_a_valid_tombstone() -> None:
+    pinned = _load("reason-manifest-v1.json")
+    live = copy.deepcopy(pinned)
+    live["entries"][3]["deprecated_in"] = "1.1.0"
+    live["registry_version"] = "1.1.0"
+    # The deprecation itself is a change to the entry's metadata, which is allowed; its meaning is not.
+    assert manifest_violations(pinned, live) == []
 
 
 def test_added_identity_needs_a_minor_bump() -> None:

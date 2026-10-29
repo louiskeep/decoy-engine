@@ -106,6 +106,7 @@ from decoy_engine.execution._governor_monitor import _RssMonitor
 from decoy_engine.execution._isolated_common import ROUTE_INELIGIBLE_MARKERS, IsolatedRunResult
 from decoy_engine.execution._isolated_run import run_pipeline_isolated
 from decoy_engine.execution._substrate import require_bool
+from decoy_engine.progress import RetryInfo, get_active_channel
 
 if TYPE_CHECKING:
     import pyarrow as pa
@@ -333,8 +334,12 @@ def run_job_with_governor(
 
     hard_threshold_bytes = int(budget_bytes * hard_threshold_fraction)
     trips: list[GovernorTripRecord] = []
+    # The governor owns route attempts (a reroute is its retry), so it, and only it, reports them
+    # to a bound progress channel. Job attempts belong to the caller's scheduler, not to this loop.
+    progress = get_active_channel()
 
     for index, route in enumerate(ladder):
+        progress.retry_report(RetryInfo("route", index + 1, index, "running"), table=None)
         result, monitor = _run_one_rung(
             config,
             sources,
@@ -412,6 +417,9 @@ def run_job_with_governor(
             on_trip(trip)
 
         if next_route is None:
+            progress.retry_report(
+                RetryInfo("route", index + 1, index, "exhausted"), reason=result.reason
+            )
             return GovernorResult(
                 outcome="exhausted",
                 final_route=None,
@@ -420,6 +428,9 @@ def run_job_with_governor(
                 diagnostic=_exhausted_diagnostic(tuple(trips), budget_bytes),
             )
         # else: loop continues to the next rung -- this IS the reroute.
+        progress.retry_report(
+            RetryInfo("route", index + 2, index + 1, "scheduled"), reason=result.reason
+        )
 
     # Unreachable (the loop above always returns on its last iteration), kept
     # only so mypy sees an exhaustive return on every path.

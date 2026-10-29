@@ -277,7 +277,10 @@ class TestSummaryBuilders:
     def test_every_governor_marker_survives_both_builders(self):
         for route, markers in ROUTE_INELIGIBLE_MARKERS.items():
             for marker in markers:
-                from_exc = exception_error_text(RuntimeError(f"x {marker} {_SENTINEL}"))
+                # Only the engine's own `ConfigError` (the real emitter of these fragments) may
+                # carry a marker; the text of any other exception is data, never a routing input.
+                from_exc = exception_error_text(ConfigError(f"x {marker} {_SENTINEL}"))
+                assert marker not in exception_error_text(RuntimeError(f"x {marker} {_SENTINEL}"))
                 from_exit = abnormal_exit_text(1, None, f"x {marker} {_SENTINEL}", "")
                 for text in (from_exc, from_exit):
                     assert marker in text

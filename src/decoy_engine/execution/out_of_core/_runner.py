@@ -58,6 +58,7 @@ from decoy_engine.execution._output_projection import (
     UnconfiguredColumnPolicy,
     enforce_output_projection,
 )
+from decoy_engine.execution._publication_observer import observed_abort, observed_commit
 from decoy_engine.execution._transactional_sink import TransactionalSink
 from decoy_engine.execution.out_of_core import _join as _join_ooc
 from decoy_engine.execution.out_of_core import _mask_group_c, _validate_batch
@@ -310,7 +311,7 @@ def run_fk_out_of_core(
         # Before the publish: a failed validation commits nothing.
         _validate_batch.finish_validation(validators, quality_metrics)
         if sink is not None:
-            sink.commit()
+            observed_commit(sink)
             committed = True
             return ExecutionResult(
                 outputs={}, warnings=tuple(warnings), quality_metrics=quality_metrics
@@ -318,9 +319,9 @@ def run_fk_out_of_core(
         return ExecutionResult(
             outputs=outputs, warnings=tuple(warnings), quality_metrics=quality_metrics
         )
-    except Exception:
+    except Exception as failure:
         if sink is not None and not committed:
-            sink.abort()
+            observed_abort(sink, failure)
         raise
     finally:
         # The relation/join staging subtrees hold (source_key, masked_key) pairs

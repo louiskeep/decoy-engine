@@ -41,6 +41,7 @@ import pyarrow as pa
 from decoy_engine import reasons
 from decoy_engine.execution._adapter import ExecutionResult
 from decoy_engine.execution._errors import ExecutionError
+from decoy_engine.execution._publication_observer import observed_abort, observed_commit
 from decoy_engine.execution._substrate import require_bool
 from decoy_engine.execution._transactional_sink import TransactionalSink
 from decoy_engine.execution.native._chunked_evidence import (
@@ -155,7 +156,7 @@ class OutputPublish:
     def commit(self) -> None:
         if not self.is_open or self._finished:
             return
-        self.sink.commit()
+        observed_commit(self.sink)
         self._finished = True
 
     def __enter__(self) -> OutputPublish:
@@ -164,10 +165,7 @@ class OutputPublish:
     def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
         if self.is_open and not self._finished:
             self._finished = True
-            try:
-                self.sink.abort()
-            except Exception:
-                pass
+            observed_abort(self.sink, exc)
             if exc_type is None:
                 # `commit()` is the run's last action, so an open session leaving the block
                 # normally without committing is a wiring bug; never return unpublished.

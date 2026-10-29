@@ -10,7 +10,9 @@ sentry (`tests/sentry/test_package_map_paths.py`) asserts every path here exists
 | `config/` | `PipelineConfig` and the source/target/table/relationship models |
 | `plan/` | `compile_plan` -> frozen `Plan`, seed envelope, plan-time checks |
 | `execution/` | `run_pipeline` spine, routes (full-frame oracle, unified slice, chunked dispatcher, sequential and out-of-core FK), strategy handlers, native companion bridge, transactional sink, capacity |
-| `progress.py` | Progress contract: `ProgressSink`, value-free events, `use_progress` |
+| `progress.py`, `_progress_events.py` | Progress contract: `ProgressSink`, the channel, value-free versioned events (`_progress_events.py` holds the event types and serializers), `use_progress` |
+| `reasons/` | The versioned reason-code registry (`ReasonSpec`, `ReasonRecord`, one catalog module per namespace) |
+| `reason_adapter.py` | `reason_from_exception`, `reasons_from_report`, the per-run failure scope |
 | `generation/` | The generation core (resident and streamed), pinned generation, pools |
 | `generators/` | `ColumnGenerator` (formula and cardinality bounds the V2 core reuses) |
 | `kernel/` | Backend-neutral Arrow masking kernels (hash, redact, truncate, passthrough) |

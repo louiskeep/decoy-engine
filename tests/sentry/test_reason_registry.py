@@ -331,3 +331,206 @@ def test_ci_collects_the_registry_guards() -> None:
     }
     assert guards <= set(globals())
     assert set(_MUTANTS) >= _REQUIRED_MUTANTS
+
+
+# -- exception families ------------------------------------------------------------------------
+
+# Engine exceptions that deliberately have no registry identity yet. They reach a consumer as
+# `decoy.unexpected_error` (retry advice `unknown`), never with a guessed meaning. Adding a code
+# is a reviewed registry addition; this list may only shrink.
+UNCLASSIFIED: dict[str, str] = {
+    "DecoyError": "the root class; a subclass without an identity is unclassified, not this",
+    "ConnectorError": "the connector base; Transient/Permanent subclasses carry the meaning",
+    "ConnectorAuthError": "an authentication failure has no code yet; its text may echo a target",
+    "FKPreservationError": "base of EmptyParentPool/UnknownFKColumn, which are classified",
+    "FixedWidthParseError": "data-derived layout errors; no stable code and a position-only text",
+    "FixedWidthWriteError": "data-derived layout errors; no stable code",
+    "CsvRecordTooLarge": "input-shape error raised inside the CSV framer; no stable code yet",
+    "CsvUnterminatedQuote": "input-shape error raised inside the CSV framer; no stable code yet",
+    "DiscoverySqlError": "data-discovery SQL failures can echo statements; no stable code",
+    "NameHintLoaderError": "a reference-data load error; no stable code",
+    "ModelPackLoadError": "a model-pack load error; no stable code",
+    "Ff1Error": "an FF1 primitive error; surfaces as FpeUnencryptable/Checksum where it matters",
+    "WindowedDateError": "a windowed-date primitive error; wrapped by PinnedModeError at the edge",
+    "LicenseError": "platform-owned license state, not a run failure",
+    "LicenseExpiredError": "platform-owned license state, not a run failure",
+    "FieldMissing": "an internal memwatch parse signal, never surfaced",
+    "PoolBuildFailed": "an internal shadow-plan signal, never surfaced",
+    "_RejectError": "an internal parser signal, never surfaced",
+    "_InfeasibleAtEpsQError": "an internal DP control-flow signal, never surfaced",
+}
+
+
+def _engine_exception_classes() -> dict[str, type]:
+    import importlib
+    import pkgutil
+
+    import decoy_engine
+
+    found: dict[str, type] = {}
+    for info in pkgutil.walk_packages(decoy_engine.__path__, "decoy_engine."):
+        try:
+            module = importlib.import_module(info.name)
+        except Exception:  # an optional dependency is absent; that module defines no new family
+            continue
+        for name, value in vars(module).items():
+            if (
+                isinstance(value, type)
+                and issubclass(value, BaseException)
+                and value.__module__.startswith("decoy_engine.")
+            ):
+                found[name] = value
+    return found
+
+
+def test_every_engine_exception_family_is_classified_or_listed() -> None:
+    """A new engine exception must either reach a registry reason or be consciously listed."""
+    from decoy_engine.reason_adapter import registered_families
+
+    registered = registered_families()
+    unclassified = {
+        name: cls
+        for name, cls in _engine_exception_classes().items()
+        if not any(base in registered for base in cls.__mro__)
+    }
+    assert set(unclassified) == set(UNCLASSIFIED), (
+        "new: "
+        f"{sorted(set(unclassified) - set(UNCLASSIFIED))}; "
+        f"now classified (delete from UNCLASSIFIED): {sorted(set(UNCLASSIFIED) - set(unclassified))}"
+    )
+
+
+# -- the safe boundary --------------------------------------------------------------------------
+
+_EVENT_TYPES = frozenset(
+    {
+        "PhaseEvent",
+        "RateSample",
+        "RouteEvent",
+        "WarningEvent",
+        "TerminalEvent",
+        "RetryEvent",
+        "CheckpointEvent",
+    }
+)
+_RECORD_FIELDS = frozenset({"retry_class", "publication_state", "cleanup_state", "storage_ref"})
+# The only modules that may build events, records or their wire dicts directly.
+_BOUNDARY_MODULES = frozenset({"progress.py", "_progress_events.py", "reasons/_record.py"})
+
+
+def boundary_violations(src: Path) -> list[str]:
+    """Direct construction of a record or event, or hand-built record dicts, outside the boundary."""
+    import ast
+
+    found: list[str] = []
+    for path in sorted(src.rglob("*.py")):
+        rel = path.relative_to(src).as_posix()
+        if rel in _BOUNDARY_MODULES:
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                name = (
+                    node.func.id
+                    if isinstance(node.func, ast.Name)
+                    else node.func.attr
+                    if isinstance(node.func, ast.Attribute)
+                    else ""
+                )
+                if name == "ReasonRecord":
+                    found.append(
+                        f"{rel}:{node.lineno} direct ReasonRecord(...) (use for_reason/from_payload)"
+                    )
+                if name in _EVENT_TYPES:
+                    found.append(
+                        f"{rel}:{node.lineno} direct {name}(...) (emit through the channel)"
+                    )
+            if isinstance(node, ast.Dict):
+                keys = {
+                    k.value
+                    for k in node.keys
+                    if isinstance(k, ast.Constant) and isinstance(k.value, str)
+                }
+                if keys & _RECORD_FIELDS:
+                    found.append(f"{rel}:{node.lineno} hand-built record dict (use to_payload)")
+    return found
+
+
+def test_reason_exports_use_safe_boundary() -> None:
+    """Events and reason records are built, validated and serialized only in the boundary modules.
+
+    Runtime field validation backs this static guard; it is not whole-program taint analysis."""
+    assert boundary_violations(scan.SRC) == []
+
+
+_BOUNDARY_MUTANTS = {
+    "direct_record": "from decoy_engine.reasons import ReasonRecord\nx = ReasonRecord(1, '1', 'a', 'b')\n",
+    "direct_event": "from decoy_engine.progress import PhaseEvent\nx = PhaseEvent('a', 'start')\n",
+    "attribute_event": "import decoy_engine.progress as p\nx = p.TerminalEvent('ok')\n",
+    "hand_built_dict": "def f(r):\n    return {'retry_class': r.retry, 'code': r.code}\n",
+}
+
+
+@pytest.mark.parametrize("name", sorted(_BOUNDARY_MUTANTS))
+def test_boundary_mutants_are_caught(tmp_path: Path, name: str) -> None:
+    root = tmp_path / "decoy_engine"
+    root.mkdir()
+    (root / "outside.py").write_text(_BOUNDARY_MUTANTS[name])
+    assert boundary_violations(root), name
+    (root / "progress.py").write_text(
+        _BOUNDARY_MUTANTS[name]
+    )  # the boundary module itself is allowed
+    (root / "outside.py").unlink()
+    assert boundary_violations(root) == []
+
+
+# -- publication sites --------------------------------------------------------------------------
+
+_SINK_NAMES = frozenset({"sink", "_tsink", "active_sink"})
+_PUBLICATION_VERBS = frozenset({"commit", "abort"})
+_PUBLICATION_OWNERS = frozenset(
+    {"execution/_publication_observer.py", "execution/_transactional_sink.py"}
+)
+
+
+def unobserved_publication_calls(src: Path) -> list[str]:
+    """Engine code that commits or aborts a sink directly instead of through the observer."""
+    import ast
+
+    found: list[str] = []
+    for path in sorted(src.rglob("*.py")):
+        rel = path.relative_to(src).as_posix()
+        if rel in _PUBLICATION_OWNERS:
+            continue
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr in _PUBLICATION_VERBS
+            ):
+                recv = node.func.value
+                name = recv.id if isinstance(recv, ast.Name) else getattr(recv, "attr", "")
+                if name in _SINK_NAMES:
+                    found.append(f"{rel}:{node.lineno} {name}.{node.func.attr}()")
+    return found
+
+
+def test_publication_sites_use_observer() -> None:
+    """Every engine-owned commit and abort goes through `observed_commit` / `observed_abort`, so
+    the publication and cleanup evidence is recorded where the outcome is decided."""
+    assert unobserved_publication_calls(scan.SRC) == []
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "def f(sink):\n    sink.commit()\n",
+        "def f(_tsink):\n    _tsink.abort()\n",
+        "class P:\n    def f(self):\n        self.sink.commit()\n",
+    ],
+)
+def test_unobserved_publication_mutants_are_caught(tmp_path: Path, body: str) -> None:
+    root = tmp_path / "decoy_engine"
+    root.mkdir()
+    (root / "route.py").write_text(body)
+    assert unobserved_publication_calls(root)
