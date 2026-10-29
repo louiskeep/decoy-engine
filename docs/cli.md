@@ -82,4 +82,4 @@ not a Python-callable shortcut surface. To mask from Python, use the engine
 library directly: build a `PipelineConfig` and call
 `decoy_engine.run_pipeline(config, sources, engine_version=...)` (see
 [recipes](recipes.md) recipe (a)). To scan from Python, call
-`decoy_engine.run_storm(df, source_label)` directly.
+`decoy_engine.profile_columns(df, source_label)` directly.
