@@ -125,14 +125,15 @@ def test_failure_at_a_later_table_aborts_without_a_partial_commit(
 def test_writer_close_failure_aborts_and_preserves_the_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from decoy_engine.execution import _transactional_sink as ts
+    from decoy_engine.fileaccess.adapters import arrow as arrow_adapter
 
     class FailingClose(pq.ParquetWriter):
         def close(self) -> None:
             super().close()
             raise OSError("close failed")
 
-    monkeypatch.setattr(ts.pq, "ParquetWriter", FailingClose)
+    # The sink writes through the file-access arrow adapter, which builds the writer.
+    monkeypatch.setattr(arrow_adapter.pq, "ParquetWriter", FailingClose)
     target = tmp_path / "out"
     with pytest.raises(OSError, match="close failed"):
         generate_tables_streamed(_relational_plan(), sink=ParquetTransactionalSink(target))
