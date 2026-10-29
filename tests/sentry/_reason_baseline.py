@@ -14,7 +14,7 @@ from collections import defaultdict
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import _reason_scan as scan  # noqa: E402
+import _reason_scan as scan
 
 FIXTURES = scan.ROOT / "tests" / "fixtures" / "f29"
 
@@ -48,6 +48,11 @@ FAMILY_NAMESPACE: dict[str, str] = {
     "DrawSiteProtocolError": "runtime",
     "VaultError": "runtime",
     "MaskSecretError": "runtime",
+    "KeyedStrategyRequiresSecret": "runtime",
+    "MissingMaskSecret": "runtime",
+    "WeakMaskSecret": "runtime",
+    "NativeChunkSchemaDriftError": "runtime",
+    "SubsetBudgetExceededError": "subset",
     "GenerationBudgetExceeded": "runtime",
     "GenerationUnboundedError": "runtime",
     "GenerationWindowError": "runtime",
@@ -89,6 +94,34 @@ EXCLUDED_ENUMS: dict[str, str] = {
 }
 
 
+# Code spaces the AST cannot enumerate (an f-string, a dict value read from a name). E0 resolved
+# each one to a finite table; the registry carries every member as an explicit entry.
+_NATIVE_STRATEGIES = (
+    "hash", "fpe", "categorical", "bucket_perturb", "date_shift", "faker",
+    "text_redact", "text_mask", "group_key",
+)  # fmt: skip
+_POST_VALIDATION_SCANS = (
+    "cardinality", "composite_coherence", "determinism_sample", "fk_validity", "format_rules",
+    "leakage", "null_audit", "pk_uniqueness", "sampled_values",
+)  # fmt: skip
+_DIAGNOSTIC_CHECKS = ("column_survival", "kind_drift", "null_drift", "row_count")
+FINITE_TABLES: list[tuple[str, str, str, str]] = (
+    [
+        ("plan", f"grouped_series_missing_{k}_ref", "PlanCompileError", "plan/_checks_grouped_series.py#table:ref_key")
+        for k in ("group_by", "order_by")
+    ]
+    + [
+        ("runtime", f"sequential_{s}_input_type_drift", "ExecutionError", "execution/_sequential_native.py#table:strategy")
+        for s in _NATIVE_STRATEGIES
+    ]
+    + [
+        ("verification", n, "PostValidationScan", "validation/post/_checks#table:scan_name")
+        for n in _POST_VALIDATION_SCANS
+    ]
+    + [("verification", n, "QualityDiagnostic", "quality/diagnostic.py#table:check") for n in _DIAGNOSTIC_CHECKS]
+)  # fmt: skip
+
+
 def _namespace_for_const(site: scan.Site) -> str:
     if site.kind == "enum_member":
         return "route"
@@ -98,7 +131,9 @@ def _namespace_for_const(site: scan.Site) -> str:
         return "physical"
     if site.file.startswith("execution/physical/"):
         return "route"
-    if "REASON" in site.family.upper() and site.file.startswith(("execution/native", "execution/out_of_core")):
+    if "REASON" in site.family.upper() and site.file.startswith(
+        ("execution/native", "execution/out_of_core")
+    ):
         return "route"
     if site.family.startswith(("REASON_", "_REASON_", "DRIVER_REASON")):
         return "route"
@@ -124,6 +159,16 @@ def build() -> tuple[dict[str, object], dict[str, object]]:
                 used_by_call[code].add(ns)
                 owners[(ns, code)].add(fam)
                 sources[(ns, code)].add(f"{s.file}#{s.kind}:{fam}")
+    for s in sites:
+        if s.kind == "dict_payload" and s.codes:
+            for code in s.codes:
+                used_by_call[code].add("verification")
+                owners[("verification", code)].add("QualityReport")
+                sources[("verification", code)].add(f"{s.file}#dict_payload:code")
+    for ns, code, owner, src in FINITE_TABLES:
+        used_by_call[code].add(ns)
+        owners[(ns, code)].add(owner)
+        sources[(ns, code)].add(src)
     for s in sites:
         if s.kind in ("module_const", "class_attr", "enum_member") and s.codes:
             for code in s.codes:

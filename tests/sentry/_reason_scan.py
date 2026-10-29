@@ -30,7 +30,9 @@ CONST_NAME = re.compile(r"(^|_)(CODE|CODES|REASON)(_|$)|^code$|^reason_code$", r
 CODE_SHAPE = re.compile(r"^[a-z][a-z0-9_.-]*$")
 _ENUM_BASES = frozenset({"Enum", "StrEnum", "IntEnum", "enum.Enum", "enum.StrEnum"})
 # Files whose every upper-case string constant is a reason code (frozen decision catalogs).
-CATALOG_FILES = frozenset({"execution/physical/_reasons.py", "execution/physical/_shadow_diff_codes.py"})
+CATALOG_FILES = frozenset(
+    {"execution/physical/_reasons.py", "execution/physical/_shadow_diff_codes.py"}
+)
 # Enums that hold reason codes. Other enums (DriverId, PIIClass, OrphanPolicy, ...) are closed
 # vocabularies, not reasons; the E0 record lists them as exclusions.
 REASON_ENUM_NAME = re.compile(r"(Code|Reason)s?$")
@@ -43,7 +45,9 @@ class Site:
     file: str  # posix path relative to src/decoy_engine
     line: int
     function: str  # enclosing function qualname, "" at module level
-    kind: str  # kw | positional | class_attr | module_const | enum_member | attr_write | dict_payload
+    kind: (
+        str  # kw | positional | class_attr | module_const | enum_member | attr_write | dict_payload
+    )
     family: str  # callee / class / constant name
     value_class: str  # literal | fstring | const_ref | forward | registry | none | dynamic
     expr: str
@@ -84,7 +88,9 @@ class _Index:
         self.trees: dict[Path, ast.Module] = {}
         self.consts: dict[tuple[str, str], str] = {}  # (module, name) -> literal
         self.const_exprs: dict[tuple[str, str], ast.expr] = {}
-        self.imports: dict[tuple[str, str], tuple[str, str]] = {}  # (module, local) -> (module, name)
+        self.imports: dict[
+            tuple[str, str], tuple[str, str]
+        ] = {}  # (module, local) -> (module, name)
         self.reasons_aliases: dict[str, set[str]] = {}  # module -> names bound to the reasons pkg
         for path in source_files():
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
@@ -102,7 +108,9 @@ class _Index:
                     self.const_exprs[(mod, tgt.id)] = node.value
                     if _is_str_const(node.value):
                         self.consts[(mod, tgt.id)] = node.value.value  # type: ignore[attr-defined]
-            elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.value:
+            elif (
+                isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.value
+            ):
                 self.const_exprs[(mod, node.target.id)] = node.value
                 if _is_str_const(node.value):
                     self.consts[(mod, node.target.id)] = node.value.value  # type: ignore[attr-defined]
@@ -134,7 +142,9 @@ class _Index:
         base = ".".join(parts)
         return f"{base}.{node.module}" if node.module else base
 
-    def resolve_literal(self, mod: str, name: str, seen: frozenset[tuple[str, str]] = frozenset()) -> str | None:
+    def resolve_literal(
+        self, mod: str, name: str, seen: frozenset[tuple[str, str]] = frozenset()
+    ) -> str | None:
         key = (mod, name)
         if key in seen:
             return None
@@ -155,7 +165,9 @@ class _Index:
         return False
 
 
-def _classify(index: _Index, mod: str, node: ast.expr | None, params: frozenset[str]) -> tuple[str, tuple[str, ...]]:
+def _classify(
+    index: _Index, mod: str, node: ast.expr | None, params: frozenset[str]
+) -> tuple[str, tuple[str, ...]]:
     if node is None:
         return "none", ()
     if isinstance(node, ast.Constant):
@@ -172,7 +184,9 @@ def _classify(index: _Index, mod: str, node: ast.expr | None, params: frozenset[
         lit = index.resolve_literal(mod, node.id)
         if lit is not None:
             return "const_ref", (lit,)
-        if (mod, node.id) in index.const_exprs and index.is_registry_chain(mod, index.const_exprs[(mod, node.id)]):
+        if (mod, node.id) in index.const_exprs and index.is_registry_chain(
+            mod, index.const_exprs[(mod, node.id)]
+        ):
             return "registry", ()
         if node.id in params:
             return "forward", ()
@@ -204,7 +218,9 @@ def _discover_families(index: _Index) -> dict[str, tuple[int | None, bool]]:
             if not isinstance(node, ast.ClassDef):
                 continue
             bases.setdefault(node.name, []).extend(
-                b.id if isinstance(b, ast.Name) else (b.attr if isinstance(b, ast.Attribute) else "")
+                b.id
+                if isinstance(b, ast.Name)
+                else (b.attr if isinstance(b, ast.Attribute) else "")
                 for b in node.bases
             )
             pos: int | None = None
@@ -223,7 +239,9 @@ def _discover_families(index: _Index) -> dict[str, tuple[int | None, bool]]:
                     if item.target.id in CODE_ARG_NAMES:
                         found = True
                 elif isinstance(item, ast.Assign):
-                    if any(isinstance(t, ast.Name) and t.id in CODE_ARG_NAMES for t in item.targets):
+                    if any(
+                        isinstance(t, ast.Name) and t.id in CODE_ARG_NAMES for t in item.targets
+                    ):
                         found = True
             if found:
                 own[node.name] = (pos, pos is None)
@@ -257,7 +275,14 @@ def scan() -> list[Site]:
 
 
 class _Visitor(ast.NodeVisitor):
-    def __init__(self, index: _Index, mod: str, rel: str, families: dict[str, tuple[int | None, bool]], out: list[Site]):
+    def __init__(
+        self,
+        index: _Index,
+        mod: str,
+        rel: str,
+        families: dict[str, tuple[int | None, bool]],
+        out: list[Site],
+    ):
         self.index, self.mod, self.rel, self.families, self.out = index, mod, rel, families, out
         self.funcs: list[tuple[str, frozenset[str]]] = []
         self.classes: list[tuple[str, bool]] = []  # (name, is_enum)
@@ -273,19 +298,33 @@ class _Visitor(ast.NodeVisitor):
         vc, codes = _classify(self.index, self.mod, value, params)
         qual = ".".join([c for c, _ in self.classes] + ([func] if func else []))
         self.out.append(
-            Site(self.rel, getattr(node, "lineno", 0), qual, kind, family, vc, _expr(value) if value is not None else "", codes)
+            Site(
+                self.rel,
+                getattr(node, "lineno", 0),
+                qual,
+                kind,
+                family,
+                vc,
+                _expr(value) if value is not None else "",
+                codes,
+            )
         )
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
         is_enum = any(
-            (isinstance(b, ast.Name) and b.id in _ENUM_BASES) or (isinstance(b, ast.Attribute) and b.attr in _ENUM_BASES)
+            (isinstance(b, ast.Name) and b.id in _ENUM_BASES)
+            or (isinstance(b, ast.Attribute) and b.attr in _ENUM_BASES)
             for b in node.bases
         )
         self.classes.append((node.name, is_enum))
         for item in node.body:
             tgt_name: str | None = None
             value: ast.expr | None = None
-            if isinstance(item, ast.Assign) and len(item.targets) == 1 and isinstance(item.targets[0], ast.Name):
+            if (
+                isinstance(item, ast.Assign)
+                and len(item.targets) == 1
+                and isinstance(item.targets[0], ast.Name)
+            ):
                 tgt_name, value = item.targets[0].id, item.value
             elif isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name):
                 tgt_name, value = item.target.id, item.value
@@ -295,7 +334,12 @@ class _Visitor(ast.NodeVisitor):
             reason_enum = is_enum and REASON_ENUM_NAME.search(node.name) is not None
             if node.name == "CODES" or reason_enum:
                 if code_shaped or self.index.is_registry_chain(self.mod, value):
-                    self._emit(item, "enum_member" if reason_enum else "class_attr", f"{node.name}.{tgt_name}", value)
+                    self._emit(
+                        item,
+                        "enum_member" if reason_enum else "class_attr",
+                        f"{node.name}.{tgt_name}",
+                        value,
+                    )
             elif CONST_NAME.search(tgt_name) and (code_shaped or not _is_str_const(value)):
                 if code_shaped or tgt_name in CODE_ARG_NAMES:
                     self._emit(item, "class_attr", f"{node.name}.{tgt_name}", value)
@@ -309,16 +353,20 @@ class _Visitor(ast.NodeVisitor):
         self.generic_visit(node)
         self.funcs.pop()
 
-    visit_AsyncFunctionDef = visit_FunctionDef  # type: ignore[assignment]
+    visit_AsyncFunctionDef = visit_FunctionDef  # type: ignore[assignment]  # noqa: N815
 
     def visit_Assign(self, node: ast.Assign) -> None:
         for tgt in node.targets:
             if isinstance(tgt, ast.Attribute) and tgt.attr in CODE_ARG_NAMES:
                 self._emit(node, "attr_write", f"{ast.unparse(tgt)}", node.value)
             elif isinstance(tgt, ast.Name) and not self.classes and not self.funcs:
-                if (CONST_NAME.search(tgt.id) or self._catalog_const(tgt.id)) and _is_str_const(node.value) and CODE_SHAPE.match(node.value.value):  # type: ignore[attr-defined]
-                    self._emit(node, "module_const", tgt.id, node.value)
-                elif CONST_NAME.search(tgt.id) and self.index.is_registry_chain(self.mod, node.value):
+                if (
+                    (CONST_NAME.search(tgt.id) or self._catalog_const(tgt.id))
+                    and _is_str_const(node.value)
+                    and CODE_SHAPE.match(node.value.value)
+                ) or (
+                    CONST_NAME.search(tgt.id) and self.index.is_registry_chain(self.mod, node.value)
+                ):  # type: ignore[attr-defined]
                     self._emit(node, "module_const", tgt.id, node.value)
         self.generic_visit(node)
 
@@ -346,11 +394,21 @@ class _Visitor(ast.NodeVisitor):
 
     def visit_Call(self, node: ast.Call) -> None:
         callee = node.func
-        name = callee.id if isinstance(callee, ast.Name) else (callee.attr if isinstance(callee, ast.Attribute) else "")
+        name = (
+            callee.id
+            if isinstance(callee, ast.Name)
+            else (callee.attr if isinstance(callee, ast.Attribute) else "")
+        )
         fam = self.families.get(name)
         for kw in node.keywords:
             if kw.arg in CODE_ARG_NAMES:
-                self._emit(node, "kw", _expr(callee), kw.value)
+                # ``super().__init__(code=...)`` stores the code for the enclosing class.
+                fam_name = (
+                    self.classes[-1][0]
+                    if self.classes and _expr(callee).startswith("super()")
+                    else _expr(callee)
+                )
+                self._emit(node, "kw", fam_name, kw.value)
         if fam is not None and fam[0] is not None:
             pos = fam[0]
             if pos < len(node.args) and not isinstance(node.args[pos], ast.Starred):
@@ -391,29 +449,29 @@ def scan_consumers() -> list[Consumer]:
         rel = path.relative_to(SRC).as_posix()
         if rel.startswith(REGISTRY_PREFIX):
             continue
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        stack: list[str] = []
-
-        def walk(node: ast.AST) -> None:
-            pushed = isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
-            if pushed:
-                stack.append(node.name)  # type: ignore[attr-defined]
-            if isinstance(node, ast.Attribute) and node.attr in CODE_ARG_NAMES and isinstance(node.ctx, ast.Load):
-                out.append(Consumer(rel, node.lineno, ".".join(stack), _expr(node)))
-            elif (
-                isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Name)
-                and node.func.id == "getattr"
-                and len(node.args) >= 2
-                and _is_str_const(node.args[1])
-                and node.args[1].value in CODE_ARG_NAMES  # type: ignore[attr-defined]
-            ):
-                out.append(Consumer(rel, node.lineno, ".".join(stack), _expr(node)))
-            for child in ast.iter_child_nodes(node):
-                walk(child)
-            if pushed:
-                stack.pop()
-
-        walk(tree)
+        _walk_consumers(rel, ast.parse(path.read_text(encoding="utf-8")), [], out)
     out.sort(key=lambda c: (c.file, c.line))
     return out
+
+
+def _walk_consumers(rel: str, node: ast.AST, stack: list[str], out: list[Consumer]) -> None:
+    pushed = isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+    if pushed:
+        stack.append(node.name)  # type: ignore[attr-defined]
+    if (
+        isinstance(node, ast.Attribute)
+        and node.attr in CODE_ARG_NAMES
+        and isinstance(node.ctx, ast.Load)
+    ) or (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "getattr"
+        and len(node.args) >= 2
+        and _is_str_const(node.args[1])
+        and node.args[1].value in CODE_ARG_NAMES  # type: ignore[attr-defined]
+    ):
+        out.append(Consumer(rel, node.lineno, ".".join(stack), _expr(node)))
+    for child in ast.iter_child_nodes(node):
+        _walk_consumers(rel, child, stack, out)
+    if pushed:
+        stack.pop()
