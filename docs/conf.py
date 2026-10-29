@@ -208,6 +208,8 @@ nitpick_ignore = [
     ("py:class", "StrategyDefault"),
     ("py:class", "ExpectedField"),
     ("py:class", "ReleasePhase"),
+    ("py:class", "ProgressEvent"),
+    ("py:class", "decoy_engine.progress.ProgressEvent"),
     ("py:obj", "DecoyError"),
     # `ConfigError` is re-exported by `decoy_engine.sdk` from
     # `decoy_engine.exceptions`. autoapi records both targets, so any
