@@ -22,13 +22,32 @@ compute that offset on read.
 from __future__ import annotations
 
 import contextlib
+from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
 import pyarrow as pa
 
+from decoy_engine.scratch._capabilities import RegisteredFile, unwrap_path
+
 if TYPE_CHECKING:
     from collections.abc import Iterator
-    from pathlib import Path
+
+
+def _spill_path(registered: RegisteredFile | Path) -> Path:
+    """Resolve a registered file (or an adopted raw path) to its write target
+    through the ``unwrap_path`` capability seam.
+
+    A ``RegisteredFile`` was created inside an already-existing arena directory.
+    A raw ``Path`` is the pre-activation / direct-call case, so its parent work
+    directory is ensured here (the arena does this for the capability path),
+    preserving the old writer behaviour of creating its own spill directory.
+    """
+
+    if isinstance(registered, RegisteredFile):
+        return unwrap_path(registered)
+    path = Path(registered)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 class PayloadStore(Protocol):
@@ -79,8 +98,10 @@ class SpillPayloadStore:
     sequentially in phase 3; at most one batch is resident on either side.
     """
 
-    def __init__(self, path: Path) -> None:
-        self._path = path
+    def __init__(self, payload: RegisteredFile | Path) -> None:
+        # T06 (plan 1.3): the Arrow IPC payload spill is a registered capability
+        # (a raw path is adopted under the producer's registered work dir).
+        self._path = _spill_path(payload)
         self._writer: pa.ipc.RecordBatchStreamWriter | None = None
         self._schema: pa.Schema | None = None
 
@@ -91,7 +112,6 @@ class SpillPayloadStore:
             # The schema is only known once the first non-empty batch arrives;
             # opening the writer any earlier would fix it from an empty batch's
             # (possibly wrong) type inference.
-            self._path.parent.mkdir(parents=True, exist_ok=True)
             self._schema = batch.schema
             self._writer = pa.ipc.new_stream(str(self._path), self._schema)
         self._writer.write_batch(batch)
@@ -141,13 +161,15 @@ class RawParentKeySpill:
     end-of-stream marker before any reader opens it.
     """
 
-    def __init__(self, path: Path, schema: pa.Schema) -> None:
-        self._path = path
-        self._path.parent.mkdir(parents=True, exist_ok=True)
+    def __init__(self, raw_keys: RegisteredFile | Path, schema: pa.Schema) -> None:
+        # T06 (plan 1.3): registered raw-parent-key Arrow IPC spill capability.
+        self._path = _spill_path(raw_keys)
         # Schema is known up front (the raw source key columns' fixed types),
         # so the writer opens eagerly; a zero-row table yields a valid empty
         # stream that reads back as no batches.
-        self._writer: pa.ipc.RecordBatchStreamWriter | None = pa.ipc.new_stream(str(path), schema)
+        self._writer: pa.ipc.RecordBatchStreamWriter | None = pa.ipc.new_stream(
+            str(self._path), schema
+        )
 
     def append(self, batch: pa.RecordBatch) -> None:
         if self._writer is None:
@@ -201,14 +223,17 @@ class SpillChildKeys:
     reading one still open for writing is version/buffering dependent.
     """
 
-    def __init__(self, path: Path, schema: pa.Schema) -> None:
-        self._path = path
-        self._path.parent.mkdir(parents=True, exist_ok=True)
+    def __init__(self, child_keys: RegisteredFile | Path, schema: pa.Schema) -> None:
+        # T06 (plan 1.3): registered child-key Arrow IPC spill capability (a raw
+        # path is adopted under the producer's already-registered work dir).
+        self._path = _spill_path(child_keys)
         # Schema is known up front (`StreamFkJoiner._key_schema`, fixed before
         # any batch is staged), so the writer opens eagerly, mirroring
         # `RawParentKeySpill`; a zero-row table yields a valid empty stream
         # that reads back as no batches.
-        self._writer: pa.ipc.RecordBatchStreamWriter | None = pa.ipc.new_stream(str(path), schema)
+        self._writer: pa.ipc.RecordBatchStreamWriter | None = pa.ipc.new_stream(
+            str(self._path), schema
+        )
 
     def append(self, batch: pa.RecordBatch) -> None:
         if self._writer is None:

@@ -22,7 +22,9 @@ import pyarrow as pa
 from decoy_engine.execution.out_of_core._join import _unified_chunk_type
 from decoy_engine.execution.out_of_core._mask import mask_table
 from decoy_engine.execution.out_of_core._relation import build_parent_key_relation_aligned
+from decoy_engine.execution.out_of_core._scratch import ArenaLike, ensure_scratch
 from decoy_engine.execution.out_of_core._stage import MaskedKeyStager
+from decoy_engine.scratch._policy import ResourceKind
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Mapping
@@ -69,6 +71,7 @@ def emit_to_sink(
     source_schema: pa.Schema,
     on_stream_consumed: Callable[[], None] | None = None,
     masked_observed_types: Mapping[str, set[pa.DataType]] | None = None,
+    arena: ArenaLike | None = None,
 ) -> None:
     """Stream the rewritten batches to the sink, then build outgoing relations.
 
@@ -106,8 +109,11 @@ def emit_to_sink(
         if on_stream_consumed is not None:
             on_stream_consumed()
         return
+    # T02 (plan 1.3): the staged masked-key file is a registered capability the
+    # arena issues before the stager opens its ParquetWriter.
+    scratch = ensure_scratch(arena, staging_path.parent)
     stager = MaskedKeyStager(
-        staging_path,
+        scratch.allocate_file(ResourceKind.FILE, "masked_keys"),
         columns=staged_columns,
         fixed_schema=fixed_schema,
         masked_observed_types=masked_observed_types,
@@ -137,6 +143,7 @@ def emit_to_sink(
                 temp_dir=relation_dir,
                 memory_limit=memory_limit,
                 batch_rows=batch_rows,
+                arena=arena,
             )
         return
     # A zero-row parent has no data-derived types; the empty whole-table
@@ -150,6 +157,7 @@ def emit_to_sink(
             temp_dir=relation_dir,
             memory_limit=memory_limit,
             batch_rows=batch_rows,
+            arena=arena,
         )
 
 

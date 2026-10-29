@@ -1,26 +1,31 @@
 """F25 scratch allocation sentry (plan 2).
 
-The runtime choke-point is the ScratchManager: a temporary producer may obtain a
-writable path only by holding a ``RegisteredFile`` / ``NativeDirectory`` /
-``PublicationStage`` capability, issued after durable registration. This sentry
-is the drift guard that keeps that true as the seam grows, modelled on
-``tests/sentry/test_physical_seam_disconnection.py`` (AST/string sweep + a
-dynamic subprocess check).
+The runtime choke-point is the ScratchManager / attempt arena: a temporary
+producer may obtain a writable path only by holding a ``RegisteredFile`` /
+``NativeDirectory`` / ``PublicationStage`` capability, allocated after durable
+registration. This sentry is the drift guard that keeps that true as the seam
+grows, modelled on ``tests/sentry/test_physical_seam_disconnection.py``.
 
-Slice 1 state: the machine-readable manifest (``scratch_producer_manifest.json``)
-seeds the plan 1.3 T01-T17 inventory, every row ``unmigrated``. The sentry
-enforces registration on NONE of them yet, because the migration is Slices 2-3.
-What Slice 1 proves is that the sentry has teeth: the AST scanner flags each
-seeded violation class (unregistered tempfile, aliased Arrow writer, new DuckDB
-connect, SQL COPY, hardcoded temp path, O_TMPFILE / open+unlink), a clean
-capability-only snippet passes, and a stale manifest entry fails. The three
-syscall-traced checks (A04/A12) run a fresh subprocess under strace and prove an
-unregistered write that unlinks its file immediately is still caught at the
-kernel boundary, which an end-of-run directory listing would miss.
+Three complementary checks (plan 2):
 
-As each T row migrates, its manifest status flips to ``migrated`` and it gains an
-allocation wrapper + witness; the per-producer AST and syscall enforcement then
-switches on for that row (Slices 2-3). A whole-module exclusion is never allowed.
+1. An AST + string scan flags each class of unregistered allocation (so the
+   scanner is proven non-vacuous on seeded snippets, and a clean capability-only
+   snippet passes).
+2. Per migrated producer (static drift guard): the module must route its
+   temporary work through the capability seam (it imports and calls one of the
+   allocation wrappers), it may hold no raw ``tempfile`` / ``mkdtemp`` call
+   outside an explicit call-site exemption, and no forbidden-primitive write or
+   ``COPY ... TO`` may carry a hardcoded absolute path. A stale manifest entry
+   fails.
+3. A real out-of-core job is run in a fresh subprocess under ``strace`` for both
+   inner lanes, and every data write it makes is asserted to land under the
+   attempt arena directory. Seeding one unregistered producer write makes that
+   check fail, so it is non-vacuous. This is the real enforcement; the static
+   checks are the drift guard (plan 2: static analysis is a drift guard, not a
+   proof against arbitrary dynamic Python).
+
+Slice 2 state: T01-T08 are ``migrated`` and enforced here; T09-T17 stay
+``unmigrated`` (Slice 3). A whole-module exclusion is never allowed.
 """
 
 from __future__ import annotations
@@ -31,16 +36,20 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import textwrap
 from pathlib import Path
 
 import pytest
 
 HERE = Path(__file__).resolve().parent
-ENGINE_ROOT = HERE.parents[1] / "src" / "decoy_engine"
+REPO_ROOT = HERE.parents[1]
+ENGINE_ROOT = REPO_ROOT / "src" / "decoy_engine"
 MANIFEST_PATH = HERE / "scratch_producer_manifest.json"
+TRACE_CHILD = HERE / "_f25_ooc_trace_child.py"
 
 EXPECTED_T_IDS = tuple(f"T{n:02d}" for n in range(1, 18))
+MIGRATED_IDS = frozenset(f"T{n:02d}" for n in range(1, 9))
 
 
 def _load_manifest() -> dict:
@@ -48,13 +57,9 @@ def _load_manifest() -> dict:
 
 
 # ---------------------------------------------------------------------------
-# AST + string scanner for unregistered allocation / write primitives.
+# Check 1: AST + string scanner for unregistered allocation / write primitives.
 # ---------------------------------------------------------------------------
 
-# Dotted-call tails that allocate or open a writable temporary resource outside
-# the ScratchManager. A migrated producer reaches its path through a capability
-# (arena.allocate_* then unwrap_path/unwrap_dir), so these raw primitives in a
-# production write site are what the sentry is built to catch.
 _FORBIDDEN_CALL_TAILS: frozenset[str] = frozenset(
     {
         "tempfile.mkdtemp",
@@ -64,15 +69,15 @@ _FORBIDDEN_CALL_TAILS: frozenset[str] = frozenset(
         "os.mkdtemp",
         "pa.OSFile",
         "pa.ipc.new_file",
+        "pa.ipc.new_stream",
         "pa.RecordBatchFileWriter",
         "pq.ParquetWriter",
+        "pq.write_table",
         "pyarrow.parquet.ParquetWriter",
         "duckdb.connect",
     }
 )
 
-# Sanctioned wrappers: a call whose tail is one of these is the registration
-# seam itself and is never a finding.
 _SANCTIONED_CALL_TAILS: frozenset[str] = frozenset(
     {
         "arena.allocate_file",
@@ -86,9 +91,30 @@ _SANCTIONED_CALL_TAILS: frozenset[str] = frozenset(
     }
 )
 
+# The sanctioned allocation wrappers a migrated producer must reach its path
+# through (plan 2 check 2: each allowed producer has an allocation wrapper).
+_SEAM_FUNCS: frozenset[str] = frozenset(
+    {
+        "ensure_scratch",
+        "edge_work_dir",
+        "unwrap_path",
+        "unwrap_dir",
+        "native_dir_path",
+        "as_native_dir",
+        "adopt_file",
+        "allocate_file",
+        "allocate_native_dir",
+    }
+)
+
 _WRITE_MODE_RE = re.compile(r"[wxa+]")
+_COPY_TO_RE = re.compile(r"\bCOPY\b.+\bTO\b", re.IGNORECASE | re.DOTALL)
+# An absolute-path literal baked into a write target or SQL string: the drift
+# this static guard catches. A path threaded in from a variable (anchored at the
+# caller) is verified at runtime by the syscall trace, not here.
+_ABS_PATH_LITERAL_RE = re.compile(r"""['"]?/[A-Za-z0-9_.]""")
 _STRING_BACKSTOPS: tuple[tuple[str, re.Pattern[str]], ...] = (
-    ("sql_copy_to", re.compile(r"\bCOPY\b.+\bTO\b", re.IGNORECASE | re.DOTALL)),
+    ("sql_copy_to", _COPY_TO_RE),
     ("o_tmpfile", re.compile(r"O_TMPFILE")),
 )
 
@@ -105,13 +131,9 @@ def _call_tail(node: ast.Call) -> str:
 
 
 def _opens_for_write(node: ast.Call, tail: str) -> bool:
-    """A builtin ``open`` / ``Path.open`` / ``os.open`` that creates or writes."""
-
     name = tail.split(".")[-1]
-    if name not in {"open"}:
+    if name != "open":
         return False
-    # Builtin / Path.open: the MODE is positional arg 1 or the mode= keyword.
-    # Inspect only the mode, never the path -- a path containing w/x/a/+ is not a write mode.
     mode_node: ast.expr | None = node.args[1] if len(node.args) > 1 else None
     for kw in node.keywords:
         if kw.arg == "mode":
@@ -122,14 +144,11 @@ def _opens_for_write(node: ast.Call, tail: str) -> bool:
         and _WRITE_MODE_RE.search(mode_node.value)
     ):
         return True
-    # os.open uses integer O_* flags, not a string mode: detect the create/write tokens.
     flags_src = ast.dump(node)
     return "O_CREAT" in flags_src or "O_TMPFILE" in flags_src or "O_WRONLY" in flags_src
 
 
 def find_unregistered_allocations(source: str) -> list[str]:
-    """Return a list of findings (one per unregistered allocation/write site)."""
-
     findings: list[str] = []
     tree = ast.parse(source)
     for node in ast.walk(tree):
@@ -148,6 +167,118 @@ def find_unregistered_allocations(source: str) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
+# AST helpers for the per-migrated-producer drift guard.
+# ---------------------------------------------------------------------------
+
+
+def _literal_text(expr: ast.expr | None) -> str:
+    """Concatenate every string literal reachable in ``expr`` (constants and
+    f-string segments), so an absolute-path literal baked anywhere in a write
+    target or SQL string is visible."""
+    if expr is None:
+        return ""
+    out: list[str] = []
+    for node in ast.walk(expr):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            out.append(node.value)
+    return " ".join(out)
+
+
+def _has_hardcoded_path(expr: ast.expr | None) -> bool:
+    return bool(_ABS_PATH_LITERAL_RE.search(_literal_text(expr)))
+
+
+def _write_sites(tree: ast.Module) -> list[tuple[ast.Call, ast.expr | None]]:
+    """Forbidden-primitive WRITE calls and their path argument."""
+    sites: list[tuple[ast.Call, ast.expr | None]] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        tail = _call_tail(node)
+        leaf = tail.split(".")[-1]
+        if tail in {
+            "pq.ParquetWriter",
+            "pyarrow.parquet.ParquetWriter",
+            "pa.ipc.new_file",
+            "pa.ipc.new_stream",
+            "pa.RecordBatchFileWriter",
+        }:
+            sites.append((node, node.args[0] if node.args else None))
+        elif tail == "pq.write_table":
+            sites.append((node, node.args[1] if len(node.args) > 1 else None))
+        elif tail == "pa.OSFile":
+            mode = node.args[1] if len(node.args) > 1 else None
+            if (
+                isinstance(mode, ast.Constant)
+                and isinstance(mode.value, str)
+                and _WRITE_MODE_RE.search(mode.value)
+            ):
+                sites.append((node, node.args[0] if node.args else None))
+        elif leaf == "open" and _opens_for_write(node, tail):
+            sites.append((node, node.args[0] if node.args else None))
+    return sites
+
+
+def _copy_to_sites(tree: ast.Module) -> list[ast.expr]:
+    """SQL strings passed to a ``.execute(...)`` call that render a DuckDB
+    ``COPY ... TO``. Restricted to execute arguments so a module/function
+    docstring that merely uses the words "copy" and "to" in prose is never a
+    site; only real SQL is checked for a hardcoded path target.
+    """
+    sites: list[ast.expr] = []
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
+            continue
+        if node.func.attr != "execute" or not node.args:
+            continue
+        sql = node.args[0]
+        if _COPY_TO_RE.search(_literal_text(sql)):
+            sites.append(sql)
+    return sites
+
+
+def _seam_calls(tree: ast.Module) -> set[str]:
+    out: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            leaf = _call_tail(node).split(".")[-1]
+            if leaf in _SEAM_FUNCS:
+                out.add(leaf)
+    return out
+
+
+def _raw_temp_calls(tree: ast.Module) -> list[str]:
+    out: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            tail = _call_tail(node)
+            if tail.startswith("tempfile.") or tail == "os.mkdtemp":
+                out.append(tail)
+    return out
+
+
+def _module_source(rel: str) -> str:
+    return (ENGINE_ROOT / rel).read_text(encoding="utf-8")
+
+
+def _exemptions_for(manifest: dict, rel: str) -> set[str]:
+    return {e["symbol"] for e in manifest.get("exemptions", []) if e["module"] == rel}
+
+
+def _migrated_modules(manifest: dict) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for p in manifest["producers"]:
+        if p["status"] != "migrated":
+            continue
+        for m in [p["module"], *p.get("extra_modules", [])]:
+            if m not in seen:
+                seen.add(m)
+                out.append(m)
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Manifest coverage + integrity.
 # ---------------------------------------------------------------------------
 
@@ -159,8 +290,6 @@ def test_manifest_loads_and_covers_T01_to_T17() -> None:
 
 
 def test_manifest_entries_point_at_real_modules() -> None:
-    """A stale manifest entry (a producer module that no longer exists) fails,
-    mirroring the physical-seam sentry's stale-entry guard."""
     manifest = _load_manifest()
     missing: list[str] = []
     for producer in manifest["producers"]:
@@ -170,24 +299,33 @@ def test_manifest_entries_point_at_real_modules() -> None:
     assert not missing, f"manifest names modules that do not exist: {missing}"
 
 
-def test_slice1_enforces_no_migration_yet() -> None:
-    """Slice 1 contract: every seeded row is unmigrated and the sentry requires
-    registration of none of them. This asserts the deliberate state so a future
-    slice that migrates a row has to flip its status here in the same diff."""
+def test_slice2_migrated_set_is_exactly_T01_to_T08() -> None:
     manifest = _load_manifest()
-    statuses = {p["id"]: p["status"] for p in manifest["producers"]}
-    assert set(statuses.values()) == {"unmigrated"}, statuses
+    status = {p["id"]: p["status"] for p in manifest["producers"]}
+    migrated = {tid for tid, s in status.items() if s == "migrated"}
+    assert migrated == MIGRATED_IDS, migrated
+    assert all(status[tid] == "unmigrated" for tid in status if tid not in MIGRATED_IDS)
+
+
+def test_migrated_rows_carry_allocation_and_witness() -> None:
+    manifest = _load_manifest()
+    for p in manifest["producers"]:
+        if p["status"] == "migrated":
+            assert p.get("allocation"), f"{p['id']} migrated without an allocation wrapper"
+            assert p.get("witness"), f"{p['id']} migrated without an acceptance witness"
 
 
 # ---------------------------------------------------------------------------
-# Scanner teeth (non-vacuous): each seeded violation class must be flagged.
+# Check 1: scanner teeth (non-vacuous).
 # ---------------------------------------------------------------------------
 
 _SEEDED_VIOLATIONS: dict[str, str] = {
     "unregistered_tempfile": "import tempfile\nd = tempfile.mkdtemp(prefix='decoy-ooc-')\n",
     "named_temporary_file": "import tempfile\nf = tempfile.NamedTemporaryFile('wb')\n",
     "aliased_arrow_writer": "import pyarrow as pa\nw = pa.ipc.new_file(sink, schema)\n",
+    "arrow_stream_writer": "import pyarrow as pa\nw = pa.ipc.new_stream('/tmp/x.arrow', schema)\n",
     "parquet_writer": "import pyarrow.parquet as pq\nw = pq.ParquetWriter('/tmp/x.parquet', schema)\n",
+    "parquet_write_table": "import pyarrow.parquet as pq\npq.write_table(t, '/tmp/x.parquet')\n",
     "new_duckdb_connect": "import duckdb\ncon = duckdb.connect('/tmp/spill.db')\n",
     "sql_copy_to": "con.execute(\"COPY t TO '/tmp/out.parquet' (FORMAT parquet)\")\n",
     "hardcoded_write_open": "f = open('/tmp/decoy-scratch/raw.bin', 'wb')\n",
@@ -203,9 +341,6 @@ def test_scanner_flags_each_seeded_violation(name: str) -> None:
 
 
 def test_scanner_passes_clean_capability_only_snippet() -> None:
-    """A producer that only reaches storage through the capability seam has no
-    raw primitive and must not be flagged (otherwise the sentry would block
-    every migrated producer)."""
     clean = textwrap.dedent(
         """
         from decoy_engine.scratch import unwrap_path
@@ -217,93 +352,141 @@ def test_scanner_passes_clean_capability_only_snippet() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Syscall-traced subprocess checks (A04/A12): an unregistered write that
-# unlinks its file immediately is still caught at the kernel boundary.
+# Check 2: every migrated producer routes its writes through the capability seam.
 # ---------------------------------------------------------------------------
 
-_UNLINKED_WRITE_CHILD = textwrap.dedent(
-    """
-    import os, sys
-    d = sys.argv[1]
-    # open + immediate unlink: the file keeps a live FD and consumes quota until
-    # the last descriptor closes, but an end-of-run directory listing is empty.
-    path = os.path.join(d, 'ghost.bin')
-    fd = os.open(path, os.O_CREAT | os.O_WRONLY, 0o600)
-    os.unlink(path)
-    os.write(fd, b'D' * (1024 * 64))
-    os.fsync(fd)
-    os.close(fd)
-    print('listing:', os.listdir(d))
-    """
-)
+
+def test_migrated_producers_use_the_capability_seam() -> None:
+    manifest = _load_manifest()
+    offenders: list[str] = []
+    for rel in _migrated_modules(manifest):
+        if not _seam_calls(ast.parse(_module_source(rel))):
+            offenders.append(rel)
+    assert not offenders, f"migrated producers do not call the capability seam: {offenders}"
+
+
+def test_migrated_producers_have_no_raw_tempfile_calls() -> None:
+    manifest = _load_manifest()
+    offenders: list[str] = []
+    for rel in _migrated_modules(manifest):
+        allowed = _exemptions_for(manifest, rel)
+        for tail in _raw_temp_calls(ast.parse(_module_source(rel))):
+            if tail not in allowed:
+                offenders.append(f"{rel}:{tail}")
+    assert not offenders, f"migrated producers hold unexempted raw temp calls: {offenders}"
+
+
+def test_migrated_producers_have_no_hardcoded_write_target() -> None:
+    """A migrated producer may not bake an absolute path into a ParquetWriter /
+    Arrow IPC / write_table / write-mode open, nor into a COPY ... TO: those are
+    the hardcoded-path bypass the static guard catches. Legitimate targets are
+    threaded in from an arena capability and verified by the syscall trace."""
+    manifest = _load_manifest()
+    offenders: list[str] = []
+    for rel in _migrated_modules(manifest):
+        tree = ast.parse(_module_source(rel))
+        for node, path_expr in _write_sites(tree):
+            if _has_hardcoded_path(path_expr):
+                offenders.append(f"{rel}:{_call_tail(node)}@L{node.lineno}")
+        for copy_node in _copy_to_sites(tree):
+            if _has_hardcoded_path(copy_node):
+                offenders.append(f"{rel}:COPY...TO@L{copy_node.lineno}")
+    assert not offenders, f"migrated producers write to hardcoded paths: {offenders}"
+
+
+def test_hardcoded_path_detector_is_non_vacuous() -> None:
+    bad = ast.parse(
+        "import pyarrow.parquet as pq\npq.write_table(t, '/tmp/leak.parquet')\n"
+        "con.execute(\"COPY t TO '/tmp/leak2.parquet' (FORMAT parquet)\")\n"
+    )
+    assert any(_has_hardcoded_path(p) for _, p in _write_sites(bad))
+    assert any(_has_hardcoded_path(c) for c in _copy_to_sites(bad))
+    good = ast.parse(
+        "import pyarrow.parquet as pq\n"
+        "from decoy_engine.scratch import unwrap_path\n"
+        "def f(rf):\n"
+        "    path = unwrap_path(rf)\n"
+        "    pq.write_table(t, path)\n"
+    )
+    assert not any(_has_hardcoded_path(p) for _, p in _write_sites(good))
+
+
+# ---------------------------------------------------------------------------
+# Check 3: syscall-traced real OOC run -- every data write is under the arena.
+# ---------------------------------------------------------------------------
+
+_CREATE_RE = re.compile(r'openat\([^,]+,\s*"([^"]+)"[^)]*\bO_CREAT\b')
 
 
 def _strace() -> str | None:
     return shutil.which("strace")
 
 
-@pytest.mark.skipif(_strace() is None, reason="strace not available on this host")
-def test_syscall_trace_catches_unlinked_write(tmp_path: Path) -> None:
-    """The open+unlink / O_TMPFILE case the plan 1.9 A12 demands: a directory
-    listing alone is insufficient, so the trace must observe the write even
-    though the file is gone by end of run."""
+def _run_traced(base: Path, lane: str, *, bypass: bool) -> tuple[str, str]:
+    base.mkdir(parents=True, exist_ok=True)
+    trace_log = base / "trace.log"
+    env = {"PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "HOME": str(base)}
+    if bypass:
+        env["DECOY_F25_SEED_BYPASS"] = "1"
     strace = _strace()
     assert strace is not None
-    child = tmp_path / "child.py"
-    child.write_text(_UNLINKED_WRITE_CHILD, encoding="utf-8")
-    trace_log = tmp_path / "trace.log"
-    work = tmp_path / "work"
-    work.mkdir()
     proc = subprocess.run(  # noqa: S603 -- fully code-constructed args, trusted
         [
             strace,
             "-f",
+            "-qq",
             "-e",
-            "trace=openat,open,write,unlink,unlinkat",
+            "trace=openat,creat,renameat,renameat2",
             "-o",
             str(trace_log),
             sys.executable,
-            str(child),
-            str(work),
+            str(TRACE_CHILD),
+            str(REPO_ROOT),
+            str(base),
+            lane,
         ],
         capture_output=True,
         text=True,
-        check=True,
+        env=env,
     )
-    # The end-of-run listing is empty: a listing-only scan would see nothing.
-    assert "listing: []" in proc.stdout
-    trace = trace_log.read_text(encoding="utf-8")
-    # The syscall trace still shows the create, the unlink and the write.
-    assert "ghost.bin" in trace, "trace did not record the unlinked file's creation"
-    assert re.search(r"\bunlink(at)?\(", trace), "trace did not record the unlink"
-    assert re.search(r"\bwrite\(", trace), "trace did not record the write"
+    return proc.stdout + "\n" + proc.stderr, trace_log.read_text(encoding="utf-8", errors="replace")
 
 
-_REGISTERED_WRITE_CHILD = textwrap.dedent(
-    """
-    import os, sys, tempfile
-    sys.path.insert(0, sys.argv[1])
-    from pathlib import Path
-    from decoy_engine.scratch._arena import Arena  # import proves the seam loads
-    # A registered write would go through Arena.allocate_file -> unwrap_path; this
-    # child only proves the capability module is importable in a fresh process
-    # (the full registered-write syscall correlation lands with the migrated
-    # producers in Slices 2-3, against a real quota'd arena).
-    print('arena importable:', Arena.__name__)
-    """
-)
+def _creates_under_work(trace: str, work: Path) -> list[str]:
+    work_str = str(work.resolve())
+    hits: list[str] = []
+    for match in _CREATE_RE.finditer(trace):
+        path = match.group(1)
+        if path.startswith(work_str + "/"):
+            hits.append(path)
+    return hits
 
 
-def test_scratch_seam_imports_in_a_fresh_subprocess() -> None:
-    """Dynamic proof (not source-text) that the capability seam imports cleanly
-    in a fresh interpreter, the precondition for the Slice 2-3 syscall
-    correlation of registered writes."""
-    src_root = str(ENGINE_ROOT.parent)
-    child_src = _REGISTERED_WRITE_CHILD
-    result = subprocess.run(  # noqa: S603 -- trusted, code-constructed args
-        [sys.executable, "-c", child_src, src_root],
-        capture_output=True,
-        text=True,
-        check=True,
+@pytest.mark.skipif(_strace() is None, reason="strace not available on this host")
+@pytest.mark.parametrize("lane", ["batch", "reorder"])
+def test_syscall_trace_data_writes_are_under_the_arena(tmp_path: Path, lane: str) -> None:
+    """A04/A12 teeth: run a real OOC job (both inner lanes) with a sink, forcing
+    spill, and prove every file it creates under the OOC temp root lives inside a
+    registered ``.decoy-arena-*`` directory -- no producer writes to a raw path."""
+    base = tmp_path / lane
+    stdout, trace = _run_traced(base, lane, bypass=False)
+    assert "OOC_RUN_OK" in stdout, f"child did not finish the {lane} run:\n{stdout}"
+    creates = _creates_under_work(trace, base / "work")
+    assert creates, "trace recorded no data writes under the OOC temp root (vacuous)"
+    unregistered = [p for p in creates if ".decoy-arena-" not in p]
+    assert not unregistered, f"{lane} lane wrote data outside any arena: {unregistered[:5]}"
+
+
+@pytest.mark.skipif(_strace() is None, reason="strace not available on this host")
+def test_syscall_trace_catches_a_seeded_bypass() -> None:
+    """Non-vacuous proof: seeding one unregistered producer write makes the
+    under-arena check fail, so the trace has teeth."""
+    base = Path(tempfile.mkdtemp(prefix="f25-sentry-bypass-")) / "batch"
+    stdout, trace = _run_traced(base, "batch", bypass=True)
+    assert "OOC_RUN_OK" in stdout, f"seeded child did not finish:\n{stdout}"
+    creates = _creates_under_work(trace, base / "work")
+    unregistered = [p for p in creates if ".decoy-arena-" not in p]
+    assert any("F25_SENTRY_BYPASS_LEAK.bin" in p for p in unregistered), (
+        "the seeded leak was not caught by the under-arena check; "
+        f"unregistered writes seen: {unregistered[:5]}"
     )
-    assert "arena importable: Arena" in result.stdout

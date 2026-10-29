@@ -91,6 +91,7 @@ from decoy_engine.execution.out_of_core._route_policy import (
     decide_route,
     validate_outgoing_parent_columns,
 )
+from decoy_engine.execution.out_of_core._scratch import ArenaLike, LocalArena, ensure_scratch
 from decoy_engine.execution.out_of_core._source import LazySource
 from decoy_engine.execution.out_of_core._stream_driver import stream_table
 from decoy_engine.execution.out_of_core._stream_driver_support import (
@@ -138,6 +139,7 @@ def run_fk_out_of_core(
     vault_writer: Any = None,
     config: Mapping[str, Any] | None = None,
     native_threads: int = 1,
+    scratch_arena: ArenaLike | None = None,
 ) -> ExecutionResult:
     """Run the out-of-core FK relationship route as a batch stream.
 
@@ -208,6 +210,11 @@ def run_fk_out_of_core(
     root = Path(tempfile.mkdtemp(prefix="decoy-ooc-")) if temp_dir is None else temp_dir
     root.mkdir(parents=True, exist_ok=True)
     os.chmod(root, 0o700)
+    # F25 T01 (plan 1.3): one attempt arena threaded into every T01-T08 producer
+    # so each temporary byte is allocated through a capability before it is
+    # written. `scratch_arena` is the injected qualified arena at activation; the
+    # default is the pre-activation local allocator rooted under this run's root.
+    scratch = ensure_scratch(scratch_arena, root)
     committed = False
     # B4: the run-scoped faker pool lifecycle. Pools are Python/object memory
     # outside DuckDB's accounting, so bound them well inside the run budget and
@@ -244,6 +251,7 @@ def run_fk_out_of_core(
                 parent_relations,
                 temp_dir=root / "relations" / table_name / "merged",
                 memory_limit=memory_limit_for(budget_bytes, 1) if budget_bytes else memory_limit,
+                arena=scratch,
             )
             table_outgoing_edges = tuple(outgoing[table_name])
             _pg = get_active_channel()
@@ -282,6 +290,7 @@ def run_fk_out_of_core(
                 "vault_writer": vault_writer,
                 "vault_config": config,
                 "validators": validators,
+                "arena": scratch,
             }
             # `reorder_caps is not None` (not `route.use_reorder`) is the branch
             # condition so this narrows for mypy directly, matching `RouteDecision`'s
@@ -332,6 +341,10 @@ def run_fk_out_of_core(
         shutil.rmtree(root / "relations", ignore_errors=True)
         shutil.rmtree(root / "joins", ignore_errors=True)
         shutil.rmtree(root / "staged", ignore_errors=True)
+        # Reclaim the local (pre-activation) arena holding this run's spill; an
+        # injected arena's lifetime is the caller's (plan 1.8 sweep / Slice 5).
+        if isinstance(scratch, LocalArena):
+            scratch.release_all()
         if owned_temp:
             shutil.rmtree(root, ignore_errors=True)
         # Release the run's faker pools (in-memory numpy arrays) and reset the
@@ -363,6 +376,7 @@ def _stream_table(
     vault_writer: Any = None,
     vault_config: Mapping[str, Any] | None = None,
     validators: Any = None,
+    arena: ArenaLike | None = None,
 ) -> None:
     """Rewrite pass for one table: mask + join per batch, then emit.
 
@@ -433,6 +447,7 @@ def _stream_table(
                     temp_dir / f"edge_{idx}",
                     joiner_memory_limit,
                     mask_key=mask_key,
+                    arena=arena,
                 )
             )
         for edge, joiner in zip(incoming_edges, joiners, strict=True):
@@ -517,6 +532,7 @@ def _stream_table(
                 sink=sink,
                 source_schema=source_schema,
                 on_stream_consumed=_release_joiners,
+                arena=arena,
             )
         else:
             batches = list(rewritten())
@@ -534,6 +550,7 @@ def _stream_table(
                     temp_dir=relation_dir,
                     memory_limit=resident_build_memory_limit,
                     batch_rows=batch_rows,
+                    arena=arena,
                 )
         # Deferred commit: `rewritten()` is fully consumed by now, so
         # `code_set_null_seen` reflects the whole stream. Only a column that
@@ -580,6 +597,7 @@ def _open_joiner(
     memory_limit: str | None,
     *,
     mask_key: bytes | None = None,
+    arena: ArenaLike | None = None,
 ) -> ChildFkBatchJoiner:
     for child_col in edge.child_columns:
         if child_col not in source_schema.names:
@@ -607,6 +625,7 @@ def _open_joiner(
         memory_limit=memory_limit,
         remap_seeds=remap_seeds,
         job_seed=mask_key if mask_key is not None else plan.seed_envelope.job_seed,
+        arena=arena,
     )
 
 

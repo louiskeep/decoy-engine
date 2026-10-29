@@ -87,6 +87,7 @@ from decoy_engine.execution.out_of_core._payload_store import (
     SpillPayloadStore,
 )
 from decoy_engine.execution.out_of_core._relation import build_parent_key_relation_aligned
+from decoy_engine.execution.out_of_core._scratch import ArenaLike, edge_work_dir, ensure_scratch
 from decoy_engine.execution.out_of_core._source import LazySource
 from decoy_engine.execution.out_of_core._stream_driver_support import (
     _code_set_records_and_evidence_for_table,
@@ -103,6 +104,7 @@ from decoy_engine.execution.out_of_core._stream_join import (
 from decoy_engine.execution.out_of_core._validate_batch import collect_batch_validation
 from decoy_engine.execution.out_of_core._vault_collect import collect_batch_vault
 from decoy_engine.relationships._graph import OrphanPolicy
+from decoy_engine.scratch._policy import ResourceKind
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping
@@ -148,6 +150,7 @@ def stream_table(
     vault_writer: Any = None,
     vault_config: Mapping[str, Any] | None = None,
     validators: Any = None,
+    arena: ArenaLike | None = None,
 ) -> None:
     """Rewrite one table via the three-phase sequential reorder driver.
 
@@ -250,8 +253,18 @@ def stream_table(
         )
         joiner_memory_limit = sink_joiner if sink is not None else resident_joiner
     joiners: list[StreamFkJoiner] = []
+    # T06 (plan 1.3): the payload and raw-parent-key Arrow IPC spills, and each
+    # edge's joiner, are this table's own ephemeral spill, so they allocate from
+    # a per-table arena rooted under `temp_dir` (reclaimed when `temp_dir` is
+    # removed in the finally). The outgoing relations the children read later
+    # must OUTLIVE this call, so their build takes the run-scoped `arena`
+    # directly (rooted under `relation_dir` when none is injected), never this
+    # per-table one.
+    scratch = ensure_scratch(arena, temp_dir)
     store: PayloadStore = (
-        ResidentPayloadStore() if sink is None else SpillPayloadStore(temp_dir / "payload.arrow")
+        ResidentPayloadStore()
+        if sink is None
+        else SpillPayloadStore(scratch.allocate_file(ResourceKind.FILE, "payload"))
     )
     # The outgoing-relation build's `source_parent`: a phase-1 capture of the
     # raw outgoing-edge parent-key columns, in phase-1 read order (== the
@@ -271,7 +284,8 @@ def stream_table(
         # cannot encode (e.g. month_day_nano_interval) yet the route admits and
         # the oracle masks; IPC round-trips the full admitted surface losslessly.
         raw_parent_spill = RawParentKeySpill(
-            temp_dir / "raw_parent_keys.arrow", raw_parent_projection_schema
+            scratch.allocate_file(ResourceKind.FILE, "raw_parent_keys"),
+            raw_parent_projection_schema,
         )
         raw_parent_source = raw_parent_spill
     try:
@@ -289,6 +303,7 @@ def stream_table(
                 temp_dir / f"edge_{idx}",
                 joiner_memory_limit,
                 mask_key=mask_key,
+                arena=scratch,
             )
             # Register for cleanup BEFORE begin_staging so a DDL/temp-dir failure
             # there cannot leak the just-opened DuckDB connection.
@@ -464,6 +479,7 @@ def stream_table(
                     source_schema=source_schema,
                     on_stream_consumed=_release_joiners,
                     masked_observed_types=payload_masked_observed,
+                    arena=arena,
                 )
             else:
                 batches = list(rewritten())
@@ -481,6 +497,7 @@ def stream_table(
                         temp_dir=relation_dir,
                         memory_limit=resident_build_memory_limit,
                         batch_rows=batch_rows,
+                        arena=arena,
                     )
         # Deferred commit: `code_set_null_seen` was populated during the phase-1
         # source pass (which always precedes this point), so it reflects the
@@ -558,6 +575,7 @@ def _open_joiner(
     memory_limit: str | None,
     *,
     mask_key: bytes | None = None,
+    arena: ArenaLike | None = None,
 ) -> StreamFkJoiner:
     for child_col in edge.child_columns:
         if child_col not in source_schema.names:
@@ -577,11 +595,16 @@ def _open_joiner(
                 )
             seeds.append(seed)
         remap_seeds = tuple(seeds)
+    # T05/T06/T07 (plan 1.3): resolve this edge's one registered work directory
+    # here, so the joiner's child-key/reorder/DuckDB spill lands under the attempt
+    # arena. The joiner stays an orchestrator over the already-anchored leaf
+    # writers (_payload_store, _external_sort, _duckdb) and takes a plain path.
+    work = edge_work_dir(arena, temp_dir, writer_id="stream-join")
     return StreamFkJoiner(
         edge=edge,
         parent_relation=relation,
         child_key_types=tuple(source_schema.field(col).type for col in edge.child_columns),
-        temp_dir=temp_dir,
+        temp_dir=work,
         memory_limit=memory_limit,
         remap_seeds=remap_seeds,
         job_seed=mask_key if mask_key is not None else plan.seed_envelope.job_seed,

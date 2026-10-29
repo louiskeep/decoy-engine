@@ -23,6 +23,7 @@ from decoy_engine.execution.out_of_core._payload_store import (
     SpillChildKeys,
     SpillPayloadStore,
 )
+from decoy_engine.execution.out_of_core._scratch import adopt_file
 from decoy_engine.execution.out_of_core._stream_join_cursors import ChildKeyLockstepCursor
 
 pytestmark = pytest.mark.skipif(
@@ -52,7 +53,7 @@ def _batches() -> list[pa.RecordBatch]:
 
 @pytest.fixture
 def keys(tmp_path: Path) -> SpillChildKeys:
-    spill = SpillChildKeys(tmp_path / "child_keys.arrow", _SCHEMA)
+    spill = SpillChildKeys(adopt_file(tmp_path / "child_keys.arrow"), _SCHEMA)
     for b in _batches():
         spill.append(b)
     spill.finalize()
@@ -96,7 +97,7 @@ def test_open_reader_exception_mid_read_closes_handle(keys: SpillChildKeys) -> N
 
 
 def test_open_reader_before_finalize_raises_without_opening(tmp_path: Path) -> None:
-    spill = SpillChildKeys(tmp_path / "ck.arrow", _SCHEMA)
+    spill = SpillChildKeys(adopt_file(tmp_path / "ck.arrow"), _SCHEMA)
     writer_fds = _open_fds(spill._path)  # the still-open writer's own descriptor
     with pytest.raises(AssertionError, match="before finalize"), spill.open_reader():
         pass
@@ -105,7 +106,7 @@ def test_open_reader_before_finalize_raises_without_opening(tmp_path: Path) -> N
 
 
 def test_open_reader_construction_failure_closes_osfile(tmp_path: Path) -> None:
-    spill = SpillChildKeys(tmp_path / "ck.arrow", _SCHEMA)
+    spill = SpillChildKeys(adopt_file(tmp_path / "ck.arrow"), _SCHEMA)
     spill.finalize()
     spill._path.write_bytes(b"not an arrow stream")
     with pytest.raises(pa.ArrowInvalid), spill.open_reader():
@@ -164,7 +165,7 @@ def test_lockstep_cursor_exception_mid_read_closes_handle(keys: SpillChildKeys) 
 
 
 def _payload_store(tmp_path: Path) -> SpillPayloadStore:
-    store = SpillPayloadStore(tmp_path / "payload.arrow")
+    store = SpillPayloadStore(adopt_file(tmp_path / "payload.arrow"))
     for b in _batches():
         store.append(b)
     return store
@@ -193,7 +194,7 @@ def test_payload_store_iter_batches_exception_closes_handle(tmp_path: Path) -> N
 
 
 def test_raw_parent_key_spill_exhaust_abandon_and_reopen(tmp_path: Path) -> None:
-    spill = RawParentKeySpill(tmp_path / "raw.arrow", _SCHEMA)
+    spill = RawParentKeySpill(adopt_file(tmp_path / "raw.arrow"), _SCHEMA)
     for b in _batches():
         spill.append(b)
     spill.finalize()

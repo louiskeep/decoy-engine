@@ -76,7 +76,9 @@ from decoy_engine.execution.out_of_core._join import (
 )
 from decoy_engine.execution.out_of_core._mask import mask_column, masked_output_type
 from decoy_engine.execution.out_of_core._relation import _column_seed
+from decoy_engine.execution.out_of_core._scratch import ArenaLike, ensure_scratch
 from decoy_engine.relationships._graph import OrphanPolicy
+from decoy_engine.scratch._policy import ResourceKind
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -107,6 +109,7 @@ class ChildFkBatchJoiner:
         memory_limit: str | None = None,
         remap_seeds: tuple[ColumnSeed, ...] | None = None,
         job_seed: bytes | None = None,
+        arena: ArenaLike | None = None,
     ) -> None:
         if len(child_key_types) != len(edge.child_columns):
             raise ExecutionError(
@@ -146,8 +149,13 @@ class ChildFkBatchJoiner:
             set() for _ in edge.child_columns
         )
         # Typing is settled; only now acquire the connection so a fail-closed
-        # rejection never leaks one.
-        self._conn = connect_duckdb(temp_dir=temp_dir / "duckdb", memory_limit=memory_limit)
+        # rejection never leaks one. T05 (plan 1.3): DuckDB's spill lands in a
+        # registered native directory the arena owns, allocated before connect.
+        scratch = ensure_scratch(arena, temp_dir)
+        self._conn = connect_duckdb(
+            temp_dir=scratch.allocate_native_dir(ResourceKind.NATIVE_DIR, "batch-join-duckdb"),
+            memory_limit=memory_limit,
+        )
         try:
             # Materialize the relation ONCE as a TEMP TABLE, not a TEMP VIEW over
             # read_parquet: `join_batch` runs one LEFT JOIN against parent_keys

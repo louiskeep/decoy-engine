@@ -1,4 +1,13 @@
-"""DuckDB helper for out-of-core relational operators."""
+"""DuckDB helper for out-of-core relational operators.
+
+F25 T05 (plan 1.3): every helper-created DuckDB connection takes its temp
+directory as a registered ``NativeDirectory`` capability, so DuckDB's opaque
+spill files inherit the owned, quota-enforced arena before the connection opens
+(plan 1.5: register the opaque DB directory before connect). The spill path is
+reached only through ``unwrap_dir``; a raw ``Path`` is still accepted for direct
+unit tests and wrapped into a fresh registered directory so the write is never
+unanchored.
+"""
 
 from __future__ import annotations
 
@@ -7,6 +16,8 @@ import re
 from pathlib import Path
 
 from decoy_engine.execution._errors import ExecutionError
+from decoy_engine.execution.out_of_core._scratch import native_dir_path
+from decoy_engine.scratch._capabilities import NativeDirectory
 
 # `_budget.py` (`resolve_budget` / `resolve_ooc_memory_limit`) is the only
 # producer of the `memory_limit` string this module consumes, and it always
@@ -24,8 +35,15 @@ _MEMORY_LIMIT_MB_PATTERN = re.compile(r"^(\d+)MB$")
 _THREAD_BYTES_PER_THREAD = 2 * 1024 * 1024 * 1024  # 2 GiB
 
 
-def connect_duckdb(*, temp_dir: Path, memory_limit: str | None = None):
-    """Open an in-memory DuckDB connection with a restricted temp directory."""
+def connect_duckdb(*, temp_dir: NativeDirectory | Path, memory_limit: str | None = None):
+    """Open an in-memory DuckDB connection with a restricted temp directory.
+
+    ``temp_dir`` is a registered ``NativeDirectory`` capability (the T05
+    migration); a bare ``Path`` is accepted for direct unit tests and wrapped
+    into a fresh registered directory. Either way the DuckDB spill path is
+    resolved through ``unwrap_dir``, so the connection's opaque spill files land
+    under an owned arena the allocation sentry can account for.
+    """
     try:
         import duckdb
     except ModuleNotFoundError as exc:  # pragma: no cover - covered in no-duckdb envs
@@ -34,8 +52,9 @@ def connect_duckdb(*, temp_dir: Path, memory_limit: str | None = None):
             message="DuckDB is required for the out-of-core relationship route.",
         ) from exc
 
-    temp_dir.mkdir(parents=True, exist_ok=True)
-    os.chmod(temp_dir, 0o700)
+    spill = native_dir_path(temp_dir, writer_id="duckdb")
+    os.chmod(spill, 0o700)
+    temp_dir = spill
     # duckdb.connect's config maps str keys to a union value type; widen the
     # annotation to that surface even though every value here is a str/bool/int.
     config: dict[str, str | bool | int | float | list[str]] = {"temp_directory": str(temp_dir)}

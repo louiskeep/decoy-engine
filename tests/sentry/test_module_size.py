@@ -120,10 +120,12 @@ ALLOWLIST: dict[str, int] = {
     "src/decoy_engine/execution/_sequential.py": 691,
     # transactional publish hardening and row mask; split the publish cluster.
     "src/decoy_engine/quarantine.py": 645,
-    # code_set provenance and FF1 notice plumbing through the streaming runner.
-    "src/decoy_engine/execution/out_of_core/_runner.py": 679,
-    # D3a validator mask-step hook threaded through the reorder driver; all logic lives in _validate_batch.py.
-    "src/decoy_engine/execution/out_of_core/_stream_driver.py": 608,
+    # code_set provenance and FF1 notice plumbing through the streaming runner; F25 attempt-arena threading (T01).
+    "src/decoy_engine/execution/out_of_core/_runner.py": 698,
+    # D3a validator mask-step hook threaded through the reorder driver; F25 arena threading into the reorder lane (T06).
+    "src/decoy_engine/execution/out_of_core/_stream_driver.py": 631,
+    # F25 relation build rebased onto one registered native work directory (T03); dedup/COPY logic unchanged.
+    "src/decoy_engine/execution/out_of_core/_relation.py": 614,
     # corpus schema checks and verify_corpus; split into _codeset_verify.py when next touched.
     "src/decoy_engine/transforms/_codeset_loader.py": 606,
     # DRAW_SITES catalogue; split into _draw_sites_mask.py / _draw_sites_gen.py if it grows.

@@ -38,6 +38,7 @@ import pyarrow.parquet as pq
 
 from decoy_engine.errors import DecoyError
 from decoy_engine.execution.out_of_core._duckdb import connect_duckdb
+from decoy_engine.execution.out_of_core._scratch import native_dir_path
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.generation.pool._value_pool import ValuePool
 
@@ -241,8 +242,12 @@ def measure_pool_quality(
     # fixed `pairs_{column}.parquet` name would let a second call's write (or
     # unlink) clobber the first's in-flight spool, corrupting or losing its
     # in-progress read.
-    pairs_path = temp_dir / f"pairs_{column}_{uuid.uuid4().hex}.parquet"
-    conn = connect_duckdb(temp_dir=temp_dir, memory_limit=memory_limit)
+    # T08 (plan 1.3): the cleartext (source, masked) pairs spool and DuckDB's
+    # own spill both land under one registered 0700 work directory the arena
+    # owns, so the pairs file is never written to a bare caller path.
+    work = native_dir_path(temp_dir, writer_id="pool_quality")
+    pairs_path = work / f"pairs_{column}_{uuid.uuid4().hex}.parquet"
+    conn = connect_duckdb(temp_dir=work, memory_limit=memory_limit)
     try:
         pq.write_table(pa.table({"source": source, "masked": masked}), pairs_path)
         row = conn.execute(_COLLISION_SQL, [str(pairs_path)]).fetchone()

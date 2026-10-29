@@ -24,8 +24,10 @@ from decoy_engine.execution._fk_keys import (
 )
 from decoy_engine.execution._fk_resolve import orphan_fk_violation_error
 from decoy_engine.execution.out_of_core._duckdb import connect_duckdb
+from decoy_engine.execution.out_of_core._scratch import ArenaLike, ensure_scratch
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.relationships._graph import OrphanPolicy, RelationshipEdge
+from decoy_engine.scratch._policy import ResourceKind
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -66,6 +68,7 @@ def mask_child_fk(
     temp_dir: Path,
     remap_values: tuple[pa.Array, ...] | None = None,
     memory_limit: str | None = None,
+    arena: ArenaLike | None = None,
 ) -> tuple[pa.Table, tuple[QualityWarning, ...]]:
     """Replace a single child FK column through a parent relation.
 
@@ -104,7 +107,11 @@ def mask_child_fk(
     )
     orphan_count = 0
     output_chunks: list[list[pa.Array]] = [[] for _ in edge.child_columns]
-    conn = connect_duckdb(temp_dir=temp_dir / "duckdb", memory_limit=memory_limit)
+    scratch = ensure_scratch(arena, temp_dir)
+    conn = connect_duckdb(
+        temp_dir=scratch.allocate_native_dir(ResourceKind.NATIVE_DIR, "child-join-duckdb"),
+        memory_limit=memory_limit,
+    )
     try:
         conn.register("child_keys_stream", reader)
         # The stream is single-pass but the FAIL count and the join are two
@@ -180,6 +187,7 @@ def mask_child_fk_fail(
     parent_relation: ParentKeyRelation,
     temp_dir: Path,
     memory_limit: str | None = None,
+    arena: ArenaLike | None = None,
 ) -> pa.Table:
     """Compatibility wrapper for the first fail-only tests."""
     output, _warnings = mask_child_fk(
@@ -189,6 +197,7 @@ def mask_child_fk_fail(
         parent_relation=parent_relation,
         temp_dir=temp_dir,
         memory_limit=memory_limit,
+        arena=arena,
     )
     return output
 

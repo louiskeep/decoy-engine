@@ -15,6 +15,7 @@ from decoy_engine.execution.out_of_core._duckdb import connect_duckdb
 from decoy_engine.execution.out_of_core._join import _sql_string
 from decoy_engine.execution.out_of_core._key_width import SlimRowWidthTracker
 from decoy_engine.execution.out_of_core._mask import mask_column, masked_output_type
+from decoy_engine.execution.out_of_core._scratch import ArenaLike, edge_work_dir
 from decoy_engine.execution.out_of_core._source import LazySource
 from decoy_engine.kernel import hash_array
 
@@ -67,6 +68,7 @@ def build_parent_key_relation(
     memory_limit: str | None = None,
     batch_rows: int = _RELATION_BATCH_ROWS,
     mask_key: bytes | None = None,
+    arena: ArenaLike | None = None,
 ) -> ParentKeyRelation:
     """Materialize a narrow last-write-wins parent source->masked key relation.
 
@@ -142,6 +144,7 @@ def build_parent_key_relation(
         batch_rows=batch_rows,
         masked_batch_fn=masked_batch_fn,
         masked_types=tuple(masked_types),
+        arena=arena,
     )
 
 
@@ -153,6 +156,7 @@ def build_parent_key_relation_from_tables(
     temp_dir: Path,
     memory_limit: str | None = None,
     batch_rows: int = _RELATION_BATCH_ROWS,
+    arena: ArenaLike | None = None,
 ) -> ParentKeyRelation:
     """Materialize source parent key -> final masked parent key."""
     return build_parent_key_relation_aligned(
@@ -162,6 +166,7 @@ def build_parent_key_relation_from_tables(
         temp_dir=temp_dir,
         memory_limit=memory_limit,
         batch_rows=batch_rows,
+        arena=arena,
     )
 
 
@@ -174,6 +179,7 @@ def build_parent_key_relation_aligned(
     masked_types: tuple[pa.DataType, ...] | None = None,
     memory_limit: str | None = None,
     batch_rows: int = _RELATION_BATCH_ROWS,
+    arena: ArenaLike | None = None,
 ) -> ParentKeyRelation:
     """Materialize source parent key -> final masked parent key, row-aligned.
 
@@ -237,6 +243,7 @@ def build_parent_key_relation_aligned(
         batch_rows=batch_rows,
         masked_batch_fn=masked_batch_fn,
         masked_types=masked_types,
+        arena=arena,
     )
 
 
@@ -426,7 +433,15 @@ def _build_relation(
     batch_rows: int,
     masked_batch_fn: MaskedBatchFn,
     masked_types: tuple[pa.DataType, ...],
+    arena: ArenaLike | None = None,
 ) -> ParentKeyRelation:
+    # T03 (plan 1.3): the whole relation build (the key_relation output, plus
+    # the staged/winners COPY scratch and DuckDB's own spill under `duckdb/`)
+    # lives inside one registered native directory, allocated before the first
+    # write -- the attempt arena's when threaded, else the adopted temp_dir. The
+    # layout and file names are unchanged, so the relation's Parquet footer and
+    # dedup output stay byte-identical.
+    temp_dir = edge_work_dir(arena, temp_dir, writer_id="relation")
     masked_columns = tuple(
         "__decoy_masked_key" if idx == 0 else f"__decoy_masked_key_{idx}"
         for idx in range(len(edge.parent_columns))

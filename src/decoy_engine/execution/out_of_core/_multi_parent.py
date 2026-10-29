@@ -36,6 +36,7 @@ from decoy_engine.execution._fk_keys import FK_KEY_DTYPE_UNSUPPORTED_CODE
 from decoy_engine.execution.out_of_core._duckdb import connect_duckdb
 from decoy_engine.execution.out_of_core._join import _sql_string
 from decoy_engine.execution.out_of_core._relation import ParentKeyRelation
+from decoy_engine.execution.out_of_core._scratch import ArenaLike, edge_work_dir
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -51,6 +52,7 @@ def resolve_incoming(
     *,
     temp_dir: Path,
     memory_limit: str | None,
+    arena: ArenaLike | None = None,
 ) -> tuple[RelationshipEdge, ...]:
     """One joinable edge per child tuple, its relation bound in `parent_relations`.
 
@@ -92,6 +94,7 @@ def resolve_incoming(
             member_relations,
             temp_dir=temp_dir / f"group_{merged_count}",
             memory_limit=memory_limit,
+            arena=arena,
         )
         merged_count += 1
         for edge, relation in zip(members, member_relations, strict=True):
@@ -107,6 +110,7 @@ def merge_parent_relations(
     *,
     temp_dir: Path,
     memory_limit: str | None,
+    arena: ArenaLike | None = None,
 ) -> ParentKeyRelation:
     """Fold member relations (in precedence order) into one first-hit-wins relation."""
     if len(relations) == 1:
@@ -129,6 +133,11 @@ def merge_parent_relations(
                     "Run it with execution_mode='sequential'."
                 ),
             )
+    # T04 (plan 1.3): the merged relation output and its staged/winners COPY
+    # scratch plus DuckDB's spill live inside one registered native directory,
+    # allocated before any write (the attempt arena's, or the adopted temp_dir);
+    # the layout and file names are unchanged, so the merge stays byte-identical.
+    temp_dir = edge_work_dir(arena, temp_dir, writer_id="multi-parent")
     # Scratch lives under the same `duckdb/` subtree as the connection's spill, exactly as
     # `_relation._build_relation` lays out its own staged and winners files.
     duckdb_dir = temp_dir / "duckdb"

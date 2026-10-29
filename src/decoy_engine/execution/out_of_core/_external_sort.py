@@ -128,6 +128,8 @@ from decoy_engine.execution.out_of_core._external_sort_bounding import (
     _min_row_bytes,
 )
 from decoy_engine.execution.out_of_core._external_sort_run import _RunHead
+from decoy_engine.execution.out_of_core._scratch import native_dir_path
+from decoy_engine.scratch._capabilities import NativeDirectory
 
 # Transient overhead multiplier for the flush-time sort: `Table.sort_by`
 # computes a sort-indices array and gathers a freshly copied result table
@@ -157,7 +159,7 @@ class BoundedExternalSorter:
 
     def __init__(
         self,
-        spill_dir: Path,
+        spill_dir: NativeDirectory | Path,
         run_bytes_cap: int,
         merge_fan_in: int,
         sort_key_column: str = "__decoy_row_nr",
@@ -172,7 +174,9 @@ class BoundedExternalSorter:
                 code="out_of_core_reorder_budget_too_small",
                 message=f"merge_fan_in must be >= 2, got {merge_fan_in}.",
             )
-        self._spill_dir = Path(spill_dir)
+        # T07 (plan 1.3): the reorder run directory is a registered capability;
+        # every initial/merge run file lives under this owned arena directory.
+        self._spill_dir = native_dir_path(spill_dir, writer_id="reorder")
         self._run_bytes_cap = run_bytes_cap
         self._merge_fan_in = merge_fan_in
         self._sort_key_column = sort_key_column
@@ -209,8 +213,6 @@ class BoundedExternalSorter:
         self._finished = False
         self._schema: pa.Schema | None = None
         self._key_type: pa.DataType | None = None
-
-        self._spill_dir.mkdir(parents=True, exist_ok=True)
 
     @property
     def peak_buffered_bytes(self) -> int:
