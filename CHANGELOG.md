@@ -9,6 +9,17 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (F33 S1/S2: signed evidence core, 2026-10-29)
+
+New `decoy_engine.signed_evidence` package: closed `EvidenceStatementV1` serialized as RFC 8785 canonical
+bytes, signed as a detached ES256 JWS (joserfc, fixed-width P1363 signatures), and an offline verifier
+(`verify_signed_evidence`) that returns independent result dimensions against a caller-held
+`VerificationContext`; a valid signature is never a release pass. The signing boundary (`sign_evidence`,
+`SignedEvidence`, `ReleasePermit`) and the `decoy_engine.evidence_release` staging coordinator publish a
+signed bundle with one atomic rename; the default evaluator denies until the S6 check ledger exists. New
+dependencies `joserfc` and `rfc8785`. No route writes through the coordinator yet; the CLI verifier,
+platform KMS, key rotation and legacy migration (S3-S7) are not shipped. See `docs/security/signed-evidence.md`.
+
 ### Changed (BREAKING, pre-GA: `TokenVaultWriter.put` returns the authoritative token, 2026-10-29)
 
 `TokenVaultWriter.put(namespace, plaintext, token)` now returns `str`: the token the vault actually

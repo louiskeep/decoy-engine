@@ -465,3 +465,51 @@ def test_a_recheck_returning_a_falsy_value_denies(tmp_path, signer, policy) -> N
         _stage(area)
         with pytest.raises(ReleaseDenied):
             _publish(area, policy, recheck=lambda _p, v=falsy: v)
+
+
+def _sealed_tree(base: Path) -> Path:
+    tree = base / "staged"
+    (tree / "outputs").mkdir(parents=True)
+    (tree / "outputs" / "data.csv").write_text("x")
+    (tree / "top.txt").write_text("y")
+    for p in (tree / "outputs" / "data.csv", tree / "top.txt"):
+        p.chmod(0o400)
+    for d in (tree / "outputs", tree):
+        d.chmod(0o500)
+    return tree
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX file modes")
+@pytest.mark.filterwarnings("ignore:This process .* is multi-threaded:DeprecationWarning")
+def test_sealed_tree_is_removed_by_a_non_root_user() -> None:
+    """Root ignores mode bits and masked this bug; run the removal as `nobody` when the suite is root."""
+    import shutil
+    import tempfile
+
+    from decoy_engine.evidence_release._staging import _remove_tree
+
+    base = Path(tempfile.mkdtemp(prefix="f33-sealed-"))
+    try:
+        base.chmod(0o777)
+        tree = _sealed_tree(base)
+        if os.geteuid() == 0:
+            for p in [tree, *tree.rglob("*")]:
+                os.chown(p, 65534, 65534)
+            pid = os.fork()
+            if pid == 0:  # pragma: no cover - runs in the child
+                code = 1
+                try:
+                    os.setgroups([])
+                    os.setgid(65534)
+                    os.setuid(65534)
+                    _remove_tree(tree)
+                    code = 0 if not os.path.lexists(tree) else 2
+                finally:
+                    os._exit(code)
+            _, status = os.waitpid(pid, 0)
+            assert os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0, "sealed tree survived"
+        else:
+            _remove_tree(tree)
+            assert not os.path.lexists(tree)
+    finally:
+        shutil.rmtree(base, ignore_errors=True)

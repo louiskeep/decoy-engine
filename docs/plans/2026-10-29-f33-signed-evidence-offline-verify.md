@@ -1,6 +1,6 @@
 # F33: Unified signed evidence and offline verification
 
-Status: plan
+Status: S1/S2 engine core shipped (S0 grounded); S3-S7 pending
 
 Summary: Authenticate a versioned evidence statement and its artifact inventory, verify it offline with independently trusted public keys, and prevent strict publication when required checks are inconclusive.
 

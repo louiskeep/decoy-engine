@@ -159,6 +159,9 @@ def _remove_tree(path: Path) -> None:
     if not os.path.lexists(path):
         return
     for dirpath, dirnames, filenames in os.walk(path, topdown=False, followlinks=False):
+        # Sealed dirs are 0o500: unlinking their files fails until the dir itself is writable again.
+        with contextlib.suppress(OSError):
+            os.chmod(dirpath, 0o700)
         for name in filenames:
             with contextlib.suppress(OSError):
                 os.unlink(os.path.join(dirpath, name))
