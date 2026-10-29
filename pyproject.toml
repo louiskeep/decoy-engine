@@ -155,6 +155,15 @@ dependencies = [
     # compatibility alias (see below) so an existing `pip install .[vault]`
     # still resolves.
     "cryptography>=42",
+    # F33 signed evidence (docs/plans/2026-10-29-f33-signed-evidence-offline-verify.md):
+    # detached ES256 JWS (RFC 7515) over a JCS (RFC 8785) statement. joserfc
+    # (BSD-3-Clause) supplies the JOSE protocol and the supported
+    # external-signer extension point the KMS seam needs; rfc8785 (Apache-2.0,
+    # Trail of Bits) supplies canonical bytes. Neither is hand-rolled here.
+    # Upper bounds because a minor release of either changes signature or
+    # canonicalization behavior; bump only with the conformance corpus green.
+    "joserfc>=1.7.7,<2",
+    "rfc8785>=0.1.4,<0.2",
 ]
 
 [project.optional-dependencies]
@@ -587,6 +596,28 @@ strict_equality = true
 # scoped to the listed modules.
 [[tool.mypy.overrides]]
 module = [
+    # F33 signed evidence: the verifier core is a security boundary and ships
+    # standalone; strict from the first commit.
+    "decoy_engine.signed_evidence",
+    "decoy_engine.signed_evidence._artifacts",
+    "decoy_engine.signed_evidence._boundary",
+    "decoy_engine.signed_evidence._release",
+    "decoy_engine.evidence_release",
+    "decoy_engine.evidence_release._staging",
+    "decoy_engine.signed_evidence._canonical",
+    "decoy_engine.signed_evidence._catalog",
+    "decoy_engine.signed_evidence._checks",
+    "decoy_engine.signed_evidence._context",
+    "decoy_engine.signed_evidence._envelope",
+    "decoy_engine.signed_evidence._errors",
+    "decoy_engine.signed_evidence._jws",
+    "decoy_engine.signed_evidence._result",
+    "decoy_engine.signed_evidence._signer",
+    "decoy_engine.signed_evidence._statement",
+    "decoy_engine.signed_evidence._strict_json",
+    "decoy_engine.signed_evidence._time",
+    "decoy_engine.signed_evidence._trust",
+    "decoy_engine.signed_evidence._verifier",
     # SP-04 / P5.INFRA.1: checksum registry (new public module).
     "decoy_engine.checksums",
     # consultant-2026-07-09 F8: the V2.0-A/B `decoy_engine.graph.*` runner

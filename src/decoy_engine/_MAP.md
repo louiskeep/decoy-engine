@@ -26,6 +26,8 @@ sentry (`tests/sentry/test_package_map_paths.py`) asserts every path here exists
 | `quarantine.py` | Quarantine-row routing (`quarantine:` block) |
 | `validation/`, `validation_result.py` | `validate_config` and the validation wire shape |
 | `relationships/` | Relationship graph, namespace registry, orphan policy |
+| `signed_evidence/` | Signed evidence core (F33): strict JSON, RFC 8785 statement, detached ES256 JWS envelope, trust policy, required-check catalog, artifact binding, the full-profile verifier, and the signing boundary / release permit. Imports only stdlib + joserfc + rfc8785 + cryptography so a standalone verifier can ship it |
+| `evidence_release/` | Private staging, sealing and atomic visibility for signed releases; default evaluator denies |
 | `subset/` | FK-aware subsetting (preflight, plan, run) |
 | `providers_v2/`, `providers.py` | Provider registry and identifier adapters |
 | `identifiers.py`, `checksums.py`, `codesets/`, `reference_tables/` | Identifier families, check digits, code corpora, reference datasets |

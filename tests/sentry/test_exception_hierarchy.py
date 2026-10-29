@@ -70,6 +70,11 @@ _ALLOWLIST: dict[tuple[str, str], str] = {
     ("decoy_engine.quality.dp_budget", "_InfeasibleAtEpsQError"): (
         "private search-loop signal inside dp_budget"
     ),
+    ("decoy_engine.signed_evidence._errors", "SignedEvidenceError"): (
+        "the signed-evidence verifier core ships standalone with no decoy_engine import "
+        "(tests/unit/signed_evidence/test_independence_and_boundary.py), so it cannot inherit "
+        "DecoyError; engine-facing callers wrap it"
+    ),
 }
 
 

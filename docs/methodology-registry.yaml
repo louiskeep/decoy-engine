@@ -28,6 +28,52 @@ modules:
   # docstrings cite the patterns. Adding registry entries for the V2
   # strategy modules is V2.1 follow-up.
 
+  # F33 signed evidence (2026-10-29): detached ES256 JWS over a JCS statement.
+  # docs/plans/2026-10-29-f33-signed-evidence-offline-verify.md section 1.3.
+  - path: src/decoy_engine/signed_evidence/_jws.py
+    pattern: RFC 7515 flattened JSON serialization
+    source: RFC 7515 Appendix F, RFC 7518 section 3.4; joserfc (BSD-3-Clause); Sigstore signature.Signer
+    note: ES256 only; the external-signer seam is a joserfc JWSAlgModel on an isolated registry.
+  - path: src/decoy_engine/signed_evidence/_canonical.py
+    pattern: RFC 8785 JSON Canonicalization Scheme
+    source: RFC 8785; rfc8785 (Apache-2.0, Trail of Bits)
+  - path: src/decoy_engine/signed_evidence/_envelope.py
+    pattern: RFC 7515 section 7.2.2
+    source: RFC 7515, RFC 8725 sections 3.1, 3.11, 3.12
+  - path: src/decoy_engine/signed_evidence/_signer.py
+    pattern: Sigstore
+    source: sigstore/sigstore pkg/signature Signer and PublicKeyProvider; AWS KMS Sign API; cryptography (PyCA)
+  - path: src/decoy_engine/signed_evidence/_strict_json.py
+    pattern: RFC 8259
+    source: RFC 8259, RFC 8785 section 3.2, RFC 8725
+  - path: src/decoy_engine/signed_evidence/_statement.py
+    pattern: RFC 8785 JCS canonical bytes
+    source: RFC 8785; in-toto Statement v1
+  - path: src/decoy_engine/signed_evidence/_trust.py
+    pattern: explicit trust roots
+    source: TUF root of trust; Sigstore trust root; RFC 8725 section 3.12; RFC 7638 JWK thumbprint
+  - path: src/decoy_engine/signed_evidence/_catalog.py
+    pattern: policy-as-pinned-input
+    source: in-toto layout; TUF
+  - path: src/decoy_engine/signed_evidence/_checks.py
+    pattern: policy evaluation separated from authentication
+    source: in-toto layout; Sigstore policy
+  - path: src/decoy_engine/signed_evidence/_artifacts.py
+    pattern: openat-style traversal
+    source: Linux openat2 RESOLVE_NO_SYMLINKS; CERT FIO45-C
+  - path: src/decoy_engine/signed_evidence/_boundary.py
+    pattern: Sigstore's ``signature.Signer`` seam
+    source: sigstore/sigstore pkg/signature; in-toto/DSSE; RFC 7515
+  - path: src/decoy_engine/signed_evidence/_release.py
+    pattern: policy evaluation separated from authentication
+    source: in-toto layout; Sigstore policy
+  - path: src/decoy_engine/evidence_release/_staging.py
+    pattern: staged-then-renamed publish
+    source: Spark FileOutputCommitter; the engine's own TransactionalSink (execution/_transactional_sink.py); POSIX rename(2); openat-style traversal
+  - path: src/decoy_engine/signed_evidence/_verifier.py
+    pattern: RFC 7515 verification
+    source: RFC 7515, RFC 8725
+
   - path: src/decoy_engine/transforms/fpe.py
     pattern: NIST SP 800-38G FF1
     source: NIST SP 800-38G (FF1, Algorithms 5/6); cryptography (PyCA, Apache-2.0/BSD)
