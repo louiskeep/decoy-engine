@@ -38,6 +38,7 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
+from decoy_engine import reasons
 from decoy_engine.execution._adapter import provider_config_to_dict
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._operator_registry import PYTHON_SCALAR, RUST_POOL_SELECT
@@ -55,7 +56,7 @@ if TYPE_CHECKING:
     from decoy_engine.plan._types import ColumnSeed
 
 _NO_BACKEND_RAN = "none"
-_REASON_NO_SELECT_CALLS = "no_native_kernel_calls"
+_REASON_NO_SELECT_CALLS = reasons.route.NO_NATIVE_KERNEL_CALLS
 
 
 @dataclass(frozen=True)
@@ -161,7 +162,7 @@ class TableFakerPlan:
         idx = batch.schema.get_field_index(column)
         if idx < 0:
             raise ExecutionError(
-                code="out_of_core_faker_column_missing",
+                code=reasons.runtime.OUT_OF_CORE_FAKER_COLUMN_MISSING,
                 message=(
                     f"faker column {column!r} of table {decision.table!r} is missing from a "
                     "streamed batch; the run is aborted rather than skipping it."
@@ -169,7 +170,7 @@ class TableFakerPlan:
             )
         if batch.schema.field(idx).type != decision.pinned_type:
             raise ExecutionError(
-                code="out_of_core_faker_source_type_drift",
+                code=reasons.runtime.OUT_OF_CORE_FAKER_SOURCE_TYPE_DRIFT,
                 message=(
                     f"faker column {column!r} of table {decision.table!r} was pinned as "
                     f"{decision.pinned_type} but a batch carries {batch.schema.field(idx).type}; "
@@ -179,7 +180,7 @@ class TableFakerPlan:
         decision.rows += batch.num_rows
         if self._bound is None:  # pragma: no cover - a native decision always carries a kernel
             raise ExecutionError(
-                code="out_of_core_faker_index_unavailable",
+                code=reasons.runtime.OUT_OF_CORE_FAKER_INDEX_UNAVAILABLE,
                 message=(
                     f"faker column {column!r} was decided native but no index kernel is bound."
                 ),
@@ -210,7 +211,7 @@ def decide_table(
         pinned_type = schema.field(column).type
         if bound is None or faker_pool is None:
             raise ExecutionError(
-                code="out_of_core_faker_pool_unsupported",
+                code=reasons.runtime.OUT_OF_CORE_FAKER_POOL_UNSUPPORTED,
                 message=(
                     f"faker column {column!r} of table {table_name!r} reached the out-of-core "
                     "mask planner without a pool context or index kernel; the run is aborted."
@@ -219,7 +220,7 @@ def decide_table(
         reason = decline_reason(column, schema, seed)
         if reason is not None:
             raise ExecutionError(
-                code="out_of_core_faker_source_type_unsupported",
+                code=reasons.runtime.OUT_OF_CORE_FAKER_SOURCE_TYPE_UNSUPPORTED,
                 message=(
                     f"faker column {column!r} of table {table_name!r} is not the admitted "
                     f"deterministic-REUSE exact-string shape ({reason}); the out-of-core route "
@@ -233,7 +234,7 @@ def decide_table(
         provider = seed.provider
         if provider is None:  # pragma: no cover - unreachable past decline_reason
             raise ExecutionError(
-                code="out_of_core_faker_pool_unsupported",
+                code=reasons.runtime.OUT_OF_CORE_FAKER_POOL_UNSUPPORTED,
                 message=f"faker column {column!r} of table {table_name!r} has no provider.",
             )
         prepared = faker_pool.prepare(
@@ -276,7 +277,7 @@ def native_faker_array(
     pool = native.decision.pool
     if pool is None:  # pragma: no cover - a native decision always carries its pool
         raise ExecutionError(
-            code="out_of_core_faker_unprepared",
+            code=reasons.runtime.OUT_OF_CORE_FAKER_UNPREPARED,
             message="a native faker column reached the kernel without a prepared pool.",
         )
     native.decision.select_calls += 1

@@ -25,6 +25,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, TypeVar
 
+from decoy_engine import reasons
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.plan._types import ColumnSeed, GroupSeed
 
@@ -490,7 +491,7 @@ def _kahn_sorted(
     if len(placed) < len(keys):
         unplaced = sorted(k for k in keys if indegree[k] > 0)
         raise ExecutionError(
-            code="cyclic_work_ordering",
+            code=reasons.runtime.CYCLIC_WORK_ORDERING,
             message=f"cycle in work-node dependencies; unresolved: {unplaced!r}",
         )
     return [by_key[k] for k in placed]

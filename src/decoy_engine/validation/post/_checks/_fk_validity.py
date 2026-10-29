@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from decoy_engine import reasons
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.relationships._graph import OrphanPolicy
 from decoy_engine.validation.post._scan import ScanContext, ScanOutcome, column_values
@@ -67,7 +68,7 @@ def run_fk_validity(ctx: ScanContext) -> ScanOutcome:
         elif policy is OrphanPolicy.WARN and orphan > 0:
             warnings.append(
                 QualityWarning(
-                    code="orphan_fk",
+                    code=reasons.warning.ORPHAN_FK,
                     provider=edge.namespace,
                     column=",".join(edge.child_columns),
                     detail={"relationship": relationship, "orphan_count": orphan},

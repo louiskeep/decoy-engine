@@ -36,6 +36,7 @@ from typing import Any
 
 import numpy as np
 
+from decoy_engine import reasons
 from decoy_engine.detection.detectors import _ICD10_CHAPTERS, _icd10_valid
 from decoy_engine.determinism import derive_value
 from decoy_engine.generation.pool._canonicalize import _canonicalize_source
@@ -72,7 +73,7 @@ class Icd10Domain:
     def from_bytes(self, b: bytes) -> str:
         if len(b) != 32:
             raise IdentifierError(
-                code="invalid_input_length",
+                code=reasons.provider.INVALID_INPUT_LENGTH,
                 message=f"Icd10Domain.from_bytes expects 32 bytes; got {len(b)}.",
             )
         return _generate_icd10_from_bytes(b)
@@ -107,7 +108,7 @@ class Icd10Adapter:
         source_value: bytes | int | str | None = None,
     ) -> Any:
         if provider != "synthetic_icd10":
-            raise ProviderError(code="unknown_provider", message=f"got {provider!r}")
+            raise ProviderError(code=reasons.provider.UNKNOWN_PROVIDER, message=f"got {provider!r}")
         if spec.deterministic and source_value is not None:
             canonical = (
                 source_value
@@ -116,12 +117,12 @@ class Icd10Adapter:
             )
             if spec.seed is None:
                 raise ProviderError(
-                    code="missing_seed",
+                    code=reasons.provider.MISSING_SEED,
                     message="Icd10Adapter: deterministic mode requires spec.seed.",
                 )
             if spec.namespace is None:
                 raise ProviderError(
-                    code="missing_namespace",
+                    code=reasons.provider.MISSING_NAMESPACE,
                     message="Icd10Adapter: deterministic mode requires spec.namespace.",
                 )
             return derive_value(
@@ -136,7 +137,7 @@ class Icd10Adapter:
     def generate_batch(self, provider: str, *, spec: ProviderSpec, count: int) -> Sequence[Any]:
         if spec.deterministic:
             raise ProviderError(
-                code="batch_deterministic_unsupported",
+                code=reasons.provider.BATCH_DETERMINISTIC_UNSUPPORTED,
                 message="Icd10Adapter.generate_batch does not support deterministic mode.",
             )
         rng = np.random.default_rng()

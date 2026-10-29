@@ -47,6 +47,7 @@ from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from decoy_engine import reasons
 from decoy_engine.determinism._hkdf import hkdf_sha256
 from decoy_engine.errors import DecoyError
 
@@ -202,11 +203,13 @@ class DeriveContext:
         """
         if len(seed) not in _SEED_LENGTHS:
             raise DeterminismError(
-                code="seed_wrong_length",
+                code=reasons.runtime.SEED_WRONG_LENGTH,
                 message=f"seed must be 8 (job_seed) or 32 (mask_key) bytes; got {len(seed)}",
             )
         if not namespace:
-            raise DeterminismError(code="namespace_empty", message="namespace must be non-empty")
+            raise DeterminismError(
+                code=reasons.runtime.NAMESPACE_EMPTY, message="namespace must be non-empty"
+            )
         key = hkdf_sha256(ikm=seed, salt=_SALT, info=namespace.encode("utf-8"), length=32)
         return cls(_hmac_key=key)
 
@@ -278,11 +281,13 @@ def derive(seed: bytes, namespace: str, source: bytes) -> bytes:
     """
     if len(seed) not in _SEED_LENGTHS:
         raise DeterminismError(
-            code="seed_wrong_length",
+            code=reasons.runtime.SEED_WRONG_LENGTH,
             message=f"seed must be 8 (job_seed) or 32 (mask_key) bytes; got {len(seed)}",
         )
     if not namespace:
-        raise DeterminismError(code="namespace_empty", message="namespace must be non-empty")
+        raise DeterminismError(
+            code=reasons.runtime.NAMESPACE_EMPTY, message="namespace must be non-empty"
+        )
     namespace_bytes = namespace.encode("utf-8")
     hmac_key = hkdf_sha256(ikm=seed, salt=_SALT, info=namespace_bytes, length=32)
     hmac_input = (
@@ -314,7 +319,7 @@ def derive_index(seed: bytes, namespace: str, source: bytes, *, pool_size: int) 
     """
     if pool_size > _POOL_SIZE_MAX:
         raise DeterminismError(
-            code="pool_size_overflow",
+            code=reasons.runtime.POOL_SIZE_OVERFLOW,
             message=f"pool_size {pool_size} exceeds maximum {_POOL_SIZE_MAX}",
         )
     # QA-7 F11 (2026-06-01): distinct code for the underflow case. A
@@ -323,7 +328,7 @@ def derive_index(seed: bytes, namespace: str, source: bytes, *, pool_size: int) 
     # misclassify. The message stays similar; only the code shifts.
     if pool_size < 1:
         raise DeterminismError(
-            code="pool_size_invalid",
+            code=reasons.runtime.POOL_SIZE_INVALID,
             message=f"pool_size must be >= 1; got {pool_size}",
         )
     raw = derive(seed, namespace, source)

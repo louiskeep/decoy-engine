@@ -24,6 +24,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from decoy_engine import reasons
 from decoy_engine.execution._strategies._bucketize import _PRESETS
 from decoy_engine.plan._errors import PlanCompileError
 
@@ -76,7 +77,7 @@ def check_bucketize_config(config: dict[str, Any]) -> None:
             if preset is not None:
                 if preset not in _PRESETS:
                     raise PlanCompileError(
-                        code="bucketize_width_unresolvable",
+                        code=reasons.plan.BUCKETIZE_WIDTH_UNRESOLVABLE,
                         path=f"tables.{table_name}.columns.{col_name}.provider_config.preset",
                         message=(
                             f"bucketize column {col_name!r} in table {table_name!r} "
@@ -93,7 +94,7 @@ def check_bucketize_config(config: dict[str, Any]) -> None:
             width = pc.get("width")
             if isinstance(width, bool) or not isinstance(width, (int, float)) or width <= 0:
                 raise PlanCompileError(
-                    code="bucketize_width_unresolvable",
+                    code=reasons.plan.BUCKETIZE_WIDTH_UNRESOLVABLE,
                     path=f"tables.{table_name}.columns.{col_name}.provider_config.width",
                     message=(
                         f"bucketize column {col_name!r} in table {table_name!r} has "

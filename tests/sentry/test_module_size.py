@@ -65,15 +65,15 @@ MAX = 700
 # docs/decisions/module-size-census-history.md.
 ALLOWLIST: dict[str, int] = {
     # sampler start/finish and evidence threading in _spawn_and_classify; split the spawn/classify half into _isolated_spawn.py.
-    "src/decoy_engine/execution/_isolated_run.py": 608,
+    "src/decoy_engine/execution/_isolated_run.py": 622,
     # bounded-eligible fit rule, the fk-dtype retention branch and the D3a validator admission in decide_execution_route; split the route-priority docstring into the plan doc.
-    "src/decoy_engine/execution/_pipeline_routing.py": 700,
+    "src/decoy_engine/execution/_pipeline_routing.py": 699,
     # wiring of the fk-dtype hazard and D3a validator signals into the one routing call site, plus
     # the B4 source-type admission threading (_source_arrow_types + the source_types param); split
     # the probe-recovery resolver into its own module.
     "src/decoy_engine/execution/_pipeline_routing_signals.py": 638,
     # fan-in guard on the budget resolver; split the disk-preflight helpers into _disk_budget.py.
-    "src/decoy_engine/execution/out_of_core/_budget.py": 608,
+    "src/decoy_engine/execution/out_of_core/_budget.py": 609,
     # float FK key token pricing; split the disk-width helpers into _spill_widths.py.
     "src/decoy_engine/execution/out_of_core/_spill_estimate.py": 623,
     # pinned-Plan generation threading through the per-generator dispatch; split the statistical/derived/formula branches.
@@ -93,11 +93,11 @@ ALLOWLIST: dict[str, int] = {
     # safety invariants documented in docstrings are part of the fix; extract the emission builders into _mem_telemetry_emit.py.
     "src/decoy_engine/execution/_mem_telemetry.py": 762,
     # chunk-parity invariant text and admission gate calls; dense exception.
-    "src/decoy_engine/execution/_chunked.py": 626,
+    "src/decoy_engine/execution/_chunked.py": 627,
     # dispatch entry plus the table-keyed params, the job-seed hand-off and the eager string-pool
     # check for the position-keyed faker; dense exception, the pool check itself lives in _chunk_masking.
     # OBS-2: threads the decline records and branch-call snapshot onto each chunk's evidence.
-    "src/decoy_engine/execution/native/_chunked_entry.py": 680,
+    "src/decoy_engine/execution/native/_chunked_entry.py": 681,
     # OBS-2b: one structured decline record paired with each existing decision source; the record
     # types live in _route_decline_codes.py. Split the static admission pass out next.
     "src/decoy_engine/execution/native/_dispatch.py": 666,
@@ -106,7 +106,7 @@ ALLOWLIST: dict[str, int] = {
     # fail-closed output projection and corpus pinning on the mask route; split the FK-resolution helpers.
     # cross-column V1 folds joint_mask key_by into the source-anchor snapshot build (a comment, no new logic).
     # MG-5 vault: the _fk_key_value compat wrapper moved to _fk_key_compat.py (pure move, zero behavior change).
-    "src/decoy_engine/execution/_pandas_adapter.py": 688,
+    "src/decoy_engine/execution/_pandas_adapter.py": 689,
     # resident Arrow type resolution and the faker seed/node precondition pair (one predicate, two
     # entry points, so the chunked and sequential routes cannot drift); move the type resolution
     # into its own module with the next operator gate.
@@ -114,24 +114,24 @@ ALLOWLIST: dict[str, int] = {
     # SeqNativeRun: one bespoke per-strategy seam method per tenant around a shared admit/pin/apply
     # core; cohesive, the descriptors and decision types are already split out, and text_mask +
     # group_key keep their seam in sibling modules (_sequential_native_text_mask/_group_key).
-    "src/decoy_engine/execution/_sequential_native.py": 699,
+    "src/decoy_engine/execution/_sequential_native.py": 697,
     # sequential FK route threading; split the per-table mask/quarantine loop.
     # cross-column V1 folds joint_mask key_by into the source-anchor build (a comment, no new logic).
-    "src/decoy_engine/execution/_sequential.py": 691,
+    "src/decoy_engine/execution/_sequential.py": 696,
     # transactional publish hardening and row mask; split the publish cluster.
     "src/decoy_engine/quarantine.py": 645,
     # code_set provenance and FF1 notice plumbing through the streaming runner.
-    "src/decoy_engine/execution/out_of_core/_runner.py": 679,
+    "src/decoy_engine/execution/out_of_core/_runner.py": 681,
     # D3a validator mask-step hook threaded through the reorder driver; all logic lives in _validate_batch.py.
-    "src/decoy_engine/execution/out_of_core/_stream_driver.py": 608,
+    "src/decoy_engine/execution/out_of_core/_stream_driver.py": 609,
     # corpus schema checks and verify_corpus; split into _codeset_verify.py when next touched.
-    "src/decoy_engine/transforms/_codeset_loader.py": 606,
+    "src/decoy_engine/transforms/_codeset_loader.py": 607,
     # DRAW_SITES catalogue; split into _draw_sites_mask.py / _draw_sites_gen.py if it grows.
     "src/decoy_engine/execution/native/_determinism_protocol.py": 928,
     # one provider class per draw mechanism across 30 sites; the size is fan-out, not tangle.
     "src/decoy_engine/execution/native/_draw_site_providers.py": 985,
     # load-time self-test and native_threads plumbing; no cleaner class split identified.
-    "src/decoy_engine/execution/out_of_core/_stream_join.py": 709,
+    "src/decoy_engine/execution/out_of_core/_stream_join.py": 707,
     # custom-provider registry snapshot for the shadow-parity gate; one cohesive module, no split identified.
     "src/decoy_engine/internal/faker_setup.py": 637,
     # FF1 span path and sub-floor policy; split into _text_mask_sub_floor.py when next touched.

@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Final, TypeAlias
 
 import pyarrow as pa
 
+from decoy_engine import reasons
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._fk_keys import NULL_FK_KEY, fk_join_key_tuple, fk_key_value
 from decoy_engine.execution.out_of_core._duckdb import connect_duckdb
@@ -88,17 +89,17 @@ def build_parent_key_relation(
         seed = _column_seed(plan, edge.parent_table, parent_col)
         if seed is None:
             raise ExecutionError(
-                code="out_of_core_parent_seed_missing",
+                code=reasons.runtime.OUT_OF_CORE_PARENT_SEED_MISSING,
                 message=f"parent key {edge.parent_table}.{parent_col} is not in the plan.",
             )
         if seed.strategy == "hash" and seed.namespace is None:
             raise ExecutionError(
-                code="out_of_core_parent_strategy_unsupported",
+                code=reasons.runtime.OUT_OF_CORE_PARENT_STRATEGY_UNSUPPORTED,
                 message="hash parent FK keys must carry a namespace.",
             )
         if schema is not None and parent_col not in schema.names:
             raise ExecutionError(
-                code="out_of_core_parent_column_missing",
+                code=reasons.runtime.OUT_OF_CORE_PARENT_COLUMN_MISSING,
                 message=f"parent source table has no column {parent_col!r}.",
             )
         source_type = schema.field(parent_col).type if schema is not None else None
@@ -192,12 +193,12 @@ def build_parent_key_relation_aligned(
     for parent_col in edge.parent_columns:
         if source_schema is not None and parent_col not in source_schema.names:
             raise ExecutionError(
-                code="out_of_core_parent_column_missing",
+                code=reasons.runtime.OUT_OF_CORE_PARENT_COLUMN_MISSING,
                 message=f"parent source table has no column {parent_col!r}.",
             )
         if parent_col not in masked_schema.names:
             raise ExecutionError(
-                code="out_of_core_parent_column_missing",
+                code=reasons.runtime.OUT_OF_CORE_PARENT_COLUMN_MISSING,
                 message=f"masked parent table has no column {parent_col!r}.",
             )
     if masked_types is None:
@@ -360,7 +361,7 @@ def _parent_key_batches(
         for col in parent_columns:
             if batch.schema.get_field_index(col) < 0:
                 raise ExecutionError(
-                    code="out_of_core_parent_column_missing",
+                    code=reasons.runtime.OUT_OF_CORE_PARENT_COLUMN_MISSING,
                     message=f"parent source table has no column {col!r}.",
                 )
         for start in range(0, batch.num_rows, batch_rows):

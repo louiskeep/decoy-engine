@@ -13,6 +13,7 @@ from typing import Any
 
 import pyarrow as pa
 
+from decoy_engine import reasons as reason_codes
 from decoy_engine.execution._operator_registry import PYTHON_SCALAR, RUST_COMPANION
 from decoy_engine.execution._sequential_native_ops import (
     BUCKET_PERTURB,
@@ -27,10 +28,10 @@ PATH_SCALAR = "scalar"
 PATH_REMAP = "fk_remap"
 MIXED = "mixed"
 _NO_KERNEL_RAN = "none"
-_REASON_NO_ROWS = "no_rows_hashed"
+_REASON_NO_ROWS = reason_codes.route.NO_ROWS_HASHED
 _NO_CALLS_REASON = {
-    BUCKET_PERTURB: "no_native_bucket_calls",
-    DATE_SHIFT: "no_native_date_shift_calls",
+    BUCKET_PERTURB: reason_codes.route.NO_NATIVE_BUCKET_CALLS,
+    DATE_SHIFT: reason_codes.route.NO_NATIVE_DATE_SHIFT_CALLS,
 }
 
 

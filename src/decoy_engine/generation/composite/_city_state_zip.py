@@ -25,6 +25,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from decoy_engine import reasons
 from decoy_engine.generation.composite._bundle_pool import BundlePool
 from decoy_engine.generation.composite._errors import CompositeError
 from decoy_engine.generation.pool._cardinality import CardinalityMode
@@ -43,7 +44,7 @@ def load_locality_table() -> tuple[tuple[str, str, str], ...]:
             rows.append((row["city"], row["state"], row["zip"]))
     if not rows:
         raise CompositeError(
-            code="empty_locality_table",
+            code=reasons.plan.EMPTY_LOCALITY_TABLE,
             message=f"Locality table at {_LOCALITY_CSV} is empty.",
         )
     return tuple(rows)
@@ -108,7 +109,7 @@ class CompositeCityStateZip:
         if deterministic:
             if source is None or spec.seed is None:
                 raise CompositeError(
-                    code="deterministic_requires_source_and_seed",
+                    code=reasons.plan.DETERMINISTIC_REQUIRES_SOURCE_AND_SEED,
                     message="Deterministic composite_city_state_zip requires source + seed.",
                 )
             return self._sampler.sample_bundle(

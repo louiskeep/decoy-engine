@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Literal
 
+from decoy_engine import reasons
 from decoy_engine.errors import DecoyError
 
 if TYPE_CHECKING:
@@ -94,4 +95,4 @@ class SubsetBudgetExceededError(SubsetError):
             "No output was written. Raise the budget, disable traversal on the "
             "offending edge, or shrink the seed."
         )
-        super().__init__(code="subset_budget_exceeded", message=message)
+        super().__init__(code=reasons.subset.SUBSET_BUDGET_EXCEEDED, message=message)

@@ -49,6 +49,7 @@ import bisect
 
 import pandas as pd
 
+from decoy_engine import reasons
 from decoy_engine.determinism import derive_index
 from decoy_engine.execution._adapter import StrategyContext, provider_config_to_dict
 from decoy_engine.execution._errors import StrategyError
@@ -62,7 +63,7 @@ from decoy_engine.plan._types import ColumnSeed
 # weights down to 1e-6 with the precision the CDF rounding allows.
 _WEIGHTED_CDF_RES = 1_000_000
 
-_POSITION_DOMAIN_CODE = "categorical_position_out_of_domain"
+_POSITION_DOMAIN_CODE = reasons.runtime.CATEGORICAL_POSITION_OUT_OF_DOMAIN
 
 
 def _build_cdf(weights: list[float]) -> list[int]:
@@ -74,7 +75,7 @@ def _build_cdf(weights: list[float]) -> list[int]:
     total = sum(weights)
     if total <= 0:
         raise StrategyError(
-            code="categorical_weights_nonpositive",
+            code=reasons.runtime.CATEGORICAL_WEIGHTS_NONPOSITIVE,
             strategy="categorical",
             message="categorical weights sum to <= 0; cannot normalize.",
         )
@@ -84,7 +85,7 @@ def _build_cdf(weights: list[float]) -> list[int]:
     for i, w in enumerate(weights):
         if w < 0:
             raise StrategyError(
-                code="categorical_weights_negative",
+                code=reasons.runtime.CATEGORICAL_WEIGHTS_NEGATIVE,
                 strategy="categorical",
                 message=f"categorical weight {w!r} is negative.",
             )
@@ -101,7 +102,7 @@ def _build_cdf(weights: list[float]) -> list[int]:
         # _WEIGHTED_CDF_RES -- breaks determinism for existing plans.
         if w > 0 and threshold == prev_threshold:
             raise StrategyError(
-                code="categorical_weight_below_resolution",
+                code=reasons.runtime.CATEGORICAL_WEIGHT_BELOW_RESOLUTION,
                 strategy="categorical",
                 message=(
                     f"categorical weight {w!r} at index {i} is below the CDF "
@@ -141,7 +142,7 @@ class CategoricalStrategyHandler:
             # value would iterate as characters below, silently corrupting
             # the output instead of masking with the intended categories.
             raise StrategyError(
-                code="categorical_categories_not_list",
+                code=reasons.runtime.CATEGORICAL_CATEGORIES_NOT_LIST,
                 strategy="categorical",
                 message=(
                     f"column {column!r} uses categorical with "
@@ -153,7 +154,7 @@ class CategoricalStrategyHandler:
         categories = list(cfg.get("categories", []))
         if not categories:
             raise StrategyError(
-                code="categorical_requires_categories",
+                code=reasons.runtime.CATEGORICAL_REQUIRES_CATEGORIES,
                 strategy="categorical",
                 message=f"column {column!r} uses categorical but provided no categories.",
             )
@@ -163,7 +164,7 @@ class CategoricalStrategyHandler:
         if weights_raw is not None:
             if not isinstance(weights_raw, (list, tuple)) or len(weights_raw) != len(categories):
                 raise StrategyError(
-                    code="categorical_weights_shape",
+                    code=reasons.runtime.CATEGORICAL_WEIGHTS_SHAPE,
                     strategy="categorical",
                     message=(
                         f"column {column!r}: weights must be a list with the same "
@@ -180,7 +181,7 @@ class CategoricalStrategyHandler:
         if plan.namespace is None:
             mode = "deterministic" if plan.deterministic else "non-deterministic"
             raise StrategyError(
-                code="categorical_requires_namespace",
+                code=reasons.runtime.CATEGORICAL_REQUIRES_NAMESPACE,
                 strategy="categorical",
                 message=f"column {column!r} uses {mode} categorical but has no namespace.",
             )

@@ -119,6 +119,7 @@ from pathlib import Path
 import pyarrow as pa
 import pyarrow.compute as pc
 
+from decoy_engine import reasons
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution.out_of_core._external_sort_bounding import (
     _bounded_batches,
@@ -164,12 +165,12 @@ class BoundedExternalSorter:
     ) -> None:
         if run_bytes_cap <= 0:
             raise ExecutionError(
-                code="out_of_core_reorder_budget_too_small",
+                code=reasons.runtime.OUT_OF_CORE_REORDER_BUDGET_TOO_SMALL,
                 message=f"run_bytes_cap must be positive, got {run_bytes_cap}.",
             )
         if merge_fan_in < 2:
             raise ExecutionError(
-                code="out_of_core_reorder_budget_too_small",
+                code=reasons.runtime.OUT_OF_CORE_REORDER_BUDGET_TOO_SMALL,
                 message=f"merge_fan_in must be >= 2, got {merge_fan_in}.",
             )
         self._spill_dir = Path(spill_dir)
@@ -184,7 +185,7 @@ class BoundedExternalSorter:
         per_head_cap_bytes = run_bytes_cap // (2 * merge_fan_in)
         if per_head_cap_bytes < 1:
             raise ExecutionError(
-                code="out_of_core_reorder_budget_too_small",
+                code=reasons.runtime.OUT_OF_CORE_REORDER_BUDGET_TOO_SMALL,
                 message=(
                     f"run_bytes_cap={run_bytes_cap} is too small for "
                     f"merge_fan_in={merge_fan_in}: the per-merge-head cap "
@@ -247,7 +248,7 @@ class BoundedExternalSorter:
         """
         if self._sort_key_column not in batch.schema.names:
             raise ExecutionError(
-                code="out_of_core_sort_key_missing",
+                code=reasons.runtime.OUT_OF_CORE_SORT_KEY_MISSING,
                 message=(
                     f"sort key column {self._sort_key_column!r} is not in the "
                     f"batch schema {batch.schema.names}."
@@ -257,7 +258,7 @@ class BoundedExternalSorter:
         if self._key_type is None:
             if not _is_supported_key_type(key.type):
                 raise ExecutionError(
-                    code="out_of_core_sort_key_type_unsupported",
+                    code=reasons.runtime.OUT_OF_CORE_SORT_KEY_TYPE_UNSUPPORTED,
                     message=(
                         f"sort key column {self._sort_key_column!r} has type "
                         f"{key.type}, which the bounded sorter does not support "
@@ -269,7 +270,7 @@ class BoundedExternalSorter:
             self._key_type = key.type
         elif key.type != self._key_type:
             raise ExecutionError(
-                code="out_of_core_sort_key_type_drift",
+                code=reasons.runtime.OUT_OF_CORE_SORT_KEY_TYPE_DRIFT,
                 message=(
                     f"sort key column {self._sort_key_column!r} changed type from "
                     f"{self._key_type} to {key.type} between batches; the key type "
@@ -278,7 +279,7 @@ class BoundedExternalSorter:
             )
         if key.null_count > 0:
             raise ExecutionError(
-                code="out_of_core_sort_key_null",
+                code=reasons.runtime.OUT_OF_CORE_SORT_KEY_NULL,
                 message=(
                     f"sort key column {self._sort_key_column!r} has "
                     f"{key.null_count} null value(s); a null key has no place in "
@@ -289,7 +290,7 @@ class BoundedExternalSorter:
     def write(self, batch: pa.RecordBatch) -> None:
         if self._finished:
             raise ExecutionError(
-                code="out_of_core_sort_invalid_state",
+                code=reasons.runtime.OUT_OF_CORE_SORT_INVALID_STATE,
                 message="write() called after finish(); the sorter is read-only past that point.",
             )
         if batch.num_rows == 0:
@@ -307,7 +308,7 @@ class BoundedExternalSorter:
             min_row = _min_row_bytes(batch.schema)
             if min_row < INDEX_BYTES:
                 raise ExecutionError(
-                    code="out_of_core_sort_row_index_unbounded",
+                    code=reasons.runtime.OUT_OF_CORE_SORT_ROW_INDEX_UNBOUNDED,
                     message=(
                         f"schema {batch.schema.names} admits rows as narrow as "
                         f"{min_row} bytes, under the {INDEX_BYTES}-byte sort index "
@@ -330,7 +331,7 @@ class BoundedExternalSorter:
             row_bytes = materialized.nbytes
             if row_bytes > self._per_head_cap_bytes:
                 raise ExecutionError(
-                    code="out_of_core_sort_row_too_wide",
+                    code=reasons.runtime.OUT_OF_CORE_SORT_ROW_TOO_WIDE,
                     message=(
                         f"a single row is {row_bytes} bytes, over the "
                         f"{self._per_head_cap_bytes}-byte per-merge-head cap "
@@ -499,7 +500,7 @@ class BoundedExternalSorter:
         Requires `finish()` to have run first."""
         if not self._finished:
             raise ExecutionError(
-                code="out_of_core_sort_invalid_state",
+                code=reasons.runtime.OUT_OF_CORE_SORT_INVALID_STATE,
                 message="iter_ordered() called before finish(); call finish() first.",
             )
         if self._final_run_path is None:

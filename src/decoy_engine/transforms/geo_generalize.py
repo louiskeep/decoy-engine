@@ -59,6 +59,7 @@ from typing import Any
 
 import pandas as pd
 
+from decoy_engine import reasons
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.reference_tables import load_table
 
@@ -210,7 +211,7 @@ def validate_geo_generalize_config(cfg: dict[str, Any]) -> None:
     geo_type = cfg.get("type")
     if geo_type not in _SUPPORTED_TYPES:
         raise PlanCompileError(
-            code="geo_generalize_unsupported_type",
+            code=reasons.plan.GEO_GENERALIZE_UNSUPPORTED_TYPE,
             path="provider_config.type",
             message=(
                 f"geo_generalize: unsupported type {geo_type!r}. "
@@ -221,7 +222,7 @@ def validate_geo_generalize_config(cfg: dict[str, Any]) -> None:
     cascade = cfg.get("cascade")
     if not cascade:
         raise PlanCompileError(
-            code="geo_generalize_invalid_cascade",
+            code=reasons.plan.GEO_GENERALIZE_INVALID_CASCADE,
             path="provider_config.cascade",
             message=(
                 "geo_generalize: 'cascade' must be a non-empty list of levels. "
@@ -232,7 +233,7 @@ def validate_geo_generalize_config(cfg: dict[str, Any]) -> None:
 
     if "suppress" not in cascade:
         raise PlanCompileError(
-            code="geo_generalize_missing_suppress",
+            code=reasons.plan.GEO_GENERALIZE_MISSING_SUPPRESS,
             path="provider_config.cascade",
             message=(
                 "geo_generalize: 'cascade' must include 'suppress' as a terminator. "
@@ -245,7 +246,7 @@ def validate_geo_generalize_config(cfg: dict[str, Any]) -> None:
     for level in cascade:
         if level not in valid_levels:
             raise PlanCompileError(
-                code="geo_generalize_invalid_cascade_level",
+                code=reasons.plan.GEO_GENERALIZE_INVALID_CASCADE_LEVEL,
                 path="provider_config.cascade",
                 message=(
                     f"geo_generalize: cascade level {level!r} is not valid for "

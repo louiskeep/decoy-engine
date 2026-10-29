@@ -40,6 +40,7 @@ from typing import Any
 import pyarrow as pa
 import pyarrow.compute as pc
 
+from decoy_engine import reasons
 from decoy_engine.execution._fk_keys import to_pandas_fk_safe
 from decoy_engine.execution.native._group_key_ext import (
     RawHexDerivationKernel,
@@ -103,12 +104,12 @@ def derive_group_key_from_strings(
     if not isinstance(hex_out, pa.Array) or hex_out.type != pa.string():
         got = hex_out.type if isinstance(hex_out, pa.Array) else type(hex_out).__name__
         raise GenerationError(
-            code="raw_hex_batch_type_mismatch",
+            code=reasons.runtime.RAW_HEX_BATCH_TYPE_MISMATCH,
             message=f"derive_hex_raw_batch returned {got}, expected a string Arrow array",
         )
     if len(hex_out) != n:
         raise GenerationError(
-            code="raw_hex_batch_length_mismatch",
+            code=reasons.runtime.RAW_HEX_BATCH_LENGTH_MISMATCH,
             message=f"derive_hex_raw_batch returned {len(hex_out)} keys for {n} input rows",
         )
     if hex_out.null_count != 0:
@@ -116,7 +117,7 @@ def derive_group_key_from_strings(
         # form, "None" or "<NA>"), so the kernel must return a fully-valid key
         # column; a null here means the never-null invariant was violated upstream.
         raise GenerationError(
-            code="raw_hex_batch_unexpected_null",
+            code=reasons.runtime.RAW_HEX_BATCH_UNEXPECTED_NULL,
             message="derive_hex_raw_batch returned a null key for a populated string row",
         )
     if not prefix:

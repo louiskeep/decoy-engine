@@ -34,10 +34,17 @@ import shutil
 import tempfile
 from collections.abc import Iterable
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 import pyarrow as pa
 import pyarrow.parquet as pq
+
+from decoy_engine.execution._publication_observer import (
+    PublicationEvidence,
+    capture_publication_failure,
+)
+from decoy_engine.progress import get_active_channel
+from decoy_engine.reasons import CleanupState, Operation, PublicationState
 
 
 # NOTE: isinstance(obj, TransactionalSink) matches write/write_batches/commit/
@@ -100,9 +107,24 @@ class _CallableSinkAdapter:
 
     def __init__(self, fn: object) -> None:
         self._fn = fn
+        # The callable publishes as it goes, so a failure leaves the output state unknowable.
+        self.publication_evidence = PublicationEvidence()
+
+    def _written(self, table: str, call: Any) -> None:
+        evidence = self.publication_evidence
+        evidence.last_operation = Operation.WRITE
+        try:
+            call()
+        except BaseException as exc:
+            evidence.state = PublicationState.UNKNOWN
+            evidence.cleanup = CleanupState.UNKNOWN
+            capture_publication_failure(exc, self, Operation.WRITE, table=table)
+            raise
+        evidence.state = PublicationState.PARTIAL
+        evidence.cleanup = CleanupState.UNKNOWN
 
     def write(self, table: str, data: pa.Table) -> None:
-        self._fn(table, data)  # type: ignore[operator]
+        self._written(table, lambda: self._fn(table, data))  # type: ignore[operator]
 
     def write_batches(
         self, table: str, batches: Iterable[pa.RecordBatch], *, schema: pa.Schema
@@ -112,12 +134,15 @@ class _CallableSinkAdapter:
         before the single legacy call. The out-of-core streaming path is
         ParquetTransactionalSink.write_batches, not this adapter."""
         data = pa.Table.from_batches(list(batches), schema=schema)
-        self._fn(table, data)  # type: ignore[operator]
+        self._written(table, lambda: self._fn(table, data))  # type: ignore[operator]
 
     def commit(self) -> None:
-        pass
+        self.publication_evidence.state = PublicationState.PUBLISHED
+        self.publication_evidence.cleanup = CleanupState.NOT_NEEDED
 
     def abort(self) -> None:
+        # Nothing is undone: whatever the callable already published stays, and cleanup is not
+        # claimed. `unknown` until a write is known not to have happened.
         pass
 
 
@@ -153,6 +178,7 @@ class ParquetTransactionalSink:
     def __init__(self, target_dir: Path) -> None:
         self._target = target_dir
         self._staging: Path | None = None
+        self.publication_evidence = PublicationEvidence()
 
     def write(self, table: str, data: pa.Table) -> None:
         """Stage one masked table as Parquet in the private staging directory.
@@ -171,7 +197,14 @@ class ParquetTransactionalSink:
         """
         self._validate_table_name(table)
         dest = self._stage_dest(table)
-        pq.write_table(data, dest)
+        self.publication_evidence.last_operation = Operation.WRITE
+        try:
+            pq.write_table(data, dest)
+        except BaseException as exc:
+            # Staged only: nothing is visible at the target until the single rename.
+            capture_publication_failure(exc, self, Operation.WRITE, table=table)
+            raise
+        self._stored(table, dest)
 
     def write_batches(
         self, table: str, batches: Iterable[pa.RecordBatch], *, schema: pa.Schema
@@ -213,18 +246,38 @@ class ParquetTransactionalSink:
         """
         self._validate_table_name(table)
         dest = self._stage_dest(table)
+        evidence = self.publication_evidence
+        evidence.last_operation = Operation.WRITE
         writer = pq.ParquetWriter(dest, schema)
         try:
             for batch in batches:
                 writer.write_batch(batch)
-        except BaseException:
+        except BaseException as exc:
+            capture_publication_failure(exc, self, Operation.WRITE, table=table)
             # Close best-effort so a close error cannot mask the original.
             try:
                 writer.close()
             except Exception:
                 pass
             raise
-        writer.close()
+        evidence.last_operation = Operation.CLOSE
+        try:
+            writer.close()
+        except BaseException as exc:
+            capture_publication_failure(exc, self, Operation.CLOSE, table=table)
+            raise
+        self._stored(table, dest)
+
+    def _stored(self, table: str, dest: Path) -> None:
+        """Record and report the serialized size of a closed staged file (`stored_output`)."""
+        try:
+            size = dest.stat().st_size
+        except OSError:
+            return
+        self.publication_evidence.stored_bytes[table] = size
+        channel = get_active_channel()
+        if channel.active:
+            channel.publish_stored(table, size)
 
     @property
     def spill_parent(self) -> Path:
@@ -264,6 +317,8 @@ class ParquetTransactionalSink:
             # Staging lives in target.parent to guarantee same-filesystem rename.
             self._target.parent.mkdir(parents=True, exist_ok=True)
             self._staging = Path(tempfile.mkdtemp(prefix="_decoy_stage_", dir=self._target.parent))
+            # Staged files exist and nothing has cleaned them yet.
+            self.publication_evidence.cleanup = CleanupState.UNKNOWN
         return self._staging / f"{table}.parquet"
 
     def commit(self) -> None:
@@ -284,17 +339,29 @@ class ParquetTransactionalSink:
                 permission denied). Nothing is published on failure; staging
                 is intact for abort().
         """
-        if self._staging is None:
-            # Nothing was written; create an empty target directory directly.
+        evidence = self.publication_evidence
+        evidence.last_operation = Operation.COMMIT
+        try:
+            if self._staging is None:
+                # Nothing was written; create an empty target directory directly.
+                self._target.parent.mkdir(parents=True, exist_ok=True)
+                self._target.mkdir(exist_ok=True)
+                evidence.state = PublicationState.PUBLISHED
+                return
+            # Ensure target's parent exists so the rename can land.
             self._target.parent.mkdir(parents=True, exist_ok=True)
-            self._target.mkdir(exist_ok=True)
-            return
-        # Ensure target's parent exists so the rename can land.
-        self._target.parent.mkdir(parents=True, exist_ok=True)
-        # Single atomic rename: staging becomes target.
-        os.replace(self._staging, self._target)
+            # Single atomic rename: staging becomes target.
+            os.replace(self._staging, self._target)
+        except BaseException as exc:
+            # The rename is atomic: a failure leaves nothing published and staging intact.
+            evidence.state = PublicationState.NOT_PUBLISHED
+            evidence.cleanup = CleanupState.NOT_NEEDED
+            capture_publication_failure(exc, self, Operation.COMMIT)
+            raise
         # Rename succeeded: staging is now the target directory; clear state.
         self._staging = None
+        evidence.state = PublicationState.PUBLISHED
+        evidence.cleanup = CleanupState.NOT_NEEDED
 
     def abort(self) -> None:
         """Remove the staging directory so nothing partial reaches the target.
@@ -304,6 +371,10 @@ class ParquetTransactionalSink:
         self._cleanup_staging()
 
     def _cleanup_staging(self) -> None:
+        evidence = self.publication_evidence
         if self._staging is not None:
-            shutil.rmtree(self._staging, ignore_errors=True)
+            staging = self._staging
+            shutil.rmtree(staging, ignore_errors=True)
+            # `ignore_errors` hides a failed removal, so confirm by looking.
+            evidence.cleanup = CleanupState.FAILED if staging.exists() else CleanupState.CONFIRMED
         self._staging = None

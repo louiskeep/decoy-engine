@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
+from decoy_engine import reasons
 from decoy_engine.execution._adapter import provider_config_to_dict
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._runner import work_order_key
@@ -48,8 +49,8 @@ if TYPE_CHECKING:
     from decoy_engine.execution.native._index_ext import IndexDerivationKernel
 
 
-NONSTRING_POOL_CODE = "chunked_faker_nondeterministic_pool_not_string"
-DETERMINISTIC_NONSTRING_POOL_CODE = "chunked_faker_deterministic_pool_not_string"
+NONSTRING_POOL_CODE = reasons.runtime.CHUNKED_FAKER_NONDETERMINISTIC_POOL_NOT_STRING
+DETERMINISTIC_NONSTRING_POOL_CODE = reasons.runtime.CHUNKED_FAKER_DETERMINISTIC_POOL_NOT_STRING
 
 
 def _mask_chunk_native(

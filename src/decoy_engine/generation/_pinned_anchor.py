@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from decoy_engine import reasons
 from decoy_engine.generation._pinned_compile import ISO_ANCHOR
 from decoy_engine.generation._pinned_plan import PinnedModeError
 
@@ -28,7 +29,7 @@ def resolve_anchor_cells(values: list[Any], reference_date: str) -> list[Any]:
             elif ISO_ANCHOR.match(cell) is None:
                 # Position only: the cell text stays out of the message.
                 raise PinnedModeError(
-                    code="pinned_windowed_anchor_not_absolute",
+                    code=reasons.plan.PINNED_WINDOWED_ANCHOR_NOT_ABSOLUTE,
                     message=f"windowed_date anchor at row {position} is not an absolute date",
                 )
         out.append(cell)

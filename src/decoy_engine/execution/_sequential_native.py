@@ -43,6 +43,7 @@ from typing import TYPE_CHECKING, Any
 import pandas as pd
 import pyarrow as pa
 
+from decoy_engine import reasons
 from decoy_engine.execution._adapter import pandas_column_to_kernel_input
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._operator_registry import PYTHON_SCALAR, RUST_COMPANION
@@ -106,10 +107,7 @@ from decoy_engine.execution.native._fpe_ext import load_compiled_fpe_kernel
 from decoy_engine.execution.native._index_ext import load_compiled_index_kernel
 from decoy_engine.execution.native._text_mask_route import text_mask_sub_floor_warning
 from decoy_engine.execution.out_of_core._categorical_native import BoundIndexKernel
-from decoy_engine.execution.out_of_core._hash_native import (
-    REASON_UNAVAILABLE,
-    BoundHashKernel,
-)
+from decoy_engine.execution.out_of_core._hash_native import REASON_UNAVAILABLE, BoundHashKernel
 
 if TYPE_CHECKING:
     from decoy_engine.execution._adapter import StrategyContext
@@ -122,13 +120,13 @@ if TYPE_CHECKING:
 PATH_INHERITED = "fk_inherited"
 PATH_KEY_DECLINED = "fk_key_declined"
 INHERITED = "inherited"
-REASON_REMAP_PARENT_PYTHON = "remap_parent_stays_python"
-REASON_REMAP_INPUT_NOT_ARROW = "remap_input_not_arrow"
-REASON_KEY_NOT_INJECTIVE = "sequential_fk_key_injectivity_not_guaranteed"
+REASON_REMAP_PARENT_PYTHON = reasons.route.REMAP_PARENT_STAYS_PYTHON
+REASON_REMAP_INPUT_NOT_ARROW = reasons.route.REMAP_INPUT_NOT_ARROW
+REASON_KEY_NOT_INJECTIVE = reasons.route.SEQUENTIAL_FK_KEY_INJECTIVITY_NOT_GUARANTEED
 # Injective per-value maps: a masked FK key stays unique and joinable. Everything else native
 # is deterministic but may collide, so it is not accelerated as a key.
 _KEY_STRATEGIES = (HASH, FPE)
-REASON_BUCKET_OUT_OF_RANGE = "sequential_bucket_perturb_date_out_of_native_range"
+REASON_BUCKET_OUT_OF_RANGE = reasons.route.SEQUENTIAL_BUCKET_PERTURB_DATE_OUT_OF_NATIVE_RANGE
 _CONVERSION_ERRORS = (pa.ArrowInvalid, pa.ArrowTypeError, pa.ArrowNotImplementedError)
 
 
@@ -584,7 +582,7 @@ class SeqNativeRun:
         op = _OPS[strategy]
         if integer_key_representation_lost(strategy, decision.pinned_type, df[column].dtype):
             raise ExecutionError(
-                code="sequential_fpe_key_integer_not_preserved",
+                code=reasons.runtime.SEQUENTIAL_FPE_KEY_INTEGER_NOT_PRESERVED,
                 message=(
                     f"fpe key column {column!r} was admitted as {decision.pinned_type} but its "
                     "frame column is no longer integer; the run is aborted."
@@ -620,7 +618,7 @@ class SeqNativeRun:
         # Raised outside the handler: pyarrow's own message quotes the offending cell.
         if failed:
             raise ExecutionError(
-                code=f"sequential_{decision.strategy}_input_type_drift",
+                code=reasons.runtime.SEQUENTIAL_INPUT_TYPE_DRIFT_BY_STRATEGY[decision.strategy],
                 message=(
                     f"{decision.strategy} column {decision.column!r} of table {decision.table!r} was pinned as "
                     f"{decision.pinned_type} but its frame column no longer converts to it; the "

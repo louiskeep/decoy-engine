@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Any, NoReturn
 
 import pandas as pd
 
+from decoy_engine import reasons as reason_codes
 from decoy_engine.errors import DecoyError
 
 if TYPE_CHECKING:
@@ -37,15 +38,15 @@ if TYPE_CHECKING:
 # raises it per call; the default is large enough for real freetext yet far below a memory risk.
 DEFAULT_MAX_CELL_CHARS = 65_536
 
-CODE_UNBOUNDED = "generation_unbounded_column"
-CODE_DEGENERATE = "statistical_stats_degenerate"
-CODE_NOT_REPRODUCIBLE = "generation_not_reproducible"
-CODE_CONDITION_UNAVAILABLE = "statistical_condition_column_unavailable"
-CODE_FLAG_TOKEN = "statistical_flag_token_invalid"  # noqa: S105 -- an error code, not a credential
-CODE_NOT_CLASS_A = "generation_not_class_a"
-CODE_TABLE_UNKNOWN = "generation_table_unknown"
-CODE_WINDOW_INVALID = "generation_window_invalid"
-CODE_TIMEOUT = "generation_window_timeout"
+CODE_UNBOUNDED = reason_codes.plan.GENERATION_UNBOUNDED_COLUMN
+CODE_DEGENERATE = reason_codes.plan.STATISTICAL_STATS_DEGENERATE
+CODE_NOT_REPRODUCIBLE = reason_codes.runtime.GENERATION_NOT_REPRODUCIBLE
+CODE_CONDITION_UNAVAILABLE = reason_codes.plan.STATISTICAL_CONDITION_COLUMN_UNAVAILABLE
+CODE_FLAG_TOKEN = reason_codes.plan.STATISTICAL_FLAG_TOKEN_INVALID
+CODE_NOT_CLASS_A = reason_codes.plan.GENERATION_NOT_CLASS_A
+CODE_TABLE_UNKNOWN = reason_codes.runtime.GENERATION_TABLE_UNKNOWN
+CODE_WINDOW_INVALID = reason_codes.runtime.GENERATION_WINDOW_INVALID
+CODE_TIMEOUT = reason_codes.runtime.GENERATION_WINDOW_TIMEOUT
 
 _MIN_YEAR = 1
 _MAX_SAMPLED_YEAR = 9998  # datetime(year + 1, 1, 1) must be representable

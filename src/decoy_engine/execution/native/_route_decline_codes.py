@@ -19,45 +19,47 @@ from __future__ import annotations
 import enum
 from dataclasses import dataclass
 
+from decoy_engine import reasons
+
 
 class RouteDeclineCode(str, enum.Enum):
     """One member per distinct decline cause. The string values are the serialized form and
     are stable: rename a member, never its value. `OTHER` is for genuinely unknown input only."""
 
     # Table-wide causes.
-    FK_RELATIONSHIP = "fk_relationship"
-    NO_MASK_NODES = "no_mask_nodes"
-    NON_SCALAR_NODE = "non_scalar_node"
-    ADAPTER_REQUESTED = "adapter_requested"
-    UNCOVERED_OR_MISSING_COLUMNS = "uncovered_or_missing_columns"
-    CRYPTO_EXT_UNAVAILABLE = "crypto_ext_unavailable"
-    FPE_EXT_UNAVAILABLE = "fpe_ext_unavailable"
-    INDEX_EXT_UNAVAILABLE = "index_ext_unavailable"
-    RAW_HEX_EXT_UNAVAILABLE = "raw_hex_ext_unavailable"
-    UNCONFIGURED_SET_MISMATCH = "unconfigured_set_mismatch"
+    FK_RELATIONSHIP = reasons.route.FK_RELATIONSHIP
+    NO_MASK_NODES = reasons.route.NO_MASK_NODES
+    NON_SCALAR_NODE = reasons.route.NON_SCALAR_NODE
+    ADAPTER_REQUESTED = reasons.route.ADAPTER_REQUESTED
+    UNCOVERED_OR_MISSING_COLUMNS = reasons.route.UNCOVERED_OR_MISSING_COLUMNS
+    CRYPTO_EXT_UNAVAILABLE = reasons.route.CRYPTO_EXT_UNAVAILABLE
+    FPE_EXT_UNAVAILABLE = reasons.route.FPE_EXT_UNAVAILABLE
+    INDEX_EXT_UNAVAILABLE = reasons.route.INDEX_EXT_UNAVAILABLE
+    RAW_HEX_EXT_UNAVAILABLE = reasons.route.RAW_HEX_EXT_UNAVAILABLE
+    UNCONFIGURED_SET_MISMATCH = reasons.route.UNCONFIGURED_SET_MISMATCH
     # Defined for completeness but never surfaced publicly: an empty source reaches no
     # per-chunk builder, and its reroute reason is the unchanged `empty_input` string.
-    EMPTY_INPUT = "empty_input"
+    EMPTY_INPUT = reasons.route.EMPTY_INPUT
     # Column-attributable causes.
-    STRATEGY_VETOED_CHUNKED = "strategy_vetoed_chunked"
-    GROUP_KEY_SELF_ANCHOR = "group_key_self_anchor"
-    GROUP_KEY_MASKED_SIBLING = "group_key_masked_sibling"
-    FALLBACK_POLICY_NOT_NATIVE = "fallback_policy_not_native"
-    NO_NATIVE_KERNEL_OR_POOL = "no_native_kernel_or_pool"
-    WHEN_PREDICATE_NOT_NATIVE = "when_predicate_not_native"
-    WHEN_OUTSIDE_SUBSET = "when_outside_subset"
-    WHEN_READS_MASKED_COLUMN = "when_reads_masked_column"
-    FAKER_SOURCE_NOT_STRING = "faker_source_not_string"
-    FAKER_SCHEMA_NOT_GUARANTEED = "faker_schema_not_guaranteed"
-    FAKER_METADATA_NOT_ALLOWLISTED = "faker_metadata_not_allowlisted"
-    FPE_CHECKSUM_NOT_NATIVE = "fpe_checksum_not_native"
-    HASH_CONFIG_REJECTED = "hash_config_rejected"
-    FAKER_PROVIDER_NOT_NATIVE = "faker_provider_not_native"
-    SOURCE_TYPE_NOT_STRING = "source_type_not_string"
-    GROUP_KEY_SIBLING_MISSING = "group_key_sibling_missing"
-    GROUP_KEY_SIBLING_TYPE_NOT_NATIVE = "group_key_sibling_type_not_native"
-    FAKER_PROVIDER_OUTPUT_NOT_STRING = "faker_provider_output_not_string"
-    OTHER = "other"
+    STRATEGY_VETOED_CHUNKED = reasons.route.STRATEGY_VETOED_CHUNKED
+    GROUP_KEY_SELF_ANCHOR = reasons.route.GROUP_KEY_SELF_ANCHOR
+    GROUP_KEY_MASKED_SIBLING = reasons.route.GROUP_KEY_MASKED_SIBLING
+    FALLBACK_POLICY_NOT_NATIVE = reasons.route.FALLBACK_POLICY_NOT_NATIVE
+    NO_NATIVE_KERNEL_OR_POOL = reasons.route.NO_NATIVE_KERNEL_OR_POOL
+    WHEN_PREDICATE_NOT_NATIVE = reasons.route.WHEN_PREDICATE_NOT_NATIVE
+    WHEN_OUTSIDE_SUBSET = reasons.route.WHEN_OUTSIDE_SUBSET
+    WHEN_READS_MASKED_COLUMN = reasons.route.WHEN_READS_MASKED_COLUMN
+    FAKER_SOURCE_NOT_STRING = reasons.route.FAKER_SOURCE_NOT_STRING
+    FAKER_SCHEMA_NOT_GUARANTEED = reasons.route.FAKER_SCHEMA_NOT_GUARANTEED
+    FAKER_METADATA_NOT_ALLOWLISTED = reasons.route.FAKER_METADATA_NOT_ALLOWLISTED
+    FPE_CHECKSUM_NOT_NATIVE = reasons.route.FPE_CHECKSUM_NOT_NATIVE
+    HASH_CONFIG_REJECTED = reasons.route.HASH_CONFIG_REJECTED
+    FAKER_PROVIDER_NOT_NATIVE = reasons.route.FAKER_PROVIDER_NOT_NATIVE
+    SOURCE_TYPE_NOT_STRING = reasons.route.SOURCE_TYPE_NOT_STRING
+    GROUP_KEY_SIBLING_MISSING = reasons.route.GROUP_KEY_SIBLING_MISSING
+    GROUP_KEY_SIBLING_TYPE_NOT_NATIVE = reasons.route.GROUP_KEY_SIBLING_TYPE_NOT_NATIVE
+    FAKER_PROVIDER_OUTPUT_NOT_STRING = reasons.route.FAKER_PROVIDER_OUTPUT_NOT_STRING
+    OTHER = reasons.route.OTHER
 
 
 @dataclass(frozen=True)

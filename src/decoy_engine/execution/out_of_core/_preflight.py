@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 import pyarrow as pa
 
+from decoy_engine import reasons
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._runner import build_work_list, order_work
 from decoy_engine.execution.out_of_core import _mask_group_c
@@ -51,7 +52,7 @@ def run_preflight(
 ) -> OocPreflight:
     if batch_rows is not None and batch_rows < 1:
         raise ExecutionError(
-            code="out_of_core_batch_rows_invalid",
+            code=reasons.runtime.OUT_OF_CORE_BATCH_ROWS_INVALID,
             message=f"batch_rows must be a positive row count, got {batch_rows}.",
         )
     # Validate the override before the caller creates a temp root: an invalid value must not leak a scratch dir.
@@ -75,14 +76,14 @@ def run_preflight(
     )
     if not compat.accepted:
         raise ExecutionError(
-            code=compat.primary_code or "out_of_core_rejected",
+            code=compat.primary_code or reasons.runtime.OUT_OF_CORE_REJECTED,
             message=compat.message(),
         )
     _mask_group_c.preflight_group_c(work)
     for edge in relationship_graph.edges:
         if edge.parent_table not in sources or edge.child_table not in sources:
             raise ExecutionError(
-                code="out_of_core_source_missing",
+                code=reasons.runtime.OUT_OF_CORE_SOURCE_MISSING,
                 message="out-of-core FK route requires every parent and child source.",
             )
     # Last: it may scan a stats-less source, so run it only once the cheap gates passed.

@@ -43,6 +43,7 @@ from typing import TYPE_CHECKING, Any
 import pyarrow as pa
 import pyarrow.compute as pc
 
+from decoy_engine import reasons
 from decoy_engine.errors import DecoyError
 
 if TYPE_CHECKING:
@@ -65,10 +66,10 @@ __all__ = [
 ]
 
 # Values mirror `physical/_shadow_diff_codes.py`; a test pins the equality.
-GENERATION_SHAPE_UNSUPPORTED = "generation-shape-unsupported"
-MIXED_DRIVER_UNSUPPORTED = "mixed-driver-unsupported"
-MIXED_FK_CROSS_GENERATE_UNSUPPORTED = "mixed-fk-cross-generate-unsupported"
-MIXED_FK_TOPOLOGY_UNSUPPORTED = "mixed-fk-topology-unsupported"
+GENERATION_SHAPE_UNSUPPORTED = reasons.runtime.GENERATION_SHAPE_UNSUPPORTED
+MIXED_DRIVER_UNSUPPORTED = reasons.runtime.MIXED_DRIVER_UNSUPPORTED
+MIXED_FK_CROSS_GENERATE_UNSUPPORTED = reasons.runtime.MIXED_FK_CROSS_GENERATE_UNSUPPORTED
+MIXED_FK_TOPOLOGY_UNSUPPORTED = reasons.runtime.MIXED_FK_TOPOLOGY_UNSUPPORTED
 
 
 # Every warning code a mask strategy can declare, classified by whether the chunk-by-chunk run
@@ -81,15 +82,15 @@ MIXED_FK_TOPOLOGY_UNSUPPORTED = "mixed-fk-topology-unsupported"
 #
 # Deferred: correct cross-chunk warning aggregation (denominators, ordering, partial chunks) to
 # re-admit the count and row-index strategies to the mixed route. v1 declines them.
-CHUNK_INVARIANT_WARNING_CODES: frozenset[str] = frozenset({"fpe_join_group_active"})
+CHUNK_INVARIANT_WARNING_CODES: frozenset[str] = frozenset({reasons.warning.FPE_JOIN_GROUP_ACTIVE})
 CHUNK_VARIANT_WARNING_CODES: frozenset[str] = frozenset(
     {
-        "fpe_partial_plaintext_disclosure",
-        "text_mask_sub_floor_span_handled",
-        "top_code_generalized",
-        "geo_generalize_cascade",
-        "nested_cell_json_parse_error",
-        "nested_jsonpath_path_overlap",
+        reasons.warning.FPE_PARTIAL_PLAINTEXT_DISCLOSURE,
+        reasons.warning.TEXT_MASK_SUB_FLOOR_SPAN_HANDLED,
+        reasons.warning.TOP_CODE_GENERALIZED,
+        reasons.warning.GEO_GENERALIZE_CASCADE,
+        reasons.warning.NESTED_CELL_JSON_PARSE_ERROR,
+        reasons.warning.NESTED_JSONPATH_PATH_OVERLAP,
     }
 )
 

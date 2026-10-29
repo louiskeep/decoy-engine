@@ -20,6 +20,7 @@ from typing import Any
 
 import pyarrow as pa
 
+from decoy_engine import reasons
 from decoy_engine.execution._errors import StrategyError
 from decoy_engine.execution.native._crypto_ext import load_compiled_crypto_kernel
 
@@ -52,7 +53,7 @@ def native_keyed_hash(
     """
     if namespace is None:
         raise StrategyError(
-            code="hash_requires_namespace",
+            code=reasons.runtime.HASH_REQUIRES_NAMESPACE,
             strategy="hash",
             message="the hash strategy requires a namespace; got None.",
         )

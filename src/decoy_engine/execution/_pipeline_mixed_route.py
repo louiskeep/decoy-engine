@@ -42,6 +42,7 @@ from typing import TYPE_CHECKING, Any
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from decoy_engine import reasons
 from decoy_engine.execution import (
     _chunked_input,
     _pipeline_auto_chunk,
@@ -93,7 +94,7 @@ def _runtime_decline(
         if not isinstance(source, LazySource) or not _chunked_input.facts_match(
             _chunked_input.source_facts(source), expected
         ):
-            return "lazy_source_changed"
+            return reasons.runtime.LAZY_SOURCE_CHANGED
     return None
 
 
@@ -107,7 +108,10 @@ def _fall_back(
     from decoy_engine.execution import _pipeline_full_frame
 
     declined = dataclasses.replace(
-        decision, route="full_frame", route_reason=f"mixed_runtime_declined:{reason}", mixed=None
+        decision,
+        route="full_frame",
+        route_reason=f"{reasons.route.MIXED_RUNTIME_DECLINED}:{reason}",
+        mixed=None,
     )
     return _pipeline_full_frame.run_full_frame_route(ctx, declined, pregenerated=generate_outputs)
 

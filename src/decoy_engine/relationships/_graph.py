@@ -42,6 +42,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
+from decoy_engine import reasons
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.profile._types import Relationship
 from decoy_engine.relationships._namespace import NamespaceRegistry
@@ -191,7 +192,7 @@ def build_relationship_graph(
         }
         if len(policies) > 1:
             raise PlanCompileError(
-                code="orphan_policy_conflict",
+                code=reasons.plan.ORPHAN_POLICY_CONFLICT,
                 path=f"relationships[{child_table}.{child_columns}]",
                 message=(
                     f"Column {child_table}.{child_columns} declares FK relationships "
@@ -217,7 +218,7 @@ def build_relationship_graph(
             # run before this function and must populate every key. If we
             # land here, it's a wiring bug in compile_plan, not user input.
             raise PlanCompileError(
-                code="orphan_fk_policy_missing",
+                code=reasons.plan.ORPHAN_FK_POLICY_MISSING,
                 path=(
                     f"relationships[{rel.parent_table}.{rel.parent_columns}->"
                     f"{rel.child_table}.{rel.child_columns}]"
@@ -300,7 +301,7 @@ def build_relationship_graph(
     if len(ordered) != len(nodes):
         cycle_nodes = sorted(n for n, d in indegree.items() if d > 0)
         raise PlanCompileError(
-            code="fk_cycle",
+            code=reasons.plan.FK_CYCLE,
             path="relationships",
             message=(
                 f"FK relationships form a cycle. {len(cycle_nodes)} nodes are part "
@@ -372,7 +373,7 @@ def check_orphan_fk_policy_completeness(
             policy = entry.get("orphan_policy")
             if policy is None:
                 raise PlanCompileError(
-                    code="orphan_fk_policy_missing",
+                    code=reasons.plan.ORPHAN_FK_POLICY_MISSING,
                     path=f"relationships[{idx}]",
                     message=(
                         f"Relationship entry for parent {parent_table}.{parent_cols} "
@@ -383,7 +384,7 @@ def check_orphan_fk_policy_completeness(
                 )
             if policy not in ("preserve", "remap", "warn", "fail"):
                 raise PlanCompileError(
-                    code="orphan_fk_policy_invalid",
+                    code=reasons.plan.ORPHAN_FK_POLICY_INVALID,
                     path=f"relationships[{idx}].orphan_policy",
                     message=(
                         f"Relationship entry for parent {parent_table}.{parent_cols} "
@@ -424,7 +425,7 @@ def check_orphan_fk_policy_completeness(
                 key = (parent_table, tuple(parent_cols), child_table, tuple(child_cols))
                 if key in config_lookup and config_lookup[key] != policy:
                     raise PlanCompileError(
-                        code="orphan_fk_policy_duplicate",
+                        code=reasons.plan.ORPHAN_FK_POLICY_DUPLICATE,
                         path=f"relationships[{idx}]",
                         message=(
                             f"Relationship for parent {parent_table}.{parent_cols} "
@@ -449,7 +450,7 @@ def check_orphan_fk_policy_completeness(
         )
         if key not in config_lookup:
             raise PlanCompileError(
-                code="orphan_fk_policy_missing",
+                code=reasons.plan.ORPHAN_FK_POLICY_MISSING,
                 path=(
                     f"relationships[{rel.parent_table}.{rel.parent_columns}->"
                     f"{rel.child_table}.{rel.child_columns}]"

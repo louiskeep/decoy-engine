@@ -41,11 +41,17 @@ from decoy_engine.execution._isolated_common import (
 from decoy_engine.execution._pipeline import run_pipeline
 from decoy_engine.execution._transactional_sink import ParquetTransactionalSink
 from decoy_engine.profile._readers import LazySource
+from decoy_engine.reason_adapter import reason_from_exception
 
 
 def _error_text(exc: BaseException) -> str:
     """Stored error text: the safe summary (no exception message), capped."""
     return exception_error_text(exc)[:500]
+
+
+def _reason_payload(exc: BaseException) -> dict[str, Any]:
+    """The failure's structured reason: the record `run_pipeline` captured at its boundary."""
+    return reason_from_exception(exc).to_payload()
 
 
 def _write_envelope_file(envelope: dict[str, Any], result_path: Path) -> None:
@@ -219,6 +225,7 @@ def _run(payload: dict[str, Any]) -> dict[str, Any]:
             "outcome": outcome,
             "peak_rss_mb": round(peak_rss_mb(), 1),
             "error": _error_text(exc),
+            "reason": _reason_payload(exc),
         }
 
     return {
@@ -254,6 +261,7 @@ def main(argv: list[str]) -> int:
             "outcome": "oom_killed" if is_memory_failure(exc) else "crashed",
             "peak_rss_mb": round(peak_rss_mb(), 1),
             "error": _error_text(exc),
+            "reason": _reason_payload(exc),
         }
     _write_envelope_file(envelope, result_path)
     return 0

@@ -13,6 +13,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
+from decoy_engine import reasons
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.validation.post._scan import ScanContext, ScanOutcome, column_values
 from decoy_engine.validation.post._types import DistinctCount
@@ -53,7 +54,7 @@ def run_cardinality(ctx: ScanContext) -> ScanOutcome:
             elif mode == "match_source_cardinality" and output_distinct != source_distinct:
                 warnings.append(
                     QualityWarning(
-                        code="cardinality_match_deviation",
+                        code=reasons.warning.CARDINALITY_MATCH_DEVIATION,
                         # Scalar-transform columns carry no provider; the
                         # warning records the column, so "" is the empty marker.
                         provider=seed.provider or "",

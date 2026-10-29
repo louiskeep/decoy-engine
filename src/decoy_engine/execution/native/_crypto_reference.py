@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import pyarrow as pa
 
+from decoy_engine import reasons
 from decoy_engine.determinism import derive
 from decoy_engine.errors import FpeChecksumError, FpeUnencryptableError
 from decoy_engine.execution._strategies._fpe import (
@@ -199,7 +200,7 @@ class _ReferenceFpe:
         if join_group:
             warnings.append(
                 QualityWarning(
-                    code="fpe_join_group_active",
+                    code=reasons.warning.FPE_JOIN_GROUP_ACTIVE,
                     provider="fpe",
                     column=column,
                     detail={

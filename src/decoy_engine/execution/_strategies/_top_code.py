@@ -50,6 +50,7 @@ from typing import Any, TypeGuard
 import numpy as np
 import pandas as pd
 
+from decoy_engine import reasons
 from decoy_engine.execution._adapter import StrategyContext, provider_config_to_dict
 from decoy_engine.execution._errors import StrategyError
 from decoy_engine.execution._row_errors import RowError
@@ -142,7 +143,7 @@ class TopCodeStrategyHandler:
             # Fail closed (mirrors bucketize's `_resolve_width is None` raise):
             # an unresolvable bound must never leave the column unmasked.
             raise StrategyError(
-                code="top_code_bounds_unresolvable",
+                code=reasons.runtime.TOP_CODE_BOUNDS_UNRESOLVABLE,
                 strategy="top_code",
                 message=(
                     f"column {column!r} uses top_code but neither a known "
@@ -242,7 +243,7 @@ class TopCodeStrategyHandler:
                 generalized[f"row_{int(i)}"] = "under"
             warnings.append(
                 QualityWarning(
-                    code="top_code_generalized",
+                    code=reasons.warning.TOP_CODE_GENERALIZED,
                     provider="top_code",
                     column=column,
                     detail={
@@ -322,7 +323,7 @@ class TopCodeStrategyHandler:
                 continue
             if parsed[0] == "frac":
                 raise StrategyError(
-                    code="top_code_non_integral_object_column",
+                    code=reasons.runtime.TOP_CODE_NON_INTEGRAL_OBJECT_COLUMN,
                     strategy="top_code",
                     message=(
                         f"column {column!r} is an object/string column holding a "
@@ -369,7 +370,7 @@ class TopCodeStrategyHandler:
         top-coding generalizes the whole column; a partial one is not supported.
         """
         raise StrategyError(
-            code="top_code_with_when_unsupported",
+            code=reasons.runtime.TOP_CODE_WITH_WHEN_UNSUPPORTED,
             strategy="top_code",
             message=(
                 "a top_code column combines `when` with top_code. Conditional "
@@ -432,7 +433,7 @@ class TopCodeStrategyHandler:
         floor = cfg.get("floor")
         if not _is_usable_bound(floor):
             raise StrategyError(
-                code="top_code_bounds_unresolvable",
+                code=reasons.runtime.TOP_CODE_BOUNDS_UNRESOLVABLE,
                 strategy="top_code",
                 message=(
                     f"top_code floor {floor!r} is not a usable bound (must be a "
@@ -443,7 +444,7 @@ class TopCodeStrategyHandler:
         under_label = cfg.get("under_label")
         if not isinstance(under_label, str) or not under_label:
             raise StrategyError(
-                code="top_code_bounds_unresolvable",
+                code=reasons.runtime.TOP_CODE_BOUNDS_UNRESOLVABLE,
                 strategy="top_code",
                 message=(
                     f"top_code sets floor {floor!r} but no non-empty under_label "

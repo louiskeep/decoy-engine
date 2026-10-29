@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
+from decoy_engine import reasons
 from decoy_engine.execution._adapter import ExecutionResult
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._pandas_adapter import PandasExecutionAdapter
@@ -538,7 +539,7 @@ def _parent_table_row_counts(
         source = sources.get(table)
         if source is None:
             raise ExecutionError(
-                code="out_of_core_parent_rows_unresolved",
+                code=reasons.runtime.OUT_OF_CORE_PARENT_ROWS_UNRESOLVED,
                 message=(
                     f"out-of-core memory preflight cannot price table {table!r}: it has an "
                     "outgoing FK edge but no resolvable source."
