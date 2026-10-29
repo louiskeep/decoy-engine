@@ -13,6 +13,9 @@ column namespace, so the same value tokenizes differently in a different
 namespace/vault. The token is deterministic, but the VAULT is the identity
 boundary: if a token is already stored for a ``(namespace, plaintext)`` pair it
 is REUSED, so a value's token is stable across jobs and across key rotations.
+On a miss the strategy only PROPOSES the derived token; ``put`` returns the
+authoritative stored one (a concurrent winner's, under a race) and that is what
+is emitted.
 The vault lookup and write are both scoped by namespace, so the same plaintext
 under two namespaces is two distinct entries with two distinct tokens, never
 one (namespaces cannot be linked through a shared token, and execution order
@@ -145,9 +148,13 @@ class TokenizeStrategyHandler:
                 + derive(ctx.mask_key, namespace, plaintext.encode("utf-8")).hex()[:_TOKEN_HEX_LEN]
             )
             try:
-                vault.put(namespace, plaintext, token)
+                stored = vault.put(namespace, plaintext, token)
             except Exception:
                 raise _vault_error("write") from None
-            out.append(token)
+            # The vault's committed token wins a race; a writer that returns
+            # nothing (the pre-0.16 Protocol) must not publish a null/unmapped token.
+            if not isinstance(stored, str) or not stored:
+                raise _vault_error("write")
+            out.append(stored)
         df[column] = out
         return df, []

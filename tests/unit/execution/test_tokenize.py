@@ -42,9 +42,9 @@ class FakeVault:
         self.lookups.append((namespace, plaintext))
         return self.map.get((namespace, plaintext))
 
-    def put(self, namespace: str, plaintext: str, token: str) -> None:
+    def put(self, namespace: str, plaintext: str, token: str) -> str:
         self.puts.append((namespace, plaintext, token))
-        self.map[(namespace, plaintext)] = token
+        return self.map.setdefault((namespace, plaintext), token)
 
 
 def _col(df: pd.DataFrame, name: str) -> ColumnProfile:
@@ -290,10 +290,10 @@ class _RaisingVault(FakeVault):
             raise RuntimeError(f"vault lookup_existing boom for {plaintext}")
         return super().lookup_existing(namespace, plaintext)
 
-    def put(self, namespace: str, plaintext: str, token: str) -> None:
+    def put(self, namespace: str, plaintext: str, token: str) -> str:
         if self._raise_on == "put":
             raise RuntimeError(f"vault put boom for {plaintext} -> {token}")
-        super().put(namespace, plaintext, token)
+        return super().put(namespace, plaintext, token)
 
 
 def _run_through_transactional_sink(df: pd.DataFrame, vault: Any, target_dir: Any) -> None:
@@ -423,3 +423,46 @@ def test_tokenize_at_ga_requires_a_secret_key(tmp_path: Any) -> None:
                 cfg, {"t": tbl}, engine_version="ga", token_vault_writer=FakeVault()
             )
     assert getattr(exc.value, "code", "") == "keyed_strategy_requires_secret"
+
+
+# --- B-6 durability: put() returns the AUTHORITATIVE token --------------------
+
+
+class _RacedVault(FakeVault):
+    """Lookup misses, but a concurrent writer committed first: ``put`` returns the
+    winner's token, which differs from the proposal."""
+
+    WINNER = "tok_" + "ab" * 16
+
+    def put(self, namespace: str, plaintext: str, token: str) -> str:
+        self.puts.append((namespace, plaintext, token))
+        self.map[(namespace, plaintext)] = self.WINNER
+        return self.WINNER
+
+
+def test_emits_authoritative_token_not_local_proposal() -> None:
+    df = pd.DataFrame({"pan": ["4111111111111111", "5500000000000004"]})
+    vault = _RacedVault()
+    out = _run(df, vault=vault)
+    assert out["pan"] == [_RacedVault.WINNER, _RacedVault.WINNER]
+    # the proposal really differed, so emitting it would have been the orphan bug
+    assert all(proposed != _RacedVault.WINNER for _ns, _p, proposed in vault.puts)
+
+
+class _BadReturnVault(FakeVault):
+    def __init__(self, bad: Any) -> None:
+        super().__init__()
+        self._bad = bad
+
+    def put(self, namespace: str, plaintext: str, token: str) -> Any:
+        self.puts.append((namespace, plaintext, token))
+        return self._bad
+
+
+@pytest.mark.parametrize("bad", [None, "", 123, b"tok_x"])
+def test_non_str_or_empty_put_return_fails_closed(bad: Any) -> None:
+    df = pd.DataFrame({"pan": ["secret-value"]})
+    with pytest.raises(ExecutionError) as exc:
+        _run(df, vault=_BadReturnVault(bad))
+    assert getattr(exc.value, "code", "") == "tokenize_vault_error"
+    assert "secret-value" not in str(exc.value)
