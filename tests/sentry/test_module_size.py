@@ -124,7 +124,7 @@ ALLOWLIST: dict[str, int] = {
     "src/decoy_engine/execution/_sequential.py": 699,
     # transactional publish hardening and row mask; split the publish cluster.
     # F22: in-unit sidecar preflight/stage helpers; split the staged-publish cluster.
-    "src/decoy_engine/quarantine.py": 685,
+    "src/decoy_engine/quarantine.py": 683,
     # code_set provenance and FF1 notice plumbing through the streaming runner.
     # F22: receipt capture and BaseException-safe abort at the commit boundary.
     "src/decoy_engine/execution/out_of_core/_runner.py": 688,

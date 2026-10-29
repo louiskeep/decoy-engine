@@ -747,6 +747,6 @@ through existing routes; every new behavior lives in `src/decoy_engine/publicati
 |---|---|---|
 | `execution/_isolated_run.py` | 608 -> 640 | parent publication plumbing: `operation_id`, `cancel_check`, receipt on both result paths. Decomposition target unchanged: split the spawn/classify half into `_isolated_spawn.py`. |
 | `execution/_sequential.py` | 691 -> 699 | capture the sink's receipt; call the quarantine preflight/stage helpers. |
-| `quarantine.py` | 645 -> 685 | `preflight_unit_sidecar` / `stage_unit_sidecar` / `already_in_unit`. Decomposition target: the staged-publish cluster. |
+| `quarantine.py` | 645 -> 683 | `preflight_unit_sidecar` / `stage_unit_sidecar` / `already_in_unit`. Decomposition target: the staged-publish cluster. |
 | `execution/out_of_core/_runner.py` | 679 -> 688 | receipt capture; `except BaseException` abort that closes the cancellation gap. |
 | `execution/_pipeline_route_exec.py` | 600 -> 601 (new entry) | the receipt rides the two `ExecutionResult` reconstruction sites. |
