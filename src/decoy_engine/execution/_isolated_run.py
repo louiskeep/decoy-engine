@@ -76,6 +76,7 @@ from typing import Any
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from decoy_engine import publication as _pub
 from decoy_engine.execution._isolated_commit import (
     CommitError,
     PublishContext,
@@ -294,10 +295,13 @@ def _run_in_process(
         try:
             stage_tables(result.outputs, staging_dir)
             receipt = atomic_commit(
-                staging_dir,
+                _pub.ChildPreparationEnvelope(
+                    staging_dir,
+                    tuple(result.outputs),
+                    tuple(sorted((t, tbl.num_rows) for t, tbl in result.outputs.items())),
+                ),
                 output_dir,
                 publish=publish,
-                producer_rows={t: tbl.num_rows for t, tbl in result.outputs.items()},
             )
         except CommitError as exc:
             shutil.rmtree(staging_dir, ignore_errors=True)
@@ -565,7 +569,9 @@ def _result_from_envelope(
         )
 
     try:
-        outputs, committed_dir, row_errors, receipt = _commit(envelope, output_dir, publish)
+        outputs, committed_dir, row_errors, receipt = _commit(
+            envelope, output_dir, publish, staging_output_dir
+        )
     except CommitError as exc:
         # MED-1: the rename failed (pre-existing non-empty target is the
         # common case) -- a classified `crashed` result, not a driver-side
@@ -600,8 +606,30 @@ def _result_from_envelope(
     )
 
 
+def _validated_child(
+    envelope: dict[str, Any], assigned: Path, output_dir: Path | None, publish: PublishContext
+) -> _pub.ChildPreparationEnvelope:
+    """Rebuild the typed child envelope; refuse (touching nothing) if it is not exactly
+    the parent-assigned directory's well-formed, versioned preparation."""
+    try:
+        return _pub.parse_child_envelope(envelope.get("preparation"), assigned)
+    except _pub.ChildEnvelopeError as exc:
+        raise _pub.PublicationRefusedError(
+            f"child preparation refused: {exc}",
+            _pub.CommitReceipt(
+                "rejected",
+                str(output_dir or assigned),
+                publish.operation_id or "",
+                "child_envelope_invalid",
+            ),
+        ) from exc
+
+
 def _commit(
-    envelope: dict[str, Any], output_dir: Path | None, publish: PublishContext
+    envelope: dict[str, Any],
+    output_dir: Path | None,
+    publish: PublishContext,
+    assigned: Path,
 ) -> tuple[dict[str, pa.Table], str | None, tuple[RowErrorRecord, ...], Any]:
     """Read the child's staged tables + row_errors, then commit-or-discard
     per §12 ruling 3.
@@ -615,12 +643,13 @@ def _commit(
         CommitError: the atomic rename failed (MED-1). Staging is rmtree'd
             here before re-raising so the caller never has to.
     """
-    staging_output_dir = Path(envelope["staging_output_dir"])
+    prepared_dir = _validated_child(envelope, assigned, output_dir, publish)
+    staging_output_dir = prepared_dir.staging_dir
     outputs = {
         table: pq.read_table(  # type: ignore[no-untyped-call, unused-ignore]
             staging_output_dir / f"{table}.parquet"
         )
-        for table in envelope.get("staged_tables", [])
+        for table in prepared_dir.tables
     }
     row_errors = read_staged_row_errors(staging_output_dir)
     if output_dir is None:
@@ -628,12 +657,7 @@ def _commit(
         return outputs, None, row_errors, None
 
     try:
-        receipt = atomic_commit(
-            staging_output_dir,
-            output_dir,
-            publish=publish,
-            producer_rows=envelope.get("row_counts"),
-        )
+        receipt = atomic_commit(prepared_dir, output_dir, publish=publish)
     except CommitError:
         shutil.rmtree(staging_output_dir, ignore_errors=True)
         raise

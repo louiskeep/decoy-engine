@@ -130,6 +130,29 @@ def _check_entry(raw: Any) -> ArtifactRef:
     return ArtifactRef(raw["role"], safe_relative_path(raw["path"]), size, raw["sha256"], rows, sd)
 
 
+def checks_context(checks: Iterable[CheckResult]) -> list[dict[str, Any]]:
+    return [
+        {"check_id": c.check_id, "disposition": c.disposition, "required": c.required}
+        for c in sorted(checks, key=lambda c: c.check_id)
+    ]
+
+
+def evidence_matches_context(
+    evidence: bytes, policy_fingerprint: str | None, checks: Iterable[CheckResult]
+) -> bool:
+    """Structurally validate a committed evidence core and compare its acceptance context
+    (policy fingerprint + check dispositions) with a recovery request's."""
+    try:
+        doc = parse_strict(evidence)
+    except CodecError:
+        return False
+    return (
+        doc.get("schema") == EVIDENCE_SCHEMA
+        and doc.get("validation_policy_fingerprint") == policy_fingerprint
+        and doc.get("checks") == checks_context(checks)
+    )
+
+
 def evidence_core_bytes(
     *,
     result_id: str,
@@ -145,10 +168,7 @@ def evidence_core_bytes(
             "result_id": result_id,
             "inventory_digest": inventory_digest,
             "validation_policy_fingerprint": policy_fingerprint,
-            "checks": [
-                {"check_id": c.check_id, "disposition": c.disposition, "required": c.required}
-                for c in sorted(checks, key=lambda c: c.check_id)
-            ],
+            "checks": checks_context(checks),
         }
     )
 

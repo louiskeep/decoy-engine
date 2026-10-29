@@ -41,6 +41,7 @@ from decoy_engine.execution._isolated_common import (
 from decoy_engine.execution._pipeline import run_pipeline
 from decoy_engine.execution._transactional_sink import ParquetPreparationSink
 from decoy_engine.profile._readers import LazySource
+from decoy_engine.publication import ChildPreparationEnvelope, child_envelope_to_doc
 
 
 def _error_text(exc: BaseException) -> str:
@@ -226,12 +227,21 @@ def _run(payload: dict[str, Any]) -> dict[str, Any]:
     return {
         "outcome": "completed",
         "peak_rss_mb": round(peak_rss_mb(), 1),
-        "staging_output_dir": payload["staging_output_dir"],
         "staged_tables": staged_tables,
-        "row_counts": {
-            **sink.row_counts,
-            **{name: tbl.num_rows for name, tbl in result.outputs.items()},
-        },
+        "preparation": child_envelope_to_doc(
+            ChildPreparationEnvelope(
+                staging_dir=Path(staging_output_dir),
+                tables=tuple(staged_tables),
+                row_counts=tuple(
+                    sorted(
+                        {
+                            **sink.row_counts,
+                            **{name: tbl.num_rows for name, tbl in result.outputs.items()},
+                        }.items()
+                    )
+                ),
+            )
+        ),
         "quality_metrics": dict(result.quality_metrics),
         "table_kinds": dict(result.table_kinds),
     }

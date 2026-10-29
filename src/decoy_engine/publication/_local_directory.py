@@ -124,15 +124,33 @@ def _lineage(request: PublicationRequest) -> tuple[str | None, str | None]:
     return request.overwrite.expected_descriptor_digest, ref
 
 
+def reject_failed_checks(request: PublicationRequest) -> None:
+    """A required failed/inconclusive check denies publication AND recovery, up front."""
+    for check in request.checks:
+        if check.required and check.disposition in ("fail", "inconclusive"):
+            raise _refuse(request, "rejected", "required_check_failed")
+
+
+def context_matches(directory: Path, expected_sha: str, request: PublicationRequest) -> bool:
+    """The committed evidence core (hash-bound by the descriptor) carries the same
+    acceptance context as `request`."""
+    path = directory / _codec.EVIDENCE_NAME
+    try:
+        raw = path.read_bytes()
+    except OSError:
+        return False
+    return _codec.sha256_hex(raw) == expected_sha and _codec.evidence_matches_context(
+        raw, request.validation_policy_fingerprint, request.checks
+    )
+
+
 def prepare_directory(
     stage: Path,
     request: PublicationRequest,
     *,
     producer_rows: Mapping[str, int] | None = None,
 ) -> PreparedPublication:
-    for check in request.checks:
-        if check.required and check.disposition in ("fail", "inconclusive"):
-            raise _refuse(request, "rejected", "required_check_failed")
+    reject_failed_checks(request)
     try:
         entries = measure_directory(stage, producer_rows=producer_rows)
     except MeasureError as exc:
@@ -251,6 +269,7 @@ def lookup_committed(request: PublicationRequest) -> CommitReceipt | None:
     Without `expected_result_id` only the same `operation_id` can be claimed before
     staging; equality of fresh content is judged after measuring, under the lock.
     """
+    reject_failed_checks(request)
     ex = inspect_destination(request.destination)
     if ex.kind != "committed" or ex.doc is None:
         return None
@@ -260,6 +279,8 @@ def lookup_committed(request: PublicationRequest) -> CommitReceipt | None:
         return None
     if request.expected_result_id is not None and not same_result:
         return None
+    if not context_matches(request.destination, ex.doc["evidence"]["sha256"], request):
+        raise _refuse(request, "conflict", "acceptance_context_differs")
     return _existing_receipt(request, ex, durable=_sync_parent(request.destination))
 
 
@@ -298,6 +319,8 @@ def _judge_existing(
 def commit_directory(prepared: PreparedPublication) -> CommitReceipt:
     """`immutable_directory/v1` commit; raises for every non-success outcome."""
     request, target = prepared.request, prepared.request.destination
+    if isinstance(request.overwrite, Replace):  # immutable directories are never replaced
+        raise _refuse(request, "unsupported", "replace_unsupported_for_unit")
     target.parent.mkdir(parents=True, exist_ok=True)
     try:
         lock = DestinationLock(target)

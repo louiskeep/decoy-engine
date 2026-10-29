@@ -162,7 +162,11 @@ def test_pre_binding_failures_never_release_a_new_result(tmp_path: Path) -> None
         current = pub.resolve_current(dest)
         assert current is not None and current.descriptor_digest == a.descriptor_digest, label
         assert _oracle(current.path) == a_facts, label
-        assert pub.lookup_committed(request) is None, label
+        if label == "required check failed":  # recovery is denied up front for failed checks
+            with pytest.raises(pub.PublicationRefusedError):
+                pub.lookup_committed(request)
+        else:
+            assert pub.lookup_committed(request) is None, label
 
     class BoomError(Exception):
         pass

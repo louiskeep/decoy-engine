@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 import signal
 import uuid
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -71,26 +71,32 @@ def stage_tables(outputs: dict[str, pa.Table], staging_dir: Path) -> None:
 
 
 def atomic_commit(
-    staging_dir: Path,
+    envelope: _pub.ChildPreparationEnvelope,
     output_dir: Path,
     *,
     publish: PublishContext | None = None,
-    producer_rows: Mapping[str, int] | None = None,
 ) -> _pub.CommitReceipt:
-    """Re-measure the prepared directory and bind it to `output_dir` (§12 ruling 3).
+    """Re-measure the validated child preparation and bind it to `output_dir` (§12 ruling 3).
+
+    Accepts ONLY a `ChildPreparationEnvelope` (already bound to the parent-assigned
+    staging directory); the declared tables and row counts are enforced against the files.
 
     A different or legacy occupant raises a classified `CommitError` (never a raw
     `OSError`, with staging left for the caller to discard); an identical committed
     result is returned as `already_committed` and its redundant staging is removed.
     """
+    if not isinstance(envelope, _pub.ChildPreparationEnvelope):
+        raise TypeError("atomic_commit promotes only a validated ChildPreparationEnvelope")
+    staging_dir = envelope.staging_dir
     publish = publish or PublishContext()
     request = _pub.PublicationRequest(
         destination=output_dir,
+        expected_tables=envelope.tables,
         operation_id=publish.operation_id or uuid.uuid4().hex,
         cancelled=publish.cancelled,
     )
     output_dir.parent.mkdir(parents=True, exist_ok=True)
-    prepared = _pub.prepare_directory(staging_dir, request, producer_rows=producer_rows)
+    prepared = _pub.prepare_directory(staging_dir, request, producer_rows=dict(envelope.row_counts))
     receipt = _pub.commit_prepared(prepared)
     if receipt.outcome == "already_committed":
         receipt = _pub.with_cleanup(receipt, _pub.cleanup_staging(staging_dir))

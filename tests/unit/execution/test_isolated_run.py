@@ -122,8 +122,13 @@ for table, data in result.outputs.items():
 envelope = {
     "outcome": "completed",
     "peak_rss_mb": 1.0,
-    "staging_output_dir": str(staging_output_dir),
     "staged_tables": staged_tables,
+    "preparation": {
+        "schema": "decoy-child-preparation/v1",
+        "staging_dir": str(staging_output_dir),
+        "tables": staged_tables,
+        "row_counts": {t: result.outputs[t].num_rows for t in staged_tables},
+    },
     "quality_metrics": dict(result.quality_metrics),
     "table_kinds": dict(result.table_kinds),
 }

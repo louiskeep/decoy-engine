@@ -5,6 +5,11 @@ a result is committed only when the destination binding resolves to a descriptor
 bound artifacts all verify. Receipts, statuses and file listings never overrule it.
 """
 
+from decoy_engine.publication._child import (
+    ChildEnvelopeError,
+    child_envelope_to_doc,
+    parse_child_envelope,
+)
 from decoy_engine.publication._dispatch import (
     commit_prepared,
     lookup_committed,
@@ -67,6 +72,7 @@ __all__ = [
     "AbortReport",
     "ArtifactRef",
     "CheckResult",
+    "ChildEnvelopeError",
     "ChildPreparationEnvelope",
     "CleanupResult",
     "CommitError",
@@ -87,6 +93,7 @@ __all__ = [
     "add_hold",
     "admit",
     "capability_rows",
+    "child_envelope_to_doc",
     "cleanup_retained",
     "cleanup_staging",
     "commit_prepared",
@@ -95,6 +102,7 @@ __all__ = [
     "inspect_destination",
     "inventory",
     "lookup_committed",
+    "parse_child_envelope",
     "pin_reader",
     "prepare_directory",
     "reconcile",

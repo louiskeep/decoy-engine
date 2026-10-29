@@ -27,6 +27,8 @@ Readers of a managed dataset call `resolve_current` (or `pin_reader`) **once** a
 
 Idempotence: keep `operation_id` stable across retries. The same operation with identical content, or any job with identical content and acceptance context, gets `already_committed` and the original descriptor. The same operation with different content or checks is `operation_conflict`. In a managed dataset a retry of a superseded operation reports the historical result with `is_current=False` and is never replayed; if its payload was expired it is `committed_artifacts_expired`. Byte-identical restaging relies on pyarrow writing deterministic bytes within the pinned version (tested); the expected-identity path (`expected_result_id`) recovers a lost receipt without restaging.
 
+Recovery by `expected_result_id` (or operation id) also requires the **same acceptance context**: the committed evidence core's policy fingerprint and check dispositions must equal the request's (`acceptance_context_differs` otherwise), and a required failed/inconclusive check is rejected before any lookup.
+
 ## Overwrite and backup
 
 `ErrorIfDifferent` (default) or `Replace(expected_descriptor_digest, NoBackup | ProtectedBackup(policy_ref))`. A protected backup is a private (0700/0600) verified copy of the prior generation plus a hold marker, created *before* the pointer switch; a backup failure prevents publication. Restore is `restore_backup(...)`, a new authorized replacement with an expected predecessor, never an implicit rollback. Local protection is not WORM and not encryption.

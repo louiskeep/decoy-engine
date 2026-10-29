@@ -29,9 +29,11 @@ from decoy_engine.publication._local_directory import (
     _receipt,
     _refuse,
     _reverify_staged_claim,
+    context_matches,
     fsync_dir,
     inspect_destination,
     prepare_directory,
+    reject_failed_checks,
     write_private_file,
 )
 from decoy_engine.publication._lock import DestinationLock, LockUnavailableError
@@ -199,6 +201,7 @@ def _sync(root: Path) -> bool:
 
 def lookup_committed_managed(request: PublicationRequest) -> CommitReceipt | None:
     root = request.destination
+    reject_failed_checks(request)
     try:
         cur = resolve_current(root)
     except ResolveError:
@@ -212,13 +215,20 @@ def lookup_committed_managed(request: PublicationRequest) -> CommitReceipt | Non
         if request.expected_result_id not in (None, cur.result_id):
             return None
         ev = cur.doc["evidence"]["sha256"]
+        _require_context(request, cur.path, ev)
         return _receipt_for(request, cur.doc, cur.descriptor_digest, current=True, ev=ev)
     if request.expected_result_id is not None:
         return None
     found = _lineage_match(root, cur.descriptor_digest, request.operation_id)
     if found is None:
         return None
+    _require_context(request, root / GENERATIONS / found[1], found[0]["evidence"]["sha256"])
     return _historical_receipt(request, *found)
+
+
+def _require_context(request: PublicationRequest, directory: Path, evidence_sha: str) -> None:
+    if not context_matches(directory, evidence_sha, request):
+        raise _refuse(request, "conflict", "acceptance_context_differs")
 
 
 def _historical_receipt(
