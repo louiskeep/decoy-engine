@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import ast
 import re
-import textwrap
 from pathlib import Path
 
 import pytest
@@ -219,7 +218,7 @@ def test_docstring_mentions_are_not_violations() -> None:
 
 
 def test_no_module_in_the_casting_package_imports_locale() -> None:
-    for path in _casting_files() + [CONTRACT]:
+    for path in [*_casting_files(), CONTRACT]:
         assert "locale" not in {
             a.name.split(".")[0]
             for n in ast.walk(ast.parse(path.read_text()))
@@ -234,6 +233,8 @@ FORMAT_ID = re.compile(
     r"""["'](?:string|integer|decimal|date|currency|cobol|sentinel)/[a-z0-9\-]+/v1["']"""
 )
 CATALOG_HOMES = {
+    "contracts/_declared_base.py",
+    "contracts/_declared_formats.py",
     "contracts/declared_casting.py",
     "declared_casting/_catalog.py",
 }

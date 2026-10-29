@@ -51,6 +51,7 @@ import pyarrow as pa
 import pyarrow.compute as pc
 
 from decoy_engine import reasons
+from decoy_engine.declared_casting._eligibility import declared_route_guard
 from decoy_engine.execution._adapter import ExecutionResult, provider_config_to_dict
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._fk_resolve import orphan_fk_violation_error
@@ -190,11 +191,7 @@ def run_fk_out_of_core(
     are route-stable (`_vault_collect.vault_ooc_safe`); persisting is the caller's, after a
     successful return.
     """
-    from decoy_engine.declared_casting._eligibility import declared_route_guard
-
-    # F06: a declared-casting job runs only where the casting boundary exists.
     declared_route_guard("out_of_core", plan=plan, raise_on_decline=True)
-
     pre = run_preflight(
         plan,
         sources,

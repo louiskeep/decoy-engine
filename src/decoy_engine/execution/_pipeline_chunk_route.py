@@ -27,6 +27,8 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
+from decoy_engine.declared_casting._eligibility import declared_route_guard
+
 if TYPE_CHECKING:
     from decoy_engine.execution._chunked_input import SourceFacts
     from decoy_engine.execution._planner import ExecutionPlan
@@ -67,13 +69,9 @@ def decide_chunk_route(
     classification. `keep_lazy` is the footer snapshot of every `LazySource` that may
     still stream (`lazy_stream_candidates`); a job with FK edges captures none.
     """
-    from decoy_engine.declared_casting._eligibility import declared_route_guard
-
-    # F06: a declared-casting job runs only where the casting boundary exists.
     _decl = declared_route_guard("chunked", plan=plan)
     if not _decl.admitted:
         return None, False, {}
-
     if not (explain_plan or (auto_chunk and has_mask_table)):
         return None, False, {}
 

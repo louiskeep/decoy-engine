@@ -135,7 +135,8 @@ class DeclaredCastRun:
 
     def abort(self) -> None:
         if self._session is not None:
-            self._runtime.sink.abort(self._session)
+            store = self._runtime.sink
+            store.abort(self._session)
             self._session = None
 
     def partial_counts(self) -> dict[str, Any]:
@@ -193,7 +194,7 @@ class DeclaredCastRun:
             from decoy_engine.execution._errors import DeclaredCastRouteError
 
             raise DeclaredCastRouteError(
-                code=str(reasons.route.DECLARED_CAST_INPUT_TYPE_INCOMPATIBLE),
+                code=reasons.route.DECLARED_CAST_INPUT_TYPE_INCOMPATIBLE,
                 message=f"column {col.name!r} arrived with a physical type its declared contract cannot parse.",
             )
 
@@ -244,9 +245,9 @@ class DeclaredCastRun:
     # -- quarantine --------------------------------------------------------------------------------
 
     def _write_rows(self, table: str, positions: list[int]) -> None:
-        sink = self._runtime.sink
+        store = self._runtime.sink
         if self._session is None:
-            self._session = sink.begin(
+            self._session = store.begin(
                 P.QuarantineRun(owner=self._runtime.owner, run_id=""),
                 P.QuarantinePolicy.model_validate(self._policy_block),
             )
@@ -256,7 +257,7 @@ class DeclaredCastRun:
                 continue
             self._written.add((table, pos))
             row = original.slice(pos, 1).to_pylist()[0]
-            sink.write_row(
+            store.write_row(
                 self._session,
                 P.QuarantineEnvelope(table, pos, self._ledger.row_reasons(table, pos), row),
             )

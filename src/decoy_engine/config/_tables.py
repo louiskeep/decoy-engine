@@ -173,7 +173,9 @@ class ColumnConfig(BaseModel):
     def _f06_contract(self) -> ColumnConfig:
         from decoy_engine.config import _declared_casting as dc
 
-        dc.check_column(self)
+        default_policy = dc.check_column(self)
+        if default_policy is not None:
+            self.error_policy = default_policy
         return self
 
     @field_validator("when")

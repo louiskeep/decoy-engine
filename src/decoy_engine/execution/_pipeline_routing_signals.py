@@ -24,6 +24,8 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
+from decoy_engine import reasons
+from decoy_engine.declared_casting._eligibility import declared_route_guard
 from decoy_engine.execution._mem_estimate_arrow import column_arrow_types as _column_arrow_types
 from decoy_engine.execution._mem_estimate_arrow import source_nullable_columns
 from decoy_engine.execution._transforms_admission import admission_signals, decline_out_of_core
@@ -567,13 +569,9 @@ def resolve_execution_route(
     rejects); the runtime `check_temp_disk_budget` is the enforcer. See
     `out_of_core._spill_estimate`'s module docstring.
     """
-    from decoy_engine.declared_casting._eligibility import declared_route_guard
-
-    # F06: a declared-casting job runs only where the casting boundary exists.
     _decl = declared_route_guard("full_frame", plan=plan)
     if _decl.requirements:
-        return "full_frame", "declared_casting"
-
+        return "full_frame", reasons.route.DECLARED_CASTING_FULL_FRAME
     from decoy_engine.execution._pipeline_routing import decide_execution_route
     from decoy_engine.execution._pipeline_routing_fk_dtype import fk_out_of_core_dtype_hazard
     from decoy_engine.execution.out_of_core._validate_batch import validators_ooc_safe

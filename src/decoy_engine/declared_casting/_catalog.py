@@ -243,14 +243,14 @@ def descriptor_for(format_id: str, direction: str) -> FormatDescriptor:
     try:
         return _BY_KEY[(format_id, direction)]
     except KeyError:
-        raise C.DeclaredCastContractError(str(reasons.plan.DECLARED_CAST_FORMAT_UNKNOWN)) from None
+        raise C.DeclaredCastContractError(reasons.plan.DECLARED_CAST_FORMAT_UNKNOWN) from None
 
 
 # -- resolved specs ----------------------------------------------------------------------------
 
 
 def _resolve(spec: Any, direction: str) -> Any:
-    if isinstance(spec, C._Model):
+    if isinstance(spec, C.ContractModel):
         return spec
     return _resolved_json(json.dumps(spec, sort_keys=True, default=str), direction)
 
@@ -402,7 +402,7 @@ def _inverse_checked(
         if isinstance(twin, C.StringExact):
             return fail(_R.DECLARED_OUTPUT_WIDTH_OVERFLOW)
         raise C.DeclaredCastContractError(
-            str(reasons.plan.DECLARED_CAST_CONTRACT_INVALID),
+            reasons.plan.DECLARED_CAST_CONTRACT_INVALID,
             "formatter is not the exact inverse of its parser.",
         )
     return out
@@ -420,7 +420,7 @@ def _cached_formatter(blob: str) -> Callable[[Any], CastOutcome]:
 
 def _key(spec: Any) -> str:
     return json.dumps(
-        spec if not isinstance(spec, C._Model) else spec.model_dump(), sort_keys=True, default=str
+        spec if not isinstance(spec, C.ContractModel) else spec.model_dump(), sort_keys=True, default=str
     )
 
 

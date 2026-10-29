@@ -287,6 +287,32 @@
       "symbol": "DECLARED_CAST_ROUTE_UNSUPPORTED"
     },
     {
+      "code": "declared_casting_full_frame",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "decision",
+      "namespace": "route",
+      "owner": "decoy_engine.declared_casting",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "success",
+          "phase": "resolve",
+          "retry": "never",
+          "severity": "info"
+        },
+        {
+          "outcome": "success",
+          "phase": "compile",
+          "retry": "never",
+          "severity": "info"
+        }
+      ],
+      "since": "1.1.0",
+      "summary": "A job with declared casting contracts runs on the full-frame route.",
+      "symbol": "DECLARED_CASTING_FULL_FRAME"
+    },
+    {
       "code": "protected_quarantine_unavailable",
       "context": [],
       "deprecated_in": null,

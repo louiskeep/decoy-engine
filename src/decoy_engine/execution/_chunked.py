@@ -165,6 +165,7 @@ from typing import Any
 import pyarrow as pa
 
 from decoy_engine import reasons
+from decoy_engine.declared_casting._eligibility import declared_route_guard
 from decoy_engine.plan._errors import PlanCompileError
 
 from . import _chunked_bucket_perturb as bucket_perturb_gate
@@ -270,11 +271,7 @@ def check_chunked_compatibility(config: dict[str, Any], *, table: str, registry:
         chunked_bucket_perturb_fk_key_unsupported: `bucket_perturb` as an FK key column.
         per_table_transforms_present: `table` declares transforms.
     """
-    from decoy_engine.declared_casting._eligibility import declared_route_guard
-
-    # F06: a declared-casting job runs only where the casting boundary exists.
     declared_route_guard("chunked", config=config, raise_on_decline=True)
-
     tables = config.get("tables") or []
     table_cfg = next((t for t in tables if isinstance(t, dict) and t.get("name") == table), None)
     if table_cfg is None:

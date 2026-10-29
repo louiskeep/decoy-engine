@@ -6,6 +6,7 @@ from decoy_engine.reasons import _catalog
 from decoy_engine.reasons._types import Kind, Outcome, Phase, RetryClass, Severity
 
 __all__ = [
+    "DECLARED_CASTING_FULL_FRAME",
     "DECLARED_CAST_INPUT_TYPE_INCOMPATIBLE",
     "DECLARED_CAST_ROUTE_UNSUPPORTED",
     "PROTECTED_QUARANTINE_UNAVAILABLE",
@@ -22,6 +23,11 @@ _REFUSAL = {
     "since": "1.1.0",
 }
 
+DECLARED_CASTING_FULL_FRAME = _d(
+    "declared_casting_full_frame",
+    "A job with declared casting contracts runs on the full-frame route.",
+    since="1.1.0",
+)
 DECLARED_CAST_ROUTE_UNSUPPORTED = _d(
     "declared_cast_route_unsupported",
     "The selected route cannot apply a declared casting contract.",

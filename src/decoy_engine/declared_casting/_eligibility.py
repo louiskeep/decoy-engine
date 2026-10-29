@@ -247,7 +247,7 @@ def preflight_declared_casting(
         qualified = why is None
         if not qualified and any(contract_model(c).error_policy == "quarantine" for c in columns):
             raise DeclaredCastRouteError(
-                code=str(reasons.route.PROTECTED_QUARANTINE_UNAVAILABLE),
+                code=reasons.route.PROTECTED_QUARANTINE_UNAVAILABLE,
                 message=f"no qualified protected quarantine store ({why}).",
             )
     route = "full_frame" if execution_mode in ("auto", "full_frame") else execution_mode

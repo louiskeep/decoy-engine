@@ -20,7 +20,7 @@ from decoy_engine.contracts.declared_casting import (
     validate_format_spec,
 )
 
-_INVALID = str(reasons.plan.DECLARED_CAST_CONTRACT_INVALID)
+_INVALID = reasons.plan.DECLARED_CAST_CONTRACT_INVALID
 LOGICAL_TYPES = ("string", "integer", "decimal", "date", "currency")
 ERROR_POLICIES = ("fail", "null", "quarantine")
 
@@ -43,7 +43,7 @@ def typed_sentinel(value: Any) -> Any:
         return value
     if not isinstance(value, dict):
         raise PydanticCustomError(
-            str(reasons.plan.DECLARED_CAST_SENTINEL_CONFIG_INVALID),
+            reasons.plan.DECLARED_CAST_SENTINEL_CONFIG_INVALID,
             "sentinel_to_null must be a mapping.",
         )
     try:
@@ -54,7 +54,7 @@ def typed_sentinel(value: Any) -> Any:
             if reasons.is_registered(err["type"]):
                 raise PydanticCustomError(err["type"], err["msg"]) from None
         raise PydanticCustomError(
-            str(reasons.plan.DECLARED_CAST_SENTINEL_CONFIG_INVALID), "sentinel_to_null is invalid."
+            reasons.plan.DECLARED_CAST_SENTINEL_CONFIG_INVALID, "sentinel_to_null is invalid."
         ) from None
 
 
@@ -66,19 +66,21 @@ def closed_choice(value: Any, choices: tuple[str, ...], what: str) -> Any:
     return value
 
 
-def check_column(column: Any) -> None:
-    """Prove a column's five optional fields form one cohesive contract (or are all unset)."""
+def check_column(column: Any) -> str | None:
+    """Prove a column's five optional fields form one cohesive contract (or are all unset).
+
+    Returns the policy to apply when the column declared a contract without one (`fail`), else
+    None; the caller assigns it, so this check never mutates its input."""
     present = {k: getattr(column, k) for k in CONTRACT_FIELDS if getattr(column, k) is not None}
     if not present:
-        return
+        return None
     if "logical_type" not in present or "parse_format" not in present:
         raise PydanticCustomError(_INVALID, "logical_type and parse_format are required together.")
     try:
         build_contract({**present, "error_policy": present.get("error_policy", "fail")})
     except DeclaredCastContractError as exc:
         raise _raise(exc) from None
-    if column.error_policy is None:
-        column.error_policy = "fail"
+    return "fail" if column.error_policy is None else None
 
 
 def require_protected_block(config: Any) -> None:

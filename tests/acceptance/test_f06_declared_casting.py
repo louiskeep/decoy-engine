@@ -183,7 +183,7 @@ def test_a8_sentinel_precedes_parse_and_is_counted_separately(tmp_path: Path) ->
         "2026-03-05",
     ]
     counts = _counts(result)
-    assert counts["sentinel_to_null"] == 2  # TBD and "" — the physical null is not a substitution
+    assert counts["sentinel_to_null"] == 2  # TBD and "" - the physical null is not a substitution
     assert counts.get("parse_null", 0) == 0 and counts.get("parse_quarantine", 0) == 0
     assert result.quality_metrics["declared_casting"]["total_substitutions"] == 2
     assert "TBD" not in json.dumps(result.quality_metrics, default=str)

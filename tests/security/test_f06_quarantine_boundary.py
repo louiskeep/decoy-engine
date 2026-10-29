@@ -585,6 +585,7 @@ F06_CODES = {
     "route": [
         "declared_cast_route_unsupported",
         "declared_cast_input_type_incompatible",
+        "declared_casting_full_frame",
         "protected_quarantine_unavailable",
     ],
     "runtime": [

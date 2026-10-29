@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 import pyarrow as pa
 
+from decoy_engine.declared_casting._eligibility import declared_route_guard
 from decoy_engine.execution.native._real_type_admission import C1_PROVIDER_ALLOWLIST
 from decoy_engine.execution.native._requirements import faker_pool_precondition_met
 
@@ -191,9 +192,6 @@ def check_out_of_core_compatibility(
     plan shape alone, and the exact-`string` requirement is enforced fail-closed
     by the per-table mask planner as a backstop.
     """
-    from decoy_engine.declared_casting._eligibility import declared_route_guard
-
-    # F06: a declared-casting job runs only where the casting boundary exists.
     _decl = declared_route_guard("out_of_core", plan=plan)
     if not _decl.admitted:
         return OutOfCoreCompatibility(
@@ -205,7 +203,6 @@ def check_out_of_core_compatibility(
                 ),
             ),
         )
-
     rejections: list[OutOfCoreRejection] = []
     if not relationship_graph.edges:
         return OutOfCoreCompatibility(
