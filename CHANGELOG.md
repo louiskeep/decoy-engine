@@ -9,6 +9,8 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-10-29
+
 ### Changed (BREAKING, pre-GA: `TokenVaultWriter.put` returns the authoritative token, 2026-10-29)
 
 `TokenVaultWriter.put(namespace, plaintext, token)` now returns `str`: the token the vault actually
