@@ -1,0 +1,21 @@
+F25 Slice 0 qualification evidence
+host: decoy-f25-dev.us-east1-b.c.gnd-automation.internal  utc: 20261029T161416Z
+image: /tmp/f25/ext4.img (ext4 encrypt,project,quota)
+
+RESULTS:
+A14-env :: captured /root/f25/evidence/20261029T161416Z/00_environment.log
+build :: native writers compiled (nwrite,tryrename,manyfiles)
+A13-mkfs :: qualifying image has encrypt+project+quota features
+mount :: mounted /mnt/f25 with prjquota
+project :: arena tagged project 777 with inherit(+P), owned by decoyf25
+A02-charge :: native write(2) 64MiB charged to project quota (blocks=65540KB); strace in 04_strace_nwrite.log
+A02-edquot-bytes :: byte hard quota ENFORCED: write(2) returned EDQUOT (errno 122), attempt stopped (rc=122)
+A02-edquot-inode :: inode hard quota ENFORCED: creation stopped at ~10-inode cap with EDQUOT (rc=122)
+A02-duckdb :: duckdb spill charge weak/absent blocks=20 traced=yes see 07_duckdb_charge.log
+A02-duckdb-edquot :: DuckDB spill under tight project quota failed closed (rc=1)
+A05-noread :: encrypted file unreadable after key removal
+A05-offline :: raw-device sentinel scan recorded (see 10_offline.log); control present, encrypted bytes not matchable
+A05-roundtrip :: re-adding key restores plaintext (round-trip ok)
+A10-rename :: same-fs rename publishes under preserved policy; cross-fs rename rejected EXDEV
+A13-failclosed :: non-qualifying images reject project-quota and encryption (fail-closed detectable)
+A14-sample :: baseline setup+throughput sample recorded (14_baseline.log)
