@@ -76,6 +76,26 @@ def approve_ref(value: object) -> str | None:
     return None
 
 
+_NAME_FORBIDDEN = re.compile(r"[/\\;=@]|://")
+MAX_NAME_LEN = 128
+
+
+def approve_name(value: object) -> str | None:
+    """``value`` when it is a plausible table/column name, else ``None``.
+
+    Wider than ``approve_ref`` (user data names may hold spaces or unicode) but it still refuses
+    anything shaped like a path, a URL or a connection string, control characters and long values.
+    """
+    if (
+        isinstance(value, str)
+        and 0 < len(value) <= MAX_NAME_LEN
+        and value.isprintable()
+        and not _NAME_FORBIDDEN.search(value)
+    ):
+        return value
+    return None
+
+
 def _is_count(value: object) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value >= 0
 
@@ -106,17 +126,39 @@ class ReasonContext:
     original_identity: tuple[str, str] | None = None
 
     def __post_init__(self) -> None:
+        self.validate()
+
+    def validate(self) -> None:
+        """Re-checkable on serialize: a frozen instance forged past ``__init__`` is still caught."""
         for name in ("object_ref", "storage_ref"):
             value = getattr(self, name)
             if value is not None and approve_ref(value) is None:
                 raise ValueError(f"{name} is not an approved identifier")
-        if len(self.counts) > MAX_COUNTS:
+        for name, enum in (
+            ("operation", Operation),
+            ("publication_state", PublicationState),
+            ("cleanup_state", CleanupState),
+        ):
+            value = getattr(self, name)
+            if value is not None and not isinstance(value, enum):
+                raise ValueError(f"{name} is not a known {enum.__name__}")
+        if not isinstance(self.counts, tuple) or len(self.counts) > MAX_COUNTS:
             raise ValueError("too many context counts")
-        for key, value in self.counts:
+        for pair in self.counts:
+            if not (isinstance(pair, tuple) and len(pair) == 2):
+                raise ValueError("context counts are (key, value) pairs")
+            key, value = pair
             if key not in COUNT_KEYS or not _is_count(value):
                 raise ValueError("context counts take closed keys and non-negative integers")
-        if self.original_identity is not None and not all(
-            _SAFE_IDENTITY.match(part) for part in self.original_identity
+        if not isinstance(self.truncated, bool):
+            raise ValueError("truncated is a bool")
+        if self.original_identity is not None and not (
+            isinstance(self.original_identity, tuple)
+            and len(self.original_identity) == 2
+            and all(
+                isinstance(part, str) and _SAFE_IDENTITY.match(part)
+                for part in self.original_identity
+            )
         ):
             raise ValueError("original_identity is not a safe identity")
 
@@ -168,6 +210,7 @@ class ReasonContext:
         )
 
     def to_payload(self) -> dict[str, Any]:
+        self.validate()
         return {
             "object_ref": self.object_ref,
             "operation": self.operation.value if self.operation else None,
@@ -209,6 +252,44 @@ class ReasonRecord:
     retry_class: RetryClass
     outcome: Outcome
     context: ReasonContext = ReasonContext()
+
+    def __post_init__(self) -> None:
+        self.validate()
+
+    def validate(self) -> None:
+        """Every semantic field must equal what the local registry says for this identity.
+
+        A record is a claim about the registry, so construction cannot carry a caller's own
+        severity, outcome, retry class, kind or phase: a mismatch is rejected, not trusted.
+        """
+        if self.schema_version != _registry.REASON_SCHEMA_VERSION:
+            raise ValueError("reason record schema_version is not supported")
+        if self.registry_version != _registry.REGISTRY_VERSION:
+            raise ValueError("reason record registry_version is not this registry's")
+        spec = (
+            _registry.find(self.namespace, self.code)
+            if isinstance(self.namespace, str) and isinstance(self.code, str)
+            else None
+        )
+        if spec is None:
+            raise ValueError("reason record identity is not registered")
+        if not isinstance(self.phase, Phase):
+            raise ValueError("reason record phase is not a Phase")
+        rule = spec.rule_for(self.phase)
+        if rule is None and self.phase is Phase.UNKNOWN:
+            rule = spec.default_rule
+        if rule is None:
+            raise ValueError("reason record phase is not allowed for this reason")
+        if (
+            self.kind is not spec.kind
+            or self.severity is not rule.severity
+            or self.outcome is not rule.outcome
+            or self.retry_class is not rule.retry
+        ):
+            raise ValueError("reason record semantics do not match the registry")
+        if not isinstance(self.context, ReasonContext):
+            raise ValueError("reason record context is not a ReasonContext")
+        self.context.validate()
 
     @property
     def summary(self) -> str:
@@ -264,17 +345,23 @@ class ReasonRecord:
         )
 
     def to_payload(self) -> dict[str, Any]:
-        """The exact wire shape: explicit fields only, no extension keys."""
+        """The exact wire shape, built from the registry (not from this instance's own fields).
+
+        Revalidates first, so an instance forged past ``__init__`` raises instead of serializing.
+        """
+        self.validate()
+        spec = _registry.get(self.namespace, self.code)
+        rule = spec.rule_for(self.phase) or spec.default_rule
         return {
-            "schema_version": self.schema_version,
-            "registry_version": self.registry_version,
-            "namespace": self.namespace,
-            "code": self.code,
-            "kind": self.kind.value,
+            "schema_version": _registry.REASON_SCHEMA_VERSION,
+            "registry_version": _registry.REGISTRY_VERSION,
+            "namespace": spec.namespace,
+            "code": spec.code,
+            "kind": spec.kind.value,
             "phase": self.phase.value,
-            "severity": self.severity.value,
-            "retry_class": self.retry_class.value,
-            "outcome": self.outcome.value,
+            "severity": rule.severity.value,
+            "retry_class": rule.retry.value,
+            "outcome": rule.outcome.value,
             "context": self.context.to_payload(),
         }
 

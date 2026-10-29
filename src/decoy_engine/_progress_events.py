@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from decoy_engine import reasons
-from decoy_engine.reasons import Operation, ReasonRecord, approve_ref
+from decoy_engine.reasons import Operation, ReasonRecord, approve_name, approve_ref
 from decoy_engine.reasons._record import CleanupState, PublicationState
 
 EVENT_SCHEMA_VERSION = reasons.EVENT_SCHEMA_VERSION
@@ -52,6 +52,18 @@ def _check_seconds(name: str, value: object) -> None:
         or value < 0
     ):
         raise ValueError(f"{name} must be a finite non-negative number or None")
+
+
+def _fixed_or(value: object, fallback: str) -> str:
+    """A fixed engine identifier (a phase, route or lane name), else ``fallback``."""
+    return value if isinstance(value, str) and approve_ref(value) is not None else fallback
+
+
+def _sanitize_names(event: Any, optional: tuple[str, ...]) -> None:
+    for name in optional:
+        value = getattr(event, name)
+        if value is not None and approve_name(value) is None:
+            object.__setattr__(event, name, None)
 
 
 def _safe_error_names() -> frozenset[str]:
@@ -225,6 +237,17 @@ class _V1Fields:
             raise ValueError("object_ref is not an approved identifier")
         if self.phase is not None and approve_ref(self.phase) is None:
             raise ValueError("phase is not a fixed identifier")
+        # Exact types: a subclass could override its own serializer. Each group re-validates on
+        # serialize, so an instance forged past its constructor is caught there too.
+        for name, group in (
+            ("reason", ReasonRecord),
+            ("retry", RetryInfo),
+            ("checkpoint", CheckpointInfo),
+            ("publication", PublicationInfo),
+        ):
+            value = getattr(self, name)
+            if value is not None and type(value) is not group:
+                raise ValueError(f"{name} must be a {group.__name__} or None")
 
 
 @dataclass(frozen=True)
@@ -247,6 +270,10 @@ class PhaseEvent(_V1Fields):
         _check_count("rows_in", self.rows_in)
         _check_count("rows_out", self.rows_out)
         _check_seconds("elapsed_s", self.elapsed_s)
+        if self.status not in ("start", "finish", "error"):
+            raise ValueError("phase status is not a known status")
+        object.__setattr__(self, "name", _fixed_or(self.name, "unknown"))
+        _sanitize_names(self, ("table",))
         object.__setattr__(self, "error_class", safe_error_class(self.error_class))
 
 
@@ -273,6 +300,8 @@ class RateSample(_V1Fields):
         _check_count("rows_total_estimate", self.rows_total_estimate)
         _check_seconds("rows_per_sec", self.rows_per_sec)
         _check_seconds("elapsed_s", self.elapsed_s)
+        if approve_name(self.table) is None:
+            object.__setattr__(self, "table", "unknown")
 
 
 @dataclass(frozen=True)
@@ -289,6 +318,11 @@ class RouteEvent(_V1Fields):
 
     def __post_init__(self) -> None:
         super().__post_init__()
+        object.__setattr__(self, "route", _fixed_or(self.route, "unknown"))
+        object.__setattr__(
+            self, "lane", None if self.lane is None else _fixed_or(self.lane, "unknown")
+        )
+        _sanitize_names(self, ("table",))
         object.__setattr__(self, "reason_code", _safe_registered_code(self.reason_code))
 
 
@@ -304,6 +338,7 @@ class WarningEvent(_V1Fields):
 
     def __post_init__(self) -> None:
         super().__post_init__()
+        _sanitize_names(self, ("table", "column"))
         object.__setattr__(self, "code", _safe_registered_code(self.code))
 
 
@@ -325,6 +360,8 @@ class TerminalEvent(_V1Fields):
         super().__post_init__()
         _check_seconds("elapsed_s", self.elapsed_s)
         _check_count("sink_failures", self.sink_failures)
+        if self.status not in ("ok", "error"):
+            raise ValueError("terminal status is not a known status")
         object.__setattr__(self, "error_class", safe_error_class(self.error_class))
 
 
@@ -338,6 +375,7 @@ class RetryEvent(_V1Fields):
 
     def __post_init__(self) -> None:
         super().__post_init__()
+        _sanitize_names(self, ("table",))
         if self.retry is None:
             raise ValueError("a retry event carries its retry group")
 
@@ -352,6 +390,7 @@ class CheckpointEvent(_V1Fields):
 
     def __post_init__(self) -> None:
         super().__post_init__()
+        _sanitize_names(self, ("table",))
         if self.checkpoint is None:
             raise ValueError("a checkpoint event carries its checkpoint group")
 
@@ -410,15 +449,31 @@ _V1_EXTRA: dict[type, tuple[str, ...]] = {
 }
 
 
+_GROUPS: dict[str, Any] = {
+    "reason": ReasonRecord,
+    "retry": RetryInfo,
+    "checkpoint": CheckpointInfo,
+    "publication": PublicationInfo,
+}
+
+
 def _field_value(event: Any, name: str) -> Any:
     if name == "event_schema_version":
         return EVENT_SCHEMA_VERSION
     if name == "registry_version":
         return reasons.REGISTRY_VERSION
     value = getattr(event, name)
-    if isinstance(value, (ReasonRecord, RetryInfo, CheckpointInfo, PublicationInfo)):
+    if value is None or name not in _GROUPS:
+        return value
+    try:
+        if type(value) is not _GROUPS[name]:
+            raise ValueError(name)
         return value.to_payload()
-    return value
+    except Exception:
+        # A group forged past its constructor never reaches the wire; the fixed diagnostic does.
+        if name == "reason":
+            return ReasonRecord.for_reason(reasons.decoy.REASON_RECORD_INVALID).to_payload()
+        return None
 
 
 def event_to_dict(event: ProgressEvent) -> dict[str, Any]:

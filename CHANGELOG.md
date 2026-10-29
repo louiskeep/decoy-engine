@@ -12,7 +12,7 @@ minimum engine version it was tested against via its
 ### Added (F29: stable machine-readable errors and progress, engine slices, 2026-10-29)
 
 New public `decoy_engine.reasons`: one engine-owned, versioned registry of reason codes (`registry_version`
-1.0.0, 862 identities across 12 namespaces) with a fixed safe summary, kind, phase rules and, per phase,
+1.0.0, 868 identities across 12 namespaces; 841 of them are the frozen baseline, the rest were added while the change was built) with a fixed safe summary, kind, phase rules and, per phase,
 a severity, outcome category and retry class (`never`, `configuration_repair`, `environment_repair`,
 `retry_operation`, `restart_attempt`, `unknown`). Every producer now references a registry symbol whose
 value is the legacy wire string, so existing `.code` values, `CODES` attributes and exception

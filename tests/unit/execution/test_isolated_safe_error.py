@@ -3,12 +3,13 @@
 Plan: docs/plans/2026-10-19-obs-1b-engine-log-leak-scrub.md section 2C. Every producer of the
 field is exercised with a sentinel that stands in for a data value or a path: child stderr,
 child stdout, the worker envelope, the in-process path, and both CommitError branches. Each
-must keep the diagnostics (return code, signal, a stable reason, memory evidence) and the
-route-ineligibility markers the governor matches, and must drop the sentinel.
+must keep the diagnostics (return code, signal, a stable reason, memory evidence) and must
+drop the sentinel. Routing reads the typed reason identity, never this text.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import signal
 from typing import Any
 
@@ -16,9 +17,8 @@ import pytest
 
 from decoy_engine.errors import ConfigError
 from decoy_engine.execution import _governor, _isolated_run, run_pipeline_isolated
-from decoy_engine.execution._governor import _is_route_ineligible_error, run_job_with_governor
+from decoy_engine.execution._governor import _is_route_ineligible, run_job_with_governor
 from decoy_engine.execution._isolated_common import (
-    ROUTE_INELIGIBLE_MARKERS,
     IsolatedRunResult,
     abnormal_exit_text,
     commit_error_text,
@@ -116,15 +116,14 @@ class TestChildStreams:
         assert result.memory_evidence is not None
 
     @pytest.mark.parametrize("stream", ["stderr", "stdout"])
-    def test_a_route_marker_in_the_child_output_survives_for_the_governor(
+    def test_a_route_marker_in_the_child_output_is_neither_kept_nor_a_routing_input(
         self, tmp_path, monkeypatch, stream
     ):
         text = f"ConfigError: the job {_OOC_MARKER} ({_SENTINEL})\n"
         result = _spawn(tmp_path, monkeypatch, _stream_worker(stream, text, 1))
         assert result.error is not None
-        assert _OOC_MARKER in result.error
         assert _SENTINEL not in result.error
-        assert _is_route_ineligible_error("out_of_core", result.error)
+        assert not _is_route_ineligible("out_of_core", result)
 
 
 _ENVELOPE_WORKER = """
@@ -160,19 +159,32 @@ class TestWorkerEnvelope:
         assert result.error == "MemoryError"
 
     @pytest.mark.parametrize(
-        ("route", "marker"), [("out_of_core", _OOC_MARKER), ("sequential", _SEQ_MARKER)]
+        ("route", "raised"),
+        [("out_of_core", "OocIneligibleError"), ("sequential", "SeqIneligibleError")],
     )
-    def test_the_route_marker_survives_the_boundary_and_the_reason_text_does_not(
-        self, tmp_path, monkeypatch, route, marker
+    def test_the_typed_route_identity_survives_the_boundary_and_the_text_does_not(
+        self, tmp_path, monkeypatch, route, raised
     ):
-        message = f"execution_mode={route!r} requested but the job {marker} ({_SENTINEL})."
-        source = _ENVELOPE_WORKER.format(raised=f"ConfigError({message!r})")
+        message = f"execution_mode={route!r} requested but the job is ineligible ({_SENTINEL})."
+        source = _ENVELOPE_WORKER.format(raised=f"{raised}({message!r})").replace(
+            "from decoy_engine.errors import ConfigError",
+            "from decoy_engine.execution._errors import OocIneligibleError, SeqIneligibleError",
+        )
         result = _spawn(tmp_path, monkeypatch, source)
         assert result.outcome == "crashed"
         assert result.error is not None
-        assert marker in result.error
         assert _SENTINEL not in result.error
-        assert _is_route_ineligible_error(route, result.error)
+        assert _is_route_ineligible(route, result)
+
+    def test_a_plain_config_error_with_marker_text_is_not_route_ineligible(
+        self, tmp_path, monkeypatch
+    ):
+        message = f"the job {_SEQ_MARKER} ({_SENTINEL})"
+        source = _ENVELOPE_WORKER.format(raised=f"ConfigError({message!r})")
+        result = _spawn(tmp_path, monkeypatch, source)
+        assert result.outcome == "crashed"
+        assert not _is_route_ineligible("sequential", result)
+        assert not _is_route_ineligible("out_of_core", result)
 
 
 class TestCodeEchoThroughProducers:
@@ -231,13 +243,13 @@ class TestInProcess:
         assert result.outcome == outcome
         assert result.error == expected
 
-    def test_a_route_marker_survives(self, monkeypatch):
+    def test_a_route_marker_in_exception_text_is_dropped(self, monkeypatch):
         def boom(*_a: Any, **_k: Any) -> Any:
             raise ConfigError(f"the job {_SEQ_MARKER} ({_SENTINEL})")
 
         monkeypatch.setattr(_isolated_run, "run_pipeline", boom)
         result = _isolated_run._run_in_process({}, None, {}, None)
-        assert result.error == f"ConfigError: {_SEQ_MARKER}"
+        assert result.error == "ConfigError"
 
 
 class TestCommitErrorBranches:
@@ -274,21 +286,13 @@ class TestCommitErrorBranches:
 
 
 class TestSummaryBuilders:
-    def test_every_governor_marker_survives_both_builders(self):
-        for route, markers in ROUTE_INELIGIBLE_MARKERS.items():
-            for marker in markers:
-                # Only the engine's own `ConfigError` (the real emitter of these fragments) may
-                # carry a marker; the text of any other exception is data, never a routing input.
-                from_exc = exception_error_text(ConfigError(f"x {marker} {_SENTINEL}"))
-                assert marker not in exception_error_text(RuntimeError(f"x {marker} {_SENTINEL}"))
-                from_exit = abnormal_exit_text(1, None, f"x {marker} {_SENTINEL}", "")
-                for text in (from_exc, from_exit):
-                    assert marker in text
-                    assert _SENTINEL not in text
-                    assert _is_route_ineligible_error(route, text), (route, marker)  # type: ignore[arg-type]
-
-    def test_the_governor_reads_the_same_marker_table_the_builders_write(self):
-        assert _governor._INELIGIBLE_ROUTE_MARKERS is ROUTE_INELIGIBLE_MARKERS
+    def test_no_builder_carries_route_marker_text(self):
+        for marker in (_OOC_MARKER, _SEQ_MARKER):
+            from_exc = exception_error_text(ConfigError(f"x {marker} {_SENTINEL}"))
+            from_exit = abnormal_exit_text(1, None, f"x {marker} {_SENTINEL}", "")
+            for text in (from_exc, from_exit):
+                assert marker not in text
+                assert _SENTINEL not in text
 
     def test_a_registered_engine_code_is_echoed(self):
         from decoy_engine.execution._errors import ExecutionError
@@ -323,9 +327,11 @@ class TestGovernorStillReroutes:
 
     def test_an_eligible_fallback_crash_still_reroutes(self, monkeypatch):
         _no_child(monkeypatch)
-        ooc = self._summary(
-            f"execution_mode='out_of_core' requested but the job {_OOC_MARKER} ({_SENTINEL})."
-        )
+        from decoy_engine.execution._errors import OocIneligibleError
+        from decoy_engine.reason_adapter import reason_from_exception
+
+        exc = OocIneligibleError(f"the job {_OOC_MARKER} ({_SENTINEL}).")
+        ooc, reason = exception_error_text(exc), reason_from_exception(exc)
 
         def fake_run(config, sources, *, execution_mode, on_spawn=None, **kw):
             if on_spawn is not None:
@@ -333,7 +339,7 @@ class TestGovernorStillReroutes:
             if execution_mode == "full_frame":
                 return _oom_killed_result(peak_rss_mb=200.0)
             if execution_mode == "out_of_core":
-                return _crashed_result(ooc)
+                return dataclasses.replace(_crashed_result(ooc), reason=reason)
             return _completed_result()
 
         monkeypatch.setattr(_governor, "run_pipeline_isolated", fake_run)
@@ -344,7 +350,6 @@ class TestGovernorStillReroutes:
         trip = result.trips[1]
         assert trip.trip_kind == "route_ineligible"
         assert trip.reroute_to == "sequential"
-        assert _OOC_MARKER in (trip.error or "")
         assert _SENTINEL not in (trip.error or "")
 
     def test_a_genuine_crash_still_classifies_and_does_not_reroute(self, monkeypatch):
@@ -361,9 +366,6 @@ class TestGovernorStillReroutes:
         assert len(result.trips) == 1
         assert result.trips[0].trip_kind == "crashed"
         assert result.trips[0].reroute_to is None
-        assert not _is_route_ineligible_error("full_frame", genuine)
-        assert not _is_route_ineligible_error("out_of_core", genuine)
-        assert not _is_route_ineligible_error("sequential", genuine)
 
 
 def test_registered_execution_codes_are_echoed_and_an_unregistered_code_is_not():

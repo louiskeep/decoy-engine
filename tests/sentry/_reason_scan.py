@@ -23,11 +23,16 @@ PACKAGE = "decoy_engine"
 # The registry's own catalog files are where literal code definitions legitimately live.
 REGISTRY_PREFIX = "reasons/"
 
-CODE_ARG_NAMES = frozenset({"code", "reason_code"})
+CODE_ARG_NAMES = frozenset({"code", "reason_code", "route_reason"})
 # Module- and class-level constants that hold a reason code by naming convention.
 CONST_NAME = re.compile(r"(^|_)(CODE|CODES|REASON)(_|$)|^code$|^reason_code$", re.IGNORECASE)
-# A wire code is a lowercase snake/dotted identifier. Prose (spaces) is not a code.
-CODE_SHAPE = re.compile(r"^[a-z][a-z0-9_.-]*$")
+# A wire code is a lowercase snake/dotted/namespaced identifier (the registry's wire grammar,
+# which allows ``:``). Prose (spaces) is not a code.
+CODE_SHAPE = re.compile(r"^[a-z][a-z0-9_.:-]*$")
+# A slot that holds a routing decision's reason: a local, a field or an unpacked result.
+REASON_NAME = re.compile(r"(route|reroute|full_frame)_reason$", re.IGNORECASE)
+# A function that decides a route: its returned literals are route reasons.
+ROUTE_DECIDER = re.compile(r"^decide_.*route", re.IGNORECASE)
 _ENUM_BASES = frozenset({"Enum", "StrEnum", "IntEnum", "enum.Enum", "enum.StrEnum"})
 # Files whose every upper-case string constant is a reason code (frozen decision catalogs).
 CATALOG_FILES = frozenset(
@@ -56,6 +61,8 @@ class Site:
     spans: tuple[tuple[int, int, int, int, str], ...] = field(default=(), compare=False)
     # Namespace of the registry symbol this site carries ("" when not registry-valued).
     registry_ns: str = field(default="", compare=False)
+    # The keyword / dict key the value is passed under ("" for non-argument sites).
+    arg: str = field(default="", compare=False)
 
 
 def source_files(src: Path = SRC) -> Iterator[Path]:
@@ -270,6 +277,29 @@ class _Index:
         return False
 
 
+def _classify_fstring(index: _Index, mod: str, node: ast.JoinedStr, params: frozenset[str]) -> str:
+    """``f"{reasons.ns.IDENTITY}:{detail}"`` is a registry identity plus a forwarded detail
+    parameter, not an ad-hoc code; any literal head or computed tail is an ``fstring``."""
+    head, *rest = node.values
+    if not (
+        isinstance(head, ast.FormattedValue)
+        and index.is_registry_chain(mod, head.value)
+        and head.conversion == -1
+    ):
+        return "fstring"
+    for part in rest:
+        if isinstance(part, ast.Constant) and part.value == ":":
+            continue
+        if (
+            isinstance(part, ast.FormattedValue)
+            and isinstance(part.value, ast.Name)
+            and part.value.id in params
+        ):
+            continue
+        return "fstring"
+    return "forward"
+
+
 def _classify(
     index: _Index, mod: str, node: ast.expr | None, params: frozenset[str]
 ) -> tuple[str, tuple[str, ...]]:
@@ -282,7 +312,7 @@ def _classify(
             return "literal", (node.value,)
         return "dynamic", ()
     if isinstance(node, ast.JoinedStr):
-        return "fstring", ()
+        return _classify_fstring(index, mod, node, params), ()
     if index.is_registry_chain(mod, node):
         return "registry", ()
     if isinstance(node, ast.Name):
@@ -398,9 +428,65 @@ def _discover_families(index: _Index) -> dict[str, tuple[int | None, bool]]:
     return own
 
 
+def _target_names(target: ast.AST) -> Iterator[str]:
+    if isinstance(target, ast.Name):
+        yield target.id
+    elif isinstance(target, (ast.Tuple, ast.List)):
+        for elt in target.elts:
+            yield from _target_names(elt)
+
+
+def _reason_bearing(index: _Index) -> frozenset[str]:
+    """Functions whose result carries a route reason: a route decider, or one unpacked into a
+    ``*route_reason`` slot.
+
+    ``route, route_reason = decide_execution_route(...)`` makes ``decide_execution_route`` a
+    producer, so a literal it returns is a reason even though it is never passed as ``code=``.
+    """
+    names: set[str] = set()
+    for tree in index.trees.values():
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                if ROUTE_DECIDER.search(node.name):
+                    names.add(node.name)
+            elif isinstance(node, ast.Assign) and isinstance(node.value, ast.Call):
+                if any(REASON_NAME.search(n) for t in node.targets for n in _target_names(t)):
+                    callee = node.value.func
+                    if isinstance(callee, ast.Name):
+                        names.add(callee.id)
+                    elif isinstance(callee, ast.Attribute):
+                        names.add(callee.attr)
+    return frozenset(names)
+
+
+def _reason_literals(node: ast.AST) -> Iterator[ast.expr]:
+    """The literal reason values a returned/assigned expression can carry (tuples, branches)."""
+    if isinstance(node, ast.Constant):
+        if isinstance(node.value, str) and CODE_SHAPE.match(node.value):
+            yield node
+    elif isinstance(node, ast.JoinedStr):
+        head = node.values[0] if node.values else None
+        if (
+            isinstance(head, ast.Constant)
+            and isinstance(head.value, str)
+            and CODE_SHAPE.match(head.value.rstrip(":"))
+        ):
+            yield node
+    elif isinstance(node, (ast.Tuple, ast.List)):
+        for elt in node.elts:
+            yield from _reason_literals(elt)
+    elif isinstance(node, ast.IfExp):
+        yield from _reason_literals(node.body)
+        yield from _reason_literals(node.orelse)
+    elif isinstance(node, ast.BoolOp):
+        for value in node.values:
+            yield from _reason_literals(value)
+
+
 def scan(src: Path = SRC) -> list[Site]:
     index = _Index(src)
     families = _discover_families(index)
+    bearing = _reason_bearing(index)
     sites: list[Site] = []
     used: set[tuple[str, str]] = set()
     for path, tree in index.trees.items():
@@ -408,7 +494,7 @@ def scan(src: Path = SRC) -> list[Site]:
         if rel.startswith(REGISTRY_PREFIX):
             continue
         mod = module_name(path, src)
-        visitor = _Visitor(index, mod, rel, families, sites)
+        visitor = _Visitor(index, mod, rel, families, sites, bearing)
         visitor.visit(tree)
         used.update(visitor.used_consts)
     # A plain-named constant (``MIXED_DRIVER_UNSUPPORTED = "..."``) is a code once it is passed to a
@@ -445,8 +531,10 @@ class _Visitor(ast.NodeVisitor):
         rel: str,
         families: dict[str, tuple[int | None, bool]],
         out: list[Site],
+        bearing: frozenset[str] = frozenset(),
     ):
         self.index, self.mod, self.rel, self.families, self.out = index, mod, rel, families, out
+        self.bearing = bearing
         self.used_consts: set[tuple[str, str]] = set()
         self.funcs: list[tuple[str, frozenset[str]]] = []
         self.classes: list[tuple[str, bool]] = []  # (name, is_enum)
@@ -457,7 +545,9 @@ class _Visitor(ast.NodeVisitor):
             return "", frozenset()
         return ".".join(n for n, _ in self.funcs), self.funcs[-1][1]
 
-    def _emit(self, node: ast.AST, kind: str, family: str, value: ast.expr | None) -> None:
+    def _emit(
+        self, node: ast.AST, kind: str, family: str, value: ast.expr | None, arg: str = ""
+    ) -> None:
         func, params = self._where()
         vc, codes = _classify(self.index, self.mod, value, params)
         if vc == "const_ref" and isinstance(value, ast.Name):
@@ -481,6 +571,7 @@ class _Visitor(ast.NodeVisitor):
                 codes,
                 spans,
                 reg_ns,
+                arg,
             )
         )
 
@@ -529,7 +620,27 @@ class _Visitor(ast.NodeVisitor):
 
     visit_AsyncFunctionDef = visit_FunctionDef  # type: ignore[assignment]  # noqa: N815
 
+    def visit_Return(self, node: ast.Return) -> None:
+        # A literal in the result slot of a reason-producing function is a reason code.
+        if self.funcs and self.funcs[-1][0] in self.bearing and node.value is not None:
+            # ``(route, reason)``: the reason is the last slot; the route name is not a reason.
+            slot = node.value
+            if isinstance(slot, ast.Tuple) and slot.elts:
+                slot = slot.elts[-1]
+            for lit in _reason_literals(slot):
+                self._emit(node, "return_slot", self.funcs[-1][0], lit)
+        self.generic_visit(node)
+
+    def _reason_local(self, node: ast.AST, names: list[str], value: ast.expr | None) -> None:
+        if value is None or not self.funcs:
+            return
+        if not any(REASON_NAME.search(n) for n in names):
+            return
+        for lit in _reason_literals(value):
+            self._emit(node, "reason_local", ", ".join(names), lit)
+
     def visit_Assign(self, node: ast.Assign) -> None:
+        self._reason_local(node, [n for t in node.targets for n in _target_names(t)], node.value)
         for tgt in node.targets:
             if isinstance(tgt, ast.Name):
                 self._container_const(node, tgt.id, node.value)
@@ -604,7 +715,7 @@ class _Visitor(ast.NodeVisitor):
     def visit_Dict(self, node: ast.Dict) -> None:
         for key, val in zip(node.keys, node.values, strict=True):
             if _is_str_const(key) and key.value in CODE_ARG_NAMES:  # type: ignore[union-attr]
-                self._emit(node, "dict_payload", f"{{{key.value!r}: ...}}", val)  # type: ignore[union-attr]
+                self._emit(node, "dict_payload", f"{{{key.value!r}: ...}}", val, key.value)  # type: ignore[union-attr]
         self.generic_visit(node)
 
     def visit_Call(self, node: ast.Call) -> None:
@@ -625,7 +736,7 @@ class _Visitor(ast.NodeVisitor):
                     if self.classes and _expr(callee).startswith("super()")
                     else _expr(callee)
                 )
-                self._emit(node, "kw", fam_name, kw.value)
+                self._emit(node, "kw", fam_name, kw.value, kw.arg)
         if fam is not None and fam[0] is not None:
             pos = fam[0]
             if pos < len(node.args) and not isinstance(node.args[pos], ast.Starred):

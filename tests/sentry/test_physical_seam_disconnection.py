@@ -653,9 +653,8 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
             "src/decoy_engine/execution/_isolated_common.py",
             # The driver removes staging on a self-reported failure and scrubs in-process error text.
             "src/decoy_engine/execution/_isolated_run.py",
-            # OBS-1b: `_governor.py` only re-points its ineligible-marker table to the shared
-            # `_isolated_common.ROUTE_INELIGIBLE_MARKERS` constant so the route matcher and the
-            # safe-error-summary builder cannot drift. No `execution.physical` import.
+            # F29: `_governor.py` reroutes on the typed route-ineligibility reason identity carried in
+            # `IsolatedRunResult.reason`, never on error text. No `execution.physical` import.
             "src/decoy_engine/execution/_governor.py",
             # Isolated-run memory evidence: the sampler lives in `_isolated_memwatch.py`; the driver and
             # `_isolated_common.py` thread `memory_evidence`. None imports `execution.physical`.

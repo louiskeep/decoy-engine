@@ -87,6 +87,8 @@ _CODED: tuple[tuple[str, str, str], ...] = (
 _FIXED: tuple[tuple[str, str, ReasonCode], ...] = (
     ("decoy_engine.errors", "EmptyParentPoolError", reasons.config.FK_EMPTY_PARENT_POOL),
     ("decoy_engine.errors", "UnknownFKColumnError", reasons.config.FK_UNKNOWN_COLUMN),
+    ("decoy_engine.execution._errors", "SeqIneligibleError", reasons.route.SEQUENTIAL_INELIGIBLE),
+    ("decoy_engine.execution._errors", "OocIneligibleError", reasons.route.OUT_OF_CORE_INELIGIBLE),
     ("decoy_engine.errors", "ConfigError", reasons.config.UNTAGGED),
     ("decoy_engine.config._errors", "PipelineConfigError", reasons.config.UNTAGGED),
     ("decoy_engine.errors", "FlagPauseSignal", reasons.decoy.RUN_PAUSED),
@@ -249,7 +251,25 @@ _MAX_SECONDARY = 4
 # weakly referenced, and a strong cache would keep a failed run's traceback frames (and the row data
 # in their locals) alive. An exception that refuses the attribute simply is not remembered.
 _ATTR = "_decoy_reason_record"
+_TOKEN = object()
 _local = threading.local()
+
+
+class _Captured:
+    """A record this module captured. Only ``capture_failure`` mints one: the slot holding the
+    module-private token cannot be filled by data that merely sits on an exception, so a
+    ``ReasonRecord`` (or a lookalike) attached by foreign code is never trusted as a capture."""
+
+    __slots__ = ("_record", "_token")
+
+    def __init__(self, token: object, record: ReasonRecord) -> None:
+        if token is not _TOKEN or type(record) is not ReasonRecord:
+            raise TypeError("captured failures are created by capture_failure only")
+        self._token = token
+        self._record = record
+
+    def __reduce__(self) -> tuple[Any, ...]:
+        return (type(None), ())  # a copied or pickled exception drops the capture
 
 
 @dataclass
@@ -304,15 +324,19 @@ class FailureScope:
 
 def _lookup_captured(exc: BaseException) -> ReasonRecord | None:
     try:
-        record = exc.__dict__.get(_ATTR)
+        held = exc.__dict__.get(_ATTR)
+        if type(held) is not _Captured or held._token is not _TOKEN:
+            return None
+        record = held._record
+        record.validate()
     except Exception:  # a hostile or slotted exception is simply not remembered
         return None
-    return record if isinstance(record, ReasonRecord) else None
+    return record
 
 
 def _remember(exc: BaseException, record: ReasonRecord) -> None:
     try:
-        exc.__dict__[_ATTR] = record
+        exc.__dict__[_ATTR] = _Captured(_TOKEN, record)
     except Exception:
         pass
 

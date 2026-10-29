@@ -165,13 +165,13 @@ def test_arbitrary_exception_text_cannot_steer_the_governor() -> None:
     hostile = ValueError(f"a parser said the job {_MARKER}")
     assert _MARKER not in exception_error_text(hostile)
     engine = ConfigError(f"execution_mode='sequential' but the job {_MARKER}")
-    assert _MARKER in exception_error_text(engine)  # the engine's own decision still routes
+    assert _MARKER not in exception_error_text(engine)  # no exception text is a routing input
 
     class Raising(ConfigError):  # noqa: N818
         def __str__(self) -> str:
             raise RuntimeError("boom")
 
-    # A hostile `__str__` costs the markers, never the primary failure.
+    # A hostile `__str__` never costs the primary failure.
     assert exception_error_text(Raising("x")).startswith("Raising")
 
 

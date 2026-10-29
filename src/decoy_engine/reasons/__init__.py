@@ -32,6 +32,7 @@ from decoy_engine.reasons._record import (
     PublicationState,
     ReasonContext,
     ReasonRecord,
+    approve_name,
     approve_ref,
 )
 from decoy_engine.reasons._registry import (
@@ -75,6 +76,7 @@ __all__ = [
     "ReasonSpec",
     "RetryClass",
     "Severity",
+    "approve_name",
     "approve_ref",
     "check_integrity",
     "config",

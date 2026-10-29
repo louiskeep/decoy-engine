@@ -22,6 +22,7 @@ code table, and a newly added module.
 
 from __future__ import annotations
 
+import re
 import sys
 import textwrap
 from collections import Counter
@@ -77,6 +78,10 @@ ADAPTERS: dict[tuple[str, str], str] = {
     ("validation_result.py", "ValidationResult.add_error"): _CTOR,
     ("validation_result.py", "ValidationResult.add_warning"): _CTOR,
     ("progress.py", "ProgressChannel.route"): _CTOR,
+    ("execution/_pipeline_mixed_route.py", "_fall_back"): (
+        "composes the registered `mixed_runtime_declined` identity with the registered decline "
+        "code the caller passes"
+    ),
     # -- private helpers that forward a parameter --------------------------------------------
     ("execution/_positional_keys.py", "row_positions"): _HELPER,
     ("execution/_positional_keys.py", "positional_key_array"): _HELPER,
@@ -118,8 +123,21 @@ REGISTRY_HELPERS = frozenset({"strategy_code_for_unencryptable", "strategy_code_
 Key = tuple[str, str, str, str, str]
 
 
+_ROUTE_REASON_SLOT = re.compile(r"(^|\.)\w*route_reason$")
+
+
 def _is_violation(site: scan.Site) -> bool:
     if site.value_class in ("registry", "none"):
+        return False
+    if (
+        site.arg == "route_reason"
+        and site.value_class in ("forward", "dynamic")
+        and not site.codes
+        and _ROUTE_REASON_SLOT.search(site.expr)
+    ):
+        # Plumbing of a value that came out of a route decider. Its origin is checked where it is
+        # made: literals returned from a decider and literals assigned to a `*route_reason` slot
+        # are sites of their own (`return_slot`, `reason_local`).
         return False
     if site.value_class == "forward":
         return (site.file, site.function) not in ADAPTERS
@@ -243,6 +261,42 @@ _MUTANTS: dict[str, str] = {
         def f(code):
             raise ExecutionError(code=code)
     """,
+    # F29 remediation: reasons that never pass through a `code=` argument.
+    "namespaced_class_constant": """
+        from decoy_engine.errors import ExecutionError
+        class Mine(ExecutionError):
+            code = "adhoc:class"
+    """,
+    "routing_helper_return": """
+        def decide_execution_route(profile):
+            if profile:
+                return "full_frame", "adhoc_reason"
+            return "sequential", "adhoc_other"
+    """,
+    "routing_helper_bare_return": """
+        def decide_the_route():
+            return "adhoc_bare"
+    """,
+    "unpacked_reason_producer": """
+        def pick(x):
+            return "out_of_core", "adhoc_unpacked"
+        def f(x):
+            route, route_reason = pick(x)
+            return route
+    """,
+    "route_reason_keyword": """
+        def f(make):
+            return make(route_reason="adhoc_keyword")
+    """,
+    "route_reason_local": """
+        def f(cyclic):
+            full_frame_reason = "adhoc_local" if cyclic else None
+            return full_frame_reason
+    """,
+    "route_reason_fstring": """
+        def f(make, why):
+            return make(route_reason=f"adhoc_prefix:{why}")
+    """,
 }
 
 _CLEAN = """
@@ -273,6 +327,20 @@ def test_each_smuggling_route_is_caught(tmp_path: Path, name: str) -> None:
     root = _tree(tmp_path, f"new_module_{name}", _MUTANTS[name])
     found = violations(scan.scan(root))
     assert any(k[0] == f"new_module_{name}.py" for k in found), (name, dict(found))
+
+
+def test_route_decider_registry_returns_are_clean(tmp_path: Path) -> None:
+    body = """
+        from decoy_engine import reasons
+        def decide_execution_route(profile):
+            return "full_frame", reasons.route.CROSS_TABLE_CYCLE
+        def wrap(make, why):
+            return make(route_reason=f"{reasons.route.MIXED_RUNTIME_DECLINED}:{why}")
+    """
+    root = _tree(tmp_path, "route_clean", body)
+    found = violations(scan.scan(root))
+    # Only the composite's forwarding site remains, and it needs a named adapter.
+    assert [k[:3] for k in found if k[0] == "route_clean.py"] == [("route_clean.py", "wrap", "kw")]
 
 
 def test_registry_backed_code_is_clean(tmp_path: Path) -> None:
