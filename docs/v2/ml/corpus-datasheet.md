@@ -16,7 +16,7 @@ no real PII enters the model weights, feature vectors, or evaluation reports
 **Who created the dataset and on whose behalf?**
 
 Created by the Decoy Engine engineering team (automated generation via
-`src/decoy_engine/storm/eval/fixtures.py`). No external parties were
+`src/decoy_engine/profiling/eval/fixtures.py`). No external parties were
 involved.
 
 **Was there existing data that was not used?**
@@ -141,9 +141,9 @@ casing) into a list of tokens used as header-indicator features.
 
 **What software was used to preprocess the data?**
 
-`decoy_engine.storm.eval.corpus` (generation) and
-`decoy_engine.storm.eval.split:make_split_inputs` (feature extraction via
-`decoy_engine.storm.features.builder:build_column_features`).
+`decoy_engine.profiling.eval.corpus` (generation) and
+`decoy_engine.profiling.eval.split:make_split_inputs` (feature extraction via
+`decoy_engine.profiling.features.builder:build_column_features`).
 
 **Was the "raw" data saved in addition to the preprocessed data?**
 

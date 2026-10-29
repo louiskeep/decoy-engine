@@ -79,7 +79,7 @@ pieces most callers need:
 | `compile_plan(config, profile, decoy_engine_version=...)`                         | Compile a validated config + Profile into a frozen `Plan` (the lower-level path).                   |
 | `select_execution_adapter()` / `PandasExecutionAdapter`                           | Plan-to-data execution. Pandas is the only masking substrate. |
 | `generate_tables(...)`                                                            | Table-from-schema synthesis for `mode: generate` configs.                    |
-| `run_storm(...)`                                                                  | Source profiling: distributions, PII detectors, sentinels.                   |
+| `profile_columns(...)`                                                                  | Source profiling: distributions, PII detectors, sentinels.                   |
 | `validate_config(...)`                                                            | Validation report without raising. Returns a `ValidationResult`.             |
 
 Anything not in `__all__`, and anything under `decoy_engine.internal/`,
