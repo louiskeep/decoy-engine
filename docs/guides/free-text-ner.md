@@ -93,7 +93,7 @@ addresses are tracked separately as TX-3 (not started -- see the backlog doc
 above); do not treat their absence here as a bug.
 
 NER spans merge into the same leftmost-longest overlap resolution as the
-regex detectors (`storm.detectors.iter_spans(..., extra_spans=...)`), so a
+regex detectors (`detection.detectors.iter_spans(..., extra_spans=...)`), so a
 regex hit (e.g. an SSN) and an NER hit never double-splice the same text.
 
 ## Cost

@@ -9,7 +9,7 @@ count and the resulting score are a conservative lower bound: some mutants
 counted "survived" here may in fact be killed by tests outside this file.
 
 TQ crown-jewels pass, 2026-07-26. `text_mask` performs span-level PII masking:
-it walks each cell with `storm.detectors.iter_spans`, keys a per-span mask via
+it walks each cell with `detection.detectors.iter_spans`, keys a per-span mask via
 HMAC-SHA256 (`_span_key`), dispatches each matched span to its per-detector
 strategy (FPE / faker / date-shift / redact / passthrough), and reassembles the
 matched and unmatched segments in order. A mutmut run produced **281 mutants,

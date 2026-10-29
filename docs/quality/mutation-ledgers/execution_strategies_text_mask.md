@@ -17,7 +17,7 @@ version-mismatch guard, iterates the non-null cells, and delegates each to
   handler's NER LOGIC (model/entities resolution, the version guard, the call-site
   args) is fully mockable off-spaCy. (Batch-3 dennis P2 correction: the first pass
   wrongly deferred these as "spaCy-gated"; they are not.) Only mutations INSIDE
-  the real `storm.ner` primitives would need spaCy, and those live in that module,
+  the real `detection.ner` primitives would need spaCy, and those live in that module,
   not here.
 
 **Grade scope: FOCUSED selection only.** This grade ran mutmut against

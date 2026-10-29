@@ -69,7 +69,7 @@ modules:
   # SP-07 / P5.S.text_mask (2026-06-28): span-level PII masking.
   # HMAC-SHA256 keyed per-span determinism (same real value in any cell
   # always produces the same masked value) for faker/date_shift spans.
-  # Reuses fpe_encrypt_value and storm.detectors.iter_spans (single source
+  # Reuses fpe_encrypt_value and detection.detectors.iter_spans (single source
   # of truth). Task 5.2 (2026-09-11): the fpe span branch now keys via
   # NIST SP 800-38G FF1, same as the column fpe strategy (see fpe.py).
   - path: src/decoy_engine/transforms/text_mask.py
@@ -164,14 +164,14 @@ modules:
     source: RFC 2104 (HMAC); MinHash bottom-k sketch family
 
   # HC-1 slice 1 (2026-07-17): code_set corpus provenance types. Imitates
-  # storm.model_pack.types.ModelPackManifest's shape (a small, frozen,
+  # profiling.model_pack.types.ModelPackManifest's shape (a small, frozen,
   # JSON-serializable manifest dataclass with a typed constructor + a
   # dict-export method) but reads from the corpus Parquet file's OWN
   # key/value metadata instead of a sidecar manifest.json, since Parquet
   # already carries key/value metadata natively.
   - path: src/decoy_engine/transforms/_codeset_provenance.py
     pattern: Parquet key/value metadata
-    source: apache/arrow (Apache-2.0); imitates storm/model_pack/types.py ModelPackManifest
+    source: apache/arrow (Apache-2.0); imitates profiling/model_pack/types.py ModelPackManifest
 
   # TX-1 (2026-07-20): text_redact's opt-in `ner` config activates spaCy NER
   # for person_name/location spans the regex catalog cannot see. The model

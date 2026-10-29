@@ -56,7 +56,7 @@ survivors -> ledger. Same parallel-author + grade harness as the crown jewels.
 - `__init__.py` re-export shims (no logic to mutate).
 - Modules under ~60 LOC unless correctness-critical (folded into a sibling's
   suite where they share behavior).
-- `storm/model_pack/trainer.py` and ML training paths: graded only if the ML
+- `profiling/model_pack/trainer.py` and ML training paths: graded only if the ML
   extra is installed; otherwise noted as uncovered.
 - Anything requiring the certified DP profile is graded on the CI cert-gate,
   not the default shell (see the crown-jewel DP notes).

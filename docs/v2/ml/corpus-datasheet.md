@@ -16,7 +16,7 @@ no real PII enters the model weights, feature vectors, or evaluation reports
 **Who created the dataset and on whose behalf?**
 
 Created by the Decoy Engine engineering team (automated generation via
-`src/decoy_engine/storm/eval/fixtures.py`). No external parties were
+`src/decoy_engine/profiling/eval/fixtures.py`). No external parties were
 involved.
 
 **Was there existing data that was not used?**

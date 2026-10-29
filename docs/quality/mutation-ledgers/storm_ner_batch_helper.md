@@ -1,9 +1,9 @@
-# Mutation grading: `storm/ner.py::iter_ner_spans_batch` -- 91.4% (0 unresolved logic)
+# Mutation grading: `detection/ner.py::iter_ner_spans_batch` -- 91.4% (0 unresolved logic)
 
 Phase 5 slice (`docs/plans/2026-09-08-p5-ner-batch-helper.md`): the batched NER
 inference helper `iter_ner_spans_batch` that four callers (oracle text_mask/
 text_redact, out-of-core group b/c) switch to instead of one `nlp(text)` call
-per cell. `storm/ner.py` also holds `iter_ner_spans` (the unchanged single-cell
+per cell. `detection/ner.py` also holds `iter_ner_spans` (the unchanged single-cell
 oracle), `_pipeline`, `ensure_ner_available`, `spacy_installed`,
 `model_installed`, `installed_model_version`, and `NerUnavailableError` --
 `[tool.mutmut].only_mutate` targets the whole file (mutmut has no
@@ -111,7 +111,7 @@ coded-field assertion already proves.
 
 ```
 # Point [tool.mutmut] at the helper (temporary -- revert after grading):
-#   only_mutate = ["src/decoy_engine/storm/ner.py"]
+#   only_mutate = ["src/decoy_engine/detection/ner.py"]
 #   pytest_add_cli_args_test_selection = ["tests/unit/storm/test_ner_batch_fake_pipeline.py"]
 uv run --frozen --extra dev --extra lint --extra mutation \
     python scripts/tq_mutate.py --run --timeout 60

@@ -468,7 +468,7 @@ so the exclusion is deliberate, not an oversight:
 - Profiling and sampling: `profile/_source.py`, `profile/_walk.py`,
   `execution/_chunked_profile.py` (a fixed `random.Random(0)` over row sampling).
 - Evaluation metrics: `quality/synth_report.py` (DCR computation).
-- Test fixtures: `storm/eval/fixtures.py`.
+- Test fixtures: `profiling/eval/fixtures.py`.
 - Determinism primitives and Faker plumbing: `determinism/_derive.py`,
   `internal/faker_setup.py`, `internal/crypto.py`, `expressions/_safe_eval.py`
   (the eval-scope factory; the actual formula draws are catalogued at the

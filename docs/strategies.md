@@ -414,7 +414,7 @@ tier it belongs to.
 
 TIER-2 defaults are active only when spans are injected via the `extra_spans=`
 parameter on `mask_cell` (for example, NER spans from
-`storm.ner.iter_ner_spans`). Under the built-in path alone, person names,
+`detection.ner.iter_ner_spans`). Under the built-in path alone, person names,
 free-text addresses, and dates are NOT masked, even when those detector IDs
 appear in `per_detector_strategy`.
 
@@ -462,7 +462,7 @@ position, not span length.
 
 To reach TIER-2 classes (names, dates, etc.), supply pre-computed spans via
 `extra_spans=` on `mask_cell`. Automatic handler-level NER wiring via a `ner:`
-config key (the design is in `storm/ner.py`) is not yet implemented in the
+config key (the design is in `detection/ner.py`) is not yet implemented in the
 column handler; deferred to SP-16/SP-19. HIPAA-pack default wiring shipped in SP-11.
 The `decoy text-mask explain` CLI subcommand is deferred to SP-16/SP-19.
 
