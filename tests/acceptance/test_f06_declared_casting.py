@@ -783,3 +783,33 @@ def test_b7_unknown_format_in_a_serialized_plan_never_executes(tmp_path: Path) -
     with pytest.raises(Exception) as exc:
         plan_from_yaml(tampered)
     assert getattr(exc.value, "code", None) == "declared_cast_format_unknown"
+
+
+def test_b7_legacy_config_and_plan_match_the_baseline_fixture(tmp_path: Path) -> None:
+    """The fixture was produced by the pre-F06 engine (fdd08a89). Config dump and hash are
+    byte-identical; the plan YAML differs only by the documented version line."""
+    import hashlib
+
+    from decoy_engine.config import PipelineConfig
+    from decoy_engine.plan._compile import compile_plan
+    from decoy_engine.plan._serialize import plan_to_yaml
+    from decoy_engine.profile._source import profile_source
+
+    fixture = json.loads(
+        (
+            Path(__file__).resolve().parents[1] / "fixtures" / "f06" / "legacy-compat-baseline.json"
+        ).read_text()
+    )
+    cfg = PipelineConfig.model_validate(fixture["raw_config"]).model_dump()
+    dump = json.dumps(cfg, sort_keys=True)
+    assert hashlib.sha256(dump.encode()).hexdigest() == fixture["config_dump_sha256"]
+    (tmp_path / "p.csv").write_text("id,age,note\n1,42,a\n2,7,b\n3,13,c\n")
+    run_cfg = json.loads(dump)
+    run_cfg["sources"]["p"]["path"] = str(tmp_path / "p.csv")
+    plan = compile_plan(
+        run_cfg, profile_source(run_cfg, seed=7), decoy_engine_version="legacy-fixture"
+    )
+    assert plan.pipeline_config_hash == fixture["pipeline_config_hash"]
+    assert plan_to_yaml(plan) == fixture["plan_yaml_at_baseline"].replace(
+        "plan_version: 2", "plan_version: 3", 1
+    )

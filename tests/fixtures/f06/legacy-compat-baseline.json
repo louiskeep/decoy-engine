@@ -1,0 +1,50 @@
+{
+ "config_dump_sha256": "f943f3965fe98c9d63a06ec042c9d2923aed93db77f51d1579346e0865806aa4",
+ "pipeline_config_hash": "c9f807fec35dea138d4d3e81c0da5537e4f9d0c608d30069ff4cf251abf770db",
+ "plan_yaml_at_baseline": "plan_version: 2\nseed_protocol_version: 7\nengine_version: legacy-fixture\npipeline_config_hash: c9f807fec35dea138d4d3e81c0da5537e4f9d0c608d30069ff4cf251abf770db\nprofile_hash: 1e5b08f74f7870e689271fb8ba9a3e2143cba8cc088ff2968c884eaedcad4220\nseed_envelope:\n  job_seed: '0000000000000007'\n  per_table:\n    p:\n      per_column:\n        id:\n          namespace: ids\n          strategy: hash\n          provider: null\n          backend_type: faker\n          backend_version: null\n          cardinality_mode: reuse\n          deterministic: false\n          technique_class: pseudonymisation\n          distribution_behavior: preserves_cardinality_only\n        age:\n          namespace: null\n          strategy: bucketize\n          provider: null\n          backend_type: faker\n          backend_version: null\n          cardinality_mode: reuse\n          deterministic: false\n          provider_config:\n            width: 10\n          technique_class: anonymisation\n          distribution_behavior: coarsens\n        note:\n          namespace: null\n          strategy: redact\n          provider: null\n          backend_type: faker\n          backend_version: null\n          cardinality_mode: reuse\n          deterministic: false\n          technique_class: anonymisation\n          distribution_behavior: collapses\nrelationships: []\nnamespaces: {}\nordering: []\nplan_compile:\n  warnings: []\n  errors: []\n  checks_passed:\n  - namespace_ambiguity\n  - unknown_provider\n  - fk_plan_ordering\n  - basic_uniqueness_pre_flight\n  - composite_columns_length_match\n  - orphan_fk_policy_completeness\n  - pool_capacity_pre_flight\n  - composite_wiring_consistent\n  - deterministic_namespace_completeness\n  - null_bearing_int_unsupported\n  - when_string_output_on_numeric_unsupported\n  - non_poolable_provider_with_pool_backend\n  - dp_generate_contract\n  - statistical_columns\n  - text_redact_ner_available\n  - text_mask_ner_available\n  - vault_columns\n  - fpe_checksum_scheme\n  - derived_column_refs\n  - derived_aggregate_refs\n  - grouped_series_refs\n  - windowed_date_refs\n  - group_key_refs\n  - date_shift_group_by_refs\n  - fpe_join_groups\n  - truncate_config\n  - bucketize_config\n  - top_code_config\n  - bucket_perturb_config\n  - categorical_categories\n  - fpe_charset_config\n  - faker_requires_provider\n  - freetext_advisory\n  checks_skipped: []\n",
+ "raw_config": {
+  "global_settings": {
+   "seed": 7
+  },
+  "namespaces": {},
+  "relationships": [],
+  "sources": {
+   "p": {
+    "format": "csv",
+    "path": "/data/p.csv",
+    "type": "file"
+   }
+  },
+  "tables": [
+   {
+    "columns": [
+     {
+      "name": "id",
+      "namespace": "ids",
+      "strategy": "hash"
+     },
+     {
+      "name": "age",
+      "provider_config": {
+       "width": 10
+      },
+      "strategy": "bucketize"
+     },
+     {
+      "name": "note",
+      "strategy": "redact"
+     }
+    ],
+    "name": "p"
+   }
+  ],
+  "targets": {
+   "p": {
+    "format": "csv",
+    "path": "/data/o.csv",
+    "type": "file"
+   }
+  },
+  "version": 1
+ }
+}
