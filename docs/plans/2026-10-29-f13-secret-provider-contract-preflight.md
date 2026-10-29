@@ -8,6 +8,8 @@
 **Owners:** Engine provider interface and optional adapter; CLI and Platform consumers  
 **Related work:** F29 is merged and is the current safe error boundary. F31 is a later safe-output seam to adopt when available, not a prerequisite. F45 authorization remains a consumer responsibility and is not an F13 blocker.
 
+**Rules consulted:** 00-universal, development-loop, risk-and-exceptions, feature-development, testing, verification, security, reuse-first, api-and-compatibility, documentation.
+
 This document is the implementation authority for F13 after the plan gate passes. The remote implementation worker must re-ground every cited consumer anchor against the then-current remote repository before editing it, but must not weaken the decisions or acceptance criteria here without returning to the owner.
 
 ## 1. FRAME
@@ -449,3 +451,18 @@ For each repository and again for the integrated final SHAs:
 6. The owner reviews evidence and authorizes merge. Push/PR/merge are not implied by plan completion.
 
 No gate may be satisfied by mocked-past-boundary tests, an earlier commit's receipt, or a statement without exact evidence.
+
+## 11. Gemini plan-gate (2026-10-29): GO-WITH-FIXES, fixes folded
+
+Gemini (google/gemini-2.5-pro) reviewed against the MASTER contract. Verdict GO-WITH-FIXES: 0 BLOCKER, 3 HIGH, 3 MEDIUM, 2 LOW. All folded (Opus, with provenance); these are additive tightenings, not redesigns, and each amends the named section.
+
+- **HIGH-1 (env:/file: encoding ambiguity), §1 matrix + §4.2:** the legacy hex-then-base64 decoding applies ONLY to `decoy-mask-root-v1`; for any other requirement type (`fernet-v1` raw urlsafe-b64, `aes-gcm-v1` raw bytes, HMAC) the `env:`/`file:` reference MUST carry an explicit `encoding=` (e.g. `env:SECRET_KEY?encoding=raw`), mirroring the `vault://` reference. Default to legacy decoding ONLY for `decoy-mask-root-v1`; require an explicit encoding otherwise. Applying legacy decoding to a Fernet key would corrupt a valid key and raise a spurious `secret_material_invalid`.
+- **HIGH-2 (`__cause__` leak via standard logging), §3/§4.3:** `SecretProviderError` must NOT retain the raw SDK exception as a live `__cause__`, because `logging.exception()` / unhandled-exception hooks trace the chain and leak provider internals (Vault paths, policy names). After mapping the cause TYPE to the F29 code, set `__cause__ = None` in production; if a debug cause is kept, wrap it in a redacted object whose `__str__`/`__repr__` return a constant safe string. Add a leak-sentry case that logs the error via `logging.exception` and asserts no provider detail appears.
+- **HIGH-3 (raw canonical ref in cache key), §4.2/§4.5:** the process cache key must be a non-reversible SALTED HASH of the canonical reference, never the raw ref string (caches log keys on miss/evict). Add `SecretRef.get_cache_key_component()` returning the salted hash; the raw reference is never passed to or stored by the cache subsystem.
+- **MEDIUM-1 (Vault TLS), §4.6:** the client construction helper must honor `VAULT_CACERT`/`VAULT_CLIENT_CERT`/`VAULT_CLIENT_KEY` and must REJECT (or high-visibility warn + require an explicit in-code override for) `VAULT_SKIP_VERIFY=true`; TLS verification is never silently disabled by an env var.
+- **MEDIUM-2 (cache expiry skew), §4.5:** define `skew` as a fixed documented constant (5s) subtracted from provider expiry to cover client/provider clock drift; effective TTL = `min(configured TTL, provider_expiry - skew)`. Document its purpose.
+- **MEDIUM-3 (cache concurrency), §5:** the process cache MUST be thread-safe; add an acceptance test that spawns multiple threads/tasks preflighting the SAME uncached secret concurrently and asserts the provider's `resolve` is called exactly once (no double-fetch, no corruption).
+- **LOW-1 (sentry scope), §4.3:** the "build-failing structural sentry" uses existing static-analysis tooling (custom `ruff` rules or a Semgrep ruleset), not a bespoke tool, to manage V1 scope.
+- **LOW-2 (surface-parity failure mode), §5 test #11:** extend the parity test so that for a given invalid reference (e.g. a deleted Vault version) the engine, CLI, and platform all emit the IDENTICAL registered F29 reason code and the value-free guarantee holds on all three (parity of failures, not only of successful masks).
+
+Opus-4.8 Dennis repo-grounded plan gate is next.
