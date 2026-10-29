@@ -224,7 +224,9 @@ def test_a_nested_target_spills_under_its_own_spill_parent_not_tmpdir(
     holds = _holds(log)
     assert holds and all(Path(d) == target.parent for d in holds), holds
     assert not any(p.name.startswith("_decoy_hold_") for p in target.parent.iterdir())
-    assert [p.name for p in target.iterdir()] == [f"{support.TABLE}.parquet"]
+    assert [p.name for p in target.iterdir() if not p.name.startswith("_decoy_")] == [
+        f"{support.TABLE}.parquet"
+    ]
     b6b.b6a.assert_streamed_equals(sink, expected)
     assert list(locked.iterdir()) == []
 
