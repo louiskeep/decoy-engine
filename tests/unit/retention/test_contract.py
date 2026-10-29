@@ -301,3 +301,26 @@ def test_evidence_is_not_a_deletion_target():
         r.ArtifactClass.STAGING,
         r.ArtifactClass.CHECKPOINT,
     }
+
+
+KNOWN_DIGEST = "60a9bac3737bccff1cebe48ad3a6805963e24945044529950e93695fc435025d"
+
+
+def test_digest_known_answer_pins_the_algorithm_domain_included():
+    """Platform and CLI must compute the same digest for the same set, forever. A change to the
+    domain string, the field set or the encoding changes this value and must be a deliberate,
+    versioned edit. (Independently derived: sha256 of the sorted-key compact JSON of the body.)"""
+    got = r.inventory_digest(
+        policy_id="7ead38cea6e6aa84",
+        scope=[r.ArtifactClass.RAW_UPLOAD, r.ArtifactClass.STAGING],
+        limits=r.Limits(max_items=10, max_bytes=1000, max_backend_calls=5, max_seconds=60),
+        expires_at=1_700_000_000,
+        eligible=[("a" * 32, "ident-a"), ("b" * 32, "ident-b")],
+    )
+    assert got == KNOWN_DIGEST
+
+
+def test_canonical_json_sorts_keys_and_has_no_whitespace():
+    assert r.canonical_json({"b": 1, "a": [2, {"d": 1, "c": 2}]}) == '{"a":[2,{"c":2,"d":1}],"b":1}'
+    with pytest.raises(ValueError):
+        r.canonical_json({"x": float("nan")})
