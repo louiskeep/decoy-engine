@@ -236,3 +236,53 @@ def test_registry_is_a_leaf() -> None:
     )
     offenders = [str(p) for p in pkg.rglob("*.py") if forbidden.search(p.read_text())]
     assert offenders == []
+
+
+def test_every_registered_code_resolves_through_its_family_without_fallback() -> None:
+    """Runtime coverage: a trusted engine family reports each code of its namespace as itself.
+
+    `T` skips the family's own constructor (their signatures differ: positional, keyword-only,
+    wrapped) and sets only `.code`, so this exercises the adapter's trust path for every
+    (family, code) pair, not just the codes a unit test happens to raise."""
+    import importlib
+
+    from decoy_engine.reason_adapter import _CODED, reason_from_exception
+
+    fallbacks: list[str] = []
+    for module, name, namespace in _CODED:
+        family = getattr(importlib.import_module(module), name)
+        shell = type(
+            "T", (family,), {"__init__": lambda self, code: object.__setattr__(self, "code", code)}
+        )
+        for spec in reasons.specs():
+            if spec.namespace != namespace:
+                continue
+            record = reason_from_exception(shell(spec.code))
+            if (record.namespace, record.code) != (namespace, spec.code):
+                fallbacks.append(f"{name}:{namespace}.{spec.code}")
+    assert fallbacks == []
+
+
+def test_class_level_and_default_codes_are_registered_symbols() -> None:
+    import importlib
+
+    from decoy_engine.reason_adapter import _CODED
+
+    unregistered = []
+    for module, name, namespace in _CODED:
+        family = getattr(importlib.import_module(module), name)
+        code = family.__dict__.get("code")
+        if isinstance(code, str) and reasons.find(namespace, code) is None:
+            unregistered.append(f"{name}.code={code!r}")
+        if isinstance(code, str):
+            assert isinstance(code, reasons.ReasonCode), name  # a symbol, not a bare literal
+    assert unregistered == []
+
+
+def test_the_baseline_fixture_is_frozen() -> None:
+    """The baseline is the registry's reference for 'a code never disappears'. It is rebuilt only
+    from the baseline commit's tree (see `_reason_baseline.py`), never from migrated source."""
+    import hashlib
+
+    digest = hashlib.sha256((FIXTURES / "reason-baseline.json").read_bytes()).hexdigest()
+    assert digest == "8b3345c2d8e5eb3541cde2f238b7048d712e5fc3903806f7ec79642520fed118"

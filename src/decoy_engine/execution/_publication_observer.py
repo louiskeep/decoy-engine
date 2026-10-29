@@ -84,11 +84,16 @@ def capture_publication_failure(
     *,
     table: str | None = None,
     secondary: bool = False,
-) -> ReasonRecord:
-    """Record ``exc`` as a failure at ``operation`` with the sink's evidence (or ``unknown``)."""
-    evidence = evidence_of(sink)
-    context = evidence.context(operation, table=table) if evidence else _unknown(operation)
-    return capture_failure(exc, phase=Phase.PUBLISH, context=context, secondary=secondary)
+) -> ReasonRecord | None:
+    """Record ``exc`` as a failure at ``operation`` with the sink's evidence (or ``unknown``).
+
+    Observation never masks the failure it observes: any error while recording is swallowed."""
+    try:
+        evidence = evidence_of(sink)
+        context = evidence.context(operation, table=table) if evidence else _unknown(operation)
+        return capture_failure(exc, phase=Phase.PUBLISH, context=context, secondary=secondary)
+    except Exception:
+        return None
 
 
 def observed_commit(sink: Any) -> None:
@@ -128,20 +133,26 @@ def observed_abort(sink: Any, failing: BaseException | None = None) -> None:
         # the call returning proves nothing about cleanup.
         state = evidence.cleanup if evidence is not None else CleanupState.ATTEMPTED
     if failing is not None:
-        amend_failure(failing, ReasonContext.build(cleanup_state=state))
+        try:
+            amend_failure(failing, ReasonContext.build(cleanup_state=state))
+        except Exception:  # evidence is best effort; it never masks the failure it describes
+            pass
 
 
-def report_partial_publication(failure: BaseException) -> ReasonRecord:
+def report_partial_publication(failure: BaseException) -> ReasonRecord | None:
     """A failure after the tables committed (a quarantine sidecar): the output is partly published.
 
     The committed tables are never aborted; the failure is reported as ``publication_partial``
-    with no replay advice, whatever the exception itself looks like."""
-    context = ReasonContext.build(
-        operation=Operation.SIDECAR,
-        storage_ref=STORAGE_REF,
-        publication_state=PublicationState.PARTIAL,
-        cleanup_state=CleanupState.NOT_NEEDED,
-    )
-    return capture_failure(
-        failure, phase=Phase.PUBLISH, context=context, reason=reasons.decoy.PUBLICATION_PARTIAL
-    )
+    with no replay advice, whatever the exception itself looks like. Never masks ``failure``."""
+    try:
+        context = ReasonContext.build(
+            operation=Operation.SIDECAR,
+            storage_ref=STORAGE_REF,
+            publication_state=PublicationState.PARTIAL,
+            cleanup_state=CleanupState.NOT_NEEDED,
+        )
+        return capture_failure(
+            failure, phase=Phase.PUBLISH, context=context, reason=reasons.decoy.PUBLICATION_PARTIAL
+        )
+    except Exception:
+        return None

@@ -87,7 +87,6 @@ from decoy_engine.execution._planner import (
 from decoy_engine.execution._transforms_prepare import prepare_transform_sources
 from decoy_engine.profile._readers import LazySource
 from decoy_engine.progress import ProgressChannel, ProgressSink, use_progress
-from decoy_engine.reason_adapter import failure_scope
 
 if TYPE_CHECKING:
     from faker import Faker
@@ -267,10 +266,6 @@ def run_pipeline(
         auto_chunk = False
     with (
         use_progress(progress, interval_s=progress_interval_s) as _progress,
-        # The run's first failure is kept by the run itself, not by the progress sink: a run with
-        # no sink (the shared no-op channel) still records it, and a nested or successive run
-        # starts with none of this run's state.
-        failure_scope(),
         _progress.run_scope(),
     ):
         with _progress.phase("resolve"):

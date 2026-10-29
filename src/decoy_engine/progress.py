@@ -56,6 +56,7 @@ from decoy_engine._progress_events import (
     event_to_legacy_dict,
     safe_error_class,
 )
+from decoy_engine.reason_adapter import capture_failure, failure_scope
 from decoy_engine.reasons import Phase, ReasonRecord, approve_ref
 
 # ---------------------------------------------------------------------------
@@ -426,56 +427,61 @@ class ProgressChannel:
     # -- terminal ------------------------------------------------------------
     @contextmanager
     def run_scope(self) -> Iterator[None]:
-        """Emit the terminal event for the enclosed run, ok or error."""
-        try:
-            yield
-        except BaseException as exc:
-            # Any phase started via the manual `phase_start`/`phase_finish` pair
-            # (the sequential, out-of-core, generate and generate+mask routes
-            # compute `rows_out` at finish, so they cannot use the `phase()` CM)
-            # that the raising work never finished would otherwise leave a
-            # consumer's step stuck "running". Close each as an error before the
-            # terminal event so a monitor sees a terminal state for every step.
-            error_class = type(exc).__name__
-            open_phases = list(self._open_phases.items())
-            # The innermost open boundary names the phase; an already-captured exception reuses
-            # its record, so a failure is never relabelled by an outer scope.
-            innermost = open_phases[-1][0][0] if open_phases else None
-            record = _capture(exc, innermost)
-            for (name, table), started in open_phases:
+        """Emit the terminal event for the enclosed run, ok or error.
+
+        The scope also opens the run's failure scope: the first causal failure is kept by the run
+        itself, not by the sink, so a run with no sink (the shared no-op channel) still records it,
+        and a nested or successive run starts with none of this run's state."""
+        with failure_scope():
+            try:
+                yield
+            except BaseException as exc:
+                # Any phase started via the manual `phase_start`/`phase_finish` pair
+                # (the sequential, out-of-core, generate and generate+mask routes
+                # compute `rows_out` at finish, so they cannot use the `phase()` CM)
+                # that the raising work never finished would otherwise leave a
+                # consumer's step stuck "running". Close each as an error before the
+                # terminal event so a monitor sees a terminal state for every step.
+                error_class = type(exc).__name__
+                open_phases = list(self._open_phases.items())
+                # The innermost open boundary names the phase; an already-captured exception
+                # reuses its record, so a failure is never relabelled by an outer scope.
+                innermost = open_phases[-1][0][0] if open_phases else None
+                record = _capture(exc, innermost)
+                for (name, table), started in open_phases:
+                    self.emit(
+                        PhaseEvent(
+                            name,
+                            "error",
+                            table=table,
+                            elapsed_s=time.perf_counter() - started,
+                            error_class=error_class,
+                            phase=_ident(name),
+                            object_ref=_ident(table),
+                            reason=record,
+                        )
+                    )
+                self._open_phases.clear()
                 self.emit(
-                    PhaseEvent(
-                        name,
+                    TerminalEvent(
                         "error",
-                        table=table,
-                        elapsed_s=time.perf_counter() - started,
                         error_class=error_class,
-                        phase=_ident(name),
-                        object_ref=_ident(table),
+                        elapsed_s=time.perf_counter() - self._started,
+                        sink_failures=self.sink_failures,
                         reason=record,
                     )
                 )
-            self._open_phases.clear()
-            self.emit(
-                TerminalEvent(
-                    "error",
-                    error_class=error_class,
-                    elapsed_s=time.perf_counter() - self._started,
-                    sink_failures=self.sink_failures,
-                    reason=record,
+                raise
+            else:
+                for table in list(self._rates):
+                    self.flush(table)
+                self.emit(
+                    TerminalEvent(
+                        "ok",
+                        elapsed_s=time.perf_counter() - self._started,
+                        sink_failures=self.sink_failures,
+                    )
                 )
-            )
-            raise
-        else:
-            for table in list(self._rates):
-                self.flush(table)
-            self.emit(
-                TerminalEvent(
-                    "ok",
-                    elapsed_s=time.perf_counter() - self._started,
-                    sink_failures=self.sink_failures,
-                )
-            )
 
 
 def _ident(name: str | None) -> str | None:
@@ -486,8 +492,6 @@ def _ident(name: str | None) -> str | None:
 def _capture(exc: BaseException, phase_name: str | None) -> ReasonRecord | None:
     """The run's first causal failure for ``exc``; never raises (progress is observational)."""
     try:
-        from decoy_engine.reason_adapter import capture_failure
-
         return capture_failure(exc, phase=_phase_of(phase_name))
     except Exception:
         return None

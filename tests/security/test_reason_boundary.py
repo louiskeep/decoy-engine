@@ -221,3 +221,57 @@ def test_interrupts_are_control_outcomes() -> None:
     record = reason_from_exception(KeyboardInterrupt())
     assert record.code == "run_cancelled"
     assert record.outcome is reasons.Outcome.CANCELLED
+
+
+def test_a_hostile_callback_exception_never_reaches_events_results_or_logs(
+    tmp_path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Real runs with marker-bearing failures: a callback sink raising a hostile exception, and a
+    secret reference naming the marker. The marker is searched for in every serialized progress
+    event, the reason record, the isolated result and the log output."""
+    import logging
+
+    import pyarrow as pa
+
+    from decoy_engine import progress
+    from decoy_engine.execution import run_pipeline
+    from decoy_engine.execution._isolated_run import run_pipeline_isolated
+    from tests.integration._f29_jobs import ENGINE_VERSION, fk_job
+
+    leak = "ZXQ-CALLBACK-LEAK-9921"
+    hostile = type("Leak9921Error", (RuntimeError,), {})
+
+    def callback(table: str, data: pa.Table) -> None:
+        raise hostile(f"{leak} postgres://u:p@h/db")
+
+    cfg, sources = fk_job(tmp_path)
+    events: list[progress.ProgressEvent] = []
+    with caplog.at_level(logging.DEBUG), pytest.raises(RuntimeError) as info:
+        run_pipeline(
+            cfg,
+            sources,
+            engine_version=ENGINE_VERSION,
+            execution_mode="sequential",
+            sink=callback,
+            progress=progress.CallbackSink(events.append),
+        )
+    secret_cfg, secret_sources = fk_job(tmp_path, mask_secret_ref=f"env:{leak.replace('-', '_')}")
+    with caplog.at_level(logging.DEBUG):
+        isolated = run_pipeline_isolated(
+            secret_cfg, secret_sources, engine_version=ENGINE_VERSION, isolate=False
+        )
+    surfaces = [
+        json.dumps([progress.event_to_dict(e) for e in events]),
+        json.dumps(reason_from_exception(info.value).to_payload()),
+        repr(isolated),
+        caplog.text,
+    ]
+    for surface in surfaces:
+        assert leak not in surface and leak.replace("-", "_") not in surface
+        assert "postgres" not in surface
+    terminal = events[-1]
+    assert terminal.kind == "terminal" and terminal.status == "error"
+    assert terminal.error_class == "Exception"  # the hostile class name is not echoed
+    assert terminal.reason is not None and terminal.reason.code == "unexpected_error"
+    # Positive control: the same hidden marker still produced a precise, safe reason.
+    assert isolated.reason is not None and isolated.reason.code == "missing_mask_secret"
