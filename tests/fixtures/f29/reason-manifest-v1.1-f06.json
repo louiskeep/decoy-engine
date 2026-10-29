@@ -1,0 +1,747 @@
+{
+  "entries": [
+    {
+      "code": "declared_cast_contract_invalid",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "plan",
+      "owner": "decoy_engine.declared_casting",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "configuration",
+          "retry": "configuration_repair",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "compile",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.1.0",
+      "summary": "A declared parsing and casting contract is inconsistent.",
+      "symbol": "DECLARED_CAST_CONTRACT_INVALID"
+    },
+    {
+      "code": "declared_cast_currency_code_invalid",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "plan",
+      "owner": "decoy_engine.declared_casting",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "configuration",
+          "retry": "configuration_repair",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "compile",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.1.0",
+      "summary": "A declared currency code is missing or malformed.",
+      "symbol": "DECLARED_CAST_CURRENCY_CODE_INVALID"
+    },
+    {
+      "code": "declared_cast_directive_unsupported",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "plan",
+      "owner": "decoy_engine.declared_casting",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "configuration",
+          "retry": "configuration_repair",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "compile",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.1.0",
+      "summary": "A declared format directive is outside the supported catalog.",
+      "symbol": "DECLARED_CAST_DIRECTIVE_UNSUPPORTED"
+    },
+    {
+      "code": "declared_cast_format_unknown",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "plan",
+      "owner": "decoy_engine.declared_casting",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "configuration",
+          "retry": "configuration_repair",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "compile",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.1.0",
+      "summary": "A declared format identifier is unknown or retired.",
+      "symbol": "DECLARED_CAST_FORMAT_UNKNOWN"
+    },
+    {
+      "code": "declared_cast_precision_invalid",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "plan",
+      "owner": "decoy_engine.declared_casting",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "configuration",
+          "retry": "configuration_repair",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "compile",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.1.0",
+      "summary": "A declared decimal precision is outside the supported range.",
+      "symbol": "DECLARED_CAST_PRECISION_INVALID"
+    },
+    {
+      "code": "declared_cast_scale_invalid",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "plan",
+      "owner": "decoy_engine.declared_casting",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "configuration",
+          "retry": "configuration_repair",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "compile",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.1.0",
+      "summary": "A declared decimal scale is outside the supported range.",
+      "symbol": "DECLARED_CAST_SCALE_INVALID"
+    },
+    {
+      "code": "declared_cast_sentinel_config_invalid",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "plan",
+      "owner": "decoy_engine.declared_casting",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "configuration",
+          "retry": "configuration_repair",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "compile",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.1.0",
+      "summary": "A declared sentinel set is empty, duplicated, oversized or of the wrong kind.",
+      "symbol": "DECLARED_CAST_SENTINEL_CONFIG_INVALID"
+    },
+    {
+      "code": "declared_output_width_unknown",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "plan",
+      "owner": "decoy_engine.declared_casting",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "configuration",
+          "retry": "configuration_repair",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "compile",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.1.0",
+      "summary": "A declared output width cannot be proved before execution.",
+      "symbol": "DECLARED_OUTPUT_WIDTH_UNKNOWN"
+    },
+    {
+      "code": "declared_type_strategy_incompatible",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "plan",
+      "owner": "decoy_engine.declared_casting",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "configuration",
+          "retry": "configuration_repair",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "compile",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.1.0",
+      "summary": "A declared column type is incompatible with its strategy or output format.",
+      "symbol": "DECLARED_TYPE_STRATEGY_INCOMPATIBLE"
+    },
+    {
+      "code": "declared_cast_input_type_incompatible",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "route",
+      "owner": "decoy_engine.declared_casting",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "resolve",
+          "retry": "configuration_repair",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "compile",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.1.0",
+      "summary": "An input column's physical type does not match its declared lexical contract.",
+      "symbol": "DECLARED_CAST_INPUT_TYPE_INCOMPATIBLE"
+    },
+    {
+      "code": "declared_cast_route_unsupported",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "route",
+      "owner": "decoy_engine.declared_casting",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "resolve",
+          "retry": "configuration_repair",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "compile",
+          "retry": "configuration_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.1.0",
+      "summary": "The selected route cannot apply a declared casting contract.",
+      "symbol": "DECLARED_CAST_ROUTE_UNSUPPORTED"
+    },
+    {
+      "code": "protected_quarantine_unavailable",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "route",
+      "owner": "decoy_engine.declared_casting",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "configuration",
+          "phase": "resolve",
+          "retry": "environment_repair",
+          "severity": "error"
+        },
+        {
+          "outcome": "configuration",
+          "phase": "compile",
+          "retry": "environment_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.1.0",
+      "summary": "A protected quarantine store with the required protection is not available.",
+      "symbol": "PROTECTED_QUARANTINE_UNAVAILABLE"
+    },
+    {
+      "code": "declared_cobol_invalid",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "runtime",
+      "owner": "decoy_engine.declared_casting",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "execution",
+          "phase": "mask",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "finalize",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "unknown",
+          "retry": "never",
+          "severity": "error"
+        }
+      ],
+      "since": "1.1.0",
+      "summary": "A value does not match the declared COBOL field encoding.",
+      "symbol": "DECLARED_COBOL_INVALID"
+    },
+    {
+      "code": "declared_currency_invalid",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "runtime",
+      "owner": "decoy_engine.declared_casting",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "execution",
+          "phase": "mask",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "finalize",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "unknown",
+          "retry": "never",
+          "severity": "error"
+        }
+      ],
+      "since": "1.1.0",
+      "summary": "A value does not match the declared currency format.",
+      "symbol": "DECLARED_CURRENCY_INVALID"
+    },
+    {
+      "code": "declared_date_invalid",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "runtime",
+      "owner": "decoy_engine.declared_casting",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "execution",
+          "phase": "mask",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "finalize",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "unknown",
+          "retry": "never",
+          "severity": "error"
+        }
+      ],
+      "since": "1.1.0",
+      "summary": "A value is not a valid date under the declared format.",
+      "symbol": "DECLARED_DATE_INVALID"
+    },
+    {
+      "code": "declared_decimal_invalid",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "runtime",
+      "owner": "decoy_engine.declared_casting",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "execution",
+          "phase": "mask",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "finalize",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "unknown",
+          "retry": "never",
+          "severity": "error"
+        }
+      ],
+      "since": "1.1.0",
+      "summary": "A value does not match the declared decimal grammar.",
+      "symbol": "DECLARED_DECIMAL_INVALID"
+    },
+    {
+      "code": "declared_decimal_overflow",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "runtime",
+      "owner": "decoy_engine.declared_casting",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "execution",
+          "phase": "mask",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "finalize",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "unknown",
+          "retry": "never",
+          "severity": "error"
+        }
+      ],
+      "since": "1.1.0",
+      "summary": "A value exceeds the declared decimal precision.",
+      "symbol": "DECLARED_DECIMAL_OVERFLOW"
+    },
+    {
+      "code": "declared_decimal_precision_loss",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "runtime",
+      "owner": "decoy_engine.declared_casting",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "execution",
+          "phase": "mask",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "finalize",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "unknown",
+          "retry": "never",
+          "severity": "error"
+        }
+      ],
+      "since": "1.1.0",
+      "summary": "A value would lose digits under the declared decimal scale.",
+      "symbol": "DECLARED_DECIMAL_PRECISION_LOSS"
+    },
+    {
+      "code": "declared_integer_invalid",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "runtime",
+      "owner": "decoy_engine.declared_casting",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "execution",
+          "phase": "mask",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "finalize",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "unknown",
+          "retry": "never",
+          "severity": "error"
+        }
+      ],
+      "since": "1.1.0",
+      "summary": "A value does not match the declared integer grammar.",
+      "symbol": "DECLARED_INTEGER_INVALID"
+    },
+    {
+      "code": "declared_integer_overflow",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "runtime",
+      "owner": "decoy_engine.declared_casting",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "execution",
+          "phase": "mask",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "finalize",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "unknown",
+          "retry": "never",
+          "severity": "error"
+        }
+      ],
+      "since": "1.1.0",
+      "summary": "A value is outside the declared integer range.",
+      "symbol": "DECLARED_INTEGER_OVERFLOW"
+    },
+    {
+      "code": "declared_output_width_overflow",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "runtime",
+      "owner": "decoy_engine.declared_casting",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "execution",
+          "phase": "mask",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "finalize",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "unknown",
+          "retry": "never",
+          "severity": "error"
+        }
+      ],
+      "since": "1.1.0",
+      "summary": "A rendered value exceeds the declared output width.",
+      "symbol": "DECLARED_OUTPUT_WIDTH_OVERFLOW"
+    },
+    {
+      "code": "fixed_width_record_overlong",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "runtime",
+      "owner": "decoy_engine.declared_casting",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "execution",
+          "phase": "resolve",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "unknown",
+          "retry": "never",
+          "severity": "error"
+        }
+      ],
+      "since": "1.1.0",
+      "summary": "A fixed-width record is longer than the layout's declared record width.",
+      "symbol": "FIXED_WIDTH_RECORD_OVERLONG"
+    },
+    {
+      "code": "protected_quarantine_access_denied",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "runtime",
+      "owner": "decoy_engine.declared_casting",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "execution",
+          "phase": "finalize",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "unknown",
+          "retry": "never",
+          "severity": "error"
+        }
+      ],
+      "since": "1.1.0",
+      "summary": "Access to the protected quarantine artifact was denied.",
+      "symbol": "PROTECTED_QUARANTINE_ACCESS_DENIED"
+    },
+    {
+      "code": "protected_quarantine_expired",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "runtime",
+      "owner": "decoy_engine.declared_casting",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "execution",
+          "phase": "finalize",
+          "retry": "never",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "unknown",
+          "retry": "never",
+          "severity": "error"
+        }
+      ],
+      "since": "1.1.0",
+      "summary": "The protected quarantine artifact is past its retention period.",
+      "symbol": "PROTECTED_QUARANTINE_EXPIRED"
+    },
+    {
+      "code": "protected_quarantine_seal_failed",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "runtime",
+      "owner": "decoy_engine.declared_casting",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "execution",
+          "phase": "finalize",
+          "retry": "environment_repair",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "publish",
+          "retry": "environment_repair",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "unknown",
+          "retry": "environment_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.1.0",
+      "summary": "The protected quarantine artifact could not be sealed.",
+      "symbol": "PROTECTED_QUARANTINE_SEAL_FAILED"
+    },
+    {
+      "code": "protected_quarantine_write_failed",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "runtime",
+      "owner": "decoy_engine.declared_casting",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "execution",
+          "phase": "finalize",
+          "retry": "environment_repair",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "publish",
+          "retry": "environment_repair",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "unknown",
+          "retry": "environment_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.1.0",
+      "summary": "A row could not be written to the protected quarantine store.",
+      "symbol": "PROTECTED_QUARANTINE_WRITE_FAILED"
+    }
+  ],
+  "registry_version": "1.1.0"
+}
