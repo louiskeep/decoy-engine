@@ -6,7 +6,7 @@
 
   "corpus": {
     "datasheet_ref": "docs/v2/ml/corpus-datasheet.md",
-    "generation_function": "decoy_engine.storm.eval.corpus:build_extended_fixtures",
+    "generation_function": "decoy_engine.profiling.eval.corpus:build_extended_fixtures",
     "generation_seed": 20260627,
     "total_columns": 2958,
     "real_pii_used": false,
@@ -19,9 +19,9 @@
     "repo": "decoy-engine",
     "branch": "feat/ml-rebaseline-corpus-calibration-lexicon",
     "base_commit": "99e65e1",
-    "training_module": "decoy_engine.storm.model_pack.trainer",
-    "feature_module": "decoy_engine.storm.model_pack.featurizer",
-    "loader_module": "decoy_engine.storm.model_pack.loader",
+    "training_module": "decoy_engine.profiling.model_pack.trainer",
+    "feature_module": "decoy_engine.profiling.model_pack.featurizer",
+    "loader_module": "decoy_engine.profiling.model_pack.loader",
     "feature_schema_version": "ml1-v1"
   },
 
@@ -59,10 +59,10 @@
   "signing": {
     "status": "unsigned",
     "signing_key_ref": "unsigned",
-    "policy": "The shipped first-party pack is distributed UNSIGNED and trusted by default (DE-04 Option C): it is sha256-verified and force-included in the wheel, so classify_fields() loads it out of the box. HMAC-SHA256 signing (decoy_engine.storm.model_pack.provenance.sign_pack) is OPT-IN: a signature is enforced for a caller-supplied external pack_dir (untrusted by default), and for the trusted default pack whenever DECOY_PACK_REQUIRE_SIGNATURE=1 OR DECOY_PACK_SIGNING_KEY is set. Note: setting the key alone makes the shipped unsigned default pack refuse to load, and classify_fields() then degrades to the regex baseline via load_with_fallback(). This is a deliberate posture, not pending work.",
+    "policy": "The shipped first-party pack is distributed UNSIGNED and trusted by default (DE-04 Option C): it is sha256-verified and force-included in the wheel, so classify_fields() loads it out of the box. HMAC-SHA256 signing (decoy_engine.profiling.model_pack.provenance.sign_pack) is OPT-IN: a signature is enforced for a caller-supplied external pack_dir (untrusted by default), and for the trusted default pack whenever DECOY_PACK_REQUIRE_SIGNATURE=1 OR DECOY_PACK_SIGNING_KEY is set. Note: setting the key alone makes the shipped unsigned default pack refuse to load, and classify_fields() then degrades to the regex baseline via load_with_fallback(). This is a deliberate posture, not pending work.",
     "signature": null,
     "signed_at": null,
     "signer": null,
-    "verification_command": "DECOY_PACK_SIGNING_KEY=<64-hex> python -c \"from pathlib import Path; from decoy_engine.storm.model_pack.loader import ModelPackLoader; ModelPackLoader(Path('<external_pack_dir>'), trusted=False).load()\""
+    "verification_command": "DECOY_PACK_SIGNING_KEY=<64-hex> python -c \"from pathlib import Path; from decoy_engine.profiling.model_pack.loader import ModelPackLoader; ModelPackLoader(Path('<external_pack_dir>'), trusted=False).load()\""
   }
 }

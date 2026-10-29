@@ -1,4 +1,4 @@
-"""Loader-specific tests for decoy_engine.storm.name_hints.loader.
+"""Loader-specific tests for decoy_engine.detection.name_hints.loader.
 
 The snapshot harness (tests/snapshots/test_name_hints_baseline.py)
 covers the happy-path: shipped YAML files load + produce the same
@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from decoy_engine.storm.name_hints.loader import (
+from decoy_engine.detection.name_hints.loader import (
     NameHintLoaderError,
     load_name_hint_terms,
 )

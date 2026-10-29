@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from decoy_engine.storm import run_storm
+from decoy_engine.profiling import profile_columns
 
 
 def test_single_qi_combo_with_k_equal_2():
@@ -30,7 +30,7 @@ def test_single_qi_combo_with_k_equal_2():
             "gender": ["F", "M", "F", "M", "F", "M"],
         }
     )
-    profile = run_storm(df, "tiny.csv")
+    profile = profile_columns(df, "tiny.csv")
     # Joint (city, state, gender) splits 6 rows into 6 unique buckets
     # -> k=1. The 3-combo sweep finds it.
     assert profile.k_anonymity == 1
@@ -50,7 +50,7 @@ def test_balanced_categoricals_yield_k_above_one():
             "status": ["x", "y"] * 5,
         }
     )
-    profile = run_storm(df, "balanced.csv")
+    profile = profile_columns(df, "balanced.csv")
     # k=2: smallest group across (city, status) is 2.
     assert profile.k_anonymity == 2
     assert profile.reid_risk_score == 50.0
@@ -69,7 +69,7 @@ def test_no_qi_candidates_when_every_column_is_unique():
             "name": [f"user_{i}" for i in range(50)],
         }
     )
-    profile = run_storm(df, "all_unique.csv")
+    profile = profile_columns(df, "all_unique.csv")
     assert profile.k_anonymity is None
     assert profile.reid_risk_score == 0.0
     assert profile.quasi_identifier_groups == []
@@ -85,7 +85,7 @@ def test_no_qi_candidates_when_every_column_is_constant():
             "status": ["active"] * 100,
         }
     )
-    profile = run_storm(df, "constants.csv")
+    profile = profile_columns(df, "constants.csv")
     assert profile.k_anonymity is None
     assert profile.reid_risk_score == 0.0
 
@@ -114,7 +114,7 @@ def test_hipaa_trio_emerges_from_data_without_name_hardcoding():
             "gender": ["F", "F", "M", "M", "F", "M", "F", "M"],
         }
     )
-    profile = run_storm(df, "hipaa.csv")
+    profile = profile_columns(df, "hipaa.csv")
     assert profile.k_anonymity == 1  # at least one combo uniquely identifies a row
     assert profile.reid_risk_score == 100.0
     # All three columns appear in at least one of the winning combos.
@@ -136,7 +136,7 @@ def test_winning_combos_tie_at_minimum_k():
             "c": ["m", "m", "n", "n", "m", "m", "n", "n", "o", "o", "u", "u", "o", "o", "u", "u"],
         }
     )
-    profile = run_storm(df, "ties.csv")
+    profile = profile_columns(df, "ties.csv")
     # The 3-combo (a, b, c) gives 8 buckets of size 2 -> k=2.
     # All 2-combos also produce k=2 buckets.
     assert profile.k_anonymity == 2
@@ -149,7 +149,7 @@ def test_winning_combos_tie_at_minimum_k():
 
 def test_too_few_rows_skips_inference():
     df = pd.DataFrame({"a": ["x"], "b": ["y"]})
-    profile = run_storm(df, "tiny.csv")
+    profile = profile_columns(df, "tiny.csv")
     assert profile.k_anonymity is None
     assert profile.reid_risk_score == 0.0
 
@@ -157,9 +157,9 @@ def test_too_few_rows_skips_inference():
 def test_existing_profile_json_without_k_anonymity_still_loads():
     # Defensive: storm profiles persisted before Plan B-1 won't have
     # k_anonymity in their JSON. Round-tripping through to_dict()
-    # -> dict -> StormProfile-via-kwargs should still work because
+    # -> dict -> ColumnProfile-via-kwargs should still work because
     # k_anonymity has a default value of None on the dataclass.
-    from decoy_engine.storm.types import StormProfile
+    from decoy_engine.profiling.types import ColumnProfile
 
     pre_b1_dict = {
         "source_label": "pre_b1.csv",
@@ -174,7 +174,7 @@ def test_existing_profile_json_without_k_anonymity_still_loads():
         "engine_version": "0.1.0",
         "generated_at": "2026-05-13T00:00:00Z",
     }
-    rebuilt = StormProfile(**pre_b1_dict)
+    rebuilt = ColumnProfile(**pre_b1_dict)
     assert rebuilt.k_anonymity is None
     # And the new field round-trips through to_dict() going forward.
     assert "k_anonymity" in rebuilt.to_dict()

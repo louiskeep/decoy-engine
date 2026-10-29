@@ -23,13 +23,13 @@ from pathlib import Path
 
 import pytest
 
-from decoy_engine.storm.model_pack.loader import ModelPackLoader, ModelPackLoadError
-from decoy_engine.storm.model_pack.provenance import (
+from decoy_engine.profiling.model_pack.loader import ModelPackLoader, ModelPackLoadError
+from decoy_engine.profiling.model_pack.provenance import (
     SIGNING_KEY_ENV,
     sign_manifest,
     verify_manifest,
 )
-from decoy_engine.storm.model_pack.types import (
+from decoy_engine.profiling.model_pack.types import (
     FEATURE_SCHEMA_VERSION,
     PACK_FORMAT,
     ModelPackManifest,
@@ -292,7 +292,7 @@ _FIXTURE_MASTER = bytes.fromhex("00112233445566778899aabbccddeeff001122334455667
 
 def test_derive_pack_signing_key_is_32_bytes_and_deterministic() -> None:
     """Deriving from the same 32-byte master yields the same 32-byte key."""
-    from decoy_engine.storm.model_pack.provenance import derive_pack_signing_key
+    from decoy_engine.profiling.model_pack.provenance import derive_pack_signing_key
 
     k1 = derive_pack_signing_key(_FIXTURE_MASTER)
     k2 = derive_pack_signing_key(_FIXTURE_MASTER)
@@ -304,7 +304,7 @@ def test_derive_pack_signing_key_is_32_bytes_and_deterministic() -> None:
 def test_derive_pack_signing_key_differs_from_master_and_other_labels() -> None:
     """The derived key is not the master itself and is purpose-separated."""
     from decoy_engine.determinism._hkdf import hkdf_sha256
-    from decoy_engine.storm.model_pack.provenance import (
+    from decoy_engine.profiling.model_pack.provenance import (
         PACK_SIGNING_INFO,
         derive_pack_signing_key,
     )
@@ -324,7 +324,7 @@ def test_derive_pack_signing_key_differs_from_master_and_other_labels() -> None:
 
 def test_derive_pack_signing_key_rejects_wrong_length() -> None:
     """A non-32-byte master is rejected (matches make_key_resolver's contract)."""
-    from decoy_engine.storm.model_pack.provenance import derive_pack_signing_key
+    from decoy_engine.profiling.model_pack.provenance import derive_pack_signing_key
 
     with pytest.raises(ValueError):
         derive_pack_signing_key(b"too-short")
@@ -332,7 +332,7 @@ def test_derive_pack_signing_key_rejects_wrong_length() -> None:
 
 def test_derived_key_round_trips_through_sign_verify() -> None:
     """A manifest signed with the derived key verifies with the derived key."""
-    from decoy_engine.storm.model_pack.provenance import derive_pack_signing_key
+    from decoy_engine.profiling.model_pack.provenance import derive_pack_signing_key
 
     key = derive_pack_signing_key(_FIXTURE_MASTER)
     m = _make_manifest()
@@ -350,7 +350,7 @@ def test_sign_pack_signs_in_place_and_loader_accepts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """sign_pack writes a valid HMAC that the loader then accepts with the key set."""
-    from decoy_engine.storm.model_pack.provenance import derive_pack_signing_key, sign_pack
+    from decoy_engine.profiling.model_pack.provenance import derive_pack_signing_key, sign_pack
 
     pack_dir = _write_signed_pack(tmp_path, key=None)  # unsigned on disk
     key = derive_pack_signing_key(_FIXTURE_MASTER)
@@ -371,7 +371,7 @@ def test_sign_pack_signs_in_place_and_loader_accepts(
 
 def test_sign_pack_rejects_empty_key(tmp_path: Path) -> None:
     """sign_pack refuses an empty key rather than producing a weak signature."""
-    from decoy_engine.storm.model_pack.provenance import sign_pack
+    from decoy_engine.profiling.model_pack.provenance import sign_pack
 
     pack_dir = _write_signed_pack(tmp_path, key=None)
     with pytest.raises(ValueError):
@@ -400,7 +400,7 @@ def test_require_signature_with_signed_pack_and_key_loads(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """REQUIRE_SIGNATURE=1 + key + properly signed pack -> loads ok (fail-closed allows the good path)."""
-    from decoy_engine.storm.model_pack.provenance import derive_pack_signing_key, sign_pack
+    from decoy_engine.profiling.model_pack.provenance import derive_pack_signing_key, sign_pack
 
     pack_dir = _write_signed_pack(tmp_path, key=None)
     key = derive_pack_signing_key(_FIXTURE_MASTER)

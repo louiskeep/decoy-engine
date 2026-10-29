@@ -20,7 +20,7 @@ point: the harness makes detector recall/precision a measured quantity.
 
 import pandas as pd
 
-from decoy_engine.storm.eval import (
+from decoy_engine.profiling.eval import (
     NO_DETECTOR,
     LabeledFixture,
     build_fixtures,

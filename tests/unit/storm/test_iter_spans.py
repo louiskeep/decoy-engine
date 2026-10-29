@@ -14,7 +14,7 @@ import re
 
 import pytest
 
-from decoy_engine.storm.detectors import Span, iter_spans
+from decoy_engine.detection.detectors import Span, iter_spans
 
 # ── empty / non-string inputs ─────────────────────────────────────────
 

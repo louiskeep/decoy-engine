@@ -196,26 +196,26 @@ decoy storm analyze data.csv --json --out profile.json
 
 Useful flags: `--rows N` caps the rows scanned; `--strategy` selects the
 sampling strategy. The result is a JSON-serializable profile (the same
-`StormProfile` the library's `run_storm` returns). `storm scan` is a
+`ColumnProfile` the library's `profile_columns` returns). `storm scan` is a
 deprecated alias for `storm analyze` and still works.
 
 From Python:
 
 ```python
 import pandas as pd
-from decoy_engine import run_storm
+from decoy_engine import profile_columns
 
 df = pd.read_csv("data.csv")
-profile = run_storm(df, "data.csv")
-# profile is a JSON-serializable StormProfile.
+profile = profile_columns(df, "data.csv")
+# profile is a JSON-serializable ColumnProfile.
 ```
 
 Every detector match carries a semantic `domain` (`IDENTITY`, `FINANCIAL`, `HEALTH`,
 `CONTACT`, `LOCATION`, or `OTHER`) so you can group or filter findings without
-memorizing detector ids. The mapping lives in `decoy_engine.storm.domains`:
+memorizing detector ids. The mapping lives in `decoy_engine.detection.domains`:
 
 ```python
-from decoy_engine.storm.domains import domain_for
+from decoy_engine.detection.domains import domain_for
 
 domain_for("ssn")    # Domain.IDENTITY
 domain_for("email")  # Domain.CONTACT

@@ -687,6 +687,9 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         # `storm.detectors`, and `transforms._text_mask_splice`/`transforms.text_mask`, nothing from
         # `execution.physical`; `_kernels_scalar.native_text_mask` (permitted above) calls it.
         "src/decoy_engine/execution/native/_text_mask_native_splice.py",
+        # `_text_mask_native_fpe.py` (added to main after the STORM split was cut): import retarget
+        # `storm.detectors` -> `detection.detectors` only; no `execution.physical` import.
+        "src/decoy_engine/execution/native/_text_mask_native_fpe.py",
         # bucket_perturb date_format guard: the oracle handler and the nested handler validate the
         # format before any early return, and the out-of-core kernel validates before its autodetect
         # check. All three call the shared rule in `transforms/bucket_perturb.py` and import nothing

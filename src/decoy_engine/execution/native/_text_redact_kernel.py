@@ -33,7 +33,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Protocol
 
-from decoy_engine.storm.detectors import _SPAN_DETECTORS, Span
+from decoy_engine.detection.detectors import _SPAN_DETECTORS, Span
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

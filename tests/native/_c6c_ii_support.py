@@ -15,9 +15,9 @@ from typing import Any
 
 import pytest
 
+from decoy_engine.detection.detectors import _SPAN_DETECTORS, iter_spans
 from decoy_engine.execution._strategies._text_redact import _DEFAULT_TOKEN, _splice
 from decoy_engine.execution.native._text_redact_kernel import load_text_redact_kernel
-from decoy_engine.storm.detectors import _SPAN_DETECTORS, iter_spans
 
 # All eleven built-in detectors now run in Rust on an eligible cell: the eight original
 # lookaround-free ones (`regex` crate) plus the three lookaround detectors ported as hand-written

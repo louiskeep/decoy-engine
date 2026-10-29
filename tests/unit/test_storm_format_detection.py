@@ -14,7 +14,7 @@ test below.
 
 import pandas as pd
 
-from decoy_engine.storm.detectors import (
+from decoy_engine.detection.detectors import (
     detect_email,
     detect_eu_date,
     detect_icd10,
@@ -25,12 +25,12 @@ from decoy_engine.storm.detectors import (
     detect_us_phone,
     detect_us_zip,
 )
-from decoy_engine.storm.profiler import (
+from decoy_engine.detection.types import DetectorMatch
+from decoy_engine.profiling import profile_columns
+from decoy_engine.profiling.profiler import (
     _detect_casing,
     _format_pattern_from_detectors,
-    run_storm,
 )
-from decoy_engine.storm.types import DetectorMatch
 
 # ── per-detector format variants ─────────────────────────────────────
 
@@ -235,7 +235,7 @@ class TestFieldStatsCarriesFormatHints:
                 "name": ["Alice", "Bob", "Carol", "Dave"],
             }
         )
-        profile = run_storm(df, "users.csv")
+        profile = profile_columns(df, "users.csv")
         ssn_field = next(f for f in profile.fields if f.name == "ssn")
         assert ssn_field.format_pattern == r"\d{3}-\d{2}-\d{4}"
         # Casing on pure-digit string column.
@@ -247,7 +247,7 @@ class TestFieldStatsCarriesFormatHints:
                 "dob": ["1985-04-12", "1990-08-22", "1975-11-03", "2001-02-28"],
             }
         )
-        profile = run_storm(df, "patients.csv")
+        profile = profile_columns(df, "patients.csv")
         dob = next(f for f in profile.fields if f.name == "dob")
         assert dob.format_pattern == "%Y-%m-%d"
 
@@ -257,7 +257,7 @@ class TestFieldStatsCarriesFormatHints:
                 "last_name": ["SMITH", "JONES", "WILLIAMS", "BROWN"],
             }
         )
-        profile = run_storm(df, "people.csv")
+        profile = profile_columns(df, "people.csv")
         f = next(fs for fs in profile.fields if fs.name == "last_name")
         assert f.casing_pattern == "upper"
 
@@ -267,6 +267,6 @@ class TestFieldStatsCarriesFormatHints:
                 "email": ["a@b.com", "c@d.org", "e@f.io", "g@h.co"],
             }
         )
-        profile = run_storm(df, "contacts.csv")
+        profile = profile_columns(df, "contacts.csv")
         e = next(f for f in profile.fields if f.name == "email")
         assert e.format_pattern is None

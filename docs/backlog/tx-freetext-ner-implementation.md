@@ -106,7 +106,7 @@ git commit -m "docs(ner): activation guide + text_redact NER smoke test (TX-1)"
 ```python
 # tests/unit/transforms/test_text_mask.py  (add)
 from decoy_engine.transforms.text_mask import mask_cell
-from decoy_engine.storm.detectors import Span
+from decoy_engine.detection.detectors import Span
 
 def test_injected_location_span_uses_location_default_not_redact():
     text = "Seen in Chicago last week."
@@ -157,7 +157,7 @@ Mirror the `text_redact` handler pattern into `_strategies/_text_mask.py`.
 ```python
 # tests/unit/execution/test_text_mask_ner.py
 from unittest.mock import patch
-from decoy_engine.storm.detectors import Span
+from decoy_engine.detection.detectors import Span
 
 def test_text_mask_routes_ner_person_to_faker():
     text = "Call Jane Doe today."
@@ -179,7 +179,7 @@ Copy the shape from `_text_redact.py:71-88,154-158`:
 
 ```python
 # _text_mask.py handler
-from decoy_engine.storm.ner import iter_ner_spans
+from decoy_engine.detection.ner import iter_ner_spans
 ner_cfg = provider_config.get("ner")
 def _spans_for(cell):
     if not ner_cfg:

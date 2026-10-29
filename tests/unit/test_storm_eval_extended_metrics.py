@@ -8,7 +8,7 @@ current fixture corpus so any detector change that moves them fails CI.
 Gate reference: ml-benchmarking-and-privacy.md §A.1, §A.7.
 """
 
-from decoy_engine.storm.eval import NO_DETECTOR, run_baseline
+from decoy_engine.profiling.eval import NO_DETECTOR, run_baseline
 
 
 class TestPerTypeF2:

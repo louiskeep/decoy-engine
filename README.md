@@ -95,7 +95,7 @@ is private and may change without a version bump.
 | `src/decoy_engine/generation/`             | `generate_tables`, composite providers, value pools.                     |
 | `src/decoy_engine/providers_v2/`           | Provider registry + identifier adapters (NPI, SSN, EIN, MRN, NDC).        |
 | `src/decoy_engine/relationships/`          | Relationship graph, namespace registry, orphan-FK policy.                 |
-| `src/decoy_engine/storm/`                  | Source profiling and PII detectors.                                       |
+| `src/decoy_engine/detection/`, `profiling/`, `verification/` | Source profiling, PII detectors, post-mask checks. |
 | `src/decoy_engine/sdk.py`                  | Public Connector SDK (`FileSource`, `FileSink`, capability flags).        |
 | `src/decoy_engine/connectors/`             | In-tree file connectors (`s3.py`, `gcs.py`, `sftp.py`).                   |
 | `tests/integration/golden/`                | Canonical end-to-end caller examples.                                    |

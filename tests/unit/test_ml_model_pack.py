@@ -24,8 +24,8 @@ from pathlib import Path
 
 import pytest
 
-from decoy_engine.storm.model_pack.loader import ModelPackLoader, ModelPackLoadError
-from decoy_engine.storm.model_pack.types import (
+from decoy_engine.profiling.model_pack.loader import ModelPackLoader, ModelPackLoadError
+from decoy_engine.profiling.model_pack.types import (
     FEATURE_SCHEMA_VERSION,
     PACK_FORMAT,
     ModelPackManifest,

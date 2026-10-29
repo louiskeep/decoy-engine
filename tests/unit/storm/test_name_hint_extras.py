@@ -1,6 +1,6 @@
 """Tests for the per-scan additive name-hint extras (ContextVar-backed).
 
-The shipped YAML library lives at decoy_engine/storm/name_hints/v1/ and
+The shipped YAML library lives at decoy_engine/detection/name_hints/v1/ and
 its coverage is pinned by tests/snapshots/test_name_hints_baseline.py.
 This file covers the OPT-IN per-scan additions the platform installs
 via the name_hint_extras() context manager when its
@@ -21,7 +21,7 @@ import threading
 
 import pytest
 
-from decoy_engine.storm.detectors import (
+from decoy_engine.detection.detectors import (
     _NAME_HINT_EXTRAS,
     hits_name_hint,
     name_hint_extras,

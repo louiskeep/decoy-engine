@@ -18,6 +18,7 @@ from typing import Any
 import pandas as pd
 import pyarrow as pa
 
+from decoy_engine.detection.detectors import _npi_valid
 from decoy_engine.execution import PandasExecutionAdapter
 from decoy_engine.generation.composite import load_locality_table
 from decoy_engine.plan import compile_plan
@@ -31,7 +32,6 @@ from decoy_engine.relationships._graph import (
 from decoy_engine.relationships._namespace import (
     build_namespace_registry,
 )
-from decoy_engine.storm.detectors import _npi_valid
 
 _VERSION = "0.1.0"
 

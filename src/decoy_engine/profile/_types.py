@@ -11,7 +11,7 @@ docs/v2/reviews/dennis-engine-v2-s1-spec-review-2026-05-26.md artifact.
 
 PIIClass enumerates the built-in STORM detector ids (resolution of M1).
 Custom-detector matches (CustomDetectorSpec ids in
-decoy_engine.storm.types) are not represented in this enum; columns
+decoy_engine.profiling.types) are not represented in this enum; columns
 matched only by a custom detector carry pii_class=None at the Profile
 layer. A V2+ extension can add a sibling custom_pii_class field if needed.
 """
@@ -27,7 +27,7 @@ class PIIClass(str, Enum):
     """Built-in STORM detector ids.
 
     Mirrors the detector_id values produced by every entry in
-    decoy_engine.storm.detectors.REGISTERED_DETECTORS. The enum and the
+    decoy_engine.detection.detectors.REGISTERED_DETECTORS. The enum and the
     registry are kept in sync by tests/unit/profile/test_pii_storm_sync.py
     which fails if a new STORM built-in lands without a matching enum
     member (resolution of slice-3 B1: first_name, last_name, address were

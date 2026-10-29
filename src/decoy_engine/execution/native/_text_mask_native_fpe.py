@@ -35,7 +35,7 @@ from typing import Any
 
 import pyarrow as pa
 
-from decoy_engine.storm.detectors import Span
+from decoy_engine.detection.detectors import Span
 from decoy_engine.transforms._text_mask_splice import splice_spans, warn_passthrough_unmatched
 from decoy_engine.transforms.fpe import FF1_TWEAK_SCOPE_TEXT_SPAN, build_ff1_tweak
 from decoy_engine.transforms.text_mask import _CHARSETS, _FPE_CONFIG, DETECTOR_DEFAULTS, _mask_span

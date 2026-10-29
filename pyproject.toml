@@ -531,7 +531,7 @@ ignore = [
 # loader by the _NAME_HINTS table; contextvars by the per-scan extras layer;
 # dataclass by the Span/iter_spans block), each with its own explanatory
 # header. Deliberate narrative layout, not a top-of-file omission.
-"src/decoy_engine/storm/detectors.py" = ["E402"]
+"src/decoy_engine/detection/detectors.py" = ["E402"]
 
 # Legacy modules scheduled for V2.1 hard deletion (per the V2 sprint
 # plan + v2-roadmap Phase 1 Sprint 5). Each entry deletes with its
@@ -840,7 +840,7 @@ module = [
     "mimesis",
     "mimesis.*",
     # spacy (MIT) is the optional NER backend for text_redact (the
-    # `ner` extra); imported function-locally in storm.ner, not
+    # `ner` extra); imported function-locally in detection.ner, not
     # installed in default-extras CI.
     "spacy",
     "spacy.*",
@@ -867,14 +867,14 @@ module = [
     "google.cloud",
     "google.cloud.*",
     # scikit-learn ships no py.typed marker; imported lazily in
-    # storm.model_pack.trainer and storm.eval.split (ml extra only).
+    # profiling.model_pack.trainer and profiling.eval.split (ml extra only).
     "sklearn",
     "sklearn.*",
     # joblib ships no py.typed marker; imported lazily in
-    # storm.model_pack.trainer and storm.model_pack.loader (ml extra only).
+    # profiling.model_pack.trainer and profiling.model_pack.loader (ml extra only).
     "joblib",
     # lightgbm ships no py.typed marker; imported lazily in
-    # storm.model_pack.trainer (ml extra only).
+    # profiling.model_pack.trainer (ml extra only).
     "lightgbm",
     "lightgbm.*",
     # python-stdnum ships no py.typed marker / stub package.

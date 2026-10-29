@@ -73,6 +73,7 @@ from decoy_engine.data_discovery import (
     DiscoverySqlError,
     run_discovery_sql,
 )
+from decoy_engine.detection import DetectorMatch
 from decoy_engine.determinism import (
     SEED_PROTOCOL_VERSION,
     DeterminismError,
@@ -164,6 +165,7 @@ from decoy_engine.plan.validate import (
 )
 from decoy_engine.profile._fixed_width_reader import read_fixed_width
 from decoy_engine.profile._fixed_width_writer import write_fixed_width
+from decoy_engine.profiling import ColumnProfile, FieldStats, SentinelFlag, profile_columns
 from decoy_engine.progress import (
     CallbackSink,
     PhaseEvent,
@@ -246,7 +248,6 @@ from decoy_engine.sdk import (
     TransientError,
     WriteResult,
 )
-from decoy_engine.storm import DetectorMatch, FieldStats, SentinelFlag, StormProfile, run_storm
 from decoy_engine.unmask import UnmaskColumnReport, UnmaskResult, unmask_pipeline
 from decoy_engine.validation import validate_config
 from decoy_engine.validation.post import (
@@ -316,6 +317,7 @@ __all__ = [
     "CapacityVerdict",
     "CardinalityMode",
     "CheckResult",
+    "ColumnProfile",
     "CompositeAdapter",
     "CompositeCoherenceReport",
     "CompositeCustom",
@@ -388,7 +390,6 @@ __all__ = [
     "SecretKeyProvider",
     "SeedKeyProvider",
     "SentinelFlag",
-    "StormProfile",
     "StrategyError",
     "StructuredEvents",
     "StructuredEventsSink",
@@ -439,6 +440,7 @@ __all__ = [
     "load_vault",
     "make_key_resolver",
     "native_companion_status",
+    "profile_columns",
     "read_fixed_width",
     "register_faker_list_provider",
     "register_faker_provider",
@@ -448,7 +450,6 @@ __all__ = [
     "run_mask_chunked",
     "run_mask_pipeline_chunked",
     "run_pipeline",
-    "run_storm",
     "select_execution_adapter",
     "unmask_pipeline",
     "unregister_faker_provider",

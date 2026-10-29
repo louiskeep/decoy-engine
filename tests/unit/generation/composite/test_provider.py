@@ -12,9 +12,9 @@ from __future__ import annotations
 
 import pandas as pd
 
+from decoy_engine.detection.detectors import _npi_valid
 from decoy_engine.generation.composite._provider import CompositeProvider
 from decoy_engine.providers_v2._adapter import ProviderSpec
-from decoy_engine.storm.detectors import _npi_valid
 
 _SEED = (0x0123456789).to_bytes(8, "big")
 

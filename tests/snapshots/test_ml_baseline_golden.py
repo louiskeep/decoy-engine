@@ -24,7 +24,7 @@ import json
 import os
 from pathlib import Path
 
-from decoy_engine.storm.eval import run_baseline
+from decoy_engine.profiling.eval import run_baseline
 
 _GOLDEN_SHA256 = Path(__file__).parent / "golden" / "ml_baseline" / "baseline.sha256"
 _REPORT_PATH = Path(__file__).parents[2] / "docs" / "v2" / "ml" / "baseline-report.json"

@@ -21,8 +21,8 @@ import pandas as pd
 import pyarrow as pa
 
 from decoy_engine.config._pipeline import PipelineConfig
+from decoy_engine.detection.ner import DEFAULT_NER_MODEL, model_installed, spacy_installed
 from decoy_engine.execution._pipeline import run_pipeline
-from decoy_engine.storm.ner import DEFAULT_NER_MODEL, model_installed, spacy_installed
 
 if not spacy_installed():
     print(

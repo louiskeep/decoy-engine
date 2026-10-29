@@ -96,7 +96,7 @@ _text_mask.py``) and its out-of-core twin (``execution/out_of_core/
 _mask_group_c.py``) opt-in NER the same way ``text_redact`` does (WS2): resolve
 ``storm.ner.iter_ner_spans`` and pass the result as this module's ``extra_spans``.
 No new methodology here -- it reuses the spaCy NER pattern already registered for
-``storm/ner.py`` and this module's own already-registered HMAC-SHA256 keyed span
+``detection/ner.py`` and this module's own already-registered HMAC-SHA256 keyed span
 determinism. The one addition specific to this module is a ``location`` entry in
 ``DETECTOR_DEFAULTS`` (below): NER emits ``location`` spans (GPE/LOC/FAC) but the
 table had no default for them, so they silently fell to ``redact`` instead of
@@ -112,9 +112,9 @@ from collections.abc import Sequence
 from datetime import datetime, timedelta
 from typing import Any
 
+from decoy_engine.detection.detectors import Span, iter_spans
 from decoy_engine.determinism import derive
 from decoy_engine.errors import FpeChecksumError, FpeUnencryptableError
-from decoy_engine.storm.detectors import Span, iter_spans
 from decoy_engine.transforms._faker_span import shared_faker
 from decoy_engine.transforms._text_mask_splice import splice_spans, warn_passthrough_unmatched
 from decoy_engine.transforms.date_shift import _COMMON_FORMATS

@@ -2,7 +2,7 @@
 
 Pattern: Parquet key/value metadata (``pyarrow.Table.schema.metadata``) carries
 the provenance block, imitating
-:class:`decoy_engine.storm.model_pack.types.ModelPackManifest` -- a small,
+:class:`decoy_engine.profiling.model_pack.types.ModelPackManifest` -- a small,
 frozen, JSON-serializable manifest dataclass with a typed constructor and a
 dict-export method. ``ModelPackManifest.from_dict`` reads a manifest.json
 dict; :meth:`CodeSetProvenance.from_parquet_metadata` plays the same role for

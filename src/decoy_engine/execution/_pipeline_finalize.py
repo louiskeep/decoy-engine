@@ -483,7 +483,7 @@ def compute_storm_postmask(
     """
     if not config.get("run_storm"):
         return
-    from decoy_engine.storm.postmask import run_storm_post_mask
+    from decoy_engine.verification import run_post_mask
 
     table_kinds = execution_result.table_kinds or {}
     mask_tables = [
@@ -493,7 +493,7 @@ def compute_storm_postmask(
     ]
     if not mask_tables:
         return
-    report = run_storm_post_mask(
+    report = run_post_mask(
         source_frames={name: sources[name].to_pandas() for name in mask_tables},
         output_frames={name: execution_result.outputs[name].to_pandas() for name in mask_tables},
         config=dict(config),

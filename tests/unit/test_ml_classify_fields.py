@@ -71,7 +71,7 @@ def test_classify_fields_output_contains_no_raw_cell_values() -> None:
     The output dict is serialised to JSON and checked against a sample of the
     actual cell values from the input DataFrame.
     """
-    from decoy_engine.storm.model_pack.classify import classify_fields
+    from decoy_engine.profiling.model_pack.classify import classify_fields
 
     # Create a small DataFrame with distinctive PII-like values.
     df = pd.DataFrame(
@@ -110,7 +110,7 @@ def test_classify_fields_returns_none_when_ml_disabled(
 ) -> None:
     """classify_fields returns None when DECOY_ML_DISABLED=1 (off-by-default)."""
     monkeypatch.setenv("DECOY_ML_DISABLED", "1")
-    from decoy_engine.storm.model_pack.classify import classify_fields
+    from decoy_engine.profiling.model_pack.classify import classify_fields
 
     df = pd.DataFrame({"col_a": ["foo", "bar"]})
     result = classify_fields(df)
@@ -119,7 +119,7 @@ def test_classify_fields_returns_none_when_ml_disabled(
 
 def test_classify_fields_returns_none_when_pack_missing(tmp_path: Path) -> None:
     """classify_fields returns None (not raises) when pack_dir is missing."""
-    from decoy_engine.storm.model_pack.classify import classify_fields
+    from decoy_engine.profiling.model_pack.classify import classify_fields
 
     df = pd.DataFrame({"col_a": ["foo", "bar"]})
     result = classify_fields(df, pack_dir=tmp_path / "nonexistent")
@@ -138,7 +138,7 @@ def test_classify_fields_rejects_unsigned_external_pack_dir(tmp_path: Path) -> N
     """
     import shutil
 
-    from decoy_engine.storm.model_pack.classify import classify_fields
+    from decoy_engine.profiling.model_pack.classify import classify_fields
 
     external = tmp_path / "external-pack"
     shutil.copytree(_LIVE_PACK, external)  # a copy of the (unsigned) first-party pack
@@ -165,7 +165,7 @@ _EXPECTED_KEYS = {
 @_needs_live_pack
 def test_classify_fields_output_shape() -> None:
     """Each column result has exactly the required keys (no extra, no missing)."""
-    from decoy_engine.storm.model_pack.classify import classify_fields
+    from decoy_engine.profiling.model_pack.classify import classify_fields
 
     df = pd.DataFrame(
         {
@@ -207,7 +207,7 @@ def test_classify_fields_output_shape() -> None:
 @_needs_live_pack
 def test_classify_fields_empty_dataframe_returns_empty_dict() -> None:
     """An empty DataFrame (0 columns) returns {} not None."""
-    from decoy_engine.storm.model_pack.classify import classify_fields
+    from decoy_engine.profiling.model_pack.classify import classify_fields
 
     df = pd.DataFrame()
     result = classify_fields(df)
@@ -220,7 +220,7 @@ def test_classify_fields_empty_dataframe_returns_empty_dict() -> None:
 @_needs_live_pack
 def test_classify_fields_is_deterministic() -> None:
     """Same DataFrame + same pack -> identical result on two calls."""
-    from decoy_engine.storm.model_pack.classify import classify_fields
+    from decoy_engine.profiling.model_pack.classify import classify_fields
 
     df = pd.DataFrame(
         {
