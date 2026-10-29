@@ -458,9 +458,18 @@
        "strategy": "redact"
       }
      ],
+     "decline_records": [
+      {
+       "code": "crypto_ext_unavailable",
+       "column": null,
+       "table": "t",
+       "table_wide": true
+      }
+     ],
      "native_admitted": false,
      "pandas_read_passthrough": [],
      "reroute_reason": "crypto_extension_unavailable",
+     "strategy_branch_calls": {},
      "table": "t"
     },
     "execution": {
@@ -544,9 +553,18 @@
        "strategy": "bucket_perturb"
       }
      ],
+     "decline_records": [
+      {
+       "code": "crypto_ext_unavailable",
+       "column": null,
+       "table": "t",
+       "table_wide": true
+      }
+     ],
      "native_admitted": false,
      "pandas_read_passthrough": [],
      "reroute_reason": "crypto_extension_unavailable",
+     "strategy_branch_calls": {},
      "table": "t"
     },
     "execution": {
@@ -622,9 +640,18 @@
         "strategy": "redact"
        }
       ],
+      "decline_records": [
+       {
+        "code": "crypto_ext_unavailable",
+        "column": null,
+        "table": "big",
+        "table_wide": true
+       }
+      ],
       "native_admitted": false,
       "pandas_read_passthrough": [],
       "reroute_reason": "crypto_extension_unavailable",
+      "strategy_branch_calls": {},
       "table": "big"
      }
     },
@@ -645,12 +672,52 @@
   "native_when": {
    "metrics": {
     "auto_chunk": {
-     "chunk_count": null,
+     "chunk_count": 3,
      "chunk_size_rows": 16,
-     "mode": "full_frame",
-     "reason": "when_predicate_not_chunk_stable: column(s) val carry a `when` predicate, which is evaluated per frame; per-chunk evaluation is a different scope than the whole frame",
+     "input": {
+      "mode": "resident",
+      "reason": "resident_source"
+     },
+     "lane": "dispatcher",
+     "lane_reason": null,
+     "mode": "chunked",
+     "native_threads": 1,
+     "output": {
+      "mode": "resident",
+      "reason": "no_sink"
+     },
+     "reason": "single mask table 'tbl' with only chunk-safe (value-keyed) scalar strategies, no FK edges, and no generate tables, on the pandas substrate. source holds 40 rows, at or above the auto-chunk threshold (10), with chunk-stable dtypes.",
      "source_rows": 40,
      "threshold_rows": 10
+    },
+    "chunked_route": {
+     "columns": [
+      {
+       "calls": 3,
+       "column": "val",
+       "executed_backend": "arrow_python",
+       "planned_backend": "arrow_python",
+       "strategy": "redact"
+      },
+      {
+       "calls": 3,
+       "column": "amount",
+       "executed_backend": "arrow_python",
+       "planned_backend": "arrow_python",
+       "strategy": "passthrough"
+      }
+     ],
+     "decline_records": [],
+     "native_admitted": true,
+     "pandas_read_passthrough": [
+      "amount"
+     ],
+     "reroute_reason": null,
+     "strategy_branch_calls": {
+      "passthrough": 3,
+      "redact": 3
+     },
+     "table": "tbl"
     },
     "execution": {
      "eviction": "none",
@@ -661,7 +728,7 @@
     }
    },
    "outputs": {
-    "tbl": "276d90c6ec8fe2e1b168c094d6c37da9dc20e201329fc0e971f7e1f0ad638a08"
+    "tbl": "ad53f4c412be129ccf2f543c905aabdc4bff354dab812af08c9db31fd2446d24"
    },
    "row_errors": 0
   },
@@ -743,9 +810,18 @@
        "strategy": "redact"
       }
      ],
+     "decline_records": [
+      {
+       "code": "crypto_ext_unavailable",
+       "column": null,
+       "table": "t",
+       "table_wide": true
+      }
+     ],
      "native_admitted": false,
      "pandas_read_passthrough": [],
      "reroute_reason": "crypto_extension_unavailable",
+     "strategy_branch_calls": {},
      "table": "t"
     },
     "execution": {
@@ -804,9 +880,18 @@
        "strategy": "redact"
       }
      ],
+     "decline_records": [
+      {
+       "code": "crypto_ext_unavailable",
+       "column": null,
+       "table": "t",
+       "table_wide": true
+      }
+     ],
      "native_admitted": false,
      "pandas_read_passthrough": [],
      "reroute_reason": "crypto_extension_unavailable",
+     "strategy_branch_calls": {},
      "table": "t"
     },
     "execution": {
