@@ -756,3 +756,14 @@ E3b (2026-10-24): +1 line passing `run_storm=bool(config.get("run_storm"))` into
 the single `decide_execution_route` call site. Decomposition target unchanged:
 split the probe-recovery resolver into its own module when next touched.
 
+## E1 rebase onto 0.15.x (2026-10-29)
+
+Census values re-set at the exact LOC after merging `main` into the E1 branch; each growth is the
+policy port layered on top of main's own change to the same file:
+
+- `execution/_isolated_run.py` 608 -> 637: the ambient guard for the subprocess route.
+- `execution/_pipeline_routing_signals.py` 638 -> 644: the policy-bound lazy-source probe.
+- `execution/_sequential.py` 691 -> 694 and `execution/native/_chunked_entry.py` 680 -> 683: the
+  `file_access=` keyword and its `entry_point` decorator.
+- `profile/_readers.py` 604 -> 520: main's CSV cluster split now carries the policy-bound
+  `CsvFileSource` in `_readers_csv.py`, with the `PolicyBound` base in `_policy_bound.py`.

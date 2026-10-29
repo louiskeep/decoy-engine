@@ -236,12 +236,17 @@ class LazySource:
             FileRequest(FileRole.SOURCE, "read", str(self.path), self.field_key)
         )
 
-    def iter_batches(self, batch_rows: int) -> Iterator[pa.RecordBatch]:
-        """Yield the file's rows as batches of at most `batch_rows` each."""
+    def iter_batches(
+        self, batch_rows: int, columns: list[str] | None = None
+    ) -> Iterator[pa.RecordBatch]:
+        """Yield the file's rows as batches of at most `batch_rows` each, optionally
+        projected to `columns`."""
         handle = self._handle()
         try:
             parquet_file = arrow_adapter.parquet_file(handle)
-            yield from arrow_adapter.iter_batches(handle, parquet_file, batch_size=batch_rows)
+            yield from arrow_adapter.iter_batches(
+                handle, parquet_file, batch_size=batch_rows, columns=columns
+            )
         finally:
             handle.close()
 
@@ -326,11 +331,11 @@ class LazySource:
         finally:
             handle.close()
 
-    def to_table(self) -> pa.Table:
-        """Read the whole file into memory. Fallback for small jobs only."""
+    def to_table(self, columns: list[str] | None = None) -> pa.Table:
+        """Read the file (or just `columns`) into memory. Fallback for small jobs only."""
         handle = self._handle()
         try:
-            return arrow_adapter.read_table(handle)
+            return arrow_adapter.read_table(handle, columns=columns)
         finally:
             handle.close()
 

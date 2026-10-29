@@ -54,6 +54,7 @@ from typing import Any
 
 import pandas as pd
 
+from decoy_engine import fileaccess
 from decoy_engine.config._fixed_width import FixedWidthColumn, FixedWidthLayout
 from decoy_engine.errors import FixedWidthWriteError
 from decoy_engine.profile._fixed_width_reader import (
@@ -227,6 +228,8 @@ def write_fixed_width(
             failure is outside the data-error guarantee and its traceback frames
             may hold already-rendered records -- see the security doc).
     """
+    # `path` is caller-named; a strict policy cannot vouch for it, so fail closed before any I/O.
+    fileaccess.require_ambient("write_fixed_width")
     if not isinstance(frame, pd.DataFrame):
         raise TypeError(f"frame must be a pandas DataFrame, got {type(frame).__name__}")
     path = os.fspath(path)

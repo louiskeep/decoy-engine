@@ -65,13 +65,13 @@ MAX = 700
 # docs/decisions/module-size-census-history.md.
 ALLOWLIST: dict[str, int] = {
     # sampler start/finish and evidence threading in _spawn_and_classify; split the spawn/classify half into _isolated_spawn.py.
-    "src/decoy_engine/execution/_isolated_run.py": 608,
+    "src/decoy_engine/execution/_isolated_run.py": 637,
     # bounded-eligible fit rule, the fk-dtype retention branch and the D3a validator admission in decide_execution_route; split the route-priority docstring into the plan doc.
     "src/decoy_engine/execution/_pipeline_routing.py": 700,
     # wiring of the fk-dtype hazard and D3a validator signals into the one routing call site, plus
     # the B4 source-type admission threading (_source_arrow_types + the source_types param); split
     # the probe-recovery resolver into its own module.
-    "src/decoy_engine/execution/_pipeline_routing_signals.py": 638,
+    "src/decoy_engine/execution/_pipeline_routing_signals.py": 644,
     # fan-in guard on the budget resolver; split the disk-preflight helpers into _disk_budget.py.
     "src/decoy_engine/execution/out_of_core/_budget.py": 608,
     # float FK key token pricing; split the disk-width helpers into _spill_widths.py.
@@ -97,7 +97,7 @@ ALLOWLIST: dict[str, int] = {
     # dispatch entry plus the table-keyed params, the job-seed hand-off and the eager string-pool
     # check for the position-keyed faker; dense exception, the pool check itself lives in _chunk_masking.
     # OBS-2: threads the decline records and branch-call snapshot onto each chunk's evidence.
-    "src/decoy_engine/execution/native/_chunked_entry.py": 680,
+    "src/decoy_engine/execution/native/_chunked_entry.py": 683,
     # OBS-2b: one structured decline record paired with each existing decision source; the record
     # types live in _route_decline_codes.py. Split the static admission pass out next.
     "src/decoy_engine/execution/native/_dispatch.py": 666,
@@ -117,7 +117,7 @@ ALLOWLIST: dict[str, int] = {
     "src/decoy_engine/execution/_sequential_native.py": 699,
     # sequential FK route threading; split the per-table mask/quarantine loop.
     # cross-column V1 folds joint_mask key_by into the source-anchor build (a comment, no new logic).
-    "src/decoy_engine/execution/_sequential.py": 691,
+    "src/decoy_engine/execution/_sequential.py": 694,
     # transactional publish hardening and row mask; split the publish cluster.
     "src/decoy_engine/quarantine.py": 638,
     # code_set provenance and FF1 notice plumbing through the streaming runner.

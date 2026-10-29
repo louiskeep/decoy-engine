@@ -27,13 +27,17 @@ local_constructors = [
 # Modules whose registry entries may be `ambient_only`: they act on a caller path only after
 # the entry point refused every policy but the ambient CLI one.
 ambient_only_modules = [
+  "decoy_engine/connectors/postgres_snapshot.py",
   "decoy_engine/execution/_isolated_commit.py",
   "decoy_engine/execution/_isolated_run.py",
   "decoy_engine/execution/out_of_core/_scratch.py",
+  "decoy_engine/profile/_fixed_width_writer.py",
 ]
 
 # Modules that must call `fileaccess.require_ambient`, the guard the ambient-only entries rely on.
 ambient_guards = [
+  "decoy_engine/connectors/postgres_snapshot.py",
   "decoy_engine/execution/_isolated_run.py",
   "decoy_engine/execution/out_of_core/_scratch.py",
+  "decoy_engine/profile/_fixed_width_writer.py",
 ]

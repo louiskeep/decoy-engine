@@ -2,7 +2,87 @@
 # `ordinal` is the index of the call among identical sinks in the function. An entry may be
 # removed freely; adding one needs a `rule` (how the path is built), an `owner` and a `reason`.
 # `ambient_only` marks a caller-derived path that is reached only after `require_ambient`.
-# Count: 164 (asserted by the sentry).
+# Count: 193 (asserted by the sentry).
+
+[[entry]]
+module = "decoy_engine/connectors/postgres_snapshot.py"
+function = "_open_connection"
+sink = "Path.mkdir"
+ordinal = 0
+rule = "path derived from the caller's ``dest_dir` or `config.temp_directory``; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
+owner = "cam"
+reason = "the Postgres snapshot primitive stages under caller-named directories a strict policy cannot vouch for, so a strict policy never gets here"
+ambient_only = true
+
+[[entry]]
+module = "decoy_engine/connectors/postgres_snapshot.py"
+function = "_open_connection"
+sink = "os.chmod"
+ordinal = 0
+rule = "path derived from the caller's ``dest_dir` or `config.temp_directory``; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
+owner = "cam"
+reason = "the Postgres snapshot primitive stages under caller-named directories a strict policy cannot vouch for, so a strict policy never gets here"
+ambient_only = true
+
+[[entry]]
+module = "decoy_engine/connectors/postgres_snapshot.py"
+function = "snapshot_tables_to_parquet"
+sink = "Path.mkdir"
+ordinal = 0
+rule = "path derived from the caller's ``dest_dir` or `config.temp_directory``; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
+owner = "cam"
+reason = "the Postgres snapshot primitive stages under caller-named directories a strict policy cannot vouch for, so a strict policy never gets here"
+ambient_only = true
+
+[[entry]]
+module = "decoy_engine/connectors/postgres_snapshot.py"
+function = "snapshot_tables_to_parquet"
+sink = "Path.mkdir"
+ordinal = 1
+rule = "path derived from the caller's ``dest_dir` or `config.temp_directory``; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
+owner = "cam"
+reason = "the Postgres snapshot primitive stages under caller-named directories a strict policy cannot vouch for, so a strict policy never gets here"
+ambient_only = true
+
+[[entry]]
+module = "decoy_engine/connectors/postgres_snapshot.py"
+function = "snapshot_tables_to_parquet"
+sink = "os.replace"
+ordinal = 0
+rule = "path derived from the caller's ``dest_dir` or `config.temp_directory``; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
+owner = "cam"
+reason = "the Postgres snapshot primitive stages under caller-named directories a strict policy cannot vouch for, so a strict policy never gets here"
+ambient_only = true
+
+[[entry]]
+module = "decoy_engine/connectors/postgres_snapshot.py"
+function = "snapshot_tables_to_parquet"
+sink = "shutil.rmtree"
+ordinal = 0
+rule = "path derived from the caller's ``dest_dir` or `config.temp_directory``; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
+owner = "cam"
+reason = "the Postgres snapshot primitive stages under caller-named directories a strict policy cannot vouch for, so a strict policy never gets here"
+ambient_only = true
+
+[[entry]]
+module = "decoy_engine/connectors/postgres_snapshot.py"
+function = "snapshot_tables_to_parquet"
+sink = "shutil.rmtree"
+ordinal = 1
+rule = "path derived from the caller's ``dest_dir` or `config.temp_directory``; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
+owner = "cam"
+reason = "the Postgres snapshot primitive stages under caller-named directories a strict policy cannot vouch for, so a strict policy never gets here"
+ambient_only = true
+
+[[entry]]
+module = "decoy_engine/connectors/postgres_snapshot.py"
+function = "snapshot_tables_to_parquet"
+sink = "shutil.rmtree"
+ordinal = 2
+rule = "path derived from the caller's ``dest_dir` or `config.temp_directory``; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
+owner = "cam"
+reason = "the Postgres snapshot primitive stages under caller-named directories a strict policy cannot vouch for, so a strict policy never gets here"
+ambient_only = true
 
 [[entry]]
 module = "decoy_engine/connectors/sftp.py"
@@ -117,6 +197,15 @@ ordinal = 0
 rule = "`/proc/<pid>/status` or `/proc/self/status`, a constant procfs path"
 owner = "cam"
 reason = "process memory readout for the governor; no caller or config value reaches the path"
+
+[[entry]]
+module = "decoy_engine/execution/_isolated_memwatch.py"
+function = "read_vm_fields"
+sink = "open"
+ordinal = 0
+rule = "`/proc/<pid>/status`, a constant procfs path"
+owner = "cam"
+reason = "process memory readout for the isolated-run sampler; no caller or config value reaches the path"
 
 [[entry]]
 module = "decoy_engine/execution/_isolated_run.py"
@@ -620,6 +709,87 @@ owner = "cam"
 reason = "engine-owned spill and relation files; never a caller or config path"
 
 [[entry]]
+module = "decoy_engine/execution/out_of_core/_multi_parent.py"
+function = "resolve_incoming"
+sink = "Path.unlink"
+ordinal = 0
+rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+owner = "cam"
+reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_multi_parent.py"
+function = "merge_parent_relations"
+sink = "Path.mkdir"
+ordinal = 0
+rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+owner = "cam"
+reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_multi_parent.py"
+function = "merge_parent_relations"
+sink = "duckdb.connection.execute"
+ordinal = 0
+rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+owner = "cam"
+reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_multi_parent.py"
+function = "merge_parent_relations"
+sink = "duckdb.connection.execute"
+ordinal = 1
+rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+owner = "cam"
+reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_multi_parent.py"
+function = "merge_parent_relations"
+sink = "duckdb.connection.execute"
+ordinal = 2
+rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+owner = "cam"
+reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_multi_parent.py"
+function = "merge_parent_relations"
+sink = "Path.unlink"
+ordinal = 0
+rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+owner = "cam"
+reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_multi_parent.py"
+function = "merge_parent_relations"
+sink = "Path.unlink"
+ordinal = 1
+rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+owner = "cam"
+reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_multi_parent.py"
+function = "merge_parent_relations"
+sink = "Path.unlink"
+ordinal = 2
+rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+owner = "cam"
+reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_multi_parent.py"
+function = "_masked_types"
+sink = "pyarrow.parquet.read_metadata"
+ordinal = 0
+rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+owner = "cam"
+reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
 module = "decoy_engine/execution/out_of_core/_payload_store.py"
 function = "SpillPayloadStore.append"
 sink = "Path.mkdir"
@@ -695,6 +865,33 @@ reason = "engine-owned spill and relation files; never a caller or config path"
 module = "decoy_engine/execution/out_of_core/_payload_store.py"
 function = "SpillChildKeys.open_reader"
 sink = "pyarrow.ipc.open_stream"
+ordinal = 0
+rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+owner = "cam"
+reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_payload_store.py"
+function = "SpillPayloadStore.iter_batches"
+sink = "pyarrow.OSFile"
+ordinal = 0
+rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+owner = "cam"
+reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_payload_store.py"
+function = "RawParentKeySpill.__iter__"
+sink = "pyarrow.OSFile"
+ordinal = 0
+rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
+owner = "cam"
+reason = "engine-owned spill and relation files; never a caller or config path"
+
+[[entry]]
+module = "decoy_engine/execution/out_of_core/_payload_store.py"
+function = "SpillChildKeys.open_reader"
+sink = "pyarrow.OSFile"
 ordinal = 0
 rule = "path under the scratch root the out-of-core runner created with `tempfile.mkdtemp`, named by an opaque per-run id (t0000, e000000, s0000, a uuid), never by a table, column or edge name"
 owner = "cam"
@@ -1289,6 +1486,42 @@ owner = "cam"
 reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
 
 [[entry]]
+module = "decoy_engine/io/bounded_reader.py"
+function = "csv_convert_options"
+sink = "pyarrow.csv.ConvertOptions"
+ordinal = 0
+rule = "pyarrow CSV option constructors and a parse of an in-memory `io.BytesIO` payload; the source file is opened through the policy in the same function"
+owner = "cam"
+reason = "no path reaches this call"
+
+[[entry]]
+module = "decoy_engine/io/bounded_reader.py"
+function = "iter_csv_chunks"
+sink = "pyarrow.csv.ParseOptions"
+ordinal = 0
+rule = "pyarrow CSV option constructors and a parse of an in-memory `io.BytesIO` payload; the source file is opened through the policy in the same function"
+owner = "cam"
+reason = "no path reaches this call"
+
+[[entry]]
+module = "decoy_engine/io/bounded_reader.py"
+function = "iter_csv_chunks.flush"
+sink = "pyarrow.csv.ReadOptions"
+ordinal = 0
+rule = "pyarrow CSV option constructors and a parse of an in-memory `io.BytesIO` payload; the source file is opened through the policy in the same function"
+owner = "cam"
+reason = "no path reaches this call"
+
+[[entry]]
+module = "decoy_engine/io/bounded_reader.py"
+function = "iter_csv_chunks.flush"
+sink = "pyarrow.csv.read_csv"
+ordinal = 0
+rule = "pyarrow CSV option constructors and a parse of an in-memory `io.BytesIO` payload; the source file is opened through the policy in the same function"
+owner = "cam"
+reason = "no path reaches this call"
+
+[[entry]]
 module = "decoy_engine/plan/_serialize.py"
 function = "plan_from_yaml"
 sink = "yaml.safe_load"
@@ -1377,6 +1610,46 @@ ordinal = 0
 rule = "the builtin `open` handed to `handle.open_binary`, which calls it with the handle's own path under the ambient policy and ignores it under a strict one"
 owner = "cam"
 reason = "keeps the module-level `open` seam an existing test patches, with no path of its own"
+
+[[entry]]
+module = "decoy_engine/profile/_fixed_width_writer.py"
+function = "_fsync_dir"
+sink = "os.open"
+ordinal = 0
+rule = "path derived from the caller's ``path``; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
+owner = "cam"
+reason = "`write_fixed_width` writes a caller-named file a strict policy cannot vouch for, so a strict policy never gets here"
+ambient_only = true
+
+[[entry]]
+module = "decoy_engine/profile/_fixed_width_writer.py"
+function = "_write_all"
+sink = "tempfile.mkstemp"
+ordinal = 0
+rule = "path derived from the caller's ``path``; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
+owner = "cam"
+reason = "`write_fixed_width` writes a caller-named file a strict policy cannot vouch for, so a strict policy never gets here"
+ambient_only = true
+
+[[entry]]
+module = "decoy_engine/profile/_fixed_width_writer.py"
+function = "_write_all"
+sink = "os.replace"
+ordinal = 0
+rule = "path derived from the caller's ``path``; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
+owner = "cam"
+reason = "`write_fixed_width` writes a caller-named file a strict policy cannot vouch for, so a strict policy never gets here"
+ambient_only = true
+
+[[entry]]
+module = "decoy_engine/profile/_fixed_width_writer.py"
+function = "_silent_unlink"
+sink = "os.unlink"
+ordinal = 0
+rule = "path derived from the caller's ``path``; reached only after `fileaccess.require_ambient` refused every policy but the ambient one"
+owner = "cam"
+reason = "`write_fixed_width` writes a caller-named file a strict policy cannot vouch for, so a strict policy never gets here"
+ambient_only = true
 
 [[entry]]
 module = "decoy_engine/quality/dp_provenance.py"

@@ -55,6 +55,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 
+from decoy_engine import fileaccess
 from decoy_engine.sdk import PermanentError
 
 __all__ = [
@@ -213,14 +214,13 @@ def _lit(text: str) -> str:
 
 
 def _open_connection(config: PostgresSnapshotConfig, spill_dir: Path) -> Any:
-    import duckdb
+    from decoy_engine.fileaccess.adapters import duckdb as duckdb_adapter
 
     spill_dir.mkdir(parents=True, exist_ok=True)
     os.chmod(spill_dir, 0o700)
     try:
-        conn = duckdb.connect(
-            database=":memory:",
-            config={
+        conn = duckdb_adapter.connect_internal(
+            {
                 "temp_directory": str(spill_dir),
                 "memory_limit": config.memory_limit,
                 "threads": config.threads,
@@ -436,6 +436,8 @@ def snapshot_tables_to_parquet(
     On any failure, timeout, or interrupt nothing is published and every
     staged and spill file is removed.
     """
+    # dest_dir and config.temp_directory are caller-named paths a strict policy cannot vouch for.
+    fileaccess.require_ambient("snapshot_tables_to_parquet")
     if not selections:
         raise PostgresSnapshotError("no_selections")
     keys = [s.key for s in selections]

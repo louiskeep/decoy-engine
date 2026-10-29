@@ -15,7 +15,6 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 
 import pyarrow as pa
-import pyarrow.parquet as pq
 
 from decoy_engine.execution._guards import null_bearing_int_candidates, null_bearing_int_error
 from decoy_engine.execution._runner import WorkNode
@@ -30,14 +29,10 @@ def _lazy_has_null(source: LazySource, column: str, footer: dict[str, int | None
     known = footer.get(column)
     if known is not None:
         return known > 0
-    parquet_file = pq.ParquetFile(source.path)
-    try:
-        for batch in parquet_file.iter_batches(batch_size=_SCAN_BATCH_ROWS, columns=[column]):
-            if batch.column(0).null_count > 0:
-                return True
-    finally:
-        parquet_file.close()
-    return False
+    return any(
+        batch.column(0).null_count > 0
+        for batch in source.iter_batches(_SCAN_BATCH_ROWS, columns=[column])
+    )
 
 
 def reject_null_bearing_int_ooc(
