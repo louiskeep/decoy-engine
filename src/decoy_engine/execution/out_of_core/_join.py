@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Final
 
 import pyarrow as pa
 
+from decoy_engine import reasons
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._fk_keys import (
     FK_KEY_DTYPE_UNSUPPORTED_CODE,
@@ -44,7 +45,7 @@ _JOIN_BATCH_ROWS: Final = 65_536
 def orphan_fk_warning(edge: RelationshipEdge, orphan_count: int) -> QualityWarning:
     """The WARN-policy warning, shared so every join surface reports one shape."""
     return QualityWarning(
-        code="orphan_fk",
+        code=reasons.warning.ORPHAN_FK,
         provider=edge.namespace,
         column=",".join(edge.child_columns),
         detail={
@@ -79,13 +80,13 @@ def mask_child_fk(
     """
     if edge.orphan_policy is OrphanPolicy.REMAP and remap_values is None:
         raise ExecutionError(
-            code="out_of_core_remap_values_missing",
+            code=reasons.runtime.OUT_OF_CORE_REMAP_VALUES_MISSING,
             message="orphan_policy='remap' requires precomputed remap values.",
         )
     for child_col in edge.child_columns:
         if child_col not in child.column_names:
             raise ExecutionError(
-                code="out_of_core_child_column_missing",
+                code=reasons.runtime.OUT_OF_CORE_CHILD_COLUMN_MISSING,
                 message=f"child source table has no column {child_col!r}.",
             )
 
@@ -93,7 +94,7 @@ def mask_child_fk(
     for child_col in edge.child_columns:
         if child_col not in source_table.column_names:
             raise ExecutionError(
-                code="out_of_core_child_column_missing",
+                code=reasons.runtime.OUT_OF_CORE_CHILD_COLUMN_MISSING,
                 message=f"child source table has no column {child_col!r}.",
             )
 

@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
+from decoy_engine import reasons
 from decoy_engine.execution._adapter import provider_config_to_dict
 from decoy_engine.execution._errors import ExecutionError, StrategyError
 from decoy_engine.execution.out_of_core._categorical_native import native_categorical_array
@@ -76,7 +77,7 @@ def truncate_params(cfg: dict[str, Any]) -> tuple[int, str, str | None]:
     length = cfg.get("length")
     if not isinstance(length, int) or length < 1:
         raise StrategyError(
-            code="truncate_length_invalid",
+            code=reasons.runtime.TRUNCATE_LENGTH_INVALID,
             strategy="truncate",
             message=(
                 f"truncate has invalid length {length!r} ({type(length).__name__}); "
@@ -88,14 +89,14 @@ def truncate_params(cfg: dict[str, Any]) -> tuple[int, str, str | None]:
         keep = "tail" if bool(cfg.get("from_end", False)) else "head"
     if keep not in ("head", "tail"):
         raise StrategyError(
-            code="truncate_keep_invalid",
+            code=reasons.runtime.TRUNCATE_KEEP_INVALID,
             strategy="truncate",
             message=f"truncate has invalid keep {keep!r}.",
         )
     mask_char = cfg.get("mask_char")
     if mask_char is not None and (not isinstance(mask_char, str) or len(mask_char) != 1):
         raise StrategyError(
-            code="truncate_mask_char_invalid",
+            code=reasons.runtime.TRUNCATE_MASK_CHAR_INVALID,
             strategy="truncate",
             message=(
                 f"truncate has invalid mask_char {mask_char!r} ({type(mask_char).__name__}); "
@@ -200,7 +201,7 @@ def mask_column(
         # fail closed rather than leak the source value.
         if faker_native is None or seed.namespace is None:
             raise ExecutionError(
-                code="out_of_core_faker_pool_unsupported",
+                code=reasons.runtime.OUT_OF_CORE_FAKER_POOL_UNSUPPORTED,
                 message=(
                     "faker reached the out-of-core mask without a prepared pool; the route "
                     "admits only the deterministic-REUSE native shape, decided per table."
@@ -221,7 +222,7 @@ def mask_column(
     if seed.strategy == "hash":
         if seed.namespace is None:
             raise ExecutionError(
-                code="hash_requires_namespace",
+                code=reasons.runtime.HASH_REQUIRES_NAMESPACE,
                 message="hash strategy requires a namespace.",
             )
         raw_truncate = cfg.get("truncate")
@@ -236,7 +237,7 @@ def mask_column(
             )
         return hash_array(values, seed=job_seed, namespace=seed.namespace, truncate=truncate)
     raise ExecutionError(
-        code="out_of_core_strategy_unsupported",
+        code=reasons.runtime.OUT_OF_CORE_STRATEGY_UNSUPPORTED,
         message=f"strategy {seed.strategy!r} is not supported by the out-of-core runner.",
     )
 
@@ -276,7 +277,7 @@ def masked_output_type(seed: ColumnSeed, source_type: pa.DataType | None = None)
     if seed.strategy == "passthrough":
         return _required_source_type(source_type, seed.strategy)
     raise ExecutionError(
-        code="out_of_core_strategy_unsupported",
+        code=reasons.runtime.OUT_OF_CORE_STRATEGY_UNSUPPORTED,
         message=f"strategy {seed.strategy!r} is not supported by the out-of-core runner.",
     )
 
@@ -284,7 +285,7 @@ def masked_output_type(seed: ColumnSeed, source_type: pa.DataType | None = None)
 def _required_source_type(source_type: pa.DataType | None, strategy: str) -> pa.DataType:
     if source_type is None:
         raise ExecutionError(
-            code="out_of_core_source_schema_required",
+            code=reasons.runtime.OUT_OF_CORE_SOURCE_SCHEMA_REQUIRED,
             message=(
                 f"strategy {strategy!r} passes the source column type through, "
                 "which a schema-less batch stream cannot provide up front."

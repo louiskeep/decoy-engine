@@ -64,6 +64,7 @@ from typing import Any
 
 import numpy as np
 
+from decoy_engine import reasons
 from decoy_engine.errors import DecoyError
 
 # Re-exported so the DP artifact schema is anchored in this pandas-free
@@ -294,12 +295,12 @@ class CarrierTable:
 def _check_validity(validity: Any, row_count: int, name: str) -> np.ndarray:
     if not isinstance(validity, np.ndarray) or validity.ndim != 1 or validity.dtype != np.bool_:
         raise CarrierError(
-            code="dp_carrier_validity_shape",
+            code=reasons.quality.DP_CARRIER_VALIDITY_SHAPE,
             message=f"column {name!r}: validity must be a 1-D bool ndarray",
         )
     if validity.shape[0] != row_count:
         raise CarrierError(
-            code="dp_carrier_validity_length",
+            code=reasons.quality.DP_CARRIER_VALIDITY_LENGTH,
             message=f"column {name!r}: validity length {validity.shape[0]} != row_count {row_count}",
         )
     return validity
@@ -311,7 +312,7 @@ def _validate_bound(name: str, which: str, b: Any) -> float:
     cell is processed so a malformed schema fails data-independently."""
     if isinstance(b, bool) or not isinstance(b, numbers.Real):
         raise CarrierError(
-            code="dp_carrier_bounds_type",
+            code=reasons.quality.DP_CARRIER_BOUNDS_TYPE,
             message=f"column {name!r}: {which} bound must be a real number, got {type(b).__name__}",
         )
     try:
@@ -324,12 +325,12 @@ def _validate_bound(name: str, which: str, b: Any) -> float:
         # structural error rather than letting a raw OverflowError/RuntimeError
         # escape. Data-independent: happens before any cell is read.
         raise CarrierError(
-            code="dp_carrier_bounds_type",
+            code=reasons.quality.DP_CARRIER_BOUNDS_TYPE,
             message=f"column {name!r}: {which} bound could not be read as a float ({type(exc).__name__})",
         ) from exc
     if not math.isfinite(fb):
         raise CarrierError(
-            code="dp_carrier_bounds_nonfinite",
+            code=reasons.quality.DP_CARRIER_BOUNDS_NONFINITE,
             message=f"column {name!r}: {which} bound must be finite, got {fb}",
         )
     return fb
@@ -338,26 +339,26 @@ def _validate_bound(name: str, which: str, b: Any) -> float:
 def _sanitize_number(name: str, col: Column, spec: dict, row_count: int) -> NumberColumn:
     if not isinstance(col, NumberColumn):
         raise CarrierError(
-            code="dp_carrier_type_mismatch",
+            code=reasons.quality.DP_CARRIER_TYPE_MISMATCH,
             message=f"column {name!r}: declared carrier 'number' but column is {type(col).__name__}",
         )
     validity = _check_validity(col.validity, row_count, name)
     values = col.values
     if not isinstance(values, np.ndarray) or values.ndim != 1 or values.dtype != np.float64:
         raise CarrierError(
-            code="dp_carrier_number_dtype",
+            code=reasons.quality.DP_CARRIER_NUMBER_DTYPE,
             message=f"column {name!r}: NumberColumn values must be a 1-D float64 ndarray",
         )
     if values.shape[0] != row_count:
         raise CarrierError(
-            code="dp_carrier_number_length",
+            code=reasons.quality.DP_CARRIER_NUMBER_LENGTH,
             message=f"column {name!r}: values length {values.shape[0]} != row_count {row_count}",
         )
     try:
         lower, upper = spec["bounds"]
     except (KeyError, TypeError, ValueError) as exc:
         raise CarrierError(
-            code="dp_carrier_bounds_missing",
+            code=reasons.quality.DP_CARRIER_BOUNDS_MISSING,
             message=f"column {name!r}: a 'number' carrier requires (lower, upper) bounds",
         ) from exc
     # Canonicalize + validate bounds ONCE, before touching any private cell.
@@ -370,7 +371,7 @@ def _sanitize_number(name: str, col: Column, spec: dict, row_count: int) -> Numb
     upper = _validate_bound(name, "upper", upper)
     if not lower < upper:
         raise CarrierError(
-            code="dp_carrier_bounds_order",
+            code=reasons.quality.DP_CARRIER_BOUNDS_ORDER,
             message=f"column {name!r}: bounds must satisfy lower < upper, got ({lower}, {upper})",
         )
     out_values = np.zeros(row_count, dtype=np.float64)
@@ -387,19 +388,19 @@ def _sanitize_number(name: str, col: Column, spec: dict, row_count: int) -> Numb
 def _sanitize_flag(name: str, col: Column, row_count: int) -> FlagColumn:
     if not isinstance(col, FlagColumn):
         raise CarrierError(
-            code="dp_carrier_type_mismatch",
+            code=reasons.quality.DP_CARRIER_TYPE_MISMATCH,
             message=f"column {name!r}: declared carrier 'flag' but column is {type(col).__name__}",
         )
     validity = _check_validity(col.validity, row_count, name)
     values = col.values
     if not isinstance(values, np.ndarray) or values.ndim != 1 or values.dtype != np.bool_:
         raise CarrierError(
-            code="dp_carrier_flag_dtype",
+            code=reasons.quality.DP_CARRIER_FLAG_DTYPE,
             message=f"column {name!r}: FlagColumn values must be a 1-D bool ndarray",
         )
     if values.shape[0] != row_count:
         raise CarrierError(
-            code="dp_carrier_flag_length",
+            code=reasons.quality.DP_CARRIER_FLAG_LENGTH,
             message=f"column {name!r}: values length {values.shape[0]} != row_count {row_count}",
         )
     out_values = np.zeros(row_count, dtype=np.bool_)
@@ -416,14 +417,14 @@ def _sanitize_flag(name: str, col: Column, row_count: int) -> FlagColumn:
 def _sanitize_text(name: str, col: Column, row_count: int) -> TextColumn:
     if not isinstance(col, TextColumn):
         raise CarrierError(
-            code="dp_carrier_type_mismatch",
+            code=reasons.quality.DP_CARRIER_TYPE_MISMATCH,
             message=f"column {name!r}: declared carrier 'text' but column is {type(col).__name__}",
         )
     validity = _check_validity(col.validity, row_count, name)
     values = col.values
     if not isinstance(values, tuple) or len(values) != row_count:
         raise CarrierError(
-            code="dp_carrier_text_shape",
+            code=reasons.quality.DP_CARRIER_TEXT_SHAPE,
             message=f"column {name!r}: TextColumn values must be a length-{row_count} tuple",
         )
     out_values: list[str] = []
@@ -452,17 +453,17 @@ def sanitize_carrier_table(table: CarrierTable, column_schema: dict[str, dict]) 
     rc = table.row_count
     if isinstance(rc, bool) or not isinstance(rc, int):
         raise CarrierError(
-            code="dp_carrier_row_count_type",
+            code=reasons.quality.DP_CARRIER_ROW_COUNT_TYPE,
             message=f"row_count must be a non-bool int, got {type(rc).__name__}",
         )
     if rc < 0:
         raise CarrierError(
-            code="dp_carrier_row_count_negative",
+            code=reasons.quality.DP_CARRIER_ROW_COUNT_NEGATIVE,
             message=f"row_count must be non-negative, got {rc}",
         )
     if set(table.columns.keys()) != set(column_schema.keys()):
         raise CarrierError(
-            code="dp_carrier_schema_mismatch",
+            code=reasons.quality.DP_CARRIER_SCHEMA_MISMATCH,
             message=(f"column keys {sorted(table.columns)} != schema keys {sorted(column_schema)}"),
         )
     sanitized: dict[str, Column] = {}
@@ -477,7 +478,7 @@ def sanitize_carrier_table(table: CarrierTable, column_schema: dict[str, dict]) 
             sanitized[name] = _sanitize_text(name, col, rc)
         else:
             raise CarrierError(
-                code="dp_carrier_unknown",
+                code=reasons.quality.DP_CARRIER_UNKNOWN,
                 message=f"column {name!r}: unknown carrier {carrier!r}, expected one of {_VALID_CARRIERS}",
             )
     return CarrierTable(row_count=rc, columns=sanitized)

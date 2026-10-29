@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from decoy_engine import reasons
 from decoy_engine.plan._errors import PlanCompileError
 
 
@@ -72,7 +73,7 @@ def check_group_key_refs(config: dict[str, Any]) -> None:
             group_by = pc.get("group_by")
             if group_by and str(group_by) not in all_col_names:
                 raise PlanCompileError(
-                    code="group_key_missing_group_by_ref",
+                    code=reasons.plan.GROUP_KEY_MISSING_GROUP_BY_REF,
                     path=(f"tables.{table_name}.columns.{col_name}.provider_config.group_by"),
                     message=(
                         f"group_key column {col_name!r} in table "
@@ -92,7 +93,7 @@ def check_group_key_refs(config: dict[str, Any]) -> None:
             group_by = col_entry.get("group_by")
             if group_by and str(group_by) not in all_col_names:
                 raise PlanCompileError(
-                    code="group_key_missing_group_by_ref",
+                    code=reasons.plan.GROUP_KEY_MISSING_GROUP_BY_REF,
                     path=(f"tables.{table_name}.generate_columns.{col_name}.group_by"),
                     message=(
                         f"group_key column {col_name!r} in table "

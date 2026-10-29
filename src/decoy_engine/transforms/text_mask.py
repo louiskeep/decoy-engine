@@ -8,8 +8,7 @@ Cross-cell keyed determinism: for the ``faker`` and ``date_shift`` span
 strategies, each span is masked by deriving a per-value key as
 HMAC-SHA256(mask_key, matched_text) (``_span_key``). The same real value in
 any two cells always produces the same masked value regardless of surrounding
-context; the context is intentionally excluded from the key so cross-cell
-consistency holds.
+context; the context is intentionally excluded from the key so cross-cell consistency holds.
 
 FF1 keying (Task 5.2 plan P3-final; BEHAVIOR CHANGE from the pre-FF1 model):
 the ``fpe`` span strategy does NOT use ``_span_key``. It is keyed like the
@@ -112,6 +111,7 @@ from collections.abc import Sequence
 from datetime import datetime, timedelta
 from typing import Any
 
+from decoy_engine import reasons
 from decoy_engine.detection.detectors import Span, iter_spans
 from decoy_engine.determinism import derive
 from decoy_engine.errors import FpeChecksumError, FpeUnencryptableError
@@ -370,13 +370,13 @@ def _apply_sub_floor_span_policy(
             f"({reason_code}) and no `sub_floor_span` policy ('redact' or "
             "'synthetic') is configured. The engine fails closed rather than "
             "silently choose a fallback; set sub_floor_span on this column.",
-            code="fpe.unencryptable_domain",
+            code=reasons.runtime.FPE__UNENCRYPTABLE_DOMAIN,
         )
     if sub_floor_span_policy not in ("redact", "synthetic"):
         raise FpeUnencryptableError(
             f"unknown sub_floor_span policy {sub_floor_span_policy!r} for detector "
             f"{detector_id!r}; expected 'redact' or 'synthetic'.",
-            code="fpe.unencryptable_domain",
+            code=reasons.runtime.FPE__UNENCRYPTABLE_DOMAIN,
         )
     if sub_floor_notices is not None:
         sub_floor_notices[detector_id] = sub_floor_notices.get(detector_id, 0) + 1
@@ -452,7 +452,7 @@ def _mask_fpe(
             key,
             detector_id,
             token,
-            reason_code="sub_minimum_domain",
+            reason_code=reasons.runtime.SUB_MINIMUM_DOMAIN,
             sub_floor_span_policy=sub_floor_span_policy,
             sub_floor_notices=sub_floor_notices,
         )
@@ -464,7 +464,7 @@ def _mask_fpe(
             key,
             detector_id,
             token,
-            reason_code="checksum_invalid",
+            reason_code=reasons.runtime.CHECKSUM_INVALID,
             sub_floor_span_policy=sub_floor_span_policy,
             sub_floor_notices=sub_floor_notices,
         )

@@ -56,6 +56,7 @@ __all__ = [
     "HASH_INPUT_TYPE_TZ_TIMESTAMP_DEFERRED",
     "INDEX_EXTENSION_UNAVAILABLE",
     "INDEX_EXT_UNAVAILABLE",
+    "INVALID_SUBSTRATE",
     "LAZY_SOURCE_NULL_COUNT_UNAVAILABLE",
     "MASKS_ONE_TABLE_PER_RUN",
     "NON_PANDAS_SUBSTRATE_REQUESTED",
@@ -63,6 +64,8 @@ __all__ = [
     "NON_SCALAR_NODE",
     "NO_MASK_NODES",
     "NO_MASK_TABLES",
+    "NO_NATIVE_BUCKET_CALLS",
+    "NO_NATIVE_DATE_SHIFT_CALLS",
     "NO_NATIVE_KERNEL_CALLS",
     "NO_NATIVE_KERNEL_OR_POOL",
     "NO_RELATIONSHIPS",
@@ -164,6 +167,8 @@ SEQUENTIAL_FK_KEY_INJECTIVITY_NOT_GUARANTEED = _d(
 
 _d = _catalog.route("decoy_engine.execution._sequential_native_decisions")
 
+NO_NATIVE_BUCKET_CALLS = _d("no_native_bucket_calls", "No native bucket calls.")
+NO_NATIVE_DATE_SHIFT_CALLS = _d("no_native_date_shift_calls", "No native date shift calls.")
 NO_ROWS_HASHED = _d("no_rows_hashed", "No rows hashed.")
 
 _d = _catalog.route("decoy_engine.execution.out_of_core._bucket_native")
@@ -248,6 +253,7 @@ FORCED_SEQUENTIAL_NO_MASK_TABLE = _d(
 FPE_JOIN_GROUP = _d("fpe_join_group", "FPE join group.")
 GENERATE_PLUS_MASK = _d("generate_plus_mask", "Generate plus mask.")
 GENERATE_TABLES_PRESENT = _d("generate_tables_present", "Generate tables present.")
+INVALID_SUBSTRATE = _d("invalid_substrate", "Invalid substrate.")
 LAZY_SOURCE_NULL_COUNT_UNAVAILABLE = _d(
     "lazy_source_null_count_unavailable", "Lazy source null count unavailable."
 )

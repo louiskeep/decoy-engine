@@ -48,6 +48,7 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.compute as pc
 
+from decoy_engine import reasons
 from decoy_engine.generation.pool import GenerationError
 
 if TYPE_CHECKING:
@@ -99,23 +100,23 @@ def _derive_offsets(
     if not isinstance(idx, pa.Array) or idx.type != pa.uint64():
         got = idx.type if isinstance(idx, pa.Array) else type(idx).__name__
         raise GenerationError(
-            code="index_batch_type_mismatch",
+            code=reasons.runtime.INDEX_BATCH_TYPE_MISMATCH,
             message=f"derive_index_batch returned {got}, expected a uint64 Arrow array",
         )
     if len(idx) != len(values):
         raise GenerationError(
-            code="index_batch_length_mismatch",
+            code=reasons.runtime.INDEX_BATCH_LENGTH_MISMATCH,
             message=f"derive_index_batch returned {len(idx)} indices for {len(values)} rows",
         )
     if idx.null_count != 0:
         raise GenerationError(
-            code="index_batch_null_mask_mismatch",
+            code=reasons.runtime.INDEX_BATCH_NULL_MASK_MISMATCH,
             message="derive_index_batch returned a null offset for a non-null source row",
         )
     idx_np = idx.to_numpy(zero_copy_only=False)
     if idx_np.size and int(idx_np.max()) >= range_size:
         raise GenerationError(
-            code="index_batch_out_of_bounds",
+            code=reasons.runtime.INDEX_BATCH_OUT_OF_BOUNDS,
             message=f"derive_index_batch returned an offset >= range_size {range_size}",
         )
     return idx_np

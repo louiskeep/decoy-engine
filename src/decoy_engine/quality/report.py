@@ -81,6 +81,7 @@ from typing import Any
 
 import pandas as pd
 
+from decoy_engine import reasons
 from decoy_engine.quality.diagnostic import compute_diagnostic
 from decoy_engine.quality.fidelity import compute_fidelity
 from decoy_engine.quality.shape_fidelity import compute_shape_fidelity
@@ -281,7 +282,7 @@ def _collect_warnings(
         warnings.append(
             {
                 "source": "fidelity",
-                "code": "no_comparable_columns",
+                "code": reasons.verification.NO_COMPARABLE_COLUMNS,
                 "detail": {},
             },
         )
@@ -292,7 +293,7 @@ def _collect_warnings(
         warnings.append(
             {
                 "source": "fidelity",
-                "code": "no_comparable_joints",
+                "code": reasons.verification.NO_COMPARABLE_JOINTS,
                 "detail": {},
             },
         )
@@ -310,7 +311,7 @@ def _collect_warnings(
                 warnings.append(
                     {
                         "source": "fidelity",
-                        "code": "gof_unavailable",
+                        "code": reasons.verification.GOF_UNAVAILABLE,
                         "detail": {
                             "column": col.get("column"),
                             "metric": metric,

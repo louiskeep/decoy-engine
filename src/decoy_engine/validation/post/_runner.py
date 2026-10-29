@@ -25,6 +25,7 @@ from collections.abc import Mapping
 from dataclasses import asdict, replace
 from typing import TYPE_CHECKING, Any
 
+from decoy_engine import reasons
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.validation.post._checks import FULL_SOURCE_SCANS, SCANS
 from decoy_engine.validation.post._scan import ScanContext, ScanOutcome
@@ -114,7 +115,7 @@ class PostValidationRunner:
                         failed=True,
                         warnings=(
                             QualityWarning(
-                                code="scan_crashed",
+                                code=reasons.warning.SCAN_CRASHED,
                                 provider="post_validation",
                                 column=name,
                                 detail={"error": repr(exc)},

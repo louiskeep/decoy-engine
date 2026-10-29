@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import pandas as pd
 
+from decoy_engine import reasons
 from decoy_engine.detection.detectors import Span, iter_spans
 from decoy_engine.execution._adapter import StrategyContext, provider_config_to_dict
 from decoy_engine.execution._errors import StrategyError
@@ -99,7 +100,7 @@ class TextRedactHandler:
             current_version = installed_model_version(ner_model)
             if current_version is not None and current_version != plan.ner_model_version:
                 raise StrategyError(
-                    code="ner_model_version_mismatch",
+                    code=reasons.runtime.NER_MODEL_VERSION_MISMATCH,
                     strategy="text_redact",
                     message=(
                         f"column {column!r}: NER model {ner_model!r} is installed at "

@@ -16,6 +16,7 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from decoy_engine import reasons
 from decoy_engine.generation.pool._errors import PoolCapacityError
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.generation.pool._value_pool import ValuePool, estimate_pool_bytes
@@ -101,7 +102,7 @@ class PoolCache:
         pool_bytes = estimate_pool_bytes(pool)
         if pool_bytes > self._max_bytes:
             raise PoolCapacityError(
-                code="pool_exceeds_cache_budget",
+                code=reasons.runtime.POOL_EXCEEDS_CACHE_BUDGET,
                 message=(
                     f"Pool for {pool.provider!r} estimated at {pool_bytes} bytes "
                     f"exceeds cache budget {self._max_bytes} bytes. Increase the "
@@ -140,7 +141,7 @@ class PoolCache:
             if pool_bytes > self._max_bytes * _DOMINATE_THRESHOLD:
                 self._warnings.append(
                     QualityWarning(
-                        code="pool_dominates_cache",
+                        code=reasons.warning.POOL_DOMINATES_CACHE,
                         provider=pool.provider,
                         detail={
                             "pool_bytes": pool_bytes,

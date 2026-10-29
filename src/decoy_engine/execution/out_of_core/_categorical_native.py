@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
+from decoy_engine import reasons
 from decoy_engine.execution._adapter import provider_config_to_dict
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._operator_registry import PYTHON_SCALAR, RUST_COMPANION
@@ -38,10 +39,10 @@ if TYPE_CHECKING:
     from decoy_engine.execution.native._index_ext import IndexDerivationKernel
     from decoy_engine.plan._types import ColumnSeed
 
-REASON_UNAVAILABLE = "index_extension_unavailable"
-REASON_NOT_STRING = "categorical_source_not_string"
+REASON_UNAVAILABLE = reasons.route.INDEX_EXTENSION_UNAVAILABLE
+REASON_NOT_STRING = reasons.route.CATEGORICAL_SOURCE_NOT_STRING
 _NO_BACKEND_RAN = "none"
-_REASON_NO_NATIVE_CALLS = "no_native_kernel_calls"
+_REASON_NO_NATIVE_CALLS = reasons.route.NO_NATIVE_KERNEL_CALLS
 
 
 @dataclass(frozen=True)
@@ -147,7 +148,7 @@ class TableCategoricalPlan:
         if decision.native:
             if idx < 0:
                 raise ExecutionError(
-                    code="out_of_core_categorical_column_missing",
+                    code=reasons.runtime.OUT_OF_CORE_CATEGORICAL_COLUMN_MISSING,
                     message=(
                         f"categorical column {column!r} of table {decision.table!r} is missing "
                         "from a streamed batch; the run is aborted rather than skipping it."
@@ -155,7 +156,7 @@ class TableCategoricalPlan:
                 )
             if batch.schema.field(idx).type != decision.pinned_type:
                 raise ExecutionError(
-                    code="out_of_core_categorical_source_type_drift",
+                    code=reasons.runtime.OUT_OF_CORE_CATEGORICAL_SOURCE_TYPE_DRIFT,
                     message=(
                         f"categorical column {column!r} of table {decision.table!r} was pinned "
                         f"as {decision.pinned_type} but a batch carries "
@@ -214,7 +215,7 @@ def native_categorical_array(
     prepared = native.decision.prepared
     if prepared is None:  # pragma: no cover - a native decision always carries its artifact
         raise ExecutionError(
-            code="out_of_core_categorical_unprepared",
+            code=reasons.runtime.OUT_OF_CORE_CATEGORICAL_UNPREPARED,
             message="a native categorical column reached the kernel without a prepared pool.",
         )
     native.decision.native_calls += 1

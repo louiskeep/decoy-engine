@@ -23,6 +23,7 @@ from pathlib import Path
 
 import polars as pl
 
+from decoy_engine import reasons
 from decoy_engine.subset._errors import SubsetConfigError, SubsetInternalError
 from decoy_engine.subset._keys import RI
 from decoy_engine.subset._types import SubsetSource
@@ -45,7 +46,7 @@ def materialize_subset(
     output_dir = Path(output_dir)
     if output_dir.exists() and any(output_dir.iterdir()):
         raise SubsetConfigError(
-            code="subset_output_dir_exists",
+            code=reasons.config.SUBSET_OUTPUT_DIR_EXISTS,
             message=f"output_dir {str(output_dir)!r} already exists and is not empty; "
             "subsetting refuses to write into a non-empty directory",
         )
@@ -64,7 +65,7 @@ def materialize_subset(
         )
         if frame.height != len(idx):
             raise SubsetInternalError(
-                code="subset_materialize_count_mismatch",
+                code=reasons.runtime.SUBSET_MATERIALIZE_COUNT_MISMATCH,
                 message=f"table {table!r}: wrote {frame.height} rows but expected "
                 f"{len(idx)} survivors",
             )

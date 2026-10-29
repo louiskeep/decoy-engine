@@ -50,6 +50,7 @@ from typing import Any, Protocol, TypeAlias
 
 import pyarrow as pa
 
+from decoy_engine import reasons
 from decoy_engine.determinism import DeterminismError
 from decoy_engine.errors import (
     DecoyError,
@@ -116,7 +117,7 @@ class CryptoExtensionUnavailableError(DecoyError):
     a missing/non-callable/raising `derive_batch`, or fails its load-time
     known-answer self-test."""
 
-    code: str = "crypto_ext.unavailable"
+    code: str = reasons.runtime.CRYPTO_EXT_UNAVAILABLE
 
 
 class FpeConfigError(DecoyError):
@@ -126,7 +127,7 @@ class FpeConfigError(DecoyError):
     characters has nothing to permute over and would leave the column in the
     clear. Mirrors the shipped strategy's `fpe_charset_degenerate` raise."""
 
-    code: str = "fpe.config_invalid"
+    code: str = reasons.runtime.FPE_CONFIG_INVALID
 
 
 # ---------------------------------------------------------------------------
@@ -375,7 +376,7 @@ def _translate_compiled_kernel_error(exc: ValueError) -> Exception:
         # kernel folds all of these into one coded rejection at the array's Arrow
         # type, so the exception TYPE is what a caller can rely on matching, not a
         # specific one of the reference's finer-grained codes.
-        return GenerationError(code="native_type_not_admitted", message=detail)
+        return GenerationError(code=reasons.runtime.NATIVE_TYPE_NOT_ADMITTED, message=detail)
     # An unrecognized code means the compiled kernel raised something this wrapper
     # was not built to translate; surface it as-is rather than guess at a mapping.
     return exc

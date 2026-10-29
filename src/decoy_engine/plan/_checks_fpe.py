@@ -37,6 +37,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from decoy_engine import reasons
 from decoy_engine.errors import FpeUnencryptableError
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.transforms.fpe import (
@@ -97,7 +98,7 @@ def check_fpe_charset_config(config: dict[str, Any]) -> None:
                 check_charset_unique(charset_spec, resolved)
             except FpeUnencryptableError as exc:
                 raise PlanCompileError(
-                    code="fpe_charset_duplicate_symbols",
+                    code=reasons.plan.FPE_CHARSET_DUPLICATE_SYMBOLS,
                     path=f"tables.{table_name}.columns.{col_name}.provider_config.charset",
                     message=(f"fpe column {col_name!r} in table {table_name!r}: {exc}"),
                 ) from exc
@@ -105,13 +106,13 @@ def check_fpe_charset_config(config: dict[str, Any]) -> None:
                 check_charset_ascii_printable(resolved)
             except FpeUnencryptableError as exc:
                 raise PlanCompileError(
-                    code="fpe_charset_non_ascii",
+                    code=reasons.plan.FPE_CHARSET_NON_ASCII,
                     path=f"tables.{table_name}.columns.{col_name}.provider_config.charset",
                     message=(f"fpe column {col_name!r} in table {table_name!r}: {exc}"),
                 ) from exc
             if len(resolved) < 2:
                 raise PlanCompileError(
-                    code="fpe_charset_degenerate",
+                    code=reasons.plan.FPE_CHARSET_DEGENERATE,
                     path=f"tables.{table_name}.columns.{col_name}.provider_config.charset",
                     message=(
                         f"fpe column {col_name!r} in table {table_name!r} resolves to a "

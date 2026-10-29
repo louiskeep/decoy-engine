@@ -18,12 +18,12 @@ __all__ = [
     "DETERMINISTIC_REQUIRES_SOURCE_AND_NAMESPACE",
     "EXACT_INT_NULL_MASK_MISMATCH",
     "FLOAT_CANONICALIZATION_UNSUPPORTED",
-    "FPE_CHECKSUM_INVALID_SOURCE",
     "FPE_CHECKSUM_UNSUPPORTED",
     "FPE_CONFIG_INVALID",
     "FPE_UNENCRYPTABLE",
-    "FPE_UNENCRYPTABLE_LENGTH",
+    "FPE__CHECKSUM_INVALID_SOURCE",
     "FPE__UNENCRYPTABLE_DOMAIN",
+    "FPE__UNENCRYPTABLE_LENGTH",
     "GENERATION_BUDGET_EXCEEDED",
     "GENERATION_COLUMN_UNBOUNDED",
     "GENERATION_NOT_CLASS_A",
@@ -227,7 +227,11 @@ UNSUPPORTED_STRATEGY = _d("unsupported_strategy", "Unsupported strategy.")
 
 _d = _catalog.runtime("FpeChecksumError")
 
-FPE_CHECKSUM_INVALID_SOURCE = _d("fpe.checksum_invalid_source", "FPE checksum invalid source.")
+FPE__CHECKSUM_INVALID_SOURCE = _d(
+    "fpe.checksum_invalid_source",
+    "FPE checksum invalid source.",
+    symbol="FPE__CHECKSUM_INVALID_SOURCE",
+)
 FPE_CHECKSUM_UNSUPPORTED = _d("fpe.checksum_unsupported", "FPE checksum unsupported.")
 
 _d = _catalog.runtime("FpeConfigError")
@@ -240,7 +244,9 @@ FPE_UNENCRYPTABLE = _d("fpe.unencryptable", "FPE unencryptable.")
 FPE__UNENCRYPTABLE_DOMAIN = _d(
     "fpe.unencryptable_domain", "FPE unencryptable domain.", symbol="FPE__UNENCRYPTABLE_DOMAIN"
 )
-FPE_UNENCRYPTABLE_LENGTH = _d("fpe.unencryptable_length", "FPE unencryptable length.")
+FPE__UNENCRYPTABLE_LENGTH = _d(
+    "fpe.unencryptable_length", "FPE unencryptable length.", symbol="FPE__UNENCRYPTABLE_LENGTH"
+)
 
 _d = _catalog.runtime("GenerationBudgetExceeded")
 

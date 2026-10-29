@@ -23,6 +23,7 @@ from typing import Any, Protocol
 
 from pydantic import BaseModel, ConfigDict
 
+from decoy_engine import reasons
 from decoy_engine.providers_v2._errors import ProviderError
 
 
@@ -59,7 +60,7 @@ class ProviderSpec:
         if self.deterministic:
             if self.namespace is None or self.seed is None:
                 raise ProviderError(
-                    code="deterministic_requires_namespace_and_seed",
+                    code=reasons.provider.DETERMINISTIC_REQUIRES_NAMESPACE_AND_SEED,
                     message=(
                         "ProviderSpec(deterministic=True) requires both "
                         f"`namespace` and `seed` to be non-None; got "
@@ -69,7 +70,7 @@ class ProviderSpec:
                 )
             if self.namespace == "":
                 raise ProviderError(
-                    code="namespace_empty",
+                    code=reasons.provider.NAMESPACE_EMPTY,
                     message=(
                         "ProviderSpec(deterministic=True) requires `namespace` "
                         "to be non-empty (matches S2's NamespaceRegistry contract)."
@@ -81,7 +82,7 @@ class ProviderSpec:
         # value). Both are valid derive() IKM lengths; any other length is a bug.
         if self.seed is not None and len(self.seed) not in (8, 32):
             raise ProviderError(
-                code="seed_wrong_length",
+                code=reasons.provider.SEED_WRONG_LENGTH,
                 message=(
                     f"ProviderSpec.seed must be 8 (job_seed) or 32 (mask_key) bytes "
                     f"when set; got {len(self.seed)} bytes."

@@ -58,6 +58,7 @@ from typing import TYPE_CHECKING, Final
 import pandas as pd
 import pyarrow as pa
 
+from decoy_engine import reasons
 from decoy_engine.execution._errors import ExecutionError
 
 if TYPE_CHECKING:
@@ -230,7 +231,7 @@ def fk_join_key_tuple(values: tuple[object, ...]) -> str:
 # prefix to avoid rewriting the out-of-core route's own pinned tests/docs
 # (tests/parity/SEMANTIC_DIFFERENCES.md, test_out_of_core_fk_parity.py) for a
 # cosmetic rename.
-FK_KEY_DTYPE_UNSUPPORTED_CODE: Final = "out_of_core_fk_key_dtype_unsupported"
+FK_KEY_DTYPE_UNSUPPORTED_CODE: Final = reasons.runtime.OUT_OF_CORE_FK_KEY_DTYPE_UNSUPPORTED
 
 # pyarrow's safe cast rejects (and this module's own round-trip check treats
 # as lossy) any int64 -> float64 conversion for a magnitude outside this

@@ -77,6 +77,7 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
+from decoy_engine import reasons
 from decoy_engine.detection.detectors import Span
 from decoy_engine.errors import FpeUnencryptableError
 from decoy_engine.execution._adapter import provider_config_to_dict
@@ -124,7 +125,7 @@ def text_mask_sub_floor_warning(
     accumulated `sub_floor_notices` dict `_text_mask_array` threads through
     `mask_cell` for every batch of a table."""
     return QualityWarning(
-        code="text_mask_sub_floor_span_handled",
+        code=reasons.warning.TEXT_MASK_SUB_FLOOR_SPAN_HANDLED,
         provider="text_mask",
         column=column,
         detail={
@@ -186,7 +187,7 @@ def group_c_array(
             values, job_seed=job_seed, namespace=seed.namespace, cfg=cfg, native=bucket_native
         )
     raise ExecutionError(
-        code="out_of_core_strategy_unsupported",
+        code=reasons.runtime.OUT_OF_CORE_STRATEGY_UNSUPPORTED,
         message=f"strategy {seed.strategy!r} is not a Group (c) out-of-core kernel.",
     )
 
@@ -291,7 +292,7 @@ def _text_mask_array(
         # (`_strategies/_text_mask.TextMaskHandler.run`) so a consumer keying
         # on `StrategyError.code` sees an identical event on both routes.
         raise StrategyError(
-            code="fpe_unencryptable_domain",
+            code=reasons.runtime.FPE_UNENCRYPTABLE_DOMAIN,
             strategy="text_mask",
             message=(
                 f"column {column!r}: {exc}. The engine fails closed rather than "
@@ -326,7 +327,7 @@ def _text_mask_ner(cfg: dict[str, Any], plan: ColumnSeed) -> tuple[str | None, l
         current_version = installed_model_version(ner_model)
         if current_version is not None and current_version != plan.ner_model_version:
             raise StrategyError(
-                code="ner_model_version_mismatch",
+                code=reasons.runtime.NER_MODEL_VERSION_MISMATCH,
                 strategy="text_mask",
                 message=(
                     f"NER model {ner_model!r} installed at {current_version!r} but the plan "
@@ -377,7 +378,7 @@ def _code_set_array(
     mode = str(cfg.get("mode", "mask"))
     if mode != "mask" or cfg.get("chapter_preserve"):
         raise ExecutionError(
-            code="out_of_core_code_set_shape_unsupported",
+            code=reasons.runtime.OUT_OF_CORE_CODE_SET_SHAPE_UNSUPPORTED,
             message="out-of-core code_set requires mask mode without chapter_preserve "
             "(gate should reject).",
         )
@@ -403,7 +404,7 @@ def _code_set_array(
         # leak the raw value.
         if exc.code in _PER_VALUE_CODE_SET_ERRORS:
             raise ExecutionError(
-                code="out_of_core_code_set_row_error_unreachable",
+                code=reasons.runtime.OUT_OF_CORE_CODE_SET_ROW_ERROR_UNREACHABLE,
                 message=f"code_set raised a per-value defect ({exc.code}) on a shape the "
                 "gate should have rejected; failing closed.",
             ) from exc
@@ -439,7 +440,7 @@ def _bucket_perturb_array(
     """
     if namespace is None:
         raise StrategyError(
-            code="bucket_perturb_requires_namespace",
+            code=reasons.runtime.BUCKET_PERTURB_REQUIRES_NAMESPACE,
             strategy="bucket_perturb",
             message="bucket_perturb strategy requires a namespace.",
         )
@@ -448,14 +449,14 @@ def _bucket_perturb_array(
         validate_bucket_perturb_config({**cfg, "bucket": bucket})
     except ValueError as exc:
         raise StrategyError(
-            code="bucket_perturb_invalid_config",
+            code=reasons.runtime.BUCKET_PERTURB_INVALID_CONFIG,
             strategy="bucket_perturb",
             message=str(exc),
         ) from exc
     date_format: str | None = cfg.get("date_format") or None
     if date_format is None:
         raise ExecutionError(
-            code="out_of_core_bucket_perturb_autodetect_unsupported",
+            code=reasons.runtime.OUT_OF_CORE_BUCKET_PERTURB_AUTODETECT_UNSUPPORTED,
             message="out-of-core bucket_perturb requires an explicit date_format "
             "(gate should reject); whole-column format detection does not chunk.",
         )
@@ -525,7 +526,7 @@ def group_c_output_type(seed: ColumnSeed, cfg: dict[str, Any]) -> pa.DataType:
             validate_bucket_perturb_config({**cfg, "bucket": bucket})
         except ValueError as exc:
             raise StrategyError(
-                code="bucket_perturb_invalid_config",
+                code=reasons.runtime.BUCKET_PERTURB_INVALID_CONFIG,
                 strategy="bucket_perturb",
                 message=str(exc),
             ) from exc

@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import duckdb
 
+from decoy_engine import reasons
 from decoy_engine.execution._isolated_memwatch import MemoryEvidence
 from decoy_engine.execution._row_errors import RowErrorRecord
 from decoy_engine.validation_result import CODES
@@ -242,10 +243,10 @@ _ALL_ROUTE_MARKERS: tuple[str, ...] = tuple(
 # must not import the physical seam; `test_isolated_safe_error` pins this set against that catalog.
 _EXECUTION_CODES: frozenset[str] = frozenset(
     {
-        "invalid_substrate",
-        "invalid_execution_knob",
-        "out_of_core_reorder_threshold_invalid",
-        "out_of_core_memory_detection_failed",
+        reasons.runtime.INVALID_SUBSTRATE,
+        reasons.runtime.INVALID_EXECUTION_KNOB,
+        reasons.runtime.OUT_OF_CORE_REORDER_THRESHOLD_INVALID,
+        reasons.runtime.OUT_OF_CORE_MEMORY_DETECTION_FAILED,
     }
 )
 # A code is echoed only if the engine registered it. Character shape is not trust: an exception

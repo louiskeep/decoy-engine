@@ -27,6 +27,7 @@ import numpy as np
 import pandas as pd
 import pyarrow as pa
 
+from decoy_engine import reasons
 from decoy_engine.generation.pool._capacity import unique_capacity_ok
 from decoy_engine.generation.pool._cardinality import CardinalityMode
 from decoy_engine.generation.pool._errors import GenerationError
@@ -89,23 +90,23 @@ def _validated_index_array(idx: Any, *, expected_len: int, pool_size: int) -> np
     if not isinstance(idx, pa.Array) or idx.type != pa.uint64():
         got = idx.type if isinstance(idx, pa.Array) else type(idx).__name__
         raise GenerationError(
-            code="index_batch_type_mismatch",
+            code=reasons.runtime.INDEX_BATCH_TYPE_MISMATCH,
             message=f"derive_index_batch returned {got}, expected a uint64 Arrow array",
         )
     if len(idx) != expected_len:
         raise GenerationError(
-            code="index_batch_length_mismatch",
+            code=reasons.runtime.INDEX_BATCH_LENGTH_MISMATCH,
             message=f"derive_index_batch returned {len(idx)} indices for {expected_len} non-null rows",
         )
     if idx.null_count:
         raise GenerationError(
-            code="index_batch_null_mask_mismatch",
+            code=reasons.runtime.INDEX_BATCH_NULL_MASK_MISMATCH,
             message="derive_index_batch returned a null index for a non-null source value",
         )
     idx_np: np.ndarray[Any, Any] = idx.to_numpy(zero_copy_only=False)
     if expected_len and int(idx_np.max()) >= pool_size:
         raise GenerationError(
-            code="index_batch_out_of_bounds",
+            code=reasons.runtime.INDEX_BATCH_OUT_OF_BOUNDS,
             message=(
                 f"derive_index_batch returned an index >= pool_size {pool_size}; "
                 "refusing to gather from the pool with it"
@@ -173,7 +174,7 @@ def _seed_bytes_to_int(seed: bytes) -> int:
     """
     if len(seed) != 8:
         raise GenerationError(
-            code="invalid_seed_length",
+            code=reasons.runtime.INVALID_SEED_LENGTH,
             message=(
                 f"PoolSampler non-deterministic seed must be exactly 8 bytes; got {len(seed)}."
             ),
@@ -233,7 +234,7 @@ class PoolSampler:
         if deterministic:
             if source is None or namespace is None:
                 raise GenerationError(
-                    code="deterministic_requires_source_and_namespace",
+                    code=reasons.runtime.DETERMINISTIC_REQUIRES_SOURCE_AND_NAMESPACE,
                     message=(
                         "deterministic=True requires both `source` and `namespace`; "
                         f"got source={'set' if source is not None else 'None'}, "
@@ -245,7 +246,7 @@ class PoolSampler:
             # REUSE semantics (silently ignoring the UNIQUE constraint).
             if mode is CardinalityMode.UNIQUE:
                 raise GenerationError(
-                    code="deterministic_mode_unsupported_cardinality",
+                    code=reasons.runtime.DETERMINISTIC_MODE_UNSUPPORTED_CARDINALITY,
                     message=(
                         "deterministic=True is incompatible with mode=UNIQUE: "
                         "the deterministic path keys output on source row identity, "
@@ -276,7 +277,7 @@ class PoolSampler:
             else:
                 if len(source) != n:
                     raise GenerationError(
-                        code="source_length_mismatch",
+                        code=reasons.runtime.SOURCE_LENGTH_MISMATCH,
                         message=(
                             f"UNIQUE sample called with source length {len(source)} "
                             f"but n={n}; they must match."
@@ -294,7 +295,7 @@ class PoolSampler:
             distinct_values = pd.unique(pool.values)
             if not unique_capacity_ok(len(distinct_values), required):
                 raise GenerationError(
-                    code="uniqueness_impossible",
+                    code=reasons.runtime.UNIQUENESS_IMPOSSIBLE,
                     message=(
                         f"UNIQUE-mode sample needs {required} distinct value(s) "
                         f"(non-null output rows) but the pool has only "
@@ -317,7 +318,7 @@ class PoolSampler:
         if mode is CardinalityMode.SCALE_SOURCE_CARDINALITY:
             return self._match_source_cardinality(pool, n, source, rng, scale=scale)
         raise GenerationError(
-            code="unknown_cardinality_mode",
+            code=reasons.runtime.UNKNOWN_CARDINALITY_MODE,
             message=f"CardinalityMode {mode!r} is not handled by PoolSampler.",
         )
 
@@ -345,7 +346,7 @@ class PoolSampler:
             # Caller error: source length must match n; this is a
             # contract surface, raise loudly.
             raise GenerationError(
-                code="source_length_mismatch",
+                code=reasons.runtime.SOURCE_LENGTH_MISMATCH,
                 message=(
                     f"deterministic sample called with source length {len(source)} "
                     f"but n={n}; they must match for per-row determinism."
@@ -383,7 +384,7 @@ class PoolSampler:
         """
         if source is None:
             raise GenerationError(
-                code="source_required_for_cardinality_mode",
+                code=reasons.runtime.SOURCE_REQUIRED_FOR_CARDINALITY_MODE,
                 message=(
                     "MATCH_SOURCE_CARDINALITY / SCALE_SOURCE_CARDINALITY require a non-None source."
                 ),
@@ -392,7 +393,7 @@ class PoolSampler:
         target_distinct = max(1, round(source_distinct * scale))
         if target_distinct > pool.size:
             raise GenerationError(
-                code="cardinality_target_exceeds_pool",
+                code=reasons.runtime.CARDINALITY_TARGET_EXCEEDS_POOL,
                 message=(
                     f"Target distinct {target_distinct} (source.nunique() {source_distinct} "
                     f"* scale {scale}) exceeds pool.size {pool.size}."
@@ -449,14 +450,14 @@ class PoolSampler:
         cols = pool.output_columns
         if not cols:
             raise GenerationError(
-                code="bundle_missing_output_columns",
+                code=reasons.runtime.BUNDLE_MISSING_OUTPUT_COLUMNS,
                 message="sample_bundle requires a BundlePool with non-empty output_columns.",
             )
 
         if deterministic:
             if source is None or namespace is None:
                 raise GenerationError(
-                    code="deterministic_requires_source_and_namespace",
+                    code=reasons.runtime.DETERMINISTIC_REQUIRES_SOURCE_AND_NAMESPACE,
                     message=(
                         "deterministic=True requires both `source` and `namespace`; "
                         f"got source={'set' if source is not None else 'None'}, "
@@ -467,7 +468,7 @@ class PoolSampler:
             # bundle path too. See `sample()` for rationale.
             if mode is CardinalityMode.UNIQUE:
                 raise GenerationError(
-                    code="deterministic_mode_unsupported_cardinality",
+                    code=reasons.runtime.DETERMINISTIC_MODE_UNSUPPORTED_CARDINALITY,
                     message=(
                         "sample_bundle: deterministic=True is incompatible with "
                         "mode=UNIQUE. Same constraint as the scalar sample() path."
@@ -475,7 +476,7 @@ class PoolSampler:
                 )
             if len(source) != n:
                 raise GenerationError(
-                    code="source_length_mismatch",
+                    code=reasons.runtime.SOURCE_LENGTH_MISMATCH,
                     message=(
                         f"sample_bundle deterministic called with source length "
                         f"{len(source)} but n={n}; they must match."
@@ -507,7 +508,7 @@ class PoolSampler:
         if mode is CardinalityMode.UNIQUE:
             if n > pool.size:
                 raise GenerationError(
-                    code="uniqueness_impossible",
+                    code=reasons.runtime.UNIQUENESS_IMPOSSIBLE,
                     message=(
                         f"UNIQUE-mode bundle sample of size {n} from pool of size "
                         f"{pool.size}: cannot draw without replacement."

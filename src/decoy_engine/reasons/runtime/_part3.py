@@ -32,8 +32,11 @@ __all__ = [
     "FAKER_POSITION_OUT_OF_DOMAIN",
     "FILTER_EXPRESSION_ERROR",
     "FILTER_EXPRESSION_NOT_BOOLEAN",
+    "FPE_CHECKSUM_INVALID_SOURCE",
     "FPE_UNENCRYPTABLE_DOMAIN",
+    "FPE_UNENCRYPTABLE_LENGTH",
     "GENERATION_NOT_REPRODUCIBLE",
+    "INVALID_SUBSTRATE",
     "JOINT_MASK_KEY_BY_SNAPSHOT_MISALIGNED",
     "JOINT_MASK_KEY_BY_SNAPSHOT_MISSING",
     "NER_MODEL_VERSION_MISMATCH",
@@ -256,6 +259,10 @@ WEAK_MASK_SECRET = _d(
     retry=RetryClass.CONFIGURATION_REPAIR,
 )
 
+_d = _catalog.runtime("decoy_engine.execution._isolated_common")
+
+INVALID_SUBSTRATE = _d("invalid_substrate", "Invalid substrate.")
+
 _d = _catalog.runtime("decoy_engine.execution._strategies._categorical")
 
 CATEGORICAL_POSITION_OUT_OF_DOMAIN = _d(
@@ -265,6 +272,11 @@ CATEGORICAL_POSITION_OUT_OF_DOMAIN = _d(
 _d = _catalog.runtime("decoy_engine.execution._strategies._faker_positional")
 
 FAKER_POSITION_OUT_OF_DOMAIN = _d("faker_position_out_of_domain", "Faker position out of domain.")
+
+_d = _catalog.runtime("decoy_engine.execution._strategies._fpe")
+
+FPE_CHECKSUM_INVALID_SOURCE = _d("fpe_checksum_invalid_source", "FPE checksum invalid source.")
+FPE_UNENCRYPTABLE_LENGTH = _d("fpe_unencryptable_length", "FPE unencryptable length.")
 
 _d = _catalog.runtime("decoy_engine.execution._strategies._windowed_date")
 

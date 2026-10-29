@@ -23,6 +23,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from decoy_engine import reasons
 from decoy_engine.generation.pool import unique_capacity_ok
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.plan._pool_size import resolve_pool_size
@@ -83,7 +84,7 @@ def check_unknown_provider(config: dict[str, Any]) -> None:
             if provider not in known:
                 col_name = col_entry.get("name", "?")
                 raise PlanCompileError(
-                    code="unknown_provider",
+                    code=reasons.plan.UNKNOWN_PROVIDER,
                     path=f"tables.{table_name}.columns.{col_name}.provider",
                     message=(
                         f"Provider {provider!r} is not in the default registry. "
@@ -130,7 +131,7 @@ def check_non_poolable_provider_with_pool_backend(config: dict[str, Any]) -> Non
             if not registry.get_capabilities(provider).poolable:
                 col_name = col_entry.get("name", "?")
                 raise PlanCompileError(
-                    code="non_poolable_provider_with_pool_backend",
+                    code=reasons.plan.NON_POOLABLE_PROVIDER_WITH_POOL_BACKEND,
                     path=f"tables.{table_name}.columns.{col_name}.provider",
                     message=(
                         f"Provider {provider!r} declares poolable=False but column "
@@ -181,7 +182,7 @@ def check_basic_uniqueness_pre_flight(config: dict[str, Any], profile: Profile) 
                 continue
             if not unique_capacity_ok(pool_size, nonnull_rows):
                 raise PlanCompileError(
-                    code="pool_capacity_pre_flight_unique",
+                    code=reasons.plan.POOL_CAPACITY_PRE_FLIGHT_UNIQUE,
                     path=f"tables.{table_name}.columns.{col_name}",
                     message=(
                         f"Column {table_name}.{col_name} uses cardinality_mode=unique "
@@ -241,7 +242,7 @@ def check_null_bearing_int_unsupported(config: dict[str, Any], profile: Profile)
             if not null_int_lookup.get((table_name, col_name), False):
                 continue
             raise PlanCompileError(
-                code="null_bearing_int_unsupported",
+                code=reasons.plan.NULL_BEARING_INT_UNSUPPORTED,
                 path=f"tables.{table_name}.columns.{col_name}",
                 message=(
                     f"Column {table_name}.{col_name} is an integer column with nulls "
@@ -270,7 +271,7 @@ def check_composite_columns_length_match(profile: Profile) -> None:
         child_len = len(rel.child_columns)
         if parent_len != child_len:
             raise PlanCompileError(
-                code="composite_columns_length_mismatch",
+                code=reasons.plan.COMPOSITE_COLUMNS_LENGTH_MISMATCH,
                 path=(
                     f"relationships[{rel.parent_table}.{rel.parent_columns}->"
                     f"{rel.child_table}.{rel.child_columns}]"
@@ -302,8 +303,7 @@ def check_statistical_columns(
     table for. `generation/statistical.load_spec` owns those verdicts
     (one set of error codes for compile time and generation time); this
     check adds the declared-order rule load_spec cannot see: the
-    condition_on column must be generated BEFORE its dependent in the
-    same table.
+    condition_on column must be generated BEFORE its dependent in the same table.
 
     `pinned` is the compiler's `{path: ReadSnapshot}` read-once map
     (`plan._generation.read_and_pin_snapshots`). `failures` is that same
@@ -351,7 +351,7 @@ def check_statistical_columns(
             col_type = col_entry.get("type")
             if col_type != "statistical" and "high_cardinality" in col_entry:
                 raise PlanCompileError(
-                    code="statistical_high_cardinality_wrong_type",
+                    code=reasons.plan.STATISTICAL_HIGH_CARDINALITY_WRONG_TYPE,
                     path=f"tables.{table_name}.generate_columns.{col_name}.high_cardinality",
                     message=(
                         f"generate column {col_name!r}: high_cardinality is only valid "
@@ -362,7 +362,7 @@ def check_statistical_columns(
                 snapshot_file = col_entry.get("snapshot_file")
                 if not snapshot_file:
                     raise PlanCompileError(
-                        code="statistical_snapshot_file_required",
+                        code=reasons.plan.STATISTICAL_SNAPSHOT_FILE_REQUIRED,
                         path=f"tables.{table_name}.generate_columns.{col_name}",
                         message=f"statistical column {col_name!r} requires `snapshot_file`.",
                     )
@@ -389,7 +389,7 @@ def check_statistical_columns(
                     ) from exc
                 if spec.condition_on is not None and spec.condition_on not in seen:
                     raise PlanCompileError(
-                        code="statistical_condition_column_unavailable",
+                        code=reasons.plan.STATISTICAL_CONDITION_COLUMN_UNAVAILABLE,
                         path=f"tables.{table_name}.generate_columns.{col_name}.condition_on",
                         message=(
                             f"statistical column {col_name!r} conditions on "
@@ -523,7 +523,7 @@ def check_fpe_checksum_scheme(config: dict[str, Any]) -> None:
             col_name = col_entry.get("name", "?")
             if checksum not in _KNOWN_SCHEMES:
                 raise PlanCompileError(
-                    code="fpe_checksum_unknown_scheme",
+                    code=reasons.plan.FPE_CHECKSUM_UNKNOWN_SCHEME,
                     path=f"tables.{table_name}.columns.{col_name}.provider_config.checksum",
                     message=(
                         f"column {col_name!r} in table {table_name!r} uses "
@@ -536,7 +536,7 @@ def check_fpe_checksum_scheme(config: dict[str, Any]) -> None:
                 )
             if checksum in _FPE_UNSUPPORTED_SCHEMES:
                 raise PlanCompileError(
-                    code="fpe_checksum_iban_unsupported",
+                    code=reasons.plan.FPE_CHECKSUM_IBAN_UNSUPPORTED,
                     path=f"tables.{table_name}.columns.{col_name}.provider_config.checksum",
                     message=(
                         f"column {col_name!r} in table {table_name!r} uses "
@@ -562,7 +562,7 @@ def check_fpe_checksum_scheme(config: dict[str, Any]) -> None:
                 missing = required - charset_set
                 if missing:
                     raise PlanCompileError(
-                        code="fpe_checksum_charset_incompatible",
+                        code=reasons.plan.FPE_CHECKSUM_CHARSET_INCOMPATIBLE,
                         path=(f"tables.{table_name}.columns.{col_name}.provider_config.charset"),
                         message=(
                             f"column {col_name!r} in table {table_name!r} uses "
@@ -655,7 +655,7 @@ def check_derived_column_refs(config: dict[str, Any]) -> None:
             missing = refs - all_col_names
             if missing:
                 raise PlanCompileError(
-                    code="derived_missing_column_ref",
+                    code=reasons.plan.DERIVED_MISSING_COLUMN_REF,
                     path=f"tables.{table_name}.{col_kind}.{col_name}.expression",
                     message=(
                         f"derived column {col_name!r} in table {table_name!r} "
@@ -699,7 +699,7 @@ def check_derived_column_refs(config: dict[str, Any]) -> None:
             for dep in derived_refs[col_name]:
                 if dep in derived_refs and _has_cycle(dep, visited, path, derived_refs):
                     raise PlanCompileError(
-                        code="derived_cyclic_reference",
+                        code=reasons.plan.DERIVED_CYCLIC_REFERENCE,
                         path=f"tables.{table_name}.columns.{col_name}.provider_config.expression",
                         message=(
                             f"derived column {col_name!r} in table {table_name!r} "

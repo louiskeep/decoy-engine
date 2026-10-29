@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from decoy_engine import reasons
 from decoy_engine.plan._errors import PlanCompileError
 
 
@@ -49,7 +50,7 @@ def deterministic_namespace_completeness(config: dict[str, Any]) -> None:
                     else "`allow_collisions: true`"
                 )
                 raise PlanCompileError(
-                    code="deterministic_namespace_missing",
+                    code=reasons.plan.DETERMINISTIC_NAMESPACE_MISSING,
                     path=f"tables.{table_name}.columns.{col_name}",
                     message=(
                         f"Column {table_name}.{col_name} declares "

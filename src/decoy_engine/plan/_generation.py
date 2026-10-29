@@ -27,6 +27,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any
 
+from decoy_engine import reasons
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.plan._types import (
     DpVerification,
@@ -120,13 +121,13 @@ def read_and_pin_snapshots(
                 raw = fh.read()
         except OSError as exc:
             failures[path] = StatisticalSpecError(
-                code="statistical_snapshot_unreadable",
+                code=reasons.plan.STATISTICAL_SNAPSHOT_UNREADABLE,
                 message=f"snapshot_file {path!r} could not be read: {exc}",
             )
             continue
         if len(raw) > EMBEDDED_SNAPSHOT_MAX_BYTES:
             raise PlanCompileError(
-                code="dp_snapshot_embedded_artifact_too_large",
+                code=reasons.plan.DP_SNAPSHOT_EMBEDDED_ARTIFACT_TOO_LARGE,
                 path=f"<snapshot_file={path}>",
                 message=(
                     f"snapshot_file {path!r} is {len(raw)} bytes, exceeding the "
@@ -142,7 +143,7 @@ def read_and_pin_snapshots(
             parsed = json.loads(raw)
         except json.JSONDecodeError as exc:
             failures[path] = StatisticalSpecError(
-                code="statistical_snapshot_unreadable",
+                code=reasons.plan.STATISTICAL_SNAPSHOT_UNREADABLE,
                 message=f"snapshot_file {path!r} could not be read: {exc}",
             )
             continue
@@ -152,7 +153,7 @@ def read_and_pin_snapshots(
         version = parsed.get("schema_version") if isinstance(parsed, dict) else None
         if not isinstance(parsed, dict) or version != DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION:
             failures[path] = StatisticalSpecError(
-                code="statistical_snapshot_schema_mismatch",
+                code=reasons.plan.STATISTICAL_SNAPSHOT_SCHEMA_MISMATCH,
                 message=(
                     f"snapshot_file {path!r} declares schema {version!r}; this engine "
                     f"consumes {DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION!r}."
@@ -191,7 +192,7 @@ def resolve_pinned_snapshot(
         raise failures.get(
             snapshot_file,
             StatisticalSpecError(
-                code="statistical_snapshot_unreadable",
+                code=reasons.plan.STATISTICAL_SNAPSHOT_UNREADABLE,
                 message=(
                     f"snapshot_file {snapshot_file!r} has no pinned content and no "
                     "recorded read failure from this compile's read-once pass; "

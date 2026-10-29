@@ -129,13 +129,11 @@ def _namespace_for_const(site: scan.Site) -> str:
         return "config" if site.family.startswith("CODES.") else "runtime"
     if site.file.startswith("execution/physical/_shadow_diff"):
         return "physical"
+    if "WARNING" in site.family.upper():
+        return "warning"
     if site.file.startswith("execution/physical/"):
         return "route"
-    if "REASON" in site.family.upper() and site.file.startswith(
-        ("execution/native", "execution/out_of_core")
-    ):
-        return "route"
-    if site.family.startswith(("REASON_", "_REASON_", "DRIVER_REASON")):
+    if "REASON" in site.family.upper():
         return "route"
     return "runtime"
 
@@ -224,6 +222,13 @@ def _dump(obj: dict[str, object]) -> str:
 def main() -> None:
     baseline, inventory = build()
     if "--write" in sys.argv:
+        # Once producers migrate, the source no longer holds the baseline's literals: rebuilding
+        # from it would silently drop identities. Rebuild only from the baseline commit's tree.
+        if "--i-am-at-the-baseline-commit" not in sys.argv:
+            raise SystemExit(
+                "refusing to overwrite the frozen F29 baseline from migrated source; "
+                "run from a checkout of 2a44723f/51e318d with --i-am-at-the-baseline-commit"
+            )
         FIXTURES.mkdir(parents=True, exist_ok=True)
         (FIXTURES / "reason-baseline.json").write_text(_dump(baseline))
         (FIXTURES / "producer-inventory.json").write_text(_dump(inventory))

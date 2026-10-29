@@ -50,6 +50,7 @@ from typing import TYPE_CHECKING, Any
 import pyarrow as pa
 import pyarrow.compute as pc
 
+from decoy_engine import reasons
 from decoy_engine.execution._adapter import ExecutionResult, provider_config_to_dict
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._fk_resolve import orphan_fk_violation_error
@@ -584,7 +585,7 @@ def _open_joiner(
     for child_col in edge.child_columns:
         if child_col not in source_schema.names:
             raise ExecutionError(
-                code="out_of_core_child_column_missing",
+                code=reasons.runtime.OUT_OF_CORE_CHILD_COLUMN_MISSING,
                 message=f"child source table has no column {child_col!r}.",
             )
     remap_seeds: tuple[ColumnSeed, ...] | None = None
@@ -594,7 +595,7 @@ def _open_joiner(
             seed = _column_seed(plan, edge.parent_table, parent_col)
             if seed is None:
                 raise ExecutionError(
-                    code="out_of_core_parent_seed_missing",
+                    code=reasons.runtime.OUT_OF_CORE_PARENT_SEED_MISSING,
                     message=f"parent key {edge.parent_table}.{parent_col} is not in the plan.",
                 )
             seeds.append(seed)

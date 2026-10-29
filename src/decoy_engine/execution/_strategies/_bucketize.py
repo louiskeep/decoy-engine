@@ -36,6 +36,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from decoy_engine import reasons
 from decoy_engine.execution._adapter import StrategyContext, provider_config_to_dict
 from decoy_engine.execution._errors import StrategyError
 from decoy_engine.execution._row_errors import RowError
@@ -72,7 +73,7 @@ class BucketizeStrategyHandler:
             # Invalid config: fail closed (Sprint 13 GATE-1 Q4). A masking
             # strategy must never silently pass the source column through.
             raise StrategyError(
-                code="bucketize_width_unresolvable",
+                code=reasons.runtime.BUCKETIZE_WIDTH_UNRESOLVABLE,
                 strategy="bucketize",
                 message=(
                     f"column {column!r} uses bucketize but neither a known "

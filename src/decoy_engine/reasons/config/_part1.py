@@ -113,6 +113,14 @@ _d = _catalog.config("NamespaceConfigError")
 NAMESPACE_AMBIGUITY = _d("namespace_ambiguity", "Namespace ambiguity.")
 NAMESPACE_MISSING = _d("namespace_missing", "Namespace missing.")
 
+_d = _catalog.config("PipelineValidationError")
+
+SOURCE_FILE_COLUMN_COUNT_MISMATCH = _d(
+    "source_file.column_count_mismatch", "Source file column count mismatch."
+)
+SOURCE_FILE_LONE_CR = _d("source_file.lone_cr", "Source file lone CR.")
+SOURCE_FILE_NUL_BYTE = _d("source_file.nul_byte", "Source file NUL byte.")
+
 _d = _catalog.config("SubsetConfigError")
 
 SUBSET_CONFIG_MISSING = _d("subset_config_missing", "Subset config missing.")
@@ -211,9 +219,6 @@ SOURCE_FILE_BAD_HAS_HEADER_TYPE = _d(
     "source_file.bad_has_header_type", "Source file bad has header type."
 )
 SOURCE_FILE_BAD_ROW_LIMIT = _d("source_file.bad_row_limit", "Source file bad row limit.")
-SOURCE_FILE_COLUMN_COUNT_MISMATCH = _d(
-    "source_file.column_count_mismatch", "Source file column count mismatch."
-)
 SOURCE_FILE_COLUMN_NAMES_WITH_HEADER = _d(
     "source_file.column_names_with_header", "Source file column names with header."
 )
@@ -221,7 +226,6 @@ SOURCE_FILE_CSV_PARAM_ON_NON_CSV = _d(
     "source_file.csv_param_on_non_csv", "Source file CSV param on non CSV."
 )
 SOURCE_FILE_FILE_NOT_FOUND = _d("source_file.file_not_found", "Source file file not found.")
-SOURCE_FILE_LONE_CR = _d("source_file.lone_cr", "Source file lone CR.")
 SOURCE_FILE_MISSING_FW_COLUMNS = _d(
     "source_file.missing_fw_columns", "Source file missing fw columns."
 )
@@ -229,7 +233,6 @@ SOURCE_FILE_MISSING_PATH = _d("source_file.missing_path", "Source file missing p
 SOURCE_FILE_NO_HEADER_COLUMNS = _d(
     "source_file.no_header_columns", "Source file no header columns."
 )
-SOURCE_FILE_NUL_BYTE = _d("source_file.nul_byte", "Source file NUL byte.")
 SOURCE_FILE_UNSUPPORTED_FORMAT = _d(
     "source_file.unsupported_format", "Source file unsupported format."
 )

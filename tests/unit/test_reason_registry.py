@@ -189,10 +189,17 @@ def test_every_producer_resolves() -> None:
 def test_dynamic_code_families_are_finite_tables() -> None:
     from decoy_engine.execution._sequential_native import _OPS
 
-    for ref_key in ("group_by", "order_by"):
-        assert reasons.find("plan", f"grouped_series_missing_{ref_key}_ref") is not None
-    for strategy in _OPS:
-        assert reasons.find("runtime", f"sequential_{strategy}_input_type_drift") is not None
+    drift = reasons.runtime.SEQUENTIAL_INPUT_TYPE_DRIFT_BY_STRATEGY
+    assert set(drift) == set(_OPS)
+    for strategy, code in drift.items():
+        assert code == f"sequential_{strategy}_input_type_drift"
+        assert reasons.find("runtime", code) is not None
+
+    refs = reasons.plan.GROUPED_SERIES_MISSING_REF_BY_KEY
+    assert set(refs) == {"group_by", "order_by"}
+    for key, code in refs.items():
+        assert code == f"grouped_series_missing_{key}_ref"
+        assert reasons.find("plan", code) is not None
 
 
 def test_every_symbol_matches_its_attribute() -> None:

@@ -14,7 +14,7 @@ from __future__ import annotations
 import ast
 import re
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -52,14 +52,18 @@ class Site:
     value_class: str  # literal | fstring | const_ref | forward | registry | none | dynamic
     expr: str
     codes: tuple[str, ...] = ()  # literal strings this site can carry, when resolvable
+    # (line, col, end_line, end_col, code) of each literal in the source, for codemods.
+    spans: tuple[tuple[int, int, int, int, str], ...] = field(default=(), compare=False)
+    # Namespace of the registry symbol this site carries ("" when not registry-valued).
+    registry_ns: str = field(default="", compare=False)
 
 
-def source_files() -> Iterator[Path]:
-    yield from sorted(p for p in SRC.rglob("*.py"))
+def source_files(src: Path = SRC) -> Iterator[Path]:
+    yield from sorted(p for p in src.rglob("*.py"))
 
 
-def module_name(path: Path) -> str:
-    rel = path.relative_to(SRC.parent).with_suffix("")
+def module_name(path: Path, src: Path = SRC) -> str:
+    rel = path.relative_to(src.parent).with_suffix("")
     parts = list(rel.parts)
     if parts[-1] == "__init__":
         parts.pop()
@@ -84,21 +88,24 @@ def _chain(node: ast.AST) -> list[str] | None:
 class _Index:
     """Project-wide constant and import tables, built once per scan."""
 
-    def __init__(self) -> None:
+    def __init__(self, src: Path = SRC) -> None:
+        self.src = src
         self.trees: dict[Path, ast.Module] = {}
         self.consts: dict[tuple[str, str], str] = {}  # (module, name) -> literal
         self.const_exprs: dict[tuple[str, str], ast.expr] = {}
         self.imports: dict[
             tuple[str, str], tuple[str, str]
         ] = {}  # (module, local) -> (module, name)
+        self.class_consts: dict[tuple[str, str, str], ast.expr] = {}
+        self.const_defs: dict[tuple[str, str], tuple[Path, ast.AST]] = {}
         self.reasons_aliases: dict[str, set[str]] = {}  # module -> names bound to the reasons pkg
-        for path in source_files():
+        for path in source_files(src):
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
             self.trees[path] = tree
             self._index(path, tree)
 
     def _index(self, path: Path, tree: ast.Module) -> None:
-        mod = module_name(path)
+        mod = module_name(path, self.src)
         is_pkg = path.name == "__init__.py"
         aliases: set[str] = set()
         for node in tree.body:
@@ -108,12 +115,29 @@ class _Index:
                     self.const_exprs[(mod, tgt.id)] = node.value
                     if _is_str_const(node.value):
                         self.consts[(mod, tgt.id)] = node.value.value  # type: ignore[attr-defined]
+                        self.const_defs[(mod, tgt.id)] = (path, node)
             elif (
                 isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.value
             ):
                 self.const_exprs[(mod, node.target.id)] = node.value
                 if _is_str_const(node.value):
                     self.consts[(mod, node.target.id)] = node.value.value  # type: ignore[attr-defined]
+                    self.const_defs[(mod, node.target.id)] = (path, node)
+        for node in tree.body:
+            if isinstance(node, ast.ClassDef):
+                for item in node.body:
+                    if (
+                        isinstance(item, ast.Assign)
+                        and len(item.targets) == 1
+                        and isinstance(item.targets[0], ast.Name)
+                    ):
+                        self.class_consts[(mod, node.name, item.targets[0].id)] = item.value
+                    elif (
+                        isinstance(item, ast.AnnAssign)
+                        and isinstance(item.target, ast.Name)
+                        and item.value is not None
+                    ):
+                        self.class_consts[(mod, node.name, item.target.id)] = item.value
         for node in ast.walk(tree):
             if isinstance(node, ast.ImportFrom):
                 base = self._resolve_from(mod, is_pkg, node)
@@ -142,6 +166,20 @@ class _Index:
         base = ".".join(parts)
         return f"{base}.{node.module}" if node.module else base
 
+    def resolve_def(
+        self, mod: str, name: str, seen: frozenset[tuple[str, str]] = frozenset()
+    ) -> tuple[str, str] | None:
+        """The ``(module, name)`` whose assignment defines the string constant ``name`` refers to."""
+        key = (mod, name)
+        if key in seen:
+            return None
+        if key in self.consts:
+            return key
+        if key in self.imports:
+            src_mod, src_name = self.imports[key]
+            return self.resolve_def(src_mod, src_name, seen | {key})
+        return None
+
     def resolve_literal(
         self, mod: str, name: str, seen: frozenset[tuple[str, str]] = frozenset()
     ) -> str | None:
@@ -153,6 +191,73 @@ class _Index:
         if key in self.imports:
             src_mod, src_name = self.imports[key]
             return self.resolve_literal(src_mod, src_name, seen | {key})
+        return None
+
+    def class_const(self, mod: str, cls: str, attr: str) -> tuple[str, str]:
+        """Classify ``Cls.attr`` when ``Cls`` is a project class with a code-valued attribute."""
+        origin = (mod, cls)
+        if origin in self.imports:
+            origin = self.imports[origin]
+        expr = self.class_consts.get((origin[0], origin[1], attr))
+        if expr is None:
+            return "", ""
+        if _is_str_const(expr):
+            return "literal", expr.value  # type: ignore[attr-defined]
+        if self.is_registry_chain(origin[0], expr):
+            return "registry", ""
+        return "", ""
+
+    def resolves_to_registry(
+        self, mod: str, name: str, seen: frozenset[tuple[str, str]] = frozenset()
+    ) -> bool:
+        """Whether a module-level ``name`` is (or is imported as) a registry symbol."""
+        key = (mod, name)
+        if key in seen:
+            return False
+        if key in self.const_exprs:
+            return self.is_registry_chain(mod, self.const_exprs[key])
+        if key in self.imports:
+            src_mod, src_name = self.imports[key]
+            if src_mod == f"{PACKAGE}.reasons" or src_mod.startswith(f"{PACKAGE}.reasons."):
+                # ``from decoy_engine.reasons.runtime import X`` binds a symbol; a bare namespace
+                # module (``from decoy_engine.reasons import runtime``) is not itself a code.
+                return src_mod != f"{PACKAGE}.reasons"
+            return self.resolves_to_registry(src_mod, src_name, seen | {key})
+        return False
+
+    def registry_namespace(self, mod: str, node: ast.AST | None, depth: int = 0) -> str | None:
+        """The ``decoy_engine.reasons`` namespace a registry-valued expression names."""
+        if node is None or depth > 6:
+            return None
+        chain = _chain(node)
+        if chain and self.is_registry_chain(mod, node):
+            aliases = self.reasons_aliases.get(mod, set())
+            origin = self.imports.get((mod, chain[0]))
+            if origin and origin[0] == f"{PACKAGE}.reasons" and origin[1] != "reasons":
+                return origin[1]  # ``from decoy_engine.reasons import runtime as R``
+            return chain[1] if chain[0] in aliases and len(chain) >= 3 else None
+        if isinstance(node, ast.Name):
+            key = (mod, node.id)
+            if key in self.const_exprs:
+                return self.registry_namespace(mod, self.const_exprs[key], depth + 1)
+            if key in self.imports:
+                src_mod, src_name = self.imports[key]
+                if src_mod.startswith(f"{PACKAGE}.reasons."):
+                    return src_mod.split(".")[2]
+                return self.registry_namespace(src_mod, ast.Name(id=src_name), depth + 1)
+        if isinstance(node, ast.Attribute):
+            c = _chain(node)
+            if c and len(c) == 2:
+                origin = self.imports.get((mod, c[0]), (mod, c[0]))
+                expr = self.class_consts.get((origin[0], origin[1], c[1]))
+                return self.registry_namespace(origin[0], expr, depth + 1)
+        if isinstance(node, ast.Subscript) and self.is_registry_chain(mod, node.value):
+            return self.registry_namespace(mod, node.value, depth + 1)
+        if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name):
+            table = self.const_exprs.get((mod, node.value.id))
+            if isinstance(table, ast.Dict):
+                found = {self.registry_namespace(mod, v, depth + 1) for v in table.values}
+                return next(iter(found)) if len(found) == 1 else "mixed"
         return None
 
     def is_registry_chain(self, mod: str, node: ast.AST) -> bool:
@@ -181,23 +286,56 @@ def _classify(
     if index.is_registry_chain(mod, node):
         return "registry", ()
     if isinstance(node, ast.Name):
+        if index.resolves_to_registry(mod, node.id):
+            return "registry", ()
         lit = index.resolve_literal(mod, node.id)
         if lit is not None:
             return "const_ref", (lit,)
-        if (mod, node.id) in index.const_exprs and index.is_registry_chain(
-            mod, index.const_exprs[(mod, node.id)]
-        ):
-            return "registry", ()
         if node.id in params:
             return "forward", ()
         return "dynamic", ()
     if isinstance(node, ast.Attribute):
+        chain = _chain(node)
+        if chain is not None and len(chain) == 2:
+            kind, lit = index.class_const(mod, chain[0], chain[1])
+            if kind == "registry":
+                return "registry", ()
+            if kind == "literal":
+                return "const_ref", (lit,)
         return "forward", ()
+    if isinstance(node, ast.Subscript) and index.is_registry_chain(mod, node.value):
+        return (
+            "registry",
+            (),
+        )  # ``reasons.plan.SOME_TABLE[key]``: a finite family owned by the registry
+    if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name):
+        # ``_TABLE[key]`` where ``_TABLE`` is a module-level dict whose values are all registry symbols.
+        table = index.const_exprs.get((mod, node.value.id))
+        if isinstance(table, ast.Dict) and table.values:
+            if all(index.is_registry_chain(mod, v) for v in table.values):
+                return "registry", ()
+        return "dynamic", ()
     if isinstance(node, ast.BoolOp):
-        # ``estimate.code or 'out_of_core_insufficient_memory'`` style defaults.
-        lits = tuple(v.value for v in node.values if _is_str_const(v))  # type: ignore[attr-defined]
-        return "dynamic", lits
+        # ``estimate.code or <fallback>``: a literal operand is an ad-hoc code; otherwise the
+        # expression only forwards values that are already registry-backed or parameters.
+        parts = [_classify(index, mod, v, params) for v in node.values]
+        lits = tuple(c for kind, codes in parts if kind in ("literal", "const_ref") for c in codes)
+        if lits:
+            return "dynamic", lits
+        if all(kind in ("registry", "none", "forward") for kind, _ in parts):
+            return "forward", ()
+        return "dynamic", ()
     return "dynamic", ()
+
+
+def _span(node: ast.Constant) -> tuple[int, int, int, int, str]:
+    return (
+        node.lineno,
+        node.col_offset,
+        node.end_lineno or node.lineno,
+        node.end_col_offset or 0,
+        node.value,
+    )
 
 
 def _expr(node: ast.AST) -> str:
@@ -260,16 +398,41 @@ def _discover_families(index: _Index) -> dict[str, tuple[int | None, bool]]:
     return own
 
 
-def scan() -> list[Site]:
-    index = _Index()
+def scan(src: Path = SRC) -> list[Site]:
+    index = _Index(src)
     families = _discover_families(index)
     sites: list[Site] = []
+    used: set[tuple[str, str]] = set()
     for path, tree in index.trees.items():
-        rel = path.relative_to(SRC).as_posix()
+        rel = path.relative_to(src).as_posix()
         if rel.startswith(REGISTRY_PREFIX):
             continue
-        mod = module_name(path)
-        _Visitor(index, mod, rel, families, sites).visit(tree)
+        mod = module_name(path, src)
+        visitor = _Visitor(index, mod, rel, families, sites)
+        visitor.visit(tree)
+        used.update(visitor.used_consts)
+    # A plain-named constant (``MIXED_DRIVER_UNSUPPORTED = "..."``) is a code once it is passed to a
+    # code sink, so its definition is a site too. Dedupe against name-pattern sites.
+    seen = {(s.file, s.line, s.family) for s in sites if s.kind == "module_const"}
+    for def_mod, name in sorted(used):
+        path, node = index.const_defs[(def_mod, name)]
+        rel = path.relative_to(src).as_posix()
+        if rel.startswith(REGISTRY_PREFIX) or (rel, node.lineno, name) in seen:  # type: ignore[attr-defined]
+            continue
+        value = node.value  # type: ignore[attr-defined]
+        sites.append(
+            Site(
+                rel,
+                node.lineno,
+                "",
+                "module_const",
+                name,
+                "literal",
+                _expr(value),
+                (value.value,),
+                (_span(value),),
+            )  # type: ignore[attr-defined]
+        )
     sites.sort(key=lambda s: (s.file, s.line, s.kind, s.family))
     return sites
 
@@ -284,6 +447,7 @@ class _Visitor(ast.NodeVisitor):
         out: list[Site],
     ):
         self.index, self.mod, self.rel, self.families, self.out = index, mod, rel, families, out
+        self.used_consts: set[tuple[str, str]] = set()
         self.funcs: list[tuple[str, frozenset[str]]] = []
         self.classes: list[tuple[str, bool]] = []  # (name, is_enum)
 
@@ -296,7 +460,15 @@ class _Visitor(ast.NodeVisitor):
     def _emit(self, node: ast.AST, kind: str, family: str, value: ast.expr | None) -> None:
         func, params = self._where()
         vc, codes = _classify(self.index, self.mod, value, params)
+        if vc == "const_ref" and isinstance(value, ast.Name):
+            ref = self.index.resolve_def(self.mod, value.id)
+            if ref is not None:
+                self.used_consts.add(ref)
         qual = ".".join([c for c, _ in self.classes] + ([func] if func else []))
+        spans: tuple[tuple[int, int, int, int, str], ...] = ()
+        if isinstance(value, ast.Constant) and isinstance(value.value, str):
+            spans = (_span(value),)
+        reg_ns = (self.index.registry_namespace(self.mod, value) or "") if vc == "registry" else ""
         self.out.append(
             Site(
                 self.rel,
@@ -307,6 +479,8 @@ class _Visitor(ast.NodeVisitor):
                 vc,
                 _expr(value) if value is not None else "",
                 codes,
+                spans,
+                reg_ns,
             )
         )
 
@@ -357,6 +531,8 @@ class _Visitor(ast.NodeVisitor):
 
     def visit_Assign(self, node: ast.Assign) -> None:
         for tgt in node.targets:
+            if isinstance(tgt, ast.Name):
+                self._container_const(node, tgt.id, node.value)
             if isinstance(tgt, ast.Attribute) and tgt.attr in CODE_ARG_NAMES:
                 self._emit(node, "attr_write", f"{ast.unparse(tgt)}", node.value)
             elif isinstance(tgt, ast.Name) and not self.classes and not self.funcs:
@@ -371,6 +547,8 @@ class _Visitor(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+        if isinstance(node.target, ast.Name):
+            self._container_const(node, node.target.id, node.value)
         if (
             isinstance(node.target, ast.Name)
             and node.value is not None
@@ -382,6 +560,43 @@ class _Visitor(ast.NodeVisitor):
         ):
             self._emit(node, "module_const", node.target.id, node.value)
         self.generic_visit(node)
+
+    def _container_const(self, node: ast.AST, name: str, value: ast.expr | None) -> None:
+        """A code-named table (dict/set/tuple/list/frozenset) holding literal code strings."""
+        if value is None or self.classes or self.funcs or not CONST_NAME.search(name):
+            return
+        if not isinstance(value, (ast.Dict, ast.Set, ast.List, ast.Tuple, ast.Call)):
+            return
+        lits = tuple(
+            sorted(
+                {
+                    n.value
+                    for n in ast.walk(value)
+                    if _is_str_const(n) and CODE_SHAPE.match(n.value)  # type: ignore[attr-defined]
+                }
+            )
+        )
+        if lits:
+            func, _ = self._where()
+            self.out.append(
+                Site(
+                    self.rel,
+                    node.lineno,
+                    func,
+                    "module_const",
+                    f"{name}[]",
+                    "literal",
+                    _expr(value),
+                    lits,
+                    tuple(
+                        _span(n)
+                        for n in ast.walk(value)
+                        if isinstance(n, ast.Constant)
+                        and isinstance(n.value, str)
+                        and CODE_SHAPE.match(n.value)
+                    ),
+                )
+            )
 
     def _catalog_const(self, name: str) -> bool:
         return self.rel in CATALOG_FILES and name.isupper()
@@ -399,7 +614,9 @@ class _Visitor(ast.NodeVisitor):
             if isinstance(callee, ast.Name)
             else (callee.attr if isinstance(callee, ast.Attribute) else "")
         )
-        fam = self.families.get(name)
+        # ``from x import ExecutionError as EE`` still constructs an ExecutionError.
+        origin = self.index.imports.get((self.mod, name))
+        fam = self.families.get(origin[1] if origin else name)
         for kw in node.keywords:
             if kw.arg in CODE_ARG_NAMES:
                 # ``super().__init__(code=...)`` stores the code for the enclosing class.
@@ -412,7 +629,7 @@ class _Visitor(ast.NodeVisitor):
         if fam is not None and fam[0] is not None:
             pos = fam[0]
             if pos < len(node.args) and not isinstance(node.args[pos], ast.Starred):
-                self._emit(node, "positional", name, node.args[pos])
+                self._emit(node, "positional", origin[1] if origin else name, node.args[pos])
         self.generic_visit(node)
 
 

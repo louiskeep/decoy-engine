@@ -59,6 +59,7 @@ import math
 from dataclasses import dataclass
 from typing import Any
 
+from decoy_engine import reasons
 from decoy_engine.expressions import CompiledExpression, compile_expr, evaluate
 from decoy_engine.plan._errors import PlanCompileError
 
@@ -113,7 +114,7 @@ class DerivedConfig:
         expr = cfg.get("expression")
         if not expr:
             raise PlanCompileError(
-                code="derived_expression_missing",
+                code=reasons.plan.DERIVED_EXPRESSION_MISSING,
                 path="provider_config.expression",
                 message=(
                     "'expression' is required for the derived strategy. "
@@ -133,7 +134,7 @@ class DerivedConfig:
         if bounds_raw is not None:
             if not isinstance(bounds_raw, dict):
                 raise PlanCompileError(
-                    code="derived_bounds_invalid",
+                    code=reasons.plan.DERIVED_BOUNDS_INVALID,
                     path="provider_config.bounds",
                     message=(
                         f"'bounds' must be a dict with 'min' and/or 'max' keys, "
@@ -147,7 +148,7 @@ class DerivedConfig:
                     bounds[key] = float(val)
             if "min" in bounds and "max" in bounds and bounds["min"] > bounds["max"]:
                 raise PlanCompileError(
-                    code="derived_bounds_inverted",
+                    code=reasons.plan.DERIVED_BOUNDS_INVERTED,
                     path="provider_config.bounds",
                     message=(
                         f"'bounds.min' ({bounds['min']}) must not exceed "
@@ -159,7 +160,7 @@ class DerivedConfig:
         null_propagation = str(cfg.get("null_propagation", "explicit_null"))
         if null_propagation not in _NULL_PROPAGATION_MODES:
             raise PlanCompileError(
-                code="derived_null_propagation_invalid",
+                code=reasons.plan.DERIVED_NULL_PROPAGATION_INVALID,
                 path="provider_config.null_propagation",
                 message=(
                     f"'null_propagation' must be one of "

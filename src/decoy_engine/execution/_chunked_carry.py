@@ -26,6 +26,7 @@ from typing import Any
 
 import pyarrow as pa
 
+from decoy_engine import reasons
 from decoy_engine.execution._column_access import (
     handler_written_columns,
     has_when,
@@ -33,7 +34,7 @@ from decoy_engine.execution._column_access import (
 )
 from decoy_engine.execution._errors import ExecutionError
 
-PASSTHROUGH_UNREPRESENTABLE_CODE = "chunked_passthrough_value_unrepresentable"
+PASSTHROUGH_UNREPRESENTABLE_CODE = reasons.runtime.CHUNKED_PASSTHROUGH_VALUE_UNREPRESENTABLE
 
 # Exceptions a pandas conversion raises for a value it refuses. A built-in
 # `TypeError` is eligible for the profile walk only (an unhashable nested value

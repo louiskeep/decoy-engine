@@ -139,6 +139,7 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
+from decoy_engine import reasons
 from decoy_engine.errors import RowErrorsFailedError
 from decoy_engine.execution._adapter import ExecutionResult, StrategyContext
 from decoy_engine.execution._errors import ExecutionError
@@ -682,7 +683,7 @@ def table_topo_order(plan: Plan, graph: RelationshipGraph) -> list[str]:
 
     if len(result) != len(order_seed):
         raise ExecutionError(
-            code="relationship_cycle",
+            code=reasons.runtime.RELATIONSHIP_CYCLE,
             message=(
                 "FK relationship graph has a cycle across tables; cannot order "
                 "tables for sequential masking."

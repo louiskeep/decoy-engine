@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from decoy_engine import reasons
 from decoy_engine.execution._errors import ExecutionError
 
 if TYPE_CHECKING:
@@ -79,7 +80,7 @@ def _iter_plan_nodes(node: Any) -> Iterator[dict[str, Any]]:
     """
     if not isinstance(node, dict) or "name" not in node:
         raise ExecutionError(
-            code="out_of_core_fk_join_plan_unverified",
+            code=reasons.runtime.OUT_OF_CORE_FK_JOIN_PLAN_UNVERIFIED,
             message=(
                 "the unordered join's EXPLAIN (FORMAT JSON) plan had an unexpected "
                 f"node shape (expected a dict with a 'name' key, got {node!r}); "
@@ -90,7 +91,7 @@ def _iter_plan_nodes(node: Any) -> Iterator[dict[str, Any]]:
     children = node.get("children", [])
     if not isinstance(children, list):
         raise ExecutionError(
-            code="out_of_core_fk_join_plan_unverified",
+            code=reasons.runtime.OUT_OF_CORE_FK_JOIN_PLAN_UNVERIFIED,
             message=(
                 f"the unordered join's EXPLAIN plan node {node.get('name')!r} had a "
                 "non-list 'children'; refusing to run an unverified plan."
@@ -119,7 +120,7 @@ def _verify_unordered_plan_or_raise(plan: dict[str, Any]) -> None:
     for node in nodes:
         if _is_global_sort_operator(node["name"]):
             raise ExecutionError(
-                code="out_of_core_fk_join_plan_unverified",
+                code=reasons.runtime.OUT_OF_CORE_FK_JOIN_PLAN_UNVERIFIED,
                 message=(
                     f"the unordered join's plan regained a global sort operator "
                     f"({node['name']!r}); the reorder path requires an UNORDERED "
@@ -129,7 +130,7 @@ def _verify_unordered_plan_or_raise(plan: dict[str, Any]) -> None:
     joins = [node for node in nodes if node["name"] == "HASH_JOIN"]
     if len(joins) != 1:
         raise ExecutionError(
-            code="out_of_core_fk_join_plan_unverified",
+            code=reasons.runtime.OUT_OF_CORE_FK_JOIN_PLAN_UNVERIFIED,
             message=(
                 "expected exactly one HASH_JOIN operator in the unordered join's "
                 f"plan, found {len(joins)}; refusing to run an unverified plan."
@@ -139,7 +140,7 @@ def _verify_unordered_plan_or_raise(plan: dict[str, Any]) -> None:
     children = join.get("children", [])
     if len(children) != 2:
         raise ExecutionError(
-            code="out_of_core_fk_join_plan_unverified",
+            code=reasons.runtime.OUT_OF_CORE_FK_JOIN_PLAN_UNVERIFIED,
             message=(
                 f"the HASH_JOIN operator had {len(children)} children, expected "
                 "exactly 2 (probe, build); refusing to run an unverified plan."
@@ -175,7 +176,7 @@ def _verify_unordered_plan_or_raise(plan: dict[str, Any]) -> None:
     )
     if not plan_ok:
         raise ExecutionError(
-            code="out_of_core_fk_join_plan_unverified",
+            code=reasons.runtime.OUT_OF_CORE_FK_JOIN_PLAN_UNVERIFIED,
             message=(
                 "the unordered join's physical plan did not keep the written join "
                 f"order (child ARROW probe / deduplicated-parent PARQUET build): "

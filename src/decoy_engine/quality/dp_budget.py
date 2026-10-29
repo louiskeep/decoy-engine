@@ -75,6 +75,7 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 import opendp.prelude as _dp
 
+from decoy_engine import reasons
 from decoy_engine.errors import DecoyError
 from decoy_engine.quality.dp_schedule import Schedule
 
@@ -139,7 +140,7 @@ def check_epsilon_supported(epsilon: float) -> None:
     # request, for which every comparison is False, also fails closed.
     if not (epsilon <= _DP_EPSILON_CEILING):
         raise DpBudgetError(
-            code="dp_epsilon_unsupported",
+            code=reasons.quality.DP_EPSILON_UNSUPPORTED,
             message=(
                 f"requested epsilon {epsilon!r} exceeds the supported ceiling "
                 f"{_DP_EPSILON_CEILING!r}; a budget this large is outside the "

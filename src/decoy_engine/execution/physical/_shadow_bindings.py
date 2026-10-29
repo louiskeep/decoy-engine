@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Any, Final
 
 import pyarrow as pa
 
+from decoy_engine import reasons
 from decoy_engine.execution._adapter import provider_config_to_dict
 from decoy_engine.execution._operator_registry import (
     DETERMINISTIC_FAKER_SOURCE_TYPES,
@@ -77,7 +78,7 @@ OPERATOR_ID_BY_STRATEGY: Final[dict[str, str]] = {
     spec.strategy: spec.operator_id for spec in OPERATORS.values()
 }
 
-_SLICE_ADMITTED_REASON_PREFIX: Final = "slice_native_admitted"
+_SLICE_ADMITTED_REASON_PREFIX: Final = reasons.route.SLICE_NATIVE_ADMITTED
 
 # The draw site each position-keyed variant runs, which names its determinism family.
 _POSITIONAL_DRAW_SITE: Final = {

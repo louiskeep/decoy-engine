@@ -51,6 +51,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from decoy_engine import reasons
 from decoy_engine.determinism._derive import derive
 from decoy_engine.errors import DecoyError
 from decoy_engine.plan._errors import PlanCompileError
@@ -126,7 +127,7 @@ class WindowedDateConfig:
         anchor = cfg.get("anchor")
         if not anchor:
             raise PlanCompileError(
-                code="windowed_date_anchor_missing",
+                code=reasons.plan.WINDOWED_DATE_ANCHOR_MISSING,
                 path="provider_config.anchor",
                 message=(
                     "'anchor' is required for the windowed_date strategy. "
@@ -136,7 +137,7 @@ class WindowedDateConfig:
 
         if "max_days" not in cfg or cfg.get("max_days") is None:
             raise PlanCompileError(
-                code="windowed_date_max_days_missing",
+                code=reasons.plan.WINDOWED_DATE_MAX_DAYS_MISSING,
                 path="provider_config.max_days",
                 message=(
                     "'max_days' is required for the windowed_date strategy. "
@@ -149,7 +150,7 @@ class WindowedDateConfig:
 
         if min_days > max_days:
             raise PlanCompileError(
-                code="windowed_date_min_exceeds_max",
+                code=reasons.plan.WINDOWED_DATE_MIN_EXCEEDS_MAX,
                 path="provider_config.min_days",
                 message=(f"'min_days' ({min_days}) must be <= 'max_days' ({max_days})."),
             )
@@ -157,7 +158,7 @@ class WindowedDateConfig:
         distribution = str(cfg.get("distribution", "uniform"))
         if distribution not in WINDOWED_DATE_DISTRIBUTIONS:
             raise PlanCompileError(
-                code="windowed_date_distribution_invalid",
+                code=reasons.plan.WINDOWED_DATE_DISTRIBUTION_INVALID,
                 path="provider_config.distribution",
                 message=(
                     f"'distribution' must be one of "

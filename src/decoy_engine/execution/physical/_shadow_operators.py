@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Final
 import pyarrow as pa
 import pyarrow.compute as pc
 
+from decoy_engine import reasons
 from decoy_engine.execution._operator_registry import OPERATORS
 from decoy_engine.execution._row_errors import RowError
 from decoy_engine.execution.native._crypto_ext import CryptoExtensionUnavailableError
@@ -80,10 +81,10 @@ _DATE_SHIFT: Final = OPERATORS["date_shift"].operator_id
 # null mask, range). They describe a broken kernel, never a bad input row.
 INDEX_KERNEL_INVARIANT_CODES: Final = frozenset(
     {
-        "index_batch_type_mismatch",
-        "index_batch_length_mismatch",
-        "index_batch_null_mask_mismatch",
-        "index_batch_out_of_bounds",
+        reasons.runtime.INDEX_BATCH_TYPE_MISMATCH,
+        reasons.runtime.INDEX_BATCH_LENGTH_MISMATCH,
+        reasons.runtime.INDEX_BATCH_NULL_MASK_MISMATCH,
+        reasons.runtime.INDEX_BATCH_OUT_OF_BOUNDS,
     }
 )
 

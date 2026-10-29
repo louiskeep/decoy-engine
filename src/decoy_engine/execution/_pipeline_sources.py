@@ -40,6 +40,7 @@ from typing import Any
 
 import pyarrow as pa
 
+from decoy_engine import reasons
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._transforms_gate import transform_bearing_mask_tables
 from decoy_engine.execution._transforms_table import transform_resolved_source
@@ -164,12 +165,16 @@ def resolve_sequential_loader(
         if t in prepared:
             prepared_table = caller_sources[t]
             if not isinstance(prepared_table, pa.Table):  # pragma: no cover - by construction
-                raise ExecutionError(code="transform_source_missing", message=_MISSING % t)
+                raise ExecutionError(
+                    code=reasons.runtime.TRANSFORM_SOURCE_MISSING, message=_MISSING % t
+                )
             return prepared_table
         if t in caller_sources:
             return transform_resolved_source(resolved_config, t, caller_sources[t])
         if source_loader is None:
-            raise ExecutionError(code="transform_source_missing", message=_MISSING % t)
+            raise ExecutionError(
+                code=reasons.runtime.TRANSFORM_SOURCE_MISSING, message=_MISSING % t
+            )
         return transform_resolved_source(resolved_config, t, source_loader(t))
 
     return load

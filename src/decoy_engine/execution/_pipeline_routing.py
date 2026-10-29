@@ -103,6 +103,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from decoy_engine import reasons
 from decoy_engine.errors import ConfigError
 from decoy_engine.execution._errors import ExecutionError
 
@@ -267,7 +268,7 @@ def lazy_transform_route(eligible: bool, route_reason: str, cyclic: bool) -> tup
     if eligible and not cyclic:
         return "sequential", route_reason
     raise ExecutionError(
-        code="fk_full_frame_oom_risk_rejected",
+        code=reasons.runtime.FK_FULL_FRAME_OOM_RISK_REJECTED,
         message=(
             "FK job rejected before read: a table that declares transforms is not "
             "resident when routing runs (a LazySource or loader-supplied source; the "
@@ -600,8 +601,7 @@ def decide_execution_route(
         # Does not fit (or UNPRICEABLE): route bounded by ELIGIBILITY alone,
         # never by an estimate of out_of_core/sequential peak -- their k's
         # are unmeasured placeholders (§13), and out_of_core's own runtime
-        # budget (Sprint 1b) caps it regardless of how this job got routed
-        # there.
+        # budget (Sprint 1b) caps it regardless of how this job got routed there.
         if eligible and not cyclic and out_of_core_compatible:
             return "out_of_core", "byte_estimate_bounded_out_of_core"
         if eligible and not cyclic:
@@ -618,7 +618,7 @@ def decide_execution_route(
             "cross_table_cycle" if (eligible and cyclic) else route_reason
         )
         raise ExecutionError(
-            code="fk_full_frame_oom_risk_rejected",
+            code=reasons.runtime.FK_FULL_FRAME_OOM_RISK_REJECTED,
             message=(
                 "FK job rejected before read: the byte-level memory estimator "
                 "(docs/plans/2026-07-10-oom-avoidance-routing-redesign.md §13) "
@@ -667,7 +667,7 @@ def decide_execution_route(
         # fine, and point at the exact-count fix (Parquet) or the escape hatch.
         if not largest_table_rows_exact:
             raise ExecutionError(
-                code="fk_full_frame_oom_risk_rejected_estimated",
+                code=reasons.runtime.FK_FULL_FRAME_OOM_RISK_REJECTED_ESTIMATED,
                 message=(
                     f"FK job rejected before read: the largest mask table's row "
                     f"count is a CSV size estimate (~{rows:,} rows), at or above "
@@ -683,7 +683,7 @@ def decide_execution_route(
                 ),
             )
         raise ExecutionError(
-            code="fk_full_frame_oom_risk_rejected",
+            code=reasons.runtime.FK_FULL_FRAME_OOM_RISK_REJECTED,
             message=(
                 f"FK job rejected before read: largest mask table has {rows:,} "
                 f"rows, at or above the full-frame reject threshold "

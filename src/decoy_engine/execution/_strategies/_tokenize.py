@@ -45,6 +45,7 @@ import unicodedata
 
 import pandas as pd
 
+from decoy_engine import reasons
 from decoy_engine.determinism import derive
 from decoy_engine.execution._adapter import StrategyContext
 from decoy_engine.execution._errors import StrategyError
@@ -72,7 +73,7 @@ class TokenizeStrategyHandler:
         vault = getattr(ctx, "vault_writer", None)
         if vault is None:
             raise StrategyError(
-                code="tokenize_requires_vault",
+                code=reasons.runtime.TOKENIZE_REQUIRES_VAULT,
                 strategy="tokenize",
                 message=(
                     f"column {column!r} uses the tokenize strategy but no vault was "
@@ -81,7 +82,7 @@ class TokenizeStrategyHandler:
             )
         if plan.namespace is None:
             raise StrategyError(
-                code="tokenize_requires_namespace",
+                code=reasons.runtime.TOKENIZE_REQUIRES_NAMESPACE,
                 strategy="tokenize",
                 message=(
                     f"column {column!r} uses the tokenize strategy but has no namespace; "
@@ -99,7 +100,7 @@ class TokenizeStrategyHandler:
         # canonicalizing wrong.
         if not (pd.api.types.is_object_dtype(col.dtype) or isinstance(col.dtype, pd.StringDtype)):
             raise StrategyError(
-                code="tokenize_requires_string_dtype",
+                code=reasons.runtime.TOKENIZE_REQUIRES_STRING_DTYPE,
                 strategy="tokenize",
                 message=(
                     f"column {column!r} uses the tokenize strategy but its source dtype "
@@ -116,7 +117,7 @@ class TokenizeStrategyHandler:
             # exception (e.g. a database error echoing the plaintext) would otherwise
             # leak the value it is meant to protect through run_pipeline's exception.
             return StrategyError(
-                code="tokenize_vault_error",
+                code=reasons.runtime.TOKENIZE_VAULT_ERROR,
                 strategy="tokenize",
                 message=(
                     f"column {column!r}: the token vault raised during {op}; the run "

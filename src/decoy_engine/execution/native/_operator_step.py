@@ -19,6 +19,7 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.compute as pc
 
+from decoy_engine import reasons
 from decoy_engine.execution._positional_keys import positional_key_array
 from decoy_engine.execution.native._bucket_perturb_ext import native_bucket_perturb
 from decoy_engine.execution.native._categorical_ext import (
@@ -125,7 +126,7 @@ def sample_faker_array(
     col_valid = col.is_valid().to_numpy(zero_copy_only=False)
     if not np.array_equal(idx_valid, col_valid):
         raise GenerationError(
-            code="index_batch_null_mask_mismatch",
+            code=reasons.runtime.INDEX_BATCH_NULL_MASK_MISMATCH,
             message="derive_index_batch's null positions do not match the source column's",
         )
     return _gather_pool_values(pool, idx, idx_valid)
@@ -168,7 +169,10 @@ def sample_faker_array_positional(
     col = source.combine_chunks() if isinstance(source, pa.ChunkedArray) else source
     n = len(col)
     keys = positional_key_array(
-        row_offset, n, code="faker_position_out_of_domain", gate_positions=gate_positions
+        row_offset,
+        n,
+        code=reasons.runtime.FAKER_POSITION_OUT_OF_DOMAIN,
+        gate_positions=gate_positions,
     )
     idx = _checked_batch(
         index_kernel.derive_index_batch(
@@ -183,7 +187,7 @@ def sample_faker_array_positional(
     if idx.null_count:
         # Dense uint64 keys have no nulls, so a null index is a malformed kernel, not data.
         raise GenerationError(
-            code="index_batch_null_mask_mismatch",
+            code=reasons.runtime.INDEX_BATCH_NULL_MASK_MISMATCH,
             message="derive_index_batch returned null indices for non-null positional keys",
         )
     if missing_mask is None:
@@ -206,12 +210,12 @@ def _checked_batch(idx: object, *, n: int) -> pa.Array:
     if not isinstance(idx, pa.Array) or idx.type != pa.uint64():
         got = idx.type if isinstance(idx, pa.Array) else type(idx).__name__
         raise GenerationError(
-            code="index_batch_type_mismatch",
+            code=reasons.runtime.INDEX_BATCH_TYPE_MISMATCH,
             message=f"derive_index_batch returned {got}, expected a uint64 Arrow array",
         )
     if len(idx) != n:
         raise GenerationError(
-            code="index_batch_length_mismatch",
+            code=reasons.runtime.INDEX_BATCH_LENGTH_MISMATCH,
             message=f"derive_index_batch returned {len(idx)} indices for {n} input rows",
         )
     return idx
@@ -225,7 +229,7 @@ def _gather_pool_values(pool: ValuePool, idx: pa.Array, valid: Any) -> pa.Array:
     idx_np = idx.fill_null(0).to_numpy(zero_copy_only=False)
     if valid.any() and int(idx_np[valid].max()) >= pool.size:
         raise GenerationError(
-            code="index_batch_out_of_bounds",
+            code=reasons.runtime.INDEX_BATCH_OUT_OF_BOUNDS,
             message=(
                 f"derive_index_batch returned an index >= pool_size {pool.size}; "
                 "refusing to gather from the pool with it"

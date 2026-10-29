@@ -28,9 +28,10 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
+from decoy_engine import reasons
 from decoy_engine.plan._errors import PlanCompileError
 
-NONDETERMINISTIC_CODE = "categorical_nondeterministic_not_chunk_safe"
+NONDETERMINISTIC_CODE = reasons.plan.CATEGORICAL_NONDETERMINISTIC_NOT_CHUNK_SAFE
 
 
 def is_nondeterministic(col_entry: dict[str, Any]) -> bool:
@@ -87,7 +88,7 @@ def reject_nondeterministic(columns: Sequence[str], *, table: str) -> None:
     )
 
 
-WHEN_CODE = "chunked_categorical_nondeterministic_when_not_supported"
+WHEN_CODE = reasons.plan.CHUNKED_CATEGORICAL_NONDETERMINISTIC_WHEN_NOT_SUPPORTED
 
 
 def reject_nondeterministic_when(table_cfg: dict[str, Any], *, table: str) -> None:

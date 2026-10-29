@@ -29,6 +29,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from decoy_engine import reasons
 from decoy_engine.generation.composite._address import CompositeAddress
 from decoy_engine.generation.composite._city_state_zip import CompositeCityStateZip
 from decoy_engine.generation.composite._name_email import CompositeNameEmail
@@ -79,7 +80,7 @@ def composite_wiring_consistent(config: dict[str, Any], registry: NamespaceRegis
             for ref in coherent:
                 if ref not in columns:
                     raise PlanCompileError(
-                        code="composite_wiring_inconsistent",
+                        code=reasons.plan.COMPOSITE_WIRING_INCONSISTENT,
                         path=path,
                         message=(
                             f"Column {table_name}.{col_name} is coherent_with {ref!r}, "
@@ -93,7 +94,7 @@ def composite_wiring_consistent(config: dict[str, Any], registry: NamespaceRegis
             providers = {columns[c].get("provider") for c in group}
             if len(providers) != 1:
                 raise PlanCompileError(
-                    code="composite_wiring_inconsistent",
+                    code=reasons.plan.COMPOSITE_WIRING_INCONSISTENT,
                     path=path,
                     message=(
                         f"Coherent group {group} in table {table_name!r} routes through "
@@ -115,7 +116,7 @@ def composite_wiring_consistent(config: dict[str, Any], registry: NamespaceRegis
                 and provider not in _VARIABLE_OUTPUT_COMPOSITES
             ):
                 raise PlanCompileError(
-                    code="composite_wiring_inconsistent",
+                    code=reasons.plan.COMPOSITE_WIRING_INCONSISTENT,
                     path=f"tables.{table_name}.columns.{col_name}.provider",
                     message=(
                         f"Column {table_name}.{col_name} declares coherent_with but its "
@@ -127,7 +128,7 @@ def composite_wiring_consistent(config: dict[str, Any], registry: NamespaceRegis
                 expected = _COMPOSITE_OUTPUT_COLUMNS[provider]
                 if expected != group:
                     raise PlanCompileError(
-                        code="composite_wiring_inconsistent",
+                        code=reasons.plan.COMPOSITE_WIRING_INCONSISTENT,
                         path=path,
                         message=(
                             f"Composite {provider!r} writes columns {expected!r} but the "
@@ -138,7 +139,7 @@ def composite_wiring_consistent(config: dict[str, Any], registry: NamespaceRegis
             # 4. The registry binds the whole (table, sorted(group)) tuple.
             if registry.for_column(table_name, group) is None:
                 raise PlanCompileError(
-                    code="composite_wiring_inconsistent",
+                    code=reasons.plan.COMPOSITE_WIRING_INCONSISTENT,
                     path=path,
                     message=(
                         f"Composite group ({table_name!r}, {group!r}) has no namespace "

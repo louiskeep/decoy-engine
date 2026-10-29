@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING, Any
 import pyarrow as pa
 import pyarrow.compute as pc
 
+from decoy_engine import reasons
 from decoy_engine.generation._admission import PlanAdmission, classify_plan
 from decoy_engine.generation._bounds import (
     accumulator_bytes,
@@ -238,7 +239,7 @@ def _reject_unbounded(config: dict[str, Any], bounds: Mapping[tuple[str, str], i
     missing = [f"{t}.{c}" for (t, c), b in bounds.items() if b is None]
     if missing:
         raise GenerationUnboundedError(
-            code="generation_column_unbounded",
+            code=reasons.runtime.GENERATION_COLUMN_UNBOUNDED,
             message=(
                 "no defensible value-width bound under a bounded ceiling for column(s): "
                 + ", ".join(sorted(missing))
@@ -264,7 +265,7 @@ def _check_width(arr: pa.Array, bound: int, column: str) -> None:
     longest = pc.max(pc.binary_length(arr)).as_py()
     if longest is not None and longest > bound:
         raise GenerationBudgetExceeded(
-            code="value_exceeds_declared_bound",
+            code=reasons.runtime.VALUE_EXCEEDS_DECLARED_BOUND,
             message=f"column {column!r} produced a value wider than its declared {bound}-byte bound.",
         )
 
@@ -360,7 +361,7 @@ def run_generation(
     stream_it = is_bounded_sink(sink) and _fits(ledger, plan.streaming_peak())
     if not stream_it and not _fits(ledger, plan.resident_peak()):
         raise GenerationBudgetExceeded(
-            code="generation_budget_exceeded",
+            code=reasons.runtime.GENERATION_BUDGET_EXCEEDED,
             message=(
                 f"resident generation needs {plan.resident_peak()} bytes at most; "
                 f"{ledger.remaining_bytes} remain under the ceiling."
@@ -509,7 +510,7 @@ def _run_legacy(
         )
         if not _fits(ledger, need):
             raise GenerationBudgetExceeded(
-                code="generation_budget_exceeded",
+                code=reasons.runtime.GENERATION_BUDGET_EXCEEDED,
                 message=f"whole-table generation needs {need} bytes at most; "
                 f"{ledger.remaining_bytes} remain under the ceiling.",
             )
