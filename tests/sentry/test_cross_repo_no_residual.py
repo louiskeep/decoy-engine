@@ -99,8 +99,12 @@ def scan(root: pathlib.Path, rel_paths: list[str]) -> list[str]:
 
 
 def _tracked() -> list[str]:
-    out = subprocess.run(
-        [shutil.which("git") or "git", "ls-files"], cwd=ROOT, check=True, capture_output=True, text=True
+    out = subprocess.run(  # noqa: S603 - fixed argv, no user input
+        [shutil.which("git") or "git", "ls-files"],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
     ).stdout
     return out.splitlines()
 
