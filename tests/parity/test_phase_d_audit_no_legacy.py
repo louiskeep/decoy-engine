@@ -96,6 +96,8 @@ _SEQ_NATIVE_PAYLOAD = {
     "faker": mx.COMPILED_SELECTION,
     "text_redact": mx.COMPILED_RUST,
     "text_mask": mx.COMPILED_RUST,
+    # B7: SEQ group_key derives through the compiled raw-hex kernel (sibling-gated).
+    "group_key": mx.COMPILED_RUST,
     "redact": mx.NAMED_ARROW,
     "truncate": mx.NAMED_ARROW,
     "passthrough": mx.NOOP,
@@ -143,11 +145,16 @@ def test_ooc_cells_match_the_support_sets() -> None:
         ("categorical", mx.PAYLOAD): mx.COMPILED_RUST,
         ("text_redact", mx.PAYLOAD): mx.COMPILED_RUST,
         ("bucket_perturb", mx.PAYLOAD): mx.COMPILED_RUST,
-        ("text_mask", mx.PAYLOAD): mx.DEDICATED_PYTHON,
-        ("code_set", mx.PAYLOAD): mx.DEDICATED_PYTHON,
+        ("text_mask", mx.PAYLOAD): mx.COMPILED_RUST,
+        ("code_set", mx.PAYLOAD): mx.ARROW_DICT_MAP,
+        # B4: deterministic-REUSE person-name faker selects from its prepared pool
+        # through the compiled index kernel; its parent-key surface stays excluded.
+        ("faker", mx.PAYLOAD): mx.COMPILED_SELECTION,
     }
-    for strategy in ("faker", "date_shift", "bucketize", "group_key", "shuffle"):
+    for strategy in ("date_shift", "bucketize", "group_key", "shuffle"):
         assert matrix[(mx.OOC, strategy, mx.PAYLOAD)] == mx.EXCLUDED, strategy
+    # faker is admitted as payload but never as a parent key (payload-only).
+    assert matrix[(mx.OOC, "faker", mx.KEY)] == mx.EXCLUDED
 
 
 def test_every_ooc_admitted_strategy_is_inside_the_enumeration_domain() -> None:
@@ -184,10 +191,15 @@ def test_native_chunked_reroutes_either_side_of_a_declared_fk_edge(side: str) ->
 def test_ooc_gate_excludes_the_deferred_strategies_with_a_reason() -> None:
     from decoy_engine.execution.out_of_core import _compat
 
-    for strategy in ("faker", "date_shift", "bucketize"):
+    for strategy in ("date_shift", "bucketize"):
         assert strategy in _compat._DEFERRED_GROUP_B
     for strategy in ("geo_generalize", "formula", "derived", "nested"):
         assert strategy in _compat._DEFERRED_GROUP_C
+    # B4: faker is no longer unconditionally deferred; it is admitted only for the
+    # deterministic-REUSE allowlisted shape, and an unsupported faker shape still
+    # declines with a caller-visible reason.
+    assert "faker" not in _compat._DEFERRED_GROUP_B
+    assert "faker" in _compat._SUPPORTED_WORK_STRATEGIES
 
 
 # ---------------------------------------------------------------------------

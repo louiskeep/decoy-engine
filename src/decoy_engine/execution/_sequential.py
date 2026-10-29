@@ -156,9 +156,9 @@ from decoy_engine.execution._row_errors import RowErrorRecord, drain_row_errors
 from decoy_engine.execution._runner import (
     WorkNode,
     build_work_list,
-    date_shift_group_columns,
     group_key_group_by_columns,
     order_work,
+    source_anchor_columns,
     top_code_columns,
 )
 from decoy_engine.execution._sequential_composite_chain import decline_composite_chain
@@ -172,6 +172,7 @@ from decoy_engine.generation.pool._cache import PoolCache
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.instrumentation.timing import TimingCollector, use_collector
 from decoy_engine.keyprovider import require_mask_key
+from decoy_engine.progress import get_active_channel
 from decoy_engine.quarantine import compute_quarantine, finalize_committed_quarantine
 
 if TYPE_CHECKING:
@@ -293,10 +294,12 @@ def run_sequential(
 
     table_order = table_topo_order(plan, graph)
 
-    # HC-3a: per-table date_shift group_by anchor columns (Codex R1 P1 #1/#2).
-    # Unioned into each table's FK-safe column set at load (lossless int+null)
-    # and snapshotted pre-mask into ctx.group_anchor_snapshots below.
-    group_anchor_cols = date_shift_group_columns(plan, registry)
+    # HC-3a: per-table date_shift group_by anchor columns (Codex R1 P1 #1/#2),
+    # plus cross-column V1 joint_mask key_by source keys (`source_anchor_columns`):
+    # both read an immutable source sibling. Unioned into each table's FK-safe
+    # column set at load (lossless int+null) and snapshotted pre-mask into
+    # ctx.group_anchor_snapshots below.
+    group_anchor_cols = source_anchor_columns(plan, registry)
     # HC-3b (Codex R2): top_code columns need the same lossless int+null typing
     # so a value >= 2**53 is not rounded by a float64 widen (chunk-safety).
     top_code_cols = top_code_columns(plan, registry)
@@ -379,6 +382,9 @@ def run_sequential(
         with use_collector(collector):
             for table in table_order:
                 src = source_loader(table)
+                _pg = get_active_channel()
+                _pg_rows_in = src.num_rows
+                _pg_started = _pg.phase_start("mask", table=table, rows_in=_pg_rows_in)
                 # Same guard as run(), table-local (FK children exempt via graph).
                 reject_null_bearing_int(plan, {table: src}, registry, graph)
                 reject_gated_hash_on_integer(plan, {table: src.schema}, registry, graph)
@@ -525,6 +531,9 @@ def run_sequential(
                 else:
                     outputs[table] = out
 
+                _pg.phase_finish(
+                    "mask", _pg_started, table=table, rows_in=_pg_rows_in, rows_out=out.num_rows
+                )
                 # Evict this table's wide frame + its pre-mask snapshots (the narrow
                 # maps it produced stay cached for downstream children).
                 del frames[table]

@@ -97,7 +97,6 @@ def _full_frame(config: dict[str, Any], source: pa.Table, tmp_path: Path) -> pa.
         config,
         {TABLE: source},
         engine_version=ENGINE_VERSION,
-        substrate="pandas",
         execution_mode="full_frame",
         auto_chunk=False,
         key_provider=key_provider(),

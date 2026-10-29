@@ -358,6 +358,11 @@ def key_provider_from_ref(
 # only in deterministic mode (a real source maps to a synthetic value); that is
 # caught by the `deterministic` check below, not this set. Kept in lockstep with
 # the 23-site keyed-surface map in the DE-02 design doc.
+# tokenize persists a reversible source->token mapping, so its token MUST be
+# derived from the secret mask key, never the public job seed: a seed-derived
+# token is dictionary-attackable without vault authorization. It is keyed
+# unconditionally (like a `vault: true` column, see _col_seed_is_keyed), not
+# only when deterministic=True.
 _ALWAYS_KEYED_STRATEGIES = frozenset(
     {
         "fpe",
@@ -371,6 +376,7 @@ _ALWAYS_KEYED_STRATEGIES = frozenset(
         "windowed_date",
         "group_key",
         "joint_mask",
+        "tokenize",
     }
 )
 

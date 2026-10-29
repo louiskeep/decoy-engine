@@ -227,6 +227,8 @@ def _resident_case(name: str, tmp_path: Path) -> tuple[dict[str, Any], dict[str,
         kwargs["fidelity_report"] = True
     elif name == "post_validation":
         kwargs["post_validation"] = True
+    elif name == "run_storm":
+        extra["run_storm"] = True
     elif name == "streaming_disabled":
         kwargs["stream_chunked_output"] = False
     elif name == "no_sink":
@@ -250,6 +252,7 @@ def _resident_case(name: str, tmp_path: Path) -> tuple[dict[str, Any], dict[str,
         "quarantine_enabled",
         "fidelity_report",
         "post_validation",
+        "run_storm",
     ],
 )
 def test_each_eligibility_reason_keeps_the_run_resident_and_the_sink_untouched(

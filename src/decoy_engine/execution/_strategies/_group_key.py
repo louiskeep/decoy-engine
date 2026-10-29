@@ -64,6 +64,31 @@ class GroupKeyStrategyHandler:
         # Namespace isolates this column's derivation from other group_key
         # columns and from mask-path derivations in the same job.
         namespace = f"group_key/{column}"
+        # SEQ native seam: when the run admitted this column (sibling type/role +
+        # companion), the raw-hex kernel derives the keys from the sibling; a
+        # decline (None) falls through to the oracle below, byte-identically.
+        seq = getattr(ctx, "seq_native", None)
+        if seq is not None:
+            # Local import: the seam pulls in the native-ops/plan chain, so a top-level import
+            # would cycle through plan compilation (the `_fpe` handler imports its op the same way).
+            from decoy_engine.execution._sequential_native_group_key import (
+                group_key_column as seq_group_key_column,
+            )
+
+            native = seq_group_key_column(
+                seq,
+                ctx,
+                df,
+                column,
+                group_by=config.group_by,
+                namespace=namespace,
+                mask_key=ctx.mask_key,
+                length=config.length,
+                prefix=config.prefix,
+            )
+            if native is not None:
+                df[column] = native
+                return df, []
         key_list = apply_group_key(config, df, seed=ctx.mask_key, namespace=namespace)
         df[column] = key_list
         return df, []

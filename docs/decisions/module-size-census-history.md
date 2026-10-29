@@ -418,6 +418,17 @@ it into `StrategyContext` construction. Same FK-resolution-helper
 decomposition target stands.
 Engine-owned transforms: +1 LOC (675 -> 676), the prepared-input contract
 docstring on `PandasExecutionAdapter.run`. No logic added.
+MG-5 vault (2026-10-23): a `token_vault_writer` parameter threaded into `run()`
+and onto `StrategyContext.vault_writer` pushed the module to 702, over the
+700 hard max (it had reached 699 since the last entry above, via the
+FK-resolution-helper extraction and the cross-column V1 comment the census
+line's own rationale names). Remediation (same day): the `_fk_key_value`
+compat wrapper (a pure one-line delegate to `_fk_keys.fk_key_value`, kept only
+for tests and older internal imports) moved verbatim to the new sibling
+`execution/_fk_key_compat.py`, landing the module at 689. Pure move, zero
+behavior change; `_pandas_adapter.py` now imports `_fk_key_value` from that
+sibling instead of defining it. Same FK-resolution-helper decomposition
+target stands for what remains.
 
 ## `src/decoy_engine/execution/_pipeline.py` (census 684 at move time; entry deleted by R3)
 
@@ -575,6 +586,18 @@ Decomposition target: split `DRAW_SITES` into `_draw_sites_mask.py` /
 Task 5.2 (2026-09-11): the FF1 cutover renamed FPE_KEY_LABEL to
 FF1_KEY_LABEL and updated the `mask.fpe` DrawSite's seed-derivation
 notes and call-site reference, pushing the module from 927 to 931.
+MG-5 vault (2026-10-23): the new `mask.tokenize` DrawSite (inline, +23 LOC)
+and its one-line `MASK_STRATEGY_TO_SITE` entry pushed the module from 928 to
+952, over the (already-legacy, over-max) 928 ceiling. Remediation (same
+day): landed the `mask.tokenize` DrawSite in the new sibling
+`_draw_sites_tokenize.py` (the exact decomposition target this module's own
+census line names -- a `_draw_sites_*.py` data sibling re-exported here),
+spliced into `DRAW_SITES` the same way `GEN_POOL_DRAW_SITES` already is;
+the `MASK_STRATEGY_TO_SITE["tokenize"]` entry stays inline (a one-line
+string mapping, not a DrawSite literal, so moving it would not shrink
+anything). A rewrap-only tightening of the (unrelated) partitionability
+docstring paragraph recovered the one line the new sibling import costs,
+landing the module back at exactly 928: no census change needed.
 
 ## `src/decoy_engine/execution/native/_draw_site_providers.py` (census 985 at move time)
 
@@ -587,6 +610,14 @@ faker / source_keyed) into sibling modules re-exported through the
 registry when the next draw-site batch lands.
 Task 5.2 (2026-09-11): FF1_KEY_LABEL rename touched the `mask.fpe`
 provider's key-derivation reference, pushing the module from 985 to 986.
+MG-5 vault (2026-10-23): the new `mask.tokenize` -> `derive` entry in
+`_SOURCE_KEYED_PRIMITIVE` (+3 LOC: a 2-line comment and the mapping)
+pushed the module from 985 to 988. Remediation (same day): the entry moved
+to the new `_draw_sites_tokenize.py` sibling as `TOKENIZE_PRIMITIVE`,
+merged back in via `_SOURCE_KEYED_PRIMITIVE = {...} | TOKENIZE_PRIMITIVE`
+(the dict literal's own closing line, not a new one) plus one new import
+line for it, landing the module back at exactly 985: no census change
+needed.
 
 ## `src/decoy_engine/execution/out_of_core/_stream_join.py` (census 720 at move time)
 
@@ -705,3 +736,23 @@ Growth under a reviewed census bump, each from routing a file access through `de
 - Shrinks: `quarantine.py` 645 -> 637, `plan/_compile.py` 703 -> 701 and `storm/model_pack/trainer.py`
   715 -> 712 (legacy over-max files may only shrink, so each gave back what the keyword and the policy
   calls added by tightening comments and a helper).
+
+## `src/decoy_engine/execution/_pipeline_routing.py` (census 691 -> 700)
+
+E3b/E2a-review (2026-10-24): 691 -> 700 threading `run_storm` into
+`decide_execution_route`. `_sequential_eligible` declines the sequential and
+out-of-core routes when `run_storm` is set (STORM needs the resident full-frame
+output, like `post_validation`), and the mixed generate+mask branch declines the
+same way (the chunked mixed route never calls `compute_storm_postmask`). This
+leaves the module at the 700-LOC hard cap with no headroom. Decomposition target:
+extract the forced-mode handling (`execution_mode == "out_of_core" | "sequential"`)
+and the B1b byte-estimate block into siblings next time this module is touched; no
+further routing logic may land here until it is decomposed.
+
+
+## `src/decoy_engine/execution/_pipeline_routing_signals.py` (census 609 -> 610)
+
+E3b (2026-10-24): +1 line passing `run_storm=bool(config.get("run_storm"))` into
+the single `decide_execution_route` call site. Decomposition target unchanged:
+split the probe-recovery resolver into its own module when next touched.
+

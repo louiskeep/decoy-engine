@@ -3,7 +3,7 @@
 Task 0.6 (engine-efficiency program, Phase 0). Reused by every later phase to
 prove a native result is LOGICALLY identical to today's pandas result.
 
-The oracle is PINNED (`run_oracle`): `substrate="pandas"`,
+The oracle is PINNED (`run_oracle`): the pandas adapter,
 `execution_mode="full_frame"`, `auto_chunk=False`. It is the single source of
 truth every later phase compares against; it must not drift with routing
 changes.
@@ -44,13 +44,11 @@ from decoy_engine.providers_v2 import get_default_registry
 
 _ENGINE_VERSION = "native-parity-harness"
 
-# The native substrate the efficiency program's Phases 1+ build. It is NOT a
-# valid substrate yet (`VALID_SUBSTRATES == ("pandas",)`), so routing
-# a candidate through it raises `invalid_substrate` today. That is the flip
-# switch: when a phase wires native execution for a strategy and it reaches
-# logical parity, that strategy's matrix cases start passing. Later phases
-# repoint this single constant if the wired token differs.
-_NATIVE_SUBSTRATE = "native"
+# Native execution is route-chosen (never caller-chosen): the candidate is the
+# default `run_pipeline` route, which runs the compiled kernels when the native
+# companion is installed and the pandas oracle otherwise. A matrix case passes
+# when the two agree logically; cases stay xfail(strict=False) because the
+# companion is optional in CI.
 
 
 # ---------------------------------------------------------------------------
@@ -134,7 +132,7 @@ DEFAULT_ALLOWED_PHYSICAL_DIFFS: tuple[PhysicalDiff, ...] = (NULL_TYPED_NORMALIZA
 
 
 def run_oracle(config: dict[str, Any], sources: Mapping[str, pa.Table]) -> LogicalResult:
-    """Run `config` on the PINNED pandas oracle: `substrate="pandas"`,
+    """Run `config` on the PINNED pandas oracle:
     `execution_mode="full_frame"`, `auto_chunk=False`. The single ground truth
     every later phase diffs against; it must not drift with routing changes.
     """
@@ -142,7 +140,6 @@ def run_oracle(config: dict[str, Any], sources: Mapping[str, pa.Table]) -> Logic
         config,
         dict(sources),
         engine_version=_ENGINE_VERSION,
-        substrate="pandas",
         execution_mode="full_frame",
         auto_chunk=False,
     )
@@ -150,15 +147,13 @@ def run_oracle(config: dict[str, Any], sources: Mapping[str, pa.Table]) -> Logic
 
 
 def run_candidate(config: dict[str, Any], sources: Mapping[str, pa.Table]) -> LogicalResult:
-    """Run `config` on the NATIVE substrate, pinned like the oracle in every
-    other dimension so only the substrate differs. Raises `invalid_substrate`
-    until a phase wires native execution; that is the intended flip switch.
+    """Run `config` on the default (native-when-present) route, pinned like
+    the oracle in every other dimension so only the compute backend differs.
     """
     result = run_pipeline(
         config,
         dict(sources),
         engine_version=_ENGINE_VERSION,
-        substrate=_NATIVE_SUBSTRATE,
         execution_mode="full_frame",
         auto_chunk=False,
     )

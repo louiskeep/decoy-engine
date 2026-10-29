@@ -651,10 +651,14 @@ class TestOrderingRegressions:
         cfg = _config(tmp_path, columns)
         return _compile_test_plan(cfg, table_data, table="people")
 
-    def test_unsafe_float_source_mask_scheduled_after_is_rejected(self, tmp_path) -> None:
-        """group_key column "aaa_group_key" sorts BEFORE "amount", so
-        amount's hash-mask (any strategy) is scheduled AFTER the consumer:
-        the consumer sees the RAW (unsafe float) source type."""
+    def test_group_by_mask_ordered_before_consumer_by_cross_column_edge(self, tmp_path) -> None:
+        """Cross-column V1: the ordering edge (group_key -> its group_by driver)
+        schedules amount's hash mask BEFORE "aaa_group_key" EVEN THOUGH the
+        group_key column name sorts first. So the consumer reads the MASKED
+        (hashed string, safe) value -- group_key's documented post-mask read --
+        not the raw float. Pre-fix this read the unsafe float source by
+        lexicographic accident and was rejected; the deterministic edge makes it
+        admissible, and column naming no longer flips it."""
         table = pa.table({"amount": pa.array([0.0, -0.0, 1.0], type=pa.float64())})
         columns = [
             {"name": "amount", "strategy": "hash", "namespace": "amount_ns"},
@@ -667,18 +671,20 @@ class TestOrderingRegressions:
         plan, registry, graph = self._plan_registry_graph(tmp_path, columns, table)
         ordered = order_work(build_work_list(plan, registry), graph)
         keys = [n.key for n in ordered]
-        assert keys.index(("people", ("aaa_group_key",))) < keys.index(("people", ("amount",)))
+        # The edge dominates the lexicographic tie-break: the driver masks first.
+        assert keys.index(("people", ("amount",))) < keys.index(("people", ("aaa_group_key",)))
 
         group_key_node = next(n for n in ordered if n.key == ("people", ("aaa_group_key",)))
         effective = group_by_effective_type(
             ordered, table.schema, table="people", group_key_node=group_key_node
         )
+        # Masked value: hash output is a string, so the effective type is safe.
         assert effective is not None
-        assert pa.types.is_floating(effective)
-        assert group_by_type_is_safe(effective) is False
+        assert pa.types.is_string(effective)
+        assert group_by_type_is_safe(effective) is True
 
         offending = unsafe_group_key_group_by_columns(ordered, table.schema, table="people")
-        assert offending == ["aaa_group_key"]
+        assert offending == []
 
     def test_registry_is_load_bearing_with_a_provider_backed_sibling(self, tmp_path) -> None:
         # A group_key column beside a provider-backed faker column: the manual
@@ -793,11 +799,15 @@ class TestOrderingRegressions:
         )
         assert auto.outputs["people"].column("zzz_group_key").to_pylist() != raw_oracle
 
-    def test_multi_consumer_independent_effective_types(self, tmp_path) -> None:
-        """Two group_key columns share one group_by ("amount", float64
-        source): "aaa_group_key" sorts BEFORE amount's hash mask (sees the
-        unsafe float source); "zzz_group_key" sorts AFTER it (sees the safe
-        hashed-string output). Each consumer's judgment is independent."""
+    def test_multi_consumer_share_masked_group_by_via_cross_column_edge(self, tmp_path) -> None:
+        """Cross-column V1: two group_key columns share one group_by ("amount",
+        float64 source) masked by hash. BOTH consumers add an ordering edge to
+        the driver, so amount's mask is scheduled before BOTH regardless of
+        name sort ("aaa" first, "zzz" last). Each then reads the MASKED
+        (hashed string, safe) value, so neither sees the raw unsafe float.
+        Pre-fix "aaa_group_key" read the raw float by lexicographic accident and
+        was rejected; the edge removes that accident. `group_by_effective_type`
+        is still computed per consumer (here both resolve to the mask output)."""
         table = pa.table({"amount": pa.array([1.5, 2.5, -0.0], type=pa.float64())})
         columns = [
             {"name": "amount", "strategy": "hash", "namespace": "amount_ns"},
@@ -815,11 +825,9 @@ class TestOrderingRegressions:
         plan, registry, graph = self._plan_registry_graph(tmp_path, columns, table)
         ordered = order_work(build_work_list(plan, registry), graph)
         keys = [n.key for n in ordered]
-        assert (
-            keys.index(("people", ("aaa_group_key",)))
-            < keys.index(("people", ("amount",)))
-            < keys.index(("people", ("zzz_group_key",)))
-        )
+        # The driver masks before BOTH consumers (both edges point to it).
+        assert keys.index(("people", ("amount",))) < keys.index(("people", ("aaa_group_key",)))
+        assert keys.index(("people", ("amount",))) < keys.index(("people", ("zzz_group_key",)))
 
         aaa_node = next(n for n in ordered if n.key == ("people", ("aaa_group_key",)))
         zzz_node = next(n for n in ordered if n.key == ("people", ("zzz_group_key",)))
@@ -829,13 +837,14 @@ class TestOrderingRegressions:
         zzz_type = group_by_effective_type(
             ordered, table.schema, table="people", group_key_node=zzz_node
         )
-        assert aaa_type is not None and pa.types.is_floating(aaa_type)
-        assert group_by_type_is_safe(aaa_type) is False
+        # Both read the masked (hashed string) value, so both are safe.
+        assert aaa_type is not None and pa.types.is_string(aaa_type)
+        assert group_by_type_is_safe(aaa_type) is True
         assert zzz_type is not None and pa.types.is_string(zzz_type)
         assert group_by_type_is_safe(zzz_type) is True
 
         offending = unsafe_group_key_group_by_columns(ordered, table.schema, table="people")
-        assert offending == ["aaa_group_key"]
+        assert offending == []
 
     def test_preceding_when_gated_sibling_mask_is_rejected(self, tmp_path) -> None:
         table = pa.table({"amount": pa.array(["1", "2", "3"], type=pa.string())})

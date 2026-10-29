@@ -53,6 +53,7 @@ def out_of_core_admission(
     *,
     registry: ProviderRegistry,
     graph: RelationshipGraph,
+    source_types: Mapping[tuple[str, str], Any] | None = None,
 ) -> tuple[bool, str | None]:
     """Static out-of-core compatibility check: `(compatible, primary_code)`.
 
@@ -63,12 +64,17 @@ def out_of_core_admission(
     per-row work), safe to call on the dispatch path. `primary_code` names the
     first rejection so the reject-before-read message and the forced-mode error
     can explain WHY the route declined.
+
+    `source_types` (`(table, column) -> Arrow type`), when a caller has the
+    schema, lets the gate decline a faker column with a non-string source so the
+    job reroutes instead of being admitted and aborting mid-run (B4). It is a
+    cheap schema read, so it stays off the per-row path.
     """
     from decoy_engine.execution._runner import build_work_list, order_work
     from decoy_engine.execution.out_of_core._compat import check_out_of_core_compatibility
 
     work = order_work(build_work_list(plan, registry), graph)
-    compat = check_out_of_core_compatibility(plan, work, graph)
+    compat = check_out_of_core_compatibility(plan, work, graph, source_types=source_types)
     return compat.accepted, compat.primary_code
 
 
@@ -204,6 +210,26 @@ def _resolve_largest_mask_table_rows(
     return best_rows, best_exact
 
 
+def _source_arrow_types(
+    caller_sources: Mapping[str, Any],
+) -> dict[tuple[str, Any], Any]:
+    """`(table, column) -> Arrow type` read from each source's schema.
+
+    Metadata-only (a `LazySource`'s schema is cached at construction, read for
+    nothing), so this stays off the per-row path. Lets the out-of-core gate
+    decline a non-string faker source at routing time (B4) rather than admit it
+    and abort mid-run; a source without a schema simply contributes nothing.
+    """
+    types: dict[tuple[str, Any], Any] = {}
+    for table_name, source in caller_sources.items():
+        schema = getattr(source, "schema", None)
+        if schema is None:
+            continue
+        for field in schema:
+            types[(table_name, field.name)] = field.type
+    return types
+
+
 def out_of_core_routing_signals(
     profile: Any,
     *,
@@ -232,7 +258,9 @@ def out_of_core_routing_signals(
     """
     if not (getattr(profile, "relationships", None) and has_mask_table):
         return False, None, None, True
-    compatible, reject_code = out_of_core_admission(plan, registry=registry, graph=graph)
+    compatible, reject_code = out_of_core_admission(
+        plan, registry=registry, graph=graph, source_types=_source_arrow_types(caller_sources)
+    )
     if config is not None:
         compatible, reject_code = decline_out_of_core(config, compatible, reject_code)
     rows, exact = _resolve_largest_mask_table_rows(
@@ -579,6 +607,7 @@ def resolve_execution_route(
         validators=validators,
         fidelity_report=fidelity_report,
         post_validation=post_validation,
+        run_storm=bool(config.get("run_storm")),
         vault_writer=vault_writer,
         execution_mode=execution_mode,
         graph=graph,

@@ -59,6 +59,7 @@ from decoy_engine.execution.native._determinism_protocol import (
     DrawSite,
     draw_site_by_id,
 )
+from decoy_engine.execution.native._draw_sites_tokenize import TOKENIZE_PRIMITIVE
 from decoy_engine.generators.derivation import GenDeriveContext
 
 # 2**53. The full mantissa width of an IEEE-754 double. NumPy's own
@@ -865,9 +866,8 @@ _SOURCE_KEYED_PRIMITIVE: dict[str, str] = {
     "gen.pool_deterministic": "derive_index",
     "mask.faker": "derive_index",
     "gen.identifier_deterministic": "derive_value",
-}
+} | TOKENIZE_PRIMITIVE
 
-# GP2 providers: sibling module (this file is allowlisted near its ceiling).
 from decoy_engine.execution.native._draw_site_providers_gen_pool import (  # noqa: E402
     GEN_POOL_PROVIDER_CLASSES,
 )

@@ -19,10 +19,8 @@ from decoy_engine import (
     ExecutionContext,
     LicenseError,
     LicenseExpiredError,
-    LicenseVerifier,
     Logger,
     PipelineValidationError,
-    SchemaInspector,
 )
 
 
@@ -88,9 +86,15 @@ def test_all_lists_every_public_name():
         "emit_quarantine",
         "emit_throughput_sample",
         "make_key_resolver",
-        "SchemaInspector",
-        "LicenseVerifier",
         "validate_config",
+        "CallbackSink",
+        "PhaseEvent",
+        "ProgressSink",
+        "RateSample",
+        "RouteEvent",
+        "StructuredEventsSink",
+        "TerminalEvent",
+        "WarningEvent",
         # S22-CL-V1GRAPHRUNNER (2026-05-30): removed validate_graph,
         # validate_graph_full, normalize_config, run_graph, preview_graph,
         # RunResult, PreviewResult. V1 graph public surface retired.
@@ -222,6 +226,9 @@ def test_all_lists_every_public_name():
         "estimate_job_capacity",
         "CapacityEstimate",
         "CapacityVerdict",
+        # Job-time estimator: the advisory estimate_job primitive + its result type.
+        "estimate_job",
+        "JobEstimate",
         # Task 3.2a (2026-09-13): the public native-companion probe. Platform
         # startup gates depend on this rather than the private crypto/index
         # loaders, so a fail-closed check crosses the in-process boundary
@@ -296,17 +303,6 @@ class TestExecutionContext:
         log = logging.getLogger("decoy_engine.test")
         ctx = ExecutionContext(logger=log)
         assert ctx.logger is log
-
-
-class TestStubs:
-    def test_license_verifier_returns_free_tier(self):
-        result = LicenseVerifier.verify()
-        assert result["tier"] == "free"
-        assert result["expires_at"] is None
-
-    def test_schema_inspector_raises_not_implemented(self):
-        with pytest.raises(NotImplementedError):
-            SchemaInspector()
 
 
 # S11-CL-DEADCODE: V2-behavior regression pins for the four QA findings the

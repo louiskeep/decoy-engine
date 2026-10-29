@@ -88,6 +88,7 @@ from decoy_engine.execution._governor import (
 )
 from decoy_engine.execution._isolated_common import IsolatedRunResult
 from decoy_engine.execution._isolated_run import run_pipeline_isolated
+from decoy_engine.execution._job_estimate import JobEstimate, estimate_job
 from decoy_engine.execution._pandas_adapter import (
     PandasExecutionAdapter,
     get_default_executor,
@@ -103,11 +104,7 @@ from decoy_engine.execution._planner import (
 from decoy_engine.execution._probe import ProbePoint, ProbeResult, probe_fits, probe_peak_bytes
 from decoy_engine.execution._row_errors import RowError, RowErrorRecord
 from decoy_engine.execution._runner import WorkNode, build_work_list, order_work
-from decoy_engine.execution._substrate import (
-    VALID_SUBSTRATES,
-    resolve_substrate,
-    select_execution_adapter,
-)
+from decoy_engine.execution._substrate import select_execution_adapter
 from decoy_engine.execution._transactional_sink import (
     ParquetTransactionalSink,
     TransactionalSink,
@@ -134,7 +131,6 @@ __all__ = [
     "FULL_FRAME_REJECT_ROWS_DEFAULT",
     "OUT_OF_CORE_SUPPORTED_STRATEGIES",
     "OUT_OF_CORE_THRESHOLD_ROWS_DEFAULT",
-    "VALID_SUBSTRATES",
     "CapacityEstimate",
     "CapacityVerdict",
     "ExecutionAdapter",
@@ -147,6 +143,7 @@ __all__ = [
     "GovernorTripKind",
     "GovernorTripRecord",
     "IsolatedRunResult",
+    "JobEstimate",
     "OutOfCoreCompatibility",
     "OutOfCoreRejection",
     "PandasExecutionAdapter",
@@ -165,12 +162,12 @@ __all__ = [
     "check_out_of_core_compatibility",
     "classify_job",
     "classify_table_kinds",
+    "estimate_job",
     "estimate_job_capacity",
     "get_default_executor",
     "order_work",
     "probe_fits",
     "probe_peak_bytes",
-    "resolve_substrate",
     "run_job_with_governor",
     "run_mask_chunked",
     "run_mask_pipeline_chunked",

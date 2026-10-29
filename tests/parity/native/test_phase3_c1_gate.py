@@ -208,7 +208,6 @@ def _run_oracle_both(
         config,
         {"patients": patients, "observations": observations},
         engine_version=_ENGINE_VERSION,
-        substrate="pandas",
         execution_mode="full_frame",
         auto_chunk=False,
         key_provider=_key_provider(),

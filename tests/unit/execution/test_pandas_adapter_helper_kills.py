@@ -11,10 +11,10 @@ from __future__ import annotations
 import pytest
 
 from decoy_engine.execution import ExecutionError
+from decoy_engine.execution._fk_key_compat import _fk_key_value
 from decoy_engine.execution._fk_keys import fk_key_value
 from decoy_engine.execution._pandas_adapter import (
     PandasExecutionAdapter,
-    _fk_key_value,
     _reset_default_executor_for_tests,
     get_default_executor,
 )

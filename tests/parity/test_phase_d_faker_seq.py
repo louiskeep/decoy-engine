@@ -69,6 +69,11 @@ from tests.parity._fpe_key_data import assert_keys_declined
 
 _OOC_CODE = "out_of_core_faker_pool_unsupported"
 _SEQUENTIAL = ("sequential", "pure_mask_fk")
+# B4 made the deterministic-REUSE faker shape out-of-core-eligible, so a faker job now
+# takes a bounded out-of-core route under the two auto paths and the explicit mode.
+_OUT_OF_CORE_BYTE = ("out_of_core", "byte_estimate_bounded_out_of_core")
+_OUT_OF_CORE_LARGE = ("out_of_core", "out_of_core_large_fk")
+_OOC_FAKER_KEY = "out_of_core_faker"
 
 
 def _companion_loads() -> bool:
@@ -82,6 +87,9 @@ def _companion_loads() -> bool:
 # The backend a sequential faker payload reports through run_pipeline: the companion when it
 # loads, else the Python handler.
 _SEQ_BACKEND = "rust_companion" if _companion_loads() else "python_scalar"
+# The backend the out-of-core faker route (B4) reports: the compiled pool-select kernel when the
+# companion loads, else the KAT-equal Python reference the pool context feeds.
+_OOC_FAKER_BACKEND = "rust_pool_select" if _companion_loads() else "python_scalar"
 
 
 def _expected_value(seed: Any) -> str:
@@ -423,25 +431,33 @@ def _route(shape: s.Shape, **kw: Any) -> tuple[str, str]:
     )
 
 
-def test_the_real_gate_declines_faker_for_the_out_of_core_route() -> None:
-    for seed in (faker_seed(), positional_seed()):
-        shape = payload_shape({"f": (strs(SRC), seed)})
-        assert out_of_core_admission(shape.plan, registry=s.REGISTRY, graph=shape.graph) == (
-            False,
-            _OOC_CODE,
-        )
+def test_the_real_gate_admits_a_deterministic_reuse_faker_for_the_out_of_core_route() -> None:
+    # B4 ported the deterministic-REUSE person-name variant, so the real gate now admits it
+    # on its plan shape (the exact-string source requirement fires later, with the schema in hand).
+    shape = payload_shape({"f": (strs(SRC), faker_seed())})
+    assert out_of_core_admission(shape.plan, registry=s.REGISTRY, graph=shape.graph) == (True, None)
+
+
+def test_the_real_gate_declines_a_positional_faker_for_the_out_of_core_route() -> None:
+    # A positional faker is not the ported deterministic-REUSE shape, so it still declines and
+    # keeps the sequential/full-frame route.
+    shape = payload_shape({"f": (strs(SRC), positional_seed())})
+    assert out_of_core_admission(shape.plan, registry=s.REGISTRY, graph=shape.graph) == (
+        False,
+        _OOC_CODE,
+    )
 
 
 @pytest.mark.parametrize(
-    ("estimate", "expected"),
-    [
-        (True, _SEQUENTIAL),  # a fit no longer pulls a bounded-eligible job onto full_frame
-        (False, _SEQUENTIAL),
-        (None, _SEQUENTIAL),
-    ],
+    "estimate",
+    [True, False, None],
     ids=["fits", "does-not-fit", "unpriceable"],
 )
-def test_byte_estimate_routing_for_a_faker_job(estimate: bool | None, expected: Any) -> None:
+def test_byte_estimate_routing_for_a_faker_job(estimate: bool | None) -> None:
+    # B4: the deterministic-REUSE faker job is bounded-eligible, so byte-estimate routing sends
+    # it to the out-of-core route whether the full-frame fit estimate is a fit, a miss, or
+    # unpriceable -- a fit no longer pulls a bounded-eligible job onto full_frame, and the row
+    # threshold is not consulted in this mode.
     assert (
         _route(
             _shape(),
@@ -449,16 +465,23 @@ def test_byte_estimate_routing_for_a_faker_job(estimate: bool | None, expected: 
             use_probe_routing=False,
             full_frame_fits_estimate=estimate,
         )
-        == expected
+        == _OUT_OF_CORE_BYTE
     )
 
 
 @pytest.mark.parametrize(
-    "rows", [4_999_999, 5_000_000, 50_000_000], ids=["below", "at", "far-above"]
+    ("rows", "expected"),
+    [
+        (4_999_999, _SEQUENTIAL),
+        (5_000_000, _OUT_OF_CORE_LARGE),
+        (50_000_000, _OUT_OF_CORE_LARGE),
+    ],
+    ids=["below", "at", "far-above"],
 )
-def test_f7b_flag_off_row_threshold_picks_sequential_on_both_sides(rows: int) -> None:
-    # `use_byte_estimate_routing=False` falls to the row-threshold path. Faker is not
-    # out-of-core compatible, so neither side of the threshold can pick out-of-core.
+def test_f7b_flag_off_row_threshold_routes_by_size(rows: int, expected: Any) -> None:
+    # `use_byte_estimate_routing=False` falls to the row-threshold path. The deterministic-REUSE
+    # faker job is out-of-core compatible (B4), so below the threshold it stays sequential and at
+    # or above it diverts to the out-of-core route.
     assert (
         _route(
             _shape(),
@@ -467,7 +490,7 @@ def test_f7b_flag_off_row_threshold_picks_sequential_on_both_sides(rows: int) ->
             largest_table_rows=rows,
             out_of_core_threshold_rows=5_000_000,
         )
-        == _SEQUENTIAL
+        == expected
     )
 
 
@@ -482,9 +505,17 @@ def test_explicit_execution_mode_is_honoured(mode: str, expected: Any) -> None:
     assert _route(_shape(), execution_mode=mode, full_frame_fits_estimate=True) == expected
 
 
-def test_explicit_out_of_core_on_a_faker_job_fails_closed() -> None:
+def test_explicit_out_of_core_on_a_deterministic_faker_job_is_honoured() -> None:
+    # B4: the deterministic-REUSE faker job is out-of-core-eligible, so the explicit mode runs it
+    # there instead of failing closed.
+    assert _route(_shape(), execution_mode="out_of_core") == ("out_of_core", "override_out_of_core")
+
+
+def test_explicit_out_of_core_on_a_positional_faker_job_fails_closed() -> None:
+    # A positional faker is not out-of-core-eligible, so the explicit mode still fails closed.
+    shape = payload_shape({"f": (strs(SRC), positional_seed()), "p": (strs(SRC), PASSTHROUGH)})
     with pytest.raises(ConfigError, match=_OOC_CODE):
-        _route(_shape(), execution_mode="out_of_core")
+        _route(shape, execution_mode="out_of_core")
 
 
 # End to end through run_pipeline on a real faker config.
@@ -545,12 +576,18 @@ def _visible(result: Any) -> tuple[str, str]:
     return execution["execution_mode"], execution["route_reason"]
 
 
-def test_default_routing_runs_a_small_faker_job_sequential(tmp_path: Path) -> None:
+def test_default_routing_runs_a_small_deterministic_faker_job_out_of_core(tmp_path: Path) -> None:
+    # B4: a deterministic-REUSE faker job is bounded-eligible, so default (byte-estimate) routing
+    # sends it to the out-of-core route regardless of size; the faker column runs there (B3/B4),
+    # not the full-frame oracle.
     result = _run(tmp_path)
-    assert _visible(result) == _SEQUENTIAL
-    assert (
-        SEQ_FAKER_DISPOSITION_KEY in result.quality_metrics
-    )  # the sequential seam, not the oracle
+    assert _visible(result) == _OUT_OF_CORE_BYTE
+    [entry] = result.quality_metrics[_OOC_FAKER_KEY]
+    assert (entry["column"], entry["path"], entry["executed_backend"]) == (
+        "f",
+        "mask_batch",
+        _OOC_FAKER_BACKEND,
+    )
 
 
 @pytest.mark.parametrize("deterministic", [True, False])
@@ -574,24 +611,35 @@ def test_sequential_route_reports_its_reason_and_its_faker_backend(
 
 
 @pytest.mark.parametrize("threshold", [3, 4, 5], ids=["below", "at", "above"])
-def test_f7b_flag_off_threshold_keeps_a_sequential_faker_native_when_the_companion_loads(
+def test_f7b_flag_off_threshold_routes_a_faker_job_by_size_and_runs_it_native(
     tmp_path: Path, threshold: int
 ) -> None:
     # The flag disables byte-estimate ROUTING, not native EXECUTION. The largest table has 4
-    # rows, so thresholds 3, 4 and 5 sit below, at and above it.
+    # rows, so thresholds 3 and 4 sit at or below it (out-of-core) and 5 above it (sequential).
+    # Either way the faker column runs native (B4 out-of-core, or the B-phase sequential seam),
+    # never the oracle.
     result = _run(tmp_path, use_byte_estimate_routing=False, out_of_core_threshold_rows=threshold)
-    assert _visible(result) == _SEQUENTIAL
-    [entry] = faker_entries(result)
-    assert entry["executed_backend"] == _SEQ_BACKEND
+    if threshold <= 4:
+        assert _visible(result) == _OUT_OF_CORE_LARGE
+        [entry] = result.quality_metrics[_OOC_FAKER_KEY]
+        assert entry["executed_backend"] == _OOC_FAKER_BACKEND
+    else:
+        assert _visible(result) == _SEQUENTIAL
+        [entry] = faker_entries(result)
+        assert entry["executed_backend"] == _SEQ_BACKEND
 
 
-def test_explicit_full_frame_is_reported_and_out_of_core_is_refused(tmp_path: Path) -> None:
+def test_explicit_full_frame_is_reported_and_out_of_core_is_honoured(tmp_path: Path) -> None:
     assert _visible(_run(tmp_path, execution_mode="full_frame")) == (
         "full_frame",
         "override_full_frame",
     )
-    with pytest.raises(ConfigError, match=_OOC_CODE):
-        _run(tmp_path, execution_mode="out_of_core")
+    # B4: the deterministic-REUSE faker job is out-of-core-eligible, so the explicit out-of-core
+    # mode now runs it there instead of being refused.
+    assert _visible(_run(tmp_path, execution_mode="out_of_core")) == (
+        "out_of_core",
+        "override_out_of_core",
+    )
 
 
 @pytest.mark.parametrize("deterministic", [True, False])

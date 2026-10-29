@@ -433,7 +433,11 @@ def test_resolve_mut34_strict_greater_than_keeps_first_on_tie() -> None:
 
 
 def _patch_admission(monkeypatch, verdict=(True, "CODE")):
-    monkeypatch.setattr(prs, "out_of_core_admission", lambda plan, *, registry, graph: verdict)
+    monkeypatch.setattr(
+        prs,
+        "out_of_core_admission",
+        lambda plan, *, registry, graph, source_types=None: verdict,
+    )
 
 
 def _fk_mask_profile():

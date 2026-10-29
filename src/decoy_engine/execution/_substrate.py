@@ -1,18 +1,14 @@
-"""DECOY_SUBSTRATE flag + execution-adapter selection (engine-v2 S11).
+"""Execution-adapter selection.
 
-The flag picks which `ExecutionAdapter` the runner instantiates. Pandas is the
-only masking substrate: `VALID_SUBSTRATES` is `("pandas",)` and any other value
-raises `invalid_substrate`. (History: S11 shipped the flag with a `pandas`
-default; S13 flipped it to `polars` on a throughput bet that measurement did not
-bear out -- polars was value-parity with pandas but not faster for the per-value
-keyed-crypto masking workload -- so the default was reverted, and the dormant
-polars masking adapter was later removed entirely. `subset/` still uses the
-polars LIBRARY directly for FK-closure joins, unaffected.)
+Pandas is the only masking adapter and the parity oracle every native route is
+graded against; which compute backend runs a strategy is decided by the routing
+layers and the native operator registry, never by a caller-chosen "substrate"
+(see docs/execution-backends.md). The former `substrate` / `DECOY_SUBSTRATE`
+knob and the `max_workers` / `fallback_to_pandas` no-ops were removed pre-GA.
 """
 
 from __future__ import annotations
 
-import os
 from typing import TYPE_CHECKING
 
 from decoy_engine.execution._errors import ExecutionError
@@ -20,38 +16,14 @@ from decoy_engine.execution._errors import ExecutionError
 if TYPE_CHECKING:
     from decoy_engine.execution._adapter import ExecutionAdapter
 
-VALID_SUBSTRATES = ("pandas",)
-_DEFAULT_SUBSTRATE = "pandas"
-
-
-def resolve_substrate(override: str | None = None) -> str:
-    """Validate `override` when given, else read the DECOY_SUBSTRATE env var.
-
-    Raises:
-        ExecutionError: ``code='invalid_substrate'`` when the resolved
-            value is not one of ``VALID_SUBSTRATES``.
-    """
-    if override is not None and not isinstance(override, str):
-        raise ExecutionError(
-            code="invalid_substrate",
-            message=f"substrate override must be a str or None; got {override!r}.",
-        )
-    raw = override if override is not None else os.environ.get("DECOY_SUBSTRATE")
-    value = (raw if raw is not None else _DEFAULT_SUBSTRATE).strip().lower()
-    if value not in VALID_SUBSTRATES:
-        source = "substrate override" if override is not None else "DECOY_SUBSTRATE"
-        raise ExecutionError(
-            code="invalid_substrate",
-            message=f"{source} must be one of {VALID_SUBSTRATES}; got {value!r}.",
-        )
-    return value
+# The adapter label stamped into plans, telemetry and evidence. One value.
+SUBSTRATE = "pandas"
 
 
 def require_positive_int(name: str, value: int) -> None:
-    """Fail-fast typed validation for runtime count knobs, mirroring
-    `resolve_substrate`'s coded-error contract. bool is excluded explicitly
-    because it passes an `isinstance(..., int)` check while being a config
-    mistake (`fpe_chunk_count: true`), the same silent-coercion trap the
+    """Fail-fast typed validation for runtime count knobs. bool is excluded
+    explicitly because it passes an `isinstance(..., int)` check while being a
+    config mistake (`fpe_chunk_count: true`), the same silent-coercion trap the
     job-seed normalizer closes."""
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
         raise ExecutionError(
@@ -63,8 +35,7 @@ def require_positive_int(name: str, value: int) -> None:
 def require_bool(name: str, value: bool) -> None:
     """Fail-fast typed validation for boolean knobs. A str like ``"false"`` is
     truthy, so an untyped job-payload value would silently invert the intended
-    behavior (a caller wanting fail-closed would get fallback enabled); reject
-    anything that is not a real bool, mirroring `require_positive_int`."""
+    behavior; reject anything that is not a real bool."""
     if not isinstance(value, bool):
         raise ExecutionError(
             code="invalid_execution_knob",
@@ -72,42 +43,23 @@ def require_bool(name: str, value: bool) -> None:
         )
 
 
-def select_execution_adapter(
-    *,
-    substrate: str | None = None,
-    fpe_chunk_count: int = 4,
-    max_workers: int = 4,
-    fallback_to_pandas: bool = True,
-) -> ExecutionAdapter:
-    """Construct the execution adapter for `substrate` (default: DECOY_SUBSTRATE).
-
-    `max_workers` + `fallback_to_pandas` are reserved no-op knobs (they applied
-    to the removed polars adapter); the pandas adapter ignores them. An explicit
-    `substrate` overrides the env var;
-    None keeps the env-resolved behavior unchanged.
+def select_execution_adapter(*, fpe_chunk_count: int = 4) -> ExecutionAdapter:
+    """Construct the pandas execution adapter.
 
     Raises:
-        ExecutionError: ``code='invalid_substrate'`` for an unknown or non-str
-            substrate; ``code='invalid_execution_knob'`` for a non-positive-int
-            count knob or a non-bool `fallback_to_pandas`. All raise BEFORE any
-            adapter work so callers fail at selection time, not mid-job.
+        ExecutionError: ``code='invalid_execution_knob'`` for a non-positive-int
+            `fpe_chunk_count`, BEFORE any adapter work so callers fail at
+            selection time, not mid-job.
     """
     require_positive_int("fpe_chunk_count", fpe_chunk_count)
-    require_positive_int("max_workers", max_workers)
-    require_bool("fallback_to_pandas", fallback_to_pandas)
-    # Validates the resolved substrate; "polars" and any unknown value now raise
-    # invalid_substrate (pandas is the only substrate since the polars masking
-    # adapter was removed). pandas is the only construction path.
-    resolve_substrate(substrate)
     from decoy_engine.execution._pandas_adapter import PandasExecutionAdapter
 
     return PandasExecutionAdapter(fpe_chunk_count=fpe_chunk_count)
 
 
 __all__ = [
-    "VALID_SUBSTRATES",
+    "SUBSTRATE",
     "require_bool",
     "require_positive_int",
-    "resolve_substrate",
     "select_execution_adapter",
 ]

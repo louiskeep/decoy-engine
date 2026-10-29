@@ -27,6 +27,10 @@ FROZEN_PARAMETERS: tuple[tuple[str, str, str, str], ...] = (
     ("derive_key", "KEYWORD_ONLY", "None", "Any"),
     ("instance_default_locale", "KEYWORD_ONLY", "None", "str | None"),
     ("vault_writer", "KEYWORD_ONLY", "None", "Any"),
+    # token_vault_writer: additive keyword-only param for the B-6 tokenization
+    # write-seam (2026-10-26). Backward compatible (optional, keyword-only);
+    # recorded in docs/compatibility-contract.md section 3.4.
+    ("token_vault_writer", "KEYWORD_ONLY", "None", "Any"),
     ("fidelity_report", "KEYWORD_ONLY", "False", "bool"),
     ("post_validation", "KEYWORD_ONLY", "False", "bool"),
     ("post_validation_skip", "KEYWORD_ONLY", "None", "list[str] | None"),
@@ -41,10 +45,7 @@ FROZEN_PARAMETERS: tuple[tuple[str, str, str, str], ...] = (
     ),
     ("sink", "KEYWORD_ONLY", "None", "TransactionalSink | None"),
     ("source_loader", "KEYWORD_ONLY", "None", "Callable[[str], pa.Table] | None"),
-    ("substrate", "KEYWORD_ONLY", "'pandas'", "str | None"),
     ("fpe_chunk_count", "KEYWORD_ONLY", "4", "int"),
-    ("max_workers", "KEYWORD_ONLY", "4", "int"),
-    ("fallback_to_pandas", "KEYWORD_ONLY", "True", "bool"),
     ("explain_plan", "KEYWORD_ONLY", "False", "bool"),
     ("auto_chunk", "KEYWORD_ONLY", "True", "bool"),
     ("chunk_size_rows", "KEYWORD_ONLY", "50000", "int"),
@@ -61,6 +62,8 @@ FROZEN_PARAMETERS: tuple[tuple[str, str, str, str], ...] = (
     ("key_provider", "KEYWORD_ONLY", "None", "KeyProvider | None"),
     ("out_of_core_reorder_threshold_rows", "KEYWORD_ONLY", "None", "int | None"),
     ("unified_slice_enabled", "KEYWORD_ONLY", "True", "bool"),
+    ("progress", "KEYWORD_ONLY", "None", "ProgressSink | None"),
+    ("progress_interval_s", "KEYWORD_ONLY", "1.0", "float"),
     ("_provider_snapshot", "KEYWORD_ONLY", "None", "Mapping[str, Callable[[Faker], Any]] | None"),
 )
 FROZEN_RETURN = "ExecutionResult"
