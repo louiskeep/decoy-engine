@@ -1,7 +1,7 @@
 """Profiling-layer dataclasses (column profile output).
 
 Split out of the former `storm/types.py` by the STORM taxonomy rename: these
-are the profiling-concern types. `StormProfile` is renamed to `ColumnProfile`
+are the profiling-concern types. the former STORM profile type is now `ColumnProfile`
 (the public artifact profile_columns produces); the detection-concern types it
 embeds (`DetectorMatch`, `DetectionSignal`) are imported from
 `decoy_engine.detection.types` (one-directional: detection is the base layer).
@@ -160,7 +160,7 @@ class FieldStats:
 class ColumnProfile:
     """The artifact profile_columns produces. Input to FORECAST. JSON-serializable.
 
-    Formerly `StormProfile`; renamed by the STORM taxonomy rename (the value is
+    Formerly the STORM profile dataclass; renamed by the STORM taxonomy rename (the value is
     a per-source column profile). Wire/config identifiers are unchanged.
     """
 
