@@ -17,6 +17,13 @@ lines of the 600-LOC cap"; decompose the OOC-D disk-preflight helpers
 mirroring the `_spill_estimate.py` split this module's own docstring
 already documents as precedent, when the next budget change lands.
 
+F25 (2026-10-29): grew to 647 as `reraise_ooc_quota` gained the no-errno
+DuckDB-COPY tier (Slice 3 added the errno EDQUOT->shared-report translation at
+637; Slice 4 added the provider-quota-evidence branch so a COPY spill quota trip
+that lost its kernel errno still surfaces as `out_of_core_temp_disk_exceeded`
+with the shared report). Decomposition target unchanged: the disk-preflight
+helpers move to `_disk_budget.py` when this module is next touched.
+
 ## `src/decoy_engine/execution/out_of_core/_spill_estimate.py` (census 623 at move time)
 
 finding #13 (2026-07-27): crossed the 600 cap (600 -> 623) pricing a

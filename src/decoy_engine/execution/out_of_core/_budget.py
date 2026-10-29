@@ -549,24 +549,34 @@ def check_temp_disk_budget(temp_dir: Path, *, max_bytes: int) -> int:
 
 
 def reraise_ooc_quota(exc: BaseException, arena: ArenaLike | None) -> None:
-    """Translate a kernel quota trip surfaced by a pyarrow/Arrow out-of-core
-    writer into the public ``out_of_core_temp_disk_exceeded`` failure with the
-    shared quota report attached (plan 1.5 item 5, A02). Classification is
-    errno-only (never a native string); a non-quota error, or the pre-activation
-    allocator that has no attempt report, falls through so the original exception
-    propagates unchanged. Lives here, beside ``check_temp_disk_budget``, because
+    """Translate a kernel quota trip surfaced by an out-of-core writer into the
+    public ``out_of_core_temp_disk_exceeded`` failure with the shared quota report
+    attached (plan 1.5 item 5, A02). A pyarrow/Arrow writer preserves the errno;
+    a DuckDB ``COPY`` (T03-T05) wraps the trip in a provider exception with the
+    errno stripped, so classification falls to the tiered classifier's bounded
+    kernel probe. Either way a native exception string is never parsed.
+
+    Only an ``errno`` or ``provider_quota`` classification is elevated, because
+    the public code means the hard disk quota was hit; an ``unknown_io`` failure
+    (a non-quota error, or no quota evidence) falls through so the original
+    exception propagates unchanged. The pre-activation allocator has no classifier
+    and also falls through. Lives here, beside ``check_temp_disk_budget``, because
     this module owns the ``out_of_core_temp_disk_exceeded`` code."""
 
-    if not isinstance(exc, OSError) or exc.errno not in _QUOTA_ERRNOS:
+    if isinstance(exc, OSError) and exc.errno is not None and exc.errno not in _QUOTA_ERRNOS:
         return
-    report_fn = getattr(arena, "attempt_quota_report", None)
-    if report_fn is None:
+    classify = getattr(arena, "classify_attempt_io", None)
+    if classify is None:
+        return
+    errno_val = exc.errno if isinstance(exc, OSError) else None
+    report = classify(errno=errno_val)
+    if report.evidence not in ("errno", "provider_quota"):
         return
     err = ExecutionError(
         code="out_of_core_temp_disk_exceeded",
         message="out-of-core temporary storage hit the attempt's hard quota.",
     )
-    err.report = report_fn(errno=exc.errno)  # type: ignore[attr-defined]  # shared scratch_quota report
+    err.report = report  # type: ignore[attr-defined]  # shared scratch_quota report
     raise err from exc
 
 

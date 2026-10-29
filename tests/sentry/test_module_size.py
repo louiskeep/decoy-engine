@@ -73,8 +73,9 @@ ALLOWLIST: dict[str, int] = {
     # the probe-recovery resolver into its own module.
     "src/decoy_engine/execution/_pipeline_routing_signals.py": 638,
     # fan-in guard on the budget resolver; F25 reraise_ooc_quota (the OOC EDQUOT -> shared-report
-    # translation, beside out_of_core_temp_disk_exceeded). Split the disk-preflight helpers into _disk_budget.py.
-    "src/decoy_engine/execution/out_of_core/_budget.py": 637,
+    # translation, beside out_of_core_temp_disk_exceeded) plus the no-errno DuckDB-COPY
+    # provider-quota tier. Split the disk-preflight helpers into _disk_budget.py.
+    "src/decoy_engine/execution/out_of_core/_budget.py": 647,
     # float FK key token pricing; split the disk-width helpers into _spill_widths.py.
     "src/decoy_engine/execution/out_of_core/_spill_estimate.py": 623,
     # pinned-Plan generation threading through the per-generator dispatch; split the statistical/derived/formula branches.

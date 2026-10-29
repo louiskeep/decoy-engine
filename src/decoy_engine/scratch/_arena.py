@@ -163,18 +163,27 @@ class Arena:
 
     def allocate_publication(self, destination: Path, retention_owner: str) -> PublicationStage:
         """Allocate a destination-side staging area. The stage must sit on the
-        destination filesystem so the existing single rename can publish it; a
-        cross-device destination is refused before any data is staged (plan 1.6,
-        A10 verification is Slice 3/4)."""
+        destination filesystem so the existing single rename can publish it.
+
+        The stage carries the same path hardening the data arena uses (plan 1.5 /
+        1.6): a symlinked destination parent is refused before any directory is
+        created (so a swapped-in link cannot redirect the stage to another mount),
+        and after creation the stage is verified non-symlink, owner-matched, mode
+        0700 and single-device with its parent. Any failure reclaims the stage and
+        raises ``ScratchPathUnsafe``; the data is never staged on an unverified
+        path."""
 
         resource_id = self._new_resource_id()
         dest_parent = destination.parent if destination.parent.exists() else destination
+        # Refuse a symlinked parent before creating anything under it (mount
+        # substitution guard, mirroring the provider's create_arena, plan 1.5).
+        if os.path.islink(dest_parent):
+            raise ScratchPathUnsafe(message="publication destination parent is a symlink")
+        parent_dev = os.stat(dest_parent).st_dev
         stage = dest_parent / f".decoy-stage-{resource_id}"
         self._register(resource_id, ResourceKind.PUBLICATION, Retention.DURABLE_PUBLICATION)
         os.mkdir(stage, mode=0o700)
-        if os.stat(stage).st_dev != os.stat(dest_parent).st_dev:
-            self._provider.reclaim(stage)
-            raise ScratchPathUnsafe(message="publication stage is not on the destination device")
+        self._verify_stage(stage, dest_parent, parent_dev)
         self._paths[resource_id] = stage
         self._ledger.transition(
             resource_id,
@@ -189,6 +198,30 @@ class Arena:
             retention_owner=retention_owner,
             _stage_path=stage,
         )
+
+    def _verify_stage(self, stage: Path, dest_parent: Path, parent_dev: int) -> None:
+        """Verify a freshly created publication stage the same way the data arena
+        verifies a child (plan 1.5): non-symlink, owned by this principal, mode
+        0700, same device as its parent, and resolving directly beneath it. A
+        swapped-in link or a wrong owner/mode means a race; reclaim and refuse."""
+
+        try:
+            stat = os.lstat(stage)
+            if os.path.islink(stage):
+                raise ScratchPathUnsafe(message="publication stage is a symlink")
+            if stat.st_dev != parent_dev:
+                raise ScratchPathUnsafe(
+                    message="publication stage is not on the destination device"
+                )
+            if stat.st_uid != os.geteuid():
+                raise ScratchPathUnsafe(message="publication stage is not owned by this principal")
+            if stat.st_mode & 0o777 != 0o700:
+                raise ScratchPathUnsafe(message="publication stage mode is not 0700")
+            if stage.resolve().parent != dest_parent.resolve():
+                raise ScratchPathUnsafe(message="publication stage escapes the destination parent")
+        except ScratchPathUnsafe:
+            self._provider.reclaim(stage)
+            raise
 
     def checkpoint(
         self,
@@ -296,38 +329,97 @@ class Arena:
     ) -> QuotaReport:
         observation = self._provider.observe(self._root, self._policy)
         dimension = "inodes" if errno == _errno.EDQUOT and _inode_pressure(observation) else "bytes"
-        return QuotaReport(
-            arena_id=self._arena_id,
-            resource_id=resource.resource_id,
-            kind=getattr(resource, "kind", ResourceKind.FILE).value
+        kind = (
+            getattr(resource, "kind", ResourceKind.FILE).value
             if hasattr(resource, "kind")
-            else "publication",
-            effective_bytes_cap=self._policy.quota_bytes,
-            effective_inodes_cap=self._policy.quota_inodes,
-            observation=observation,
+            else "publication"
+        )
+        return self._quota_report(
+            observation,
+            resource_id=resource.resource_id,
+            kind=kind,
             dimension=dimension,
-            disposition=Disposition.RETAINED,
             errno=errno,
+            evidence="errno",
         )
 
     def attempt_quota_report(self, *, errno: int | None) -> QuotaReport:
-        """An attempt-level quota report, for a quota trip surfaced where no one
-        resource is the obvious owner (the out-of-core runner's choke point, which
-        preserves ``out_of_core_temp_disk_exceeded`` and attaches this, plan 1.5
-        item 5). The classification is errno-only, never a native string."""
+        """An attempt-level quota report for an errno-classified trip surfaced
+        where no one resource is the obvious owner. Errno-only; use
+        ``classify_attempt_io`` for a provider failure that lost its errno."""
 
         observation = self._provider.observe(self._root, self._policy)
         dimension = "inodes" if errno == _errno.EDQUOT and _inode_pressure(observation) else "bytes"
-        return QuotaReport(
-            arena_id=self._arena_id,
+        return self._quota_report(
+            observation, resource_id="", kind="attempt", dimension=dimension, errno=errno
+        )
+
+    def classify_attempt_io(self, *, errno: int | None) -> QuotaReport:
+        """Classify an attempt-level I/O failure that may carry no errno into the
+        shared report (plan 1.5 item 5): DuckDB and libpq ``COPY`` wrap a kernel
+        quota trip in a provider exception with the errno stripped, so errno
+        classification alone misses them.
+
+        Tiered, and never parses a native exception string:
+
+        * errno preserved and a quota errno -> ``errno`` evidence.
+        * no quota errno -> a bounded authoritative kernel probe. EDQUOT/ENOSPC on
+          the probe is ``provider_quota`` evidence for that dimension.
+        * neither -> ``unknown_io``: a write failed with no evidence it was a
+          quota breach, so one is not claimed.
+
+        The caller decides what to raise: a quota-coded failure for ``errno`` /
+        ``provider_quota``, an honest pass-through or typed outcome for
+        ``unknown_io``."""
+
+        observation = self._provider.observe(self._root, self._policy)
+        if errno in _QUOTA_ERRNOS:
+            dimension = (
+                "inodes" if errno == _errno.EDQUOT and _inode_pressure(observation) else "bytes"
+            )
+            return self._quota_report(
+                observation, resource_id="", kind="attempt", dimension=dimension, errno=errno
+            )
+        exhausted, probe_dim = self._provider.probe_exhaustion(self._root, self._policy)
+        if exhausted:
+            return self._quota_report(
+                observation,
+                resource_id="",
+                kind="attempt",
+                dimension=probe_dim or "bytes",
+                errno=None,
+                evidence="provider_quota",
+            )
+        return self._quota_report(
+            observation,
             resource_id="",
             kind="attempt",
+            dimension="unknown",
+            errno=None,
+            evidence="unknown_io",
+        )
+
+    def _quota_report(
+        self,
+        observation: QuotaObservation,
+        *,
+        resource_id: str,
+        kind: str,
+        dimension: str,
+        errno: int | None,
+        evidence: str = "errno",
+    ) -> QuotaReport:
+        return QuotaReport(
+            arena_id=self._arena_id,
+            resource_id=resource_id,
+            kind=kind,
             effective_bytes_cap=self._policy.quota_bytes,
             effective_inodes_cap=self._policy.quota_inodes,
             observation=observation,
             dimension=dimension,
             disposition=Disposition.RETAINED,
             errno=errno,
+            evidence=evidence,
         )
 
 

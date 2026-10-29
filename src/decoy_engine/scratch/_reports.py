@@ -78,9 +78,15 @@ class QuotaReport:
     effective_bytes_cap: int
     effective_inodes_cap: int
     observation: QuotaObservation
-    dimension: str  # "bytes" or "inodes"
+    dimension: str  # "bytes", "inodes" or "unknown" (unknown-I/O classification)
     disposition: Disposition
     errno: int | None = None
+    # How the failure was classified (plan 1.5 item 5): "errno" when the kernel
+    # errno was preserved, "provider_quota" when a bounded kernel probe confirmed
+    # the hard cap for an errno-less provider failure (DuckDB/COPY), or
+    # "unknown_io" when a write failed with neither errno nor quota evidence, so a
+    # quota breach is not claimed. A native exception string is never parsed.
+    evidence: str = "errno"
 
 
 @dataclass(frozen=True, slots=True)

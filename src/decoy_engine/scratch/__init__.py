@@ -79,6 +79,7 @@ from decoy_engine.scratch._seam import (
     ensure_scratch,
     ensure_scratch_file,
     native_dir_path,
+    provider_io_report,
     release_resource,
     route_write_failure,
 )
@@ -135,6 +136,7 @@ __all__ = [
     "ensure_scratch",
     "ensure_scratch_file",
     "native_dir_path",
+    "provider_io_report",
     "release_resource",
     "route_write_failure",
     "unwrap_dir",

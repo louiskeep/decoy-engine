@@ -53,6 +53,7 @@ from decoy_engine.scratch._policy import ResourceKind
 
 if TYPE_CHECKING:
     from decoy_engine.scratch._capabilities import ArenaCapability
+    from decoy_engine.scratch._reports import QuotaReport
 
 # The sentinel arena_id an *adopted* (pre-activation) capability carries: it was
 # not issued by a durable-ledger arena, so EDQUOT routing and release fall back
@@ -333,6 +334,24 @@ def release_resource(
         pass
 
 
+def provider_io_report(arena: ArenaLike | None, *, errno: int | None = None) -> QuotaReport | None:
+    """The shared classification report for an attempt-level I/O failure that may
+    carry no errno (DuckDB/libpq ``COPY``; plan 1.5 item 5), or ``None`` when there
+    is no durable-ledger arena to classify against.
+
+    A real ``Arena`` runs the tiered classifier (errno, then a bounded kernel
+    probe for provider-quota evidence, then unknown-I/O); the pre-activation
+    allocator and a missing arena have no classifier, so the caller keeps its own
+    coded error unchanged. The returned report's ``evidence`` says which tier
+    classified it, so a caller can choose to raise a quota-coded failure or attach
+    the report to its own documented error."""
+
+    classify = getattr(arena, "classify_attempt_io", None)
+    if classify is None:
+        return None
+    return classify(errno=errno)
+
+
 def route_write_failure(
     arena: ArenaLike | None,
     cap: RegisteredFile | NativeDirectory | PublicationStage | None,
@@ -367,6 +386,7 @@ __all__ = [
     "ensure_scratch",
     "ensure_scratch_file",
     "native_dir_path",
+    "provider_io_report",
     "release_resource",
     "route_write_failure",
 ]

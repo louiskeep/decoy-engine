@@ -59,6 +59,7 @@ from decoy_engine.scratch import (
     ArenaLike,
     ensure_native_dir,
     ensure_publication_stage,
+    provider_io_report,
     release_resource,
 )
 from decoy_engine.sdk import PermanentError
@@ -430,6 +431,22 @@ def _export_relation(conn: Any, sel: RelationSelection, target: Path, row_group_
     )
 
 
+def _attach_quota_report(err: PostgresSnapshotError, arena: ArenaLike | None) -> None:
+    """Attach the shared scratch classification report to a COPY failure.
+
+    A DuckDB ``COPY`` to a staged Parquet (T13) loses the kernel errno when the
+    spill or stage filesystem hits the project quota, so the failure cannot be
+    classified by errno alone (plan 1.5 item 5). With an injected arena the tiered
+    classifier (errno, kernel probe for provider-quota evidence, else unknown-I/O)
+    produces the report, so the failure surfaces as a typed shared-report outcome
+    rather than a bare ``export_failed`` code. Without a durable-ledger arena there
+    is nothing to classify against and the code is left as-is."""
+
+    report = provider_io_report(arena)
+    if report is not None:
+        err.report = report  # type: ignore[attr-defined]  # shared scratch_quota report
+
+
 def snapshot_tables_to_parquet(
     config: PostgresSnapshotConfig,
     selections: list[RelationSelection],
@@ -526,7 +543,9 @@ def snapshot_tables_to_parquet(
         except Exception as exc:
             if timed_out.is_set():
                 raise PostgresSnapshotError("deadline_exceeded") from None
-            raise PostgresSnapshotError("export_failed", cause_type=type(exc).__name__) from None
+            failure = PostgresSnapshotError("export_failed", cause_type=type(exc).__name__)
+            _attach_quota_report(failure, scratch_arena)
+            raise failure from None
 
         if timed_out.is_set():
             raise PostgresSnapshotError("deadline_exceeded")

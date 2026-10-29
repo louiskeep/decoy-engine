@@ -28,6 +28,7 @@ production write path is wired to this provider in Slice 1.
 
 from __future__ import annotations
 
+import errno as _errno
 import fcntl
 import os
 import shutil
@@ -41,6 +42,11 @@ from decoy_engine.scratch._reports import QualificationResult, QuotaObservation
 # FS_IOC_FSGETXATTR = _IOR('X', 31, struct fsxattr); struct fsxattr is 28 bytes.
 _FS_IOC_FSGETXATTR = 0x801C581F
 _FS_XFLAG_PROJINHERIT = 0x00000200
+
+# One ext4 block: the smallest write that charges the byte quota (plan 1.5 item 5).
+_PROBE_BLOCK = 4096
+_PROBE_EDQUOT = _errno.EDQUOT
+_PROBE_ENOSPC = _errno.ENOSPC
 
 
 def _read_fsxattr(path: Path) -> tuple[int, int]:
@@ -166,6 +172,35 @@ class KernelProjectQuotaProvider:
             logical_bytes=logical,
             observed_via="fsxattr+walk",
         )
+
+    def probe_exhaustion(self, arena: Path, policy: ScratchPolicy) -> tuple[bool, str]:
+        # One inode + one filesystem block, created then immediately removed. The
+        # kernel is the authority: EDQUOT/ENOSPC on create is inode pressure, on
+        # the block write it is byte pressure (plan 1.5 item 5). Any other errno
+        # (EACCES, a vanished arena) is not quota evidence, so the caller falls to
+        # the unknown-I/O classification. No logical-length walk is consulted.
+        probe = arena / f".decoy-quota-probe-{os.getpid()}"
+        fd = -1
+        try:
+            fd = os.open(probe, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
+        except OSError as exc:
+            if exc.errno in (_PROBE_EDQUOT, _PROBE_ENOSPC):
+                return True, "inodes"
+            return False, ""
+        try:
+            os.write(fd, b"\0" * _PROBE_BLOCK)
+            os.fsync(fd)
+        except OSError as exc:
+            if exc.errno in (_PROBE_EDQUOT, _PROBE_ENOSPC):
+                return True, "bytes"
+            return False, ""
+        finally:
+            os.close(fd)
+            try:
+                os.unlink(probe)
+            except OSError:
+                pass
+        return False, ""
 
     def reclaim(self, arena: Path) -> tuple[bool, int, int]:
         if not arena.exists():

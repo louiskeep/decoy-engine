@@ -62,3 +62,15 @@ class StorageProvider(Protocol):
         ``(confirmed, retained_bytes, retained_inodes)``. A failed cleanup keeps
         its charge (plan 1.5 item 6)."""
         ...
+
+    def probe_exhaustion(self, arena: Path, policy: ScratchPolicy) -> tuple[bool, str]:
+        """Authoritatively test whether ``arena`` is at its kernel hard cap, for a
+        provider failure that lost its errno (DuckDB/COPY; plan 1.5 item 5).
+
+        Attempt one bounded allocation under the arena and read the kernel's
+        answer: ``EDQUOT``/``ENOSPC`` on inode creation is inode exhaustion, on a
+        one-block write is byte exhaustion. Returns ``(exhausted, dimension)`` with
+        ``dimension`` one of ``"inodes"`` / ``"bytes"`` (empty when not exhausted).
+        This is the enforcement path, not the diagnostic logical walk, and it never
+        parses an exception string. The probe leaves no residue."""
+        ...
