@@ -37,6 +37,9 @@ if [ "$(stat -c '%u %a' "$WORKDIR")" != "0 700" ]; then
   echo "workdir $WORKDIR is not root-owned 0700; refusing" >&2
   exit 2
 fi
+# The unprivileged writer needs traverse (x) to reach its chowned arena; 0711 keeps the
+# dir non-listable and non-writable by others, preserving the anti-symlink-race property.
+chmod 0711 "$WORKDIR"
 IMG="$WORKDIR/slice1.img"
 MNT="$WORKDIR/mnt"
 ARENA="$MNT/slice1-arena"

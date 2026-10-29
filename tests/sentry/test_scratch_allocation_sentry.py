@@ -110,12 +110,19 @@ def _opens_for_write(node: ast.Call, tail: str) -> bool:
     name = tail.split(".")[-1]
     if name not in {"open"}:
         return False
-    # os.open with a flags argument naming O_CREAT / O_WRONLY / O_TMPFILE.
-    for arg in node.args:
-        if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
-            if _WRITE_MODE_RE.search(arg.value):
-                return True
-    # os.open flags are ast.BinOp/Attribute of os.O_*; detect the O_CREAT token.
+    # Builtin / Path.open: the MODE is positional arg 1 or the mode= keyword.
+    # Inspect only the mode, never the path -- a path containing w/x/a/+ is not a write mode.
+    mode_node: ast.expr | None = node.args[1] if len(node.args) > 1 else None
+    for kw in node.keywords:
+        if kw.arg == "mode":
+            mode_node = kw.value
+    if (
+        isinstance(mode_node, ast.Constant)
+        and isinstance(mode_node.value, str)
+        and _WRITE_MODE_RE.search(mode_node.value)
+    ):
+        return True
+    # os.open uses integer O_* flags, not a string mode: detect the create/write tokens.
     flags_src = ast.dump(node)
     return "O_CREAT" in flags_src or "O_TMPFILE" in flags_src or "O_WRONLY" in flags_src
 
