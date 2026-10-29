@@ -1,0 +1,136 @@
+"""Phase envelope, reason registry and the three foundation correctness fixes."""
+
+from __future__ import annotations
+
+import dataclasses
+from types import SimpleNamespace
+
+import pytest
+
+from decoy_engine import phase, reasons
+from decoy_engine.reasons import ReasonRef
+from decoy_engine.verification.postmask.types import PostMaskReport
+
+
+def _result(**kw):
+    base = dict(
+        phase="post_scan", check_id="integrity", status="passed", method="m", method_version="1"
+    )
+    base.update(kw)
+    return phase.PhaseResult(**base)
+
+
+def test_public_collection_types_are_immutable():
+    for cls in (phase.PhaseResult, phase.PhaseCoverage, phase.PhaseEvent, PostMaskReport):
+        for f in dataclasses.fields(cls):
+            ann = str(f.type)
+            assert (
+                "list[" not in ann
+                and "dict[" not in ann
+                and "set[" not in ann.replace("frozenset[", "")
+            ), (
+                cls.__name__,
+                f.name,
+                ann,
+            )
+
+
+def test_freeze_is_deep_and_rejects_later_mutation():
+    src = {"a": [1, {"b": [2, 3]}], "c": {"x"}}
+    frozen = phase.freeze(src)
+    src["a"][1]["b"].append(99)
+    res = _result(payload=frozen)
+    assert phase.to_wire(res)["payload"] == {"a": [1, {"b": [2, 3]}], "c": ["x"]}
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        res.status = "failed"  # type: ignore[misc]
+    with pytest.raises(TypeError):
+        res.payload[0] = ("z", 1)  # type: ignore[index]
+
+
+def test_canonical_bytes_stable_after_source_changes():
+    src = {"k": [1, 2]}
+    res = _result(payload=phase.freeze(src))
+    before = phase.canonical_bytes(res)
+    src["k"].append(3)
+    assert phase.canonical_bytes(res) == before
+
+
+def test_freeze_refuses_unsafe_objects():
+    with pytest.raises(phase.PhaseContractError):
+        phase.freeze({"x": object()})
+    with pytest.raises(phase.PhaseContractError):
+        phase.to_wire(_result(payload=(object(),)))  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    "kw",
+    [
+        {"schema_version": "phase-result/v0"},
+        {"status": "weird"},
+        {"phase": "scan"},
+        {"reasons": (ReasonRef("post_scan", "nope"),)},
+    ],
+)
+def test_unknown_versions_status_or_reason_fail_closed(kw):
+    res = _result(**kw)
+    assert not phase.satisfies_required_gate(res)
+    with pytest.raises(phase.PhaseContractError):
+        phase.to_wire(res)
+
+
+@pytest.mark.parametrize(
+    "status", ["completed", "failed", "error", "unavailable", "skipped", "not_applicable"]
+)
+def test_only_passed_satisfies_required_gate(status):
+    assert not phase.satisfies_required_gate(_result(status=status))
+    assert phase.satisfies_required_gate(_result(status="passed"))
+
+
+def test_error_result_carries_type_name_never_text():
+    secret = "ssn=123-45-6789 /home/u/.ssh/id"
+    res = phase.error_result(
+        "post_scan",
+        "integrity",
+        "m",
+        "1",
+        reasons.get_reason("post_scan", "check_error").ref,
+        OSError(secret),
+    )
+    wire = phase.canonical_bytes(res).decode()
+    assert "OSError" in wire and secret not in wire and "123-45" not in wire
+    assert res.status == "error"
+
+
+def test_registry_identities_unique_and_resolvable():
+    assert reasons.REGISTRY_SCHEMA == "decoy-reasons/v1"
+    for (ns, code), spec in reasons.REASONS.items():
+        assert reasons.get_reason(ns, code) is spec
+        assert spec.summary and "{" not in spec.summary
+    with pytest.raises(reasons.UnknownReasonError):
+        reasons.get_reason("post_scan", "run_storm_requested")
+
+
+def test_post_validation_runner_does_not_capture_exception_text_or_mutate_result(monkeypatch):
+    from decoy_engine.execution import ExecutionResult
+    from decoy_engine.validation.post import PostValidationRunner, _runner
+    from decoy_engine.relationships import NamespaceRegistry, RelationshipGraph
+
+    def boom(ctx):
+        raise ValueError("leaky cell value 4111111111111111")
+
+    monkeypatch.setattr(_runner, "SCANS", (("boom", boom),))
+    result = ExecutionResult(outputs={}, warnings=())
+    summary = PostValidationRunner().run(
+        plan=SimpleNamespace(),  # type: ignore[arg-type]
+        execution_result=result,
+        sources={},
+        profile=SimpleNamespace(tables=()),  # type: ignore[arg-type]
+        registry=None,  # type: ignore[arg-type]
+        relationship_graph=RelationshipGraph(edges=(), ordering=()),
+        namespace_registry=NamespaceRegistry(bindings=()),
+        config={"post_validation": True},
+    )
+    assert summary is not None and summary.failed_checks == ("boom",)
+    assert "4111" not in repr(summary)
+    assert summary.quality_warnings[0].detail == {"error_type": "ValueError"}
+    assert "quality_summary" not in result.quality_metrics

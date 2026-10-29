@@ -156,9 +156,9 @@ def run_post_mask(
 
     report = PostMaskReport(
         schema_version=SCHEMA_VERSION,
-        residual_pii=residual_pii,
-        fk_preservation=fk_preservation,
-        policy_validation=policy_validation,
+        residual_pii=tuple(residual_pii),
+        fk_preservation=tuple(fk_preservation),
+        policy_validation=tuple(policy_validation),
         pass_count=pass_count,
         warning_count=warning_count,
         fail_count=fail_count,

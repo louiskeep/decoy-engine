@@ -290,9 +290,8 @@ def compute_post_validation(
     Flag off (the default) -> this returns before importing `validation.post`, so
     the hot path is unchanged and the output byte-identical. Flag on -> it builds
     the `config` dict the `PostValidationRunner` reads and calls it; the runner
-    scans the masked output against the sources and writes the full manifest block
-    under `quality_metrics["quality_summary"]` (mutating the mutable dict the
-    frozen `ExecutionResult` holds).
+    scans the masked output against the sources and returns the summary, which this
+    function attaches under `quality_metrics["quality_summary"]`.
 
     Job-outcome signal (LOCKED: warn-only default). The runner sets
     `QualitySummary.failed_checks` (the hard-failed scan names). This surfaces them
@@ -345,9 +344,11 @@ def compute_post_validation(
     if summary is None:  # pragma: no cover - post_validation=True always returns a summary
         return
     qm = execution_result.quality_metrics
-    quality_summary = qm.get("quality_summary")
-    if quality_summary is not None:
-        _filter_sampled_values_source_equality(quality_summary, sources)
+    # The orchestrator owns attachment: the runner returns a value and never writes
+    # into the mutable dict the frozen ExecutionResult holds.
+    quality_summary = dataclasses.asdict(summary)
+    _filter_sampled_values_source_equality(quality_summary, sources)
+    qm["quality_summary"] = quality_summary
     qm["failed_checks"] = [
         {"code": name, "message": f"post-validation scan {name!r} hard-failed"}
         for name in summary.failed_checks

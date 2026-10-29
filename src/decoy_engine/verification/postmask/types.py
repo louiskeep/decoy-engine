@@ -8,7 +8,7 @@ a future "fix this" affordance to route back to a node config.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Literal
 
 # Bump when the report dict shape changes in a non-backward-compatible
@@ -126,9 +126,9 @@ class PostMaskReport:
     """
 
     schema_version: str
-    residual_pii: list[ResidualPIIFinding] = field(default_factory=list)
-    fk_preservation: list[FKPreservationFinding] = field(default_factory=list)
-    policy_validation: list[PolicyValidationFinding] = field(default_factory=list)
+    residual_pii: tuple[ResidualPIIFinding, ...] = ()
+    fk_preservation: tuple[FKPreservationFinding, ...] = ()
+    policy_validation: tuple[PolicyValidationFinding, ...] = ()
     # Top-level counters for the FE summary line (pass/warn/fail counts
     # rendered above the per-finding detail expander).
     pass_count: int = 0
