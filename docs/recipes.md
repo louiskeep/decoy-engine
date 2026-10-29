@@ -14,7 +14,7 @@ CLI (`decoy templates list`) and the [strategies](strategies.md) catalog.
 `pipeline.yaml`:
 
 ```yaml
-version: 1
+version: 2
 global_settings:
   seed: 42
 sources:
@@ -52,7 +52,7 @@ import pyarrow.csv as pacsv
 from decoy_engine import PipelineConfig, run_pipeline
 
 config_dict = {
-    "version": 1,
+    "version": 2,
     "global_settings": {"seed": 42},
     "sources": {
         "people": {"type": "file", "format": "csv", "path": "./people.csv"},
@@ -91,7 +91,7 @@ the same source key maps to the same masked key on both sides. Declare the
 relationship in the config and mask both tables in one run.
 
 ```yaml
-version: 1
+version: 2
 global_settings:
   seed: 7
 sources:
@@ -151,7 +151,7 @@ Generation needs no input file: it builds rows from a column spec. Set
 `mode: generate` (or pass `--mode generate` on the command line).
 
 ```yaml
-version: 1
+version: 2
 global_settings:
   seed: 42
 sources: {}
@@ -184,20 +184,20 @@ decoy run pipeline.yaml --mode generate
 Column `type` values: `sequence`, `faker`, `categorical`, `reference`,
 `formula`, `distribution`. See [strategies](strategies.md) for what each does.
 
-## (d) Detect PII (storm)
+## (d) Detect PII (pre-scan)
 
-`storm` profiles a dataset for PII, format signals, and re-identification risk
-without masking anything. The canonical command is `storm analyze`.
+`pre-scan` profiles a dataset for PII, format signals, and re-identification risk
+without masking anything. The canonical command is `pre-scan analyze`.
 
 ```
-decoy storm analyze data.csv
-decoy storm analyze data.csv --json --out profile.json
+decoy pre-scan analyze data.csv
+decoy pre-scan analyze data.csv --json --out profile.json
 ```
 
 Useful flags: `--rows N` caps the rows scanned; `--strategy` selects the
 sampling strategy. The result is a JSON-serializable profile (the same
-`ColumnProfile` the library's `profile_columns` returns). `storm scan` is a
-deprecated alias for `storm analyze` and still works.
+`ColumnProfile` the library's `profile_columns` returns). `pre-scan scan` is a
+deprecated alias for `pre-scan analyze` and still works.
 
 From Python:
 

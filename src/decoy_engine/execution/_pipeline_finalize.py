@@ -30,6 +30,7 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
+from decoy_engine.config import post_scan_integrity_requested
 from decoy_engine.execution._planner import AUTO_CHUNK_THRESHOLD_ROWS_DEFAULT
 
 if TYPE_CHECKING:
@@ -466,14 +467,14 @@ def finalize_validators_and_quarantine(
     return outputs, quarantine_removed
 
 
-def compute_storm_postmask(
+def compute_post_scan_integrity(
     execution_result: ExecutionResult,
     *,
     config: Mapping[str, Any],
     sources: Mapping[str, pa.Table],
 ) -> None:
-    """`run_storm: true` (E3b): run the STORM post-mask integrity checks over every
-    mask table and stamp the report under `quality_metrics["storm_postmask"]`.
+    """`post_scan_integrity: true` (E3b): run the Post-scan integrity integrity checks over every
+    mask table and stamp the report under `quality_metrics["post_scan_integrity"]`.
 
     The config key was accepted by the schema for a long time but nothing in the
     spine honoured it, so a user who asked for the in-run check silently got
@@ -482,7 +483,7 @@ def compute_storm_postmask(
     full-frame finalize branch, which routing guarantees for an opted-in job
     (see `_sequential_eligible`), so the whole output is resident here.
     """
-    if not config.get("run_storm"):
+    if not post_scan_integrity_requested(config):
         return
     from decoy_engine.verification import run_post_mask
 
@@ -499,4 +500,4 @@ def compute_storm_postmask(
         output_frames={name: execution_result.outputs[name].to_pandas() for name in mask_tables},
         config=dict(config),
     )
-    execution_result.quality_metrics["storm_postmask"] = report
+    execution_result.quality_metrics["post_scan_integrity"] = report

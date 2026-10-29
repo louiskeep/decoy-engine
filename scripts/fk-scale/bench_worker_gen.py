@@ -66,7 +66,7 @@ def build_config(rows: int, plan: str = "fr0") -> dict[str, Any]:
     if plan == "rep":
         return _f4a_gen.representative_config(rows, PARENT_ROWS)
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 20261018},
         "sources": {},
         "targets": {},

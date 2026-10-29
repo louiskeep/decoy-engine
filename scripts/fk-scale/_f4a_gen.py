@@ -69,7 +69,7 @@ def mixed_parent_config(parent_rows: int) -> dict[str, Any]:
     from _mixed_layout import PARENT, parent_columns
 
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": SEED},
         "sources": {},
         "targets": {},
@@ -88,7 +88,7 @@ def representative_config(rows: int, parent_rows: int) -> dict[str, Any]:
     windowed_date. `parent_rows` stays fixed across tiers so the reference key pool does not
     scale with the tier."""
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": SEED},
         "sources": {},
         "targets": {},

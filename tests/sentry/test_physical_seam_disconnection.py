@@ -303,9 +303,9 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         "src/decoy_engine/execution/_pipeline_routing.py",
         "src/decoy_engine/execution/_pipeline_routing_signals.py",
         "src/decoy_engine/execution/_pipeline_sources.py",
-        # E3b (run_storm honoured in-run): `capacity.py` passes
-        # `run_storm=bool(config.get("run_storm"))` into its two `decide_execution_route`
-        # calls so the capacity probe sees the same storm-forces-full-frame decision the
+        # E3b (post_scan_integrity honoured in-run): `capacity.py` passes
+        # `post_scan_integrity=bool(config.get("post_scan_integrity"))` into its two `decide_execution_route`
+        # calls so the capacity probe sees the same pre-scan-forces-full-frame decision the
         # production route makes. Pure kwarg threading; imports nothing from
         # `execution.physical` (the import-direction sweeps above stay green).
         "src/decoy_engine/execution/capacity.py",
@@ -659,7 +659,7 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         # C6c-ii (text_redact Rust span kernel): `_kernels_scalar.native_text_redact` now routes
         # all eleven built-in detectors into the compiled companion on ASCII-safe cells via the
         # new `_text_redact_kernel.py` (the catalog, loader and `merge_text_redact_spans`). The
-        # new module imports only `storm.detectors` and stdlib -- nothing from `execution.physical`
+        # new module imports only `detection.detectors` and stdlib -- nothing from `execution.physical`
         # -- so every import-direction sweep and the fresh-import probe above stay green.
         "src/decoy_engine/execution/native/_text_redact_kernel.py",
         # FPE reference kernel: `_crypto_reference.py` keeps an empty string as missing data like
@@ -684,11 +684,11 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         "src/decoy_engine/execution/native/_text_mask_route.py",
         # C6b-ii slice b (native text_mask splice): `_text_mask_native_splice.py` is new -- the loader
         # and planner for the Rust redact/passthrough splice kernel. It imports only `_text_redact_kernel`,
-        # `storm.detectors`, and `transforms._text_mask_splice`/`transforms.text_mask`, nothing from
+        # `detection.detectors`, and `transforms._text_mask_splice`/`transforms.text_mask`, nothing from
         # `execution.physical`; `_kernels_scalar.native_text_mask` (permitted above) calls it.
         "src/decoy_engine/execution/native/_text_mask_native_splice.py",
-        # `_text_mask_native_fpe.py` (added to main after the STORM split was cut): import retarget
-        # `storm.detectors` -> `detection.detectors` only; no `execution.physical` import.
+        # `_text_mask_native_fpe.py` (added to main after the Pre-scan split was cut): import retarget
+        # `detection.detectors` -> `detection.detectors` only; no `execution.physical` import.
         "src/decoy_engine/execution/native/_text_mask_native_fpe.py",
         # bucket_perturb date_format guard: the oracle handler and the nested handler validate the
         # format before any early return, and the out-of-core kernel validates before its autodetect

@@ -57,7 +57,7 @@ def _select_validator(data: dict) -> Any:
     # config shapes are no longer validated by ``validate_config``. The V1
     # validators (``MaskerConfigValidator`` + ``GeneratorConfigValidator``)
     # were deleted with the V1 ``Masker`` + ``DataGenerator`` paths. V2
-    # ``PipelineConfig`` configs (``version: 1``) flow through the engine
+    # ``PipelineConfig`` configs (``version: 2``) flow through the engine
     # ``PipelineConfig.model_validate`` choke-point instead -- the platform
     # spine at ``api/jobs/v2_runner.py`` calls it directly. Callers that
     # used to reach validate_config for a V1 shape now get a typed reject
@@ -72,7 +72,7 @@ def _select_validator(data: dict) -> Any:
         return None
     raise PipelineValidationError(
         "v1 mask + v1 generate config shapes are no longer validated by "
-        "validate_config (S9 removal). Use a `version: 1` PipelineConfig "
+        "validate_config (S9 removal). Use a `version: 2` PipelineConfig "
         "(see decoy_engine.PipelineConfig.model_validate) for v2 mask + "
         "v2 generate configs."
     )

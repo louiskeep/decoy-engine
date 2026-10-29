@@ -64,7 +64,7 @@ def fk_job(
     }
     hash_ = lambda c, ns: {"name": c, "strategy": "hash", "namespace": ns}
     cfg = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 7},
         "sources": {
             n: {"type": "file", "path": _write(tmp, t, n), "format": "parquet"}

@@ -107,13 +107,13 @@ def test_registry_identities_unique_and_resolvable():
         assert reasons.get_reason(ns, code) is spec
         assert spec.summary and "{" not in spec.summary
     with pytest.raises(reasons.UnknownReasonError):
-        reasons.get_reason("post_scan", "run_storm_requested")
+        reasons.get_reason("post_scan", "post_scan_integrity_requested")
 
 
 def test_post_validation_runner_does_not_capture_exception_text_or_mutate_result(monkeypatch):
     from decoy_engine.execution import ExecutionResult
-    from decoy_engine.validation.post import PostValidationRunner, _runner
     from decoy_engine.relationships import NamespaceRegistry, RelationshipGraph
+    from decoy_engine.validation.post import PostValidationRunner, _runner
 
     def boom(ctx):
         raise ValueError("leaky cell value 4111111111111111")

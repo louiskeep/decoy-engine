@@ -23,7 +23,7 @@ from decoy_engine.plan import Plan, compile_plan
 from decoy_engine.profile import Profile, profile_source
 
 ADVISORY_SKETCH_YAML = """
-version: 1
+version: 2
 global_settings:
   seed: 42
   post_validation: false
@@ -337,7 +337,7 @@ def _acceptance_config(tmp_path: Path) -> dict[str, Any]:
     _write_csv(customers_csv, "customer_id,name", ["1,Alice", "2,Bob", "3,Carol"])
     _write_csv(orders_csv, "order_id,customer_id", ["10,1", "11,2", "12,1"])
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42, "on_pool_exhaustion": "scale_up"},
         "sources": {
             "customers": {"type": "file", "format": "csv", "path": str(customers_csv)},
@@ -416,7 +416,7 @@ class TestQaWalksGenF6GenerateColumnConfigTypeParams:
         # FC-1 (2026-06-02): top-level `mode:` discriminator dropped.
         # Per-table kind is inferred from `generate_columns` presence.
         return {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 42},
             "sources": {},
             "tables": [{"name": "t", "row_count": 5, "generate_columns": [col]}],

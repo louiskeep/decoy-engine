@@ -139,7 +139,7 @@ def cell_r010_pooled_faker(n: int, *, deterministic: bool = True) -> tuple[dict,
     table = pa.table(src)
     path = _write_parquet("stage2d_r010", table)
     raw = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 20260930},
         "sources": {"t": {"type": "file", "format": "parquet", "path": path}},
         "targets": {"t": {"type": "file", "format": "parquet", "path": f"{path}.out.parquet"}},
@@ -169,7 +169,7 @@ def cell_r014_mix_plus_faker(n: int) -> tuple[dict, dict]:
     table = pa.table(src)
     path = _write_parquet("stage2d_r014", table)
     raw = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 20260930},
         "sources": {"t": {"type": "file", "format": "parquet", "path": path}},
         "targets": {"t": {"type": "file", "format": "parquet", "path": f"{path}.out.parquet"}},
@@ -190,7 +190,7 @@ def cell_chunked_faker_150k(n: int) -> tuple[dict, dict]:
     table = pa.table(src)
     path = _write_parquet("stage2d_chunked_faker_150k", table)
     raw = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 20260930},
         "sources": {"t": {"type": "file", "format": "parquet", "path": path}},
         "targets": {"t": {"type": "file", "format": "parquet", "path": f"{path}.out.parquet"}},
@@ -205,7 +205,7 @@ def cell_r023_generate_only(n: int) -> tuple[dict, dict]:
     never touches the native companion at all; this cell checks that claim
     with the SAME counter used for the masking cells, not a separate one."""
     raw = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 20260930},
         "sources": {},
         "targets": {
@@ -252,7 +252,7 @@ def cell_fk_faker_sequential(n_parent: int, n_child: int) -> tuple[dict, dict]:
     c_path = _write_parquet("stage2d_fk_faker_child", child_table)
 
     raw = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 20260930},
         "sources": {
             "parent": {"type": "file", "format": "parquet", "path": p_path},

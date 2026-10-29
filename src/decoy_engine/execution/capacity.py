@@ -76,6 +76,7 @@ from typing import Any
 
 import pyarrow as pa
 
+from decoy_engine.config import post_scan_integrity_requested
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._pipeline import classify_table_kinds
 from decoy_engine.execution._pipeline_route_exec import (
@@ -314,7 +315,7 @@ def estimate_job_capacity(
             validators=(config.get("validators") or []),
             fidelity_report=False,
             vault_writer=None,
-            run_storm=bool(config.get("run_storm")),
+            post_scan_integrity=post_scan_integrity_requested(config),
             execution_mode="auto",
             graph=graph,
             resolved_substrate="pandas",
@@ -376,7 +377,7 @@ def estimate_job_capacity(
                 validators=(config.get("validators") or []),
                 fidelity_report=False,
                 vault_writer=None,
-                run_storm=bool(config.get("run_storm")),
+                post_scan_integrity=post_scan_integrity_requested(config),
                 execution_mode="auto",
                 graph=graph,
                 resolved_substrate="pandas",

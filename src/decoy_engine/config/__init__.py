@@ -41,6 +41,7 @@ from decoy_engine.config._global_settings import DpGenerateSettings, GlobalSetti
 from decoy_engine.config._namespaces import NamespaceConfig
 from decoy_engine.config._override import override_sources
 from decoy_engine.config._pipeline import PipelineConfig
+from decoy_engine.config._post_scan import PostScanConfig, post_scan_integrity_requested
 from decoy_engine.config._relationships import (
     OrphanPolicyLiteral,
     RelationshipConfig,
@@ -94,6 +95,7 @@ __all__ = [
     "OrphanPolicyLiteral",
     "PipelineConfig",
     "PipelineConfigError",
+    "PostScanConfig",
     "RelationshipConfig",
     "RelationshipEnd",
     "S3Source",
@@ -108,4 +110,5 @@ __all__ = [
     "TargetDescriptor",
     "TransformOp",
     "override_sources",
+    "post_scan_integrity_requested",
 ]

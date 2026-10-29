@@ -1,6 +1,6 @@
 """MG-2 Step 1 (2026-05-31): iter_spans regression cells.
 
-Locks the public contract of `storm.detectors.iter_spans`:
+Locks the public contract of `detection.detectors.iter_spans`:
 - Built-in detectors return spans aligned to original text offsets.
 - Validators gate matches (invalid Luhn / IBAN / NPI / ICD-10 dropped).
 - Overlap resolution is leftmost-then-longest.

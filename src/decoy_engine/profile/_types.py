@@ -9,7 +9,7 @@ metadata (excluded) is the resolution of B1 in the Dennis spec review. See
 the profile_hash docstring for the rationale and the
 docs/v2/reviews/dennis-engine-v2-s1-spec-review-2026-05-26.md artifact.
 
-PIIClass enumerates the built-in STORM detector ids (resolution of M1).
+PIIClass enumerates the built-in detector ids (resolution of M1).
 Custom-detector matches (CustomDetectorSpec ids in
 decoy_engine.profiling.types) are not represented in this enum; columns
 matched only by a custom detector carry pii_class=None at the Profile
@@ -24,12 +24,12 @@ from enum import Enum
 
 
 class PIIClass(str, Enum):
-    """Built-in STORM detector ids.
+    """Built-in detector ids.
 
     Mirrors the detector_id values produced by every entry in
     decoy_engine.detection.detectors.REGISTERED_DETECTORS. The enum and the
-    registry are kept in sync by tests/unit/profile/test_pii_storm_sync.py
-    which fails if a new STORM built-in lands without a matching enum
+    registry are kept in sync by tests/unit/profile/test_pii_detector_sync.py
+    which fails if a new Pre-scan built-in lands without a matching enum
     member (resolution of slice-3 B1: first_name, last_name, address were
     added to REGISTERED_DETECTORS in the V1 detection sprint but never
     propagated to this enum, causing those columns to drop their tags

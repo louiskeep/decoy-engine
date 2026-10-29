@@ -271,7 +271,7 @@ def _avg_key_len(n: int, *, prefix: int) -> float:
 def _single_config(name: str, columns: list[dict]) -> dict:
     sources, targets = _file_io(Path("."), [name])
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"job_name": f"tb4-{name}", "seed": 7},
         "sources": sources,
         "targets": targets,
@@ -282,7 +282,7 @@ def _single_config(name: str, columns: list[dict]) -> dict:
 def _fk_config(p: str, p_cols: list[dict], c: str, c_cols: list[dict]) -> dict:
     sources, targets = _file_io(Path("."), [p, c])
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"job_name": "tb4-fk", "seed": 7},
         "sources": sources,
         "targets": targets,

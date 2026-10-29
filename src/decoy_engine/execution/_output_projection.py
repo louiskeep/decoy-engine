@@ -16,7 +16,7 @@ about to be written carries a column the plan never declared. Compile cannot
 see runtime schema drift (a column present in the source but absent from the
 profile the plan was built against), so enforcement lives at the adapter, not
 the compiler. It composes with -- and never calls into -- the optional,
-probabilistic `storm/postmask/residual_pii` advisory (two distinct layers).
+probabilistic `verification/postmask/residual_pii` advisory (two distinct layers).
 
 Policy fork (Cam, 2026-07-13): `unconfigured_column_policy` defaults to `warn`
 while `release.is_pre_ga()` so existing configs keep working through the

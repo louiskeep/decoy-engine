@@ -107,7 +107,7 @@ def _ooc_config(
         else _write_csv(tmp_path, child, "child")
     )
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"job_name": "capacity-estimate-test", "seed": 7},
         "sources": {
             "parent": {"type": "file", "path": parent_src, "format": parent_fmt},
@@ -156,7 +156,7 @@ def low_threshold(monkeypatch):
 class TestNotApplicable:
     def test_no_relationships(self, tmp_path: Path) -> None:
         config = {
-            "version": 1,
+            "version": 2,
             "global_settings": {"job_name": "no-fk", "seed": 1},
             "sources": {},
             "targets": {},

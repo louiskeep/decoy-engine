@@ -99,7 +99,7 @@ Provider backend names identify adapters. `decoy_native` identifies the engine's
 | `SFTPFileSource` | - | yes | - | - | - | yes |
 | `SFTPFileSink` | - | - | - | - | - | yes |
 
-## STORM detectors (25)
+## detectors (25)
 
 | Detector | Match kind |
 | --- | --- |

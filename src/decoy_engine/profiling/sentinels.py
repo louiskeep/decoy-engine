@@ -1,4 +1,4 @@
-"""Sentinel value detection for STORM.
+"""Sentinel value detection for Pre-scan.
 
 A "sentinel" is a value that parsed structurally (so it doesn't show up as
 invalid in the basic profiler) but is suspicious in context. Examples:

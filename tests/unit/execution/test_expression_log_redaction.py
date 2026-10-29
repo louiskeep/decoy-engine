@@ -72,7 +72,7 @@ def test_date_shift_unparseable_values_are_counted_not_logged(caplog) -> None:
 
 def test_formula_errors_are_one_line_per_column_without_cell_values(caplog) -> None:
     cfg = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42},
         "sources": {},
         "tables": [
@@ -105,7 +105,7 @@ def test_formula_errors_are_one_line_per_column_without_cell_values(caplog) -> N
 
 def _formula_cfg(formula: str) -> dict:
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42},
         "sources": {},
         "tables": [

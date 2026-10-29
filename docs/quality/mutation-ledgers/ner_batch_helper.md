@@ -11,7 +11,7 @@ function-level granularity), so this ledger reports the file's raw tally but
 grades and adjudicates ONLY `iter_ner_spans_batch`'s own mutants -- the
 positivity/guard/cardinality/scatter/filter branches the plan's verify step
 asks for. `iter_ner_spans`, `_pipeline`, and the availability-check functions
-are exercised by the real-model suites in `tests/unit/storm/test_ner_spans.py`
+are exercised by the real-model suites in `tests/unit/detection_verification/test_ner_spans.py`
 and `tests/unit/execution/test_text_mask_ner.py` / `test_text_redact.py`
 instead (not this narrow selection), so their mutants are out of scope here,
 not a coverage gap.
@@ -19,7 +19,7 @@ not a coverage gap.
 Graded via `scripts/tq_mutate.py` (mutmut generation + full-selection
 subprocess re-adjudication, promoting mutmut's in-process false-timeouts and
 false-survivors to their true verdict), selection
-`tests/unit/storm/test_ner_batch_fake_pipeline.py` -- a SEPARATE module from
+`tests/unit/detection_verification/test_ner_batch_fake_pipeline.py` -- a SEPARATE module from
 `test_ner_spans.py` on purpose: `test_ner_spans.py` computes `_NER_READY =
 spacy_installed() and model_installed(...)` at import time, and calling a
 trampoline-wrapped (mutated) function during collection reports as a pytest
@@ -112,7 +112,7 @@ coded-field assertion already proves.
 ```
 # Point [tool.mutmut] at the helper (temporary -- revert after grading):
 #   only_mutate = ["src/decoy_engine/detection/ner.py"]
-#   pytest_add_cli_args_test_selection = ["tests/unit/storm/test_ner_batch_fake_pipeline.py"]
+#   pytest_add_cli_args_test_selection = ["tests/unit/detection_verification/test_ner_batch_fake_pipeline.py"]
 uv run --frozen --extra dev --extra lint --extra mutation \
     python scripts/tq_mutate.py --run --timeout 60
 cat mutants/tq_mutate_report.json

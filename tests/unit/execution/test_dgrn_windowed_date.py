@@ -55,7 +55,7 @@ def _validated_dump(cfg: dict) -> dict:
 def _config(tmp_path, columns: list[dict], table: str = "accounts") -> dict:
     return _validated_dump(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 42},
             "sources": {table: {"type": "file", "format": "csv", "path": str(tmp_path / "in.csv")}},
             "tables": [{"name": table, "columns": columns}],

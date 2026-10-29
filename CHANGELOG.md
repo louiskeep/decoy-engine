@@ -9,6 +9,22 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Changed (BREAKING, pre-GA: STORM removed; Pre-scan / Transform / Post-scan reframe, 2026-10-29)
+
+STORM is no longer a concept in the engine. Decoy is a data-manipulation compiler pipeline with three
+phases: Pre-scan (`pre_scan`: profile / detect), Transform (`transform`: mask / generate) and Post-scan
+(`post_scan`: verify / leak / fidelity). Hard rename, no aliases or dual reads:
+
+- Pipeline config `version: 2` is required (`version: 1` is rejected). `run_storm: true` is replaced by
+  `post_scan: {integrity: true}` (default `false`; the integrity suite stays report-only). Unknown keys fail.
+- `quality_metrics["storm_postmask"]` -> `quality_metrics["post_scan_integrity"]`; schema
+  `storm-post-mask/v1` -> `post-scan-integrity/v2`; event `storm.scan` -> `pre_scan.profile`; routing reason
+  `run_storm_requested` -> `post_scan_integrity_requested`; resident reason `run_storm` -> `post_scan_integrity`.
+- New `decoy_engine.reasons` (`decoy-reasons/v1`, the shared reason registry) and `decoy_engine.phase`
+  (`phase-result/v1`, `phase-event/v1`, deeply immutable, one safe serializer).
+- `PostMaskReport` findings are tuples; `PostValidationRunner.run` returns its summary and no longer writes
+  `quality_metrics` itself; a crashed post-validation scan records `{"error_type": ...}` instead of `repr(exc)`.
+
 ### Changed (BREAKING, pre-GA: `TokenVaultWriter.put` returns the authoritative token, 2026-10-29)
 
 `TokenVaultWriter.put(namespace, plaintext, token)` now returns `str`: the token the vault actually

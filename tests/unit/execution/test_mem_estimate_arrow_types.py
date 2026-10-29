@@ -425,7 +425,7 @@ def _profile_of(path: Path, name: str = "t") -> Profile:
     first = pq.read_schema(path).names[0]
     config = PipelineConfig.model_validate(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 1},
             "sources": {name: {"type": "file", "format": "parquet", "path": str(path)}},
             "targets": {name: {"type": "file", "format": "parquet", "path": str(path) + ".out"}},

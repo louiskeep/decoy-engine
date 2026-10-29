@@ -81,7 +81,7 @@ def _validated_dump(cfg: dict[str, Any]) -> dict[str, Any]:
 def _mask_config(tmp_path, n_cols: int) -> dict[str, Any]:
     return _validated_dump(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 42},
             "sources": {
                 "customers": {

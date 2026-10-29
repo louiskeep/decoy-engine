@@ -447,7 +447,7 @@ class TestHashConfigExcludesSourcesAndTargets:
         from decoy_engine.plan._compile import _hash_config
 
         config = {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 42},
             "tables": [{"name": "t"}],
         }

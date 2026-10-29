@@ -66,7 +66,7 @@ def _fk_config(
     seed: int = 20260916,
 ) -> dict[str, Any]:
     raw: dict[str, Any] = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": seed},
         "sources": {},
         "targets": {},

@@ -113,7 +113,7 @@ def _fk_bucketize_config(tmp_path: Path, quarantine: dict[str, Any] | None) -> d
         }
     )
     cfg: dict[str, Any] = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"job_name": "seq-kills-bucketize", "seed": 42},
         "sources": {
             "parent": {
@@ -177,7 +177,7 @@ def _fk_key_error_config(tmp_path: Path, quarantine: dict[str, Any] | None) -> d
         "namespace": "parent_ns",
     }
     cfg: dict[str, Any] = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"job_name": "seq-kills-keyerror", "seed": 42},
         "sources": {
             "parent": {
@@ -484,7 +484,7 @@ def _multi_table_quarantine_config(tmp_path: Path, qpath: str) -> dict[str, Any]
         }
     )
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"job_name": "seq-kills-multi", "seed": 42},
         "sources": {
             "parent": {
@@ -694,7 +694,7 @@ def _group_by_config(tmp_path: Path) -> dict[str, Any]:
         }
     )
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"job_name": "seq-kills-groupby", "seed": 7},
         "sources": {
             "t": {"type": "file", "path": _write_source(tmp_path, src, "t"), "format": "parquet"}
@@ -806,7 +806,7 @@ def _clean_fk_config(tmp_path: Path) -> dict[str, Any]:
         }
     )
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"job_name": "seq-kills-clean-fk", "seed": 42},
         "sources": {
             "parent": {
@@ -884,7 +884,7 @@ def _self_fk_config(tmp_path: Path, qpath: str) -> dict[str, Any]:
         }
     )
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"job_name": "seq-kills-selfref", "seed": 42},
         "sources": {
             "employees": {
@@ -977,7 +977,7 @@ def _diamond_config(tmp_path: Path) -> dict[str, Any]:
         }
     )
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"job_name": "seq-kills-diamond", "seed": 42},
         "sources": {
             "parent": {
@@ -1076,7 +1076,7 @@ def test_row_error_count_accumulates_same_key(tmp_path: Path) -> None:
         }
     )
     config = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"job_name": "seq-kills-twoerr", "seed": 42},
         "sources": {
             "parent": {

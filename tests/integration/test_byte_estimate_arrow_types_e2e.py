@@ -63,7 +63,7 @@ def _single_table_config(
     tmp_path: Path, source: Path, columns: list[dict[str, Any]], extra_tables: list[Any] = ()
 ) -> dict[str, Any]:
     raw: dict[str, Any] = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 5},
         "sources": {"t": {"type": "file", "format": "parquet", "path": str(source)}},
         "targets": {"t": {"type": "file", "format": "parquet", "path": str(tmp_path / "t.out")}},
@@ -234,7 +234,7 @@ def _fk_pure_mask_with_temporal(
     }
     config = _validated(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 7},
             "sources": {
                 k: {"type": "file", "path": str(v), "format": "parquet"} for k, v in paths.items()
@@ -435,7 +435,7 @@ def _fk_late_null_config(tmp_path: Path, parent: pa.Table, child: pa.Table) -> d
     pq.write_table(child, paths["child"], row_group_size=10_000)
     return _validated(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 3},
             "sources": {
                 k: {"type": "file", "format": "parquet", "path": str(v)} for k, v in paths.items()

@@ -1,4 +1,4 @@
-"""Plan B-2 tests for STORM's new column-shape signals.
+"""Plan B-2 tests for Pre-scan's new column-shape signals.
 
 These exercise the four FieldStats fields the profiler now computes:
 ``alphabet``, ``value_set_size_class``, ``numeric_range_class``,
@@ -16,7 +16,7 @@ from decoy_engine.profiling import profile_columns
 
 
 def _scan(**columns) -> dict[str, object]:
-    """Run STORM on the columns and return a {name: FieldStats} map."""
+    """Run Pre-scan on the columns and return a {name: FieldStats} map."""
     df = pd.DataFrame(columns)
     profile = profile_columns(df, source_label="signals-test.csv")
     return {f.name: f for f in profile.fields}

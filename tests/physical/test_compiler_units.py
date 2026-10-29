@@ -38,7 +38,7 @@ def _flat_inputs(tmp_path: Path, **kwargs: Any) -> Any:
     path = _write(tmp_path, source, "t")
     config = PipelineConfig.model_validate(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 1},
             "sources": {"t": {"type": "file", "format": "parquet", "path": str(path)}},
             "targets": {
@@ -57,7 +57,7 @@ def _fk_inputs(tmp_path: Path, **kwargs: Any) -> Any:
     cp = _write(tmp_path, child, "child")
     config = PipelineConfig.model_validate(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 1},
             "sources": {
                 "parent": {"type": "file", "format": "parquet", "path": str(pp)},
@@ -150,7 +150,7 @@ def test_plan_hash_covers_full_config_content(tmp_path: Path) -> None:
     def _inputs_with_columns(columns: list[dict[str, Any]]) -> Any:
         config = PipelineConfig.model_validate(
             {
-                "version": 1,
+                "version": 2,
                 "global_settings": {"seed": 1},
                 "sources": {"t": {"type": "file", "format": "parquet", "path": str(path)}},
                 "targets": {
@@ -220,7 +220,7 @@ def test_plan_hash_changes_with_resident_row_count(tmp_path: Path) -> None:
     path = _write(tmp_path, small, "t")
     config = PipelineConfig.model_validate(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 1},
             "sources": {"t": {"type": "file", "format": "parquet", "path": str(path)}},
             "targets": {
@@ -311,7 +311,7 @@ def test_plan_hash_changes_when_a_source_is_renamed_with_identical_content(
         path = _write(tmp_path, source, table_name)
         config = PipelineConfig.model_validate(
             {
-                "version": 1,
+                "version": 2,
                 "global_settings": {"seed": 1},
                 "sources": {table_name: {"type": "file", "format": "parquet", "path": str(path)}},
                 "targets": {
@@ -472,7 +472,7 @@ def test_out_of_core_not_ready_reason_reports_incompatible_code_when_eligible(
     cp = _write(tmp_path, child, "child")
     config = PipelineConfig.model_validate(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 1},
             "sources": {
                 "parent": {"type": "file", "format": "parquet", "path": str(pp)},
@@ -742,7 +742,7 @@ def test_capture_matches_live_run_pipeline_rejection_for_invalid_knob(tmp_path: 
     path = _write(tmp_path, source, "t")
     config = PipelineConfig.model_validate(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 1},
             "sources": {"t": {"type": "file", "format": "parquet", "path": str(path)}},
             "targets": {
@@ -771,7 +771,7 @@ def test_synthesis_stage_config_digest_is_sha256_of_generation_config_json(tmp_p
 
     config = PipelineConfig.model_validate(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 1},
             "sources": {},
             "targets": {"people": {"type": "file", "format": "csv", "path": "out.csv"}},

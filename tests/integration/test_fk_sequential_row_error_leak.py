@@ -104,7 +104,7 @@ def _fk_config(
         parent_columns.append({"name": "keep", "strategy": "passthrough"})
 
     cfg: dict[str, Any] = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"job_name": "s2-fk-sequential-leak", "seed": 42},
         "sources": {
             "parent": {"type": "file", "path": parent_src, "format": "parquet"},
@@ -300,7 +300,7 @@ def _key_error_config(
         "namespace": "parent_ns",
     }
     cfg: dict[str, Any] = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"job_name": "s2-fk-key-error-leak", "seed": 42},
         "sources": {
             "parent": {"type": "file", "path": parent_src, "format": "parquet"},
@@ -525,7 +525,7 @@ class TestSequentialMultiTableQuarantineJsonlNotClobbered:
         qpath = str(tmp_path / "quarantine.jsonl")
 
         config: dict[str, Any] = {
-            "version": 1,
+            "version": 2,
             "global_settings": {"job_name": "s2-multi-table-quarantine", "seed": 42},
             "sources": {
                 "parent": {"type": "file", "path": parent_src, "format": "parquet"},
@@ -612,7 +612,7 @@ def _self_fk_config(
     )
     src = _write_source(tmp_path, employees, "employees")
     cfg: dict[str, Any] = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"job_name": "s2-self-fk-leak", "seed": 42},
         "sources": {"employees": {"type": "file", "path": src, "format": "parquet"}},
         "targets": {
@@ -801,7 +801,7 @@ def _dupwhen_config(tmp_path: Path) -> dict[str, Any]:
     parent_src = _write_source(tmp_path, parent, "parent")
     child_src = _write_source(tmp_path, child, "child")
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"job_name": "s2-dupwhen-accepted-limitation", "seed": 42},
         "sources": {
             "parent": {"type": "file", "path": parent_src, "format": "parquet"},

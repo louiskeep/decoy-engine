@@ -119,7 +119,7 @@ def _single_table_config(
     path = _write(tmp_path, source, "t")
     return PipelineConfig.model_validate(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 1},
             "sources": {"t": {"type": "file", "format": "parquet", "path": str(path)}},
             "targets": {
@@ -135,7 +135,7 @@ def _fk_config(tmp_path: Path, parent: pa.Table, child: pa.Table) -> dict[str, A
     child_path = _write(tmp_path, child, "child")
     return PipelineConfig.model_validate(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 1},
             "sources": {
                 "parent": {"type": "file", "format": "parquet", "path": str(parent_path)},
@@ -494,7 +494,7 @@ def test_generate_and_mask_full_frame(tmp_path: Path, monkeypatch: pytest.Monkey
     mask_path = _write(tmp_path, mask_source, "masked")
     config = PipelineConfig.model_validate(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 1},
             "sources": {"masked": {"type": "file", "format": "parquet", "path": str(mask_path)}},
             "targets": {
@@ -556,7 +556,7 @@ def test_reject_before_read_large_fk_no_bounded_route(
     b_path = _write(tmp_path, b, "b")
     config = PipelineConfig.model_validate(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 1},
             "sources": {
                 "a": {"type": "file", "format": "parquet", "path": str(a_path)},
@@ -671,7 +671,7 @@ def test_forced_out_of_core_no_mask_table(tmp_path: Path, monkeypatch: pytest.Mo
     """A pure-generate job forced to out_of_core: no mask table exists."""
     config = PipelineConfig.model_validate(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 1},
             "sources": {},
             "targets": {
@@ -731,7 +731,7 @@ def test_forced_out_of_core_incompatible_recipe(
     child_path = _write(tmp_path, child, "child")
     config = PipelineConfig.model_validate(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 1},
             "sources": {
                 "parent": {"type": "file", "format": "parquet", "path": str(parent_path)},
@@ -800,7 +800,7 @@ def test_forced_sequential_cyclic_fk_graph(tmp_path: Path, monkeypatch: pytest.M
     b_path = _write(tmp_path, b, "b")
     config = PipelineConfig.model_validate(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 1},
             "sources": {
                 "a": {"type": "file", "format": "parquet", "path": str(a_path)},

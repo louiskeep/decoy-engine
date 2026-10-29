@@ -1,4 +1,4 @@
-"""Integration tests for run_storm - exercises the full profiler against
+"""Integration tests for post_scan_integrity - exercises the full profiler against
 realistic sample DataFrames and asserts the ColumnProfile that comes out.
 """
 

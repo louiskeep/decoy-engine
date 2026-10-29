@@ -1,4 +1,4 @@
-"""Dennis Batch B closures (QA triage 2026-06-01) for the storm
+"""Dennis Batch B closures (QA triage 2026-06-01) for the pre-scan
 postmask engine module.
 
 Pins H4 (composite FK tuple-wise check), M11 (policy comparison
@@ -240,7 +240,7 @@ class TestResidualPiiPassthroughIsNoOp:
 
 class TestEnginePayloadGeneratedAt:
     """M23: the run_post_mask payload now includes generated_at
-    so the FE typings + JobStormReport row column agree with the
+    so the FE typings + JobPostScanIntegrityReport row column agree with the
     engine emission."""
 
     def test_payload_carries_generated_at_iso_string(self):

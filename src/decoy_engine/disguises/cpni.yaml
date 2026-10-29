@@ -13,7 +13,7 @@
 #   Reference: 47 CFR 64.2003 (definitions); 47 CFR 64.2005 (approval).
 #   See also: FCC CPNI rules, 2007 Order (FCC 07-22) and 2016 Broadband Order.
 #
-# What this pack covers (auto-routed via STORM detectors):
+# What this pack covers (auto-routed via detectors):
 #   US phone numbers   -> faker phone_number (subscriber MSISDN; CDR calling/called
 #                         numbers in US format; detected by us_phone value-pattern)
 #   Device IDs         -> fpe digits (imei / imei_number / device_imei / imsi / iccid /
@@ -28,7 +28,7 @@
 #   Account dates      -> date_shift +/- 30 days (CDR timestamps in date form,
 #                         account creation / churn dates)
 #   Subscriber email   -> faker email
-#   Account numbers    -> fpe ALPHANUM (detected as iban by STORM)
+#   Account numbers    -> fpe ALPHANUM (detected as iban by Pre-scan)
 #
 # Honest gaps -- fields NOT auto-routed by this pack:
 #
@@ -79,7 +79,7 @@
 #     Cell tower latitude/longitude is among the most sensitive CPNI under
 #     47 CFR 64.2003 ("location" is explicitly included in the definition).
 #     The geo_generalize strategy supports type: lat_lng (H3 hexagonal
-#     generalization) but NO STORM detector exists for cell tower coordinate
+#     generalization) but NO detector exists for cell tower coordinate
 #     columns. Configure manually:
 #
 #       columns:
@@ -101,7 +101,7 @@
 #
 #   CALL DURATION / DATA USAGE:
 #     Numeric CPNI quantities (call_duration_sec, data_usage_bytes, sms_count)
-#     have no STORM detector. Configure manually with bucketize:
+#     have no detector. Configure manually with bucketize:
 #
 #       columns:
 #         - name: call_duration_sec
@@ -130,7 +130,7 @@
 id: cpni
 version: "2026-06-29"
 name: "CPNI Telecom"
-summary: "Customer Proprietary Network Information protection under 47 CFR Part 64 Subpart U / 47 U.S.C. 222: subscriber SSN, US phone numbers, device IDs (fpe digits; imei/imsi/iccid/handset_id columns auto-detect via device_id name hints), names, billing address, account dates. SP-12. Honest gaps: IMEI Luhn requires manual column config (device_id rule is checksum-free to cover IMSI/ICCID); international MSISDNs, cell tower lat/lng, call duration, and CDR non-US numbers have no STORM detectors and require manual recipe config."
+summary: "Customer Proprietary Network Information protection under 47 CFR Part 64 Subpart U / 47 U.S.C. 222: subscriber SSN, US phone numbers, device IDs (fpe digits; imei/imsi/iccid/handset_id columns auto-detect via device_id name hints), names, billing address, account dates. SP-12. Honest gaps: IMEI Luhn requires manual column config (device_id rule is checksum-free to cover IMSI/ICCID); international MSISDNs, cell tower lat/lng, call duration, and CDR non-US numbers have no detectors and require manual recipe config."
 regulation: "FCC CPNI rules - 47 CFR Part 64 Subpart U (implementing 47 U.S.C. 222)"
 primary_buyer: "Telecom data engineers"
 

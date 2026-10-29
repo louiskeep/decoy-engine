@@ -194,7 +194,7 @@ def _build_fk_tree(n_parent: int, n_child: int) -> tuple[dict, dict]:
     c_path = _write_parquet("stage2d_fk_backend_child", pa.table(child_src))
 
     raw = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 20260930},
         "sources": {
             "parent": {"type": "file", "format": "parquet", "path": p_path},

@@ -2,7 +2,7 @@
 
 ## One-Line Project Summary
 
-Shared Python data engine for Decoy masking, generation, plan-compile execution, connectors, STORM profiling, and the Disguise registry.
+Shared Python data engine for Decoy masking, generation, plan-compile execution, connectors, Pre-scan profiling, and the Disguise registry.
 
 ## Tech Stack
 
@@ -100,7 +100,7 @@ Shared Python data engine for Decoy masking, generation, plan-compile execution,
 | `src/decoy_engine/instrumentation/` | Public timing / collector helpers |
 | `src/decoy_engine/determinism/` | Seed protocol, key derivation |
 | `src/decoy_engine/transforms/` | Leaf modules kept because V2 strategies in `execution/_strategies/` import them: `base.py`, `code_set.py`, `date_shift.py`, `derived.py`, `formula.py`, `fpe.py`, `geo_generalize.py`, `joint_mask.py`, `text_mask.py`; a future sprint may relocate them into `_strategies/_reused_v1/`. |
-| `src/decoy_engine/transforms/text_mask.py` | `text_mask` core logic (SP-07): HMAC-SHA256-keyed span masking, `DETECTOR_DEFAULTS` dispatch table (TIER-1 and TIER-2 entries), `unmatched_span_policy` enforcement, raw-value isolation. Calls `iter_spans` directly; STORM is the single detector source. |
+| `src/decoy_engine/transforms/text_mask.py` | `text_mask` core logic (SP-07): HMAC-SHA256-keyed span masking, `DETECTOR_DEFAULTS` dispatch table (TIER-1 and TIER-2 entries), `unmatched_span_policy` enforcement, raw-value isolation. Calls `iter_spans` directly; Pre-scan is the single detector source. |
 | `src/decoy_engine/execution/_strategies/_text_mask.py` | `TextMaskHandler` (SP-07): thin V2 StrategyHandler wrapping `transforms/text_mask.py`. Registered in `SCALAR_HANDLERS`. Reads `detectors`, `per_detector_strategy`, `unmatched_span_policy`, and `token` from `plan.provider_config`. |
 | `src/decoy_engine/transforms/joint_mask.py` | `joint_mask` core logic (SP-08): HMAC-SHA256-keyed reference-row selection (mask mode via `ReferenceTable.keyed_row`, RFC 2104) and seeded random row selection (gen mode via `numpy.default_rng`). `JointMaskConfig` and `validate_joint_mask_config` enforce fail-closed execution-time validation. Cross-version keyed-access caveat: `keyed_row` position is `HMAC(...) % row_count`; not stable if `row_count` changes. |
 | `src/decoy_engine/execution/_strategies/_joint_mask.py` | `JointMaskHandler` (SP-08): thin V2 StrategyHandler wrapping `transforms/joint_mask.py`. Multi-column: writes all `columns` from `provider_config` in one pass. Reads `columns`, `reference`, `key_by`, and `mode` from `plan.provider_config`. |
@@ -179,7 +179,7 @@ Shared Python data engine for Decoy masking, generation, plan-compile execution,
 | Provider registry | `src/decoy_engine/providers_v2/_registry.py` |
 | Validation surface | `src/decoy_engine/validation/_config.py`, `src/decoy_engine/validation_result.py` |
 | Connectors | `src/decoy_engine/sdk.py`, `src/decoy_engine/connectors/` |
-| STORM (product label) | `src/decoy_engine/detection/`, `profiling/`, `verification/` |
+| Pre-scan (product label) | `src/decoy_engine/detection/`, `profiling/`, `verification/` |
 | ML field-recognition evaluation (BF2 / ML0) | `src/decoy_engine/profiling/eval/` (harness, split, bands); see CHANGELOG §"ML-foundation measurement substrate" |
 | ML3.1 column-type classification | `src/decoy_engine/profiling/model_pack/classify.py` (`classify_fields` function); see CHANGELOG §"ML3 field classification and provenance" |
 | ML3.2 manifest provenance signing | `src/decoy_engine/profiling/model_pack/provenance.py` (`sign_manifest`, `verify_manifest`); signatures enforced by `ModelPackLoader` when `DECOY_PACK_SIGNING_KEY` is set |
@@ -200,7 +200,7 @@ Shared Python data engine for Decoy masking, generation, plan-compile execution,
 | Add masking strategy | Implement `StrategyHandler` under `execution/_strategies/`, wire into the Pandas adapter dispatch, add unit + golden coverage |
 | Add provider | Register in `providers_v2/_registry.py`; the planner closed-checks unknown providers with `code=unknown_provider` |
 | Add connector | Inherit from `FileSource` / `FileSink` in `sdk.py`, declare capabilities, ship in-tree under `connectors/` or as an external package via the `decoy.connectors` entry point |
-| Add STORM detector | Add detector provenance, positive/negative tests |
+| Add detector | Add detector provenance, positive/negative tests |
 | Shared CLI/platform behavior | Implement here first, then wrap in CLI/platform |
 
 ## Gotchas

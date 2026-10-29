@@ -1,6 +1,6 @@
-"""Cross-module symmetry: PIIClass enum mirrors STORM REGISTERED_DETECTORS.
+"""Cross-module symmetry: PIIClass enum mirrors Pre-scan REGISTERED_DETECTORS.
 
-Resolution of slice-3 B1 from the Dennis review (Session 8). STORM grew
+Resolution of slice-3 B1 from the Dennis review (Session 8). Pre-scan grew
 three built-in detectors (first_name, last_name, address) during the V1
 detection sprint that were never propagated to PIIClass. Result: those
 columns dropped their tags silently when run_pii_detection=True. The
@@ -11,10 +11,10 @@ so future detector additions cannot land silently.
 
 When this test fails, the fix is one of:
   (a) Add the missing PIIClass member to decoy_engine.profile._types
-      (most common: STORM grew a detector and the enum lagged).
-  (b) Remove the extra PIIClass member (rare: STORM dropped a detector).
-  (c) If the STORM function name does not follow detect_<id>, the
-      assert on the prefix below will fail; either rename the STORM
+      (most common: Pre-scan grew a detector and the enum lagged).
+  (b) Remove the extra PIIClass member (rare: Pre-scan dropped a detector).
+  (c) If the Pre-scan function name does not follow detect_<id>, the
+      assert on the prefix below will fail; either rename the Pre-scan
       function or special-case it here. Renames are the right call.
 
 A WARNING log from decoy_engine.profile._pii.detect_pii_classes provides
@@ -28,19 +28,19 @@ from decoy_engine.detection.detectors import REGISTERED_DETECTORS
 from decoy_engine.profile import PIIClass
 
 
-def test_every_storm_built_in_detector_has_pii_class_member() -> None:
+def test_every_built_in_detector_has_pii_class_member() -> None:
     pii_class_values = {member.value for member in PIIClass}
     missing: list[str] = []
     for detector_fn in REGISTERED_DETECTORS:
         assert detector_fn.__name__.startswith("detect_"), (
-            f"Unexpected STORM detector function name {detector_fn.__name__!r}; "
+            f"Unexpected detector function name {detector_fn.__name__!r}; "
             f"this test assumes all detectors follow the detect_<id> pattern."
         )
         detector_id = detector_fn.__name__.removeprefix("detect_")
         if detector_id not in pii_class_values:
             missing.append(detector_id)
     assert not missing, (
-        f"STORM REGISTERED_DETECTORS includes ids that are not in "
+        f"Pre-scan REGISTERED_DETECTORS includes ids that are not in "
         f"decoy_engine.profile.PIIClass: {missing!r}. Add each as a member "
         f'of PIIClass with NAME = "id". This drift causes run_pii_detection '
         f"tagged columns to silently drop their pii_class. See slice-3 B1 "
@@ -48,21 +48,21 @@ def test_every_storm_built_in_detector_has_pii_class_member() -> None:
     )
 
 
-def test_every_pii_class_member_corresponds_to_a_storm_detector() -> None:
-    """Reverse direction: every PIIClass value matches a STORM detector.
+def test_every_pii_class_member_corresponds_to_a_detector() -> None:
+    """Reverse direction: every PIIClass value matches a detector.
 
-    Prevents accidental enum growth with values STORM does not actually
+    Prevents accidental enum growth with values Pre-scan does not actually
     emit (aspirational tags that never fire would mislead the planner).
     """
-    storm_ids = {
+    detector_ids = {
         detector_fn.__name__.removeprefix("detect_") for detector_fn in REGISTERED_DETECTORS
     }
     extras: list[str] = []
     for member in PIIClass:
-        if member.value not in storm_ids:
+        if member.value not in detector_ids:
             extras.append(member.value)
     assert not extras, (
-        f"PIIClass has members not produced by STORM REGISTERED_DETECTORS: "
-        f"{extras!r}. Either add a matching STORM detector or remove these "
+        f"PIIClass has members not produced by Pre-scan REGISTERED_DETECTORS: "
+        f"{extras!r}. Either add a matching detector or remove these "
         f"members. Aspirational enum entries that never fire mislead the planner."
     )

@@ -38,6 +38,7 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
+from decoy_engine.config import post_scan_integrity_requested
 from decoy_engine.execution._adapter import ExecutionResult
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._substrate import require_bool
@@ -91,7 +92,7 @@ def decide_output_mode(
 
     The first failing condition names the reason and the run stays resident. The
     consumers declined last (validators, quarantine, fidelity, post-validation,
-    run_storm) read the whole output after the mask step, so a run that has one cannot
+    post_scan_integrity) read the whole output after the mask step, so a run that has one cannot
     stream."""
     if not stream_chunked_output:
         return "resident", "streaming_disabled"
@@ -114,13 +115,13 @@ def decide_output_mode(
         return "resident", "fidelity_report"
     if post_validation:
         return "resident", "post_validation"
-    if config.get("run_storm"):
-        # STORM post-mask (`compute_storm_postmask`) reads `result.outputs`; a streamed
+    if post_scan_integrity_requested(config):
+        # Post-scan integrity (`compute_post_scan_integrity`) reads `result.outputs`; a streamed
         # run leaves it empty, so the requested check would silently no-op. Keep the
         # output resident -- masked values are chunk-invariant, so the resident chunked
-        # output is STORM-correct, matching how run_storm declines the sequential, mixed,
+        # output is Post-scan-correct, matching how post_scan_integrity declines the sequential, mixed,
         # out-of-core and unified-slice routes for the same whole-output reason.
-        return "resident", "run_storm"
+        return "resident", "post_scan_integrity"
     return "streamed", REASON_ELIGIBLE
 
 

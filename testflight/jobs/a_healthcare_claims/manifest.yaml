@@ -87,7 +87,7 @@ relationships:
 # Full PipelineConfig dict. Sources/targets use placeholder paths that the
 # runner replaces with temp-file paths before calling run_pipeline.
 config:
-  version: 1
+  version: 2
   global_settings:
     seed: 42
 

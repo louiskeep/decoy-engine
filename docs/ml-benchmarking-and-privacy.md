@@ -5,10 +5,10 @@
 provenance + review UI). No ML model pack merges, and no model-driven
 classification ships, until it meets every MUST below with committed evidence.
 
-**Scope.** Covers the STORM **field-recognition** capability: a classifier that
+**Scope.** Covers the Pre-scan **field-recognition** capability: a classifier that
 labels tabular **columns** with one of the Decoy-owned semantic types (SSN,
 email, MRN, ...). It is a detector, not a privacy mechanism. It does not change
-masked output; it suggests labels that flow through the existing STORM
+masked output; it suggests labels that flow through the existing Pre-scan
 review/remap path (ML off by default; on-prem only; no cloud inference).
 
 This standard refines, and is authoritative over, the per-sprint specs it

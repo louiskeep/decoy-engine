@@ -30,7 +30,7 @@ def _write_parquet(tmp_path: Path, table: pa.Table, name: str) -> str:
 def _single_table_config(tmp_path: Path, table: pa.Table, column: dict) -> dict:
     src = _write_parquet(tmp_path, table, "t")
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 7},
         "sources": {"t": {"type": "file", "path": src, "format": "parquet"}},
         "targets": {
@@ -66,7 +66,7 @@ def test_string_without_sample_is_unpriceable_not_a_raise(tmp_path: Path) -> Non
 
 def _generate_config(tmp_path: Path, rows: int) -> dict:
     raw = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 7},
         "sources": {},
         "targets": {
@@ -118,7 +118,7 @@ def test_mixed_mask_and_generate_is_unpriceable(tmp_path: Path) -> None:
     assert any("mixed" in n for n in est.notes)
 
 
-def test_run_storm_is_forwarded_to_the_router(
+def test_post_scan_integrity_is_forwarded_to_the_router(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from decoy_engine.execution import _pipeline_routing as routing
@@ -127,14 +127,14 @@ def test_run_storm_is_forwarded_to_the_router(
     real = routing.decide_execution_route
 
     def spy(*args: Any, **kwargs: Any) -> Any:
-        seen.append(bool(kwargs.get("run_storm")))
+        seen.append(bool(kwargs.get("post_scan_integrity")))
         return real(*args, **kwargs)
 
     monkeypatch.setattr(routing, "decide_execution_route", spy)
     table = pa.table({"n": pa.array(list(range(50)), type=pa.int64())})
     cfg = _single_table_config(tmp_path, table, {"name": "n", "strategy": "redact"})
     estimate_job(cfg, tmp_path)
-    estimate_job({**cfg, "run_storm": True}, tmp_path)
+    estimate_job({**cfg, "post_scan": {"integrity": True}}, tmp_path)
     assert seen == [False, True]
 
 
@@ -213,7 +213,7 @@ def test_unprofilable_source_returns_unknown_never_raises(tmp_path: Path) -> Non
     # A source file that does not exist makes profiling fail; the advisory
     # estimate must return a flagged "unknown", never propagate the error.
     cfg = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 1},
         "sources": {
             "t": {"type": "file", "path": str(tmp_path / "missing.parquet"), "format": "parquet"}

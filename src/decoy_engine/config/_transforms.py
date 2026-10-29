@@ -6,7 +6,7 @@ strategy loop. Six ops: filter, sort, limit, dedupe, derive,
 drop_column. These are the 80/20 of customer pipelines that the V1
 graph runner's expansive transform palette covered; the remaining nine
 ops (sql_run, sub_pipeline, iterate_*, if_router, flag_gate, join,
-select_column, convert_file_type, run_storm) are retired, power-user,
+select_column, convert_file_type, and the old profile op) are retired, power-user,
 or platform-owned and stay on the V1 graph runner (S22-CL-V1GRAPHRUNNER
 removes that runner once its dependencies clear).
 

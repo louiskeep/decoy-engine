@@ -15,7 +15,7 @@ out-of-core output is byte-identical rather than merely similar.
   single-key/varying-tweak model) with the exact key derivation the
   `_strategies/_fpe.FpeStrategyHandler` uses (`derive(job_seed, namespace,
   FF1_KEY_LABEL)`, column-or-join_group tweak per `build_ff1_tweak`).
-- text_redact: reuses `storm.detectors.iter_spans` + `_text_redact._splice`
+- text_redact: reuses `detection.detectors.iter_spans` + `_text_redact._splice`
   (span-level PII redaction; deterministic pure function of input + config).
 - categorical: reuses `determinism.derive_index` over the plan's category pool
   (source-conditioned deterministic remap), including the `_categorical`

@@ -10,7 +10,7 @@ make.
 ## It provides a formal privacy guarantee in exactly one place, and nowhere else
 
 MASKED OUTPUTS carry no differential privacy, no epsilon, and no
-mathematical bound on re-identification risk. The `storm` profiler reports
+mathematical bound on re-identification risk. The `pre-scan` profiler reports
 heuristic re-identification-risk signals to help you assess a dataset; those
 are diagnostics, not a proof.
 
@@ -395,13 +395,13 @@ catches version drift; it does not widen the coverage guarantee above.
 Decoy validates a config against its schema and runs what the config says. It
 does not know which columns in your data are actually sensitive. If a config
 leaves a sensitive column on `passthrough`, or masks the wrong column, the run
-will succeed and the output will leak. Use `storm` to find candidate PII and the
+will succeed and the output will leak. Use `pre-scan` to find candidate PII and the
 post-mask checks to look for residual identifiers, but the mapping from your
 data's sensitivities to a correct config is yours to get right.
 
 ## The ML column classifier does not de-identify anything
 
-The STORM LightGBM column classifier (lgbm-v1) DETECTS which semantic type
+The Pre-scan LightGBM column classifier (lgbm-v1) DETECTS which semantic type
 a column is likely to contain (SSN, email, ICD-10 code, etc.). It does not
 mask, redact, transform, or remove any values. A column classified as `ssn`
 still contains SSNs until a masking step explicitly transforms them.

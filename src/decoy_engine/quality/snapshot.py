@@ -125,9 +125,9 @@ _DEFAULT_CATEGORICAL_TOP_K = 20
 _DEFAULT_CONTINGENCY_TOP_K = 25
 
 # Cardinality cap that splits "categorical" from "freetext" for object
-# columns. Mirrors storm/_distributions._STORM_CATEGORICAL_DISTINCT_CAP (30)
+# columns. Mirrors profiling/_distributions._PROFILE_CATEGORICAL_DISTINCT_CAP (30)
 # so the kind assignment is consistent across the engine. This is the SINGLE
-# fit source of truth (HC-5 D4): the STORM copy is a deliberately independent
+# fit source of truth (HC-5 D4): the Pre-scan copy is a deliberately independent
 # profiler-chart constant, not derived from this one.
 _CATEGORICAL_DISTINCT_CAP = 30
 

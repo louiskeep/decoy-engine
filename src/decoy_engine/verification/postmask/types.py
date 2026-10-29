@@ -1,8 +1,8 @@
-"""Dataclasses for the Storm post-mask report (Reframe-A).
+"""Dataclasses for the Post-scan integrity report (Reframe-A).
 
 Lightweight + frozen so the platform's report-persistence layer can
 treat them as immutable carriers. Each finding carries enough context
-for the FE to render a per-finding row in the Storm tab + enough for
+for the FE to render a per-finding row in the Post-scan integrity view + enough for
 a future "fix this" affordance to route back to a node config.
 """
 
@@ -12,9 +12,9 @@ from dataclasses import dataclass
 from typing import Literal
 
 # Bump when the report dict shape changes in a non-backward-compatible
-# way. The platform persists this on the JobStormReport row so reads of
+# way. The platform persists this on the JobPostScanIntegrityReport row so reads of
 # old rows can render correctly. Mirrors the Quality report's versioning.
-SCHEMA_VERSION = "storm-post-mask/v1"
+SCHEMA_VERSION = "post-scan-integrity/v2"
 
 
 Severity = Literal["info", "warning", "fail", "error"]
@@ -53,7 +53,7 @@ class ResidualPIIFinding:
     sample_match_count: int = 0  # how many rows still match
     message: str = ""
     # Source-comparison evidence (audit C1 fix). Additive with defaults
-    # so storm-post-mask/v1 payload consumers are unaffected.
+    # so post-scan-integrity/v2 payload consumers are unaffected.
     # Positional out==src rate over comparable non-null rows; None when
     # the source was unavailable or the column was not comparable.
     source_identity_rate: float | None = None
@@ -117,11 +117,11 @@ class PolicyValidationFinding:
 
 @dataclass(frozen=True)
 class PostMaskReport:
-    """The full Storm post-mask report.
+    """The full Post-scan integrity report.
 
     Engine returns this from ``run_post_mask``; the platform's
-    post_mask_service serializes it to JSON for the JobStormReport row.
-    The FE Storm tab (Reframe-B) joins this with the JobQualityReport
+    post_mask_service serializes it to JSON for the JobPostScanIntegrityReport row.
+    The FE Post-scan integrity view (Reframe-B) joins this with the JobQualityReport
     (for distribution drift + schema integrity) and renders the union.
     """
 
@@ -137,10 +137,10 @@ class PostMaskReport:
     error_count: int = 0
     # If the entire pass failed catastrophically (e.g. detectors module
     # missing), this carries the exception type name. The hook still
-    # produces a report row so the FE can show "Storm pass failed:
+    # produces a report row so the FE can show "Post-scan pass failed:
     # ModuleNotFoundError" rather than silently dropping.
     pass_failed_with: str | None = None
-    # Dennis M23 fix (2026-06-01): the JobStormReport row carries
+    # Dennis M23 fix (2026-06-01): the JobPostScanIntegrityReport row carries
     # generated_at + the FE typings expect it on the payload too, but
     # the engine never emitted the field. Set by run_post_mask
     # at the moment it tallies counters; ISO-8601 string. Keep

@@ -32,7 +32,7 @@
 //! leftmost-first, matching Python's `re.finditer` on the lookaround-free patterns) and, for the
 //! three lookaround patterns, hand scanners that replay Python `re`'s leftmost/greedy/ordered-
 //! alternation advancement directly over ASCII bytes. Validators port the executable behavior of
-//! `storm/_validators.py` (the reference), not an idealized standard: Luhn (ISO/IEC 7812-1) with
+//! `pre-scan/_validators.py` (the reference), not an idealized standard: Luhn (ISO/IEC 7812-1) with
 //! the module's normalization, NPI (CMS Luhn over the 80840 prefix), ICD-10 chapter-range table,
 //! IBAN (ISO 13616 incremental mod-97), IPv4 octet range.
 
@@ -550,7 +550,7 @@ fn run_validator(validator: Validator, matched: &str) -> bool {
     }
 }
 
-// ── validators (ports of storm/_validators.py; ASCII-input behavior) ────────────────────────
+// ── validators (ports of pre-scan/_validators.py; ASCII-input behavior) ────────────────────────
 
 /// The whitespace set Python's `\s` strips on an eligible cell: `[ \t\n\x0b\x0c\r]`. 0x1c-0x1f
 /// (which Python `\s` also matches) never appear in an eligible cell, so they are not listed.

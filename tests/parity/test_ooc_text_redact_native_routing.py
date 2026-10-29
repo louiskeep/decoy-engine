@@ -618,7 +618,7 @@ def _text_redact_payload_fk_config(tmp_path: Path) -> dict[str, Any]:
         paths[name] = str(tmp_path / f"{name}.parquet")
         pq.write_table(tbl, paths[name])
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"job_name": "ooc-text-redact-routing", "seed": 11},
         "sources": {
             name: {"type": "file", "path": paths[name], "format": "parquet"} for name in tables

@@ -409,7 +409,7 @@ markers = [
     "golden: engine-v2 S1 golden fixture suite (CSVs + manifests under tests/fixtures/golden/); CI gates engine-v2 sprint work on these",
     "regression: a bugfix's regression test; the prove-regression gate re-runs it against the pre-fix baseline and requires it to fail there",
     "testflight: acceptance test-flight suite (deliberately run, multi-job); excluded from the default loop; invoke via pytest testflight -m testflight or python scripts/test_flight.py",
-    "ml: STORM field-recognition ML tests needing the [ml] extra (scikit-learn + lightgbm). Run by the ml-gate CI job (pytest -m ml with .[dev,ml] installed); they importorskip in the default gate where the extra is absent. Mark a new ML test module by adding pytestmark = pytest.mark.ml at module top so coverage stays automatic rather than a hand-maintained path list.",
+    "ml: Pre-scan field-recognition ML tests needing the [ml] extra (scikit-learn + lightgbm). Run by the ml-gate CI job (pytest -m ml with .[dev,ml] installed); they importorskip in the default gate where the extra is absent. Mark a new ML test module by adding pytestmark = pytest.mark.ml at module top so coverage stays automatic rather than a hand-maintained path list.",
     "packaging: build-artifact tests that shell out to the wheel build frontend (DE-07 wheel-membership gate). Run by the packaging-gate CI job (pytest -m packaging with `build` installed); importorskip out of the default loop where `build` is absent.",
     "dp_certified: requires the certified DP proof-stack (fit_dp_snapshot only completes in the 77-dist dev+lint+vault 3.10.20 profile); tests/conftest.py's pytest_collection_modifyitems skips these off that profile. Run by the dp-certified-gate CI job.",
 ]
@@ -520,7 +520,7 @@ ignore = [
 # Same character in a test comment ("2 cities × 2 statuses = 4 buckets")
 # explaining a balanced-categoricals fixture; ASCII would obscure the
 # product semantics.
-"tests/unit/test_storm_reid_risk.py" = ["RUF003"]
+"tests/unit/test_scan_reid_risk.py" = ["RUF003"]
 # Empty-hook base classes intentionally swallow their body for
 # subclasses to override.
 "src/decoy_engine/internal/base.py" = ["B027"]
@@ -617,7 +617,7 @@ module = [
     "decoy_engine.instrumentation",
     "decoy_engine.instrumentation.timing",
     # engine-v2 S1 (Profile module: dataclasses + hash + serialization +
-    # DataFrame walker + STORM PII bridge). Spec:
+    # DataFrame walker + PII bridge). Spec:
     # docs/v2/sprints/engine-v2/sprint-01-profile-plan-and-fixtures.md
     # in decoy-platform.
     "decoy_engine.profile",

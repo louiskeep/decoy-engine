@@ -29,7 +29,7 @@ def _raw(when: Any = "s == 'a'", *, strategy: str = "redact") -> dict[str, Any]:
     if when is not ...:
         column["when"] = when
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 7, "post_validation": False},
         "sources": {"t": {"type": "file", "format": "csv", "path": "/dev/null"}},
         "tables": [{"name": "t", "columns": [column, {"name": "n", "strategy": "passthrough"}]}],
@@ -160,7 +160,7 @@ _PRE_WHEN_CANONICAL_SHA = "802af7ea25d6f91eef4f8c9488e3e782f5e6a171b78105c8f860a
 
 def _hash_fixture(**column_extra: object) -> dict:
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42},
         "sources": {"t": {"type": "file", "format": "csv", "path": "/tmp/x.csv"}},
         "targets": {"t": {"type": "file", "format": "csv", "path": "/tmp/y.csv"}},

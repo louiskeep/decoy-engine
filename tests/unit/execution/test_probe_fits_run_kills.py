@@ -78,7 +78,7 @@ def _never_called(config: Any = None, sources: Any = None, **kwargs: Any) -> Iso
 
 def _resident_job(rows: int) -> tuple[dict[str, Any], dict[str, pa.Table]]:
     config = {
-        "version": 1,
+        "version": 2,
         "tables": [{"name": "t", "columns": [{"name": "email", "strategy": "faker"}]}],
     }
     sources = {"t": pa.table({"id": list(range(rows))})}

@@ -1,9 +1,9 @@
-"""Storm post-mask runner -- assembles the report (Reframe-A).
+"""Post-scan integrity runner -- assembles the report (Reframe-A).
 
 Public entry: ``run_post_mask``. Called by the platform's
 post_mask_hook AFTER a successful mask job lands its output. Pure
 function: takes source + output frames + config dict, returns a
-JSON-serializable storm-report dict.
+JSON-serializable post-scan-integrity report dict.
 
 Best-effort: each check category runs inside its own try/except so a
 broken check doesn't kill the whole pass. A check that raises is
@@ -12,7 +12,7 @@ type name; the other checks still run + produce their findings.
 
 The catastrophic-failure case (the runner itself can't even start, e.g.
 ``output_frames`` is the wrong type) raises TypeError. The platform
-hook catches that + writes a JobStormReport with
+hook catches that + writes a JobPostScanIntegrityReport with
 ``pass_failed_with: "TypeError"`` so the FE has something to render.
 """
 
@@ -54,9 +54,9 @@ def run_post_mask(
             Used to look up configured masks + relationships.
 
     Returns:
-        A storm-post-mask/v1 report dict. JSON-serializable (every
+        A post-scan-integrity/v2 report dict. JSON-serializable (every
         field is a primitive or list of dataclass-asdict'd findings).
-        Caller persists this to JobStormReport.report_json.
+        Caller persists this to JobPostScanIntegrityReport.report_json.
 
     Raises:
         TypeError: if the frame dicts are not actually dicts of
@@ -82,7 +82,7 @@ def run_post_mask(
     # kill the pass. Failures are recorded as error-severity findings.
     # Dennis H3 fix (2026-06-01): the exception message previously
     # included `{exc}` which surfaced raw exception text into the
-    # report payload + the FE Storm tab. An OSError on a missing path
+    # report payload + the FE Post-scan integrity view. An OSError on a missing path
     # could leak `/home/user/.ssh/...`; a KeyError could expose a
     # column name an operator didn't expect to see in a UI-rendered
     # report. The typed name (`{type(exc).__name__}`) is sufficient
@@ -149,7 +149,7 @@ def run_post_mask(
             error_count += 1
 
     # Dennis M23 fix (2026-06-01): stamp generated_at at report
-    # construction so the JobStormReport row column + the engine
+    # construction so the JobPostScanIntegrityReport row column + the engine
     # payload agree. Module-level import would force a stdlib pull at
     # every engine import; local for now.
     from datetime import datetime, timezone

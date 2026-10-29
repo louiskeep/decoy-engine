@@ -110,7 +110,7 @@ def _config(snapshot: str, seed: int = 11, **overrides: Any) -> dict[str, Any]:
         ],
     }
     cfg: dict[str, Any] = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": seed},
         "sources": {},
         "tables": [child, parent],
@@ -466,7 +466,7 @@ def test_ordinary_statistical_null_injection_matches_origin_main_golden() -> Non
 
     snap_path = Path(__file__).resolve().parents[2] / "fixtures/phase_f_f0/stat_snapshot.json"
     cfg = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 5},
         "sources": {},
         "targets": {},
@@ -542,7 +542,7 @@ def test_cyclic_plan_is_a_coded_error(snap: str) -> None:
 
 def _inf_count_config() -> dict[str, Any]:
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 1},
         "sources": {},
         "targets": {},
@@ -584,7 +584,7 @@ def test_column_name_is_part_of_the_fingerprint(snap: str) -> None:
     assert exc.value.code == "pinned_plan_malformed"
 
 
-@pytest.mark.parametrize("value", ["${env.SECRET}", "${var.x}", "pre-${storm.k}-post"])
+@pytest.mark.parametrize("value", ["${env.SECRET}", "${var.x}", "pre-${pre-scan.k}-post"])
 def test_live_resolver_tokens_are_refused(snap: str, value: str) -> None:
     cfg = _config(snap)
     cfg["tables"][0]["generate_columns"][0]["prefix"] = value

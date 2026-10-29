@@ -173,7 +173,7 @@ def distribution_behavior_for(
         # but an explicit `from_profile: 1` in YAML parses as int 1
         # and would have fallen through to `destroys_frequency`).
         # Metadata-only impact (the masking strategy itself is
-        # unaffected) but the Storm preservation badge would have
+        # unaffected) but the preservation badge would have
         # been wrong.
         from_profile = cfg.get("from_profile")
         if from_profile is True or from_profile == 1:

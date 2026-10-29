@@ -109,7 +109,7 @@ OOC_FK_PARITY_DIFF: Final = "ooc-fk-parity-diff"
 # shape`): a missing/malformed/mismatched `ShadowContext.plan`, an
 # unsupported generate-column type, or `determinism: fresh`. The pure gate
 # additionally requires an empty sources/relationships/namespaces/subset/
-# transforms/validators/quarantine/run_storm/mask_secret_ref and every
+# transforms/validators/quarantine/post_scan_integrity/mask_secret_ref and every
 # runtime carrier at its admitted value; the mixed gate instead requires no
 # job-level validators/quarantine/vault-writer/fidelity-reporting/mask_
 # secret_ref, no sink/source_loader, and (via `ShadowContext.relationship_

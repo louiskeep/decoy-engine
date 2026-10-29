@@ -107,7 +107,7 @@ def _strip_platform_only_keys(descriptor: dict) -> dict:
 
 def _minimal_config(table: str, source: dict, target: dict) -> dict:
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 1},
         "sources": {table: source},
         "targets": {table: target},

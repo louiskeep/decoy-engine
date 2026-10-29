@@ -118,7 +118,7 @@ def job(
         pq.write_table(table, path)
         src[name] = {"type": "file", "path": str(path), "format": "parquet"}
     cfg: dict[str, Any] = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 7},
         "sources": src,
         "targets": {

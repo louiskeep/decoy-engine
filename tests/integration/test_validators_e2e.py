@@ -40,7 +40,7 @@ def _config(
 ) -> dict[str, Any]:
     """Minimal valid pipeline config pointing at a file source."""
     cfg: dict[str, Any] = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"job_name": "sp05-test", "seed": 42},
         "sources": {"t": {"type": "file", "path": src_path, "format": "parquet"}},
         "targets": {"t": {"type": "file", "path": src_path + ".out", "format": "parquet"}},
