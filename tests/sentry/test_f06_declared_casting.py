@@ -194,6 +194,7 @@ CATALOG_HOMES = {
 
 
 def test_format_ids_live_only_in_the_catalog_and_contract() -> None:
+    assert all((SRC / home).is_file() for home in CATALOG_HOMES)
     stray = []
     for path in sorted(SRC.rglob("*.py")):
         rel = str(path.relative_to(SRC))

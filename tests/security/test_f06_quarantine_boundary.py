@@ -142,8 +142,12 @@ def test_c1_protected_block_is_validated(tmp_path: Path, patch: dict) -> None:
 
     cfg = _cfg(tmp_path)
     cfg["protected_quarantine"] = {**PROTECTED_QUARANTINE, **patch}
-    with pytest.raises(ValidationError):
+    with pytest.raises(ValidationError) as exc:
         validate(cfg)
+    (key,) = patch
+    # the rejection must name the offending field of the block itself (not an unrelated error
+    # such as a still-unknown top-level key)
+    assert ("protected_quarantine", key) in {tuple(e["loc"][:2]) for e in exc.value.errors()}
 
 
 def test_c1_seed_only_key_provider_is_rejected_before_source_read(tmp_path: Path) -> None:
