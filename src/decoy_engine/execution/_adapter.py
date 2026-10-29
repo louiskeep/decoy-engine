@@ -104,8 +104,15 @@ class TokenVaultWriter(Protocol):
         so namespaces cannot be linked through a shared token."""
         ...
 
-    def put(self, namespace: str, plaintext: str, token: str) -> None:
-        """Persist a newly minted ``(plaintext, token)`` pair under ``namespace``."""
+    def put(self, namespace: str, plaintext: str, token: str) -> str:
+        """Persist ``(plaintext, token)`` under ``namespace`` and return the
+        AUTHORITATIVE stored token.
+
+        ``token`` is only a proposal: when a concurrent writer committed the same
+        ``(namespace, plaintext)`` first, the vault keeps ITS token and this
+        returns that one, which may differ from ``token``. The strategy emits the
+        return value, never its proposal, so a published token always has a reverse
+        mapping. Raises on failure; never returns None."""
         ...
 
 

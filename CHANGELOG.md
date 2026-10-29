@@ -9,6 +9,15 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Changed (BREAKING, pre-GA: `TokenVaultWriter.put` returns the authoritative token, 2026-10-29)
+
+`TokenVaultWriter.put(namespace, plaintext, token)` now returns `str`: the token the vault actually
+stored, which may differ from the proposed `token` when a concurrent writer committed the same
+`(namespace, plaintext)` first. The `tokenize` strategy emits that return value instead of its own
+proposal, so a published token always has a reverse mapping. A writer that returns `None`, an empty
+string or a non-`str` fails the run closed (`tokenize_vault_error`). Writers must be updated to return
+the stored token; there is no compatibility shim. Ships in the next engine minor.
+
 ### Added (parity E2a: shared bounded reader + progress stream, 2026-10-26)
 
 New public `decoy_engine.io` package (`bounded_reader`, `csv_framer`): the memory-bounded chunked

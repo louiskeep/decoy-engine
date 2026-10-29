@@ -35,8 +35,8 @@ class _MemTokenVault:
     def lookup_existing(self, namespace: str, plaintext: str) -> str | None:
         return self._m.get((namespace, plaintext))
 
-    def put(self, namespace: str, plaintext: str, token: str) -> None:
-        self._m[(namespace, plaintext)] = token
+    def put(self, namespace: str, plaintext: str, token: str) -> str:
+        return self._m.setdefault((namespace, plaintext), token)
 
 
 def _two_tables(tmp_path: Path, **extra: Any) -> tuple[dict[str, Any], dict[str, pa.Table]]:
