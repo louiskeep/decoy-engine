@@ -43,11 +43,13 @@ class Trace:
         """The syscalls between the two marker `stat` calls the traced script makes."""
 
         # The execve line prints the whole script, so match the marker's own stat call.
-        def marker(name: str) -> str:
-            return f'stat("/{name}"'
+        # strace 6.x prints the call as `newfstatat(AT_FDCWD</cwd>, "/NAME", ...)` where earlier
+        # releases printed `stat("/NAME", ...)`; accept both.
+        def marker(name: str) -> re.Pattern[str]:
+            return re.compile(rf'stat\w*\((?:AT_FDCWD(?:<[^>]*>)?, )?"/{name}"')
 
-        start = next(i for i, ln in enumerate(self.lines) if marker(begin) in ln)
-        stop = next(i for i, ln in enumerate(self.lines) if marker(end) in ln and i > start)
+        start = next(i for i, ln in enumerate(self.lines) if marker(begin).search(ln))
+        stop = next(i for i, ln in enumerate(self.lines) if marker(end).search(ln) and i > start)
         return self.lines[start + 1 : stop]
 
 
