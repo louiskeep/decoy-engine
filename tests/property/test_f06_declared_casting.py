@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import string
 from datetime import date
 from decimal import Decimal
@@ -119,8 +120,8 @@ def test_one_edit_neighbours_never_become_a_different_valid_integer(pair) -> Non
     base, edited = pair
     out = parse(INT64, edited)
     if out.ok:
-        # whatever parses must be exactly the integer its own canonical text names
-        assert str(out.value) == edited.lstrip("+").lstrip("0") or edited.lstrip("+-").strip("0") == "" or out.value == int(edited)
+        # only the strict ASCII grammar parses, and it names exactly one integer
+        assert re.fullmatch(r"[+-]?[0-9]+", edited) and out.value == int(edited)
         assert fmt(INT64, out.value).value == str(out.value)
     else:
         assert str(out.reason) in {"declared_integer_invalid", "declared_integer_overflow"}
