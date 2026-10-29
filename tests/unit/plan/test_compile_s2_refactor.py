@@ -453,7 +453,7 @@ class TestHashConfigExcludesSourcesAndTargets:
         }
         assert (
             _hash_config(config)
-            == "9c2c4ae154637bb1db28973df3c842c2f0b86a00c3587617ad8fb7fd5503bce1"
+            == "e3b6b0c013f75765e284eb17b2fcdd80163708872d2b9e4b93550fe800171c32"
         )
 
 

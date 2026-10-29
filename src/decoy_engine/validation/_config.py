@@ -62,7 +62,7 @@ def _select_validator(data: dict) -> Any:
     # spine at ``api/jobs/v2_runner.py`` calls it directly. Callers that
     # used to reach validate_config for a V1 shape now get a typed reject
     # pointing at the V2 path.
-    if data.get("version") == 1:
+    if data.get("version") == 2:
         from decoy_engine.config import PipelineConfig
 
         try:

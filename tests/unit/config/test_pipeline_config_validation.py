@@ -98,7 +98,7 @@ def base_config() -> dict[str, Any]:
 class TestAdvisorySketchValidates:
     def test_advisory_sketch_validates_clean(self) -> None:
         cfg = PipelineConfig.model_validate(base_config())
-        assert cfg.version == 1
+        assert cfg.version == 2
         assert cfg.global_settings.seed == 42
         assert cfg.global_settings.post_validation is False
         assert len(cfg.tables) == 2
@@ -221,9 +221,9 @@ class TestStrictValidationCatchesTypos:
             PipelineConfig.model_validate(bad)
 
     def test_wrong_version_fails_loud(self) -> None:
-        """version: Literal[1] -- bumping is a deliberate schema change."""
+        """version: Literal[2] -- bumping is a deliberate schema change."""
         bad = base_config()
-        bad["version"] = 2
+        bad["version"] = 1
         with pytest.raises(ValidationError, match="version"):
             PipelineConfig.model_validate(bad)
 

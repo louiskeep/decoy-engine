@@ -304,11 +304,13 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         "src/decoy_engine/execution/_pipeline_routing_signals.py",
         "src/decoy_engine/execution/_pipeline_sources.py",
         # E3b (post_scan_integrity honoured in-run): `capacity.py` passes
-        # `post_scan_integrity=bool(config.get("post_scan_integrity"))` into its two `decide_execution_route`
-        # calls so the capacity probe sees the same pre-scan-forces-full-frame decision the
+        # `post_scan_integrity=post_scan_integrity_requested(config)` into its two `decide_execution_route`
+        # calls so the capacity probe sees the same Post-scan-integrity full-frame decision the
         # production route makes. Pure kwarg threading; imports nothing from
         # `execution.physical` (the import-direction sweeps above stay green).
         "src/decoy_engine/execution/capacity.py",
+        # Docstring-only edit while removing the STORM name; no code or imports changed.
+        "src/decoy_engine/execution/_output_projection.py",
         # R3 (run context + route executors, 2026-10-10): `run_pipeline`'s resolve and route
         # phases move into the new `_pipeline_context.py` (a frozen `PipelineRunContext` and
         # `RouteDecision`) and the two bounded layer-1 routes get context-driven entry points in
