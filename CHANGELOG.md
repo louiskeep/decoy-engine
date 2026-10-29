@@ -24,6 +24,10 @@ digests; the identity digests are inputs only and are never serialized). Policy 
 saved uploads, snapshots, published outputs and checkpoints are `keep_all`; transient uploads and staging
 expire 24 hours after quiescence. A policy states when an artifact may become eligible; it never deletes.
 
+Also: `DECOY_ENGINE_LOG_FILE` overrides the engine logger's default `./logs/decoy_engine.log`; an empty value
+disables the file handler. Importing the engine otherwise creates that file in the working directory as an
+import-time side effect, which a stateless caller (`decoy local-cleanup`) must be able to opt out of.
+
 ### Added (F29: stable machine-readable errors and progress, engine slices, 2026-10-29)
 
 New public `decoy_engine.reasons`: one engine-owned, versioned registry of reason codes (`registry_version`
