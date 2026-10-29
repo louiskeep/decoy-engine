@@ -14,7 +14,7 @@ from functools import lru_cache
 from typing import Any
 
 from decoy_engine import reasons
-from decoy_engine.contracts.declared_casting import date_pattern
+from decoy_engine.contracts.declared_casting import DateIso, date_pattern
 from decoy_engine.declared_casting._types import CastOutcome, fail, succeed
 
 _R = reasons.runtime
@@ -28,7 +28,7 @@ def _compiled(fmt: str) -> re.Pattern[str]:
 
 
 def _format_of(spec: Any) -> str:
-    return ISO_FORMAT if spec.id == "date/iso8601/v1" else spec.format
+    return ISO_FORMAT if isinstance(spec, DateIso) else spec.format
 
 
 def parse_date(spec: Any, raw: Any) -> CastOutcome:

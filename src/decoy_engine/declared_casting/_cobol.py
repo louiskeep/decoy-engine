@@ -42,9 +42,8 @@ def parse_overpunch(spec: Any, raw: Any) -> CastOutcome:
         return fail(_BAD)
     body, last = raw[:-1], raw[-1]
     mapped = _OVERPUNCH.get(last)
-    if mapped is None or not (
-        body.isascii() and (body == "" or body.isdigit())
-    ):  # guard:cobol_digit
+    body_ok = body.isascii() and (body == "" or body.isdigit())
+    if mapped is None or not body_ok:  # guard:cobol_digit
         return fail(_BAD)
     digit, negative = mapped
     return _digits_value(body + str(digit), spec, negative)

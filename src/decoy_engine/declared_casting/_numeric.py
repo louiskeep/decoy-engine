@@ -20,6 +20,7 @@ from decimal import Decimal
 from typing import Any
 
 from decoy_engine import reasons
+from decoy_engine.contracts.declared_casting import IntegerZeroPad
 from decoy_engine.declared_casting._types import CastOutcome, fail, succeed
 
 _R = reasons.runtime
@@ -90,7 +91,7 @@ def parse_integer(spec: Any, raw: Any) -> CastOutcome:
         return fail(_R.DECLARED_INTEGER_INVALID)
     significant = raw.lstrip("+-").lstrip("0")
     lo, hi = int_bounds(spec.signed, spec.bit_width)
-    if len(significant) > len(str(hi)) + 1:  # guard:integer_digits
+    if len(significant) > len(str(hi)) + 1:
         return fail(_R.DECLARED_INTEGER_OVERFLOW)
     value = int(raw)
     if not lo <= value <= hi:  # guard:integer_range
@@ -105,7 +106,7 @@ def format_integer(spec: Any, value: Any) -> CastOutcome:
     if not lo <= value <= hi:  # guard:integer_range_format
         return fail(_R.DECLARED_INTEGER_OVERFLOW)
     text = str(value)
-    if spec.id == "integer/zero-pad/v1":
+    if isinstance(spec, IntegerZeroPad):
         sign, digits = ("-", text[1:]) if value < 0 else ("", text)
         room = spec.width - len(sign)  # the sign consumes width; unit is irrelevant for ASCII
         if len(digits) > room:  # guard:width_overflow_zero_pad

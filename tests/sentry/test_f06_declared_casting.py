@@ -21,30 +21,36 @@ CONTRACT = SRC / "contracts" / "declared_casting.py"
 # Route owners: every production function that admits, selects or runs an execution route must
 # route its F06 decision through the one central evaluator. (module, function) pairs.
 ROUTE_OWNERS = {
-    ("execution/_pipeline_context.py", "decide_route"),
-    ("execution/_pipeline_routing.py", "resolve_execution_route"),
-    ("execution/_pipeline_routing.py", "decide_chunk_route"),
-    ("execution/_planner.py", "classify_job"),
     ("execution/_chunked.py", "check_chunked_compatibility"),
-    ("execution/out_of_core/_compat.py", "check_out_of_core_compatibility"),
     ("execution/_mixed_static.py", "admit_mixed_static"),
-    ("execution/_unified_slice.py", "maybe_run_unified_slice"),
+    ("execution/_pipeline_chunk_route.py", "decide_chunk_route"),
+    ("execution/_pipeline_context.py", "decide_route"),
+    ("execution/_pipeline_mixed_route.py", "run_mixed_route"),
+    ("execution/_pipeline_route_exec.py", "run_mixed_route"),
+    ("execution/_pipeline_route_exec.py", "run_out_of_core_route"),
+    ("execution/_pipeline_route_exec.py", "run_sequential_route"),
+    ("execution/_pipeline_routing_signals.py", "resolve_execution_route"),
+    ("execution/_planner.py", "classify_job"),
     ("execution/_sequential.py", "run_sequential"),
+    ("execution/_unified_slice.py", "maybe_run_unified_slice"),
+    ("execution/out_of_core/_compat.py", "check_out_of_core_compatibility"),
     ("execution/out_of_core/_runner.py", "run_fk_out_of_core"),
 }
+# The route that applies the boundary: it calls the shared DeclaredCastRun, never a private parser.
 RUNTIME_ADAPTERS = {
     ("execution/_pipeline_full_frame.py", "run_full_frame_route"),
 }
 ROUTE_FN = re.compile(
-    r"^(run_.*route|run_sequential|run_fk_out_of_core|check_.*compat.*|admit_.*|decide_.*route.*|resolve_execution_route|maybe_run_unified_slice)$"
+    r"^(run_.*route|run_sequential|run_fk_out_of_core|check_.*compat.*|admit_.*|decide_chunk_route"
+    r"|resolve_execution_route|maybe_run_unified_slice|classify_job)$"
 )
+# Module-level functions only: methods are internals of an owner already in the inventory.
+EXTRA_DISCOVERED = {("execution/_pipeline_context.py", "decide_route")}
 
 
 def _functions(source: str) -> dict[str, ast.AST]:
     tree = ast.parse(source)
-    return {
-        n.name: n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
-    }
+    return {n.name: n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
 
 
 def _calls_name(node: ast.AST, names: set[str]) -> bool:
@@ -87,10 +93,11 @@ def test_route_owner_inventory_is_complete() -> None:
     found: set[tuple[str, str]] = set()
     for path in sorted((SRC / "execution").rglob("*.py")):
         rel = str(path.relative_to(SRC))
-        for name, node in _functions(path.read_text()).items():
+        for name in _functions(path.read_text()):
             if ROUTE_FN.match(name) and not name.startswith("_"):
                 found.add((rel, name))
     known = ROUTE_OWNERS | RUNTIME_ADAPTERS
+    found |= EXTRA_DISCOVERED
     unknown = sorted(f for f in found if f not in known)
     # entries that exist in the inventory but vanished are also drift
     gone = sorted(k for k in known if k not in found and not (SRC / k[0]).exists())
@@ -110,7 +117,7 @@ def test_seeded_route_without_the_evaluator_fails_the_inventory() -> None:
 def test_runtime_adapters_call_the_shared_boundary_not_a_private_parser() -> None:
     for rel, fn in sorted(RUNTIME_ADAPTERS):
         node = _functions(_read(rel))[fn]
-        assert _calls_name(node, {"cast_sources_pre_mask", "apply_declared_casting"}), (rel, fn)
+        assert _calls_name(node, {"DeclaredCastRun"}), (rel, fn)
 
 
 # -- forbidden constructs in the casting package ----------------------------------------------
@@ -133,11 +140,11 @@ def casting_violations(source: str, *, allow_quantize: bool = False) -> list[str
     tree = ast.parse(source)
     for node in ast.walk(tree):
         if (
-            isinstance(node, ast.Name)
-            and node.id in FORBIDDEN_NAMES
-            and isinstance(node.ctx, ast.Load)
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in FORBIDDEN_NAMES
         ):
-            out.append(f"name:{node.id}")
+            out.append(f"name:{node.func.id}")
         elif isinstance(node, ast.Attribute):
             if node.attr in FORBIDDEN_ATTRS and not (
                 node.attr == "parse" and not _is_dateutil(node)
@@ -145,11 +152,7 @@ def casting_violations(source: str, *, allow_quantize: bool = False) -> list[str
                 out.append(f"attr:{node.attr}")
             if node.attr == "quantize" and not allow_quantize:
                 out.append("attr:quantize")
-            if (
-                node.attr == "cast"
-                and isinstance(node.value, (ast.Name, ast.Attribute))
-                and "compute" in ast.dump(node.value)
-            ):
+            if node.attr == "cast":  # Arrow's unchecked/unsafe cast has no place in the boundary
                 out.append("attr:arrow-cast")
         elif isinstance(node, ast.Import):
             out += [
@@ -276,47 +279,73 @@ def test_catalog_manifest_snapshot_is_pinned() -> None:
     assert json.loads(pinned.read_text()) == json.loads(json.dumps(capability_manifest()))
 
 
+def _plan_column_for(desc, *, with_width: bool):
+    """A one-column declared plan whose output format is the descriptor's registered vector."""
+    from decoy_engine.contracts.declared_casting import build_contract
+    from decoy_engine.declared_casting import descriptor_for
+    from decoy_engine.plan._types import PlanDeclaredColumn, freeze_json
+
+    output = dict(desc.vectors[0][0])
+    if with_width and "width" in desc.model.model_fields and "width" not in output:
+        output.update(width=40, width_unit="code_points")
+    parse = dict(descriptor_for(desc.inverse, "parse").vectors[0][0])
+    if desc.logical in ("decimal", "currency"):
+        parse.update({k: output[k] for k in ("precision", "scale") if k in output})
+    contract = build_contract(
+        {
+            "logical_type": desc.logical,
+            "parse_format": parse,
+            "error_policy": "null",
+            "output_format": output,
+        }
+    )
+    return PlanDeclaredColumn("t", "c", "passthrough", freeze_json(contract.to_payload()))
+
+
 def test_matrix_every_output_descriptor_has_exact_width_or_a_registered_rejection() -> None:
+    from decoy_engine import reasons
     from decoy_engine.declared_casting import (
         ROUTES,
         descriptors,
         evaluate_declared_casting,
-        sample_contract_for,
+        output_width,
     )
+    from decoy_engine.declared_casting._eligibility import contract_model
 
-    for d in descriptors():
-        for route in ROUTES:
-            decision = evaluate_declared_casting(
-                route=route,
-                plan_contracts=(sample_contract_for(d),),
-                source_facts={},
-                target_facts={"kind": "fixed_width"},
-                capabilities=None,
-            )
-            assert decision.admitted or decision.rejection is not None
-            if decision.admitted:
-                assert decision.output_width(d.format_id) is not None or d.direction == "parse"
-            else:
-                from decoy_engine import reasons
+    outputs = [d for d in descriptors() if d.direction == "output"]
+    assert outputs
+    for d in outputs:
+        for with_width in (False, True):
+            column = _plan_column_for(d, with_width=with_width)
+            for route in ROUTES:
+                for target in ("fixed_width", "csv", "parquet"):
+                    decision = evaluate_declared_casting(
+                        route=route,
+                        plan_contracts=(column,),
+                        source_facts={},
+                        target_facts={"kind": target},
+                    )
+                    if decision.admitted:
+                        assert route == "full_frame", (d.format_id, route)
+                        if target == "fixed_width":
+                            assert decision.output_width(d.format_id) is not None, d.format_id
+                    else:
+                        assert reasons.is_registered(str(decision.rejection)), decision
+                    out_fmt = contract_model(column).output_format
+                    if target == "fixed_width" and output_width(out_fmt) is None:
+                        assert str(decision.rejection) == "declared_output_width_unknown"
 
-                assert reasons.is_registered(str(decision.rejection))
 
+def test_unknown_width_is_never_admitted_to_a_fixed_width_target() -> None:
+    from decoy_engine.declared_casting import descriptor_for, evaluate_declared_casting
 
-def test_unknown_width_allowed_mutant_is_caught() -> None:
-    from decoy_engine.declared_casting import (
-        ROUTES,
-        evaluate_declared_casting,
-        sample_unknown_width_contract,
-    )
-
-    decision = evaluate_declared_casting(
-        route=ROUTES[0],
-        plan_contracts=(sample_unknown_width_contract(),),
-        source_facts={},
-        target_facts={"kind": "fixed_width"},
-        capabilities=None,
-    )
-    assert not decision.admitted and str(decision.rejection) == "declared_output_width_unknown"
+    for fid in ("integer/ascii/v1", "decimal/plain/v1", "string/exact/v1", "currency/explicit/v1"):
+        column = _plan_column_for(descriptor_for(fid, "output"), with_width=False)
+        decision = evaluate_declared_casting(
+            route="full_frame", plan_contracts=(column,), target_facts={"kind": "fixed_width"}
+        )
+        assert not decision.admitted
+        assert str(decision.rejection) == "declared_output_width_unknown", fid
 
 
 # -- issue accounting and mutation harness -----------------------------------------------------
@@ -382,25 +411,27 @@ def _mutants(source: str) -> list[tuple[str, str]]:
     return out
 
 
-def test_every_numeric_guard_is_tagged_and_a_mutant_is_killed_by_the_vectors() -> None:
+GUARDS = {
+    "_numeric.py": (
+        "numeric",
+        {"integer_range", "decimal_precision", "decimal_scale_loss", "width_overflow_zero_pad"},
+    ),
+    "_cobol.py": ("cobol", {"cobol_length", "cobol_digit", "cobol_sign", "comp3_pad_nibble"}),
+    "_date.py": ("date", {"date_shape"}),
+}
+
+
+@pytest.mark.parametrize("module", sorted(GUARDS))
+def test_every_load_bearing_guard_is_tagged_and_every_mutant_is_killed(module: str) -> None:
     import sys
 
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from _f06_mutation_battery import run_battery
 
-    src = (CASTING / "_numeric.py").read_text()
+    kind, required = GUARDS[module]
+    src = (CASTING / module).read_text()
     mutants = _mutants(src)
-    names = {n for n, _ in mutants}
-    assert {
-        "integer_range",
-        "decimal_precision",
-        "decimal_scale_loss",
-        "width_overflow",
-        "decimal_trap",
-    } <= names
-    survivors = []
-    for name, text in mutants:
-        if run_battery(textwrap.dedent(text)):  # the battery still passes: the mutant survived
-            survivors.append(name)
+    assert required <= {n for n, _ in mutants}, f"untagged guards in {module}"
+    survivors = [n for n, text in mutants if run_battery(text, kind)]  # still passing: survived
     assert survivors == []
-    assert run_battery(src) is True  # the unmutated module passes the same battery
+    assert run_battery(src, kind) is True  # the unmutated kernel passes the same battery

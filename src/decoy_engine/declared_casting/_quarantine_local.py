@@ -193,7 +193,7 @@ class LocalProtectedQuarantineSink:
         partial, final = directory / f"{run_id}.partial", directory / f"{run_id}.dqa"
         fd = os.open(partial, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
         os.fchmod(fd, 0o600)
-        now = float(self._clock())
+        now = self._clock()
         header = {
             "format": "decoy-quarantine/v1",
             "key_version": str(self._key_provider.key_version),
@@ -371,7 +371,7 @@ class LocalProtectedQuarantineSink:
             or header.get("owner") != owner_hash
         ):
             raise _qerror(_R.PROTECTED_QUARANTINE_ACCESS_DENIED, "access denied.")
-        if float(self._clock()) >= float(header["expires_at"]):
+        if self._clock() >= header["expires_at"]:
             raise _qerror(_R.PROTECTED_QUARANTINE_EXPIRED, "retention has elapsed.")
         return P.OpaqueRetrievalToken(
             f"dqt1.{ref}.{self._token_mac(ref, owner_hash, header['token_salt'])}"
@@ -391,7 +391,7 @@ class LocalProtectedQuarantineSink:
         key_ok = header.get("key_version") == str(self._key_provider.key_version)
         if not (hmac.compare_digest(mac, expected) and owner_ok and key_ok):
             raise _qerror(_R.PROTECTED_QUARANTINE_ACCESS_DENIED, "access denied.")
-        if float(self._clock()) >= float(header["expires_at"]):
+        if self._clock() >= header["expires_at"]:
             raise _qerror(_R.PROTECTED_QUARANTINE_EXPIRED, "retention has elapsed.")
         return path, header, blob
 
@@ -462,7 +462,7 @@ class LocalProtectedQuarantineSink:
         for path in sorted(directory.glob("*.dqa")):
             try:
                 header, _ = self._read_header(path)
-                if header.get("owner") != owner_hash or float(header["expires_at"]) > now:
+                if header.get("owner") != owner_hash or header["expires_at"] > now:
                     retained += 1
                     continue
                 os.unlink(path)
