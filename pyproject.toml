@@ -840,7 +840,7 @@ module = [
     "mimesis",
     "mimesis.*",
     # spacy (MIT) is the optional NER backend for text_redact (the
-    # `ner` extra); imported function-locally in storm.ner, not
+    # `ner` extra); imported function-locally in detection.ner, not
     # installed in default-extras CI.
     "spacy",
     "spacy.*",
@@ -867,14 +867,14 @@ module = [
     "google.cloud",
     "google.cloud.*",
     # scikit-learn ships no py.typed marker; imported lazily in
-    # storm.model_pack.trainer and storm.eval.split (ml extra only).
+    # profiling.model_pack.trainer and profiling.eval.split (ml extra only).
     "sklearn",
     "sklearn.*",
     # joblib ships no py.typed marker; imported lazily in
-    # storm.model_pack.trainer and storm.model_pack.loader (ml extra only).
+    # profiling.model_pack.trainer and profiling.model_pack.loader (ml extra only).
     "joblib",
     # lightgbm ships no py.typed marker; imported lazily in
-    # storm.model_pack.trainer (ml extra only).
+    # profiling.model_pack.trainer (ml extra only).
     "lightgbm",
     "lightgbm.*",
     # python-stdnum ships no py.typed marker / stub package.
