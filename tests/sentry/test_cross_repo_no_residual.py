@@ -16,6 +16,7 @@ from __future__ import annotations
 import fnmatch
 import pathlib
 import re
+import shutil
 import subprocess
 from dataclasses import dataclass
 
@@ -54,19 +55,19 @@ FORBIDDEN_TOKENS: tuple[str, ...] = (
 
 
 @dataclass(frozen=True)
-class Exception_:
+class Allowed:
     glob: str
     purpose: str
     reaches_published_artifact: bool
 
 
-EXCEPTIONS: tuple[Exception_, ...] = (
-    Exception_("docs/plans/*", "immutable plan history", False),
-    Exception_("docs/archive/*", "archived records", False),
-    Exception_("docs/decisions/*", "immutable ADRs", False),
-    Exception_("docs/records/*", "immutable build/audit records", False),
-    Exception_("CHANGELOG.md", "release history", True),
-    Exception_("tests/sentry/test_cross_repo_no_residual.py", "sentry definition", False),
+EXCEPTIONS: tuple[Allowed, ...] = (
+    Allowed("docs/plans/*", "immutable plan history", False),
+    Allowed("docs/archive/*", "archived records", False),
+    Allowed("docs/decisions/*", "immutable ADRs", False),
+    Allowed("docs/records/*", "immutable build/audit records", False),
+    Allowed("CHANGELOG.md", "release history", True),
+    Allowed("tests/sentry/test_cross_repo_no_residual.py", "sentry definition", False),
 )
 
 
@@ -99,7 +100,7 @@ def scan(root: pathlib.Path, rel_paths: list[str]) -> list[str]:
 
 def _tracked() -> list[str]:
     out = subprocess.run(
-        ["git", "ls-files"], cwd=ROOT, check=True, capture_output=True, text=True
+        [shutil.which("git") or "git", "ls-files"], cwd=ROOT, check=True, capture_output=True, text=True
     ).stdout
     return out.splitlines()
 
