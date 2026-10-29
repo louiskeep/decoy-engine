@@ -272,3 +272,97 @@ def test_a_job_reports_a_registered_route_reason(tmp_path: Any) -> None:
     result = run_pipeline(cfg, sources, engine_version=ENGINE_VERSION, post_validation=True)
     reason = result.quality_metrics["execution"]["route_reason"]
     assert reasons.find("route", reason.split(":")[0]) is not None, reason
+
+
+# -- r3: serializers revalidate everything on the way out -------------------------------------
+
+
+def _forge(obj: Any, **fields: Any) -> None:
+    for name, value in fields.items():
+        object.__setattr__(obj, name, value)
+
+
+def _valid_events() -> list[Any]:
+    from decoy_engine.progress import CheckpointInfo, PublicationInfo, RetryInfo
+
+    retry = RetryInfo(scope="operation", attempt=1, retries_completed=0, state="not_scheduled")
+    ckpt = CheckpointInfo(state="committed", reference="ck1", sequence=1)
+    pub = PublicationInfo(storage_ref="store1")
+    return [
+        PhaseEvent(
+            "mask",
+            "start",
+            table="t",
+            phase="mask",
+            object_ref="o",
+            publication=pub,
+            checkpoint=ckpt,
+            retry=retry,
+            reason=_good(),
+        ),
+        RateSample("t", 1, 1.0, 1.0, phase="mask", object_ref="o", retry=retry),
+        RouteEvent("full_frame", lane="native", reason_code="cross_table_cycle", table="t"),
+        WarningEvent("missing_mask_secret", table="t", column="c", reason=_good()),
+        TerminalEvent("error", error_class="ValueError", reason=_good(), publication=pub),
+        RetryEvent(table="t", retry=retry),
+        CheckpointEvent(table="t", checkpoint=ckpt),
+    ]
+
+
+_STR_FIELDS = (
+    "name", "route", "lane", "code", "reason_code", "table", "column", "phase", "object_ref",
+    "status", "error_class", "byte_basis", "kind",
+)  # fmt: skip
+
+
+def test_forged_event_fields_never_reach_either_projection() -> None:
+    for event in _valid_events():
+        for name in _STR_FIELDS:
+            if not hasattr(event, name):
+                continue
+            original = getattr(event, name)
+            _forge(event, **{name: CONN})
+            for wire in (event_to_dict(event), event_to_legacy_dict(event)):
+                assert CONN not in json.dumps(wire), (type(event).__name__, name)
+            _forge(event, **{name: original})
+
+
+def test_forged_numeric_event_fields_never_reach_either_projection() -> None:
+    for event in _valid_events():
+        for name in ("sequence", "bytes_done", "rows_in", "rows_done", "elapsed_s", "ts"):
+            if hasattr(event, name):
+                _forge(event, **{name: CONN})
+                for wire in (event_to_dict(event), event_to_legacy_dict(event)):
+                    assert CONN not in json.dumps(wire), (type(event).__name__, name)
+
+
+def test_forged_group_fields_are_omitted_and_a_forged_reason_is_the_fixed_diagnostic() -> None:
+    event = _valid_events()[0]
+    _forge(event.checkpoint, reference=CONN)
+    _forge(event.publication, storage_ref=CONN)
+    _forge(event.retry, scope=CONN)
+    _forge(event.reason, code=CONN)
+    wire = event_to_dict(event)
+    assert CONN not in json.dumps(wire)
+    assert wire["checkpoint"] is None and wire["publication"] is None and wire["retry"] is None
+    assert wire["reason"]["code"] == str(reasons.decoy.REASON_RECORD_INVALID)
+
+
+@pytest.mark.parametrize("group", ["retry", "checkpoint", "publication"])
+def test_group_to_payload_revalidates(group: str) -> None:
+    event = _valid_events()[0]
+    info = getattr(event, group)
+    field = {"retry": "state", "checkpoint": "reference", "publication": "storage_ref"}[group]
+    _forge(info, **{field: CONN})
+    with pytest.raises(ValueError):
+        info.to_payload()
+
+
+def test_forged_status_and_group_enum_are_not_serialized() -> None:
+    event = _valid_events()[4]
+    _forge(event, status=CONN)
+    assert event_to_dict(event)["status"] is None
+    pub = _valid_events()[0].publication
+    _forge(pub, operation=CONN)
+    with pytest.raises(ValueError):
+        pub.to_payload()

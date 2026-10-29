@@ -19,7 +19,7 @@ from typing import Any, Literal
 
 from decoy_engine import reasons
 from decoy_engine.reasons import Operation, ReasonRecord, approve_name, approve_ref
-from decoy_engine.reasons._record import CleanupState, PublicationState
+from decoy_engine.reasons._record import CleanupState, PublicationState, _is_count
 
 EVENT_SCHEMA_VERSION = reasons.EVENT_SCHEMA_VERSION
 LEGACY_SCHEMA_VERSION = 0
@@ -121,6 +121,9 @@ class RetryInfo:
     delay_s: float | None = None
 
     def __post_init__(self) -> None:
+        self.validate()
+
+    def validate(self) -> None:
         if self.scope not in ("operation", "attempt", "route"):
             raise ValueError("retry scope is not a known scope")
         if self.state not in ("not_scheduled", "scheduled", "running", "exhausted"):
@@ -136,6 +139,7 @@ class RetryInfo:
             raise ValueError("delay_s is only reported for a scheduled retry")
 
     def to_payload(self) -> dict[str, Any]:
+        self.validate()
         return {
             "scope": self.scope,
             "attempt": self.attempt,
@@ -156,6 +160,9 @@ class CheckpointInfo:
     bytes: int | None = None
 
     def __post_init__(self) -> None:
+        self.validate()
+
+    def validate(self) -> None:
         if self.state not in ("unsupported", "none", "writing", "committed", "failed"):
             raise ValueError("checkpoint state is not a known state")
         _check_count("sequence", self.sequence)
@@ -171,6 +178,7 @@ class CheckpointInfo:
             raise ValueError("an unsupported or empty checkpoint carries no progress")
 
     def to_payload(self) -> dict[str, Any]:
+        self.validate()
         return {
             "state": self.state,
             "reference": self.reference,
@@ -190,10 +198,22 @@ class PublicationInfo:
     cleanup_state: CleanupState | None = None
 
     def __post_init__(self) -> None:
+        self.validate()
+
+    def validate(self) -> None:
         if self.storage_ref is not None and approve_ref(self.storage_ref) is None:
             raise ValueError("storage_ref is not an approved identifier")
+        for name, enum in (
+            ("operation", Operation),
+            ("publication_state", PublicationState),
+            ("cleanup_state", CleanupState),
+        ):
+            value = getattr(self, name)
+            if value is not None and not isinstance(value, enum):
+                raise ValueError(f"{name} is not a known {enum.__name__}")
 
     def to_payload(self) -> dict[str, Any]:
+        self.validate()
         return {
             "operation": self.operation.value if self.operation else None,
             "storage_ref": self.storage_ref,
@@ -457,23 +477,105 @@ _GROUPS: dict[str, Any] = {
 }
 
 
+def _count_or_none(value: object) -> Any:
+    return value if value is None or _is_count(value) else None
+
+
+def _seconds_or_none(value: object) -> Any:
+    return (
+        value
+        if value is None
+        or (
+            isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and math.isfinite(value)
+            and value >= 0
+        )
+        else None
+    )
+
+
+def _ref_or_none(value: object) -> Any:
+    return approve_ref(value)
+
+
+def _name_or_none(value: object) -> Any:
+    return approve_name(value)
+
+
+def _one_of(*allowed: str) -> Any:
+    return lambda value: value if value in allowed else None
+
+
+# Every non-group field is passed through its allowlist on the way out, so a value forged past
+# the constructor (`object.__setattr__`) cannot reach the wire. A required field that fails becomes
+# `None`; consumers already treat every v1 field as optional.
+_SANITIZERS: dict[str, Any] = {
+    "sequence": _count_or_none,
+    "bytes_done": _count_or_none,
+    "bytes_total_estimate": _count_or_none,
+    "rows_in": _count_or_none,
+    "rows_out": _count_or_none,
+    "rows_done": _count_or_none,
+    "rows_total_estimate": _count_or_none,
+    "sink_failures": _count_or_none,
+    "elapsed_s": _seconds_or_none,
+    "rows_per_sec": _seconds_or_none,
+    "ts": _seconds_or_none,
+    "phase": _ref_or_none,
+    "object_ref": _ref_or_none,
+    "name": _ref_or_none,
+    "route": _ref_or_none,
+    "lane": _ref_or_none,
+    "table": _name_or_none,
+    "column": _name_or_none,
+    "byte_basis": _one_of(*sorted(_BYTE_BASES)),
+    "final": lambda v: v if isinstance(v, bool) else None,
+    "error_class": lambda v: safe_error_class(v) if isinstance(v, str) else None,
+}
+for _wire_field in ("code", "reason_code"):
+    _SANITIZERS[_wire_field] = lambda v: _safe_registered_code(v) if isinstance(v, str) else None
+_KINDS = {
+    PhaseEvent: "phase",
+    RateSample: "rate",
+    RouteEvent: "route",
+    WarningEvent: "warning",
+    TerminalEvent: "terminal",
+    RetryEvent: "retry",
+    CheckpointEvent: "checkpoint",
+}
+_STATUSES = {
+    PhaseEvent: ("start", "finish", "error"),
+    TerminalEvent: ("ok", "error"),
+}
+
+
 def _field_value(event: Any, name: str) -> Any:
     if name == "event_schema_version":
         return EVENT_SCHEMA_VERSION
     if name == "registry_version":
         return reasons.REGISTRY_VERSION
-    value = getattr(event, name)
-    if value is None or name not in _GROUPS:
-        return value
-    try:
-        if type(value) is not _GROUPS[name]:
-            raise ValueError(name)
-        return value.to_payload()
-    except Exception:
-        # A group forged past its constructor never reaches the wire; the fixed diagnostic does.
-        if name == "reason":
-            return ReasonRecord.for_reason(reasons.decoy.REASON_RECORD_INVALID).to_payload()
-        return None
+    value = getattr(event, name, None)
+    if name in _GROUPS:
+        if value is None:
+            return None
+        try:
+            if type(value) is not _GROUPS[name]:
+                raise ValueError(name)
+            return value.to_payload()
+        except Exception:
+            # A group forged past its constructor never reaches the wire.
+            if name == "reason":
+                return ReasonRecord.for_reason(reasons.decoy.REASON_RECORD_INVALID).to_payload()
+            return None
+    if name == "kind":
+        return _KINDS.get(type(event))
+    if name == "status":
+        return _one_of(*_STATUSES.get(type(event), ()))(value)
+    sanitize = _SANITIZERS.get(name)
+    if sanitize is None:
+        raise KeyError(name)  # an unlisted field is a bug here, never silently emitted
+    return sanitize(value)
 
 
 def event_to_dict(event: ProgressEvent) -> dict[str, Any]:
@@ -484,7 +586,12 @@ def event_to_dict(event: ProgressEvent) -> dict[str, Any]:
     variant = type(event)
     legacy = _LEGACY_FIELDS[variant]
     extra = _V1_EXTRA[variant]
-    return {name: _field_value(event, name) for name in (*legacy, *extra)}
+    out = {name: _field_value(event, name) for name in (*legacy, *extra)}
+    if "byte_basis" in out and out["byte_basis"] is None:
+        for counter in _BYTES[:2]:  # counters never travel baseless
+            if counter in out:
+                out[counter] = None
+    return out
 
 
 def event_to_legacy_dict(event: ProgressEvent) -> dict[str, Any]:
