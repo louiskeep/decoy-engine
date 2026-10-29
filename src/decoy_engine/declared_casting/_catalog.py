@@ -420,7 +420,9 @@ def _cached_formatter(blob: str) -> Callable[[Any], CastOutcome]:
 
 def _key(spec: Any) -> str:
     return json.dumps(
-        spec if not isinstance(spec, C.ContractModel) else spec.model_dump(), sort_keys=True, default=str
+        spec if not isinstance(spec, C.ContractModel) else spec.model_dump(),
+        sort_keys=True,
+        default=str,
     )
 
 

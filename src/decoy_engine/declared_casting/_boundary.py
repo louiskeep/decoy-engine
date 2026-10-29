@@ -148,7 +148,8 @@ class DeclaredCastRun:
         from decoy_engine.execution._pipeline_sources import materialize_source
 
         src = materialize_source(src)
-        self._originals[table] = src
+        if any(c.policy == "quarantine" for c in cols):
+            self._originals[table] = src  # only a quarantining table needs its raw rows later
         self._positions[table] = list(range(src.num_rows))
         replaced: dict[str, pa.Array] = {}
         for col in cols:
@@ -159,7 +160,8 @@ class DeclaredCastRun:
         if not quarantined:
             return typed
         self._write_rows(table, quarantined)
-        keep = [i for i in range(src.num_rows) if i not in set(quarantined)]
+        dropped = set(quarantined)
+        keep = [i for i in range(src.num_rows) if i not in dropped]
         self._positions[table] = keep
         return typed.take(pa.array(keep, pa.int64()))
 
