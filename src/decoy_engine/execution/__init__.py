@@ -88,6 +88,7 @@ from decoy_engine.execution._governor import (
 )
 from decoy_engine.execution._isolated_common import IsolatedRunResult
 from decoy_engine.execution._isolated_run import run_pipeline_isolated
+from decoy_engine.execution._job_estimate import JobEstimate, estimate_job
 from decoy_engine.execution._pandas_adapter import (
     PandasExecutionAdapter,
     get_default_executor,
@@ -142,6 +143,7 @@ __all__ = [
     "GovernorTripKind",
     "GovernorTripRecord",
     "IsolatedRunResult",
+    "JobEstimate",
     "OutOfCoreCompatibility",
     "OutOfCoreRejection",
     "PandasExecutionAdapter",
@@ -160,6 +162,7 @@ __all__ = [
     "check_out_of_core_compatibility",
     "classify_job",
     "classify_table_kinds",
+    "estimate_job",
     "estimate_job_capacity",
     "get_default_executor",
     "order_work",
