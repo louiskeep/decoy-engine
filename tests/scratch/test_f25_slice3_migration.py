@@ -26,11 +26,11 @@ import pyarrow.parquet as pq
 import pytest
 
 import decoy_engine
-from decoy_engine.scratch import ScratchManager, ScratchQuotaExceeded
+from decoy_engine.scratch import Arena, ScratchManager, ScratchQuotaExceeded
 from tests.scratch._fakes import FakeAuthority, QualifiedTmpfsProvider, make_policy
 
 
-def _open_arena(tmp_path: Path) -> tuple[ScratchManager, object]:
+def _open_arena(tmp_path: Path) -> tuple[ScratchManager, Arena]:
     stage_root = tmp_path / "stage"
     stage_root.mkdir()
     provider = QualifiedTmpfsProvider()
@@ -41,12 +41,12 @@ def _open_arena(tmp_path: Path) -> tuple[ScratchManager, object]:
     return manager, arena
 
 
-def _ledger_kinds(arena: object) -> set[str]:
-    rows = arena._ledger.list_resources(arena.arena_id)  # type: ignore[attr-defined]
+def _ledger_kinds(arena: Arena) -> set[str]:
+    rows = arena._ledger.list_resources(arena.arena_id)
     return {getattr(r.kind, "value", str(r.kind)) for r in rows}
 
 
-def _has_kind(arena: object, needle: str) -> bool:
+def _has_kind(arena: Arena, needle: str) -> bool:
     return needle in _ledger_kinds(arena)
 
 
@@ -79,7 +79,7 @@ def test_t09_a04_parity_with_pre_activation_path(tmp_path: Path) -> None:
         arena_out = tmp_path / "arena_out"
         plain_out = tmp_path / "plain_out"
         for out, kw in ((arena_out, {"scratch_arena": arena}), (plain_out, {})):
-            sink = ParquetTransactionalSink(out, **kw)  # type: ignore[arg-type]
+            sink = ParquetTransactionalSink(out, **kw)
             sink.write("customers", table)
             sink.commit()
         a = (arena_out / "customers.parquet").read_bytes()
@@ -264,6 +264,8 @@ def test_t12_isolated_commit_stages_under_injected_arena(tmp_path: Path) -> None
 
 
 def test_t13_postgres_snapshot_dirs_resolve_through_seam(tmp_path: Path) -> None:
+    from pydantic import SecretStr
+
     from decoy_engine.connectors.postgres_snapshot import (
         PostgresSnapshotConfig,
         PostgresSnapshotError,
@@ -276,7 +278,7 @@ def test_t13_postgres_snapshot_dirs_resolve_through_seam(tmp_path: Path) -> None
         ext_dir = tmp_path / "ext"
         ext_dir.mkdir()
         config = PostgresSnapshotConfig(
-            dsn="postgresql://invalid:invalid@127.0.0.1:1/none",
+            dsn=SecretStr("postgresql://invalid:invalid@127.0.0.1:1/none"),
             extension_directory=ext_dir,
             memory_limit="256MB",
             temp_directory=tmp_path / "pg_tmp",
@@ -461,6 +463,73 @@ def test_t17_discovery_without_arena_still_runs(tmp_path: Path) -> None:
     pq.write_table(pa.table({"a": [1, 2, 3]}), src)
     result = run_discovery_sql("SELECT a FROM t ORDER BY a", {"t": str(src)})
     assert result.rows == [{"a": 1}, {"a": 2}, {"a": 3}]
+
+
+# --------------------------------------------------------------------------
+# OOC (T01-T08) EDQUOT -> out_of_core_temp_disk_exceeded with the shared report
+# --------------------------------------------------------------------------
+
+
+def test_ooc_edquot_surfaces_as_out_of_core_temp_disk_exceeded_with_report(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A kernel quota trip in an out-of-core writer is translated at the runner
+    choke point into the public out_of_core_temp_disk_exceeded error with the
+    shared scratch_quota report attached (plan 1.5 item 5)."""
+    from decoy_engine.execution._errors import ExecutionError
+    from decoy_engine.execution.out_of_core import _stage
+    from decoy_engine.execution.out_of_core._runner import run_fk_out_of_core
+    from tests.physical._helpers import build_job
+
+    manager, arena = _open_arena(tmp_path)
+    try:
+        fix = tmp_path / "fix"
+        fix.mkdir()
+        specs = [
+            {
+                "name": "parent",
+                "columns": [{"name": "id", "strategy": "hash", "namespace": "pns"}],
+            },
+            {
+                "name": "child",
+                "columns": [{"name": "pid", "strategy": "hash", "namespace": "pns"}],
+            },
+        ]
+        rels = [
+            {
+                "parent": {"table": "parent", "columns": ["id"]},
+                "children": [{"table": "child", "columns": ["pid"]}],
+                "orphan_policy": "preserve",
+                "namespace": "pns",
+            }
+        ]
+        srcs = {
+            "parent": pa.table({"id": pa.array([f"p{i}" for i in range(20)], pa.string())}),
+            "child": pa.table({"pid": pa.array([f"p{i % 20}" for i in range(20)], pa.string())}),
+        }
+        job = build_job(fix, srcs, specs, relationships=rels)
+
+        def _boom(self, *_a, **_k):
+            raise OSError(errno.EDQUOT, "disk quota exceeded")
+
+        monkeypatch.setattr(_stage.MaskedKeyStager, "add", _boom)
+        with pytest.raises(ExecutionError) as excinfo:
+            run_fk_out_of_core(
+                job.plan,
+                job.sources,
+                registry=job.registry,
+                relationship_graph=job.graph,
+                sink=ParquetTransactionalSink(tmp_path / "ooc_out"),
+                temp_dir=tmp_path / "ooc_work",
+                scratch_arena=arena,
+            )
+        assert excinfo.value.code == "out_of_core_temp_disk_exceeded"
+        report = getattr(excinfo.value, "report", None)
+        assert report is not None, "the shared quota report was not attached"
+        assert report.errno == errno.EDQUOT
+        assert report.arena_id == arena.arena_id
+    finally:
+        manager.close()
 
 
 # --------------------------------------------------------------------------

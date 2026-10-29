@@ -310,6 +310,26 @@ class Arena:
             errno=errno,
         )
 
+    def attempt_quota_report(self, *, errno: int | None) -> QuotaReport:
+        """An attempt-level quota report, for a quota trip surfaced where no one
+        resource is the obvious owner (the out-of-core runner's choke point, which
+        preserves ``out_of_core_temp_disk_exceeded`` and attaches this, plan 1.5
+        item 5). The classification is errno-only, never a native string."""
+
+        observation = self._provider.observe(self._root, self._policy)
+        dimension = "inodes" if errno == _errno.EDQUOT and _inode_pressure(observation) else "bytes"
+        return QuotaReport(
+            arena_id=self._arena_id,
+            resource_id="",
+            kind="attempt",
+            effective_bytes_cap=self._policy.quota_bytes,
+            effective_inodes_cap=self._policy.quota_inodes,
+            observation=observation,
+            dimension=dimension,
+            disposition=Disposition.RETAINED,
+            errno=errno,
+        )
+
 
 def _inode_pressure(observation: QuotaObservation) -> bool:
     used = observation.inodes_used

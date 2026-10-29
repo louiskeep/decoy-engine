@@ -815,14 +815,7 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
         "src/decoy_engine/execution/out_of_core/_duckdb.py",
         "src/decoy_engine/execution/out_of_core/_emit.py",
         "src/decoy_engine/execution/out_of_core/_external_sort.py",
-        "src/decoy_engine/execution/out_of_core/_payload_store.py",
-        "src/decoy_engine/execution/out_of_core/_stream_driver.py",
-        "src/decoy_engine/execution/native/_pool_quality.py",
-        "src/decoy_engine/execution/_transactional_sink.py",
-        "src/decoy_engine/execution/_chunked_output_sink.py",
-        "src/decoy_engine/execution/_isolated_run.py",
-        "src/decoy_engine/execution/_isolated_worker.py",
-        "src/decoy_engine/execution/_isolated_commit.py",
+        "src/decoy_engine/execution/out_of_core/_budget.py",
         "src/decoy_engine/execution/_isolated_cap.py",
     }
     unexpected = [

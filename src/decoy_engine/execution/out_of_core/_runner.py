@@ -61,7 +61,7 @@ from decoy_engine.execution._transactional_sink import TransactionalSink
 from decoy_engine.execution.out_of_core import _join as _join_ooc
 from decoy_engine.execution.out_of_core import _mask_group_c, _validate_batch
 from decoy_engine.execution.out_of_core._batch_join import ChildFkBatchJoiner
-from decoy_engine.execution.out_of_core._budget import check_temp_disk_budget
+from decoy_engine.execution.out_of_core._budget import check_temp_disk_budget, reraise_ooc_quota
 from decoy_engine.execution.out_of_core._emit import (
     assemble_resident,
     emit_to_sink,
@@ -326,9 +326,10 @@ def run_fk_out_of_core(
         return ExecutionResult(
             outputs=outputs, warnings=tuple(warnings), quality_metrics=quality_metrics
         )
-    except Exception:
+    except Exception as exc:
         if sink is not None and not committed:
             sink.abort()
+        reraise_ooc_quota(exc, scratch)
         raise
     finally:
         # The relation/join staging subtrees hold (source_key, masked_key) pairs

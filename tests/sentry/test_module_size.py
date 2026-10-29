@@ -72,8 +72,9 @@ ALLOWLIST: dict[str, int] = {
     # the B4 source-type admission threading (_source_arrow_types + the source_types param); split
     # the probe-recovery resolver into its own module.
     "src/decoy_engine/execution/_pipeline_routing_signals.py": 638,
-    # fan-in guard on the budget resolver; split the disk-preflight helpers into _disk_budget.py.
-    "src/decoy_engine/execution/out_of_core/_budget.py": 608,
+    # fan-in guard on the budget resolver; F25 reraise_ooc_quota (the OOC EDQUOT -> shared-report
+    # translation, beside out_of_core_temp_disk_exceeded). Split the disk-preflight helpers into _disk_budget.py.
+    "src/decoy_engine/execution/out_of_core/_budget.py": 637,
     # float FK key token pricing; split the disk-width helpers into _spill_widths.py.
     "src/decoy_engine/execution/out_of_core/_spill_estimate.py": 623,
     # pinned-Plan generation threading through the per-generator dispatch; split the statistical/derived/formula branches.
@@ -120,8 +121,9 @@ ALLOWLIST: dict[str, int] = {
     "src/decoy_engine/execution/_sequential.py": 691,
     # transactional publish hardening and row mask; F25 T15 staged-quarantine publication arena. Split the publish cluster.
     "src/decoy_engine/quarantine.py": 678,
-    # code_set provenance and FF1 notice plumbing through the streaming runner; F25 attempt-arena threading (T01).
-    "src/decoy_engine/execution/out_of_core/_runner.py": 698,
+    # code_set provenance and FF1 notice plumbing through the streaming runner; F25 attempt-arena threading (T01)
+    # + the OOC EDQUOT reraise call at the run choke point. Near the hard max; decompose the per-table loop next.
+    "src/decoy_engine/execution/out_of_core/_runner.py": 699,
     # D3a validator mask-step hook threaded through the reorder driver; F25 arena threading into the reorder lane (T06).
     "src/decoy_engine/execution/out_of_core/_stream_driver.py": 631,
     # F25 relation build rebased onto one registered native work directory (T03); dedup/COPY logic unchanged.
