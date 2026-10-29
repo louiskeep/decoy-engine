@@ -9,6 +9,41 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (F29: stable machine-readable errors and progress, engine slices, 2026-10-29)
+
+New public `decoy_engine.reasons`: one engine-owned, versioned registry of reason codes (`registry_version`
+1.0.0, 862 identities across 12 namespaces) with a fixed safe summary, kind, phase rules and, per phase,
+a severity, outcome category and retry class (`never`, `configuration_repair`, `environment_repair`,
+`retry_operation`, `restart_attempt`, `unknown`). Every producer now references a registry symbol whose
+value is the legacy wire string, so existing `.code` values, `CODES` attributes and exception
+constructors are unchanged byte for byte; `tests/sentry/test_reason_registry.py` fails on an ad-hoc code
+(literal, aliased constructor, positional, f-string, helper return, class constant, payload dict, code
+table or a new module). Codes are append-only; a pinned manifest rejects a deleted identity or a changed
+retry or outcome.
+
+`reason_from_exception(exc, phase=, context=)` returns a safe `ReasonRecord` (identity, phase, severity,
+retry class, outcome and a closed, bounded context; no message, class name, cause or path), trusting an
+exception's `.code` only for a registered engine class. `reasons_from_report` adapts a verification report.
+`IsolatedRunResult.reason` carries the record across the worker boundary and the parent re-derives its
+semantics from its own registry. Engine sinks report publication evidence (`not_published`, `published`,
+`partial`, `unknown`) and truthful cleanup state; a quarantine sidecar failing after the tables committed
+is `publication_partial` with no replay advice. A typed `ENOSPC`/`EDQUOT` at a publication boundary is
+`storage_capacity_exhausted` (`environment_repair`); a generic `OSError` is not.
+
+`decoy_engine.progress` events are versioned. `event_to_dict` is version 1, a strict additive superset of
+the version 0 keys that `event_to_legacy_dict` keeps emitting; new fields (`sequence`, `phase`,
+`object_ref`, byte counters with a `byte_basis`, `reason`, `retry`, `checkpoint`, `publication`) are
+keyword-only so positional constructors are unchanged. New `RetryEvent` and `CheckpointEvent` are reported
+only by the owner of a schedule or of a durable checkpoint (the governor reports route attempts); the
+engine has no checkpoint store and invents no retry. Warning and route codes and error class names pass an
+allowlist before they reach an event.
+
+Behaviour changes to note: the isolated-run safe summary now re-emits a governor route marker only from an
+engine `ConfigError`, never from the text of an arbitrary exception (the markers are `ConfigError` messages
+authored by route selection; foreign text must not steer a reroute). `IsolatedRunResult` gains a `reason`
+field before `memory_evidence`, which stays last. See [Reason codes and progress events](docs/reasons.md).
+Consumer slices (CLI exits, platform persistence) are separate work and are not part of this change.
+
 ### Changed (BREAKING, pre-GA: `TokenVaultWriter.put` returns the authoritative token, 2026-10-29)
 
 `TokenVaultWriter.put(namespace, plaintext, token)` now returns `str`: the token the vault actually

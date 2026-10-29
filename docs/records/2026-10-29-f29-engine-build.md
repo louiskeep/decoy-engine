@@ -1,0 +1,38 @@
+# F29 engine build record
+
+Status: record
+
+Plan: [`docs/plans/2026-10-29-f29-machine-readable-errors-progress.md`](../plans/2026-10-29-f29-machine-readable-errors-progress.md). Inventory and freeze: [`2026-10-29-f29-e0-inventory.md`](2026-10-29-f29-e0-inventory.md).
+
+## Built (engine slices E0 to E6)
+
+| Slice | Delivered | Evidence |
+|---|---|---|
+| E0 | Producer, wrapper and consumer inventory; frozen baseline (841 identities); finite-table decisions; F31 and F23/F30/F33 grounding | `tests/fixtures/f29/reason-baseline.json`, `producer-inventory.json`, the E0 record |
+| E1 | `decoy_engine.reasons` (leaf package, 12 namespaces); every producer migrated; both bypass sentries | A1/A2 in `tests/unit/test_reason_registry.py`; `tests/sentry/test_reason_registry.py` (10 seeded mutants) |
+| E2 | `ReasonRecord`/`ReasonContext`, `reason_from_exception`, per-run `FailureScope`, `reasons_from_report`, `IsolatedRunResult.reason` with parent-side validation | A3 `tests/security/test_reason_boundary.py`, A5, A8 |
+| E3 | Publication evidence at write/close/commit/abort for the two engine sinks and the four engine commit/abort sites; `publication_partial` for a post-commit sidecar failure | A4, A9 |
+| E4 | Version-1 events, version-0 projection, byte counters with a basis, stored-bytes `publish` phase, sequence | A6, A7 |
+| E5 | Owner-reported retry and checkpoint events; the governor reports route attempts | A10, A8 (governor) |
+| E6 | `docs/reasons.md`, security note, CHANGELOG, maps, pinned manifest and consumer-contract fixtures | `reason-manifest-v1.json`, `consumer-contract.json` |
+
+## Decisions and deviations the reviewer should look at
+
+1. **The A1 summary rule.** The plan says a summary edit fails A1 and also that editorial corrections bump the patch version. The test implements both: any summary change fails unless `registry_version` is bumped, and the pinned snapshot is regenerated in the same change. A change to retry, outcome, kind, phase rules, owner or symbol always fails.
+2. **The manifest is regenerated until the first release.** `reason-manifest-v1.json` is the birth snapshot of 1.0.0; the registry grew while this change was built. After a release it is append-only.
+3. **Catalog metadata is profile-driven.** Each namespace has a profile (kind, phases, severity, outcome, retry class); retry classes other than `unknown` and `never` are assigned only where the evidence is explicit (config and plan rejections, secrets, capacity, a transient connector failure). Everything else is `unknown`, which is the safe "no recommendation". Summaries for most codes are the humanised code; they are fixed and safe but terse, and are the first candidates for a patch-version editorial pass.
+4. **The trust anchor is the class, not a string.** `reason_from_exception` consults a table of engine exception classes (`reason_adapter._CODED`, `_FIXED`) resolved to class objects. `test_every_engine_exception_family_is_classified_or_listed` fails when a new engine exception class is neither classified nor consciously listed as unclassified (19 are, with reasons).
+5. **A captured record rides on the exception.** Builtin exceptions cannot be weakly referenced and a strong cache would retain traceback frames (and the row data in their locals), so the record is stored in the exception's `__dict__` under a private name. An exception that refuses the attribute is simply not remembered, and the standalone classification is used.
+6. **Governor marker trust.** The governor reroutes on route-ineligibility fragments in `IsolatedRunResult.error`. They are `ConfigError` messages authored by route selection, so the summary builder now reads them only from a `ConfigError`. Arbitrary exception text no longer steers a reroute (A8). One existing test that asserted the opposite for a `RuntimeError` now uses `ConfigError`.
+7. **`_TRUSTED_CODES` is unchanged.** The isolated error text still echoes only `CODES` plus the four execution codes. Echoing every registered code would change the documented text contract and is the structured reason's job, not the text's. `_EXECUTION_CODES` now holds registry symbols.
+8. **`progress.py` was split.** The event types and serializers moved to `_progress_events.py` to hold the module size limit; `decoy_engine.progress` re-exports them.
+9. **Stored bytes add a `publish` phase.** After an engine writer closes, the sink reports a `publish` start and finish for the table with `bytes_done` on the `stored_output` basis. This is additive; a monitor sees a new step name.
+
+## Open items, not done here
+
+- **F31 hook.** No shared safe-output boundary exists. Identifier fields use a strict shape (`approve_ref`); that is the single seam F31 replaces.
+- **Physical seam composites.** `execution/physical` reason strings of the form `<code>:<detail>` and `unclassified_<family>_rejection:<prose>` still need an approved typed design (identity plus typed context, prose dropped). The seam's finite decision codes are migrated to the registry; the composites are not code sinks and are untouched.
+- **Consumers.** C0 grounding, C1 (CLI exit mapping, which needs an explicit compatibility decision before any exit integer changes) and C2 (platform persistence and presentation) are not started. The CLI and platform checkouts supplied no evidence for this change. `consumer-contract.json` is their input.
+- **Live isolated progress** stays unsupported, as the plan requires.
+- **Write-time evidence for a custom sink class.** A custom class that implements the sink protocol and keeps no `publication_evidence` gets commit and abort evidence (`unknown` and `attempted`), not write-time evidence. A plain callable is adapted and does report `unknown`.
+- **Instrumented sites.** The four engine commit and abort sites use the observer. Direct `sink.write` call sites on custom classes (mixed route, out-of-core emit) are reported through the surrounding phase, without publication evidence.
