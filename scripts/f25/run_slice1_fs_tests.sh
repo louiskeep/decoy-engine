@@ -18,29 +18,44 @@
 set -u
 BUNDLE="${1:?usage: run_slice1_fs_tests.sh <bundle_dir> [wuser]}"
 WUSER="${2:-decoyf25}"
-IMG=/tmp/f25/slice1.img
-MNT=/mnt/f25
 PROJID=911                           # data project (small caps)
 CPROJID=912                          # control project (generous, separate domain)
 QUOTA_BYTES=$((8 * 1024 * 1024))     # 8 MiB hard byte cap
 QUOTA_KB=$((QUOTA_BYTES / 1024))
 QUOTA_INODES=64
-ARENA="$MNT/slice1-arena"
-CONTROL="$MNT/slice1-control"
 
 if [ "$(id -u)" -ne 0 ]; then
   echo "provisioning needs root; re-run under sudo" >&2
   exit 2
 fi
 
+# Root-owned private workdir. A predictable /tmp path created by root is a
+# symlink-race / privilege-escalation vector, so use mktemp (0700) and refuse
+# anything that is not root-owned 0700.
+WORKDIR="$(mktemp -d /var/tmp/f25.XXXXXX)"
+if [ "$(stat -c '%u %a' "$WORKDIR")" != "0 700" ]; then
+  echo "workdir $WORKDIR is not root-owned 0700; refusing" >&2
+  exit 2
+fi
+IMG="$WORKDIR/slice1.img"
+MNT="$WORKDIR/mnt"
+ARENA="$MNT/slice1-arena"
+CONTROL="$MNT/slice1-control"
+LOOP=""
+cleanup() {
+  umount "$MNT" 2>/dev/null || true
+  [ -n "$LOOP" ] && losetup -d "$LOOP" 2>/dev/null || true
+  rm -rf "$WORKDIR" 2>/dev/null || true
+}
+trap cleanup EXIT
+
 echo "== provisioning ext4 + project quota (root) =="
-mkdir -p /tmp/f25 "$MNT"
-umount "$MNT" 2>/dev/null
-losetup -D 2>/dev/null
-rm -f "$IMG"
+mkdir -p "$MNT"
+install -m 600 /dev/null "$IMG"
 truncate -s 256M "$IMG"
 mkfs.ext4 -F -b 4096 -O encrypt,project,quota "$IMG" >/dev/null 2>&1
-mount -o loop,prjquota "$IMG" "$MNT"
+LOOP="$(losetup --find --show "$IMG")"
+mount -o prjquota,nosuid,nodev,noexec "$LOOP" "$MNT"
 quotaon -Pp "$MNT" >/dev/null 2>&1 || true
 mkdir -p "$ARENA"
 chattr +P -p "$PROJID" "$ARENA"
@@ -73,6 +88,6 @@ EOF
 RC=$?
 
 echo "== teardown =="
-umount "$MNT" 2>/dev/null
-losetup -D 2>/dev/null
+cleanup
+trap - EXIT
 exit $RC
