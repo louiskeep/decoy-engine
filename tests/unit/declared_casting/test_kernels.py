@@ -42,7 +42,7 @@ def test_a2_zero_pad_formats_and_never_truncates() -> None:
     ("spec", "value"),
     [
         ({**DEC_5_2, "width": 5, "width_unit": "code_points", "pad": " ", "align": "right"}, Decimal("-99.99")),
-        ({**USD, "width": 6, "width_unit": "code_points", "pad": " ", "align": "right"}, Decimal("12.50")),
+        ({**USD, "width": 6, "width_unit": "code_points", "pad": " ", "align": "right"}, Decimal("123.50")),
         ({**EUR, "width": 6, "width_unit": "code_points", "pad": " ", "align": "right"}, Decimal("1.50")),
         (
             {"id": "decimal/grouped/v1", "precision": 8, "scale": 2, "radix": ".", "group": ",",
