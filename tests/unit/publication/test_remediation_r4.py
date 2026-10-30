@@ -297,3 +297,12 @@ def test_a_well_formed_child_with_matching_footers_still_publishes(tmp_path: Pat
     )
     assert result.outcome == "completed" and result.publication_receipt.outcome == "published"  # type: ignore[union-attr]
     sup.oracle(out)
+
+
+def test_one_publish_context_names_one_operation_for_gate_and_promotion(tmp_path: Path) -> None:
+    publish = PublishContext()
+    assert publish.operation_id
+    assert (
+        publish.request_for(tmp_path / "a").operation_id
+        == publish.request_for(tmp_path / "b").operation_id
+    )

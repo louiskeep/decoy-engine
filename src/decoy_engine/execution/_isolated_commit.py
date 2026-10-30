@@ -59,10 +59,15 @@ class PublishContext:
     unit: str = _pub.UNIT_IMMUTABLE_DIRECTORY
     overwrite: _pub.OverwritePolicy = _pub.ErrorIfDifferent()  # noqa: RUF009
 
+    def __post_init__(self) -> None:
+        # Minted once, so the child gate and the promotion name the same operation.
+        if self.operation_id is None:
+            object.__setattr__(self, "operation_id", uuid.uuid4().hex)
+
     def request_for(self, destination: Path) -> _pub.PublicationRequest:
         return _pub.PublicationRequest(
             destination=destination,
-            operation_id=self.operation_id or uuid.uuid4().hex,
+            operation_id=self.operation_id or "",
             unit=self.unit,
             cancelled=self.cancelled,
             checks=self.checks,
