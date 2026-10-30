@@ -23,6 +23,7 @@ import logging
 import pickle
 import sys
 import traceback
+from dataclasses import dataclass
 
 import pytest
 
@@ -31,14 +32,20 @@ from decoy_engine.keyprovider import MaskSecretError, MissingMaskSecret, SecretK
 from decoy_engine.progress import CallbackSink, event_to_dict
 from decoy_engine.secret_providers import (
     AES_GCM_V1,
+    API_VERSION,
     FERNET_V1,
     HMAC_SHA256_V1,
     MASK_ROOT_V1,
     REQUIREMENTS,
     SecretAccessDenied,
     SecretBuffer,
+    SecretCachePolicy,
+    SecretDescriptor,
+    SecretProviderRegistry,
     SecretProviderUnavailable,
+    admit_mask_key,
     parse_ref,
+    prepare_legacy,
     prepare_secret,
 )
 from tests.secret_providers._helpers import (
@@ -397,3 +404,112 @@ def test_sdk_exception_text_never_survives_any_surface(caplog, capsys):
 def test_validation_failures_are_value_free_on_every_surface(case, caplog, capsys):
     surfaces = render_everywhere(_provoke(case), caplog, capsys)
     assert_absent(surfaces, _value_forms(VALIDATION_FAILURES[case][2]))
+
+
+# --- r3: value-bearing OBJECTS in admission frames (dataclass repr renders every field) -------
+
+CANARY = "F13-CANARY-dsn://svc:hunter2@vault.internal/secret/path"
+
+
+@dataclass
+class _CanaryProvider:
+    """An extension provider that holds a token, DSN or path as a dataclass field."""
+
+    token: str = CANARY
+    api_version = API_VERSION
+    scheme = "canary"
+
+    def describe(self, ref):
+        return SecretDescriptor(scheme=self.scheme, key_version="v1", renewable=False)
+
+    def resolve(self, ref):
+        raise SDKBoomError("denied")
+
+    def preflight(self, ref, requirements, cache_policy):
+        raise SDKBoomError("denied")
+
+
+@dataclass
+class _CanaryClock:
+    token: str = CANARY
+
+    def monotonic(self) -> float:
+        raise SDKBoomError("clock")
+
+    def wall(self) -> float:
+        raise SDKBoomError("clock")
+
+
+@dataclass
+class _CanaryKeyProvider:
+    token: str = CANARY
+    key_version: int = 1
+
+    def mask_key(self) -> bytes:
+        return b"short"
+
+
+@dataclass
+class _CanaryRegistry(SecretProviderRegistry):
+    provider: object = None
+    token: str = CANARY
+
+    def __post_init__(self) -> None:
+        SecretProviderRegistry.__init__(self, (self.provider,))  # type: ignore[arg-type]
+
+
+def _raised(call) -> BaseException:
+    # The canaries are built inside ``call`` so no frame of this module ever binds one.
+    try:
+        call()
+    except MaskSecretError as exc:
+        return exc
+    raise AssertionError("expected an admission failure")
+
+
+_CFG = {"global_settings": {"mask_secret_ref": "canary:x"}, "tables": []}
+_KEYED = {
+    "global_settings": {},
+    "tables": [{"name": "t", "columns": [{"name": "email", "strategy": "hash", "namespace": "e"}]}],
+}
+
+CANARY_CASES = {
+    "prepare_secret-provider": lambda: prepare_secret(
+        provider=_CanaryProvider(),
+        ref=parse_ref("canary:x?encoding=raw"),
+        requirements=(REQUIREMENTS[MASK_ROOT_V1],),
+    ),
+    "prepare_secret-clock": lambda: prepare_secret(
+        provider=ProtocolProvider(),
+        ref=parse_ref("test:x?encoding=raw"),
+        requirements=(REQUIREMENTS[MASK_ROOT_V1],),
+        cache_policy=SecretCachePolicy(ttl_seconds=5, clock=_CanaryClock()),
+    ),
+    "admit-registry-and-provider": lambda: admit_mask_key(
+        _CFG, registry=_CanaryRegistry(provider=_CanaryProvider())
+    ),
+    "admit-registry-and-clock": lambda: admit_mask_key(
+        _CFG,
+        registry=_CanaryRegistry(provider=ProtocolProvider("canary")),
+        cache_policy=SecretCachePolicy(ttl_seconds=5, clock=_CanaryClock()),
+    ),
+    "admit-key-provider": lambda: admit_mask_key(_KEYED, key_provider=_CanaryKeyProvider()),
+    "prepare_legacy-key-provider": lambda: prepare_legacy(
+        _CanaryKeyProvider(), (REQUIREMENTS[MASK_ROOT_V1],)
+    ),
+}
+
+
+@pytest.mark.parametrize("case", sorted(CANARY_CASES))
+def test_value_bearing_objects_never_reach_traceback_locals(case, caplog, capsys):
+    exc = _raised(CANARY_CASES[case])
+    assert isinstance(exc, MaskSecretError) and exc.__cause__ is None and exc.__context__ is None
+    frames = [f.f_code.co_name for f, _ in traceback.walk_tb(exc.__traceback__)]
+    assert any(name in ("prepare_secret", "admit_mask_key", "prepare_legacy") for name in frames)
+    surfaces = render_everywhere(exc, caplog, capsys)
+    assert (
+        "prepare_secret" in surfaces["capture_locals"]
+        or "admit" in surfaces["capture_locals"]
+        or "prepare_legacy" in surfaces["capture_locals"]
+    )
+    assert_absent(surfaces, [CANARY, "hunter2", "vault.internal"])

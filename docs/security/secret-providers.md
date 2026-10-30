@@ -110,7 +110,18 @@ register_secret_provider(VaultKV2Provider(client_from_env()))
 - Rotation: write a new KV version and change the reference's `version=`; the output identity
   (`key_version`) changes with it. Incident invalidation: destroy the version in Vault and
   clear any positive-TTL cache by restarting the process or calling
-  `default_cache().clear()`.
+  `default_cache().clear()` (all keys) or `default_cache().invalidate(key, owners=...)` (one).
+  Both fence loads already in flight: a read that began before the call is returned to its own
+  caller but is never inserted, so no revoked material is served from the cache after the call
+  returns. Cached entries are also never served past the calling policy's TTL.
+- The cache scope is one security-context snapshot (address, namespace, token digest) taken when
+  a load starts and checked again after the read. A client that changes mid-load fails the load
+  with `secret_provider_unavailable` and caches nothing. This detects a change that is still in
+  effect after the read; it cannot see a value that changes and changes back within one read.
+- **Not live-verified.** The in-process fakes prove the adapter's mapping and ordering, not the
+  real `hvac` wire format, TLS verification, namespace header routing or the KV v2 metadata
+  envelope. The five live tests in `tests/secret_providers/test_vault_live.py` are skipped
+  without a Vault service and have not been run.
 
 ## Not shipped
 

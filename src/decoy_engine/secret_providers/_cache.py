@@ -9,6 +9,12 @@ extension) as ``min(ttl, provider_expiry - EXPIRY_SKEW_SECONDS)`` on the inserti
 monotonic clock; expired, failed, evicted or invalidated entries are closed (best-effort wiped)
 and a stale value is never returned as a fallback.
 
+Invalidation is linearizable against in-flight loads: ``clear`` bumps a global epoch and
+``invalidate`` bumps the epoch of that key's live flight; a loader records both when its read
+starts and refuses to insert if either moved, so material read before a revocation is returned to
+its own caller but never cached. A hit also honors the CALLING policy: an entry older than the
+caller's TTL is not served to it.
+
 Bounds: at most ``capacity`` entries (oldest insert evicted first), every expired entry is pruned
 on each access, and single-flight locks are reference-counted and dropped when their last caller
 leaves, so rotating references cannot grow the cache or the lock table. Concurrent loads of one
@@ -36,15 +42,20 @@ class _Entry:
     deadline: float
     clock: Clock
     owners: tuple[object, ...]
+    inserted: float
 
     def expired(self) -> bool:
         return self.clock.monotonic() >= self.deadline
+
+    def older_than(self, ttl: float) -> bool:
+        return self.clock.monotonic() - self.inserted >= ttl
 
 
 @dataclass
 class _Flight:
     lock: threading.Lock
     callers: int = 0
+    epoch: int = 0
 
 
 class SecretCache:
@@ -55,6 +66,7 @@ class SecretCache:
         self._guard = threading.Lock()
         self._entries: dict[_Key, _Entry] = {}
         self._locks: dict[_Key, _Flight] = {}
+        self._epoch = 0
 
     @staticmethod
     def _key(key: str, owners: tuple[object, ...]) -> _Key:
@@ -75,13 +87,17 @@ class SecretCache:
             self._evict_locked(next(iter(self._entries)))
         self._entries[key] = entry
 
-    def _hit_locked(self, key: _Key, owners: tuple[object, ...]) -> PreparedSecret | None:
+    def _hit_locked(
+        self, key: _Key, owners: tuple[object, ...], ttl: float
+    ) -> PreparedSecret | None:
         entry = self._entries.get(key)
         if entry is None:
             return None
         if entry.expired() or any(a is not b for a, b in zip(entry.owners, owners, strict=True)):
             self._evict_locked(key)
             return None
+        if entry.older_than(ttl):
+            return None  # valid for a longer-TTL caller, so it stays; this caller reloads
         return entry.master.clone()
 
     def get_or_load(
@@ -101,7 +117,8 @@ class SecretCache:
         try:
             with flight.lock:
                 with self._guard:
-                    hit = self._hit_locked(full, owners)
+                    hit = self._hit_locked(full, owners, float(ttl))
+                    started = (self._epoch, flight.epoch)
                 if hit is not None:
                     return hit
                 now = clock.monotonic()
@@ -112,9 +129,12 @@ class SecretCache:
                         remaining, prepared.expires_at - clock.wall() - EXPIRY_SKEW_SECONDS
                     )
                 if remaining > 0:
-                    entry = _Entry(prepared.clone(), now + remaining, clock, owners)
+                    entry = _Entry(prepared.clone(), now + remaining, clock, owners, now)
                     with self._guard:
-                        self._insert_locked(full, entry)
+                        if started == (self._epoch, flight.epoch):
+                            self._insert_locked(full, entry)
+                        else:
+                            entry.master.close()
                 return prepared
         finally:
             with self._guard:
@@ -123,11 +143,16 @@ class SecretCache:
                     del self._locks[full]
 
     def invalidate(self, key: str, *, owners: tuple[object, ...]) -> None:
+        full = self._key(key, owners)
         with self._guard:
-            self._evict_locked(self._key(key, owners))
+            flight = self._locks.get(full)
+            if flight is not None:
+                flight.epoch += 1
+            self._evict_locked(full)
 
     def clear(self) -> None:
         with self._guard:
+            self._epoch += 1
             for key in list(self._entries):
                 self._evict_locked(key)
 

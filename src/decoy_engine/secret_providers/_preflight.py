@@ -9,14 +9,21 @@ Failures are never re-raised: ``closed_error`` builds a new engine error from th
 and it is raised without a traceback from the failing frames, whose locals may hold material
 (``traceback.TracebackException(capture_locals=True)`` renders them). Material between the read
 and the derivation lives only in ``SecretBuffer`` objects, which render as ``<redacted secret>``.
+
+The same holds for value-bearing OBJECTS (a dataclass provider's repr prints every field): each
+public entry point moves its arguments into an ``_OpaqueBox`` (fixed repr), deletes its own
+locals, and runs the work in a contained worker whose frames never reach the raised error. The
+only frames a traceback keeps are the entry point's (holding the box) and ``_call_closed``.
 """
 
 from __future__ import annotations
 
 import contextvars
-from collections.abc import Mapping
+import hashlib
+import json
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from decoy_engine.keyprovider import (
     KEY_REQUIRED_GUIDANCE,
@@ -112,22 +119,127 @@ def _load(
         )
 
 
-def _cache_key(
-    provider: SecretProvider, ref: SecretRef, requirements: tuple[SecretRequirement, ...]
-) -> str:
-    """Salted key over the ref, the requirement set and the provider's security context.
+class _OpaqueBox:
+    """Carries value-bearing objects through frames that traceback rendering may capture."""
 
-    ``cache_context()`` is an optional provider member returning strings that select which
-    secret a ref resolves to (a Vault address, namespace and token); a provider without one is
-    scoped by its instance identity alone.
+    __slots__ = ("_items",)
+
+    def __init__(self, *items: object) -> None:
+        self._items = items
+
+    def open(self) -> tuple[Any, ...]:
+        return self._items
+
+    def __repr__(self) -> str:
+        return "<opaque>"
+
+    __str__ = __repr__
+
+    def __reduce_ex__(self, *_: object) -> Any:
+        raise TypeError("opaque boxes cannot be pickled")
+
+
+_T = TypeVar("_T")
+
+
+def _contained(
+    work: Callable[[_OpaqueBox], _T], box: _OpaqueBox
+) -> tuple[_T | None, Exception | None]:
+    """Run ``work``; its failure leaves only a rebuilt engine error, never its frames."""
+    try:
+        return work(box), None
+    except Exception as exc:
+        return None, closed_error(exc)
+
+
+def _call_closed(work: Callable[[_OpaqueBox], _T], box: _OpaqueBox) -> _T:
+    """Raise from a frame whose locals hold no value-bearing object (only the box)."""
+    result, failure = _contained(work, box)
+    if failure is not None:
+        raise failure.with_traceback(None) from None
+    if result is None:  # unreachable: a failure raises above
+        raise SecretProviderUnavailable
+    return result
+
+
+@dataclass(frozen=True)
+class _ContextSnapshot:
+    """The provider's security context at the start of a load, as digests only.
+
+    ``key`` is the salted cache-key component; ``digest`` identifies the context for the
+    before/after comparison. Neither holds an address, a namespace or a token.
     """
+
+    key: str
+    digest: bytes
+
+    def __repr__(self) -> str:
+        return "<context snapshot>"
+
+
+def _security_context(provider: SecretProvider) -> tuple[str, ...]:
+    """``cache_context()`` is an optional provider member returning strings that select which
+    secret a ref resolves to (a Vault address, namespace and token)."""
     hook = getattr(provider, "cache_context", None)
     context = tuple(hook()) if callable(hook) else ()
     if not all(isinstance(part, str) for part in context):
         raise SecretProviderUnavailable
-    return ref.get_cache_key_component(
-        tuple(r.id for r in requirements), context=(provider.scheme, *context)
+    return (provider.scheme, *context)
+
+
+def _digest(context: tuple[str, ...]) -> bytes:
+    return hashlib.sha256(json.dumps(context).encode("utf-8")).digest()
+
+
+def _snapshot(
+    provider: SecretProvider, ref: SecretRef, requirements: tuple[SecretRequirement, ...]
+) -> _ContextSnapshot:
+    context = _security_context(provider)
+    return _ContextSnapshot(
+        key=ref.get_cache_key_component(tuple(r.id for r in requirements), context=context),
+        digest=_digest(context),
     )
+
+
+def _load_in_context(
+    provider: SecretProvider,
+    ref: SecretRef,
+    requirements: tuple[SecretRequirement, ...],
+    clock: Clock,
+    snapshot: _ContextSnapshot,
+) -> PreparedSecret:
+    """One load bound to ``snapshot``: the context must be the same before and after the read.
+
+    A shared mutable client changed mid-load could answer for another tenant than the one the
+    cache key names; such a result is closed and never returned or cached.
+    """
+    if _digest(_security_context(provider)) != snapshot.digest:
+        raise SecretProviderUnavailable
+    prepared = _load(provider, ref, requirements, clock)
+    if _digest(_security_context(provider)) != snapshot.digest:
+        prepared.close()
+        raise SecretProviderUnavailable
+    return prepared
+
+
+def _prepare_boxed(box: _OpaqueBox) -> PreparedSecret:
+    provider, ref, requirements, policy = box.open()
+    if not requirements:
+        raise SecretProviderUnavailable
+    snapshot = _snapshot(provider, ref, requirements)
+
+    def loader() -> PreparedSecret:
+        return _load_in_context(provider, ref, requirements, policy.clock, snapshot)
+
+    if policy.ttl_seconds > 0:
+        return default_cache().get_or_load(
+            snapshot.key,
+            owners=(provider, _ADMITTING_REGISTRY.get()),
+            ttl=policy.ttl_seconds,
+            clock=policy.clock,
+            loader=loader,
+        )
+    return loader()
 
 
 def prepare_secret(
@@ -138,33 +250,9 @@ def prepare_secret(
     cache_policy: SecretCachePolicy | None = None,
 ) -> PreparedSecret:
     """Admit one pinned secret for ``requirements``. Fails closed with a registered F29 reason."""
-    policy = cache_policy or SecretCachePolicy()
-    failure: BaseException | None = None
-    prepared: PreparedSecret | None = None
-    try:
-        if not requirements:
-            raise SecretProviderUnavailable
-
-        def loader() -> PreparedSecret:
-            return _load(provider, ref, requirements, policy.clock)
-
-        if policy.ttl_seconds > 0:
-            prepared = default_cache().get_or_load(
-                _cache_key(provider, ref, requirements),
-                owners=(provider, _ADMITTING_REGISTRY.get()),
-                ttl=policy.ttl_seconds,
-                clock=policy.clock,
-                loader=loader,
-            )
-        else:
-            prepared = loader()
-    except Exception as exc:
-        failure = closed_error(exc)
-    if failure is not None:
-        raise failure.with_traceback(None) from None
-    if prepared is None:  # unreachable: a failure raises above
-        raise SecretProviderUnavailable
-    return prepared
+    box = _OpaqueBox(provider, ref, requirements, cache_policy or SecretCachePolicy())
+    del provider, ref, requirements, cache_policy
+    return _call_closed(_prepare_boxed, box)
 
 
 def _load_legacy(
@@ -183,6 +271,10 @@ def _load_legacy(
     )
 
 
+def _legacy_boxed(box: _OpaqueBox) -> PreparedSecret:
+    return _load_legacy(*box.open())
+
+
 def prepare_legacy(
     key_provider: KeyProvider, requirements: tuple[SecretRequirement, ...]
 ) -> PreparedSecret:
@@ -191,17 +283,9 @@ def prepare_legacy(
     It has no external ref and no cross-run cache, and satisfies only the mask-root requirement.
     A ``SeedKeyProvider`` (the 8-byte job_seed) is never a secret.
     """
-    failure: BaseException | None = None
-    prepared: PreparedSecret | None = None
-    try:
-        prepared = _load_legacy(key_provider, requirements)
-    except Exception as exc:
-        failure = closed_error(exc)
-    if failure is not None:
-        raise failure.with_traceback(None) from None
-    if prepared is None:  # unreachable: a failure raises above
-        raise SecretProviderUnavailable
-    return prepared
+    box = _OpaqueBox(key_provider, requirements)
+    del key_provider, requirements
+    return _call_closed(_legacy_boxed, box)
 
 
 @dataclass
@@ -238,28 +322,30 @@ class AdmissionScope:
         self.close()
 
 
-def _guarded_preflight(
-    provider: SecretProvider,
-    registry: SecretProviderRegistry,
-    ref: SecretRef,
-    requirements: tuple[SecretRequirement, ...],
-    policy: SecretCachePolicy,
-) -> PreparedSecret:
-    """``preflight`` is extension code: its errors cross the same closed boundary."""
-    failure: BaseException | None = None
-    prepared: PreparedSecret | None = None
+def _admit_boxed(box: _OpaqueBox) -> AdmittedKey:
+    config, key_provider, registry, cache_policy = box.open()
+    requirements = secret_requirements_for_config(config)
+    ref_text = (config.get("global_settings") or {}).get("mask_secret_ref")
+    if key_provider is not None:
+        if not requirements:
+            return AdmittedKey(key_provider)
+        prepared = _load_legacy(key_provider, requirements)
+        return AdmittedKey(prepared.key_provider(), prepared, requirements)
+    if not ref_text:
+        if requirements:
+            raise KeyedStrategyRequiresSecret(KEY_REQUIRED_GUIDANCE)
+        return AdmittedKey(None)
+    requirements = requirements or (MASK_ROOT,)
+    ref = parse_ref(ref_text)
+    registry = registry or default_registry()
+    provider = registry.get(ref.scheme)
+    # ``preflight`` is extension code: its errors cross the same closed boundary.
     scope = _ADMITTING_REGISTRY.set(registry)
     try:
-        prepared = provider.preflight(ref, requirements, policy)
-    except Exception as exc:
-        failure = closed_error(exc)
+        admitted = provider.preflight(ref, requirements, cache_policy or SecretCachePolicy())
     finally:
         _ADMITTING_REGISTRY.reset(scope)
-    if failure is not None:
-        raise failure.with_traceback(None) from None
-    if prepared is None:  # unreachable: a failure raises above
-        raise SecretProviderUnavailable
-    return prepared
+    return AdmittedKey(admitted.key_provider(), admitted, requirements)
 
 
 def admit_mask_key(
@@ -275,25 +361,9 @@ def admit_mask_key(
     ref is always preflighted (even for an unkeyed plan), preserving the earlier fail-early
     behavior for a broken ref. Keyed work with no admitted secret fails closed in every phase.
     """
-    requirements = secret_requirements_for_config(config)
-    ref_text = (config.get("global_settings") or {}).get("mask_secret_ref")
-    if key_provider is not None:
-        if not requirements:
-            return AdmittedKey(key_provider)
-        prepared = prepare_legacy(key_provider, requirements)
-        return AdmittedKey(prepared.key_provider(), prepared, requirements)
-    if not ref_text:
-        if requirements:
-            raise KeyedStrategyRequiresSecret(KEY_REQUIRED_GUIDANCE)
-        return AdmittedKey(None)
-    requirements = requirements or (MASK_ROOT,)
-    ref = parse_ref(ref_text)
-    registry = registry or default_registry()
-    provider = registry.get(ref.scheme)
-    admitted = _guarded_preflight(
-        provider, registry, ref, requirements, cache_policy or SecretCachePolicy()
-    )
-    return AdmittedKey(admitted.key_provider(), admitted, requirements)
+    box = _OpaqueBox(config, key_provider, registry, cache_policy)
+    del config, key_provider, registry, cache_policy
+    return _call_closed(_admit_boxed, box)
 
 
 def assert_plan_requirements_admitted(plan: Plan, admitted: AdmittedKey) -> None:
