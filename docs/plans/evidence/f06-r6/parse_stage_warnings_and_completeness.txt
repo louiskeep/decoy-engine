@@ -1,0 +1,3 @@
+warn warnings: ["QualityWarning(code='orphan_fk', provider='ns', column='pid', detail={'parent_table': 'parent', 'parent_columns': ['id']"] dc: {'schema_version': 1, 'completeness': 'complete', 'total_substitutions': 0, 'total_failures': 1, 'quarantined_rows': 1, 'by_table': {'parent': {'by_column': {'amt': {'parse_quarantine': 1}}}}}
+preserve warnings: [] dc: {'schema_version': 1, 'completeness': 'complete', 'total_substitutions': 0, 'total_failures': 1, 'quarantined_rows': 1, 'by_table': {'parent': {'by_column': {'amt': {'parse_quarantine': 1}}}}}
+remap warnings: [] dc: {'schema_version': 1, 'completeness': 'complete', 'total_substitutions': 0, 'total_failures': 1, 'quarantined_rows': 1, 'by_table': {'parent': {'by_column': {'amt': {'parse_quarantine': 1}}}}}
