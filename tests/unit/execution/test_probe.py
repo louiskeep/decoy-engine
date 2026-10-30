@@ -47,6 +47,7 @@ from decoy_engine.execution._probe import (
     probe_peak_bytes,
     uniqueness_saturation_risk,
 )
+from tests._keyed_secret import THROWAWAY_SECRET
 
 _MIB = 1024 * 1024
 _GB = 1024 * _MIB
@@ -669,13 +670,23 @@ class TestUniquenessSaturationRisk:
 # ---------------------------------------------------------------------------
 
 
+_SECRET_REF = "env:DECOY_TEST_THROWAWAY_SECRET"
+
+
+@pytest.fixture(autouse=True)
+def _throwaway_secret_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The real probe runs in a child process, which the in-process default-secret fixture cannot
+    # reach; the child resolves the same throwaway secret through `mask_secret_ref`.
+    monkeypatch.setenv("DECOY_TEST_THROWAWAY_SECRET", THROWAWAY_SECRET.hex())
+
+
 def _real_probe_config(tmp_path: Path, rows: int) -> tuple[dict[str, Any], dict[str, pa.Table]]:
     table = pa.table({"raw_id": pa.array([f"id-{i}" for i in range(rows)], type=pa.string())})
     src_path = tmp_path / "t.parquet"
     pq.write_table(table, src_path)
     raw_config = {
         "version": 1,
-        "global_settings": {"seed": 1},
+        "global_settings": {"seed": 1, "mask_secret_ref": _SECRET_REF},
         "sources": {"t": {"type": "file", "path": str(src_path), "format": "parquet"}},
         "targets": {
             "t": {"type": "file", "path": str(tmp_path / "t.out.parquet"), "format": "parquet"}
@@ -802,7 +813,7 @@ def _non_aligned_fk_config(
 
     config = {
         "version": 1,
-        "global_settings": {"seed": 3},
+        "global_settings": {"seed": 3, "mask_secret_ref": _SECRET_REF},
         "sources": {
             "parent": {"type": "file", "path": str(parent_src), "format": "parquet"},
             "child": {"type": "file", "path": str(child_src), "format": "parquet"},
