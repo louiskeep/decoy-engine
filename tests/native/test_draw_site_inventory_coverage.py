@@ -244,6 +244,12 @@ _ALLOWLIST = frozenset(
         # siblings above: these are DrawSite literals whose seed_derivation/notes
         # strings quote the call shape the scan looks for.
         "execution/native/_draw_sites_tokenize.py",
+        # Per-family DRAW_SITES data modules assembled by _determinism_protocol.py.
+        # Same rationale as the siblings above: DrawSite literals whose
+        # seed_derivation/notes strings quote the call shapes the scan looks for.
+        "execution/native/_draw_sites_gen.py",
+        "execution/native/_draw_sites_mask.py",
+        "execution/native/_draw_sites_provider_backed.py",
         # Task 0.3 protocol plumbing: reproduces the catalogued draws off the
         # hot path (one provider per DRAW_SITES entry). Not a new output site.
         "execution/native/_draw_site_providers.py",

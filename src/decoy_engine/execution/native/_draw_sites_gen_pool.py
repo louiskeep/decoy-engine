@@ -5,7 +5,7 @@ decomposition-target comment ("split ``DRAW_SITES`` into ``_draw_sites_mask.py``
 / ``_draw_sites_gen.py`` data siblings re-exported here if it grows further"):
 ``_determinism_protocol.py`` is allowlisted at its recorded LOC ceiling
 (``tests/sentry/test_module_size.py``), so a new catalogued draw site lands
-here and is spliced into ``DRAW_SITES`` at the bottom of that module, instead
+here and is spliced into ``DRAW_SITES`` by that module, instead
 of regrowing an already-capped file.
 
 Three entries: the GP2 pool BUILD and REUSE-SELECTION sites for a closed
@@ -17,7 +17,7 @@ Faker's position-keyed reuse selection (see
 
 from __future__ import annotations
 
-from decoy_engine.execution.native._determinism_protocol import _V6, DrawSite
+from decoy_engine.execution.native._draw_site_types import _V6, DrawSite
 
 GEN_POOL_DRAW_SITES: tuple[DrawSite, ...] = (
     # -- Generation: GP2 generation-local Faker pool BUILD --------------------
