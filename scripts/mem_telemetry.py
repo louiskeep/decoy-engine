@@ -79,7 +79,7 @@ from __future__ import annotations
 from mem_telemetry_calibration import (
     KRecalibration,
     MemoryTelemetryStore,
-    _percentile,
+    _percentile,  # noqa: F401  (importable for tests; deliberately not in __all__)
     recalibrate_k,
 )
 from mem_telemetry_records import (
