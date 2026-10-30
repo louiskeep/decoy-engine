@@ -85,8 +85,9 @@ masking strategy; formatting is applied after it:
 
 `042` reaches the strategy as the integer 42 and is written back as exactly three characters.
 Substitutions and failures are counted without values under `quality_metrics["declared_casting"]`.
-Today the boundary runs on the full-frame route and any other route refuses before reading the
-source. The engine owns the contract, catalog and reason codes; CLI and Studio controls are
+The same boundary runs on the full-frame, chunked, sequential, out-of-core, mixed and unified-slice
+routes; a route that cannot honour a contract (for example row quarantine on the out-of-core route)
+is refused before any source is read with a registered code, and `auto` routing never picks one. The engine owns the contract, catalog and reason codes; CLI and Studio controls are
 consumer work and are not part of this engine change. See `docs/declared-casting.md`.
 
 ## Public API at a glance

@@ -67,8 +67,13 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
-from decoy_engine.declared_casting._eligibility import declared_rejection
+from decoy_engine.declared_casting._eligibility import chunk_stability, declared_rejection
 from decoy_engine.execution import _chunked_input as _ci
+from decoy_engine.execution._planner_columns import (
+    _bucketize_columns,
+    _fpe_join_group_columns,
+    _table_column_entries,
+)
 from decoy_engine.profile._readers import LazySource
 
 if TYPE_CHECKING:
@@ -365,18 +370,10 @@ def _chunked_rejection(
                     bucketize_columns=_bucketize_columns(config, table=table),
                     ordered_work=ordered_work,
                     source_facts=source_facts,
+                    declared=chunk_stability(config, table),
                 )
             )
     return "; ".join(reasons) if reasons else None
-
-
-def _table_column_entries(config: dict[str, Any], *, table: str) -> list[dict[str, Any]]:
-    """The dict column entries of `table` in the raw config, else []."""
-    tables = config.get("tables") or []
-    table_cfg = next((t for t in tables if isinstance(t, dict) and t.get("name") == table), None)
-    if table_cfg is None:
-        return []
-    return [c for c in table_cfg.get("columns") or [] if isinstance(c, dict)]
 
 
 def _whole_column_state_rejections(
@@ -426,29 +423,6 @@ def _whole_column_state_rejections(
     return reasons
 
 
-def _bucketize_columns(config: dict[str, Any], *, table: str) -> list[str]:
-    return sorted(
-        str(c.get("name", "?"))
-        for c in _table_column_entries(config, table=table)
-        if c.get("strategy") == "bucketize"
-    )
-
-
-def _fpe_join_group_columns(config: dict[str, Any], *, table: str) -> list[str]:
-    """Columns on `table` whose fpe config sets `fpe_join_group`."""
-    tables = config.get("tables") or []
-    table_cfg = next((t for t in tables if isinstance(t, dict) and t.get("name") == table), None)
-    if table_cfg is None:
-        return []
-    out: list[str] = []
-    for col_entry in table_cfg.get("columns") or []:
-        if not isinstance(col_entry, dict) or col_entry.get("strategy") != "fpe":
-            continue
-        if (col_entry.get("provider_config") or {}).get("fpe_join_group"):
-            out.append(str(col_entry.get("name", "?")))
-    return sorted(out)
-
-
 def _runtime_source_rejections(
     source_tables: Mapping[str, pa.Table | LazySource],
     *,
@@ -457,6 +431,7 @@ def _runtime_source_rejections(
     bucketize_columns: list[str] | None = None,
     ordered_work: list[Any] | None = None,
     source_facts: dict[str, _ci.SourceFacts] | None = None,
+    declared: tuple[frozenset[str], frozenset[str]] = (frozenset(), frozenset()),
 ) -> list[str]:
     """Runtime (loaded-source) gates: presence, size threshold, dtypes,
     and the bucketize source shape.
@@ -491,9 +466,12 @@ def _runtime_source_rejections(
     gap = _ci.null_count_gap_reason(facts, bucketize_columns or [], table)
     if gap:
         reasons.append(gap)
-    unstable: list[str] = []
+    stable, bad = declared  # F06: judged by the type a declared column leaves the cast with
+    unstable: list[str] = [f"{n} (declared, no output_format)" for n in sorted(bad)]
     for schema_field in schema:
         t = schema_field.type
+        if schema_field.name in stable | bad:
+            continue
         if pat.is_integer(t):
             # pandas widens int+null to float PER FRAME, so a null-free
             # chunk keeps int64 while a null-bearing one becomes float64;

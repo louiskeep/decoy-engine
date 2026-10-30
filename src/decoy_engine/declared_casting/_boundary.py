@@ -14,6 +14,7 @@ framed row to the protected sink. A row that fails several fields is quarantined
 
 from __future__ import annotations
 
+import dataclasses
 import secrets
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -91,6 +92,33 @@ def open_cast_run(plan: Any, runtime: Any) -> DeclaredCastRun | None:
     """The run's casting boundary, or None when the plan declares no contract."""
     block = getattr(plan, "declared_casting", None)
     return DeclaredCastRun(block, runtime) if block is not None else None
+
+
+def remap_row_errors(records: Any, kept: Mapping[str, list[int]]) -> tuple[Any, ...]:
+    """Row errors keep pointing at the same rows after declared quarantine removed some.
+
+    ``kept[table]`` lists the old index of every row of that table that remains; a table absent
+    from ``kept`` lost no rows. Order is preserved.
+    """
+    if not kept:
+        return tuple(records)
+    index = {t: {old: new for new, old in enumerate(rows)} for t, rows in kept.items()}
+    out = []
+    for rec in records:
+        table_index = index.get(rec.table)
+        if table_index is None:
+            out.append(rec)
+        elif rec.row_index in table_index:
+            out.append(dataclasses.replace(rec, row_index=table_index[rec.row_index]))
+    return tuple(out)
+
+
+def seal_evidence(cast_run: DeclaredCastRun | None, metrics: dict[str, Any]) -> Any:
+    """Seal the run's quarantine LAST and put its counts into ``metrics``; returns the token."""
+    if cast_run is None:
+        return None
+    metrics["declared_casting"], token = cast_run.finish()
+    return token
 
 
 def declared_integer_columns(plan: Any) -> dict[str, set[str]]:
@@ -271,6 +299,19 @@ class DeclaredCastRun:
             ]
             out[table] = batch.table.take(pa.array(keep, pa.int64()))
         return out
+
+    def load_table(self, table: str, src: Any) -> Any:
+        """``src`` cast as one whole-table batch when ``table`` is declared, else unchanged."""
+        return self.pre_mask({table: src})[table] if table in self._tables else src
+
+    def render_table(
+        self, table: str, out: pa.Table, records: Any = ()
+    ) -> tuple[pa.Table, tuple[Any, ...]]:
+        """``out`` rendered, and the row errors re-pointed at the rows that remain."""
+        if table not in self._tables:
+            return out, tuple(records)
+        rendered, _, kept = self.post_mask({table: out}, {})
+        return rendered[table], remap_row_errors(records, kept)
 
     def finish(self) -> tuple[dict[str, Any], P.OpaqueRetrievalToken | None]:
         """Seal LAST: callers invoke this after every failure-capable validation, and ``abort``

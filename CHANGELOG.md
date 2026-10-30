@@ -22,9 +22,14 @@ registered F29 reasons (`registry_version` 1.1.0, 27 new identities). Fixed-widt
 `run_pipeline(quarantine_runtime=...)` takes a protected-quarantine runtime; the local reference sink writes
 Fernet-encrypted, `0700`/`0600`, finite-retention artifacts and the run returns a portable
 `ExecutionResult.quarantine_access` token. `PLAN_VERSION` is now 3 (the only YAML change for configs that do not
-use the feature is the version line; a version-2 plan still loads). Declared columns run on the full-frame route;
-other routes refuse before reading the source. See `docs/declared-casting.md` and
-`docs/security/protected-quarantine.md`.
+use the feature is the version line; a version-2 plan still loads). Declared columns run on the full-frame,
+chunked, sequential, out-of-core, mixed and unified-slice routes through one batch-shaped casting kernel; a route
+that lacks a needed capability refuses before reading the source (`declared_cast_route_unsupported`) and `auto`
+routing never selects it. CSV readers keep declared columns as exact lexemes (no inference, no default NA
+conversion). The quarantine seal is the last failure-capable step of a run, a sealed artifact is discarded if the
+run then fails, retrieval tokens are bound to the run (`QuarantineAccessContext(owner, run_id)`), protected records
+carry full F29 `ReasonRecord`s, and the raw row reopens with its Decimal / date / datetime types intact. See
+`docs/declared-casting.md` and `docs/security/protected-quarantine.md`.
 
 ### Added (F29: stable machine-readable errors and progress, engine slices, 2026-10-29)
 

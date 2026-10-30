@@ -461,3 +461,168 @@ def test_unified_slice_route_matches_the_full_frame_oracle(tmp_path: Path, polic
     assert b["counts"] == a["counts"]
     if policy == "quarantine":
         assert _opened(got, tmp_path, "uni") == _opened(want, tmp_path, "uni-oracle")
+
+
+# -- binary cells ---------------------------------------------------------------------------------
+
+
+def _comp3(value: str) -> bytes:
+    from decimal import Decimal
+
+    from decoy_engine.declared_casting import format_value
+
+    spec = {"id": "cobol/comp-3/v1", "precision": 5, "scale": 2, "signed": True}
+    outcome = format_value(spec, Decimal(value))
+    assert outcome.ok
+    return bytes(outcome.value)
+
+
+def test_binary_comp3_cells_keep_their_bytes_on_the_chunked_route(tmp_path: Path) -> None:
+    import pyarrow.parquet as pq
+
+    comp3 = {"id": "cobol/comp-3/v1", "precision": 5, "scale": 2, "signed": True}
+    cells = [_comp3("12.34"), _comp3("-0.05"), b"\xff\xff\xff", None, _comp3("999.99")]
+    path = tmp_path / "amt.parquet"
+    pq.write_table(
+        pa.table({"id": ["1", "2", "3", "4", "5"], "amt": pa.array(cells, pa.binary())}), path
+    )
+    cfg = {
+        "version": 1,
+        "global_settings": {"seed": 7},
+        "sources": {"t": {"type": "file", "format": "parquet", "path": str(path)}},
+        "tables": [
+            {
+                "name": "t",
+                "columns": [
+                    column("id"),
+                    column(
+                        "amt",
+                        logical_type="decimal",
+                        parse_format=comp3,
+                        error_policy="null",
+                        output_format=comp3,
+                    ),
+                ],
+            }
+        ],
+        "targets": {
+            "t": {"type": "file", "format": "parquet", "path": str(tmp_path / "o.parquet")}
+        },
+        "relationships": [],
+        "namespaces": {},
+    }
+    table = pq.read_table(path)
+    base = run(cfg, {"t": table}, execution_mode="full_frame", auto_chunk=False)
+    got = run(cfg, {"t": table}, auto_chunk=True, chunk_size_rows=2, auto_chunk_threshold_rows=1)
+    assert got.quality_metrics["auto_chunk"]["mode"] == "chunked"
+    assert got.outputs["t"].equals(base.outputs["t"])
+    out = got.outputs["t"].column("amt").to_pylist()
+    assert out[0] == cells[0] and out[1] == cells[1] and out[4] == cells[4]  # canonical bytes
+    assert out[2] is None and out[3] is None  # invalid bytes -> null; physical null stays null
+    counts = got.quality_metrics["declared_casting"]["by_table"]["t"]["by_column"]["amt"]
+    assert counts == base.quality_metrics["declared_casting"]["by_table"]["t"]["by_column"]["amt"]
+
+
+# -- decimals: stable only when rendered --------------------------------------------------------
+
+AMOUNTS = ["12.34", "0.5", "999.99", "1.234", None, "-3.10", "bad", "7"]
+DEC = {"id": "decimal/plain/v1", "precision": 5, "scale": 2}
+DEC_OUT = {
+    "id": "decimal/plain/v1",
+    "precision": 5,
+    "scale": 2,
+    "width": 8,
+    "width_unit": "code_points",
+}
+
+
+def _dec_cfg(tmp_path: Path, *, rendered: bool) -> dict[str, Any]:
+    src = write_csv(tmp_path / "d.csv", ["id", "amt"], [["1", "1.00"]])
+    extra = {"output_format": DEC_OUT} if rendered else {}
+    cols = [
+        column("id"),
+        column("amt", logical_type="decimal", parse_format=DEC, error_policy="null", **extra),
+    ]
+    return config(cols, source_path=src)
+
+
+@pytest.mark.parametrize("chunk", [1, 3])
+def test_rendered_decimal_is_chunk_stable_and_matches_full_frame(
+    tmp_path: Path, chunk: int
+) -> None:
+    source = text_table(id=IDS, amt=AMOUNTS)
+    base = run(
+        _dec_cfg(tmp_path, rendered=True),
+        {"people": source},
+        execution_mode="full_frame",
+        auto_chunk=False,
+    )
+    got = run(
+        _dec_cfg(tmp_path, rendered=True),
+        {"people": source},
+        auto_chunk=True,
+        chunk_size_rows=chunk,
+        auto_chunk_threshold_rows=1,
+    )
+    assert got.quality_metrics["auto_chunk"]["mode"] == "chunked"
+    assert got.outputs["people"].equals(base.outputs["people"])
+    assert got.quality_metrics["declared_casting"] == base.quality_metrics["declared_casting"]
+
+
+def test_unrendered_decimal_keeps_the_job_off_the_chunked_route(tmp_path: Path) -> None:
+    """Its Arrow precision is rebuilt per chunk, so the planner refuses chunking with a reason
+    and the job runs full-frame with the same result."""
+    source = text_table(id=IDS, amt=AMOUNTS)
+    got = run(
+        _dec_cfg(tmp_path, rendered=False),
+        {"people": source},
+        auto_chunk=True,
+        chunk_size_rows=2,
+        auto_chunk_threshold_rows=1,
+    )
+    block = got.quality_metrics["auto_chunk"]
+    assert block["mode"] == "full_frame" and "declared, no output_format" in block["reason"]
+
+
+# -- a failed publish leaves no sealed quarantine on any route that can quarantine -----------------
+
+
+def _sealed(root: Path) -> list[Path]:
+    return [p for p in root.rglob("*.dqa")] if root.exists() else []
+
+
+def test_sequential_sink_commit_failure_discards_the_sealed_quarantine(tmp_path: Path) -> None:
+    from tests.parity._f2_mixed_support import RecordingSink
+
+    sink = RecordingSink(fail_on="commit")
+    with pytest.raises(RuntimeError, match="injected sink failure"):
+        run(
+            _fk_cfg(tmp_path, endpoints=True, policy="quarantine"),
+            _fk_sources(),
+            execution_mode="sequential",
+            sink=sink,
+            **_kwargs("quarantine", tmp_path, "commit-fail"),
+        )
+    assert sink.aborted == 1
+    assert _sealed(tmp_path / "q-commit-fail") == []
+
+
+def test_chunked_late_failure_leaves_no_quarantine_artifact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from decoy_engine.execution import _pipeline_finalize
+
+    def boom(*a: Any, **k: Any) -> None:
+        raise RuntimeError("late failure in the last finalize step")
+
+    monkeypatch.setattr(_pipeline_finalize, "compute_storm_postmask", boom)
+    with pytest.raises(RuntimeError, match="late failure"):
+        run(
+            _cfg(tmp_path, "quarantine"),
+            {"people": _source()},
+            auto_chunk=True,
+            chunk_size_rows=2,
+            auto_chunk_threshold_rows=1,
+            **_kwargs("quarantine", tmp_path, "late"),
+        )
+    assert _sealed(tmp_path / "q-late") == []

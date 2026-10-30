@@ -141,10 +141,10 @@ def render_batches(
 
 def maybe_render(
     run: DeclaredCastRun | None, table: str, batches: Iterable[pa.RecordBatch]
-) -> Iterable[pa.RecordBatch]:
+) -> Iterator[pa.RecordBatch]:
     """``render_batches`` for a declared table; the batches themselves for any other."""
     if run is None or table not in run.tables():
-        return batches
+        return iter(batches)
     return render_batches(run, table, batches)
 
 

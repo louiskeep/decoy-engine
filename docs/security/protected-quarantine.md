@@ -6,11 +6,19 @@ Status: current
 
 ## Sink protocol
 
-`ProtectedQuarantineSink` (`decoy_engine.declared_casting`): `begin`, `write_row`, `seal`, `abort`, `get_retrieval_token`, `open`, `purge_expired`, plus a `capability` the engine checks before reading any source. A run is given `ProtectedQuarantineRuntime(sink, owner)` through `run_pipeline(quarantine_runtime=...)`. Missing, unprotected, wrongly protected or protocol-incomplete sinks are refused with `protected_quarantine_unavailable`; the legacy `quarantine.output_path` does not qualify.
+`ProtectedQuarantineSink` (`decoy_engine.declared_casting`): `begin`, `write_row`, `seal`, `abort`, `get_retrieval_token`, `open`, `purge_expired`, plus a `capability` the engine checks before reading any source. A run is given `ProtectedQuarantineRuntime(sink, owner, run_id=None)` through `run_pipeline(quarantine_runtime=...)`. Missing, unprotected, wrongly protected or protocol-incomplete sinks are refused with `protected_quarantine_unavailable`; the legacy `quarantine.output_path` does not qualify.
 
 ## Portable access token
 
-After sealing, the run returns `ExecutionResult.quarantine_access`, an `OpaqueRetrievalToken`: a serializable, value-free bearer capability (`to_wire()` / `from_wire()`), hidden from `repr`, absent when no row was quarantined and never written to evidence. A remote owner presents it later to `sink.open(token, QuarantineAccessContext(owner=...))`. `get_retrieval_token(receipt, context)` issues one again from the opaque receipt ref. `quality_metrics["declared_casting"]["quarantine"]` holds only the receipt: opaque ref, row and byte counts, digest, expiry, protection and key version.
+After sealing, the run returns `ExecutionResult.quarantine_access`, an `OpaqueRetrievalToken`: a serializable, value-free bearer capability (`to_wire()` / `from_wire()`), hidden from `repr`, absent when no row was quarantined and never written to evidence. A remote owner presents it later to `sink.open(token, QuarantineAccessContext(owner=..., run_id=...))`. The token MAC binds the artifact's owner, run identity and salt, so a context for another run is refused even for the same owner and key; `run_id` is the caller's run/job id, or a fresh random one reported in the receipt evidence when none is given. `get_retrieval_token(receipt, context)` issues one again from the opaque receipt ref. `quality_metrics["declared_casting"]["quarantine"]` holds only the receipt: opaque ref, row and byte counts, digest, expiry, protection, key version and run id.
+
+## Records
+
+Each protected record holds the table, the absolute source row position, the raw framed row and a full F29 `ReasonRecord` per failing field: registry and schema version, the phase (`mask` for a parse failure, `finalize` for a format failure), outcome and retry class resolved from the registry, and the column as `table.column`. The raw row reopens with its types: Decimal, date, datetime, time, timedelta, bytes and nested values round-trip exactly, and a value of any other type fails the write rather than being stringified.
+
+## Failure ordering
+
+The seal is the last failure-capable step before the publish. A failure after the seal discards the sealed artifact (`discard`), and a failure before it aborts the open session, so a failed run leaves no sealed artifact behind and no token is returned.
 
 ## Local reference adapter
 

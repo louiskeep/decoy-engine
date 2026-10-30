@@ -73,7 +73,6 @@ ROW_GROUP_ROWS = 1024 * 1024
 ROW_GROUP_BYTES = 256 * 1024 * 1024
 
 REASON_ELIGIBLE = reasons.route.ELIGIBLE
-REASON_DECLARED_CASTING = "declared_casting"
 
 
 def resident_block(reason: str) -> dict[str, Any]:
@@ -113,7 +112,7 @@ def decide_output_mode(
     if lexeme_columns_by_table(config):
         # F06: the rendered rows of a declared table are published after the whole run is known
         # to have passed, and a quarantine seal must follow every other failure-capable step.
-        return "resident", REASON_DECLARED_CASTING
+        return "resident", "declared_casting"
     if config.get("validators"):
         return "resident", "validators_present"
     if (config.get("quarantine") or {}).get("enabled"):

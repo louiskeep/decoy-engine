@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 import pyarrow as pa
 
 from decoy_engine import reasons
+from decoy_engine.declared_casting._boundary import remap_row_errors
 from decoy_engine.execution import _pipeline_finalize, _pipeline_generate_mask, _unified_slice
 from decoy_engine.execution import _pipeline_route_exec as _route_exec
 from decoy_engine.execution import _pipeline_sources as _psrc
@@ -82,21 +83,6 @@ def _raise_if_source_value_unrepresentable(
                             "and does not hit this limit."
                         ),
                     ) from exc
-
-
-def _remap_row_errors(records: Any, kept: Mapping[str, list[int]]) -> Any:
-    """Row errors keep pointing at the same rows after declared quarantine removed some."""
-    if not kept:
-        return records
-    new_index = {t: {old: new for new, old in enumerate(rows)} for t, rows in kept.items()}
-    out = []
-    for rec in records:
-        table_map = new_index.get(rec.table)
-        if table_map is None:
-            out.append(rec)
-        elif rec.row_index in table_map:
-            out.append(dataclasses.replace(rec, row_index=table_map[rec.row_index]))
-    return tuple(out)
 
 
 def _render_and_seal(cast_run: Any, result: ExecutionResult) -> ExecutionResult:
@@ -226,7 +212,7 @@ def _run_full_frame(
                 step,
                 mask_outputs=outs,
                 sources=srcs,
-                mask_row_errors=_remap_row_errors(step.mask_row_errors, kept),
+                mask_row_errors=remap_row_errors(step.mask_row_errors, kept),
             )
         # Step 3: stitch the outputs together via the shared helper both this
         # oracle and the shadow coordinator's mixed dispatch call, so "mask wins

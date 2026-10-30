@@ -8,6 +8,7 @@ a leaf of the dependency graph.
 
 from __future__ import annotations
 
+from decoy_engine._lexeme import lexeme_columns_by_table, profile_descriptors
 from decoy_engine.declared_casting._boundary import DeclaredCastRun, arrow_type
 from decoy_engine.declared_casting._catalog import (
     FormatDescriptor,
@@ -81,11 +82,13 @@ __all__ = [
     "descriptors",
     "evaluate_declared_casting",
     "format_value",
+    "lexeme_columns_by_table",
     "match_sentinel",
     "max_rendered_width",
     "output_width",
     "parse_value",
     "preflight_declared_casting",
+    "profile_descriptors",
     "validate_format_spec",
     "validate_sentinel_spec",
 ]

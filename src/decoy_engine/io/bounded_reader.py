@@ -293,11 +293,10 @@ def restore_default_na(table: pa.Table, lexeme_columns: frozenset[str]) -> pa.Ta
         if name in lexeme_columns:
             continue
         column = table.column(index)
-        table = table.set_column(
-            index,
-            name,
-            pc.if_else(pc.is_in(column, value_set=na), pa.scalar(None, pa.string()), column),
-        )
+        # pc.* funcs are dynamically generated; stubs miss them.
+        hit = pc.is_in(column, value_set=na)  # type: ignore[attr-defined, unused-ignore]
+        nulled = pc.if_else(hit, pa.scalar(None, pa.string()), column)  # type: ignore[attr-defined, unused-ignore]
+        table = table.set_column(index, name, nulled)
     return table
 
 

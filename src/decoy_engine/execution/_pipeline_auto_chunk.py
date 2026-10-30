@@ -29,7 +29,7 @@ from decoy_engine import reasons
 from decoy_engine.execution import _chunked_input
 from decoy_engine.execution import _chunked_output_sink as _output_sink
 from decoy_engine.execution._adapter import ExecutionResult
-from decoy_engine.execution._errors import ExecutionError
+from decoy_engine.execution._errors import DeclaredCastRouteError, ExecutionError
 from decoy_engine.execution._substrate import require_bool, require_positive_int
 from decoy_engine.profile._readers import LazySource
 
@@ -422,7 +422,7 @@ def run_auto_chunk(
     if sink is None and isinstance(source, LazySource):
         raise AssertionError("a LazySource reaches the auto-chunk lane only with a sink")
     if sink is not None and cast_run is not None and table in cast_run.tables():
-        raise ExecutionError(
+        raise DeclaredCastRouteError(
             code=reasons.route.DECLARED_CAST_ROUTE_UNSUPPORTED,
             message="a declared table cannot stream its output through the chunked lane.",
         )

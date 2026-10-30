@@ -736,3 +736,14 @@ E3b (2026-10-24): +1 line passing `run_storm=bool(config.get("run_storm"))` into
 the single `decide_execution_route` call site. Decomposition target unchanged:
 split the probe-recovery resolver into its own module when next touched.
 
+
+## F06 r2 (2026-10-30): declared casting on every capable route
+
+- `execution/_pandas_adapter.py` (689 -> 692), `execution/out_of_core/_stream_driver.py` (609 -> 618) and
+  `execution/_pipeline_route_exec.py` (604 -> 612): the `cast_run` / declared-integer pass-through the routes need,
+  with no casting logic of their own (that lives in `declared_casting/`). Decomposition targets are unchanged.
+- `execution/_sequential.py` (698 -> 661, `table_topo_order` split to `_sequential_order.py`),
+  `execution/out_of_core/_runner.py` (683 -> 631, joiner/schema helpers split to `_runner_support.py`) and
+  `execution/_pipeline_routing_signals.py` (643 -> 638): shrank while taking the F06 hooks.
+- `execution/_planner.py` stays at 578: the column lookups moved to `_planner_columns.py` to make room for the
+  chunk-stability rule for declared columns.

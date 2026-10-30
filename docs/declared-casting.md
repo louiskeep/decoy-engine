@@ -44,7 +44,7 @@ protected_quarantine:
 
 ## Order of operations
 
-1. Source framing (CSV quoting, fixed-width slices) yields an exact string or bytes. A column the caller already converted cannot be re-read: the cast refuses it (`declared_cast_input_type_incompatible`).
+1. Source framing (CSV quoting, fixed-width slices) yields an exact string or bytes. Every CSV reader (local, cloud, bounded) reads a declared column with no type inference and no default NA conversion, so `NA` or an empty field reaches the boundary as that text. A column the caller already converted cannot be re-read: the cast refuses it (`declared_cast_input_type_incompatible`). Binary COBOL formats need a source that carries bytes; compile refuses them on CSV and fixed-width sources.
 2. **Sentinel**: an exact match becomes null (counted as `sentinel_to_null`). A physical null stays null and is never a substitution.
 3. **Parse** to `str`, `int`, `Decimal` or `date`; Arrow carries them as `string`, sized `int`/`uint`, `decimal128(p, s)` and `date32`. A failure follows the column's `error_policy`.
 4. The masking strategy runs on the typed value.
@@ -86,7 +86,20 @@ A fixed-width layout feeding a declared column must read the field as `str` and 
 
 ## Where it runs
 
-The boundary exists on the full-frame route. A job with declared columns therefore runs full-frame (the engine pins `auto` routing to it and turns off auto-chunk and the unified slice). An explicit `execution_mode` of `sequential` or `out_of_core`, and the chunked and mixed routes, are refused before any source is read with `declared_cast_route_unsupported`, by the one central decision `decoy_engine.declared_casting.evaluate_declared_casting`. A route that gains the boundary declares the capability in `ROUTE_CAPABILITIES`; it does not get its own parser.
+One batch-shaped kernel (`DeclaredCastRun.cast_batch` / `format_batch`) serves every route; a resident table is a single batch and a streamed one is cast chunk by chunk with absolute row offsets, so any partition gives the same typed rows, counts and quarantine set. The generated, pinned matrix is `tests/fixtures/f06/route-format-matrix-v1.json`; a route parity test per route proves which route ran (`tests/acceptance/test_f06_route_parity.py`).
+
+| Route | Capabilities | Where the boundary sits |
+|---|---|---|
+| full-frame | all | whole resident tables, before the adapter and after it |
+| unified slice | all but cast-before-join | the resident table before the slice; its result is rendered and sealed |
+| chunked | all but cast-before-join | per chunk, between the source slices and the masker, and between the masker and the joined output |
+| sequential | all | each table as it is loaded; parent key maps are built from typed values and rendering follows them |
+| mixed | cast, format, counts, binary | per chunk of each mask table, inside the chunked lane |
+| out-of-core | cast, format, counts, binary | every declared source is cast once into a typed source (a private Parquet file for a lazy one), then streamed; rendering follows the join |
+
+`cast-before-join` is needed only when a declared column is itself a relationship endpoint. Row quarantine needs a route that can drop rows without desyncing something already built from them, which the mixed route (pre-resolved key column) and the out-of-core route (parent-key relations) cannot, so they refuse it. A refusal is decided by the one central evaluator `decoy_engine.declared_casting.evaluate_declared_casting` from the capability sets in `ROUTE_CAPABILITIES`, before any source is read; under `auto` each route's own admission predicate consults it, so the router falls back to a capable route instead of failing. A sentry requires every route that claims a capability to have a wired applier and a parity test.
+
+Notes: a declared job keeps one route for the whole job (the multi-table split is off) and its output is resident, not streamed into a sink, because the quarantine seal must follow every other failure-capable step. A decimal or currency column with no `output_format` is not chunk-stable (its Arrow precision is rebuilt per chunk), so the planner keeps such a table off the chunked route with a stated reason.
 
 ## Counts and safe output
 
@@ -102,4 +115,4 @@ See [Protected quarantine](security/protected-quarantine.md).
 
 ## Not in V1
 
-Ambient locale parsing, Unicode/CLDR currency inference, natural-language dates, time or timezone semantics, exponent notation, arbitrary grouping, rounding modes, permissive COBOL sign nibbles, copybook import, automatic encoding detection, field-level quarantine, and declared casting on the sequential, chunked, out-of-core, mixed and unified routes. A truthful refusal is the answer for those, not an approximation.
+Ambient locale parsing, Unicode/CLDR currency inference, natural-language dates, time or timezone semantics, exponent notation, arbitrary grouping, rounding modes, permissive COBOL sign nibbles, copybook import, automatic encoding detection, field-level quarantine, and row quarantine on the mixed and out-of-core routes, declared relationship endpoints on the chunked, out-of-core, mixed and unified-slice routes, and streamed (sink) output of a declared table. A truthful refusal is the answer for those, not an approximation.

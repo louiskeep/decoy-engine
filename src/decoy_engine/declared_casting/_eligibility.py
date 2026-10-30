@@ -112,7 +112,7 @@ def relationship_endpoints(source: Any) -> frozenset[tuple[str, str]]:
                 continue
             table = end.get("table") if isinstance(end, Mapping) else end.table
             cols = end.get("columns") if isinstance(end, Mapping) else end.columns
-            out.update((table, c) for c in cols or ())
+            out.update((str(table), str(c)) for c in cols or ())
     return frozenset(out)
 
 
@@ -307,3 +307,30 @@ def preflight_declared_casting(
                 code=str(decision.rejection),
                 message=f"route {execution_mode!r} cannot apply the declared contract: {', '.join(decision.missing) or 'see code'}.",
             )
+
+
+def chunk_stability(config: Mapping[str, Any], table: str) -> tuple[frozenset[str], frozenset[str]]:
+    """``(stable, unstable)`` declared columns of ``table`` for a route that masks chunk by chunk.
+
+    The planner reads raw source types, but a declared column leaves the casting boundary as its
+    declared type. Integers (kept exact through pandas), dates and strings keep one type on every
+    chunk, and an ``output_format`` renders to text or bytes whatever the masker returned. A
+    decimal or currency with no ``output_format`` is rebuilt from Python ``Decimal`` objects per
+    chunk, so its Arrow precision can differ between chunks: such a table is not chunk-stable.
+    """
+    stable: set[str] = set()
+    unstable: set[str] = set()
+    for entry in config.get("tables") or ():
+        if not isinstance(entry, Mapping) or entry.get("name") != table:
+            continue
+        for col in entry.get("columns") or ():
+            fields = {k: col[k] for k in C.CONTRACT_FIELDS if col.get(k) is not None}
+            if not fields:
+                continue
+            model = C.build_contract(fields)
+            rendered = model.output_format is not None
+            if rendered or model.logical_type in ("integer", "date", "string"):
+                stable.add(col["name"])
+            else:
+                unstable.add(col["name"])
+    return frozenset(stable), frozenset(unstable)

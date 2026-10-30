@@ -65,8 +65,9 @@ MAX = 700
 # docs/decisions/module-size-census-history.md.
 ALLOWLIST: dict[str, int] = {
     # F06: one declared-casting route guard per route owner (the sentry in test_f06_declared_casting
-    # inventories them); no logic of its own lives in these routers.
-    "src/decoy_engine/execution/_pipeline_route_exec.py": 604,
+    # inventories them) and the cast_run threaded through the sequential and out-of-core executors;
+    # no casting logic of its own lives in these routers.
+    "src/decoy_engine/execution/_pipeline_route_exec.py": 612,
     # sampler start/finish and evidence threading in _spawn_and_classify; split the spawn/classify half into _isolated_spawn.py.
     "src/decoy_engine/execution/_isolated_run.py": 622,
     # bounded-eligible fit rule, the fk-dtype retention branch and the D3a validator admission in decide_execution_route; split the route-priority docstring into the plan doc.
@@ -74,7 +75,7 @@ ALLOWLIST: dict[str, int] = {
     # wiring of the fk-dtype hazard and D3a validator signals into the one routing call site, plus
     # the B4 source-type admission threading (_source_arrow_types + the source_types param); split
     # the probe-recovery resolver into its own module.
-    "src/decoy_engine/execution/_pipeline_routing_signals.py": 643,
+    "src/decoy_engine/execution/_pipeline_routing_signals.py": 638,
     # fan-in guard on the budget resolver; split the disk-preflight helpers into _disk_budget.py.
     "src/decoy_engine/execution/out_of_core/_budget.py": 609,
     # float FK key token pricing; split the disk-width helpers into _spill_widths.py.
@@ -109,7 +110,7 @@ ALLOWLIST: dict[str, int] = {
     # fail-closed output projection and corpus pinning on the mask route; split the FK-resolution helpers.
     # cross-column V1 folds joint_mask key_by into the source-anchor snapshot build (a comment, no new logic).
     # MG-5 vault: the _fk_key_value compat wrapper moved to _fk_key_compat.py (pure move, zero behavior change).
-    "src/decoy_engine/execution/_pandas_adapter.py": 689,
+    "src/decoy_engine/execution/_pandas_adapter.py": 692,
     # resident Arrow type resolution and the faker seed/node precondition pair (one predicate, two
     # entry points, so the chunked and sequential routes cannot drift); move the type resolution
     # into its own module with the next operator gate.
@@ -120,13 +121,13 @@ ALLOWLIST: dict[str, int] = {
     "src/decoy_engine/execution/_sequential_native.py": 697,
     # sequential FK route threading; split the per-table mask/quarantine loop.
     # cross-column V1 folds joint_mask key_by into the source-anchor build (a comment, no new logic).
-    "src/decoy_engine/execution/_sequential.py": 698,
+    "src/decoy_engine/execution/_sequential.py": 661,
     # transactional publish hardening and row mask; split the publish cluster.
     "src/decoy_engine/quarantine.py": 645,
     # code_set provenance and FF1 notice plumbing through the streaming runner.
-    "src/decoy_engine/execution/out_of_core/_runner.py": 683,
+    "src/decoy_engine/execution/out_of_core/_runner.py": 631,
     # D3a validator mask-step hook threaded through the reorder driver; all logic lives in _validate_batch.py.
-    "src/decoy_engine/execution/out_of_core/_stream_driver.py": 609,
+    "src/decoy_engine/execution/out_of_core/_stream_driver.py": 618,
     # corpus schema checks and verify_corpus; split into _codeset_verify.py when next touched.
     "src/decoy_engine/transforms/_codeset_loader.py": 607,
     # DRAW_SITES catalogue; split into _draw_sites_mask.py / _draw_sites_gen.py if it grows.
