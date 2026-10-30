@@ -36,7 +36,6 @@ See `_batch_join.py`'s docstring for the typing divergences this class inherits;
 
 from __future__ import annotations
 
-import json
 from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
@@ -67,6 +66,9 @@ from decoy_engine.execution.out_of_core._stream_join_cursors import (
 )
 from decoy_engine.execution.out_of_core._stream_join_plan import (
     _disable_join_optimizers,
+    _explain_physical_plan,
+    _read_disabled_optimizers,
+    _unordered_join_query,
     _verify_unordered_plan_or_raise,
 )
 from decoy_engine.relationships._graph import OrphanPolicy
@@ -376,78 +378,19 @@ class StreamFkJoiner:
                     self._conn.unregister("child_keys")
 
     def _unordered_join_query(self) -> str:
-        """The SLIM unordered join query -- shared by `_iter_unordered_join_rows`
-        and `explain_join()` so the plan a test inspects is exactly the plan the
-        drain actually runs.
-
-        Projects ONLY what the bounded sorter must reorder: `__decoy_row_nr` (the
-        sort key), a COMPACT nullable-boolean match token (`TRUE` matched, NULL
-        orphan -- never the raw parent value), and the masked parent components.
-        The raw child columns (`__decoy_fk_join_key`, `__decoy_src_*`) stay OUT of
-        the SELECT -- they are re-fetched out-of-line from `SpillChildKeys` in
-        phase 3 -- so no wide raw key, orphan, or dictionary encoding can overflow
-        the sorter. `__decoy_fk_join_key` remains the JOIN predicate, not output.
-        """
-        join_key = self._relation.join_key_column
-        select_list = [
-            f"c.{_q('__decoy_row_nr')}",
-            f"CASE WHEN p.{_q(join_key)} IS NULL THEN NULL ELSE TRUE END "
-            f"AS {_q('__decoy_parent_match')}",
-        ]
-        for idx, masked_column in enumerate(self._relation.masked_key_columns):
-            select_list.append(f"p.{_q(masked_column)} AS {_q(f'__decoy_parent_masked_{idx}')}")
-        return f"""
-            SELECT {", ".join(select_list)}
-            FROM child_keys c
-            LEFT JOIN parent_keys p
-              ON c.__decoy_fk_join_key = p.{_q(join_key)}
-        """
+        """The SLIM unordered join query (`_stream_join_plan._unordered_join_query`),
+        shared by `_iter_unordered_join_rows` and `explain_join()`."""
+        return _unordered_join_query(
+            self._relation.join_key_column, self._relation.masked_key_columns
+        )
 
     def _run_explain_json(self, query: str) -> dict[str, Any]:
-        """Parsed `EXPLAIN (FORMAT JSON)` physical plan for `query`.
-
-        Assumes `child_keys` is already registered on this joiner's connection
-        (the caller's job, since a fresh reader must back it and EXPLAIN never
-        consumes that reader -- it plans without executing). Fails closed
-        (`out_of_core_fk_join_plan_unverified`) on any malformed, missing, or
-        unparseable EXPLAIN output rather than proceeding on an unverified plan.
-        """
-        conn = self._ensure_conn()
-        rows = conn.execute(f"EXPLAIN (FORMAT JSON) {query}").fetchall()
-        # Iterate WITHOUT a 2-tuple unpack in the comprehension: a DuckDB version
-        # that changes EXPLAIN's result arity would otherwise raise a bare
-        # ValueError with no `code`, escaping this method's coded fail-closed
-        # contract (the parity harness would see an unexpected crash, not an
-        # admitted rejection). A non-2-column row simply does not match.
-        raw = next(
-            (row[1] for row in rows if len(row) == 2 and row[0] == "physical_plan"),
-            None,
-        )
-        if raw is None:
-            raise ExecutionError(
-                code=reasons.runtime.OUT_OF_CORE_FK_JOIN_PLAN_UNVERIFIED,
-                message="EXPLAIN (FORMAT JSON) returned no 'physical_plan' row.",
-            )
-        try:
-            parsed = json.loads(raw)
-        except (TypeError, ValueError) as exc:
-            raise ExecutionError(
-                code=reasons.runtime.OUT_OF_CORE_FK_JOIN_PLAN_UNVERIFIED,
-                message="EXPLAIN (FORMAT JSON) output was not valid JSON.",
-            ) from exc
-        if not isinstance(parsed, list) or len(parsed) != 1 or not isinstance(parsed[0], dict):
-            raise ExecutionError(
-                code=reasons.runtime.OUT_OF_CORE_FK_JOIN_PLAN_UNVERIFIED,
-                message=(
-                    f"EXPLAIN (FORMAT JSON) plan had an unexpected top-level shape: {parsed!r}."
-                ),
-            )
-        return parsed[0]
+        """Parsed `EXPLAIN (FORMAT JSON)` physical plan for `query` on this
+        joiner's connection (`_stream_join_plan._explain_physical_plan`)."""
+        return _explain_physical_plan(self._ensure_conn(), query)
 
     def _disabled_optimizers(self) -> frozenset[str]:
-        conn = self._ensure_conn()
-        value = conn.execute("SELECT current_setting('disabled_optimizers')").fetchone()[0]
-        return frozenset(name for name in value.split(",") if name)
+        return _read_disabled_optimizers(self._ensure_conn())
 
     def explain_join(self) -> dict[str, Any]:
         """Structural proof of the unordered join's physical plan.

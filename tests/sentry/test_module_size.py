@@ -130,8 +130,8 @@ ALLOWLIST: dict[str, int] = {
     "src/decoy_engine/execution/native/_determinism_protocol.py": 928,
     # one provider class per draw mechanism across 30 sites; the size is fan-out, not tangle.
     "src/decoy_engine/execution/native/_draw_site_providers.py": 985,
-    # load-time self-test and native_threads plumbing; no cleaner class split identified.
-    "src/decoy_engine/execution/out_of_core/_stream_join.py": 707,
+    # one StreamFkJoiner lifecycle class (stage, orphan count, ordered and bounded-reorder joins, resolve); explain/optimizer helpers live in _stream_join_plan.py.
+    "src/decoy_engine/execution/out_of_core/_stream_join.py": 650,
     # custom-provider registry snapshot for the shadow-parity gate; one cohesive module, no split identified.
     "src/decoy_engine/internal/faker_setup.py": 637,
     # FF1 span path and sub-floor policy; split into _text_mask_sub_floor.py when next touched.
