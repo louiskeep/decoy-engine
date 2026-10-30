@@ -140,6 +140,7 @@ from typing import TYPE_CHECKING, Any
 import pyarrow as pa
 
 from decoy_engine import reasons
+from decoy_engine.declared_casting._boundary import declared_integer_columns
 from decoy_engine.declared_casting._eligibility import declared_route_guard
 from decoy_engine.errors import RowErrorsFailedError
 from decoy_engine.execution._adapter import ExecutionResult, StrategyContext
@@ -231,6 +232,7 @@ def run_sequential(
     unconfigured_column_policy: UnconfiguredColumnPolicy | None = None,
     key_provider: KeyProvider | None = None,
     native_threads: int = 1,
+    cast_run: Any = None,
 ) -> ExecutionResult:
     """Mask an FK-related job table by table in FK-topological order.
 
@@ -271,6 +273,10 @@ def run_sequential(
     published on any exception, including a commit failure. See the module
     docstring's "Quarantine sidecar shares the sink's commit-or-discard fate"
     section.
+
+    `cast_run` (F06): the run's declared-casting boundary. Each table is cast as it is loaded, so
+    parent key maps and child keys are built from typed values, rendered before projection and
+    write, and sealed last (before the sink commits). The caller owns `cast_run.abort()`.
     """
     declared_route_guard("sequential", plan=plan, raise_on_decline=True)
     q_cfg: dict[str, Any] = quarantine_config or {}
@@ -313,6 +319,7 @@ def run_sequential(
     # can mask an ordinary column on any table in an FK job, so this route
     # needs the same union the single-table pandas adapter uses.
     group_key_cols = group_key_group_by_columns(plan, registry)
+    declared_int_cols = declared_integer_columns(plan)  # F06: typed ints stay exact
 
     # A parent key map is retained until every child table that references it has
     # been processed; this makes multi-parent and diamond graphs safe.
@@ -387,6 +394,8 @@ def run_sequential(
         with use_collector(collector):
             for table in table_order:
                 src = source_loader(table)
+                if cast_run is not None and table in cast_run.tables():
+                    src = cast_run.pre_mask({table: src})[table]
                 _pg = get_active_channel()
                 _pg_rows_in = src.num_rows
                 _pg_started = _pg.phase_start("mask", table=table, rows_in=_pg_rows_in)
@@ -404,7 +413,8 @@ def run_sequential(
                     fk_columns_for_table(graph.edges, table)
                     | group_anchor_cols.get(table, set())
                     | top_code_cols.get(table, set())
-                    | group_key_cols.get(table, set()),
+                    | group_key_cols.get(table, set())
+                    | declared_int_cols.get(table, set()),
                 )
                 conversion_ms += (time.perf_counter() - t0) * 1000.0
                 frames[table] = df
@@ -510,6 +520,13 @@ def run_sequential(
                     pa.Table.from_pandas(frames[table], preserve_index=False), faker_pin
                 )
                 conversion_ms += (time.perf_counter() - t1) * 1000.0
+                if cast_run is not None and table in cast_run.tables():
+                    # Rendered after every parent map was built from the full typed frame, so a
+                    # format-stage removal never changes which parent keys children resolve to.
+                    rendered, _, kept = cast_run.post_mask({table: out}, {})
+                    out = rendered[table]
+                    if table in kept:
+                        table_records = remap_row_errors(table_records, kept[table])
 
                 # DE-03: fail-closed output projection before this table is
                 # written/evicted. The sequential route is pure-mask by
@@ -574,6 +591,10 @@ def run_sequential(
             **ctx.date_preserve_metrics(),  # D1c: {} unless a column opted in
             **native_run.metrics(),  # D2a: {} unless the plan hashes a column
         }
+        quarantine_token = None
+        if cast_run is not None:
+            # Seal last: nothing failure-capable remains before the sink commit below.
+            quality_metrics["declared_casting"], quarantine_token = cast_run.finish()
         if all_row_errors:
             row_error_counts: dict[str, int] = {}
             for rec in all_row_errors:
@@ -646,6 +667,19 @@ def run_sequential(
         warnings=tuple(warnings),
         quality_metrics=quality_metrics,
         row_errors=tuple(all_row_errors),
+        quarantine_access=quarantine_token,
+    )
+
+
+def remap_row_errors(records: Any, kept: list[int]) -> tuple[RowErrorRecord, ...]:
+    """Row errors keep pointing at the same rows after declared quarantine removed some."""
+    import dataclasses
+
+    new_index = {old: new for new, old in enumerate(kept)}
+    return tuple(
+        dataclasses.replace(r, row_index=new_index[r.row_index])
+        for r in records
+        if r.row_index in new_index
     )
 
 

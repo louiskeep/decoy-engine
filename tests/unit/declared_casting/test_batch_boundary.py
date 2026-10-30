@@ -124,11 +124,11 @@ def test_record_false_has_no_side_effects(tmp_path: Path) -> None:
     assert counts["total_failures"] == 0 and counts["total_substitutions"] == 0
 
 
-def test_fail_policy_aborts_with_a_registered_code_in_any_partition(tmp_path: Path) -> None:
+def test_fail_policy_aborts_with_a_registered_code(tmp_path: Path) -> None:
     from decoy_engine.execution._errors import DeclaredCastValueError
 
     run = _run(tmp_path, "fail")
     with pytest.raises(DeclaredCastValueError) as exc:
         _through(run, _table(), 2)
-    # columns run in deterministic plan order, so the first failure is the same in every partition
+    # columns run in plan order within a batch: the first failure is deterministic for a partition
     assert exc.value.code == "declared_integer_invalid"

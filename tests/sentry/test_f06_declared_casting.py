@@ -23,21 +23,60 @@ ROUTE_OWNERS = {
     ("execution/_chunked.py", "check_chunked_compatibility"),
     ("execution/_mixed_static.py", "admit_mixed_static"),
     ("execution/_pipeline_chunk_route.py", "decide_chunk_route"),
-    ("execution/_pipeline_context.py", "decide_route"),
     ("execution/_pipeline_mixed_route.py", "run_mixed_route"),
     ("execution/_pipeline_route_exec.py", "run_mixed_route"),
     ("execution/_pipeline_route_exec.py", "run_out_of_core_route"),
     ("execution/_pipeline_route_exec.py", "run_sequential_route"),
-    ("execution/_pipeline_routing_signals.py", "resolve_execution_route"),
     ("execution/_planner.py", "classify_job"),
     ("execution/_sequential.py", "run_sequential"),
     ("execution/_unified_slice.py", "maybe_run_unified_slice"),
     ("execution/out_of_core/_compat.py", "check_out_of_core_compatibility"),
     ("execution/out_of_core/_runner.py", "run_fk_out_of_core"),
 }
-# The route that applies the boundary: it calls the shared DeclaredCastRun, never a private parser.
+# Pure delegators: they pick a route only through predicates that are themselves route owners
+# above (the OOC compatibility check, the chunk planner, the mixed static admission, the
+# unified-slice admission), so a second evaluator call here would be a second, divergent vote.
+DELEGATING_ROUTERS = {
+    ("execution/_pipeline_context.py", "decide_route"),
+    ("execution/_pipeline_routing_signals.py", "resolve_execution_route"),
+}
+# Who APPLIES the boundary for each route the capability table lets run a declared column. A route
+# that claims a capability without an entry here (the r1 defect: capabilities declared for every
+# route, boundary wired for one) fails `test_every_capable_route_is_wired`.
+ROUTE_APPLIERS = {
+    "full_frame": (
+        "execution/_pipeline_full_frame.py",
+        "_run_full_frame",
+        {"pre_mask", "post_mask"},
+    ),
+    "unified_slice": (
+        "execution/_pipeline_full_frame.py",
+        "_render_and_seal",
+        {"post_mask", "finish"},
+    ),
+    "chunked": (
+        "execution/_pipeline_auto_chunk.py",
+        "_declared_wrap",
+        {"cast_stream", "format_stream"},
+    ),
+    "mixed": ("execution/_pipeline_mixed_route.py", "_run_admitted", {"run_auto_chunk", "finish"}),
+    "sequential": (
+        "execution/_sequential.py",
+        "run_sequential",
+        {"pre_mask", "post_mask", "finish"},
+    ),
+    "out_of_core": (
+        "execution/out_of_core/_runner.py",
+        "run_fk_out_of_core",
+        {"stage_typed_sources", "finish"},
+    ),
+}
+# Route executors that own the run's lifetime: they open the boundary and abort it on failure.
 RUNTIME_ADAPTERS = {
     ("execution/_pipeline_full_frame.py", "run_full_frame_route"),
+    ("execution/_pipeline_mixed_route.py", "run_mixed_route"),
+    ("execution/_pipeline_route_dispatch.py", "execute_out_of_core_route"),
+    ("execution/_pipeline_route_dispatch.py", "execute_sequential_route"),
 }
 ROUTE_FN = re.compile(
     r"^(run_.*route|run_sequential|run_fk_out_of_core|check_.*compat.*|admit_.*|decide_chunk_route"
@@ -95,7 +134,7 @@ def test_route_owner_inventory_is_complete() -> None:
         for name in _functions(path.read_text()):
             if ROUTE_FN.match(name) and not name.startswith("_"):
                 found.add((rel, name))
-    known = ROUTE_OWNERS | RUNTIME_ADAPTERS
+    known = ROUTE_OWNERS | RUNTIME_ADAPTERS | DELEGATING_ROUTERS
     found |= EXTRA_DISCOVERED
     unknown = sorted(f for f in found if f not in known)
     # entries that exist in the inventory but vanished are also drift
@@ -116,7 +155,34 @@ def test_seeded_route_without_the_evaluator_fails_the_inventory() -> None:
 def test_runtime_adapters_call_the_shared_boundary_not_a_private_parser() -> None:
     for rel, fn in sorted(RUNTIME_ADAPTERS):
         node = _functions(_read(rel))[fn]
-        assert _calls_name(node, {"DeclaredCastRun"}), (rel, fn)
+        assert _calls_name(node, {"DeclaredCastRun", "open_cast_run"}), (rel, fn)
+        assert _calls_name(node, {"abort"}), (rel, fn, "must abort the quarantine on failure")
+
+
+def unwired_routes(capable: set[str], appliers: dict[str, tuple], read) -> list[str]:
+    """Capable routes with no applier, or whose applier does not call the shared kernel."""
+    bad = sorted(capable - set(appliers))
+    for route, (rel, fn, calls) in sorted(appliers.items()):
+        node = _functions(read(rel)).get(fn)
+        if route in capable and (node is None or not all(_calls_name(node, {c}) for c in calls)):
+            bad.append(route)
+    return bad
+
+
+def test_every_capable_route_is_wired() -> None:
+    from decoy_engine.declared_casting._eligibility import ROUTE_CAPABILITIES
+
+    capable = {route for route, caps in ROUTE_CAPABILITIES.items() if caps}
+    assert unwired_routes(capable, ROUTE_APPLIERS, _read) == []
+
+
+def test_a_capable_route_without_a_wired_applier_fails_the_inventory() -> None:
+    sources = {"x.py": "def apply(run):\n    return run.pre_mask({})\n"}
+    applier = {"chunked": ("x.py", "apply", {"cast_stream"})}
+    assert unwired_routes({"chunked"}, applier, sources.__getitem__) == ["chunked"]
+    assert unwired_routes({"chunked", "mixed"}, {}, sources.__getitem__) == ["chunked", "mixed"]
+    good = {"chunked": ("x.py", "apply", {"pre_mask"})}
+    assert unwired_routes({"chunked"}, good, sources.__getitem__) == []
 
 
 # -- forbidden constructs in the casting package ----------------------------------------------
@@ -311,7 +377,7 @@ def test_matrix_every_output_descriptor_has_exact_width_or_a_registered_rejectio
         evaluate_declared_casting,
         output_width,
     )
-    from decoy_engine.declared_casting._eligibility import contract_model
+    from decoy_engine.declared_casting._eligibility import ROUTE_CAPABILITIES, contract_model
 
     outputs = [d for d in descriptors() if d.direction == "output"]
     assert outputs
@@ -327,7 +393,7 @@ def test_matrix_every_output_descriptor_has_exact_width_or_a_registered_rejectio
                         target_facts={"kind": target},
                     )
                     if decision.admitted:
-                        assert route == "full_frame", (d.format_id, route)
+                        assert route in ROUTE_CAPABILITIES, (d.format_id, route)
                         if target == "fixed_width":
                             assert decision.output_width(d.format_id) is not None, d.format_id
                     else:

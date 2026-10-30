@@ -235,12 +235,10 @@ def build_run_context(
     # missing protected-quarantine store is refused before the source is profiled or read.
     declared_plan = compile_declared_casting_contract(config)
     if declared_plan is not None:
-        execution_mode, auto_chunk, unified_slice_enabled = preflight_declared_casting(
+        preflight_declared_casting(
             declared_plan,
             config,
             execution_mode=execution_mode,
-            auto_chunk=auto_chunk,
-            unified_slice_enabled=unified_slice_enabled,
             quarantine_runtime=quarantine_runtime,
         )
 
@@ -426,11 +424,6 @@ def decide_route(ctx: PipelineRunContext) -> RouteDecision:
     surfaces it on every route, relationship jobs included. `keep_lazy` is the B6b footer
     snapshot of lazy candidates; see `_pipeline_routing`.
     """
-    from decoy_engine.declared_casting._eligibility import declared_route_guard
-
-    # F06: a declared job runs only where the boundary exists; the preflight already pinned the
-    # mode, so this is the routing layer's own check that nothing steered it elsewhere.
-    declared_route_guard("full_frame", plan=ctx.plan)
     mixed = _mixed_static_plan(ctx)
     route, route_reason = _pipeline_routing.resolve_execution_route(
         routing_profile(ctx.profile, ctx.caller_sources, ctx.prepared.prepared),

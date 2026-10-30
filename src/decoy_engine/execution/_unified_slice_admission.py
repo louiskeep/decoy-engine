@@ -49,6 +49,7 @@ from typing import TYPE_CHECKING, Any, Final
 import pandas as pd
 import pyarrow as pa
 
+from decoy_engine._lexeme import integer_columns_by_table
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._fk_keys import to_pandas_fk_safe
 from decoy_engine.execution._guards import (
@@ -352,7 +353,9 @@ def cheap_admission(
             group_key_sibling_cols.add(group_by)
     conversion_t0 = time.perf_counter()
     try:
-        frame = to_pandas_fk_safe(source, group_key_sibling_cols)
+        # F06: a declared integer stays exact on the oracle, so it must here too.
+        declared_ints = integer_columns_by_table(config).get(table, frozenset())
+        frame = to_pandas_fk_safe(source, group_key_sibling_cols | declared_ints)
     except Exception:
         # Total-to-decline: any Arrow->pandas failure declines to the legacy
         # route rather than raising a different error than legacy's own coded

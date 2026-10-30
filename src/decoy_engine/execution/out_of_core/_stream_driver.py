@@ -62,6 +62,8 @@ import pyarrow as pa
 import pyarrow.compute as pc
 
 from decoy_engine import reasons
+from decoy_engine.declared_casting._stream import maybe_render as _declared_render
+from decoy_engine.declared_casting._stream import maybe_render_empty as _declared_empty
 from decoy_engine.execution._adapter import provider_config_to_dict
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._fk_resolve import orphan_fk_violation_error
@@ -149,6 +151,7 @@ def stream_table(
     vault_writer: Any = None,
     vault_config: Mapping[str, Any] | None = None,
     validators: Any = None,
+    cast_run: Any = None,
 ) -> None:
     """Rewrite one table via the three-phase sequential reorder driver.
 
@@ -305,6 +308,8 @@ def stream_table(
         # extra_known to avoid a false positive.
         fk_components = _fk_component_map(incoming_edges, joiners)
         fixed_schema = _fixed_output_schema(plan, table_name, source_schema, fk_components)
+        if cast_run is not None:  # F06: declared formatted columns leave as text or bytes
+            fixed_schema = cast_run.rendered_schema(table_name, fixed_schema)
         warnings.extend(
             enforce_output_projection(
                 table_name,
@@ -452,7 +457,7 @@ def stream_table(
                     plan,
                     table_name,
                     raw_parent_source,
-                    rewritten(),
+                    _declared_render(cast_run, table_name, rewritten()),
                     fixed_schema=fixed_schema,
                     fk_components=fk_components,
                     outgoing_edges=outgoing_edges,
@@ -467,11 +472,15 @@ def stream_table(
                     masked_observed_types=payload_masked_observed,
                 )
             else:
-                batches = list(rewritten())
+                batches = list(_declared_render(cast_run, table_name, rewritten()))
                 table_out = (
                     assemble_resident(batches, fk_components)
                     if batches
-                    else empty_output_table(plan, table_name, source_schema, fk_components)
+                    else _declared_empty(
+                        cast_run,
+                        table_name,
+                        empty_output_table(plan, table_name, source_schema, fk_components),
+                    )
                 )
                 outputs[table_name] = table_out
                 for edge in outgoing_edges:

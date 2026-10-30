@@ -429,32 +429,8 @@ def _golden(tmp_path: Path) -> tuple[dict[str, Any], pa.Table]:
     return cfg, text_table(id=rows, start=dates)
 
 
-@pytest.mark.parametrize("chunk", [1, 2, 100])
-def test_b3_auto_chunk_never_changes_declared_results(tmp_path: Path, chunk: int) -> None:
-    cfg, table = _golden(tmp_path)
-    base = run(cfg, {"people": table}, execution_mode="full_frame", auto_chunk=False)
-    got = run(
-        cfg, {"people": table}, auto_chunk=True, chunk_size_rows=chunk, auto_chunk_threshold_rows=1
-    )
-    assert got.outputs["people"].equals(base.outputs["people"])
-    assert got.outputs["people"].schema.equals(base.outputs["people"].schema)
-    assert got.quality_metrics["declared_casting"] == base.quality_metrics["declared_casting"]
-
-
-@pytest.mark.parametrize("mode", ["sequential", "out_of_core"])
-def test_b3_explicit_incapable_route_refuses_before_reading(tmp_path: Path, mode: str) -> None:
-    from decoy_engine.execution._errors import ExecutionError
-    from decoy_engine.profile._readers import LazySource
-
-    cfg, _ = _golden(tmp_path)
-    poisoned = LazySource(path=tmp_path / "does-not-exist.parquet")
-
-    def boom(_name: str) -> pa.Table:
-        raise AssertionError("source was read before route admission")
-
-    with pytest.raises((ExecutionError, Exception)) as exc:
-        run(cfg, {"people": poisoned}, execution_mode=mode, source_loader=boom)
-    assert getattr(exc.value, "code", None) == "declared_cast_route_unsupported"
+# B3 route parity (chunked / sequential / out-of-core / mixed / unified-slice) lives in
+# tests/acceptance/test_f06_route_parity.py, where every case proves which route ran.
 
 
 def test_b3_fk_parent_042_joins_child_42_after_both_become_integer(tmp_path: Path) -> None:

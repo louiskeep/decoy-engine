@@ -391,7 +391,7 @@ def maybe_run_unified_slice(
     """
     from decoy_engine.declared_casting._eligibility import declared_route_guard
 
-    # F06: this lane has no declared-casting boundary, so a job with declared columns declines.
+    # F06: a job whose declared contracts this lane cannot honour declines to the full-frame lane.
     if not declared_route_guard("unified_slice", plan=ctx.plan).admitted:
         return None
     # D1: checked before this module reaches for anything under

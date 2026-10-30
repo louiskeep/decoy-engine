@@ -25,26 +25,35 @@ from decoy_engine.reasons import ReasonCode
 
 ROUTES = ("full_frame", "sequential", "chunked", "out_of_core", "mixed", "unified_slice")
 
-# What each route can do for a declared column. Only the full-frame route has the pre-mask and
-# post-mask boundary wired in; the others lack a bounded-memory cast/format/quarantine hook, so
-# they decline rather than approximate (a registered refusal, per the F06 plan).
+# What each route can do for a declared column. Each route lists only what its own cast/format
+# hooks honour; a combination outside the set is a registered refusal, never an approximation.
+#   cast_before_join          a declared column is a relationship endpoint: both sides must be
+#                             typed before keys are compared or mapped.
+#   row_quarantine            a parse failure removes the row before masking.
+#   post_mask_row_quarantine  a format failure removes the row after masking (needs the
+#                             publication stage to drop rows the parent-key maps already saw).
 _FULL = frozenset(
     {
         "pre_mask_cast",
         "post_mask_format",
         "issue_counts",
         "binary_cells",
-        "cast_before_join",
         "row_quarantine",
+        "post_mask_row_quarantine",
+        "cast_before_join",
     }
 )
+_BASIC = frozenset({"pre_mask_cast", "post_mask_format", "issue_counts", "binary_cells"})
 ROUTE_CAPABILITIES: Mapping[str, frozenset[str]] = {
     "full_frame": _FULL,
-    "sequential": frozenset(),
-    "chunked": frozenset(),
-    "out_of_core": frozenset(),
-    "mixed": frozenset(),
-    "unified_slice": frozenset(),
+    "sequential": _FULL,
+    "unified_slice": _FULL - {"cast_before_join"},
+    "chunked": _FULL - {"cast_before_join"},
+    # The mixed route threads a pre-resolved key column positionally beside the stream, so
+    # removing rows would desync it; the out-of-core route publishes rows its parent-key
+    # relations were already built from.
+    "mixed": _BASIC,
+    "out_of_core": _BASIC,
 }
 BYTE_PRESERVING_TARGETS = frozenset({"parquet", "memory", None})
 
@@ -83,21 +92,47 @@ def contract_model(column: Any) -> C.DeclaredColumnContractV1:
     return C.build_contract(unfreeze_json(column.contract))
 
 
+def relationship_endpoints(source: Any) -> frozenset[tuple[str, str]]:
+    """``(table, column)`` ends of every relationship, from a Plan, a config mapping or the
+    config's relationship list itself."""
+    if source is None:
+        return frozenset()
+    if isinstance(source, Mapping):
+        edges: Any = source.get("relationships")
+    elif isinstance(source, (list, tuple)):
+        edges = source
+    else:
+        edges = getattr(source, "relationships", None)
+    out: set[tuple[str, str]] = set()
+    for edge in edges or ():
+        get = edge.get if isinstance(edge, Mapping) else lambda k, _e=edge: getattr(_e, k, None)
+        ends = [get("parent"), *(get("children") or ())]
+        for end in ends:
+            if end is None:
+                continue
+            table = end.get("table") if isinstance(end, Mapping) else end.table
+            cols = end.get("columns") if isinstance(end, Mapping) else end.columns
+            out.update((table, c) for c in cols or ())
+    return frozenset(out)
+
+
 def _requirements(
-    columns: Iterable[Any], models: list[C.DeclaredColumnContractV1], plan: Any
+    columns: Iterable[Any],
+    models: list[C.DeclaredColumnContractV1],
+    endpoints: frozenset[tuple[str, str]],
 ) -> set[str]:
     need = {"pre_mask_cast", "issue_counts"}
-    for model in models:
+    for column, model in zip(columns, models, strict=True):
         if model.output_format is not None:
             need.add("post_mask_format")
         if model.binary_input:
             need.add("binary_cells")
         if model.error_policy == "quarantine":
             need.add("row_quarantine")
-    if getattr(plan, "relationships", None) or (
-        isinstance(plan, Mapping) and plan.get("relationships")
-    ):
-        need.add("cast_before_join")
+            if model.output_format is not None:
+                need.add("post_mask_row_quarantine")
+        if (column.table, column.column) in endpoints:
+            need.add("cast_before_join")
     return need
 
 
@@ -108,15 +143,13 @@ def evaluate_declared_casting(
     source_facts: Mapping[str, Any] | None = None,
     target_facts: Mapping[str, Any] | None = None,
     capabilities: Any = None,
-    has_relationships: bool = False,
+    relationships: Any = None,
 ) -> CastRouteDecision:
     columns = _columns(plan_contracts)
     if not columns:
         return CastRouteDecision(True, None, (), (), {})
     models = [contract_model(c) for c in columns]
-    need = _requirements(columns, models, None)
-    if has_relationships:
-        need.add("cast_before_join")
+    need = _requirements(columns, models, relationship_endpoints(relationships))
     have = ROUTE_CAPABILITIES.get(route, frozenset())
     fixed_target = (target_facts or {}).get("kind") == "fixed_width"
     widths: dict[str, int | None] = {}
@@ -200,7 +233,7 @@ def declared_route_guard(
         capabilities=capabilities
         if capabilities is not None
         else RuntimeCapabilities(quarantine_sink=True),
-        has_relationships=bool((config or {}).get("relationships")),
+        relationships=(config or {}).get("relationships") or plan,
     )
     if raise_on_decline and not decision.admitted:
         from decoy_engine.execution._errors import DeclaredCastRouteError
@@ -232,16 +265,14 @@ def preflight_declared_casting(
     config: Mapping[str, Any],
     *,
     execution_mode: str,
-    auto_chunk: bool,
-    unified_slice_enabled: bool,
     quarantine_runtime: Any,
-) -> tuple[str, bool, bool]:
+) -> None:
     """Config-only admission, run before the source is profiled or read.
 
-    Returns the ``(execution_mode, auto_chunk, unified_slice_enabled)`` the job must run with: a
-    declared job takes the one route that applies the boundary. An explicitly requested route
-    without the capability, or a quarantine policy without a qualified sink, is a registered
-    refusal here, never a failure discovered after data was read.
+    Nothing is rewritten: ``auto`` leaves route choice to the router, whose admission predicates
+    each consult :func:`declared_route_guard`. An explicitly requested route that lacks a needed
+    capability, or a quarantine policy without a qualified sink, is a registered refusal here,
+    never a failure discovered after data was read.
     """
     from decoy_engine.declared_casting import (
         _quarantine_protocol as P,  # noqa: N812 -- short alias for the contract namespace
@@ -250,7 +281,7 @@ def preflight_declared_casting(
 
     columns = _columns(plan)
     if not columns:
-        return execution_mode, auto_chunk, unified_slice_enabled
+        return
     qualified = False
     if plan.quarantine is not None:
         why = P.qualify_runtime(quarantine_runtime, dict(plan.quarantine))
@@ -260,19 +291,19 @@ def preflight_declared_casting(
                 code=reasons.route.PROTECTED_QUARANTINE_UNAVAILABLE,
                 message=f"no qualified protected quarantine store ({why}).",
             )
-    route = "full_frame" if execution_mode in ("auto", "full_frame") else execution_mode
+    if execution_mode == "auto":
+        return
     targets = config.get("targets") or {}
     for table in sorted({c.table for c in columns}):
-        evaluate = evaluate_declared_casting(
-            route=route,
+        decision = evaluate_declared_casting(
+            route=execution_mode,
             plan_contracts=[c for c in columns if c.table == table],
             target_facts={"kind": (targets.get(table) or {}).get("format")},
             capabilities=RuntimeCapabilities(quarantine_sink=qualified),
-            has_relationships=bool(config.get("relationships")),
+            relationships=config.get("relationships"),
         )
-        if not evaluate.admitted:
+        if not decision.admitted:
             raise DeclaredCastRouteError(
-                code=str(evaluate.rejection),
-                message=f"route {route!r} cannot apply the declared contract: {', '.join(evaluate.missing) or 'see code'}.",
+                code=str(decision.rejection),
+                message=f"route {execution_mode!r} cannot apply the declared contract: {', '.join(decision.missing) or 'see code'}.",
             )
-    return "full_frame", False, False

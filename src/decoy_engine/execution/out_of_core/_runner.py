@@ -52,6 +52,9 @@ import pyarrow.compute as pc
 
 from decoy_engine import reasons
 from decoy_engine.declared_casting._eligibility import declared_route_guard
+from decoy_engine.declared_casting._stream import maybe_render as _declared_render
+from decoy_engine.declared_casting._stream import maybe_render_empty as _declared_empty
+from decoy_engine.declared_casting._stream import stage_typed_sources
 from decoy_engine.execution._adapter import ExecutionResult, provider_config_to_dict
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._fk_resolve import orphan_fk_violation_error
@@ -141,6 +144,8 @@ def run_fk_out_of_core(
     vault_writer: Any = None,
     config: Mapping[str, Any] | None = None,
     native_threads: int = 1,
+    cast_run: Any = None,
+    _staged: bool = False,
 ) -> ExecutionResult:
     """Run the out-of-core FK relationship route as a batch stream.
 
@@ -192,6 +197,35 @@ def run_fk_out_of_core(
     successful return.
     """
     declared_route_guard("out_of_core", plan=plan, raise_on_decline=True)
+    if cast_run is not None and not _staged and cast_run.tables() & set(sources):
+        # F06: every declared source is cast exactly once into a typed source (a private
+        # Parquet file for a lazy one), so the several passes this route makes over a source
+        # see one stable compacted row set and the casting is counted and quarantined once.
+        with tempfile.TemporaryDirectory(prefix="decoy-ooc-cast-") as stage:
+            os.chmod(stage, 0o700)
+            staged = stage_typed_sources(
+                cast_run, sources, Path(stage), batch_rows or _join_ooc._JOIN_BATCH_ROWS
+            )
+            return run_fk_out_of_core(
+                plan,
+                staged,
+                registry=registry,
+                relationship_graph=relationship_graph,
+                sink=sink,
+                temp_dir=temp_dir,
+                memory_limit=memory_limit,
+                batch_rows=batch_rows,
+                budget_bytes=budget_bytes,
+                temp_disk_budget_bytes=temp_disk_budget_bytes,
+                unconfigured_column_policy=unconfigured_column_policy,
+                key_provider=key_provider,
+                out_of_core_reorder_threshold_rows=out_of_core_reorder_threshold_rows,
+                vault_writer=vault_writer,
+                config=config,
+                native_threads=native_threads,
+                cast_run=cast_run,
+                _staged=True,
+            )
     pre = run_preflight(
         plan,
         sources,
@@ -286,6 +320,7 @@ def run_fk_out_of_core(
                 "vault_writer": vault_writer,
                 "vault_config": config,
                 "validators": validators,
+                "cast_run": cast_run,
             }
             # `reorder_caps is not None` (not `route.use_reorder`) is the branch
             # condition so this narrows for mypy directly, matching `RouteDecision`'s
@@ -312,14 +347,24 @@ def run_fk_out_of_core(
         }
         # Before the publish: a failed validation commits nothing.
         _validate_batch.finish_validation(validators, quality_metrics)
+        quarantine_token = None
+        if cast_run is not None:
+            # Seal last: nothing failure-capable remains before the publish below.
+            quality_metrics["declared_casting"], quarantine_token = cast_run.finish()
         if sink is not None:
             observed_commit(sink)
             committed = True
             return ExecutionResult(
-                outputs={}, warnings=tuple(warnings), quality_metrics=quality_metrics
+                outputs={},
+                warnings=tuple(warnings),
+                quality_metrics=quality_metrics,
+                quarantine_access=quarantine_token,
             )
         return ExecutionResult(
-            outputs=outputs, warnings=tuple(warnings), quality_metrics=quality_metrics
+            outputs=outputs,
+            warnings=tuple(warnings),
+            quality_metrics=quality_metrics,
+            quarantine_access=quarantine_token,
         )
     except Exception as failure:
         if sink is not None and not committed:
@@ -367,6 +412,7 @@ def _stream_table(
     vault_writer: Any = None,
     vault_config: Mapping[str, Any] | None = None,
     validators: Any = None,
+    cast_run: Any = None,
 ) -> None:
     """Rewrite pass for one table: mask + join per batch, then emit.
 
@@ -444,6 +490,8 @@ def _stream_table(
                 _raise_on_total_orphans(edge, joiner, raw, batch_rows)
         fk_components = _fk_component_map(incoming_edges, joiners)
         fixed_schema = _fixed_output_schema(plan, table_name, source_schema, fk_components)
+        if cast_run is not None:  # F06: declared formatted columns leave as text or bytes
+            fixed_schema = cast_run.rendered_schema(table_name, fixed_schema)
         # DE-03: fail-closed output projection at the earliest point -- the fixed
         # output schema is known before any batch streams. FK-resolved child
         # columns are legitimate output but are not in the mask plan's seed
@@ -509,7 +557,7 @@ def _stream_table(
                 plan,
                 table_name,
                 raw,
-                rewritten(),
+                _declared_render(cast_run, table_name, rewritten()),
                 fixed_schema=fixed_schema,
                 fk_components=fk_components,
                 outgoing_edges=outgoing_edges,
@@ -523,11 +571,15 @@ def _stream_table(
                 on_stream_consumed=_release_joiners,
             )
         else:
-            batches = list(rewritten())
+            batches = list(_declared_render(cast_run, table_name, rewritten()))
             table_out = (
                 assemble_resident(batches, fk_components)
                 if batches
-                else empty_output_table(plan, table_name, source_schema, fk_components)
+                else _declared_empty(
+                    cast_run,
+                    table_name,
+                    empty_output_table(plan, table_name, source_schema, fk_components),
+                )
             )
             outputs[table_name] = table_out
             for edge in outgoing_edges:

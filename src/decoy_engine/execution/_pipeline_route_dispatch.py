@@ -11,8 +11,9 @@ Nothing here decides or re-decides a route: the decision arrives finished in `Ro
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
+from decoy_engine.declared_casting._boundary import open_cast_run
 from decoy_engine.execution import _pipeline_route_exec as _route_exec
 from decoy_engine.execution import _pipeline_sources as _psrc
 from decoy_engine.execution._transforms_admission import stamp_out_of_core_declined
@@ -29,7 +30,21 @@ def execute_sequential_route(ctx: PipelineRunContext, decision: RouteDecision) -
     loader = _psrc.resolve_sequential_loader(
         ctx.source_loader, ctx.caller_sources, config=ctx.config, prepared=ctx.prepared.prepared
     )
-    sequential_result = _route_exec.run_sequential_route(
+    cast_run = open_cast_run(ctx.plan, ctx.quarantine_runtime)
+    try:
+        sequential_result = _sequential_route(ctx, decision, loader, cast_run)
+    except BaseException:
+        if cast_run is not None:
+            cast_run.abort()
+        raise
+    stamp_out_of_core_declined(sequential_result.quality_metrics, decision.ooc_declined)
+    return sequential_result
+
+
+def _sequential_route(
+    ctx: PipelineRunContext, decision: RouteDecision, loader: Any, cast_run: Any
+) -> ExecutionResult:
+    return _route_exec.run_sequential_route(
         plan=ctx.plan,
         loader=loader,
         registry=ctx.registry,
@@ -47,14 +62,25 @@ def execute_sequential_route(ctx: PipelineRunContext, decision: RouteDecision) -
         unconfigured_column_policy=ctx.projection_policy,
         key_provider=ctx.key_provider,
         native_threads=ctx.native_threads,
+        cast_run=cast_run,
     )
-    stamp_out_of_core_declined(sequential_result.quality_metrics, decision.ooc_declined)
-    return sequential_result
 
 
 def execute_out_of_core_route(ctx: PipelineRunContext, decision: RouteDecision) -> ExecutionResult:
     """Run the out-of-core route. `caller_sources` feeds the runner directly (TB-1: a
     `LazySource` streams natively there, no materialization)."""
+    cast_run = open_cast_run(ctx.plan, ctx.quarantine_runtime)
+    try:
+        return _out_of_core_route(ctx, decision, cast_run)
+    except BaseException:
+        if cast_run is not None:
+            cast_run.abort()
+        raise
+
+
+def _out_of_core_route(
+    ctx: PipelineRunContext, decision: RouteDecision, cast_run: Any
+) -> ExecutionResult:
     return _route_exec.run_out_of_core_route(
         plan=ctx.plan,
         sources=ctx.caller_sources,
@@ -74,6 +100,7 @@ def execute_out_of_core_route(ctx: PipelineRunContext, decision: RouteDecision) 
         vault_writer=ctx.vault_writer,
         config=ctx.config,
         native_threads=ctx.native_threads,
+        cast_run=cast_run,
     )
 
 

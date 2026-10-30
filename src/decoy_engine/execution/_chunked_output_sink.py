@@ -39,6 +39,7 @@ from typing import TYPE_CHECKING, Any
 import pyarrow as pa
 
 from decoy_engine import reasons
+from decoy_engine._lexeme import lexeme_columns_by_table
 from decoy_engine.execution._adapter import ExecutionResult
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._publication_observer import observed_abort, observed_commit
@@ -72,6 +73,7 @@ ROW_GROUP_ROWS = 1024 * 1024
 ROW_GROUP_BYTES = 256 * 1024 * 1024
 
 REASON_ELIGIBLE = reasons.route.ELIGIBLE
+REASON_DECLARED_CASTING = "declared_casting"
 
 
 def resident_block(reason: str) -> dict[str, Any]:
@@ -108,6 +110,10 @@ def decide_output_mode(
             return "resident", "split_full_frame_present"
         if any(name not in split.dispatched for name in resident_names):
             return "resident", "split_extra_sources_present"
+    if lexeme_columns_by_table(config):
+        # F06: the rendered rows of a declared table are published after the whole run is known
+        # to have passed, and a quarantine seal must follow every other failure-capable step.
+        return "resident", REASON_DECLARED_CASTING
     if config.get("validators"):
         return "resident", "validators_present"
     if (config.get("quarantine") or {}).get("enabled"):

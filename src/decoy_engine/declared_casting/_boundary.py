@@ -87,6 +87,27 @@ def _compile(plan: Any) -> dict[str, list[_Col]]:
     return by_table
 
 
+def open_cast_run(plan: Any, runtime: Any) -> DeclaredCastRun | None:
+    """The run's casting boundary, or None when the plan declares no contract."""
+    block = getattr(plan, "declared_casting", None)
+    return DeclaredCastRun(block, runtime) if block is not None else None
+
+
+def declared_integer_columns(plan: Any) -> dict[str, set[str]]:
+    """Declared integer columns per table.
+
+    pandas widens an Arrow integer column that holds a null to float64, which would turn a typed
+    ``42`` into ``42.0`` (and round past 2**53) before the post-mask format stage. These columns
+    join the lossless-typing set the adapters already keep exact for FK keys and anchors.
+    """
+    block = getattr(plan, "declared_casting", None)
+    out: dict[str, set[str]] = {}
+    for c in getattr(block, "columns", None) or ():
+        if contract_model(c).logical_type == "integer":
+            out.setdefault(c.table, set()).add(c.column)
+    return out
+
+
 @dataclass
 class CastBatch:
     """One cast batch: the typed rows that continue, where they came from, and the raw framing.
@@ -221,6 +242,35 @@ class DeclaredCastRun:
                     if isinstance(sources.get(table), pa.Table):
                         new_src[table] = sources[table].take(pa.array(keep, pa.int64()))
         return new_out, new_src, kept
+
+    def rendered_schema(self, table: str, schema: pa.Schema) -> pa.Schema:
+        """``schema`` with every formatted column typed as its rendered form (text or bytes)."""
+        out = schema
+        for col in self._tables.get(table, ()):
+            if col.fmt is None or col.name not in schema.names:
+                continue
+            kind = pa.binary() if col.model.output_format.binary else pa.string()
+            out = out.set(out.get_field_index(col.name), pa.field(col.name, kind))
+        return out
+
+    def align_sources(
+        self, sources: Mapping[str, Any], outputs: Mapping[str, pa.Table]
+    ) -> dict[str, Any]:
+        """Typed companion rows for tables whose chunks were cast and rendered inside a lane:
+        the same rows, in the same order, as the lane published (no counting, no sink)."""
+        out = dict(sources)
+        for table in self._tables:
+            src = sources.get(table)
+            if not isinstance(src, pa.Table) or table not in outputs:
+                continue
+            batch = self.cast_batch(table, src, record=False)
+            keep = [
+                i
+                for i, p in enumerate(batch.positions)
+                if not self._ledger.is_quarantined(table, p)
+            ]
+            out[table] = batch.table.take(pa.array(keep, pa.int64()))
+        return out
 
     def finish(self) -> tuple[dict[str, Any], P.OpaqueRetrievalToken | None]:
         """Seal LAST: callers invoke this after every failure-capable validation, and ``abort``

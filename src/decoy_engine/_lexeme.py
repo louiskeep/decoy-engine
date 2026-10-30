@@ -45,3 +45,16 @@ def pandas_lexeme_kwargs(columns: Any) -> dict[str, Any]:
     """``read_csv`` options keeping these columns as exact text; ``{}`` when there are none."""
     names = list(columns or ())
     return {"converters": {name: str for name in names}} if names else {}
+
+
+def integer_columns_by_table(config: Mapping[str, Any]) -> dict[str, frozenset[str]]:
+    """Declared integer columns per table: the ones pandas must keep exact (see
+    ``declared_casting.declared_integer_columns``, the plan-side twin)."""
+    out: dict[str, frozenset[str]] = {}
+    for table in config.get("tables") or ():
+        ints = frozenset(
+            c["name"] for c in table.get("columns") or () if c.get("logical_type") == "integer"
+        )
+        if ints:
+            out[table["name"]] = ints
+    return out

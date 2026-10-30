@@ -20,7 +20,7 @@ which backend masked each column (`quality_metrics["chunked_route"]`).
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from typing import TYPE_CHECKING, Any, cast
 
 import pyarrow as pa
@@ -215,6 +215,20 @@ def _legacy_route_evidence(
     return evidence
 
 
+def _declared_wrap(cast_run: Any, table: str, chunks: Any) -> tuple[Any, Callable[[Any], Any]]:
+    """F06: cast the table's chunks before masking and render the masked chunks after, paired
+    chunk for chunk. A table with no declared column passes through untouched."""
+    if cast_run is None or table not in cast_run.tables():
+        return chunks, lambda masked: masked
+    from decoy_engine.declared_casting._stream import CastPairing, cast_stream, format_stream
+
+    pairing = CastPairing()
+    return (
+        cast_stream(cast_run, table, chunks, pairing),
+        lambda masked: format_stream(cast_run, table, masked, pairing),
+    )
+
+
 def _run_legacy(
     config: dict[str, Any],
     source: pa.Table,
@@ -228,22 +242,26 @@ def _run_legacy(
     key_provider: KeyProvider | None,
     chunk_results: list[ExecutionResult],
     preresolved: PreResolvedColumn | None = None,
+    cast_run: Any = None,
 ) -> pa.Table:
     from decoy_engine.execution import _chunked
 
     if preresolved is not None:  # pragma: no cover - the mixed route requires the dispatcher lane
         raise AssertionError("a pre-resolved column reaches only the dispatcher lane")
+    chunks_in, render = _declared_wrap(cast_run, table, _slices(source, chunk_size_rows))
     masked_chunks = list(
-        _chunked.run_mask_pipeline_chunked(
-            config,
-            _slices(source, chunk_size_rows),
-            table=table,
-            engine_version=engine_version,
-            registry=registry,
-            adapter=adapter,
-            vault_writer=vault_writer,
-            chunk_result_sink=chunk_results,
-            key_provider=key_provider,
+        render(
+            _chunked.run_mask_pipeline_chunked(
+                config,
+                chunks_in,
+                table=table,
+                engine_version=engine_version,
+                registry=registry,
+                adapter=adapter,
+                vault_writer=vault_writer,
+                chunk_result_sink=chunk_results,
+                key_provider=key_provider,
+            )
         )
     )
     return _chunked.concat_masked_chunks(masked_chunks, table=table)
@@ -263,6 +281,7 @@ def _run_dispatcher(
     native_threads: int,
     chunk_results: list[ExecutionResult],
     preresolved: PreResolvedColumn | None = None,
+    cast_run: Any = None,
 ) -> pa.Table:
     # Looked up through the module so a spy on the public entry sees the call.
     from decoy_engine.execution.native import _chunked_entry
@@ -270,19 +289,24 @@ def _run_dispatcher(
     # The C5c-ii producer: resident slices carry the resident schema metadata-inclusive,
     # which the chunked route needs to admit deterministic Faker over bool/int/uint.
     producer = _chunked_input.fixed_schema_chunks_from_resident(source, chunk_size_rows)
+    chunks_in, render = _declared_wrap(
+        cast_run, table, producer if preresolved is None else preresolved.wrap(producer)
+    )
     chunks = list(
-        _chunked_entry.run_mask_chunked(
-            config,
-            producer if preresolved is None else preresolved.wrap(producer),
-            table=table,
-            engine_version=engine_version,
-            registry=registry,
-            adapter=adapter,
-            vault_writer=vault_writer,
-            chunk_result_sink=chunk_results,
-            key_provider=key_provider,
-            base_row_offset=0,
-            native_threads=native_threads,
+        render(
+            _chunked_entry.run_mask_chunked(
+                config,
+                chunks_in,
+                table=table,
+                engine_version=engine_version,
+                registry=registry,
+                adapter=adapter,
+                vault_writer=vault_writer,
+                chunk_result_sink=chunk_results,
+                key_provider=key_provider,
+                base_row_offset=0,
+                native_threads=native_threads,
+            )
         )
     )
     return join_dispatcher_chunks(chunks, table=table)
@@ -304,6 +328,7 @@ def _run_streamed(
     chunk_results: _output_sink.OutputEvidenceAccumulator,
     expected: _chunked_input.SourceFacts | None,
     preresolved: PreResolvedColumn | None = None,
+    cast_run: Any = None,  # accepted for the shared call shape; run_auto_chunk refuses it earlier
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """The dispatcher lane with the chunks streamed into `sink`; returns the `output` and
     `input` blocks. A `LazySource` is read as batches (B6b) and its handle is closed on every
@@ -366,6 +391,7 @@ def run_auto_chunk(
     sink: TransactionalSink | None = None,
     expected: _chunked_input.SourceFacts | None = None,
     preresolved: PreResolvedColumn | None = None,
+    cast_run: Any = None,
 ) -> tuple[dict[str, pa.Table], tuple[Any, ...], float, tuple[Any, ...], dict[str, Any]]:
     """Mask one eligible table in `chunk_size_rows`-row slices on the selected lane.
 
@@ -382,6 +408,11 @@ def run_auto_chunk(
     `preresolved` (the mixed route's coupled FK key, `_chunked_preresolved`) replaces
     one column's source values with a slice resolved up front, per chunk, before the
     masker sees the chunk; the column is configured `passthrough`. Dispatcher lane only.
+
+    `cast_run` (F06): the run's declared-casting boundary. Each chunk is cast (typed, quarantined
+    rows removed, absolute row offsets kept) before the masker sees it and rendered after, on
+    both resident lanes. A streaming run is refused for a declared table: its output mode is
+    decided resident for declared jobs, so reaching it is a wiring bug.
     """
     from decoy_engine.execution._chunked import aggregate_chunk_timings, aggregate_chunk_warnings
     from decoy_engine.execution._chunked_code_set import aggregate_chunk_code_set_corpora
@@ -390,6 +421,11 @@ def run_auto_chunk(
     lane, lane_reason = select_lane(dispatcher_enabled)
     if sink is None and isinstance(source, LazySource):
         raise AssertionError("a LazySource reaches the auto-chunk lane only with a sink")
+    if sink is not None and cast_run is not None and table in cast_run.tables():
+        raise ExecutionError(
+            code=reasons.route.DECLARED_CAST_ROUTE_UNSUPPORTED,
+            message="a declared table cannot stream its output through the chunked lane.",
+        )
     streamed_evidence = _output_sink.OutputEvidenceAccumulator() if sink is not None else None
     chunk_results: list[ExecutionResult] = []
     common: dict[str, Any] = {
@@ -401,6 +437,7 @@ def run_auto_chunk(
         "chunk_size_rows": chunk_size_rows,
         "key_provider": key_provider,
         "preresolved": preresolved,
+        "cast_run": cast_run,
     }
     output_block: dict[str, Any] | None = None
     input_block: dict[str, Any] | None = None

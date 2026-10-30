@@ -131,6 +131,7 @@ def run_sequential_route(
     unconfigured_column_policy: UnconfiguredColumnPolicy | None = None,
     key_provider: KeyProvider | None = None,
     native_threads: int = 1,
+    cast_run: Any = None,
 ) -> ExecutionResult:
     """Execute the sequential route and package it as a full `ExecutionResult`.
 
@@ -168,6 +169,7 @@ def run_sequential_route(
         unconfigured_column_policy=unconfigured_column_policy,
         key_provider=key_provider,
         native_threads=native_threads,
+        cast_run=cast_run,
     )
     seq_quality_metrics = dict(seq_result.quality_metrics)
     seq_quality_metrics["execution"] = execution_telemetry(
@@ -191,6 +193,7 @@ def run_sequential_route(
         quality_metrics=seq_quality_metrics,
         table_kinds=table_kinds,
         row_errors=seq_result.row_errors,
+        quarantine_access=seq_result.quarantine_access,
     )
 
 
@@ -214,6 +217,7 @@ def run_out_of_core_route(
     vault_writer: Any = None,
     config: dict[str, Any] | None = None,
     native_threads: int = 1,
+    cast_run: Any = None,
 ) -> ExecutionResult:
     """Execute the out-of-core FK route and package it as an `ExecutionResult`.
 
@@ -431,6 +435,7 @@ def run_out_of_core_route(
         vault_writer=vault_writer,
         config=config,
         native_threads=native_threads,
+        cast_run=cast_run,
     )
     quality_metrics = dict(ooc_result.quality_metrics)
     quality_metrics["execution"] = execution_telemetry(
@@ -467,6 +472,7 @@ def run_out_of_core_route(
         quality_metrics=quality_metrics,
         table_kinds=table_kinds,
         row_errors=ooc_result.row_errors,
+        quarantine_access=ooc_result.quarantine_access,
     )
 
 
@@ -565,6 +571,7 @@ def run_mask_chunked(
     key_provider: KeyProvider | None = None,
     native_threads: int = 1,
     dispatcher_enabled: bool = True,
+    cast_run: Any = None,
 ) -> tuple[dict[str, pa.Table], tuple, float, tuple, dict[str, Any]]:
     """Mask one eligible table via the chunked lane; a delegate to
     `_pipeline_auto_chunk.run_auto_chunk`, which owns the lane logic.
@@ -592,6 +599,7 @@ def run_mask_chunked(
         key_provider=key_provider,
         native_threads=native_threads,
         dispatcher_enabled=dispatcher_enabled,
+        cast_run=cast_run,
     )
 
 
