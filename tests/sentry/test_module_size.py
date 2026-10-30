@@ -64,6 +64,12 @@ MAX = 700
 # One-line rationale per entry; the per-file growth history lives in
 # docs/decisions/module-size-census-history.md.
 ALLOWLIST: dict[str, int] = {
+    # F25 identity-bound capability arena: use-time (st_dev, st_ino) verification,
+    # dir_fd-relative verified child creation, guaranteed-reclaim and the tiered
+    # quota-report builders in one cohesive allocator. The fs-identity primitives
+    # are kept here (not split out) because the scratch tests monkeypatch this
+    # module's `os`; split the quota-report builders into _quota_report.py next.
+    "src/decoy_engine/scratch/_arena.py": 653,
     # sampler start/finish and evidence threading in _spawn_and_classify; F25 T11 attempt-arena work-root allocation + capability-fd transport. Split the spawn/classify half into _isolated_spawn.py.
     "src/decoy_engine/execution/_isolated_run.py": 675,
     # bounded-eligible fit rule, the fk-dtype retention branch and the D3a validator admission in decide_execution_route; split the route-priority docstring into the plan doc.

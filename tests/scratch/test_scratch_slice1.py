@@ -101,9 +101,12 @@ def test_a01_registration_precedes_first_write(tmp_path: Path, monkeypatch) -> N
 
     real_open = arena_mod.os.open
 
-    def spy_open(path, flags, mode=0o777):  # type: ignore[no-untyped-def]
-        events.append("fs_create")
-        return real_open(path, flags, mode)
+    def spy_open(path, flags, mode=0o777, *, dir_fd=None):  # type: ignore[no-untyped-def]
+        # Record only a creating open: allocation first opens the arena root
+        # O_RDONLY|O_DIRECTORY (dir_fd-relative creation), which is not a write.
+        if flags & os.O_CREAT:
+            events.append("fs_create")
+        return real_open(path, flags, mode, dir_fd=dir_fd)
 
     monkeypatch.setattr(arena._ledger, "register_resource", spy_register)
     monkeypatch.setattr(arena_mod.os, "open", spy_open)

@@ -20,15 +20,20 @@ import errno as _errno
 import os
 import stat as _stat
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, NoReturn
 
 from decoy_engine.scratch._capabilities import (
+    DIR_MODE,
+    FILE_MODE,
     ArenaCapability,
     CheckpointRef,
+    Identity,
     NativeDirectory,
     PublicationStage,
     RegisteredFile,
+    verify_target_identity,
 )
 from decoy_engine.scratch._errors import (
     ScratchCleanupError,
@@ -57,6 +62,35 @@ if TYPE_CHECKING:
 _QUOTA_ERRNOS = frozenset({_errno.EDQUOT, _errno.ENOSPC})
 
 
+@dataclass(frozen=True, slots=True)
+class _Allocated:
+    """What the arena records for one allocated resource, so ``release`` can
+    re-verify the target's pinned kernel identity before any destructive reclaim
+    (argon use-time model): the arena trusts its own record, not a path or an
+    identity carried back on the capability it is handed."""
+
+    path: Path
+    parent_identity: Identity
+    identity: Identity
+    expected_mode: int
+
+
+def _pin_dir_identity(path: Path) -> Identity:
+    """Pin a directory's ``(st_dev, st_ino)`` through an ``O_NOFOLLOW`` open, so a
+    later check can prove it was not swapped for a symlink or a different inode.
+    A non-directory or a symlink fails closed with ``ScratchPathUnsafe``."""
+
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_DIRECTORY)
+    except OSError:
+        raise ScratchPathUnsafe(message="arena root is not a non-symlink directory") from None
+    try:
+        st = os.fstat(fd)
+    finally:
+        os.close(fd)
+    return (st.st_dev, st.st_ino)
+
+
 class Arena:
     """A single attempt's registered resource space."""
 
@@ -82,7 +116,10 @@ class Arena:
         self._root = root
         self._quota_domain_id = quota_domain_id
         self._owner = owner_principal
-        self._paths: dict[str, Path] = {}
+        # Pin the arena root identity at construction, so every allocation can
+        # prove the root has not been swapped since the manager verified it.
+        self._root_identity = _pin_dir_identity(self._root)
+        self._paths: dict[str, _Allocated] = {}
 
     @property
     def arena_id(self) -> str:
@@ -116,26 +153,67 @@ class Arena:
             recovery_class=retention.value,
         )
 
-    def _safe_child(self, name: str) -> Path:
-        """Resolve a generated component beneath the arena root, rejecting any
-        escape or symlink (plan 1.5)."""
+    def _create_verified_child(self, name: str, *, is_dir: bool) -> tuple[Path, Identity, Identity]:
+        """Create a generated component beneath the arena root RELATIVE to a
+        no-follow root fd and capture its pinned ``(st_dev, st_ino)`` identity
+        (argon). Replaces the old ``.resolve()`` getter: the root is reopened
+        ``O_NOFOLLOW`` and its pinned identity re-asserted (so the root cannot
+        have been swapped since ``Arena`` init), the child is created with
+        ``dir_fd=root_fd`` (``O_CREAT|O_EXCL|O_NOFOLLOW`` for a file, ``mkdir``
+        for a dir), and its identity/owner/mode verified under the same pinned
+        fd. Returns ``(path, parent_identity, child_identity)``. Any failure
+        reclaims a partial child and raises ``ScratchPathUnsafe``.
+        """
 
         if "/" in name or name in ("", ".", ".."):
             raise ScratchPathUnsafe(message="resource component is unsafe")
         child = self._root / name
-        resolved = child.resolve()
-        if resolved.parent != self._root.resolve():
-            raise ScratchPathUnsafe(message="resource path escapes the arena root")
-        return child
+        root_fd = os.open(self._root, os.O_RDONLY | os.O_NOFOLLOW | os.O_DIRECTORY)
+        try:
+            rst = os.fstat(root_fd)
+            if (rst.st_dev, rst.st_ino) != self._root_identity:
+                raise ScratchPathUnsafe(message="arena root identity changed since init")
+            if rst.st_uid != os.geteuid():
+                raise ScratchPathUnsafe(message="arena root is not owned by this principal")
+            parent_identity = (rst.st_dev, rst.st_ino)
+            if is_dir:
+                os.mkdir(name, mode=0o700, dir_fd=root_fd)
+                child_identity = self._verified_dir_identity(root_fd, name, rst.st_dev)
+            else:
+                # 0600 from creation, O_EXCL so we never adopt a planted file,
+                # O_NOFOLLOW so a symlink planted at the name is refused.
+                fd = os.open(
+                    name,
+                    os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW,
+                    0o600,
+                    dir_fd=root_fd,
+                )
+                try:
+                    cst = os.fstat(fd)
+                finally:
+                    os.close(fd)
+                if (
+                    cst.st_dev != rst.st_dev
+                    or cst.st_uid != os.geteuid()
+                    or cst.st_mode != FILE_MODE
+                ):
+                    self._reclaim_stage(root_fd, name)
+                    raise ScratchPathUnsafe(message="arena file failed verification")
+                child_identity = (cst.st_dev, cst.st_ino)
+            return child, parent_identity, child_identity
+        except ScratchPathUnsafe:
+            raise
+        except OSError:
+            self._reclaim_stage(root_fd, name)
+            raise ScratchPathUnsafe(message="arena child creation failed verification") from None
+        finally:
+            os.close(root_fd)
 
     def allocate_file(self, kind: ResourceKind, opaque_name: str) -> RegisteredFile:
         resource_id = self._new_resource_id()
         self._register(resource_id, kind, self._policy.retention)
-        path = self._safe_child(resource_id)
-        # 0600 metadata/data from creation, O_EXCL so we never adopt a planted file.
-        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
-        os.close(fd)
-        self._paths[resource_id] = path
+        path, parent_id, child_id = self._create_verified_child(resource_id, is_dir=False)
+        self._paths[resource_id] = _Allocated(path, parent_id, child_id, FILE_MODE)
         self._ledger.transition(
             resource_id,
             frm=ResourceState.CREATING,
@@ -143,15 +221,20 @@ class Arena:
             generation=self._lease.generation,
         )
         return RegisteredFile(
-            arena_id=self._arena_id, resource_id=resource_id, kind=kind, _writable_path=path
+            arena_id=self._arena_id,
+            resource_id=resource_id,
+            kind=kind,
+            _writable_path=path,
+            _parent_identity=parent_id,
+            _identity=child_id,
+            _expected_mode=FILE_MODE,
         )
 
     def allocate_native_dir(self, kind: ResourceKind, writer_id: str) -> NativeDirectory:
         resource_id = self._new_resource_id()
         self._register(resource_id, ResourceKind.NATIVE_DIR, self._policy.retention)
-        path = self._safe_child(resource_id)
-        os.mkdir(path, mode=0o700)
-        self._paths[resource_id] = path
+        path, parent_id, child_id = self._create_verified_child(resource_id, is_dir=True)
+        self._paths[resource_id] = _Allocated(path, parent_id, child_id, DIR_MODE)
         self._ledger.transition(
             resource_id,
             frm=ResourceState.CREATING,
@@ -159,7 +242,13 @@ class Arena:
             generation=self._lease.generation,
         )
         return NativeDirectory(
-            arena_id=self._arena_id, resource_id=resource_id, writer_id=writer_id, _native_root=path
+            arena_id=self._arena_id,
+            resource_id=resource_id,
+            writer_id=writer_id,
+            _native_root=path,
+            _parent_identity=parent_id,
+            _identity=child_id,
+            _expected_mode=DIR_MODE,
         )
 
     def allocate_publication(self, destination: Path, retention_owner: str) -> PublicationStage:
@@ -193,13 +282,14 @@ class Arena:
                 message="publication destination parent is not a non-symlink directory"
             ) from None
         try:
-            parent_dev = os.fstat(dir_fd).st_dev
+            parent_stat = os.fstat(dir_fd)
+            parent_identity: Identity = (parent_stat.st_dev, parent_stat.st_ino)
             self._register(resource_id, ResourceKind.PUBLICATION, Retention.DURABLE_PUBLICATION)
             os.mkdir(stage_name, mode=0o700, dir_fd=dir_fd)
-            self._verify_stage(dir_fd, stage_name, parent_dev)
+            stage_identity = self._verify_stage(dir_fd, stage_name, parent_stat.st_dev)
         finally:
             os.close(dir_fd)
-        self._paths[resource_id] = stage
+        self._paths[resource_id] = _Allocated(stage, parent_identity, stage_identity, DIR_MODE)
         self._ledger.transition(
             resource_id,
             frm=ResourceState.CREATING,
@@ -212,47 +302,21 @@ class Arena:
             destination=destination,
             retention_owner=retention_owner,
             _stage_path=stage,
+            _parent_identity=parent_identity,
+            _identity=stage_identity,
+            _expected_mode=DIR_MODE,
         )
 
-    def _verify_stage(self, dir_fd: int, stage_name: str, parent_dev: int) -> None:
-        """Verify a freshly created publication stage the same way the data arena
-        verifies a child (plan 1.5), all relative to the pinned parent fd:
-        non-symlink, owned by this principal, mode 0700, same device as its
-        parent, and with a device+inode identity that still matches when reopened
-        no-follow under the pinned fd. ANY verification failure (a typed path
+    def _verify_stage(self, dir_fd: int, stage_name: str, parent_dev: int) -> Identity:
+        """Verify a freshly created publication stage and return its pinned
+        ``(st_dev, st_ino)`` identity. ANY verification failure (a typed path
         rejection or a raw ``lstat``/``open`` error) reclaims the stage and raises
         ``ScratchPathUnsafe`` with a value-free message, so a race can never leave
         an unverified stage on disk (never a bare ``OSError`` carrying native
         detail)."""
 
         try:
-            st = os.lstat(stage_name, dir_fd=dir_fd)
-            if _stat.S_ISLNK(st.st_mode):
-                raise ScratchPathUnsafe(message="publication stage is a symlink")
-            if not _stat.S_ISDIR(st.st_mode):
-                raise ScratchPathUnsafe(message="publication stage is not a directory")
-            if st.st_dev != parent_dev:
-                raise ScratchPathUnsafe(
-                    message="publication stage is not on the destination device"
-                )
-            if st.st_uid != os.geteuid():
-                raise ScratchPathUnsafe(message="publication stage is not owned by this principal")
-            if st.st_mode & 0o777 != 0o700:
-                raise ScratchPathUnsafe(message="publication stage mode is not 0700")
-            # Reopen the stage no-follow under the pinned fd and confirm its
-            # device+inode identity is unchanged: a name swapped for a link or a
-            # different inode between lstat and acceptance is caught here.
-            stage_fd = os.open(
-                stage_name, os.O_RDONLY | os.O_NOFOLLOW | os.O_DIRECTORY, dir_fd=dir_fd
-            )
-            try:
-                ident = os.fstat(stage_fd)
-            finally:
-                os.close(stage_fd)
-            if (ident.st_dev, ident.st_ino) != (st.st_dev, st.st_ino):
-                raise ScratchPathUnsafe(
-                    message="publication stage identity changed under the pinned fd"
-                )
+            return self._verified_dir_identity(dir_fd, stage_name, parent_dev)
         except ScratchPathUnsafe:
             self._reclaim_stage(dir_fd, stage_name)
             raise
@@ -261,17 +325,72 @@ class Arena:
             raise ScratchPathUnsafe(message="publication stage failed verification") from None
 
     @staticmethod
+    def _verified_dir_identity(dir_fd: int, name: str, parent_dev: int) -> Identity:
+        """Verify a freshly created directory child the way the data arena
+        verifies a child (plan 1.5), all relative to the pinned parent fd:
+        non-symlink, owned by this principal, mode 0700, same device as its
+        parent, and with a device+inode identity that still matches when reopened
+        no-follow under the pinned fd. Returns the pinned ``(st_dev, st_ino)``.
+        Raises ``ScratchPathUnsafe`` on any typed mismatch (the caller maps a raw
+        ``OSError`` and performs reclaim)."""
+
+        st = os.lstat(name, dir_fd=dir_fd)
+        if _stat.S_ISLNK(st.st_mode):
+            raise ScratchPathUnsafe(message="directory child is a symlink")
+        if not _stat.S_ISDIR(st.st_mode):
+            raise ScratchPathUnsafe(message="directory child is not a directory")
+        if st.st_dev != parent_dev:
+            raise ScratchPathUnsafe(message="directory child is not on the parent device")
+        if st.st_uid != os.geteuid():
+            raise ScratchPathUnsafe(message="directory child is not owned by this principal")
+        if st.st_mode & 0o777 != 0o700:
+            raise ScratchPathUnsafe(message="directory child mode is not 0700")
+        # Reopen the child no-follow under the pinned fd and confirm its
+        # device+inode identity is unchanged: a name swapped for a link or a
+        # different inode between lstat and acceptance is caught here.
+        child_fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_DIRECTORY, dir_fd=dir_fd)
+        try:
+            ident = os.fstat(child_fd)
+        finally:
+            os.close(child_fd)
+        if (ident.st_dev, ident.st_ino) != (st.st_dev, st.st_ino):
+            raise ScratchPathUnsafe(message="directory child identity changed under the pinned fd")
+        return (ident.st_dev, ident.st_ino)
+
+    @staticmethod
     def _reclaim_stage(dir_fd: int, stage_name: str) -> None:
-        """Remove a rejected stage by name under the pinned parent fd, never by a
-        re-resolved path: whether it is still our empty directory or was swapped
-        for a link/file, it is unlinked in place without following it."""
+        """Remove a rejected stage/child by name under the pinned parent fd and
+        CONFIRM it is gone, never by a re-resolved path (argon guaranteed-reclaim).
+
+        The old implementation swallowed every ``OSError`` and returned, so a
+        racer-populated directory or a permission change could leave an
+        unverified entry on disk silently, violating the "nothing left on disk"
+        invariant. This version removes relative to the pinned fd, then confirms
+        the entry no longer resolves under that fd; if a non-empty directory
+        blocks ``rmdir`` it clears the children it owns (no-follow, same device)
+        and retries once, and if removal still cannot be confirmed it raises
+        ``ScratchPathUnsafe`` rather than returning as if clean."""
 
         for remover in (os.rmdir, os.unlink):
             try:
                 remover(stage_name, dir_fd=dir_fd)
+                break
+            except FileNotFoundError:
                 return
             except OSError:
                 continue
+        if _entry_absent(dir_fd, stage_name):
+            return
+        _clear_owned_dir_children(dir_fd, stage_name)
+        try:
+            os.rmdir(stage_name, dir_fd=dir_fd)
+        except OSError:
+            pass
+        if _entry_absent(dir_fd, stage_name):
+            return
+        raise ScratchPathUnsafe(
+            message="publication stage could not be reclaimed after failed verification"
+        )
 
     def checkpoint(
         self,
@@ -289,9 +408,8 @@ class Arena:
         _ = (recovery_descriptor, validator_or_manifest)
         resource_id = self._new_resource_id()
         self._register(resource_id, ResourceKind.CHECKPOINT, Retention.RESUMABLE)
-        payload = self._safe_child(resource_id)
-        os.mkdir(payload, mode=0o700)
-        self._paths[resource_id] = payload
+        payload, parent_id, child_id = self._create_verified_child(resource_id, is_dir=True)
+        self._paths[resource_id] = _Allocated(payload, parent_id, child_id, DIR_MODE)
         self._ledger.transition(
             resource_id,
             frm=ResourceState.CREATING,
@@ -309,6 +427,9 @@ class Arena:
             resource_id=resource_id,
             generation=self._lease.generation,
             _payload_path=payload,
+            _parent_identity=parent_id,
+            _identity=child_id,
+            _expected_mode=DIR_MODE,
         )
 
     def release(
@@ -316,18 +437,29 @@ class Arena:
     ) -> CleanupReport:
         """Release one resource. Capacity is reported released only after the
         provider confirms reclamation; a failed cleanup keeps its charge and
-        inventory and raises ``ScratchCleanupError`` (plan 1.5 item 6)."""
+        inventory and raises ``ScratchCleanupError`` (plan 1.5 item 6).
+
+        The destructive reclaim is gated on use-time identity: before handing the
+        path to the provider, the arena re-verifies the target's pinned parent and
+        child ``(st_dev, st_ino)`` under ``O_NOFOLLOW`` from its OWN recorded
+        identity (not the capability it was handed), so a post-allocation symlink
+        or inode swap can never trick ``release`` into reclaiming outside the
+        arena/stage domain (argon). A mismatch fails closed with
+        ``ScratchPathUnsafe``."""
 
         resource_id = resource.resource_id
-        path = self._paths.get(resource_id)
-        if path is None or not path.exists():
+        record = self._paths.get(resource_id)
+        if record is None or not record.path.exists():
             self._ledger.set_disposition(
                 resource_id, disposition=Disposition.DELETED.value, state=ResourceState.REAPED
             )
             return CleanupReport(
                 arena_id=self._arena_id, resource_id=resource_id, disposition=Disposition.DELETED
             )
-        confirmed, retained_bytes, retained_inodes = self._provider.reclaim(path)
+        verify_target_identity(
+            record.path, record.parent_identity, record.identity, record.expected_mode
+        )
+        confirmed, retained_bytes, retained_inodes = self._provider.reclaim(record.path)
         if not confirmed:
             self._ledger.set_disposition(
                 resource_id,
@@ -476,3 +608,46 @@ class Arena:
 def _inode_pressure(observation: QuotaObservation) -> bool:
     used = observation.inodes_used
     return used is not None and used >= observation.inodes_limit
+
+
+def _entry_absent(dir_fd: int, name: str) -> bool:
+    """True iff ``name`` no longer resolves under the pinned parent fd. A raw
+    ``OSError`` other than ``FileNotFoundError`` means the entry's fate could not
+    be confirmed, so it is treated as still present (reclaim must raise)."""
+
+    try:
+        os.lstat(name, dir_fd=dir_fd)
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    return False
+
+
+def _clear_owned_dir_children(dir_fd: int, name: str) -> None:
+    """Best-effort removal of the children of a stage directory a racer populated
+    between ``mkdir`` and verification, so a non-empty directory can still be
+    reclaimed. Opens the directory ``O_NOFOLLOW`` under the pinned parent fd,
+    refuses to cross a device boundary, and unlinks each child relative to the
+    directory fd without following a symlink."""
+
+    try:
+        stage_fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_DIRECTORY, dir_fd=dir_fd)
+    except OSError:
+        return
+    try:
+        stage_dev = os.fstat(stage_fd).st_dev
+        for child in os.listdir(stage_fd):
+            try:
+                cst = os.lstat(child, dir_fd=stage_fd)
+                if cst.st_dev != stage_dev:
+                    continue
+                if _stat.S_ISDIR(cst.st_mode):
+                    _clear_owned_dir_children(stage_fd, child)
+                    os.rmdir(child, dir_fd=stage_fd)
+                else:
+                    os.unlink(child, dir_fd=stage_fd)
+            except OSError:
+                continue
+    finally:
+        os.close(stage_fd)
