@@ -41,8 +41,14 @@ with no secret.
 
 ## Golden / test-flight
 
-`testflight/_runner.py` passes a fixed throwaway `key_provider`; keyed jobs now fingerprint under
-that key. See the PR for the golden-fingerprint recapture status.
+`testflight/_runner.py` passes a fixed throwaway `key_provider`. The pytest gate
+(`pytest testflight -m testflight`) is at its baseline failure set after ONE deliberate recapture:
+`d_longitudinal_visits` (keyed output now derives from the throwaway secret) was updated to the value the
+gate reported, `fa244ee9... -> f4f1bc8c...`. All 53 invariant checks still pass. Not done: the CLI
+`scripts/test_flight.py` cross-process fingerprint check already drifts on the baseline in this
+Python 3.12 sandbox for all five jobs (goldens were captured on 3.10), so `--update-fingerprints`
+was NOT run here; the canonical-environment recapture of a/b/c/e is a required pre-merge step.
+The `tokenize` strategy-coverage guard failure is also pre-existing on the baseline.
 
 ## Unrun / environment-limited
 
