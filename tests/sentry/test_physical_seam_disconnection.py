@@ -477,6 +477,14 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
             "src/decoy_engine/execution/_strategies/_categorical.py",
             "src/decoy_engine/execution/native/_capabilities.py",
             "src/decoy_engine/execution/native/_draw_site_providers.py",
+            # Draw-site providers split into the `native/protocol/` package (shared base,
+            # masking-side, generation-side); `_draw_site_providers.py` keeps the registry and
+            # re-exports, and its gen-pool sibling repoints its base-class import. Pure moves;
+            # none imports `execution.physical`.
+            "src/decoy_engine/execution/native/protocol/__init__.py",
+            "src/decoy_engine/execution/native/protocol/providers_base.py",
+            "src/decoy_engine/execution/native/protocol/providers_gen.py",
+            "src/decoy_engine/execution/native/protocol/providers_mask.py",
             "src/decoy_engine/execution/out_of_core/_mask_group_b.py",
             # Slice C5b-i (position-keyed non-deterministic Faker, 2026-10-05): the oracle Faker
             # handler selects through a shared index-kernel helper and a shared uint64 position-key

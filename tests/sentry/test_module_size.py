@@ -128,8 +128,6 @@ ALLOWLIST: dict[str, int] = {
     "src/decoy_engine/transforms/_codeset_loader.py": 607,
     # DRAW_SITES catalogue; split into _draw_sites_mask.py / _draw_sites_gen.py if it grows.
     "src/decoy_engine/execution/native/_determinism_protocol.py": 928,
-    # one provider class per draw mechanism across 30 sites; the size is fan-out, not tangle.
-    "src/decoy_engine/execution/native/_draw_site_providers.py": 985,
     # load-time self-test and native_threads plumbing; no cleaner class split identified.
     "src/decoy_engine/execution/out_of_core/_stream_join.py": 707,
     # custom-provider registry snapshot for the shadow-parity gate; one cohesive module, no split identified.

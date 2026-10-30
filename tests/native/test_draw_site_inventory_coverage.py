@@ -247,6 +247,11 @@ _ALLOWLIST = frozenset(
         # Task 0.3 protocol plumbing: reproduces the catalogued draws off the
         # hot path (one provider per DRAW_SITES entry). Not a new output site.
         "execution/native/_draw_site_providers.py",
+        # The provider classes split out of _draw_site_providers.py into the
+        # protocol package; same non-output-draw rationale as that module's entry.
+        "execution/native/protocol/providers_base.py",
+        "execution/native/protocol/providers_gen.py",
+        "execution/native/protocol/providers_mask.py",
         # GP2 (2026-09-17): DrawSiteProvider siblings split out of
         # _draw_site_providers.py's own recorded LOC ceiling; same non-output-draw
         # rationale as that module's own entry above.
