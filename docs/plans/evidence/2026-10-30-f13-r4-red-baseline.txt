@@ -75,3 +75,20 @@ Fix: `parse_ref` checks for an exact `str`, records any parse failure inside the
 fresh `bad_secret_ref` outside it; Vault query decoding is strict. The other tests in
 test_r4_mutation_kills.py pin behavior that was already correct (they exist to kill mutants) and
 were not red-first.
+
+Gates at 74a08b4 (the code head of this round), CPython 3.10.20, `uv sync --frozen` from uv.lock:
+- `uv run --frozen pytest tests -n 8`: 4 failed, 28284 passed, 5366 skipped, 4 xfailed, 60 xpassed.
+  The same 4 fail on the unmodified bf76e761 sources in this environment (rerun of exactly those
+  tests, not of the whole suite): tests/physical/test_shadow_snapshot.py::
+  test_fixture_is_written_then_made_read_only (runs as root), and three tests in
+  tests/unit/execution/test_r3_failure_publication_trace.py (2) and
+  tests/unit/test_v2_cloud_sources.py (1).
+- `tests/secret_providers`: 289 passed, 5 skipped (the 5 live-Vault tests; no Vault service here).
+- `tests/sentry`: 3129 passed, 2 skipped before the kill-test commit; `test_module_size.py`: 636
+  passed at 74a08b4 (largest secret-provider module: _types.py, under 600 lines).
+- `ruff check .`: all checks passed. `ruff format --check .`: 1778 files formatted.
+- `mypy src/decoy_engine/secret_providers src/decoy_engine/keyprovider.py`: no issues (11 files).
+- `uv lock --check`: Resolved 161 packages, lock unchanged.
+- `semgrep==1.183.0 --config .semgrep/f13-secret-providers.yml --error src/decoy_engine`: 0
+  findings; the added two-argument `resolve` pattern was checked to fire on a seeded file.
+Not run: the live-Vault tests (no Vault service), Python 3.11/3.12 and the parity suite under 3.12.
