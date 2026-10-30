@@ -87,8 +87,28 @@ def _compile(plan: Any) -> dict[str, list[_Col]]:
     return by_table
 
 
+@dataclass
+class CastBatch:
+    """One cast batch: the typed rows that continue, where they came from, and the raw framing.
+
+    ``positions`` are absolute source rows (independent of how the source was partitioned);
+    ``offset`` is the absolute row of ``raw``'s first row; ``raw`` is kept only for a table that
+    can quarantine, because only then does a later stage need the original framed row.
+    """
+
+    table: pa.Table
+    positions: list[int]
+    offset: int
+    raw: pa.Table | None
+
+
 class DeclaredCastRun:
-    """State of one run's declared casting: ledger, originals, positions and the quarantine session."""
+    """One run's declared casting: ledger, quarantine session and per-table whole-table batches.
+
+    The kernel is batch-shaped (``cast_batch`` / ``format_batch``); ``pre_mask`` / ``post_mask``
+    are the same kernel applied to a resident table as a single batch, so a route that streams
+    chunks and a route that holds the table cannot diverge.
+    """
 
     def __init__(self, plan: Any, runtime: Any = None) -> None:
         self._tables = _compile(plan)
@@ -98,8 +118,7 @@ class DeclaredCastRun:
             (getattr(runtime, "run_id", None) or secrets.token_hex(16)) if runtime else ""
         )
         self._ledger = K.CastIssueLedger()
-        self._originals: dict[str, pa.Table] = {}
-        self._positions: dict[str, list[int]] = {}
+        self._whole: dict[str, CastBatch] = {}
         self._session: P.QuarantineSession | None = None
         self._receipt: P.QuarantineReceipt | None = None
         self._written: set[tuple[str, int]] = set()
@@ -109,11 +128,83 @@ class DeclaredCastRun:
     def tables(self) -> frozenset[str]:
         return frozenset(self._tables)
 
+    def format_tables(self) -> frozenset[str]:
+        """Tables with at least one output format, i.e. those that need a post-mask stage."""
+        return frozenset(t for t, cols in self._tables.items() if any(c.fmt for c in cols))
+
+    def cast_batch(
+        self, table: str, src: pa.Table | pa.RecordBatch, *, offset: int = 0, record: bool = True
+    ) -> CastBatch:
+        """Cast one batch (``offset`` = absolute row of its first row) and drop quarantined rows.
+
+        ``record=False`` makes the same decisions without touching the ledger or the quarantine
+        sink, for a route that re-reads a source in several passes: only one pass may count.
+        """
+        if isinstance(src, pa.RecordBatch):
+            src = pa.Table.from_batches([src])
+        cols = self._tables[table]
+        ledger = self._ledger if record else K.CastIssueLedger()
+        positions = list(range(offset, offset + src.num_rows))
+        replaced = {col.name: self._cast_column(table, col, src, positions, ledger) for col in cols}
+        names = src.column_names
+        typed = pa.table({n: replaced.get(n, src.column(n)) for n in names})
+        raw = src if any(c.policy == "quarantine" for c in cols) else None
+        dropped = [i for i, p in enumerate(positions) if ledger.is_quarantined(table, p)]
+        if not dropped:
+            return CastBatch(typed, positions, offset, raw)
+        if record:
+            self._write_rows(table, [positions[i] for i in dropped], raw, offset)
+        gone = set(dropped)
+        keep = [i for i in range(src.num_rows) if i not in gone]
+        return CastBatch(
+            typed.take(pa.array(keep, pa.int64())), [positions[i] for i in keep], offset, raw
+        )
+
+    def format_batch(
+        self, table: str, out: pa.Table, batch: CastBatch, *, record: bool = True
+    ) -> tuple[pa.Table, list[int] | None]:
+        """Render a masked batch; returns it and, when rows were removed, the kept indices."""
+        cols = self._tables[table]
+        if not any(c.fmt is not None for c in cols):
+            return out, None
+        ledger = self._ledger if record else K.CastIssueLedger()
+        positions = batch.positions
+        replaced: dict[str, pa.Array] = {}
+        for col in cols:
+            if col.fmt is None:
+                continue
+            values = out.column(col.name).to_pylist()
+            rendered: list[Any] = [None] * len(values)
+            for i, value in enumerate(values):
+                if value is None:
+                    continue
+                result = col.fmt(value)
+                if result.ok:
+                    rendered[i] = result.value
+                else:
+                    self._disposition(table, col, positions[i], "format", result.reason, ledger)
+            replaced[col.name] = pa.array(
+                rendered, type=pa.binary() if col.model.output_format.binary else pa.string()
+            )
+        formatted = pa.table({n: replaced.get(n, out.column(n)) for n in out.column_names})
+        dropped = [i for i, p in enumerate(positions) if ledger.is_quarantined(table, p)]
+        if not dropped:
+            return formatted, None
+        if record:
+            self._write_rows(table, [positions[i] for i in dropped], batch.raw, batch.offset)
+        gone = set(dropped)
+        keep = [i for i in range(out.num_rows) if i not in gone]
+        batch.positions = [positions[i] for i in keep]
+        return formatted.take(pa.array(keep, pa.int64())), keep
+
     def pre_mask(self, sources: Mapping[str, Any]) -> dict[str, Any]:
+        from decoy_engine.execution._pipeline_sources import materialize_source
+
         out = dict(sources)
-        for table, cols in self._tables.items():
+        for table in self._tables:
             if table in sources:
-                out[table] = self._pre_table(table, cols, sources[table])
+                self._whole[table] = self.cast_batch(table, materialize_source(sources[table]))
+                out[table] = self._whole[table].table
         return out
 
     def post_mask(
@@ -121,9 +212,9 @@ class DeclaredCastRun:
     ) -> tuple[dict[str, pa.Table], dict[str, Any], dict[str, list[int]]]:
         """Formatted outputs, companion sources, and per-table kept-row maps (old index per new)."""
         new_out, new_src, kept = dict(outputs), dict(sources), {}
-        for table, cols in self._tables.items():
-            if table in outputs and any(c.fmt is not None for c in cols):
-                table_out, keep = self._post_table(table, cols, outputs[table])
+        for table in self._tables:
+            if table in outputs and table in self._whole:
+                table_out, keep = self.format_batch(table, outputs[table], self._whole[table])
                 new_out[table] = table_out
                 if keep is not None:
                     kept[table] = keep
@@ -161,30 +252,11 @@ class DeclaredCastRun:
     def partial_counts(self) -> dict[str, Any]:
         return self._ledger.counts(completeness=K.PARTIAL)
 
-    # -- pre-mask -----------------------------------------------------------------------------------
+    # -- internals ----------------------------------------------------------------------------------
 
-    def _pre_table(self, table: str, cols: list[_Col], src: Any) -> pa.Table:
-        from decoy_engine.execution._pipeline_sources import materialize_source
-
-        src = materialize_source(src)
-        if any(c.policy == "quarantine" for c in cols):
-            self._originals[table] = src  # only a quarantining table needs its raw rows later
-        self._positions[table] = list(range(src.num_rows))
-        replaced: dict[str, pa.Array] = {}
-        for col in cols:
-            replaced[col.name] = self._cast_column(table, col, src)
-        quarantined = sorted(r for t, r in self._ledger.quarantined_rows() if t == table)
-        names = src.column_names
-        typed = pa.table({n: replaced.get(n, src.column(n)) for n in names})
-        if not quarantined:
-            return typed
-        self._write_rows(table, quarantined)
-        dropped = set(quarantined)
-        keep = [i for i in range(src.num_rows) if i not in dropped]
-        self._positions[table] = keep
-        return typed.take(pa.array(keep, pa.int64()))
-
-    def _cast_column(self, table: str, col: _Col, src: pa.Table) -> pa.Array:
+    def _cast_column(
+        self, table: str, col: _Col, src: pa.Table, positions: list[int], ledger: K.CastIssueLedger
+    ) -> pa.Array:
         self._check_physical(col, src.schema.field(col.name).type)
         values = src.column(col.name).to_pylist()
         out: list[Any] = [None] * len(values)
@@ -192,13 +264,13 @@ class DeclaredCastRun:
             if raw is None:
                 continue
             if col.sentinels and _is_sentinel(col, raw):
-                self._ledger.add_sentinel(table, col.name)
+                ledger.add_sentinel(table, col.name)
                 continue
             result = col.parse(raw)
             if result.ok:
                 out[i] = result.value
             else:
-                self._disposition(table, col, i, "parse", result.reason)
+                self._disposition(table, col, positions[i], "parse", result.reason, ledger)
         return pa.array(out, type=arrow_type(col.model))
 
     @staticmethod
@@ -219,65 +291,39 @@ class DeclaredCastRun:
                 message=f"column {col.name!r} arrived with a physical type its declared contract cannot parse.",
             )
 
-    def _disposition(self, table: str, col: _Col, row: int, stage: str, reason: Any) -> None:
-        pos = self._positions[table][row]
-        self._ledger.add(K.CastIssue(table, col.name, pos, stage, reason, col.policy))
+    def _disposition(
+        self,
+        table: str,
+        col: _Col,
+        position: int,
+        stage: str,
+        reason: Any,
+        ledger: K.CastIssueLedger,
+    ) -> None:
+        ledger.add(K.CastIssue(table, col.name, position, stage, reason, col.policy))
         if col.policy == "fail":
             from decoy_engine.execution._errors import DeclaredCastValueError
 
             raise DeclaredCastValueError(
-                code=str(reason), counts=self._ledger.counts(completeness=K.PARTIAL)
+                code=str(reason), counts=ledger.counts(completeness=K.PARTIAL)
             )
-
-    # -- post-mask ----------------------------------------------------------------------------------
-
-    def _post_table(
-        self, table: str, cols: list[_Col], out: pa.Table
-    ) -> tuple[pa.Table, list[int] | None]:
-        positions = self._positions[table]
-        replaced: dict[str, pa.Array] = {}
-        before = {r for t, r in self._ledger.quarantined_rows() if t == table}
-        for col in cols:
-            if col.fmt is None:
-                continue
-            values = out.column(col.name).to_pylist()
-            rendered: list[Any] = [None] * len(values)
-            for i, value in enumerate(values):
-                if value is None:
-                    continue
-                result = col.fmt(value)
-                if result.ok:
-                    rendered[i] = result.value
-                else:
-                    self._disposition(table, col, i, "format", result.reason)
-            replaced[col.name] = pa.array(
-                rendered, type=pa.binary() if col.model.output_format.binary else pa.string()
-            )
-        formatted = pa.table({n: replaced.get(n, out.column(n)) for n in out.column_names})
-        fresh = sorted({r for t, r in self._ledger.quarantined_rows() if t == table} - before)
-        if not fresh:
-            return formatted, None
-        self._write_rows(table, fresh)
-        drop = set(fresh)
-        keep = [i for i, pos in enumerate(positions) if pos not in drop]
-        self._positions[table] = [positions[i] for i in keep]
-        return formatted.take(pa.array(keep, pa.int64())), keep
 
     # -- quarantine --------------------------------------------------------------------------------
 
-    def _write_rows(self, table: str, positions: list[int]) -> None:
+    def _write_rows(
+        self, table: str, positions: list[int], raw: pa.Table | None, offset: int
+    ) -> None:
         store = self._runtime.sink
         if self._session is None:
             self._session = store.begin(
                 P.QuarantineRun(owner=self._runtime.owner, run_id=self._run_id),
                 P.QuarantinePolicy.model_validate(self._policy_block),
             )
-        original = self._originals[table]
         for pos in positions:
             if (table, pos) in self._written:
                 continue
             self._written.add((table, pos))
-            row = original.slice(pos, 1).to_pylist()[0]
+            row = raw.slice(pos - offset, 1).to_pylist()[0] if raw is not None else {}
             store.write_row(
                 self._session,
                 P.QuarantineEnvelope(table, pos, self._ledger.row_reasons(table, pos), row),

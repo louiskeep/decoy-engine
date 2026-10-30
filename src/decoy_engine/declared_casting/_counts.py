@@ -74,6 +74,9 @@ class CastIssueLedger:
     def add_sentinel(self, table: str, column: str, n: int = 1) -> None:
         self._counts[(table, column)]["sentinel_to_null"] += n
 
+    def is_quarantined(self, table: str, row: int) -> bool:
+        return (table, row) in self._rows
+
     def quarantined_rows(self) -> set[tuple[str, int]]:
         return set(self._rows)
 
