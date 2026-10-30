@@ -50,6 +50,9 @@ import pytest
 
 SRC = Path(__file__).parents[2] / "src" / "decoy_engine"
 REPO = Path(__file__).parents[2]
+# Tooling under scripts/ is held to the same limits: moving a module out of src/
+# must not be a way to hide its size.
+SCRIPTS = REPO / "scripts"
 
 # Soft goal + hard ceiling (best-practices section 4.1; 2026-09-22 revision).
 # A module <= GOAL needs no entry. Nothing new may cross MAX -- decompose instead.
@@ -81,7 +84,6 @@ ALLOWLIST: dict[str, int] = {
     "src/decoy_engine/detection/detectors.py": 1046,
     "src/decoy_engine/generators/columns.py": 660,
     "src/decoy_engine/profiling/profiler.py": 637,
-    "src/decoy_engine/quality/synth_report.py": 863,
     # expanded ML training corpus generators split out of fixtures.py; split value-generators from corpus builders next.
     "src/decoy_engine/profiling/eval/corpus.py": 976,
     # monolithic train_and_evaluate; decompose into split/fit/calibrate/evaluate modules.
@@ -90,8 +92,6 @@ ALLOWLIST: dict[str, int] = {
     "src/decoy_engine/plan/_checks.py": 712,
     # statistical-column check threading; same per-strategy-check decomposition target as _checks.py.
     "src/decoy_engine/plan/_compile.py": 663,
-    # safety invariants documented in docstrings are part of the fix; extract the emission builders into _mem_telemetry_emit.py.
-    "src/decoy_engine/execution/_mem_telemetry.py": 762,
     # chunk-parity invariant text and admission gate calls; dense exception.
     "src/decoy_engine/execution/_chunked.py": 627,
     # dispatch entry plus the table-keyed params, the job-seed hand-off and the eager string-pool
@@ -101,8 +101,6 @@ ALLOWLIST: dict[str, int] = {
     # OBS-2b: one structured decline record paired with each existing decision source; the record
     # types live in _route_decline_codes.py. Split the static admission pass out next.
     "src/decoy_engine/execution/native/_dispatch.py": 666,
-    # scale-aware chunked-FK dtype family and rootness check; split the FK helpers.
-    "src/decoy_engine/execution/_chunked_fk.py": 970,
     # fail-closed output projection and corpus pinning on the mask route; split the FK-resolution helpers.
     # cross-column V1 folds joint_mask key_by into the source-anchor snapshot build (a comment, no new logic).
     # MG-5 vault: the _fk_key_value compat wrapper moved to _fk_key_compat.py (pure move, zero behavior change).
@@ -126,17 +124,29 @@ ALLOWLIST: dict[str, int] = {
     "src/decoy_engine/execution/out_of_core/_stream_driver.py": 609,
     # corpus schema checks and verify_corpus; split into _codeset_verify.py when next touched.
     "src/decoy_engine/transforms/_codeset_loader.py": 607,
-    # DRAW_SITES catalogue; split into _draw_sites_mask.py / _draw_sites_gen.py if it grows.
-    "src/decoy_engine/execution/native/_determinism_protocol.py": 928,
-    # one provider class per draw mechanism across 30 sites; the size is fan-out, not tangle.
-    "src/decoy_engine/execution/native/_draw_site_providers.py": 985,
-    # load-time self-test and native_threads plumbing; no cleaner class split identified.
-    "src/decoy_engine/execution/out_of_core/_stream_join.py": 707,
+    # one StreamFkJoiner lifecycle class (stage, orphan count, ordered and bounded-reorder joins, resolve); explain/optimizer helpers live in _stream_join_plan.py.
+    "src/decoy_engine/execution/out_of_core/_stream_join.py": 650,
     # custom-provider registry snapshot for the shadow-parity gate; one cohesive module, no split identified.
     "src/decoy_engine/internal/faker_setup.py": 637,
     # FF1 span path and sub-floor policy; split into _text_mask_sub_floor.py when next touched.
     "src/decoy_engine/transforms/text_mask.py": 708,
+    # scripts/: pre-existing one-off tooling, recorded when the sentry started scanning scripts/.
+    # Legacy (> MAX) entries may only shrink; split each into sibling modules when next touched.
+    "scripts/audit/probe.py": 775,
+    "scripts/bench-generation-pool/bench_compare_gen.py": 908,
+    "scripts/bench-unified-slice/bench_compare.py": 894,
+    "scripts/build_golden_fixtures.py": 606,
+    "scripts/faker-determinism/check_determinism.py": 601,
+    "scripts/fk_memory_probe.py": 1093,
+    "scripts/gen_proof_manifest.py": 1241,
+    "scripts/native-baseline/bench_c1_oracle.py": 767,
+    "scripts/tb3_cgroup_validation.py": 603,
+    "scripts/tq_mutate.py": 822,
 }
+
+
+def _budgeted_files() -> list[Path]:
+    return sorted(SRC.rglob("*.py")) + sorted(SCRIPTS.rglob("*.py"))
 
 
 def _loc(py_file: Path) -> int:
@@ -189,7 +199,7 @@ def _size_verdict(rel: str, loc: int, ceiling: int | None) -> str | None:
 
 @pytest.mark.parametrize(
     "py_file",
-    sorted(SRC.rglob("*.py")),
+    _budgeted_files(),
     ids=lambda p: str(p.relative_to(REPO)),
 )
 def test_module_within_size_budget(py_file: Path) -> None:
@@ -240,6 +250,11 @@ def test_allowlist_entries_are_still_over_goal() -> None:
             f"Delete it so the {GOAL}-LOC goal applies normally. "
             f"(Recorded ceiling was {ceiling}.)"
         )
+
+
+def test_sentry_scans_scripts_dir() -> None:
+    """scripts/ is inside the budgeted set (a file moved out of src/ stays measured)."""
+    assert SCRIPTS / "mem_telemetry.py" in _budgeted_files()
 
 
 def test_sentry_catches_a_planted_violation(tmp_path: Path) -> None:

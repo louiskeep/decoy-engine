@@ -761,7 +761,6 @@ module = [
     "decoy_engine.execution._probe_scale",
     "decoy_engine.execution._governor",
     "decoy_engine.execution._governor_monitor",
-    "decoy_engine.execution._mem_telemetry",
     "decoy_engine.execution._pipeline_chunk_route",
     "decoy_engine.execution._isolated_run",
     "decoy_engine.execution._isolated_worker",
