@@ -23,13 +23,13 @@ Fixtures mirror `test_mem_telemetry.py`.
 from __future__ import annotations
 
 import pytest
-
-from decoy_engine.execution._mem_estimate import ExecutionPath, route_intercept_bytes
-from decoy_engine.execution._mem_telemetry import (
+from mem_telemetry import (
     MemoryTelemetryRecord,
     MemoryTelemetryStore,
     recalibrate_k,
 )
+
+from decoy_engine.execution._mem_estimate import ExecutionPath, route_intercept_bytes
 
 _MB = 1024 * 1024
 _GB = 1024 * _MB

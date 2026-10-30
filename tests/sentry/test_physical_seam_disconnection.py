@@ -323,6 +323,9 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
             # config resolver, and nothing under `execution.physical`.
             "src/decoy_engine/execution/_throughput_calibration.py",
             "src/decoy_engine/execution/_job_estimate.py",
+            # The B5 telemetry self-calibration loop had no engine, platform or CLI caller and
+            # moved to `scripts/mem_telemetry.py` as calibration tooling (a deletion here).
+            "src/decoy_engine/execution/_mem_telemetry.py",
             # F2 (production mixed generate+mask route): the semantic admission core and the
             # generate-parent FK bridge move OUT of `execution/physical/_shadow_mixed.py` /
             # `_shadow_fk.py` into `_mixed_admission.py` / `_mixed_fk_bridge.py` so the shadow and

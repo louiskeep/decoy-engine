@@ -2,6 +2,12 @@
 redesign, `docs/plans/2026-07-10-oom-avoidance-routing-redesign.md` §3.4,
 corrected by §11's §3.4 erratum and refined by §13).
 
+Calibration tooling, not engine runtime: no engine, platform or CLI code
+imports it, so it lives in `scripts/` beside `tb4_calibration.py` (the harness
+that pins the constants this loop suggests changes to) and, like that script,
+reads the estimator's own `decoy_engine.execution._mem_estimate` helpers.
+Tests import it as `mem_telemetry` through pytest's `scripts` pythonpath.
+
 This module replaces nothing -- `K_FULL_FRAME_SLOPE` and its siblings
 in `_mem_estimate.py` stay exactly as they are; this loop only computes a
 *suggestion* an operator/config can choose to adopt in their place. Wiring

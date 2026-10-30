@@ -90,8 +90,6 @@ ALLOWLIST: dict[str, int] = {
     "src/decoy_engine/plan/_checks.py": 712,
     # statistical-column check threading; same per-strategy-check decomposition target as _checks.py.
     "src/decoy_engine/plan/_compile.py": 663,
-    # safety invariants documented in docstrings are part of the fix; extract the emission builders into _mem_telemetry_emit.py.
-    "src/decoy_engine/execution/_mem_telemetry.py": 762,
     # chunk-parity invariant text and admission gate calls; dense exception.
     "src/decoy_engine/execution/_chunked.py": 627,
     # dispatch entry plus the table-keyed params, the job-seed hand-off and the eager string-pool

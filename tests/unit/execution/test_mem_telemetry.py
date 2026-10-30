@@ -13,6 +13,15 @@ refuse to manufacture a record from data that is not trustworthy evidence
 from __future__ import annotations
 
 import pytest
+from mem_telemetry import (
+    KRecalibration,
+    MemoryTelemetryRecord,
+    MemoryTelemetryStore,
+    recalibrate_k,
+    schema_fingerprint,
+    telemetry_record_from_governor_trip,
+    telemetry_record_from_isolated_run,
+)
 
 from decoy_engine.execution._governor import GovernorTripRecord
 from decoy_engine.execution._isolated_common import IsolatedRunResult
@@ -26,15 +35,6 @@ from decoy_engine.execution._mem_estimate import (
     TableSizeSpec,
     estimator_basis_bytes,
     route_intercept_bytes,
-)
-from decoy_engine.execution._mem_telemetry import (
-    KRecalibration,
-    MemoryTelemetryRecord,
-    MemoryTelemetryStore,
-    recalibrate_k,
-    schema_fingerprint,
-    telemetry_record_from_governor_trip,
-    telemetry_record_from_isolated_run,
 )
 
 _MB = 1024 * 1024
