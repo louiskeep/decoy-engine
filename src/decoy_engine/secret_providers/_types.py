@@ -41,6 +41,9 @@ _PROCESS_SALT = os.urandom(32)
 _SCHEME_RE = re.compile(r"^([A-Za-z][A-Za-z0-9+.\-]*):")
 _VERSION_RE = re.compile(r"^[1-9][0-9]{0,9}$")
 _LOGICAL_VERSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._\-]{0,63}$")
+# RFC 3986 §2.1: "%" only ever starts a two-hex-digit escape. Python's ``unquote`` passes a
+# malformed one through unchanged; the Vault grammar rejects it instead.
+_MALFORMED_ESCAPE_RE = re.compile(r"%(?![0-9A-Fa-f]{2})")
 
 
 def _bad_ref() -> MaskSecretError:
@@ -114,6 +117,10 @@ def _parse(text: str) -> SecretRef:
     return _parse_local(scheme, text[match.end() :])
 
 
+def _control_chars(value: str) -> bool:
+    return any(ord(c) < 32 for c in value)
+
+
 def _encoding(value: str) -> str:
     if value not in ENCODINGS:
         raise _bad_ref()
@@ -145,6 +152,10 @@ def _parse_local(scheme: str, rest: str) -> SecretRef:
 
 
 def _parse_vault(text: str) -> SecretRef:
+    """Each component is percent-decoded exactly once, strictly (UTF-8): the mount and the path
+    here, the query values by ``parse_qsl``. A second decode would read ``%25ff`` as ``%ff``."""
+    if _MALFORMED_ESCAPE_RE.search(text):
+        raise _bad_ref()
     try:
         parts = urlsplit(text)
         query = parse_qsl(
@@ -169,15 +180,16 @@ def _parse_vault(text: str) -> SecretRef:
     try:
         decoded = unquote(parts.path, errors="strict")
         mount = unquote(parts.netloc, errors="strict")
-        fld = unquote(fld, errors="strict")
     except UnicodeDecodeError:
         raise _bad_ref() from None
     segments = decoded.split("/")[1:]
     if not decoded.startswith("/") or not segments:
         raise _bad_ref()
     for seg in (mount, *segments):
-        if seg in ("", ".", "..") or "\\" in seg or any(ord(c) < 32 for c in seg):
+        if seg in ("", ".", "..") or "\\" in seg or _control_chars(seg):
             raise _bad_ref()
+    if _control_chars(fld):
+        raise _bad_ref()
     return SecretRef(
         scheme="vault",
         locator=mount + "/" + "/".join(segments),

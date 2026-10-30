@@ -27,6 +27,11 @@ row is read**. This page describes shipped behavior; the design record is
 
 The default logical `key_version` of `env:`/`file:` is `v1`; change it to rotate output identity
 intentionally. Vault derives `key_version` from the pinned KV version (`v3`).
+Every component of a `vault:` reference (mount, path, field) is percent-decoded exactly once and
+strictly: `%25ff` names the literal field `%ff`, an undecodable escape (`%ff`, an overlong or
+truncated UTF-8 sequence), a malformed escape (a `%` not followed by two hex digits) and a control
+character in any component are rejected. The query is form-decoded as `parse_qsl` defines it
+(`+` is a space, `%2B` a plus); the mount and path are not (`+` is literal).
 Errors never repeat the reference, path or field: every malformed reference (including a malformed
 query or an undecodable percent-escape) fails `bad_secret_ref` with no chained parser exception.
 
