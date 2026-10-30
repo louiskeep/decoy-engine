@@ -20,6 +20,7 @@ import copy
 import io
 import json
 import logging
+import os
 import pickle
 import sys
 import traceback
@@ -500,16 +501,17 @@ CANARY_CASES = {
 }
 
 
+@pytest.mark.skipif(
+    "MUTANT_UNDER_TEST" in os.environ,
+    reason="mutmut wraps every function in a trampoline frame that holds the call arguments",
+)
 @pytest.mark.parametrize("case", sorted(CANARY_CASES))
 def test_value_bearing_objects_never_reach_traceback_locals(case, caplog, capsys):
     exc = _raised(CANARY_CASES[case])
     assert isinstance(exc, MaskSecretError) and exc.__cause__ is None and exc.__context__ is None
-    frames = [f.f_code.co_name for f, _ in traceback.walk_tb(exc.__traceback__)]
-    assert any(name in ("prepare_secret", "admit_mask_key", "prepare_legacy") for name in frames)
+    # File names, not function names: mutation tooling renames the functions.
+    files = [f.f_code.co_filename for f, _ in traceback.walk_tb(exc.__traceback__)]
+    assert any(name.endswith("_preflight.py") for name in files)
     surfaces = render_everywhere(exc, caplog, capsys)
-    assert (
-        "prepare_secret" in surfaces["capture_locals"]
-        or "admit" in surfaces["capture_locals"]
-        or "prepare_legacy" in surfaces["capture_locals"]
-    )
+    assert "_preflight.py" in surfaces["capture_locals"]  # positive control: locals were rendered
     assert_absent(surfaces, [CANARY, "hunter2", "vault.internal"])

@@ -7,6 +7,7 @@ count in the migration evidence is pinned so reverting the document turns a test
 
 from __future__ import annotations
 
+import os
 import re
 import threading
 from pathlib import Path
@@ -197,6 +198,9 @@ AUDIT = Path(__file__).resolve().parents[2] / (
 )
 
 
+@pytest.mark.skipif(
+    "MUTANT_UNDER_TEST" in os.environ, reason="mutmut's working copy does not include docs/"
+)
 def test_the_keyed_test_migration_audit_counts_are_pinned():
     text = AUDIT.read_text(encoding="utf-8")
     section = re.search(r"## Coverage accounting.*?(?=\n## |\Z)", text, re.S)
