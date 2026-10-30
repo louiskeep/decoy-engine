@@ -33,7 +33,8 @@ from decoy_engine.scratch._capabilities import (
     NativeDirectory,
     PublicationStage,
     RegisteredFile,
-    verify_target_identity,
+    open_verified_dir,
+    open_verified_target,
 )
 from decoy_engine.scratch._errors import (
     ScratchCleanupError,
@@ -75,22 +76,6 @@ class _Allocated:
     expected_mode: int
 
 
-def _pin_dir_identity(path: Path) -> Identity:
-    """Pin a directory's ``(st_dev, st_ino)`` through an ``O_NOFOLLOW`` open, so a
-    later check can prove it was not swapped for a symlink or a different inode.
-    A non-directory or a symlink fails closed with ``ScratchPathUnsafe``."""
-
-    try:
-        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_DIRECTORY)
-    except OSError:
-        raise ScratchPathUnsafe(message="arena root is not a non-symlink directory") from None
-    try:
-        st = os.fstat(fd)
-    finally:
-        os.close(fd)
-    return (st.st_dev, st.st_ino)
-
-
 class Arena:
     """A single attempt's registered resource space."""
 
@@ -104,6 +89,7 @@ class Arena:
         lease: LeaseIdentity,
         arena_id: str,
         root: Path,
+        root_identity: Identity,
         quota_domain_id: str,
         owner_principal: str,
     ) -> None:
@@ -116,9 +102,10 @@ class Arena:
         self._root = root
         self._quota_domain_id = quota_domain_id
         self._owner = owner_principal
-        # Pin the arena root identity at construction, so every allocation can
-        # prove the root has not been swapped since the manager verified it.
-        self._root_identity = _pin_dir_identity(self._root)
+        # The arena root identity, pinned once by the manager when it created and
+        # verified the arena (never re-stat'd here). Every allocation re-opens the
+        # root O_NOFOLLOW and re-asserts this identity before any *at call.
+        self._root_identity = root_identity
         self._paths: dict[str, _Allocated] = {}
 
     @property
@@ -139,7 +126,10 @@ class Arena:
         return uuid.uuid4().hex
 
     def _register(self, resource_id: str, kind: ResourceKind, retention: Retention) -> None:
-        root_stat = os.stat(self._root)
+        # Record the arena root's pinned identity, never a fresh unverified
+        # os.stat(self._root) (which would follow a symlink swapped in before
+        # allocation and forge the ledger's (st_dev, st_ino)).
+        root_dev, root_ino = self._root_identity
         self._ledger.register_resource(
             resource_id=resource_id,
             arena_id=self._arena_id,
@@ -147,8 +137,8 @@ class Arena:
             kind=kind,
             retention=retention,
             owner_principal=self._owner,
-            root_dev=root_stat.st_dev,
-            root_ino=root_stat.st_ino,
+            root_dev=root_dev,
+            root_ino=root_ino,
             quota_domain_id=self._quota_domain_id,
             recovery_class=retention.value,
         )
@@ -267,7 +257,10 @@ class Arena:
         ``ScratchPathUnsafe``; the data is never staged on an unverified path."""
 
         resource_id = self._new_resource_id()
-        dest_parent = destination.parent if destination.parent.exists() else destination
+        # Stage beside the destination, in its parent directory. A missing or
+        # symlinked parent is caught when it is opened O_NOFOLLOW|O_DIRECTORY
+        # below (no Path.exists() pre-check, which would re-resolve the path).
+        dest_parent = destination.parent
         stage_name = f".decoy-stage-{resource_id}"
         stage = dest_parent / stage_name
         # Pin the destination parent with a no-follow directory fd. If the parent
@@ -439,27 +432,44 @@ class Arena:
         provider confirms reclamation; a failed cleanup keeps its charge and
         inventory and raises ``ScratchCleanupError`` (plan 1.5 item 6).
 
-        The destructive reclaim is gated on use-time identity: before handing the
-        path to the provider, the arena re-verifies the target's pinned parent and
-        child ``(st_dev, st_ino)`` under ``O_NOFOLLOW`` from its OWN recorded
-        identity (not the capability it was handed), so a post-allocation symlink
-        or inode swap can never trick ``release`` into reclaiming outside the
-        arena/stage domain (argon). A mismatch fails closed with
-        ``ScratchPathUnsafe``."""
+        The destructive reclaim is identity-bound: the arena hands the provider
+        the target's pinned parent and child ``(st_dev, st_ino)`` from its OWN
+        record (not the capability it was handed), and the provider re-verifies
+        and deletes on the SAME ``O_NOFOLLOW`` file descriptors, so there is no
+        path re-resolution between the check and the delete. A post-allocation
+        symlink or inode swap of the parent or target fails closed with
+        ``ScratchPathUnsafe`` and nothing outside the pinned object is touched
+        (argon)."""
 
         resource_id = resource.resource_id
         record = self._paths.get(resource_id)
-        if record is None or not record.path.exists():
+        if record is None:
             self._ledger.set_disposition(
                 resource_id, disposition=Disposition.DELETED.value, state=ResourceState.REAPED
             )
             return CleanupReport(
                 arena_id=self._arena_id, resource_id=resource_id, disposition=Disposition.DELETED
             )
-        verify_target_identity(
+        # Confirm absence under the verified parent fd (never Path.exists(), which
+        # follows symlinks and would mark a swapped-in broken link as DELETED).
+        with open_verified_dir(
+            record.path.parent, record.parent_identity, require_owner=False
+        ) as vparent:
+            if _entry_absent(vparent.fd, record.path.name):
+                self._ledger.set_disposition(
+                    resource_id, disposition=Disposition.DELETED.value, state=ResourceState.REAPED
+                )
+                return CleanupReport(
+                    arena_id=self._arena_id,
+                    resource_id=resource_id,
+                    disposition=Disposition.DELETED,
+                )
+        # The reclaim runs INSIDE open_verified_target so the delete executes on
+        # the same O_NOFOLLOW parent fd the identity was verified against.
+        with open_verified_target(
             record.path, record.parent_identity, record.identity, record.expected_mode
-        )
-        confirmed, retained_bytes, retained_inodes = self._provider.reclaim(record.path)
+        ) as vtarget:
+            confirmed, retained_bytes, retained_inodes = self._provider.reclaim(vtarget)
         if not confirmed:
             self._ledger.set_disposition(
                 resource_id,
@@ -503,13 +513,27 @@ class Arena:
         )
         raise ScratchQuotaExceeded(report=report, message="kernel hard quota exceeded")
 
+    def _observe(self) -> QuotaObservation:
+        """Observe usage on the arena root through a verified-dir handle, so the
+        provider walks the ``fstat``-verified fd, never a re-resolved path."""
+
+        with open_verified_dir(self._root, self._root_identity) as vroot:
+            return self._provider.observe(vroot, self._policy)
+
+    def _probe_exhaustion(self) -> tuple[bool, str]:
+        """Probe the kernel hard cap on the arena root through a verified-dir
+        handle (the probe file is created/unlinked ``dir_fd=vroot.fd``)."""
+
+        with open_verified_dir(self._root, self._root_identity) as vroot:
+            return self._provider.probe_exhaustion(vroot, self._policy)
+
     def build_quota_report(
         self,
         resource: RegisteredFile | NativeDirectory | PublicationStage,
         *,
         errno: int | None,
     ) -> QuotaReport:
-        observation = self._provider.observe(self._root, self._policy)
+        observation = self._observe()
         dimension = "inodes" if errno == _errno.EDQUOT and _inode_pressure(observation) else "bytes"
         kind = (
             getattr(resource, "kind", ResourceKind.FILE).value
@@ -530,7 +554,7 @@ class Arena:
         where no one resource is the obvious owner. Errno-only; use
         ``classify_attempt_io`` for a provider failure that lost its errno."""
 
-        observation = self._provider.observe(self._root, self._policy)
+        observation = self._observe()
         dimension = "inodes" if errno == _errno.EDQUOT and _inode_pressure(observation) else "bytes"
         return self._quota_report(
             observation, resource_id="", kind="attempt", dimension=dimension, errno=errno
@@ -554,7 +578,7 @@ class Arena:
         ``provider_quota``, an honest pass-through or typed outcome for
         ``unknown_io``."""
 
-        observation = self._provider.observe(self._root, self._policy)
+        observation = self._observe()
         if errno in _QUOTA_ERRNOS:
             dimension = (
                 "inodes" if errno == _errno.EDQUOT and _inode_pressure(observation) else "bytes"
@@ -562,7 +586,7 @@ class Arena:
             return self._quota_report(
                 observation, resource_id="", kind="attempt", dimension=dimension, errno=errno
             )
-        exhausted, probe_dim = self._provider.probe_exhaustion(self._root, self._policy)
+        exhausted, probe_dim = self._probe_exhaustion()
         if exhausted:
             return self._quota_report(
                 observation,

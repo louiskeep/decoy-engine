@@ -39,6 +39,8 @@ from __future__ import annotations
 
 import os
 import stat as _stat
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -155,70 +157,125 @@ def _reject_unsafe_name(name: str) -> None:
         raise ScratchPathUnsafe(message="capability target is not a single safe path component")
 
 
-def verify_target_identity(
+@dataclass(frozen=True, slots=True)
+class VerifiedDir:
+    """An open ``O_RDONLY|O_NOFOLLOW|O_DIRECTORY`` descriptor whose
+    ``(st_dev, st_ino)`` has been ``fstat``-verified. The operation runs on
+    ``fd`` (and ``*at`` calls anchored to it); ``path`` is diagnostic only and is
+    never passed to an ``os.*`` call."""
+
+    fd: int
+    identity: Identity
+    path: Path
+
+
+@dataclass(frozen=True, slots=True)
+class VerifiedChild:
+    """An open, verified parent ``dir_fd`` plus the single-component child name
+    and the child's pinned identity/mode. The operation acts on ``name`` only via
+    ``*at(..., dir_fd=parent_fd)`` calls; the parent fd stays open for the life of
+    the surrounding context."""
+
+    parent_fd: int
+    name: str
+    parent_identity: Identity
+    identity: Identity
+    expected_mode: int
+
+
+@contextmanager
+def open_verified_dir(
+    path: Path, expected_identity: Identity | None = None, *, require_owner: bool = True
+) -> Iterator[VerifiedDir]:
+    """Open ``path`` as a directory ``O_RDONLY|O_NOFOLLOW|O_DIRECTORY`` and yield
+    an ``fstat``-verified handle, so the caller runs every subsequent syscall on
+    the open ``fd`` and never re-resolves the path string. A symlink at the final
+    component trips ``O_NOFOLLOW``; a changed ``(st_dev, st_ino)`` (when an
+    expected identity is pinned) or wrong owner fails closed with
+    ``ScratchPathUnsafe``. ``require_owner`` is relaxed for a caller-owned
+    publication destination parent, where the pinned identity, not ownership, is
+    the guard."""
+
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_DIRECTORY)
+    except OSError:
+        raise ScratchPathUnsafe(message="directory failed use-time verification") from None
+    try:
+        st = os.fstat(fd)
+        ident = (st.st_dev, st.st_ino)
+        if expected_identity is not None and ident != expected_identity:
+            raise ScratchPathUnsafe(message="directory identity changed since pinning")
+        if require_owner and st.st_uid != os.geteuid():
+            raise ScratchPathUnsafe(message="directory is not owned by this principal")
+        yield VerifiedDir(fd=fd, identity=ident, path=path)
+    finally:
+        os.close(fd)
+
+
+@contextmanager
+def open_verified_target(
     path: Path,
-    parent_identity: Identity | None,
-    identity: Identity | None,
+    parent_identity: Identity,
+    identity: Identity,
     expected_mode: int,
-) -> None:
-    """Re-verify a capability target against its pinned kernel identity, at the
-    moment of use, closing the TOCTOU window a path-getter leaves open.
+) -> Iterator[VerifiedChild]:
+    """Open and verify a capability target, yielding a ``VerifiedChild`` whose
+    parent ``dir_fd`` stays open for the caller's ``*at`` operation (reclaim,
+    stat, delete). The child is resolved relative to the ``fstat``-verified
+    parent fd ``O_NOFOLLOW``, its ``(st_dev, st_ino)`` from both ``fstat`` and a
+    ``dir_fd``-relative ``lstat`` must equal the pinned identity, and its owner
+    and mode must be unchanged. Any mismatch or ``OSError`` fails closed with
+    ``ScratchPathUnsafe``. The parent is not required to be owned by this
+    principal (a publication destination is caller-owned); the pinned identity is
+    the guard."""
 
-    An adopted/pre-activation capability pins no identity (``None``); there is
-    nothing to re-verify, so this returns and the caller uses the stored path as
-    before. For a qualified-arena capability it opens the parent
-    ``O_RDONLY|O_NOFOLLOW|O_DIRECTORY``, asserts the parent ``(st_dev, st_ino)``
-    is unchanged, then opens the child relative to that pinned parent fd
-    ``O_NOFOLLOW`` (``O_DIRECTORY`` for a directory target), and asserts the
-    child ``(st_dev, st_ino)`` from both ``fstat`` and a ``dir_fd``-relative
-    ``lstat`` still equals the pinned identity, that it is owned by this
-    principal, and that its mode (type + permission) is unchanged. Any mismatch
-    or ``OSError`` (a symlink swapped in trips ``O_NOFOLLOW``) fails closed with
-    ``ScratchPathUnsafe``. The parent is NOT required to be owned by this
-    principal: a publication destination is a caller-owned directory, and the
-    pinned ``(st_dev, st_ino)`` identity is what defeats a parent swap, not its
-    ownership.
-    """
-
-    if identity is None or parent_identity is None:
-        return
     _reject_unsafe_name(path.name)
     expect_dir = _stat.S_ISDIR(expected_mode)
-    parent_fd = -1
-    child_fd = -1
-    try:
-        parent_fd = os.open(path.parent, os.O_RDONLY | os.O_NOFOLLOW | os.O_DIRECTORY)
-        pst = os.fstat(parent_fd)
-        if (pst.st_dev, pst.st_ino) != parent_identity:
-            raise ScratchPathUnsafe(message="capability parent identity changed since allocation")
-        lst = os.lstat(path.name, dir_fd=parent_fd)
-        child_flags = os.O_RDONLY | os.O_NOFOLLOW | (os.O_DIRECTORY if expect_dir else 0)
-        child_fd = os.open(path.name, child_flags, dir_fd=parent_fd)
-        cst = os.fstat(child_fd)
+    with open_verified_dir(path.parent, parent_identity, require_owner=False) as parent:
+        try:
+            lst = os.lstat(path.name, dir_fd=parent.fd)
+            child_flags = os.O_RDONLY | os.O_NOFOLLOW | (os.O_DIRECTORY if expect_dir else 0)
+            child_fd = os.open(path.name, child_flags, dir_fd=parent.fd)
+            try:
+                cst = os.fstat(child_fd)
+            finally:
+                os.close(child_fd)
+        except OSError:
+            raise ScratchPathUnsafe(
+                message="capability target failed use-time verification"
+            ) from None
         if (cst.st_dev, cst.st_ino) != identity or (lst.st_dev, lst.st_ino) != identity:
             raise ScratchPathUnsafe(message="capability target identity changed since allocation")
         if cst.st_uid != os.geteuid():
             raise ScratchPathUnsafe(message="capability target is not owned by this principal")
         if cst.st_mode != expected_mode:
             raise ScratchPathUnsafe(message="capability target type or mode changed")
-    except ScratchPathUnsafe:
-        raise
-    except OSError:
-        raise ScratchPathUnsafe(message="capability target failed use-time verification") from None
-    finally:
-        if child_fd >= 0:
-            os.close(child_fd)
-        if parent_fd >= 0:
-            os.close(parent_fd)
+        yield VerifiedChild(
+            parent_fd=parent.fd,
+            name=path.name,
+            parent_identity=parent_identity,
+            identity=identity,
+            expected_mode=expected_mode,
+        )
 
 
-def _verify_capability_target(capability: _Capability) -> None:
-    verify_target_identity(
+def _verify_capability_at_use(capability: _Capability) -> None:
+    """Re-verify a capability target at use time by entering and immediately
+    leaving ``open_verified_target``. Used only by ``unwrap_path`` / ``unwrap_dir``
+    for native-library callers that need a ``char*`` path: those re-resolve the
+    returned string, so a narrow residual window remains (documented in the plan
+    threat model). A Python writer uses ``open_capability_fd`` instead, which acts
+    on the open descriptor with no re-resolution."""
+
+    if capability._identity is None or capability._parent_identity is None:
+        return
+    with open_verified_target(
         _target_path(capability),
         capability._parent_identity,
         capability._identity,
         capability._expected_mode,
-    )
+    ):
+        pass
 
 
 def unwrap_path(capability: RegisteredFile | PublicationStage) -> Path:
@@ -234,7 +291,7 @@ def unwrap_path(capability: RegisteredFile | PublicationStage) -> Path:
     with no path re-resolution after the check.
     """
 
-    _verify_capability_target(capability)
+    _verify_capability_at_use(capability)
     if isinstance(capability, RegisteredFile):
         return capability._writable_path
     return capability._stage_path
@@ -244,7 +301,7 @@ def unwrap_dir(capability: NativeDirectory) -> Path:
     """Return the native-library-writable directory a capability authorizes,
     after re-verifying its pinned identity at use time."""
 
-    _verify_capability_target(capability)
+    _verify_capability_at_use(capability)
     return capability._native_root
 
 
@@ -288,10 +345,15 @@ def open_capability_fd(
         )
         fd = os.open(path.name, open_flags, dir_fd=parent_fd)
         cst = os.fstat(fd)
-        if identity is not None and (cst.st_dev, cst.st_ino) != identity:
-            raise ScratchPathUnsafe(message="capability target identity changed since allocation")
-        if cst.st_uid != os.geteuid():
-            raise ScratchPathUnsafe(message="capability target is not owned by this principal")
+        if identity is not None:
+            if (cst.st_dev, cst.st_ino) != identity:
+                raise ScratchPathUnsafe(
+                    message="capability target identity changed since allocation"
+                )
+            if cst.st_mode != capability._expected_mode:
+                raise ScratchPathUnsafe(message="capability target type or mode changed")
+            if cst.st_uid != os.geteuid():
+                raise ScratchPathUnsafe(message="capability target is not owned by this principal")
     except ScratchPathUnsafe:
         if fd >= 0:
             os.close(fd)

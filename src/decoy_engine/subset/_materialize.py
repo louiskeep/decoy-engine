@@ -23,7 +23,12 @@ from pathlib import Path
 
 import polars as pl
 
-from decoy_engine.scratch import ArenaLike, native_dir_path
+from decoy_engine.scratch import (
+    ArenaLike,
+    ScratchQuotaExceeded,
+    native_dir_path,
+    provider_io_report,
+)
 from decoy_engine.subset._errors import SubsetConfigError, SubsetInternalError
 from decoy_engine.subset._keys import RI
 from decoy_engine.subset._types import SubsetSource
@@ -80,6 +85,21 @@ def materialize_subset(
                 message=f"table {table!r}: wrote {frame.height} rows but expected "
                 f"{len(idx)} survivors",
             )
-        frame.write_parquet(out_path)
+        try:
+            frame.write_parquet(out_path)
+        except (OSError, pl.exceptions.PolarsError) as exc:
+            # F25 T14: a kernel quota trip during the parquet write stops the
+            # attempt with the shared typed report. polars surfaces EDQUOT as a
+            # PolarsError with no Python errno, so classification falls to the
+            # bounded kernel probe (provider-quota evidence); a plain OSError
+            # keeps its errno. Without an injected arena there is no ledger to
+            # classify against and the original error propagates unchanged.
+            errno_val = exc.errno if isinstance(exc, OSError) else None
+            report = provider_io_report(scratch_arena, errno=errno_val)
+            if report is not None and report.evidence in ("errno", "provider_quota"):
+                raise ScratchQuotaExceeded(
+                    report=report, message="kernel hard quota exceeded"
+                ) from exc
+            raise
         written.append((table, str(out_path)))
     return tuple(written)

@@ -68,6 +68,7 @@ from decoy_engine.scratch import (  # noqa: E402
     unwrap_dir,
     unwrap_path,
 )
+from decoy_engine.scratch._capabilities import open_verified_dir  # noqa: E402
 
 _QUOTA_ROOT = os.environ.get("DECOY_F25_QUOTA_ROOT")
 _CONTROL_ROOT = os.environ.get("DECOY_F25_CONTROL_ROOT")
@@ -242,7 +243,8 @@ def test_carried4_probe_reads_real_kernel_byte_exhaustion(manager: ScratchManage
         os.close(fd)
     # The arena root is now at its hard byte cap.
     root = Path(arena.capability.approved_root)
-    exhausted, dimension = provider.probe_exhaustion(root, _make_policy())
+    with open_verified_dir(root) as vroot:
+        exhausted, dimension = provider.probe_exhaustion(vroot, _make_policy())
     assert exhausted is True
     assert dimension in ("bytes", "inodes")
     report = arena.classify_attempt_io(errno=None)
@@ -265,9 +267,8 @@ def test_carried4_probe_reads_real_kernel_inode_exhaustion(manager: ScratchManag
         except OSError as exc:
             assert exc.errno == errno.EDQUOT
             break
-    exhausted, dimension = provider.probe_exhaustion(
-        Path(arena.capability.approved_root), _make_policy()
-    )
+    with open_verified_dir(Path(arena.capability.approved_root)) as vroot:
+        exhausted, dimension = provider.probe_exhaustion(vroot, _make_policy())
     assert exhausted is True
     assert dimension in ("inodes", "bytes")
 
@@ -321,18 +322,22 @@ def test_t16_fixed_width_byte_quota_raises_typed_report(manager: ScratchManager)
     report = excinfo.value.report
     assert report.effective_bytes_cap == _QUOTA_BYTES
     assert report.dimension in ("bytes", "inodes")
-    assert report.evidence in ("errno", "provider_quota")
+    # T16 writes the staged file with raw Python writes, so the kernel EDQUOT is
+    # preserved and routed by errno (route_write_failure). The tightened contract
+    # is the typed report via the errno tier, not a probe (provider_quota).
+    assert report.evidence == "errno"
     assert not out.exists(), "no fixed-width output may be published past the cap"
 
 
-def test_t14_subset_materialize_byte_quota_stops(manager: ScratchManager) -> None:
-    """T14: the subset materializer (a non-routing writer: polars write_parquet)
-    must have the kernel boundary hold -- a write past the cap fails with a
-    quota error (polars wraps the kernel EDQUOT, os error 122, in its own
-    ``PolarsError`` rather than a Python ``OSError``). The materializer has no
-    atomic contract of its own (the stage discard is ``run_subset``'s job), so
-    this unit proves the boundary, not durability."""
-    pl = pytest.importorskip("polars")
+def test_t14_subset_materialize_byte_quota_raises_typed_report(manager: ScratchManager) -> None:
+    """T14: the subset materializer now routes a kernel quota trip to the shared
+    typed report (it no longer leaks a bare ``PolarsError``/``OSError``). polars
+    wraps the kernel EDQUOT (os error 122) in its own ``PolarsError`` with no
+    Python errno, so classification falls to the bounded kernel probe and the
+    evidence is ``provider_quota``. The old weak assertion accepted any
+    ``OSError``/``PolarsError``; the tightened contract requires the typed
+    report."""
+    pytest.importorskip("polars")
     from decoy_engine.subset._materialize import materialize_subset
     from decoy_engine.subset._types import SubsetSource
 
@@ -345,27 +350,29 @@ def test_t14_subset_materialize_byte_quota_stops(manager: ScratchManager) -> Non
         pq.write_table(_incompressible(_QUOTA_BYTES * 4), src)
         nrows = pq.read_metadata(src).num_rows
         out_dir = Path(_QUOTA_ROOT) / "t14_out"
-        with pytest.raises((OSError, pl.exceptions.PolarsError)) as excinfo:
+        with pytest.raises(ScratchQuotaExceeded) as excinfo:
             materialize_subset(
                 sources={"t": SubsetSource(path=str(src), format="parquet")},
                 survivors={"t": frozenset(range(nrows))},
                 output_dir=out_dir,
                 scratch_arena=arena,
             )
-        msg = str(excinfo.value).lower()
-        assert (
-            "quota" in msg
-            or "122" in msg
-            or getattr(excinfo.value, "errno", None) in (errno.EDQUOT, errno.ENOSPC)
-        ), f"write failure is not a quota trip: {excinfo.value!r}"
+        report = excinfo.value.report
+        assert report.effective_bytes_cap == _QUOTA_BYTES
+        assert report.evidence == "provider_quota"
+        # The materializer has no atomic contract of its own (the stage discard is
+        # run_subset's job), so a partial file may remain; this unit proves the
+        # quota boundary surfaces as the typed report, not durability.
     finally:
         shutil.rmtree(src_tmp, ignore_errors=True)
 
 
-def test_t15_quarantine_stage_byte_quota_stops_unpublished(manager: ScratchManager) -> None:
-    """T15: the quarantine sidecar (a raw-OSError writer: raw fh.write of JSONL,
-    no quota routing) must have the kernel boundary hold -- the staged write fails
-    with EDQUOT/ENOSPC and nothing is published to output_path."""
+def test_t15_quarantine_stage_byte_quota_raises_typed_report(manager: ScratchManager) -> None:
+    """T15: the quarantine sidecar now routes its staged-write quota trip to the
+    shared typed report (it no longer leaks a bare ``OSError``). The JSONL is
+    written with raw Python writes, so the kernel EDQUOT is preserved and routed
+    by errno; the tightened contract is the typed report via the errno tier, and
+    nothing is published to output_path."""
     from decoy_engine.execution._transactional_sink import ParquetTransactionalSink
     from decoy_engine.quarantine import finalize_committed_quarantine
 
@@ -379,7 +386,7 @@ def test_t15_quarantine_stage_byte_quota_stops_unpublished(manager: ScratchManag
         {"table": "t", "column": "c", "row_index": i, "trigger": "x", "reason": big}
         for i in range(_QUOTA_BYTES * 3 // 4096)
     ]
-    with pytest.raises(OSError) as excinfo:
+    with pytest.raises(ScratchQuotaExceeded) as excinfo:
         finalize_committed_quarantine(
             sink=sink,
             is_genuine_transactional_sink=True,
@@ -389,7 +396,7 @@ def test_t15_quarantine_stage_byte_quota_stops_unpublished(manager: ScratchManag
             counts_by_trigger={"x": len(entries)},
             scratch_arena=arena,
         )
-    assert excinfo.value.errno in (errno.EDQUOT, errno.ENOSPC)
+    assert excinfo.value.report.evidence == "errno"
     assert not Path(output_path).exists(), "no quarantine sidecar may be published past the cap"
 
 
@@ -415,7 +422,9 @@ def test_t12_isolated_run_source_staging_byte_quota_typed_report(
     report = excinfo.value.report
     assert report.effective_bytes_cap == _QUOTA_BYTES
     assert report.dimension in ("bytes", "inodes")
-    assert report.evidence in ("errno", "provider_quota")
+    # T12 stages sources with pyarrow pq.write_table, which preserves the kernel
+    # EDQUOT errno, so route_write_failure classifies by the errno tier.
+    assert report.evidence == "errno"
 
 
 def test_t13_errno_less_copy_classifies_provider_quota_on_real_kernel(

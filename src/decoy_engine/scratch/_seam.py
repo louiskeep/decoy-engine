@@ -46,6 +46,7 @@ from decoy_engine.scratch._capabilities import (
     NativeDirectory,
     PublicationStage,
     RegisteredFile,
+    open_capability_fd,
     unwrap_dir,
     unwrap_path,
 )
@@ -277,9 +278,22 @@ def ensure_publication_file(
     if allocate_publication is not None:
         cap: PublicationStage = allocate_publication(destination, retention_owner)
         stage = unwrap_path(cap)
-        fd, name = tempfile.mkstemp(prefix=fallback_prefix, suffix=fallback_suffix, dir=stage)
-        os.close(fd)
-        return Path(name), cap
+        # Create the staged file relative to the verified stage directory fd, not
+        # via tempfile.mkstemp on the unwrapped path string (that would re-resolve
+        # the stage path, an in-package TOCTOU even on a qualified arena).
+        child = f"{fallback_prefix}{uuid.uuid4().hex}{fallback_suffix}"
+        stage_fd = open_capability_fd(cap)
+        try:
+            fd = os.open(
+                child,
+                os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW,
+                0o600,
+                dir_fd=stage_fd,
+            )
+            os.close(fd)
+        finally:
+            os.close(stage_fd)
+        return stage / child, cap
     fallback_dir.mkdir(parents=True, exist_ok=True)
     fd, name = tempfile.mkstemp(prefix=fallback_prefix, suffix=fallback_suffix, dir=fallback_dir)
     os.close(fd)

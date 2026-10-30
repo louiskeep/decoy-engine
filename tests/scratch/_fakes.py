@@ -17,23 +17,28 @@ from __future__ import annotations
 from pathlib import Path
 
 from decoy_engine.scratch._authority import AuthorityUnavailable, ReapVerdict
+from decoy_engine.scratch._capabilities import VerifiedDir
 from decoy_engine.scratch._local_provider import KernelProjectQuotaProvider
 from decoy_engine.scratch._policy import AuthorityMode, LeaseIdentity, ScratchPolicy
 from decoy_engine.scratch._reports import QualificationResult, QuotaObservation
 
 
 class QualifiedTmpfsProvider(KernelProjectQuotaProvider):
-    """A provider that behaves like the real one but treats any existing
-    directory as a qualified backend. For dev-box logic tests only."""
+    """A provider that behaves like the real one but treats any already-verified
+    directory as a qualified backend. For dev-box logic tests only. ``qualify`` /
+    ``verify_quota`` / ``observe`` / ``probe_exhaustion`` / ``create_arena`` /
+    ``reclaim`` all operate on the verified descriptor handles the manager opens,
+    exactly like the real provider; only the kernel project-quota checks are
+    skipped (no project quota on a dev tmpdir; the real ones run on the GCP host)."""
 
-    def qualify(self, root: Path) -> QualificationResult:
-        ok = root.exists() and root.is_dir()
-        reasons = () if ok else ("arena root is not an existing directory",)
+    def qualify(self, root: VerifiedDir) -> QualificationResult:
+        # The manager already opened and verified ``root`` as a directory; the
+        # dev tmpdir carries no project quota, so qualification is unconditional.
         return QualificationResult(
-            qualified=ok, profile=self.profile.value, reasons=reasons, encryption_verified=False
+            qualified=True, profile=self.profile.value, reasons=(), encryption_verified=False
         )
 
-    def verify_quota(self, arena: Path, policy: ScratchPolicy) -> QuotaObservation:
+    def verify_quota(self, arena: VerifiedDir, policy: ScratchPolicy) -> QuotaObservation:
         # Skip the kernel project-id check (no project quota on a dev tmpdir);
         # the real verify_quota is exercised on the GCP quota host.
         return self.observe(arena, policy)

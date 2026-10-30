@@ -69,7 +69,7 @@ ALLOWLIST: dict[str, int] = {
     # quota-report builders in one cohesive allocator. The fs-identity primitives
     # are kept here (not split out) because the scratch tests monkeypatch this
     # module's `os`; split the quota-report builders into _quota_report.py next.
-    "src/decoy_engine/scratch/_arena.py": 653,
+    "src/decoy_engine/scratch/_arena.py": 677,
     # sampler start/finish and evidence threading in _spawn_and_classify; F25 T11 attempt-arena work-root allocation + capability-fd transport. Split the spawn/classify half into _isolated_spawn.py.
     "src/decoy_engine/execution/_isolated_run.py": 675,
     # bounded-eligible fit rule, the fk-dtype retention branch and the D3a validator admission in decide_execution_route; split the route-priority docstring into the plan doc.
@@ -127,7 +127,7 @@ ALLOWLIST: dict[str, int] = {
     # cross-column V1 folds joint_mask key_by into the source-anchor build (a comment, no new logic).
     "src/decoy_engine/execution/_sequential.py": 691,
     # transactional publish hardening and row mask; F25 T15 staged-quarantine publication arena. Split the publish cluster.
-    "src/decoy_engine/quarantine.py": 678,
+    "src/decoy_engine/quarantine.py": 686,
     # code_set provenance and FF1 notice plumbing through the streaming runner; F25 attempt-arena threading (T01)
     # + the OOC EDQUOT reraise call at the run choke point. Near the hard max; decompose the per-table loop next.
     "src/decoy_engine/execution/out_of_core/_runner.py": 699,

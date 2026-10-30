@@ -33,7 +33,9 @@ from decoy_engine.scratch import (
     ScratchOwnershipError,
     ScratchPathUnsafe,
     TargetLockAuthority,
+    unwrap_dir,
 )
+from decoy_engine.scratch._capabilities import VerifiedChild, open_verified_dir
 from tests.scratch._fakes import (
     FakeAuthority,
     FakePlatformClient,
@@ -132,19 +134,26 @@ def test_a01_opaque_name_is_never_a_path_component(tmp_path: Path) -> None:
 
 
 def test_a01_provider_rejects_traversal_arena_id(tmp_path: Path) -> None:
+    # Provider signature changed (argon class-fix): create_arena takes a verified
+    # root descriptor, not a bare Path. The traversal rejection is unchanged.
     provider = KernelProjectQuotaProvider()
     with pytest.raises(ScratchPathUnsafe):
-        provider.create_arena(tmp_path, "../escape")
+        with open_verified_dir(tmp_path) as vroot:
+            provider.create_arena(vroot, "../escape")
 
 
 def test_a01_provider_rejects_symlinked_root(tmp_path: Path) -> None:
+    # A symlinked root is now refused when the manager opens it O_NOFOLLOW
+    # (open_verified_dir), before create_arena runs; the rejection is the same
+    # ScratchPathUnsafe, raised one step earlier at the verified-open boundary.
     real = tmp_path / "real"
     real.mkdir()
     link = tmp_path / "link"
     link.symlink_to(real)
     provider = KernelProjectQuotaProvider()
     with pytest.raises(ScratchPathUnsafe):
-        provider.create_arena(link, "arena1")
+        with open_verified_dir(link) as vroot:
+            provider.create_arena(vroot, "arena1")
 
 
 # --- A03 accounting: one attempt budget, no per-connection multiplication ---
@@ -176,7 +185,8 @@ def test_a13_real_provider_fails_closed_without_project_quota(tmp_path: Path) ->
     stage.mkdir()
     real_provider = KernelProjectQuotaProvider()
     manager, _ = _open_pool(tmp_path)
-    qual = real_provider.qualify(stage)
+    with open_verified_dir(stage) as vstage:
+        qual = real_provider.qualify(vstage)
     assert not qual.qualified
     with pytest.raises(ScratchBackendUnavailable):
         manager.open_attempt(make_policy(stage), real_provider, FakeAuthority())
@@ -324,9 +334,32 @@ def test_release_deletes_and_reports(tmp_path: Path) -> None:
     manager.close()
 
 
+def test_release_handles_both_file_and_directory_targets(tmp_path: Path) -> None:
+    """Reclaim branches on file vs directory (argon): a RegisteredFile is unlinked
+    (the old shutil.rmtree would raise NotADirectoryError on a plain file and
+    leave every file permanently un-releasable), a NativeDirectory tree is torn
+    down FD-relative. Both confirm DELETED."""
+    manager, arena = _open_attempt(tmp_path)
+    rf = arena.allocate_file(ResourceKind.FILE, "f")
+    nd = arena.allocate_native_dir(ResourceKind.NATIVE_DIR, "d")
+    # Put a child inside the directory so the tree branch is exercised.
+    (unwrap_dir(nd) / "inner.bin").write_bytes(b"x" * 16)
+
+    file_report = arena.release(rf)
+    dir_report = arena.release(nd)
+    assert file_report.disposition is Disposition.DELETED
+    assert dir_report.disposition is Disposition.DELETED
+    for cap in (rf, nd):
+        row = manager.ledger.get_resource(cap.resource_id)
+        assert row is not None and row.state is ResourceState.REAPED
+    manager.close()
+
+
 def test_release_retains_on_failed_reclaim(tmp_path: Path) -> None:
     class StubbornProvider(QualifiedTmpfsProvider):
-        def reclaim(self, arena: Path) -> tuple[bool, int, int]:
+        # Provider signature changed (argon class-fix): reclaim takes a
+        # VerifiedChild; the stubborn (False, retained...) behavior is unchanged.
+        def reclaim(self, target: VerifiedChild) -> tuple[bool, int, int]:
             return (False, 4096, 1)
 
     stage = tmp_path / "stage"

@@ -56,6 +56,7 @@ from decoy_engine.scratch import (
     ensure_publication_stage,
     ensure_scratch_file,
     release_resource,
+    route_write_failure,
 )
 from decoy_engine.validators._types import QuarantineSummary
 
@@ -622,7 +623,14 @@ def finalize_committed_quarantine(
             )
             stage_dir = Path(stage_path)
         try:
-            staged = write_jsonl_staged(output_path, entries, staging_dir=stage_dir)
+            try:
+                staged = write_jsonl_staged(output_path, entries, staging_dir=stage_dir)
+            except OSError as exc:
+                # F25 T15: a kernel quota trip while staging the sidecar stops the
+                # attempt with the shared typed report (errno path: the raw JSONL
+                # write preserves EDQUOT/ENOSPC). With no injected arena the
+                # original OSError propagates unchanged.
+                route_write_failure(scratch_arena, stage_cap, exc)
             try:
                 publish_staged_jsonl(staged, output_path)
             except BaseException:

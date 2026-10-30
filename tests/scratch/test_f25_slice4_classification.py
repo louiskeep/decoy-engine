@@ -30,6 +30,7 @@ from decoy_engine.scratch import (
     ScratchPathUnsafe,
     unwrap_path,
 )
+from decoy_engine.scratch._capabilities import open_verified_dir
 from decoy_engine.scratch._local_provider import KernelProjectQuotaProvider
 from tests.scratch._fakes import FakeAuthority, QualifiedTmpfsProvider, make_policy
 
@@ -43,7 +44,7 @@ class _ExhaustedProvider(QualifiedTmpfsProvider):
     def __init__(self, dimension: str = "bytes") -> None:
         self._dimension = dimension
 
-    def probe_exhaustion(self, arena: Path, policy) -> tuple[bool, str]:  # type: ignore[no-untyped-def]
+    def probe_exhaustion(self, arena: object, policy: object) -> tuple[bool, str]:  # type: ignore[override]
         return True, self._dimension
 
 
@@ -272,7 +273,8 @@ def test_reference_provider_probe_finds_headroom_on_plain_dir(tmp_path: Path) ->
     policy = make_policy(tmp_path)
     arena_dir = tmp_path / "arena"
     arena_dir.mkdir(mode=0o700)
-    exhausted, _dim = provider.probe_exhaustion(arena_dir, policy)
+    with open_verified_dir(arena_dir) as varena:
+        exhausted, _dim = provider.probe_exhaustion(varena, policy)
     assert exhausted is False
 
 
@@ -355,12 +357,13 @@ def test_quota_probe_filename_is_unpredictable(tmp_path: Path, monkeypatch) -> N
     seen: list[str] = []
     real_open = lp.os.open
 
-    def _capture_open(path, flags, mode=0o777):  # type: ignore[no-untyped-def]
+    def _capture_open(path, flags, mode=0o777, *, dir_fd=None):  # type: ignore[no-untyped-def]
         seen.append(os.path.basename(os.fspath(path)))
-        return real_open(path, flags, mode)
+        return real_open(path, flags, mode, dir_fd=dir_fd)
 
     monkeypatch.setattr(lp.os, "open", _capture_open)
-    provider.probe_exhaustion(arena_dir, policy)
+    with open_verified_dir(arena_dir) as varena:
+        provider.probe_exhaustion(varena, policy)
 
     probe_names = [n for n in seen if n.startswith(".decoy-quota-probe-")]
     assert probe_names, "probe did not create a probe file"

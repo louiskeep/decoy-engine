@@ -32,10 +32,16 @@ import errno as _errno
 import fcntl
 import os
 import secrets
-import shutil
+import stat as _stat
 import struct
 from pathlib import Path
 
+from decoy_engine.scratch._capabilities import (
+    DIR_MODE,
+    Identity,
+    VerifiedChild,
+    VerifiedDir,
+)
 from decoy_engine.scratch._errors import ScratchBackendUnavailable, ScratchPathUnsafe
 from decoy_engine.scratch._policy import ScratchPolicy, StorageProfile
 from decoy_engine.scratch._reports import QualificationResult, QuotaObservation
@@ -50,41 +56,58 @@ _PROBE_EDQUOT = _errno.EDQUOT
 _PROBE_ENOSPC = _errno.ENOSPC
 
 
-def _read_fsxattr(path: Path) -> tuple[int, int]:
-    """Return ``(projid, xflags)`` from the inode's FS_IOC_FSGETXATTR.
+# Lifecycle filesystem calls that must execute relative to a verified descriptor.
+# os.supports_dir_fd lists os.stat (os.lstat is its follow_symlinks=False variant
+# and shares the same dir_fd capability), os.open, os.mkdir, os.unlink, os.rmdir.
+# os.fstat / os.fchmod are unconditional fd builtins on POSIX, not members of
+# os.supports_fd (which is the optional-fd-as-path set), so they are not checked.
+_REQUIRED_DIR_FD = frozenset({os.open, os.mkdir, os.stat, os.unlink, os.rmdir})
 
-    Readable by the owning user; no privilege required. Lets the engine confirm
-    the deployment adapter tagged the arena with a project id + inheritance flag.
+
+def _dir_fd_support_reasons() -> tuple[str, ...]:
+    """Reasons the host cannot enforce the fd-relative boundary, or empty when it
+    can. The provider targets Linux; a platform without ``dir_fd`` support for
+    these lifecycle calls cannot bind operations to a verified descriptor, so it
+    fails closed instead of silently degrading to path ops."""
+
+    if not os.supports_dir_fd >= _REQUIRED_DIR_FD:
+        return ("os does not support dir_fd for the lifecycle calls",)
+    return ()
+
+
+def _read_fsxattr(fd: int) -> tuple[int, int]:
+    """Return ``(projid, xflags)`` from an OPEN inode's FS_IOC_FSGETXATTR.
+
+    Operates on the already-verified ``fd``; it never re-opens a path. Readable by
+    the owning user with no privilege, so the engine can confirm the deployment
+    adapter tagged the arena with a project id + inheritance flag.
     """
 
     buf = bytearray(28)
-    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_DIRECTORY)
-    try:
-        fcntl.ioctl(fd, _FS_IOC_FSGETXATTR, buf, True)
-    finally:
-        os.close(fd)
+    fcntl.ioctl(fd, _FS_IOC_FSGETXATTR, buf, True)
     xflags, _extsize, _nextents, projid = struct.unpack_from("=IIII", buf, 0)
     return projid, xflags
 
 
-def _mount_options_for(path: Path) -> str:
-    """Return the mount options of the filesystem holding ``path`` (longest
-    matching mountpoint in /proc/mounts)."""
+def _mount_options_for_dev(st_dev: int) -> str:
+    """Return the combined per-mount and superblock options of the filesystem
+    whose device is ``st_dev``, matched by ``major:minor`` in
+    ``/proc/self/mountinfo``. Device identity comes from ``fstat`` on the verified
+    fd, so there is no path to re-resolve; ``prjquota`` lives in the superblock
+    options (the fields after the ``-`` separator)."""
 
-    target = os.path.realpath(path)
-    best_mount = ""
-    best_opts = ""
-    with open("/proc/mounts", encoding="utf-8") as handle:
+    want = f"{os.major(st_dev)}:{os.minor(st_dev)}"
+    opts = ""
+    with open("/proc/self/mountinfo", encoding="utf-8") as handle:
         for line in handle:
-            parts = line.split()
-            if len(parts) < 4:
+            fields = line.split()
+            if len(fields) < 7 or fields[2] != want:
                 continue
-            mountpoint, opts = parts[1], parts[3]
-            if (target == mountpoint or target.startswith(mountpoint.rstrip("/") + "/")) and len(
-                mountpoint
-            ) >= len(best_mount):
-                best_mount, best_opts = mountpoint, opts
-    return best_opts
+            per_mount = fields[5]
+            sep = fields.index("-")
+            superblock = fields[sep + 3] if len(fields) > sep + 3 else ""
+            opts = f"{per_mount},{superblock}"
+    return opts
 
 
 class KernelProjectQuotaProvider:
@@ -92,18 +115,14 @@ class KernelProjectQuotaProvider:
 
     profile = StorageProfile.LINUX_EXT4_FSCRYPT_PRJQUOTA
 
-    def qualify(self, root: Path) -> QualificationResult:
-        reasons: list[str] = []
-        if not root.exists() or not root.is_dir():
-            reasons.append("arena root is not an existing directory")
-            return QualificationResult(
-                qualified=False, profile=self.profile.value, reasons=tuple(reasons)
-            )
-        opts = _mount_options_for(root)
+    def qualify(self, root: VerifiedDir) -> QualificationResult:
+        reasons: list[str] = list(_dir_fd_support_reasons())
+        st = os.fstat(root.fd)
+        opts = _mount_options_for_dev(st.st_dev)
         if "prjquota" not in opts.split(",") and "project" not in opts.split(","):
             reasons.append("mount does not enforce project quota (no prjquota option)")
         try:
-            projid, xflags = _read_fsxattr(root)
+            projid, xflags = _read_fsxattr(root.fd)
         except OSError as exc:
             reasons.append(f"cannot read project attributes: errno {exc.errno}")
             projid, xflags = 0, 0
@@ -118,37 +137,38 @@ class KernelProjectQuotaProvider:
             encryption_verified=False,
         )
 
-    def create_arena(self, root: Path, arena_id: str) -> Path:
-        # Reject a symlinked root before resolving it, so a swapped-in symlink
-        # cannot redirect the arena to another mount (plan 1.5 mount substitution).
-        if os.path.islink(root):
-            raise ScratchPathUnsafe(message="arena root is a symlink")
-        root = root.resolve()
-        root_stat = os.stat(root)
-        # A generated opaque component, never a table/tenant name (plan 1.5).
+    def create_arena(self, root: VerifiedDir, arena_id: str) -> tuple[Path, Identity]:
+        # A generated opaque component, never a table/tenant name (plan 1.5). The
+        # child is created, chmod'd and verified entirely relative to the verified
+        # root fd, so a swapped-in symlink at the root cannot redirect it.
         if "/" in arena_id or arena_id in ("", ".", ".."):
             raise ScratchPathUnsafe(message="arena id is not a single safe path component")
-        child = root / arena_id
         try:
-            # O_NOFOLLOW on the parent, then mkdir the child with a tight mode.
-            os.mkdir(child, mode=0o700)
+            os.mkdir(arena_id, mode=0o700, dir_fd=root.fd)
         except FileExistsError as exc:
             raise ScratchPathUnsafe(message="arena id collides with an existing path") from exc
-        os.chmod(child, 0o700)
-        child_stat = os.lstat(child)
-        if not os.path.samestat(os.stat(child), child_stat) or os.path.islink(child):
-            raise ScratchPathUnsafe(message="arena child changed under us (symlink/race)")
-        if child_stat.st_dev != root_stat.st_dev:
-            raise ScratchPathUnsafe(message="arena child is on a different device (mount swap)")
-        if child_stat.st_uid != os.geteuid():
-            raise ScratchPathUnsafe(message="arena child is not owned by the engine principal")
-        if child_stat.st_mode & 0o777 != 0o700:
-            raise ScratchPathUnsafe(message="arena child mode is not 0700")
-        return child
-
-    def verify_quota(self, arena: Path, policy: ScratchPolicy) -> QuotaObservation:
         try:
-            projid, _xflags = _read_fsxattr(arena)
+            child_fd = os.open(
+                arena_id, os.O_RDONLY | os.O_NOFOLLOW | os.O_DIRECTORY, dir_fd=root.fd
+            )
+        except OSError:
+            raise ScratchPathUnsafe(message="arena child changed under us (symlink/race)") from None
+        try:
+            os.fchmod(child_fd, 0o700)
+            cst = os.fstat(child_fd)
+        finally:
+            os.close(child_fd)
+        if cst.st_dev != root.identity[0]:
+            raise ScratchPathUnsafe(message="arena child is on a different device (mount swap)")
+        if cst.st_uid != os.geteuid():
+            raise ScratchPathUnsafe(message="arena child is not owned by the engine principal")
+        if cst.st_mode != DIR_MODE:
+            raise ScratchPathUnsafe(message="arena child mode is not 0700")
+        return root.path / arena_id, (cst.st_dev, cst.st_ino)
+
+    def verify_quota(self, arena: VerifiedDir, policy: ScratchPolicy) -> QuotaObservation:
+        try:
+            projid, _xflags = _read_fsxattr(arena.fd)
         except OSError as exc:
             raise ScratchBackendUnavailable(
                 message="cannot read arena project id",
@@ -161,8 +181,8 @@ class KernelProjectQuotaProvider:
             )
         return self.observe(arena, policy)
 
-    def observe(self, arena: Path, policy: ScratchPolicy) -> QuotaObservation:
-        logical, inodes = _walk_logical(arena)
+    def observe(self, arena: VerifiedDir, policy: ScratchPolicy) -> QuotaObservation:
+        logical, inodes = _walk_logical_fd(arena.fd)
         return QuotaObservation(
             bytes_limit=policy.quota_bytes,
             inodes_limit=policy.quota_inodes,
@@ -171,21 +191,26 @@ class KernelProjectQuotaProvider:
             bytes_used=None,
             inodes_used=inodes,
             logical_bytes=logical,
-            observed_via="fsxattr+walk",
+            observed_via="fsxattr+fwalk",
         )
 
-    def probe_exhaustion(self, arena: Path, policy: ScratchPolicy) -> tuple[bool, str]:
-        # One inode + one filesystem block, created then immediately removed. The
-        # kernel is the authority: EDQUOT/ENOSPC on create is inode pressure, on
-        # the block write it is byte pressure (plan 1.5 item 5). Any other errno
-        # (EACCES, a vanished arena) is not quota evidence, so the caller falls to
-        # the unknown-I/O classification. No logical-length walk is consulted.
-        # Unpredictable exclusive name (not a PID, which can collide or be
-        # pre-created by another process): O_EXCL fails closed on any clash.
-        probe = arena / f".decoy-quota-probe-{secrets.token_hex(16)}"
+    def probe_exhaustion(self, arena: VerifiedDir, policy: ScratchPolicy) -> tuple[bool, str]:
+        # One inode + one filesystem block, created then immediately removed,
+        # entirely relative to the verified arena fd. The kernel is the authority:
+        # EDQUOT/ENOSPC on create is inode pressure, on the block write it is byte
+        # pressure (plan 1.5 item 5). Any other errno (EACCES, a vanished arena) is
+        # not quota evidence, so the caller falls to the unknown-I/O classification.
+        # Unpredictable exclusive name (not a PID, which can collide): O_EXCL fails
+        # closed on any clash.
+        probe = f".decoy-quota-probe-{secrets.token_hex(16)}"
         fd = -1
         try:
-            fd = os.open(probe, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
+            fd = os.open(
+                probe,
+                os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW,
+                0o600,
+                dir_fd=arena.fd,
+            )
         except OSError as exc:
             if exc.errno in (_PROBE_EDQUOT, _PROBE_ENOSPC):
                 return True, "inodes"
@@ -200,33 +225,121 @@ class KernelProjectQuotaProvider:
         finally:
             os.close(fd)
             try:
-                os.unlink(probe)
+                os.unlink(probe, dir_fd=arena.fd)
             except OSError:
                 pass
         return False, ""
 
-    def reclaim(self, arena: Path) -> tuple[bool, int, int]:
-        if not arena.exists():
-            return True, 0, 0
-        logical, inodes = _walk_logical(arena)
+    def reclaim(self, target: VerifiedChild) -> tuple[bool, int, int]:
+        """Delete the verified target, bound to the pinned parent fd. The parent fd
+        is held open by the caller's ``open_verified_target`` context, so there is
+        no path re-resolution between the identity check and the delete."""
+
+        expect_dir = _stat.S_ISDIR(target.expected_mode)
+        if expect_dir:
+            try:
+                child_fd = os.open(
+                    target.name,
+                    os.O_RDONLY | os.O_NOFOLLOW | os.O_DIRECTORY,
+                    dir_fd=target.parent_fd,
+                )
+            except FileNotFoundError:
+                return True, 0, 0
+            except OSError:
+                raise ScratchPathUnsafe(
+                    message="reclaim child could not be opened no-follow"
+                ) from None
+            try:
+                cst = os.fstat(child_fd)
+                if (cst.st_dev, cst.st_ino) != target.identity:
+                    raise ScratchPathUnsafe(message="reclaim child identity changed")
+                logical, inodes = _delete_tree_fd(child_fd)
+            finally:
+                os.close(child_fd)
+            remove = os.rmdir
+        else:
+            try:
+                logical, inodes = os.lstat(target.name, dir_fd=target.parent_fd).st_size, 1
+            except FileNotFoundError:
+                return True, 0, 0
+            remove = os.unlink
         try:
-            shutil.rmtree(arena)
+            remove(target.name, dir_fd=target.parent_fd)
+        except FileNotFoundError:
+            pass
         except OSError:
             return False, logical, inodes
-        confirmed = not arena.exists()
-        return (confirmed, 0, 0) if confirmed else (False, logical, inodes)
+        if _entry_absent(target.parent_fd, target.name):
+            return True, 0, 0
+        return False, logical, inodes
 
 
-def _walk_logical(arena: Path) -> tuple[int, int]:
-    """Diagnostic only: logical byte sum and inode count. Never enforcement."""
+def _entry_absent(dir_fd: int, name: str) -> bool:
+    """True iff ``name`` no longer resolves under the pinned parent fd. Any
+    ``OSError`` other than ``FileNotFoundError`` leaves the fate unconfirmed, so
+    the entry is treated as still present."""
+
+    try:
+        os.lstat(name, dir_fd=dir_fd)
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    return False
+
+
+def _walk_logical_fd(dir_fd: int) -> tuple[int, int]:
+    """Diagnostic only: logical byte sum and inode count, walked FD-relative with
+    ``os.fwalk`` (never ``os.walk`` on a path string). Never enforcement."""
 
     total_bytes = 0
     inodes = 0
-    for dirpath, dirnames, filenames in os.walk(arena):
+    for _dirpath, dirnames, filenames, walk_fd in os.fwalk(dir_fd=dir_fd, follow_symlinks=False):
         inodes += len(dirnames) + len(filenames)
         for name in filenames:
             try:
-                total_bytes += os.lstat(os.path.join(dirpath, name)).st_size
+                total_bytes += os.lstat(name, dir_fd=walk_fd).st_size
+            except OSError:
+                continue
+    return total_bytes, inodes
+
+
+def _delete_tree_fd(dir_fd: int) -> tuple[int, int]:
+    """Delete every child of an open directory fd, FD-relative and no-follow,
+    refusing to cross a device boundary. Returns the ``(logical_bytes, inodes)``
+    removed, so a failed removal still reports a diagnostic charge. Never follows
+    a symlink and never re-resolves a path string."""
+
+    dev = os.fstat(dir_fd).st_dev
+    total_bytes = 0
+    inodes = 0
+    for child in os.listdir(dir_fd):
+        try:
+            st = os.lstat(child, dir_fd=dir_fd)
+        except OSError:
+            continue
+        if st.st_dev != dev:
+            continue
+        inodes += 1
+        if _stat.S_ISDIR(st.st_mode):
+            try:
+                sub = os.open(child, os.O_RDONLY | os.O_NOFOLLOW | os.O_DIRECTORY, dir_fd=dir_fd)
+            except OSError:
+                continue
+            try:
+                sub_bytes, sub_inodes = _delete_tree_fd(sub)
+            finally:
+                os.close(sub)
+            total_bytes += sub_bytes
+            inodes += sub_inodes
+            try:
+                os.rmdir(child, dir_fd=dir_fd)
+            except OSError:
+                continue
+        else:
+            total_bytes += st.st_size
+            try:
+                os.unlink(child, dir_fd=dir_fd)
             except OSError:
                 continue
     return total_bytes, inodes

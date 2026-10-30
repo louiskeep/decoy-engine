@@ -24,6 +24,7 @@ from pathlib import Path
 
 from decoy_engine.scratch._arena import Arena
 from decoy_engine.scratch._authority import AuthorityUnavailable, OwnershipAuthority
+from decoy_engine.scratch._capabilities import open_verified_dir
 from decoy_engine.scratch._errors import ScratchBackendUnavailable
 from decoy_engine.scratch._ledger import ResourceLedger, ResourceRow
 from decoy_engine.scratch._policy import (
@@ -60,8 +61,12 @@ class ScratchManager:
         recording a terminal data-quota breach can never fail on control quota.
         """
 
-        control_arena.mkdir(mode=0o700, parents=True, exist_ok=True)
-        os.chmod(control_arena, 0o700)
+        # Create and verify the control arena relative to its (existing) parent
+        # fd: mkdir under a no-follow parent, then fchmod/fstat on the child fd,
+        # never a path chmod/stat that would follow a swapped-in symlink. The
+        # deployment adapter provisions the control arena ahead of time in
+        # production; here we also create it when absent (its parent must exist).
+        control_dev, control_ino = _bootstrap_control_dir(control_arena)
         ledger = ResourceLedger.bootstrap(control_arena, pool_id)
         control_lease = LeaseIdentity(
             job_id=f"control::{pool_id}",
@@ -71,15 +76,14 @@ class ScratchManager:
             mode=AuthorityMode.TARGET_LOCK,
             local_stage_root=str(control_arena),
         )
-        stat = os.stat(control_arena)
         control_arena_id = f"control-{uuid.uuid4().hex}"
         if not any(a.is_control for a in ledger.list_arenas()):
             ledger.register_arena(
                 arena_id=control_arena_id,
                 lease=control_lease,
                 root_path=str(control_arena),
-                root_dev=stat.st_dev,
-                root_ino=stat.st_ino,
+                root_dev=control_dev,
+                root_ino=control_ino,
                 quota_domain_id=f"{pool_id}::control",
                 quota_bytes=1 << 20,
                 quota_inodes=256,
@@ -109,27 +113,35 @@ class ScratchManager:
             Path(lease.local_stage_root) if lease.local_stage_root else self._control_arena.parent
         )
 
-        # 2. Qualify the backend; no permissive fallback (plan 1.5, A13).
-        qualification = storage_provider.qualify(root)
-        if not qualification.qualified:
-            raise ScratchBackendUnavailable(
-                message="storage backend did not qualify", reasons=qualification.reasons
-            )
-
-        # 3. Create the restrictive data arena and verify the kernel quota.
+        # 2. Qualify the backend on an opened, identity-verified root fd; no
+        #    permissive fallback (plan 1.5, A13). The root is opened once and the
+        #    verified descriptor is carried into qualify and create_arena, so the
+        #    path is never re-resolved between checks.
         arena_id = uuid.uuid4().hex
-        arena_root = storage_provider.create_arena(root, arena_id)
-        storage_provider.verify_quota(arena_root, policy)
+        with open_verified_dir(root, require_owner=False) as vroot:
+            qualification = storage_provider.qualify(vroot)
+            if not qualification.qualified:
+                raise ScratchBackendUnavailable(
+                    message="storage backend did not qualify", reasons=qualification.reasons
+                )
+            # 3. Create the restrictive data arena under the verified root fd; the
+            #    provider returns the child path and its pinned (st_dev, st_ino).
+            arena_root, arena_identity = storage_provider.create_arena(vroot, arena_id)
 
-        # 4. Register the arena durably before issuing any capability.
-        stat = os.stat(arena_root)
+        # 4. Verify the kernel quota on the newly created arena, opened and pinned
+        #    by the identity create_arena returned (no intervening path re-stat).
+        with open_verified_dir(arena_root, arena_identity) as varena:
+            storage_provider.verify_quota(varena, policy)
+
+        # 5. Register the arena durably before issuing any capability, recording
+        #    the pinned identity rather than a fresh os.stat(arena_root).
         quota_domain_id = f"{policy.job_id}::{policy.attempt_id}"
         self._ledger.register_arena(
             arena_id=arena_id,
             lease=lease,
             root_path=str(arena_root),
-            root_dev=stat.st_dev,
-            root_ino=stat.st_ino,
+            root_dev=arena_identity[0],
+            root_ino=arena_identity[1],
             quota_domain_id=quota_domain_id,
             quota_bytes=policy.quota_bytes,
             quota_inodes=policy.quota_inodes,
@@ -143,6 +155,7 @@ class ScratchManager:
             lease=lease,
             arena_id=arena_id,
             root=arena_root,
+            root_identity=arena_identity,
             quota_domain_id=quota_domain_id,
             owner_principal=_current_principal(),
         )
@@ -220,6 +233,32 @@ class ScratchManager:
 
     def close(self) -> None:
         self._ledger.close()
+
+
+def _bootstrap_control_dir(control_arena: Path) -> tuple[int, int]:
+    """Create (if absent) and verify the control arena relative to its parent fd,
+    returning its pinned ``(st_dev, st_ino)``. The parent is opened
+    ``O_NOFOLLOW|O_DIRECTORY`` and the child is created/opened/chmod'd/stat'd via
+    that fd, so a symlink swapped in for the control arena is refused rather than
+    followed. The parent directory must already exist (the deployment adapter
+    provisions the control location)."""
+
+    name = control_arena.name
+    parent_fd = os.open(control_arena.parent, os.O_RDONLY | os.O_NOFOLLOW | os.O_DIRECTORY)
+    try:
+        try:
+            os.mkdir(name, mode=0o700, dir_fd=parent_fd)
+        except FileExistsError:
+            pass
+        fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_DIRECTORY, dir_fd=parent_fd)
+        try:
+            os.fchmod(fd, 0o700)
+            st = os.fstat(fd)
+        finally:
+            os.close(fd)
+    finally:
+        os.close(parent_fd)
+    return st.st_dev, st.st_ino
 
 
 def _current_principal() -> str:

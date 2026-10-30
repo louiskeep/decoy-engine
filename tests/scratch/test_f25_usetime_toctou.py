@@ -11,7 +11,7 @@ use-time guarantee.
 These tests swap the parent or the child AFTER a successful allocation and prove
 the swap is refused at the unwrap/release seam for all three writable capability
 types, and that the attacker's out-of-arena target is never touched. Without the
-use-time verification in ``_capabilities.verify_target_identity`` every one of
+use-time verification in ``_capabilities.open_verified_target`` every one of
 these calls returns the stale path and the swap succeeds silently; that is the
 RED the fix turns green.
 """
@@ -201,6 +201,39 @@ def test_release_refuses_to_reclaim_a_child_swapped_for_a_symlink(tmp_path: Path
 
         # The victim tree the symlink pointed at is intact.
         assert (outside / "keepme.txt").read_text() == "do not delete"
+    finally:
+        manager.close()
+
+
+def test_release_reclaim_refuses_parent_swapped_for_symlink(tmp_path: Path) -> None:
+    """The destructive reclaim is bound to the pinned parent/child inodes, not a
+    re-resolved path. If the arena root is swapped for a symlink to an attacker
+    tree after allocation, ``release`` must fail closed (``ScratchPathUnsafe``)
+    and the attacker tree must be left intact: a path-based ``rmtree`` would have
+    followed the symlink and deleted the attacker tree at the target's name."""
+
+    manager, arena = _open_arena(tmp_path)
+    try:
+        cap = arena.allocate_native_dir(ResourceKind.NATIVE_DIR, "duckdb")
+        target = unwrap_dir(cap)
+        root = target.parent
+        # Attacker tree carrying an entry with the SAME basename the reclaim path
+        # would resolve to through the swapped-in symlink.
+        outside = tmp_path / "attacker_root"
+        (outside / target.name).mkdir(parents=True)
+        (outside / target.name / "keepme.txt").write_text("do not delete")
+
+        root_real = root.with_name(root.name + ".real")
+        root.rename(root_real)
+        root.symlink_to(outside, target_is_directory=True)
+
+        with pytest.raises(ScratchPathUnsafe):
+            arena.release(cap)
+
+        assert (outside / target.name / "keepme.txt").read_text() == "do not delete"
+        # Restore the real root so teardown operates on the arena, not the link.
+        root.unlink()
+        root_real.rename(root)
     finally:
         manager.close()
 
