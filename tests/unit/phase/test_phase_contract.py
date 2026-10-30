@@ -202,3 +202,69 @@ def test_freeze_refuses_non_finite_numbers():
     for bad in (float("nan"), float("inf")):
         with pytest.raises(phase.PhaseContractError):
             phase.freeze({"x": bad})
+
+
+# ---- identity and FrozenMap construction validation (round 4) ----------------------------------
+
+
+@pytest.mark.parametrize(
+    "ident",
+    [
+        (("k", "a"), ("k", "b")),
+        [("k", "a"), ("k", "b")],
+    ],
+)
+def test_identity_rejects_duplicate_keys_instead_of_dropping_a_field(ident):
+    with pytest.raises(phase.PhaseContractError):
+        _result(identity=ident)
+
+
+@pytest.mark.parametrize(
+    "ident",
+    [
+        ((1, "a"), ("1", "b")),
+        ((1, 2),),
+        (("k", 2),),
+        ((1, "a"),),
+        (("k", "a", "extra"),),
+        ("ka",),
+    ],
+)
+def test_identity_requires_exact_str_pairs_and_never_coerces(ident):
+    with pytest.raises(phase.PhaseContractError):
+        _result(identity=ident)
+
+
+def test_identity_accepts_str_pairs_and_mappings_losslessly():
+    res = _result(identity={"source": "s1", "target": "t1"})
+    assert phase.to_wire(res)["identity"] == {"source": "s1", "target": "t1"}
+    res = _result(identity=(("a", "1"), ("b", "2")))
+    assert phase.to_wire(res)["identity"] == {"a": "1", "b": "2"}
+
+
+@pytest.mark.parametrize(
+    "pairs",
+    [
+        ((1, "a"), ("1", "b")),
+        (("k", "a"), ("k", "b")),
+        ((1, "a"),),
+        (("k",),),
+        ("ab",),
+        (("k", object()),),
+        (("k", ["mutable"]),),
+        (("k", {"x": 1}),),
+        (("k", float("nan")),),
+    ],
+)
+def test_direct_frozenmap_construction_is_validated(pairs):
+    with pytest.raises(phase.PhaseContractError):
+        phase.FrozenMap(pairs)
+
+
+def test_direct_frozenmap_is_sorted_and_round_trips_through_the_gate():
+    fm = phase.FrozenMap((("b", 2), ("a", (1, phase.FrozenMap((("z", None),))))))
+    assert [k for k, _ in fm] == ["a", "b"]
+    res = _result(payload=fm)
+    assert phase.satisfies_required_gate(res)
+    assert phase.to_wire(res)["payload"] == {"a": [1, {"z": None}], "b": 2}
+    assert phase.canonical_bytes(res)

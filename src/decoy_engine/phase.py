@@ -46,14 +46,65 @@ FrozenScalar = str | int | float | bool | None
 FrozenValue = FrozenScalar | tuple["FrozenValue", ...]
 
 
-class FrozenMap(tuple):  # type: ignore[type-arg]
-    """An immutable JSON object: a tuple of `(str, FrozenValue)` pairs sorted by key."""
+class FrozenMap(tuple[tuple[str, Any], ...]):
+    """An immutable JSON object: a tuple of `(str, FrozenValue)` pairs sorted by key.
+
+    Validated at construction, not at export: keys must be exact, unique `str` and values
+    already frozen, so a direct `FrozenMap(...)` can never collide on serialization, drop a
+    field, or pass the gate and then fail `canonical_bytes`.
+    """
 
     __slots__ = ()
+
+    def __new__(cls, pairs: Any = ()) -> FrozenMap:
+        items = tuple(pairs)
+        seen: set[str] = set()
+        for item in items:
+            if not isinstance(item, tuple) or len(item) != 2:
+                raise PhaseContractError("FrozenMap entries must be (key, value) pairs")
+            key, value = item
+            if type(key) is not str:
+                raise PhaseContractError("FrozenMap keys must be str")
+            if key in seen:
+                raise PhaseContractError("duplicate key in FrozenMap")
+            seen.add(key)
+            _require_frozen(value)
+        return super().__new__(cls, sorted(items, key=lambda kv: kv[0]))
 
 
 class PhaseContractError(DecoyError, ValueError):
     """A phase envelope that is malformed, unsafe to export, or of an unknown version."""
+
+
+def _require_frozen(value: Any) -> None:
+    if value is None or isinstance(value, (str, bool, int, FrozenMap)):
+        return
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise PhaseContractError("non-finite number in phase evidence")
+        return
+    if type(value) is tuple:
+        for v in value:
+            _require_frozen(v)
+        return
+    raise PhaseContractError(f"unfrozen {type(value).__name__} in FrozenMap")
+
+
+def _identity_pairs(value: Any) -> tuple[tuple[str, str], ...]:
+    items = value.items() if isinstance(value, Mapping) else value
+    pairs: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for item in items:
+        if not isinstance(item, tuple) or len(item) != 2:
+            raise PhaseContractError("identity entries must be (str, str) pairs")
+        key, val = item
+        if type(key) is not str or type(val) is not str:
+            raise PhaseContractError("identity keys and values must be str")
+        if key in seen:
+            raise PhaseContractError("duplicate identity key")
+        seen.add(key)
+        pairs.append((key, val))
+    return tuple(pairs)
 
 
 def _str_tuple(value: Any, name: str) -> tuple[str, ...]:
@@ -136,9 +187,7 @@ class PhaseResult:
         # Coerce at construction so a caller's list/dict can never alias evidence that was
         # already hashed: frozen dataclass fields alone only block re-assignment.
         object.__setattr__(self, "reasons", tuple(self.reasons))
-        ident = self.identity.items() if isinstance(self.identity, Mapping) else self.identity
-        pairs = tuple((str(k), str(v)) for k, v in ident)
-        object.__setattr__(self, "identity", pairs)
+        object.__setattr__(self, "identity", _identity_pairs(self.identity))
         object.__setattr__(self, "payload", freeze(self.payload))
 
 
