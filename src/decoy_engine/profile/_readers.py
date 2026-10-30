@@ -39,6 +39,7 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from decoy_engine._lexeme import LEXEME_KEY
 from decoy_engine.profile._fixed_width_reader import read_fixed_width
 from decoy_engine.profile._readers_csv import CsvFileSource, estimate_csv_rows
 
@@ -400,6 +401,7 @@ def _build_file_source(descriptor: dict[str, Any]) -> ProfileSource:
             has_header=descriptor.get("has_header", True),
             column_names=descriptor.get("column_names"),
             delimiter=descriptor.get("delimiter", ","),
+            lexeme_columns=tuple(descriptor.get(LEXEME_KEY) or ()),
         )
     if fmt == "parquet":
         return ParquetFileSource(Path(path))

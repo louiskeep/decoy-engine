@@ -454,6 +454,7 @@ def test_the_delegate_forwards_every_argument_and_returns_the_result_unchanged(
     assert set(seen) == {
         "config", "source", "table", "engine_version", "registry", "adapter",
         "vault_writer", "chunk_size_rows", "key_provider", "native_threads", "dispatcher_enabled",
+        "cast_run",
     }  # fmt: skip
 
 

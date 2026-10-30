@@ -27,6 +27,9 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
+from decoy_engine.declared_casting._eligibility import declared_route_guard
+from decoy_engine.declared_casting._refusals import note_declined, refusal_for, refusal_text
+
 if TYPE_CHECKING:
     from decoy_engine.execution._chunked_input import SourceFacts
     from decoy_engine.execution._planner import ExecutionPlan
@@ -68,6 +71,10 @@ def decide_chunk_route(
     still stream (`lazy_stream_candidates`); a job with FK edges captures none.
     """
     if not (explain_plan or (auto_chunk and has_mask_table)):
+        return None, False, {}
+    _decl = declared_route_guard("chunked", plan=plan)
+    if not _decl.admitted:
+        note_declined("chunked", _decl)
         return None, False, {}
 
     from decoy_engine.execution import _chunked_input
@@ -122,6 +129,8 @@ def auto_chunk_stamp(
         reason = decision.rejections.get(
             "chunked", f"planner selected {decision.mode}: {decision.reason}"
         )
+    elif (refused := refusal_for("chunked")) is not None:
+        reason = refusal_text(refused)
     else:  # unreachable by construction; kept total for safety
         reason = "no routing decision was computed"
     return {

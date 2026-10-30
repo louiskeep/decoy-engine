@@ -110,6 +110,7 @@ GUARDED_MODULES: tuple[str, ...] = (
     "execution/native/_operator_params.py",
     "execution/native/_operator_step.py",
     "execution/out_of_core/_runner.py",
+    "execution/out_of_core/_rewrite_pass.py",
     "execution/out_of_core/_compat.py",
     "execution/out_of_core/_preflight.py",
     "execution/out_of_core/_null_int_guard.py",
@@ -375,6 +376,9 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
             "src/decoy_engine/execution/_pipeline_routing_fk_dtype.py",
             "src/decoy_engine/execution/out_of_core/_multi_parent.py",
             "src/decoy_engine/execution/out_of_core/_stream_driver_support.py",
+            # F06 r3: the per-table rewrite pass split out of `out_of_core/_runner.py` (a pure
+            # move; `_runner` stays in GUARDED_MODULES). It imports nothing from `execution.physical`.
+            "src/decoy_engine/execution/out_of_core/_rewrite_pass.py",
             "src/decoy_engine/execution/out_of_core/_null_int_guard.py",
             # D3b (token vault on the bounded out-of-core route): the vault collector the two
             # out-of-core drivers call. It imports nothing from `execution.physical`.
@@ -836,6 +840,11 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
             # `native/_draw_site_providers.py`. Pure moves; none imports `execution.physical`.
             "src/decoy_engine/execution/_fk_key_compat.py",
             "src/decoy_engine/execution/native/_draw_sites_tokenize.py",
+            # F06 r2 module-size decomposition: the sequential table order and the planner's
+            # config column lookups split out of capped modules. Pure moves; neither imports
+            # `execution.physical`.
+            "src/decoy_engine/execution/_sequential_order.py",
+            "src/decoy_engine/execution/_planner_columns.py",
         }
     )
     unexpected = [

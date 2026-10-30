@@ -1,0 +1,26 @@
+________ test_failed_open_closes_the_fd_and_removes_the_partial[fchmod] ________
+tmp_path = PosixPath('/tmp/pytest-of-root/pytest-4/test_failed_open_closes_the_fd0')
+    def test_failed_open_closes_the_fd_and_removes_the_partial(
+________ test_failed_open_closes_the_fd_and_removes_the_partial[write] _________
+tmp_path = PosixPath('/tmp/pytest-of-root/pytest-4/test_failed_open_closes_the_fd1')
+    def test_failed_open_closes_the_fd_and_removes_the_partial(
+___________ test_failed_open_reports_a_cleanup_that_could_not_finish ___________
+tmp_path = PosixPath('/tmp/pytest-of-root/pytest-4/test_failed_open_reports_a_cle0')
+    def test_failed_open_reports_a_cleanup_that_could_not_finish(
+>       assert info.value.cleanup_state == "failed"
+E       AssertionError: assert 'not_needed' == 'failed'
+E         - failed
+FAILED tests/acceptance/test_f06_parent_quarantine.py::test_quarantined_parent_row_never_orphans_its_children[format-full_frame]
+FAILED tests/acceptance/test_f06_parent_quarantine.py::test_quarantined_parent_row_never_orphans_its_children[format-sequential]
+FAILED tests/acceptance/test_f06_parent_quarantine.py::test_quarantined_parent_row_never_orphans_its_children[format-chunked]
+FAILED tests/acceptance/test_f06_parent_quarantine.py::test_quarantined_parent_row_never_orphans_its_children[format-unified_slice]
+FAILED tests/acceptance/test_f06_parent_quarantine.py::test_auto_mode_refuses_before_any_read
+FAILED tests/unit/declared_casting/test_qualify_runtime.py::test_empty_owner_is_refused
+FAILED tests/unit/declared_casting/test_qualify_runtime.py::test_sink_detail_is_mapped_to_a_fixed_token[/secret/path: permission denied-unqualified]
+FAILED tests/unit/declared_casting/test_quarantine_begin_failure.py::test_failed_open_closes_the_fd_and_removes_the_partial[fchmod]
+FAILED tests/unit/declared_casting/test_quarantine_begin_failure.py::test_failed_open_closes_the_fd_and_removes_the_partial[write]
+FAILED tests/unit/declared_casting/test_quarantine_begin_failure.py::test_failed_open_reports_a_cleanup_that_could_not_finish
+FAILED tests/unit/declared_casting/test_stream_staging.py::test_staged_copy_lives_under_the_callers_temp_dir_and_is_removed
+FAILED tests/unit/declared_casting/test_stream_staging.py::test_staged_copy_counts_against_the_temp_disk_budget
+FAILED tests/unit/declared_casting/test_stream_staging.py::test_budget_applies_without_a_caller_temp_dir
+13 failed, 19 passed in 0.85s

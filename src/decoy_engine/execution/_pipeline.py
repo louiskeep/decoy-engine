@@ -74,9 +74,9 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import pyarrow as pa
 
+from decoy_engine.declared_casting._refusals import collect_refusals
 from decoy_engine.execution import _pipeline_context as _ctx
 from decoy_engine.execution import _pipeline_finalize
-from decoy_engine.execution import _pipeline_full_frame as _full_frame
 from decoy_engine.execution import _pipeline_route_dispatch as _dispatch
 from decoy_engine.execution._adapter import ExecutionResult
 from decoy_engine.execution._pipeline_context import classify_table_kinds
@@ -148,6 +148,7 @@ def run_pipeline(
     unified_slice_enabled: bool = True,
     progress: ProgressSink | None = None,
     progress_interval_s: float = 1.0,
+    quarantine_runtime: Any = None,
     _provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None = None,
 ) -> ExecutionResult:
     """Execute a mixed mask + generate config end-to-end.
@@ -242,6 +243,19 @@ def run_pipeline(
     is reproducible from its manifest; the all-default path stamps
     nothing, keeping golden fixtures byte-identical.
 
+    `quarantine_runtime` (F06): a `decoy_engine.declared_casting.ProtectedQuarantineRuntime`
+    (sink + owner). Required, and checked before the source is read, by any column with
+    `error_policy: quarantine`; the run returns its portable retrieval token on
+    `ExecutionResult.quarantine_access`. A declared job runs on any route whose capabilities
+    cover its contracts; an explicit `execution_mode` lacking one is refused before any read.
+
+    Under `auto`, a declared job that an admission layer kept off a route (mixed, chunked,
+    unified slice, out-of-core, or the multi-table split) falls back to a capable route and says
+    so: `quality_metrics["execution"]["declared_route_refusals"]` lists one value-free
+    `{route, namespace, code, missing}` entry per route, taken from that route's own registered
+    refusal. An undeclared job has no such key, and a forced `execution_mode` still refuses
+    instead of falling back.
+
     `unified_slice_enabled` (default True since 2026-09-20; admission is the safety
     gate, pass False for legacy): see `_unified_slice.maybe_run_unified_slice`.
 
@@ -306,18 +320,12 @@ def run_pipeline(
                 unified_slice_enabled=unified_slice_enabled,
                 provider_snapshot=_provider_snapshot,
                 prepare_sources=prepare_transform_sources,
+                quarantine_runtime=quarantine_runtime,
             )
-        decision = _ctx.decide_route(ctx)
-        _emit_route(_progress, decision)
-
-        # Layer-1 dispatch: every route is an executor over the same (ctx, decision).
-        if ctx.has_mask_table and decision.route == "sequential":
-            return _dispatch.execute_sequential_route(ctx, decision)
-        if ctx.has_mask_table and decision.route == "out_of_core":
-            return _dispatch.execute_out_of_core_route(ctx, decision)
-        if ctx.has_mask_table and decision.route == "mixed":
-            return _dispatch.execute_mixed_route(ctx, decision)
-        return _full_frame.run_full_frame_route(ctx, decision)
+        with collect_refusals() as refusals:
+            decision = _ctx.decide_route(ctx)
+            _emit_route(_progress, decision)
+            return _dispatch.execute_route(ctx, decision, refusals)
 
 
 def _emit_route(channel: ProgressChannel, decision: Any) -> None:

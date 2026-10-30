@@ -27,9 +27,10 @@ class TestCompilePlanHappyPath:
         (2026-09-11).
 
         plan_version bumped 1 -> 2 for the DPS Scope B pinned
-        `GenerationPlan` payload (guide section 4.7)."""
+        `GenerationPlan` payload (guide section 4.7), then 2 -> 3 for the F06 pinned
+        `declared_casting` payload."""
         plan = compile_plan(simple_config, simple_profile, decoy_engine_version="0.1.0")
-        assert plan.plan_version == 2
+        assert plan.plan_version == 3
         assert plan.seed_protocol_version == 7
         assert plan.engine_version == "0.1.0"
 
@@ -144,7 +145,7 @@ class TestYamlRoundTrip:
     ) -> None:
         plan = compile_plan(simple_config, simple_profile, decoy_engine_version="0.1.0")
         y = plan_to_yaml(plan)
-        assert "plan_version: 2" in y
+        assert "plan_version: 3" in y
         assert "seed_protocol_version: 7" in y
 
     def test_yaml_emits_seed_protocol_version_seven(

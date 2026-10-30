@@ -37,6 +37,7 @@ import pandas as pd
 import pyarrow as pa
 
 from decoy_engine import reasons
+from decoy_engine.declared_casting._boundary import declared_integer_columns
 from decoy_engine.execution._adapter import (
     ExecutionAdapter,
     ExecutionResult,
@@ -210,13 +211,15 @@ class PandasExecutionAdapter:
         # Phase 4 slice 2: a group_key `group_by` sibling has the identical
         # lossless-typing need (see `group_key_group_by_columns`'s docstring).
         group_key_cols = group_key_group_by_columns(plan, registry)
+        declared_int_cols = declared_integer_columns(plan)  # F06: typed ints stay exact
         frames: dict[str, pd.DataFrame] = {
             t: to_pandas_fk_safe(
                 tbl,
                 fk_columns_for_table(relationship_graph.edges, t)
                 | group_anchor_cols.get(t, set())
                 | top_code_cols.get(t, set())
-                | group_key_cols.get(t, set()),
+                | group_key_cols.get(t, set())
+                | declared_int_cols.get(t, set()),
             )
             for t, tbl in sources.items()
         }

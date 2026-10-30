@@ -461,6 +461,17 @@ class FixedWidthParseError(DecoyError):
     """
 
 
+class FixedWidthRecordOverlongError(FixedWidthParseError):
+    """A record is longer than an ``exact_record_width`` layout allows.
+
+    A framing error, kept apart from value-cast errors: the extra bytes would otherwise be
+    silently ignored (or, for a misaligned file, bleed into a neighbouring field and surface as a
+    misleading ``declared_*_invalid``). Carries a registered code; the message holds position only.
+    """
+
+    code: str = reasons.runtime.FIXED_WIDTH_RECORD_OVERLONG
+
+
 class FixedWidthWriteError(DecoyError):
     """Raised when a value cannot be written to a fixed-width file such that
     it reads back unchanged against its `FixedWidthLayout` column-spec
@@ -494,6 +505,7 @@ __all__ = [
     "EmptyParentPoolError",
     "FKPreservationError",
     "FixedWidthParseError",
+    "FixedWidthRecordOverlongError",
     "FixedWidthWriteError",
     "FlagPauseSignal",
     "FpeChecksumError",

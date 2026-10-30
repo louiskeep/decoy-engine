@@ -24,9 +24,9 @@ def test_pipeline_stays_at_its_exact_ratchet_and_the_new_module_under_the_goal()
     # B-6 vault write-seam added the token_vault_writer param + force-full-frame wiring (308 -> 322).
     assert "src/decoy_engine/execution/_pipeline.py" not in size_sentry.ALLOWLIST
     # _pipeline.py: 308 (R3) -> 322 (B-6 token_vault_writer + force-full-frame)
-    # -> 332 (E1 progress scope + E3a knob deletion). Superseded by the census sentry.
+    # -> 332 (E1 progress scope + E3a knob deletion) -> 340 (F06 `quarantine_runtime`). Superseded by the census sentry.
     assert "src/decoy_engine/execution/_pipeline.py" not in size_sentry.ALLOWLIST
-    assert size_sentry._loc(EXEC / "_pipeline.py") == 332
+    assert size_sentry._loc(EXEC / "_pipeline.py") == 340
     assert size_sentry._loc(EXEC / NEW) <= 600
     assert f"src/decoy_engine/execution/{NEW}" not in size_sentry.ALLOWLIST
 

@@ -13,12 +13,14 @@ reads.
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
 from decoy_engine import reasons
+from decoy_engine.declared_casting._boundary import remap_row_errors
 from decoy_engine.execution import _pipeline_finalize, _pipeline_generate_mask, _unified_slice
 from decoy_engine.execution import _pipeline_route_exec as _route_exec
 from decoy_engine.execution import _pipeline_sources as _psrc
@@ -83,6 +85,14 @@ def _raise_if_source_value_unrepresentable(
                     ) from exc
 
 
+def _render_and_seal(cast_run: Any, result: ExecutionResult) -> ExecutionResult:
+    """F06 for a lane that returns a finished result: render its outputs, then seal last."""
+    outputs, _, _ = cast_run.post_mask(result.outputs, {})
+    result = dataclasses.replace(result, outputs=outputs)
+    result.quality_metrics["declared_casting"], token = cast_run.finish()
+    return dataclasses.replace(result, quarantine_access=token)
+
+
 def run_full_frame_route(
     ctx: PipelineRunContext,
     decision: RouteDecision,
@@ -90,7 +100,30 @@ def run_full_frame_route(
     pregenerated: dict[str, pa.Table] | None = None,
 ) -> ExecutionResult:
     """`pregenerated` hands over generate outputs a prior route already built (the mixed
-    route's runtime decline), so generation is never run twice."""
+    route's runtime decline), so generation is never run twice.
+
+    A job with declared columns applies the F06 boundary here (pre-mask cast, post-mask format);
+    any failure aborts the protected-quarantine session so no partial artifact survives."""
+    from decoy_engine.declared_casting._boundary import open_cast_run
+    from decoy_engine.declared_casting._eligibility import declared_route_guard
+
+    declared_route_guard("full_frame", plan=ctx.plan, raise_on_decline=False)
+    cast_run = open_cast_run(ctx.plan, ctx.quarantine_runtime)
+    try:
+        return _run_full_frame(ctx, decision, pregenerated=pregenerated, cast_run=cast_run)
+    except BaseException as failure:
+        if cast_run is not None:
+            cast_run.abort(failure)
+        raise
+
+
+def _run_full_frame(
+    ctx: PipelineRunContext,
+    decision: RouteDecision,
+    *,
+    pregenerated: dict[str, pa.Table] | None,
+    cast_run: Any,
+) -> ExecutionResult:
     # TB-1: only full_frame / auto-chunk below needs every source resident, and a loader-backed
     # job diverted here must still get its mask tables through the loader. A lazy route or
     # split candidate stays lazy (`keep_lazy`); the unified slice sees the rest as tables.
@@ -102,6 +135,10 @@ def run_full_frame_route(
         prepared=ctx.prepared.prepared,
         keep_lazy=decision.keep_lazy,
     )
+    if cast_run is not None and not decision.route_chunked:
+        # F06 pre-mask boundary: the one place a declared lexeme becomes a typed value. A chunked
+        # job casts each chunk inside its lane instead, so the full table is never typed twice.
+        resident_sources = cast_run.pre_mask(resident_sources)
     caller_sources = {k: v for k, v in resident_sources.items() if k in ctx.caller_sources}
 
     pool_cache = PoolCache()
@@ -109,6 +146,8 @@ def run_full_frame_route(
         ctx=ctx, decision=decision, caller_sources=caller_sources, pool_cache=pool_cache
     )
     if unified_slice_result is not None:
+        if cast_run is not None:
+            unified_slice_result = _render_and_seal(cast_run, unified_slice_result)
         return unified_slice_result
 
     publish = ctx.publish
@@ -157,10 +196,24 @@ def run_full_frame_route(
                 now_iso=ctx.now_iso,
                 publish=publish,
                 pregenerated=pregenerated,
+                cast_run=cast_run,
             )
         except _ingest_conversion_errors() as exc:
             _raise_if_source_value_unrepresentable(resident_sources, ctx.graph, exc)
             raise
+        if cast_run is not None and decision.route_chunked:
+            # The lane rendered each chunk; finalize still needs companion rows aligned to it.
+            step = dataclasses.replace(
+                step, sources=cast_run.align_sources(step.sources, step.mask_outputs)
+            )
+        elif cast_run is not None:
+            outs, srcs, kept = cast_run.post_mask(step.mask_outputs, step.sources)
+            step = dataclasses.replace(
+                step,
+                mask_outputs=outs,
+                sources=srcs,
+                mask_row_errors=remap_row_errors(step.mask_row_errors, kept),
+            )
         # Step 3: stitch the outputs together via the shared helper both this
         # oracle and the shadow coordinator's mixed dispatch call, so "mask wins
         # ties" cannot drift between the two (Task 4.6 slice 5b-i).
@@ -240,5 +293,10 @@ def run_full_frame_route(
             post_validation_enforce=ctx.post_validation_enforce,
         )
         _pipeline_finalize.compute_storm_postmask(result, config=ctx.config, sources=step.sources)
+        if cast_run is not None:
+            # Seal only once nothing failure-capable remains but the publish itself; a failure
+            # from here on still discards the sealed artifact through cast_run.abort().
+            result.quality_metrics["declared_casting"], quarantine_token = cast_run.finish()
+            result = dataclasses.replace(result, quarantine_access=quarantine_token)
         publish.commit()  # B6a: the run's last action; inert unless this run streamed
         return result

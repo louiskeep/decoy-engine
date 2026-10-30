@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 import pandas as pd
 import pyarrow as pa
 
+from decoy_engine._lexeme import pandas_lexeme_kwargs
 from decoy_engine.errors import PipelineValidationError
 from decoy_engine.validation_result import CODES
 
@@ -44,6 +45,11 @@ if TYPE_CHECKING:
 _CSV_ESTIMATE_LINES = 1_000
 
 
+def _positional_lexemes(columns: tuple[str, ...], names: list[str]) -> dict[str, dict[int, type]]:
+    """Headerless files key converters by position, so map the declared names onto it."""
+    return pandas_lexeme_kwargs([names.index(c) for c in columns if c in names])
+
+
 @dataclass(frozen=True)
 class CsvFileSource:
     """`ProfileSource` for a local CSV file.
@@ -62,10 +68,16 @@ class CsvFileSource:
     has_header: bool = True
     column_names: list[str] | None = None
     delimiter: str = ","
+    lexeme_columns: tuple[str, ...] = ()
 
     def _read(self, nrows: int | None = None) -> pd.DataFrame:
         if self.has_header:
-            return pd.read_csv(self.path, nrows=nrows, sep=self.delimiter)
+            return pd.read_csv(
+                self.path,
+                nrows=nrows,
+                sep=self.delimiter,
+                **pandas_lexeme_kwargs(self.lexeme_columns),
+            )
         # Headerless: pandas cannot fail closed on a mis-sized file. A too-short
         # row is silently padded (and earlier values shift into the wrong column);
         # a too-long row is dropped or shifts. Frame-width alone does not catch a
@@ -78,7 +90,13 @@ class CsvFileSource:
         names = self.column_names or []
         self._assert_record_widths(len(names), nrows)
         try:
-            frame = pd.read_csv(self.path, nrows=nrows, sep=self.delimiter, header=None)
+            frame = pd.read_csv(
+                self.path,
+                nrows=nrows,
+                sep=self.delimiter,
+                header=None,
+                **_positional_lexemes(self.lexeme_columns, names),
+            )
         except (pd.errors.EmptyDataError, pd.errors.ParserError):
             # The width scan above already rejects the known mis-size cases with a
             # coded error; this is a fail-closed backstop for any parser disagreement.

@@ -139,10 +139,10 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
-from decoy_engine import reasons
+from decoy_engine.declared_casting._boundary import declared_integer_columns, seal_evidence
+from decoy_engine.declared_casting._eligibility import declared_route_guard
 from decoy_engine.errors import RowErrorsFailedError
 from decoy_engine.execution._adapter import ExecutionResult, StrategyContext
-from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._exact_int_sources import register_exact_int_sources, release_table
 from decoy_engine.execution._fk_keys import fk_columns_for_table, to_pandas_fk_safe
 from decoy_engine.execution._guards import (
@@ -169,6 +169,7 @@ from decoy_engine.execution._runner import (
 )
 from decoy_engine.execution._sequential_composite_chain import decline_composite_chain
 from decoy_engine.execution._sequential_native import SeqNativeRun
+from decoy_engine.execution._sequential_order import table_topo_order
 from decoy_engine.execution._transactional_sink import (
     TransactionalSink,
     _CallableSinkAdapter,
@@ -230,6 +231,7 @@ def run_sequential(
     unconfigured_column_policy: UnconfiguredColumnPolicy | None = None,
     key_provider: KeyProvider | None = None,
     native_threads: int = 1,
+    cast_run: Any = None,
 ) -> ExecutionResult:
     """Mask an FK-related job table by table in FK-topological order.
 
@@ -270,7 +272,11 @@ def run_sequential(
     published on any exception, including a commit failure. See the module
     docstring's "Quarantine sidecar shares the sink's commit-or-discard fate"
     section.
+
+    `cast_run` (F06): each table is cast as it is loaded and rendered before projection and write;
+    the quarantine is sealed last. The caller owns `cast_run.abort()`.
     """
+    declared_route_guard("sequential", plan=plan, raise_on_decline=True)
     q_cfg: dict[str, Any] = quarantine_config or {}
     q_enabled = bool(q_cfg.get("enabled", False))
     q_triggers: list[str] = list(q_cfg.get("triggers") or [])
@@ -311,6 +317,7 @@ def run_sequential(
     # can mask an ordinary column on any table in an FK job, so this route
     # needs the same union the single-table pandas adapter uses.
     group_key_cols = group_key_group_by_columns(plan, registry)
+    declared_int_cols = declared_integer_columns(plan)  # F06: typed ints stay exact
 
     # A parent key map is retained until every child table that references it has
     # been processed; this makes multi-parent and diamond graphs safe.
@@ -385,6 +392,8 @@ def run_sequential(
         with use_collector(collector):
             for table in table_order:
                 src = source_loader(table)
+                if cast_run is not None:
+                    src = cast_run.load_table(table, src)
                 _pg = get_active_channel()
                 _pg_rows_in = src.num_rows
                 _pg_started = _pg.phase_start("mask", table=table, rows_in=_pg_rows_in)
@@ -402,7 +411,8 @@ def run_sequential(
                     fk_columns_for_table(graph.edges, table)
                     | group_anchor_cols.get(table, set())
                     | top_code_cols.get(table, set())
-                    | group_key_cols.get(table, set()),
+                    | group_key_cols.get(table, set())
+                    | declared_int_cols.get(table, set()),
                 )
                 conversion_ms += (time.perf_counter() - t0) * 1000.0
                 frames[table] = df
@@ -508,6 +518,8 @@ def run_sequential(
                     pa.Table.from_pandas(frames[table], preserve_index=False), faker_pin
                 )
                 conversion_ms += (time.perf_counter() - t1) * 1000.0
+                if cast_run is not None:  # after the parent maps were built from the typed frame
+                    out, table_records = cast_run.render_table(table, out, table_records)
 
                 # DE-03: fail-closed output projection before this table is
                 # written/evicted. The sequential route is pure-mask by
@@ -572,6 +584,7 @@ def run_sequential(
             **ctx.date_preserve_metrics(),  # D1c: {} unless a column opted in
             **native_run.metrics(),  # D2a: {} unless the plan hashes a column
         }
+        quarantine_token = seal_evidence(cast_run, quality_metrics)  # last, before the commit
         if all_row_errors:
             row_error_counts: dict[str, int] = {}
             for rec in all_row_errors:
@@ -644,53 +657,5 @@ def run_sequential(
         warnings=tuple(warnings),
         quality_metrics=quality_metrics,
         row_errors=tuple(all_row_errors),
+        quarantine_access=quarantine_token,
     )
-
-
-def table_topo_order(plan: Plan, graph: RelationshipGraph) -> list[str]:
-    """FK-topological order over TABLES (every parent before its children), stable
-    to the plan's table order where the graph leaves a choice. Raises on a cycle.
-    Sequential eviction relies on a parent being fully masked, and its key map
-    built, before any child table is loaded."""
-    order_seed: list[str] = []
-    seen: set[str] = set()
-    for name, _ in plan.seed_envelope.per_table:
-        if name not in seen:
-            seen.add(name)
-            order_seed.append(name)
-    for edge in graph.edges:
-        for tbl in (edge.parent_table, edge.child_table):
-            if tbl not in seen:
-                seen.add(tbl)
-                order_seed.append(tbl)
-
-    position = {t: i for i, t in enumerate(order_seed)}
-    children: dict[str, set[str]] = {t: set() for t in order_seed}
-    indegree: dict[str, int] = dict.fromkeys(order_seed, 0)
-    for edge in graph.edges:
-        if edge.parent_table == edge.child_table:
-            continue  # self-FK masks within one table; no table-level ordering
-        if edge.child_table not in children[edge.parent_table]:
-            children[edge.parent_table].add(edge.child_table)
-            indegree[edge.child_table] += 1
-
-    ready = [t for t in order_seed if indegree[t] == 0]
-    result: list[str] = []
-    while ready:
-        ready.sort(key=position.__getitem__)
-        current = ready.pop(0)
-        result.append(current)
-        for child in sorted(children[current], key=position.__getitem__):
-            indegree[child] -= 1
-            if indegree[child] == 0:
-                ready.append(child)
-
-    if len(result) != len(order_seed):
-        raise ExecutionError(
-            code=reasons.runtime.RELATIONSHIP_CYCLE,
-            message=(
-                "FK relationship graph has a cycle across tables; cannot order "
-                "tables for sequential masking."
-            ),
-        )
-    return result

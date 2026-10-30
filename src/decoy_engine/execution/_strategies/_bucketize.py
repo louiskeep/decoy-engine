@@ -108,6 +108,9 @@ class BucketizeStrategyHandler:
                 mid = mid.astype("Int64")
             formatted = mid.astype(str)
 
+        if cfg.get("declared_integer_output") and fmt == "lower" and is_int_width:
+            formatted = lower  # F06: stays an integer; the declared formatter renders it once
+
         # Sprint 2 honesty pack (D7): a non-null cell that fails numeric
         # coercion is a per-row format error, NOT a silent keep-original.
         # `col.notna()` isolates non-null source cells; among those, `nums`

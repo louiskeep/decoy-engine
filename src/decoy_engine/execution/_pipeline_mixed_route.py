@@ -43,6 +43,8 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from decoy_engine import reasons
+from decoy_engine.declared_casting._boundary import open_cast_run
+from decoy_engine.declared_casting._eligibility import declared_route_guard
 from decoy_engine.execution import (
     _chunked_input,
     _pipeline_auto_chunk,
@@ -146,6 +148,7 @@ def _build_carrier(
 
 
 def run_mixed_route(ctx: PipelineRunContext, decision: RouteDecision) -> ExecutionResult:
+    declared_route_guard("mixed", plan=ctx.plan, raise_on_decline=True)
     static = decision.mixed
     if static is None:  # pragma: no cover - the router sets both together
         raise AssertionError("run_mixed_route reached without a static admission")
@@ -154,6 +157,22 @@ def run_mixed_route(ctx: PipelineRunContext, decision: RouteDecision) -> Executi
     declined = _runtime_decline(static, ctx, generate_outputs)
     if declined is not None:
         return _fall_back(ctx, decision, generate_outputs, declined)
+    cast_run = open_cast_run(ctx.plan, ctx.quarantine_runtime)
+    try:
+        return _run_admitted(ctx, decision, static, generate_outputs, cast_run)
+    except BaseException as failure:
+        if cast_run is not None:
+            cast_run.abort(failure)
+        raise
+
+
+def _run_admitted(
+    ctx: PipelineRunContext,
+    decision: RouteDecision,
+    static: MixedStaticPlan,
+    generate_outputs: dict[str, pa.Table],
+    cast_run: Any,
+) -> ExecutionResult:
 
     publish = ctx.publish
     mode, mode_reason = _output_sink.decide_output_mode(
@@ -207,6 +226,7 @@ def run_mixed_route(ctx: PipelineRunContext, decision: RouteDecision) -> Executi
                     sink=publish.active_sink,
                     expected=static.source_facts.get(name),
                     preresolved=carrier if carrier and carrier.table == name else None,
+                    cast_run=cast_run,
                 )
             )
             mask_outputs.update(outputs)
@@ -254,6 +274,10 @@ def run_mixed_route(ctx: PipelineRunContext, decision: RouteDecision) -> Executi
                 "rejections": {},
             }
         stamp_out_of_core_declined(quality_metrics, decision.ooc_declined)
+        quarantine_token = None
+        if cast_run is not None:
+            # Seal last: only the publish itself remains.
+            quality_metrics["declared_casting"], quarantine_token = cast_run.finish()
         result = ExecutionResult(
             outputs={}
             if streamed
@@ -264,6 +288,7 @@ def run_mixed_route(ctx: PipelineRunContext, decision: RouteDecision) -> Executi
             quality_metrics=quality_metrics,
             table_kinds=ctx.table_kinds,
             row_errors=(),
+            quarantine_access=quarantine_token,
         )
         publish.commit()
         return result

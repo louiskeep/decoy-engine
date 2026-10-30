@@ -29,9 +29,9 @@ def test_module_sizes_hold_their_bars() -> None:
     # B-6 vault write-seam added the token_vault_writer param + force-full-frame wiring (308 -> 322).
     assert "src/decoy_engine/execution/_pipeline.py" not in size_sentry.ALLOWLIST
     # _pipeline.py: 308 (R3) -> 322 (B-6 token_vault_writer + force-full-frame)
-    # -> 332 (E1 progress scope + E3a knob deletion). Superseded by the census sentry.
+    # -> 332 (E1 progress scope + E3a knob deletion) -> 340 (F06 `quarantine_runtime`). Superseded by the census sentry.
     assert "src/decoy_engine/execution/_pipeline.py" not in size_sentry.ALLOWLIST
-    assert size_sentry._loc(EXEC / "_pipeline.py") == 332
+    assert size_sentry._loc(EXEC / "_pipeline.py") == 340
 
 
 def test_the_new_module_is_guarded_by_the_seam_disconnection_sentry() -> None:

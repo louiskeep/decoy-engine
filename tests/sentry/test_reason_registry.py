@@ -40,7 +40,25 @@ _HELPER = "private helper; every caller passes a registry symbol, checked at the
 _REWRAP = "re-wraps the already-registered code of the exception it catches"
 _KERNEL = "forwards a compiled-kernel code only after an `in` guard against known codes"
 
+_FIRST_CODE = "re-raises the registered reason taken from a pydantic error type (membership-checked in first_code)"
+_KERNEL_REASON = "forwards the ReasonCode a casting kernel returned for the failed cell"
+_DECISION_REASON = "forwards the rejection ReasonCode of the central route decision"
+
 ADAPTERS: dict[tuple[str, str], str] = {
+    # -- F06 declared casting ----------------------------------------------------------------
+    ("contracts/_declared_base.py", "DeclaredCastContractError.__init__"): _CTOR,
+    ("execution/_errors.py", "DeclaredCastValueError.__init__"): _CTOR,
+    ("execution/_errors.py", "QuarantineError.__init__"): _CTOR,
+    ("contracts/_declared_formats.py", "validate_format_spec"): _FIRST_CODE,
+    ("contracts/declared_casting.py", "build_contract"): _FIRST_CODE,
+    ("contracts/declared_casting.py", "validate_sentinel_spec"): _FIRST_CODE,
+    ("declared_casting/_boundary.py", "DeclaredCastRun._disposition"): _KERNEL_REASON,
+    ("declared_casting/_eligibility.py", "declared_route_guard"): _DECISION_REASON,
+    ("declared_casting/_eligibility.py", "preflight_declared_casting"): _DECISION_REASON,
+    ("declared_casting/_refusals.py", "note"): _DECISION_REASON,
+    ("declared_casting/_quarantine_local.py", "_qerror"): _HELPER,
+    ("plan/_checks_declared_casting.py", "_fail"): _HELPER,
+    ("plan/_serialize_declared.py", "declared_casting_from_dict"): _REWRAP,
     # -- constructors that store the caller's code -------------------------------------------
     ("_reference_date.py", "PinnedModeError.__init__"): _CTOR,
     ("connectors/postgres_snapshot.py", "PostgresSnapshotError.__init__"): _CTOR,

@@ -66,6 +66,30 @@ A more complete, runnable end-to-end shape lives in
 `tests/integration/golden/test_execution_e2e.py` (the `_run` helper is
 the canonical caller pattern).
 
+## Declared parsing and casting
+
+A mask column can declare how its text or bytes are read and written back, and what happens when a
+value does not fit. Parsing is strict and exact (no float, rounding or locale), applied before the
+masking strategy; formatting is applied after it:
+
+```yaml
+- name: age
+  strategy: bucketize
+  provider_config: {width: 10, format: lower}
+  logical_type: integer
+  parse_format: {id: integer/ascii/v1}
+  sentinel_to_null: {id: sentinel/exact/v1, values: [""]}
+  error_policy: fail            # or null, or quarantine (needs a protected quarantine store)
+  output_format: {id: integer/zero-pad/v1, width: 3, width_unit: code_points}
+```
+
+`042` reaches the strategy as the integer 42 and is written back as exactly three characters.
+Substitutions and failures are counted without values under `quality_metrics["declared_casting"]`.
+The same boundary runs on the full-frame, chunked, sequential, out-of-core, mixed and unified-slice
+routes; a route that cannot honour a contract (for example row quarantine on the out-of-core route)
+is refused before any source is read with a registered code, and `auto` routing never picks one. The engine owns the contract, catalog and reason codes; CLI and Studio controls are
+consumer work and are not part of this engine change. See `docs/declared-casting.md`.
+
 ## Public API at a glance
 
 The full public surface lives in `decoy_engine.__all__`. The contract

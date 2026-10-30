@@ -34,6 +34,10 @@ from decoy_engine.plan._checks import check_statistical_columns
 from decoy_engine.plan._checks_dp import verify_dp_snapshots
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.plan._generation import ReadSnapshot, build_generation_plan
+from decoy_engine.plan._serialize_declared import (
+    declared_casting_from_dict,
+    declared_casting_to_dict,
+)
 from decoy_engine.plan._types import (
     ColumnSeed,
     DpVerification,
@@ -93,6 +97,10 @@ def _plan_to_dict(plan: Plan) -> dict[str, Any]:
     # versions' YAML shape identical for that case.
     if plan.generation is not None:
         out["generation"] = _generation_plan_to_dict(plan.generation)
+    # F06 (plan_version 3): omitted when empty, so a plan with no declared columns differs from
+    # its version-2 form only by the version line.
+    if plan.declared_casting is not None:
+        out["declared_casting"] = declared_casting_to_dict(plan.declared_casting)
     return out
 
 
@@ -269,6 +277,11 @@ def _plan_from_dict(data: dict[str, Any]) -> Plan:
         plan_compile=_plan_compile_from_dict(data.get("plan_compile", {})),
         generation=(
             _generation_plan_from_dict(generation_raw) if generation_raw is not None else None
+        ),
+        declared_casting=(
+            declared_casting_from_dict(data["declared_casting"])
+            if data.get("declared_casting") is not None
+            else None
         ),
     )
 

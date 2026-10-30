@@ -1,0 +1,30 @@
+bringing up nodes...
+bringing up nodes...
+
+.........................................s.............................. [ 14%]
+.....................................................s.s......ss......s. [ 28%]
+s..........s.s.....s.s...............s..ss..................s.ss.s...... [ 43%]
+.s.s.................................................................... [ 57%]
+........................................................................ [ 72%]
+........................................................................ [ 86%]
+...............................................s...................      [100%]
+=============================== warnings summary ===============================
+tests/integration/test_fk_sequential_row_error_leak.py: 14 warnings
+  /home/user/decoy-engine/src/decoy_engine/execution/_strategies/_date_shift.py:247: UserWarning: Could not infer format, so each element will be parsed individually, falling back to `dateutil`. To ensure parsing is consistent and as-expected, please specify a format.
+    parsed = pd.to_datetime(col, format=fmt, errors="coerce")
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+SKIPPED [1] tests/integration/compat_corpus/test_compat_corpus.py:95: pre-GA: synthetic baseline is sufficient; capture real artifacts at GA
+SKIPPED [2] tests/integration/test_byte_estimate_arrow_types_e2e.py:344: dictionary_float16: refused by the engine with estimate routing off (known issue)
+SKIPPED [2] tests/integration/test_byte_estimate_arrow_types_e2e.py:344: dense_union: refused by the engine with estimate routing off (known issue)
+SKIPPED [2] tests/integration/test_byte_estimate_arrow_types_e2e.py:344: large_list: refused by the engine with estimate routing off (known issue)
+SKIPPED [2] tests/integration/test_byte_estimate_arrow_types_e2e.py:344: list: refused by the engine with estimate routing off (known issue)
+SKIPPED [2] tests/integration/test_byte_estimate_arrow_types_e2e.py:344: map: refused by the engine with estimate routing off (known issue)
+SKIPPED [1] tests/integration/test_byte_estimate_arrow_types_e2e.py:344: fixed_shape_tensor: refused by the engine with estimate routing off (known issue)
+SKIPPED [2] tests/integration/test_byte_estimate_arrow_types_e2e.py:344: time64_ns: refused by the engine with estimate routing off (known issue)
+SKIPPED [2] tests/integration/test_byte_estimate_arrow_types_e2e.py:344: ree_string_view: refused by the engine with estimate routing off (known issue)
+SKIPPED [2] tests/integration/test_byte_estimate_arrow_types_e2e.py:344: sparse_union: refused by the engine with estimate routing off (known issue)
+SKIPPED [2] tests/integration/test_byte_estimate_arrow_types_e2e.py:344: struct: refused by the engine with estimate routing off (known issue)
+SKIPPED [1] tests/integration/test_byte_estimate_arrow_types_e2e.py:344: fixed_size_list: refused by the engine with estimate routing off (known issue)
+478 passed, 21 skipped, 14 warnings in 18.36s

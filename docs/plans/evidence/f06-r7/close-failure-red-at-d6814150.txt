@@ -1,0 +1,7 @@
+__ test_failed_open_reports_a_close_that_failed_even_when_the_partial_is_gone __
+tmp_path = PosixPath('/tmp/pytest-of-root/pytest-18/test_failed_open_reports_a_clo0')
+    def test_failed_open_reports_a_close_that_failed_even_when_the_partial_is_gone(
+>       assert info.value.cleanup_state == "failed"
+E       AssertionError: assert 'confirmed' == 'failed'
+FAILED tests/unit/declared_casting/test_quarantine_begin_failure.py::test_failed_open_reports_a_close_that_failed_even_when_the_partial_is_gone
+1 failed, 3 passed in 0.29s

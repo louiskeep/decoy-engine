@@ -1,0 +1,20 @@
+src/decoy_engine/quality/dp_provenance.py:514: error: Cannot find implementation or library stub for module named "tomli"  [import-not-found]
+src/decoy_engine/quality/dp_provenance.py:514: note: See https://mypy.readthedocs.io/en/stable/running_mypy.html#missing-imports
+src/decoy_engine/execution/_mixed_fk_bridge.py:139: error: Module has no attribute "index_in"; maybe "index"?  [attr-defined]
+src/decoy_engine/execution/_mixed_fk_bridge.py:140: error: Module has no attribute "and_"  [attr-defined]
+src/decoy_engine/execution/_mixed_fk_bridge.py:140: error: Module has no attribute "is_null"  [attr-defined]
+src/decoy_engine/execution/_mixed_fk_bridge.py:140: error: Module has no attribute "is_valid"  [attr-defined]
+src/decoy_engine/execution/_mixed_fk_bridge.py:141: error: Module has no attribute "sum"  [attr-defined]
+src/decoy_engine/execution/_mixed_fk_bridge.py:152: error: Module has no attribute "if_else"  [attr-defined]
+src/decoy_engine/generation/_streamed.py:265: error: Module has no attribute "max"  [attr-defined]
+src/decoy_engine/generation/_streamed.py:265: error: Module has no attribute "binary_length"  [attr-defined]
+src/decoy_engine/execution/native/_date_shift_ext.py:179: error: Module has no attribute "replace_with_mask"  [attr-defined]
+src/decoy_engine/execution/native/_bucket_perturb_ext.py:258: error: Module has no attribute "replace_with_mask"  [attr-defined]
+src/decoy_engine/execution/native/_operator_step.py:523: error: Module has no attribute "sum"  [attr-defined]
+src/decoy_engine/execution/native/_operator_step.py:528: error: Module has no attribute "filter"  [attr-defined]
+src/decoy_engine/execution/native/_operator_step.py:535: error: Module has no attribute "filter"  [attr-defined]
+src/decoy_engine/execution/native/_operator_step.py:543: error: Module has no attribute "replace_with_mask"  [attr-defined]
+src/decoy_engine/execution/native/_faker_null_mask.py:43: error: Module has no attribute "is_null"  [attr-defined]
+src/decoy_engine/execution/physical/_shadow_operators.py:421: error: Module has no attribute "sum"  [attr-defined]
+Found 17 errors in 8 files (checked 671 source files)
+exit 1

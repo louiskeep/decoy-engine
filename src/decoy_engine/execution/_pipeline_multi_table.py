@@ -148,6 +148,36 @@ def _job_gates_hold(
     )
 
 
+def note_declared_split_exclusion(
+    config: dict[str, Any],
+    *,
+    plan: Plan,
+    graph: RelationshipGraph,
+    substrate: str,
+    table_kinds: Mapping[str, str],
+    auto_chunk: bool,
+    dispatcher_enabled: bool,
+    vault_writer_present: bool,
+) -> None:
+    """Record why a split that was on offer did not run: a declared job keeps one route for the
+    whole job (`declared_casting_full_frame`). Silent for a job the split never applied to."""
+    from decoy_engine import reasons
+    from decoy_engine.declared_casting._refusals import note
+
+    if _job_gates_hold(
+        config,
+        plan=plan,
+        graph=graph,
+        substrate=substrate,
+        table_kinds=table_kinds,
+        auto_chunk=auto_chunk,
+        dispatcher_enabled=dispatcher_enabled,
+        split_enabled=True,
+        vault_writer_present=vault_writer_present,
+    ):
+        note("multi_table_split", reasons.route.DECLARED_CASTING_FULL_FRAME)
+
+
 def decide_multi_table_split(
     config: dict[str, Any],
     *,

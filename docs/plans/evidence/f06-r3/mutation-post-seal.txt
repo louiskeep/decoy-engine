@@ -1,0 +1,9 @@
+# mutation: DeclaredCastRun.abort() no longer discards a sealed artifact (source e7f0c93)
+## old test (tests/acceptance/test_f06_route_parity.py at e7f0c93)
+.                                                                        [100%]
+1 passed, 28 deselected in 3.42s
+## new test (r3)
+E       AssertionError: assert [PosixPath('/...d0bf1db.dqa')] == []
+tests/acceptance/test_f06_route_parity_r3.py:635: AssertionError
+FAILED tests/acceptance/test_f06_route_parity_r3.py::test_chunked_post_seal_failure_leaves_no_quarantine_artifact
+1 failed, 28 deselected in 0.69s
