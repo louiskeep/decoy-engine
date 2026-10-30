@@ -460,6 +460,14 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
             # §WHEN-NUMERIC: a pure value-shape guard on the gated pandas write (no physical seam).
             "src/decoy_engine/execution/_gated_string_guard.py",
             "src/decoy_engine/execution/native/_determinism_protocol.py",
+            # DRAW_SITES split by family: the record type and enums, and the per-family data
+            # modules `_determinism_protocol.py` assembles (the two existing data siblings, already
+            # listed, only repoint their `DrawSite` import). Pure data moves; none imports
+            # `execution.physical`.
+            "src/decoy_engine/execution/native/_draw_site_types.py",
+            "src/decoy_engine/execution/native/_draw_sites_gen.py",
+            "src/decoy_engine/execution/native/_draw_sites_mask.py",
+            "src/decoy_engine/execution/native/_draw_sites_provider_backed.py",
             # C5c-ii (deterministic Faker over bool/int/uint on the native routes, 2026-10-09): the
             # closed metadata-shape admission classifier (`native/_faker_deterministic_admission.py`,
             # new) and the degenerate output-type pin shared by the chunked and from_pandas routes
