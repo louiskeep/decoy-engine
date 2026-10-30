@@ -1,8 +1,8 @@
 """F13 r3: the two recurring classes hold across a race and across a traceback.
 
-Cache scope is bound to ONE security-context snapshot per load (verified again after the read);
-invalidation fences in-flight loaders by epoch; a hit honors the calling policy's TTL; the audit
-count in the migration evidence is pinned so reverting the document turns a test red.
+Invalidation fences in-flight loaders by epoch; a hit honors the calling policy's TTL; the audit
+count in the migration evidence is pinned so reverting the document turns a test red. The r3
+mid-load snapshot tests are superseded by the structural r4 tests in ``test_r4_contract.py``.
 """
 
 from __future__ import annotations
@@ -11,11 +11,9 @@ import os
 import re
 import threading
 from pathlib import Path
-from typing import Any
 
 import pytest
 
-from decoy_engine.keyprovider import SecretKeyProvider
 from decoy_engine.secret_providers import (
     MASK_ROOT_V1,
     REQUIREMENTS,
@@ -23,7 +21,6 @@ from decoy_engine.secret_providers import (
     SecretBuffer,
     SecretCache,
     SecretCachePolicy,
-    SecretProviderUnavailable,
     default_cache,
     parse_ref,
     prepare_secret,
@@ -43,78 +40,6 @@ def _clean_cache():
 
 def admit(provider, policy):
     return prepare_secret(provider=provider, ref=REF, requirements=REQ, cache_policy=policy)
-
-
-# --- BLOCKER: the cache scope is one snapshot, bound to the load --------------------------------
-
-
-class _MutatingProvider(ProtocolProvider):
-    """A shared mutable client: its tenant changes at ``flip_at`` while a load is in flight."""
-
-    def __init__(self, flip_at: str) -> None:
-        super().__init__()
-        self.namespace = "tenant-a"
-        self.flip_at = flip_at
-        self.flipped = False
-
-    def cache_context(self) -> tuple[str, ...]:
-        return (self.namespace,)
-
-    def _flip(self, where: str) -> None:
-        if where == self.flip_at and not self.flipped:
-            self.flipped = True
-            self.namespace = "tenant-b"
-
-    def describe(self, ref):
-        self._flip("describe")
-        return super().describe(ref)
-
-    def resolve(self, ref):
-        self._flip("resolve-before")
-        self.value = self.namespace.encode() * 5
-        resolved = super().resolve(ref)
-        self._flip("resolve-after")
-        return resolved
-
-
-@pytest.mark.parametrize("flip_at", ["describe", "resolve-before", "resolve-after"])
-def test_a_client_mutated_mid_load_never_poisons_the_cache(flip_at):
-    prov = _MutatingProvider(flip_at)
-    policy = SecretCachePolicy(ttl_seconds=30, clock=FakeClock())
-    with pytest.raises(SecretProviderUnavailable):
-        admit(prov, policy)
-    assert len(default_cache()) == 0  # nothing cached under either tenant's key
-
-    served_b = admit(prov, policy)  # the client is now tenant B and stays stable
-    assert served_b.mask_key() == SecretKeyProvider(b"tenant-b" * 5).mask_key()
-    served_b.close()
-    prov.namespace = "tenant-a"
-    served_a = admit(prov, policy)
-    assert served_a.mask_key() == SecretKeyProvider(b"tenant-a" * 5).mask_key()
-    served_a.close()
-
-
-def test_a_mid_load_mutation_of_a_vault_client_never_poisons_the_cache():
-    pytest.importorskip("hvac")
-    from decoy_engine.secret_providers.vault import VaultKV2Provider
-    from tests.secret_providers.test_vault_adapter import REF as VREF
-    from tests.secret_providers.test_vault_adapter import StubClient, payload
-
-    client: Any = StubClient(payload())
-    client.url, client.token = "https://vault.test:8200", "tok-a"
-    read = client.secrets.kv.v2.read_secret_version
-
-    def racing_read(**kwargs):
-        result = read(**kwargs)
-        client.token = "tok-b"  # another thread re-authenticates the shared client mid-read
-        return result
-
-    client.secrets.kv.v2.read_secret_version = racing_read
-    provider = VaultKV2Provider(client)
-    policy = SecretCachePolicy(ttl_seconds=30, clock=FakeClock())
-    with pytest.raises(SecretProviderUnavailable):
-        provider.preflight(VREF, REQ, policy)
-    assert len(default_cache()) == 0
 
 
 # --- HIGH: invalidation fences in-flight loaders ------------------------------------------------

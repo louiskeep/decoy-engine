@@ -7,19 +7,24 @@ strictness. See docs/plans/2026-10-29-f13-secret-provider-contract-preflight.md.
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import hmac
 import json
 import os
 import re
 from dataclasses import dataclass, field
-from typing import Any, Literal, Protocol, runtime_checkable
+from typing import Any, Literal, Protocol, cast, runtime_checkable
 from urllib.parse import parse_qsl, unquote, urlsplit
 
 from decoy_engine import reasons
 from decoy_engine.keyprovider import MaskSecretError
 from decoy_engine.secret_providers._buffer import SecretBuffer
-from decoy_engine.secret_providers._errors import BAD_REF_MESSAGE, SecretClosedError
+from decoy_engine.secret_providers._errors import (
+    BAD_REF_MESSAGE,
+    SecretClosedError,
+    SecretProviderUnavailable,
+)
 
 API_VERSION: Literal["secret-provider/v1"] = "secret-provider/v1"
 
@@ -192,6 +197,68 @@ class SecretDescriptor:
         }
 
 
+@dataclass(frozen=True, repr=False)
+class ResolveContext:
+    """The immutable security context ONE provider read is made with.
+
+    The engine takes it once per load, derives the cache key from every field of this same object
+    and hands the same object to ``resolve``, which reads with it (never with mutable provider or
+    client state), so the key and the read cannot name different tenants. A provider that needs
+    selectors (a Vault address, namespace, token) subclasses it as a frozen dataclass with
+    ``repr=False``; ``context_key_parts`` rejects anything else. Pattern: an immutable request
+    context passed explicitly (Go ``context.Context`` values, AWS SDK per-call config) instead of
+    ambient mutable client state.
+    """
+
+    scheme: str
+
+    def __repr__(self) -> str:
+        return f"ResolveContext(scheme={self.scheme!r})"
+
+    __str__ = __repr__
+
+    def __reduce_ex__(self, *_: object) -> Any:
+        raise TypeError("resolve contexts cannot be pickled")
+
+
+_CONTEXT_SCALARS = (str, bool, int, type(None))
+
+
+def _immutable_value(value: object) -> bool:
+    if type(value) is tuple:
+        return all(type(v) in _CONTEXT_SCALARS for v in value)
+    return type(value) in _CONTEXT_SCALARS
+
+
+def context_key_parts(context: object, scheme: str) -> tuple[str, ...]:
+    """Every field of ``context`` as cache-key strings, or ``SecretProviderUnavailable``.
+
+    Only an exact frozen dataclass subclass of ``ResolveContext`` whose fields are exact
+    immutable scalars (or tuples of them), whose rendering is the base's fixed one and whose
+    scheme is the provider's is accepted: such an object cannot change between deriving the key
+    and the read, and cannot print a token in a traceback.
+    """
+    cls = type(context)
+    params = cls.__dict__.get("__dataclass_params__")
+    if (
+        not isinstance(context, ResolveContext)
+        or params is None
+        or not params.frozen
+        or cls.__repr__ is not ResolveContext.__repr__
+        or cast(object, cls.__str__) is not ResolveContext.__str__
+        or type(context.scheme) is not str
+        or context.scheme != scheme
+    ):
+        raise SecretProviderUnavailable
+    parts: list[str] = []
+    for f in dataclasses.fields(context):
+        value = getattr(context, f.name)
+        if not _immutable_value(value):
+            raise SecretProviderUnavailable
+        parts.append(json.dumps([f.name, value]))
+    return tuple(parts)
+
+
 class Clock(Protocol):
     def monotonic(self) -> float: ...
 
@@ -348,14 +415,19 @@ class PreparedKeyProvider:
 @runtime_checkable
 class SecretProvider(Protocol):
     """``secret-provider/v1``. ``describe`` never reads the value; ``preflight`` delegates to the
-    common ``prepare_secret`` choke point."""
+    common ``prepare_secret`` choke point.
+
+    ``resolve`` reads with the ``ResolveContext`` it is handed. A provider whose read depends on a
+    security context (address, namespace, credentials) fixes it at construction and exposes it
+    through an optional ``resolve_context()`` member; one without gets ``ResolveContext(scheme)``.
+    """
 
     api_version: Literal["secret-provider/v1"]
     scheme: str
 
     def describe(self, ref: SecretRef) -> SecretDescriptor: ...
 
-    def resolve(self, ref: SecretRef) -> ResolvedSecret: ...
+    def resolve(self, ref: SecretRef, context: ResolveContext) -> ResolvedSecret: ...
 
     def preflight(
         self,

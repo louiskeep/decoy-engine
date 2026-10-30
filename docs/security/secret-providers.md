@@ -53,12 +53,14 @@ mapped by exception *type* with fixed text: `secret_provider_unknown`, `secret_p
 `weak_mask_secret`, `keyed_strategy_requires_secret`. The provider exception is not retained as
 `__cause__`/`__context__`, so `logging.exception` and excepthooks cannot print provider internals.
 
-No caught exception is ever re-raised. The admission boundary (`prepare_secret`, `prepare_legacy`
-and a provider's own `preflight` called from `admit_mask_key`) rebuilds a fresh engine error from
-the registered code alone and raises it without the failing frames' traceback. A provider that
+No caught exception is ever re-raised. The admission boundary (`prepare_secret`, `prepare_legacy`,
+`prepare_ref` behind `keyprovider.key_provider_from_ref`, and a provider's own `preflight` called
+from `admit_mask_key`) catches every `BaseException` except `KeyboardInterrupt` and `SystemExit`
+(those pass through untouched), records only the registered code inside the handler, and raises a
+fresh engine error outside it without the failing frames' traceback. A provider that
 raises a `MaskSecretError` with its own message, or a subclass of a closed error, gets the
-engine's constant text for that code. An unregistered or non-string code becomes
-`secret_provider_unavailable`. Rendering with `traceback.TracebackException(capture_locals=True)`
+engine's constant text for that code. An unregistered code, a code that is not an exact `str`, or a
+`code`/`message` attribute that raises becomes `secret_provider_unavailable`. Rendering with `traceback.TracebackException(capture_locals=True)`
 therefore shows no frame that held secret material. Between the read and the derivation, material
 lives only in `SecretBuffer` objects, which render as `<redacted secret>`.
 
@@ -71,8 +73,12 @@ lives only in `SecretBuffer` objects, which render as `<redacted secret>`.
   by a hit, and are evicted on expiry or error. Concurrent preflights of one uncached secret read
   the provider once.
 - Entries are scoped. The key is a per-process salted hash of the canonical reference, the
-  requirement set, the scheme and the provider's optional `cache_context()` (Vault: address,
-  namespace and token). Each entry is also bound to the identity of the provider instance and
+  requirement set and every field of the provider's `ResolveContext` (Vault: scheme, address,
+  namespace, token and TLS settings). The engine takes that immutable context once per load and
+  hands the same object to `resolve(ref, context)`, which reads with it, so the key and the read
+  cannot name different tenants. A context must be a frozen dataclass subclass of
+  `ResolveContext` with `repr=False`, the provider's scheme and only immutable scalar fields;
+  anything else fails `secret_provider_unavailable` before any read. Each entry is also bound to the identity of the provider instance and
   the admitting registry, and is served only to those same objects. Two providers that share a
   scheme and a reference (two tenants) each read their own secret.
 - The cache is bounded: at most 128 entries (the oldest insert is evicted first), every expired
@@ -96,8 +102,13 @@ from decoy_engine.secret_providers.vault import VaultKV2Provider, client_from_en
 register_secret_provider(VaultKV2Provider(client_from_env()))
 ```
 
-- The caller authenticates and authorizes (F45) first; the engine accepts an already-authenticated
-  client and never stores a token. `client_from_env` honors `VAULT_ADDR`, `VAULT_TOKEN`,
+- The caller authenticates and authorizes (F45) first and passes an already-authenticated client.
+  The provider is immutable: construction copies the client's address, namespace, token and TLS
+  settings (`verify`, client cert) into a frozen `VaultContext`, keeps no reference to the client,
+  and each read goes through a client built from that context. Re-pointing or re-authenticating
+  the caller's client afterwards changes nothing; to change tenant or token, build and register a
+  new provider (a new registry, or `admit_mask_key(..., registry=...)`). The provider and its
+  context never render their settings and cannot be pickled. `client_from_env` honors `VAULT_ADDR`, `VAULT_TOKEN`,
   `VAULT_NAMESPACE`, `VAULT_CACERT`, `VAULT_CLIENT_CERT`, `VAULT_CLIENT_KEY`, and **rejects**
   `VAULT_SKIP_VERIFY` (disabling TLS verification needs `insecure_skip_tls_verify=True` in code).
 - One provider round trip: the KV v2 read returns data and metadata together and the returned
@@ -114,10 +125,9 @@ register_secret_provider(VaultKV2Provider(client_from_env()))
   Both fence loads already in flight: a read that began before the call is returned to its own
   caller but is never inserted, so no revoked material is served from the cache after the call
   returns. Cached entries are also never served past the calling policy's TTL.
-- The cache scope is one security-context snapshot (address, namespace, token digest) taken when
-  a load starts and checked again after the read. A client that changes mid-load fails the load
-  with `secret_provider_unavailable` and caches nothing. This detects a change that is still in
-  effect after the read; it cannot see a value that changes and changes back within one read.
+- Cache isolation is structural, not a before/after comparison: a shared client switched to
+  another tenant and back during a load cannot change the context the read used, because the read
+  never goes through that client.
 - **Not live-verified.** The in-process fakes prove the adapter's mapping and ordering, not the
   real `hvac` wire format, TLS verification, namespace header routing or the KV v2 metadata
   envelope. The five live tests in `tests/secret_providers/test_vault_live.py` are skipped

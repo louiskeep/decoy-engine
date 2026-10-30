@@ -7,6 +7,7 @@ context, so two providers sharing a scheme and reference never share a prepared 
 from __future__ import annotations
 
 import threading
+from dataclasses import dataclass
 
 import pytest
 
@@ -15,6 +16,7 @@ from decoy_engine.secret_providers import (
     EXPIRY_SKEW_SECONDS,
     MASK_ROOT_V1,
     REQUIREMENTS,
+    ResolveContext,
     SecretCache,
     SecretCachePolicy,
     SecretExpired,
@@ -177,6 +179,11 @@ def test_the_same_provider_in_two_registries_is_cached_per_registry(tmp_path):
     assert prov.resolve_calls == 2
 
 
+@dataclass(frozen=True, repr=False)
+class _TenantContext(ResolveContext):
+    namespace: str = ""
+
+
 class _NamespacedProvider(ProtocolProvider):
     """Carries a security context (like a Vault namespace) that selects a different secret."""
 
@@ -184,12 +191,12 @@ class _NamespacedProvider(ProtocolProvider):
         super().__init__()
         self.namespace = "tenant-a"
 
-    def cache_context(self) -> tuple[str, ...]:
-        return (self.namespace,)
+    def resolve_context(self) -> _TenantContext:
+        return _TenantContext(scheme=self.scheme, namespace=self.namespace)
 
-    def resolve(self, ref):  # type: ignore[override]
-        self.value = self.namespace.encode() * 4
-        return super().resolve(ref)
+    def resolve(self, ref, context=None):  # type: ignore[override]
+        self.value = context.namespace.encode() * 4
+        return super().resolve(ref, context)
 
 
 def test_the_provider_security_context_is_part_of_the_key():
@@ -205,7 +212,7 @@ def test_the_provider_security_context_is_part_of_the_key():
 
 def test_a_failing_security_context_fails_closed():
     class Broken(ProtocolProvider):
-        def cache_context(self):
+        def resolve_context(self):
             raise RuntimeError("F13-CONTEXT-MARKER")
 
     prov = Broken()

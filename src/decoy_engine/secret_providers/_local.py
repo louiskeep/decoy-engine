@@ -11,6 +11,7 @@ from decoy_engine.secret_providers._errors import MISSING_MESSAGE
 from decoy_engine.secret_providers._types import (
     API_VERSION,
     PreparedSecret,
+    ResolveContext,
     ResolvedSecret,
     SecretCachePolicy,
     SecretDescriptor,
@@ -35,7 +36,8 @@ class _LocalProvider:
     def _read(self, ref: SecretRef) -> bytes:  # pragma: no cover - overridden
         raise NotImplementedError
 
-    def resolve(self, ref: SecretRef) -> ResolvedSecret:
+    def resolve(self, ref: SecretRef, context: ResolveContext) -> ResolvedSecret:
+        # No security selectors: the reference alone names the variable or file.
         return ResolvedSecret(
             SecretBuffer(self._read(ref)), key_version=ref.key_version or _DEFAULT_KEY_VERSION
         )

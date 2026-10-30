@@ -119,7 +119,7 @@ class ProtocolProvider:
             scheme=self.scheme, key_version=self.key_version, renewable=self.renewable
         )
 
-    def resolve(self, ref: SecretRef) -> ResolvedSecret:
+    def resolve(self, ref: SecretRef, context: Any = None) -> ResolvedSecret:
         with self._lock:
             self.resolve_calls += 1
             n = self.resolve_calls

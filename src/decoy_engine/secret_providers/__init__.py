@@ -24,6 +24,7 @@ from decoy_engine.secret_providers._preflight import (
     admit_mask_key,
     assert_plan_requirements_admitted,
     prepare_legacy,
+    prepare_ref,
     prepare_secret,
 )
 from decoy_engine.secret_providers._registry import (
@@ -47,6 +48,7 @@ from decoy_engine.secret_providers._types import (
     MAX_CACHE_TTL_SECONDS,
     PreparedKeyProvider,
     PreparedSecret,
+    ResolveContext,
     ResolvedSecret,
     SecretCachePolicy,
     SecretDescriptor,
@@ -68,6 +70,7 @@ __all__ = [
     "AdmittedKey",
     "PreparedKeyProvider",
     "PreparedSecret",
+    "ResolveContext",
     "ResolvedSecret",
     "SecretAccessDenied",
     "SecretBuffer",
@@ -91,6 +94,7 @@ __all__ = [
     "default_registry",
     "parse_ref",
     "prepare_legacy",
+    "prepare_ref",
     "prepare_secret",
     "register_secret_provider",
     "secret_requirements_for_config",

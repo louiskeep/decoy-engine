@@ -15,16 +15,19 @@ New `decoy_engine.secret_providers`: the versioned `secret-provider/v1` contract
 / `preflight`), per-algorithm validation (`decoy-mask-root-v1`, `fernet-v1`, `hmac-sha256-v1`, `aes-gcm-v1`;
 no universal 32-byte rule), a redacted `SecretBuffer`, a thread-safe bounded cache (off by default, 60 s
 maximum, `min(ttl, provider_expiry - 5 s)`, 128 entries, expired entries and single-flight locks pruned on
-access, entries scoped to the provider instance, the admitting registry and the provider's
-`cache_context()`), `env:`/`file:` providers with explicit `?encoding=`, and an
+access, entries scoped to the provider instance, the admitting registry and every field of the
+provider's immutable `ResolveContext`, the same object `resolve(ref, context)` reads with),
+`env:`/`file:` providers with explicit `?encoding=`, and an
 optional HashiCorp Vault KV v2 adapter (`pip install decoy-engine[hashicorp-vault]`, `hvac==2.4.0`,
-exact-version references, TLS verification mandatory). The keyed-mask secret is now admitted from
+exact-version references, TLS verification mandatory; the provider is immutable and copies the
+client's address, namespace, token and TLS settings at construction). The keyed-mask secret is now admitted from
 configuration BEFORE `profile_source`, before a chunk iterator is touched (`run_mask_chunked`,
 `run_mask_pipeline_chunked`) and before unmask / vault-writer reads. Seven registered `runtime` reasons
 (`secret_provider_unknown`, `secret_provider_unavailable`, `secret_access_denied`,
 `secret_version_unavailable`, `secret_expired`, `secret_lease_unsupported`, `secret_material_invalid`);
 `REGISTRY_VERSION` 1.1.0. Admission failures are rebuilt from their registered code (provider-supplied
-messages are dropped) and raised without the failing frames' traceback. Docs:
+messages are dropped) and raised without the failing frames' traceback; the boundary covers every
+`BaseException` except `KeyboardInterrupt` and `SystemExit`. Docs:
 `docs/security/secret-providers.md`.
 
 ### Removed (pre-GA hard delete, F13)

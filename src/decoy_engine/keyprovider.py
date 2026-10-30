@@ -182,23 +182,9 @@ def key_provider_from_ref(ref: str, *, key_version: str | None = None) -> KeyPro
     closes it automatically and nothing caches it). Prefer
     `decoy_engine.secret_providers.admit_mask_key`, which also owns closing.
     """
-    from decoy_engine.secret_providers import (
-        MASK_ROOT_V1,
-        REQUIREMENTS,
-        SecretCachePolicy,
-        default_registry,
-        parse_ref,
-    )
+    from decoy_engine.secret_providers import prepare_ref
 
-    parsed = parse_ref(ref)
-    if key_version is not None:
-        from dataclasses import replace
-
-        parsed = replace(parsed, key_version=key_version)
-    provider = default_registry().get(parsed.scheme)
-    return provider.preflight(
-        parsed, (REQUIREMENTS[MASK_ROOT_V1],), SecretCachePolicy()
-    ).key_provider()
+    return prepare_ref(ref, key_version=key_version).key_provider()
 
 
 def plan_has_keyed_strategy(plan: Plan) -> bool:

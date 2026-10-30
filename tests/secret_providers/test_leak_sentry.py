@@ -85,7 +85,7 @@ class SDKBoomError(Exception):
 
 
 class LeakyProvider(ProtocolProvider):
-    def resolve(self, ref):  # type: ignore[override]
+    def resolve(self, ref, context=None):  # type: ignore[override]
         self.resolve_calls += 1
         raise SDKBoomError(
             f"GET /v1/kv/F13-PATH-MARKER denied; body={MARKER!r}; token=F13-TOKEN-MARKER"
@@ -350,7 +350,7 @@ class _ValueBearingProvider(ProtocolProvider):
         super().__init__(scheme)
         self._make = make
 
-    def resolve(self, ref):  # type: ignore[override]
+    def resolve(self, ref, context=None):  # type: ignore[override]
         self.resolve_calls += 1
         raise self._make()
 
@@ -423,7 +423,7 @@ class _CanaryProvider:
     def describe(self, ref):
         return SecretDescriptor(scheme=self.scheme, key_version="v1", renewable=False)
 
-    def resolve(self, ref):
+    def resolve(self, ref, context=None):
         raise SDKBoomError("denied")
 
     def preflight(self, ref, requirements, cache_policy):

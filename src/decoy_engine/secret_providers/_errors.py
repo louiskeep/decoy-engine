@@ -24,6 +24,7 @@ from decoy_engine.keyprovider import (
     MissingMaskSecret,
     WeakMaskSecret,
 )
+from decoy_engine.reasons import ReasonCode
 
 BAD_REF_MESSAGE = "The secret reference is invalid."
 BAD_ENCODING_MESSAGE = "The secret material has an invalid encoding."
@@ -118,19 +119,50 @@ _CLOSED[reasons.runtime.WEAK_MASK_SECRET] = lambda: WeakMaskSecret(WEAK_MESSAGE)
 # Engine-owned constant texts that keep their precision; any other text falls back to the first.
 _BAD_REF_TEXTS = (BAD_REF_MESSAGE, BAD_ENCODING_MESSAGE, NEEDS_ENCODING_MESSAGE)
 
+Failure = tuple[str, str]
+"""A registered code and an engine-owned text: the only things a failure keeps."""
 
-def closed_error(exc: BaseException) -> MaskSecretError:
-    """A freshly built, engine-owned error for ``exc``: same registered code, engine text only.
+_UNAVAILABLE: Failure = (reasons.runtime.SECRET_PROVIDER_UNAVAILABLE, "")
+_REGISTERED = {code: code for code in _CLOSED}
+_CODE_TYPES = (str, ReasonCode)
 
-    Nothing of ``exc`` survives but its code: not its message, args, attributes, type, chain
-    or traceback (whose frames may hold secret material in their locals).
-    """
+
+def _classify(exc: BaseException) -> Failure:
     code = getattr(exc, "code", None) if isinstance(exc, MaskSecretError) else None
-    if not isinstance(code, str):
-        return SecretProviderUnavailable()
+    # Exact types: a foreign str subclass could run code on compare or hash.
+    if not isinstance(code, str) or type(code) not in _CODE_TYPES:
+        return _UNAVAILABLE
     if code == reasons.runtime.BAD_SECRET_REF:
         message = getattr(exc, "message", None)
-        text = message if isinstance(message, str) and message in _BAD_REF_TEXTS else None
+        if type(message) is not str:
+            return (reasons.runtime.BAD_SECRET_REF, BAD_REF_MESSAGE)
+        text = next((t for t in _BAD_REF_TEXTS if t == message), BAD_REF_MESSAGE)
+        return (reasons.runtime.BAD_SECRET_REF, text)
+    return (_REGISTERED.get(code, _UNAVAILABLE[0]), "")
+
+
+def failure_of(exc: BaseException) -> Failure:
+    """The registered code (and engine text) for ``exc``, built from engine constants only.
+
+    Total: a hostile ``code`` or ``message`` attribute that raises yields
+    ``secret_provider_unavailable``. Nothing of ``exc`` (message, args, notes, type, chain,
+    traceback) is retained, so the caller may drop ``exc`` and raise outside its handler.
+    """
+    try:
+        return _classify(exc)
+    except BaseException:
+        return _UNAVAILABLE
+
+
+def error_for(failure: Failure) -> MaskSecretError:
+    """A freshly built engine error for a recorded ``failure``."""
+    code, text = failure
+    if code == reasons.runtime.BAD_SECRET_REF:
         return MaskSecretError(code=reasons.runtime.BAD_SECRET_REF, message=text or BAD_REF_MESSAGE)
     make = _CLOSED.get(code)
     return make() if make is not None else SecretProviderUnavailable()
+
+
+def closed_error(exc: BaseException) -> MaskSecretError:
+    """A freshly built, engine-owned error for ``exc``: same registered code, engine text only."""
+    return error_for(failure_of(exc))

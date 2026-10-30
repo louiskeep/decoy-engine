@@ -55,12 +55,22 @@ def payload(*, version=3, value=KEY_B64, destroyed=False, deletion_time="", **to
     return body
 
 
+_STUBS: dict[str, StubClient] = {}
+
+
 class StubClient:
-    """Counts round trips; behaves like hvac.Client for the one call the adapter makes."""
+    """Counts round trips; behaves like hvac.Client for the one call the adapter makes.
+
+    The provider copies its settings at construction and reads through ``hvac.Client`` built
+    from them; ``_transport`` routes that client back here by URL and records its settings.
+    """
 
     def __init__(self, result=None, raises=None):
         self.calls = []
+        self.connects = []
         self._result, self._raises = result, raises
+        self.url, self.token = f"https://stub-{len(_STUBS)}.vault.test:8200", "stub-token"
+        _STUBS[self.url] = self
         outer = self
 
         class V2:
@@ -77,6 +87,22 @@ class StubClient:
             kv = KV()
 
         self.secrets = Secrets()
+
+
+_REAL_CLIENT = hvac.Client
+
+
+def _transport(url=None, token=None, namespace=None, verify=True, cert=None, **kwargs):
+    stub = _STUBS.get(url or "")
+    if stub is None:
+        return _REAL_CLIENT(url=url, token=token, namespace=namespace, verify=verify, cert=cert)
+    stub.connects.append({"url": url, "token": token, "namespace": namespace})
+    return stub
+
+
+@pytest.fixture(autouse=True)
+def _stub_transport(monkeypatch):
+    monkeypatch.setattr(hvac, "Client", _transport)
 
 
 def admit(client, clock=None):
@@ -174,7 +200,6 @@ def test_the_client_security_context_scopes_the_cache(attribute):
 
     default_cache().clear()
     client = StubClient(payload())
-    client.url, client.token = "https://vault.test:8200", "tok-a"
     client.adapter = SimpleNamespace(namespace="tenant-a")
     provider = VaultKV2Provider(client)
     policy = SecretCachePolicy(ttl_seconds=30, clock=FakeClock())
@@ -183,8 +208,13 @@ def test_the_client_security_context_scopes_the_cache(attribute):
     assert len(client.calls) == 1  # positive control: same context, one read
     target = client.adapter if attribute == "namespace" else client
     setattr(target, attribute, getattr(target, attribute) + "-other")
+    if attribute == "url":
+        _STUBS[client.url] = client
     provider.preflight(REF, REQ, policy).close()
-    assert len(client.calls) == 2
+    assert len(client.calls) == 1  # the provider kept its construction-time context
+    VaultKV2Provider(client).preflight(REF, REQ, policy).close()
+    assert len(client.calls) == 2  # a provider over the changed settings is its own scope
+    assert client.connects[0][attribute] != client.connects[1][attribute]
     default_cache().clear()
 
 

@@ -1043,6 +1043,8 @@ only_mutate = [
     "src/decoy_engine/secret_providers/_cache.py",
     "src/decoy_engine/secret_providers/_preflight.py",
     "src/decoy_engine/secret_providers/_errors.py",
+    "src/decoy_engine/secret_providers/_types.py",
+    "src/decoy_engine/secret_providers/vault.py",
     "src/decoy_engine/keyprovider.py",
 ]
 pytest_add_cli_args_test_selection = [

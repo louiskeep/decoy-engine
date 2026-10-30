@@ -1,0 +1,62 @@
+F13 r4 red baseline: the r4 tests against the bf76e761 sources (the r3 head), CPython 3.10.20,
+installed with `uv sync --frozen` from this branch's uv.lock (same .venv as the green run).
+Method: a git worktree at bf76e761 with only the test files of this round copied in
+(tests/secret_providers/test_r4_contract.py, _helpers.py, test_leak_sentry.py; the two helper edits
+only add an optional `context=None` parameter to test providers' `resolve`). pytest's
+`pythonpath = ["src"]` makes the worktree's src the imported package (checked:
+decoy_engine.__file__ is under the worktree).
+Command: .venv/bin/python -m pytest -q -p no:cacheprovider tests/secret_providers/test_r4_contract.py --tb=line
+Result: 21 failed, 4 passed
+
+BLOCKER (class 3): the read is bound to the keyed context
+FAILED ...::test_a_barrier_forced_switch_mid_load_cannot_change_the_read_context[describe]
+    AssertionError: tenant B's secret served for tenant A   (the poisoning the gate found: the switch
+    A -> B -> A happens between the r3 before/after comparisons, both pass)
+FAILED ...::test_a_barrier_forced_switch_mid_load_cannot_change_the_read_context[context]
+    SecretProviderUnavailable   (the switch lands between the r3 snapshot and its before-check, so
+    the r3 head fails the load instead of reading with the keyed context; this case exists to kill
+    the mutant "re-read the context at read time" on the r4 head)
+FAILED ...::test_a_barrier_forced_vault_client_switch_mid_load_cannot_change_the_read_context
+    AssertionError: tenant B's secret served for tenant A   (through the shipped Vault adapter)
+FAILED ...::test_a_vault_provider_is_immutable_and_never_renders_its_settings
+    Failed: DID NOT RAISE AttributeError   (the r3 provider is mutable)
+FAILED ...::test_a_context_that_is_not_immutable_and_value_free_fails_closed[5 cases]
+    AssertionError: the r4 resolve context is missing   (red because the structure does not exist at
+    bf76e761, not because of a behavior; recorded as such)
+
+HIGH (class 1): one translation boundary for every BaseException
+FAILED ...::test_an_extension_base_exception_is_rebuilt_from_a_fixed_code[5 entry points]
+FAILED ...::test_an_extension_base_exception_leaves_no_value_bearing_local[5 entry points]
+    AssertionError: a value-bearing BaseException escaped the boundary
+    (entry points: prepare_secret, admit_mask_key via the registry, admit_mask_key with a key
+    provider, prepare_legacy, keyprovider.key_provider_from_ref; the last had no boundary at all)
+FAILED ...::test_a_hostile_error_object_is_classified_without_escaping[foreign-str-code]
+FAILED ...::test_a_hostile_error_object_is_classified_without_escaping[raising-code]
+    AssertionError: a value-bearing BaseException escaped the boundary (classifying the error ran
+    extension code inside the handler: a `str` subclass `__eq__`, a raising `code` property)
+
+Green on bf76e761 by design (guards against a regression, not red-first tests):
+PASSED ...::test_interrupts_and_exits_pass_through_untouched[KeyboardInterrupt]
+PASSED ...::test_interrupts_and_exits_pass_through_untouched[SystemExit]
+PASSED ...::test_a_hostile_error_object_is_classified_without_escaping[bad-ref-without-message]
+PASSED ...::test_a_hostile_error_object_is_classified_without_escaping[no-init]
+    (no-init kills r3 mutant `_errors.closed_error` 6, whose recorded justification was false; see
+    the r4 mutation report)
+
+So the claim is: every r4 test that targets a defect is red on bf76e761, 21 of 25; the 4 green
+ones are named above with the reason. Not every new test is red-first.
+
+Superseded and deleted (their assertions belonged to the deleted before/after comparison, not to
+the property): test_r3_contract.py::test_a_client_mutated_mid_load_never_poisons_the_cache[3] and
+::test_a_mid_load_mutation_of_a_vault_client_never_poisons_the_cache. The second would now pass
+vacuously (it expects SecretProviderUnavailable, which an unpatched hvac transport also raises).
+test_vault_adapter.py::test_the_client_security_context_scopes_the_cache now asserts the stronger
+r4 property (a re-pointed client changes nothing; a new provider is its own scope).
+
+Correction to the r3 evidence (class 8). 2026-10-30-f13-r3-red-baseline.txt ran only
+test_r3_contract.py and test_leak_sentry.py on d888e81 (13 failed, 33 passed) and the r3 report
+claimed each new test fails on r2. That is false. Rerun here, same environment, the r3-head test
+files test_r3_contract.py, test_leak_sentry.py and test_r3_mutation_kills.py against the d888e81
+sources: 18 failed, 61 passed (the two files alone: 13 failed, 33 passed; test_r3_mutation_kills.py
+alone: 5 failed, 28 passed). Most mutation-kill tests pin behavior that was already correct and
+were never red-first.
