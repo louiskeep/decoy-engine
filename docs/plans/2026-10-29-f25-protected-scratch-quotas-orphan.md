@@ -225,6 +225,125 @@ Encryption/ledger benchmark protocol: fixed synthetic datasets and seeds; tiny j
 
 Do not adopt a percentage overhead estimate. Before implementation acceptance, reviewers set deployment throughput/latency budgets from the measured baseline and workload requirements; preserve those budgets for the full-profile comparison. Correctness, hard quota, no bypass and checkpoint safety are unconditional gates. A performance miss returns to profile selection/optimization and cannot disable encryption or weaken tests. Existing bounded-RSS behavior must remain intact: buffered readers at `src/decoy_engine/execution/out_of_core/_payload_store.py:244` and `_external_sort_run.py:37` must not become whole-file decryptions or new memory maps.
 
+### 1.10 Defect-catalog class table for Slice 4c and touched 4b seams
+
+The table applies the catalog to the 4c amendment and to 4b wherever encryption crosses the same handle, process, native-library, report, or publication seam. An N/A does not waive the existing characterization test named in that row.
+
+| # | Class and applicability | Closing structure | Proving test | Required mutation |
+|---|---|---|---|---|
+| 1 | Value-bearing output: applies. The F31 plan is itself the class-1 closing structure; its implementation is absent here and must be grounded before integration. | F31 closed-event boundary, plus F25 typed reports at `src/decoy_engine/scratch/_reports.py:67` and safe summaries at `src/decoy_engine/execution/_isolated_common.py:266`. | Seed values, paths, DSNs, keys, native errors, and class names across every output surface; require a nonempty seed corpus per surface. | Remove the F31 boundary call or restore raw exception/path text; the marker test must fail. |
+| 2 | Cleanup missing on an exit path: applies. | One `ScratchDirectoryHandle`/`ScratchFileHandle` owner and ledger disposition on every non-publish exit, preserving the existing release contract at `src/decoy_engine/scratch/_arena.py:428`. | Generated exit-path matrix covering success, refusal, exception, timeout, cancellation, crash, failed close, double release, and release after commit. | Delete one `finally`/abort/release edge or make failed cleanup report success. |
+| 3 | State machine and concurrency: applies. | Written file-handle and `ResourceState` transition tables, one lock per owner, lease generation fence; current durable states are at `src/decoy_engine/scratch/_policy.py:58`. | Barrier-force allocate/write/close/publish/reap and key-retention transition pairs; assert one winner and retained ambiguity. | Remove a lock, CAS predicate, or generation comparison. |
+| 4 | Route parity and silent fallback: applies. | T01-T17 capability matrix across OOC lanes, sink modes, isolated/fallback, standalone entrypoints, native/no-companion, and 4b encryption; route reasons stay registered. | Generated route matrix with a nonempty actual-write or actual-spill witness in every cell and byte/schema/order parity. | Omit one route's arena, disable forced spill, or restore an unmanaged fallback. |
+| 5 | Referential integrity: N/A because 4c/4b change storage authority and encryption, not row selection, FK mapping, or orphan policy. | Existing `RelationshipEdge` shape remains frozen at `src/decoy_engine/relationships/_graph.py:70`; A04 characterizes it. | Run single, composite, self-referencing, multi-parent, and cross-batch FK cases through both OOC lanes. | Route one FK case through a storage migration that changes rows or order; parity must fail. |
+| 6 | Untrusted producer: applies to native libraries and the isolated child. | Exact envelopes, bounded parsing, inherited verified fds, created-child adoption, and safe coded errors at `src/decoy_engine/scratch/_errors.py:23`. | Hostile envelope/child/native corpus plus public-type field walk; reject extra fields, path reconstruction, raw error text, and replaced outputs. | Accept a path-bearing envelope, subclass, unknown field, or unadopted native child. |
+| 7 | TOCTOU/check-then-use on a path: applies and is the central 4c defect. | Non-Path capabilities, live verified directory fds, single-component operations, `ScratchDirEntry`, `NativePathLease`, and the transitive sentry replacing the current narrow root at `tests/scratch/test_fd_only_filesystem_sentry.py:26`. | C00-C21 AST seeds and real-kernel parent/stage/child swaps at every pause. | Return a `Path`, close the lease early, allow raw `DirEntry`, or remove one identity comparison. |
+| 8 | Weak tests and overclaimed evidence: applies. | RED-first witnesses, non-vacuity assertions, same-`uv.lock` baselines, exact-commit GCP evidence, and unchanged budgets. | Each generated matrix records fail-before and one mechanism-neutering failure; reviewer reruns baseline and mutation in one environment. | Skip a writer/spill, widen a threshold, or let a test pass without reaching its intended syscall. |
+| 9 | Behavior-preserving refactor drift: applies to all consumer migrations. | Characterization tests before changing each T row, existing output contracts, one bounded 4c unit at a time, and sentries that scan moved files. | A04 compares values, schema, order, warnings, deterministic bytes, FK behavior, and publication semantics before/after. | Reorder one output, change one schema metadata value, or move a consumer beyond sentry reach. |
+| 10 | Frozen contract drift: applies. | Explicit frozen-contract list below and schema/API snapshots; breaking 4c helper changes receive a caller migration gate. | Snapshot public reports, errors, ledger/envelope versions, capability surface, and output contracts. | Add an unversioned field, accept an unknown ledger version, or silently preserve an old path-returning helper. |
+
+### 1.11 Enumerations filled from this checkout
+
+These are the contract enumerations for the amended boundary, not a second design. Each list is the minimum generated-test input; T01-T17 and C00-C22 remain the complete producer and consumer censuses.
+
+#### Exit paths
+
+| Owner | Enumerated exits |
+|---|---|
+| OOC attempt | sink commit and two successful returns at `src/decoy_engine/execution/out_of_core/_runner.py:318`; exception abort/rethrow at `src/decoy_engine/execution/out_of_core/_runner.py:329`; all-exit subtree/local-arena/faker cleanup at `src/decoy_engine/execution/out_of_core/_runner.py:334`. |
+| In-process isolated fallback | pipeline failure result at `src/decoy_engine/execution/_isolated_run.py:276`; commit failure cleanup/result at `src/decoy_engine/execution/_isolated_run.py:298`; completed return at `src/decoy_engine/execution/_isolated_run.py:318`. |
+| Child process | timeout kill/reap/discard at `src/decoy_engine/execution/_isolated_run.py:514`; callback exception kill/reap/rethrow at `src/decoy_engine/execution/_isolated_run.py:532`; valid envelope return at `src/decoy_engine/execution/_isolated_run.py:544`; abnormal exit discard/result at `src/decoy_engine/execution/_isolated_run.py:558`. |
+| Child publication | self-reported failure discard at `src/decoy_engine/execution/_isolated_run.py:593`; commit failure result at `src/decoy_engine/execution/_isolated_run.py:609`; no-output discard at `src/decoy_engine/execution/_isolated_run.py:666`; successful commit at `src/decoy_engine/execution/_isolated_run.py:670`. |
+| Scratch release | absent record/target success at `src/decoy_engine/scratch/_arena.py:444`; retained cleanup error at `src/decoy_engine/scratch/_arena.py:473`; confirmed reap at `src/decoy_engine/scratch/_arena.py:489`; quota failure retention at `src/decoy_engine/scratch/_arena.py:497`. |
+| OOC subordinate owners | payload stores close idempotently at `src/decoy_engine/execution/out_of_core/_payload_store.py:90` and `src/decoy_engine/execution/out_of_core/_payload_store.py:140`; sort writers and readers close in `finally` at `src/decoy_engine/execution/out_of_core/_external_sort.py:388` and `src/decoy_engine/execution/out_of_core/_external_sort.py:428`; failed construction closes at `src/decoy_engine/execution/out_of_core/_stream_join.py:571`, while the returned owner closes the successful sorter at `src/decoy_engine/execution/out_of_core/_stream_join_cursors.py:112`. |
+| Sink and hold-back owners | transactional success/empty commit at `src/decoy_engine/execution/_transactional_sink.py:295` and abort at `src/decoy_engine/execution/_transactional_sink.py:328`; hold-back success/failure both close through `finally` at `src/decoy_engine/execution/_chunked_output_sink.py:592`. |
+| Standalone publication owners | subset success at `src/decoy_engine/subset/_api.py:223` and `src/decoy_engine/subset/_api.py:231`, failure at `src/decoy_engine/subset/_api.py:224`; snapshot success/error/timeout all converge on `finally` at `src/decoy_engine/connectors/postgres_snapshot.py:575`; discovery returns at `src/decoy_engine/data_discovery.py:221` and releases in `finally` at `src/decoy_engine/data_discovery.py:222`; quarantine publishes/discards at `src/decoy_engine/quarantine.py:625` and releases at `src/decoy_engine/quarantine.py:642`; fixed-width data failure, success, `OSError`, and other failure release at `src/decoy_engine/profile/_fixed_width_writer.py:373`, `src/decoy_engine/profile/_fixed_width_writer.py:382`, and `src/decoy_engine/profile/_fixed_width_writer.py:388`. |
+
+#### Routes
+
+| Route family | Enumerated routes |
+|---|---|
+| Pipeline layer 1 | `full_frame`, `sequential`, `mixed`, and `out_of_core`, or reject-before-read, are the closed decision set at `src/decoy_engine/execution/_pipeline_routing.py:312` and the actual dispatch at `src/decoy_engine/execution/_pipeline.py:313`. |
+| Full-frame lanes | unified-slice success returns before the legacy body at `src/decoy_engine/execution/_pipeline_full_frame.py:107`; legacy full-frame then selects multi-table split, chunked, or adapter oracle at `src/decoy_engine/execution/_pipeline_generate_mask.py:210`, `src/decoy_engine/execution/_pipeline_generate_mask.py:238`, and `src/decoy_engine/execution/_pipeline_generate_mask.py:276`. |
+| Chunked backends | streamed, dispatcher, and legacy lanes are selected at `src/decoy_engine/execution/_pipeline_auto_chunk.py:407`, `src/decoy_engine/execution/_pipeline_auto_chunk.py:418`, and `src/decoy_engine/execution/_pipeline_auto_chunk.py:423`; dispatcher then selects pandas oracle or native once for the whole table at `src/decoy_engine/execution/native/_chunked_entry.py:566` and `src/decoy_engine/execution/native/_chunked_entry.py:579`. |
+| OOC drivers | reordered streaming when `reorder_caps` exists and baseline `_stream_table` otherwise at `src/decoy_engine/execution/out_of_core/_runner.py:261` and `src/decoy_engine/execution/out_of_core/_runner.py:298`. |
+| Output sink | whole-table `write` and incremental `write_batches` at `src/decoy_engine/execution/_transactional_sink.py:169` and `src/decoy_engine/execution/_transactional_sink.py:191`. |
+| Process | in-process/re-entrant fallback and fresh isolated subprocess at `src/decoy_engine/execution/_isolated_run.py:220` and `src/decoy_engine/execution/_isolated_run.py:242`. |
+| Standalone producers | subset direct-versus-managed publication at `src/decoy_engine/subset/_api.py:195`; PostgreSQL stage plus spill at `src/decoy_engine/connectors/postgres_snapshot.py:490` and `src/decoy_engine/connectors/postgres_snapshot.py:494`; discovery protected-spill versus spill-disabled at `src/decoy_engine/data_discovery.py:189`. |
+| Native/library | fd-backed Arrow/Polars routes and the enumerated DuckDB residual must cover every `duckdb.connect`; current snapshot connection passes a character spill path at `src/decoy_engine/connectors/postgres_snapshot.py:231`. |
+| Encryption | 4b crosses every route above and adds no independent plaintext fallback; the production profile enum is frozen at `src/decoy_engine/scratch/_policy.py:24`. |
+
+#### FK shapes
+
+| Shape | Grounding and required characterization |
+|---|---|
+| Single and composite | `RelationshipEnd.columns` defines length 1 and length >1 at `src/decoy_engine/config/_relationships.py:24`; `RelationshipEdge` preserves equal tuples at `src/decoy_engine/relationships/_graph.py:70`. |
+| Self-referencing | Existing protected-column proof constructs `employees.manager_id -> employees.id` at `tests/property/test_fk_keys_invariants.py:659`. |
+| Cross-table and multiple children | One parent and one-or-more children are the config shape at `src/decoy_engine/config/_relationships.py:46`; the plan must exercise different child tables, not only several columns. |
+| Multi-parent | Merged relations require shared child tuple arity and reject type drift at `src/decoy_engine/execution/out_of_core/_multi_parent.py:121`; actual native outputs/spill begin at `src/decoy_engine/execution/out_of_core/_multi_parent.py:136`. |
+| Children in another batch | Batch join materializes the parent relation once at `src/decoy_engine/execution/out_of_core/_batch_join.py:160` and joins each child batch at `src/decoy_engine/execution/out_of_core/_batch_join.py:209`; quota/encryption must cover all batches under one attempt. |
+
+#### Fields of public result types touched by F25
+
+| Type | Complete dataclass field list in this checkout |
+|---|---|
+| `ExecutionResult` | `outputs`, `timings`, `boundary_conversion_ms`, `warnings`, `quality_metrics`, `table_kinds`, `row_errors`: `src/decoy_engine/execution/_adapter.py:41`. |
+| `IsolatedRunResult` | `outcome`, `peak_rss_mb`, `outputs`, `quality_metrics`, `table_kinds`, `returncode`, `signal_number`, `error`, `isolated`, `pid`, `committed_output_dir`, `row_errors`, `extra`, `memory_evidence`: `src/decoy_engine/execution/_isolated_common.py:351`. |
+| `QualificationResult`; `QuotaObservation` | `qualified`, `profile`, `reasons`, `encryption_verified`: `src/decoy_engine/scratch/_reports.py:31`; `bytes_limit`, `inodes_limit`, `bytes_used`, `inodes_used`, `logical_bytes`, `observed_via`: `src/decoy_engine/scratch/_reports.py:49`. |
+| `QuotaReport`; `CleanupReport` | `arena_id`, `resource_id`, `kind`, both effective caps, `observation`, `dimension`, `disposition`, `errno`, `evidence`: `src/decoy_engine/scratch/_reports.py:67`; `arena_id`, `resource_id`, `disposition`, retained bytes/inodes, `detail`: `src/decoy_engine/scratch/_reports.py:92`. |
+| `SweptResource`; `SweepReport`; `ReapVerdict` | `arena_id`, `resource_id`, `disposition`, `reason`: `src/decoy_engine/scratch/_reports.py:109`; `scope`, `resources`: `src/decoy_engine/scratch/_reports.py:119`; `reap_eligible`, `reason`: `src/decoy_engine/scratch/_authority.py:50`. |
+| `SubsetResult`; `SubsetManifest`; `DiscoveryResult` | `plan`, `manifest`, `output_paths`: `src/decoy_engine/subset/_types.py:217`; manifest version, engine version, public seed specs, tables, edges, closure rounds, budget, outcome, preflight summary: `src/decoy_engine/subset/_types.py:202`; discovery `columns`, `rows`: `src/decoy_engine/data_discovery.py:79`. Snapshot returns `dict[str, Path]`, not a result dataclass, at `src/decoy_engine/connectors/postgres_snapshot.py:459`. |
+
+#### Output surfaces
+
+| Surface | Grounding and F25/F31 rule |
+|---|---|
+| Python returns and raised errors | Public scratch reports are re-exported at `src/decoy_engine/scratch/__init__.py:63`; stable coded failures and attached typed reports are at `src/decoy_engine/scratch/_errors.py:23`. F31 must walk both. |
+| Files and JSON envelopes | Ledger DB/journal/lock names are created at `src/decoy_engine/scratch/_ledger.py:177`; isolated result JSON path is derived at `src/decoy_engine/execution/_isolated_worker.py:252` and written at `src/decoy_engine/execution/_isolated_worker.py:272`; T09-T16 publication files remain in the T inventory. |
+| stdout, stderr, and user-visible error text | Isolated stdout/stderr are captured at `src/decoy_engine/execution/_isolated_run.py:482` and withheld from abnormal results at `src/decoy_engine/execution/_isolated_run.py:567`; worker usage errors write stderr at `src/decoy_engine/execution/_isolated_worker.py:242`; safe summaries live at `src/decoy_engine/execution/_isolated_common.py:266`. |
+| Logs and progress | Console/file logging handlers are configured at `src/decoy_engine/internal/logging.py:86`; route/warning progress emits coded fields at `src/decoy_engine/progress.py:264`. Marker tests cover both configurations and every progress sink. |
+| Evidence and audit | ResourceLedger is the engine evidence surface at `src/decoy_engine/scratch/_ledger.py:153`. Engine audit output is N/A because this library defines no audit emitter; platform/CLI audit integration is asserted and must be opened before build, never inferred here. |
+| CLI help, parse errors, and root callbacks | N/A in this engine-only plan because these entrypoints are outside this library; the only process entrypoint touched is the isolated worker usage branch at `src/decoy_engine/execution/_isolated_worker.py:240`. Cross-repo callers remain an integration blocker. |
+
+### 1.12 Reuse inventory
+
+| Reuse, do not duplicate | Grounding and use |
+|---|---|
+| Scratch manager, arena, ledger, policies, typed reports, and seams | Existing exports are centralized at `src/decoy_engine/scratch/__init__.py:18`; 4c replaces unsafe return shapes behind this package instead of creating a second allocator. |
+| Allocation sentry and producer manifest | Whole-engine root, manifest, T01-T17 constants, and sanctioned seams are at `tests/sentry/test_scratch_allocation_sentry.py:48`; extend its reachability and stale-entry proofs. |
+| fd-only sentry | Current forbidden-call catalog and allowlist are at `tests/scratch/test_fd_only_filesystem_sentry.py:29`; widen its root and resolution, then remove function-wide exemptions. |
+| Physical-seam sentry pattern | Broad scan plus stale allowlist proof at `tests/sentry/test_physical_seam_disconnection.py:173`; reuse the two-sided allowlist pattern. |
+| Module-size sentry | Existing 600/700 limits are at `tests/sentry/test_module_size.py:54`, and the F25 census starts at `tests/sentry/test_module_size.py:66`; new 4c modules stay within it rather than widening the budget. |
+| Route reason registry | Reuse current execution reason sets at `src/decoy_engine/execution/physical/_reasons.py:95`; the catalogued F29 implementation is absent, so ground it before claiming F29 reuse. |
+| F31 boundary | No F31 implementation exists in this checkout. The F31 plan is the class-1 structure; integration is blocked until its exact API and all-surface sentry are opened and verified. |
+| Crypto, fsync, and key seams | Reuse the Fernet adapter at `src/decoy_engine/vault.py:128`, fixed-width flush/fsync/rename at `src/decoy_engine/profile/_fixed_width_writer.py:370` and `src/decoy_engine/profile/_fixed_width_writer.py:378`, and `SecretKeyProvider` at `src/decoy_engine/keyprovider.py:123`; do not change vault/masking formats. |
+
+### 1.13 Frozen contracts touched
+
+| Contract | Change classification and guard |
+|---|---|
+| Public scratch helper/capability API | **Breaking in 4c:** path-returning helpers exported at `src/decoy_engine/scratch/__init__.py:72` become handle-only; required-entrypoint signatures also become non-optional. Inventory and migrate all callers in 4c-8a, with no compatibility shim accepting `None`. |
+| Public report and error fields/codes | **Additive only:** current report fields are frozen at `src/decoy_engine/scratch/_reports.py:31`; current stable error codes start at `src/decoy_engine/scratch/_errors.py:23`. F31 projection may add a closed event, not remove or expose raw values. |
+| Ledger format and resource states | **Versioned breaking if changed:** `FORMAT_VERSION = 1` and schema are at `src/decoy_engine/scratch/_ledger.py:46`; unknown versions already fail closed at `src/decoy_engine/scratch/_ledger.py:213`. Any schema/state change bumps the version and ships recovery/rollback evidence. |
+| Isolated transport/result | **Breaking internal envelope, additive public result only:** public fields are frozen at `src/decoy_engine/execution/_isolated_common.py:351`; 4c removes path authority from the private payload/envelope with explicit compatibility tests. |
+| Masked outputs, FK behavior, warnings, and order | **No behavior change:** `ExecutionResult` fields at `src/decoy_engine/execution/_adapter.py:41` and A04 remain the oracle across 4c and 4b. |
+| Vault and seed protocols | **Untouched:** `VAULT_FORMAT_VERSION` is frozen at `src/decoy_engine/vault.py:81`; 4b reuses crypto/key seams without changing vault or masking bytes. |
+| Storage profile and publication durability | **Additive qualification only:** the profile enum at `src/decoy_engine/scratch/_policy.py:24` and existing fixed-width fsync/rename sequence at `src/decoy_engine/profile/_fixed_width_writer.py:370` are not weakened. |
+
+### 1.14 Pre-mortem: five likely gate findings
+
+| Likely gate finding | Planned prevention and decisive evidence |
+|---|---|
+| A capability still becomes a bare path through a helper, `.name`, raw `DirEntry`, container, or dynamic call. | 4c-0b closes class 7 with whole-engine taint reachability, C00/C21 seeded evasions, and a mutation that restores one coercion; current narrow scope at `tests/scratch/test_fd_only_filesystem_sentry.py:26` must disappear. |
+| One exit leaks a stage, fd, quota charge, key reference, or live child. | Class-2 exit matrix covers the enumerated OOC/isolated/release paths, including timeout and close failure; deleting the cleanup at `src/decoy_engine/execution/_isolated_run.py:514` or the retained outcome at `src/decoy_engine/scratch/_arena.py:473` must fail. |
+| A route is green only because no native spill/write occurred, or a standalone fallback still accepts no arena. | Class-4 matrix asserts nonzero writes/spill and required signatures for every route; neuter discovery's protected-spill branch at `src/decoy_engine/data_discovery.py:189` and require RED. |
+| F31 integration or diagnostics leak a path, DSN, key, source value, native exception, or dynamic class name. | Class-1 marker corpus walks every enumerated field and surface with non-vacuity; safe-summary code at `src/decoy_engine/execution/_isolated_common.py:266` is only the current foundation, not a substitute for grounding F31. |
+| The migration or 4b encryption changes output/FK behavior or silently drifts a frozen schema/version. | Classes 5, 9, and 10 pin A04 plus schema snapshots; mutate one `ExecutionResult` field/order, FK route, ledger version check, and vault format at `src/decoy_engine/vault.py:81` to prove each guard. |
+
+### 1.15 Worker evidence rules
+
+Every implementation handoff must name each finding's catalog class and fix the class-level structure, write the generated tests first and record their RED result, then mutate every new mechanism once and record the test turning RED. Baselines run from the same `uv.lock` environment as the branch and state every check not run. A worker may not widen a threshold, skip a test, or reduce a budget to obtain green. If a new defect repeats a catalog class already found in the build, stop and report it instead of applying a third local patch.
+
 ## 2. Single choke-point and CI SENTRY
 
 Deliverable: **Scratch Allocation Sentry**, proposed `tests/sentry/test_scratch_allocation_sentry.py`, with one machine-readable producer manifest under `tests/sentry/` (new). T01-T17 seed it. It mirrors the broad scan plus deliberate connection allowlist at `tests/sentry/test_physical_seam_disconnection.py:173` and stale-entry check at `:192`. That precedent is verified, not a claim that scratch enforcement already exists.
@@ -391,9 +510,20 @@ Argon returned **GO-WITH-FIXES** with five HIGH and three MEDIUM findings on the
 
 The original ten Slice 4c build units therefore become fourteen bounded units: 4c-0a, 4c-0b, 4c-1, 4c-2, 4c-3, 4c-4a, 4c-4b, 4c-5a, 4c-5b, 4c-6a, 4c-6b, 4c-7, 4c-8a, and 4c-8b. The increase is test and boundary work, not scope expansion into encryption or orphan-policy implementation. No unit may start production changes until its listed RED witness and neutering control have been observed failing for the intended reason.
 
-## 3. PLAN
+## 3. PLAN and slices
 
 Every slice starts by implementing its named acceptance witnesses, preserving the FRAME criteria. Proposed package/test/benchmark paths below are new deliverables. Existing anchors identify integration seams, not files to invent. All source slices require lint, format, typing, relevant existing suites, sentries, per-unit branch coverage and mutation evidence for security-critical transitions. Never weaken an accepted assertion to pass a gate.
+
+| Slice | Repo | Bounded size and independent gate |
+|---|---|---|
+| 0 | `decoy-engine` | S: qualification contract and RED harness only; gate freezes the storage profile before production code. |
+| 1 | `decoy-engine` | L: one scratch subsystem foundation; gate covers manager, ledger, registration, reports, and allocation sentry. |
+| 2 | `decoy-engine` | L: eight producer rows, T01-T08; gate requires their actual-write matrix. |
+| 3 | `decoy-engine` | L: nine producer rows, T09-T17; gate requires their publication and standalone matrix. |
+| 4c | `decoy-engine`; caller repos only after grounding | L, decomposed into the fourteen separately gated units in 2A.7; each unit owns one boundary or consumer family. External caller work gets a separately sized owning-repo plan after 4c-8a opens the source. |
+| 4b | `decoy-engine` | M: one qualified encryption backend, envelope/child transport seam, and benchmark package; gate covers every 4c handle route. |
+| 5 | `decoy-engine` | M: one sweep/reconciliation subsystem and startup API; gate covers fencing and destructive eligibility. |
+| 6 | `decoy-engine`; caller repos after grounding | M: recovery-policy and compatibility integration plus documentation; each external repo receives its own gate before its change. |
 
 ### Slice 0: Qualify the storage profile and freeze integration contracts
 
