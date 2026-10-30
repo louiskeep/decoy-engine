@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
 from decoy_engine.contracts.declared_casting import ProtectedQuarantineConfig
+from decoy_engine.reasons import ReasonRecord
 
 QUARANTINE_SCHEMA_VERSION = 1
 PROTECTION_ENCRYPTED = "encrypted"
@@ -24,9 +25,10 @@ PROTECTION_ENCRYPTED = "encrypted"
 
 @dataclass(frozen=True)
 class QuarantineAccessContext:
-    """Who is asking. The local adapter checks ``owner`` against the artifact's owner."""
+    """Who is asking, for which run. The local adapter checks both against the artifact."""
 
     owner: str
+    run_id: str
 
 
 @dataclass(frozen=True)
@@ -72,7 +74,7 @@ class QuarantineEnvelope:
 
     table: str
     row_position: int
-    reasons: tuple[Any, ...]
+    reasons: tuple[ReasonRecord, ...]
     row: Mapping[str, Any]
 
 
@@ -80,7 +82,7 @@ class QuarantineEnvelope:
 class QuarantineRecord:
     table: str
     row_position: int
-    reasons: tuple[str, ...]
+    reasons: tuple[ReasonRecord, ...]
     row: dict[str, Any]
     schema_version: int = QUARANTINE_SCHEMA_VERSION
 
@@ -97,6 +99,7 @@ class QuarantineReceipt:
     expires_at: float
     protection: str
     key_version: str
+    run_id: str = ""
     schema_version: int = QUARANTINE_SCHEMA_VERSION
 
     def to_evidence(self) -> dict[str, Any]:
@@ -108,6 +111,7 @@ class QuarantineReceipt:
             "expires_at": self.expires_at,
             "protection": self.protection,
             "key_version": self.key_version,
+            "run_id": self.run_id,
             "schema_version": self.schema_version,
         }
 
@@ -157,10 +161,15 @@ class ProtectedQuarantineSink(Protocol):
 
 @dataclass(frozen=True)
 class ProtectedQuarantineRuntime:
-    """The one runtime argument: the resolved sink and the owner it acts for."""
+    """The one runtime argument: the resolved sink, the owner it acts for and the run identity.
+
+    ``run_id`` is the caller's job/run identifier; left unset, each run gets a fresh random one,
+    reported in the receipt evidence so the holder can present it with the retrieval token.
+    """
 
     sink: ProtectedQuarantineSink
     owner: str
+    run_id: str | None = None
 
 
 def qualify_runtime(runtime: Any, policy: Mapping[str, Any]) -> str | None:

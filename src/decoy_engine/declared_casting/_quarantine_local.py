@@ -24,7 +24,8 @@ import stat
 import struct
 import time
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
+from datetime import time as dt_time
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -34,6 +35,7 @@ from decoy_engine.declared_casting import (
     _quarantine_protocol as P,  # noqa: N812 -- short alias for the contract namespace
 )
 from decoy_engine.determinism._hkdf import hkdf_sha256
+from decoy_engine.reasons import ReasonRecord
 
 _MAGIC = b"DQA1\n"
 _SALT = b"decoy-engine/protected-quarantine/v1"
@@ -49,21 +51,57 @@ def _qerror(code: Any, message: str = "", cleanup_state: str = "not_needed") -> 
     return QuarantineError(code=str(code), message=message, cleanup_state=cleanup_state)
 
 
-def _json_default(value: Any) -> Any:
+def _encode(value: Any) -> Any:
+    """A raw cell as tagged JSON that reopens as the same Python type.
+
+    Only the types a framed Arrow row can hold are accepted; anything else is refused rather than
+    stringified, so a reopened row is never a lossy approximation of what was captured.
+    """
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
     if isinstance(value, (bytes, bytearray)):
         return {"$hex": bytes(value).hex()}
-    if isinstance(value, (Decimal, date, datetime)):
-        return {"$str": str(value)}
-    return {"$str": str(value)}
+    if isinstance(value, Decimal):
+        return {"$dec": str(value)}
+    if isinstance(value, datetime):  # before date: datetime is a date subclass
+        return {"$datetime": value.isoformat()}
+    if isinstance(value, date):
+        return {"$date": value.isoformat()}
+    if isinstance(value, dt_time):
+        return {"$time": value.isoformat()}
+    if isinstance(value, timedelta):
+        return {"$td": [value.days, value.seconds, value.microseconds]}
+    if isinstance(value, (list, tuple)):
+        tag = "$tuple" if isinstance(value, tuple) else "$list"
+        return {tag: [_encode(v) for v in value]}
+    if isinstance(value, dict):
+        return {"$map": [[_encode(k), _encode(v)] for k, v in value.items()]}
+    raise TypeError("unsupported quarantined value type")
 
 
-def _revive(value: Any) -> Any:
-    if isinstance(value, dict) and len(value) == 1:
-        if "$hex" in value:
-            return bytes.fromhex(value["$hex"])
-        if "$str" in value:
-            return value["$str"]
-    return value
+def _decode(value: Any) -> Any:
+    if not isinstance(value, dict) or len(value) != 1:
+        return value
+    ((tag, body),) = value.items()
+    if tag == "$hex":
+        return bytes.fromhex(body)
+    if tag == "$dec":
+        return Decimal(body)
+    if tag == "$datetime":
+        return datetime.fromisoformat(body)
+    if tag == "$date":
+        return date.fromisoformat(body)
+    if tag == "$time":
+        return dt_time.fromisoformat(body)
+    if tag == "$td":
+        return timedelta(days=body[0], seconds=body[1], microseconds=body[2])
+    if tag == "$list":
+        return [_decode(v) for v in body]
+    if tag == "$tuple":
+        return tuple(_decode(v) for v in body)
+    if tag == "$map":
+        return {_decode(k): _decode(v) for k, v in body}
+    raise ValueError("unknown value tag")
 
 
 @dataclass
@@ -73,6 +111,8 @@ class _State:
     fd: int
     ref: str
     owner_hash: str
+    run_hash: str
+    run_id: str
     policy: Any
     created_at: float
     expires_at: float
@@ -85,6 +125,10 @@ class _State:
 
 def _owner_hash(owner: str) -> str:
     return hashlib.sha256(owner.encode("utf-8")).hexdigest()[:32]
+
+
+def _run_hash(run_id: str) -> str:
+    return hashlib.sha256(b"run:" + run_id.encode("utf-8")).hexdigest()[:32]
 
 
 class LocalProtectedQuarantineSink:
@@ -189,7 +233,10 @@ class LocalProtectedQuarantineSink:
         return P.QuarantineSession(session_id=state.ref, state=state)
 
     def _open_artifact(self, run: P.QuarantineRun, policy: P.QuarantinePolicy) -> _State:
+        if not run.run_id:
+            raise ValueError("a quarantine run needs an identity")
         owner_hash = _owner_hash(run.owner)
+        run_hash = _run_hash(run.run_id)
         directory = self._owner_dir(owner_hash, create=True)
         run_id = secrets.token_hex(16)
         partial, final = directory / f"{run_id}.partial", directory / f"{run_id}.dqa"
@@ -200,6 +247,7 @@ class LocalProtectedQuarantineSink:
             "format": "decoy-quarantine/v1",
             "key_version": str(self._key_provider.key_version),
             "owner": owner_hash,
+            "run": run_hash,
             "created_at": now,
             "expires_at": now + policy.retention_seconds,
             "token_salt": secrets.token_hex(16),
@@ -214,6 +262,8 @@ class LocalProtectedQuarantineSink:
             fd,
             f"{owner_hash}-{run_id}",
             owner_hash,
+            run_hash,
+            run.run_id,
             policy,
             now,
             header["expires_at"],
@@ -222,16 +272,20 @@ class LocalProtectedQuarantineSink:
 
     def write_row(self, session: P.QuarantineSession, envelope: P.QuarantineEnvelope) -> None:
         state: _State = session.state
-        line = json.dumps(
-            {
-                "table": envelope.table,
-                "row_position": envelope.row_position,
-                "reasons": [str(r) for r in envelope.reasons],
-                "row": dict(envelope.row),
-            },
-            default=_json_default,
-            sort_keys=True,
-        ).encode("utf-8")
+        try:
+            line = json.dumps(
+                {
+                    "table": envelope.table,
+                    "row_position": envelope.row_position,
+                    "reasons": [r.to_payload() for r in envelope.reasons],
+                    "row": {k: _encode(v) for k, v in envelope.row.items()},
+                },
+                sort_keys=True,
+            ).encode("utf-8")
+        except (TypeError, ValueError):
+            line = b""
+        if not line:
+            self._fail_write(state, "io")
         if (
             state.rows + 1 > state.policy.max_rows
             or state.plain_bytes + len(line) > state.policy.max_bytes
@@ -300,6 +354,7 @@ class LocalProtectedQuarantineSink:
             expires_at=state.expires_at,
             protection=P.PROTECTION_ENCRYPTED,
             key_version=str(self._key_provider.key_version),
+            run_id=state.run_id,
         )
 
     def _publish_atomic(self, state: _State) -> None:
@@ -349,8 +404,8 @@ class LocalProtectedQuarantineSink:
 
     # -- reading ---------------------------------------------------------------------------------
 
-    def _token_mac(self, ref: str, owner_hash: str, salt: str) -> str:
-        msg = f"{ref}|{owner_hash}|{salt}".encode()
+    def _token_mac(self, ref: str, owner_hash: str, run_hash: str, salt: str) -> str:
+        msg = f"{ref}|{owner_hash}|{run_hash}|{salt}".encode()
         return hmac.new(self._token_key(), msg, hashlib.sha256).hexdigest()
 
     def _locate(self, ref: str) -> tuple[Path, str]:
@@ -385,12 +440,13 @@ class LocalProtectedQuarantineSink:
         if (
             header.get("owner") != _owner_hash(access_context.owner)
             or header.get("owner") != owner_hash
+            or header.get("run") != _run_hash(access_context.run_id)
         ):
             raise _qerror(_R.PROTECTED_QUARANTINE_ACCESS_DENIED, "access denied.")
         if self._clock() >= header["expires_at"]:
             raise _qerror(_R.PROTECTED_QUARANTINE_EXPIRED, "retention has elapsed.")
         return P.OpaqueRetrievalToken(
-            f"dqt1.{ref}.{self._token_mac(ref, owner_hash, header['token_salt'])}"
+            f"dqt1.{ref}.{self._token_mac(ref, owner_hash, header['run'], header['token_salt'])}"
         )
 
     def _check_token(
@@ -402,8 +458,10 @@ class LocalProtectedQuarantineSink:
         ref, mac = parts[1], parts[2]
         path, owner_hash = self._locate(ref)
         header, blob = self._read_header(path)
-        expected = self._token_mac(ref, owner_hash, str(header.get("token_salt", "")))
+        run_hash = str(header.get("run", ""))
+        expected = self._token_mac(ref, owner_hash, run_hash, str(header.get("token_salt", "")))
         owner_ok = header.get("owner") == _owner_hash(ctx.owner) == owner_hash
+        owner_ok = owner_ok and run_hash == _run_hash(ctx.run_id)
         key_ok = header.get("key_version") == str(self._key_provider.key_version)
         if not (hmac.compare_digest(mac, expected) and owner_ok and key_ok):
             raise _qerror(_R.PROTECTED_QUARANTINE_ACCESS_DENIED, "access denied.")
@@ -453,8 +511,8 @@ class LocalProtectedQuarantineSink:
                         P.QuarantineRecord(
                             table=raw["table"],
                             row_position=raw["row_position"],
-                            reasons=tuple(raw["reasons"]),
-                            row={k: _revive(v) for k, v in raw["row"].items()},
+                            reasons=tuple(ReasonRecord.from_payload(r) for r in raw["reasons"]),
+                            row={k: _decode(v) for k, v in raw["row"].items()},
                         )
                     )
         except (InvalidToken, ValueError, KeyError):

@@ -62,7 +62,7 @@ def _local_runtime(tmp_path: Path, clock: Any = None) -> Any:
     sink = LocalProtectedQuarantineSink(
         tmp_path / "quarantine", key_provider=SecretKeyProvider(secret=b"q" * 32), **kwargs
     )
-    return ProtectedQuarantineRuntime(sink=sink, owner="tenant-1")
+    return ProtectedQuarantineRuntime(sink=sink, owner="tenant-1", run_id="run-A")
 
 
 # -- A1 fixed-width age ----------------------------------------------------------------------
@@ -361,11 +361,11 @@ def test_b1_quarantine_policy_removes_the_whole_row_and_stores_it_once(tmp_path:
     assert token is not None and "TBD" not in repr(result)
     from decoy_engine.declared_casting import QuarantineAccessContext
 
-    records = runtime.sink.open(token, QuarantineAccessContext(owner="tenant-1"))
+    records = runtime.sink.open(token, QuarantineAccessContext(owner="tenant-1", run_id="run-A"))
     assert len(records) == 1
     assert records[0].table == "people" and records[0].row_position == 1
     assert records[0].row == {"id": "2", "start": "TBD"}
-    assert [str(r) for r in records[0].reasons] == ["declared_date_invalid"]
+    assert [r.code for r in records[0].reasons] == ["declared_date_invalid"]
 
 
 # -- B2 multi-field row -----------------------------------------------------------------------
@@ -402,9 +402,11 @@ def test_b2_two_failing_fields_one_quarantined_row_two_reasons(tmp_path: Path) -
     assert by_col["a"]["parse_quarantine"] == 1 and by_col["b"]["parse_quarantine"] == 1
     from decoy_engine.declared_casting import QuarantineAccessContext
 
-    records = runtime.sink.open(result.quarantine_access, QuarantineAccessContext(owner="tenant-1"))
+    records = runtime.sink.open(
+        result.quarantine_access, QuarantineAccessContext(owner="tenant-1", run_id="run-A")
+    )
     assert len(records) == 1
-    assert sorted(str(r) for r in records[0].reasons) == [
+    assert sorted(r.code for r in records[0].reasons) == [
         "declared_date_invalid",
         "declared_integer_invalid",
     ]

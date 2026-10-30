@@ -353,6 +353,7 @@ def test_unknown_width_is_never_admitted_to_a_fixed_width_target() -> None:
 
 
 def test_every_issue_is_counted_exactly_once() -> None:
+    from decoy_engine import reasons
     from decoy_engine.declared_casting import CastIssue, CastIssueLedger
 
     ledger = CastIssueLedger()
@@ -362,7 +363,7 @@ def test_every_issue_is_counted_exactly_once() -> None:
             column="a",
             row=0,
             stage="parse",
-            reason="declared_date_invalid",
+            reason=reasons.runtime.DECLARED_DATE_INVALID,
             disposition="null",
         ),
         CastIssue(
@@ -370,7 +371,7 @@ def test_every_issue_is_counted_exactly_once() -> None:
             column="b",
             row=0,
             stage="parse",
-            reason="declared_integer_invalid",
+            reason=reasons.runtime.DECLARED_INTEGER_INVALID,
             disposition="quarantine",
         ),
         CastIssue(
@@ -378,7 +379,7 @@ def test_every_issue_is_counted_exactly_once() -> None:
             column="a",
             row=1,
             stage="format",
-            reason="declared_output_width_overflow",
+            reason=reasons.runtime.DECLARED_OUTPUT_WIDTH_OVERFLOW,
             disposition="quarantine",
         ),
     ]

@@ -46,7 +46,11 @@ def _kp(byte: bytes = b"q"):
 
 
 def _runtime(
-    root: Path, clock: Clock | None = None, key_provider: Any = None, owner: str = "tenant-1"
+    root: Path,
+    clock: Clock | None = None,
+    key_provider: Any = None,
+    owner: str = "tenant-1",
+    run_id: str = "run-A",
 ):
     from decoy_engine.declared_casting import (
         LocalProtectedQuarantineSink,
@@ -56,13 +60,13 @@ def _runtime(
     sink = LocalProtectedQuarantineSink(
         root, key_provider=key_provider or _kp(), clock=clock or Clock()
     )
-    return ProtectedQuarantineRuntime(sink=sink, owner=owner)
+    return ProtectedQuarantineRuntime(sink=sink, owner=owner, run_id=run_id)
 
 
-def _ctx(owner: str = "tenant-1"):
+def _ctx(owner: str = "tenant-1", run_id: str = "run-A"):
     from decoy_engine.declared_casting import QuarantineAccessContext
 
-    return QuarantineAccessContext(owner=owner)
+    return QuarantineAccessContext(owner=owner, run_id=run_id)
 
 
 def _cfg(tmp_path: Path, **top: Any) -> dict[str, Any]:
@@ -284,7 +288,7 @@ def test_c2_partial_files_are_not_receipts_and_abort_leaves_nothing(tmp_path: Pa
     runtime = _runtime(root)
     sink = runtime.sink
     policy = QuarantinePolicy(**PROTECTED_QUARANTINE)
-    session = sink.begin(QuarantineRun(owner="tenant-1", run_id="r1"), policy)
+    session = sink.begin(QuarantineRun(owner="tenant-1", run_id="run-A"), policy)
     sink.write_row(
         session, QuarantineEnvelope(table="t", row_position=0, reasons=(), row={"a": f"x{MARKER}"})
     )
@@ -339,6 +343,153 @@ def test_c3_token_owner_run_and_key_version_gate_access(tmp_path: Path) -> None:
         runtime.sink.open(OpaqueRetrievalToken.from_wire("forged-" + wire), _ctx())
     assert exc2.value.code == "protected_quarantine_access_denied"
     assert wire not in repr(token) and wire not in repr(result)
+
+
+def test_c3_same_owner_other_run_cannot_open_or_mint_a_token(tmp_path: Path) -> None:
+    """The token MAC binds the run: same owner, same key, different run is denied both ways."""
+    from decoy_engine.declared_casting import OpaqueRetrievalToken
+    from decoy_engine.errors import DecoyError
+
+    root = tmp_path / "q"
+    run_a = _quarantine_run(tmp_path, _runtime(root, run_id="run-A"))
+    (tmp_path / "b").mkdir()
+    run_b = _quarantine_run(tmp_path / "b", _runtime(root, run_id="run-B"))
+    sink = _runtime(root).sink
+    ev_a = run_a.quality_metrics["declared_casting"]["quarantine"]
+    assert ev_a["run_id"] == "run-A"
+    assert len(sink.open(run_a.quarantine_access, _ctx(run_id="run-A"))) == 1
+    assert len(sink.open(run_b.quarantine_access, _ctx(run_id="run-B"))) == 1
+    for token, wrong in ((run_a.quarantine_access, "run-B"), (run_b.quarantine_access, "run-A")):
+        with pytest.raises(DecoyError) as exc:
+            sink.open(token, _ctx(run_id=wrong))
+        assert exc.value.code == "protected_quarantine_access_denied"
+    with pytest.raises(DecoyError) as exc2:
+        sink.get_retrieval_token(ev_a["ref"], _ctx(run_id="run-B"))
+    assert exc2.value.code == "protected_quarantine_access_denied"
+    # a MAC minted for another run's identity does not verify against this artifact
+    a_wire = run_a.quarantine_access.to_wire().split(".")
+    b_wire = run_b.quarantine_access.to_wire().split(".")
+    spliced = OpaqueRetrievalToken.from_wire(".".join([a_wire[0], a_wire[1], b_wire[2]]))
+    with pytest.raises(DecoyError):
+        sink.open(spliced, _ctx(run_id="run-A"))
+
+
+def test_c3_generated_run_identity_is_unique_and_surfaced(tmp_path: Path) -> None:
+    from decoy_engine.declared_casting import (
+        LocalProtectedQuarantineSink,
+        ProtectedQuarantineRuntime,
+    )
+
+    sink = LocalProtectedQuarantineSink(tmp_path / "q", key_provider=_kp(), clock=Clock())
+    runtime = ProtectedQuarantineRuntime(sink=sink, owner="tenant-1")  # no caller-supplied run id
+    first = _quarantine_run(tmp_path, runtime)
+    (tmp_path / "b").mkdir()
+    second = _quarantine_run(tmp_path / "b", runtime)
+    ids = [r.quality_metrics["declared_casting"]["quarantine"]["run_id"] for r in (first, second)]
+    assert ids[0] != ids[1] and all(ids)
+    assert len(sink.open(first.quarantine_access, _ctx(run_id=ids[0]))) == 1
+
+
+def test_c3_raw_row_round_trips_with_its_types(tmp_path: Path) -> None:
+    """Decimal / date / datetime / time / bytes / nested values reopen as the same typed values."""
+    import datetime as dt
+    import decimal
+
+    from decoy_engine.declared_casting import QuarantineEnvelope, QuarantinePolicy, QuarantineRun
+
+    runtime = _runtime(tmp_path / "q")
+    sink = runtime.sink
+    row = {
+        "dec": decimal.Decimal("-12.340"),
+        "day": dt.date(2026, 2, 1),
+        "ts": dt.datetime(2026, 2, 1, 3, 4, 5, 678, tzinfo=dt.timezone.utc),
+        "naive": dt.datetime(2026, 2, 1, 3, 4, 5),
+        "clock": dt.time(23, 59, 1),
+        "span": dt.timedelta(days=2, seconds=3, microseconds=4),
+        "raw": b"\x00\xffbytes",
+        "nested": [{"d": decimal.Decimal("1.0")}, None, 3, 2.5, True, "s"],
+        "text": "plain",
+        "none": None,
+    }
+    session = sink.begin(
+        QuarantineRun(owner="tenant-1", run_id="run-A"), QuarantinePolicy(**PROTECTED_QUARANTINE)
+    )
+    sink.write_row(session, QuarantineEnvelope(table="t", row_position=3, reasons=(), row=row))
+    token = sink.get_retrieval_token(sink.seal(session), _ctx())
+    (record,) = sink.open(token, _ctx())
+    assert record.row == row
+    for key, value in row.items():
+        assert type(record.row[key]) is type(value), key
+    assert str(record.row["dec"]) == "-12.340"  # scale survives, not just numeric equality
+
+
+def test_c3_unsupported_row_value_type_fails_closed_not_lossy(tmp_path: Path) -> None:
+    from decoy_engine.declared_casting import QuarantineEnvelope, QuarantinePolicy, QuarantineRun
+    from decoy_engine.execution._errors import QuarantineError
+
+    sink = _runtime(tmp_path / "q").sink
+    session = sink.begin(
+        QuarantineRun(owner="tenant-1", run_id="run-A"), QuarantinePolicy(**PROTECTED_QUARANTINE)
+    )
+    with pytest.raises(QuarantineError):
+        sink.write_row(
+            session, QuarantineEnvelope(table="t", row_position=0, reasons=(), row={"x": object()})
+        )
+    assert not [p for p in _walk(tmp_path / "q") if p.is_file()]
+
+
+def test_c6_protected_record_carries_the_full_f29_reason_record(tmp_path: Path) -> None:
+    """Open the sealed record and verify the stored ReasonRecord itself, not a constructed one."""
+    from decoy_engine import reasons
+
+    runtime = _runtime(tmp_path / "q")
+    result = _quarantine_run(tmp_path, runtime)
+    (record,) = runtime.sink.open(result.quarantine_access, _ctx())
+    (stored,) = record.reasons
+    assert isinstance(stored, reasons.ReasonRecord)
+    assert (stored.namespace, stored.code) == ("runtime", "declared_date_invalid")
+    assert stored.registry_version == reasons.REGISTRY_VERSION
+    assert stored.schema_version == reasons.REASON_SCHEMA_VERSION
+    assert stored.phase is reasons.Phase.MASK  # a parse failure happens before masking
+    assert stored.context.object_ref == "people.start"  # the column association
+    expected = reasons.ReasonRecord.for_reason(
+        reasons.runtime.DECLARED_DATE_INVALID, phase=reasons.Phase.MASK, context=stored.context
+    )
+    assert stored == expected  # outcome / severity / retry come from the registry
+    assert stored.to_payload()["outcome"] == expected.to_payload()["outcome"]
+    assert reasons.ReasonRecord.from_payload(stored.to_payload()) == stored
+    assert MARKER not in repr(stored) and MARKER not in json.dumps(stored.to_payload())
+
+
+def test_c6_format_stage_failure_is_recorded_at_the_finalize_phase(tmp_path: Path) -> None:
+    from decoy_engine import reasons
+    from tests.acceptance._f06_support import zero_pad
+
+    src = write_csv(tmp_path / "n.csv", ["id", "n"], [["0", "042"]])
+    cfg = config(
+        [
+            column("id"),
+            column(
+                "n",
+                logical_type="integer",
+                parse_format=INT64,
+                error_policy="quarantine",
+                output_format=zero_pad(3),
+            ),
+        ],
+        source_path=src,
+        top={"protected_quarantine": PROTECTED_QUARANTINE},
+    )
+    runtime = _runtime(tmp_path / "q")
+    result = run(
+        cfg, {"people": text_table(id=["0", "1"], n=["042", "1000"])}, quarantine_runtime=runtime
+    )
+    (record,) = runtime.sink.open(result.quarantine_access, _ctx())
+    (stored,) = record.reasons
+    assert stored.code == "declared_output_width_overflow"
+    assert stored.phase is reasons.Phase.FINALIZE
+    assert stored.context.object_ref == "people.n"
+    assert record.row == {"id": "1", "n": "1000"}
 
 
 def test_c3_get_retrieval_token_is_issued_from_the_receipt(tmp_path: Path) -> None:

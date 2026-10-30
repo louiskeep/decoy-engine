@@ -14,6 +14,7 @@ framed row to the protected sink. A row that fails several fields is quarantined
 
 from __future__ import annotations
 
+import secrets
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -93,6 +94,9 @@ class DeclaredCastRun:
         self._tables = _compile(plan)
         self._policy_block = dict(plan.quarantine) if plan.quarantine else None
         self._runtime = runtime
+        self._run_id = (
+            (getattr(runtime, "run_id", None) or secrets.token_hex(16)) if runtime else ""
+        )
         self._ledger = K.CastIssueLedger()
         self._originals: dict[str, pa.Table] = {}
         self._positions: dict[str, list[int]] = {}
@@ -137,17 +141,21 @@ class DeclaredCastRun:
             self._session = None
             evidence["quarantine"] = self._receipt.to_evidence()
             token = self._runtime.sink.get_retrieval_token(
-                self._receipt, P.QuarantineAccessContext(owner=self._runtime.owner)
+                self._receipt,
+                P.QuarantineAccessContext(owner=self._runtime.owner, run_id=self._run_id),
             )
         return evidence, token
 
     def abort(self) -> None:
         """Remove every trace of the run's quarantine: the open session or an already sealed one."""
+        if self._session is None and self._receipt is None:
+            return
+        store = self._runtime.sink
         if self._session is not None:
-            self._runtime.sink.abort(self._session)
+            store.abort(self._session)
             self._session = None
         if self._receipt is not None:
-            self._runtime.sink.discard(self._receipt)
+            store.discard(self._receipt)
             self._receipt = None
 
     def partial_counts(self) -> dict[str, Any]:
@@ -261,7 +269,7 @@ class DeclaredCastRun:
         store = self._runtime.sink
         if self._session is None:
             self._session = store.begin(
-                P.QuarantineRun(owner=self._runtime.owner, run_id=""),
+                P.QuarantineRun(owner=self._runtime.owner, run_id=self._run_id),
                 P.QuarantinePolicy.model_validate(self._policy_block),
             )
         original = self._originals[table]

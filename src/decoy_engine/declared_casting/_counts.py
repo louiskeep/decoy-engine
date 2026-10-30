@@ -16,7 +16,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any
 
-from decoy_engine.reasons import approve_name
+from decoy_engine.reasons import Phase, ReasonContext, ReasonRecord, approve_name, approve_ref
 
 SCHEMA_VERSION = 1
 COMPLETE, PARTIAL, UNAVAILABLE = "complete", "partial_before_abort", "unavailable"
@@ -36,10 +36,23 @@ class CastIssue:
     disposition: str
 
 
+def _record(issue: CastIssue) -> ReasonRecord:
+    """The F29 occurrence: registry identity and semantics, the stage as phase, the column as ref.
+
+    A parse failure happens before masking (``MASK``); a format failure after it (``FINALIZE``).
+    A name F29 does not approve is left out of the context rather than leaked.
+    """
+    phase = Phase.MASK if issue.stage == "parse" else Phase.FINALIZE
+    ref = approve_ref(f"{issue.table}.{issue.column}")
+    return ReasonRecord.for_reason(
+        issue.reason, phase=phase, context=ReasonContext.build(object_ref=ref)
+    )
+
+
 class CastIssueLedger:
     def __init__(self) -> None:
         self._counts: dict[tuple[str, str], dict[str, int]] = defaultdict(lambda: defaultdict(int))
-        self._rows: dict[tuple[str, int], list[str]] = {}
+        self._rows: dict[tuple[str, int], list[ReasonRecord]] = {}
         self._seen: set[tuple[str, str, int, str]] = set()
         self._truncated = False
 
@@ -56,7 +69,7 @@ class CastIssueLedger:
         stage = "parse" if issue.stage == "parse" else "output"
         self._counts[(issue.table, issue.column)][f"{stage}_{issue.disposition}"] += 1
         if issue.disposition == "quarantine":
-            self._rows.setdefault((issue.table, issue.row), []).append(str(issue.reason))
+            self._rows.setdefault((issue.table, issue.row), []).append(_record(issue))
 
     def add_sentinel(self, table: str, column: str, n: int = 1) -> None:
         self._counts[(table, column)]["sentinel_to_null"] += n
@@ -64,7 +77,7 @@ class CastIssueLedger:
     def quarantined_rows(self) -> set[tuple[str, int]]:
         return set(self._rows)
 
-    def row_reasons(self, table: str, row: int) -> tuple[str, ...]:
+    def row_reasons(self, table: str, row: int) -> tuple[ReasonRecord, ...]:
         return tuple(self._rows.get((table, row), ()))
 
     def counts(self, *, completeness: str = COMPLETE) -> dict[str, Any]:
