@@ -1,4 +1,8 @@
-"""F13 §5 acceptance 8 and the thread-safety invariant: bounded, deterministic cache lifetime."""
+"""F13 §5 acceptance 8 and the thread-safety invariant: bounded, deterministic cache lifetime.
+
+Entries are scoped to the provider instance, the admitting registry and the provider's security
+context, so two providers sharing a scheme and reference never share a prepared key.
+"""
 
 from __future__ import annotations
 
@@ -6,18 +10,23 @@ import threading
 
 import pytest
 
-from decoy_engine.keyprovider import MaskSecretError
+from decoy_engine.keyprovider import MaskSecretError, SecretKeyProvider
 from decoy_engine.secret_providers import (
     EXPIRY_SKEW_SECONDS,
     MASK_ROOT_V1,
     REQUIREMENTS,
+    SecretCache,
     SecretCachePolicy,
     SecretExpired,
+    SecretProviderRegistry,
+    SecretProviderUnavailable,
+    _cache,
+    admit_mask_key,
     default_cache,
     parse_ref,
     prepare_secret,
 )
-from tests.secret_providers._helpers import FakeClock, ProtocolProvider
+from tests.secret_providers._helpers import FakeClock, ProtocolProvider, keyed_config
 
 REQ = (REQUIREMENTS[MASK_ROOT_V1],)
 REF = parse_ref("test:thing?encoding=raw")
@@ -137,3 +146,113 @@ def test_concurrent_preflight_of_the_same_uncached_secret_reads_once():
         t.join()
     assert not errors and prov.resolve_calls == 1
     assert len(set(keys)) == 1 and len(keys) == 8
+
+
+def _admit_ref(provider, ref, policy):
+    return prepare_secret(provider=provider, ref=ref, requirements=REQ, cache_policy=policy)
+
+
+def test_providers_sharing_a_scheme_and_reference_never_share_an_entry():
+    # Tenant B's job must never receive tenant A's prepared key from the process cache.
+    policy = SecretCachePolicy(ttl_seconds=30, clock=FakeClock())
+    tenant_a = ProtocolProvider(value=b"A" * 33)
+    tenant_b = ProtocolProvider(value=b"B" * 33)
+    key_a, key_b = admit(tenant_a, policy), admit(tenant_b, policy)
+    assert tenant_a.resolve_calls == 1 and tenant_b.resolve_calls == 1
+    assert key_a.mask_key() == SecretKeyProvider(b"A" * 33).mask_key()
+    assert key_b.mask_key() == SecretKeyProvider(b"B" * 33).mask_key()
+    for prov, secret in ((tenant_a, b"A" * 33), (tenant_b, b"B" * 33)):
+        again = admit(prov, policy)
+        assert again.mask_key() == SecretKeyProvider(secret).mask_key()
+        again.close()
+    assert tenant_a.resolve_calls == 1 and tenant_b.resolve_calls == 1  # each hit its own entry
+
+
+def test_the_same_provider_in_two_registries_is_cached_per_registry(tmp_path):
+    prov = ProtocolProvider()
+    cfg = keyed_config(tmp_path, mask_secret_ref="test:thing?encoding=raw")
+    policy = SecretCachePolicy(ttl_seconds=30, clock=FakeClock())
+    for registry in (SecretProviderRegistry((prov,)), SecretProviderRegistry((prov,))):
+        admit_mask_key(cfg, registry=registry, cache_policy=policy).close()
+    assert prov.resolve_calls == 2
+
+
+class _NamespacedProvider(ProtocolProvider):
+    """Carries a security context (like a Vault namespace) that selects a different secret."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.namespace = "tenant-a"
+
+    def cache_context(self) -> tuple[str, ...]:
+        return (self.namespace,)
+
+    def resolve(self, ref):  # type: ignore[override]
+        self.value = self.namespace.encode() * 4
+        return super().resolve(ref)
+
+
+def test_the_provider_security_context_is_part_of_the_key():
+    policy = SecretCachePolicy(ttl_seconds=30, clock=FakeClock())
+    prov = _NamespacedProvider()
+    first = admit(prov, policy)
+    prov.namespace = "tenant-b"
+    second = admit(prov, policy)
+    assert prov.resolve_calls == 2
+    assert first.mask_key() != second.mask_key()
+    assert second.mask_key() == SecretKeyProvider(b"tenant-b" * 4).mask_key()
+
+
+def test_a_failing_security_context_fails_closed():
+    class Broken(ProtocolProvider):
+        def cache_context(self):
+            raise RuntimeError("F13-CONTEXT-MARKER")
+
+    prov = Broken()
+    with pytest.raises(SecretProviderUnavailable) as info:
+        admit(prov, SecretCachePolicy(ttl_seconds=30, clock=FakeClock()))
+    assert "F13-CONTEXT-MARKER" not in str(info.value) + repr(info.value)
+    assert prov.resolve_calls == 0
+
+
+def test_the_cache_is_bounded_by_capacity():
+    capacity = getattr(_cache, "MAX_CACHE_ENTRIES", 128)
+    policy = SecretCachePolicy(ttl_seconds=30, clock=FakeClock())
+    prov = ProtocolProvider()
+    for i in range(capacity + 1):
+        _admit_ref(prov, parse_ref(f"test:rotating-{i}?encoding=raw"), policy).close()
+    cache = default_cache()
+    assert len(cache) == capacity
+    assert len(cache._locks) == 0  # single-flight locks leave with their callers
+
+
+def test_expired_entries_and_their_locks_are_pruned_on_access():
+    clock = FakeClock()
+    policy = SecretCachePolicy(ttl_seconds=30, clock=clock)
+    prov = ProtocolProvider()
+    for i in range(5):
+        _admit_ref(prov, parse_ref(f"test:unique-{i}?encoding=raw"), policy).close()
+    cache = default_cache()
+    assert len(cache) == 5  # positive control: they were cached
+    clock.advance(30)
+    _admit_ref(prov, parse_ref("test:another?encoding=raw"), policy).close()
+    assert len(cache) == 1
+    assert len(cache._locks) == 0
+
+
+def test_capacity_eviction_closes_the_evicted_master():
+    cache = SecretCache(capacity=2)
+    clock = FakeClock()
+    masters = []
+
+    def loader():
+        return admit(ProtocolProvider())
+
+    owner = object()
+    for key in ("a", "b", "c"):
+        cache.get_or_load(key, owners=(owner,), ttl=30, clock=clock, loader=loader).close()
+        masters.append(list(cache._entries.values())[-1].master)
+    assert len(cache) == 2
+    assert masters[0].closed and not masters[1].closed and not masters[2].closed
+    with pytest.raises(ValueError):
+        SecretCache(capacity=0)

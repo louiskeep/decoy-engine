@@ -166,6 +166,28 @@ def test_material_that_fails_the_algorithm_contract_is_rejected():
     assert code_of(StubClient(payload(value=short))) == "weak_mask_secret"
 
 
+@pytest.mark.parametrize("attribute", ["namespace", "token", "url"])
+def test_the_client_security_context_scopes_the_cache(attribute):
+    from types import SimpleNamespace
+
+    from decoy_engine.secret_providers import default_cache
+
+    default_cache().clear()
+    client = StubClient(payload())
+    client.url, client.token = "https://vault.test:8200", "tok-a"
+    client.adapter = SimpleNamespace(namespace="tenant-a")
+    provider = VaultKV2Provider(client)
+    policy = SecretCachePolicy(ttl_seconds=30, clock=FakeClock())
+    provider.preflight(REF, REQ, policy).close()
+    provider.preflight(REF, REQ, policy).close()
+    assert len(client.calls) == 1  # positive control: same context, one read
+    target = client.adapter if attribute == "namespace" else client
+    setattr(target, attribute, getattr(target, attribute) + "-other")
+    provider.preflight(REF, REQ, policy).close()
+    assert len(client.calls) == 2
+    default_cache().clear()
+
+
 # --- client construction from the standard environment -------------------------------------
 
 

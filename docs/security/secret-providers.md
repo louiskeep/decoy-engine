@@ -53,6 +53,15 @@ mapped by exception *type* with fixed text: `secret_provider_unknown`, `secret_p
 `weak_mask_secret`, `keyed_strategy_requires_secret`. The provider exception is not retained as
 `__cause__`/`__context__`, so `logging.exception` and excepthooks cannot print provider internals.
 
+No caught exception is ever re-raised. The admission boundary (`prepare_secret`, `prepare_legacy`
+and a provider's own `preflight` called from `admit_mask_key`) rebuilds a fresh engine error from
+the registered code alone and raises it without the failing frames' traceback. A provider that
+raises a `MaskSecretError` with its own message, or a subclass of a closed error, gets the
+engine's constant text for that code. An unregistered or non-string code becomes
+`secret_provider_unavailable`. Rendering with `traceback.TracebackException(capture_locals=True)`
+therefore shows no frame that held secret material. Between the read and the derivation, material
+lives only in `SecretBuffer` objects, which render as `<redacted secret>`.
+
 ## Cache and lifetime
 
 - One admitted secret is reused for the whole run; it is closed (best-effort overwritten) when the
@@ -60,7 +69,15 @@ mapped by exception *type* with fixed text: `secret_provider_unknown`, `secret_p
 - Cross-run caching is **off by default**. `SecretCachePolicy(ttl_seconds=N)` allows `1..60`.
   Entries live at most `min(ttl, provider_expiry - 5s)` on a monotonic clock, are never extended
   by a hit, and are evicted on expiry or error. Concurrent preflights of one uncached secret read
-  the provider once. Cache keys are per-process salted hashes of the canonical reference.
+  the provider once.
+- Entries are scoped. The key is a per-process salted hash of the canonical reference, the
+  requirement set, the scheme and the provider's optional `cache_context()` (Vault: address,
+  namespace and token). Each entry is also bound to the identity of the provider instance and
+  the admitting registry, and is served only to those same objects. Two providers that share a
+  scheme and a reference (two tenants) each read their own secret.
+- The cache is bounded: at most 128 entries (the oldest insert is evicted first), every expired
+  entry is pruned on each access, and the single-flight lock of a key is dropped when its last
+  caller leaves. Evicted entries are closed.
 - With a positive TTL, a revocation or deletion after admission can remain visible for up to the
   TTL (maximum 60 seconds). The default observes the next read immediately.
 - Clearing Python-managed memory is **best effort**: the interpreter, base64 decoders and

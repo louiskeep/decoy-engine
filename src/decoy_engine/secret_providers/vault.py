@@ -11,6 +11,8 @@ Contract notes:
     together), and the returned version must equal the pinned version.
   * Static KV v2 values only. A response carrying a lease id, a renewable flag, a lease duration,
     wrap info or auth data is a dynamic/leased secret and fails ``secret_lease_unsupported``.
+  * Cache entries are scoped to this provider instance and its client's address, namespace and
+    token (``cache_context``), so tenants sharing a mount path never share a prepared key.
   * Every SDK/transport failure is mapped to a fixed registered reason by exception TYPE; vendor
     text, paths and response bodies never leave this module.
 """
@@ -110,6 +112,19 @@ class VaultKV2Provider:
     def __init__(self, client: Any, *, clock: Any | None = None) -> None:
         self._client = client
         self._clock = clock or SystemClock()
+
+    def cache_context(self) -> tuple[str, ...]:
+        """The client's security context (address, namespace, token) for the cache key.
+
+        The same KV path resolves to different secrets per namespace and per token's policies;
+        the values only enter the salted cache-key HMAC and are never stored or rendered.
+        """
+        client = self._client
+        namespace = getattr(getattr(client, "adapter", None), "namespace", None)
+        return tuple(
+            "" if value is None else str(value)
+            for value in (getattr(client, "url", None), namespace, getattr(client, "token", None))
+        )
 
     def describe(self, ref: SecretRef) -> SecretDescriptor:
         # No provider call: the pinned version is part of the reference.

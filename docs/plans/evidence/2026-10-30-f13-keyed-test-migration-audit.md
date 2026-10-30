@@ -30,8 +30,17 @@ with no secret.
 
 ## Coverage accounting (no net loss)
 
-- Collected tests, excluding the new `tests/secret_providers` suite: baseline **33,330** -> branch
-  **33,408** (+78; none removed or de-selected).
+- Selected tests, excluding the new `tests/secret_providers` suite: baseline `fdd08a89` **33,330**
+  (33,378 collected) -> branch `969ff7e4` **33,409** (33,457 collected), **+79**; none removed, and the
+  48 deselected (the default `-m` filter) are the same on both sides. The earlier "+78 (33,408)" was a
+  miscount and is corrected here. Measured on CPython 3.10.20, Linux x86_64, venv from `uv sync
+  --frozen --extra dev --extra hashicorp-vault --extra xdist --extra lint`, no `decoy-engine-native`
+  companion, one worktree per SHA:
+  `PYTHONPATH=<worktree>/src:<worktree> python -m pytest --collect-only -q -p no:cacheprovider --ignore=tests/secret_providers`.
+  The reviewer's run (Python 3.10, `pytest-one`) measured 33,361 / 33,409 -> 33,440 / 33,488. That is
+  the same +79 delta, with 31 more tests on both sides. The cause of the constant offset is not
+  identified; it is environment-dependent collection (likely an optional module present there and
+  absent here). The two runs agree on the coverage delta.
 - Skip/xfail markers added to migrated tests: **0**. New skip markers exist only on the new
   Vault-live / Semgrep tests (environment-gated, reported as NOT RUN when skipped).
 - Assertions deliberately dropped: **1** - `mask_batch` called with no `mask_key` equals the

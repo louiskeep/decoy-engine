@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import os
 import re
 from dataclasses import dataclass, field
@@ -18,7 +19,7 @@ from urllib.parse import parse_qsl, unquote, urlsplit
 from decoy_engine import reasons
 from decoy_engine.keyprovider import MaskSecretError
 from decoy_engine.secret_providers._buffer import SecretBuffer
-from decoy_engine.secret_providers._errors import SecretClosedError
+from decoy_engine.secret_providers._errors import BAD_REF_MESSAGE, SecretClosedError
 
 API_VERSION: Literal["secret-provider/v1"] = "secret-provider/v1"
 
@@ -38,9 +39,7 @@ _LOGICAL_VERSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._\-]{0,63}$")
 
 def _bad_ref() -> MaskSecretError:
     # Fixed text: the reference (path, field, name) is never repeated in an error.
-    return MaskSecretError(
-        code=reasons.runtime.BAD_SECRET_REF, message="The secret reference is invalid."
-    )
+    return MaskSecretError(code=reasons.runtime.BAD_SECRET_REF, message=BAD_REF_MESSAGE)
 
 
 @dataclass(frozen=True, repr=False)
@@ -73,10 +72,12 @@ class SecretRef:
         }
         return {k: v for k, v in raw.items() if v is not None}
 
-    def get_cache_key_component(self, requirement_ids: tuple[str, ...] = ()) -> str:
-        """Per-process salted hash of the canonical ref + requirement set. The raw ref never
-        reaches the cache subsystem."""
-        material = self.canonical() + "\x1e" + ",".join(sorted(requirement_ids))
+    def get_cache_key_component(
+        self, requirement_ids: tuple[str, ...] = (), *, context: tuple[str, ...] = ()
+    ) -> str:
+        """Per-process salted hash of the canonical ref, the requirement set and the provider's
+        security context. Neither the raw ref nor the context reaches the cache subsystem."""
+        material = json.dumps([self.canonical(), sorted(requirement_ids), list(context)])
         return hmac.new(_PROCESS_SALT, material.encode("utf-8"), hashlib.sha256).hexdigest()
 
 

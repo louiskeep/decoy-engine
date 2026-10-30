@@ -7,6 +7,7 @@ from typing import Any, Literal
 
 from decoy_engine.keyprovider import MissingMaskSecret
 from decoy_engine.secret_providers._buffer import SecretBuffer
+from decoy_engine.secret_providers._errors import MISSING_MESSAGE
 from decoy_engine.secret_providers._types import (
     API_VERSION,
     PreparedSecret,
@@ -17,7 +18,6 @@ from decoy_engine.secret_providers._types import (
 )
 
 _DEFAULT_KEY_VERSION = "v1"
-_MISSING = "The mask secret could not be resolved."
 
 
 class _LocalProvider:
@@ -56,7 +56,7 @@ class EnvSecretProvider(_LocalProvider):
     def _read(self, ref: SecretRef) -> bytes:
         value = os.environ.get(ref.locator)
         if value is None:
-            raise MissingMaskSecret(_MISSING)
+            raise MissingMaskSecret(MISSING_MESSAGE)
         return value.encode("utf-8")
 
 
@@ -68,4 +68,4 @@ class FileSecretProvider(_LocalProvider):
             with open(ref.locator, "rb") as handle:
                 return handle.read()
         except OSError:
-            raise MissingMaskSecret(_MISSING) from None
+            raise MissingMaskSecret(MISSING_MESSAGE) from None

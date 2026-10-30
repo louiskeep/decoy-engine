@@ -22,7 +22,11 @@ from typing import TYPE_CHECKING, Any
 
 from decoy_engine import reasons
 from decoy_engine.keyprovider import MaskSecretError, SecretKeyProvider
-from decoy_engine.secret_providers._errors import SecretMaterialInvalid
+from decoy_engine.secret_providers._errors import (
+    BAD_ENCODING_MESSAGE,
+    NEEDS_ENCODING_MESSAGE,
+    SecretMaterialInvalid,
+)
 
 if TYPE_CHECKING:
     from decoy_engine.plan._types import Plan
@@ -95,10 +99,7 @@ MASK_ROOT = REQUIREMENTS[MASK_ROOT_V1]
 
 def _bad_encoding_for(req: SecretRequirement) -> Exception:
     if req.id == MASK_ROOT_V1:
-        return MaskSecretError(
-            code=reasons.runtime.BAD_SECRET_REF,
-            message="The secret material has an invalid encoding.",
-        )
+        return MaskSecretError(code=reasons.runtime.BAD_SECRET_REF, message=BAD_ENCODING_MESSAGE)
     return SecretMaterialInvalid()
 
 
@@ -107,8 +108,7 @@ def decode_material(raw: bytes, encoding: str | None, req: SecretRequirement) ->
     if encoding is None:
         if not req.legacy_decoding:
             raise MaskSecretError(
-                code=reasons.runtime.BAD_SECRET_REF,
-                message="This secret requirement needs an explicit encoding.",
+                code=reasons.runtime.BAD_SECRET_REF, message=NEEDS_ENCODING_MESSAGE
             )
         return _decode_legacy(raw, req)
     if encoding == "raw":

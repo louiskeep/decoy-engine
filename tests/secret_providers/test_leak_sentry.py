@@ -5,25 +5,37 @@ reference path/field. Success and failure are exercised through the direct engin
 captured string/serialized artifact is scanned for the marker and its hex/base64 forms, plus the
 derived mask key. Positive controls prove the expected fixed reason and ordinary output were
 captured, so an empty capture cannot pass vacuously.
+
+Rendered surfaces include tracebacks with ``capture_locals=True`` (the mode that once leaked raw
+material from validation frames), a provider-raised ``MaskSecretError`` that carries a value,
+captured stdout/stderr (``print``, ``print_exception``, ``sys.excepthook``) and a structured JSON
+audit record of the error's attributes. Pre-fix red runs are recorded in
+docs/plans/evidence/2026-10-30-f13-r2-red-baseline.txt.
 """
 
 from __future__ import annotations
 
 import base64
 import copy
+import io
 import json
 import logging
 import pickle
+import sys
 import traceback
 
 import pytest
 
 from decoy_engine import run_mask_pipeline_chunked, run_pipeline
-from decoy_engine.keyprovider import MaskSecretError, SecretKeyProvider
+from decoy_engine.keyprovider import MaskSecretError, MissingMaskSecret, SecretKeyProvider
 from decoy_engine.progress import CallbackSink, event_to_dict
 from decoy_engine.secret_providers import (
+    AES_GCM_V1,
+    FERNET_V1,
+    HMAC_SHA256_V1,
     MASK_ROOT_V1,
     REQUIREMENTS,
+    SecretAccessDenied,
     SecretBuffer,
     SecretProviderUnavailable,
     parse_ref,
@@ -171,3 +183,217 @@ def test_success_surfaces_do_not_carry_the_secret(tmp_path, registry):
     assert "F13-PATH-MARKER" not in "".join(
         s for s in surfaces[:4]
     )  # the ref locator stays out too
+
+
+# --- r2: traceback locals, value-bearing provider errors, stdio and an audit surface ---------
+
+LOCALS_MARKER = "F13LOCALS"
+
+# case -> (ref, requirement id, value, expected code). Each value carries LOCALS_MARKER and fails
+# one validation step after the provider read, while the material sits in engine frames.
+VALIDATION_FAILURES = {
+    "mask-root-legacy-decoding": (
+        "test:x",
+        MASK_ROOT_V1,
+        b"F13LOCALS-not-hex-and-not-base64!!",
+        "bad_secret_ref",
+    ),
+    "mask-root-bad-hex": ("test:x?encoding=hex", MASK_ROOT_V1, b"F13LOCALS-zz", "bad_secret_ref"),
+    "mask-root-weak": ("test:x?encoding=raw", MASK_ROOT_V1, b"F13LOCALS-weak", "weak_mask_secret"),
+    "fernet-needs-encoding": ("test:x", FERNET_V1, b"F13LOCALS-fernet-text", "bad_secret_ref"),
+    "fernet-invalid": (
+        "test:x?encoding=raw",
+        FERNET_V1,
+        b"F13LOCALS-not-a-fernet-key",
+        "secret_material_invalid",
+    ),
+    "hmac-short": (
+        "test:x?encoding=raw",
+        HMAC_SHA256_V1,
+        b"F13LOCALS-hmac",
+        "secret_material_invalid",
+    ),
+    "aes-gcm-length": (
+        "test:x?encoding=raw",
+        AES_GCM_V1,
+        b"F13LOCALS-aes-gcm-20B",
+        "secret_material_invalid",
+    ),
+}
+
+
+def _value_forms(value: bytes) -> list[str]:
+    forms = [value.decode("latin-1"), value.hex(), base64.b64encode(value).decode()]
+    return [*forms, LOCALS_MARKER, LOCALS_MARKER.encode().hex()]
+
+
+def _provoke(case: str) -> BaseException:
+    # The value never becomes a local of the frame the caught traceback starts from.
+    ref, req_id = VALIDATION_FAILURES[case][:2]
+    provider = ProtocolProvider(value=VALIDATION_FAILURES[case][2])
+    try:
+        prepare_secret(provider=provider, ref=parse_ref(ref), requirements=(REQUIREMENTS[req_id],))
+    except MaskSecretError as exc:
+        return exc
+    raise AssertionError("validation unexpectedly passed")
+
+
+def _with_locals(exc: BaseException) -> str:
+    return "".join(traceback.TracebackException.from_exception(exc, capture_locals=True).format())
+
+
+@pytest.mark.parametrize("case", sorted(VALIDATION_FAILURES))
+def test_validation_failures_carry_no_secret_in_traceback_locals(case):
+    exc = _provoke(case)
+    assert exc.code == VALIDATION_FAILURES[case][3]  # positive control: the expected reason
+    rendered = _with_locals(exc)
+    assert "prepare_secret" in rendered  # positive control: locals were rendered
+    for needle in _value_forms(VALIDATION_FAILURES[case][2]):
+        assert needle not in rendered, case
+    assert exc.__traceback__ is not None
+    frames = [f.f_code.co_name for f, _ in traceback.walk_tb(exc.__traceback__)]
+    assert "_load" not in frames and "decode_material" not in frames
+
+
+VALUE_MARKER = "F13-VALUE-MARKER-c0ffee"
+
+
+class _AuditFormatter(logging.Formatter):
+    """A structured audit record: the error's attributes and a locals-bearing trace, as JSON."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        exc = record.exc_info[1] if record.exc_info else None
+        return json.dumps(
+            {
+                "event": record.getMessage(),
+                "error": {"type": type(exc).__name__, "args": exc.args, "attrs": vars(exc)},
+                "trace": _with_locals(exc) if exc is not None else None,
+            },
+            default=repr,
+        )
+
+
+def render_everywhere(exc: BaseException, caplog, capsys) -> dict[str, str]:
+    """Every engine-visible surface a caller is likely to emit an admission failure on."""
+    audit_stream = io.StringIO()
+    handler = logging.StreamHandler(audit_stream)
+    handler.setFormatter(_AuditFormatter())
+    audit = logging.getLogger("f13.audit")
+    audit.addHandler(handler)
+    audit.propagate = False
+    sentry = logging.getLogger("f13.sentry")
+    try:
+        with caplog.at_level(logging.DEBUG, logger="f13.sentry"):
+            try:
+                raise exc
+            except MaskSecretError:
+                sentry.exception("admission failed")
+                audit.exception("admission failed")
+        print(exc, repr(exc))
+        traceback.print_exception(type(exc), exc, exc.__traceback__, file=sys.stderr)
+        sys.excepthook(type(exc), exc, exc.__traceback__)
+    finally:
+        audit.removeHandler(handler)
+        audit.propagate = True
+    out, err = capsys.readouterr()
+    record = audit_stream.getvalue()
+    code = getattr(exc, "code", "")
+    assert "admission failed" in caplog.text and code in out and code in err  # positive controls
+    assert code in record and json.loads(record)["error"]["attrs"]["code"] == code
+    return {
+        "str": str(exc),
+        "repr": repr(exc),
+        "format_exception": "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)),
+        "capture_locals": _with_locals(exc),
+        "json": json.dumps({"args": exc.args, "attrs": vars(exc)}, default=repr),
+        "log": caplog.text,
+        "stdout": out,
+        "stderr": err,
+        "audit": record,
+    }
+
+
+def assert_absent(surfaces: dict[str, str], needles: list[str]) -> None:
+    leaked = sorted({name for name, text in surfaces.items() for n in needles if n in text})
+    assert not leaked, f"secret material reached: {', '.join(leaked)}"
+
+
+class _ValueBearingError(SecretAccessDenied):
+    _MESSAGE = f"denied: {VALUE_MARKER}"
+
+    def __init__(self) -> None:
+        MaskSecretError.__init__(self, code="secret_access_denied", message=self._MESSAGE)
+
+
+VALUE_BEARING = {
+    "free-code": (lambda: MaskSecretError(code=VALUE_MARKER, message=VALUE_MARKER), None),
+    "registered-code": (
+        lambda: MaskSecretError(code="secret_access_denied", message=VALUE_MARKER),
+        "secret_access_denied",
+    ),
+    "legacy-code": (lambda: MissingMaskSecret(VALUE_MARKER), "missing_mask_secret"),
+    "closed-subclass": (_ValueBearingError, "secret_access_denied"),
+    "non-string-code": (lambda: MaskSecretError(code=7, message=VALUE_MARKER), None),  # type: ignore[arg-type]
+}
+
+
+class _ValueBearingProvider(ProtocolProvider):
+    def __init__(self, scheme: str, make) -> None:
+        super().__init__(scheme)
+        self._make = make
+
+    def resolve(self, ref):  # type: ignore[override]
+        self.resolve_calls += 1
+        raise self._make()
+
+
+@pytest.mark.parametrize("case", sorted(VALUE_BEARING))
+def test_a_value_bearing_provider_error_is_rebuilt_from_its_code(case, caplog, capsys):
+    make, code = VALUE_BEARING[case]
+    with pytest.raises(MaskSecretError) as info:
+        prepare_secret(
+            provider=_ValueBearingProvider("vb", make),
+            ref=parse_ref("vb:x?encoding=raw"),
+            requirements=(REQUIREMENTS[MASK_ROOT_V1],),
+        )
+    exc = info.value
+    assert exc.code == (code or "secret_provider_unavailable")
+    assert type(exc).__module__.startswith("decoy_engine.")
+    assert_absent(render_everywhere(exc, caplog, capsys), [VALUE_MARKER])
+
+
+@pytest.mark.parametrize("case", sorted(VALUE_BEARING))
+def test_a_value_bearing_error_from_a_custom_preflight_is_rebuilt(case, tmp_path, registry):
+    make, code = VALUE_BEARING[case]
+
+    class OwnPreflight(ProtocolProvider):
+        def preflight(self, ref, requirements, cache_policy):  # type: ignore[override]
+            raise make()
+
+    registry.register(OwnPreflight("ownpf"))
+    cfg = keyed_config(tmp_path, mask_secret_ref="ownpf:x")
+    with pytest.raises(MaskSecretError) as info:
+        run_pipeline(cfg, engine_version=ENGINE_VERSION)
+    exc = info.value
+    assert exc.code == (code or "secret_provider_unavailable")
+    assert VALUE_MARKER not in _with_locals(exc) + str(exc) + repr(exc) + json.dumps(
+        vars(exc), default=repr
+    )
+
+
+def test_sdk_exception_text_never_survives_any_surface(caplog, capsys):
+    prov = LeakyProvider()
+    with pytest.raises(SecretProviderUnavailable) as info:
+        prepare_secret(
+            provider=prov,
+            ref=parse_ref("test:F13-PATH-MARKER?encoding=raw"),
+            requirements=(REQUIREMENTS[MASK_ROOT_V1],),
+        )
+    surfaces = render_everywhere(info.value, caplog, capsys)
+    assert_absent(surfaces, ["F13-PATH-MARKER", "F13-TOKEN-MARKER", "SDKBoomError", *_forms()])
+
+
+@pytest.mark.parametrize("case", sorted(VALIDATION_FAILURES))
+def test_validation_failures_are_value_free_on_every_surface(case, caplog, capsys):
+    surfaces = render_everywhere(_provoke(case), caplog, capsys)
+    assert_absent(surfaces, _value_forms(VALIDATION_FAILURES[case][2]))

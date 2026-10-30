@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import inspect
+import typing
+from typing import Protocol
 
 import pytest
 
@@ -27,8 +29,34 @@ class DuckProvider:
         return b"d" * 32
 
 
+def protocol_members(proto: type) -> set[str]:
+    """Public members of a Protocol on every supported Python (3.10+).
+
+    ``typing.get_protocol_members`` (3.13+) where available; otherwise the members the Protocol
+    declares itself (annotations and attributes across its own MRO, minus typing internals).
+    """
+    get = getattr(typing, "get_protocol_members", None)
+    if get is not None:
+        return set(get(proto))
+    members: set[str] = set()
+    for base in proto.__mro__:
+        if base in (object, Protocol, typing.Generic):
+            continue
+        members |= set(vars(base)) | set(vars(base).get("__annotations__", {}))
+    return {m for m in members if not m.startswith("_")}
+
+
+def test_protocol_members_helper_sees_declared_members():
+    class Probe(Protocol):
+        attr: int
+
+        def method(self) -> None: ...
+
+    assert protocol_members(Probe) == {"attr", "method"}
+
+
 def test_key_provider_protocol_is_unchanged():
-    assert set(KeyProvider.__protocol_attrs__) == {"key_version", "mask_key"}
+    assert protocol_members(KeyProvider) == {"key_version", "mask_key"}
     assert isinstance(DuckProvider(), KeyProvider)
     assert list(inspect.signature(SecretKeyProvider).parameters) == ["secret", "key_version"]
 
