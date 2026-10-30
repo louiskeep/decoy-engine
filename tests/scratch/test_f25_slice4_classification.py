@@ -122,8 +122,10 @@ def test_publication_rejects_wrong_mode_and_reclaims_stage(tmp_path: Path, monke
 
         real_mkdir = arena_mod.os.mkdir
 
-        def _loose_mkdir(path, mode=0o777):  # type: ignore[no-untyped-def]
-            real_mkdir(path, 0o777)
+        def _loose_mkdir(path, mode=0o777, *, dir_fd=None):  # type: ignore[no-untyped-def]
+            # Force a wrong (0777) mode through the hardened dir_fd-relative call
+            # so verification must reject and reclaim it.
+            real_mkdir(path, 0o777, dir_fd=dir_fd)
 
         monkeypatch.setattr(arena_mod.os, "mkdir", _loose_mkdir)
         with pytest.raises(ScratchPathUnsafe):
@@ -272,3 +274,115 @@ def test_reference_provider_probe_finds_headroom_on_plain_dir(tmp_path: Path) ->
     arena_dir.mkdir(mode=0o700)
     exhausted, _dim = provider.probe_exhaustion(arena_dir, policy)
     assert exhausted is False
+
+
+# ---------------------------------------------------------------------------
+# Codex gate remediation: publication-stage TOCTOU, verify reclaim, probe name,
+# and postgres probe-failure hygiene. Each proves a defect the gate flagged.
+# ---------------------------------------------------------------------------
+
+
+def test_publication_parent_symlink_substitution_is_refused(tmp_path: Path, monkeypatch) -> None:
+    """HIGH (TOCTOU): if the destination parent is swapped for a symlink after
+    the pre-check but before ``mkdir``, a path-string create would follow the
+    link and stage on another mount, escaping the quota domain. Pinning the
+    parent with a no-follow directory fd makes creation refuse the substituted
+    link instead of following it. Simulated by defeating the ``islink``
+    pre-check so the race window is the only thing that can catch the swap."""
+
+    manager, arena = _open_arena(tmp_path)
+    try:
+        from decoy_engine.scratch import _arena as arena_mod
+
+        outside = tmp_path / "outside"  # the attacker's redirect target
+        outside.mkdir()
+        link_parent = tmp_path / "out"  # the destination parent, now a symlink
+        link_parent.symlink_to(outside, target_is_directory=True)
+        dest = link_parent / "customers.parquet"
+        # Race: the pre-check saw a real directory; by creation time it is a link.
+        monkeypatch.setattr(arena_mod.os.path, "islink", lambda p: False)
+        with pytest.raises(ScratchPathUnsafe):
+            arena.allocate_publication(dest, retention_owner="t09")
+        # Nothing may be created under the symlink target (arena escape).
+        assert [p for p in outside.iterdir() if p.name.startswith(".decoy-stage-")] == []
+    finally:
+        manager.close()
+
+
+def test_publication_verify_oserror_reclaims_and_raises_pathunsafe(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """MEDIUM (incomplete reclaim): a raw ``OSError`` from a verify step must not
+    escape and leave the freshly created stage on disk. Any verification failure
+    reclaims the stage and raises ``ScratchPathUnsafe`` with a value-free
+    message, never the native detail."""
+
+    manager, arena = _open_arena(tmp_path)
+    try:
+        from decoy_engine.scratch import _arena as arena_mod
+
+        dest = tmp_path / "out_verify" / "customers.parquet"
+        dest.parent.mkdir()
+        native_detail = "native verify detail that must not surface"
+
+        def _boom_lstat(*_a: object, **_k: object):  # type: ignore[no-untyped-def]
+            raise PermissionError(native_detail)
+
+        monkeypatch.setattr(arena_mod.os, "lstat", _boom_lstat)
+        with pytest.raises(ScratchPathUnsafe) as excinfo:
+            arena.allocate_publication(dest, retention_owner="t09")
+        assert native_detail not in str(excinfo.value)
+        leftover = [p for p in dest.parent.iterdir() if p.name.startswith(".decoy-stage-")]
+        assert leftover == [], "a stage left after a verify failure escapes the quota domain"
+    finally:
+        manager.close()
+
+
+def test_quota_probe_filename_is_unpredictable(tmp_path: Path, monkeypatch) -> None:
+    """LOW: the bounded quota probe's filename must not be a predictable
+    PID-only name (a collision/clobber surface); it uses an unpredictable
+    exclusive token."""
+
+    import re
+
+    from decoy_engine.scratch import _local_provider as lp
+
+    provider = lp.KernelProjectQuotaProvider()
+    policy = make_policy(tmp_path)
+    arena_dir = tmp_path / "arena"
+    arena_dir.mkdir(mode=0o700)
+
+    seen: list[str] = []
+    real_open = lp.os.open
+
+    def _capture_open(path, flags, mode=0o777):  # type: ignore[no-untyped-def]
+        seen.append(os.path.basename(os.fspath(path)))
+        return real_open(path, flags, mode)
+
+    monkeypatch.setattr(lp.os, "open", _capture_open)
+    provider.probe_exhaustion(arena_dir, policy)
+
+    probe_names = [n for n in seen if n.startswith(".decoy-quota-probe-")]
+    assert probe_names, "probe did not create a probe file"
+    name = probe_names[0]
+    assert name != f".decoy-quota-probe-{os.getpid()}", "probe name is a predictable PID"
+    assert re.fullmatch(r"\.decoy-quota-probe-[0-9a-f]{16,}", name), name
+
+
+def test_postgres_attach_quota_report_probe_failure_fails_closed() -> None:
+    """MEDIUM (exception hygiene): if the classifier/probe itself fails, the
+    report attachment must fail closed to no report, never raise and surface its
+    native detail or chain the original export failure."""
+
+    from decoy_engine.connectors.postgres_snapshot import (
+        PostgresSnapshotError,
+        _attach_quota_report,
+    )
+
+    class _RaisingArena:
+        def classify_attempt_io(self, *, errno: int | None = None):  # type: ignore[no-untyped-def]
+            raise OSError("native probe detail that must not surface")
+
+    err = PostgresSnapshotError("export_failed", cause_type="RuntimeError")
+    _attach_quota_report(err, _RaisingArena())  # must not raise
+    assert getattr(err, "report", None) is None

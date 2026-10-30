@@ -31,6 +31,7 @@ from __future__ import annotations
 import errno as _errno
 import fcntl
 import os
+import secrets
 import shutil
 import struct
 from pathlib import Path
@@ -179,7 +180,9 @@ class KernelProjectQuotaProvider:
         # the block write it is byte pressure (plan 1.5 item 5). Any other errno
         # (EACCES, a vanished arena) is not quota evidence, so the caller falls to
         # the unknown-I/O classification. No logical-length walk is consulted.
-        probe = arena / f".decoy-quota-probe-{os.getpid()}"
+        # Unpredictable exclusive name (not a PID, which can collide or be
+        # pre-created by another process): O_EXCL fails closed on any clash.
+        probe = arena / f".decoy-quota-probe-{secrets.token_hex(16)}"
         fd = -1
         try:
             fd = os.open(probe, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o600)

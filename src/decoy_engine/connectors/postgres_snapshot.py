@@ -440,9 +440,18 @@ def _attach_quota_report(err: PostgresSnapshotError, arena: ArenaLike | None) ->
     classifier (errno, kernel probe for provider-quota evidence, else unknown-I/O)
     produces the report, so the failure surfaces as a typed shared-report outcome
     rather than a bare ``export_failed`` code. Without a durable-ledger arena there
-    is nothing to classify against and the code is left as-is."""
+    is nothing to classify against and the code is left as-is.
 
-    report = provider_io_report(arena)
+    Fails closed: the classifier runs a bounded kernel probe that can itself
+    raise, so any failure here leaves the report unset rather than surfacing the
+    probe's native detail. Call this OUTSIDE the active ``except`` so a raised
+    probe error could never chain the original export failure via
+    ``__context__``."""
+
+    try:
+        report = provider_io_report(arena)
+    except Exception:
+        report = None
     if report is not None:
         err.report = report  # type: ignore[attr-defined]  # shared scratch_quota report
 
@@ -524,6 +533,7 @@ def snapshot_tables_to_parquet(
             ) from None
 
         staged: dict[str, Path] = {}
+        export_cause: str | None = None
         try:
             conn.execute("BEGIN TRANSACTION")
             # Validate every relation first so a late type rejection never
@@ -543,7 +553,12 @@ def snapshot_tables_to_parquet(
         except Exception as exc:
             if timed_out.is_set():
                 raise PostgresSnapshotError("deadline_exceeded") from None
-            failure = PostgresSnapshotError("export_failed", cause_type=type(exc).__name__)
+            # Capture only the cause's TYPE name; classify and raise OUTSIDE this
+            # handler so a probe failure can neither surface native text nor chain
+            # the original native exception via __context__ (exception hygiene).
+            export_cause = type(exc).__name__
+        if export_cause is not None:
+            failure = PostgresSnapshotError("export_failed", cause_type=export_cause)
             _attach_quota_report(failure, scratch_arena)
             raise failure from None
 

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import errno as _errno
 import os
+import stat as _stat
 import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, NoReturn
@@ -166,24 +167,38 @@ class Arena:
         destination filesystem so the existing single rename can publish it.
 
         The stage carries the same path hardening the data arena uses (plan 1.5 /
-        1.6): a symlinked destination parent is refused before any directory is
-        created (so a swapped-in link cannot redirect the stage to another mount),
-        and after creation the stage is verified non-symlink, owner-matched, mode
-        0700 and single-device with its parent. Any failure reclaims the stage and
-        raises ``ScratchPathUnsafe``; the data is never staged on an unverified
-        path."""
+        1.6), closed against a substitution race: the destination parent is pinned
+        with a NO-FOLLOW directory fd (``O_NOFOLLOW|O_DIRECTORY``), so a symlink
+        swapped in for the parent after any check cannot redirect the stage to
+        another mount. Creation and verification happen RELATIVE to that fd
+        (``os.mkdir``/``os.open`` with ``dir_fd=``), never by re-resolving a path
+        string, and the stage is verified non-symlink, owner-matched, mode 0700,
+        single-device with the pinned parent, and unchanged in device+inode
+        identity under the pinned fd. Any failure reclaims the stage and raises
+        ``ScratchPathUnsafe``; the data is never staged on an unverified path."""
 
         resource_id = self._new_resource_id()
         dest_parent = destination.parent if destination.parent.exists() else destination
-        # Refuse a symlinked parent before creating anything under it (mount
-        # substitution guard, mirroring the provider's create_arena, plan 1.5).
-        if os.path.islink(dest_parent):
-            raise ScratchPathUnsafe(message="publication destination parent is a symlink")
-        parent_dev = os.stat(dest_parent).st_dev
-        stage = dest_parent / f".decoy-stage-{resource_id}"
-        self._register(resource_id, ResourceKind.PUBLICATION, Retention.DURABLE_PUBLICATION)
-        os.mkdir(stage, mode=0o700)
-        self._verify_stage(stage, dest_parent, parent_dev)
+        stage_name = f".decoy-stage-{resource_id}"
+        stage = dest_parent / stage_name
+        # Pin the destination parent with a no-follow directory fd. If the parent
+        # is itself a symlink the open fails (ELOOP), and every mkdir/stat below
+        # is relative to this pinned inode, so a link swapped in after the open
+        # cannot redirect the stage off the quota domain (mount-substitution
+        # guard, mirroring the data arena's _safe_child discipline, plan 1.5/1.6).
+        try:
+            dir_fd = os.open(dest_parent, os.O_RDONLY | os.O_NOFOLLOW | os.O_DIRECTORY)
+        except OSError:
+            raise ScratchPathUnsafe(
+                message="publication destination parent is not a non-symlink directory"
+            ) from None
+        try:
+            parent_dev = os.fstat(dir_fd).st_dev
+            self._register(resource_id, ResourceKind.PUBLICATION, Retention.DURABLE_PUBLICATION)
+            os.mkdir(stage_name, mode=0o700, dir_fd=dir_fd)
+            self._verify_stage(dir_fd, stage_name, parent_dev)
+        finally:
+            os.close(dir_fd)
         self._paths[resource_id] = stage
         self._ledger.transition(
             resource_id,
@@ -199,29 +214,64 @@ class Arena:
             _stage_path=stage,
         )
 
-    def _verify_stage(self, stage: Path, dest_parent: Path, parent_dev: int) -> None:
+    def _verify_stage(self, dir_fd: int, stage_name: str, parent_dev: int) -> None:
         """Verify a freshly created publication stage the same way the data arena
-        verifies a child (plan 1.5): non-symlink, owned by this principal, mode
-        0700, same device as its parent, and resolving directly beneath it. A
-        swapped-in link or a wrong owner/mode means a race; reclaim and refuse."""
+        verifies a child (plan 1.5), all relative to the pinned parent fd:
+        non-symlink, owned by this principal, mode 0700, same device as its
+        parent, and with a device+inode identity that still matches when reopened
+        no-follow under the pinned fd. ANY verification failure (a typed path
+        rejection or a raw ``lstat``/``open`` error) reclaims the stage and raises
+        ``ScratchPathUnsafe`` with a value-free message, so a race can never leave
+        an unverified stage on disk (never a bare ``OSError`` carrying native
+        detail)."""
 
         try:
-            stat = os.lstat(stage)
-            if os.path.islink(stage):
+            st = os.lstat(stage_name, dir_fd=dir_fd)
+            if _stat.S_ISLNK(st.st_mode):
                 raise ScratchPathUnsafe(message="publication stage is a symlink")
-            if stat.st_dev != parent_dev:
+            if not _stat.S_ISDIR(st.st_mode):
+                raise ScratchPathUnsafe(message="publication stage is not a directory")
+            if st.st_dev != parent_dev:
                 raise ScratchPathUnsafe(
                     message="publication stage is not on the destination device"
                 )
-            if stat.st_uid != os.geteuid():
+            if st.st_uid != os.geteuid():
                 raise ScratchPathUnsafe(message="publication stage is not owned by this principal")
-            if stat.st_mode & 0o777 != 0o700:
+            if st.st_mode & 0o777 != 0o700:
                 raise ScratchPathUnsafe(message="publication stage mode is not 0700")
-            if stage.resolve().parent != dest_parent.resolve():
-                raise ScratchPathUnsafe(message="publication stage escapes the destination parent")
+            # Reopen the stage no-follow under the pinned fd and confirm its
+            # device+inode identity is unchanged: a name swapped for a link or a
+            # different inode between lstat and acceptance is caught here.
+            stage_fd = os.open(
+                stage_name, os.O_RDONLY | os.O_NOFOLLOW | os.O_DIRECTORY, dir_fd=dir_fd
+            )
+            try:
+                ident = os.fstat(stage_fd)
+            finally:
+                os.close(stage_fd)
+            if (ident.st_dev, ident.st_ino) != (st.st_dev, st.st_ino):
+                raise ScratchPathUnsafe(
+                    message="publication stage identity changed under the pinned fd"
+                )
         except ScratchPathUnsafe:
-            self._provider.reclaim(stage)
+            self._reclaim_stage(dir_fd, stage_name)
             raise
+        except OSError:
+            self._reclaim_stage(dir_fd, stage_name)
+            raise ScratchPathUnsafe(message="publication stage failed verification") from None
+
+    @staticmethod
+    def _reclaim_stage(dir_fd: int, stage_name: str) -> None:
+        """Remove a rejected stage by name under the pinned parent fd, never by a
+        re-resolved path: whether it is still our empty directory or was swapped
+        for a link/file, it is unlinked in place without following it."""
+
+        for remover in (os.rmdir, os.unlink):
+            try:
+                remover(stage_name, dir_fd=dir_fd)
+                return
+            except OSError:
+                continue
 
     def checkpoint(
         self,
