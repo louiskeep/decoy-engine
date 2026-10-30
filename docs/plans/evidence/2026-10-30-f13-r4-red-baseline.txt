@@ -60,3 +60,18 @@ files test_r3_contract.py, test_leak_sentry.py and test_r3_mutation_kills.py aga
 sources: 18 failed, 61 passed (the two files alone: 13 failed, 33 passed; test_r3_mutation_kills.py
 alone: 5 failed, 28 passed). Most mutation-kill tests pin behavior that was already correct and
 were never red-first.
+
+Addendum: `parse_ref` (class 1 / class 6, found while killing r4 mutants; pre-existing at bf76e761).
+test_r4_mutation_kills.py::test_malformed_refs_are_bad_secret_ref_and_never_echo_the_ref, run on
+this branch before the `parse_ref` boundary (same environment; the code paths are as at bf76e761):
+6 failed, 14 passed for the reference-grammar tests:
+    [4] env:N?encoding=raw&SECRETPATH   ValueError: bad query field: 'SECRETPATH' (the ref text)
+    [5] env:N?encoding=raw&&            ValueError: bad query field: ''
+    [8] trailing "&" in a vault query   bad_secret_ref, but __context__ is the ValueError
+    [11] undecodable vault path         bad_secret_ref, but __context__ is the UnicodeDecodeError
+    [12] undecodable vault mount        same
+    [13] undecodable vault field        accepted (decoded to U+FFFD instead of rejected)
+Fix: `parse_ref` checks for an exact `str`, records any parse failure inside the handler and raises a
+fresh `bad_secret_ref` outside it; Vault query decoding is strict. The other tests in
+test_r4_mutation_kills.py pin behavior that was already correct (they exist to kill mutants) and
+were not red-first.

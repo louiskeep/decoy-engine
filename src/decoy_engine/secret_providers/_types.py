@@ -7,6 +7,7 @@ strictness. See docs/plans/2026-10-29-f13-secret-provider-contract-preflight.md.
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import hashlib
 import hmac
@@ -91,9 +92,18 @@ def parse_ref(text: object) -> SecretRef:
 
     Any other well-formed ``scheme:locator[?encoding=..&key_version=..]`` parses with the local
     grammar so the registry, not the parser, owns the "unknown provider" decision. Anything
-    malformed is ``bad_secret_ref``.
+    malformed is ``bad_secret_ref``, raised outside any handler: no parser or decoder exception
+    (whose text and ``__context__`` can hold part of the reference) survives.
     """
-    if not isinstance(text, str) or not text or "\x00" in text:
+    if type(text) is not str:  # exact: a str subclass could run code inside the parser
+        raise _bad_ref()
+    with contextlib.suppress(Exception):  # every parse failure is the one fixed reason
+        return _parse(text)
+    raise _bad_ref()
+
+
+def _parse(text: str) -> SecretRef:
+    if not text or "\x00" in text:
         raise _bad_ref()
     match = _SCHEME_RE.match(text)
     if match is None:
@@ -137,7 +147,12 @@ def _parse_local(scheme: str, rest: str) -> SecretRef:
 def _parse_vault(text: str) -> SecretRef:
     try:
         parts = urlsplit(text)
-        query = parse_qsl(parts.query, keep_blank_values=True, strict_parsing=bool(parts.query))
+        query = parse_qsl(
+            parts.query,
+            keep_blank_values=True,
+            strict_parsing=bool(parts.query),
+            errors="strict",
+        )
     except ValueError:
         raise _bad_ref() from None
     if parts.fragment or "@" in parts.netloc or ":" in parts.netloc or not parts.netloc:

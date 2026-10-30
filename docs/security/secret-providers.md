@@ -27,7 +27,8 @@ row is read**. This page describes shipped behavior; the design record is
 
 The default logical `key_version` of `env:`/`file:` is `v1`; change it to rotate output identity
 intentionally. Vault derives `key_version` from the pinned KV version (`v3`).
-Errors never repeat the reference, path or field.
+Errors never repeat the reference, path or field: every malformed reference (including a malformed
+query or an undecodable percent-escape) fails `bad_secret_ref` with no chained parser exception.
 
 ## Per-algorithm validation
 
