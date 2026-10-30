@@ -91,7 +91,6 @@ from decoy_engine.progress import ProgressChannel, ProgressSink, use_progress
 if TYPE_CHECKING:
     from faker import Faker
 
-    from decoy_engine.declared_casting import ProtectedQuarantineRuntime
     from decoy_engine.execution._transactional_sink import TransactionalSink
     from decoy_engine.keyprovider import KeyProvider
     from decoy_engine.providers_v2 import ProviderRegistry
@@ -149,7 +148,7 @@ def run_pipeline(
     unified_slice_enabled: bool = True,
     progress: ProgressSink | None = None,
     progress_interval_s: float = 1.0,
-    quarantine_runtime: ProtectedQuarantineRuntime | None = None,
+    quarantine_runtime: Any = None,
     _provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None = None,
 ) -> ExecutionResult:
     """Execute a mixed mask + generate config end-to-end.
