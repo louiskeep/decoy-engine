@@ -401,6 +401,7 @@ pythonpath = ["src", "scripts"]
 # `pytest -m determinism_harness` or `python scripts/faker-determinism/check_determinism.py`.
 addopts = "-m 'not benchmark and not testflight and not packaging and not codspeed and not determinism_harness'"
 markers = [
+    "no_default_secret: opt out of the shared throwaway secret (tests/_keyed_secret.py); the test asserts behavior with no secret supplied",
     "benchmark: informational performance benchmarks; not a regression gate",
     "determinism_harness: full faker-pool determinism matrix sweep (scripts/faker-determinism/check_determinism.py against golden_digests.json); excluded from the default loop for runtime, run explicitly via pytest -m determinism_harness",
     "codspeed: pytest-codspeed instrumented microbenchmarks (tests/codspeed/); needs the [perf] extra; run only by the codspeed CI workflow, gated on the CODSPEED_TOKEN secret",

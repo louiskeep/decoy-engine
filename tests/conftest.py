@@ -251,3 +251,40 @@ def mock_logger():
     logger_config = {"level": "debug", "console": True, "verbose": True}
 
     return get_logger(logger_config)
+
+
+def _install_default_secret(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fill in the shared throwaway secret at the admission seams, for keyed work only."""
+    import decoy_engine.keyprovider as kp
+    import decoy_engine.secret_providers as sp
+    from decoy_engine.execution import _pandas_adapter, _sequential
+    from decoy_engine.execution.out_of_core import _preflight as ooc_preflight
+    from tests._keyed_secret import THROWAWAY_KEY_PROVIDER
+
+    real_admit = sp.admit_mask_key
+    real_require = kp.require_mask_key
+
+    def admit(config, *, key_provider=None, **kwargs):
+        has_ref = bool((config.get("global_settings") or {}).get("mask_secret_ref"))
+        if key_provider is None and not has_ref and sp.secret_requirements_for_config(config):
+            key_provider = THROWAWAY_KEY_PROVIDER
+        return real_admit(config, key_provider=key_provider, **kwargs)
+
+    def require(plan, key_provider):
+        if key_provider is None and kp.plan_has_keyed_strategy(plan):
+            key_provider = THROWAWAY_KEY_PROVIDER
+        return real_require(plan, key_provider)
+
+    monkeypatch.setattr(sp, "admit_mask_key", admit)
+    monkeypatch.setattr(kp, "require_mask_key", require)
+    for module in (_pandas_adapter, _sequential, ooc_preflight):
+        monkeypatch.setattr(module, "require_mask_key", require)
+
+
+@pytest.fixture(autouse=True)
+def _default_throwaway_secret(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch):
+    """Shared throwaway secret for keyed tests; see tests/_keyed_secret.py for the contract."""
+    path = str(request.node.path)
+    if request.node.get_closest_marker("no_default_secret") or "/tests/secret_providers/" in path:
+        return
+    _install_default_secret(monkeypatch)
