@@ -30,8 +30,10 @@ ROUTES = ("full_frame", "sequential", "chunked", "out_of_core", "mixed", "unifie
 #   cast_before_join          a declared column is a relationship endpoint: both sides must be
 #                             typed before keys are compared or mapped.
 #   row_quarantine            a parse failure removes the row before masking.
-#   post_mask_row_quarantine  a format failure removes the row after masking (needs the
-#                             publication stage to drop rows the parent-key maps already saw).
+#   post_mask_row_quarantine  a format failure removes the row after masking.
+# `post_mask_parent_row_quarantine` (the same removal on a relationship parent, whose children
+# were already mapped against the dropped row) is listed by no route: none re-applies the orphan
+# policy to the children after publication drops rows, so it is a registered refusal.
 _FULL = frozenset(
     {
         "pre_mask_cast",
@@ -92,19 +94,33 @@ def contract_model(column: Any) -> C.DeclaredColumnContractV1:
     return C.build_contract(unfreeze_json(column.contract))
 
 
+def _edges(source: Any) -> Any:
+    if source is None:
+        return ()
+    if isinstance(source, Mapping):
+        return source.get("relationships") or ()
+    if isinstance(source, (list, tuple)):
+        return source
+    return getattr(source, "relationships", None) or ()
+
+
+def relationship_parent_tables(source: Any) -> frozenset[str]:
+    """Tables that are the parent end of any relationship (same sources as the endpoints)."""
+    out: set[str] = set()
+    for edge in _edges(source):
+        parent = edge.get("parent") if isinstance(edge, Mapping) else getattr(edge, "parent", None)
+        if parent is None:
+            continue
+        table = parent.get("table") if isinstance(parent, Mapping) else parent.table
+        out.add(str(table))
+    return frozenset(out)
+
+
 def relationship_endpoints(source: Any) -> frozenset[tuple[str, str]]:
     """``(table, column)`` ends of every relationship, from a Plan, a config mapping or the
     config's relationship list itself."""
-    if source is None:
-        return frozenset()
-    if isinstance(source, Mapping):
-        edges: Any = source.get("relationships")
-    elif isinstance(source, (list, tuple)):
-        edges = source
-    else:
-        edges = getattr(source, "relationships", None)
     out: set[tuple[str, str]] = set()
-    for edge in edges or ():
+    for edge in _edges(source):
         get = edge.get if isinstance(edge, Mapping) else lambda k, _e=edge: getattr(_e, k, None)
         ends = [get("parent"), *(get("children") or ())]
         for end in ends:
@@ -120,6 +136,7 @@ def _requirements(
     columns: Iterable[Any],
     models: list[C.DeclaredColumnContractV1],
     endpoints: frozenset[tuple[str, str]],
+    parents: frozenset[str] = frozenset(),
 ) -> set[str]:
     need = {"pre_mask_cast", "issue_counts"}
     for column, model in zip(columns, models, strict=True):
@@ -131,6 +148,8 @@ def _requirements(
             need.add("row_quarantine")
             if model.output_format is not None:
                 need.add("post_mask_row_quarantine")
+                if column.table in parents:
+                    need.add("post_mask_parent_row_quarantine")
         if (column.table, column.column) in endpoints:
             need.add("cast_before_join")
     return need
@@ -149,7 +168,12 @@ def evaluate_declared_casting(
     if not columns:
         return CastRouteDecision(True, None, (), (), {})
     models = [contract_model(c) for c in columns]
-    need = _requirements(columns, models, relationship_endpoints(relationships))
+    need = _requirements(
+        columns,
+        models,
+        relationship_endpoints(relationships),
+        relationship_parent_tables(relationships),
+    )
     have = ROUTE_CAPABILITIES.get(route, frozenset())
     fixed_target = (target_facts or {}).get("kind") == "fixed_width"
     widths: dict[str, int | None] = {}
@@ -283,15 +307,18 @@ def preflight_declared_casting(
     if not columns:
         return
     qualified = False
-    if plan.quarantine is not None:
+    if plan.quarantine is not None and any(
+        contract_model(c).error_policy == "quarantine" for c in columns
+    ):
         why = P.qualify_runtime(quarantine_runtime, dict(plan.quarantine))
         qualified = why is None
-        if not qualified and any(contract_model(c).error_policy == "quarantine" for c in columns):
+        if not qualified:
             raise DeclaredCastRouteError(
                 code=reasons.route.PROTECTED_QUARANTINE_UNAVAILABLE,
                 message=f"no qualified protected quarantine store ({why}).",
             )
     if execution_mode == "auto":
+        _refuse_unprovided(columns, config)
         return
     targets = config.get("targets") or {}
     for table in sorted({c.table for c in columns}):
@@ -307,6 +334,25 @@ def preflight_declared_casting(
                 code=str(decision.rejection),
                 message=f"route {execution_mode!r} cannot apply the declared contract: {', '.join(decision.missing) or 'see code'}.",
             )
+
+
+def _refuse_unprovided(columns: tuple[Any, ...], config: Mapping[str, Any]) -> None:
+    """On ``auto`` no route can be chosen for a requirement that no route provides."""
+    from decoy_engine.execution._errors import DeclaredCastRouteError
+
+    provided = frozenset().union(*ROUTE_CAPABILITIES.values())
+    models = [contract_model(c) for c in columns]
+    need = _requirements(
+        columns,
+        models,
+        relationship_endpoints(config.get("relationships")),
+        relationship_parent_tables(config.get("relationships")),
+    )
+    if need - provided:
+        raise DeclaredCastRouteError(
+            code=reasons.route.DECLARED_CAST_ROUTE_UNSUPPORTED,
+            message=f"no route can apply the declared contract: {', '.join(sorted(need - provided))}.",
+        )
 
 
 def chunk_stability(config: Mapping[str, Any], table: str) -> tuple[frozenset[str], frozenset[str]]:

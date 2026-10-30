@@ -141,3 +141,9 @@ def test_cast_before_join_is_needed_only_for_declared_relationship_endpoints() -
     assert evaluate_declared_casting(
         route="sequential", plan_contracts=contracts, relationships=_edges("t", "start")
     ).admitted
+
+
+def test_no_route_provides_parent_row_quarantine() -> None:
+    from decoy_engine.declared_casting._eligibility import ROUTE_CAPABILITIES
+
+    assert all("post_mask_parent_row_quarantine" not in v for v in ROUTE_CAPABILITIES.values())

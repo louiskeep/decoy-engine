@@ -104,6 +104,20 @@ def _decode(value: Any) -> Any:
     raise ValueError("unknown value tag")
 
 
+def _discard_partial(fd: int, partial: Path) -> str:
+    try:
+        os.close(fd)
+    except OSError:
+        pass
+    try:
+        os.unlink(partial)
+    except FileNotFoundError:
+        pass
+    except OSError:
+        return "failed"
+    return "confirmed"
+
+
 @dataclass
 class _State:
     partial: Path
@@ -241,6 +255,27 @@ class LocalProtectedQuarantineSink:
         run_id = secrets.token_hex(16)
         partial, final = directory / f"{run_id}.partial", directory / f"{run_id}.dqa"
         fd = os.open(partial, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        try:
+            return self._write_header(run, policy, fd, partial, final, owner_hash, run_hash, run_id)
+        except BaseException as failure:
+            cleanup = _discard_partial(fd, partial)
+            if not isinstance(failure, Exception):
+                raise
+            raise _qerror(
+                _R.PROTECTED_QUARANTINE_WRITE_FAILED, "quarantine could not be opened.", cleanup
+            ) from None
+
+    def _write_header(
+        self,
+        run: P.QuarantineRun,
+        policy: P.QuarantinePolicy,
+        fd: int,
+        partial: Path,
+        final: Path,
+        owner_hash: str,
+        run_hash: str,
+        run_id: str,
+    ) -> _State:
         os.fchmod(fd, 0o600)
         now = self._clock()
         header = {
@@ -255,7 +290,8 @@ class LocalProtectedQuarantineSink:
         }
         blob = json.dumps(header, sort_keys=True).encode("utf-8")
         head = _MAGIC + struct.pack(">I", len(blob)) + blob
-        os.write(fd, head)
+        if os.write(fd, head) != len(head):
+            raise OSError("short write of the quarantine header")
         return _State(
             partial,
             final,

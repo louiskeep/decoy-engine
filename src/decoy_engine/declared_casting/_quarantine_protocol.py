@@ -142,7 +142,10 @@ class ProtectedQuarantineSink(Protocol):
 
     def seal(self, session: QuarantineSession) -> QuarantineReceipt: ...
 
-    def abort(self, session: QuarantineSession) -> str: ...
+    def abort(self, session: QuarantineSession) -> str:
+        """Remove an open session's partial artifact. Idempotent: a session that already cleaned
+        up after a failed ``write_row`` or ``seal`` reports ``confirmed`` again, never an error."""
+        ...
 
     def get_retrieval_token(
         self, receipt: QuarantineReceipt | str, access_context: QuarantineAccessContext
@@ -152,7 +155,10 @@ class ProtectedQuarantineSink(Protocol):
         self, token: OpaqueRetrievalToken, access_context: QuarantineAccessContext
     ) -> list[QuarantineRecord]: ...
 
-    def purge_expired(self, now: float, authority: QuarantineAccessContext) -> PurgeResult: ...
+    def purge_expired(self, now: float, authority: QuarantineAccessContext) -> PurgeResult:
+        """Remove the expired artifacts owned by ``authority.owner`` only. It takes no retrieval
+        token: it deletes, it never opens, and the owner scope is its whole authority."""
+        ...
 
     def discard(self, receipt: QuarantineReceipt) -> str:
         """Remove a sealed artifact whose run then failed; returns the cleanup state."""
@@ -172,16 +178,23 @@ class ProtectedQuarantineRuntime:
     run_id: str | None = None
 
 
+_DETAIL_TOKENS = frozenset({"seed_key_provider", "weak_key", "arena_unavailable", "arena_unsafe"})
+
+
 def qualify_runtime(runtime: Any, policy: Mapping[str, Any]) -> str | None:
     """None when the runtime can honour ``policy``; else a fixed non-secret reason token."""
     sink = getattr(runtime, "sink", None)
-    if runtime is None or sink is None or not isinstance(getattr(runtime, "owner", None), str):
+    owner = getattr(runtime, "owner", None)
+    if runtime is None or sink is None or not isinstance(owner, str):
         return "no_runtime"
+    if not owner:
+        return "empty_owner"
     if not isinstance(sink, ProtectedQuarantineSink):
         return "sink_protocol"
     cap = sink.capability
     if not cap.qualified:
-        return cap.detail or "unqualified"
+        # A third-party sink's free text never reaches an error message.
+        return cap.detail if cap.detail in _DETAIL_TOKENS else "unqualified"
     if cap.protection != policy.get("required_protection"):
         return "protection_mismatch"
     return None

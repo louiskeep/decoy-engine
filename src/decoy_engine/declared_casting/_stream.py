@@ -77,18 +77,23 @@ def format_stream(
 
 
 def stage_typed_sources(
-    run: DeclaredCastRun, sources: Mapping[str, Any], root: Path, batch_rows: int
+    run: DeclaredCastRun,
+    sources: Mapping[str, Any],
+    root: Path,
+    batch_rows: int,
+    max_bytes: int | None = None,
 ) -> dict[str, Any]:
     """Cast each declared source once, up front, into a typed source the route then treats as an
     ordinary one.
 
     A resident table is cast in place. A ``LazySource`` is streamed batch by batch into a typed
-    Parquet file under the caller's private ``root`` (bounded memory), because a route that
-    re-reads its sources in several passes must not count or quarantine twice and must see one
-    stable, already-compacted row set on every pass.
+    Parquet file under ``root`` (bounded memory), because a route that re-reads its sources in
+    several passes must not count or quarantine twice and must see one stable, already-compacted
+    row set on every pass. ``max_bytes`` bounds the footprint of ``root``, checked per batch.
     """
     import pyarrow.parquet as pq
 
+    from decoy_engine.execution.out_of_core._budget import check_temp_disk_budget
     from decoy_engine.profile._readers import LazySource
 
     out = dict(sources)
@@ -109,6 +114,8 @@ def stage_typed_sources(
                 if writer is None:
                     writer = pq.ParquetWriter(path, cast.table.schema)
                 writer.write_table(cast.table)
+                if max_bytes is not None:
+                    check_temp_disk_budget(root, max_bytes=max_bytes)
             if writer is None:  # a zero-row source still needs a typed, readable file
                 empty = run.cast_batch(table, src.schema.empty_table(), offset=0).table
                 writer = pq.ParquetWriter(path, empty.schema)
@@ -116,6 +123,8 @@ def stage_typed_sources(
         finally:
             if writer is not None:
                 writer.close()
+        if max_bytes is not None:
+            check_temp_disk_budget(root, max_bytes=max_bytes)
         out[table] = LazySource(path)
     return out
 
@@ -162,7 +171,10 @@ def run_staged(fn: Callable[..., Any], call: dict[str, Any], default_batch_rows:
 
     ``call`` is the caller's own keyword snapshot (``dict(locals())`` at its first line); the
     sources are replaced by their staged form, the private staging directory is removed on every
-    exit, and ``_staged=True`` stops the second call from staging again.
+    exit, and ``_staged=True`` stops the second call from staging again. The directory lives
+    under the caller's ``temp_dir`` when given, so the route's own temp-disk accounting sees the
+    copy; without one it is a private system temp directory, and the copy alone is held to
+    ``temp_disk_budget_bytes``.
     """
     import os
     import tempfile
@@ -170,8 +182,13 @@ def run_staged(fn: Callable[..., Any], call: dict[str, Any], default_batch_rows:
     run = call["cast_run"]
     plan, sources = call.pop("plan"), call.pop("sources")
     call.pop("_staged", None)
-    with tempfile.TemporaryDirectory(prefix="decoy-ooc-cast-") as stage:
+    parent = call.get("temp_dir")
+    if parent is not None:
+        Path(parent).mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="decoy-ooc-cast-", dir=parent) as stage:
         os.chmod(stage, 0o700)
         batch_rows = call.get("batch_rows") or default_batch_rows
-        staged = stage_typed_sources(run, sources, Path(stage), batch_rows)
+        staged = stage_typed_sources(
+            run, sources, Path(stage), batch_rows, call.get("temp_disk_budget_bytes")
+        )
         return fn(plan, staged, _staged=True, **call)
