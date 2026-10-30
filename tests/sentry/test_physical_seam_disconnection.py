@@ -533,6 +533,13 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
             "src/decoy_engine/execution/out_of_core/_compat.py",
             "src/decoy_engine/execution/_guards.py",
             "src/decoy_engine/execution/_strategies/_date_shift.py",
+            # Chunked FK gate split: `_chunked_fk.py` (already listed under F29) keeps the edge
+            # walk; the ordered edge checks, the per-chunk runtime guards and the shared
+            # strategy/dtype vocabulary move to these siblings. Pure moves; none imports
+            # `execution.physical`.
+            "src/decoy_engine/execution/_chunked_fk_edge_checks.py",
+            "src/decoy_engine/execution/_chunked_fk_runtime.py",
+            "src/decoy_engine/execution/_chunked_fk_vocab.py",
             # Phase 5 Track B (native categorical operator, 2026-09-21): the new
             # operator extends the NATIVE route -- its config/determinism gate
             # (`_requirements.py`), the config-only eligibility query (`_plan.py`),

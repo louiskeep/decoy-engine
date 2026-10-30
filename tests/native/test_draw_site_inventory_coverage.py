@@ -229,7 +229,7 @@ def _strip_prose(text: str) -> str:
 _ALLOWLIST = frozenset(
     {
         "execution/_chunked.py",
-        "execution/_chunked_fk.py",  # a log-message string quotes "derive(seed, ns, value)"
+        "execution/_chunked_fk_edge_checks.py",  # a log-message string quotes "derive(seed, ns, value)"
         "execution/_chunked_profile.py",
         "execution/_pipeline.py",
         "execution/native/_determinism_protocol.py",
