@@ -25,12 +25,22 @@ from __future__ import annotations
 
 import json
 import math
-from collections.abc import Mapping
-from dataclasses import dataclass
-from typing import Any, Literal
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
+from functools import wraps
+from typing import Any, Literal, TypeVar
 
 from decoy_engine.errors import DecoyError
 from decoy_engine.reasons import ReasonRef, UnknownReasonError, require_known
+
+_F = TypeVar("_F", bound=Callable[..., Any])
+
+# Canonical JSON must round-trip through every consumer, so integers are bounded to signed
+# 64-bit (also keeps int -> str clear of CPython's digit-conversion limit) and nesting is
+# bounded well inside the interpreter recursion limit.
+INT_MIN = -(2**63)
+INT_MAX = 2**63 - 1
+MAX_DEPTH = 64
 
 RESULT_SCHEMA = "phase-result/v1"
 EVENT_SCHEMA = "phase-event/v1"
@@ -62,7 +72,10 @@ class FrozenMap(tuple[tuple[str, Any], ...]):
     __slots__ = ()
 
     def __new__(cls, pairs: Any = ()) -> FrozenMap:
-        items = tuple(pairs)
+        try:
+            items = tuple(pairs)
+        except Exception:
+            raise PhaseContractError("FrozenMap needs an iterable of (key, value) pairs") from None
         seen: set[str] = set()
         for item in items:
             if not isinstance(item, tuple) or len(item) != 2:
@@ -81,21 +94,57 @@ class PhaseContractError(DecoyError, ValueError):
     """A phase envelope that is malformed, unsafe to export, or of an unknown version."""
 
 
-def _require_frozen(value: Any) -> None:
-    if value is None or isinstance(value, (str, bool, int, FrozenMap)):
+def _contained(fn: _F) -> _F:
+    """Turn any foreign failure (hostile `__iter__`, recursion, ...) into a fixed-text contract error."""
+
+    @wraps(fn)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        try:
+            return fn(*args, **kwargs)
+        except PhaseContractError:
+            raise
+        except Exception:
+            raise PhaseContractError("malformed phase evidence") from None
+
+    return wrapper  # type: ignore[return-value]
+
+
+def _check_int(value: int) -> None:
+    if not INT_MIN <= value <= INT_MAX:
+        raise PhaseContractError("integer outside the 64-bit canonical range")
+
+
+def _check_depth(depth: int) -> None:
+    if depth > MAX_DEPTH:
+        raise PhaseContractError("phase evidence nested too deeply")
+
+
+def _require_frozen(value: Any, depth: int = 0) -> None:
+    _check_depth(depth)
+    if value is None or isinstance(value, (str, bool)):
+        return
+    if isinstance(value, int):
+        _check_int(value)
         return
     if isinstance(value, float):
         if not math.isfinite(value):
             raise PhaseContractError("non-finite number in phase evidence")
         return
+    if isinstance(value, FrozenMap):
+        for _, v in value:
+            _require_frozen(v, depth + 1)
+        return
     if type(value) is tuple:
         for v in value:
-            _require_frozen(v)
+            _require_frozen(v, depth + 1)
         return
     raise PhaseContractError(f"unfrozen {type(value).__name__} in FrozenMap")
 
 
+@_contained
 def _identity_pairs(value: Any) -> tuple[tuple[str, str], ...]:
+    if not isinstance(value, (Mapping, tuple, list)):
+        raise PhaseContractError("identity must be a mapping or a tuple of (str, str) pairs")
     items = value.items() if isinstance(value, Mapping) else value
     pairs: list[tuple[str, str]] = []
     seen: set[str] = set()
@@ -112,6 +161,7 @@ def _identity_pairs(value: Any) -> tuple[tuple[str, str], ...]:
     return tuple(pairs)
 
 
+@_contained
 def _str_tuple(value: Any, name: str) -> tuple[str, ...]:
     # A bare str is iterable; accepting it would silently explode "abc" into ("a", "b", "c").
     if isinstance(value, (str, bytes, Mapping)) or not isinstance(value, (tuple, list)):
@@ -139,6 +189,7 @@ def _require_reason(value: Any) -> None:
     _require_str(value.code, "reason code")
 
 
+@_contained
 def _reason_tuple(value: Any) -> tuple[ReasonRef, ...]:
     if not isinstance(value, (tuple, list)):
         raise PhaseContractError("reasons must be a tuple of ReasonRef")
@@ -148,45 +199,80 @@ def _reason_tuple(value: Any) -> tuple[ReasonRef, ...]:
     return items
 
 
+def _set_sort_key(value: Any) -> tuple[int, Any]:
+    # Rank by exact type so only same-typed primitives are ever compared with `<`; a foreign
+    # `__lt__`/`__repr__` is unreachable because exact-type validation precedes sorting.
+    if value is None:
+        return (0, 0)
+    t = type(value)
+    if t is bool:
+        return (1, value)
+    if t is int:
+        _check_int(value)
+        return (2, value)
+    if t is float:
+        if not math.isfinite(value):
+            raise PhaseContractError("non-finite number in phase evidence")
+        return (3, value)
+    if t is str:
+        return (4, value)
+    raise PhaseContractError("set elements must be None, bool, int, float or str")
+
+
+def _freeze(value: Any, depth: int) -> FrozenValue:
+    _check_depth(depth)
+    if value is None or isinstance(value, (str, bool)):
+        return value
+    if isinstance(value, int):
+        _check_int(value)
+        return value
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise PhaseContractError("non-finite number in phase evidence")
+        return value
+    if isinstance(value, FrozenMap):
+        return FrozenMap((k, _freeze(v, depth + 1)) for k, v in value)
+    if isinstance(value, Mapping):
+        if not all(isinstance(k, str) for k in value):
+            raise PhaseContractError("phase evidence mapping keys must be str")
+        return FrozenMap((k, _freeze(v, depth + 1)) for k, v in sorted(value.items()))
+    if isinstance(value, (set, frozenset)):
+        ordered = sorted(((_set_sort_key(v), v) for v in value), key=lambda kv: kv[0])
+        return tuple(v for _, v in ordered)
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze(v, depth + 1) for v in value)
+    raise PhaseContractError("cannot freeze this type into phase evidence")
+
+
+@_contained
 def freeze(value: Any) -> FrozenValue:
     """Deep-copy plain JSON-like data into the immutable representation.
 
     Lossless for JSON: objects become `FrozenMap`, arrays become tuples. Mapping keys must
     already be `str` (JSON object keys are strings; coercing `1` to `"1"` could silently merge
-    two entries). Sets freeze to a sorted tuple because JSON has no set. NaN/inf are refused
-    because they have no canonical JSON form.
+    two entries). Sets of primitives freeze to a tuple ordered by (type rank, value) because
+    JSON has no set; other set elements are refused before any comparison or repr runs.
+    NaN/inf and integers outside signed 64-bit are refused because they have no canonical form.
     """
-    if value is None or isinstance(value, (str, bool, int)):
+    return _freeze(value, 0)
+
+
+def _thaw(value: Any, depth: int = 0) -> Any:
+    _check_depth(depth)
+    if value is None or isinstance(value, (str, bool)):
+        return value
+    if isinstance(value, int):
+        _check_int(value)
         return value
     if isinstance(value, float):
         if not math.isfinite(value):
             raise PhaseContractError("non-finite number in phase evidence")
         return value
     if isinstance(value, FrozenMap):
-        return FrozenMap((k, freeze(v)) for k, v in value)
-    if isinstance(value, Mapping):
-        if not all(isinstance(k, str) for k in value):
-            raise PhaseContractError("phase evidence mapping keys must be str")
-        return FrozenMap((k, freeze(v)) for k, v in sorted(value.items()))
-    if isinstance(value, (set, frozenset)):
-        return tuple(freeze(v) for v in sorted(value, key=repr))
-    if isinstance(value, (list, tuple)):
-        return tuple(freeze(v) for v in value)
-    raise PhaseContractError(f"cannot freeze {type(value).__name__} into phase evidence")
-
-
-def _thaw(value: Any) -> Any:
-    if value is None or isinstance(value, (str, bool, int)):
-        return value
-    if isinstance(value, float):
-        if not math.isfinite(value):
-            raise PhaseContractError("non-finite number in phase evidence")
-        return value
-    if isinstance(value, FrozenMap):
-        return {k: _thaw(v) for k, v in value}
+        return {k: _thaw(v, depth + 1) for k, v in value}
     if isinstance(value, tuple):
-        return [_thaw(v) for v in value]
-    raise PhaseContractError(f"unsafe value {type(value).__name__} in phase evidence")
+        return [_thaw(v, depth + 1) for v in value]
+    raise PhaseContractError("unsafe value in phase evidence")
 
 
 @dataclass(frozen=True)
@@ -215,6 +301,8 @@ def _check_coverage(cov: Any) -> None:
     # bool is an int subclass; a count of True is a type confusion, not a count.
     if cov.rows_examined is not None and type(cov.rows_examined) is not int:
         raise PhaseContractError("rows_examined must be int or None")
+    if cov.rows_examined is not None:
+        _check_int(cov.rows_examined)
     if type(cov.exact) is not bool:
         raise PhaseContractError("exact must be bool")
     _require_opt_str(cov.sampling_method, "sampling_method")
@@ -227,7 +315,7 @@ class PhaseResult:
     status: Status
     method: str
     method_version: str
-    coverage: PhaseCoverage = PhaseCoverage()
+    coverage: PhaseCoverage = field(default_factory=PhaseCoverage)
     reasons: tuple[ReasonRef, ...] = ()
     identity: tuple[tuple[str, str], ...] = ()
     payload: FrozenValue = None
@@ -293,11 +381,27 @@ def _reason_wire(ref: ReasonRef) -> dict[str, str]:
     return {"namespace": spec.namespace, "code": spec.code}
 
 
+def _encode(wire: dict[str, Any]) -> bytes:
+    try:
+        return json.dumps(wire, sort_keys=True, separators=(",", ":")).encode()
+    except Exception:
+        raise PhaseContractError("phase envelope has no canonical encoding") from None
+
+
+@_contained
 def to_wire(item: PhaseResult | PhaseEvent) -> dict[str, Any]:
     """The one serializer: validates versions and reasons, thaws to JSON-safe data.
 
-    Exact-type dispatch: a duck-typed or subclassed look-alike is not an envelope.
+    Exact-type dispatch: a duck-typed or subclassed look-alike is not an envelope. The wire
+    form is proven canonically encodable before it is returned, so a caller (and the gate)
+    never holds an envelope that later fails hashing or persistence.
     """
+    wire = _wire(item)
+    _encode(wire)
+    return wire
+
+
+def _wire(item: PhaseResult | PhaseEvent) -> dict[str, Any]:
     if type(item) is PhaseResult:
         _check_result_fields(item)
         _check_header(item.phase, item.status, item.schema_version, RESULT_SCHEMA)
@@ -335,8 +439,9 @@ def to_wire(item: PhaseResult | PhaseEvent) -> dict[str, Any]:
     }
 
 
+@_contained
 def canonical_bytes(item: PhaseResult | PhaseEvent) -> bytes:
-    return json.dumps(to_wire(item), sort_keys=True, separators=(",", ":")).encode()
+    return _encode(_wire(item))
 
 
 def satisfies_required_gate(item: PhaseResult) -> bool:
@@ -344,7 +449,7 @@ def satisfies_required_gate(item: PhaseResult) -> bool:
     if type(item) is not PhaseResult:
         return False
     try:
-        to_wire(item)
+        canonical_bytes(item)
     except PhaseContractError:
         return False
     return item.status == "passed"

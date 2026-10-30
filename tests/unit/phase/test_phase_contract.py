@@ -400,3 +400,205 @@ def test_gate_true_implies_canonical_bytes_succeed():
         "post_scan", "done", "passed", reasons.get_reason("post_scan", "check_error").ref
     )
     assert json.loads(phase.canonical_bytes(ev))["reason"]["code"] == "check_error"
+
+
+# --- r6: encoding-faithful gate, foreign-code-free freeze, isolated defaults, contained errors ---
+
+_MARKER = "R6-MARKER-do-not-leak"
+
+
+class _RaisingRepr:
+    def __repr__(self) -> str:
+        raise RuntimeError(_MARKER)
+
+    def __lt__(self, other):
+        raise RuntimeError(_MARKER)
+
+    def __hash__(self) -> int:
+        return 1
+
+
+class _RaisingIter(list):
+    def __iter__(self):
+        raise RuntimeError(_MARKER)
+
+
+def _deep(n: int, wrap=lambda x: [x]):
+    node: object = 1
+    for _ in range(n):
+        node = wrap(node)
+    return node
+
+
+def _cyclic():
+    a: list = []
+    a.append(a)
+    return a
+
+
+def _hostile():
+    return [
+        10**5000,
+        -(10**5000),
+        2**63,
+        -(2**63) - 1,
+        _RaisingRepr(),
+        {_RaisingRepr()},
+        frozenset({_RaisingRepr(), 1}),
+        {(1, 2)},
+        {1, "a", None, 2.5},
+        None,
+        Path("x"),
+        ValueError(_MARKER),
+        RuntimeError(_MARKER),
+        _deep(5000),
+        _deep(5000, lambda x: (x,)),
+        _deep(5000, lambda x: {"k": x}),
+        _cyclic(),
+        {1: 2},
+        {b"a"},
+        b"bytes",
+        float("nan"),
+        float("inf"),
+        object(),
+        (i for i in range(3)),
+        _RaisingIter([1]),
+        SimpleNamespace(a=1),
+        "x" * 10,
+        7,
+        True,
+        1.5,
+        (),
+        [],
+        {},
+    ]
+
+
+def test_gate_runs_the_real_canonical_encoding():
+    with pytest.raises(phase.PhaseContractError):
+        _result(payload=10**5000)
+    with pytest.raises(phase.PhaseContractError):
+        phase.freeze(10**5000)
+    with pytest.raises(phase.PhaseContractError):
+        phase.PhaseCoverage(rows_examined=10**5000)
+    ok = _result(payload=2**63 - 1)
+    assert phase.satisfies_required_gate(ok)
+
+
+def test_forged_oversized_int_fails_gate_and_wire_with_contract_error():
+    res = _result(payload=1)
+    object.__setattr__(res, "payload", 10**5000)
+    assert phase.satisfies_required_gate(res) is False
+    with pytest.raises(phase.PhaseContractError):
+        phase.to_wire(res)
+    with pytest.raises(phase.PhaseContractError):
+        phase.canonical_bytes(res)
+    cov_res = _result()
+    object.__setattr__(cov_res.coverage, "rows_examined", 10**5000)
+    assert phase.satisfies_required_gate(cov_res) is False
+    with pytest.raises(phase.PhaseContractError):
+        phase.canonical_bytes(cov_res)
+
+
+def test_deep_nesting_is_a_contract_error_not_recursion_error():
+    for build in (lambda x: [x], lambda x: (x,), lambda x: {"k": x}):
+        with pytest.raises(phase.PhaseContractError):
+            phase.freeze(_deep(5000, build))
+    with pytest.raises(phase.PhaseContractError):
+        phase.freeze(_cyclic())
+    res = _result(payload=1)
+    object.__setattr__(res, "payload", _deep(5000, lambda x: (x,)))
+    assert phase.satisfies_required_gate(res) is False
+    with pytest.raises(phase.PhaseContractError):
+        phase.to_wire(res)
+
+
+@pytest.mark.parametrize("make", [_RaisingRepr, lambda: (_RaisingRepr(), 1)])
+def test_freeze_set_never_runs_foreign_repr(make):
+    elem = make()
+    for container in (set, frozenset):
+        with pytest.raises(phase.PhaseContractError) as ei:
+            phase.freeze(container({elem}))
+        assert _MARKER not in str(ei.value)
+
+
+def test_freeze_set_of_mixed_primitives_is_deterministic():
+    assert phase.freeze({3, "a", None, 2.5, True}) == phase.freeze({True, 2.5, None, "a", 3})
+    assert phase.freeze({"b", "a"}) == ("a", "b")
+
+
+def test_default_coverage_is_not_shared():
+    first, second = _result(), _result()
+    assert first.coverage is not second.coverage
+    object.__setattr__(first.coverage, "rows_examined", True)
+    assert phase.satisfies_required_gate(first) is False
+    assert phase.satisfies_required_gate(second) is True
+    assert phase.satisfies_required_gate(_result()) is True
+    assert phase.PhaseCoverage() is not phase.PhaseCoverage()
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [None, Path("x"), ValueError(_MARKER), 5, 1.5, object(), True, _RaisingRepr(), b"ab", "ab"],
+)
+def test_malformed_identity_is_contract_error_with_fixed_text(bad):
+    with pytest.raises(phase.PhaseContractError) as ei:
+        _result(identity=bad)
+    assert _MARKER not in str(ei.value)
+
+
+@pytest.mark.parametrize("bad", [None, Path("x"), ValueError(_MARKER), 5, object()])
+def test_frozenmap_non_iterable_is_contract_error(bad):
+    with pytest.raises(phase.PhaseContractError) as ei:
+        phase.FrozenMap(bad)
+    assert _MARKER not in str(ei.value)
+
+
+def _constructors():
+    cov_kw = ("requested_scope", "observed_scope", "rows_examined", "exact", "sampling_method")
+    out = [("freeze", lambda h: phase.freeze(h)), ("FrozenMap", lambda h: phase.FrozenMap(h))]
+    out += [(f"coverage.{k}", lambda h, k=k: phase.PhaseCoverage(**{k: h})) for k in cov_kw]
+    res_kw = ("check_id", "method", "method_version", "payload", "identity", "reasons", "coverage")
+    out += [(f"result.{k}", lambda h, k=k: _result(**{k: h})) for k in res_kw]
+    out += [
+        ("result.phase", lambda h: _result(phase=h)),
+        ("result.status", lambda h: _result(status=h)),
+    ]
+    out += [("event.event", lambda h: phase.PhaseEvent("post_scan", h, "passed"))]
+    out += [("event.reason", lambda h: phase.PhaseEvent("post_scan", "e", "passed", h))]
+    return out
+
+
+@pytest.mark.parametrize("name,build", _constructors(), ids=[n for n, _ in _constructors()])
+def test_hostile_inputs_only_ever_raise_contract_error(name, build):
+    for hostile in _hostile():
+        try:
+            built = build(hostile)
+        except phase.PhaseContractError as exc:
+            assert _MARKER not in str(exc), (name, type(hostile))
+            continue
+        if isinstance(built, (phase.PhaseResult, phase.PhaseEvent)):
+            for call in (phase.to_wire, phase.canonical_bytes):
+                try:
+                    call(built)
+                except phase.PhaseContractError:
+                    pass
+            if phase.satisfies_required_gate(built):
+                assert isinstance(phase.canonical_bytes(built), bytes)
+        elif isinstance(built, phase.PhaseCoverage):
+            res = _result(coverage=built)
+            if phase.satisfies_required_gate(res):
+                assert isinstance(phase.canonical_bytes(res), bytes)
+
+
+@pytest.mark.parametrize("hostile", _hostile(), ids=lambda h: type(h).__name__)
+def test_forged_fields_never_escape_as_other_exception(hostile):
+    for field in ("payload", "identity", "reasons", "check_id", "coverage"):
+        res = _result()
+        object.__setattr__(res, field, hostile)
+        for call in (phase.to_wire, phase.canonical_bytes):
+            try:
+                call(res)
+            except phase.PhaseContractError as exc:
+                assert _MARKER not in str(exc)
+        assert phase.satisfies_required_gate(res) in (True, False)
