@@ -497,7 +497,7 @@ tmp_path = PosixPath('/tmp/pytest-of-root/pytest-48/popen-gw0/test_failure_and_p
         assert name in baseline, "baseline missing; it must come from the pre-extraction tree"
 >       assert sc.failure_snapshot(name, tmp_path) == baseline[name]
 E       assert {'exception':...les': [], ...} == {'exception':...': False, ...}
-E         
+E
 E         Omitting 4 identical items, use -vv to show
 E         Differing items:
 E         {'exception': {'type': 'OocIneligibleError', 'module': 'decoy_engine.execution._errors', 'code': None, 'message': "execution_mode='out_of_core' requested but the job is not out-of-core-eligible (generate_plus_mask)."}} != {'exception': {'code': None, 'message': "execution_mode='out_of_core' requested but the job is not out-of-core-eligible (generate_plus_mask).", 'module': 'decoy_engine.errors', 'type': 'ConfigError'}}
@@ -515,7 +515,7 @@ tmp_path = PosixPath('/tmp/pytest-of-root/pytest-48/popen-gw0/test_forced_out_of
         got = _run("f_forced_ooc_incompatible", tmp_path)
 >       assert got["exception"]["type"] == "ConfigError"
 E       AssertionError: assert 'OocIneligibleError' == 'ConfigError'
-E         
+E
 E         - ConfigError
 E         + OocIneligibleError
 

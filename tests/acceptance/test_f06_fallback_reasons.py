@@ -84,6 +84,21 @@ def test_auto_relationship_routing_reports_the_refused_out_of_core_route(tmp_pat
     _assert_refusal(got, "out_of_core")
 
 
+def test_declared_relationship_keys_report_the_refused_chunked_route(tmp_path: Path) -> None:
+    # Isolates the chunked admission site: the out-of-core and slice entries are separate sites,
+    # so this asserts the chunked entry by route and by what it names as missing.
+    got = run(
+        parity._fk_cfg(tmp_path, endpoints=True),
+        parity._fk_sources(),
+        auto_chunk=True,
+        auto_chunk_threshold_rows=1,
+    )
+    assert got.quality_metrics["execution"]["execution_mode"] == "sequential"
+    assert "auto_chunk" not in got.quality_metrics  # no chunk route was taken
+    entry = _assert_refusal(got, "chunked")
+    assert entry["missing"] == ["cast_before_join"]
+
+
 def _two_tables(tmp_path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
     a = write_csv(tmp_path / "a.csv", ["id", "age"], [["1", "2"]])
     b = write_csv(tmp_path / "b.csv", ["id", "name"], [["1", "x"]])
