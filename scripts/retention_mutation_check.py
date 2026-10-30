@@ -49,6 +49,7 @@ MUTANTS = [
     M("exit: unknown outcome maps to success", "_vocab.py", "return _OUTCOME_EXIT.get(outcome, ExitCode.INDETERMINATE)", "return _OUTCOME_EXIT.get(outcome, ExitCode.SUCCESS)"),
     M("exit: partial collides with retained", "_vocab.py", "PARTIAL = 12", "PARTIAL = 11"),
     # ---- unknown future values can only retain --------------------------------------------
+    M("reason: cloud report codes are not retained statuses", "_vocab.py", '        if v.startswith(("retain_", "cloud_object_")):\n', '        if v.startswith(("retain_",)):\n'),
     M("reason: unknown parses to eligible", "_vocab.py", "        return cls.RETAIN_UNKNOWN\n", "        return cls.ELIGIBLE\n"),
     M("report item: contradictory decision stays eligible", "_report.py", "            decision, reason = (\n                Decision.RETAINED,", "            decision, reason = (\n                decision,"),
     M("report item: decision and reason may disagree", "_report.py", "        if (self.decision is Decision.ELIGIBLE) != (self.reason is ReasonCode.ELIGIBLE):\n            raise ValueError(\"decision and reason disagree\")", "        pass"),
