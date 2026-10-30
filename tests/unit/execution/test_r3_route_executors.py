@@ -15,6 +15,7 @@ For each executor there are two kinds of test:
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from pathlib import Path
 from typing import Any
@@ -24,6 +25,7 @@ import pytest
 from decoy_engine.execution import _pipeline_context as ctxmod
 from decoy_engine.execution import _pipeline_route_dispatch as dispatch
 from decoy_engine.execution import run_pipeline
+from tests._keyed_secret import THROWAWAY_KEY_PROVIDER
 from tests.unit.execution import _r3_scenarios as sc
 
 pytestmark = pytest.mark.filterwarnings("ignore")
@@ -121,13 +123,19 @@ def test_full_frame_jobs_reach_no_bounded_executor(
     assert got == _BASELINE[name]
 
 
+def _rekeyed(ctx: Any) -> Any:
+    # run_pipeline closed the context's prepared secret when the first run ended; the direct
+    # re-execution gets the same throwaway secret the admission seam supplied to that run.
+    return dataclasses.replace(ctx, key_provider=THROWAWAY_KEY_PROVIDER)
+
+
 def _assert_direct_call_matches_baseline(
     executor: Any, ctx: Any, decision: Any, name: str, tmp_path: Path
 ) -> None:
     # The baseline was recorded without the companion (`sc.success_snapshot` hides it); a
     # re-execution on a box that has it would report the native hash disposition instead.
     with sc.without_companion():
-        again = executor(ctx, decision)
+        again = executor(_rekeyed(ctx), decision)
     expected = _BASELINE[name]
     projected = sc._relocate(sc.snapshot(sc.Run(again)), tmp_path)
     for key in ("tables", "warnings", "row_errors", "table_kinds", "execution", "execution_plan"):
@@ -251,7 +259,7 @@ def test_full_frame_dispatch_witness_and_parity(
     assert isinstance(decision, ctxmod.RouteDecision) and decision.route == "full_frame"
     assert got == _BASELINE[name]
     with sc.without_companion():
-        again = witness.real(ctx, decision)
+        again = witness.real(_rekeyed(ctx), decision)
     projected = sc._relocate(sc.snapshot(sc.Run(again)), tmp_path)
     for key in ("tables", "warnings", "row_errors", "table_kinds", "execution", "execution_plan"):
         assert projected[key] == _BASELINE[name][key], key

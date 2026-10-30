@@ -224,6 +224,12 @@ ner = [
 # .[vault]` invocation, script, or Dockerfile still works unchanged. New
 # installs need no extra flag for either the vault or fpe/FF1.
 vault = []
+# F13: the sole external secret-provider adapter (HashiCorp Vault KV v2). Lazy-imported in
+# `secret_providers.vault`; the base install and env:/file: providers work without it. NOT the
+# `vault` alias above, which names Decoy's own token-vault feature. Exact pin: hvac 2.4.0,
+# Apache-2.0, pure-Python (requests + pyhcl); any change from this pin returns to owner review
+# (docs/security/secret-providers.md, "Dependency decision").
+hashicorp-vault = ["hvac==2.4.0"]
 # Sphinx + sphinx-autoapi build the API reference site published to
 # GitHub Pages. Build from the repo root via `pip install -e .[docs]`
 # then `make -C docs html`. CI lives at `.github/workflows/docs.yml`.
@@ -902,6 +908,10 @@ module = [
     # installed in default-extras CI.
     "decoy_engine_native",
     "decoy_engine_native.*",
+    # hvac (HashiCorp Vault client) is the OPTIONAL `hashicorp-vault` extra, imported lazily in
+    # secret_providers.vault; absent from the base install and untyped when present.
+    "hvac",
+    "hvac.*",
 ]
 ignore_missing_imports = true
 

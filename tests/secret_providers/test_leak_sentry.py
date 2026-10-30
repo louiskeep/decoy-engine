@@ -67,7 +67,9 @@ class SDKBoomError(Exception):
 class LeakyProvider(ProtocolProvider):
     def resolve(self, ref):  # type: ignore[override]
         self.resolve_calls += 1
-        raise SDKBoomError(f"GET /v1/kv/F13-PATH-MARKER denied; body={MARKER!r}; token=F13-TOKEN-MARKER")
+        raise SDKBoomError(
+            f"GET /v1/kv/F13-PATH-MARKER denied; body={MARKER!r}; token=F13-TOKEN-MARKER"
+        )
 
 
 def test_secret_bearing_objects_have_constant_redacted_renderings():
