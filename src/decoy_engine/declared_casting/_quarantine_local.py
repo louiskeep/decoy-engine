@@ -313,6 +313,20 @@ class LocalProtectedQuarantineSink:
     def abort(self, session: P.QuarantineSession) -> str:
         return self._cleanup(session.state)
 
+    def discard(self, receipt: P.QuarantineReceipt) -> str:
+        """A sealed artifact of a run that later failed is removed; the receipt names it."""
+        try:
+            path, _ = self._locate(receipt.ref)
+        except Exception:
+            return "failed"
+        try:
+            os.unlink(path)
+        except FileNotFoundError:
+            return "confirmed"
+        except OSError:
+            return "failed"
+        return "confirmed"
+
     def _cleanup(self, state: _State) -> str:
         try:
             if state.fd >= 0:

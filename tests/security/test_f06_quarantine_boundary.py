@@ -423,6 +423,43 @@ def test_c4_seal_failure_and_cleanup_failure_are_distinct(
     assert exc.value.cleanup_state == "failed"  # cleanup failure reported as its own outcome
 
 
+def test_c4_later_validator_failure_leaves_no_sealed_artifact(tmp_path: Path) -> None:
+    """A bad date is quarantined, then an uncovered legacy validator fails the run: the raw row
+    must not survive as a sealed artifact nobody holds a token for."""
+    from decoy_engine.errors import ValidatorFailedError
+
+    runtime = _runtime(tmp_path / "q")
+    cfg = _cfg(
+        tmp_path,
+        validators=[
+            {"name": "regex_match", "columns": {"people": ["id"]}, "params": {"pattern": "^nomatch$"}}
+        ],
+    )
+    start = ["2026-02-01", f"bad-{MARKER}", "2026-03-05"]
+    with pytest.raises(ValidatorFailedError):
+        run(
+            cfg,
+            {"people": text_table(id=["0", "1", "2"], start=start)},
+            quarantine_runtime=runtime,
+        )
+    assert not [p for p in _walk(tmp_path / "q") if p.is_file()]
+
+
+def test_c4_post_seal_failure_discards_the_sealed_artifact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Sealing is the last failure-capable step, but a sealed receipt is still abortable."""
+    runtime = _runtime(tmp_path / "q")
+
+    def boom(*a: Any, **k: Any) -> None:
+        raise RuntimeError("late failure")
+
+    monkeypatch.setattr(runtime.sink, "get_retrieval_token", boom)
+    with pytest.raises(RuntimeError):
+        _quarantine_run(tmp_path, runtime)
+    assert not [p for p in _walk(tmp_path / "q") if p.is_file()]
+
+
 # -- C5 no leakage ----------------------------------------------------------------------------
 
 

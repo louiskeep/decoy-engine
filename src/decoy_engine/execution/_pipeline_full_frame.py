@@ -13,6 +13,7 @@ reads.
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
@@ -85,8 +86,6 @@ def _raise_if_source_value_unrepresentable(
 
 def _remap_row_errors(records: Any, kept: Mapping[str, list[int]]) -> Any:
     """Row errors keep pointing at the same rows after declared quarantine removed some."""
-    import dataclasses
-
     if not kept:
         return records
     new_index = {t: {old: new for new, old in enumerate(rows)} for t, rows in kept.items()}
@@ -209,8 +208,6 @@ def _run_full_frame(
             _raise_if_source_value_unrepresentable(resident_sources, ctx.graph, exc)
             raise
         if cast_run is not None:
-            import dataclasses
-
             outs, srcs, kept = cast_run.post_mask(step.mask_outputs, step.sources)
             step = dataclasses.replace(
                 step,
@@ -230,9 +227,6 @@ def _run_full_frame(
         # Additive + default-OFF: when the flag is off, fidelity_reports is
         # empty and quality_metrics is untouched.
         quality_metrics: dict[str, Any] = dict(step.mask_quality_metrics)
-        quarantine_token = None
-        if cast_run is not None:
-            quality_metrics["declared_casting"], quarantine_token = cast_run.finish()
         if step.fidelity_reports:
             quality_metrics["fidelity_reports"] = step.fidelity_reports
 
@@ -279,7 +273,6 @@ def _run_full_frame(
             quality_metrics=quality_metrics,
             table_kinds=ctx.table_kinds,
             row_errors=step.mask_row_errors,
-            quarantine_access=quarantine_token,
         )
 
         # A1: opt-in post-execution scan suite. Runs only on this full-frame finalize
@@ -301,5 +294,10 @@ def _run_full_frame(
             post_validation_enforce=ctx.post_validation_enforce,
         )
         _pipeline_finalize.compute_storm_postmask(result, config=ctx.config, sources=step.sources)
+        if cast_run is not None:
+            # Seal only once nothing failure-capable remains but the publish itself; a failure
+            # from here on still discards the sealed artifact through cast_run.abort().
+            result.quality_metrics["declared_casting"], quarantine_token = cast_run.finish()
+            result = dataclasses.replace(result, quarantine_access=quarantine_token)
         publish.commit()  # B6a: the run's last action; inert unless this run streamed
         return result

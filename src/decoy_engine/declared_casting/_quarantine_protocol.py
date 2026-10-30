@@ -150,6 +150,10 @@ class ProtectedQuarantineSink(Protocol):
 
     def purge_expired(self, now: float, authority: QuarantineAccessContext) -> PurgeResult: ...
 
+    def discard(self, receipt: QuarantineReceipt) -> str:
+        """Remove a sealed artifact whose run then failed; returns the cleanup state."""
+        ...
+
 
 @dataclass(frozen=True)
 class ProtectedQuarantineRuntime:

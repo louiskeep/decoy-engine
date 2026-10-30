@@ -128,6 +128,8 @@ class DeclaredCastRun:
         return new_out, new_src, kept
 
     def finish(self) -> tuple[dict[str, Any], P.OpaqueRetrievalToken | None]:
+        """Seal LAST: callers invoke this after every failure-capable validation, and ``abort``
+        still discards the sealed artifact if anything after it fails."""
         evidence = self._ledger.counts(completeness=K.COMPLETE)
         token = None
         if self._session is not None:
@@ -140,10 +142,13 @@ class DeclaredCastRun:
         return evidence, token
 
     def abort(self) -> None:
+        """Remove every trace of the run's quarantine: the open session or an already sealed one."""
         if self._session is not None:
-            store = self._runtime.sink
-            store.abort(self._session)
+            self._runtime.sink.abort(self._session)
             self._session = None
+        if self._receipt is not None:
+            self._runtime.sink.discard(self._receipt)
+            self._receipt = None
 
     def partial_counts(self) -> dict[str, Any]:
         return self._ledger.counts(completeness=K.PARTIAL)
