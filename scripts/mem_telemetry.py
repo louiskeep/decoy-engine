@@ -95,7 +95,6 @@ __all__ = [
     "MemoryTelemetryOutcome",
     "MemoryTelemetryRecord",
     "MemoryTelemetryStore",
-    "_percentile",
     "recalibrate_k",
     "schema_fingerprint",
     "telemetry_record_from_governor_trip",
