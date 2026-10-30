@@ -273,7 +273,7 @@ K_CALIBRATION_ERROR_BAND = 0.30
 
 # RECALIBRATION TRIGGER (when to re-run `scripts/tb4_calibration.py` and
 # re-pin these constants; §13 / doc B5):
-#   1. DRIFT: B5 telemetry (`scripts/mem_telemetry.py` `recalibrate_k`) sees an isolated
+#   1. DRIFT: B5 telemetry (`_mem_telemetry.recalibrate_k`) sees an isolated
 #      job whose INTERCEPT-REMOVED observed_slope ((peak - route intercept) /
 #      raw_bytes, so a small job's fixed-floor peak is not mistaken for a
 #      steep slope) exceeds current_k -> RAISE immediately (safety), or the
