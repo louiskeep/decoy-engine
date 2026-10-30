@@ -1,3 +1,5 @@
+> Superseded by [2026-10-30-f06-r2-evidence.md](2026-10-30-f06-r2-evidence.md): r1 ran declared columns on the full-frame route only. Kept as the r1 record.
+
 # F06 build evidence
 
 Base `fdd08a89`; branch `feat/f06-declared-parsing`.

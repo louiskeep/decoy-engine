@@ -9,7 +9,7 @@ pytest tests/unit/declared_casting tests/acceptance tests/property/test_f06_decl
        tests/sentry/test_f06_declared_casting.py tests/security/test_f06_quarantine_boundary.py -q -p no:cacheprovider
 ```
 
-Result on the baseline: see the counts recorded in the PR description. Failure classes:
+Result on the baseline: **200 failed, 14 passed** (per-file counts in `f06-r2/red-slice0-on-baseline.txt`). Failure classes:
 
 | Failure signature | Meaning |
 |---|---|

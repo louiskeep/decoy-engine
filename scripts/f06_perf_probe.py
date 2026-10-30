@@ -26,26 +26,22 @@ from decoy_engine.declared_casting import (
     DeclaredCastRun,
     LocalProtectedQuarantineSink,
     ProtectedQuarantineRuntime,
-    parse_value,
+    compile_parser,
+    descriptor_for,
 )
 from decoy_engine.keyprovider import SecretKeyProvider
 from decoy_engine.plan._checks_declared_casting import compile_declared_casting_contract
 
-KERNELS: dict[str, tuple[dict[str, Any], list[Any]]] = {
-    "integer/ascii": (
-        {"id": "integer/ascii/v1", "signed": True, "bit_width": 64},
-        ["-12345", "042", "7"],
-    ),
-    "decimal/plain": (
-        {"id": "decimal/plain/v1", "precision": 12, "scale": 2},
-        ["12345.67", "0.5", "-3.10"],
-    ),
-    "date/iso8601": ({"id": "date/iso8601/v1"}, ["2026-02-01", "2024-02-29", "1999-12-31"]),
-    "overpunch": (
-        {"id": "cobol/overpunch-ascii-trailing/v1", "precision": 8, "scale": 2, "signed": True},
-        ["0001234{", "0000050}", "0099999I"],
-    ),
-}
+# Valid specs and sample cells come from the catalog's own registered vectors, so the probe cannot
+# drift from the formats it measures.
+KERNEL_IDS = (
+    "integer/ascii/v1",
+    "decimal/plain/v1",
+    "date/iso8601/v1",
+    "cobol/overpunch-ascii-trailing/v1",
+    "cobol/comp-3/v1",
+    "currency/explicit/v1",
+)
 # Floors (cells/second), ceilings and ratios, set with wide margin against the slowest CI profile.
 BUDGET = {
     "kernel_cells_per_s_min": 100_000,
@@ -57,6 +53,7 @@ BUDGET = {
 
 
 def _plan(policy: str, quarantine: bool = False) -> Any:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # the repo's test helpers
     from tests.acceptance._f06_support import (
         INT64,
         ISO_DATE,
@@ -77,14 +74,17 @@ def _plan(policy: str, quarantine: bool = False) -> Any:
 
 
 def kernel_rates(cells: int) -> dict[str, float]:
+    """Cells per second through the compiled parser (the path the boundary uses)."""
     out: dict[str, float] = {}
-    for name, (spec, samples) in KERNELS.items():
-        values = [samples[i % len(samples)] for i in range(cells)]
+    for fid in KERNEL_IDS:
+        spec, sample, _ = descriptor_for(fid, "parse").vectors[0]
+        parse = compile_parser(spec)
+        values = [sample] * cells
         started = time.perf_counter()
         for v in values:
-            if not parse_value(spec, v).ok:
-                raise AssertionError(name)
-        out[name] = cells / (time.perf_counter() - started)
+            if not parse(v).ok:
+                raise AssertionError(fid)
+        out[fid] = cells / (time.perf_counter() - started)
     return out
 
 
