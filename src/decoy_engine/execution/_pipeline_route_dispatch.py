@@ -22,7 +22,32 @@ if TYPE_CHECKING:
     from decoy_engine.execution._adapter import ExecutionResult
     from decoy_engine.execution._pipeline_context import PipelineRunContext, RouteDecision
 
-__all__ = ["execute_mixed_route", "execute_out_of_core_route", "execute_sequential_route"]
+__all__ = [
+    "execute_mixed_route",
+    "execute_out_of_core_route",
+    "execute_route",
+    "execute_sequential_route",
+]
+
+
+def execute_route(
+    ctx: PipelineRunContext, decision: RouteDecision, refusals: dict[Any, Any]
+) -> ExecutionResult:
+    """Layer-1 dispatch: every route is an executor over the same (ctx, decision). The result
+    carries the declared-route refusals the admission layers noted while deciding."""
+    from decoy_engine.declared_casting._refusals import stamp
+    from decoy_engine.execution import _pipeline_full_frame
+
+    if ctx.has_mask_table and decision.route == "sequential":
+        result = execute_sequential_route(ctx, decision)
+    elif ctx.has_mask_table and decision.route == "out_of_core":
+        result = execute_out_of_core_route(ctx, decision)
+    elif ctx.has_mask_table and decision.route == "mixed":
+        result = execute_mixed_route(ctx, decision)
+    else:
+        result = _pipeline_full_frame.run_full_frame_route(ctx, decision)
+    stamp(result.quality_metrics, refusals)
+    return result
 
 
 def execute_sequential_route(ctx: PipelineRunContext, decision: RouteDecision) -> ExecutionResult:

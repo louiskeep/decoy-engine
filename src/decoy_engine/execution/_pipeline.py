@@ -75,10 +75,8 @@ from typing import TYPE_CHECKING, Any, Literal
 import pyarrow as pa
 
 from decoy_engine.declared_casting._refusals import collect_refusals
-from decoy_engine.declared_casting._refusals import stamp as stamp_refusals
 from decoy_engine.execution import _pipeline_context as _ctx
 from decoy_engine.execution import _pipeline_finalize
-from decoy_engine.execution import _pipeline_full_frame as _full_frame
 from decoy_engine.execution import _pipeline_route_dispatch as _dispatch
 from decoy_engine.execution._adapter import ExecutionResult
 from decoy_engine.execution._pipeline_context import classify_table_kinds
@@ -251,6 +249,13 @@ def run_pipeline(
     `ExecutionResult.quarantine_access`. A declared job runs on any route whose capabilities
     cover its contracts; an explicit `execution_mode` lacking one is refused before any read.
 
+    Under `auto`, a declared job that an admission layer kept off a route (mixed, chunked,
+    unified slice, out-of-core, or the multi-table split) falls back to a capable route and says
+    so: `quality_metrics["execution"]["declared_route_refusals"]` lists one value-free
+    `{route, namespace, code, missing}` entry per route, taken from that route's own registered
+    refusal. An undeclared job has no such key, and a forced `execution_mode` still refuses
+    instead of falling back.
+
     `unified_slice_enabled` (default True since 2026-09-20; admission is the safety
     gate, pass False for legacy): see `_unified_slice.maybe_run_unified_slice`.
 
@@ -320,20 +325,7 @@ def run_pipeline(
         with collect_refusals() as refusals:
             decision = _ctx.decide_route(ctx)
             _emit_route(_progress, decision)
-            result = _dispatch_route(ctx, decision)
-            stamp_refusals(result.quality_metrics, refusals)
-        return result
-
-
-def _dispatch_route(ctx: Any, decision: Any) -> Any:
-    """Layer-1 dispatch: every route is an executor over the same (ctx, decision)."""
-    if ctx.has_mask_table and decision.route == "sequential":
-        return _dispatch.execute_sequential_route(ctx, decision)
-    if ctx.has_mask_table and decision.route == "out_of_core":
-        return _dispatch.execute_out_of_core_route(ctx, decision)
-    if ctx.has_mask_table and decision.route == "mixed":
-        return _dispatch.execute_mixed_route(ctx, decision)
-    return _full_frame.run_full_frame_route(ctx, decision)
+            return _dispatch.execute_route(ctx, decision, refusals)
 
 
 def _emit_route(channel: ProgressChannel, decision: Any) -> None:
