@@ -80,7 +80,7 @@ def root(tmp_path: Path) -> Path:
 @pytest.fixture(autouse=True)
 def _all_logs(caplog: pytest.LogCaptureFixture) -> Iterator[None]:
     caplog.set_level(logging.DEBUG)
-    yield
+    return
 
 
 def _tables() -> dict[str, pa.Table]:
@@ -347,9 +347,7 @@ def test_a_child_envelope_with_seeded_names_is_value_free_through_a_real_spawn(
         "json.dump(env, open(os.path.join(os.path.dirname(sys.argv[1]), RESULT_FILENAME), 'w'))\n"
     )
     _install_fake_worker(root, monkeypatch, "r5_names", worker)
-    result = run.run_pipeline_isolated(
-        {}, None, engine_version="r5", output_dir=root / "final"
-    )
+    result = run.run_pipeline_isolated({}, None, engine_version="r5", output_dir=root / "final")
     assert result.publication_receipt.reason_code == "child_envelope_invalid"  # type: ignore[union-attr]
     _clean(_result_json(result), caplog.text)
 

@@ -14,6 +14,7 @@ from pathlib import Path
 from types import TracebackType
 
 from decoy_engine.errors import DecoyError
+from decoy_engine.publication._tokens import os_error_label
 
 try:
     import fcntl
@@ -46,7 +47,7 @@ class DestinationLock:
             self._path.parent.mkdir(parents=True, exist_ok=True)
             fd = os.open(self._path, os.O_RDWR | os.O_CREAT, 0o600)
         except OSError as exc:
-            raise LockUnavailableError(f"cannot open lock file: {exc}") from exc
+            raise LockUnavailableError(f"cannot open lock file ({os_error_label(exc)})") from exc
         deadline = time.monotonic() + self._timeout_s
         while True:
             try:
@@ -59,7 +60,9 @@ class DestinationLock:
                 time.sleep(0.02)
             except OSError as exc:
                 os.close(fd)
-                raise LockUnavailableError(f"filesystem does not support flock: {exc}") from exc
+                raise LockUnavailableError(
+                    f"filesystem does not support flock ({os_error_label(exc)})"
+                ) from exc
         self._fd = fd
         return self
 

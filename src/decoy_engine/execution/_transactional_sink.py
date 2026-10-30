@@ -27,14 +27,40 @@ non-empty target; any other occupant is a typed refusal.
 Staging always lives in target.parent so staging and target share a
 filesystem, ensuring the rename cannot fail with EXDEV.
 
+Concurrency (F22 r5): the public API is callable from several threads on ONE sink. Every
+state read and transition holds ``self._lock`` (re-entrant: a cancel hook may call back into
+the sink); the lock is never held across long I/O. Work that is slow instead runs in a named
+in-flight state (WRITING, COMMITTING) that the table below makes every other call respect.
+The flags in the code are the state: OPEN has none set; WRITING is ``_writes > 0``;
+COMMITTING is ``_committing``; SEALED is ``_sealed`` or a receipt; UNCERTAIN is
+``_uncertain``; REFUSED is ``_reason``; FAILED is ``_failed``; ABORTED is ``_aborted``.
+
+  state       write/sidecar   record_validation  commit                  abort
+  OPEN        ok              ok                 -> COMMITTING           -> ABORTED
+  WRITING     ok              ok                 refuse write_in_progress  deferred to idle
+  COMMITTING  refuse          refuse             refuse commit_in_progress deferred to resolution
+  SEALED      refuse          refuse             same receipt            no-op
+  UNCERTAIN   refuse          refuse             refuse (reconcile)      no-op
+  REFUSED     refuse          refuse             refuse attempt_rejected -> ABORTED
+  FAILED      refuse          refuse             refuse attempt_invalid  -> ABORTED
+  ABORTED     refuse          refuse             refuse attempt_aborted  no-op
+
+A deferred abort runs when the in-flight work settles, and only if that work did not bind a
+result: a commit that published or went uncertain leaves the sink SEALED/UNCERTAIN, so an
+abort that raced the bind can never poison a later ``reconcile()``. ``lookup_committed`` and
+``reconcile`` are refused while COMMITTING (``commit_in_progress``). Refusals for busy state
+are not latched: the in-flight call still decides the attempt.
+
 See GNU Coreutils mv(1), POSIX.1-2008 rename(2), and Python os.replace docs.
 """
 
 from __future__ import annotations
 
+import contextlib
 import os
 import tempfile
-from collections.abc import Callable, Iterable, Mapping
+import threading
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
@@ -146,29 +172,75 @@ class _ParquetStager:
 
     def __init__(self, target_dir: Path) -> None:
         self._target = target_dir
+        self._lock = threading.RLock()
         self._staging: Path | None = None
         self._rows: dict[str, int] = {}
         self._failed = False
         self._sealed = False
         self._aborted = False
         self._uncertain = False
+        self._writes = 0  # in-flight write()/write_batches()/stage_sidecar() calls
+        self._committing = False
+        self._abort_requested = False
         self._reason: str | None = None  # set by a refusal; never cleared
         self.receipt: _pub.CommitReceipt | None = None
         self.abort_report: _ret.AbortReport | None = None
 
+    def _operation_id(self) -> str:
+        return ""
+
+    def _busy(self, reason: str) -> _pub.PublicationRefusedError:
+        """A refusal for a call that raced in-flight work; it never latches the attempt."""
+        return _pub.PublicationRefusedError(
+            f"the sink is busy ({reason})",
+            _pub.CommitReceipt("rejected", self._operation_id(), reason),
+        )
+
     def _require_open(self) -> None:
         """Writes, sidecars, validation changes and the child seal are legal only while the
         attempt is OPEN. The machine is OPEN -> SEALED | REFUSED | FAILED | ABORTED, one way."""
-        if (
-            self._failed
-            or self._sealed
-            or self._aborted
-            or self._reason is not None
-            or self.receipt is not None
-        ):
-            raise _pub.PublicationRefusedError(
-                "sink is no longer open (a write failed, it was refused, aborted, or sealed)"
-            )
+        with self._lock:
+            if (
+                self._failed
+                or self._sealed
+                or self._aborted
+                or self._committing
+                or self._reason is not None
+                or self.receipt is not None
+            ):
+                raise _pub.PublicationRefusedError(
+                    "sink is no longer open (a write failed, it was refused, aborted, or sealed)"
+                )
+
+    @contextlib.contextmanager
+    def _writing(self) -> Iterator[None]:
+        """Mark a write in flight so commit refuses and abort defers until it settles."""
+        with self._lock:
+            self._require_open()
+            self._writes += 1
+        try:
+            yield
+        finally:
+            with self._lock:
+                self._writes -= 1
+            self._settle()
+
+    def _mark_failed(self) -> None:
+        with self._lock:
+            self._failed = True
+
+    def _begin_commit(self) -> None:
+        """OPEN -> COMMITTING (caller holds the lock). Busy callers are refused, not latched."""
+        if self._committing:
+            raise self._busy("commit_in_progress")
+        if self._writes:
+            raise self._busy("write_in_progress")
+        self._committing = True
+
+    def _end_commit(self) -> None:
+        with self._lock:
+            self._committing = False
+        self._settle()
 
     def write(self, table: str, data: pa.Table) -> None:
         """Stage one masked table as Parquet in the private staging directory.
@@ -181,15 +253,16 @@ class _ParquetStager:
             OSError: If the staging directory or file cannot be written.
             pa.lib.ArrowInvalid: If ``data`` cannot be serialized as Parquet.
         """
-        self._require_open()
-        self._validate_table_name(table)
-        dest = self._stage_dest(table)
-        try:
-            pq.write_table(data, dest)
-        except BaseException:
-            self._failed = True
-            raise
-        self._rows[table] = data.num_rows
+        with self._writing():
+            self._validate_table_name(table)
+            dest = self._stage_dest(table)
+            try:
+                pq.write_table(data, dest)
+            except BaseException:
+                self._mark_failed()
+                raise
+            with self._lock:
+                self._rows[table] = data.num_rows
 
     def write_batches(
         self, table: str, batches: Iterable[pa.RecordBatch], *, schema: pa.Schema
@@ -208,37 +281,39 @@ class _ParquetStager:
             OSError: If the staging directory or file cannot be created or written.
             pa.lib.ArrowInvalid: If a batch does not match ``schema``.
         """
-        self._require_open()
-        self._validate_table_name(table)
-        dest = self._stage_dest(table)
-        rows = 0
-        try:
-            writer = pq.ParquetWriter(dest, schema)
-        except BaseException:
-            self._failed = True
-            raise
-        try:
-            for batch in batches:
-                writer.write_batch(batch)
-                rows += batch.num_rows
-        except BaseException:
-            self._failed = True
+        with self._writing():
+            self._validate_table_name(table)
+            dest = self._stage_dest(table)
+            rows = 0
+            try:
+                writer = pq.ParquetWriter(dest, schema)
+            except BaseException:
+                self._mark_failed()
+                raise
+            try:
+                for batch in batches:
+                    writer.write_batch(batch)
+                    rows += batch.num_rows
+            except BaseException:
+                self._mark_failed()
+                try:
+                    writer.close()
+                except Exception:
+                    pass
+                raise
             try:
                 writer.close()
-            except Exception:
-                pass
-            raise
-        try:
-            writer.close()
-        except BaseException:
-            self._failed = True
-            raise
-        self._rows[table] = rows
+            except BaseException:
+                self._mark_failed()
+                raise
+            with self._lock:
+                self._rows[table] = rows
 
     @property
     def row_counts(self) -> dict[str, int]:
         """Rows the producer handed this sink per table (reconciled against footers)."""
-        return dict(self._rows)
+        with self._lock:
+            return dict(self._rows)
 
     @property
     def spill_parent(self) -> Path:
@@ -265,12 +340,15 @@ class _ParquetStager:
         return self._ensure_staging() / f"{table}.parquet"
 
     def _ensure_staging(self) -> Path:
-        if self._staging is None:
-            self._before_first_stage()
-            parent = self._staging_parent()
-            parent.mkdir(parents=True, exist_ok=True)
-            self._staging = Path(tempfile.mkdtemp(prefix="_decoy_stage_", dir=parent))
-        return self._staging
+        # One mkdir + mkdtemp under the lock (short metadata work): two first writers must not
+        # each create a directory and orphan one.
+        with self._lock:
+            if self._staging is None:
+                self._before_first_stage()
+                parent = self._staging_parent()
+                parent.mkdir(parents=True, exist_ok=True)
+                self._staging = Path(tempfile.mkdtemp(prefix="_decoy_stage_", dir=parent))
+            return self._staging
 
     def _staging_parent(self) -> Path:
         return self._target.parent
@@ -284,17 +362,31 @@ class _ParquetStager:
         Best-effort: must not raise even if cleanup fails. A no-op once the staging
         directory has been renamed into place (it no longer exists at the staged path).
         The typed outcome is left in ``abort_report``; an aborted sink can never commit.
+        With a write or commit in flight the abort is deferred and runs when it settles,
+        unless that work bound a result (then the sink stays SEALED/UNCERTAIN).
         """
-        if self.receipt is None and not self._uncertain:
-            self._aborted = True  # a committed or possibly-committed attempt stays SEALED
-        if self._staging is not None:
-            try:
-                self.abort_report = self._dispose_staging(self._staging)
-            except Exception:
-                self.abort_report = _ret.AbortReport(
-                    "failed", "cleanup_error", resource=self._staging
-                )
-        self._staging = None
+        with self._lock:
+            self._abort_requested = True
+        self._settle()
+
+    def _settle(self) -> None:
+        """Run a deferred abort once nothing is in flight."""
+        with self._lock:
+            if not self._abort_requested or self._committing or self._writes:
+                return
+            self._abort_requested = False
+            if self.receipt is not None or self._uncertain:
+                return  # a committed or possibly-committed attempt stays SEALED
+            self._aborted = True
+            staging, self._staging = self._staging, None
+        if staging is None:
+            return
+        try:
+            report = self._dispose_staging(staging)
+        except Exception:
+            report = _ret.AbortReport("failed", "cleanup_error", resource=staging)
+        with self._lock:
+            self.abort_report = report
 
     def _dispose_staging(self, staging: Path) -> _ret.AbortReport:
         return _ret.discard(staging, "aborted")
@@ -312,18 +404,26 @@ class ParquetPreparationSink(_ParquetStager):
     """
 
     def commit(self) -> _pub.ChildPreparationEnvelope:
-        self._require_open()
-        if self._staging is None:
-            self._target.mkdir(parents=True, exist_ok=True)
-        else:
-            self._target.parent.mkdir(parents=True, exist_ok=True)
-            os.replace(self._staging, self._target)
-            self._staging = None
-        self._sealed = True
+        with self._lock:
+            self._require_open()
+            self._begin_commit()
+            staging = self._staging
+        try:
+            if staging is None:
+                self._target.mkdir(parents=True, exist_ok=True)
+            else:
+                self._target.parent.mkdir(parents=True, exist_ok=True)
+                os.replace(staging, self._target)
+            with self._lock:
+                self._staging = None
+                self._sealed = True
+                rows = dict(self._rows)
+        finally:
+            self._end_commit()
         return _pub.ChildPreparationEnvelope(
             staging_dir=self._target,
-            tables=tuple(sorted(self._rows)),
-            row_counts=tuple(sorted(self._rows.items())),
+            tables=tuple(sorted(rows)),
+            row_counts=tuple(sorted(rows.items())),
         )
 
 
@@ -356,23 +456,29 @@ class _PublishingSink(_ParquetStager):
                 f"{type(self).__name__} publishes {self._unit}, not {self._request.unit}"
             )
 
+    def _operation_id(self) -> str:
+        return self._request.operation_id
+
     def _dispose_staging(self, staging: Path) -> _ret.AbortReport:
-        reason = self._reason or ("write_failed" if self._failed else "aborted")
+        with self._lock:
+            reason = self._reason or ("write_failed" if self._failed else "aborted")
+            request = self._request
         return _ret.dispose_staging(
             staging,
-            self._request.retention,
-            operation_id=self._request.operation_id,
-            attempt_id=self._request.attempt_id,
+            request.retention,
+            operation_id=request.operation_id,
+            attempt_id=request.attempt_id,
             reason=reason,
         )
 
     @property
     def request(self) -> _pub.PublicationRequest:
-        return self._request
+        with self._lock:
+            return self._request
 
     @property
     def sidecars_in_unit(self) -> bool:
-        return self._request.sidecars_in_unit
+        return self.request.sidecars_in_unit
 
     def stage_sidecar(self, name: str, data: bytes) -> None:
         """Stage a required sidecar inside the unit (bound by the descriptor, mode 0600).
@@ -380,15 +486,15 @@ class _PublishingSink(_ParquetStager):
         Raises:
             ValueError: ``name`` is not a plain file name or would alias a table artifact.
         """
-        self._require_open()
-        if name.endswith(".parquet") or name != Path(name).name or name.startswith("."):
-            raise ValueError(f"sidecar name {name!r} is not a plain non-table file name")
-        dest = self._ensure_staging() / name
-        try:
-            _pub.write_private_file(dest, data)
-        except BaseException:
-            self._failed = True
-            raise
+        with self._writing():
+            if name.endswith(".parquet") or name != Path(name).name or name.startswith("."):
+                raise ValueError(f"sidecar name {name!r} is not a plain non-table file name")
+            dest = self._ensure_staging() / name
+            try:
+                _pub.write_private_file(dest, data)
+            except BaseException:
+                self._mark_failed()
+                raise
 
     def record_validation(
         self, checks: Iterable[_pub.CheckResult], *, policy_fingerprint: str | None = None
@@ -397,13 +503,13 @@ class _PublishingSink(_ParquetStager):
         makes commit() refuse; there is no silent downgrade. Only legal while OPEN."""
         from dataclasses import replace
 
-        self._require_open()
-
-        self._request = replace(
-            self._request,
-            checks=tuple(checks),
-            validation_policy_fingerprint=policy_fingerprint,
-        )
+        with self._lock:
+            self._require_open()
+            self._request = replace(
+                self._request,
+                checks=tuple(checks),
+                validation_policy_fingerprint=policy_fingerprint,
+            )
 
     def _enter_publication(self) -> None:
         """The one entry gate for lookup, reconcile, staging and commit: admission through
@@ -411,13 +517,14 @@ class _PublishingSink(_ParquetStager):
         refusal so every path leaves the attempt in the same terminal state. A failed,
         aborted or refused attempt is refused here, so none of the four entry points can
         emit a receipt (cached or fresh) from a dead attempt."""
-        self._terminal_guard()
-        try:
-            _proto.admit_request(self._request, self)
-            _pub.reject_failed_checks(self._request)
-        except _pub.PublicationRefusedError as exc:
-            self._reason = exc.receipt.reason_code if exc.receipt else "refused"
-            raise
+        with self._lock:
+            self._terminal_guard()
+            try:
+                _proto.admit_request(self._request, self)
+                _pub.reject_failed_checks(self._request)
+            except _pub.PublicationRefusedError as exc:
+                self._reason = exc.receipt.reason_code if exc.receipt else "refused"
+                raise
 
     def _terminal_guard(self) -> None:
         for dead, reason in (
@@ -428,32 +535,41 @@ class _PublishingSink(_ParquetStager):
             if dead:
                 raise _pub.PublicationRefusedError(
                     f"this attempt is terminal ({reason}) and can never publish or report",
-                    _pub.CommitReceipt(
-                        "rejected", str(self._target), self._request.operation_id, reason
-                    ),
+                    _pub.CommitReceipt("rejected", self._request.operation_id, reason),
                 )
 
     def _before_first_stage(self) -> None:
         self._enter_publication()
-        _pub.validate_request(self._request)
+        _pub.validate_request(self.request)
 
     def lookup_committed(self) -> _pub.CommitReceipt | None:
         """Receipt for an already committed result this request names, else None."""
-        self._enter_publication()
-        return self._latched(_pub.lookup_committed)
+        return self._recovery_read(_pub.lookup_committed)
 
     def reconcile(self) -> _pub.CommitReceipt | None:
         """Resolve a `commit_uncertain` outcome to the authoritative committed state."""
-        self._enter_publication()
-        return self._latched(_pub.reconcile)
+        return self._recovery_read(_pub.reconcile)
 
-    def _latched(
+    def _recovery_read(
         self, op: Callable[[_pub.PublicationRequest], _pub.CommitReceipt | None]
     ) -> _pub.CommitReceipt | None:
+        with self._lock:
+            self._enter_publication()
+            if self._committing:
+                raise self._busy("commit_in_progress")
+            request = self._request
+        return self._latched(op, request)
+
+    def _latched(
+        self,
+        op: Callable[[_pub.PublicationRequest], _pub.CommitReceipt | None],
+        request: _pub.PublicationRequest,
+    ) -> _pub.CommitReceipt | None:
         try:
-            return op(self._request)
+            return op(request)
         except _pub.PublicationRefusedError as exc:
-            self._reason = exc.receipt.reason_code if exc.receipt else "refused"
+            with self._lock:
+                self._reason = exc.receipt.reason_code if exc.receipt else "refused"
             raise
 
     def commit(self) -> _pub.CommitReceipt:
@@ -461,42 +577,51 @@ class _PublishingSink(_ParquetStager):
 
         Raises:
             PublicationRefusedError: conflict / unsupported / rejected / cancelled; nothing new
-                is bound and staging is intact for abort().
+                is bound and staging is intact for abort(). Also raised, without latching the
+                attempt, while another commit or a write is in flight.
             CommitUncertainError: the binding may be visible but sync/reread failed; the
                 possible committed generation is preserved, never deleted.
         """
-        self._enter_publication()  # admission + acceptance + terminal latch, ALWAYS first
-        if self.receipt is not None:
-            return self.receipt
-        if self._uncertain:
-            raise _pub.PublicationRefusedError(
-                "the commit is uncertain: reconcile() instead of committing again",
-                _pub.CommitReceipt(
-                    "rejected", str(self._target), self._request.operation_id, "commit_uncertain"
-                ),
-            )
-        self._sealed = True  # every resolution below is a decision; nothing may mutate after
-        if self._staging is None and self._request.expected_result_id is not None:
-            found = self._latched(_pub.lookup_committed)
-            if found is not None:
-                self.receipt = found
-                return found
-        stage = self._ensure_staging()
+        with self._lock:
+            self._enter_publication()  # admission + acceptance + terminal latch, ALWAYS first
+            if self.receipt is not None:
+                return self.receipt
+            if self._uncertain:
+                raise _pub.PublicationRefusedError(
+                    "the commit is uncertain: reconcile() instead of committing again",
+                    _pub.CommitReceipt("rejected", self._request.operation_id, "commit_uncertain"),
+                )
+            self._begin_commit()
+            self._sealed = True  # every resolution below is a decision; nothing may mutate after
+            request, staged, rows = self._request, self._staging, dict(self._rows)
         try:
-            prepared = _pub.prepare_directory(stage, self._request, producer_rows=self._rows)
-            receipt = _pub.commit_prepared(prepared)
-        except _pub.CommitUncertainError:
-            self._staging = None  # renamed into place: never delete a possible commit
-            self._uncertain = True
-            raise
-        except _pub.PublicationRefusedError as exc:
-            self._reason = exc.receipt.reason_code if exc.receipt else "refused"
-            raise
-        if receipt.outcome == "already_committed":
-            receipt = _pub.with_cleanup(receipt, _pub.cleanup_staging(stage))
-        self._staging = None
-        self.receipt = receipt
-        return receipt
+            if staged is None and request.expected_result_id is not None:
+                found = self._latched(_pub.lookup_committed, request)
+                if found is not None:
+                    with self._lock:
+                        self.receipt = found
+                    return found
+            stage = self._ensure_staging()
+            try:
+                prepared = _pub.prepare_directory(stage, request, producer_rows=rows)
+                receipt = _pub.commit_prepared(prepared)
+            except _pub.CommitUncertainError:
+                with self._lock:
+                    self._staging = None  # renamed into place: never delete a possible commit
+                    self._uncertain = True
+                raise
+            except _pub.PublicationRefusedError as exc:
+                with self._lock:
+                    self._reason = exc.receipt.reason_code if exc.receipt else "refused"
+                raise
+            if receipt.outcome == "already_committed":
+                receipt = _pub.with_cleanup(receipt, _pub.cleanup_staging(stage))
+            with self._lock:
+                self._staging = None
+                self.receipt = receipt
+            return receipt
+        finally:
+            self._end_commit()  # clears COMMITTING, then runs any abort that raced it
 
 
 class ParquetTransactionalSink(_PublishingSink):

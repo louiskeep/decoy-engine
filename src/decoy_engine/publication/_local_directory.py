@@ -28,6 +28,7 @@ from decoy_engine.publication._measure import (
     measure_directory,
     verify_artifacts,
 )
+from decoy_engine.publication._tokens import os_error_token
 from decoy_engine.publication._types import (
     UNIT_MANAGED_DATASET,
     ArtifactRef,
@@ -80,9 +81,10 @@ def _receipt(
     reason: str | None = None,
     **fields: Any,
 ) -> CommitReceipt:
+    if "artifacts" in fields:  # receipts report summaries, never artifact names
+        fields["artifacts"] = tuple(a.summary() for a in fields["artifacts"])
     return CommitReceipt(
         outcome=outcome,
-        destination=str(request.destination.resolve()),
         operation_id=request.operation_id,
         reason_code=reason,
         **fields,
@@ -232,8 +234,8 @@ def inspect_destination(target: Path) -> ExistingState:
     try:
         raw = (target / _codec.DESCRIPTOR_NAME).read_bytes()
         doc = _codec.parse_descriptor(raw)
-    except (OSError, _codec.CodecError) as exc:
-        return ExistingState("corrupt", f"descriptor_invalid: {exc}")
+    except (OSError, _codec.CodecError):
+        return ExistingState("corrupt", "descriptor_invalid")
     try:
         ev_size, ev_digest = hash_file(target / _codec.EVIDENCE_NAME)
     except OSError:
@@ -384,7 +386,7 @@ def _rename_and_sync(prepared: PreparedPublication) -> CommitReceipt:
                     request, "commit_uncertain", "rename_error_visible", visible=True, **bound
                 ),
             ) from exc
-        raise _refuse(request, "rejected", f"rename_failed:{exc.errno}") from exc
+        raise _refuse(request, "rejected", f"rename_failed:{os_error_token(exc)}") from exc
     try:
         fsync_dir(target.parent)
     except OSError as exc:

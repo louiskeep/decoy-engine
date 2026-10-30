@@ -1,7 +1,7 @@
 """Staging, atomic-commit, and result-envelope IO for the isolated-run primitive.
 
-Split out of `_isolated_run.py` (which owns spawn/classify orchestration) to
-stay under the ~600 LOC orchestration cap (CLAUDE.md, `graph/runner.py`
+Split out of `_isolated_run.py` (publication orchestration; the process lifecycle lives in
+`_isolated_spawn.py`) to stay under the ~600 LOC orchestration cap (CLAUDE.md, `graph/runner.py`
 threshold) -- these are pure IO/filesystem helpers with no subprocess
 lifecycle logic of their own, shared by both the isolated (subprocess) path
 and the `isolate=False` in-process fallback so the two modes commit with
@@ -16,7 +16,11 @@ binds it through the one `decoy_engine.publication` backend, so this path and
 from __future__ import annotations
 
 import json
+import logging
+import os
+import shutil
 import signal
+import threading
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -33,6 +37,7 @@ from decoy_engine.publication import CommitError
 __all__ = [
     "CommitError",
     "PublishContext",
+    "StagingLease",
     "atomic_commit",
     "read_envelope",
     "read_staged_row_errors",
@@ -43,6 +48,45 @@ __all__ = [
 ]
 
 _STAGING_DIR_PREFIX = "_decoy_isolated_stage_"
+
+_logger = logging.getLogger(__name__)
+
+
+class StagingLease:
+    """Sole owner of one parent-assigned staging directory: disposed on every exit that did
+    not commit.
+
+    Pattern: `tempfile.TemporaryDirectory` / `contextlib` scoped ownership (the owner, not
+    each failure branch, removes the resource), with the Arrow/Parquet-style rule of never
+    following a symlink while deleting.
+
+    Promotion renames the directory away, so a commit leaves nothing at this path and disposal
+    is then a no-op: the lease never deletes a published result. The path is chosen by the
+    parent and never derived from anything the child reports, so a child that names some other
+    directory cannot get that directory deleted.
+    """
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self._lock = threading.Lock()
+
+    def __enter__(self) -> StagingLease:
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self.dispose()
+
+    def dispose(self) -> None:
+        with self._lock:
+            try:
+                if os.path.islink(self.path):
+                    os.unlink(self.path)  # a swapped-in link is removed, never followed
+                else:
+                    shutil.rmtree(self.path, ignore_errors=True)
+            except OSError:
+                pass
+            if os.path.lexists(self.path):
+                _logger.warning("staging directory could not be fully disposed")
 
 
 @dataclass(frozen=True)

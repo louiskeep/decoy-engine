@@ -85,9 +85,7 @@ def test_a_successful_publish_leaves_no_staging_and_the_result(tmp_path: Path) -
 
 
 def test_a_child_crash_disposes_the_staging(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    _install_fake_worker(
-        tmp_path, monkeypatch, "r5_crash", _STAGE_THEN.format(tail="os._exit(3)")
-    )
+    _install_fake_worker(tmp_path, monkeypatch, "r5_crash", _STAGE_THEN.format(tail="os._exit(3)"))
     out = tmp_path / "final"
     result = run_pipeline_isolated({}, None, engine_version="r5", output_dir=out)
     assert result.outcome == "crashed"
@@ -247,7 +245,7 @@ def test_dispose_from_two_threads_is_safe(tmp_path: Path) -> None:
     def run() -> None:
         try:
             lease.dispose()
-        except BaseException as exc:  # noqa: BLE001
+        except BaseException as exc:
             errors.append(exc)
 
     threads = [threading.Thread(target=run) for _ in range(4)]

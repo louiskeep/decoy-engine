@@ -22,7 +22,9 @@ def _req(dest: Path) -> pub.PublicationRequest:
     return pub.PublicationRequest(destination=dest, operation_id="op-1")
 
 
-def _staged(root: Path, rows: int = 2, **write: object) -> tuple[Path, pub.ChildPreparationEnvelope]:
+def _staged(
+    root: Path, rows: int = 2, **write: object
+) -> tuple[Path, pub.ChildPreparationEnvelope]:
     d = root / "assigned"
     d.mkdir()
     pq.write_table(pa.table({"id": list(range(rows))}), d / "t.parquet", **write)  # type: ignore[arg-type]
@@ -109,7 +111,9 @@ def test_memory_exhaustion_during_the_parse_is_a_typed_refusal(
     assert isinstance(refusal.__cause__, MemoryError)
 
 
-@pytest.mark.parametrize("exc", [pa.ArrowInvalid("x"), OSError(5, "x"), ValueError("x"), OverflowError()])
+@pytest.mark.parametrize(
+    "exc", [pa.ArrowInvalid("x"), OSError(5, "x"), ValueError("x"), OverflowError()]
+)
 def test_parse_failures_are_a_typed_refusal(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, exc: Exception
 ) -> None:
@@ -122,9 +126,7 @@ def test_parse_failures_are_a_typed_refusal(
     assert _refusal(env, tmp_path / "out").receipt.reason_code == "child_envelope_invalid"
 
 
-def test_the_parse_runs_with_thrift_limits(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_the_parse_runs_with_thrift_limits(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _, env = _staged(tmp_path)
     real = pq.ParquetFile
     kwargs: list[dict[str, object]] = []

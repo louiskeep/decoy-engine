@@ -26,8 +26,8 @@ def _check(receipt: pub.CommitReceipt | None, sink_dir: Path) -> dict[str, objec
     facts = sup.oracle(sink_dir)
     assert facts["descriptor_digest"] == receipt.descriptor_digest
     assert facts["result_id"] == receipt.result_id
-    bound = {a.path for a in receipt.artifacts}
-    assert bound == {p.name for p in sink_dir.glob("*.parquet")}
+    bound = {(a.sha256, a.size) for a in receipt.artifacts if a.role == "table"}
+    assert bound == {(sup.sha(p), p.stat().st_size) for p in sink_dir.glob("*.parquet")}
     return facts
 
 

@@ -577,7 +577,7 @@ def _unit_sidecar_name(sink: Any, output_path: str) -> str | None:
         raise PublicationRefusedError(
             "quarantine.output_path must be directly inside the publication destination "
             "when sidecars_in_unit is set; an external sidecar cannot be bound by the descriptor",
-            CommitReceipt("unsupported", str(destination), "", "sidecar_outside_unit"),
+            CommitReceipt("unsupported", "", "sidecar_outside_unit"),
         )
     return path.name
 

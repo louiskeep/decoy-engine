@@ -44,7 +44,7 @@ class Runner:
     def _run(self, fn: Callable[[], Any]) -> None:
         try:
             self.value = fn()
-        except BaseException as exc:  # noqa: BLE001
+        except BaseException as exc:
             self.error = exc
 
     def start(self) -> Runner:
@@ -65,7 +65,9 @@ def _reason(err: BaseException | None) -> str | None:
     return err.receipt.reason_code if err.receipt else None
 
 
-def _park_in(monkeypatch: pytest.MonkeyPatch, owner: Any, name: str) -> tuple[threading.Event, threading.Event]:
+def _park_in(
+    monkeypatch: pytest.MonkeyPatch, owner: Any, name: str
+) -> tuple[threading.Event, threading.Event]:
     """Wrap owner.name so its first call announces `reached` and waits for `release`."""
     reached, release = threading.Event(), threading.Event()
     real = getattr(owner, name)
@@ -165,7 +167,11 @@ def test_record_validation_cannot_install_a_failing_request_after_the_commit_pub
     main = threading.get_ident()
 
     def replace(obj: Any, /, **changes: Any) -> Any:
-        if isinstance(obj, pub.PublicationRequest) and threading.get_ident() != main and "checks" in changes:
+        if (
+            isinstance(obj, pub.PublicationRequest)
+            and threading.get_ident() != main
+            and "checks" in changes
+        ):
             parked.set()
             resume.wait(1.0)  # let the commit run to completion if nothing serializes the two
         return real_replace(obj, **changes)
@@ -350,6 +356,7 @@ def test_random_interleavings_never_break_the_machine(tmp_path: Path, round_: in
     ]
     runners = []
     for op in ops:
+
         def body(op: Callable[[], Any] = op) -> Any:
             gate.wait()
             return op()

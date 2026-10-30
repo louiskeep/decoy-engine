@@ -26,6 +26,16 @@ protocol declarations with admission (`admit`), and a reusable adapter conforman
 the isolated child is preparation-only and the parent is the only publisher. The out-of-core route now aborts
 its sink on `BaseException` like the sequential route.
 
+### Changed (F22 remediation r5, 2026-10-30)
+
+Pre-GA hard change: `CommitReceipt` no longer has a `destination` field and `CommitReceipt.artifacts`
+holds `ArtifactSummary` (role, size, SHA-256, rows, schema digest) instead of `ArtifactRef` paths; receipts
+and refusals carry only stable tokens (`rename_failed:ENOSPC`), never paths, OS error text or table names.
+The isolated parent disposes the staged dataset on every non-commit exit through one `StagingLease`, bounds
+the child's Parquet footer before parsing it, and `ParquetTransactionalSink`/`ManagedDatasetSink` are safe to
+call from several threads (`commit_in_progress` / `write_in_progress` refusals; a racing `abort()` can no
+longer poison `reconcile()`). `execution/_isolated_spawn.py` holds the spawn/classify half.
+
 ### Changed (BREAKING, pre-GA: published Parquet directories carry a descriptor, 2026-10-29)
 
 A published directory now also contains `_decoy_publication.json` and `_decoy_evidence_core.json`. Consumers

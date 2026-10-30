@@ -100,5 +100,5 @@ def test_default_mode_keeps_the_post_commit_diagnostic_behaviour(tmp_path: Path)
     out = tmp_path / "out"
     result = _run(tmp_path, out / "quarantine.jsonl", ParquetTransactionalSink(out))
     assert result.publication_receipt.outcome == "published"  # type: ignore[union-attr]
-    bound = {a.path for a in result.publication_receipt.artifacts}  # type: ignore[union-attr]
-    assert "quarantine.jsonl" not in bound and (out / "quarantine.jsonl").exists()
+    bound = {a.sha256 for a in result.publication_receipt.artifacts}  # type: ignore[union-attr]
+    assert sup.sha(out / "quarantine.jsonl") not in bound and (out / "quarantine.jsonl").exists()

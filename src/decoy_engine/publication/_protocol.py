@@ -184,12 +184,10 @@ def admit(sink: Any, request: PublicationRequest | None = None) -> CommitProtoco
     decl = declaration_for(sink)
     problems = violations(decl, request)
     if problems:
-        destination = str(request.destination) if request else ""
         raise PublicationRefusedError(
             f"sink {decl.name!r} is not admitted for F22 publication: {', '.join(problems)}",
             CommitReceipt(
                 "unsupported",
-                destination,
                 request.operation_id if request else "",
                 problems[0],
             ),
@@ -229,7 +227,6 @@ def admit_request(request: PublicationRequest, sink: Any = None) -> None:
             f"publication request is not admitted for {decl_name!r}: {', '.join(problems)}",
             CommitReceipt(
                 "unsupported",
-                str(request.destination),
                 request.operation_id,
                 problems[0],
             ),

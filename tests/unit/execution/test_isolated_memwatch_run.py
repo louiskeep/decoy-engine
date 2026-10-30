@@ -35,7 +35,7 @@ def _install(tmp_path, monkeypatch, name: str, source: str) -> None:
     (fake_dir / f"{name}.py").write_text(source, encoding="utf-8")
     existing = os.environ.get("PYTHONPATH", "")
     monkeypatch.setenv("PYTHONPATH", str(fake_dir) + (os.pathsep + existing if existing else ""))
-    monkeypatch.setattr("decoy_engine.execution._isolated_run._WORKER_MODULE", name)
+    monkeypatch.setattr("decoy_engine.execution._isolated_spawn._WORKER_MODULE", name)
 
 
 def _sampler_threads() -> list[threading.Thread]:
@@ -163,7 +163,7 @@ class TestLifecycle:
     def test_thread_start_failure_leaves_the_run_unaffected(self, tmp_path, monkeypatch):
         _install(tmp_path, monkeypatch, "silent_worker", _SILENT)
         monkeypatch.setattr(
-            "decoy_engine.execution._isolated_run.start_sampler", lambda *a, **k: None
+            "decoy_engine.execution._isolated_spawn.start_sampler", lambda *a, **k: None
         )
         result = _run(mem_cap_bytes=64 * _MIB)
         assert result.memory_evidence is None
@@ -287,7 +287,7 @@ def _with_channel(monkeypatch, hs: _Handshake) -> None:
         hs.ready_w = hs.ack_r = -1
         return proc
 
-    monkeypatch.setattr("decoy_engine.execution._isolated_run.subprocess.Popen", popen)
+    monkeypatch.setattr("decoy_engine.execution._isolated_spawn.subprocess.Popen", popen)
     monkeypatch.setattr(mw, "live_observer", hs.observe)
     monkeypatch.setenv("MW_READY_FD", str(hs.ready_w))
     monkeypatch.setenv("MW_ACK_FD", str(hs.ack_r))
@@ -372,7 +372,6 @@ class TestHandshakeCleanup:
 
 def test_a_sampler_construction_error_still_kills_and_reaps_the_child(monkeypatch, tmp_path):
     """A failure while building the sampler must not leak the already-spawned child."""
-    from decoy_engine.execution import _isolated_run
 
     _install(tmp_path, monkeypatch, "hang_worker", _HANGING)
     spawned: list[int] = []
@@ -386,8 +385,8 @@ def test_a_sampler_construction_error_still_kills_and_reaps_the_child(monkeypatc
     def boom(*_args, **_kwargs):
         raise KeyError("unknown rlimit kind")
 
-    monkeypatch.setattr("decoy_engine.execution._isolated_run.subprocess.Popen", popen)
-    monkeypatch.setattr(_isolated_run, "start_sampler", boom)
+    monkeypatch.setattr("decoy_engine.execution._isolated_spawn.subprocess.Popen", popen)
+    monkeypatch.setattr("decoy_engine.execution._isolated_spawn.start_sampler", boom)
     with pytest.raises(KeyError):
         _run(mem_cap_bytes=64 * 1024 * 1024)
     assert spawned, "the child was never spawned, so the leak path was not exercised"

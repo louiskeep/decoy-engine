@@ -39,6 +39,7 @@ from decoy_engine.publication._local_directory import (
 from decoy_engine.publication._lock import DestinationLock, LockUnavailableError
 from decoy_engine.publication._measure import MeasureError, hash_file, verify_artifacts
 from decoy_engine.publication._retention import CleanupResult
+from decoy_engine.publication._tokens import os_error_label, os_error_token
 from decoy_engine.publication._types import (
     UNIT_MANAGED_DATASET,
     ArtifactRef,
@@ -112,7 +113,7 @@ def _read_pointer(root: Path) -> dict[str, Any] | None:
         ):
             raise _codec.CodecError("malformed CURRENT pointer")
     except (OSError, _codec.CodecError) as exc:
-        raise ResolveError(f"CURRENT is not a valid pointer: {exc}") from exc
+        raise ResolveError(f"CURRENT is not a valid pointer ({os_error_label(exc)})") from exc
     return doc
 
 
@@ -404,11 +405,11 @@ def _promote_and_switch(prepared: PreparedPublication, backup_ref: str | None) -
         )
     except OSError as exc:
         raise PublicationRefusedError(
-            f"publication rejected: could not stage the generation: {exc}",
+            f"publication rejected: could not stage the generation ({os_error_label(exc)})",
             _receipt(
                 request,
                 "rejected",
-                f"promote_failed:{exc.errno}",
+                f"promote_failed:{os_error_token(exc)}",
                 backup_status=bound["backup_status"],
                 backup_ref=backup_ref,
             ),
@@ -426,11 +427,11 @@ def _promote_and_switch(prepared: PreparedPublication, backup_ref: str | None) -
                 ),
             ) from exc
         raise PublicationRefusedError(
-            f"publication rejected: pointer switch failed: {exc}",
+            f"publication rejected: pointer switch failed ({os_error_label(exc)})",
             _receipt(
                 request,
                 "rejected",
-                f"switch_failed:{exc.errno}",
+                f"switch_failed:{os_error_token(exc)}",
                 backup_status=bound["backup_status"],
                 backup_ref=backup_ref,
             ),

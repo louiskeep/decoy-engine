@@ -37,6 +37,16 @@ Recovery by `expected_result_id` (or operation id) also requires the **same acce
 
 The commit guard (the destination lock plus `PublicationRequest.cancelled`) arbitrates cancellation against publication: before the binding nothing new is released; after it the result is complete and committed. A completed rename is never reversed. In isolated runs the child only prepares a directory (`ParquetPreparationSink`, returning a non-committable `ChildPreparationEnvelope`); the parent re-measures and publishes it, and `cancel_check` is polled under the lock immediately before the rename.
 
+The parent owns the staged dataset through one `StagingLease` (`execution/_isolated_commit.py`): the directory is disposed on every exit that did not commit (gate refusal, child crash, timeout, cancel, exception), and the lease only ever names the path the parent assigned, never one the child reports. The child gate also reads the Parquet trailer first and refuses a declared footer over 64 MiB, then parses the footer under Thrift string and container limits; memory exhaustion or a parse failure is `child_envelope_invalid`.
+
+## Concurrency on one sink
+
+The sink's public methods may be called from several threads. Every state read and transition holds one re-entrant sink lock; slow work runs in a named in-flight state (WRITING, COMMITTING) rather than under the lock. The transition table is in the `_transactional_sink` module docstring. A second `commit()` or a recovery read during a commit, and a `commit()` during a write, are refused (`commit_in_progress`, `write_in_progress`) without latching the attempt; an `abort()` during in-flight work is deferred and cannot undo a binding that landed first.
+
+## Value-free surfaces
+
+Receipts and refusals carry stable reason tokens, errno names (`rename_failed:ENOSPC`), exception type names, digests and counts, never paths, OS error text or table names. `CommitReceipt` has no destination field and reports `ArtifactSummary` (role, size, SHA-256, rows, schema digest) instead of artifact paths; the descriptor inside the committed unit still binds the real relative paths. Child-envelope refusals name a defect class, never a child-supplied value. The exception chain (`__cause__`) keeps the original in-process exception for debugging; it is not part of any receipt or result. F31's boundary will own redaction once it lands.
+
 ## Complete-unit quarantine
 
 Default: the quarantine sidecar is a post-commit diagnostic outside the descriptor (unchanged behavior). With `PublicationRequest.sidecars_in_unit=True` the JSONL is staged inside the unit and bound by the descriptor; a quarantine path outside the destination is refused (`sidecar_outside_unit`) before any masking.

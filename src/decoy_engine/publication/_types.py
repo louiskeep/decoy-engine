@@ -113,19 +113,39 @@ class ArtifactRef:
     rows: int | None = None
     schema_digest: str | None = None
 
+    def summary(self) -> ArtifactSummary:
+        return ArtifactSummary(self.role, self.size, self.sha256, self.rows, self.schema_digest)
+
+
+@dataclass(frozen=True)
+class ArtifactSummary:
+    """An artifact as a receipt reports it: identity and size, never a name or a path.
+
+    A receipt is persisted and shown outside the process; artifact file names derive from
+    table names and the destination path is the caller's own, so neither is carried. The
+    descriptor inside the committed unit still binds the real relative paths."""
+
+    role: str
+    size: int
+    sha256: str
+    rows: int | None = None
+    schema_digest: str | None = None
+
 
 @dataclass(frozen=True)
 class CommitReceipt:
-    """What a publication attempt observably did. Visibility and durability are separate."""
+    """What a publication attempt observably did. Visibility and durability are separate.
+
+    Value-free by construction: stable tokens, digests and counts only. The destination the
+    caller named is not echoed (the caller already holds it)."""
 
     outcome: Outcome
-    destination: str
     operation_id: str
     reason_code: str | None = None
     result_id: str | None = None
     descriptor_digest: str | None = None
     evidence_digest: str | None = None
-    artifacts: tuple[ArtifactRef, ...] = ()
+    artifacts: tuple[ArtifactSummary, ...] = ()
     is_current: bool = False
     visible: bool = False
     durable: bool = False

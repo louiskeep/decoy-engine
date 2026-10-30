@@ -745,7 +745,7 @@ through existing routes; every new behavior lives in `src/decoy_engine/publicati
 
 | Module | Census | Why |
 |---|---|---|
-| `execution/_isolated_run.py` | 608 -> 695 | parent publication plumbing: `operation_id`, `cancel_check`, receipt on both result paths, the versioned child-preparation validation (r2), and the publication request (`checks`, `expected_tables`, `unit`, `overwrite`) a real run carries into the child gate (r4). Decomposition target unchanged: split the spawn/classify half into `_isolated_spawn.py`. |
+| `execution/_isolated_run.py` | 608 -> 695 (r4), 695 -> 555 (r5, entry removed) | parent publication plumbing: `operation_id`, `cancel_check`, receipt on both result paths, the versioned child-preparation validation (r2), and the publication request (`checks`, `expected_tables`, `unit`, `overwrite`) a real run carries into the child gate (r4). The r5 split moved the spawn/classify half into `_isolated_spawn.py` (146 LOC, under the goal) and the scattered staging cleanup into `StagingLease`, so the module is back under 600 and has no census entry. |
 | `execution/_sequential.py` | 691 -> 699 | capture the sink's receipt; call the quarantine preflight/stage helpers. |
 | `quarantine.py` | 645 -> 683 | `preflight_unit_sidecar` / `stage_unit_sidecar` / `already_in_unit`. Decomposition target: the staged-publish cluster. |
 | `execution/out_of_core/_runner.py` | 679 -> 688 | receipt capture; `except BaseException` abort that closes the cancellation gap. |

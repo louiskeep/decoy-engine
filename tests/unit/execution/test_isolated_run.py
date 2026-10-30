@@ -60,7 +60,7 @@ def _install_fake_worker(tmp_path, monkeypatch, module_name: str, source: str) -
     existing = os.environ.get("PYTHONPATH", "")
     new_path = str(fake_dir) + (os.pathsep + existing if existing else "")
     monkeypatch.setenv("PYTHONPATH", new_path)
-    monkeypatch.setattr("decoy_engine.execution._isolated_run._WORKER_MODULE", module_name)
+    monkeypatch.setattr("decoy_engine.execution._isolated_spawn._WORKER_MODULE", module_name)
 
 
 _HANGING_WORKER_SRC = """
@@ -734,18 +734,18 @@ class TestPayloadFilePermissions:
 
 class TestSignalNameGuard:
     def test_real_time_signal_number_falls_back_to_numeric_label(self):
-        from decoy_engine.execution._isolated_run import _signal_name
+        from decoy_engine.execution._isolated_commit import signal_name as _signal_name
 
         rt_signal = int(signal.SIGRTMIN) + 5
         assert _signal_name(rt_signal) == f"signal {rt_signal}"
 
     def test_known_signal_number_resolves_its_name(self):
-        from decoy_engine.execution._isolated_run import _signal_name
+        from decoy_engine.execution._isolated_commit import signal_name as _signal_name
 
         assert _signal_name(int(signal.SIGKILL)) == "SIGKILL"
 
     def test_none_or_zero_returns_none(self):
-        from decoy_engine.execution._isolated_run import _signal_name
+        from decoy_engine.execution._isolated_commit import signal_name as _signal_name
 
         assert _signal_name(None) is None
         assert _signal_name(0) is None
@@ -774,7 +774,7 @@ class TestIsolationReentryGuard:
                 "isolated worker -- the self-multiplying grandchild runaway"
             )
 
-        monkeypatch.setattr("decoy_engine.execution._isolated_run.subprocess.Popen", _no_spawn)
+        monkeypatch.setattr("decoy_engine.execution._isolated_spawn.subprocess.Popen", _no_spawn)
 
         cfg = _mask_config(tmp_path, n_cols=1)
         sources = _mask_sources(tmp_path, n_rows=10, n_cols=1)
@@ -786,7 +786,7 @@ class TestIsolationReentryGuard:
         assert result.outputs["customers"].num_rows == 10
 
     def test_spawned_child_env_carries_the_reentry_marker(self, tmp_path, monkeypatch):
-        import decoy_engine.execution._isolated_run as iso
+        import decoy_engine.execution._isolated_spawn as iso
 
         captured: dict[str, dict[str, str] | None] = {}
         real_popen = iso.subprocess.Popen
