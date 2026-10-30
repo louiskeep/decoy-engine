@@ -13,13 +13,14 @@ REPO_NAME=decoy-engine
 RUFF_PATHS=(src tests testflight scripts)
 MYPY_ARGS=(src/decoy_engine testflight)
 SENTRY_PATHS=(tests/sentry)
+PYTEST_ARGS=(-m 'not benchmark and not packaging and not codspeed')
 SRC_MATCH='src/*.py'   # changed files that map to a dotted module
 SRC_STRIP='src/'       # prefix removed before turning a path into a module
 PYPATH_DIRS=(src scripts)
 IMPORT_PKG=decoy_engine
 
 ROOT=$(git rev-parse --show-toplevel) || exit 2
-VENV=${UV_PROJECT_ENVIRONMENT:-$ROOT/.venv}
+VENV=${DECOY_VENV:-${UV_PROJECT_ENVIRONMENT:-$ROOT/.venv}}
 BIN=$VENV/bin
 KEEP=0 BASELINE=0 STEPS=env,ruff,format,mypy,sentry,tests PATHS=()
 while [ $# -gt 0 ]; do
@@ -70,7 +71,7 @@ run_steps() {  # $1 label, $2 tree
   local label=$1 tree=$2 name rc stop=0 p cmd tests=()
   : >"$OUT/$label.steps"
   for name in ${STEPS//,/ }; do
-    local junit=(-p no:cacheprovider -q -rfE "--junitxml=$OUT/$label-$name.xml")
+    local junit=(-p no:cacheprovider -q -rfE "--junitxml=$OUT/$label-$name.xml" "${PYTEST_ARGS[@]}")
     case $name in
       env) cmd=(bash "$ROOT/scripts/dev/bootstrap.sh" --check) ;;
       ruff) cmd=("$BIN/ruff" check "${RUFF_PATHS[@]}") ;;

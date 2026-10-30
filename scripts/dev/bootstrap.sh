@@ -2,10 +2,11 @@
 # Make the venv match uv.lock exactly, then print the environment header.
 # Usage: scripts/dev/bootstrap.sh [--check]
 #   --check  verify only, never install (gates.sh runs this as its env step)
-# Venv: $UV_PROJECT_ENVIRONMENT if set, else ./.venv. Exits non-zero on any
+# Venv: $DECOY_VENV, else $UV_PROJECT_ENVIRONMENT, else ./.venv. Exits non-zero on any
 # mismatch; there is no fallback install path.
 set -uo pipefail
 
+REPO_NAME=decoy-engine
 # The profile ci.yml's dp-certified-gate syncs: the one CI job built from uv.lock.
 PY_VERSION=3.10.20
 EXTRAS=(--extra dev --extra lint --extra vault --extra cloud)
@@ -14,7 +15,7 @@ ABI_SRC=src/decoy_engine/execution/native/_crypto_ext.py
 
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 cd "$ROOT" || exit 2
-export UV_PROJECT_ENVIRONMENT=${UV_PROJECT_ENVIRONMENT:-$ROOT/.venv}
+export UV_PROJECT_ENVIRONMENT=${DECOY_VENV:-${UV_PROJECT_ENVIRONMENT:-$ROOT/.venv}}
 VENV=$UV_PROJECT_ENVIRONMENT
 SYNC=(uv sync --frozen "${EXTRAS[@]}" --python "$PY_VERSION")
 CHECK=0
@@ -39,7 +40,7 @@ lock_version() {  # first locked version of package $1
   awk -v n="name = \"$1\"" '$0 == n { getline; gsub(/version = |"/, ""); print; exit }' uv.lock
 }
 
-echo "== $(basename "$ROOT") environment =="
+echo "== $REPO_NAME environment =="
 echo "venv:       $VENV"
 py_have=$("$PY" -c 'import platform; print(platform.python_version())')
 echo "python:     $py_have (lock profile expects $PY_VERSION)"

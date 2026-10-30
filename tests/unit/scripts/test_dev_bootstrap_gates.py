@@ -25,7 +25,7 @@ pytestmark = pytest.mark.skipif(BASH is None or GIT is None, reason="needs bash 
 
 def _run(argv: list[str], cwd: Path, check: bool = False) -> subprocess.CompletedProcess[str]:
     # Point the scripts at the interpreter running this test so nothing is installed.
-    env = dict(os.environ, UV_PROJECT_ENVIRONMENT=sys.prefix)
+    env = dict(os.environ, DECOY_VENV=sys.prefix)
     env.pop("VIRTUAL_ENV", None)
     return subprocess.run(  # noqa: S603 -- argv is test literals plus resolved tool paths
         argv, cwd=cwd, env=env, capture_output=True, text=True, timeout=600, check=check
