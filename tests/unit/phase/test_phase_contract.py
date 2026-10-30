@@ -609,56 +609,9 @@ def test_forged_fields_never_escape_as_other_exception(hostile):
 _R7 = "R7-MARKER-do-not-leak"
 
 
-def _boom(*_a, **_k):
-    raise RuntimeError(_R7)
-
-
-_HOSTILE_DUNDERS = (
-    "__repr__",
-    "__len__",
-    "__iter__",
-    "__eq__",
-    "__hash__",
-    "__lt__",
-    "__getattr__",
-)
-
-
-def _hostile_type(base: type, dunder: str) -> type:
-    ns: dict = {dunder: _boom}
-    if dunder == "__eq__":
-        ns["__hash__"] = base.__hash__ if base is not object else object.__hash__
-    return type(f"Hostile{base.__name__.title()}{dunder.strip('_').title()}", (base,), ns)
-
-
-class _ForeignContractError(list):
-    """Foreign code raising the engine's own error type with the input in the text."""
-
-    def __iter__(self):
-        raise phase.PhaseContractError(_R7)
-
-    def __len__(self):
-        raise phase.PhaseContractError(_R7)
-
-
-class _RaisingGetattribute:
-    def __getattribute__(self, name):
-        raise RuntimeError(_R7)
-
-
 def _r7_scalars() -> list:
-    out: list = []
-    for dunder in _HOSTILE_DUNDERS:
-        out.append(_hostile_type(object, dunder)())
-        out.append(_hostile_type(int, dunder)(3))
-        out.append(_hostile_type(str, dunder)("ok"))
-        out.append(_hostile_type(tuple, dunder)(("k", 1)))
-        out.append(_hostile_type(float, dunder)(1.5))
-        out.append(_hostile_type(list, dunder)(["k"]))
-        out.append(_hostile_type(dict, dunder)({"k": 1}))
-    out += [
-        _RaisingGetattribute(),
-        _ForeignContractError(),
+    # Ordinary values only; hostile-dunder types live in test_v2_hostile_deferred.py.
+    return [
         _R7,
         10**5000,
         -(10**5000),
@@ -678,7 +631,6 @@ def _r7_scalars() -> list:
         b"bytes",
         object(),
     ]
-    return out
 
 
 def _r7_variants(h) -> list:
@@ -748,10 +700,10 @@ def _check_exports(obj, label, escapes):
         _exercise(lambda fn=fn: fn(env), f"{label}:{fn.__name__}", escapes)
 
 
-def _r7_escapes() -> tuple[list, set]:
+def _r7_escapes(scalars: list | None = None) -> tuple[list, set]:
     escapes: list = []
     exercised: set = set()
-    hostiles = [v for h in _r7_scalars() for v in _r7_variants(h)]
+    hostiles = [v for h in (_r7_scalars() if scalars is None else scalars) for v in _r7_variants(h)]
     for h in hostiles:
         _exercise(lambda h=h: phase.freeze(h), "freeze", escapes)
         _exercise(lambda h=h: phase.FrozenMap(h), "FrozenMap", escapes)
@@ -777,7 +729,8 @@ def test_every_envelope_field_is_walked_and_only_raises_fixed_contract_error():
 
 @pytest.mark.parametrize(
     ("owner", "attr"),
-    [(phase.FrozenMap, "__new__"), (phase.PhaseCoverage, "__post_init__")],
+    # PhaseCoverage.__post_init__ is only reachable with hostile dunders: test_v2_hostile_deferred.
+    [(phase.FrozenMap, "__new__")],
 )
 def test_catch_all_detects_containment_removed_from_a_constructor(monkeypatch, owner, attr):
     raw = owner.__dict__[attr]
@@ -786,19 +739,6 @@ def test_catch_all_detects_containment_removed_from_a_constructor(monkeypatch, o
     monkeypatch.setattr(owner, attr, staticmethod(unwrapped) if attr == "__new__" else unwrapped)
     escapes, _ = _r7_escapes()
     assert escapes, f"removing containment from {owner.__name__}.{attr} went undetected"
-
-
-def test_frozenmap_rejects_subclassed_pairs_and_primitives_with_fixed_text():
-    for bad in (
-        (_hostile_type(tuple, "__len__")(("k", 1)),),
-        (("k", _hostile_type(int, "__lt__")(1)),),
-        (("k", _hostile_type(str, "__eq__")("v")),),
-        ((_hostile_type(str, "__lt__")("k"), 1), ("j", 2)),
-        (("k", _hostile_type(tuple, "__iter__")((1,))),),
-    ):
-        with pytest.raises(phase.PhaseContractError) as ei:
-            phase.FrozenMap(bad)
-        assert _R7 not in str(ei.value)
 
 
 def test_unknown_header_and_reason_errors_never_echo_the_input():

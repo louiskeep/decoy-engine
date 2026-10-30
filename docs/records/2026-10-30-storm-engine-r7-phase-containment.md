@@ -39,9 +39,14 @@ The 42 escapes include the two MEDIUM 1 cases (a tuple subclass's `__len__`, a r
   `satisfies_required_gate` and `error_result`. The private helpers are no longer wrapped one by one,
   so removing the boundary from a constructor is visible (see the mutation test).
 - Exact types. One helper, `_is_scalar`, does exact-type scalar checks for `FrozenMap`, `freeze`,
-  `_thaw`, set ordering and `_require_frozen`. A subclass of `int`/`str`/`float`/`bool`/`tuple`/`FrozenMap`
-  is refused with fixed text, so its dunders never run. `FrozenMap` and identity entries must be
-  exact `tuple`s, and mapping keys exact `str`.
+  `_thaw`, set ordering and `_require_frozen`, so a subclass of `int`/`str`/`float`/`bool` is refused
+  with fixed text. `FrozenMap` and identity entries must be exact `tuple`s, and mapping keys exact `str`.
+  **Corrected (V1 close-out):** at `7f60f21` this was not true for containers. `freeze` matched
+  `isinstance(value, (list, tuple))`, so a `list`, `tuple` or `FrozenMap` subclass was accepted and its
+  `__iter__` ran (a `FrozenMap` subclass was silently re-frozen as a list). The close-out makes `list`,
+  `tuple` and `FrozenMap` exact in `freeze`. `freeze` still accepts any `Mapping` and any
+  `set`/`frozenset` subclass, and `identity`, `reasons` and the coverage scope fields still accept
+  `list`/`tuple` subclasses before checking each element by exact type.
 - Fixed text. The header and reason errors no longer include the value.
 - Sentry. `tests/sentry/test_phase_containment.py` walks every public class and function in `phase.py`.
   Each must use `_contained`, matched by the wrapper's code object. A class must define a contained
@@ -62,7 +67,9 @@ The 42 escapes include the two MEDIUM 1 cases (a tuple subclass's `__len__`, a r
   - huge ints, None, `Path`, exception values, marker strings and marker `ReasonRef`s;
   - depth-5000 nesting, cycles, NaN, bytes and `object()`.
 
-  Each value is placed bare and inside a tuple, list, dict, pair and set.
+  Each value is placed bare and inside a tuple, list, dict and pair, and inside a set only when it
+  is hashable (**corrected, V1 close-out:** values whose `__hash__` or `__eq__` raises never got
+  the set placement, because `_r7_variants` skips a set it cannot build).
 - Pass rule: an operation either succeeds or raises `PhaseContractError`, and the error text never
   contains the marker.
 - Non-vacuity: the mutation test strips the containment out of two different constructors
@@ -70,8 +77,9 @@ The 42 escapes include the two MEDIUM 1 cases (a tuple subclass's `__len__`, a r
   reports escapes: 43 and 24.
 
 ## Behavior changes
-- `freeze` and `FrozenMap` refuse subclasses of primitives, `IntEnum` and `str` enums included. No
-  in-repo caller passes them.
+- `freeze` and `FrozenMap` refuse subclasses of the scalar primitives, `IntEnum` and `str` enums
+  included. No in-repo caller passes them. **Corrected (V1 close-out):** at `7f60f21` `freeze` still
+  accepted `list`, `tuple` and `FrozenMap` subclasses; that is fixed in the close-out (see above).
 - Error text for unknown schema, phase, status and reason no longer names the value.
 
 ## Gates (green on this commit)
@@ -83,3 +91,20 @@ The 42 escapes include the two MEDIUM 1 cases (a tuple subclass's `__len__`, a r
 - Proof manifest (`tests/sentry/test_proof_manifest.py`): 8 passed.
 
 `error_result` recording `type(exc).__name__` stays deferred to F31. It is now inside the boundary.
+
+## Superseded by the V1 close-out
+The owner narrowed the threat model on 2026-10-30 (decoy-platform `handoffs/queue`,
+`docs/handoffs/OWNER-DECISIONS-2026-10-30.md`, "Threat model for V1"). `_RejectedError` and its
+pass-through are gone; see `2026-10-30-storm-engine-v1-closeout.md`.
+
+## Deferred to V2
+Hostile in-process hardening is out of V1 scope. These cases are recorded, not gated, in
+`tests/unit/phase/test_v2_hostile_deferred.py` (`xfail(strict=False)`):
+- raising `__repr__`, `__len__`, `__iter__`, `__eq__`, `__hash__`, `__lt__`, `__getattr__` on
+  `object`/`int`/`str`/`float`/`tuple`/`list`/`dict` subclasses, a raising `__getattribute__`, and a
+  foreign `PhaseContractError` raised from a dunder, through the full r7 field walk;
+- a `__class__` property spoof;
+- a `FrozenMap` forged with `tuple.__new__`;
+- a `BaseException` subclass raised from a dunder (V1 lets `BaseException` through on purpose);
+- a raising `__del__` reaching `sys.unraisablehook`;
+- the r7 mutation case for `PhaseCoverage.__post_init__`, which only the hostile corpus detects.

@@ -15,11 +15,13 @@ again at export (a frozen dataclass can still be forced with `object.__setattr__
 so nothing is accepted that later fails `canonical_bytes`, and every malformed
 envelope surfaces as `PhaseContractError`, never a stray `TypeError`.
 
-Containment: every public constructor and serializer runs inside `_contained`, the single
-place a foreign escape (hostile `__iter__`/`__len__`/`__lt__`, recursion, even a foreign
-raise of `PhaseContractError` itself) becomes a fixed-text error. Only rejections this
-module raises (`_RejectedError`) pass through, and their text never includes the input. Scalars
-and tuples are matched by exact type, so a subclass's overridden dunders never run.
+Containment (V1 threat model: ordinary values, ordinary callee exceptions): every public
+constructor and serializer runs inside `_contained`. It catches `Exception`, keeps only a text
+from the closed `_FIXED_TEXTS` set (anything else becomes "malformed phase evidence"), leaves
+the handler and raises a fresh `PhaseContractError` outside it, so the error has no
+`__context__`, `__cause__`, notes or wrapper locals holding the input. `KeyboardInterrupt` and
+`SystemExit` pass through. Scalars and containers are matched by exact type. Hostile in-process
+objects (overridden dunders, forged instances) are V2 scope, not claimed here.
 
 Gate rule: only a `passed` result of a known schema can satisfy a required gate;
 unknown schema, status or reason identity fails closed. Pattern: MLIR's split
@@ -38,6 +40,30 @@ from typing import Any, Literal, TypeVar
 
 from decoy_engine.errors import DecoyError
 from decoy_engine.reasons import ReasonRef, UnknownReasonError, require_known
+
+__all__ = [
+    "EVENT_SCHEMA",
+    "INT_MAX",
+    "INT_MIN",
+    "MAX_DEPTH",
+    "PHASES",
+    "RESULT_SCHEMA",
+    "STATUSES",
+    "FrozenMap",
+    "FrozenScalar",
+    "FrozenValue",
+    "Phase",
+    "PhaseContractError",
+    "PhaseCoverage",
+    "PhaseEvent",
+    "PhaseResult",
+    "Status",
+    "canonical_bytes",
+    "error_result",
+    "freeze",
+    "satisfies_required_gate",
+    "to_wire",
+]
 
 _F = TypeVar("_F", bound=Callable[..., Any])
 
@@ -71,8 +97,65 @@ class PhaseContractError(DecoyError, ValueError):
     """A phase envelope that is malformed, unsafe to export, or of an unknown version."""
 
 
-class _RejectedError(PhaseContractError):
-    """A rejection raised by this module with fixed text; the only error `_contained` passes on."""
+_MALFORMED = "malformed phase evidence"
+_SCOPE_FIELDS = ("requested_scope", "observed_scope", "limits", "omissions")
+_STR_FIELDS = (
+    "phase",
+    "check_id",
+    "status",
+    "method",
+    "method_version",
+    "schema_version",
+    "event",
+    "sampling_method",
+    "reason namespace",
+    "reason code",
+)
+# Every rejection text this module raises. A text outside this set (a caller's own
+# PhaseContractError, or a new site not listed here) degrades to `_MALFORMED`, never leaks.
+_FIXED_TEXTS: frozenset[str] = frozenset(
+    {
+        _MALFORMED,
+        "FrozenMap entries must be (key, value) pairs",
+        "FrozenMap keys must be str",
+        "duplicate key in FrozenMap",
+        "integer outside the 64-bit canonical range",
+        "phase evidence nested too deeply",
+        "non-finite number in phase evidence",
+        "unfrozen value in FrozenMap",
+        "identity must be a mapping or a tuple of (str, str) pairs",
+        "identity entries must be (str, str) pairs",
+        "identity keys and values must be str",
+        "duplicate identity key",
+        "reasons must be ReasonRef",
+        "reasons must be a tuple of ReasonRef",
+        "set elements must be None, bool, int, float or str",
+        "phase evidence mapping keys must be str",
+        "cannot freeze this type into phase evidence",
+        "unsafe value in phase evidence",
+        "coverage must be PhaseCoverage",
+        "rows_examined must be int or None",
+        "exact must be bool",
+        "identity must be a tuple of (str, str) pairs",
+        "unknown schema_version",
+        "unknown phase",
+        "unknown status",
+        "unknown reason identity",
+        "phase envelope has no canonical encoding",
+        "not a phase envelope",
+    }
+    | {f"{n} must be a tuple of str" for n in _SCOPE_FIELDS}
+    | {f"{n} must contain only str" for n in _SCOPE_FIELDS}
+    | {f"{n} must be str" for n in _STR_FIELDS}
+)
+
+
+def _fixed_text(exc: Exception) -> str:
+    if type(exc) is PhaseContractError and len(exc.args) == 1:
+        text = exc.args[0]
+        if type(text) is str and text in _FIXED_TEXTS:
+            return text
+    return _MALFORMED
 
 
 def _contained(fn: _F) -> _F:
@@ -82,12 +165,14 @@ def _contained(fn: _F) -> _F:
     def wrapper(*args: Any, **kwargs: Any) -> Any:
         try:
             return fn(*args, **kwargs)
-        except _RejectedError:
-            raise
-        except Exception:
-            # Includes a foreign PhaseContractError, whose text may carry the input.
-            raise _RejectedError("malformed phase evidence") from None
+        except Exception as exc:
+            text = _fixed_text(exc)
+        # Raised outside the handler with the inputs dropped from this frame, so neither the
+        # exception chain nor captured traceback locals hold caller data.
+        del args, kwargs
+        raise PhaseContractError(text)
 
+    wrapper.__phase_contained__ = True  # type: ignore[attr-defined]
     return wrapper  # type: ignore[return-value]
 
 
@@ -107,12 +192,12 @@ class FrozenMap(tuple[tuple[str, Any], ...]):
         seen: set[str] = set()
         for item in items:
             if type(item) is not tuple or len(item) != 2:
-                raise _RejectedError("FrozenMap entries must be (key, value) pairs")
+                raise PhaseContractError("FrozenMap entries must be (key, value) pairs")
             key, value = item
             if type(key) is not str:
-                raise _RejectedError("FrozenMap keys must be str")
+                raise PhaseContractError("FrozenMap keys must be str")
             if key in seen:
-                raise _RejectedError("duplicate key in FrozenMap")
+                raise PhaseContractError("duplicate key in FrozenMap")
             seen.add(key)
             _require_frozen(value)
         return super().__new__(cls, sorted(items, key=lambda kv: kv[0]))
@@ -120,12 +205,12 @@ class FrozenMap(tuple[tuple[str, Any], ...]):
 
 def _check_int(value: int) -> None:
     if not INT_MIN <= value <= INT_MAX:
-        raise _RejectedError("integer outside the 64-bit canonical range")
+        raise PhaseContractError("integer outside the 64-bit canonical range")
 
 
 def _check_depth(depth: int) -> None:
     if depth > MAX_DEPTH:
-        raise _RejectedError("phase evidence nested too deeply")
+        raise PhaseContractError("phase evidence nested too deeply")
 
 
 def _is_scalar(value: Any) -> bool:
@@ -138,7 +223,7 @@ def _is_scalar(value: Any) -> bool:
         return True
     if t is float:
         if not math.isfinite(value):
-            raise _RejectedError("non-finite number in phase evidence")
+            raise PhaseContractError("non-finite number in phase evidence")
         return True
     return False
 
@@ -155,23 +240,23 @@ def _require_frozen(value: Any, depth: int = 0) -> None:
         for v in value:
             _require_frozen(v, depth + 1)
         return
-    raise _RejectedError("unfrozen value in FrozenMap")
+    raise PhaseContractError("unfrozen value in FrozenMap")
 
 
 def _identity_pairs(value: Any) -> tuple[tuple[str, str], ...]:
     if not isinstance(value, (Mapping, tuple, list)):
-        raise _RejectedError("identity must be a mapping or a tuple of (str, str) pairs")
+        raise PhaseContractError("identity must be a mapping or a tuple of (str, str) pairs")
     items = value.items() if isinstance(value, Mapping) else value
     pairs: list[tuple[str, str]] = []
     seen: set[str] = set()
     for item in items:
         if type(item) is not tuple or len(item) != 2:
-            raise _RejectedError("identity entries must be (str, str) pairs")
+            raise PhaseContractError("identity entries must be (str, str) pairs")
         key, val = item
         if type(key) is not str or type(val) is not str:
-            raise _RejectedError("identity keys and values must be str")
+            raise PhaseContractError("identity keys and values must be str")
         if key in seen:
-            raise _RejectedError("duplicate identity key")
+            raise PhaseContractError("duplicate identity key")
         seen.add(key)
         pairs.append((key, val))
     return tuple(pairs)
@@ -180,16 +265,16 @@ def _identity_pairs(value: Any) -> tuple[tuple[str, str], ...]:
 def _str_tuple(value: Any, name: str) -> tuple[str, ...]:
     # A bare str is iterable; accepting it would silently explode "abc" into ("a", "b", "c").
     if isinstance(value, (str, bytes, Mapping)) or not isinstance(value, (tuple, list)):
-        raise _RejectedError(f"{name} must be a tuple of str")
+        raise PhaseContractError(f"{name} must be a tuple of str")
     items = tuple(value)
     if not all(type(i) is str for i in items):
-        raise _RejectedError(f"{name} must contain only str")
+        raise PhaseContractError(f"{name} must contain only str")
     return items
 
 
 def _require_str(value: Any, name: str) -> None:
     if type(value) is not str:
-        raise _RejectedError(f"{name} must be str")
+        raise PhaseContractError(f"{name} must be str")
 
 
 def _require_opt_str(value: Any, name: str) -> None:
@@ -199,14 +284,14 @@ def _require_opt_str(value: Any, name: str) -> None:
 
 def _require_reason(value: Any) -> None:
     if type(value) is not ReasonRef:
-        raise _RejectedError("reasons must be ReasonRef")
+        raise PhaseContractError("reasons must be ReasonRef")
     _require_str(value.namespace, "reason namespace")
     _require_str(value.code, "reason code")
 
 
 def _reason_tuple(value: Any) -> tuple[ReasonRef, ...]:
     if not isinstance(value, (tuple, list)):
-        raise _RejectedError("reasons must be a tuple of ReasonRef")
+        raise PhaseContractError("reasons must be a tuple of ReasonRef")
     items = tuple(value)
     for ref in items:
         _require_reason(ref)
@@ -220,7 +305,7 @@ def _set_sort_key(value: Any) -> tuple[int, Any]:
     # Rank by exact type so only same-typed primitives are ever compared with `<`; a foreign
     # `__lt__`/`__repr__` is unreachable because exact-type validation precedes sorting.
     if not _is_scalar(value):
-        raise _RejectedError("set elements must be None, bool, int, float or str")
+        raise PhaseContractError("set elements must be None, bool, int, float or str")
     if value is None:
         return (0, 0)
     return (_SET_RANK[type(value)], value)
@@ -234,16 +319,16 @@ def _freeze(value: Any, depth: int) -> FrozenValue:
         return FrozenMap((k, _freeze(v, depth + 1)) for k, v in value)
     if isinstance(value, Mapping):
         if not all(type(k) is str for k in value):
-            raise _RejectedError("phase evidence mapping keys must be str")
+            raise PhaseContractError("phase evidence mapping keys must be str")
         return FrozenMap(
             (k, _freeze(v, depth + 1)) for k, v in sorted(value.items(), key=lambda kv: kv[0])
         )
     if isinstance(value, (set, frozenset)):
         ordered = sorted(((_set_sort_key(v), v) for v in value), key=lambda kv: kv[0])
         return tuple(v for _, v in ordered)
-    if isinstance(value, (list, tuple)):
+    if type(value) is list or type(value) is tuple:
         return tuple(_freeze(v, depth + 1) for v in value)
-    raise _RejectedError("cannot freeze this type into phase evidence")
+    raise PhaseContractError("cannot freeze this type into phase evidence")
 
 
 @_contained
@@ -267,7 +352,7 @@ def _thaw(value: Any, depth: int = 0) -> Any:
         return {k: _thaw(v, depth + 1) for k, v in value}
     if type(value) is tuple:
         return [_thaw(v, depth + 1) for v in value]
-    raise _RejectedError("unsafe value in phase evidence")
+    raise PhaseContractError("unsafe value in phase evidence")
 
 
 @dataclass(frozen=True)
@@ -282,25 +367,25 @@ class PhaseCoverage:
 
     @_contained
     def __post_init__(self) -> None:
-        for name in ("requested_scope", "observed_scope", "limits", "omissions"):
+        for name in _SCOPE_FIELDS:
             object.__setattr__(self, name, _str_tuple(getattr(self, name), name))
         _check_coverage(self)
 
 
 def _check_coverage(cov: Any) -> None:
     if type(cov) is not PhaseCoverage:
-        raise _RejectedError("coverage must be PhaseCoverage")
-    for name in ("requested_scope", "observed_scope", "limits", "omissions"):
+        raise PhaseContractError("coverage must be PhaseCoverage")
+    for name in _SCOPE_FIELDS:
         value = getattr(cov, name)
         if type(value) is not tuple or not all(type(i) is str for i in value):
-            raise _RejectedError(f"{name} must be a tuple of str")
+            raise PhaseContractError(f"{name} must be a tuple of str")
     # bool is an int subclass; a count of True is a type confusion, not a count.
     if cov.rows_examined is not None and type(cov.rows_examined) is not int:
-        raise _RejectedError("rows_examined must be int or None")
+        raise PhaseContractError("rows_examined must be int or None")
     if cov.rows_examined is not None:
         _check_int(cov.rows_examined)
     if type(cov.exact) is not bool:
-        raise _RejectedError("exact must be bool")
+        raise PhaseContractError("exact must be bool")
     _require_opt_str(cov.sampling_method, "sampling_method")
 
 
@@ -334,11 +419,11 @@ def _check_result_fields(item: PhaseResult) -> None:
         _require_str(getattr(item, name), name)
     _check_coverage(item.coverage)
     if type(item.reasons) is not tuple:
-        raise _RejectedError("reasons must be a tuple of ReasonRef")
+        raise PhaseContractError("reasons must be a tuple of ReasonRef")
     for ref in item.reasons:
         _require_reason(ref)
     if type(item.identity) is not tuple:
-        raise _RejectedError("identity must be a tuple of (str, str) pairs")
+        raise PhaseContractError("identity must be a tuple of (str, str) pairs")
     _identity_pairs(item.identity)
 
 
@@ -365,26 +450,30 @@ def _check_event_fields(item: PhaseEvent) -> None:
 def _check_header(phase: str, status: str, schema: str, expected: str) -> None:
     # Fixed text: the offending value is caller data and never echoed.
     if schema != expected:
-        raise _RejectedError("unknown schema_version")
+        raise PhaseContractError("unknown schema_version")
     if phase not in PHASES:
-        raise _RejectedError("unknown phase")
+        raise PhaseContractError("unknown phase")
     if status not in STATUSES:
-        raise _RejectedError("unknown status")
+        raise PhaseContractError("unknown status")
 
 
+# Both raise outside the handler: `raise ... from None` inside it would still set
+# `__context__` to the callee's error, whose text can carry the input.
 def _reason_wire(ref: ReasonRef) -> dict[str, str]:
     try:
         spec = require_known(ref)
+        return {"namespace": spec.namespace, "code": spec.code}
     except UnknownReasonError:
-        raise _RejectedError("unknown reason identity") from None
-    return {"namespace": spec.namespace, "code": spec.code}
+        pass
+    raise PhaseContractError("unknown reason identity")
 
 
 def _encode(wire: dict[str, Any]) -> bytes:
     try:
         return json.dumps(wire, sort_keys=True, separators=(",", ":")).encode()
     except Exception:
-        raise _RejectedError("phase envelope has no canonical encoding") from None
+        pass
+    raise PhaseContractError("phase envelope has no canonical encoding")
 
 
 @_contained
@@ -426,7 +515,7 @@ def _wire(item: PhaseResult | PhaseEvent) -> dict[str, Any]:
             "payload": _thaw(item.payload),
         }
     if type(item) is not PhaseEvent:
-        raise _RejectedError("not a phase envelope")
+        raise PhaseContractError("not a phase envelope")
     _check_event_fields(item)
     _check_header(item.phase, item.status, item.schema_version, EVENT_SCHEMA)
     return {
@@ -455,6 +544,25 @@ def satisfies_required_gate(item: PhaseResult) -> bool:
     return item.status == "passed"
 
 
+# Exact type, never `__name__`: an unlisted or subclassed exception records "Exception".
+_ERROR_KINDS: dict[type[BaseException], str] = {
+    OSError: "OSError",
+    ValueError: "ValueError",
+    TypeError: "TypeError",
+    KeyError: "KeyError",
+    IndexError: "IndexError",
+    RuntimeError: "RuntimeError",
+    MemoryError: "MemoryError",
+    TimeoutError: "TimeoutError",
+    NotImplementedError: "NotImplementedError",
+    ArithmeticError: "ArithmeticError",
+    ZeroDivisionError: "ZeroDivisionError",
+    OverflowError: "OverflowError",
+    UnicodeError: "UnicodeError",
+    AssertionError: "AssertionError",
+}
+
+
 @_contained
 def error_result(
     phase: Phase,
@@ -464,9 +572,10 @@ def error_result(
     reason: ReasonRef,
     exc: BaseException,
 ) -> PhaseResult:
-    """A failed check as evidence: registry reason plus the exception type name only.
+    """A failed check as evidence: registry reason plus a fixed error kind.
 
-    Raw exception text can carry paths and cell values, so it is never captured.
+    Raw exception text can carry paths and cell values, and a callee's class name is caller
+    text too, so neither is read: the kind comes from an exact-type table of builtins.
     """
     return PhaseResult(
         phase=phase,
@@ -475,5 +584,5 @@ def error_result(
         method=method,
         method_version=method_version,
         reasons=(reason,),
-        payload=freeze({"error_type": type(exc).__name__}),
+        payload=freeze({"error_type": _ERROR_KINDS.get(type(exc), "Exception")}),
     )
