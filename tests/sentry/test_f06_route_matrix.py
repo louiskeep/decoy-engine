@@ -132,6 +132,66 @@ def test_every_route_that_admits_a_cell_has_an_existing_parity_test() -> None:
         assert PARITY_TESTS[route] in defined, (route, PARITY_TESTS[route])
 
 
+# Cells a route admits by capability but declines at its physical admission (a documented rule in
+# tests/acceptance/_f06_cells.py::DECLINE_RULES). The corpus still runs them and checks the
+# fallback publishes what the contract promises; growing this census is a reviewed decision.
+PINNED_DECLINED_CELLS = {"chunked": 18, "mixed": 12, "unified_slice": 48}
+
+
+def _admitted(matrix: dict[str, Any]) -> set[tuple[str, str, str]]:
+    return {
+        (route, key, policy)
+        for key, row in matrix["formats"].items()
+        for route, cells in row["routes"].items()
+        for policy, verdict in cells.items()
+        if verdict == "ok"
+    }
+
+
+def test_the_corpus_runs_every_admitted_cell_and_only_those() -> None:
+    """Each admitted (route, format, policy) cell is a test case of the real-route corpus."""
+    from tests.acceptance import test_f06_route_cells as corpus
+
+    case = corpus.test_admitted_cell_runs_on_its_route
+    (mark,) = [m for m in case.pytestmark if m.name == "parametrize"]
+    assert set(mark.args[1]) == _admitted(build_matrix())
+    assert len(mark.args[1]) == len(set(mark.args[1]))
+
+
+def test_every_policy_of_an_admitted_format_route_pair_is_in_the_corpus() -> None:
+    from tests.acceptance import _f06_cells as cells
+
+    matrix = build_matrix()
+    for key, row in matrix["formats"].items():
+        for route, verdicts in row["routes"].items():
+            admitted = {p for p, v in verdicts.items() if v == "ok"}
+            assert admitted == {p for r, k, p in cells.admitted_cells() if (r, k) == (route, key)}
+
+
+def test_the_corpus_drives_every_route_and_asserts_its_identity() -> None:
+    import inspect
+
+    from decoy_engine.declared_casting import ROUTES
+    from tests.acceptance import _f06_cells as cells
+
+    assert set(cells.DRIVERS) == set(ROUTES)
+    for route, driver in cells.DRIVERS.items():
+        # A driver that never checks which route ran would let a cell run elsewhere.
+        body = inspect.getsource(driver) + inspect.getsource(cells._drive_relational)
+        assert any(t in body for t in ("check_route", "execution_mode")), route
+
+
+def test_physically_declined_cells_are_a_pinned_documented_census() -> None:
+    from tests.acceptance import _f06_cells as cells
+
+    declined: dict[str, int] = {}
+    for route, key, _policy in cells.admitted_cells():
+        if cells.physical_decline(route, key) is not None:
+            declined[route] = declined.get(route, 0) + 1
+    assert declined == PINNED_DECLINED_CELLS
+    assert set(cells.DECLINE_RULES) == set(PINNED_DECLINED_CELLS)
+
+
 def regenerate() -> None:  # pragma: no cover - maintenance entry point
     PINNED.write_text(json.dumps(build_matrix(), indent=2, sort_keys=True) + "\n")
 

@@ -55,6 +55,7 @@ ADAPTERS: dict[tuple[str, str], str] = {
     ("declared_casting/_boundary.py", "DeclaredCastRun._disposition"): _KERNEL_REASON,
     ("declared_casting/_eligibility.py", "declared_route_guard"): _DECISION_REASON,
     ("declared_casting/_eligibility.py", "preflight_declared_casting"): _DECISION_REASON,
+    ("declared_casting/_refusals.py", "note"): _DECISION_REASON,
     ("declared_casting/_quarantine_local.py", "_qerror"): _HELPER,
     ("plan/_checks_declared_casting.py", "_fail"): _HELPER,
     ("plan/_serialize_declared.py", "declared_casting_from_dict"): _REWRAP,

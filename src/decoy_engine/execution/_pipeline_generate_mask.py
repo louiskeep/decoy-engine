@@ -179,6 +179,17 @@ def run_generate_and_mask_steps(
                 vault_writer_present=vault_writer is not None,
             )
         )
+        if cast_run is not None and multi_table_dispatch_enabled and not route_chunked:
+            _multi_table.note_declared_split_exclusion(
+                config,
+                plan=plan,
+                graph=graph,
+                substrate=resolved_substrate,
+                table_kinds=table_kinds,
+                auto_chunk=auto_chunk,
+                dispatcher_enabled=chunked_dispatcher_enabled,
+                vault_writer_present=vault_writer is not None,
+            )
         # B6a: decided once, before the first chunk; a streaming run opens the publish session.
         out_mode, out_reason = ("resident", "")
         if split is not None or route_chunked:

@@ -110,6 +110,7 @@ GUARDED_MODULES: tuple[str, ...] = (
     "execution/native/_operator_params.py",
     "execution/native/_operator_step.py",
     "execution/out_of_core/_runner.py",
+    "execution/out_of_core/_rewrite_pass.py",
     "execution/out_of_core/_compat.py",
     "execution/out_of_core/_preflight.py",
     "execution/out_of_core/_null_int_guard.py",

@@ -81,15 +81,149 @@ def test_bounded_reader_keeps_declared_lexemes(tmp_path: Path) -> None:
     assert legacy.column("age").to_pylist() == [None, "042", None]  # undeclared: unchanged
 
 
-@pytest.mark.parametrize("reader", ["s3", "gcs"])
-def test_cloud_csv_readers_honour_lexeme_columns(reader: str) -> None:
-    from decoy_engine.profile import _cloud_readers as cr
+CLOUD_CSV = b"age,note\nNA,NA\n042,x\n,\n"
 
-    window = b"age,note\nNA,NA\n042,x\n"
-    frame = cr._csv_sample_from_window(window, len(window), 10, lexeme_columns=frozenset({"age"}))
-    assert frame["age"].tolist() == ["NA", "042"]
-    assert frame["note"].isna().tolist() == [True, False]
-    assert reader in ("s3", "gcs")
+
+def _cloud_cfg(kind: str) -> dict[str, Any]:
+    """A validated config whose only source is a cloud CSV with one declared column."""
+    location = (
+        {"type": "s3", "bucket": "b", "key": "t.csv"}
+        if kind == "s3"
+        else {"type": "gcs", "bucket": "b", "object": "t.csv"}
+    )
+    return {
+        "version": 1,
+        "global_settings": {"seed": 7},
+        "sources": {"t": {**location, "format": "csv"}},
+        "tables": [
+            {
+                "name": "t",
+                "columns": [
+                    column("note"),
+                    column(
+                        "age",
+                        logical_type="integer",
+                        parse_format=INT64,
+                        sentinel_to_null=SENTINEL,
+                        error_policy="null",
+                    ),
+                ],
+            }
+        ],
+        "targets": {"t": {"type": "file", "format": "csv", "path": "/tmp/f06-out.csv"}},
+        "relationships": [],
+        "namespaces": {},
+    }
+
+
+class _Body:
+    def __init__(self, data: bytes) -> None:
+        self._data = data
+
+    def __enter__(self) -> _Body:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        return None
+
+    def read(self) -> bytes:
+        return self._data
+
+
+class _FakeS3:
+    def head_object(self, Bucket: str, Key: str) -> dict[str, int]:
+        return {"ContentLength": len(CLOUD_CSV)}
+
+    def get_object(self, Bucket: str, Key: str, Range: str | None = None) -> dict[str, Any]:
+        if Range is None:
+            return {"Body": _Body(CLOUD_CSV)}
+        _, _, span = Range.partition("=")
+        start, _, end = span.partition("-")
+        return {"Body": _Body(CLOUD_CSV[int(start) : int(end) + 1])}
+
+
+class _FakeBlob:
+    size = len(CLOUD_CSV)
+
+    def download_as_bytes(self, start: int | None = None, end: int | None = None) -> bytes:
+        return CLOUD_CSV if start is None else CLOUD_CSV[start : (end or 0) + 1]
+
+
+class _FakeGcs:
+    def __enter__(self) -> _FakeGcs:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        return None
+
+    def bucket(self, name: str) -> Any:
+        return type("_Bucket", (), {"blob": lambda self, obj: _FakeBlob()})()
+
+
+@pytest.fixture
+def cloud_reader(monkeypatch: pytest.MonkeyPatch) -> Any:
+    """The real reader class for ``kind``, built through its production builder, over an
+    in-memory client (the only fake is the network)."""
+    from decoy_engine._lexeme import profile_descriptors
+    from decoy_engine.profile import _cloud_readers as cr
+    from tests.acceptance._f06_support import validate
+
+    def build(kind: str) -> Any:
+        descriptor = profile_descriptors(validate(_cloud_cfg(kind)))["t"]
+        if kind == "s3":
+            monkeypatch.setattr(cr, "_s3_client", lambda _descriptor: _FakeS3())
+            reader = cr.build_s3_profile_source(descriptor)
+            assert isinstance(reader, cr.S3CsvSource)
+            return reader
+        try:
+            import google.cloud.storage
+        except ImportError:  # the optional client is absent; the reader only needs `Client()`
+            import sys
+            import types
+
+            google = types.ModuleType("google")
+            cloud = types.ModuleType("google.cloud")
+            storage = types.ModuleType("google.cloud.storage")
+            google.cloud = cloud  # type: ignore[attr-defined]
+            cloud.storage = storage  # type: ignore[attr-defined]
+            for name, mod in (
+                ("google", google),
+                ("google.cloud", cloud),
+                ("google.cloud.storage", storage),
+            ):
+                monkeypatch.setitem(sys.modules, name, mod)
+        monkeypatch.setattr(
+            "google.cloud.storage.Client", lambda *a, **k: _FakeGcs(), raising=False
+        )
+        reader = cr.build_gcs_profile_source(descriptor)
+        assert isinstance(reader, cr.GcsCsvSource)
+        return reader
+
+    return build
+
+
+@pytest.mark.parametrize("kind", ["s3", "gcs"])
+def test_cloud_csv_readers_honour_lexeme_columns(cloud_reader: Any, kind: str) -> None:
+    reader = cloud_reader(kind)
+    sample = reader.sample_frame(10)
+    full = reader.to_frame()
+    for frame in (sample, full):
+        assert frame["age"].tolist() == ["NA", "042", ""]  # exact lexemes, not NaN / int 42
+        assert frame["note"].isna().tolist() == [True, False, True]  # undeclared: legacy NA
+    assert str(reader.schema().field("age").type) in {"string", "large_string"}
+
+
+@pytest.mark.parametrize("kind", ["s3", "gcs"])
+def test_cloud_csv_reader_loses_the_lexeme_when_descriptor_plumbing_breaks(
+    cloud_reader: Any, kind: str
+) -> None:
+    """The same reader without the contract-aware descriptor keeps the legacy NA behaviour, so
+    a regression that stops attaching ``lexeme_columns`` turns the test above red."""
+    from decoy_engine._lexeme import LEXEME_KEY
+
+    reader = cloud_reader(kind)
+    reader._descriptor.pop(LEXEME_KEY)
+    assert reader.to_frame()["age"].tolist() != ["NA", "042", ""]
 
 
 def test_end_to_end_csv_sentinel_is_counted_not_a_source_null(tmp_path: Path) -> None:

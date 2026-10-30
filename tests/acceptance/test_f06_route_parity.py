@@ -607,15 +607,21 @@ def test_sequential_sink_commit_failure_discards_the_sealed_quarantine(tmp_path:
     assert _sealed(tmp_path / "q-commit-fail") == []
 
 
-def test_chunked_late_failure_leaves_no_quarantine_artifact(
+def test_chunked_post_seal_failure_leaves_no_quarantine_artifact(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from decoy_engine.execution import _pipeline_finalize
+    """The failure fires in the publish step, after the chunked route sealed its quarantine; the
+    injection itself asserts the sealed artifact exists, so the discard is what removes it."""
+    from decoy_engine.execution._chunked_output_sink import OutputPublish
 
-    def boom(*a: Any, **k: Any) -> None:
-        raise RuntimeError("late failure in the last finalize step")
+    root = tmp_path / "q-late"
+    seen: list[int] = []
 
-    monkeypatch.setattr(_pipeline_finalize, "compute_storm_postmask", boom)
+    def boom(self: Any) -> None:
+        seen.append(len(_sealed(root)))
+        raise RuntimeError("late failure after the seal")
+
+    monkeypatch.setattr(OutputPublish, "commit", boom)
     with pytest.raises(RuntimeError, match="late failure"):
         run(
             _cfg(tmp_path, "quarantine"),
@@ -625,7 +631,8 @@ def test_chunked_late_failure_leaves_no_quarantine_artifact(
             auto_chunk_threshold_rows=1,
             **_kwargs("quarantine", tmp_path, "late"),
         )
-    assert _sealed(tmp_path / "q-late") == []
+    assert seen == [1], "the chunked route had not sealed its quarantine when the failure fired"
+    assert _sealed(root) == []
 
 
 def test_chunked_route_keeps_its_schema_when_every_row_is_quarantined(tmp_path: Path) -> None:
