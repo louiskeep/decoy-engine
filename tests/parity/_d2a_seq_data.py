@@ -38,6 +38,7 @@ from tests.parity._d1a_hash_data import (
     hash_seeds,
     source_columns,
 )
+from tests._keyed_secret import THROWAWAY_KEY_PROVIDER
 
 REGISTRY = get_default_registry()
 NAMESPACES = NamespaceRegistry(bindings=())
@@ -137,6 +138,7 @@ def run_seq(
         relationship_graph=chain_graph(policy),
         namespace_registry=NAMESPACES,
         sink=sink,
+        key_provider=THROWAWAY_KEY_PROVIDER,
     )
 
 
@@ -154,6 +156,7 @@ def run_full(
         registry=REGISTRY,
         relationship_graph=chain_graph(policy),
         namespace_registry=NAMESPACES,
+        key_provider=THROWAWAY_KEY_PROVIDER,
     )
 
 

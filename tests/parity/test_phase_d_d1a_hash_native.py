@@ -29,7 +29,7 @@ from decoy_engine.keyprovider import SecretKeyProvider
 from tests.parity import _strict_compare as sc
 from tests.parity._d1a_hash_data import (
     EXPECTED_TOKENS,
-    JOB_SEED,
+    MASK_KEY,
     NS,
     SECRET,
     chain_graph,
@@ -63,8 +63,11 @@ _TYPED = list(source_columns())
 _ALL = [*_TYPED, "c_trunc", "c_other_ns"]
 # `a` + U+0897 + U+0316: the post-version mark reorders under Unicode >= 16, not under 14.
 _SENSITIVE = "a̖ࢗ"
-_SENSITIVE_NATIVE_TOKEN = "18a1e2bb3115db92ca35562b009f759d454959777614e4d9d7a00d27eb2b5ae4"
-_SENSITIVE_PYTHON_14_TOKEN = "3682379fae9e7a059e7dc794535530f5a3141c2cc37c5b61be770201c7719686"
+# Re-pinned under F13 (job_seed keying removed): Python hash of the reordered / unreordered form
+# under THROWAWAY_KEY_PROVIDER; the real companion is unavailable here so these skip-guarded
+# tokens are unverified against the kernel.
+_SENSITIVE_NATIVE_TOKEN = "8db248d3f22ce7e8d7faa6ccb6a4ac7d25345afb124f6a09a85c6e827ba1e7e9"
+_SENSITIVE_PYTHON_14_TOKEN = "376687f6c8fada32210019cf0c8063b7021044377c37949395cbae20efc58bc5"
 
 
 def _payload() -> pa.Table:
@@ -109,7 +112,7 @@ def test_native_output_is_the_pinned_baseline_and_is_consumed(
 def test_native_equals_the_python_reference_for_shared_version_input() -> None:
     run = run_chain(_payload(), _SEEDS)
     for name in _TYPED:
-        want = hash_array(source_columns()[name], seed=JOB_SEED, namespace=NS).to_pylist()
+        want = hash_array(source_columns()[name], seed=MASK_KEY, namespace=NS).to_pylist()
         assert run.tables["t"].column(name).to_pylist() == want, name
 
 
@@ -126,7 +129,7 @@ def test_secret_backed_mask_key_matches_the_pin_and_differs_from_job_seed() -> N
 def test_composed_and_decomposed_text_agree_on_both_paths() -> None:
     table = pa.table({"s": pa.array(["é", "é"], pa.string())})
     native = run_chain(table, (("s", column_seed()),)).tables["t"].column("s").to_pylist()
-    python = hash_array(table.column("s"), seed=JOB_SEED, namespace=NS).to_pylist()
+    python = hash_array(table.column("s"), seed=MASK_KEY, namespace=NS).to_pylist()
     assert native == python
     assert native[0] == native[1]
 
@@ -166,7 +169,7 @@ def test_tz_aware_timestamp_stays_python_with_the_real_companion() -> None:
     assert entry["reason"] == "hash_input_type_tz_timestamp_deferred:c"
     assert (
         run.tables["t"].column("c").to_pylist()
-        == hash_array(column, seed=JOB_SEED, namespace=NS).to_pylist()
+        == hash_array(column, seed=MASK_KEY, namespace=NS).to_pylist()
     )
 
 
@@ -206,14 +209,14 @@ def test_post_python_version_sequence_differs_from_the_python_path() -> None:
     assert tuple(int(p) for p in unicodedata.unidata_version.split(".")) < (16, 0, 0)
     table = pa.table({"s": pa.array([_SENSITIVE], pa.string())})
     native = run_chain(table, (("s", column_seed()),)).tables["t"].column("s").to_pylist()
-    python = hash_array(table.column("s"), seed=JOB_SEED, namespace=NS).to_pylist()
+    python = hash_array(table.column("s"), seed=MASK_KEY, namespace=NS).to_pylist()
     assert native != python
     assert python == [_SENSITIVE_PYTHON_14_TOKEN] or unicodedata.unidata_version != "14.0.0"
     # The divergence is the normalization, not the character: the lone codepoint, and the
     # already-ordered sequence, agree on both paths.
     agree = pa.table({"s": pa.array(["ࢗ", "a̖ࢗ"], pa.string())})
     got = run_chain(agree, (("s", column_seed()),)).tables["t"].column("s").to_pylist()
-    assert got == hash_array(agree.column("s"), seed=JOB_SEED, namespace=NS).to_pylist()
+    assert got == hash_array(agree.column("s"), seed=MASK_KEY, namespace=NS).to_pylist()
 
 
 # `unicode-normalization` -> (Unicode table version it carries, registry checksum). A

@@ -662,6 +662,7 @@ def _run_out_of_core(
                 temp_dir=runner_temp,
                 memory_limit=memory_limit,
                 batch_rows=batch_rows,
+                key_provider=_PROBE_KEY,
             )
         finally:
             mask_s = time.perf_counter() - mask_t0

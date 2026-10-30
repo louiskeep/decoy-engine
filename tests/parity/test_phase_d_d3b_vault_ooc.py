@@ -41,6 +41,7 @@ from decoy_engine.plan._types import ColumnSeed, SeedEnvelope, TableSeed
 from decoy_engine.relationships._graph import OrphanPolicy, RelationshipEdge, RelationshipGraph
 from decoy_engine.unmask import unmask_pipeline
 from decoy_engine.vault import VaultWriter, load_vault, vault_writer_for_config
+from tests._keyed_secret import THROWAWAY_KEY_PROVIDER
 from tests.parity import _strict_compare as sc
 
 pytestmark = pytest.mark.filterwarnings("ignore")
@@ -185,8 +186,16 @@ def run(
     writer: Any = None,
     **kw: Any,
 ) -> tuple[Any, Any]:
-    writer = vault_writer_for_config(cfg) if writer is None else writer
-    kwargs: dict[str, Any] = {"engine_version": "d3b", "vault_writer": writer}
+    writer = (
+        vault_writer_for_config(cfg, key_provider=THROWAWAY_KEY_PROVIDER)
+        if writer is None
+        else writer
+    )
+    kwargs: dict[str, Any] = {
+        "engine_version": "d3b",
+        "vault_writer": writer,
+        "key_provider": THROWAWAY_KEY_PROVIDER,
+    }
     kwargs.update(
         {"execution_mode": "full_frame"} if full else {"out_of_core_budget_bytes": BUDGET}
     )
@@ -268,7 +277,9 @@ class CountingWriter(VaultWriter):
 
 
 def counting_writer(cfg: dict[str, Any]) -> CountingWriter:
-    return CountingWriter(vault_writer_for_config(cfg)._mask_key)
+    return CountingWriter(
+        vault_writer_for_config(cfg, key_provider=THROWAWAY_KEY_PROVIDER)._mask_key
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -789,7 +800,10 @@ class TestNfcEnvelope:
             sources = tables["parent"].column(column).to_pylist()
             assert [mapping[(ns, m)] for m in masked] == sources  # every row, incl. the NFC one
         recovered = unmask_pipeline(
-            cfg, dict(result.outputs), vault_path=str(tmp_path / "nfc.vault")
+            cfg,
+            dict(result.outputs),
+            vault_path=str(tmp_path / "nfc.vault"),
+            key_provider=THROWAWAY_KEY_PROVIDER,
         )
         statuses = {r.column: r.status for r in recovered.columns}
         assert statuses["email"] == "vault_reversed"
@@ -946,6 +960,7 @@ def test_the_vault_hook_does_not_perturb_masked_output(
         cfg,
         tables,
         engine_version="d3b",
+        key_provider=THROWAWAY_KEY_PROVIDER,
         execution_mode="out_of_core",
         out_of_core_budget_bytes=BUDGET,
         sink=ParquetTransactionalSink(tmp_path / "sink_out"),
@@ -966,6 +981,7 @@ def test_resident_masked_output_is_identical_with_and_without_the_vault(tmp_path
         cfg,
         tables,
         engine_version="d3b",
+        key_provider=THROWAWAY_KEY_PROVIDER,
         execution_mode="out_of_core",
         out_of_core_budget_bytes=BUDGET,
     )
