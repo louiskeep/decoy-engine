@@ -1,4 +1,5 @@
-Status: plan (revision 3, author = Opus). Codex plan-gate rounds 1-2 REVISE (MEDIUMs only) folded; round 3 is the final round before owner escalation.
+Status: built
+Shipped: docs/records/2026-10-06-r0-engine-cleanup-build.md
 Rules consulted: 00-universal, development-loop, refactoring, testing, code-review, workspace-and-vcs, destructive-operations, api-and-compatibility
 
 # R0 (engine): small cleanups from the 2026-10-06 health report

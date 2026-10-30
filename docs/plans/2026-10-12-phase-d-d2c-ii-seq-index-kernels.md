@@ -1,6 +1,7 @@
 # Phase D / D2c-ii: wire `categorical` into the SEQ-native framework + generalize the disposition
 
-Status: plan (rev 2, GATE GO - ready to build once D2c-i main CI is green; round-2 Codex plan-gate GO,
+Status: built
+Shipped: merge PR #244 (fc6fe86e)
 all 4 rev-1 findings resolved). Second slice of D2c's ENGINE half. Builds on D2c-i (engine
 #243, the `_sequential_native_ops` descriptor framework + `fpe`). Branches off origin/main (b52fe688,
 includes D2c-i) on feat/phase-d-d2c-ii-seq-index-kernels (worktree phase-d-d2c-ii).

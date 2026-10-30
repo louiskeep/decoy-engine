@@ -1,3 +1,5 @@
+Status: record
+
 Cross-model PLAN gate for the Decoy engine-efficiency Part 1 Phase 2 implementation plan, BEFORE
 it is handed to a builder. HARD CONSTRAINTS: do NOT use qmd, graphify, web search, or dispatch ANY
 subagent. Read the plan file below and, only if needed, the existing plan and the Phase 0 crypto

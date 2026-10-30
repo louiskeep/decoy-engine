@@ -1,4 +1,5 @@
-Status: plan (rev 3, BUILD-READY: Codex plan gate GO in round 3)
+Status: built
+Shipped: docs/records/2026-10-08-c8-iii-d2-native-positional-when-build.md
 
 Rules consulted: 00-universal, feature-dev, testing.
 

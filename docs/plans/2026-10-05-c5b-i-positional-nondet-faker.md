@@ -1,4 +1,5 @@
-Status: plan (revision 2.1, BUILD-READY, author = Opus). Codex plan gate: round 1 REVISE folded; round 2 closed all five round-1 findings with 1 new MEDIUM (an ambiguous default-namespace encoding), folded here as length-prefixed components.
+Status: built
+Shipped: docs/records/2026-10-05-c5b-i-positional-nondet-faker-build.md
 
 # C5b-i: position-keyed non-deterministic Faker (oracle semantics, routes held constant)
 

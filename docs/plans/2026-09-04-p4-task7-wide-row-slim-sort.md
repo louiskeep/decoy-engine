@@ -1,6 +1,7 @@
 # P4-A Task 7 wide-row fix: slim the reorder sort (raw payload out-of-line)
 
-Status: plan (GATE-APPROVED — Codex plan-gate 0 P0; design verified correct;
+Status: built
+Shipped: src/decoy_engine/execution/out_of_core/_key_width.py:1-20 (slim sorter row, SlimRowWidthTracker)
 3 P1 + P2/P3 plan-precision findings incorporated, "suitable for GO once
 incorporated"). Author: Opus, 2026-09-04.
 Held target branch `feat/native-phase3`; merges with the Phase-4 bundle.

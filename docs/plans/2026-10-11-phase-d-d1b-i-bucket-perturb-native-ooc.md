@@ -1,4 +1,5 @@
-Status: plan (Phase D slice D1b-i: bucket_perturb native on the OOC route; rev 6, folds the rev-5 Codex NO-GO (1 MEDIUM): corrected the validation-ORDERING (namespace is checked at the masking seam, not preflight) and preserve that seam check before the native branch. revs 1-4 resolved output-type, offset parity, tz/bucket, NFC policy, silent-wrap guard, source-binding, witness verified-idle. Base: current main after D1b-ii merged.)
+Status: built
+Shipped: merge PR #239 (4e331f22)
 
 # Phase D / D1b-i: bucket_perturb masking native on the out-of-core route
 

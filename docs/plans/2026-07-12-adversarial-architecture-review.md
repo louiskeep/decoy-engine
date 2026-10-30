@@ -1,5 +1,7 @@
 # Adversarial Architecture Review Plan
 
+Status: plan
+
 ## Objective
 
 Produce a current, evidence-backed technical-lead review of `decoy-engine` that:
