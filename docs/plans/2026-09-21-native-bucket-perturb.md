@@ -1,6 +1,7 @@
 # PLAN — native `bucket_perturb` operator
 
-Status: plan
+Status: built
+Shipped: src/decoy_engine/execution/native/_bucket_perturb_ext.py (native_bucket_perturb); commit 5ea666e7
 Author: Opus (top-tier, per the guides/plans standing rule). Codex cross-reviews as plan-gate.
 Roadmap: native operator breadth (post-Phase 5, S-port slate). Cam-approved 2026-09-21 (the measured
 cheap-win slate: bucket_perturb -> group_key -> faker-full-frame). Base: engine main AFTER the categorical

@@ -1,4 +1,5 @@
-Status: plan (rev 3, BUILD-READY: Codex plan gate GO in round 3)
+Status: built
+Shipped: docs/records/2026-10-07-c8-iii-c-rawdict-when-build.md
 
 Rules consulted: 00-universal, development-loop, risk-and-exceptions, feature-dev, testing, code-review, security.
 

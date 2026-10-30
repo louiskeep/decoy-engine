@@ -1,6 +1,7 @@
 # Plan: DP test certification-awareness (CI fix #4)
 
-Status: PLAN v2 (Opus-authored 2026-07-24, Codex plan-reviewed REVISE -> revised; build-ready). The
+Status: built
+Shipped: commit 947ddfa8 on main (CI fix #4, certification-aware DP fit suite)
 "Codex plan-review revisions" section at the end OVERRIDES the original Design/Acceptance where they conflict; read it as the spec.
 Owner: engine PR #110 (integration/engine-0.5.0). Scope: engine test suite + CI + one conftest hook.
 

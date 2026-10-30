@@ -1,4 +1,6 @@
-Status: plan (engine R3 refactor slice; Codex plan-gate GO round 4, BUILD-READY; rev 5 folds the final LOW; Cam-gated checkpoint inside, see §9)
+Status: built
+Shipped: merge PR #235 (49b88677)
+Prior status (kept because it records a hold): plan (engine R3 refactor slice; Codex plan-gate GO round 4, BUILD-READY; rev 5 folds the final LOW; Cam-gated checkpoint inside, see §9)
 
 # R3 engine refactor: pipeline run context + layer-1 route executors + out-of-core liveness reconciliation
 

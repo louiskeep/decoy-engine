@@ -1,5 +1,7 @@
 # Crypto + DE-11 GA-hardening — delivery plan
 
+Status: plan
+
 Sequenced delivery for the GA-blocker findings (DE-01, DE-02, DE-03) + DE-11, after Fable review and Cam's decisions (2026-07-13). All scope grounded in Fable's verified file:line findings (`docs/discussions/2026-07-13-crypto-ga-blockers.md`, `2026-07-13-de11-pool-size-precedence.md`, `2026-07-13-de01-fpe-options.md`).
 
 ## Decision ledger (locked)

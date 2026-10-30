@@ -1,6 +1,7 @@
 # Phase D / D2c-iv: `date_shift` native on the SEQ route
 
-Status: plan
+Status: built
+Shipped: merge PR #246 (5694331e)
 
 Rules consulted: 00-universal, development-loop, risk-and-exceptions, feature-dev, testing
 

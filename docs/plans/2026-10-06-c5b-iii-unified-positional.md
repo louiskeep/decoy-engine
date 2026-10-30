@@ -1,4 +1,5 @@
-Status: plan (revision 2, BUILD-READY, author = Opus). Codex plan gate: round 1 REVISE folded; round 2 GO (0 findings). Built: see `docs/records/2026-10-06-c5b-iii-unified-positional-build.md`.
+Status: built
+Shipped: docs/records/2026-10-06-c5b-iii-unified-positional-build.md
 Rules consulted: 00-universal, development-loop, testing, architecture, code-review, scope-discipline, observability-and-resilience
 
 # C5b-iii: position-keyed categorical and Faker on the unified full-frame route

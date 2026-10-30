@@ -1,6 +1,7 @@
 # Retire the D9 peak-memory ratio gate (Rust engine program A7)
 
-Status: plan (implemented on branch chore/retire-d9-rss-ratio; merge and v2 recert pending)
+Status: built
+Shipped: CHANGELOG.md:1766; docs/records/2026-09-30-d9-v2-recert.md
 
 Date: 2026-09-30. Program: `docs/plans/2026-09-30-rust-engine-program.md` (on decoy-engine branch `docs/reality-2026-09-30` until it merges), Phase A (record gap R14). Branch `chore/retire-d9-rss-ratio`, off engine main `8dc559e5`.
 

@@ -1,6 +1,7 @@
 # C6c-ii: a Rust span-detection kernel for text_redact
 
-Status: plan (rev 4, BUILD-READY: Codex round 3 = correctness GO, sole residual §7.7 perf-gate
+Status: built
+Shipped: docs/records/2026-10-09-c6c-ii-text-redact-rust-kernel-build.md, docs/records/2026-10-22-c6c-ii-text-redact-lookaround-port-build.md
 wording folded here). Phase C, Rust-engine program.
 Branch `feat/c6c-ii-text-redact-rust` off engine main `90e36c38`.
 Supersedes the C6c-ii sketch in `docs/plans/2026-10-06-c6c-i-text-redact-arrow.md`.

@@ -1,4 +1,5 @@
-Status: plan (Phase D / Dcomp build-slice. rev 2, folds Codex plan-gate round 1 = 2 HIGH + 2 MED. Scope narrowed + made honest: hash-composite-key parity-completeness on SEQ. Pre re-gate.)
+Status: built
+Shipped: merge PR #249 (e9e0435a)
 
 # Phase D / Dcomp: composite FK parity-completeness on the sequential route (hash-key subset)
 

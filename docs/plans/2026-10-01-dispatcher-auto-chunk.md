@@ -1,6 +1,7 @@
 # Engine auto-chunk on the chunked dispatcher (Rust engine program B2)
 
-Status: plan (revision 5: Codex plan-gate round 1 on revision 4 patched: native Faker's companion-dependent all-null type, guarantee 3(c) defined over today's output columns, the active-doc inventory, and three LOWs)
+Status: built
+Shipped: docs/records/2026-10-01-b2-dispatcher-auto-chunk-build.md
 
 Revision 5 changes (Codex plan-gate round 1 on revision 4, REVISE with 3 HIGH and 3 LOW; patches only, no redesign):
 

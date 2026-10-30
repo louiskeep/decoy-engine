@@ -1,5 +1,6 @@
 ---
-Status: plan
+Status: built
+Shipped: src/decoy_engine/execution/_chunked_group_key.py:1; _chunked.py:194 admits group_key; CHANGELOG.md:1278
 ---
 
 # Phase 4 Slice 2: group_key on the chunked route

@@ -1,5 +1,7 @@
 # Test-Quality Program (TQ-0 .. TQ-3)
 
+Status: plan
+
 **Written:** 2026-07-21. **Purpose:** move test quality from reflective (audit
 the existing 368-file suite after the fact) to proactive (make weakly-tested
 code unable to enter, and let the audit happen incrementally at the point of
