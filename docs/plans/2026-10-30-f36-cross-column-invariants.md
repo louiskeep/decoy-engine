@@ -1,10 +1,10 @@
-Status: plan only. This document grants no implementation, release, merge, or publication approval.
+Status: plan only, revision 3 (Opus remediation 1 of 3 after the Opus hostile review on `review/f36-opus`). This document grants no implementation, release, merge, or publication approval.
 
-Baseline: `decoy-engine` commit `fdd08a894d5dd4440a1adea0ee62bf0b670808bb`, equal to `origin/main` when framed on 2026-10-30. Planning branch: `plan/f36-cross-column-invariants`.
+Baseline: `decoy-engine` `fdd08a894d5dd4440a1adea0ee62bf0b670808bb`; `decoy-platform` `origin/main` `ea68d8e`; F31 plan `origin/plan/f31-safe-output` `a909118` (itself under revision). Line numbers below are at these commits.
 
-Rules consulted: `/home/cam/dev-rules/00-universal.md`, `/home/cam/dev-rules/risk-and-exceptions.md`, `/home/cam/dev-rules/README.md`, and the README-selected rulebooks `/home/cam/dev-rules/development-loop.md`, `/home/cam/dev-rules/workspace-and-vcs.md`, `/home/cam/dev-rules/reuse-first.md`, `/home/cam/dev-rules/exploration.md`, `/home/cam/dev-rules/scope-discipline.md`, `/home/cam/dev-rules/verification.md`, `/home/cam/dev-rules/feature-dev.md`, `/home/cam/dev-rules/testing.md`, `/home/cam/dev-rules/architecture.md`, `/home/cam/dev-rules/api-and-compatibility.md`, `/home/cam/dev-rules/data-and-migrations.md`, `/home/cam/dev-rules/security.md`, `/home/cam/dev-rules/performance.md`, `/home/cam/dev-rules/release-and-rollback.md`, `/home/cam/dev-rules/observability-and-resilience.md`, `/home/cam/dev-rules/config-secrets-and-supply-chain.md`, `/home/cam/dev-rules/code-review.md`, and `/home/cam/dev-rules/documentation.md`. Repository guidance consulted: `AGENTS.md`, `README.md`, `CODEMAP.md`, `CONTRIBUTING.md`, `CLAUDE.md`, and `SECURITY.md`.
+Rules consulted: `/home/cam/dev-rules/` README-selected rulebooks, repository `AGENTS.md`, `CODEMAP.md`, `CONTRIBUTING.md`, `CLAUDE.md`, and `decoy-platform:handoffs/queue:docs/handoffs/DEFECT-CATALOG.md`.
 
-Risk: **R2**. F36 adds public configuration, result fields, a versioned artifact, bounded relational scratch, concurrency, and a Platform schema. Owner approval, RED-first evidence, independent adversarial review, and exact-artifact gates apply to every slice.
+Risk: **R2**. Public configuration, result fields, a versioned artifact, bounded relational scratch, concurrency, and a Platform schema. Owner approval, RED-first evidence, and adversarial review per slice.
 
 # F36: Cross-column invariants and relational fidelity
 
@@ -12,70 +12,63 @@ Risk: **R2**. F36 adds public configuration, result fields, a versioned artifact
 
 ### Problem
 
-The engine has point validators and marginal fidelity reports, but no closed, bounded contract for declared row relations or join-cardinality change. Existing validator reports contain names, row positions, prose, and free mappings. F36 needs stable value-free identities, exact or honestly sampled counts, route parity, and a report-only seam for B-9 and future F35.
-
-The source/output ordering prerequisite is already present at `src/decoy_engine/execution/_runner.py:234-378` and is covered by `tests/unit/execution/test_cross_column_ordering.py:83-233`. F36 retains those tests and does not reimplement ordering.
+The engine has point validators and marginal fidelity reports, but no closed, bounded contract for declared row relations or join-cardinality change. Existing validator reports carry names, row positions, prose, and free mappings. F36 needs stable value-free identities, exact or honestly sampled counts, route parity, and a report-only seam for B-9 and future F35. The source/output ordering prerequisite exists at `src/decoy_engine/execution/_runner.py:234-378` with tests at `tests/unit/execution/test_cross_column_ordering.py:83-233`; F36 keeps them and does not reimplement ordering.
 
 ### Guarantee as properties
 
 For every valid F36 program within the limits below:
 
-1. The language is a closed tagged union. It has no expression text, SQL, callback, plugin, arbitrary literal set, free metadata, or user-defined operation.
-2. Every observation identity is `ObservationRef(CheckRef(code, authored_position), scope)`, where scope is exactly `source`, `output`, or `transition`. Reordering declarations does not change identity. Duplicate identities fail before data read.
-3. Source, output, and transition are separate observations with separate status, verdict, counts, and reason. Future F35 eligibility is only `scope=output`, `status=measured_exact`, and `verdict=pass`.
-4. Exact observations report exact counts. Sampled observations report observed and unobserved populations and never claim total failures. A sampled observation with no observed failure is `indeterminate`, never `pass`.
-5. Ordinary comparisons treat null as unknown. Only null checks judge nullity. Non-finite, overflowing, drifting, or non-comparable values are unevaluable, never silently passed or coerced.
-6. All supported execution routes feed one semantic collector. A route either measures, delegates, or refuses before its first read with a registered reason. No `skip` capability exists.
-7. Join-cardinality change compares aligned selected parent-row ordinals. No report, artifact, event, error, log, file, database row, or HTTP body contains a cell, key, row index, configured name, path, DSN, query, exception text, or value-derived label.
-8. Findings are measurement only. They do not change output bytes, quarantine, publication, job success, quality grade, or legacy `quality-report/v1`. F35 alone may later enforce eligible output observations.
-
-Every absence test first proves its seeded marker exists in input and that the expected surface emitted or was invoked.
+1. The language is a closed tagged union: no expression text, SQL, callback, plugin, literal set, free metadata, or user-defined operation.
+2. Every observation identity is `ObservationRef(CheckRef(code, authored_position), scope)`, scope exactly `source`, `output`, or `transition`. Reordering declarations does not change identity. Duplicate identities fail before data read.
+3. Source, output, and transition are separate observations with their own status, verdict, counts, and reason. F35 eligibility is only `scope=output`, `status=measured_exact`, `verdict=pass`, and `rows_evaluated>0`.
+4. Exact observations report exact counts. Sampled observations report observed and unobserved populations and never claim population failures. A sampled observation with no observed failure is `indeterminate`, never `pass`. Zero evaluated rows is never `pass`.
+5. Ordinary comparisons treat null as unknown. Only null checks judge nullity. Non-finite, overflowing, drifting, or non-comparable values are unevaluable.
+6. All supported routes feed one semantic collector. A route measures, delegates, or refuses before its first read with a registered reason. No `skip` capability exists.
+7. No report, artifact, event, error, log, file, database row, or HTTP body contains a cell, key, row index, configured name, path, DSN, query, exception text, value-derived label, or value-derived number. Every number in the report is a row or parent count.
+8. **R-FAIL (measurement never changes the run).** Findings and F36 failures alike do not change output bytes, quarantine, publication, job success, quality grade, or legacy `quality-report/v1`. The binding rule is in "Failure rule R-FAIL" below.
 
 ### Non-goals
 
-- Automatic discovery, inference, anomaly detection, arbitrary formulas, regex, Python, SQL, plugins, or set-membership syntax.
-- Gating, quarantine policy, output mutation, a new quality score, or a change to legacy validators.
-- Distributed execution or support above the selected-row limits.
-- Containment against malicious Python or native code already executing in the caller's process.
-- A generic aggregate registry, generic serializer, generic unseal API, or engine-owned file, database, or HTTP transport.
+- Discovery, inference, formulas, regex, Python, SQL, plugins; gating, quarantine policy, output mutation, a new score, legacy validator changes; distributed execution or rows above the limits.
+- Containment against malicious code already executing in the caller's process (use `run_pipeline_isolated`).
+- A generic aggregate registry, serializer, unseal API, or engine-owned file, database, or HTTP transport.
 
 ### Definition of done
 
-- The closed grammar, side-specific report, schema-specific codec, collector, and every V1 evaluator are public and tested.
-- All route and FK manifests are executable test data. Supported cells are byte-equal to the resident oracle; refused cells perform zero reads.
-- F31 ordinary events render summaries, while F36 canonical bytes use only the F36 codec.
-- Engine, CLI, and Platform surfaces pass the hostile marker corpus, field walk, exit matrix, barrier matrix, compatibility corpus, and schema snapshots.
-- B-9 stores a sibling invariant section without changing score, grade, job outcome, or legacy payloads. The F35 fixture accepts only exact output pass.
-- Each slice is independently gateable and small enough for at most two worker remediation rounds.
+- Grammar, side-specific report, codec, collector, R-FAIL guard, and every V1 evaluator are public and tested.
+- Route and FK manifests are executable test data. Supported cells are byte-equal to the resident oracle; refused cells perform zero reads; output bytes with invariants on equal bytes with invariants off on every route.
+- Every F31 extension point in the table below exists in the built F31 and is used as listed.
+- Engine, CLI, and Platform surfaces pass the marker corpus, field walk, exit matrix, barrier matrix, compatibility corpus, and schema snapshots.
+- B-9 stores one sibling invariant section per committed attempt without changing score, grade, job outcome, or legacy payloads. The F35 fixture accepts only eligible output observations.
 
-## F31 assumptions
+## F31 extension points (BLOCKER 1)
 
-F31 is a prerequisite only for ordinary output. The branch plan is read from `origin/plan/f31-safe-output:docs/plans/2026-10-30-f31-shared-safe-output-boundary.md`.
+F31 is being revised. F36 assumes only what `origin/plan/f31-safe-output` at `a909118` promises, and names each mechanism. Every F36 slice that consumes a row first runs a reconcile check against the built F31: if the mechanism is absent or changed, the slice stops and asks the owner. F36 never amends F31, widens an analyzer exemption, or adds a directory exclusion.
 
-| Item | Promise or owner |
-|---|---|
-| Provenance-backed `SafeEvent` and sealed `SerializedSafePayload` | F31, "The single model" and "One serializer and fail-closed behavior" |
-| `SafeOutputScope`, exception conversion, process-entry containment | F31, "Exception boundary", "Third-party and ambient containment", Slices 2-3 |
-| Named `families.quality` factories and shared analyzer | F31, "Ownership, layout, public API", Slices 1 and 5 |
-| Canonical `decoy-invariant-report/v1` codec | Built here in Slice 0 |
-| Collector feed lease and drain state | Built here in Slice 1 |
-| Descriptor-anchored relationship scratch lease | Built here in Slice 3 |
-| Bounded isolated invariant sidecar lease | Built here in Slice 7 |
-| CLI artifact publisher | Built in the CLI repository in Slice 9 |
-| Platform persistence and HTTP response adapters | Built in `decoy-platform` in Slice 10 |
-| Generic aggregate registry or generic unseal | Not promised by F31 and explicitly not built |
+| ID | F31 mechanism F36 uses (F31 plan line) | F36 use and owning slice |
+|---|---|---|
+| X1 | Domain family modules under `safe_output/families/` with named typed factories; "no generic public factory" (f31 :243-266, :270) and the documented review path for "a new event family" (f31 :768) | New engine module `safe_output/families/invariants.py` with factories `invariant_summary`, `invariant_not_run`, `invariant_artifact_written`, `invariant_route_refused`. Built in the engine (Slice 4), never in a consumer. CLI and Platform call these public factories; they mint nothing. |
+| X2 | `SafeCount(name_enum, value)` with closed names (f31 :293) | Closed names `observations_pass`, `observations_fail`, `observations_indeterminate`, `observations_not_run`. No `SafeMeasurement` use. |
+| X3 | F29 `ordinary_output: bool = False` and exact opt-in manifest (f31 :276) | Only the reasons marked "ordinary" in the reason table are opted in, in Slice 4. |
+| X4 | Exact data-plane writer manifest with one threat-model entry per writer, no wildcards (f31 :66, :470), per-repository sink manifests (f31 :58, :448) | Four entries, each added in the slice that builds the writer: engine `InvariantSidecarLease.write_bytes` (Slice 8); CLI `publish_invariant_artifact` (Slice 10); Platform `persist_invariant_report` ORM write and `invariant_artifact_response` byte response (Slices 11a, 11b). Each accepts only an exact `SerializedInvariantReportV1`. RED: the shared analyzer flags each writer before its manifest entry exists. |
+| X5 | Platform response-model gate: no `response_model`, approved byte adapters only (f31 :460, :671) | The artifact route returns a `Response` built only inside `invariant_artifact_response`, has no response model, and is listed in the Platform route manifest as data-plane. |
+| X6 | `SafeEventSink`, `SafeOutputScope`, process-entry install (f31 :270, :356) | Used unchanged for all ordinary F36 events. |
+| X7 | F31 changes ordinary serialization of `ExecutionResult` and `IsolatedRunResult` (f31 :228) | F36 field snapshots are taken on top of landed F31 engine Slice 5, never before. |
 
-No F36 module imports SQLAlchemy, FastAPI, CLI, or Platform code. If the implemented F31 surface differs from the three promised rows above, reconcile topology before Slice 0; do not amend F31 from this feature.
+Not assumed: aggregate registry, generic unseal, `SerializedSafePayload` nesting of the artifact. The invariant artifact is data-plane bytes produced only by the F36 codec; it is value-free by F36's own proof (marker corpus), not by F31's.
 
-## Established solutions and design notes
+## Failure rule R-FAIL (BLOCKER 2)
 
-- Named pair checks and aggregate-only result shapes follow [Great Expectations expectations](https://docs.greatexpectations.io/docs/0.18/cloud/expectations/manage_expectations/) and [result formats](https://docs.greatexpectations.io/docs/0.18/reference/learn/expectations/result_format/), without unexpected-value fields.
-- Null and ordinary comparison separation follows [PostgreSQL comparison semantics](https://www.postgresql.org/docs/current/functions-comparison.html).
-- Shared analyzers and separate constraints follow [Deequ key concepts](https://github.com/awslabs/deequ/blob/master/docs/key-concepts.md). F36 measures; F35 constrains.
-- Stable assertion identity follows [OpenLineage data quality assertions](https://openlineage.io/docs/spec/facets/dataset-facets/data_quality_assertions/), excluding actual values and free text.
-- Descriptor-relative operations follow Python's [`dir_fd` and no-check-before-use guidance](https://docs.python.org/3.12/library/os.html). DuckDB spill uses its documented [`temp_directory`, `memory_limit`, and `max_temp_directory_size`](https://duckdb.org/docs/lts/configuration/overview). `/proc/self/fd` is admitted only after the behavior described by [`proc_pid_fd(5)`](https://man7.org/linux/man-pages/man5/proc_pid_fd.5.html) is proven by the Slice 3 spike.
+One rule, enforced at one place: **any F36 internal failure after config validation yields `not_run` plus a registered reason for the affected observations and never changes output bytes, publication, or job outcome.**
 
-No new runtime dependency is planned. High cohesion puts grammar, row evaluation, relationship evaluation, collector state, and codec in separate modules. One fact lives in one place: enums and limits in `_registry.py`, transition rules in `_collector.py`, wire order in `_codec.py`, and route capabilities in one executable manifest. The public API uses typed context objects, not long parameter lists or behavior flags.
+- Config time (pre-read) is the only place F36 may fail a run: grammar errors, limits that are static, probe use, direct chunked API use, unsupported OS for relationship checks. These raise the existing config error before any read.
+- After config validation, every F36 call from route code goes through `InvariantRunGuard` (in `_collector.py`): `guard.feed(...)` and `guard.finalize(...)`. The guard catches `Exception` raised inside F36 frames only, marks affected observations `not_run` with the matching reason (`invariant.internal_failure` when no narrower code applies), emits `invariant_not_run` through F31, and returns normally. It never wraps route code, and `feed` accepts only materialized Arrow batches (no iterator or lazy frame), so a route read, mask, rewrite, or publish error never surfaces inside the guard and propagates exactly as today.
+- At compile time the guard pre-encodes the all-`not_run` fallback report for the program. If that encode fails, config validation fails. Therefore a failure during assembly still returns a valid report and the fallback itself cannot fail at run time.
+- `BaseException` that is not `Exception` (cancel, `KeyboardInterrupt`, `SystemExit`) propagates unchanged; F36 leases release in `finally`. The run's existing exit path owns the outcome.
+- Failure kinds covered: Arrow kernel error, DuckDB error, scratch identity drift, procfs absence at run time, scratch or memory budget exceeded, 100,000,001 selected rows, drain or deadline timeout, sidecar decode failure, codec cap overflow, collector assembly error.
+- Residual: a process OOM kill is not an exception. Bounded accumulators (acceptance 7) and the governor on isolated runs are the mitigation; in-process OOM stays a documented residual.
+
+Proof (acceptance 15): per route, a fault injector raises each failure kind; output bytes, publish commit call, job result, and `quality_metrics` equal the no-F36 run, and the report shows `not_run` with the expected reason. Mutation A: guard re-raises, test goes RED on publication. Mutation B: guard swallows without a reason, RED on reason membership. Mutation C: guard widened around route code, RED on the "route exception still fails the run" cell.
 
 ## Binding design
 
@@ -102,174 +95,209 @@ relationship   := {kind: relationship, position: u16,
                    coverage: exact}
 ```
 
-All Pydantic models use `extra="forbid"`. `position` is authored in `1..65535`. `sample_rows` is required only for sampled row-local checks. Tolerance is finite `Decimal` in `[0, 10^12]`. References resolve once during compile and names never enter report types. Relationship members must be the complete declared-order first-hit group for one child tuple.
+Pydantic models use `extra="forbid"`. `position` is `1..65535`. `sample_rows` is required only for sampled row-local checks. Tolerance is finite `Decimal` in `[0, 10^12]`. Names resolve once at compile and never enter report types. Relationship members must be the complete declared-order first-hit group for one child tuple.
 
-### Hard sizes and frame meanings
+### Hard sizes
 
 | Constant | Value and meaning |
 |---|---|
 | `MAX_CHECKS` | 256 declarations |
 | `MAX_RELATIONSHIP_MEMBERS` | 8 complete ordered members |
 | `MAX_SAMPLE_ROWS` | 1,000,000 observed rows per sampled scope |
-| `MAX_SELECTED_ROWS_PER_SIDE` | 100,000,000, independently for source and output |
-| `MAX_EVAL_BATCH_ROWS` | 65,536; larger Arrow input batches are sliced internally before a kernel feed |
-| `MAX_OBSERVATIONS` | 1,792: 256 relationship checks times 7 scoped observations |
-| `MAX_ARTIFACT_BYTES` | 16,777,216 canonical bytes, for file, isolated sidecar, DB, and HTTP alike |
+| `MAX_SELECTED_ROWS_PER_SIDE` | 100,000,000, independently per side; above it R-FAIL `invariant.row_limit` |
+| `MAX_EVAL_BATCH_ROWS` | 65,536; larger Arrow batches are sliced before a kernel feed |
+| `MAX_OBSERVATIONS` | 1,792: 256 relationship checks times 7 observations |
+| `MAX_ARTIFACT_BYTES` | 16,777,216 canonical bytes for file, sidecar, DB, and HTTP alike |
+| `MAX_DRAIN_SECONDS` | 300; finalize deadline is `min(MAX_DRAIN_SECONDS, remaining isolated timeout_s)` (`_isolated_run.py:151`) |
 
-A relationship declaration emits source and output observations for `rel.pk.unique`, `rel.fk.coverage`, and `rel.fk.orphan`, plus one transition observation for `rel.join.cardinality_change`: seven total. A row-local declaration emits source, output, and transition observations: three total. The maximum legal report fixture must encode below `MAX_ARTIFACT_BYTES`; otherwise Slice 0 stops and narrows the schema before implementation. There is no second envelope or transport frame size. Isolated execution uses the same bounded canonical sidecar bytes and keeps them out of `result.json`.
+A relationship declaration emits source and output observations for `rel.pk.unique`, `rel.fk.coverage`, `rel.fk.orphan`, plus one transition observation `rel.join.cardinality_change`. A row-local or reconciliation declaration emits source, output, and transition. The maximum legal report must encode below `MAX_ARTIFACT_BYTES`, or Slice 0 stops and narrows the schema.
 
-### Counts, status, and verdict
-
-`ExactRowCounts` fields are `rows_total`, `rows_evaluated`, `rows_passed`, `rows_failed`, `rows_null_unknown`, `rows_unevaluable`.
-
-```text
-rows_total = rows_evaluated + rows_null_unknown + rows_unevaluable
-rows_evaluated = rows_passed + rows_failed
-```
-
-`SampledRowCounts` fields are `population_rows`, `observed_rows`, `observed_passed`, `observed_failed`, `observed_null_unknown`, `observed_unevaluable`, `unobserved_rows`.
+### Counts, status, verdict
 
 ```text
-population_rows = observed_rows + unobserved_rows
-observed_rows = observed_passed + observed_failed
-              + observed_null_unknown + observed_unevaluable
+ExactRowCounts:   rows_total = rows_evaluated + rows_null_unknown + rows_unevaluable
+                  rows_evaluated = rows_passed + rows_failed
+SampledRowCounts: population_rows = observed_rows + unobserved_rows
+                  observed_rows = observed_passed + observed_failed
+                                + observed_null_unknown + observed_unevaluable
 ```
 
-No sampled type has `rows_failed` or any population-failure field. `ExactTransitionCounts` contains comparable, introduced, resolved, persistent-fail, persistent-pass, unknown, and unevaluable counts. `SampledTransitionCounts` adds `population_rows`, `observed_rows`, and `unobserved_rows` and uses the same observed transition buckets. `RelationshipCounts` and `JoinChangeCounts` are exact-only and use the field list below.
+No sampled type has a population-failure field. Transition types use comparable, introduced, resolved, persistent-fail, persistent-pass, unknown, unevaluable buckets; the sampled variant adds `population_rows`, `observed_rows`, `unobserved_rows`.
 
-For source or output scope: a known failure yields `fail`; no failure plus any unevaluable row yields `indeterminate`; exact clean yields `pass`; sampled clean yields `indeterminate`. For transition scope: an introduced failure or changed parent multiplicity yields `fail`; no such failure plus unknown or unevaluable alignment yields `indeterminate`; exact clean yields `pass`; sampled clean yields `indeterminate`. `not_run` and `unsupported` always pair with `indeterminate` and a registered reason.
+Source or output scope: any known failure is `fail`; zero evaluated rows is `indeterminate` with `invariant.no_rows_evaluated`; no failure plus any unevaluable row is `indeterminate`; exact clean is `pass`; sampled clean is `indeterminate` even when `unobserved_rows=0`. Transition scope: introduced failure or changed parent multiplicity is `fail`; zero comparable rows or any unknown alignment is `indeterminate`; exact clean is `pass`; sampled clean is `indeterminate`. `not_run` and `unsupported` always pair with `indeterminate`, `counts=None`, and a registered reason.
 
-F35 identifies `(code, position, scope)` and may satisfy a required invariant only from exact output pass. It never treats a source or transition pass as output eligibility.
+### Frozen `/v1` enums and unions (MEDIUM 2)
 
-### Collector lifecycle
+| Name | Members, in wire order |
+|---|---|
+| `scope` | `source`, `output`, `transition` |
+| `side` | `source`, `output` |
+| observation `status` | `measured_exact`, `measured_sampled`, `not_run`, `unsupported` |
+| `verdict` | `pass`, `fail`, `indeterminate` |
+| report `status` | `complete` (all measured), `partial`, `not_run` (none measured) |
+| report `coverage` | `exact`, `sampled`, `mixed`, `none` |
+| check `code` | `row.compare`, `row.null`, `row.null_pair`, `row.sum_equals`, `row.checksum`, `rel.reconciliation`, `rel.pk.unique`, `rel.fk.coverage`, `rel.fk.orphan`, `rel.join.cardinality_change` |
+| `structures` member | `ColumnStructureRef`, `RelationshipStructureRef` |
+| `counts` member | `ExactRowCounts`, `SampledRowCounts`, `ExactTransitionCounts`, `SampledTransitionCounts`, `RelationshipCounts`, `JoinChangeCounts`, `None` |
 
-`InvariantCollector` owns one lock, one condition, `inflight_feeds`, `close_pending`, bounded accumulators, and the table below. Feed admission increments `inflight_feeds` under the lock; kernel or DuckDB work runs outside it; merge and decrement run under it in `finally`, then notify. Finalize changes `OPEN` to `DRAINING`, rejects new feeds, waits for admitted feeds to reach zero, then snapshots and enters `FINALIZING`. No callback, query, codec, or sink runs under the lock.
+### Reasons (MEDIUM 3)
 
-| State | `feed` | `finalize` | `close` |
-|---|---|---|---|
-| `OPEN` | admit lease, evaluate, merge | become `DRAINING` | become `CLOSED` if no feed; otherwise set `close_pending` |
-| `DRAINING` | reject | one finalizer waits; others reject | set `close_pending`; draining feeds still merge |
-| `FINALIZING` | reject | reject | set `close_pending` |
-| `FINALIZED` | reject | reject | release and become `CLOSED` |
-| `CLOSED` | reject | reject | idempotent no-op |
+New F29 namespace profile `invariant(owner)` in `src/decoy_engine/reasons/_catalog.py` (the file is 170 lines and has no `invariant` profile), declared like `verification` at `_catalog.py:134-146` (kind finding, outcome findings). The registry takes the next minor version after landed F31 (`REGISTRY_VERSION` at `reasons/_registry.py:24`; the added-identity rule at `tests/unit/test_reason_registry.py:70-72` and `:150-157`). All codes are engine-declared, including the two Platform-detected ones (owner `platform`).
 
-After a draining feed decrements to zero, `close_pending` wins and closes without a report; otherwise the claiming finalizer enters `FINALIZING`. Failed assembly closes with a fixed reason. Feed/feed merge is serialized. Cancellation cannot strand an inflight count.
+| Code | Raised by | Ordinary (X3) |
+|---|---|---|
+| `invariant.probe_unsupported`, `invariant.chunked_api_unsupported`, `invariant.platform_unsupported` | config time | yes |
+| `invariant.internal_failure`, `invariant.row_limit`, `invariant.scratch_budget`, `invariant.deadline`, `invariant.feed_rejected` | R-FAIL | yes |
+| `invariant.no_rows_evaluated`, `invariant.no_source_side`, `invariant.alignment_lost` | verdict rules | no (report only) |
+| `invariant.report_conflict`, `invariant.report_not_persisted` | Platform (owner `platform`) | yes |
+
+### Collector lifecycle (HIGH 1)
+
+`InvariantCollector` owns one lock, one condition, `inflight_feeds`, `close_pending`, `claimant`, `drain_expired`, bounded accumulators, and this table. Admission increments `inflight_feeds` under the lock; kernel and DuckDB work runs outside it; merge and decrement run under it in `finally`, then notify. Merge applies only when state is `OPEN` or `DRAINING` and `drain_expired` is false; otherwise the result is discarded and still decremented. No callback, query, codec, or sink runs under the lock.
+
+| State | `feed` | `finalize` | `close` | claimant cancelled (`BaseException`) | deadline expires |
+|---|---|---|---|---|---|
+| `OPEN` | admit iff not `close_pending`; else reject | claim, become `DRAINING` | set `close_pending` (rejects all new feeds); `CLOSED` when inflight is 0 or at deadline | n/a | n/a |
+| `DRAINING` | reject | reject (one claimant) | set `close_pending`; claimant returns no report; `CLOSED` at inflight 0 or deadline | `CLOSED`, leases released, exception propagates | set `drain_expired`; enter `FINALIZING`; observations with an unmerged feed become `not_run` `invariant.deadline` |
+| `FINALIZING` | reject | reject | set `close_pending`; report is still returned to the claimant, then `CLOSED` | `CLOSED`, no report | relational queries interrupted; affected observations `not_run` `invariant.deadline` |
+| `FINALIZED` | reject | reject | release, `CLOSED` | n/a | n/a |
+| `CLOSED` | reject | reject | no-op | n/a | n/a |
+
+A rejected feed increments `rejected_feeds`; when rejection happens before snapshot, affected observations are `not_run` `invariant.feed_rejected`. The route matrix asserts `rejected_feeds == 0` on every supported cell. `close` is called only from route exit paths, so a close without a report means the run is not publishing.
 
 ### Row and relationship semantics
 
-Comparison and sum kernels use lossless Arrow common types only. Null is unknown. NaN, infinity, overflow, unsupported types, and drift are unevaluable. Checksums call `decoy_engine.checksums.validate`. Deterministic sampling selects `m=min(sample_rows,population_rows)` midpoint positions `floor(((2k+1)*population_rows)/(2m))` and aligns source/output on those positions.
+Comparison and sum kernels use lossless Arrow common types only. Checksums call `decoy_engine.checksums.validate` (`checksums.py:351-369`, one Python call per value). Deterministic sampling selects `m=min(sample_rows,population_rows)` midpoint positions `floor(((2k+1)*population_rows)/(2m))` and aligns source and output on those positions.
 
-Relationship semantics reuse `src/decoy_engine/relationships/_graph.py:71-204` and existing validator truth definitions at `src/decoy_engine/validators/_fk_validators.py:72-301` and `_relationship_checks.py:31-342`. Complete composite tuples are atomic. All-null child tuples are null orphans; partial-null tuples are unmatched. Multi-parent groups use declared-order first-hit. Duplicate non-null parents remain visible and make only join change indeterminate. Parent ordinals are `(member_position,row_position)` and never leave the evaluator. Subset compares the post-closure selection. Quarantine alignment happens before both side and transition collection.
+Relationship semantics reuse `relationships/_graph.py:134-204` (declared-order first-hit at `:167`, `:177`) and these validator truth definitions, never their Python-set implementations, which grow with rows (LOW 1):
 
-`InvariantScratchLease` retains root and child descriptors, creates fixed names relative to a dirfd with exclusive non-following opens, checks type, owner, device, inode, and link count, and gives Arrow duplicated file objects. DuckDB receives only a proven live `/proc/self/fd/<fd>` bridge and configured memory and temp-size limits. It streams aggregate results, never keys. Missing capability, procfs mismatch, identity drift, or unsupported platform refuses before staging. The worker does not proceed from the capability spike to SQL until every evasion test is RED then green.
+- Null parent tuples are excluded from the parent key set: `_parent_pk_set` (`validators/_fk_validators.py:72-114`).
+- An all-null child tuple is a null FK, a partial-null tuple is an ordinary unmatched tuple: `_child_fk_values` (`_fk_validators.py:116-142`, rule at `:140-141`).
+- `rel.fk.coverage` follows `validate_fk_intact` (`_fk_validators.py:150`, null FK ignored); `rel.fk.orphan` follows `validate_no_orphan_children` (`_fk_validators.py:235`, null FK is an orphan).
+- `rel.reconciliation` follows `validate_reconciliation_holds` (`validators/_relationship_checks.py:199-215`) grouping, but uses absolute `Decimal` tolerance, not that validator's `isclose`-style default `1e-6`. The divergence is documented in the module docstring.
+
+Duplicate non-null parents stay visible and make only join change indeterminate. Parent ordinals are `(member_position, row_position)` and never leave the evaluator. Quarantine alignment happens before side and transition collection.
+
+### Streamed source feed (HIGH 3)
+
+Each route feeds the source side at the read it already performs; F36 adds no source read.
+
+| Route | Source feed point | Per-row transition carrier |
+|---|---|---|
+| Resident (full-frame, mixed, multi-table, unified) | resident source table after load | in-memory aligned Arrow verdict arrays, bounded by `MAX_EVAL_BATCH_ROWS` slices |
+| Sequential and auto-chunk streamed | the raw batch in hand before masking, same iteration as its output batch | per-batch verdict array, aligned by in-batch ordinal, then quarantine-aligned |
+| OOC reorder | phase 1 raw batch, the only raw read (`out_of_core/_stream_driver.py:11-23`) | 2-bit verdict per row per row-local check, spilled as Arrow IPC under `InvariantScratchLease`, keyed by the same `row_nr` that phase 3 asserts (`_stream_driver.py:32-37`) |
+| OOC resident and batch-join | the batch where the raw child is read | same spilled carrier |
+
+Relationship keys for both sides are staged into DuckDB scratch at the same reads. Spill size counts against the scratch budget; exceeding it is R-FAIL `invariant.scratch_budget`. Acceptance 8 counts source reads per table and requires the count with invariants on to equal the count with invariants off.
+
+### Scratch capability
+
+`InvariantScratchLease` retains root and child descriptors, creates fixed names relative to a dirfd with exclusive non-following opens, checks type, owner, device, inode, and link count, and gives Arrow duplicated file objects. DuckDB receives only a proven live `/proc/self/fd/<fd>` bridge plus configured `memory_limit`, `temp_directory`, and `max_temp_directory_size`. Today `out_of_core/_duckdb.py:42` sets only `temp_directory` and `memory_limit`, so the temp-size cap is new configuration, not reuse. It streams aggregates, never keys. The Slice 3a spike must also prove that `DuckDBPyConnection.interrupt()` stops a running query (deadline column above); if not, Slice 3a stops for the owner.
+
+**Platform matrix (MEDIUM 7).** Row-local checks run on every OS. Relationship and reconciliation checks are Linux-only in V1; elsewhere they are `unsupported` with `invariant.platform_unsupported` decided at config time, before staging. Relationship cells of the parity matrix are Linux-only and labelled so; non-Linux CI, where present, asserts the `unsupported` cells.
 
 ### Artifact and isolation ownership
 
-`encode_invariant_report_v1` and `decode_invariant_report_v1` are schema-specific engine functions. They require exact types, closed fields, canonical order, duplicate-key rejection, finite bounded numerics, F29 membership, UTF-8, byte cap, and byte-for-byte re-encode equality. `SerializedInvariantReportV1` is an opaque exact type with no mapping or generic unseal. It is not a `SerializedSafePayload`.
+`encode_invariant_report_v1` and `decode_invariant_report_v1` are schema-specific engine functions: exact types, closed fields, canonical order, duplicate-key rejection, bounded integers, F29 membership, UTF-8, byte cap, byte-for-byte re-encode equality. `SerializedInvariantReportV1` is an opaque exact type with no mapping protocol or generic unseal. `measure_invariants` is a normal in-process API over typed Arrow inputs; callers with a hostile-code threat model use `run_pipeline_isolated`. F36 builds only the engine sidecar lease; the CLI owns its file publish, Platform its DB write and HTTP response, F31 every ordinary event.
 
-`measure_invariants` is a normal in-process library API. It accepts typed Arrow inputs and executes no callback, plugin, expression, or user code. It does not claim containment against malicious same-process code. A caller with that threat model uses existing `run_pipeline_isolated`; isolation parity is required, but isolation is not mandatory for trusted direct API use.
+### Platform persistence contract (HIGH 2)
 
-F36 builds only an engine sidecar lease for existing isolated execution. The CLI owns exclusive stage, fsync, rename, abort, and cleanup for requested report files. Platform owns its DB transaction and HTTP response. F31 owns ordinary status, error, log, and human/JSON events.
-
-### Platform persistence contract
-
-Slice 10 adds `job_invariant_reports` with exactly:
+Table `job_invariant_reports`, one row per attempt (V1 produces exactly one report per run, so there is no section position):
 
 | Column | Contract |
 |---|---|
-| `job_id` | Existing job ID type; FK to `jobs.id`; `ON DELETE CASCADE`; composite PK part 1 |
-| `section_position` | Nonnegative integer `<=65535`; composite PK part 2 |
-| `schema_version` | Fixed `decoy-invariant-report/v1` token |
-| `artifact_bytes` | Non-null binary, `1..MAX_ARTIFACT_BYTES`; exact canonical bytes |
+| `attempt_id` | PK; FK to `job_attempts.id` `ON DELETE CASCADE`, the same pattern as `job_outputs.attempt_id` (`api/models.py:1187-1190`) |
+| `schema_version` | Fixed `decoy-invariant-report/v1` |
+| `artifact_bytes` | Non-null binary, `1..MAX_ARTIFACT_BYTES`, exact canonical bytes |
 
-The composite PK is the uniqueness and idempotency key. A same-key retry with byte-identical content is a no-op. Different bytes at the same key raise fixed `invariant.report_conflict` and never overwrite. Reads are ordered by `section_position ASC`. The service flushes but never commits the caller-owned transaction. Owner-or-admin authorization applies before read. Downgrade drops only this table and its rows.
+- Fencing: attempts are fenced generations (`JobAttempt`, `uq_job_attempts_job_generation` and one non-terminal attempt, `api/models.py:971-995`). A retried generation is a new attempt and a new key, so a changed source never conflicts with an older report. The write happens only while the writing attempt still holds the fence, checked in the same transaction by the existing fence check that publication uses; Slice 11a cites that function before any code or stops for the owner.
+- Call site and transaction: a fourth best-effort hook in `_run_post_success_report_hooks` (`api/jobs/runner.py:289-335`), called from `run_job` and from the worker (`api/jobs/dispatch_worker_main.py:505`). It follows the quality hook pattern exactly: own session commit (`api/quality/runner_hook.py:273`), every `Exception` caught and logged through F31 without text (`runner_hook.py:141-153`), never raised into job completion.
+- Same-attempt second write with identical bytes is a no-op; with different bytes it keeps the first row and records `invariant.report_conflict` as an F31 event. Neither changes job outcome (R-FAIL).
+- Read: the report of the attempt whose outputs are committed. No row returns the fixed `invariant.report_not_persisted` body. Owner-or-admin authorization applies before read. Downgrade drops only this table.
 
 ## Defect-class closure table
 
 | # | Class | Closing structure | Non-vacuous RED-first proof | Required mutation |
 |---|---|---|---|---|
-| 1 | Value-bearing output | F36 exact report/codec plus F31 ordinary events and repository-owned transports | Seed markers through every surface; prove input marker and output unit exist | Bypass named event factory or add mapping decode |
-| 2 | Cleanup | Scratch lease, isolated sidecar lease, CLI file owner, caller-owned DB transaction | Owner by exit matrix covers success, refusal, error, cancel, `BaseException`, double close | Remove one `finally`, abort, or rollback path |
-| 3 | State/concurrency | Lock, condition, inflight feed leases, `DRAINING`, close-pending | Barriers after admission and before merge for every transition pair and feed/feed | Remove admission increment, wait, or merge lock |
-| 4 | Route parity | Executable capability manifest with measure, delegate, or pre-read refusal | Generated route matrix asserts telemetry, nonempty observations, bytes, zero-read refusal | Delete one route hook or decline reason |
-| 5 | Referential integrity | Complete ordered FK-shape manifest and exact member groups | Route by stage by FK shape product with independent counts | Drop one key component or later batch |
-| 6 | Untrusted producer | Exact frozen types, bounded codec, fixed errors, no producer exception formatting | Recursive field walk and hostile artifact corpus | Replace exact type check with `isinstance` |
-| 7 | TOCTOU | Descriptor-anchored scratch capability and identity checks | Symlink, rename, hard link, fd reuse, absent procfs, bridge drift | Use one bare path or remove post-query check |
-| 8 | Weak evidence | Same-lock RED logs, branch counters, non-vacuity, mutation per mechanism | Reviewer reruns baseline and named failing assertion | Remove marker or observation non-vacuity |
-| 9 | Refactor drift | Characterization first and route-family slices | No-invariant bytes, ordering, quarantine, rewrite placement, route choice | Move unified hook before quarantine or OOC hook before rewrite |
-| 10 | Frozen drift | Complete field ledger, schema snapshots, compatibility corpus | Field/default snapshots and old-reader fixtures | Reorder a field or mutate `/v1` in place |
+| 1 | Value-bearing output | F36 codec plus F31 extension points X1-X5; no value-derived numbers (no measurement field) | Marker corpus incl. numeric markers through every surface; F31 analyzer over the four X4 writers | Re-add a deviation measurement; drop one X4 manifest entry |
+| 2 | Cleanup on every exit | Scratch lease, sidecar lease, CLI file owner, Platform hook session; R-FAIL guard | Owner by exit matrix plus R-FAIL fault matrix per route | Remove one `finally`, or make the guard re-raise |
+| 3 | State and concurrency | Lock, condition, inflight leases, `close_pending`, claimant, deadline; attempt fence | Barrier matrix generated from the six-column table incl. starvation, claimant cancel, deadline | Let `OPEN` admit while `close_pending`; drop claimant cancel transition |
+| 4 | Route parity and silent fallback | Executable capability manifest; R-FAIL reasons; Linux matrix | Route matrix asserts telemetry, nonempty observations, bytes, zero-read refusal, `rejected_feeds==0` | Delete one route hook or one R-FAIL reason |
+| 5 | Referential integrity | FK-shape by route disposition table | Relational oracle per shape per route with expected status and route | Drop one key component; omit a later batch |
+| 6 | Untrusted producer | Exact frozen types, bounded codec, fixed errors, closed enums | Field walk and hostile artifact corpus | Replace an exact type check with `isinstance` |
+| 7 | TOCTOU (check then use) | Descriptor-anchored scratch capability and identity checks | Symlink, rename, hard link, fd reuse, absent procfs, bridge drift | Use one bare path; remove post-query check |
+| 8 | Weak evidence | Non-vacuity counters; zero-evaluated is indeterminate; same-lock RED logs | All-quarantined output is not `pass`; reviewer reruns baseline | Remove the zero-evaluated rule |
+| 9 | Refactor drift | Characterization first; census ratchet-down only | Placement mutations for full-frame, unified, OOC; read counter | Move full-frame hook above `_pipeline_full_frame.py:194` |
+| 10 | Frozen drift | Enum table, field ledger, dump-shape rule, schema snapshots | Snapshot and old-reader fixtures; `config_digest` unchanged | Emit `"invariants": None` in the default dump |
 
 ## Reuse inventory
 
 | Existing capability | Binding decision |
 |---|---|
-| F29 reason registry and manifest at `src/decoy_engine/reasons/` | Add append-only F36 reasons. Do not create another reason registry. |
-| F31 ordinary events, quality factories, process containment, and analyzer | Use only the promises in the F31 assumptions table. Do not treat event payloads as invariant artifacts. |
-| Strict `PipelineConfig` at `src/decoy_engine/config/_pipeline.py:45-99` | Add one optional strict block and characterize every default-inclusive dump consumer. |
-| Relationship config and graph at `config/_relationships.py:24-49` and `relationships/_graph.py:71-204` | Resolve the existing complete graph. Do not build a second graph or change first-hit and cycle rules. |
-| FK, orphan, reconciliation, and checksum truth definitions | Reuse algorithms or semantics from `validators/_fk_validators.py`, `validators/_relationship_checks.py`, and `checksums.py`; never reuse value-bearing result shapes. |
-| Arrow, DuckDB, and out-of-core budgets | Reuse formats, memory limits, temp-size budgets, and streaming aggregates behind the new descriptor capability. No unbounded Python key map. |
-| `OutputPublish` and transactional sinks | Retain publication ownership. F36 feeds and finalizes before the existing commit point and adds no output-data sink. |
-| Ordering, quarantine, route, golden, and compatibility tests | Characterize before hooks and retain as release sentries. |
-| Automatic module-size and public-import sentries | New files are discovered without allowlist entries. Add only the focused F36 import-boundary sentry. |
-| `test_physical_seam_disconnection.py` | Keep its actual narrow role: it protects `execution.physical` imports only. Do not cite it as a general layering proof. |
+| F29 registry (`src/decoy_engine/reasons/`) | New `invariant` profile and minor bump only (Reasons section). |
+| F31 extension points X1-X7 | Exactly as tabled; nothing else from F31. |
+| Strict `PipelineConfig` (`config/_pipeline.py:45-99`) | One optional strict block; dump shape unchanged when omitted (MEDIUM 6 list). |
+| Relationship config and graph (`config/_relationships.py:24-49`, `relationships/_graph.py:134-204`) | Resolve the existing graph; no second graph, no change to first-hit or cycle rules. |
+| Validator and checksum truth definitions | Semantics as cited in Row and relationship semantics; never value-bearing result shapes or Python-set implementations. |
+| `OutputPublish` and transactional sinks | F36 runs before the existing commit and adds no output-data sink. |
+| Platform quality hook pattern (`api/quality/runner_hook.py:119-153`, `:273`) | Copied for the invariant hook. |
+| `tests/sentry/test_module_size.py`, `test_public_import_boundary.py`, `test_physical_seam_disconnection.py` (narrow role only) | Unchanged; census rule in Slices. |
+| `tests/sentry/test_validate_no_mutation.py`, `test_methodology_citations.py`, `test_capability_matrix.py` (LOW 3) | `measure_invariants` must pass all three; new evaluator modules carry methodology citations (Great Expectations result formats, PostgreSQL null comparison, Deequ analyzers, OpenLineage assertion identity, Python `dir_fd`, DuckDB configuration, `proc_pid_fd(5)`). |
 
 ## Code-filled enumerations
 
-### Execution routes and hook placement
+### Execution routes and hook placement (HIGH 5)
+
+Dispatch: `execution/_pipeline.py:313-320` sends to `_pipeline_route_dispatch.py:27` (sequential), `:55` (out-of-core), `:80` (mixed), else `_pipeline_full_frame.run_full_frame_route` (`_pipeline_full_frame.py:86`).
 
 | Cells | Grounding and binding placement |
 |---|---|
-| Full-frame resident, pure mask, pure generate, generate then mask | `_pipeline_generate_mask.py:119-157,276-308`; collect after `finalize_validators_and_quarantine` and before result construction |
-| Independent multi-table split and residual group | `_pipeline_multi_table.py:260-402`; one enclosing collector, one finalize |
-| Mixed generate-mask and runtime decline | `_pipeline_mixed_route.py:148-282`; carry the same collector through decline |
-| Unified slice | `_unified_slice.py:275-350`; collect only after `finalize_validators_and_quarantine` at `:314-320` |
-| Sequential resident or transactional sink | `_sequential.py:531-638`; collect final rewritten and quarantine-aligned batches before commit |
-| Auto-chunk dispatcher resident, legacy resident, dispatcher streamed | `_pipeline_auto_chunk.py:218-350,395-450`; one run collector, never average chunk rates |
-| Out-of-core resident, sink batch-join, sink reorder | `out_of_core/_runner.py:125-341,450-531`; collect after FK rewrite, before commit |
-| Isolated false/true | `_isolated_run.py:141-243,409-622`; in-process parity or bounded canonical sidecar |
-| Governor off/on and failed rungs | `_governor.py:243-436`; only final completed `IsolatedRunResult` may carry a report |
-| Probe | `_probe.py:222-352`; F36 config rejects before spawn with `invariant.probe_unsupported` |
-| Direct public native and legacy chunk iterators | `native/_chunked_entry.py:601-690`, `_chunked.py:369-449`; reject F36 before first iterator pull |
-| Direct `PandasExecutionAdapter.run` | `_adapter.py:121-210`; remains config-unaware; callers use `measure_invariants` explicitly |
+| Full-frame resident, pure mask, pure generate, generate then mask | `_pipeline_full_frame.py:86-244`. Collect after `finalize_validators_and_quarantine` (`:194-200`) and before `publish.commit()` (`:243`). Never inside `run_generate_and_mask_steps` (`:123`), which runs before quarantine. |
+| Unified slice (early return at `_pipeline_full_frame.py:111`) | `_unified_slice.py:275-350`; collect after `finalize_validators_and_quarantine` at `:314` |
+| Sequential route executor | `_pipeline_route_exec.py:114` (`run_sequential_route`) into `_sequential.py:531-638`; final rewritten, quarantine-aligned batches before commit |
+| Out-of-core route executor | `_pipeline_route_exec.py:195` (`run_out_of_core_route`) into `out_of_core/_runner.py:125-341,450-531`; output after FK rewrite, before commit; source per HIGH 3 table |
+| Mixed and runtime decline | `_pipeline_route_exec.py:595` and `_pipeline_mixed_route.py:148-282`; the same collector carries through decline |
+| Independent multi-table | `_pipeline_multi_table.py:260-402`; one collector, one finalize |
+| Auto-chunk dispatcher and legacy | `_pipeline_auto_chunk.py:218-350,395-450`; one run collector |
+| Isolated false/true | `_isolated_run.py:141-243,409-622`; in-process parity or sidecar |
+| Governor | `_governor.py:243-436`; only the final completed `IsolatedRunResult` carries a report |
+| Probe | `_probe.py:222-352`; config-time refusal `invariant.probe_unsupported` before spawn |
+| Direct public chunk iterators | `native/_chunked_entry.py:601` (`run_mask_chunked`, file is 681 lines), `_chunked.py:369-449`; refuse before first pull |
+| Direct `PandasExecutionAdapter.run` | `_pandas_adapter.py:105`, `run` at `:163`; config-unaware; callers use `measure_invariants` |
 
-### Owned state and exits
+### Owned state and exit paths
 
 | Owner | Every required exit |
 |---|---|
-| `InvariantCollector` | finalize, feed failure, assembly failure, feed/feed, feed/finalize, finalize/finalize, feed/close, finalize/close, cancel, `BaseException`, repeated close |
-| `InvariantScratchLease` | capability refusal, root/child open failure, bridge mismatch, Arrow or DuckDB failure, budget refusal, success, cancel, `BaseException`, cleanup failure, repeated close |
-| `InvariantSidecarLease` | create, write, flush, fsync, close, decode, child crash, timeout, malformed envelope, parent discard, parent commit, cleanup failure, repeated dispose |
-| Existing `OutputPublish` and transactional sink | context exception, normal no-commit, write or close failure, commit success/failure, abort before/after failure, repeated abort |
-| Sequential, auto-chunk, out-of-core route owners | resident/sink success, decline, validation failure, stream error, input/spill close failure, exception before/after commit, caller-owned root |
-| Governor and probe | flag off/on, failed or killed rung, successful later rung, exhaustion, callback failure; probe refusal before spawn |
-| CLI report file owner | validation refusal, exclusive stage failure, write/fsync/rename failure, success, cancel, cleanup failure, repeated abort |
-| Platform caller transaction | same retry, conflicting retry, flush failure, caller rollback, authorization refusal, missing job, cascade delete, upgrade/downgrade |
+| `InvariantCollector` and `InvariantRunGuard` | every cell of the six-column table; each R-FAIL kind; repeated close |
+| `InvariantScratchLease` | capability refusal, open failure, bridge mismatch, Arrow or DuckDB failure, budget, interrupt, success, cancel, cleanup failure, repeated close |
+| `InvariantSidecarLease` | create, write, fsync, close, decode failure, child crash, timeout, malformed envelope, parent discard and commit, cleanup failure, repeated dispose |
+| Existing `OutputPublish` and sinks (`_sequential.py:23-63`) | unchanged; R-FAIL proves commit is called exactly as without F36 |
+| Route owners | resident and sink success, decline, validation failure, stream error, exception before and after commit |
+| Governor and probe | failed rung, later success, exhaustion, callback failure; probe zero spawn |
+| CLI file owner | refusal, stage, write, fsync, rename failures, success, cancel, cleanup failure |
+| Platform invariant hook | fence lost, same-bytes retry, conflict, DB error, rollback, cascade, migration up and down |
 
-### FK shapes
+### FK shapes by route (MEDIUM 5, LOW 2)
 
-The generated manifest contains:
+R = resident routes (full-frame, unified, mixed, multi-table), S = sequential and auto-chunk, O = out-of-core. Default disposition is `measured_exact` on the route the run actually took, with route telemetry asserting that route.
 
-- single-column cross-table;
-- composite all-present, partial-null, and all-null;
-- one parent with multiple children, including a child in a later batch;
-- the same parent table with different child tuples;
-- one child tuple with its complete multi-parent first-hit group;
-- self-reference with a parent row in a later batch;
-- multi-hop chain and diamond fan-in;
-- junction table with two independent parent tuples;
-- zero, one, and many child multiplicity;
-- duplicate and null parent keys, unmatched keys, and an empty child;
-- an earlier parent relation consumed by a later table or batch;
-- generate-parent to mask-child;
-- generate-child to mask-parent existing refusal;
-- cycle existing refusal;
-- direct public chunked refusal;
-- Platform `job_invariant_reports.job_id -> jobs.id ON DELETE CASCADE`.
+| Shape | R | S | O |
+|---|---|---|---|
+| Single-column cross-table; composite all-present, partial-null, all-null | measured | measured | measured |
+| One parent many children, child in a later batch | measured | measured | measured |
+| Same parent table, different child tuples; multi-parent first-hit group | measured | measured | measured |
+| Self-reference, parent in a later batch | measured | measured | OOC rejects (`out_of_core/_compat.py:478-492`); run falls back to full-frame; report measured, telemetry `full_frame` |
+| Multi-hop chain, diamond fan-in, junction with two parents | measured | measured | measured |
+| Zero, one, many multiplicity; duplicate and null parents; unmatched; empty child | measured (duplicates make join change `indeterminate`) | same | same |
+| Generate-parent to mask-child | source scope `not_run` `invariant.no_source_side` for the parent; output measured; transition `not_run` | same | same |
+| Generate-child to mask-parent; cycle | existing config refusal, zero reads | same | same |
+| Direct public chunked API | n/a | config refusal `invariant.chunked_api_unsupported`, zero pulls | n/a |
 
-### Public result fields and defaults
+### Public result fields and defaults (HIGH 4)
 
-All new domain records are frozen, slotted, exact dataclasses with no inheritance. Fields are in this order:
+Frozen, slotted, exact dataclasses, no inheritance, fields in order:
 
 | Type | Fields |
 |---|---|
@@ -284,182 +312,118 @@ All new domain records are frozen, slotted, exact dataclasses with no inheritanc
 | `ExactTransitionCounts` | `comparable_rows`, `introduced_failures`, `resolved_failures`, `persistent_failures`, `persistent_passes`, `unknown_transitions`, `unevaluable_transitions` |
 | `SampledTransitionCounts` | `population_rows`, `observed_rows`, `introduced_failures`, `resolved_failures`, `persistent_failures`, `persistent_passes`, `unknown_transitions`, `unevaluable_transitions`, `unobserved_rows` |
 | `JoinChangeCounts` | `comparable_parents`, `changed_parents`, `increased_parents`, `decreased_parents`, `lost_all_children`, `gained_from_zero`, `unchanged_parents` |
-| `BoundedMeasurement` | `name`, `value`, `unit` |
-| `InvariantObservation` | `observation_ref`, `structures`, `status`, `verdict`, `reason`, `counts`, `measurements` |
+| `InvariantObservation` | `observation_ref`, `structures`, `status`, `verdict`, `reason`, `counts` |
 | `InvariantReportV1` | `schema_version`, `status`, `coverage`, `observations` |
 
-`ExecutionResult` becomes `outputs`, `timings=()`, `boundary_conversion_ms=0.0`, `warnings=()`, `quality_metrics={}`, `table_kinds={}`, `row_errors=()`, `invariant_report=None`.
+V1 has no measurement field: every candidate (maximum deviation, residual sum) is value-derived and is dropped. Every integer is a row or parent count bounded by `MAX_SELECTED_ROWS_PER_SIDE`. Enum and union members are the frozen table above.
 
-`IsolatedRunResult` becomes `outcome`, `peak_rss_mb`, `outputs`, `quality_metrics`, `table_kinds`, `returncode`, `signal_number`, `error`, `isolated`, `pid=None`, `committed_output_dir=None`, `row_errors=()`, `extra={}`, `reason=None`, `memory_evidence=None`, `invariant_report=None`.
+`ExecutionResult` (`_adapter.py:61-71`) gains trailing `invariant_report=None`. `IsolatedRunResult` (`_isolated_common.py:362-388`) gains trailing `invariant_report=None`. Unchanged: `GovernorTripRecord` and `GovernorResult` (`_governor.py:170-211`), `ProbePoint` and `ProbeResult` (`_probe.py:133-172`). `SerializedInvariantReportV1` is opaque with no public fields.
 
-F36 does not change these public records:
-
-- `GovernorTripRecord`: `route`, `budget_bytes`, `observed_peak_mb`, `trip_kind`, `reroute_to`, `error`.
-- `GovernorResult`: `outcome`, `final_route`, `result`, `trips=()`, `diagnostic=None`.
-- `ProbePoint`: `rows`, `peak_bytes`.
-- `ProbeResult`: `conclusive`, `reason`, `estimated_peak_bytes=None`, `slope_bytes_per_row=None`, `intercept_bytes=None`, `low_point=None`, `high_point=None`.
-
-The field walk pins type, order, defaults, bounds, and union members. `SerializedInvariantReportV1` is an opaque non-dataclass with no public fields or mapping protocol.
+**Default config dump consumers (MEDIUM 6).** Producers: `config/_pipeline.py:50`, `config/_override.py:65`. Consumers that require the default-inclusive dump: `generation/_reproducibility.py:204` (hashes the whole dump into `config_digest`), `execution/capacity.py:219`, `execution/_job_estimate.py:82`, `execution/_isolated_run.py:158`, `execution/_pipeline.py:12`, `verification/postmask/runner.py:53`, `verification/postmask/residual_pii.py:139`, `profile/_source.py:57`, `profile/_fixed_width_reader.py:148`, `plan/_checks_dp.py:66`. Rule: when the block is omitted, `model_dump()` omits the `invariants` key, so every dump and every `config_digest` is byte-identical to today. A characterization test pins the digest of every golden config before Slice 0 code.
 
 ### Output surfaces
 
 | Surface | F36 disposition |
 |---|---|
-| Direct API and object `repr` | Exact typed report only; schema-specific codec only |
-| Canonical bytes and isolated sidecar | F36 codec and one 16 MiB cap; no event payload reuse |
-| CLI stdout, stderr, JSON, quiet, verbose, help, parse errors, root callbacks | F31 named events; quiet is silent; findings exit 0 |
-| CLI requested file | CLI-owned exact artifact publisher; never print the path |
-| Engine logs, warnings, progress, errors | F31 events only; no report dump or exception text |
-| Governor result, trips, callback, diagnostics | Existing fields unchanged; failed rungs carry no report |
-| Probe result | Existing fields unchanged; F36 refuses before child spawn |
-| Platform DB and authorized API body | Exact canonical artifact, separate row and byte response |
-| FastAPI 404, 422, framework exceptions, response-model serialization, OpenAPI | F31 process boundary; artifact route has no response model and returns approved byte response; hostile path/query/body tests |
-| Platform logs, job events, audit, evidence, telemetry, trackers | F31 events; no new F36 audit row; B-9 gets one sibling artifact section |
-| Notifications, vaults, callbacks, support bundles | No F36 payload; tests assert non-invocation or registered status event only |
-
-## Hostile-review finding closure
-
-| ID | Concrete design change | RED-first test | Slice effect |
-|---|---|---|---|
-| B1 | Assume only promised F31 events/containment; F36 owns codec and sidecar; repositories own transports | Import sentry rejects aggregate prerequisite, SQLAlchemy, FastAPI, CLI, Platform imports | Add Slice 0 and keep transports in Slices 9-10 |
-| B2 | Separate exact and sampled count types; sampled has observed and unobserved only | Clean sample balances without total failures; forged population failure field rejects | Slice 2 before routes |
-| B3 | One observation and verdict per scope; F35 exact output pass only | Source fail/output pass and inverse produce independent verdicts | Slices 0 and 2 |
-| H4 | Inflight feed lease, condition, `DRAINING`, close-pending | Barrier after admission proves finalize waits; feed/feed included | Dedicated Slice 1 |
-| H5 | Complete Platform columns, PK, FK/cascade, retry conflict, ordering, transaction rule | Same retry, conflict, rollback, cascade, ordered read | Slice 10 owns schema and service together |
-| H6 | Governor/probe fields stay unchanged; probe refuses F36 before spawn | Field snapshots, failed-rung absence, zero probe spawn | Dedicated Slice 7 |
-| H7 | Split resident, sequential/chunked, OOC, process, and artifact integration | Each slice starts with only its route cells RED and reruns prior parity | Replace old combined route slice with Slices 4-8 |
-| M1 | Add framework-generated 404/422/OpenAPI/response-model surfaces | Hostile path/query/body through each generated surface | Slice 10 analyzer and route tests |
-| M2 | Ground dirfd/procfs/DuckDB protocol and gate it with a capability spike | Symlink, rename, hard link, fd reuse, procfs absence, bridge drift, spill cap | Slice 3 spike precedes evaluator |
-| L1 | Do not add module-size sentry entries or exclusions | Existing automatic sentry plus temporary oversized fixture | Every slice: new modules target 450 and no allowlist edit |
-| L2 | Existing physical sentry remains narrow; add F36 import-boundary sentry | Forbidden JSON, Rich, logging, persistence, CLI, Platform imports turn RED | Slice 0 |
+| Direct API, object `repr` | Exact typed report only |
+| Canonical bytes, isolated sidecar | F36 codec, one 16 MiB cap, X4 writer |
+| CLI stdout, stderr, JSON, quiet, verbose, help, parse errors, root callbacks | X1 factories via X6; quiet is silent; findings and R-FAIL exit 0 |
+| CLI requested file | X4 `publish_invariant_artifact`; path never printed |
+| Engine logs, warnings, progress, errors | X1 events only |
+| Governor, probe | Existing fields unchanged; failed rungs carry no report |
+| Platform DB row, artifact HTTP body | X4 writers; X5 route without response model |
+| FastAPI 404, 422, framework exceptions, OpenAPI | F31 process boundary; hostile path, query, body tests |
+| Platform logs, job events, audit, evidence, telemetry, notifications, support bundles | F31 events only; no F36 payload; B-9 gets one sibling section |
 
 ## Frozen contracts touched
 
 | Contract | Classification and proof |
 |---|---|
-| Pipeline V1 config | Additive `invariants: InvariantProgramV1 | None=None`; default-inclusive dump gains `"invariants": None`; every dump consumer is characterized |
-| `run_pipeline`, route choice, determinism, output bytes | Unchanged when omitted; no-invariant golden and route tests |
-| `ExecutionResult` | Additive trailing defaulted field; full field snapshot |
-| `IsolatedRunResult` and worker envelope | Additive trailing defaulted field; sidecar name is fixed envelope metadata, report bytes stay outside JSON |
-| `GovernorTripRecord`, `GovernorResult`, `ProbePoint`, `ProbeResult` | Fields, defaults, `error`, `diagnostic`, and `reason` meanings unchanged; snapshots and no-F36 behavior tests |
-| Direct public chunked APIs | New F36 config refuses before first pull; all old inputs and return shapes unchanged |
-| `decoy_engine.__all__`, F29 reasons | Exact additive names and append-only reasons only |
-| F31 `decoy-safe-output/v1` | Used unchanged for ordinary events; invariant artifact is not nested or registered there |
-| `quality-report/v1`, grade, legacy validator report | Frozen unchanged; no invariant `quality_metrics` key |
-| `decoy-invariant-report/v1` | New closed schema; field order, enum tokens, limits, canonical bytes, and strict reader frozen; changes require `/v2` |
-| CLI commands and exits | Additive report command/file option; measured findings remain exit 0; existing no-F36 modes unchanged |
-| Platform tables and endpoints | Additive table and owner-scoped endpoint; legacy quality routes, audit behavior, and B-9 primary sections unchanged |
-| Release identity and pins | Chosen from the current lineage after F31 is gated; exact artifact and consumer pins are release evidence, not hard-coded plan numbers |
+| Pipeline V1 config | Additive optional block; omitted block leaves dump and `config_digest` byte-identical |
+| `run_pipeline`, route choice, output bytes | Unchanged with or without invariants (R-FAIL and on/off byte equality) |
+| `ExecutionResult`, `IsolatedRunResult` | Additive trailing defaulted field; snapshot on top of F31 (X7) |
+| Governor and probe records | Unchanged; snapshots |
+| Direct chunked APIs | Config refusal before first pull; shapes unchanged |
+| `decoy_engine.__all__`, F29 registry | Exact additive names; new profile; next minor |
+| F31 `decoy-safe-output/v1` | One new family and closed names via X1-X3; artifact never nested |
+| `quality-report/v1`, grade, legacy validators | Unchanged; no invariant `quality_metrics` key |
+| `decoy-invariant-report/v1` | New; enum table, field order, limits, canonical bytes frozen; change needs `/v2` |
+| CLI commands and exits | Additive; findings and F36 failures exit 0 |
+| Platform tables and endpoints | Additive table keyed by attempt; owner-scoped endpoint; legacy routes unchanged |
 
 ## Acceptance tests, all RED first
 
-1. **Grammar and identity:** current config rejects a valid block; implementation accepts it while rejecting extra keys, expression/SQL/callable shapes, duplicate identities, partial relationship groups, and 257 checks. Reorder and name/value replacement preserve observation refs and canonical order.
-2. **Scoped verdict matrix:** source fail/output pass, source pass/output fail, introduced/resolved/persistent transitions, pure-generate no-source, and alignment loss all produce independent status and verdict.
-3. **Exact and sampled balance:** every bucket is nonzero across fixtures. Exact and sampled equations hold. Clean sampled is indeterminate with `unobserved_rows>0`; sampled observed failure fails; no total-failure field can be encoded.
-4. **Truth tables:** every compare and null operator, arithmetic tolerance, overflow, null, non-finite, incompatible type, and checksum scheme has independent expected counts. A spy proves checksum registry reuse.
-5. **Collector races:** barrier after feed admission and before merge covers feed/feed, feed/finalize, finalize/finalize, feed/close, finalize/close, cancel, and close-pending in both orders. Exactly one report or one close wins and no admitted feed is lost.
-6. **Relationships:** independently computed counts cover all FK shapes, first-hit multi-parent shadowing, duplicates, nulls, empty child, later parent/child batches, and constant row totals with changed multiplicity.
-7. **Scratch capability:** every TOCTOU evasion and unsupported capability refuses before staging; low memory and temp limits spill within budget; no Python collection grows with rows.
-8. **Route product:** force every capability cell and batch partitions `1`, `7`, `65_536`, including unified post-quarantine and OOC post-rewrite. Compare canonical bytes and route telemetry. Refusals record zero reads.
-9. **Process ownership:** isolated false/true parity, child crash/timeout/malformed envelope/oversize sidecar, governor two failures then success, exhausted governor, callback failure, probe zero-spawn refusal, and direct chunk zero-pull refusal.
-10. **Artifact corpus:** maximum legal report is below 16 MiB. Mutate schema, keys, order, bounds, UTF-8, duplicate keys, trailing bytes, reason membership, numeric form, and size. Valid round trip is byte-identical; invalid input returns no partial report.
-11. **Selected scope:** subset excludes a full-source violation and quarantine removes another row. Selected and aligned results differ from the deliberately wrong full-source oracle.
-12. **Platform contract:** same retry, conflicting retry, rollback, cascade, authorization, old job, missing report, deterministic order, migration round trip, exact bytes, 404, 422, OpenAPI, and response-model bypass attempt.
-13. **B-9 and F35:** two sections preserve declaration order and partial status; score, grade, job outcome, and legacy payload stay fixed. Only exact output pass is eligible.
-14. **100M boundary:** 100,000,000 narrow rows complete within existing memory/scratch budgets; 100,000,001 on either side returns fixed `not_run` before staging. Evidence records HWM and scratch counts, never paths or values.
+1. **Grammar and identity:** valid block rejected today; implementation rejects extra keys, expression shapes, duplicates, partial groups, 257 checks; reorder and renames preserve refs.
+2. **Scoped verdicts:** source fail/output pass and inverse, transitions, pure generate, alignment loss give independent verdicts.
+3. **Balance:** every bucket nonzero across fixtures; equations hold. `sample_rows < population` gives `unobserved_rows>0`; `sample_rows >= population` gives `unobserved_rows==0` and clean is still `indeterminate`.
+4. **Truth tables:** every operator, tolerance, overflow, null, non-finite, type, and checksum scheme; a spy proves `checksums.validate` reuse.
+5. **Collector races:** barrier matrix generated from all six table columns, plus feed/feed.
+6. **Relationships:** every FK shape against an independent oracle, including later batches and changed multiplicity at constant row totals.
+7. **Scratch:** every TOCTOU evasion refuses before staging; low limits spill within budget; no Python collection grows with rows; `interrupt()` honoured.
+8. **Route product:** every capability cell at batch sizes 1, 7, 65,536; canonical bytes, route telemetry, source-read count equal to invariants-off, output bytes equal to invariants-off, `rejected_feeds==0`; refusals record zero reads.
+9. **Process ownership:** isolated parity, child crash, timeout, malformed envelope, oversize sidecar, governor failures then success, exhaustion, probe zero spawn, direct chunk zero pull.
+10. **Artifact corpus:** maximum legal report under 16 MiB; every schema, order, bound, UTF-8, duplicate-key, trailing-byte, reason, and size mutation rejected with no partial report.
+11. **Selected scope:** subset and quarantine differ from a deliberately wrong full-source oracle.
+12. **Platform:** fence-lost write refused, same-bytes no-op, conflict recorded and job still succeeds, rollback, cascade, authorization, no-report read, migration round trip, exact bytes, 404, 422, OpenAPI, response-model bypass.
+13. **B-9 and F35:** one section per committed attempt; score, grade, outcome, legacy payload fixed; only eligible output observations accepted.
+14. **Scale:** 100,000,000 narrow rows within budgets; 100,000,001 on either side yields R-FAIL `invariant.row_limit` before staging; checksum throughput at 10M rows recorded as evidence (LOW 5).
+15. **R-FAIL fault matrix:** see the R-FAIL section.
 
-Generated tests include the recursive public-field walk, owner by exit matrix, transition-pair barrier matrix, seeded marker corpus, route by FK product, balance properties, and artifact mutation corpus. Each asserts a positive visit/emission/branch count before its main assertion.
+Generated tests (field walk, exit matrix, barrier matrix, marker corpus with raw cell, key, name, path, DSN, credential, exception, class-name, Unicode, short, numeric, UUID-shaped, SQL-shaped, and control-character markers, route by FK product, balance, artifact corpus, R-FAIL matrix) each first assert the marker is in input and a positive visit or emission count.
 
-## Hostile corpus: ten gate breaks
+## Hostile corpus: ten gate breaks, each with a RED-first test
 
-| Attack | RED witness | Slice |
-|---|---|---|
-| Source and output disagree but one verdict hides it | Scoped verdict matrix | 0, 2 |
-| Clean sample claims zero failures or breaks balance | Sampled type and forged-field rejection | 2 |
-| Finalize overtakes an admitted feed | Post-admission barrier | 1 |
-| Composite FK uses only its first component | Composite relational oracle | 3 |
-| A later parent or child batch is omitted | Batch-partition relationship test | 3, 5-6 |
-| Failed governor rung or probe publishes a report | Failed-rung absence and zero-spawn probe | 7 |
-| Scratch identity swaps after validation | Before/after query identity evasion | 3 |
-| Platform duplicate stores conflicting bytes | Same-key different-bytes conflict test | 10 |
-| FastAPI 404/422/OpenAPI echoes hostile input | Framework-generated surface corpus | 10 |
-| Unified or OOC hook runs before final row semantics | Move-before-quarantine/rewrite mutations | 4, 6 |
-
-The seeded corpus includes unique raw cell, key, table, column, path, DSN, URL, credential, exception, class-name, Unicode, short, numeric, UUID-shaped, SQL-shaped, and control-character markers. It scans object `repr`, canonical bytes, CLI modes/files, isolated/governor/probe state, Platform DB/API/framework errors, logs, audit, evidence, telemetry, and failure paths. These are defensive fixtures, not exploit scripts.
+| # | Break (review section 5) | RED-first test | Slice |
+|---|---|---|---|
+| 1 | CLI prints a summary with no F31 factory | CLI test calls only `families.invariants`; analyzer RED on any CLI-local event construction | 4, 10 |
+| 2 | Sidecar, CLI file, or Platform byte writer is an unregistered sink | Analyzer run before each X4 entry exists is RED, green after | 8, 10, 11a, 11b |
+| 3 | DuckDB error drops publication or is swallowed | R-FAIL matrix: DuckDB fault keeps publication and records `invariant.internal_failure` | 1, 5-7 |
+| 4 | Close starvation, stranded `DRAINING` | Barrier rows: feed after `close_pending` rejected; claimant cancel reaches `CLOSED`; deadline row | 1 |
+| 5 | Retried attempt conflicts and fails the job | Two generations with different source bytes store two rows; same-attempt conflict records a reason and job succeeds | 11a |
+| 6 | OOC source scope re-reads source | Source-read counter equals invariants-off | 7 |
+| 7 | Numeric marker surfaces as a measurement | Numeric cell marker larger than every fixture count absent from report, DB, HTTP; mutation re-adding deviation turns RED | 0, 2 |
+| 8 | Full-frame hook before quarantine | Quarantine fixture where pre-quarantine counts differ; mutation moves hook into `run_generate_and_mask_steps` | 5 |
+| 9 | All-quarantined output reports exact pass | Zero evaluated rows gives `indeterminate` and F35 fixture refuses it | 2, 11b |
+| 10 | Self-reference on OOC claims OOC measured it | FK-by-route table cell asserts telemetry `full_frame` and `measured_exact` | 7 |
 
 ## Implementation slices
 
-Every new module has a 450 physical-line plan ceiling, stays out of the module-size allowlist, and is discovered automatically by `tests/sentry/test_module_size.py`. Existing 600-line or allowlisted seams get zero net growth; extract a helper before adding a hook. Each slice writes the named behavior test first, records the intended assertion RED, implements, runs targeted plus prior parity tests, mutates its mechanism once, then receives adversarial review. Resolve every BLOCKER and HIGH before the next slice.
+New modules have a 450-line plan ceiling and need no census entry. Census rule (MEDIUM 1): existing `tests/sentry/test_module_size.py` entries may only ratchet down to the exact new LOC; no new entries and no upward bumps. Hook sites already on the census: `_sequential.py` 696 (`:120`), `out_of_core/_runner.py` 681 (`:124`), `out_of_core/_stream_driver.py` 609 (`:126`), `native/_chunked_entry.py` 681 (`:100`), `_chunked.py` 627 (`:96`), `_isolated_run.py` 622 (`:68`). `_pipeline_route_exec.py` is at 600 and must stay at or below 600. Each hook is a single guard call; extract first where needed. Every slice writes its RED tests first, implements, reruns prior parity, mutates its mechanism once, then gets adversarial review.
 
-### Slice 0: closed models, limits, codec, and import boundary
+- **Slice 0** (engine): models, limits, enum table, codec, dump-shape rule and digest characterization, import sentry. RED: acceptance 1, 10, field walk, break 7 schema half.
+- **Slice 1** (engine): collector table and `InvariantRunGuard` with fake accumulators and the precomputed fallback. RED: acceptance 5, breaks 3 and 4 (unit level).
+- **Slice 2** (engine): row compiler, kernels, sampling, count types, zero-evaluated rule. RED: acceptance 2-4, breaks 7 and 9.
+- **Slice 3a** (engine): dirfd, procfs, DuckDB bridge and `interrupt()` spike, scratch lease, cleanup matrix. RED: acceptance 7. Stop if the spike fails.
+- **Slice 3b** (engine): relationship and reconciliation evaluator, first-hit groups, aligned ordinals. RED: acceptance 6.
+- **Slice 4** (engine; needs F31 engine gated): X1-X3 family module, reasons opt-in, reconcile check. RED: break 1 at engine level.
+- **Slice 5** (engine): full-frame, unified, mixed, multi-table hooks. RED: route cells, break 8, R-FAIL cells.
+- **Slice 6** (engine): sequential and auto-chunk hooks, direct chunk refusal. RED: route cells, R-FAIL cells.
+- **Slice 7** (engine): out-of-core source carrier and hooks, scale. RED: breaks 6 and 10, acceptance 14.
+- **Slice 8** (engine): sidecar lease (X4), governor, probe. RED: acceptance 9, break 2 engine writer.
+- **Slice 9** (engine): compatibility, snapshots after F31 (X7), docs, release identity from current lineage.
+- **Slice 10** (`decoy` CLI): thin `report invariants`, X4 file publisher, exact pin. RED: breaks 1 and 2 CLI cells.
+- **Slice 11a** (`decoy-platform`): migration, ORM, fenced hook, X4 DB writer. RED: acceptance 12 persistence half, breaks 2 and 5.
+- **Slice 11b** (`decoy-platform`): artifact endpoint (X5), B-9 section, F35 fixture, framework surfaces. RED: acceptance 12 API half, 13, break 9.
 
-Repository: `decoy-engine`. RED: acceptance 1, field walk, maximum-report byte cap, artifact corpus, forbidden-import fixtures. Build strict config/report models, scoped observation refs, F29 reasons, exact codec, `measure_invariants` signature, public exports, F36 import sentry, compatibility fixture skeleton. No evaluator or transport.
+## Verification and worker evidence rules
 
-### Slice 1: collector feed leases and drain state
+Per slice record repository and lock identities, the RED assertion, green commands, changed files with before and after line counts, non-vacuity counters, the mutation killed, checks not run, and review findings. `scripts/dev/bootstrap.sh` and `gates.sh` do not exist in `decoy-engine` at baseline (LOW 4); until they land, baselines come from `uv sync --locked` then the named `pytest`, `ruff`, and `mypy` commands in the branch's own environment, and the evidence says so.
 
-Repository: `decoy-engine`. RED: acceptance 5 and generated transition pairs. Build the lock/condition lifecycle only, with fake bounded accumulators. Prove cancellation-safe decrement, close-pending, one finalizer, feed/feed merge, and no work under the lock.
-
-### Slice 2: row compiler and evaluator
-
-Repository: `decoy-engine`. RED: acceptance 2-4 and sampled transition properties. Build name-to-position compile, Arrow kernels, deterministic sampling, exact/sample count types, checksum delegation, scoped report assembly. Compare whole-table with random batches.
-
-### Slice 3: scratch capability spike and relational evaluator
-
-Repository: `decoy-engine`. RED: acceptance 6-7. First prove the dirfd/procfs/DuckDB bridge and cleanup matrix. Stop if unavailable or identity checks are not stable. Then build bounded relationship and reconciliation scans, first-hit groups, aligned ordinals, exact counts, and validator parity.
-
-### Slice 4: resident, mixed, multi-table, and unified routes
-
-Repository: `decoy-engine`. RED: only those route cells from acceptance 8, including the mutation that moves unified collection before quarantine. Wire one run collector after final selected-row semantics. Rerun Slices 0-3 and no-invariant goldens.
-
-### Slice 5: sequential and managed chunked routes
-
-Repository: `decoy-engine`. RED: sequential resident/sink, dispatcher/legacy, resident/streamed, later-batch, and direct-public zero-pull cells. Wire one enclosing collector and eager direct-public refusal. Rerun resident parity.
-
-### Slice 6: out-of-core routes and scale
-
-Repository: `decoy-engine`. RED: resident, batch-join, reorder, post-rewrite mutation, budget refusal, and acceptance 14. Wire post-FK batches, no second evaluator, and measure 1M/10M/100M in the approved environment. Rerun every prior route.
-
-### Slice 7: isolated sidecar, governor, and probe
-
-Repository: `decoy-engine`. RED: acceptance 9, owner exit matrix, and all existing field snapshots. Build bounded sidecar lease and exact decode. Carry a report only on completed isolated results and final successful governor rung. Keep trip, diagnostic, and probe fields unchanged. Probe rejects F36 before spawn.
-
-### Slice 8: engine compatibility and release integration
-
-Repository: `decoy-engine`. RED: old-reader, schema snapshot, public import, no-invariant, full route artifact, and compatibility-corpus tests. Finish changelog and durable engine docs through Barry, run `pytest tests`, `ruff`, `mypy`, `scripts/test_flight.py`, coverage and mutation evidence, then select the next release identity from current lineage after F31. No hard-coded stale version.
-
-### Slice 9: CLI rendering and artifact file owner
-
-Repository: `decoy`. Prerequisites: released exact engine artifact and F31 CLI boundary. RED: CLI marker cells, help/parse/root errors, file exit matrix, violation exit 0. Build thin `report invariants`, run summary factories, optional exact artifact output, and exact engine pin. Existing oversized modules receive registration-only replacement-sized calls.
-
-### Slice 10: Platform persistence, API, B-9, and F35 seam
-
-Repository: `decoy-platform`. Prerequisites: released exact engine artifact and F31 Platform boundary. RED: acceptance 12-13 and all framework-generated surfaces. Build the exact migration/ORM/service, byte response without a response model, owner authorization, B-9 sibling section, and eligibility fixture. Do not implement F35 gating. Run migration up/down/up, full Platform tests, shared analyzer, and dependency lock checks.
-
-## Verification, handoff, and evidence rules
-
-Per slice record exact repository and lock identities, RED assertion, green commands, changed files, before/after line counts, route/exit/non-vacuity counters, mutation killed, full checks run and not run, review findings, remediation identity, and safe performance facts. The resident direct API is the semantic oracle, but it calls the same compiler and collector. Route telemetry proves route selection; report equality alone does not.
-
-Release units are the gated F31 engine, gated F36 engine, CLI consumer, and Platform consumer. Consumers exact-pin the released engine. CLI and Platform roll back by reverting their consumer commit and pin. Platform downgrade deletes only F36 rows and table; deleted report rows are not recoverable. Post-release canaries cover exact, sampled, isolated, one Platform mask job, one reference-backed job, owner/non-owner API, read-back, unchanged grade, and marker absence.
-
-Binding worker rules:
-
-- Name the defect class and fix the class structure, not one instance.
-- Write generated tests first and record the intended behavioral RED, not an import error.
-- Mutate each new mechanism once before handoff and show the agreed test turns RED.
-- Run baselines and implementation with `uv.lock` in the same environment. State omissions.
-- Never widen a threshold, add a size allowlist, skip a test, reduce a budget, or weaken an assertion to pass.
-- If a defect from an already-remediated class reappears, stop and report it. Do not patch a third round.
-- No worker may merge, publish, enable F35, or expose a raw diagnostic without owner approval.
+- Name the defect class of every finding and fix the class structure, not one instance.
+- Write generated tests first and record the behavioral RED, not an import error.
+- Attack your own diff: mutate each new mechanism once and show the agreed test turns RED.
+- Run baselines with `uv.lock` in the same environment as the branch. State omissions.
+- Never widen a threshold, add a census entry, skip a test, reduce a budget, or weaken an assertion.
+- If a defect of an already catalogued class reappears, stop and report it. Do not patch a third time.
+- No worker merges, publishes, enables F35, or exposes a raw diagnostic without owner approval.
 
 ## Pre-mortem
 
-| Likely failure | Preventive plan element |
-|---|---|
-| Worker waits for F31 aggregate machinery that will never exist | Short assumptions table and F36-owned exact codec |
-| Sampled or side ambiguity lets F35 accept the wrong state | Separate count types, scoped observations, exact-output-only eligibility |
-| Finalize loses the final batch | Inflight leases, `DRAINING`, post-admission barrier, dedicated lifecycle slice |
-| Broad route remediation reaches a third round | Five route/process/integration slices with prior-parity reruns |
-| Platform retry or framework error leaks or returns the wrong artifact | Composite PK conflict semantics, caller transaction, deterministic order, generated-surface corpus |
-| DuckDB reopens a swapped path | Standards-grounded capability spike, retained fds, identity checks, fail-closed platform gate |
-| Public fields drift while fixing governor/probe | Complete frozen field list and unchanged semantics snapshots |
-| Plan bloat hides binding rules | Guarantee, manifests, design, RED tests, slices, pre-mortem, and frozen ledger are the only retained narrative |
+The class table and the ten gate breaks above are the pre-mortem; the three known third-round risks are the Slice 3a spike passing on one host and failing on the gate host (stop, do not patch), F31 changing an X row during its own revision (reconcile check stops the slice), and the Platform fence function not being reachable from the post-success hook (Slice 11a stops for the owner).
+
+## Open questions for the owner
+
+1. Linux-only relationship and reconciliation checks in V1 (MEDIUM 7): accept, or require a non-procfs bridge first?
+2. Flag-off `run_job` runs without a `JobAttempt`: persist nothing (`invariant.report_not_persisted`, proposed) or key by job?
+3. Checksum exact coverage above 10M rows: keep exact with recorded throughput (proposed), or cap and require sampled?
+4. Engine-declared ownership of the two Platform-detected reason codes (proposed) versus a Platform-side registry.
