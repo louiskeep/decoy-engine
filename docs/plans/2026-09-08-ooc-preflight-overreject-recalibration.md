@@ -1,7 +1,6 @@
 # OOC capacity preflight: advisory build-floor, hard fan-in end-to-end, completion-cap recalibration
 
-Status: built
-Shipped: commit 152fbc8d (PR #128, OOC capacity preflight with recalibrated slope)
+Status: plan v6 (Opus, 2026-09-08). Risk R2 (changes a public verdict contract +
 cross-repo CLI behavior + capacity control flow). The measure-first step falsified
 the row-independence premise of v1-v4; v5 established the correct row-linear,
 advisory, no-classifier direction (Codex validated it); v6 folds in v5's gate

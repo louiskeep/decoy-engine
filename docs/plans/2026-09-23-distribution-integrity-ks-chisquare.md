@@ -1,7 +1,6 @@
 # A2: KS + chi-square methods in the distribution-integrity comparator
 
-Status: built
-Shipped: src/decoy_engine/quality/_distribution_gof.py; commit f6ce5db1 (DI1 GOF extension)
+Status: plan, BUILD-READY (Codex GO-WITH-CHANGES 2026-09-23; changes incorporated below).
 Risk: R2. Author: Opus. Locked: additive and report-only, grade unchanged; hand-rolled from
 snapshots (no scipy); new metrics live in named nested fields, not new column entries.
 Roadmap: `decoy-platform/docs/ROADMAP.md` "Ready to build" and "NEXT SET OF WORK" item 4.

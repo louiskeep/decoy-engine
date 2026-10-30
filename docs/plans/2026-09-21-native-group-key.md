@@ -1,7 +1,6 @@
 # PLAN — native `group_key` operator
 
-Status: built
-Shipped: commit cfe00b4b (feat(native): wire native group_key operator through all seams)
+Status: plan
 Author: Opus (top-tier, per the guides/plans standing rule). Codex cross-reviews as plan-gate.
 Roadmap: native operator breadth (S-port slate #2). Cam-approved 2026-09-21 ("push ahead" after the FRAME
 survey showed group_key needs a new kernel path -- it is an M, not the S the measurement implied). Base:
