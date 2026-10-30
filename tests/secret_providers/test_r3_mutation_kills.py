@@ -120,7 +120,7 @@ def test_closed_error_keeps_engine_texts_and_drops_every_other():
 def test_the_opaque_box_has_a_fixed_rendering_and_cannot_be_pickled():
     box = _preflight._OpaqueBox("F13-CANARY")
     assert repr(box) == "<opaque>" == str(box) == f"{box}"
-    with pytest.raises(TypeError, match="cannot be pickled"):
+    with pytest.raises(TypeError, match="^opaque boxes cannot be pickled$"):
         pickle.dumps(box)
 
 
@@ -267,7 +267,7 @@ def test_require_mask_key_gates_carry_the_guidance_text(monkeypatch):
 
 @pytest.mark.parametrize("bad", [0, -1, True, 1.5, "3"])
 def test_capacity_must_be_a_positive_integer(bad):
-    with pytest.raises(ValueError, match="cache capacity must be a positive integer"):
+    with pytest.raises(ValueError, match="^cache capacity must be a positive integer$"):
         SecretCache(bad)  # type: ignore[arg-type]
 
 
@@ -321,32 +321,50 @@ def test_the_remaining_lifetime_boundary_is_exclusive():
         assert len(cache) == cached
 
 
-def test_a_second_invalidation_still_fences_a_load_started_between_them():
+def _wait(predicate) -> None:
+    deadline = time.monotonic() + 5
+    while not predicate():
+        assert time.monotonic() < deadline
+        time.sleep(0.005)
+
+
+def test_a_second_invalidation_fences_a_load_that_began_after_the_first():
+    cache, owners, clock = SecretCache(), (object(),), FakeClock()
+    a_in, a_go, b_in, b_go = (threading.Event() for _ in range(4))
+
+    def slow(started, go):
+        def loader() -> PreparedSecret:
+            started.set()
+            assert go.wait(5)
+            return _prepared()
+
+        return loader
+
+    def call(loader):
+        return threading.Thread(
+            target=lambda: cache.get_or_load(
+                "k", owners=owners, ttl=30, clock=clock, loader=loader
+            ).close()
+        )
+
+    first, second = call(slow(a_in, a_go)), call(slow(b_in, b_go))
+    first.start()
+    assert a_in.wait(5)
+    second.start()  # queues on the same flight behind the first
+    _wait(lambda: any(f.callers == 2 for f in cache._locks.values()))
+    cache.invalidate("k", owners=owners)
+    a_go.set()
+    assert b_in.wait(5)  # the queued load starts only after the first invalidation
+    cache.invalidate("k", owners=owners)
+    b_go.set()
+    first.join(5)
+    second.join(5)
+    assert len(cache) == 0
+
+
+def test_a_second_clear_fences_a_load_that_began_after_the_first():
     cache, owners = SecretCache(), (object(),)
-    cache.get_or_load("k", owners=owners, ttl=30, clock=FakeClock(), loader=_prepared).close()
-    # a flight must be live for invalidate to fence it, so hold one open across two calls
-    started, release = threading.Event(), threading.Event()
-
-    def loader() -> PreparedSecret:
-        started.set()
-        assert release.wait(5)
-        return _prepared()
-
-    def run() -> None:
-        cache.get_or_load("k2", owners=owners, ttl=30, clock=FakeClock(), loader=loader).close()
-
-    worker = threading.Thread(target=run)
-    worker.start()
-    assert started.wait(5)
-    cache.invalidate("k2", owners=owners)
-    cache.invalidate("k2", owners=owners)
-    release.set()
-    worker.join(5)
-    assert len(cache) == 1  # only the unrelated first key; the fenced load inserted nothing
-
-
-def test_clear_twice_still_fences():
-    cache, owners = SecretCache(), (object(),)
+    cache.clear()
     started, release = threading.Event(), threading.Event()
 
     def loader() -> PreparedSecret:
@@ -362,17 +380,9 @@ def test_clear_twice_still_fences():
     worker.start()
     assert started.wait(5)
     cache.clear()
-    cache.clear()
     release.set()
     worker.join(5)
     assert len(cache) == 0
-
-
-def _wait(predicate) -> None:
-    deadline = time.monotonic() + 5
-    while not predicate():
-        assert time.monotonic() < deadline
-        time.sleep(0.005)
 
 
 def test_flights_count_their_callers_and_outlive_all_but_the_last():
