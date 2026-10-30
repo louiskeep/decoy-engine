@@ -14,6 +14,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 _SUMMARY = re.compile(r"^(?:FAILED|ERROR) (.+?)(?: - .*)?$")
+_FOUND = re.compile(r"^Found (\d+) errors?", re.MULTILINE)
 
 
 def _steps(out: Path, label: str) -> list[tuple[str, int, str]]:
@@ -30,7 +31,10 @@ def _steps(out: Path, label: str) -> list[tuple[str, int, str]]:
 def _counts(out: Path, label: str, name: str) -> str:
     xml = out / f"{label}-{name}.xml"
     if not xml.exists():
-        return ""
+        # ruff and mypy both end with a "Found N error(s)" line when they fail.
+        log = out / f"{label}-{name}.log"
+        found = _FOUND.findall(log.read_text(errors="replace")) if log.exists() else []
+        return f"errors={found[-1]}" if found else ""
     root = ET.parse(xml).getroot()  # noqa: S314 -- pytest JUnit output this run wrote
     suites = [root] if root.tag == "testsuite" else list(root.iter("testsuite"))
     total = {
