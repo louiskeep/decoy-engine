@@ -63,7 +63,7 @@ ROUTE_APPLIERS = {
     "sequential": (
         "execution/_sequential.py",
         "run_sequential",
-        {"pre_mask", "post_mask", "finish"},
+        {"load_table", "render_table", "seal_evidence"},
     ),
     "out_of_core": (
         "execution/out_of_core/_runner.py",

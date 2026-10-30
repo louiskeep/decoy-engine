@@ -214,6 +214,11 @@ class DeclaredCastRun:
     ) -> tuple[pa.Table, list[int] | None]:
         """Render a masked batch; returns it and, when rows were removed, the kept indices."""
         cols = self._tables[table]
+        if out.num_rows == 0:
+            # A frame with no rows carries no values to infer a type from (pandas turns an empty
+            # object column into `null`), so every route gives it the cast input's schema with
+            # the formats rendered.
+            return self.rendered_schema(table, batch.table.schema).empty_table(), None
         if not any(c.fmt is not None for c in cols):
             return out, None
         ledger = self._ledger if record else K.CastIssueLedger()

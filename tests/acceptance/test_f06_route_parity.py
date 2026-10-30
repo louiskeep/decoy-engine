@@ -626,3 +626,27 @@ def test_chunked_late_failure_leaves_no_quarantine_artifact(
             **_kwargs("quarantine", tmp_path, "late"),
         )
     assert _sealed(tmp_path / "q-late") == []
+
+
+def test_chunked_route_keeps_its_schema_when_every_row_is_quarantined(tmp_path: Path) -> None:
+    source = text_table(id=["1", "2", "3"], start=["bad", "bad", "bad"], age=["x", "y", "z"])
+    base = run(
+        _cfg(tmp_path, "quarantine"),
+        {"people": source},
+        execution_mode="full_frame",
+        auto_chunk=False,
+        **_kwargs("quarantine", tmp_path, "empty-full"),
+    )
+    got = run(
+        _cfg(tmp_path, "quarantine"),
+        {"people": source},
+        auto_chunk=True,
+        chunk_size_rows=2,
+        auto_chunk_threshold_rows=1,
+        **_kwargs("quarantine", tmp_path, "empty-chunk"),
+    )
+    assert got.quality_metrics["auto_chunk"]["mode"] == "chunked"
+    assert got.outputs["people"].num_rows == 0
+    assert got.outputs["people"].schema.equals(base.outputs["people"].schema)
+    assert got.quality_metrics["declared_casting"]["quarantined_rows"] == 3
+    assert _opened(got, tmp_path, "empty-chunk") == _opened(base, tmp_path, "empty-full")

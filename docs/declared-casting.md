@@ -44,7 +44,7 @@ protected_quarantine:
 
 ## Order of operations
 
-1. Source framing (CSV quoting, fixed-width slices) yields an exact string or bytes. Every CSV reader (local, cloud, bounded) reads a declared column with no type inference and no default NA conversion, so `NA` or an empty field reaches the boundary as that text. A column the caller already converted cannot be re-read: the cast refuses it (`declared_cast_input_type_incompatible`). Binary COBOL formats need a source that carries bytes; compile refuses them on CSV and fixed-width sources.
+1. Source framing (CSV quoting, fixed-width slices) yields an exact string or bytes. Every CSV reader (local, cloud, bounded) reads a declared column with no type inference and no default NA conversion, so `NA` or an empty field reaches the boundary as that text. A column the caller already converted cannot be re-read: the cast refuses it (`declared_cast_input_type_incompatible`). Binary COBOL formats need a source that carries bytes; compile refuses them on CSV and fixed-width sources. A consumer that reads CSV itself passes the declared columns to the reader: `decoy_engine.declared_casting.lexeme_columns_by_table(config)` gives them per table, and `iter_csv_chunks(..., lexeme_columns=...)` keeps them as exact lexemes (profiling does this itself through `profile_descriptors`).
 2. **Sentinel**: an exact match becomes null (counted as `sentinel_to_null`). A physical null stays null and is never a substitution.
 3. **Parse** to `str`, `int`, `Decimal` or `date`; Arrow carries them as `string`, sized `int`/`uint`, `decimal128(p, s)` and `date32`. A failure follows the column's `error_policy`.
 4. The masking strategy runs on the typed value.

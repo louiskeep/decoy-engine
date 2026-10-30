@@ -60,18 +60,20 @@ def format_stream(
     run: DeclaredCastRun, table: str, masked: Iterable[pa.Table], pairing: CastPairing
 ) -> Iterator[pa.Table]:
     """Rendered chunks; a chunk that loses every row to a format failure is dropped unless it is
-    the only one, so the schema survives."""
-    last_empty: pa.Table | None = None
+    the only one, in which case an empty table of the declared (rendered) schema is produced, so
+    the schema never depends on what the masker made of an empty frame."""
+    schema_in: pa.Schema | None = None
     emitted = False
     for out in masked:
-        formatted, _ = run.format_batch(table, out, pairing.pop())
+        batch = pairing.pop()
+        schema_in = batch.table.schema
+        formatted, _ = run.format_batch(table, out, batch)
         if formatted.num_rows == 0:
-            last_empty = formatted
             continue
         emitted = True
         yield formatted
-    if not emitted and last_empty is not None:
-        yield last_empty
+    if not emitted and schema_in is not None:
+        yield run.rendered_schema(table, schema_in).empty_table()
 
 
 def stage_typed_sources(
