@@ -53,6 +53,7 @@ Shared Python data engine for Decoy masking, generation, plan-compile execution,
 | `src/decoy_engine/generation/_faker_pool.py` | GP2 generation-local pool bridge for scalar `faker_type` columns: `POOL_ELIGIBLE_FAKER_TYPES`, `pool_eligible`, `build_and_sample`. Called from `synthesize.py::_faker`; reuses `generation/pool`'s `ValuePool`/`PoolSampler`, not the V2 `PoolBuilder`/`ProviderRegistry` seam. |
 | `src/decoy_engine/profiling/profiler.py` | `profile_columns` |
 | `src/decoy_engine/validation_result.py` | `ValidationResult` wire shape + `VALIDATION_CODES` (`CODES` are views of the `config` namespace of the reason registry) |
+| `src/decoy_engine/retention/` | The F26 retention contract (`retention-policy/v1`, `retention-report/v1`, closed reason and exit-code registries, canonical serializer, inventory digest). Pure: no locators, no SDKs, no deletion. A leaf the platform and CLI import |
 | `src/decoy_engine/reasons/` | The versioned reason-code registry: `ReasonSpec` (identity, fixed safe summary, phase rules, retry class, outcome), `ReasonRecord`/`ReasonContext` (the safe occurrence), one catalog package per namespace, `manifest()` export. A leaf: imports no engine code |
 | `src/decoy_engine/reason_adapter.py` | `reason_from_exception`, `reasons_from_report`, `FailureScope` (the run's first failure, independent of any sink) |
 | `src/decoy_engine/progress.py`, `src/decoy_engine/_progress_events.py` | Versioned progress events (`event_to_dict` v1, `event_to_legacy_dict` v0), the channel and owner-reported retry/checkpoint groups |

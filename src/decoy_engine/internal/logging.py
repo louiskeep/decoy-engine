@@ -98,7 +98,10 @@ def _configure_logger(logger, config: dict[str, Any]):
     # ran. Honour explicit opt-out (`file: null` / empty string)
     # AND degrade gracefully on OSError/PermissionError, falling back
     # to console-only logging with a warning.
-    log_file = config.get("file", "logs/decoy_engine.log")
+    # DECOY_ENGINE_LOG_FILE overrides the default path; an EMPTY value disables the file handler.
+    # Callers that must leave no trace in the working directory (decoy local-cleanup, which may be
+    # cleaning that very directory) set it to "" before the first engine import.
+    log_file = config.get("file", os.environ.get("DECOY_ENGINE_LOG_FILE", "logs/decoy_engine.log"))
     if log_file:
         try:
             log_dir = os.path.dirname(log_file)

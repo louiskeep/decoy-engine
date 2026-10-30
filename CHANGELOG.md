@@ -9,6 +9,25 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (F26: retention contract, 2026-10-29)
+
+New public `decoy_engine.retention`: the engine-owned `retention-policy/v1` and `retention-report/v1`
+contract the platform retention sweeper and the `decoy local-cleanup` CLI both import, so their
+vocabularies cannot drift. Pure types and one canonical serializer; no locator, backend SDK or deletion
+code lives here. Closed, append-only registries of artifact classes, reason codes (`retain_*`,
+`result_*`, `refused_*`) and outcome exit codes (`0` success, `10` no-op, `11` retained, `12` partial, `13`
+refused, `14` indeterminate; kept clear of every consumer's own usage/runtime codes). An unrecognized future value parses to unknown-and-retained, never to eligible. The report
+serializes through an explicit allow-list (opaque ids, closed codes, counts, the confirmation digest) and
+`tests/sentry/test_retention_contract.py` fails when a field is added without review. `inventory_digest`
+binds an execution to the exact reviewed set (scope, policy id, limits, expiry, target ids and identity
+digests; the identity digests are inputs only and are never serialized). Policy defaults are conservative:
+saved uploads, snapshots, published outputs and checkpoints are `keep_all`; transient uploads and staging
+expire 24 hours after quiescence. A policy states when an artifact may become eligible; it never deletes.
+
+Also: `DECOY_ENGINE_LOG_FILE` overrides the engine logger's default `./logs/decoy_engine.log`; an empty value
+disables the file handler. Importing the engine otherwise creates that file in the working directory as an
+import-time side effect, which a stateless caller (`decoy local-cleanup`) must be able to opt out of.
+
 ### Added (F29: stable machine-readable errors and progress, engine slices, 2026-10-29)
 
 New public `decoy_engine.reasons`: one engine-owned, versioned registry of reason codes (`registry_version`
