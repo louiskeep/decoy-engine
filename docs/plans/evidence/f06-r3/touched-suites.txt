@@ -1,0 +1,10 @@
+$ pytest tests/sentry -q   (every sentry, incl. reason-registry, physical-seam, module-size, route-matrix)
+3231 passed, 1 skipped in 46.04s
+$ pytest tests/sentry/test_reason_registry.py tests/sentry/test_physical_seam_disconnection.py tests/sentry/test_f06_route_matrix.py tests/sentry/test_module_size.py tests/sentry/test_f06_declared_casting.py -q
+728 passed in 26.33s
+$ pytest tests/acceptance/test_f06_*.py -q
+561 passed in 11.65s
+$ pytest tests/unit/declared_casting tests/security/test_f06_quarantine_boundary.py tests/property -q
+440 passed, 5 skipped, 7 warnings in 162.96s (0:02:42)
+$ pytest (out-of-core runner suites)
+705 passed, 2 skipped in 61.32s (0:01:01)

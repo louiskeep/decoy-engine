@@ -1,0 +1,8 @@
+# mutation: the corpus drops one admitted cell (mixed x cobol/comp-3 x null)
+## old sentry at e7f0c93: only checks that a named parity function exists per route
+3 passed in 0.26s
+## new sentry (r3)
+FAILED tests/sentry/test_f06_route_matrix.py::test_the_corpus_runs_every_admitted_cell_and_only_those
+FAILED tests/sentry/test_f06_route_matrix.py::test_every_policy_of_an_admitted_format_route_pair_is_in_the_corpus
+FAILED tests/sentry/test_f06_route_matrix.py::test_physically_declined_cells_are_a_pinned_documented_census
+3 failed, 4 passed in 0.51s

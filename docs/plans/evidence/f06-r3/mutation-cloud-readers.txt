@@ -1,0 +1,7 @@
+# mutation: S3CsvSource.sample_frame and GcsCsvSource.to_frame stop passing the descriptor's lexeme_columns (source e7f0c93)
+## old test: parametrize s3/gcs calling the private helper
+2 passed, 5 deselected in 0.27s
+## new tests (r3): real S3CsvSource / GcsCsvSource built by their builders
+FAILED tests/acceptance/test_f06_csv_framing_r3.py::test_cloud_csv_readers_honour_lexeme_columns[s3]
+FAILED tests/acceptance/test_f06_csv_framing_r3.py::test_cloud_csv_readers_honour_lexeme_columns[gcs]
+2 failed, 2 passed, 5 deselected in 0.45s
