@@ -62,8 +62,7 @@ import pyarrow as pa
 import pyarrow.compute as pc
 
 from decoy_engine import reasons
-from decoy_engine.declared_casting._stream import maybe_render as _declared_render
-from decoy_engine.declared_casting._stream import maybe_render_empty as _declared_empty
+from decoy_engine.declared_casting import _stream as _declared
 from decoy_engine.execution._adapter import provider_config_to_dict
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._fk_resolve import orphan_fk_violation_error
@@ -457,7 +456,7 @@ def stream_table(
                     plan,
                     table_name,
                     raw_parent_source,
-                    _declared_render(cast_run, table_name, rewritten()),
+                    _declared.maybe_render(cast_run, table_name, rewritten()),
                     fixed_schema=fixed_schema,
                     fk_components=fk_components,
                     outgoing_edges=outgoing_edges,
@@ -472,11 +471,11 @@ def stream_table(
                     masked_observed_types=payload_masked_observed,
                 )
             else:
-                batches = list(_declared_render(cast_run, table_name, rewritten()))
+                batches = list(_declared.maybe_render(cast_run, table_name, rewritten()))
                 table_out = (
                     assemble_resident(batches, fk_components)
                     if batches
-                    else _declared_empty(
+                    else _declared.maybe_render_empty(
                         cast_run,
                         table_name,
                         empty_output_table(plan, table_name, source_schema, fk_components),

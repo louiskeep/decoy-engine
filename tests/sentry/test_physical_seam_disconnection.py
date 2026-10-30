@@ -836,6 +836,11 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
             # `native/_draw_site_providers.py`. Pure moves; none imports `execution.physical`.
             "src/decoy_engine/execution/_fk_key_compat.py",
             "src/decoy_engine/execution/native/_draw_sites_tokenize.py",
+            # F06 r2 module-size decomposition: the sequential table order and the planner's
+            # config column lookups split out of capped modules. Pure moves; neither imports
+            # `execution.physical`.
+            "src/decoy_engine/execution/_sequential_order.py",
+            "src/decoy_engine/execution/_planner_columns.py",
         }
     )
     unexpected = [

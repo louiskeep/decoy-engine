@@ -50,11 +50,13 @@ from typing import TYPE_CHECKING, Any
 import pyarrow as pa
 import pyarrow.compute as pc
 
+from decoy_engine import reasons
+from decoy_engine.declared_casting import _stream as _declared
+from decoy_engine.declared_casting._boundary import seal_evidence
 from decoy_engine.declared_casting._eligibility import declared_route_guard
-from decoy_engine.declared_casting._stream import maybe_render as _declared_render
-from decoy_engine.declared_casting._stream import maybe_render_empty as _declared_empty
-from decoy_engine.declared_casting._stream import stage_typed_sources
 from decoy_engine.execution._adapter import ExecutionResult, provider_config_to_dict
+from decoy_engine.execution._errors import ExecutionError
+from decoy_engine.execution._fk_resolve import orphan_fk_violation_error
 from decoy_engine.execution._output_projection import (
     UnconfiguredColumnPolicy,
     enforce_output_projection,
@@ -75,6 +77,7 @@ from decoy_engine.execution.out_of_core._hash_run import OocHashRun
 from decoy_engine.execution.out_of_core._join import orphan_fk_warning
 from decoy_engine.execution.out_of_core._mask import (
     mask_batch,
+    masked_output_type,
     table_seed,
 )
 from decoy_engine.execution.out_of_core._memory_estimate import (
@@ -84,6 +87,7 @@ from decoy_engine.execution.out_of_core._memory_estimate import (
 from decoy_engine.execution.out_of_core._multi_parent import resolve_incoming
 from decoy_engine.execution.out_of_core._preflight import run_preflight
 from decoy_engine.execution.out_of_core._relation import (
+    _column_seed,
     build_parent_key_relation_aligned,
 )
 from decoy_engine.execution.out_of_core._route_policy import (
@@ -91,13 +95,6 @@ from decoy_engine.execution.out_of_core._route_policy import (
     _table_order,
     decide_route,
     validate_outgoing_parent_columns,
-)
-from decoy_engine.execution.out_of_core._runner_support import (
-    _fixed_output_schema,
-    _fk_component_map,
-    _iter_source_batches,
-    _open_joiner,
-    _raise_on_total_orphans,
 )
 from decoy_engine.execution.out_of_core._source import LazySource
 from decoy_engine.execution.out_of_core._stream_driver import stream_table
@@ -107,6 +104,7 @@ from decoy_engine.execution.out_of_core._stream_driver_support import (
 from decoy_engine.execution.out_of_core._vault_collect import (
     collect_batch_vault,
 )
+from decoy_engine.plan._types import ColumnSeed
 from decoy_engine.progress import get_active_channel
 from decoy_engine.relationships._graph import OrphanPolicy
 
@@ -199,34 +197,9 @@ def run_fk_out_of_core(
     """
     declared_route_guard("out_of_core", plan=plan, raise_on_decline=True)
     if cast_run is not None and not _staged and cast_run.tables() & set(sources):
-        # F06: every declared source is cast exactly once into a typed source (a private
-        # Parquet file for a lazy one), so the several passes this route makes over a source
-        # see one stable compacted row set and the casting is counted and quarantined once.
-        with tempfile.TemporaryDirectory(prefix="decoy-ooc-cast-") as stage:
-            os.chmod(stage, 0o700)
-            staged = stage_typed_sources(
-                cast_run, sources, Path(stage), batch_rows or _join_ooc._JOIN_BATCH_ROWS
-            )
-            return run_fk_out_of_core(
-                plan,
-                staged,
-                registry=registry,
-                relationship_graph=relationship_graph,
-                sink=sink,
-                temp_dir=temp_dir,
-                memory_limit=memory_limit,
-                batch_rows=batch_rows,
-                budget_bytes=budget_bytes,
-                temp_disk_budget_bytes=temp_disk_budget_bytes,
-                unconfigured_column_policy=unconfigured_column_policy,
-                key_provider=key_provider,
-                out_of_core_reorder_threshold_rows=out_of_core_reorder_threshold_rows,
-                vault_writer=vault_writer,
-                config=config,
-                native_threads=native_threads,
-                cast_run=cast_run,
-                _staged=True,
-            )
+        # F06: declared sources are cast once into typed sources (see `run_staged`), then this
+        # function runs again over them.
+        return _declared.run_staged(run_fk_out_of_core, dict(locals()), _join_ooc._JOIN_BATCH_ROWS)
     pre = run_preflight(
         plan,
         sources,
@@ -348,24 +321,15 @@ def run_fk_out_of_core(
         }
         # Before the publish: a failed validation commits nothing.
         _validate_batch.finish_validation(validators, quality_metrics)
-        quarantine_token = None
-        if cast_run is not None:
-            # Seal last: nothing failure-capable remains before the publish below.
-            quality_metrics["declared_casting"], quarantine_token = cast_run.finish()
+        seal = {"quarantine_access": seal_evidence(cast_run, quality_metrics)}  # last, pre-publish
         if sink is not None:
             observed_commit(sink)
             committed = True
             return ExecutionResult(
-                outputs={},
-                warnings=tuple(warnings),
-                quality_metrics=quality_metrics,
-                quarantine_access=quarantine_token,
+                outputs={}, warnings=tuple(warnings), quality_metrics=quality_metrics, **seal
             )
         return ExecutionResult(
-            outputs=outputs,
-            warnings=tuple(warnings),
-            quality_metrics=quality_metrics,
-            quarantine_access=quarantine_token,
+            outputs=outputs, warnings=tuple(warnings), quality_metrics=quality_metrics, **seal
         )
     except Exception as failure:
         if sink is not None and not committed:
@@ -558,7 +522,7 @@ def _stream_table(
                 plan,
                 table_name,
                 raw,
-                _declared_render(cast_run, table_name, rewritten()),
+                _declared.maybe_render(cast_run, table_name, rewritten()),
                 fixed_schema=fixed_schema,
                 fk_components=fk_components,
                 outgoing_edges=outgoing_edges,
@@ -572,11 +536,11 @@ def _stream_table(
                 on_stream_consumed=_release_joiners,
             )
         else:
-            batches = list(_declared_render(cast_run, table_name, rewritten()))
+            batches = list(_declared.maybe_render(cast_run, table_name, rewritten()))
             table_out = (
                 assemble_resident(batches, fk_components)
                 if batches
-                else _declared_empty(
+                else _declared.maybe_render_empty(
                     cast_run,
                     table_name,
                     empty_output_table(plan, table_name, source_schema, fk_components),
@@ -626,6 +590,111 @@ def _stream_table(
     finally:
         for joiner in joiners:
             joiner.close()
+
+
+def _open_joiner(
+    plan: Plan,
+    edge: RelationshipEdge,
+    relation: ParentKeyRelation,
+    source_schema: pa.Schema,
+    temp_dir: Path,
+    memory_limit: str | None,
+    *,
+    mask_key: bytes | None = None,
+) -> ChildFkBatchJoiner:
+    for child_col in edge.child_columns:
+        if child_col not in source_schema.names:
+            raise ExecutionError(
+                code=reasons.runtime.OUT_OF_CORE_CHILD_COLUMN_MISSING,
+                message=f"child source table has no column {child_col!r}.",
+            )
+    remap_seeds: tuple[ColumnSeed, ...] | None = None
+    if edge.orphan_policy is OrphanPolicy.REMAP:
+        seeds: list[ColumnSeed] = []
+        for parent_col in edge.parent_columns:
+            seed = _column_seed(plan, edge.parent_table, parent_col)
+            if seed is None:
+                raise ExecutionError(
+                    code=reasons.runtime.OUT_OF_CORE_PARENT_SEED_MISSING,
+                    message=f"parent key {edge.parent_table}.{parent_col} is not in the plan.",
+                )
+            seeds.append(seed)
+        remap_seeds = tuple(seeds)
+    return ChildFkBatchJoiner(
+        edge=edge,
+        parent_relation=relation,
+        child_key_types=tuple(source_schema.field(col).type for col in edge.child_columns),
+        temp_dir=temp_dir,
+        memory_limit=memory_limit,
+        remap_seeds=remap_seeds,
+        job_seed=mask_key if mask_key is not None else plan.seed_envelope.job_seed,
+    )
+
+
+def _raise_on_total_orphans(
+    edge: RelationshipEdge,
+    joiner: ChildFkBatchJoiner,
+    raw: TableSource,
+    batch_rows: int,
+) -> None:
+    # FAIL reports the whole child's orphan count before any output exists;
+    # the per-batch fail-fast inside join_batch only ever sees the first
+    # offending batch, so the total needs its own bounded raw pass.
+    total = 0
+    for raw_batch in _iter_source_batches(raw, batch_rows):
+        total += joiner.count_batch_orphans(raw_batch)
+    if total:
+        raise orphan_fk_violation_error(edge, total)
+
+
+def _iter_source_batches(src: TableSource, batch_rows: int) -> Iterator[pa.RecordBatch]:
+    if isinstance(src, LazySource):
+        yield from src.iter_batches(batch_rows)
+        return
+    yield from src.to_batches(max_chunksize=batch_rows)
+
+
+def _fk_component_map(
+    incoming_edges: tuple[RelationshipEdge, ...],
+    joiners: list[ChildFkBatchJoiner],
+) -> dict[str, tuple[ChildFkBatchJoiner, int]]:
+    """Map each FK child column to (its joiner, component index).
+
+    Well-defined because the runner resolves one representative edge per child
+    FK tuple (`_multi_parent.resolve_incoming`).
+    """
+    components: dict[str, tuple[ChildFkBatchJoiner, int]] = {}
+    for edge, joiner in zip(incoming_edges, joiners, strict=True):
+        for idx, child_col in enumerate(edge.child_columns):
+            components[child_col] = (joiner, idx)
+    return components
+
+
+def _fixed_output_schema(
+    plan: Plan,
+    table_name: str,
+    source_schema: pa.Schema,
+    fk_components: Mapping[str, tuple[ChildFkBatchJoiner, int]],
+) -> pa.Schema:
+    """One deterministic output schema, resolved before any batch is built.
+
+    FK columns take the joiner's fixed type; plan-masked columns take the
+    strategy's analytic output type; everything else keeps its source field
+    (metadata included). Masked and FK fields are bare, matching the
+    set-column field semantics of the per-batch rewrites.
+    """
+    seed = table_seed(plan, table_name)
+    seeds = dict(seed.per_column) if seed is not None else {}
+    fields: list[pa.Field] = []
+    for field in source_schema:
+        if field.name in fk_components:
+            joiner, component = fk_components[field.name]
+            fields.append(pa.field(field.name, joiner.output_types[component]))
+        elif field.name in seeds:
+            fields.append(pa.field(field.name, masked_output_type(seeds[field.name], field.type)))
+        else:
+            fields.append(field)
+    return pa.schema(fields, metadata=source_schema.metadata)
 
 
 __all__ = ["run_fk_out_of_core"]

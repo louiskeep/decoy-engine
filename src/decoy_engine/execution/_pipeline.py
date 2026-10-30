@@ -246,8 +246,8 @@ def run_pipeline(
     `quarantine_runtime` (F06): a `decoy_engine.declared_casting.ProtectedQuarantineRuntime`
     (sink + owner). Required, and checked before the source is read, by any column with
     `error_policy: quarantine`; the run returns its portable retrieval token on
-    `ExecutionResult.quarantine_access`. A job with declared columns runs on the one route that
-    applies the declared-casting boundary and refuses any other explicit `execution_mode`.
+    `ExecutionResult.quarantine_access`. A declared job runs on any route whose capabilities
+    cover its contracts; an explicit `execution_mode` lacking one is refused before any read.
 
     `unified_slice_enabled` (default True since 2026-09-20; admission is the safety
     gate, pass False for legacy): see `_unified_slice.maybe_run_unified_slice`.

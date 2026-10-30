@@ -10,7 +10,7 @@ chunk is still produced when nothing else is, so a table with no surviving rows 
 from __future__ import annotations
 
 from collections import deque
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -155,3 +155,23 @@ def maybe_render_empty(run: DeclaredCastRun | None, table: str, out: pa.Table) -
     if run is None or table not in run.tables():
         return out
     return run.rendered_schema(table, out.schema).empty_table()
+
+
+def run_staged(fn: Callable[..., Any], call: dict[str, Any], default_batch_rows: int) -> Any:
+    """Run ``fn(plan, sources, **rest)`` over typed copies of its declared sources.
+
+    ``call`` is the caller's own keyword snapshot (``dict(locals())`` at its first line); the
+    sources are replaced by their staged form, the private staging directory is removed on every
+    exit, and ``_staged=True`` stops the second call from staging again.
+    """
+    import os
+    import tempfile
+
+    run = call["cast_run"]
+    plan, sources = call.pop("plan"), call.pop("sources")
+    call.pop("_staged", None)
+    with tempfile.TemporaryDirectory(prefix="decoy-ooc-cast-") as stage:
+        os.chmod(stage, 0o700)
+        batch_rows = call.get("batch_rows") or default_batch_rows
+        staged = stage_typed_sources(run, sources, Path(stage), batch_rows)
+        return fn(plan, staged, _staged=True, **call)
