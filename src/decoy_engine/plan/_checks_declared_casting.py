@@ -78,11 +78,27 @@ def _layout_columns(layout: Mapping[str, Any] | None) -> dict[str, Mapping[str, 
     return {c["name"]: c for c in (layout or {}).get("columns", ())}
 
 
-def _check_source(table: str, col_name: str, source: Mapping[str, Any] | None) -> None:
+# Physical kinds that can hand the boundary exact bytes. CSV and fixed-width records are text
+# (the fixed-width reader UTF-8-decodes and pad-strips), so a byte contract cannot be honoured.
+_BINARY_SOURCE_FORMATS = frozenset({"parquet"})
+
+
+def _check_source(
+    table: str,
+    col_name: str,
+    contract: C.DeclaredColumnContractV1,
+    source: Mapping[str, Any] | None,
+) -> None:
+    path = f"tables.{table}.columns.{col_name}"
+    if contract.binary_input and source and source.get("format") not in _BINARY_SOURCE_FORMATS:
+        raise _fail(
+            _P.DECLARED_CAST_CONTRACT_INVALID,
+            path,
+            "A binary COBOL contract needs a source that carries exact bytes; a text source cannot.",
+        )
     if not source or source.get("format") != "fixed_width":
         return
     layout = source.get("layout") or {}
-    path = f"tables.{table}.columns.{col_name}"
     if not layout.get("exact_record_width"):
         raise _fail(
             _P.DECLARED_CAST_CONTRACT_INVALID,
@@ -160,7 +176,7 @@ def compile_declared_casting_contract(config: Mapping[str, Any]) -> DeclaredCast
             except C.DeclaredCastContractError as exc:
                 raise _fail(exc.code, path, exc.message) from None
             _check_column(path, col, contract)
-            _check_source(tname, cname, sources.get(tname))
+            _check_source(tname, cname, contract, sources.get(tname))
             _check_target(tname, cname, contract, targets.get(tname))
             needs_quarantine |= contract.error_policy == "quarantine"
             contracts[(tname, cname)] = contract

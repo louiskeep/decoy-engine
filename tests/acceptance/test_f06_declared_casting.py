@@ -276,6 +276,48 @@ def test_fixed_width_source_with_declared_columns_requires_exact_record_width(
     assert exc.value.code == "declared_cast_contract_invalid"
 
 
+@pytest.mark.parametrize("fmt", ["cobol/comp-3/v1", "cobol/zoned-ebcdic-trailing/v1"])
+@pytest.mark.parametrize("kind", ["fixed_width", "csv"])
+def test_a9_binary_cobol_on_a_text_source_is_rejected_at_compile(
+    tmp_path: Path, fmt: str, kind: str
+) -> None:
+    """A text physical kind cannot carry exact bytes: reject before any read, not at decode."""
+    from decoy_engine.plan._errors import PlanCompileError
+
+    path = tmp_path / "t.txt"
+    path.write_text("0123\n", encoding="utf-8")
+    source: dict[str, Any] = {"type": "file", "format": kind, "path": str(path)}
+    if kind == "fixed_width":
+        source["layout"] = {
+            "exact_record_width": True,
+            "columns": [{"name": "amt", "start": 0, "width": 3, "type": "str"}],
+        }
+    cfg = {
+        "version": 1,
+        "global_settings": {"seed": 7},
+        "sources": {"t": source},
+        "tables": [
+            {
+                "name": "t",
+                "columns": [
+                    column(
+                        "amt",
+                        logical_type="decimal",
+                        parse_format={"id": fmt, "precision": 5, "scale": 2, "signed": True},
+                        error_policy="fail",
+                    )
+                ],
+            }
+        ],
+        "targets": {"t": {"type": "file", "format": "csv", "path": str(tmp_path / "o.csv")}},
+        "relationships": [],
+        "namespaces": {},
+    }
+    with pytest.raises(PlanCompileError) as exc:
+        run(cfg, {"t": text_table(amt=["x"])})
+    assert exc.value.code == "declared_cast_contract_invalid"
+
+
 # -- B1 three policies ------------------------------------------------------------------------
 
 _BAD_DATES = ["2026-02-01", "TBD", "2026-03-05"]

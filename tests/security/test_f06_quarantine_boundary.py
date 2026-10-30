@@ -432,7 +432,11 @@ def test_c4_later_validator_failure_leaves_no_sealed_artifact(tmp_path: Path) ->
     cfg = _cfg(
         tmp_path,
         validators=[
-            {"name": "regex_match", "columns": {"people": ["id"]}, "params": {"pattern": "^nomatch$"}}
+            {
+                "name": "regex_match",
+                "columns": {"people": ["id"]},
+                "params": {"pattern": "^nomatch$"},
+            }
         ],
     )
     start = ["2026-02-01", f"bad-{MARKER}", "2026-03-05"]
