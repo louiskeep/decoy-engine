@@ -68,7 +68,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -149,6 +149,11 @@ def run_pipeline_isolated(
     timeout_s: float | None = _DEFAULT_TIMEOUT_S,
     operation_id: str | None = None,
     cancel_check: Callable[[], bool] | None = None,
+    checks: Iterable[_pub.CheckResult] = (),
+    validation_policy_fingerprint: str | None = None,
+    expected_tables: Iterable[str] | None = None,
+    unit: str = _pub.UNIT_IMMUTABLE_DIRECTORY,
+    overwrite: _pub.OverwritePolicy = _pub.ErrorIfDifferent(),  # noqa: B008
     **run_pipeline_kwargs: Any,
 ) -> IsolatedRunResult:
     """Run one pipeline job in a fresh child process; return a clean result.
@@ -187,6 +192,9 @@ def run_pipeline_isolated(
             gets `already_committed` instead of a failed non-empty-target commit.
         cancel_check: polled by the parent under the destination lock immediately before
             the final rename; True refuses publication (`cancelled_before_commit`).
+        checks / validation_policy_fingerprint / expected_tables / unit / overwrite: the
+            publication request the parent enforces at the child gate (before any payload
+            read) and at promotion; a required failing check refuses, nothing is read.
         **run_pipeline_kwargs: forwarded to `run_pipeline` (e.g.
             `engine_version`, `execution_mode`, `native_threads`). See
             `_NOT_SERIALIZABLE_KWARGS` for the excluded subset.
@@ -203,7 +211,15 @@ def run_pipeline_isolated(
             spawned.
     """
     _reject_unserializable_kwargs(run_pipeline_kwargs)
-    publish = PublishContext(operation_id=operation_id, cancelled=cancel_check)
+    publish = PublishContext(
+        operation_id=operation_id,
+        cancelled=cancel_check,
+        checks=tuple(checks),
+        validation_policy_fingerprint=validation_policy_fingerprint,
+        expected_tables=None if expected_tables is None else tuple(expected_tables),
+        unit=unit,
+        overwrite=overwrite,
+    )
     if mem_cap_bytes is not None and rlimit_kind not in RLIMIT_KINDS:
         raise ValueError(f"rlimit_kind={rlimit_kind!r} is not one of {sorted(RLIMIT_KINDS)}")
 

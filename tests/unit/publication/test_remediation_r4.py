@@ -306,3 +306,70 @@ def test_one_publish_context_names_one_operation_for_gate_and_promotion(tmp_path
         publish.request_for(tmp_path / "a").operation_id
         == publish.request_for(tmp_path / "b").operation_id
     )
+
+
+# ------------------------------------------------------------ real runs reach the child gate
+
+
+def _real_run(tmp_path: Path, **publication: object):  # type: ignore[no-untyped-def]
+    from decoy_engine.execution._isolated_run import run_pipeline_isolated
+    from tests.unit.execution import _r3_scenarios as sc
+
+    cfg, tables = sc.two_tables(tmp_path)
+    out = tmp_path / "final"
+    result = run_pipeline_isolated(
+        cfg, tables, engine_version=sc.ENGINE_VERSION, output_dir=out, **publication
+    )
+    assert result.isolated
+    return result, out
+
+
+def test_a_real_isolated_run_carries_its_publication_request_into_the_child_gate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen: list[pub.PublicationRequest] = []
+    real = pub.verify_child_envelope
+    monkeypatch.setattr(
+        pub, "verify_child_envelope", lambda env, req: (seen.append(req), real(env, req))[1]
+    )
+    checks = (pub.CheckResult("fk", "pass"), pub.CheckResult("advisory", "fail", required=False))
+    result, out = _real_run(
+        tmp_path,
+        checks=checks,
+        validation_policy_fingerprint="policy-1",
+        expected_tables=["a", "b"],
+    )
+    assert result.publication_receipt.outcome == "published"  # type: ignore[union-attr]
+    gate = seen[0]  # the parent's gate before any payload read, not the promotion's re-check
+    assert gate.checks == checks and gate.validation_policy_fingerprint == "policy-1"
+    assert gate.expected_tables == ("a", "b")
+    assert gate.unit == pub.UNIT_IMMUTABLE_DIRECTORY
+    assert isinstance(gate.overwrite, pub.ErrorIfDifferent)
+    assert {r.operation_id for r in seen} == {gate.operation_id}
+    sup.oracle(out)
+
+
+def test_a_real_isolated_run_with_a_failed_required_check_is_refused_with_zero_payload_reads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls = _no_reads(monkeypatch)  # parent-side only: the child is a separate process
+    result, out = _real_run(tmp_path, checks=tuple(FAIL))
+    assert result.publication_receipt.reason_code == "required_check_failed"  # type: ignore[union-attr]
+    assert result.outcome != "completed" and result.outputs is None
+    assert calls == [] and not out.exists()
+
+
+def test_a_real_isolated_run_with_the_wrong_expected_tables_is_refused_with_zero_payload_reads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls = _no_reads(monkeypatch)
+    result, out = _real_run(tmp_path, expected_tables=["a"])
+    assert result.publication_receipt.reason_code == "child_envelope_invalid"  # type: ignore[union-attr]
+    assert calls == [] and not out.exists()
+
+
+def test_a_real_isolated_run_publishes_the_requested_unit(tmp_path: Path) -> None:
+    result, out = _real_run(tmp_path, unit=pub.UNIT_MANAGED_DATASET)
+    receipt = result.publication_receipt
+    assert receipt.outcome == "published" and receipt.generation is not None  # type: ignore[union-attr]
+    assert pub.resolve_current(out) is not None

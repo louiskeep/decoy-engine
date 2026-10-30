@@ -66,7 +66,7 @@ MAX = 700
 ALLOWLIST: dict[str, int] = {
     # sampler start/finish and evidence threading in _spawn_and_classify; split the spawn/classify half into _isolated_spawn.py.
     # F22: the parent-publication plumbing (operation id, cancel hook, receipt) threads through the spawn and in-process paths.
-    "src/decoy_engine/execution/_isolated_run.py": 679,
+    "src/decoy_engine/execution/_isolated_run.py": 695,
     # bounded-eligible fit rule, the fk-dtype retention branch and the D3a validator admission in decide_execution_route; split the route-priority docstring into the plan doc.
     # F22: the receipt rides the sequential and out-of-core ExecutionResult reconstruction sites.
     "src/decoy_engine/execution/_pipeline_route_exec.py": 601,
