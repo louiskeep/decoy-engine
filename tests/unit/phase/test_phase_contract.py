@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import dataclasses
+import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -268,3 +270,133 @@ def test_direct_frozenmap_is_sorted_and_round_trips_through_the_gate():
     assert phase.satisfies_required_gate(res)
     assert phase.to_wire(res)["payload"] == {"a": [1, {"z": None}], "b": 2}
     assert phase.canonical_bytes(res)
+
+
+# ---- every envelope field validated at construction; malformed -> PhaseContractError (round 5) --
+
+
+class _Wrapped:
+    """A non-envelope duck type that quacks like a PhaseEvent."""
+
+    phase = "post_scan"
+    event = "done"
+    status = "passed"
+    reason = None
+    schema_version = "phase-event/v1"
+
+
+_SECRET = Path("/secret/customer.csv")
+
+
+@pytest.mark.parametrize(
+    "kw",
+    [
+        {"check_id": _SECRET},
+        {"method": _SECRET},
+        {"method_version": 1},
+        {"phase": _SECRET},
+        {"status": _SECRET},
+        {"schema_version": _SECRET},
+        {"coverage": None},
+        {"coverage": {"rows_examined": 1}},
+        {"reasons": (object(),)},
+        {"reasons": (ReasonRef(_SECRET, "check_error"),)},  # type: ignore[arg-type]
+        {"reasons": ReasonRef("post_scan", "check_error")},
+    ],
+)
+def test_result_rejects_non_contract_field_types_at_construction(kw):
+    with pytest.raises(phase.PhaseContractError):
+        _result(**kw)
+
+
+@pytest.mark.parametrize(
+    "kw",
+    [
+        {"rows_examined": _SECRET},
+        {"rows_examined": True},
+        {"rows_examined": 1.5},
+        {"exact": "yes"},
+        {"exact": 1},
+        {"sampling_method": _SECRET},
+        {"requested_scope": (_SECRET,)},
+        {"limits": "abc"},
+        {"omissions": None},
+    ],
+)
+def test_coverage_rejects_non_contract_field_types_at_construction(kw):
+    with pytest.raises(phase.PhaseContractError):
+        phase.PhaseCoverage(**kw)
+
+
+@pytest.mark.parametrize(
+    "kw",
+    [
+        {"event": _SECRET},
+        {"phase": _SECRET},
+        {"status": 1},
+        {"reason": object()},
+        {"reason": "post_scan/check_error"},
+        {"schema_version": None},
+    ],
+)
+def test_event_rejects_non_contract_field_types_at_construction(kw):
+    base = dict(phase="post_scan", event="done", status="passed")
+    base.update(kw)
+    with pytest.raises(phase.PhaseContractError):
+        phase.PhaseEvent(**base)
+
+
+def _bypass(obj, name, value):
+    # Frozen dataclasses can still be forced; export must re-validate, never trust construction.
+    object.__setattr__(obj, name, value)
+    return obj
+
+
+@pytest.mark.parametrize(
+    ("make", "field", "value"),
+    [
+        (lambda: _result(), "check_id", _SECRET),
+        (lambda: _result(), "coverage", None),
+        (lambda: _result(), "reasons", (object(),)),
+        (lambda: _result(), "identity", ((_SECRET, "x"),)),
+        (lambda: _result(), "payload", [_SECRET]),
+        (lambda: phase.PhaseCoverage(), "rows_examined", _SECRET),
+        (lambda: phase.PhaseEvent("post_scan", "done", "passed"), "event", _SECRET),
+        (lambda: phase.PhaseEvent("post_scan", "done", "passed"), "reason", object()),
+    ],
+)
+def test_forced_malformed_envelope_fails_closed_with_contract_error(make, field, value):
+    obj = _bypass(make(), field, value)
+    if isinstance(obj, phase.PhaseCoverage):
+        obj = _result(coverage=phase.PhaseCoverage())
+        _bypass(obj.coverage, field, value)
+    with pytest.raises(phase.PhaseContractError):
+        phase.to_wire(obj)
+    with pytest.raises(phase.PhaseContractError):
+        phase.canonical_bytes(obj)
+    if isinstance(obj, phase.PhaseResult):
+        assert phase.satisfies_required_gate(obj) is False
+
+
+@pytest.mark.parametrize("item", [_Wrapped(), object(), None, {"phase": "post_scan"}, "x"])
+def test_non_envelope_inputs_are_rejected_explicitly(item):
+    with pytest.raises(phase.PhaseContractError):
+        phase.to_wire(item)  # type: ignore[arg-type]
+    with pytest.raises(phase.PhaseContractError):
+        phase.canonical_bytes(item)  # type: ignore[arg-type]
+    assert phase.satisfies_required_gate(item) is False  # type: ignore[arg-type]
+
+
+def test_gate_true_implies_canonical_bytes_succeed():
+    ok = _result(
+        coverage=phase.PhaseCoverage(rows_examined=10, sampling_method="head", exact=False),
+        reasons=(reasons.get_reason("post_scan", "check_error").ref,),
+        identity={"source": "s"},
+        payload={"a": [1]},
+    )
+    assert phase.satisfies_required_gate(ok)
+    assert json.loads(phase.canonical_bytes(ok))["coverage"]["rows_examined"] == 10
+    ev = phase.PhaseEvent(
+        "post_scan", "done", "passed", reasons.get_reason("post_scan", "check_error").ref
+    )
+    assert json.loads(phase.canonical_bytes(ev))["reason"]["code"] == "check_error"

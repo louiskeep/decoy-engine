@@ -10,6 +10,11 @@ frozen mappings (tuples of key/value pairs) and refuses anything else, so a raw
 exception, DataFrame or arbitrary object cannot reach ordinary evidence.
 Reasons are registry identities (`decoy_engine.reasons`), never formatted text.
 
+Every envelope, coverage and reason field is type-checked at construction and
+again at export (a frozen dataclass can still be forced with `object.__setattr__`),
+so nothing is accepted that later fails `canonical_bytes`, and every malformed
+envelope surfaces as `PhaseContractError`, never a stray `TypeError`.
+
 Gate rule: only a `passed` result of a known schema can satisfy a required gate;
 unknown schema, status or reason identity fails closed. Pattern: MLIR's split
 between analyses that inspect input and transforms that change it, applied as
@@ -108,9 +113,38 @@ def _identity_pairs(value: Any) -> tuple[tuple[str, str], ...]:
 
 
 def _str_tuple(value: Any, name: str) -> tuple[str, ...]:
+    # A bare str is iterable; accepting it would silently explode "abc" into ("a", "b", "c").
+    if isinstance(value, (str, bytes, Mapping)) or not isinstance(value, (tuple, list)):
+        raise PhaseContractError(f"{name} must be a tuple of str")
     items = tuple(value)
-    if not all(isinstance(i, str) for i in items):
+    if not all(type(i) is str for i in items):
         raise PhaseContractError(f"{name} must contain only str")
+    return items
+
+
+def _require_str(value: Any, name: str) -> None:
+    if type(value) is not str:
+        raise PhaseContractError(f"{name} must be str")
+
+
+def _require_opt_str(value: Any, name: str) -> None:
+    if value is not None:
+        _require_str(value, name)
+
+
+def _require_reason(value: Any) -> None:
+    if type(value) is not ReasonRef:
+        raise PhaseContractError("reasons must be ReasonRef")
+    _require_str(value.namespace, "reason namespace")
+    _require_str(value.code, "reason code")
+
+
+def _reason_tuple(value: Any) -> tuple[ReasonRef, ...]:
+    if not isinstance(value, (tuple, list)):
+        raise PhaseContractError("reasons must be a tuple of ReasonRef")
+    items = tuple(value)
+    for ref in items:
+        _require_reason(ref)
     return items
 
 
@@ -168,6 +202,22 @@ class PhaseCoverage:
     def __post_init__(self) -> None:
         for name in ("requested_scope", "observed_scope", "limits", "omissions"):
             object.__setattr__(self, name, _str_tuple(getattr(self, name), name))
+        _check_coverage(self)
+
+
+def _check_coverage(cov: Any) -> None:
+    if type(cov) is not PhaseCoverage:
+        raise PhaseContractError("coverage must be PhaseCoverage")
+    for name in ("requested_scope", "observed_scope", "limits", "omissions"):
+        value = getattr(cov, name)
+        if type(value) is not tuple or not all(type(i) is str for i in value):
+            raise PhaseContractError(f"{name} must be a tuple of str")
+    # bool is an int subclass; a count of True is a type confusion, not a count.
+    if cov.rows_examined is not None and type(cov.rows_examined) is not int:
+        raise PhaseContractError("rows_examined must be int or None")
+    if type(cov.exact) is not bool:
+        raise PhaseContractError("exact must be bool")
+    _require_opt_str(cov.sampling_method, "sampling_method")
 
 
 @dataclass(frozen=True)
@@ -186,9 +236,25 @@ class PhaseResult:
     def __post_init__(self) -> None:
         # Coerce at construction so a caller's list/dict can never alias evidence that was
         # already hashed: frozen dataclass fields alone only block re-assignment.
-        object.__setattr__(self, "reasons", tuple(self.reasons))
+        object.__setattr__(self, "reasons", _reason_tuple(self.reasons))
         object.__setattr__(self, "identity", _identity_pairs(self.identity))
         object.__setattr__(self, "payload", freeze(self.payload))
+        # Types only: unknown phase/status/schema values stay constructible so the gate can
+        # report them as fail-closed evidence rather than crash the producer.
+        _check_result_fields(self)
+
+
+def _check_result_fields(item: PhaseResult) -> None:
+    for name in ("phase", "check_id", "status", "method", "method_version", "schema_version"):
+        _require_str(getattr(item, name), name)
+    _check_coverage(item.coverage)
+    if type(item.reasons) is not tuple:
+        raise PhaseContractError("reasons must be a tuple of ReasonRef")
+    for ref in item.reasons:
+        _require_reason(ref)
+    if type(item.identity) is not tuple:
+        raise PhaseContractError("identity must be a tuple of (str, str) pairs")
+    _identity_pairs(item.identity)
 
 
 @dataclass(frozen=True)
@@ -198,6 +264,16 @@ class PhaseEvent:
     status: Status
     reason: ReasonRef | None = None
     schema_version: str = EVENT_SCHEMA
+
+    def __post_init__(self) -> None:
+        _check_event_fields(self)
+
+
+def _check_event_fields(item: PhaseEvent) -> None:
+    for name in ("phase", "event", "status", "schema_version"):
+        _require_str(getattr(item, name), name)
+    if item.reason is not None:
+        _require_reason(item.reason)
 
 
 def _check_header(phase: str, status: str, schema: str, expected: str) -> None:
@@ -218,8 +294,12 @@ def _reason_wire(ref: ReasonRef) -> dict[str, str]:
 
 
 def to_wire(item: PhaseResult | PhaseEvent) -> dict[str, Any]:
-    """The one serializer: validates versions and reasons, thaws to JSON-safe data."""
-    if isinstance(item, PhaseResult):
+    """The one serializer: validates versions and reasons, thaws to JSON-safe data.
+
+    Exact-type dispatch: a duck-typed or subclassed look-alike is not an envelope.
+    """
+    if type(item) is PhaseResult:
+        _check_result_fields(item)
         _check_header(item.phase, item.status, item.schema_version, RESULT_SCHEMA)
         cov = item.coverage
         return {
@@ -242,6 +322,9 @@ def to_wire(item: PhaseResult | PhaseEvent) -> dict[str, Any]:
             "reasons": [_reason_wire(r) for r in item.reasons],
             "payload": _thaw(item.payload),
         }
+    if type(item) is not PhaseEvent:
+        raise PhaseContractError("not a phase envelope")
+    _check_event_fields(item)
     _check_header(item.phase, item.status, item.schema_version, EVENT_SCHEMA)
     return {
         "schema_version": item.schema_version,
@@ -258,6 +341,8 @@ def canonical_bytes(item: PhaseResult | PhaseEvent) -> bytes:
 
 def satisfies_required_gate(item: PhaseResult) -> bool:
     """Fail-closed: only a `passed` result of a known schema with known reasons counts."""
+    if type(item) is not PhaseResult:
+        return False
     try:
         to_wire(item)
     except PhaseContractError:
