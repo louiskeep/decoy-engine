@@ -34,6 +34,10 @@ ROUTES = ("full_frame", "sequential", "chunked", "out_of_core", "mixed", "unifie
 # `post_mask_parent_row_quarantine` (the same removal on a relationship parent, whose children
 # were already mapped against the dropped row) is listed by no route: none re-applies the orphan
 # policy to the children after publication drops rows, so it is a registered refusal.
+# `pre_mask_parent_row_quarantine` (a parse-stage removal on a parent whose relationship tolerates
+# orphans) is listed by no route either: `remap`, `preserve` and `warn` exist for orphans already
+# in the source, so the children of an engine-dropped parent would publish, under `preserve` and
+# `warn` with the parent's raw key. Only `orphan_policy: fail` turns that removal into a refusal.
 _FULL = frozenset(
     {
         "pre_mask_cast",
@@ -116,6 +120,19 @@ def relationship_parent_tables(source: Any) -> frozenset[str]:
     return frozenset(out)
 
 
+def orphan_tolerant_parent_tables(source: Any) -> frozenset[str]:
+    """Parent tables of relationships that publish orphans instead of failing on them. A
+    missing policy counts as tolerant, so an under-specified edge can only be refused."""
+    out: set[str] = set()
+    for edge in _edges(source):
+        get = edge.get if isinstance(edge, Mapping) else lambda k, _e=edge: getattr(_e, k, None)
+        parent = get("parent")
+        if parent is None or get("orphan_policy") == "fail":
+            continue
+        out.add(str(parent.get("table") if isinstance(parent, Mapping) else parent.table))
+    return frozenset(out)
+
+
 def relationship_endpoints(source: Any) -> frozenset[tuple[str, str]]:
     """``(table, column)`` ends of every relationship, from a Plan, a config mapping or the
     config's relationship list itself."""
@@ -137,6 +154,7 @@ def _requirements(
     models: list[C.DeclaredColumnContractV1],
     endpoints: frozenset[tuple[str, str]],
     parents: frozenset[str] = frozenset(),
+    tolerant_parents: frozenset[str] = frozenset(),
 ) -> set[str]:
     need = {"pre_mask_cast", "issue_counts"}
     for column, model in zip(columns, models, strict=True):
@@ -146,6 +164,8 @@ def _requirements(
             need.add("binary_cells")
         if model.error_policy == "quarantine":
             need.add("row_quarantine")
+            if column.table in tolerant_parents:
+                need.add("pre_mask_parent_row_quarantine")
             if model.output_format is not None:
                 need.add("post_mask_row_quarantine")
                 if column.table in parents:
@@ -173,6 +193,7 @@ def evaluate_declared_casting(
         models,
         relationship_endpoints(relationships),
         relationship_parent_tables(relationships),
+        orphan_tolerant_parent_tables(relationships),
     )
     have = ROUTE_CAPABILITIES.get(route, frozenset())
     fixed_target = (target_facts or {}).get("kind") == "fixed_width"
@@ -347,6 +368,7 @@ def _refuse_unprovided(columns: tuple[Any, ...], config: Mapping[str, Any]) -> N
         models,
         relationship_endpoints(config.get("relationships")),
         relationship_parent_tables(config.get("relationships")),
+        orphan_tolerant_parent_tables(config.get("relationships")),
     )
     if need - provided:
         raise DeclaredCastRouteError(

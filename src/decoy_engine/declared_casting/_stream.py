@@ -170,11 +170,12 @@ def run_staged(fn: Callable[..., Any], call: dict[str, Any], default_batch_rows:
     """Run ``fn(plan, sources, **rest)`` over typed copies of its declared sources.
 
     ``call`` is the caller's own keyword snapshot (``dict(locals())`` at its first line); the
-    sources are replaced by their staged form, the private staging directory is removed on every
-    exit, and ``_staged=True`` stops the second call from staging again. The directory lives
-    under the caller's ``temp_dir`` when given, so the route's own temp-disk accounting sees the
-    copy; without one it is a private system temp directory, and the copy alone is held to
-    ``temp_disk_budget_bytes``.
+    sources are replaced by their staged form and ``_staged=True`` stops the second call from
+    staging again. One private per-run root (under the caller's ``temp_dir`` when given, else
+    the system temp directory) holds the copy and is handed on as the route's ``temp_dir``, so
+    the route spills beside the copy and every footprint check, the copy's per batch and the
+    route's per table, measures both against the one ``temp_disk_budget_bytes``. Two roots would
+    each get the whole budget. The root is removed on every exit.
     """
     import os
     import tempfile
@@ -185,10 +186,11 @@ def run_staged(fn: Callable[..., Any], call: dict[str, Any], default_batch_rows:
     parent = call.get("temp_dir")
     if parent is not None:
         Path(parent).mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="decoy-ooc-cast-", dir=parent) as stage:
-        os.chmod(stage, 0o700)
+    with tempfile.TemporaryDirectory(prefix="decoy-ooc-run-", dir=parent) as root:
+        os.chmod(root, 0o700)
         batch_rows = call.get("batch_rows") or default_batch_rows
         staged = stage_typed_sources(
-            run, sources, Path(stage), batch_rows, call.get("temp_disk_budget_bytes")
+            run, sources, Path(root), batch_rows, call.get("temp_disk_budget_bytes")
         )
+        call["temp_dir"] = Path(root)
         return fn(plan, staged, _staged=True, **call)

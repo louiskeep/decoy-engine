@@ -105,17 +105,20 @@ def _decode(value: Any) -> Any:
 
 
 def _discard_partial(fd: int, partial: Path) -> str:
+    # A failed close may leave the descriptor open, so it is never a confirmed cleanup; the
+    # unlink still runs so no `.partial` outlives the failure.
+    closed = True
     try:
         os.close(fd)
     except OSError:
-        pass
+        closed = False
     try:
         os.unlink(partial)
     except FileNotFoundError:
         pass
     except OSError:
         return "failed"
-    return "confirmed"
+    return "confirmed" if closed else "failed"
 
 
 @dataclass

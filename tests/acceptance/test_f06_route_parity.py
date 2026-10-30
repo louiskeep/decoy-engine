@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
 
 from tests.acceptance._f06_support import (
@@ -140,7 +141,7 @@ def _fk_cfg(tmp_path: Path, *, endpoints: bool, policy: str = "null") -> dict[st
     par = write_csv(tmp_path / "par.csv", ["id", "label"], [["1", "a"]])
     chi = write_csv(tmp_path / "chi.csv", ["cid", "pid", "start"], [["1", "1", "2026-02-01"]])
 
-    def key(name: str, **extra: Any) -> dict[str, Any]:
+    def key(name: str, error_policy: str = policy) -> dict[str, Any]:
         return column(
             name,
             "hash",
@@ -148,9 +149,12 @@ def _fk_cfg(tmp_path: Path, *, endpoints: bool, policy: str = "null") -> dict[st
             deterministic=True,
             logical_type="integer",
             parse_format=INT64,
-            error_policy=policy,
-            **extra,
+            error_policy=error_policy,
         )
+
+    # Quarantining a parent row under `remap` is refused (`pre_mask_parent_row_quarantine`), so
+    # the parent key nulls its bad cell; `_fk_parent_quarantine_cfg` covers the admitted shape.
+    parent_key = key("id", "null" if policy == "quarantine" else policy)
 
     plain = column("id", "hash", namespace="ns", deterministic=True)
     plain_fk = column("pid", "hash", namespace="ns", deterministic=True)
@@ -162,7 +166,7 @@ def _fk_cfg(tmp_path: Path, *, endpoints: bool, policy: str = "null") -> dict[st
             "child": {"type": "file", "format": "csv", "path": chi},
         },
         "tables": [
-            {"name": "parent", "columns": [key("id") if endpoints else plain, column("label")]},
+            {"name": "parent", "columns": [parent_key if endpoints else plain, column("label")]},
             {
                 "name": "child",
                 "columns": [
@@ -238,6 +242,58 @@ def test_sequential_route_matches_full_frame_for_declared_relationship_keys(
     assert b["counts"] == a["counts"]
     if policy == "quarantine":
         assert _opened(got, tmp_path, "fk-sequential") == _opened(base, tmp_path, "fk-full_frame")
+
+
+def _fk_parent_quarantine_cfg(tmp_path: Path, orphan_policy: str) -> dict[str, Any]:
+    cfg = _fk_cfg(tmp_path, endpoints=True, policy="quarantine")
+    cfg["tables"][0]["columns"][0]["error_policy"] = "quarantine"
+    cfg["relationships"][0]["orphan_policy"] = orphan_policy
+    return cfg
+
+
+def _fk_consistent_sources() -> dict[str, pa.Table]:
+    """No source orphan, and no child references the parent row whose key fails to parse."""
+    sources = _fk_sources()
+    sources["child"] = sources["child"].set_column(
+        1, "pid", pa.array(["42", "0007", "100", "42", "7"], pa.string())
+    )
+    return sources
+
+
+def test_parse_quarantine_on_a_parent_key_matches_across_fk_routes_under_fail(
+    tmp_path: Path,
+) -> None:
+    runs = {
+        mode: run(
+            _fk_parent_quarantine_cfg(tmp_path, "fail"),
+            _fk_consistent_sources(),
+            execution_mode=mode,
+            quarantine_runtime=_runtime(tmp_path / f"q-pq-{mode}"),
+        )
+        for mode in ("full_frame", "sequential")
+    }
+    base, got = runs["full_frame"], runs["sequential"]
+    assert got.quality_metrics["execution"]["execution_mode"] == "sequential"
+    assert base.outputs["parent"].num_rows == len(PARENT_IDS) - 1  # "bad" was quarantined
+    for name in ("parent", "child"):
+        assert got.outputs[name].equals(base.outputs[name]), name
+    assert _opened(got, tmp_path, "pq-sequential") == _opened(base, tmp_path, "pq-full_frame")
+
+
+@pytest.mark.parametrize("orphan_policy", ["remap", "preserve", "warn"])
+def test_parse_quarantine_on_a_parent_key_is_refused_unless_orphans_fail(
+    tmp_path: Path, orphan_policy: str
+) -> None:
+    from decoy_engine.execution._errors import DeclaredCastRouteError
+
+    with pytest.raises(DeclaredCastRouteError) as exc:
+        run(
+            _fk_parent_quarantine_cfg(tmp_path, orphan_policy),
+            _fk_sources(),
+            quarantine_runtime=_runtime(tmp_path / "q"),
+        )
+    assert str(exc.value.code) == "declared_cast_route_unsupported"
+    assert "pre_mask_parent_row_quarantine" in str(exc.value)
 
 
 def test_sequential_child_keys_join_the_parent_after_both_are_typed(tmp_path: Path) -> None:
@@ -354,6 +410,38 @@ def test_out_of_core_streams_lazy_sources_into_a_sink_with_the_same_result(
     assert counts == _fk_facts(base)["counts"]
     if policy == "quarantine":
         assert _opened(got, tmp_path, "fk-stream") == _opened(base, tmp_path, "fk-full_frame")
+
+
+def test_out_of_core_budget_root_holds_the_staged_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Managed execution passes no ``temp_dir``: the runner's per-table footprint check must still
+    measure the typed staging copy, so the copy and the spill share one budget."""
+    from decoy_engine.execution._transactional_sink import ParquetTransactionalSink
+    from decoy_engine.execution.out_of_core import _runner
+    from decoy_engine.profile._readers import LazySource
+
+    checked: list[list[str]] = []
+    original = _runner.check_temp_disk_budget
+
+    def spy(root: Path, *, max_bytes: int) -> int:
+        checked.append(sorted(p.name for p in Path(root).glob("*.typed.parquet")))
+        return original(root, max_bytes=max_bytes)
+
+    monkeypatch.setattr(_runner, "check_temp_disk_budget", spy)
+    lazy: dict[str, Any] = {}
+    for name, table in _fk_sources().items():
+        pq.write_table(table, tmp_path / f"{name}.parquet")
+        lazy[name] = LazySource(path=tmp_path / f"{name}.parquet")
+    got = run(
+        _fk_cfg(tmp_path, endpoints=False),
+        lazy,
+        execution_mode="out_of_core",
+        sink=ParquetTransactionalSink(tmp_path / "published"),
+    )
+    assert got.quality_metrics["execution"]["execution_mode"] == "out_of_core"
+    assert checked, "the runner checked its footprint at least once"
+    assert all(names == ["child.typed.parquet"] for names in checked), checked
 
 
 # -- mixed (generate + mask) ----------------------------------------------------------------------

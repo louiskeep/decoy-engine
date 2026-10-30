@@ -79,3 +79,33 @@ def test_failed_open_reports_a_cleanup_that_could_not_finish(
         _begin(sink)
     monkeypatch.undo()
     assert info.value.cleanup_state == "failed"
+
+
+def test_failed_open_reports_a_close_that_failed_even_when_the_partial_is_gone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A descriptor that may still be open is not a confirmed cleanup, though the unlink ran."""
+    from decoy_engine.declared_casting import _quarantine_local as local
+    from decoy_engine.execution._errors import QuarantineError
+
+    sink = _sink(tmp_path)
+    real_close = os.close
+    held: list[int] = []
+
+    def boom(*a: Any, **k: Any) -> None:
+        raise OSError(28, "injected")
+
+    def no_close(fd: int) -> None:
+        held.append(fd)
+        raise OSError(5, "injected")
+
+    monkeypatch.setattr(local.os, "fchmod", boom)
+    monkeypatch.setattr(local.os, "close", no_close)
+    with pytest.raises(QuarantineError) as info:
+        _begin(sink)
+    monkeypatch.undo()
+    for fd in held:
+        real_close(fd)
+    assert held, "the close failure was injected"
+    assert info.value.cleanup_state == "failed"
+    assert _partials(tmp_path) == []  # the unlink still ran

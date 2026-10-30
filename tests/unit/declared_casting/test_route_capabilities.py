@@ -146,4 +146,32 @@ def test_cast_before_join_is_needed_only_for_declared_relationship_endpoints() -
 def test_no_route_provides_parent_row_quarantine() -> None:
     from decoy_engine.declared_casting._eligibility import ROUTE_CAPABILITIES
 
-    assert all("post_mask_parent_row_quarantine" not in v for v in ROUTE_CAPABILITIES.values())
+    for capability in ("post_mask_parent_row_quarantine", "pre_mask_parent_row_quarantine"):
+        assert all(capability not in v for v in ROUTE_CAPABILITIES.values())
+
+
+@pytest.mark.parametrize("orphan_policy", ["preserve", "remap", "warn", "fail", None])
+def test_parse_quarantine_on_a_parent_needs_a_failing_orphan_policy(
+    orphan_policy: str | None,
+) -> None:
+    from decoy_engine.declared_casting import RuntimeCapabilities, evaluate_declared_casting
+
+    edge: dict[str, Any] = {
+        "parent": {"table": "t", "columns": ["id"]},
+        "children": [{"table": "c", "columns": ["pid"]}],
+    }
+    if orphan_policy is not None:
+        edge["orphan_policy"] = orphan_policy
+    decision = evaluate_declared_casting(
+        route="sequential",
+        plan_contracts=_contracts("quarantine", fmt=False),
+        capabilities=RuntimeCapabilities(quarantine_sink=True),
+        relationships=[edge],
+    )
+    if orphan_policy == "fail":
+        assert decision.admitted
+        assert "pre_mask_parent_row_quarantine" not in decision.requirements
+    else:
+        assert not decision.admitted
+        assert decision.missing == ("pre_mask_parent_row_quarantine",)
+        assert str(decision.rejection) == "declared_cast_route_unsupported"
