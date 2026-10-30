@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from decoy_engine.keyprovider import (
+    KEY_REQUIRED_GUIDANCE,
     MIN_SECRET_BYTES,
     KeyedStrategyRequiresSecret,
     KeyProvider,
@@ -47,13 +48,6 @@ from decoy_engine.secret_providers._types import (
 
 if TYPE_CHECKING:
     from decoy_engine.plan._types import Plan
-
-_NO_KEY_GUIDANCE = (
-    "this plan masks a keyed re-identification surface but no mask secret was admitted. "
-    "Supply run(key_provider=...) or global_settings.mask_secret_ref (env:NAME, file:/PATH or "
-    "a registered provider reference). No job_seed fallback exists in any release phase; for "
-    "local development a throwaway secret is enough: DECOY_MASK_SECRET=$(openssl rand -hex 32)."
-)
 
 
 def _safe(exc: BaseException) -> BaseException:
@@ -146,10 +140,10 @@ def prepare_legacy(
         if isinstance(key_provider, SeedKeyProvider) or any(
             r.id != MASK_ROOT_V1 for r in requirements
         ):
-            raise KeyedStrategyRequiresSecret(_NO_KEY_GUIDANCE)
+            raise KeyedStrategyRequiresSecret(KEY_REQUIRED_GUIDANCE)
         key = bytearray(key_provider.mask_key())
         if len(key) < MIN_SECRET_BYTES:
-            raise KeyedStrategyRequiresSecret(_NO_KEY_GUIDANCE)
+            raise KeyedStrategyRequiresSecret(KEY_REQUIRED_GUIDANCE)
         prepared = PreparedSecret(
             SecretBuffer.adopt(key),
             key_version=str(key_provider.key_version),
@@ -177,6 +171,27 @@ class AdmittedKey:
             self.prepared.close()
 
 
+class AdmissionScope:
+    """Owns the admitted secret of one run so its caller can close it on every exit path."""
+
+    def __init__(self) -> None:
+        self.admitted: AdmittedKey | None = None
+
+    def adopt(self, admitted: AdmittedKey) -> AdmittedKey:
+        self.admitted = admitted
+        return admitted
+
+    def close(self) -> None:
+        if self.admitted is not None:
+            self.admitted.close()
+
+    def __enter__(self) -> AdmissionScope:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self.close()
+
+
 def admit_mask_key(
     config: Mapping[str, Any],
     *,
@@ -199,7 +214,7 @@ def admit_mask_key(
         return AdmittedKey(prepared.key_provider(), prepared, requirements)
     if not ref_text:
         if requirements:
-            raise KeyedStrategyRequiresSecret(_NO_KEY_GUIDANCE)
+            raise KeyedStrategyRequiresSecret(KEY_REQUIRED_GUIDANCE)
         return AdmittedKey(None)
     requirements = requirements or (MASK_ROOT,)
     ref = parse_ref(ref_text)
@@ -216,10 +231,11 @@ def assert_plan_requirements_admitted(plan: Plan, admitted: AdmittedKey) -> None
     """
     if secret_requirements_for_plan(plan) and not admitted.requirements:
         admitted.close()
-        raise KeyedStrategyRequiresSecret(_NO_KEY_GUIDANCE)
+        raise KeyedStrategyRequiresSecret(KEY_REQUIRED_GUIDANCE)
 
 
 __all__ = [
+    "AdmissionScope",
     "AdmittedKey",
     "admit_mask_key",
     "assert_plan_requirements_admitted",

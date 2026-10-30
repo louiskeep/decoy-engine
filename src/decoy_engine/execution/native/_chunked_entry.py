@@ -500,9 +500,47 @@ def _run_chunked(
         carry_passthrough=enforce_schema_rule,
     )
     if state.first is None:
+        state.close_secret()
         if route_evidence_sink is not None:
             route_evidence_sink.append(_oracle_evidence(table, "empty_input"))
         return iter(())
+    try:
+        stream = _route_chunked(
+            state,
+            config=config,
+            table=table,
+            engine_version=engine_version,
+            adapter=adapter,
+            vault_writer=vault_writer,
+            chunk_result_sink=chunk_result_sink,
+            base_row_offset=base_row_offset,
+            native_threads=native_threads,
+            route_evidence_sink=route_evidence_sink,
+            enforce_schema_rule=enforce_schema_rule,
+            captured_schema=captured_schema,
+        )
+    except BaseException:
+        state.close_secret()
+        raise
+    return _chunked_oracle.release_when_done(stream, state)
+
+
+def _route_chunked(
+    state: Any,
+    *,
+    config: dict[str, Any],
+    table: str,
+    engine_version: str,
+    adapter: Any,
+    vault_writer: Any,
+    chunk_result_sink: list[Any] | None,
+    base_row_offset: int,
+    native_threads: int | None,
+    route_evidence_sink: list[NativeRouteEvidence] | None,
+    enforce_schema_rule: bool,
+    captured_schema: Any,
+) -> Iterator[pa.Table]:
+    """Everything after admission and preflight: route choice and the two chunk loops."""
 
     c5c_ii_admission = wire_nonempty_preflight(
         state, config=config, table=table, captured_schema=captured_schema

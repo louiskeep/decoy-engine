@@ -148,7 +148,12 @@ def test_success_surfaces_do_not_carry_the_secret(tmp_path, registry):
 
     (tmp_path / "t.csv").write_text("email\n" + "\n".join(f"u{i}@x.test" for i in range(5)) + "\n")
     events = []
-    result = run_pipeline(cfg, engine_version=ENGINE_VERSION, progress=CallbackSink(events.append))
+    import pyarrow as pa
+
+    sources = {"t": pa.Table.from_pandas(pd.read_csv(tmp_path / "t.csv"), preserve_index=False)}
+    result = run_pipeline(
+        cfg, sources, engine_version=ENGINE_VERSION, progress=CallbackSink(events.append)
+    )
     assert len(result.outputs["t"]) == 5  # positive control: ordinary output was produced
     from decoy_engine.plan._serialize import plan_to_yaml
 

@@ -19,8 +19,10 @@ from decoy_engine.secret_providers._errors import (
     SecretVersionUnavailable,
 )
 from decoy_engine.secret_providers._preflight import (
+    AdmissionScope,
     AdmittedKey,
     admit_mask_key,
+    assert_plan_requirements_admitted,
     prepare_legacy,
     prepare_secret,
 )
@@ -62,6 +64,7 @@ __all__ = [
     "MASK_ROOT_V1",
     "MAX_CACHE_TTL_SECONDS",
     "REQUIREMENTS",
+    "AdmissionScope",
     "AdmittedKey",
     "PreparedKeyProvider",
     "PreparedSecret",
@@ -83,6 +86,7 @@ __all__ = [
     "SecretRequirement",
     "SecretVersionUnavailable",
     "admit_mask_key",
+    "assert_plan_requirements_admitted",
     "default_cache",
     "default_registry",
     "parse_ref",

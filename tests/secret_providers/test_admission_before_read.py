@@ -107,7 +107,7 @@ def test_unknown_provider_is_fail_closed_with_no_fallback(tmp_path, registry, en
 @pytest.mark.parametrize("pre_ga", [True, False], ids=["pre-ga", "ga"])
 @pytest.mark.parametrize("entry", CHUNKED)
 def test_keyed_work_without_a_secret_never_falls_back(tmp_path, monkeypatch, entry, pre_ga):
-    monkeypatch.setattr("decoy_engine.keyprovider.is_pre_ga", lambda: pre_ga)
+    monkeypatch.setattr("decoy_engine.release.is_pre_ga", lambda: pre_ga)
 
     def boom(self):
         raise AssertionError("seed fallback ran")
@@ -124,7 +124,7 @@ def test_keyed_work_without_a_secret_never_falls_back(tmp_path, monkeypatch, ent
 def test_run_pipeline_keyed_without_secret_never_falls_back(
     tmp_path, monkeypatch, pre_ga, profile_spy
 ):
-    monkeypatch.setattr("decoy_engine.keyprovider.is_pre_ga", lambda: pre_ga)
+    monkeypatch.setattr("decoy_engine.release.is_pre_ga", lambda: pre_ga)
     with pytest.raises(KeyedStrategyRequiresSecret):
         run_pipeline(keyed_config(tmp_path), engine_version=ENGINE_VERSION)
     assert profile_spy == []

@@ -52,6 +52,13 @@ class SecretBuffer:
         self._buf[:] = bytes(len(self._buf))
         self._closed = True
 
+    def __del__(self) -> None:
+        # Best effort for a buffer nobody closed (e.g. a chunk stream never iterated).
+        try:
+            self.close()
+        except Exception:
+            pass
+
     def __enter__(self) -> SecretBuffer:
         return self
 

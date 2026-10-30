@@ -17,12 +17,11 @@ and by the per-purpose label / column tweak, a single 32-byte `mask_root`
 inherits every existing separation for free. Rotating `key_version`
 deterministically re-keys the whole surface without touching any derivation code.
 
-Secret source (Option A/B split at the seam): the engine only ever accepts
-bytes. It ships `SecretKeyProvider` + a `mask_secret_ref` resolver supporting two
-ref kinds -- `env:NAME` and `file:/PATH` -- decoding hex OR base64 to raw bytes.
-The reference lives in config; the raw secret is NEVER serialized into the plan,
-logged, or printed. The platform feeds per-tenant bytes straight into
-`run(key_provider=...)`; the engine ships no KMS client or tenancy concept.
+Secret source: the engine only ever accepts bytes. A `mask_secret_ref` in config is a
+REFERENCE resolved by the versioned `secret_providers` contract (F13): admission runs before
+any source read, per-algorithm validation, no `job_seed` fallback in any release phase. The raw
+secret is NEVER serialized into the plan, logged, or printed. The platform feeds per-tenant
+bytes into `run(key_provider=...)`; the engine ships no tenancy concept.
 
 We do not roll our own crypto: HKDF-SHA256 (RFC 5869) over the same stdlib
 `hmac`/`hashlib` primitive the rest of the engine uses. References:
@@ -34,15 +33,12 @@ We do not roll our own crypto: HKDF-SHA256 (RFC 5869) over the same stdlib
 
 from __future__ import annotations
 
-import base64
-import os
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from decoy_engine import reasons
 from decoy_engine.determinism._hkdf import hkdf_sha256
 from decoy_engine.errors import DecoyError
-from decoy_engine.release import is_pre_ga
 
 if TYPE_CHECKING:
     from decoy_engine.plan._types import Plan
@@ -179,247 +175,69 @@ class SeedKeyProvider:
         return self.job_seed
 
 
-def _decode_secret_material(text: str) -> bytes:
-    """Decode a hex OR base64 secret string to raw bytes.
+def key_provider_from_ref(ref: str, *, key_version: str | None = None) -> KeyProvider:
+    """Admit a `mask_secret_ref` through the secret-provider choke point.
 
-    Hex is tried first (a 64-char hex string is unambiguously 32 bytes); base64
-    is the fallback. A value that is valid as both (all-hex, even length) decodes
-    as hex -- documented precedence, not ambiguity in practice.
+    Returns a `KeyProvider` view of the prepared secret; the caller owns its lifetime (nothing
+    closes it automatically and nothing caches it). Prefer
+    `decoy_engine.secret_providers.admit_mask_key`, which also owns closing.
     """
-    stripped = "".join(text.split())
-    if not stripped:
-        raise MaskSecretError(
-            code=reasons.runtime.BAD_SECRET_REF, message="secret material is empty."
-        )
-    try:
-        return bytes.fromhex(stripped)
-    except ValueError:
-        pass
-    try:
-        return base64.b64decode(stripped, validate=True)
-    except (base64.binascii.Error, ValueError) as exc:  # type: ignore[attr-defined]
-        raise MaskSecretError(
-            code=reasons.runtime.BAD_SECRET_REF,
-            message="secret material is neither valid hex nor base64.",
-        ) from exc
-
-
-def _redact_ref(ref: str) -> str:
-    """A safe rendering of a ref for error messages (Codex MEDIUM 7).
-
-    `env:NAME` / `file:/PATH` carry only a var name / path (not the secret), shown
-    verbatim. Any other value could be a raw secret pasted directly as the ref, so
-    only its length is shown -- never the bytes.
-    """
-    if ref.startswith(("env:", "file:")):
-        return repr(ref)
-    return f"<redacted ref, {len(ref)} chars>"
-
-
-def resolve_mask_secret_ref(ref: str) -> bytes:
-    """Resolve a `mask_secret_ref` (`env:NAME` or `file:/PATH`) to raw bytes.
-
-    The ref is a REFERENCE, never the secret itself. Supported kinds:
-      - `env:NAME`   -> os.environ["NAME"], hex/base64-decoded.
-      - `file:/PATH` -> the file's text contents, hex/base64-decoded.
-
-    Raises MissingMaskSecret when the source is absent/unreadable and
-    MaskSecretError(code='bad_secret_ref') for an unknown kind.
-    """
-    if ref.startswith("env:"):
-        name = ref[len("env:") :]
-        if not name:
-            raise MaskSecretError(
-                code=reasons.runtime.BAD_SECRET_REF, message="env ref has no variable name."
-            )
-        raw = os.environ.get(name)
-        if raw is None:
-            raise MissingMaskSecret(
-                f"environment variable {name!r} (from mask_secret_ref) is unset."
-            )
-        return _decode_secret_material(raw)
-    if ref.startswith("file:"):
-        path = ref[len("file:") :]
-        if not path:
-            raise MaskSecretError(
-                code=reasons.runtime.BAD_SECRET_REF, message="file ref has no path."
-            )
-        try:
-            with open(path, encoding="utf-8") as handle:
-                raw = handle.read()
-        except OSError as exc:
-            raise MissingMaskSecret(
-                f"mask secret file {path!r} (from mask_secret_ref) could not be read: {exc}."
-            ) from exc
-        except UnicodeDecodeError as exc:
-            # The file exists and is readable, but is not valid UTF-8 text --
-            # a distinct failure mode from "missing" (bad_secret_ref, not
-            # MissingMaskSecret), and it must not escape as a raw
-            # UnicodeDecodeError (an uncaught crash instead of a clean,
-            # typed gate error the CLI maps to EXIT_USAGE). Read stays TEXT
-            # (not bytes) -- switching to a raw-bytes read would change key
-            # derivation for existing file-based secrets, a determinism/
-            # compat break outside this fix's scope (see PR body follow-up).
-            raise MaskSecretError(
-                code=reasons.runtime.BAD_SECRET_REF,
-                message=f"mask secret file {path!r} (from mask_secret_ref) is not valid UTF-8: {exc}.",
-            ) from exc
-        return _decode_secret_material(raw)
-    raise MaskSecretError(
-        code=reasons.runtime.BAD_SECRET_REF,
-        message=f"mask_secret_ref must start with 'env:' or 'file:'; got {_redact_ref(ref)}.",
+    from decoy_engine.secret_providers import (
+        MASK_ROOT_V1,
+        REQUIREMENTS,
+        SecretCachePolicy,
+        default_registry,
+        parse_ref,
     )
 
+    parsed = parse_ref(ref)
+    if key_version is not None:
+        from dataclasses import replace
 
-def key_provider_from_ref(ref: str, *, key_version: str = "v1") -> SecretKeyProvider:
-    """Build a SecretKeyProvider from a `mask_secret_ref`. Validates >=32 bytes."""
-    return SecretKeyProvider(resolve_mask_secret_ref(ref), key_version=key_version)
-
-
-# Strategies whose handlers always feed the mask key (re-identification surface
-# regardless of the deterministic flag). Faker/categorical/composite are keyed
-# only in deterministic mode (a real source maps to a synthetic value); that is
-# caught by the `deterministic` check below, not this set. Kept in lockstep with
-# the 23-site keyed-surface map in the DE-02 design doc.
-# tokenize persists a reversible source->token mapping, so its token MUST be
-# derived from the secret mask key, never the public job seed: a seed-derived
-# token is dictionary-attackable without vault authorization. It is keyed
-# unconditionally (like a `vault: true` column, see _col_seed_is_keyed), not
-# only when deterministic=True.
-_ALWAYS_KEYED_STRATEGIES = frozenset(
-    {
-        "fpe",
-        "hash",
-        "date_shift",
-        "shuffle",
-        "bucket_perturb",
-        "text_mask",
-        "code_set",
-        "grouped_series",
-        "windowed_date",
-        "group_key",
-        "joint_mask",
-        "tokenize",
-    }
-)
-
-
-def _col_seed_is_keyed(col_seed: Any) -> bool:
-    """Whether one ColumnSeed is keyed re-identification surface.
-
-    A `vault: true` column is ALWAYS keyed (Codex item 6b): its source->masked
-    mapping is persisted, encrypted, into the token vault for reversal, so it
-    stores reversible plaintext PII even when the masking strategy itself is
-    anonymising (e.g. `redact` + `vault: true`). The GA gate must therefore
-    require a real secret for any vault-bearing plan, at every entry point.
-
-    Recurses into `nested` children (Codex BLOCKER 3): a nested wrapper carries
-    its child strategy in `provider_config["strategy"]` and the child's config in
-    `provider_config["strategy_config"]`; a keyed child (e.g.
-    `nested(strategy=hash)`) must be classified keyed even though the parent
-    strategy is `nested`.
-    """
-    if getattr(col_seed, "vault", False):
-        return True
-    if col_seed.strategy in _ALWAYS_KEYED_STRATEGIES or col_seed.deterministic:
-        return True
-    if col_seed.strategy == "nested":
-        cfg = dict(col_seed.provider_config)
-        child_strategy = cfg.get("strategy")
-        child_cfg = cfg.get("strategy_config")
-        child_deterministic = (
-            bool(child_cfg.get("deterministic")) if isinstance(child_cfg, dict) else False
-        )
-        if child_strategy in _ALWAYS_KEYED_STRATEGIES or child_deterministic:
-            return True
-        # A nested-of-nested is not a shipped pattern, but classify it keyed
-        # defensively rather than silently exempt it (fail-safe).
-        if child_strategy == "nested":
-            return True
-    return False
+        parsed = replace(parsed, key_version=key_version)
+    provider = default_registry().get(parsed.scheme)
+    return provider.preflight(
+        parsed, (REQUIREMENTS[MASK_ROOT_V1],), SecretCachePolicy()
+    ).key_provider()
 
 
 def plan_has_keyed_strategy(plan: Plan) -> bool:
     """True if the compiled plan contains any keyed re-identification strategy.
 
-    Keyed = any always-keyed strategy, OR any deterministic column (a
-    deterministic faker/categorical/composite maps a real source value to a
-    synthetic one and is reversible under the key), OR a keyed `nested` child, OR
-    any composite-FK group (a keyed pseudonym mapping over real FK values).
+    The rules live in one registry (`secret_providers._requirements`) shared with the
+    pre-read config classifier, so the two cannot drift.
     """
-    for _table, table_seed in plan.seed_envelope.per_table:
-        for _col, col_seed in table_seed.per_column:
-            if _col_seed_is_keyed(col_seed):
-                return True
-        if table_seed.per_group:
-            return True
-    return False
+    from decoy_engine.secret_providers import secret_requirements_for_plan
+
+    return bool(secret_requirements_for_plan(plan))
 
 
-_GA_MASK_KEY_REQUIRED_MSG = (
-    "this plan masks a keyed re-identification surface but no >=32-byte mask "
-    "secret was resolved. At GA a keyed job must be given a real secret via "
-    "run(key_provider=...) or global_settings.mask_secret_ref (env:NAME or "
-    "file:/PATH); an 8-byte job_seed fallback is NOT accepted. For local dev, a "
-    "throwaway secret is enough: DECOY_MASK_SECRET=$(openssl rand -hex 32), then "
-    "mask_secret_ref: 'env:DECOY_MASK_SECRET'."
+KEY_REQUIRED_GUIDANCE = (
+    "this plan masks a keyed re-identification surface but no mask secret was admitted. "
+    "Supply run(key_provider=...) or global_settings.mask_secret_ref (env:NAME, file:/PATH or "
+    "a registered provider reference). No job_seed fallback exists in any release phase; for "
+    "local development a throwaway secret is enough: DECOY_MASK_SECRET=$(openssl rand -hex 32)."
 )
 
 
 def require_mask_key(plan: Plan, key_provider: KeyProvider | None) -> bytes:
-    """THE execution choke-point gate: gate on (plan, provider) and return mask_key.
+    """Defense-in-depth gate at every masking choke point: gate on (plan, provider), return mask_key.
 
-    Called at every masking choke point (each adapter's StrategyContext.mask_key,
-    the out-of-core runner) so no public entry point can run keyed masking off
-    `job_seed` at GA (Codex BLOCKER 4). Idempotent -- `run_pipeline` runs it once
-    up front (fail fast) and the choke points run it again for direct callers.
-
-    Gate (provenance-blind: presence + RESOLVED-key length, not just presence):
-      - Non-keyed plan: mask key is inert -> provider root, else `job_seed`.
-      - Keyed plan + provider present: use `provider.mask_key()`, but at GA reject
-        a resolved key < 32 bytes (a SeedKeyProvider's 8-byte fallback or an empty
-        custom provider is NOT a real secret) with KeyedStrategyRequiresSecret
-        (Codex BLOCKER 2).
-      - Keyed plan + no provider + pre-GA: `job_seed` (byte-identical to today).
-      - Keyed plan + no provider + GA: raise KeyedStrategyRequiresSecret.
+    The entry points admit a secret BEFORE reading any source (`secret_providers.admit_mask_key`);
+    this re-asserts the invariant for direct callers of the adapters. Keyed work never runs off
+    `job_seed` in any release phase: a missing provider, a `SeedKeyProvider`, or a resolved key
+    shorter than the 32-byte mask root all fail closed with KeyedStrategyRequiresSecret.
+    Non-keyed plans: the mask key is inert -> provider root, else `job_seed`.
     """
     job_seed = plan.seed_envelope.job_seed
     if not plan_has_keyed_strategy(plan):
         return key_provider.mask_key() if key_provider is not None else job_seed
-
-    if key_provider is not None:
-        mask_key = key_provider.mask_key()
-        if not is_pre_ga() and len(mask_key) < MIN_SECRET_BYTES:
-            raise KeyedStrategyRequiresSecret(_GA_MASK_KEY_REQUIRED_MSG)
-        return mask_key
-
-    if is_pre_ga():
-        return job_seed
-    raise KeyedStrategyRequiresSecret(_GA_MASK_KEY_REQUIRED_MSG)
-
-
-def resolve_key_provider(
-    *,
-    plan: Plan,
-    key_provider: KeyProvider | None = None,
-    mask_secret_ref: str | None = None,
-) -> KeyProvider | None:
-    """Resolve the ref -> provider and run the fail-closed gate (fail fast).
-
-    `run_pipeline` calls this once after compile_plan so a keyed job with no
-    secret dies before any profiling/execution; the returned provider is then
-    threaded into every route, whose choke point re-gates via `require_mask_key`.
-    A programmatic `key_provider` wins over `mask_secret_ref`; the ref resolves to
-    a SecretKeyProvider (>=32 bytes enforced at construction). Raises
-    KeyedStrategyRequiresSecret at GA when the resolved key is absent or < 32
-    bytes.
-    """
-    provider: KeyProvider | None = key_provider
-    if provider is None and mask_secret_ref:
-        provider = key_provider_from_ref(mask_secret_ref)
-    # Fail fast with the same gate the choke points enforce; discard the bytes.
-    require_mask_key(plan, provider)
-    return provider
+    if key_provider is None or isinstance(key_provider, SeedKeyProvider):
+        raise KeyedStrategyRequiresSecret(KEY_REQUIRED_GUIDANCE)
+    mask_key = key_provider.mask_key()
+    if len(mask_key) < MIN_SECRET_BYTES:
+        raise KeyedStrategyRequiresSecret(KEY_REQUIRED_GUIDANCE)
+    return mask_key
 
 
 def mask_key_from_provider(provider: KeyProvider | None, job_seed: bytes) -> bytes:
@@ -430,15 +248,7 @@ def mask_key_from_provider(provider: KeyProvider | None, job_seed: bytes) -> byt
     return provider.mask_key() if provider is not None else job_seed
 
 
-def resolve_mask_key(
-    *,
-    plan: Plan,
-    key_provider: KeyProvider | None = None,
-    mask_secret_ref: str | None = None,
-) -> bytes:
-    """Gate + resolve straight to `mask_key` bytes (for direct-bytes callers such
-    as `vault` / `unmask` that stand outside `StrategyContext`)."""
-    provider: KeyProvider | None = key_provider
-    if provider is None and mask_secret_ref:
-        provider = key_provider_from_ref(mask_secret_ref)
-    return require_mask_key(plan, provider)
+def resolve_mask_key(*, plan: Plan, key_provider: KeyProvider | None = None) -> bytes:
+    """Gate + resolve straight to `mask_key` bytes for callers that stand outside
+    `StrategyContext`. The provider must already be admitted; refs are not resolved here."""
+    return require_mask_key(plan, key_provider)
