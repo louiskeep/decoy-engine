@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from decoy_engine.reasons import _catalog
 from decoy_engine.reasons._types import Phase, RetryClass
 
@@ -24,13 +26,21 @@ __all__ = [
 
 _d = _catalog.runtime("decoy_engine.declared_casting")
 # A value failure is repaired in the data, never by retrying the operation.
-_VALUE = {"retry": RetryClass.NEVER, "phases": (Phase.MASK, Phase.FINALIZE, Phase.UNKNOWN), "since": "1.1.0"}
-_STORE = {
+_VALUE: dict[str, Any] = {
+    "retry": RetryClass.NEVER,
+    "phases": (Phase.MASK, Phase.FINALIZE, Phase.UNKNOWN),
+    "since": "1.1.0",
+}
+_STORE: dict[str, Any] = {
     "retry": RetryClass.ENVIRONMENT_REPAIR,
     "phases": (Phase.FINALIZE, Phase.PUBLISH, Phase.UNKNOWN),
     "since": "1.1.0",
 }
-_ACCESS = {"retry": RetryClass.NEVER, "phases": (Phase.FINALIZE, Phase.UNKNOWN), "since": "1.1.0"}
+_ACCESS: dict[str, Any] = {
+    "retry": RetryClass.NEVER,
+    "phases": (Phase.FINALIZE, Phase.UNKNOWN),
+    "since": "1.1.0",
+}
 
 DECLARED_INTEGER_INVALID = _d(
     "declared_integer_invalid", "A value does not match the declared integer grammar.", **_VALUE

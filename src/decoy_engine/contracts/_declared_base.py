@@ -90,7 +90,7 @@ def _separator(value: Any, what: str) -> str:
         raise violation(
             _P.DECLARED_CAST_DIRECTIVE_UNSUPPORTED, f"{what} must be one printable ASCII separator."
         )
-    return value  # type: ignore[no-any-return]
+    return value
 
 
 class _Separators(ContractModel):

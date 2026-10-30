@@ -68,7 +68,7 @@ class CastIssueLedger:
         return tuple(self._rows.get((table, row), ()))
 
     def counts(self, *, completeness: str = COMPLETE) -> dict[str, Any]:
-        by_table: dict[str, dict[str, dict[str, int]]] = {}
+        by_table: dict[str, dict[str, dict[str, dict[str, int]]]] = {}
         subs = fails = 0
         for (table, column), cell in sorted(self._counts.items()):
             subs += sum(v for k, v in cell.items() if k in _SUBSTITUTING or k == "sentinel_to_null")

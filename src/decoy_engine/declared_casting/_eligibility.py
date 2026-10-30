@@ -17,7 +17,9 @@ from typing import Any
 import pyarrow as pa
 
 from decoy_engine import reasons
-from decoy_engine.contracts import declared_casting as C  # noqa: N812 -- short alias for the contract namespace
+from decoy_engine.contracts import (
+    declared_casting as C,  # noqa: N812 -- short alias for the contract namespace
+)
 from decoy_engine.declared_casting import _catalog
 from decoy_engine.reasons import ReasonCode
 
@@ -241,7 +243,9 @@ def preflight_declared_casting(
     without the capability, or a quarantine policy without a qualified sink, is a registered
     refusal here, never a failure discovered after data was read.
     """
-    from decoy_engine.declared_casting import _quarantine_protocol as P  # noqa: N812 -- short alias for the contract namespace
+    from decoy_engine.declared_casting import (
+        _quarantine_protocol as P,  # noqa: N812 -- short alias for the contract namespace
+    )
     from decoy_engine.execution._errors import DeclaredCastRouteError
 
     columns = _columns(plan)

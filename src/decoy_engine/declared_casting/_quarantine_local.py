@@ -30,7 +30,9 @@ from pathlib import Path
 from typing import Any
 
 from decoy_engine import reasons
-from decoy_engine.declared_casting import _quarantine_protocol as P  # noqa: N812 -- short alias for the contract namespace
+from decoy_engine.declared_casting import (
+    _quarantine_protocol as P,  # noqa: N812 -- short alias for the contract namespace
+)
 from decoy_engine.determinism._hkdf import hkdf_sha256
 
 _MAGIC = b"DQA1\n"

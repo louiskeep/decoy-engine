@@ -108,7 +108,9 @@ def format_integer(spec: Any, value: Any) -> CastOutcome:
     text = str(value)
     if isinstance(spec, IntegerZeroPad):
         sign, digits = ("-", text[1:]) if value < 0 else ("", text)
-        room = spec.width - len(sign)  # the sign consumes width; unit is irrelevant for ASCII
+        room = (spec.width or 0) - len(
+            sign
+        )  # the sign consumes width; unit is irrelevant for ASCII
         if len(digits) > room:  # guard:width_overflow_zero_pad
             return fail(_R.DECLARED_OUTPUT_WIDTH_OVERFLOW)
         return succeed(sign + digits.rjust(room, "0"))

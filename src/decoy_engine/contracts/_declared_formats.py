@@ -51,7 +51,7 @@ class IntegerAscii(ContractModel):
             raise violation(
                 _P.DECLARED_CAST_DIRECTIVE_UNSUPPORTED, "bit_width must be one of 8, 16, 32, 64."
             )
-        return v  # type: ignore[no-any-return]
+        return v
 
 
 class DecimalPlain(_Precision):
@@ -282,7 +282,7 @@ class IntegerZeroPad(_Padded):
     @field_validator("bit_width", mode="before")
     @classmethod
     def _bits(cls, v: Any) -> int:
-        return IntegerAscii._bits(v)  # type: ignore[no-any-return]
+        return IntegerAscii._bits(v)
 
     @model_validator(mode="after")
     def _zero_right(self) -> IntegerZeroPad:
@@ -320,7 +320,7 @@ class DateStrftime(_Padded):
     @field_validator("format", mode="before")
     @classmethod
     def _fmt(cls, v: Any) -> str:
-        return DateStrptime._fmt(v)  # type: ignore[no-any-return]
+        return DateStrptime._fmt(v)
 
     @model_validator(mode="after")
     def _static(self) -> DateStrftime:

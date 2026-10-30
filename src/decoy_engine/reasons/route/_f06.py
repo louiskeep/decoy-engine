@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from decoy_engine.reasons import _catalog
 from decoy_engine.reasons._types import Kind, Outcome, Phase, RetryClass, Severity
 
@@ -14,7 +16,7 @@ __all__ = [
 
 _d = _catalog.route("decoy_engine.declared_casting")
 # A refusal before any source is read: the job or the environment must change, nothing is retried.
-_REFUSAL = {
+_REFUSAL: dict[str, Any] = {
     "kind": Kind.FAILURE,
     "severity": Severity.ERROR,
     "outcome": Outcome.CONFIGURATION,

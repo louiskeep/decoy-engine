@@ -104,7 +104,6 @@ def _plan_to_dict(plan: Plan) -> dict[str, Any]:
     return out
 
 
-
 def _seed_envelope_to_dict(env: SeedEnvelope) -> dict[str, Any]:
     return {
         # Post-S3 plan-schema delta: job_seed is bytes; serialize as a hex

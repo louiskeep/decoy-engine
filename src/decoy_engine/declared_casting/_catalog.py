@@ -17,8 +17,12 @@ from decimal import Decimal
 from functools import lru_cache
 from typing import Any
 
+from pydantic import BaseModel
+
 from decoy_engine import reasons
-from decoy_engine.contracts import declared_casting as C  # noqa: N812 -- short alias for the contract namespace
+from decoy_engine.contracts import (
+    declared_casting as C,  # noqa: N812 -- short alias for the contract namespace
+)
 from decoy_engine.declared_casting import _cobol, _date, _numeric
 from decoy_engine.declared_casting._types import CastOutcome, fail, succeed
 
@@ -30,7 +34,7 @@ Kernel = Callable[[Any, Any], CastOutcome]
 class FormatDescriptor:
     format_id: str
     direction: str
-    model: type
+    model: type[BaseModel]
     physical_kind: str
     logical: str
     kernel: Kernel
@@ -279,7 +283,7 @@ def output_width(spec: Any) -> int | None:
     """The width a fixed-width target can rely on: declared, else statically exact, else unknown."""
     model = _resolve(spec, "output")
     if getattr(model, "width", None) is not None:
-        return model.width  # type: ignore[no-any-return]
+        return model.width
     return _static_width(model)
 
 
@@ -290,7 +294,7 @@ def _static_width(model: Any) -> int | None:
     if fid == "date/strftime/v1":
         return C.date_width(model.format)
     if fid == "cobol/overpunch-ascii-trailing/v1" or fid == "cobol/zoned-ebcdic-trailing/v1":
-        return model.precision  # type: ignore[no-any-return]
+        return model.precision
     if fid == "cobol/comp-3/v1":
         return _cobol.comp3_length(model.precision)
     return None

@@ -14,7 +14,9 @@ from collections.abc import Mapping
 from typing import Any
 
 from decoy_engine import reasons
-from decoy_engine.contracts import declared_casting as C  # noqa: N812 -- short alias for the contract namespace
+from decoy_engine.contracts import (
+    declared_casting as C,  # noqa: N812 -- short alias for the contract namespace
+)
 from decoy_engine.declared_casting import _catalog
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.plan._types import DeclaredCastingPlan, PlanDeclaredColumn, freeze_json
@@ -231,7 +233,7 @@ def _check_relationships(
 ) -> None:
     for rel in config.get("relationships") or ():
         parent, children = rel.get("parent") or {}, rel.get("children") or ()
-        pairs = [
+        pairs: list[Any] = [
             ((parent.get("table"), pc), (child.get("table"), cc))
             for child in children
             for pc, cc in zip(parent.get("columns", ()), child.get("columns", ()), strict=False)

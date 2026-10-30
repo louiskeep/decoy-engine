@@ -222,7 +222,13 @@ class ColumnConfig(BaseModel):
         data: dict[str, Any] = handler(self)
         if data.get("when") is None:
             data.pop("when", None)
-        for key in ("logical_type", "parse_format", "sentinel_to_null", "error_policy", "output_format"):
+        for key in (
+            "logical_type",
+            "parse_format",
+            "sentinel_to_null",
+            "error_policy",
+            "output_format",
+        ):
             if data.get(key) is None:
                 data.pop(key, None)
         return data

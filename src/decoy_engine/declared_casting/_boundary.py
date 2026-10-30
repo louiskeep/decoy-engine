@@ -21,10 +21,16 @@ from typing import Any
 import pyarrow as pa
 
 from decoy_engine import reasons
-from decoy_engine.contracts import declared_casting as C  # noqa: N812 -- short alias for the contract namespace
+from decoy_engine.contracts import (
+    declared_casting as C,  # noqa: N812 -- short alias for the contract namespace
+)
 from decoy_engine.declared_casting import _catalog
-from decoy_engine.declared_casting import _counts as K  # noqa: N812 -- short alias for the contract namespace
-from decoy_engine.declared_casting import _quarantine_protocol as P  # noqa: N812 -- short alias for the contract namespace
+from decoy_engine.declared_casting import (
+    _counts as K,  # noqa: N812 -- short alias for the contract namespace
+)
+from decoy_engine.declared_casting import (
+    _quarantine_protocol as P,  # noqa: N812 -- short alias for the contract namespace
+)
 from decoy_engine.declared_casting._eligibility import contract_model
 
 _R = reasons.runtime
