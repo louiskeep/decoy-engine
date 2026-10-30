@@ -99,7 +99,7 @@ run_steps() {  # $1 label, $2 tree
   done
 }
 
-ver() { "$@" 2>/dev/null | head -n 1 || true; }
+ver() { local v; v=$("$@" 2>/dev/null | head -n 1); echo "${v:-not installed}"; }
 {
   echo "repo:       $REPO_NAME @ $(git -C "$ROOT" rev-parse HEAD) ($(git -C "$ROOT" branch --show-current))"
   echo "dirty:      $(git -C "$ROOT" status --porcelain | wc -l) path(s) uncommitted"
