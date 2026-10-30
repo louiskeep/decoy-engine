@@ -447,8 +447,9 @@ def _result_from_envelope(
     outcome = envelope["outcome"]
     peak = envelope.get("peak_rss_mb")
     if outcome != "completed":
-        # A self-reported failure may have staged part of its output; nothing commits it
-        # (the caller's lease disposes it).
+        # A self-reported failure may have staged part of its output; nothing commits it.
+        # Idempotent with the caller's lease, which stays the owner on every other path.
+        shutil.rmtree(staging_output_dir, ignore_errors=True)
         return IsolatedRunResult(
             outcome=outcome,
             peak_rss_mb=peak,

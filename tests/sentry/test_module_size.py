@@ -64,6 +64,8 @@ MAX = 700
 # One-line rationale per entry; the per-file growth history lives in
 # docs/decisions/module-size-census-history.md.
 ALLOWLIST: dict[str, int] = {
+    # F22 r5: the sink-local lock, the WRITING/COMMITTING in-flight states and the written transition table; split the preparation sink and the publishing half into their own modules.
+    "src/decoy_engine/execution/_transactional_sink.py": 684,
     # bounded-eligible fit rule, the fk-dtype retention branch and the D3a validator admission in decide_execution_route; split the route-priority docstring into the plan doc.
     # F22: the receipt rides the sequential and out-of-core ExecutionResult reconstruction sites.
     "src/decoy_engine/execution/_pipeline_route_exec.py": 601,
