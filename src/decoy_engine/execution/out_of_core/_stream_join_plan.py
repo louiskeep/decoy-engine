@@ -1,5 +1,6 @@
-"""DuckDB EXPLAIN-plan unordered-join verification helpers (pure-move
-decomposition out of `_stream_join.py`, P4 HIGH-1 module-size decomposition).
+"""DuckDB EXPLAIN-plan and optimizer helpers for `StreamFkJoiner` (moved out
+of `_stream_join.py`): the pinned-optimizer pragma, the slim unordered join
+query, EXPLAIN (FORMAT JSON) parsing, and the unordered-plan verification.
 
 `StreamFkJoiner._iter_unordered_join_rows` runs the join with no `ORDER BY` (so
 the never-OOM claim rests on the join's build side staying on the bounded
@@ -13,13 +14,15 @@ lifecycle.
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING, Any
 
 from decoy_engine import reasons
 from decoy_engine.execution._errors import ExecutionError
+from decoy_engine.execution.out_of_core._join import _q
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Iterator, Sequence
 
 
 # DuckDB's optimizers, by name in `duckdb_optimizers()`, pinned off so the
@@ -68,6 +71,80 @@ def _disable_join_optimizers(conn: Any) -> None:
         # never an error.
     if disabled:
         conn.execute(f"SET disabled_optimizers = '{','.join(sorted(disabled))}'")
+
+
+def _read_disabled_optimizers(conn: Any) -> frozenset[str]:
+    value = conn.execute("SELECT current_setting('disabled_optimizers')").fetchone()[0]
+    return frozenset(name for name in value.split(",") if name)
+
+
+def _unordered_join_query(join_key: str, masked_key_columns: Sequence[str]) -> str:
+    """The SLIM unordered join query -- shared by `_iter_unordered_join_rows`
+    and `explain_join()` so the plan a test inspects is exactly the plan the
+    drain actually runs.
+
+    Projects ONLY what the bounded sorter must reorder: `__decoy_row_nr` (the
+    sort key), a COMPACT nullable-boolean match token (`TRUE` matched, NULL
+    orphan -- never the raw parent value), and the masked parent components.
+    The raw child columns (`__decoy_fk_join_key`, `__decoy_src_*`) stay OUT of
+    the SELECT -- they are re-fetched out-of-line from `SpillChildKeys` in
+    phase 3 -- so no wide raw key, orphan, or dictionary encoding can overflow
+    the sorter. `__decoy_fk_join_key` remains the JOIN predicate, not output.
+    """
+    select_list = [
+        f"c.{_q('__decoy_row_nr')}",
+        f"CASE WHEN p.{_q(join_key)} IS NULL THEN NULL ELSE TRUE END "
+        f"AS {_q('__decoy_parent_match')}",
+    ]
+    for idx, masked_column in enumerate(masked_key_columns):
+        select_list.append(f"p.{_q(masked_column)} AS {_q(f'__decoy_parent_masked_{idx}')}")
+    # The statement text keeps the indentation it had as a method body; the
+    # characterization test pins it byte for byte.
+    return f"""
+            SELECT {", ".join(select_list)}
+            FROM child_keys c
+            LEFT JOIN parent_keys p
+              ON c.__decoy_fk_join_key = p.{_q(join_key)}
+        """
+
+
+def _explain_physical_plan(conn: Any, query: str) -> dict[str, Any]:
+    """Parsed `EXPLAIN (FORMAT JSON)` physical plan for `query`.
+
+    Assumes `child_keys` is already registered on `conn` (the caller's job,
+    since a fresh reader must back it and EXPLAIN never consumes that reader --
+    it plans without executing). Fails closed
+    (`out_of_core_fk_join_plan_unverified`) on any malformed, missing, or
+    unparseable EXPLAIN output rather than proceeding on an unverified plan.
+    """
+    rows = conn.execute(f"EXPLAIN (FORMAT JSON) {query}").fetchall()
+    # Iterate WITHOUT a 2-tuple unpack in the comprehension: a DuckDB version
+    # that changes EXPLAIN's result arity would otherwise raise a bare
+    # ValueError with no `code`, escaping this function's coded fail-closed
+    # contract (the parity harness would see an unexpected crash, not an
+    # admitted rejection). A non-2-column row simply does not match.
+    raw = next(
+        (row[1] for row in rows if len(row) == 2 and row[0] == "physical_plan"),
+        None,
+    )
+    if raw is None:
+        raise ExecutionError(
+            code=reasons.runtime.OUT_OF_CORE_FK_JOIN_PLAN_UNVERIFIED,
+            message="EXPLAIN (FORMAT JSON) returned no 'physical_plan' row.",
+        )
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, ValueError) as exc:
+        raise ExecutionError(
+            code=reasons.runtime.OUT_OF_CORE_FK_JOIN_PLAN_UNVERIFIED,
+            message="EXPLAIN (FORMAT JSON) output was not valid JSON.",
+        ) from exc
+    if not isinstance(parsed, list) or len(parsed) != 1 or not isinstance(parsed[0], dict):
+        raise ExecutionError(
+            code=reasons.runtime.OUT_OF_CORE_FK_JOIN_PLAN_UNVERIFIED,
+            message=(f"EXPLAIN (FORMAT JSON) plan had an unexpected top-level shape: {parsed!r}."),
+        )
+    return parsed[0]
 
 
 def _iter_plan_nodes(node: Any) -> Iterator[dict[str, Any]]:
