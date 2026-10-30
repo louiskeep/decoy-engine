@@ -123,8 +123,6 @@ ALLOWLIST: dict[str, int] = {
     "src/decoy_engine/execution/out_of_core/_stream_driver.py": 609,
     # corpus schema checks and verify_corpus; split into _codeset_verify.py when next touched.
     "src/decoy_engine/transforms/_codeset_loader.py": 607,
-    # one provider class per draw mechanism across 30 sites; the size is fan-out, not tangle.
-    "src/decoy_engine/execution/native/_draw_site_providers.py": 985,
     # one StreamFkJoiner lifecycle class (stage, orphan count, ordered and bounded-reorder joins, resolve); explain/optimizer helpers live in _stream_join_plan.py.
     "src/decoy_engine/execution/out_of_core/_stream_join.py": 650,
     # custom-provider registry snapshot for the shadow-parity gate; one cohesive module, no split identified.
