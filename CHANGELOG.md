@@ -17,7 +17,7 @@ catalog version 1) and one casting boundary (`decoy_engine.declared_casting`): e
 exact `Decimal` (precision 1..38, no float, no rounding, a pinned `decimal` context), restricted dates
 (`%Y %m %d`, no locale), explicit currency, ASCII overpunch, EBCDIC zoned decimal and COMP-3. Sentinels become
 null before parsing and are counted apart from source nulls; counts and every failure are value-free and use
-registered F29 reasons (`registry_version` 1.1.0, 27 new identities). Fixed-width layouts gain
+registered F29 reasons (`registry_version` 1.1.0, 28 new identities). Fixed-width layouts gain
 `exact_record_width` (default off) so an over-length record is a framing error.
 `run_pipeline(quarantine_runtime=...)` takes a protected-quarantine runtime; the local reference sink writes
 Fernet-encrypted, `0700`/`0600`, finite-retention artifacts and the run returns a portable
@@ -29,6 +29,9 @@ routing never selects it. CSV readers keep declared columns as exact lexemes (no
 conversion). The quarantine seal is the last failure-capable step of a run, a sealed artifact is discarded if the
 run then fails, retrieval tokens are bound to the run (`QuarantineAccessContext(owner, run_id)`), protected records
 carry full F29 `ReasonRecord`s, and the raw row reopens with its Decimal / date / datetime types intact. See
+A failed discard after the seal is reported as the registered `protected_quarantine_cleanup_failed` with the
+artifact's recovery identity, and a declared job that falls back to a less bounded route lists the refusal under
+`quality_metrics["execution"]["declared_route_refusals"]`. See
 `docs/declared-casting.md` and `docs/security/protected-quarantine.md`.
 
 ### Added (F29: stable machine-readable errors and progress, engine slices, 2026-10-29)

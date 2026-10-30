@@ -20,6 +20,8 @@ Each protected record holds the table, the absolute source row position, the raw
 
 The seal is the last failure-capable step before the publish. A failure after the seal discards the sealed artifact (`discard`), and a failure before it aborts the open session, so a failed run leaves no sealed artifact behind and no token is returned.
 
+When the discard itself fails (the adapter reports `failed`, or raises), the run's original failure still propagates, the receipt is kept so a later `DeclaredCastRun.abort()` retries, and the cleanup is reported rather than hidden: the failure's F29 record gains `cleanup_state: failed` with the run identity as `object_ref`, the registered runtime reason `protected_quarantine_cleanup_failed` is captured as a secondary reason, and the exception carries `declared_cast_cleanup` (a value-free `CleanupOutcome`: the opaque artifact `ref`, `run_id`, `key_version`, `expires_at`). The artifact is encrypted and bounded by its retention period, so `purge_expired` is the backstop; an operator reconciles the named artifact by its ref. No path, key material or row value appears in the report.
+
 ## Local reference adapter
 
 `LocalProtectedQuarantineSink(root, key_provider=..., clock=...)`:
