@@ -1,353 +1,361 @@
-Status: proposed (re-plan; replaces the remediation track of `2026-10-29-f22-atomic-idempotent-publication.md` for the execution-side integration)
+Status: proposed (re-plan, revision 1 after the Codex hostile review `review/f22-replan-codex:docs/reviews/2026-10-30-f22-replan-codex-review.md`)
 
-Summary: F22 r1 to r5 each ended NO-GO because three resource and reporting concerns were patched per site. This plan keeps the publication backend, and restructures ownership (one attempt arena), the sink lifecycle (one executable transition table with a RECOVERING state) and reporting (one report-plane serializer on F29's reason vocabulary), rebuilt on top of F29 on `main`.
+Summary: keep the F22 publication backend; restructure ownership (one attempt arena, fd-held, with a safe-parent precondition), the sink lifecycle (one exhaustive transition table including RECOVERING and restart) and reporting (report types that are value-free by construction, so every serialization is safe, plus a closed list of engine-owned emitters); rebuild on F29 in five linearly gateable slices.
 
-Baseline: `decoy-engine` `claude/wizardly-allen-8ymekg` at `2fa4f8a5` (read-only). F29 baseline: `main` at `fdd08a8` (merge base `1b3a922`).
+Baseline: F22 `2fa4f8a5` (read-only). F29 `main` at `fdd08a8`. Merge base `1b3a922`.
 
-Rules consulted: `DEFECT-CATALOG.md` (decoy-platform `handoffs/queue`, sections 2 to 5), `HOSTILE-PLAN-REVIEW.md`, engine `CLAUDE.md` (600/700 LOC census, pre-GA hard delete, established methodology, comments explain why), `docs/publication.md`, `docs/compatibility-contract.md`, the F22 plan and r5 evidence, F29 `src/decoy_engine/reasons/_record.py` and `execution/_publication_observer.py` at `fdd08a8`.
+Rules consulted: `DEFECT-CATALOG.md` sections 2 to 5 and `HOSTILE-PLAN-REVIEW.md` (decoy-platform `handoffs/queue`); dev-rules `00-universal.md`, `testing.md`, `security.md`, `observability-and-resilience.md` (log content rule), `refactoring.md`, `api-and-compatibility.md`, `documentation.md` (by title and the review-checklist line `code-review.md:47`; not re-read in full); engine `CLAUDE.md` (600/700 census, pre-GA hard delete, established methodology); PEP 578 (audit hooks); POSIX `renameat`, `unlinkat`, sticky-bit rename rule.
 
-Grounding note: every `file:line` below was read at `2fa4f8a5` unless prefixed `main:` (read at `fdd08a8`). No tests, probes or baselines were run for this plan. The four Codex HIGH findings are taken as reported by Codex; the code paths they name were read and agree, but the leftovers were not re-reproduced here.
+Grounding: `file:line` is at `2fa4f8a5` unless prefixed `main:`. Probes run from `uv.lock` (`uv sync --frozen --extra dev`, Python 3.11.17, DuckDB 1.5.4, PyArrow 24.0.0), one worktree per commit, results in section 0. Not run: the real-child kill (Codex's K2 leftover is taken as reported), the full test suites, any mutation.
 
-# F22 publication: re-plan
+# F22 publication: re-plan (revision 1)
+
+## 0. Review dispositions
+
+| Finding | Disposition | Where |
+|---|---|---|
+| B1 `to_report()` is not a boundary | Fixed. `to_report()` deleted. Report types are value-free by construction (exact-type field validation), so raw object, `repr`, `asdict`, `json`, `pickle` are safe; unsafe fields moved to named data carriers; a closed emitter list is the boundary. Reproduced: `exception_error_text` returns a dynamic class name `CELLMARK_secret_value`; F22's own `os_error_label` returns `CELLMARK_x/ENOSPC`; `approve_ref("TBLMARK_55d0")` passes; `asdict(AbortReport)` holds `PATHMARK` paths; retention `meta.json` holds `operation_id="/srv/PATHMARK_op"`. | 2 P6, 5.3, 7.2 |
+| B2 producers create paths outside the arena | Fixed. Pointer temp, backup and restore stages move into the arena; retention is an explicit ownership transfer by rename; the containment proof is runtime (PEP 578 audit hook plus tree walks), not a `tempfile` sentry. Reproduced: an injected pointer-temp failure leaves `generations/<d>` and `CURRENT.<uuid>.tmp` under the dataset root. Renamed-arena attack closed by a safe-parent precondition plus fd-relative disposal; residual named. | 2 P1 to P3, 5.1, 7.3 A5, A6 |
+| B3 RECOVERING incomplete and contradictory | Fixed. One exhaustive table: idle ops per state plus in-flight exits `(prior, outcome) -> final, pending abort`; validation during recovery is busy and never mutates; found binding seals from any prior; restart is the OPEN row. Reproduced at `2fa4f8a5`: validation FAIL accepted during a blocked lookup, lookup then returns `already_committed`; abort during lookup sets `_aborted` and lookup still returns `already_committed`; a fresh sink reconciles and then accepts writes; a commit after a non-refusal `OSError` publishes. | 5.2, 7.2 P4, P5 |
+| H4 enumerations incomplete | Fixed: arena, work-root, payload, retention, reader-hold, recovery and disposal exits; eight routes plus three sink variants; every field of every public type; emitters incl. repr, traceback, logs, evidence. | 4 |
+| H5 five vacuous proofs, K5 and K6 | Fixed per class row (section 3); oracle twins replace in-test non-vacuity asserts. K5 accepted: green at baseline (prep rename lands at the leased path), now characterization. K6 accepted: hook is `_isolated_worker._write_envelope_file` (`execution/_isolated_worker.py:52`, called at `:274`). | 3, 7.1, 7.3 |
+| H6 F29 integration not executable | Fixed: token census rule, outcome map, emitter order, observer writes removed, registry `1.0.0 -> 1.1.0`, producer inventory, no `object_ref` from F22. Provenance-aware `approve_ref` deferred to owner (Q2). | 5.4, 12 |
+| H7 slices not gateable | Fixed: S0 to S4, each depends only on earlier slices, each carries its own docs delta. | 9 |
+| H8 sizing understated | Accepted and reproduced: `git diff --shortstat 1b3a922 2fa4f8a5 -- src` is 3,632 insertions, `publication/` is 2,620 LOC; S0 is a mechanical port with a byte-identity gate; census per near-limit module. | 9.1 |
+| M grounding defects | Accepted; fixed: pointer switch `publication/_managed.py:418`, sibling mint `execution/_isolated_commit.py:129-130`, `AbortReport.retained_path` `:39`, `resource` `:40`, immutable rename `publication/_local_directory.py:379`; phantom `api/jobs/memory_evidence.py` dropped; plan-lint is run from a downloaded copy, not a repo path. | 4, 9 |
+| M frozen contracts | Fixed: `PublicationEvidence`, registry bump, full schema snapshots, rules line. | 8 |
 
 ## 1. Where we are
 
-### 1.1 What is sound and kept
+Kept (no gate round found a defect): the descriptor `decoy-publication/v1` and `result_id` commit truth (`publication/_types.py:136`), the `flock` destination lock without fallback (`publication/_lock.py:33`), managed generations behind `CURRENT`, the parent-only publisher with a preparation-only child (`execution/_isolated_worker.py:214`), the bounded trailer-first child gate (`publication/_child.py`). Not kept as is: `publication/_tokens.py:12-23` falls back to `type(exc).__name__`, so `os_error_label` of a dynamic `OSError` subclass returns `CELLMARK_x/ENOSPC` (probe, this revision).
 
-- **The commit truth.** The descriptor (`decoy-publication/v1`), `result_id` over the artifact inventory, the evidence core bound before the descriptor, `already_committed` / `conflict` / `commit_uncertain` outcomes (`publication/_types.py:19`, `docs/publication.md:9`). Reasoned, cited (Delta Lake transaction id, Git content naming, `publication/_types.py:3`), and no gate round found a defect in it.
-- **The backend layout.** `publication/` as the one place that binds a destination (`tests/sentry/test_publication_commit_boundary.py:110`, `:120`, `:137`), the `flock` destination lock with no lock-free fallback (`publication/_lock.py:1`), managed generations behind an atomically replaced `CURRENT` pointer (`publication/_managed.py:385`).
-- **The isolated child is preparation-only** and the parent is the only publisher (`execution/_isolated_worker.py:214`, `execution/_isolated_commit.py:141`). One `PublishContext` builds the request for both the gate and the promotion (`execution/_isolated_commit.py:111`).
-- **The bounded child gate.** Trailer-first footer read with a 64 MiB cap (`publication/_child.py:31`, `:149`), typed envelope rebuilt against the parent-assigned path (`publication/_child.py:68`), verify before any payload read (`execution/_isolated_run.py:536` to `:546`).
-- **Value-free tokens** for OS errors (`publication/_tokens.py:12`) and `ArtifactSummary` without paths (`publication/_types.py:121`).
-- **The test investment** under `tests/unit/publication/` (r2 to r5, about 3,900 lines) as characterization, except where section 1.4 says it proved the wrong thing.
-
-### 1.2 What is structurally wrong
-
-1. **Ownership is derived from paths, not held by an owner.** Each producer mints its own temporary directory next to a shared parent: the sink's `_decoy_stage_*` in `target.parent` (`execution/_transactional_sink.py:342` to `:354`), the hold-back spill `_decoy_hold_*` in `sink.spill_parent` (`execution/_chunked_output_sink.py:463` to `:476`, `execution/_transactional_sink.py:318`), the isolated prep dir `_decoy_isolated_stage_*` (`execution/_isolated_commit.py:124`), the quarantine `mkstemp` (`quarantine.py:358`), managed backups and restores (`publication/_managed.py:316`, `:491`), and the out-of-core scratch in `TMPDIR` (`execution/out_of_core/_runner.py:209`). The r5 `StagingLease` owns exactly the one path the parent named (`execution/_isolated_run.py:366`, `:371`), so it cannot own what the child's sink or spill created beside it. That is Codex HIGH 1, and it will recur for every new producer as long as producers choose locations.
-2. **The sink's state is eight independent flags with a prose table.** `_failed`, `_sealed`, `_aborted`, `_uncertain`, `_writes`, `_committing`, `_abort_requested`, `_reason`, `receipt` (`execution/_transactional_sink.py:176` to `:186`); the table lives only in the docstring (`:38` to `:46`). Each public method hand-picks which flags to test. `_recovery_read` tests `_committing` and then drops the lock before backend I/O (`:553` to `:561`) without entering any in-flight state, so `abort()` and `record_validation()` interleave freely (Codex HIGH 2). Three further code-grounded gaps of the same shape:
-   - A non-refusal exception inside `commit()` (for example `OSError` from `_ensure_staging`, `:604`) leaves `_sealed=True` with no receipt, no `_reason`, no `_failed`; a second `commit()` passes `_enter_publication` and commits again (`:585` to `:596`). The table has no row for "COMMITTING ended by an unexpected exception".
-   - `ParquetPreparationSink`: an `abort()` after the seal reaches `_settle` with `receipt is None` and `_uncertain` false, so the sealed sink is flagged ABORTED (`:378` to `:380`), which the table forbids (SEALED abort is a no-op).
-   - `_before_first_stage` runs admission and `validate_request` while holding the sink lock (`:345` to `:347`, `:541` to `:543`), which is the "lock across I/O" the module docstring says never happens (`:31`).
-3. **Value-free is enforced by deleting fields from chosen types and testing chosen fields.** The r5 helper serializes four fields of `IsolatedRunResult` (`tests/unit/publication/test_remediation_r5_value_free.py:56` to `:64`). Nothing classifies every field of every public type, and there is no single serializer, so `AbortReport.resource` / `retained_path` (`publication/_retention.py:39`, `:40`), `IsolatedRunResult.committed_output_dir`, `outputs`, `row_errors`, `extra`, `quality_metrics` (`execution/_isolated_common.py:404` to `:426`) all reach any caller that runs `dataclasses.asdict`. Also unfound by any round: `PublicationRequest.operation_id` is caller text with no shape check (`publication/_types.py:90`, `publication/_local_directory.py:106`) and is echoed into every receipt and into persisted retention metadata (`publication/_retention.py:126`).
-4. **F22 was built on a fork that predates F29 and edits the same files.** `fdd08a8` is not an ancestor of `2fa4f8a5`; F29 rewrote `_transactional_sink.py`, `_isolated_common.py`, `_isolated_run.py`, `_isolated_worker.py` and added `_publication_observer.py` and `_isolated_reason.py`. The overlap is semantic, not textual (section 9).
-
-### 1.3 Recurring classes (catalog numbers)
-
-| Round finding | Catalog class | Why it recurred |
-|---|---|---|
-| r4 HIGH 1, r5 HIGH 1, 2fa4 HIGH 1: staging left after refusal, then after child kill | 2 cleanup | producers pick locations; the owner was added after, per path |
-| r3 sink acceptance split-brain, r4 six siblings, r5 HIGH 3, 2fa4 HIGH 2 | 3 state machine | flags plus prose table; each new method guards a subset |
-| r5 HIGH 4, 2fa4 HIGH 3 | 1 value-bearing output | per-field deletion; tests over chosen fields |
-| r5 HIGH 2 footer | 6 untrusted producer | closed in r5, kept |
-| r5 baseline counts, 2fa4 LOW baseline | 8 weak evidence | environment not recorded (Python 3.11 vs 3.12, DuckDB version) |
-| 2fa4 HIGH 4 F29 | 9 refactor drift / 10 frozen contract | long-lived branch over a squash-merged neighbor |
-
-### 1.4 Verdict
-
-**Restructure three edges, keep the core; not a rewrite.** The descriptor, backend, lock, managed pointer, child gate and receipt vocabulary are right. The lease, the sink state machine and the value-free surface each need a class-level structure, because each is the third or later recurrence of a catalogued class (catalog section 5: stop patching). The existing parent-assigned exit-path matrix uses a fake worker that writes straight into the leased directory (`tests/unit/publication/test_remediation_r5_staging_lease.py:22`, `:87`), so it never exercised the real child sink; those tests stay as characterization but are not evidence for the arena invariant.
-
-### 1.5 The new design in five sentences
-
-1. Every publication attempt owns exactly one **attempt arena**, a private 0700 directory on the destination filesystem created by the attempt's owner, and every byte the attempt writes (child prep dir, sink staging, hold-back spill, unit sidecars, in-flight managed generation, scratch) is created inside it from an `ArenaLayout` capability; disposing the arena is the only cleanup and no producer may mint a temporary location anywhere else.
-2. The sink's lifecycle is one `SinkState` enum and one literal `TRANSITIONS` table that every public method enters through a single `_enter(op)` / `_leave(op, result)` pair, with WRITING, COMMITTING and **RECOVERING** as first-class in-flight states and an explicit target state for every exception exit.
-3. RECOVERING refuses `record_validation`, `commit`, writes and a second recovery as busy (not latched) and defers `abort` until recovery resolves, so a recovery result is always computed from the request in force when it returns.
-4. Every public result, receipt and report type has each field registered in one `FIELD_PLANES` map (report, handle or data), and one serializer, `to_report()`, emits only report-plane fields through F29's closed `ReasonContext` and `approve_ref`; a generated field walk and a seeded marker corpus cover the complete payload.
-5. F22's execution-side integration is re-applied on a fresh branch from `main` (F29), with F29's `PublicationEvidence` / `ReasonRecord` as the one channel for publication and cleanup state, fed by the arena disposal report and the sink state rather than by a second set of flags.
+Structurally wrong, each a third or later recurrence of a catalogued class: (a) producers choose temp locations next to shared parents (`execution/_transactional_sink.py:350`, `execution/_chunked_output_sink.py:471` on main, `execution/_isolated_commit.py:129-130`, `publication/_managed.py:316`, `:402`, `:491`), class 2; (b) sink state is nine flags (`execution/_transactional_sink.py:176-186`) guarded per method, and `_recovery_read` snapshots then drops the lock (`:553-561`), class 3; (c) value-freedom by deleting fields from chosen types, class 1. Verdict: restructure these three edges, keep the core, rebuild on F29 (not a rewrite, not a rebase).
 
 ## 2. Invariants as properties
 
-- **P1 (arena containment).** For any attempt A and any time t, every filesystem entry created by A's code (parent or child process) is a descendant of `arena(A)`, of the committed destination binding, or is the destination lock file `.<name>.decoy-lock` (`publication/_lock.py:33`, holds no data).
-- **P2 (disposal).** When the owner of `arena(A)` exits by any path other than "bound", `arena(A)` does not exist afterwards, or the result carries `cleanup_state=failed` and the arena is still a single contained directory named in a handle-plane field only.
-- **P3 (no orphan generation).** In a managed dataset, under the destination lock, every `generations/<d>` is referenced by `CURRENT`, by history lineage, by a backup, or by a live reader hold; an attempt that renamed a generation and then failed to switch removes that generation before releasing the lock.
-- **P4 (linearizable sink).** Every concurrent history of public calls on one sink is equivalent to some sequential history permitted by `TRANSITIONS`; every busy refusal leaves the state unchanged.
-- **P5 (recovery coherence).** A `lookup_committed` / `reconcile` result is computed from the request that is current at its return, and no `abort` or validation change is linearized inside it.
-- **P6 (report plane is value-free).** For every public type T and every instance reachable on any exit path, `json.dumps(T.to_report())` contains no input data value, no filesystem path or path component, no OS error message text, no DSN, no child-supplied string, and no table identifier except an F29-approved config identifier in an `object_ref` key.
-- **P7 (one truth for state).** `IsolatedRunResult.reason.context.publication_state` and `cleanup_state`, the `CommitReceipt.outcome`, and the sink's `SinkState` agree under the mapping in section 9.2 for every exit.
-- **P8 (bounded child gate).** Unchanged from r5: the parent reads no child payload before the typed envelope, declared table set and footers verify within the footer budget.
+Threat model: another principal may act on the destination's parent directory; same-uid hostile code and native code that ignores the paths it is given are out of scope (they can do anything). Each invariant names the test in 7.2 that proves it.
+
+- **P1 containment (narrowed).** During an attempt A, every filesystem entry created by A's Python code, parent or child, lies in exactly one location class: `arena(A)`, the destination binding, the destination lock file (`publication/_lock.py:33`), a retention record created only by `rename` out of `arena(A)`, a reader hold (reader-owned, `publication/_managed.py:541`), or the attempt's scratch root (same owner). Native writers (PyArrow, DuckDB) are given only arena paths; their entries are observed at phase barriers and at the end, not continuously. Residual: a native file created and removed between two observations is not seen.
+- **P2 disposal.** When the owner of `arena(A)` exits by any path other than bound, no byte written by A survives outside the binding and a retention record; the arena and scratch root are gone, or the result carries `cleanup_state=failed` and `leftover_count>0`. Residual: after a process kill (no in-process exit) the arena survives until `reclaim_orphan_arenas` (Q1).
+- **P3 no orphan generation.** Under the destination lock, a managed attempt that renamed a generation and then failed to switch `CURRENT` removes that generation before releasing the lock.
+- **P4 linearizable sink.** Every concurrent history of public calls on one sink equals a sequential history allowed by the table in 5.2; a busy refusal changes nothing.
+- **P5 recovery coherence.** A recovery result is computed from the request in force for the whole call; no validation change or abort is linearized inside it; a found binding leaves the sink SEALED from any prior state, in this or a fresh process.
+- **P6 report types are value-free.** For every report type (4.4) and every instance on any exit, `repr`, `str`, `dataclasses.asdict`, `json.dumps(asdict)` and `pickle` hold no data value, path, path component, OS message, DSN, exception class name, child-supplied string or table identifier. Caller-chosen identifiers (`operation_id`, `attempt_id`, `job_id`, `check_id`) appear as given after a shape check; that is the caller's own text, not data. Data carriers (4.4) are data by contract.
+- **P7 closed emitters.** Every engine-owned emitter in 4.5 receives only report-type values or constant text. Residual: emitters outside F22's modules (explain output `execution/_planner.py:238`, strategy exceptions propagating unchanged) are F31's (Q3).
+- **P8 bounded child gate.** Unchanged from r5.
+- **P9 unit atomicity.** For every route and FK shape, the destination resolves to the complete prior unit or the complete new unit. FK closure inside a complete unit is the producer's (F06) invariant, not F22's.
 
 ## 3. Class table
 
-| # | Class | Instances in F22 | Closing structure | Proof (sentry / property test) | Mutation that must turn it red |
-|---|---|---|---|---|---|
-| 1 | Value-bearing output | `AbortReport.resource` (`publication/_retention.py:40`); `IsolatedRunResult` full asdict (`execution/_isolated_common.py:402`); unvalidated `operation_id` (`publication/_types.py:90`); child table names in refusals (r5) | `FIELD_PLANES` registry over every public type; one `to_report()`; report fields only from closed enums, digests, counts, errno names, registered reason codes and `approve_ref` identifiers; `operation_id` / `attempt_id` shape-checked at construction | `test_report_plane_field_walk` (every field of every type in `PUBLIC_RESULT_TYPES` registered); `test_report_plane_marker_corpus` (section 6.3) | add a `Path` field to `CommitReceipt` without a plane entry; route `resource` into `to_report()`; drop the `operation_id` check |
-| 2 | Cleanup missing on an exit path | child `_decoy_stage_*` beside prep (`execution/_transactional_sink.py:350`); `_decoy_hold_*` (`execution/_chunked_output_sink.py:476`); orphan managed generation (`publication/_managed.py:400`); caller `staging_dir` keeps `payload.json` and source Parquet (`execution/_isolated_run.py:395`, `:408`) | `AttemptArena` owner per attempt; `ArenaLayout` capability is the only way to obtain a writable temp path; arena-temp AST sentry | `test_real_child_kill_matrix` (section 6.1); `test_inprocess_exit_matrix`; `test_no_temp_outside_arena` AST sentry | restore `tempfile.mkdtemp(dir=self._target.parent)` in the sink; make `_Spill` ignore the layout; skip `arena.dispose()` on the timeout branch |
-| 3 | State machine and concurrency | `_recovery_read` drops the lock (`execution/_transactional_sink.py:553`); unexpected exception in commit re-enables commit (`:595`, `:604`); SEALED prep sink flagged ABORTED (`:378`) | `SinkState` enum + literal `TRANSITIONS` table + single `_enter` / `_leave`; RECOVERING; exception exits named per state | `test_transitions_generated` (every state x op cell); `test_barrier_interleavings` (section 6.2); `test_docs_table_matches_transitions` | delete RECOVERING (recovery runs in OPEN); map COMMITTING+exception to OPEN; remove the deferred-abort branch |
-| 4 | Route parity and silent fallback | eight publishing routes (section 4.2) each obtain staging differently | every route takes its arena from one `open_attempt()`; capability row per route | `test_every_route_writes_inside_arena` parametrized over section 4.2 | change one route to construct `ParquetTransactionalSink(target)` without an arena |
-| 5 | Referential integrity | N/A for new design: publication is all-or-nothing over the unit, so parent and child tables bind in one rename; no per-row path exists in F22 | unit atomicity (kept) | `test_fk_parent_child_bind_together` (kill between the two table writes: neither visible) | publish tables one rename per table |
-| 6 | Untrusted producer | child envelope and footer (`publication/_child.py:68`, `:93`); child-written `row_errors.json` read unbounded (`execution/_isolated_commit.py:182` to `:194`) | keep r5 bounded gate; add a byte cap and exact-type rebuild for `row_errors.json`; child strings never enter the report plane | `test_child_row_errors_bounded`; corpus seeds child-supplied markers | remove the `row_errors.json` size cap |
-| 7 | Check then use on a path (TOCTOU) | lease checks `islink` then `rmtree` by path (`execution/_isolated_commit.py:82` to `:85`) | arena held by an `O_DIRECTORY` fd; disposal walks with `dir_fd` and `follow_symlinks=False` (the `shutil.rmtree` fd-based variant) | `test_arena_swap_is_not_followed` (replace arena with a symlink to a sentinel dir between create and dispose) | dispose by path string instead of the held fd |
-| 8 | Weak tests and overclaimed evidence | fake child in the lease matrix (`tests/unit/publication/test_remediation_r5_staging_lease.py:87`); four-field serializer (`tests/unit/publication/test_remediation_r5_value_free.py:56`); baseline on 3.11 without DuckDB version | evidence rules (section 11); real child only; complete payload only; every generated test has a non-vacuity assertion | reviewer reruns slice commands in one environment | delete the non-vacuity assertion in any generated test; the test must then fail its own meta-check |
-| 9 | Behavior-preserving refactor drift | r5 split moved code to `_isolated_spawn.py`; F29 rewrote the same modules; `_transactional_sink.py` split pending | re-apply on `main`; characterization tests ported first; sentries scan new module paths | `test_module_size` census exact; ported r2 to r5 suites green at each slice | move a module out of the arena sentry's scan roots |
-| 10 | Frozen contract drift | F29 reason manifest v1 (`main:tests/fixtures/f29/reason-manifest-v1.json`), F29 consumer contract, `decoy-publication/v1` | additive-only; snapshot tests | `test_reason_manifest_snapshot` (F29, kept); new `test_commit_receipt_schema_snapshot` and `test_report_schema_snapshot` | rename a F29 code; drop a receipt field |
+| # | Class | Closing structure | Proof (test id in 7) | Mutation that must turn it red |
+|---|---|---|---|---|
+| 1 | Value-bearing output | report types validated by exact type at construction; data carriers named; closed emitter list; error text from an exact-type table, never `__name__`; publication exceptions `raise ... from None` | `test_report_types_field_walk`, `test_marker_corpus_all_emitters` (A9) | annotate a report field `str`; restore `type(exc).__name__`; restore `from exc` |
+| 2 | Cleanup missing on an exit path | `AttemptArena` sole owner, fd-held, disposal on every non-bind exit; retention by rename only; orphan generation removed under the lock | `test_exit_matrix_inprocess`, `test_real_child_kill_matrix`, `test_managed_orphan_generation` | skip `dispose()` on the timeout branch; mint the pointer temp under the root |
+| 3 | State machine and concurrency | `SinkState` enum, literal table, single `_enter`/`_leave`, RECOVERING, COMMITTING split pre-bind/binding | `test_transition_cells_generated` (every cell of both tables), `test_restart_recovery` | run recovery in OPEN; map binding+exception to FAILED |
+| 4 | Route parity and silent fallback | one `open_attempt()` for every route; capability row per route; a refused cell raises a registered reason | `test_route_capability_matrix` | flip one capability cell; drop the reason on the isolate=False fallback |
+| 5 | Referential integrity | unit atomicity over every FK shape and route | `test_fk_shapes_all_or_none` | publish one rename per table |
+| 6 | Untrusted producer | r5 bounded gate kept; `row_errors.json` byte cap and exact-type rebuild; child names never reach an emitter | `test_child_row_errors_bounded`, A10 | remove the cap; pass the child table to `context(table=)` |
+| 7 | Check then use on a path (TOCTOU) | safe-parent precondition (sticky or not writable by others); arena fd held; disposal by `dir_fd`, never following links; binding rename `src_dir_fd`-relative; identity check at dispose | `test_arena_parent_unsafe_refused`, `test_arena_swap` (A6) | dispose by path; drop the precondition |
+| 8 | Weak tests and overclaimed evidence | oracle twins (each oracle is run on a planted defect and must fail); baselines from the lock in one environment | `test_oracles_detect_planted_defects` | delete any oracle assertion: its twin turns red |
+| 9 | Behavior-preserving refactor drift | S0 byte-identity port; sentries scan the whole package, not fixed roots; census exact | `test_sentry_scope_is_whole_package`, `test_module_size` | move a producer into a new subpackage |
+| 10 | Frozen contract drift | additive only; registry 1.1.0; schema snapshots of every report type and `PublicationEvidence` | `test_report_schema_snapshots`, F29 `test_reason_registry.py` | drop a receipt field; add a code without the bump |
 
 ## 4. Enumerations
 
 ### 4.1 Exit paths of everything that owns files or state
 
-Isolated parent (`execution/_isolated_run.py:345` to `:396`) and spawn (`execution/_isolated_spawn.py:47` to `:146`):
+Isolated parent and spawn (`execution/_isolated_run.py:345-396`, `execution/_isolated_spawn.py:47-146`):
 
-| Id | Exit | Code | r5 behavior | Arena design |
-|---|---|---|---|---|
-| X1 | payload not JSON-serializable | `execution/_isolated_run.py:425` to `:430` | lease disposes prep; owned work root removed | arena disposed |
-| X2 | `Popen` raises | `execution/_isolated_spawn.py:69` | lease | arena disposed |
-| X3 | `on_spawn` raises, child killed and reaped | `execution/_isolated_spawn.py:106` to `:116` | prep only; child `_decoy_stage_*`, `_decoy_hold_*` left | arena disposed after reap |
-| X4 | timeout, child killed | `execution/_isolated_spawn.py:89` to `:105` | same leftover as X3 | arena disposed after reap |
-| X5 | child killed externally or by the kernel, no envelope | `execution/_isolated_spawn.py:118` to `:146` | same leftover | arena disposed |
-| X6 | child self-reports `crashed` / `oom_killed` | `execution/_isolated_run.py:449` to `:464` | prep rmtree; inner stage relies on the child's own best-effort abort | arena disposed |
-| X7 | malformed child envelope | `execution/_isolated_run.py:504` to `:515` | lease | arena disposed |
-| X8 | gate refusal (checks, tables, footer) | `execution/_isolated_run.py:539` | lease | arena disposed |
-| X9 | declared table unreadable | `execution/_isolated_run.py:547` to `:551` | lease | arena disposed |
-| X10 | promotion refused / conflict / cancelled | `execution/_isolated_commit.py:162` | lease | arena disposed |
-| X11 | promotion `commit_uncertain` | `publication/_local_directory.py:386`, `:395` | prep renamed; lease no-op | arena disposed; bound dir untouched |
-| X12 | `already_committed` | `execution/_isolated_commit.py:163` | `cleanup_staging` + lease | arena disposed |
-| X13 | published | `execution/_isolated_run.py:555` | prep renamed away | arena disposed (now empty of data) |
-| X14 | `KeyboardInterrupt` in the parent while waiting | `execution/_isolated_spawn.py:106` | lease | arena disposed after reap |
-| X15 | parent process killed | none | everything left, including caller `staging_dir` payload | not closable in-process: arena is reclaimable by `reclaim_orphan_arenas` (section 5.1, open question Q1) |
-| X16 | no `output_dir` | `execution/_isolated_commit.py:177` to `:179` | prep under work root; inner stage in work root, kept if caller supplied `staging_dir` (`execution/_isolated_run.py:395`) | arena under the run's scratch; same disposal |
-
-In-process sinks (`execution/_transactional_sink.py`) driven by routes:
-
-| Id | Exit | Code | Target state |
+| Id | Exit | Code | Arena design |
 |---|---|---|---|
-| S1 | write raises | `:259` to `:263`, `:288` to `:308` | FAILED; route aborts (`execution/_sequential.py:635`, `execution/out_of_core/_runner.py:329`) |
-| S2 | abort cleanup fails | `:384` to `:389` | ABORTED with `cleanup=failed`; path stays handle-plane |
-| S3 | commit refused | `:613` to `:616` | REFUSED |
-| S4 | commit uncertain | `:608` to `:612` | UNCERTAIN; nothing disposed |
-| S5 | commit raises a non-refusal exception | `:604`, `:606` | today: sealed, re-committable (defect); new: FAILED |
-| S6 | publishing process killed | none | arena left; X15 rule |
-| S7 | hold-back spill on route failure | `execution/_chunked_output_sink.py:485` to `:488` | spill lives in the arena; disposed with it |
-| S8 | quarantine sidecar staged then unlink fails | `quarantine.py:358` to `:405` | sidecar temp lives in the arena |
+| X1 | work root `mkdtemp` or caller `staging_dir` `mkdir` fails before `try` | `execution/_isolated_run.py:358-366` | arena opened first; nothing to dispose; registered reason |
+| X2 | arena open fails (unsafe parent, `mkdir`, owner `flock`) | new | refuse before any write; `arena_parent_unsafe` / `arena_open_failed` |
+| X3 | sources or payload write, `json.dumps`, `chmod` fail | `execution/_isolated_run.py:413`, `:426-436` | inside arena; disposed |
+| X4 | `Popen` raises | `execution/_isolated_spawn.py:69` | disposed |
+| X5 | `on_spawn` raises; child killed, reaped | `execution/_isolated_spawn.py:85`, `:106-116` | disposed after reap |
+| X6 | timeout; child killed | `execution/_isolated_spawn.py:88-105` | disposed after reap |
+| X7 | external kill, no envelope | `execution/_isolated_spawn.py:118-146` | disposed |
+| X8 | child self-reports crash or OOM | `execution/_isolated_run.py:449-464` | disposed |
+| X9 | malformed envelope, gate refusal, unreadable table | `execution/_isolated_run.py:504-551` | disposed |
+| X10 | promotion refused, conflict, cancelled | `execution/_isolated_commit.py:162` | disposed |
+| X11 | promotion `commit_uncertain` | `publication/_local_directory.py:379-395` | arena disposed; binding untouched |
+| X12 | `already_committed` or published | `execution/_isolated_commit.py:163`, `execution/_isolated_run.py:555` | disposed |
+| X13 | `KeyboardInterrupt` while waiting | `execution/_isolated_spawn.py:106` | disposed after reap |
+| X14 | parent killed | none | arena survives; `reclaim_orphan_arenas` (Q1) |
 
-Managed dataset (`publication/_managed.py`):
+In-process sinks and backend:
 
-| Id | Exit | Code | Target |
+| Id | Exit | Code | Arena design |
 |---|---|---|---|
-| M1 | generation renamed, then `fsync_dir` or pointer temp write fails | `publication/_managed.py:398` to `:416` | remove `generations/<d>` this attempt created, under the lock (P3) |
-| M2 | pointer switch fails, not visible | `publication/_managed.py:417` to `:438` | same as M1 |
-| M3 | pointer switch fails, visible | `publication/_managed.py:422` to `:428` | UNCERTAIN; generation kept |
-| M4 | protected backup fails | `publication/_managed.py:308` to `:343` | backup temp in the arena |
-| M5 | restore stage fails | `publication/_managed.py:491` to `:499` | restore stage in the arena |
+| S1 | write or sidecar raises | `execution/_transactional_sink.py:483-497` | FAILED; disposal on abort |
+| S2 | commit raises before bind (`OSError` in `_ensure_staging`) | `execution/_transactional_sink.py:595-604` | FAILED (today re-committable) |
+| S3 | exception inside the bind call | `execution/_transactional_sink.py:606` | UNCERTAIN |
+| S4 | refused, uncertain, published | `execution/_transactional_sink.py:608-626` | per 5.2 |
+| S5 | lookup or reconcile: found, none, refused, raised | `execution/_transactional_sink.py:553-573` | per 5.2 |
+| S6 | quarantine sidecar staged, unlink fails | `quarantine.py:358`, `:498-504` | temp in arena; constant log |
+| D1 | disposal partial (`unlinkat` fails) | new | `cleanup_state=failed`, `leftover_count` |
+| D2 | arena renamed by another principal | new | refused by precondition; else identity mismatch, failed |
+| D3 | `KeyboardInterrupt` during disposal | new | disposal completes in `finally`, then re-raises |
+| M1 | generation renamed, then `fsync_dir` or pointer temp fails | `publication/_managed.py:398-416` | remove the generation under the lock (P3) |
+| M2 | pointer switch fails, not visible | `publication/_managed.py:418-438` | same as M1 |
+| M3 | pointer switch fails, visible | `publication/_managed.py:422-428` | UNCERTAIN, generation kept |
+| M4 | protected backup fails | `publication/_managed.py:308-343` | backup temp in arena |
+| M5 | restore stage fails | `publication/_managed.py:491-499` | own arena |
+| R1 | retention record created | `publication/_retention.py:111-137` | rename out of arena; meta holds report values only |
+| R2 | retention refused (store not private, budget, expiry) | `publication/_retention.py:104-110` | arena disposed |
+| R3 | record `mkdir`/rename fails, `rmtree(record)` fails | `publication/_retention.py:135-136` | `cleanup_state=failed`, leftover counted |
+| H1 | reader hold write fails; reader killed | `publication/_managed.py:533-546`, `:515-529` | reader-owned; stale holds reaped by pid check (unchanged) |
 
-### 4.2 Execution routes that publish
+### 4.2 Execution routes
 
-- sequential: `execution/_sequential.py:591` (commit), `:635` (abort).
-- out-of-core: `execution/out_of_core/_runner.py:313` (commit), `:329` (abort); scratch `:209` in `TMPDIR`.
-- full-frame and mixed through `OutputPublish` (`execution/_chunked_output_sink.py:129`): `execution/_pipeline_full_frame.py:243`, `execution/_pipeline_mixed_route.py:264`.
-- streamed generation: `generation/_streamed.py:475`.
-- isolated parent promotion: `execution/_isolated_run.py:555`.
-- in-process fallback: `execution/_isolated_run.py:301` to `:313`.
-- `publish_tables`: `execution/_transactional_sink.py:664`.
-- managed unit: `execution/_transactional_sink.py:644` (staging parent `.staging`, `:656`).
+- sequential `execution/_sequential.py:591` commit, `:635` abort (`main:` via `observed_commit`/`observed_abort`, same lines).
+- out-of-core `execution/out_of_core/_runner.py:313`, `:329`; scratch `main:execution/out_of_core/_runner.py:210`.
+- full-frame `execution/_pipeline_full_frame.py:243` through `OutputPublish` (`execution/_chunked_output_sink.py:159`, `:171`).
+- mixed `execution/_pipeline_mixed_route.py:264`, same `OutputPublish`.
+- streamed generation `generation/_streamed.py:475`.
+- isolated parent promotion `execution/_isolated_run.py:555`.
+- isolated in-process fallback `execution/_isolated_run.py:301-313` (`main:execution/_isolated_run.py:212-230` warns, records no reason).
+- resident `publish_tables` `execution/_transactional_sink.py:664`.
+
+Sink variants (not routes): immutable directory, managed dataset (`execution/_transactional_sink.py:644`), preparation (`execution/_isolated_worker.py:214`).
 
 ### 4.3 FK shapes
 
-- N/A as a per-shape matrix, because F22 binds the whole unit in one rename (`execution/_transactional_sink.py:416`, `publication/_managed.py:400`), so single, composite, self-referencing and cross-table FKs all publish or fail together.
-- One test proves it for the cross-table shape (parent and child in one unit, kill between their writes): `test_fk_parent_child_bind_together`.
+- Shapes: single, composite, self-referencing, cross-table chain (parent, child, grandchild), child rows in a later batch than their parent.
+- F22 binds the unit with one rename (`publication/_local_directory.py:379`, `publication/_managed.py:400`), so the claim per shape is P9 all-or-none, tested per route (7.2), not FK closure.
 
-### 4.4 Fields of public result types (plane classification)
+### 4.4 Fields of public types
 
-- `CommitReceipt` (`publication/_types.py:136` to `:155`): all report plane: `outcome`, `operation_id` (shape-checked), `reason_code` (registered base token; errno moves to a new `os_error` field holding only an `errno.errorcode` name), `result_id`, `descriptor_digest`, `evidence_digest`, `artifacts` (`ArtifactSummary`), `is_current`, `visible`, `durable`, `backup_status`, `cleanup_status`, `generation` and `backup_ref` (digest-only relative refs; asserted to match `^(generations|backups)/[0-9a-f]{64}$`).
-- `AbortReport` (`publication/_retention.py:32` to `:41`): report: `status`, `reason`, `record_id`, `classification`; handle: `retained_path`, `resource`.
-- `RetainedRecord` (`publication/_retention.py:44` to `:54`): report: `record_id`, `reason_code`, `classification`, `expires_at`, `holds`; handle: `path`; caller-identity (shape-checked, report): `owner`, `operation_id`, `attempt_id`.
-- `CleanupResult` (`publication/_retention.py:57` to `:60`): report.
-- `ResolvedGeneration` (`publication/_managed.py:70` to `:77`): handle (the reader protocol needs the path): `path`, `artifacts` (`ArtifactRef.path`), `doc`; report: `descriptor_digest`, `result_id`.
-- `IsolatedRunResult` (`execution/_isolated_common.py:402` to `:429`, plus `main:` `reason`): report: `outcome`, `peak_rss_mb`, `returncode`, `signal_number`, `error` (already safe text), `isolated`, `pid`, `publication_receipt` (via its own `to_report`), `reason` (F29 payload), `memory_evidence` (value-free per platform `api/jobs/memory_evidence.py:4`), `table_kinds` (keys through `approve_ref`, values closed enum); data: `outputs`, `quality_metrics`, `extra`, `row_errors`; handle: `committed_output_dir`.
-- `ExecutionResult.publication_receipt` (`execution/_adapter.py:75`) and `GenerationResult.publication_receipt` (`generation/_streamed.py:89`): report via `CommitReceipt.to_report`.
+Report types (every field validated at construction; safe under every serialization):
+
+- `CommitReceipt` (`publication/_types.py:136-155`): `outcome` (closed), `operation_id` (SafeId), `reason_code` (registered base token), new `os_error` (errno name), `result_id`, `descriptor_digest`, `evidence_digest` (hex64), `artifacts` (`ArtifactSummary`), `is_current`, `visible`, `durable` (bool), `backup_status`, `cleanup_status` (closed); `generation`, `backup_ref` (today relative paths) become `generation_digest`, `backup_digest` (hex64).
+- `ArtifactSummary` (`publication/_types.py:121-133`): `role` (closed), `size`, `rows` (int), `sha256`, `schema_digest` (hex64).
+- `AbortReport` (`publication/_retention.py:32-41`): `status`, `reason`, `classification` (closed), `record_id` (hex32); `retained_path` (`:39`) and `resource` (`:40`) are deleted and move to `RetentionHandle`.
+- `CleanupResult` (`publication/_retention.py:57-60`), new `DisposalReport(status, leftover_count)`.
+- `CheckResult` (`publication/_types.py:65-68`): `check_id` (SafeId), `disposition` (closed), `required`.
+- F29 `ReasonRecord` and `ReasonContext` (`main:src/decoy_engine/reasons/_record.py:110-122`, `:245-254`): already closed; `object_ref` is shape-only (`:72-76`) and F22 never sets it.
+- F29 `MemoryEvidence` (`main:src/decoy_engine/execution/_isolated_memwatch.py:112-123`): floats, ints, bool; `kind`, `stop_reason`, `basis` become closed tokens.
+
+Data carriers (data by contract; only their report-type fields reach an emitter):
+
+- `PublicationRequest` (`publication/_types.py:86-104`), `PreparedPublication` (`:187-196`), `ChildPreparationEnvelope` (`:200-209`), `ArtifactRef` (`:108-118`), `ResolvedGeneration` (`publication/_managed.py:70-77`), `RetainedRecord` (`publication/_retention.py:44-54`), new `RetentionHandle(path)`.
+- `IsolatedRunResult` (`main:src/decoy_engine/execution/_isolated_common.py:321-388`): report fields `outcome`, `peak_rss_mb`, `returncode`, `signal_number`, `error` (exact-type token), `isolated`, `pid`, `reason`, `publication_receipt`, `memory_evidence`; data fields `outputs`, `quality_metrics`, `table_kinds`, `committed_output_dir`, `row_errors`, `extra`.
+- `ExecutionResult` (`main:src/decoy_engine/execution/_adapter.py:43-71`), `GenerationResult` (`main:src/decoy_engine/generation/_streamed.py:80-88`), `RowErrorRecord` (`main:src/decoy_engine/execution/_row_errors.py:48-59`), F29 `PublicationEvidence` (`main:src/decoy_engine/execution/_publication_observer.py:42-49`, `stored_bytes` keyed by config table).
 
 ### 4.5 Output surfaces
 
-- Receipts and refusal exceptions: `CommitReceipt`, `PublicationRefusedError.receipt` and `str()` (`publication/_managed.py:408`, `:430` use `os_error_label`, safe).
-- `IsolatedRunResult` and its F29 `reason` (`main:src/decoy_engine/execution/_isolated_reason.py:27`).
-- `AbortReport` on `sink.abort_report` (`execution/_transactional_sink.py:389`).
-- Persisted retention `meta.json` (`publication/_retention.py:121` to `:132`).
-- Persisted descriptor and evidence core inside the unit (data plane by design: they bind real relative paths, `docs/publication.md:52`).
-- Child result envelope `result.json` (child to parent, untrusted; `execution/_isolated_worker.py:52` to `:65`).
-- Logs: `execution/_isolated_commit.py:89` (constant text), `execution/_isolated_run.py:227`, `:235` (constant text).
-- Progress channel `publish_stored(table, size)` (`main:src/decoy_engine/execution/_transactional_sink.py`, F29 `_stored`): table via the channel's own policy; F29-owned.
-- Explain output `execution/_planner.py:238` interpolates a table name with `!r`: not an F22 surface; F22 docs stop claiming an engine-wide property; routed to F31 (Q3).
+Engine-owned emitters (the closed list for P7):
+
+- receipts on `sink.receipt`, `CommitError.receipt`, `ExecutionResult`/`GenerationResult`/`IsolatedRunResult.publication_receipt`.
+- exception `str`, `args`, `__cause__`, `__context__` and formatted traceback of `CommitError`, `PublicationRefusedError`, `CommitUncertainError`, `ChildEnvelopeError`, `ResolveError` (`publication/_types.py:162-184`).
+- `sink.abort_report`, `sink.disposal_report`, result `reason` payloads (`main:src/decoy_engine/execution/_isolated_reason.py:41-52`).
+- `IsolatedRunResult` report fields, incl. `error` (`main:src/decoy_engine/execution/_isolated_common.py:238-259`).
+- logs: `execution/_isolated_commit.py:89`, `main:src/decoy_engine/execution/_isolated_run.py:215`, `:223` (constant), `quarantine.py:498-504` (today paths and raw exception; becomes constant text plus errno token), new arena disposal log.
+- progress `publish_stored(table, bytes)` (`main:src/decoy_engine/progress.py:268`): config table names only, F29-owned.
+- persisted: retention `meta.json` (`publication/_retention.py:121-132`), `CURRENT` pointer (digests), reader hold files (pid), descriptor and evidence core (bind relative artifact paths: data by design, `docs/publication.md:48`, whose claims of exception type names and a debugging `__cause__` S1 rewrites).
+- channels in, not out: child envelope `result.json` (`execution/_isolated_worker.py:52-65`), child stdout and stderr (`execution/_isolated_spawn.py:129`).
 
 ## 5. Design
 
-### 5.1 Attempt arena (closes classes 2, 4, 7)
+### 5.1 Attempt arena (classes 2, 4, 7)
 
-New module `publication/_arena.py` (about 180 LOC). Pattern: `tempfile.TemporaryDirectory` scoped ownership, plus the fd-relative, symlink-safe removal that `shutil.rmtree` uses on platforms with `os.open(dir_fd=...)` (`shutil._rmtree_safe_fd`), plus SQLite's rule that a journal lives beside its database on the same filesystem.
+`publication/_arena.py` (about 200 LOC). Patterns: `tempfile.TemporaryDirectory` scoped ownership; `shutil._rmtree_safe_fd` fd-relative removal; POSIX sticky-bit rename rule; SQLite's journal-beside-database rule.
 
-- `open_attempt(destination, *, operation_id) -> AttemptArena`: `mkdtemp(prefix=".decoy-attempt-", dir=destination.parent)` (or `<root>/.staging` for a managed unit), mode 0700, opened and held as an `O_DIRECTORY | O_NOFOLLOW` fd; an `owner` file holds `pid` and an `flock` kept for the arena's lifetime.
-- `ArenaLayout` (frozen): `prep`, `stage`, `hold`, `sidecar`, `scratch`, `work`. Producers receive the layout; nothing else yields a writable temp path.
-- `dispose() -> DisposalReport(status: "confirmed" | "failed", leftover_count: int)`: fd-relative walk, never follows links, idempotent, thread-safe. The report has no path; the arena's path is handle-plane.
-- `reclaim_orphan_arenas(parent)`: removes only `.decoy-attempt-*` whose `owner` lock can be taken non-blocking (owner process dead). Never a prefix sweep without the lock proof (Codex's warning). Ships behind Q1.
-- Isolated runs: the payload carries the layout; the child builds `ParquetPreparationSink(layout)`, so its staging is `layout.stage`, its spill parent is `layout.hold`, and its env sets `TMPDIR=layout.scratch` so DuckDB and the out-of-core runner scratch (`execution/out_of_core/_runner.py:209`) are inside the arena. A caller-supplied `staging_dir` gets a fresh `work` subdirectory, never the caller directory itself (closes X16 leftovers of `payload.json` and source Parquet). Scratch on the destination filesystem changes where out-of-core spills land; the disk budget must be measured at `layout.scratch` (`execution/_pipeline_route_exec.py:254` to `:266`), see pre-mortem R4.
-- Managed M1/M2: `_promote_and_switch` records `created_generation=True` only when its `os.replace` succeeded (a non-empty target makes it fail, so success means this attempt created it) and removes it under the lock when the pointer does not reference it.
+- `open_attempt(destination, *, scratch=True) -> AttemptArena`: refuse with `arena_parent_unsafe` unless the parent has the sticky bit or no principal other than the uid (and root) can write it (owner is uid or root, no group or other write bit). `os.mkdir(".decoy-attempt-<hex>", 0o700, dir_fd=parent_fd)` under `destination.parent` (managed: `<root>/.staging`); hold an `O_DIRECTORY|O_NOFOLLOW` fd and its `(st_dev, st_ino)`; `owner` file with pid under a held `flock`. Scratch root `.decoy-scratch-<hex>` under `TMPDIR`, same owner (keeps out-of-core scratch off the destination disk).
+- Layout subdirectories: `prep`, `stage`, `hold`, `sidecar`, `ptr`, `backup`, `restore`, `work`. A producer receives the arena, not a parent path.
+- The bind rename uses `os.replace(name, target, src_dir_fd=arena_fd)`; the managed pointer temp is `ptr/CURRENT.tmp`, replaced into `<root>/CURRENT` (same filesystem).
+- `dispose() -> DisposalReport`: fd-relative walk with `follow_symlinks=False`, idempotent, in `finally`; then `rmdir` by name only if the name still has the held identity, else `failed` with `leftover_count=1`.
+- Retention: `dispose_staging` renames `stage` out of the arena into `store/<record>/payload` (no copy); `meta.json` holds report values only.
+- Isolated: the payload names arena-relative locations; child `TMPDIR` is the scratch root; caller `staging_dir` becomes the parent of `work`, never written itself.
+- Managed P3: `_promote_and_switch` notes that its own `os.replace` created `generations/<d>` and removes it under the lock when `CURRENT` does not name it.
+- `reclaim_orphan_arenas(parent)`: removes `.decoy-attempt-*` only when its owner `flock` is free (Q1).
+- In-process fallback (`isolate=False`) records registered reason `isolation_disabled` (class 4).
 
-### 5.2 Sink state machine (closes class 3)
+### 5.2 Sink state machine (class 3)
 
-Split `_transactional_sink.py` (684 LOC) into `_sink_state.py` (enum, table, `_enter` / `_leave`, about 160), `_preparation_sink.py` (about 120), `_publishing_sink.py` (about 330) and a thin `_transactional_sink.py` re-export (protocol, adapter, `publish_tables`, about 150). The table is a literal dict; the docstring and `docs/publication.md` render it and a test asserts equality.
+Split `execution/_transactional_sink.py` (684 at `2fa4f8a5`, 380 on main) into `_sink_state.py` (enum, literal table, `_enter`/`_leave`), `_preparation_sink.py`, `_publishing_sink.py`, thin `_transactional_sink.py`. One `RLock`; transitions under it; backend I/O outside it. COMMITTING has two phases: `pre_bind` until `commit_prepared` is entered, `binding` inside it.
 
-| state \ op | write / sidecar | record_validation | commit | lookup / reconcile | abort |
-|---|---|---|---|---|---|
-| OPEN | -> WRITING | ok | -> COMMITTING | -> RECOVERING | -> ABORTED (dispose) |
-| WRITING | -> WRITING (count) | ok (as r5) | busy `write_in_progress` | busy `write_in_progress` | defer |
-| COMMITTING | busy `commit_in_progress` | busy | busy | busy | defer |
-| RECOVERING | busy `recovery_in_progress` | busy | busy | busy | defer |
-| SEALED | refuse | refuse | same receipt | -> RECOVERING (read-only) | no-op |
-| UNCERTAIN | refuse | refuse | refuse `commit_uncertain` | reconcile only -> RECOVERING | no-op |
-| REFUSED | refuse | refuse | refuse `attempt_rejected` | refuse | -> ABORTED (dispose) |
-| FAILED | refuse | refuse | refuse `attempt_invalid` | refuse | -> ABORTED (dispose) |
-| ABORTED | refuse | refuse | refuse `attempt_aborted` | refuse | no-op |
+Idle and busy cells (`p` = prior state stored in RECOVERING; abort while in flight sets `pending`):
 
-Leaving in-flight states: WRITING -> OPEN on success, FAILED on any exception. COMMITTING -> SEALED (published, already_committed), UNCERTAIN (`CommitUncertainError`), REFUSED (`PublicationRefusedError`), FAILED (any other exception, closing S5). RECOVERING -> prior state on a `None` result or a non-refusal exception (read-only, nothing changed); from UNCERTAIN, a `reconcile` that finds the binding -> SEALED with that receipt, one that finds none -> REFUSED `commit_not_visible`; a refusal -> REFUSED. A deferred abort runs in `_leave` only if the state reached is OPEN, REFUSED or FAILED. Busy refusals never change state. Admission and `validate_request` run in `_enter` under the lock only as pure checks; `inspect_destination` I/O runs after the transition. `ParquetPreparationSink` uses the same table (SEALED abort is a no-op, closing the prep-sink defect).
+| state | write, sidecar | record_validation | commit | lookup | reconcile | abort |
+|---|---|---|---|---|---|---|
+| OPEN | WRITING | apply | COMMITTING | RECOVERING(OPEN) | RECOVERING(OPEN) | ABORTED, dispose |
+| WRITING | WRITING (n+1) | apply | busy `write_in_progress` | busy `write_in_progress` | busy `write_in_progress` | pending |
+| COMMITTING | busy `commit_in_progress` | busy | busy | busy | busy | pending |
+| RECOVERING(p) | busy `recovery_in_progress` | busy, request unchanged | busy | busy | busy | pending |
+| SEALED(R) | refuse `attempt_sealed` | refuse `attempt_sealed` | return R | return R, no I/O | return R, no I/O | no-op |
+| UNCERTAIN | refuse `commit_uncertain` | refuse | refuse `commit_uncertain` | refuse `commit_uncertain` | RECOVERING(UNCERTAIN) | no-op, report `deferred_uncertain` |
+| REFUSED | refuse `attempt_rejected` | refuse | refuse | refuse | refuse | ABORTED, dispose |
+| FAILED | refuse `attempt_invalid` | refuse | refuse | refuse | refuse | ABORTED, dispose |
+| ABORTED | refuse `attempt_aborted` | refuse | refuse | refuse | refuse | no-op |
 
-### 5.3 Report plane (closes class 1)
+In-flight exits (`pending` = an abort arrived during the in-flight call):
 
-- `publication/_report.py`: `FIELD_PLANES: dict[type, dict[str, Plane]]` for every type in section 4.4, and `to_report(obj) -> dict` that walks only `report` fields, recursing into registered types, rejecting any value whose type is not `str` of a closed vocabulary, `int`, `float`, `bool`, `None`, an `Enum`, or a registered type. Strings must pass one of: registered reason code, errno name, hex digest, shape-checked caller id, F29 `approve_ref` (identifier from config provenance only), or the digest-ref pattern.
-- Every public type gets a `to_report()` method delegating to it. `IsolatedRunResult.to_report()` uses F29's `ReasonRecord.to_payload()` for `reason`.
-- `PublicationRequest.__post_init__` shape-checks `operation_id`, `attempt_id`, `job_id` (`^[A-Za-z0-9][A-Za-z0-9_.:\-]{0,127}$`).
-- Child-supplied names never enter a report: refusals name a defect class (kept from r5).
-- Docs state the guarantee for `to_report()` only, and say `dataclasses.asdict` of a result is not a safe surface; a sentry forbids `asdict` / `json.dumps` of these types inside the engine outside `_report.py`.
+| from | outcome | final | if pending |
+|---|---|---|---|
+| WRITING (last writer) | ok | OPEN | ABORTED, dispose |
+| WRITING | any exception | FAILED | ABORTED, dispose |
+| COMMITTING | published, already_committed | SEALED(R) | dropped; abort report `not_needed` |
+| COMMITTING | `CommitUncertainError`, or any other exception in `binding` | UNCERTAIN | dropped; `deferred_uncertain` |
+| COMMITTING | `PublicationRefusedError` | REFUSED | ABORTED, dispose |
+| COMMITTING | any other exception in `pre_bind` | FAILED | ABORTED, dispose |
+| RECOVERING(OPEN), nothing staged | receipt R | SEALED(R) | dropped |
+| RECOVERING(OPEN), bytes staged | receipt R | OPEN, R returned; `commit()` judges (`already_committed` or `operation_conflict`, `docs/publication.md:28`) | ABORTED, dispose |
+| RECOVERING(OPEN) | none | OPEN | ABORTED, dispose |
+| RECOVERING(OPEN) | refused | REFUSED | ABORTED, dispose |
+| RECOVERING(OPEN) | other exception | OPEN | ABORTED, dispose |
+| RECOVERING(UNCERTAIN) | receipt R | SEALED(R) | dropped |
+| RECOVERING(UNCERTAIN) | none | REFUSED `commit_not_visible` | ABORTED, dispose |
+| RECOVERING(UNCERTAIN) | refused | REFUSED | ABORTED, dispose |
+| RECOVERING(UNCERTAIN) | other exception | UNCERTAIN | dropped; `deferred_uncertain` |
 
-### 5.4 Reuse inventory
+Restart: a fresh sink starts OPEN and knows nothing; a `reconcile()` or `lookup_committed()` before any write that finds the binding seals it, so it refuses writes and returns R on commit (sealing after writes would hide an `operation_conflict`, so a sink with staged bytes stays OPEN and lets the backend judge); a `commit()` without recovery reaches the backend judge, which returns `already_committed` (SEALED) or refuses a different result. Dispose never touches a binding: only the arena. The preparation sink uses the same table (SEALED abort is a no-op, closing the `execution/_transactional_sink.py:378-380` defect).
 
-- F29 `reasons` registry, `ReasonRecord`, `ReasonContext`, `approve_ref`, `Operation`, `PublicationState`, `CleanupState` (`main:src/decoy_engine/reasons/_record.py:43` to `:72`): the only vocabulary for publication and cleanup state.
-- F29 `_publication_observer.py` (`main:src/decoy_engine/execution/_publication_observer.py:42`, `:99`, `:114`): `PublicationEvidence` becomes a projection of `SinkState` plus the `DisposalReport`.
-- F29 `_isolated_reason.commit_reason` (`main:src/decoy_engine/execution/_isolated_reason.py:41`): changed to take the `DisposalReport` instead of `staging.exists()`.
-- F29 sentries `tests/sentry/test_reason_registry.py`, `_reason_scan.py` and fixtures: new refusal sites get producer-inventory entries.
-- Engine sentries: `tests/sentry/test_module_size.py`, `tests/sentry/test_physical_seam_disconnection.py`, `tests/sentry/test_publication_commit_boundary.py` (extended with the arena sentry).
-- `publication/_tokens.py` errno tokens; `publication/_child.py` bounded gate (kept verbatim).
-- F31 boundary: not landed; `approve_ref` is F29's documented plug-in seam for it (`main:src/decoy_engine/reasons/_record.py:12` to `:14`). No local boundary is built.
-- F25 (protected scratch, quotas, orphans; plan on `main`): owns long-term orphan reclamation policy; `reclaim_orphan_arenas` is the minimal hook (Q1).
+### 5.3 Report boundary (classes 1, 6)
 
-## 6. Hostile corpus (acceptance tests, red first)
+- `publication/_report.py` (about 150 LOC): `report_type` decorator; `__post_init__` validates each field by exact type (`type(v) is str`, never `isinstance`, so a `str` subclass with a hostile `__repr__` is refused) against its annotation: `Token[vocab]`, `Hex64`, `Hex32`, `SafeId` (`^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$`), `ErrnoName`, `int`, finite `float`, `bool`, `None`, a closed `Enum`, an exact nested report type, a tuple of these. Report types are `frozen=True, slots=True`; a property is allowed only from a listed set (today `CommitReceipt.committed`, `publication/_types.py:158`, a bool) whose return values the corpus walks.
+- `PublicationRequest.__post_init__` shape-checks `operation_id`, `attempt_id`, `job_id`, `check_id` before any write.
+- `exception_error_text`, `commit_error_text` (`main:src/decoy_engine/execution/_isolated_common.py:238-259`) and `os_error_token`/`os_error_label` (`publication/_tokens.py:12-23`) map `type(exc)` through an explicit literal table of engine and builtin exception classes; anything else is `UnregisteredError`. A hostile subclass of a listed class is unregistered.
+- Publication backend raises `PublicationRefusedError(...) from None`; the errno lives in `receipt.os_error`.
+- `quarantine.py:498-504` log becomes constant text plus errno name.
 
-Every test below is written and recorded red on the slice's starting commit before the fix. Each has a non-vacuity assertion.
+### 5.4 F29 integration
 
-### 6.1 Real child killed at every phase
+- Re-apply on a branch from current `main`; `2fa4f8a5` stays the reference.
+- Receipt `reason_code` base tokens (`already_committed`, `conflict`, `target_occupied_different`, `required_check_failed`, `lock_unavailable`, `promote_failed`, `switch_failed`, `rename_failed`, `staging_changed`, `backup_failed`, and the rest found by the census) each register as `decoy.publication_<token>` in `main:src/decoy_engine/reasons/decoy/_core.py`; the `:<errno>` suffix moves to `os_error`. Busy and arena codes: `write_in_progress`, `commit_in_progress`, `recovery_in_progress`, `attempt_sealed`, `commit_not_visible`, `arena_parent_unsafe`, `arena_open_failed`, `arena_cleanup_failed`, `isolation_disabled`. `CommitReceipt.__post_init__` refuses an unregistered token, so the exit matrix proves the mapping exhaustive at runtime; `REGISTRY_VERSION` goes `1.0.0 -> 1.1.0` (`main:src/decoy_engine/reasons/_registry.py:24`, rule `main:tests/unit/test_reason_registry.py:151-159`); new sites go into `main:tests/fixtures/f29/producer-inventory.json`.
+- Outcome to `PublicationState`: published, already_committed -> `published`; rejected, conflict, unsupported, cancelled_before_commit -> `not_published`; commit_uncertain -> `unknown`. `DisposalReport.status` to `CleanupState`: confirmed -> `confirmed`, failed -> `failed`, not run -> `not_needed`.
+- Ordering: the sink's `_leave` sets `SinkState` and, for disposal, `DisposalReport`; `publication_evidence` becomes a read-only projection of both; the evidence writes in `observed_commit`/`observed_abort` (`main:src/decoy_engine/execution/_publication_observer.py:110-111`, `:123`, `:128`) are deleted for sinks with evidence, kept for foreign sinks. `commit_reason` takes the `DisposalReport` instead of `staging.exists()` (`main:src/decoy_engine/execution/_isolated_reason.py:50`), read after disposal.
+- Table identifiers: F22 passes no `table=` to `PublicationEvidence.context` and sets no `object_ref`; `stored_bytes` keys are config-declared tables, asserted in A10.
 
-`tests/unit/publication/test_arena_real_child_kill.py`. Real `decoy_engine.execution._isolated_worker`, no fake worker. Fault injection without a production hook: the test prepends a directory holding a `sitecustomize.py` to the child's `PYTHONPATH` (the spawn copies `os.environ`, `execution/_isolated_spawn.py:68`); it wraps `pq.ParquetWriter.write_batch`, `pq.write_table`, `os.replace` and `_Spill.add` to write a `reached-<phase>` file listing the arena's current entries, then block on a FIFO. The test kills the child with SIGKILL from an `on_spawn` thread after the phase file appears. Phases: K1 before first write; K2 mid `write_batches` of table 1 (seeded name `TBLMARK_<hex>`); K3 hold-back spill active; K4 after table 1 closed, before table 2; K5 after the prep sink's rename, before the envelope; K6 after the envelope, before exit. Same matrix with timeout and with `on_spawn` raising. Assertion: after `run_pipeline_isolated` returns, a walk of `tmp_path` finds no `TBLMARK` file, no `.decoy-attempt-*`, no `_decoy_*`, and nothing but the lock file beside `output_dir`; the result reports `cleanup_state=confirmed`. Non-vacuity: the `reached-<phase>` listing contains the seeded file in its arena subdirectory (K2 to K5) and a `hold/` entry at K3. Red on `2fa4f8a5` for K2 to K5 (the inner stage is outside the lease).
+## 6. Reuse inventory
 
-### 6.2 Barrier interleavings
+- F29 registry, `ReasonRecord`, `ReasonContext`, `PublicationState`, `CleanupState` (`main:src/decoy_engine/reasons/_record.py:43-72`); `_publication_observer.py`; `_isolated_reason.py`; reason sentries `main:tests/sentry/test_reason_registry.py`, `main:tests/sentry/_reason_scan.py`, fixtures under `main:tests/fixtures/f29/`.
+- Engine sentries `tests/sentry/test_module_size.py`, `test_physical_seam_disconnection.py`, `test_public_import_boundary.py`, `test_publication_commit_boundary.py` (ported).
+- F22 backend verbatim: descriptor, codec, lock, child gate, tokens, `tests/unit/publication/_support.py` oracle helpers.
+- F31 boundary: not landed; F22 builds no general boundary, only report types for its own types (Q2, Q3).
+- F25: orphan scheduling and quotas (Q1).
 
-`tests/unit/publication/test_sink_interleavings.py`, generated from `TRANSITIONS`. Harness: monkeypatch the backend call of the in-flight op (`_pub.lookup_committed`, `_pub.reconcile`, `_pub.prepare_directory`, `pq.write_table`) to set `entered` and wait on `release`. For every in-flight op X in {write, commit, lookup, reconcile} and every arriving op Y in {write, record_validation(fail), commit, lookup, reconcile, abort}: start X, wait `entered`, call Y on another thread, assert Y's outcome equals the table cell, release, assert X's result and the final state. Required named cases:
-- I1 recovery vs `record_validation(FAIL)`: validation is busy; recovery returns from the old request; a following `commit()` is refused by the failing check. Red today (Codex reproduced the stale `already_committed`).
-- I2 recovery vs `commit()`: commit busy `recovery_in_progress`, not latched.
-- I3 recovery vs `abort()`: abort deferred; recovery result returned; then state ABORTED and arena disposed; the result never has `aborted` before it. Red today.
-- I4 recovery vs a second recovery: busy.
-- I5 commit vs commit, commit vs abort, write vs commit (r5 cases, kept).
-- I6 commit raising a non-refusal exception then a second `commit()`: refused `attempt_invalid`. Red today (S5).
-- I7 prep sink sealed then `abort()`: state stays SEALED. Red today.
-Non-vacuity: each case asserts `entered.is_set()` before Y and that the call Y blocked zero times on the sink lock for longer than the barrier (the lock is not held across X's I/O).
+## 7. Hostile corpus (acceptance tests, red first)
 
-### 6.3 Marker corpus over the complete payload
+All tests are written and recorded red on the slice's start commit before the fix. Where a test is green at baseline it is labelled characterization and paired with the mutation that must turn it red.
 
-`tests/unit/publication/test_report_plane.py`. Markers: `PATHMARK` in `output_dir`, the caller `staging_dir` and the retention store; `OSMARK` as the message of an injected `OSError(ENOSPC, ...)` at rename, pointer switch, backup, fsync, arena dispose; `TBLMARK` as a child-supplied undeclared table and as a config table; `CELLMARK` in data values; `DSNMARK` in the config's connection string. For every exit in section 4.1 and every type in section 4.4, build the instance, `json.dumps(obj.to_report())`, assert no marker, except `TBLMARK` (config provenance) only under an `object_ref` key. The field walk test asserts `FIELD_PLANES` covers every `dataclasses.fields()` entry of every public type and every type reachable from them. Non-vacuity: the same instances' handle and data fields do contain the markers (proof the seed reached the object), and a deliberately unregistered dummy field makes the walk fail.
+### 7.1 Harness and oracle twins
 
-### 6.4 Other red-first tests
+- `tests/unit/publication/_audit.py`: runs the scenario in a fresh subprocess that installs `sys.addaudithook` (PEP 578) for `open` (write modes, `O_CREAT`), `os.mkdir`, `os.rename`, `os.replace`, `os.link`, `os.symlink`, `tempfile.mkstemp`, `tempfile.mkdtemp`, `shutil.copyfile`; the child inherits it through a `sitecustomize.py` on `PYTHONPATH` (spawn copies `os.environ`, `execution/_isolated_spawn.py:68`). Audit events fire for every call route (alias, `getattr`, `functools.partial`, property), so containment does not depend on syntax.
+- Oracles: `assert_contained(events, tree_before, tree_after, arena)`, `assert_no_markers(blob)`, `assert_all_or_none(dest)`, `assert_cell(state, op, outcome)`.
+- `test_oracles_detect_planted_defects`: each oracle runs on a planted leftover, a planted marker, a half unit and a wrong state, and must raise. Deleting an oracle assertion turns this red independently of test order.
+- Phase hooks in the child (sitecustomize wrappers that write `reached-<phase>` with a tree listing, then block on a FIFO): `pq.ParquetWriter.write_batch`, `pq.write_table`, `_Spill.add`, `ParquetPreparationSink.commit` after its rename, `_isolated_worker._write_envelope_file` after return. A thread started by `on_spawn` (`execution/_isolated_spawn.py:85`) waits for the phase file and sends SIGKILL. The phase file must exist, so a broken hook fails rather than passes.
 
-- `test_inprocess_exit_matrix`: S1 to S5, S7, S8 per route in section 4.2; arena gone or `cleanup=failed`.
-- `test_managed_orphan_generation`: inject failures at M1 and M2; `generations/` holds only referenced digests (red today).
-- `test_no_temp_outside_arena` (AST sentry over `execution/`, `publication/`, `generation/`, `quarantine.py`): no `mkdtemp`, `mkstemp`, `TemporaryDirectory`, `NamedTemporaryFile` outside `publication/_arena.py`, with a reasoned allow-list (the profiler and benchmark scripts are outside the scan roots).
-- `test_arena_swap_is_not_followed`.
-- `test_f29_cleanup_state_after_disposal`: a promotion refusal gives `reason.context.cleanup_state == confirmed` (red on a naive merge, where `commit_reason` checks `staging.exists()` before the lease exits).
-- `test_publication_state_mapping` (section 9.2).
-- `test_operation_id_shape`.
-- `test_child_row_errors_bounded`.
-- `test_docs_table_matches_transitions`.
+### 7.2 Per-invariant tests
 
-### 6.5 Ten ways a gate reviewer breaks it (each has a test above)
+| Test | Proves | Cases | Red at baseline? |
+|---|---|---|---|
+| `test_exit_matrix_inprocess` | P1, P2 | S1 to S6, D1 to D3, M1 to M5, R1 to R3 on every in-process route | red: M1 (orphan generation reproduced), R1 (meta marker), S2 |
+| `test_real_child_kill_matrix` | P1, P2 | K1 before write, K2 mid table 1, K3 spill active, K4 between tables, K5 after prep rename, K6 after envelope; kill, timeout, `on_spawn` raise | red K2 to K4 (Codex); K1, K5, K6 characterization, mutation: drop disposal on the self-report path |
+| `test_managed_orphan_generation` | P3 | fault at `fsync_dir(generations)`, pointer temp write, switch | red |
+| `test_transition_cells_generated` | P4 | in-flight {write, commit pre_bind, commit binding, lookup, reconcile} x arriving {write, validation FAIL, commit, lookup, reconcile, abort} x every outcome row of the in-flight table (cell count asserted equal to the table); asserts arriving result, final state, request unchanged on busy, lock not held across I/O | red on the reproduced cells |
+| `test_restart_recovery` | P5 | subprocess A SIGKILLed after the bind rename, before return; fresh sink B: reconcile -> SEALED, write refused `attempt_sealed`, commit returns R, abort no-op, binding intact | red (write accepted today) |
+| `test_report_types_field_walk` | P6 | every class in 4.4 classified; every report field annotation allowed; slots hold no extra attribute and every property is in the listed set; a `str` subclass value is refused | red (`AbortReport.retained_path`) |
+| `test_marker_corpus_all_emitters` | P6, P7 | markers `PATHMARK` (dirs), `OSMARK` (injected `OSError` text), `CELLMARK` (data and a dynamic exception class name), `TBLMARK` (child-only table), `DSNMARK` (config DSN); every exit in 4.1 x every emitter in 4.5 incl. `repr`, `asdict`, `pickle`, traceback, `caplog`; non-empty: the same markers are present in the data carriers | red (P1 to Q3 probes) |
+| `test_fk_shapes_all_or_none` | P9 | 4.3 shapes x 8 routes x {kill mid table k, refused commit} | characterization; mutation: one rename per table |
+| `test_route_capability_matrix` | class 4 | every route: arena used, recovery available, managed unit; `isolate=False` records `isolation_disabled` | red (no reason today) |
+| `test_child_row_errors_bounded` | P8 | oversize and wrong-type `row_errors.json` | red |
+| `test_arena_parent_unsafe_refused` | class 7 | parent 0o777 without sticky refused before any write; with sticky accepted | red (no check) |
 
-1. Kill the real child mid-spill (6.1 K3). 2. Swap the arena for a symlink (6.4). 3. Validation FAIL during lookup (I1). 4. Abort during reconcile (I3). 5. Commit twice after an `OSError` (I6). 6. `json.dumps(asdict(result))` (sentry plus 6.3 docs scope). 7. `operation_id="/srv/PATHMARK"` (6.4). 8. Pointer switch failure leaves a generation (6.4). 9. Caller `staging_dir` keeps source Parquet (6.1 assertion over `tmp_path`). 10. Merged F29 reports `cleanup_state=failed` after a clean disposal (6.4).
+### 7.3 Ten gate attacks (Codex list)
 
-## 7. Frozen contracts touched
+| # | Attack | Test | Red first |
+|---|---|---|---|
+| A1 | kill real child mid-spill | kill matrix K3 | red |
+| A2 | kill after prep rename | K5 | characterization; mutation: lease skips `prep` |
+| A3 | kill after envelope, before exit | K6 via `_write_envelope_file` hook | characterization; mutation as K5 |
+| A4 | retain rejected staging outside arena | `test_retention_transfer`: audit shows one `rename` arena -> store; `meta.json` and `AbortReport` free of markers; refused retention leaves the store unchanged | red (`/srv/PATHMARK_op` in meta, path in `asdict`) |
+| A5 | fail managed pointer-temp write | `test_managed_orphan_generation` plus SIGKILL at the pointer write: no new entry under root except the arena | red |
+| A6 | rename arena, symlink its old name | `test_arena_swap`: under a sticky parent the swap by a second uid is impossible (precondition test); same-uid swap: sentinel untouched, contents removed via fd, `cleanup_state=failed`, `leftover_count=1` | red (lease follows `islink` then path, `execution/_isolated_commit.py:82-85`) |
+| A7 | recovery versus validation FAIL | cell: lookup in flight, validation busy, request unchanged; after release with none, validation applies and commit refuses | red (reproduced) |
+| A8 | crash after bind, fresh process recovers then commits | `test_restart_recovery` | red (reproduced) |
+| A9 | hostile class name or path in result, cause, log | corpus with `type("CELLMARK_x", (OSError,), {})` raised at write, bind and dispose | red (reproduced: `exception_error_text` on main, `os_error_label` at `2fa4f8a5`) |
+| A10 | valid-shaped child table into `object_ref` or `stored_bytes` | child declares `TBLMARK_x`; absent from every reason payload, evidence, progress event, receipt, log | worker records; if green, mutation: pass the child name to `context(table=)` |
+
+### 7.4 Sentries (tripwires; the runtime tests above are the proof)
+
+- `test_creation_sites_census`: AST over every `.py` under `src/decoy_engine/` (file set asserted equal to `git ls-files`); resolves `import x as y`, `from x import f as g`, literal `getattr(mod, "f")`, `functools.partial(f, ...)`; flags non-literal `getattr` on `os`, `shutil`, `tempfile`, `pathlib` as unresolved; flags method names `mkdir`, `write_bytes`, `write_text`, `touch`, `open` on any receiver (covers properties returning paths). Every hit must be in `tests/sentry/creation_sites.json` with a location class from P1. Seeded evasion fixtures for each alias form must fail it.
+- `test_report_schema_snapshots` (class 10) and F29 `test_reason_registry.py` (version bump).
+
+## 8. Frozen contracts touched
 
 - `decoy-publication/v1` descriptor and evidence core: unchanged.
-- F29 reason manifest v1 and consumer contract (`main:tests/fixtures/f29/reason-manifest-v1.json`, `consumer-contract.json`): additive only: a `publication` group of codes for receipt reason tokens and `recovery_in_progress`, `commit_not_visible`, `arena_cleanup_failed`. No rename, no removal.
-- `IsolatedRunResult`: additive (`publication_receipt` beside F29 `reason`; `memory_evidence` stays last per `main:` comment).
-- `CommitReceipt`: not yet released (F22 unmerged); changed (errno split to `os_error`) then frozen by `test_commit_receipt_schema_snapshot`.
-- `TransactionalSink` protocol (`execution/_transactional_sink.py:84`): unchanged methods; `ArenaLayout` is an optional constructor argument.
-- `docs/compatibility-contract.md`: the F22 entry is rewritten to the arena and report-plane claims.
+- F29 reason manifest and consumer contract (`main:tests/fixtures/f29/reason-manifest-v1.json`, `consumer-contract.json`): additive, registry 1.1.0.
+- `PublicationEvidence` fields: unchanged; writes move from the observer into the sink projection; snapshot added.
+- `IsolatedRunResult`: additive (`publication_receipt`); `error` text changes for unregistered classes (pre-GA).
+- `CommitReceipt`, `AbortReport` (unreleased): changed as in 4.4, then frozen by snapshots.
+- `TransactionalSink` protocol (`execution/_transactional_sink.py:84`): methods unchanged.
 
-## 8. Behavior changes (pre-GA, hard delete)
+## 9. Slices
 
-- Staging, spill and scratch move from `target.parent` siblings and `TMPDIR` into `.decoy-attempt-*`.
-- `StagingLease` and `sibling_staging_dir` are deleted, not adapted.
-- `staging_dir=` is a scratch parent; the engine never leaves `payload.json` or source Parquet in it.
+Branch `f22/rebuild` from current `main`, repo `decoy-engine`. Each slice depends only on earlier ones, lands its red tests in its own first commit, and updates the `docs/publication.md` section it changes.
 
-## 9. F29 integration
-
-### 9.1 Strategy
-
-Re-apply, do not rebase. Cut `f22/rebuild` from current `main` (at least `fdd08a8`). Slice F0 copies the new `publication/` package and its tests from `2fa4f8a5` (new files, no textual conflict), then the execution-side files are rebuilt on F29's versions under sections 5.1 to 5.3. Reason: the conflicting files (`_transactional_sink.py`, `_isolated_common.py`, `_isolated_run.py`, `_isolated_worker.py`) are exactly the ones this plan restructures, so a rebase would resolve conflicts in code that is then rewritten, and a merge commit would hide the semantic overlaps listed below. `claude/wizardly-allen-8ymekg` stays as the reference; nothing is pushed to it.
-
-### 9.2 What stays true on both sides
-
-| Fact | F29 rule kept | F22 rule kept | Reconciliation |
+| Slice | Content | Size | Acceptance |
 |---|---|---|---|
-| Failure identity | `IsolatedRunResult.reason` set on every non-completed result; governor reroutes on typed reason (`main:` `_isolated_common.py` removes route markers) | receipt carries the publication outcome | both fields; F22's port drops `preserved_route_markers` (present at `execution/_isolated_common.py:261`) |
-| Publication state | `PublicationState` closed enum | receipt outcomes | published, already_committed -> `published`; rejected, conflict, unsupported, cancelled_before_commit -> `not_published`; commit_uncertain -> `unknown`; F29's `observed_commit` sets `published` on return, which is right for both success outcomes |
-| Cleanup state | `CleanupState` closed enum; `confirmed` only when checked | arena disposal | from `DisposalReport.status` after disposal; `commit_reason` takes the report |
-| Table identifiers | `approve_ref` permits config identifiers in `object_ref` | r5 said "never table names" | F22 adopts F29: config identifiers only, only in `object_ref`; never child-supplied, never path-derived (Q2) |
-| Sink evidence | `PublicationEvidence` mutated at write/close/commit/abort | `SinkState` | evidence is derived from `SinkState`; no second flag set |
-| Stored bytes | `_stored` publishes `stored_output` progress | arena staging | `_stored` reads the size inside `layout.stage`; unchanged event |
+| S0 | port `publication/` and its backend-only tests and sentries from `2fa4f8a5` verbatim | 2,620 src; tests measured at start (Codex: up to 4,607 unit, 239 sentry) | `git diff 2fa4f8a5 -- src/decoy_engine/publication` empty; ported suites and F29 sentries green |
+| S1 | `_report.py`, report types reshaped, id shape checks, `from None`, registry 1.1.0 codes, token census | ~350 | field walk, marker corpus on backend types, A4 meta part, snapshots |
+| S2 | `_arena.py`, managed P3, pointer/backup/restore in arena, retention transfer, audit harness, creation census | ~450 | `test_managed_orphan_generation`, A4, A5, A6, precondition, oracle twins |
+| S3 | sink split, state table, RECOVERING, restart, in-process routes on the arena, observer projection | ~500 new, ~400 moved | all table cells, restart, in-process exit matrix, route matrix, FK matrix |
+| S4 | isolated parent and child on the arena, scratch root, exact-type error text, `commit_reason` with `DisposalReport`, quarantine log, `row_errors` cap | ~350 | kill matrix, A9, A10, full corpus |
 
-## 10. Slices
+### 9.1 Module census after each slice (`main` LOC)
 
-Each slice is separately gateable on `decoy-engine`, branch `f22/rebuild`, red tests in their own commit first.
+| Module | main | Rule |
+|---|---|---|
+| `execution/_sequential.py` | 696 | call sites only, net <= 0 |
+| `execution/out_of_core/_runner.py` | 681 | net <= 0 |
+| `quarantine.py` | 645 | net <= 0 |
+| `execution/_isolated_run.py` | 622 | arena code goes to `_isolated_commit.py`; <= 622 |
+| `execution/_chunked_output_sink.py` | 558 | spill takes the arena; <= 600 |
+| new modules | 0 | each <= 600 |
 
-| Slice | Content | Size | Acceptance (red first) |
-|---|---|---|---|
-| F0 | port `publication/` package and its unit tests onto `main`; drop `preserved_route_markers` users; census | ~0 new LOC, port only | ported suites green; F29 sentries green |
-| F1 | `_sink_state.py` + module split + RECOVERING + exception exits | ~450 moved, ~200 new | 6.2 all, `test_docs_table_matches_transitions` |
-| F2 | `publication/_arena.py` + in-process routes + managed M1/M2 | ~350 | 6.4 in-process matrix, managed orphan, AST sentry, swap test |
-| F3 | isolated parent and child on the arena; `TMPDIR` and disk budget at `layout.scratch`; caller `staging_dir` | ~250 | 6.1 full matrix |
-| F4 | `_report.py`, `FIELD_PLANES`, `to_report()`, id shape checks, F29 codes, mapping | ~300 | 6.3, `test_f29_cleanup_state_after_disposal`, `test_publication_state_mapping`, snapshots |
-| F5 | docs (`docs/publication.md`, CHANGELOG, compatibility contract), evidence record, archive the r1 to r5 remediation notes | docs | doc claims each cite a test id |
-
-Exact commands per slice (from `uv.lock`, one environment, recorded in the evidence file with `python -V`, `duckdb.__version__`, `pyarrow.__version__`):
+### 9.2 Commands (from `uv.lock`, one environment; record `python -V`, DuckDB and PyArrow versions)
 
 ```bash
-uv sync --frozen --extra dev --extra lint --extra vault --extra cloud --extra xdist
+uv sync --frozen --extra dev
 ```
 
 ```bash
-uv run pytest tests/unit/publication tests/sentry -q -p no:cacheprovider -n 4
+uv run pytest tests/unit/publication tests/sentry -q -p no:cacheprovider
 ```
 
 ```bash
-uv run pytest tests/unit/execution tests/integration tests/parity tests/security -q -p no:cacheprovider -n 4
+uv run pytest tests/unit/execution tests/integration tests/parity tests/security -q -p no:cacheprovider
 ```
 
 ```bash
 uv run ruff check src tests && uv run ruff format --check src tests && uv run mypy src/decoy_engine
 ```
 
-```bash
-python docs/handoffs/tools/plan-lint plan docs/plans/2026-10-30-f22-publication-replan.md
-```
+The baseline is the same commands on the slice's start commit in the same environment; both failure sets go in the evidence file. `scripts/dev/gates.sh` does not exist at `2fa4f8a5` or `fdd08a8`.
 
-The baseline for each slice is the same commands on the slice's starting commit in the same environment; both failure sets go in the evidence file. `scripts/dev/gates.sh` (catalog section 6) does not exist in this repo at `2fa4f8a5` or `fdd08a8`; the commands above stand in for it.
+## 10. Worker evidence rules
 
-## 11. Worker evidence rules
+- Name the class of every finding (section 3) and fix the class structure, not the instance.
+- Write the generated tests first (7.1 to 7.3) and record them red with exact ids; label characterization tests and record their mutation.
+- Attack your own diff: apply each mutation in section 3 once and record the test that turned red.
+- Run baselines from `uv.lock` in the same environment as the branch; state what you did not run.
+- Never widen a threshold, skip a test, weaken an assertion or raise a census number.
+- If a defect of a class already in the catalog recurs, stop and report it with a class-level proposal.
 
-- Name the class of every finding (section 3 numbering) and fix the class structure, not the instance.
-- Write the generated tests first (6.1 to 6.4) and record them red with the exact failing ids.
-- Attack your own diff: mutate each mechanism once (the mutation column in section 3) and record the test that turned red.
-- Run baselines from `uv.lock` in the same environment as the branch; record Python, DuckDB and PyArrow versions; state what you did not run.
-- Never widen a threshold, skip a test, weaken an assertion or raise a census number to pass.
-- If a defect of a class already in the catalog appears a third time, stop and report it to the owner with a class-level proposal.
+## 11. Pre-mortem
 
-## 12. Pre-mortem
+- **R1 audit hook misses native writes.** Named residual in P1; barrier walks catch survivors; native writers only receive arena paths.
+- **R2 safe-parent precondition breaks a real deployment** (group-writable shared output without sticky bit). Typed refusal before any write; owner decides (Q4).
+- **R3 `src_dir_fd` unsupported.** Assert `os.rename in os.supports_dir_fd` at import (`os.replace` shares `renameat` but is not listed in that set: probe on 3.11 shows `os.replace in os.supports_dir_fd` is False while `os.replace(..., src_dir_fd=fd)` works); otherwise refuse, no path fallback.
+- **R4 S0 port drifts from `main`.** Byte-identity gate; F29 lands first; S1 onwards rebase their own commits only.
+- **R5 the cell generator itself is wrong.** Its expectations are read from the literal table; the oracle twin plants a wrong state.
+- **R6 a third round.** Most likely cause: a producer outside 4.1. The creation census fails on it and the audit oracle names its path class.
 
-- **R1: arena on the destination filesystem fills the output disk with scratch.** Out-of-core scratch moves from `TMPDIR` to `layout.scratch`. Mitigation: F3 measures the disk budget at `layout.scratch`; if the owner prefers scratch on `TMPDIR`, the arena gets a second, scratch-filesystem root owned by the same `AttemptArena` (two roots, one owner, one disposal). Q4.
-- **R2: `sitecustomize` injection is fragile across interpreters.** If the child runs with `-I` or `-S` later, injection silently stops and 6.1 becomes vacuous. The non-vacuity assertion (phase file must exist) makes that a failure, not a pass.
-- **R3: the state table grows a ninth column and a hand-written guard reappears.** `_enter` / `_leave` are the only callers of the table; an AST sentry forbids reading the state attribute outside `_sink_state.py`.
-- **R4: F29 lands more changes during the rebuild.** F0 is cut from the newest `main`; each slice rebases onto `main` (its own commits only, all on one branch).
-- **R5: report-plane strictness rejects a legitimate value** (for example a long operation id from the platform). The shape check fails at request construction with a typed refusal, before any write, never at report time.
-- **R6: `reclaim_orphan_arenas` deletes a live attempt.** Only with the owner `flock` taken non-blocking; NFS without `flock` refuses (no fallback), matching `publication/_lock.py:1`.
-- **R7: a third round.** Most likely cause: a route not in section 4.2 that stages output (a new producer). The AST sentry in 6.4 is the guard; a new producer must take an `ArenaLayout` or the sentry fails.
+## 12. Open questions for the owner
 
-## 13. Open questions for the owner
-
-- Q1: F22 or F25 owns `reclaim_orphan_arenas` for a killed publishing process (X15, S6)? Default: F22 ships the lock-proved primitive, F25 owns scheduling and quotas.
-- Q2: adopt F29's rule (config table identifiers allowed in `object_ref` only) and drop r5's "never table names"? Default: yes.
-- Q3: explain output (`execution/_planner.py:238`) and `quality_metrics` are value-bearing today and outside F22; route to F31?
-- Q4: scratch on the destination filesystem (one root) or on `TMPDIR` (second root)?
-- Q5: approve re-application on a fresh branch from `main` instead of rebasing `claude/wizardly-allen-8ymekg`?
+- Q1: F22 ships `reclaim_orphan_arenas` (owner-lock proof); F25 owns scheduling and quotas. Agree?
+- Q2: F29 `approve_ref` is shape-only (`main:src/decoy_engine/reasons/_record.py:72-76`). F22 avoids it by never passing table text. Should F29 or F31 replace it with a config-provenance capability?
+- Q3: explain output (`execution/_planner.py:238`) and strategy exceptions are outside F22's emitter list; route to F31?
+- Q4: accept the safe-parent precondition (refuse a non-sticky, other-writable destination parent)?
+- Q5: exact-type error text changes `IsolatedRunResult.error` for unlisted classes to `UnregisteredError`; acceptable pre-GA?
