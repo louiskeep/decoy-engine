@@ -602,3 +602,213 @@ def test_forged_fields_never_escape_as_other_exception(hostile):
             except phase.PhaseContractError as exc:
                 assert _MARKER not in str(exc)
         assert phase.satisfies_required_gate(res) in (True, False)
+
+
+# ---- r7: every field of every public envelope, contained end to end -----------------------------
+
+_R7 = "R7-MARKER-do-not-leak"
+
+
+def _boom(*_a, **_k):
+    raise RuntimeError(_R7)
+
+
+_HOSTILE_DUNDERS = (
+    "__repr__",
+    "__len__",
+    "__iter__",
+    "__eq__",
+    "__hash__",
+    "__lt__",
+    "__getattr__",
+)
+
+
+def _hostile_type(base: type, dunder: str) -> type:
+    ns: dict = {dunder: _boom}
+    if dunder == "__eq__":
+        ns["__hash__"] = base.__hash__ if base is not object else object.__hash__
+    return type(f"Hostile{base.__name__.title()}{dunder.strip('_').title()}", (base,), ns)
+
+
+class _ForeignContractError(list):
+    """Foreign code raising the engine's own error type with the input in the text."""
+
+    def __iter__(self):
+        raise phase.PhaseContractError(_R7)
+
+    def __len__(self):
+        raise phase.PhaseContractError(_R7)
+
+
+class _RaisingGetattribute:
+    def __getattribute__(self, name):
+        raise RuntimeError(_R7)
+
+
+def _r7_scalars() -> list:
+    out: list = []
+    for dunder in _HOSTILE_DUNDERS:
+        out.append(_hostile_type(object, dunder)())
+        out.append(_hostile_type(int, dunder)(3))
+        out.append(_hostile_type(str, dunder)("ok"))
+        out.append(_hostile_type(tuple, dunder)(("k", 1)))
+        out.append(_hostile_type(float, dunder)(1.5))
+        out.append(_hostile_type(list, dunder)(["k"]))
+        out.append(_hostile_type(dict, dunder)({"k": 1}))
+    out += [
+        _RaisingGetattribute(),
+        _ForeignContractError(),
+        _R7,
+        10**5000,
+        -(10**5000),
+        2**63,
+        None,
+        Path(_R7),
+        ValueError(_R7),
+        RuntimeError(_R7),
+        ReasonRef(_R7, _R7),
+        ReasonRef("post_scan", _R7),
+        phase.PhaseCoverage(),
+        _deep(5000),
+        _deep(5000, lambda x: (x,)),
+        _deep(5000, lambda x: {"k": x}),
+        _cyclic(),
+        float("nan"),
+        b"bytes",
+        object(),
+    ]
+    return out
+
+
+def _r7_variants(h) -> list:
+    # The hostile value itself and the container positions it can hide in.
+    out = [h, (h,), [h], {"k": h}, (("k", h),), ((_R7, "v"),)]
+    try:
+        out.append({h})
+    except Exception:
+        pass
+    return out
+
+
+def _envelope_types() -> list[type]:
+    found = [
+        obj
+        for name, obj in vars(phase).items()
+        if not name.startswith("_")
+        and isinstance(obj, type)
+        and dataclasses.is_dataclass(obj)
+        and obj.__module__ == phase.__name__
+    ]
+    assert {phase.PhaseCoverage, phase.PhaseResult, phase.PhaseEvent} <= set(found)
+    return found
+
+
+def _valid(cls: type):
+    if cls is phase.PhaseCoverage:
+        return phase.PhaseCoverage()
+    if cls is phase.PhaseResult:
+        return _result()
+    if cls is phase.PhaseEvent:
+        return phase.PhaseEvent("post_scan", "done", "passed")
+    raise AssertionError(f"no valid builder for new envelope type {cls.__name__}")
+
+
+def _ctor_kwargs(cls: type) -> dict:
+    v = _valid(cls)
+    return {f.name: getattr(v, f.name) for f in dataclasses.fields(cls)}
+
+
+def _forge(cls: type, name: str, value):
+    # A forged coverage is only reachable through a result that already holds it.
+    holder = _result() if cls is phase.PhaseCoverage else _valid(cls)
+    target = holder.coverage if cls is phase.PhaseCoverage else holder
+    object.__setattr__(target, name, value)
+    return holder
+
+
+def _exercise(call, label, escapes):
+    try:
+        return call()
+    except phase.PhaseContractError as exc:
+        if _R7 in str(exc) or _R7 in repr(exc.args):
+            escapes.append((label, "leaked input text"))
+    except Exception as exc:  # every foreign escape is the finding
+        escapes.append((label, type(exc).__name__))
+    return None
+
+
+def _check_exports(obj, label, escapes):
+    if isinstance(obj, phase.PhaseCoverage):
+        obj = _exercise(lambda: _result(coverage=obj), f"{label}:result", escapes)
+        if obj is None:
+            return
+    env = obj
+    for fn in (phase.to_wire, phase.canonical_bytes, phase.satisfies_required_gate):
+        _exercise(lambda fn=fn: fn(env), f"{label}:{fn.__name__}", escapes)
+
+
+def _r7_escapes() -> tuple[list, set]:
+    escapes: list = []
+    exercised: set = set()
+    hostiles = [v for h in _r7_scalars() for v in _r7_variants(h)]
+    for h in hostiles:
+        _exercise(lambda h=h: phase.freeze(h), "freeze", escapes)
+        _exercise(lambda h=h: phase.FrozenMap(h), "FrozenMap", escapes)
+        _exercise(lambda h=h: phase.FrozenMap([h]), "FrozenMap[pair]", escapes)
+        for cls in _envelope_types():
+            for f in dataclasses.fields(cls):
+                label = f"{cls.__name__}.{f.name}"
+                exercised.add(label)
+                kw = {**_ctor_kwargs(cls), f.name: h}
+                built = _exercise(lambda cls=cls, kw=kw: cls(**kw), f"{label}:ctor", escapes)
+                if built is not None:
+                    _check_exports(built, f"{label}:built", escapes)
+                _check_exports(_forge(cls, f.name, h), f"{label}:forged", escapes)
+    return escapes, exercised
+
+
+def test_every_envelope_field_is_walked_and_only_raises_fixed_contract_error():
+    escapes, exercised = _r7_escapes()
+    expected = {f"{c.__name__}.{f.name}" for c in _envelope_types() for f in dataclasses.fields(c)}
+    assert exercised == expected and len(expected) >= 22
+    assert sorted(set(escapes)) == []
+
+
+@pytest.mark.parametrize(
+    ("owner", "attr"),
+    [(phase.FrozenMap, "__new__"), (phase.PhaseCoverage, "__post_init__")],
+)
+def test_catch_all_detects_containment_removed_from_a_constructor(monkeypatch, owner, attr):
+    raw = owner.__dict__[attr]
+    raw = raw.__func__ if isinstance(raw, staticmethod) else raw
+    unwrapped = raw.__wrapped__
+    monkeypatch.setattr(owner, attr, staticmethod(unwrapped) if attr == "__new__" else unwrapped)
+    escapes, _ = _r7_escapes()
+    assert escapes, f"removing containment from {owner.__name__}.{attr} went undetected"
+
+
+def test_frozenmap_rejects_subclassed_pairs_and_primitives_with_fixed_text():
+    for bad in (
+        (_hostile_type(tuple, "__len__")(("k", 1)),),
+        (("k", _hostile_type(int, "__lt__")(1)),),
+        (("k", _hostile_type(str, "__eq__")("v")),),
+        ((_hostile_type(str, "__lt__")("k"), 1), ("j", 2)),
+        (("k", _hostile_type(tuple, "__iter__")((1,))),),
+    ):
+        with pytest.raises(phase.PhaseContractError) as ei:
+            phase.FrozenMap(bad)
+        assert _R7 not in str(ei.value)
+
+
+def test_unknown_header_and_reason_errors_never_echo_the_input():
+    for res in (
+        _result(status=_R7),
+        _result(phase=_R7),
+        _result(schema_version=_R7),
+        _result(reasons=(ReasonRef("post_scan", _R7),)),
+        phase.PhaseEvent("post_scan", "e", "passed", ReasonRef(_R7, "x")),
+    ):
+        with pytest.raises(phase.PhaseContractError) as ei:
+            phase.canonical_bytes(res)
+        assert _R7 not in str(ei.value)
