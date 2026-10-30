@@ -101,8 +101,12 @@ from decoy_engine.execution._isolated_common import (
     peak_rss_mb,
 )
 from decoy_engine.execution._isolated_memwatch import error_suffix, evidence_of, start_sampler
+from decoy_engine.execution._isolated_reason import commit_reason, reason_from_envelope
 from decoy_engine.execution._pipeline import run_pipeline
 from decoy_engine.execution._row_errors import RowErrorRecord
+from decoy_engine.reason_adapter import reason_from_exception
+from decoy_engine.reasons import ReasonRecord
+from decoy_engine.reasons import decoy as _decoy_reasons
 
 __all__ = ["run_pipeline_isolated"]
 
@@ -271,6 +275,7 @@ def _run_in_process(
             signal_number=None,
             error=exception_error_text(exc),
             isolated=False,
+            reason=reason_from_exception(exc),
         )
 
     committed_dir: str | None = None
@@ -295,6 +300,7 @@ def _run_in_process(
                 signal_number=None,
                 error=commit_error_text(exc),
                 isolated=False,
+                reason=commit_reason(exc, staging_dir),
             )
         committed_dir = str(output_dir)
 
@@ -461,6 +467,7 @@ def _spawn_and_classify(
             isolated=True,
             pid=proc.pid,
             memory_evidence=evidence_of(finished, abnormal=False),
+            reason=ReasonRecord.for_reason(_decoy_reasons.ISOLATED_RUN_TIMED_OUT),
         )
     except BaseException:
         # MED-3: on_spawn raised (a governor bug, not the child's fault).
@@ -515,6 +522,11 @@ def _spawn_and_classify(
         isolated=True,
         pid=proc.pid,
         memory_evidence=evidence,
+        reason=ReasonRecord.for_reason(
+            _decoy_reasons.ISOLATED_WORKER_OUT_OF_MEMORY
+            if outcome == "oom_killed"
+            else _decoy_reasons.ISOLATED_WORKER_DIED
+        ),
     )
 
 
@@ -537,6 +549,7 @@ def _result_from_envelope(
             error=envelope.get("error"),
             isolated=True,
             pid=pid,
+            reason=reason_from_envelope(envelope),
         )
 
     try:
@@ -556,6 +569,7 @@ def _result_from_envelope(
             error=commit_error_text(exc),
             isolated=True,
             pid=pid,
+            reason=commit_reason(exc, staging_output_dir),
         )
     return IsolatedRunResult(
         outcome="completed",

@@ -1,6 +1,7 @@
 # P4-A Task 7: reorder-route live seam (auto-select by parent-key size)
 
-Status: plan (DRAFT v4 — remediated after Codex plan-gate rounds 1-3 NO-GO).
+Status: built
+Shipped: CHANGELOG.md:2117 (Task 6 + Task 7 auto-routed reorder); docs/plans/2026-09-03-phase4-merge-readiness.md; PR #126 (cd6e993d)
 Author: Opus, 2026-09-03. Held target branch `feat/native-phase3`; merges with
 the Phase-4 bundle. Route-selection behavior change (R2).
 

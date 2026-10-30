@@ -164,6 +164,7 @@ from typing import Any
 
 import pyarrow as pa
 
+from decoy_engine import reasons
 from decoy_engine.plan._errors import PlanCompileError
 
 from . import _chunked_bucket_perturb as bucket_perturb_gate
@@ -274,13 +275,13 @@ def check_chunked_compatibility(config: dict[str, Any], *, table: str, registry:
     if table_cfg is None:
         known = sorted(t.get("name", "?") for t in tables if isinstance(t, dict))
         raise PlanCompileError(
-            code="chunked_table_unknown",
+            code=reasons.plan.CHUNKED_TABLE_UNKNOWN,
             path=f"tables.{table}",
             message=f"table {table!r} is not in the config (tables: {known}).",
         )
     if table_cfg.get("generate_columns"):
         raise PlanCompileError(
-            code="chunked_generate_unsupported",
+            code=reasons.plan.CHUNKED_GENERATE_UNSUPPORTED,
             path=f"tables.{table}",
             message=(
                 f"table {table!r} is a generate table; chunked execution masks "
@@ -339,7 +340,7 @@ def check_chunked_compatibility(config: dict[str, Any], *, table: str, registry:
     if offending:
         details = ", ".join(f"{name} ({strategy})" for name, strategy in offending)
         raise PlanCompileError(
-            code="strategy_not_chunk_safe",
+            code=reasons.plan.STRATEGY_NOT_CHUNK_SAFE,
             path=f"tables.{table}.columns",
             message=(
                 f"column(s) {details} use strategies that are not value-keyed and "
@@ -354,7 +355,7 @@ def check_chunked_compatibility(config: dict[str, Any], *, table: str, registry:
             for name, strategy, failures in conditions_unmet
         )
         raise PlanCompileError(
-            code="chunked_strategy_conditions_unmet",
+            code=reasons.plan.CHUNKED_STRATEGY_CONDITIONS_UNMET,
             path=f"tables.{table}.columns",
             message=(
                 f"column(s) {details}. faker/categorical run chunked only on "
@@ -540,7 +541,7 @@ def concat_masked_chunks(chunks: list[pa.Table], *, table: str) -> pa.Table:
     for chunk in chunks[1:]:
         if chunk.schema.names != names:
             raise ExecutionError(
-                code="chunked_schema_mismatch",
+                code=reasons.runtime.CHUNKED_SCHEMA_MISMATCH,
                 message=(
                     f"masked chunks of table {table!r} disagree on column names "
                     f"({names} vs {chunk.schema.names}); the auto-chunk "
@@ -556,7 +557,7 @@ def concat_masked_chunks(chunks: list[pa.Table], *, table: str) -> pa.Table:
                 non_null_types.append(t)
         if len(non_null_types) > 1:
             raise ExecutionError(
-                code="chunked_schema_mismatch",
+                code=reasons.runtime.CHUNKED_SCHEMA_MISMATCH,
                 message=(
                     f"masked chunks of table {table!r} disagree on column "
                     f"{name!r} type ({', '.join(str(t) for t in non_null_types)}); "

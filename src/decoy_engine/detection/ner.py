@@ -35,6 +35,7 @@ import importlib.util
 from collections.abc import Collection, Sequence
 from typing import Any
 
+from decoy_engine import reasons
 from decoy_engine.detection.detectors import Span
 from decoy_engine.errors import DecoyError
 
@@ -99,7 +100,7 @@ def ensure_ner_available(model: str = DEFAULT_NER_MODEL) -> None:
     """Raise the typed error a config-only caller (decoy validate) needs."""
     if not spacy_installed():
         raise NerUnavailableError(
-            code="ner_spacy_not_installed",
+            code=reasons.provider.NER_SPACY_NOT_INSTALLED,
             message=(
                 "text_redact `ner` requires spaCy: pip install 'decoy-engine[ner]' "
                 "(or pip install spacy)."
@@ -107,7 +108,7 @@ def ensure_ner_available(model: str = DEFAULT_NER_MODEL) -> None:
         )
     if not model_installed(model):
         raise NerUnavailableError(
-            code="ner_model_not_installed",
+            code=reasons.provider.NER_MODEL_NOT_INSTALLED,
             message=(
                 f"text_redact `ner` model {model!r} is not installed: "
                 f"python -m spacy download {model}"

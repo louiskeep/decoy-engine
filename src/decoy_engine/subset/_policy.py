@@ -17,6 +17,7 @@ from typing import Any
 
 import polars as pl
 
+from decoy_engine import reasons
 from decoy_engine.subset._closure import BudgetCheck, ClosureResult
 from decoy_engine.subset._errors import SubsetBudgetExceededError, SubsetConfigError
 from decoy_engine.subset._types import (
@@ -40,7 +41,7 @@ def resolve_edge_directions(
     for edge_id, direction in policy.edge_directions:
         if edge_id not in valid_ids:
             raise SubsetConfigError(
-                code="subset_unknown_edge",
+                code=reasons.config.SUBSET_UNKNOWN_EDGE,
                 message=f"edge_directions names unknown edge_id {edge_id!r}; valid edge_ids: "
                 f"{sorted(valid_ids)!r}",
             )
@@ -50,7 +51,7 @@ def resolve_edge_directions(
         dangling = sorted(edge_id for edge_id, d in directions.items() if d in ("downward", "none"))
         if dangling:
             raise SubsetConfigError(
-                code="subset_dangling_not_acknowledged",
+                code=reasons.config.SUBSET_DANGLING_NOT_ACKNOWLEDGED,
                 message="disabling upward traversal on an edge can orphan child FKs "
                 f"(edges: {dangling!r}); set allow_dangling=True on the FanOutPolicy to "
                 "acknowledge this explicitly, or leave the edge direction as 'both'/'upward'",

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
+from decoy_engine import reasons
 from decoy_engine.errors import FpeUnencryptableError
 from decoy_engine.execution._errors import StrategyError
 from decoy_engine.generation.pool._events import QualityWarning
@@ -39,7 +40,7 @@ def text_mask_fail_closed_error(exc: FpeUnencryptableError, column: str) -> Stra
     strategy, message), so the native route raises the identical error the oracle handler does.
     A separate function so mutation testing can grade the code + message mapping on its own."""
     return StrategyError(
-        code="fpe_unencryptable_domain",
+        code=reasons.runtime.FPE_UNENCRYPTABLE_DOMAIN,
         strategy="text_mask",
         message=(
             f"column {column!r}: {exc}. The engine fails closed rather than "
@@ -57,7 +58,7 @@ def text_mask_sub_floor_warning(
     and policy, at the oracle's scope: the whole column (unified, counts summed across batches) or
     one oracle-equivalent chunk (chunked)."""
     return QualityWarning(
-        code="text_mask_sub_floor_span_handled",
+        code=reasons.warning.TEXT_MASK_SUB_FLOOR_SPAN_HANDLED,
         provider="text_mask",
         column=column,
         detail={

@@ -99,7 +99,10 @@ def test_g2_composite_providers_agree_across_handler_generator_and_declarations(
 
 def test_g2_check_fails_for_a_stub_provider_branch() -> None:
     source = inspect.getsource(CompositeHandler.run)
-    marker = '        else:\n            raise ExecutionError(\n                code="unsupported_strategy",'
+    marker = (
+        "        else:\n            raise ExecutionError(\n"
+        "                code=reasons.runtime.UNSUPPORTED_STRATEGY,"
+    )
     assert marker in source
     patched = source.replace(
         marker, "        elif node.provider == 'composite_stub':\n            pass\n" + marker

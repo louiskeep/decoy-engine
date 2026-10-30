@@ -23,6 +23,7 @@ from typing import Any
 
 import pyarrow as pa
 
+from decoy_engine import reasons
 from decoy_engine.generation._pinned_compile import refuse_live_tokens, reject_unpinnable
 from decoy_engine.generation._pinned_plan import (
     PinnedModeError,
@@ -56,12 +57,12 @@ def _order_tables(plan: PinnedPlan) -> list[str]:
                 continue
             if parent not in deps:
                 raise PinnedModeError(
-                    code="pinned_plan_malformed",
+                    code=reasons.plan.PINNED_PLAN_MALFORMED,
                     message=f"table #{pos[node]} depends on a table the plan does not declare",
                 )
             if parent in done and parent not in finished:
                 raise PinnedModeError(
-                    code="pinned_plan_malformed",
+                    code=reasons.plan.PINNED_PLAN_MALFORMED,
                     message=f"tables #{pos[node]} and #{pos[parent]} depend on each other",
                 )
             if parent not in done:
@@ -81,7 +82,8 @@ def _scan_plan_for_tokens(plan: PinnedPlan) -> None:
             st["spec"] = json.loads(st.pop("spec_json"))
     except (ValueError, TypeError):
         raise PinnedModeError(
-            code="pinned_plan_malformed", message="a column config or spec is not valid JSON"
+            code=reasons.plan.PINNED_PLAN_MALFORMED,
+            message="a column config or spec is not valid JSON",
         ) from None
     refuse_live_tokens(decoded, "plan")
 
@@ -90,7 +92,7 @@ def _check_plan(plan: PinnedPlan) -> dict[tuple[str, str], StatisticalSpec]:
     """Re-check a plan that may have been deserialized or hand-built, then decode its specs."""
     if plan.runtime_identity != runtime_identity():
         raise PinnedModeError(
-            code="pinned_runtime_changed",
+            code=reasons.plan.PINNED_RUNTIME_CHANGED,
             message="the runtime identity differs from the one the plan was pinned under",
         )
     reject_unpinnable(
@@ -108,20 +110,20 @@ def _check_plan(plan: PinnedPlan) -> dict[tuple[str, str], StatisticalSpec]:
         for ci, c in enumerate(t.columns):
             if json.loads(c.config_json).get("name") != c.name:
                 raise PinnedModeError(
-                    code="pinned_plan_malformed",
+                    code=reasons.plan.PINNED_PLAN_MALFORMED,
                     message=f"table #{ti} column #{ci}: name differs from its config",
                 )
     specs: dict[tuple[str, str], StatisticalSpec] = {}
     for s in plan.statistical:
         if not s.snapshot_digest:
             raise PinnedModeError(
-                code="pinned_statistical_digest_missing",
+                code=reasons.plan.PINNED_STATISTICAL_DIGEST_MISSING,
                 message=f"table {s.table!r} column {s.column!r}: no pinned snapshot digest",
             )
         spec = spec_from_dict(json.loads(s.spec_json))
         if spec.snapshot_digest != s.snapshot_digest:
             raise PinnedModeError(
-                code="pinned_statistical_digest_missing",
+                code=reasons.plan.PINNED_STATISTICAL_DIGEST_MISSING,
                 message=f"table {s.table!r} column {s.column!r}: spec digest does not match",
             )
         specs[(s.table, s.column)] = spec
@@ -131,7 +133,7 @@ def _check_plan(plan: PinnedPlan) -> dict[tuple[str, str], StatisticalSpec]:
                 (t.name, c.name) not in specs
             ):
                 raise PinnedModeError(
-                    code="pinned_statistical_digest_missing",
+                    code=reasons.plan.PINNED_STATISTICAL_DIGEST_MISSING,
                     message=f"table {t.name!r} column {c.name!r}: no pinned snapshot digest",
                 )
     return specs

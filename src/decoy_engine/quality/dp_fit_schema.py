@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from decoy_engine import reasons
 from decoy_engine.quality.carriers import CarrierError, _validate_bound
 
 # The closed release-kind x carrier table (guide section 3.3). `kind` is
@@ -68,7 +69,7 @@ def parse_column_schema(
     schedule needs to know a column's mechanism domain and bin edges."""
     if not isinstance(column_schema, dict):
         raise CarrierError(
-            code="dp_schema_type",
+            code=reasons.quality.DP_SCHEMA_TYPE,
             message=f"column_schema must be a dict, got {type(column_schema).__name__}",
         )
     numeric_bounds: dict[str, tuple[float, float]] = {}
@@ -76,13 +77,13 @@ def parse_column_schema(
     for name, spec in column_schema.items():
         if not isinstance(spec, dict):
             raise CarrierError(
-                code="dp_schema_column_type",
+                code=reasons.quality.DP_SCHEMA_COLUMN_TYPE,
                 message=f"column {name!r}: schema entry must be a dict, got {type(spec).__name__}",
             )
         carrier = spec.get("carrier")
         if not isinstance(carrier, str) or carrier not in ("number", "flag", "text"):
             raise CarrierError(
-                code="dp_carrier_unknown",
+                code=reasons.quality.DP_CARRIER_UNKNOWN,
                 message=(
                     f"column {name!r}: unknown carrier {carrier!r}, expected one of "
                     "('number', 'flag', 'text')"
@@ -92,7 +93,7 @@ def parse_column_schema(
         if kind is not None:
             if not isinstance(kind, str) or kind not in _KIND_TO_CARRIERS:
                 raise CarrierError(
-                    code="dp_kind_unknown",
+                    code=reasons.quality.DP_KIND_UNKNOWN,
                     message=(
                         f"column {name!r}: unknown kind {kind!r}, expected one of "
                         f"{tuple(_KIND_TO_CARRIERS)}"
@@ -101,7 +102,7 @@ def parse_column_schema(
             allowed = _KIND_TO_CARRIERS[kind]
             if carrier not in allowed:
                 raise CarrierError(
-                    code="dp_kind_carrier_mismatch",
+                    code=reasons.quality.DP_KIND_CARRIER_MISMATCH,
                     message=(
                         f"column {name!r}: kind {kind!r} does not allow carrier {carrier!r} "
                         f"(allowed: {allowed})"
@@ -111,14 +112,14 @@ def parse_column_schema(
             bounds = spec.get("bounds")
             if not isinstance(bounds, (tuple, list)) or len(bounds) != 2:
                 raise CarrierError(
-                    code="dp_carrier_bounds_missing",
+                    code=reasons.quality.DP_CARRIER_BOUNDS_MISSING,
                     message=f"column {name!r}: a 'number' carrier requires (lower, upper) bounds",
                 )
             lower = _validate_bound(name, "lower", bounds[0])
             upper = _validate_bound(name, "upper", bounds[1])
             if not lower < upper:
                 raise CarrierError(
-                    code="dp_carrier_bounds_order",
+                    code=reasons.quality.DP_CARRIER_BOUNDS_ORDER,
                     message=f"column {name!r}: bounds must satisfy lower < upper, got ({lower}, {upper})",
                 )
             numeric_bounds[name] = (lower, upper)

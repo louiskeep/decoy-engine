@@ -51,6 +51,7 @@ from typing import Any
 
 import numpy as np
 
+from decoy_engine import reasons
 from decoy_engine.determinism import derive, derive_index, derive_value
 from decoy_engine.determinism._derive import Domain
 from decoy_engine.errors import DecoyError
@@ -156,7 +157,7 @@ class DrawSiteProvider:
         """
         if not self.site.partitionable:
             raise DrawSiteProtocolError(
-                code="site_not_partitionable",
+                code=reasons.runtime.SITE_NOT_PARTITIONABLE,
                 draw_site_id=self.site.draw_site_id,
                 message=(
                     "whole-column or per-group stream: a partition boundary breaks "
@@ -408,8 +409,7 @@ class ShuffleProvider(DrawSiteProvider):
 
     Seed EXACTLY ``int.from_bytes(derive(mask_key, namespace, column.encode())[:8], "big")``,
     then ``np.random.default_rng(seed).permutation(len(non_null))``. Whole-column,
-    so NON-partitionable: a partition sees only its slice and cannot reproduce
-    the global order.
+    so NON-partitionable: a partition sees only its slice and cannot reproduce the global order.
     """
 
     draw_site_id = "mask.shuffle"
@@ -836,7 +836,7 @@ class UnseededProvider(DrawSiteProvider):
 
     def reproduce(self, *args: Any, **kwargs: Any) -> Any:
         raise DrawSiteProtocolError(
-            code="site_not_reproducible",
+            code=reasons.runtime.SITE_NOT_REPRODUCIBLE,
             draw_site_id=self.site.draw_site_id,
             message="unseeded non-deterministic site: output differs run to run by design.",
         )

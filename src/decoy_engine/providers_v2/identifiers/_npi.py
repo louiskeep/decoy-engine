@@ -21,6 +21,7 @@ from typing import Any
 
 import numpy as np
 
+from decoy_engine import reasons
 from decoy_engine.determinism import derive_value
 from decoy_engine.generation.pool._canonicalize import _canonicalize_source
 from decoy_engine.providers_v2._adapter import CapabilityMatrix, ProviderSpec
@@ -68,7 +69,7 @@ class NpiDomain:
     def from_bytes(self, b: bytes) -> str:
         if len(b) != 32:
             raise IdentifierError(
-                code="invalid_input_length",
+                code=reasons.provider.INVALID_INPUT_LENGTH,
                 message=f"NpiDomain.from_bytes expects 32 bytes; got {len(b)}.",
             )
         # First digit is 1 or 2 (allocate roughly half-and-half from byte[0] parity).
@@ -88,7 +89,7 @@ class NpiValidator:
 def generate_random(rng: np.random.Generator, locale: str = "en_US") -> str:
     if locale != "en_US":
         raise ProviderError(
-            code="unsupported_locale",
+            code=reasons.provider.UNSUPPORTED_LOCALE,
             message=f"NPI is US-only; got locale={locale!r}.",
         )
     first = str(int(rng.choice([1, 2])))
@@ -111,7 +112,7 @@ class NpiAdapter:
         source_value: bytes | int | str | None = None,
     ) -> Any:
         if provider != "synthetic_npi":
-            raise ProviderError(code="unknown_provider", message=f"got {provider!r}")
+            raise ProviderError(code=reasons.provider.UNKNOWN_PROVIDER, message=f"got {provider!r}")
         if spec.deterministic and source_value is not None:
             canonical = (
                 source_value
@@ -120,12 +121,12 @@ class NpiAdapter:
             )
             if spec.seed is None:
                 raise ProviderError(
-                    code="missing_seed",
+                    code=reasons.provider.MISSING_SEED,
                     message="NpiAdapter: deterministic mode requires spec.seed.",
                 )
             if spec.namespace is None:
                 raise ProviderError(
-                    code="missing_namespace",
+                    code=reasons.provider.MISSING_NAMESPACE,
                     message="NpiAdapter: deterministic mode requires spec.namespace.",
                 )
             return derive_value(
@@ -140,7 +141,7 @@ class NpiAdapter:
     def generate_batch(self, provider: str, *, spec: ProviderSpec, count: int) -> Sequence[Any]:
         if spec.deterministic:
             raise ProviderError(
-                code="batch_deterministic_unsupported",
+                code=reasons.provider.BATCH_DETERMINISTIC_UNSUPPORTED,
                 message="NpiAdapter.generate_batch does not support deterministic mode.",
             )
         rng = np.random.default_rng()

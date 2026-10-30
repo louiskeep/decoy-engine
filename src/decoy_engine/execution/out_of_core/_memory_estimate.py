@@ -85,6 +85,7 @@ from __future__ import annotations
 
 import math
 
+from decoy_engine import reasons
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution.out_of_core._budget import (
     _OOC_RESERVE_FLOOR_BYTES,
@@ -123,7 +124,7 @@ def _per_instance_mib(budget_bytes: int, live_instances: int) -> int:
     """
     if live_instances < 1:
         raise ExecutionError(
-            code="out_of_core_concurrency_invalid",
+            code=reasons.runtime.OUT_OF_CORE_CONCURRENCY_INVALID,
             message=f"live_instances must be >= 1, got {live_instances}.",
         )
     per_instance_mib = (budget_bytes // live_instances) // (1024 * 1024)
@@ -133,7 +134,7 @@ def _per_instance_mib(budget_bytes: int, live_instances: int) -> int:
         # still fit the budget; only a genuine over-commit is refused.
         if live_instances * 1_000_000 > budget_bytes:
             raise ExecutionError(
-                code="out_of_core_fanin_exceeds_budget",
+                code=reasons.runtime.OUT_OF_CORE_FANIN_EXCEEDS_BUDGET,
                 message=(
                     f"{live_instances} co-live DuckDB instances over a {budget_bytes}-byte "
                     "budget cannot each hold DuckDB's 1 MB minimum memory_limit without the "

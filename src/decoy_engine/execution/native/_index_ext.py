@@ -27,6 +27,7 @@ from typing import Protocol
 
 import pyarrow as pa
 
+from decoy_engine import reasons
 from decoy_engine.determinism import DeterminismError, derive_index
 from decoy_engine.determinism._derive import DeriveContext
 from decoy_engine.generation.pool._canonicalize import _canonicalize_source
@@ -107,7 +108,7 @@ def _translate_compiled_index_kernel_error(exc: ValueError) -> Exception:
         # Arrow type with one coded ValueError, where the reference's canonicalizer
         # raises a finer-grained GenerationError code per value type. The exception
         # TYPE is the drop-in guarantee, not the specific code.
-        return GenerationError(code="native_type_not_admitted", message=detail)
+        return GenerationError(code=reasons.runtime.NATIVE_TYPE_NOT_ADMITTED, message=detail)
     return exc
 
 

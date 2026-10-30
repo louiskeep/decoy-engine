@@ -59,6 +59,7 @@ from typing import Any
 
 import pandas as pd
 
+from decoy_engine import reasons
 from decoy_engine.determinism._derive import derive
 from decoy_engine.plan._errors import PlanCompileError
 
@@ -100,7 +101,7 @@ class GroupKeyConfig:
         group_by = cfg.get("group_by")
         if not group_by:
             raise PlanCompileError(
-                code="group_key_group_by_missing",
+                code=reasons.plan.GROUP_KEY_GROUP_BY_MISSING,
                 path="provider_config.group_by",
                 message=(
                     "'group_by' is required for the group_key strategy. "
@@ -112,7 +113,7 @@ class GroupKeyConfig:
         length = int(cfg.get("length", 16))
         if length % 2 != 0:
             raise PlanCompileError(
-                code="group_key_length_odd",
+                code=reasons.plan.GROUP_KEY_LENGTH_ODD,
                 path="provider_config.length",
                 message=(
                     f"'length' must be even (hex string of n bytes = 2n characters); got {length}."
@@ -120,7 +121,7 @@ class GroupKeyConfig:
             )
         if length < _MIN_LENGTH or length > _MAX_LENGTH:
             raise PlanCompileError(
-                code="group_key_length_out_of_range",
+                code=reasons.plan.GROUP_KEY_LENGTH_OUT_OF_RANGE,
                 path="provider_config.length",
                 message=(f"'length' must be in [{_MIN_LENGTH}, {_MAX_LENGTH}]; got {length}."),
             )

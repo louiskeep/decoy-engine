@@ -43,6 +43,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from decoy_engine import reasons
 from decoy_engine.plan._errors import PlanCompileError
 
 # FPE config keys that must match across all members of the same join group.
@@ -124,7 +125,7 @@ def check_fpe_join_groups(config: dict[str, Any]) -> tuple[str, ...]:
         if len(members) < 2:
             m = members[0]
             raise PlanCompileError(
-                code="fpe_join_group_singleton",
+                code=reasons.plan.FPE_JOIN_GROUP_SINGLETON,
                 path=(f"tables.{m['table']}.columns.{m['column']}.provider_config.fpe_join_group"),
                 message=(
                     f"fpe_join_group {group_name!r} has only one member "
@@ -138,7 +139,7 @@ def check_fpe_join_groups(config: dict[str, Any]) -> tuple[str, ...]:
         for m in members:
             if m["strategy"] != "fpe":
                 raise PlanCompileError(
-                    code="fpe_join_group_non_fpe_member",
+                    code=reasons.plan.FPE_JOIN_GROUP_NON_FPE_MEMBER,
                     path=(
                         f"tables.{m['table']}.columns.{m['column']}.provider_config.fpe_join_group"
                     ),
@@ -159,7 +160,7 @@ def check_fpe_join_groups(config: dict[str, Any]) -> tuple[str, ...]:
                     k for k in _HOMOGENEITY_KEYS if m["cfg_snap"].get(k) != first["cfg_snap"].get(k)
                 ]
                 raise PlanCompileError(
-                    code="fpe_join_group_config_mismatch",
+                    code=reasons.plan.FPE_JOIN_GROUP_CONFIG_MISMATCH,
                     path=(f"tables.{m['table']}.columns.{m['column']}.provider_config"),
                     message=(
                         f"fpe_join_group {group_name!r}: column "
@@ -176,7 +177,7 @@ def check_fpe_join_groups(config: dict[str, Any]) -> tuple[str, ...]:
         if len(set(namespaces)) > 1:
             ns_detail = ", ".join(f"{m['table']}.{m['column']}={m['namespace']!r}" for m in members)
             raise PlanCompileError(
-                code="fpe_join_group_namespace_mismatch",
+                code=reasons.plan.FPE_JOIN_GROUP_NAMESPACE_MISMATCH,
                 path=f"tables.*.columns.*.provider_config.fpe_join_group.{group_name}",
                 message=(
                     f"fpe_join_group {group_name!r}: members resolve to different "

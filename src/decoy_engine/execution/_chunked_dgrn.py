@@ -57,6 +57,7 @@ from typing import Any
 
 import pyarrow as pa
 
+from decoy_engine import reasons
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.plan._errors import PlanCompileError
 
@@ -87,7 +88,7 @@ def validate_base_row_offset(base_row_offset: int) -> None:
     # (an easy config-plumbing mistake) does not silently mask as row 1.
     if isinstance(base_row_offset, bool) or not isinstance(base_row_offset, int):
         raise ExecutionError(
-            code="chunked_row_offset_out_of_domain",
+            code=reasons.runtime.CHUNKED_ROW_OFFSET_OUT_OF_DOMAIN,
             message=(
                 f"base_row_offset must be an int in [0, {ROW_OFFSET_DOMAIN_MAX}]; "
                 f"got {base_row_offset!r} ({type(base_row_offset).__name__})."
@@ -95,7 +96,7 @@ def validate_base_row_offset(base_row_offset: int) -> None:
         )
     if not (0 <= base_row_offset <= ROW_OFFSET_DOMAIN_MAX):
         raise ExecutionError(
-            code="chunked_row_offset_out_of_domain",
+            code=reasons.runtime.CHUNKED_ROW_OFFSET_OUT_OF_DOMAIN,
             message=(
                 f"base_row_offset {base_row_offset} is outside the DGRN domain "
                 f"[0, {ROW_OFFSET_DOMAIN_MAX}] (`i.to_bytes(8, 'big')`'s range)."
@@ -117,7 +118,7 @@ def validate_chunk_row_offset_range(chunk_base_offset: int, num_rows: int) -> No
     last_row = chunk_base_offset + num_rows - 1
     if last_row > ROW_OFFSET_DOMAIN_MAX:
         raise ExecutionError(
-            code="chunked_row_offset_out_of_domain",
+            code=reasons.runtime.CHUNKED_ROW_OFFSET_OUT_OF_DOMAIN,
             message=(
                 f"chunk spanning rows [{chunk_base_offset}, {last_row}] exceeds the "
                 f"DGRN domain [0, {ROW_OFFSET_DOMAIN_MAX}]."
@@ -141,7 +142,7 @@ def reject_windowed_date_when(table_cfg: dict[str, Any], *, table: str) -> None:
     if not windowed_date_when_cols:
         return
     raise PlanCompileError(
-        code="chunked_windowed_date_when_not_supported",
+        code=reasons.plan.CHUNKED_WINDOWED_DATE_WHEN_NOT_SUPPORTED,
         path=f"tables.{table}.columns",
         message=(
             f"column(s) {', '.join(windowed_date_when_cols)} combine "

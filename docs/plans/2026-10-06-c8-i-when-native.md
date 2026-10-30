@@ -1,4 +1,5 @@
-Status: plan (revision 4, BUILD-READY, author = Opus). Codex plan gate: rounds 1-3 REVISE folded; round 4 (owner-authorized) GO, 2 LOW folded. Build starts after C5b-ii merges.
+Status: built
+Shipped: docs/records/2026-10-06-c8-i-when-native-build.md
 Rules consulted: 00-universal, development-loop, security, testing, architecture, api-and-compatibility, code-review, scope-discipline
 
 # C8-i: a public, closed `when:` language, plus native `when` on the chunked route

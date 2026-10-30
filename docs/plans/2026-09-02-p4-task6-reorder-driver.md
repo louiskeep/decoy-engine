@@ -1,6 +1,7 @@
 # P4-A Task 6: sequential per-edge reorder driver
 
-Status: plan GATE-APPROVED (2026-09-02, Opus). Plan-gate rounds 1-2 NO-GO
+Status: built
+Shipped: CHANGELOG.md:2117 (Phase 4 Task 6 reorder driver); docs/records/2026-10-10-ooc-reorder-liveness.md; PR #126 (cd6e993d)
 remediated; round 3 closed all findings except one stale Task-A wording, fixed
 verbatim per Codex's prescription (Codex: "all other findings closed... complete
 buildable acceptance contract"). Ready for the Sonnet build.

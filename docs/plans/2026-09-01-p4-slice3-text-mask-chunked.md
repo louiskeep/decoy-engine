@@ -1,5 +1,6 @@
 ---
-Status: plan
+Status: built
+Shipped: src/decoy_engine/execution/_chunked.py:68 (text_mask in CHUNK_SAFE_STRATEGIES)
 ---
 
 # Phase 4 Slice 3: text_mask on the chunked route

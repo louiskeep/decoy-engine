@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
+from decoy_engine import reasons
 from decoy_engine.execution import _pipeline_finalize, _pipeline_generate_mask, _unified_slice
 from decoy_engine.execution import _pipeline_route_exec as _route_exec
 from decoy_engine.execution import _pipeline_sources as _psrc
@@ -71,7 +72,7 @@ def _raise_if_source_value_unrepresentable(
             except Exception as again:
                 if type(again) is type(exc) and str(again) == str(exc):
                     raise ExecutionError(
-                        code="full_frame_value_unrepresentable",
+                        code=reasons.runtime.FULL_FRAME_VALUE_UNREPRESENTABLE,
                         message=(
                             f"table {table!r} column {name!r} holds a value pandas "
                             f"cannot represent ({type(exc).__name__}: {exc}). The "

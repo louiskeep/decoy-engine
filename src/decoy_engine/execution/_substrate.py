@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from decoy_engine import reasons
 from decoy_engine.execution._errors import ExecutionError
 
 if TYPE_CHECKING:
@@ -27,7 +28,7 @@ def require_positive_int(name: str, value: int) -> None:
     job-seed normalizer closes."""
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
         raise ExecutionError(
-            code="invalid_execution_knob",
+            code=reasons.runtime.INVALID_EXECUTION_KNOB,
             message=f"{name} must be a positive int; got {value!r}.",
         )
 
@@ -38,7 +39,7 @@ def require_bool(name: str, value: bool) -> None:
     behavior; reject anything that is not a real bool."""
     if not isinstance(value, bool):
         raise ExecutionError(
-            code="invalid_execution_knob",
+            code=reasons.runtime.INVALID_EXECUTION_KNOB,
             message=f"{name} must be a bool; got {value!r}.",
         )
 

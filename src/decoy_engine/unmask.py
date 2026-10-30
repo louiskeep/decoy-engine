@@ -39,6 +39,7 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
+from decoy_engine import reasons
 from decoy_engine.determinism import derive
 from decoy_engine.errors import FpeUnencryptableError
 from decoy_engine.execution._errors import ExecutionError
@@ -118,12 +119,12 @@ def _decrypt_column(
         check_charset_unique(charset_spec, charset)
     except FpeUnencryptableError as exc:
         raise ExecutionError(
-            code="fpe_charset_duplicate_symbols",
+            code=reasons.runtime.FPE_CHARSET_DUPLICATE_SYMBOLS,
             message=f"column {column!r} in table {table_name!r}: {exc}",
         ) from exc
     if len(charset) < 2:
         raise ExecutionError(
-            code="fpe_charset_degenerate",
+            code=reasons.runtime.FPE_CHARSET_DEGENERATE,
             message=(
                 f"column {column!r} in table {table_name!r} uses fpe but its "
                 f"resolved charset {charset_spec!r} -> {charset!r} has fewer than 2 "
@@ -386,7 +387,7 @@ def unmask_pipeline(
             namespace = col_cfg.get("namespace")
             if not namespace:
                 raise ExecutionError(
-                    code="fpe_requires_namespace",
+                    code=reasons.runtime.FPE_REQUIRES_NAMESPACE,
                     message=(
                         f"column {col!r} in table {name!r} uses fpe but has no "
                         "namespace; the decryption key cannot be derived."

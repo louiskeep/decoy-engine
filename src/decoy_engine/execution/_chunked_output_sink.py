@@ -38,9 +38,11 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
+from decoy_engine import reasons
 from decoy_engine.config import post_scan_integrity_requested
 from decoy_engine.execution._adapter import ExecutionResult
 from decoy_engine.execution._errors import ExecutionError
+from decoy_engine.execution._publication_observer import observed_abort, observed_commit
 from decoy_engine.execution._substrate import require_bool
 from decoy_engine.execution._transactional_sink import TransactionalSink
 from decoy_engine.execution.native._chunked_evidence import (
@@ -70,7 +72,7 @@ ROW_GROUP_ROWS = 1024 * 1024
 # Protects wide rows, where 1,048,576 rows could be gigabytes. Frozen with the plan's bars.
 ROW_GROUP_BYTES = 256 * 1024 * 1024
 
-REASON_ELIGIBLE = "eligible"
+REASON_ELIGIBLE = reasons.route.ELIGIBLE
 
 
 def resident_block(reason: str) -> dict[str, Any]:
@@ -155,7 +157,7 @@ class OutputPublish:
     def commit(self) -> None:
         if not self.is_open or self._finished:
             return
-        self.sink.commit()
+        observed_commit(self.sink)
         self._finished = True
 
     def __enter__(self) -> OutputPublish:
@@ -164,15 +166,12 @@ class OutputPublish:
     def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
         if self.is_open and not self._finished:
             self._finished = True
-            try:
-                self.sink.abort()
-            except Exception:
-                pass
+            observed_abort(self.sink, exc)
             if exc_type is None:
                 # `commit()` is the run's last action, so an open session leaving the block
                 # normally without committing is a wiring bug; never return unpublished.
                 raise ExecutionError(
-                    code="internal_publish_not_committed",
+                    code=reasons.runtime.INTERNAL_PUBLISH_NOT_COMMITTED,
                     message="a streamed run ended without committing its output.",
                 )
 
@@ -222,7 +221,7 @@ def fold_route_evidence(state: _RouteFold, result: Any) -> None:
     else:
         if evidence["table"] != state.head["table"]:
             raise ExecutionError(
-                code="chunked_route_evidence_mixed_tables",
+                code=reasons.runtime.CHUNKED_ROUTE_EVIDENCE_MIXED_TABLES,
                 message=(
                     "chunk evidence takes the results of one table; got "
                     f"{state.head['table']!r} and {evidence['table']!r}."
@@ -231,7 +230,7 @@ def fold_route_evidence(state: _RouteFold, result: Any) -> None:
         listed = evidence.get("pandas_read_passthrough")
         if listed != state.read_head:
             raise ExecutionError(
-                code="chunked_route_evidence_inconsistent",
+                code=reasons.runtime.CHUNKED_ROUTE_EVIDENCE_INCONSISTENT,
                 message=(
                     "chunk evidence takes the results of one call; it disagrees on "
                     f"pandas_read_passthrough ({state.read_head!r} then {listed!r})."
@@ -342,7 +341,7 @@ class StreamStats:
 
 def _mismatch(table: str, detail: str) -> ExecutionError:
     return ExecutionError(
-        code="chunked_schema_mismatch",
+        code=reasons.runtime.CHUNKED_SCHEMA_MISMATCH,
         message=f"cannot join the chunks of table {table!r}: {detail}.",
     )
 
@@ -463,7 +462,7 @@ class _Spill:
         parent = getattr(self.sink, "spill_parent", None)
         if parent is None:
             raise ExecutionError(
-                code="hold_back_spill_unavailable",
+                code=reasons.runtime.HOLD_BACK_SPILL_UNAVAILABLE,
                 message=(
                     f"table {self.table!r} holds back more chunks than fit in one row group, "
                     "so they must spill to disk, but the sink names no `spill_parent`."

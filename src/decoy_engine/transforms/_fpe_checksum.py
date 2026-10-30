@@ -14,6 +14,7 @@ cycle forms.
 
 from __future__ import annotations
 
+from decoy_engine import reasons
 from decoy_engine.errors import FpeChecksumError
 from decoy_engine.transforms.fpe import _permute
 
@@ -182,7 +183,7 @@ def _fpe_checksum_permute(
             "engine fails closed. Fix the source data or route this column "
             "through a different strategy.",
             scheme=scheme,
-            code="fpe.checksum_invalid_source",
+            code=reasons.runtime.FPE__CHECKSUM_INVALID_SOURCE,
         )
 
     _DIGITS_ONLY = "0123456789"

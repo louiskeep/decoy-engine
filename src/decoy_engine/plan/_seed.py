@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from decoy_engine import reasons
 from decoy_engine.plan._errors import PlanCompileError
 
 
@@ -64,7 +65,7 @@ def _normalize_job_seed_int(config: dict[str, Any]) -> int:
             # would compile to byte-identical plans.
             if isinstance(job_seed_raw, bool):
                 raise PlanCompileError(
-                    code="seed_not_numeric",
+                    code=reasons.plan.SEED_NOT_NUMERIC,
                     path="global_settings.seed",
                     message=(
                         f"seed must be an integer; got bool {job_seed_raw!r}. "
@@ -75,7 +76,7 @@ def _normalize_job_seed_int(config: dict[str, Any]) -> int:
                 )
             if isinstance(job_seed_raw, float):
                 raise PlanCompileError(
-                    code="seed_not_numeric",
+                    code=reasons.plan.SEED_NOT_NUMERIC,
                     path="global_settings.seed",
                     message=(
                         f"seed must be an integer; got float {job_seed_raw!r}. "
@@ -87,7 +88,7 @@ def _normalize_job_seed_int(config: dict[str, Any]) -> int:
                 seed_int = int(job_seed_raw)
             except (TypeError, ValueError) as exc:
                 raise PlanCompileError(
-                    code="seed_not_numeric",
+                    code=reasons.plan.SEED_NOT_NUMERIC,
                     path="global_settings.seed",
                     message=(
                         f"seed must be numeric (int or int-coercible); got "
@@ -96,7 +97,7 @@ def _normalize_job_seed_int(config: dict[str, Any]) -> int:
                 ) from exc
     if not 0 <= seed_int < (1 << 64):
         raise PlanCompileError(
-            code="seed_overflow",
+            code=reasons.plan.SEED_OVERFLOW,
             path="global_settings.seed",
             message=(f"seed must fit in unsigned 64-bit (range [0, 2**64)); got {seed_int}"),
         )

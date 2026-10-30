@@ -76,6 +76,7 @@ from typing import Any
 
 import pyarrow as pa
 
+from decoy_engine import reasons
 from decoy_engine.config import post_scan_integrity_requested
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._pipeline import classify_table_kinds
@@ -105,7 +106,7 @@ _OUT_OF_CORE_ROUTE = "out_of_core"
 # resolvable source at all -- a real config/graph inconsistency, not a
 # priceability question. Reused verbatim here (same code, same fail-closed
 # posture) rather than inventing a second code for the identical defect.
-_PARENT_ROWS_UNRESOLVED_CODE = "out_of_core_parent_rows_unresolved"
+_PARENT_ROWS_UNRESOLVED_CODE = reasons.runtime.OUT_OF_CORE_PARENT_ROWS_UNRESOLVED
 
 # The one code `detect_host_memory_bytes` raises (propagated through
 # `detect_effective_memory_bytes` -> `resolve_ooc_memory_limit`) when NEITHER
@@ -115,7 +116,7 @@ _PARENT_ROWS_UNRESOLVED_CODE = "out_of_core_parent_rows_unresolved"
 # `max_concurrent_instances`, an invalid explicit `budget_bytes`, an
 # un-sizeable fan-in split, ...) is a genuine defect, not a detection
 # failure, and must propagate rather than being swallowed into a verdict.
-_RAM_UNDETECTABLE_CODE = "out_of_core_memory_detection_failed"
+_RAM_UNDETECTABLE_CODE = reasons.runtime.OUT_OF_CORE_MEMORY_DETECTION_FAILED
 
 # Raised when a declared source cannot be read or parsed while profiling it for
 # the capacity estimate -- a file that is present but truncated, corrupt, or not
@@ -130,7 +131,7 @@ _RAM_UNDETECTABLE_CODE = "out_of_core_memory_detection_failed"
 # narrow catch wraps ONLY the `profile_source` call, and config-shape defects
 # are already filtered out upstream (schema validation + profile-free plan
 # checks), so a caught error here is a genuine source-read failure.
-_SOURCE_UNPROFILABLE_CODE = "capacity_source_unprofilable"
+_SOURCE_UNPROFILABLE_CODE = reasons.runtime.CAPACITY_SOURCE_UNPROFILABLE
 
 # The ONLY `ExecutionError` codes `decide_execution_route` raises for a job it
 # would refuse BEFORE reading any data (its full-frame OOM-risk guard,
@@ -141,7 +142,10 @@ _SOURCE_UNPROFILABLE_CODE = "capacity_source_unprofilable"
 # routing defect, NOT a reject-before-read, and must propagate rather than be
 # swallowed into a false NOT_APPLICABLE (R3, Codex re-gate HIGH).
 _ROUTING_REJECT_CODES = frozenset(
-    {"fk_full_frame_oom_risk_rejected", "fk_full_frame_oom_risk_rejected_estimated"}
+    {
+        reasons.runtime.FK_FULL_FRAME_OOM_RISK_REJECTED,
+        reasons.runtime.FK_FULL_FRAME_OOM_RISK_REJECTED_ESTIMATED,
+    }
 )
 
 

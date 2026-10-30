@@ -1,6 +1,7 @@
 # PLAN — Remove the dormant Polars MASKING adapter (keep Polars for subsetting)
 
-Status: plan (rev3) — UNPARKED 2026-09-20. The one product decision that parked it is RESOLVED:
+Status: built
+Shipped: CHANGELOG.md:1854 (Removed: Polars masking adapter, 2026-09-21)
 **Cam decided RETIRE the V2 baseline benchmark harness** (2026-09-20). Rationale (Cam's framing): the
 V2 harness's "correctness" is cross-substrate parity (pandas==polars); once the polars masking adapter
 is deleted there is no second substrate to compare against, so the check is moot, and the shipped

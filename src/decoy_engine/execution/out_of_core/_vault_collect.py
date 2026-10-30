@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
+from decoy_engine import reasons
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.vault import assert_vault_writer_keyed, collect_vault_entries, iter_vault_columns
 
@@ -68,7 +69,7 @@ def assert_vault_inputs(
         return
     if config is None:
         raise ExecutionError(
-            code="out_of_core_vault_config_required",
+            code=reasons.runtime.OUT_OF_CORE_VAULT_CONFIG_REQUIRED,
             message="a vault_writer on the out-of-core route needs the job config.",
         )
     assert_vault_writer_keyed(vault_writer, mask_key)

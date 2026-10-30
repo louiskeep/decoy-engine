@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+from decoy_engine import reasons
 from decoy_engine.errors import DecoyError
 
 __all__ = ["PinnedModeError", "normalize_reference_date"]
@@ -36,12 +37,12 @@ def normalize_reference_date(value: datetime | str) -> str:
             value = datetime.fromisoformat(value.replace("Z", "+00:00"))
         except ValueError:
             raise PinnedModeError(
-                code="pinned_reference_date_invalid",
+                code=reasons.plan.PINNED_REFERENCE_DATE_INVALID,
                 message="reference_date is not an ISO 8601 datetime",
             ) from None
     if not isinstance(value, datetime) or value.tzinfo is None:
         raise PinnedModeError(
-            code="pinned_reference_date_invalid",
+            code=reasons.plan.PINNED_REFERENCE_DATE_INVALID,
             message="reference_date must be a timezone-aware datetime",
         )
     return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")

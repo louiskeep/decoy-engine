@@ -50,6 +50,7 @@ from typing import TYPE_CHECKING, Any
 import pyarrow as pa
 import pyarrow.compute as pc
 
+from decoy_engine import reasons
 from decoy_engine.execution._adapter import ExecutionResult, provider_config_to_dict
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._fk_resolve import orphan_fk_violation_error
@@ -57,6 +58,7 @@ from decoy_engine.execution._output_projection import (
     UnconfiguredColumnPolicy,
     enforce_output_projection,
 )
+from decoy_engine.execution._publication_observer import observed_abort, observed_commit
 from decoy_engine.execution._transactional_sink import TransactionalSink
 from decoy_engine.execution.out_of_core import _join as _join_ooc
 from decoy_engine.execution.out_of_core import _mask_group_c, _validate_batch
@@ -309,7 +311,7 @@ def run_fk_out_of_core(
         # Before the publish: a failed validation commits nothing.
         _validate_batch.finish_validation(validators, quality_metrics)
         if sink is not None:
-            sink.commit()
+            observed_commit(sink)
             committed = True
             return ExecutionResult(
                 outputs={}, warnings=tuple(warnings), quality_metrics=quality_metrics
@@ -317,9 +319,9 @@ def run_fk_out_of_core(
         return ExecutionResult(
             outputs=outputs, warnings=tuple(warnings), quality_metrics=quality_metrics
         )
-    except Exception:
+    except Exception as failure:
         if sink is not None and not committed:
-            sink.abort()
+            observed_abort(sink, failure)
         raise
     finally:
         # The relation/join staging subtrees hold (source_key, masked_key) pairs
@@ -584,7 +586,7 @@ def _open_joiner(
     for child_col in edge.child_columns:
         if child_col not in source_schema.names:
             raise ExecutionError(
-                code="out_of_core_child_column_missing",
+                code=reasons.runtime.OUT_OF_CORE_CHILD_COLUMN_MISSING,
                 message=f"child source table has no column {child_col!r}.",
             )
     remap_seeds: tuple[ColumnSeed, ...] | None = None
@@ -594,7 +596,7 @@ def _open_joiner(
             seed = _column_seed(plan, edge.parent_table, parent_col)
             if seed is None:
                 raise ExecutionError(
-                    code="out_of_core_parent_seed_missing",
+                    code=reasons.runtime.OUT_OF_CORE_PARENT_SEED_MISSING,
                     message=f"parent key {edge.parent_table}.{parent_col} is not in the plan.",
                 )
             seeds.append(seed)

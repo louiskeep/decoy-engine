@@ -31,6 +31,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from decoy_engine import reasons
 from decoy_engine.generation.pool._capacity import unique_capacity_ok
 from decoy_engine.generation.pool._errors import PoolCapacityError
 
@@ -144,7 +145,7 @@ def check_pool_capacity_pre_flight(
                 nonnull_rows = nonnull_lookup.get((table_name, col_name))
                 if nonnull_rows is None:
                     raise PoolCapacityError(
-                        code="pool_capacity_unverifiable_no_profile",
+                        code=reasons.runtime.POOL_CAPACITY_UNVERIFIABLE_NO_PROFILE,
                         message=(
                             f"Column {table_name}.{col_name} uses cardinality_mode='unique' "
                             "but no source row/null counts are available "
@@ -156,7 +157,7 @@ def check_pool_capacity_pre_flight(
                     )
                 if not unique_capacity_ok(pool_size, nonnull_rows):
                     raise PoolCapacityError(
-                        code="pool_too_small_for_source",
+                        code=reasons.runtime.POOL_TOO_SMALL_FOR_SOURCE,
                         message=(
                             f"Column {table_name}.{col_name} uses cardinality_mode='unique' "
                             f"with pool_size={pool_size}, but the pool must supply one unique "
@@ -200,7 +201,7 @@ def check_pool_capacity_pre_flight(
             if needed > pool_size:
                 if on_pool_exhaustion == "fail":
                     raise PoolCapacityError(
-                        code="pool_too_small_for_source",
+                        code=reasons.runtime.POOL_TOO_SMALL_FOR_SOURCE,
                         message=(
                             f"Column {table_name}.{col_name} uses cardinality_mode={cardinality_mode!r} "
                             f"with pool_size={pool_size}, but profile reports "

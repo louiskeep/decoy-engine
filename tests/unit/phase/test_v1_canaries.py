@@ -335,26 +335,58 @@ def test_canary_corpus_detects_each_boundary_removed(monkeypatch, owner, attr):
 # the envelope cannot tell a source value from an allowed one. Scrubbing, hashing or rejecting
 # accepted content would break the wire; value-freeness of content is the producer's job (F31).
 
+# (field, build, read): `read` picks the field back out of the wire form, so the test asserts the
+# exact value, not only that the marker survived somewhere in the serialization.
 _PASS_THROUGH = [
-    ("payload", lambda: _result(payload={"row": [_MARK], "n": _PAN})),
-    ("identity", lambda: _result(identity={"source": _MARK})),
-    ("check_id", lambda: _result(check_id=_MARK)),
-    ("method", lambda: _result(method=_MARK)),
-    ("method_version", lambda: _result(method_version=_MARK)),
-    ("requested_scope", lambda: _result(coverage=phase.PhaseCoverage(requested_scope=(_MARK,)))),
-    ("observed_scope", lambda: _result(coverage=phase.PhaseCoverage(observed_scope=(_MARK,)))),
-    ("limits", lambda: _result(coverage=phase.PhaseCoverage(limits=(_MARK,)))),
-    ("omissions", lambda: _result(coverage=phase.PhaseCoverage(omissions=(_MARK,)))),
-    ("sampling_method", lambda: _result(coverage=phase.PhaseCoverage(sampling_method=_MARK))),
-    ("event", lambda: phase.PhaseEvent("post_scan", _MARK, "passed")),
+    ("payload", lambda: _result(payload={"row": [_MARK], "n": _PAN}), lambda w: w["payload"]),
+    ("identity", lambda: _result(identity={"source": _MARK}), lambda w: w["identity"]),
+    ("check_id", lambda: _result(check_id=_MARK), lambda w: w["check_id"]),
+    ("method", lambda: _result(method=_MARK), lambda w: w["method"]),
+    ("method_version", lambda: _result(method_version=_MARK), lambda w: w["method_version"]),
+    (
+        "requested_scope",
+        lambda: _result(coverage=phase.PhaseCoverage(requested_scope=(_MARK,))),
+        lambda w: w["coverage"]["requested_scope"],
+    ),
+    (
+        "observed_scope",
+        lambda: _result(coverage=phase.PhaseCoverage(observed_scope=(_MARK,))),
+        lambda w: w["coverage"]["observed_scope"],
+    ),
+    (
+        "limits",
+        lambda: _result(coverage=phase.PhaseCoverage(limits=(_MARK,))),
+        lambda w: w["coverage"]["limits"],
+    ),
+    (
+        "omissions",
+        lambda: _result(coverage=phase.PhaseCoverage(omissions=(_MARK,))),
+        lambda w: w["coverage"]["omissions"],
+    ),
+    (
+        "sampling_method",
+        lambda: _result(coverage=phase.PhaseCoverage(sampling_method=_MARK)),
+        lambda w: w["coverage"]["sampling_method"],
+    ),
+    ("event", lambda: phase.PhaseEvent("post_scan", _MARK, "passed"), lambda w: w["event"]),
 ]
+_EXPECTED = {
+    "payload": {"row": [_MARK], "n": _PAN},
+    "identity": {"source": _MARK},
+    "requested_scope": [_MARK],
+    "observed_scope": [_MARK],
+    "limits": [_MARK],
+    "omissions": [_MARK],
+}
 
 
-@pytest.mark.parametrize("name,build", _PASS_THROUGH, ids=[n for n, _ in _PASS_THROUGH])
-def test_accepted_field_content_round_trips_unchanged(name, build):
+@pytest.mark.parametrize("name,build,read", _PASS_THROUGH, ids=[n for n, _, _ in _PASS_THROUGH])
+def test_accepted_field_content_round_trips_unchanged(name, build, read):
     env = build()
-    wire = json.dumps(phase.to_wire(env))
-    assert _MARK in wire and _MARK in phase.canonical_bytes(env).decode()
+    wire = phase.to_wire(env)
+    # Exact per-field equality: the accepted value is exported as given, not scrubbed or recoded.
+    assert read(wire) == _EXPECTED.get(name, _MARK)
+    assert read(json.loads(phase.canonical_bytes(env).decode())) == _EXPECTED.get(name, _MARK)
     assert _MARK in repr(env)
 
 

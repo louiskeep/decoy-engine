@@ -24,9 +24,10 @@ from typing import Any, Literal, Union
 
 import lark
 
+from decoy_engine import reasons
 from decoy_engine.errors import DecoyError, ValidationError
 
-WHEN_OUTSIDE_GRAMMAR_CODE = "when_outside_closed_grammar"
+WHEN_OUTSIDE_GRAMMAR_CODE = reasons.config.WHEN_OUTSIDE_CLOSED_GRAMMAR
 
 _GRAMMAR_PATH = Path(__file__).parent / "when_grammar.lark"
 _PARSER = lark.Lark(

@@ -38,6 +38,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
+from decoy_engine import reasons
 from decoy_engine.generation.pool._errors import GenerationError
 
 
@@ -71,7 +72,7 @@ def _canonicalize_source(value: Any) -> bytes:
     """
     if value is None:
         raise GenerationError(
-            code="null_canonicalization_unreachable",
+            code=reasons.runtime.NULL_CANONICALIZATION_UNREACHABLE,
             message=(
                 "_canonicalize_source received None. Nulls preserve at the "
                 "mask layer (see PoolSampler.sample); they should not reach "
@@ -88,7 +89,7 @@ def _canonicalize_source(value: Any) -> bytes:
         return _encode_int(int(value))
     if isinstance(value, float):
         raise GenerationError(
-            code="float_canonicalization_unsupported",
+            code=reasons.runtime.FLOAT_CANONICALIZATION_UNSUPPORTED,
             message=(
                 f"Float source value {value!r} cannot be canonicalized for "
                 "deterministic mapping. IEEE-754 representation drifts "
@@ -101,7 +102,7 @@ def _canonicalize_source(value: Any) -> bytes:
     if isinstance(value, datetime):
         if value.tzinfo is None:
             raise GenerationError(
-                code="timezone_naive_datetime",
+                code=reasons.runtime.TIMEZONE_NAIVE_DATETIME,
                 message=(
                     f"Datetime {value!r} has no tzinfo. Deterministic "
                     "canonicalization requires explicit UTC; localize "

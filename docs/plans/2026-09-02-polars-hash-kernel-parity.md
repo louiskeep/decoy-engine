@@ -1,6 +1,7 @@
 # Polars hash: cross-adapter parity for the common key dtypes via the shared kernel
 
-Status: plan HANDLER-FIX GATE-CONFIRMED (2026-09-02, Opus). Rounds 1-3 NO-GO ->
+Status: built
+Shipped: CHANGELOG.md:2118 (Phase 4 slice 3); PR #126 (cd6e993d)
 Cam right-size; round 4: Codex confirmed the handler fix is a STRICT no-regression
 and the exotic divergences are pre-existing (GO on the fix itself). Round-4
 findings applied: test #1 parameterized over the full common set; the one BLOCKER

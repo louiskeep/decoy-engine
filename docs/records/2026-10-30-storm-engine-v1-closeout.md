@@ -85,9 +85,10 @@ cannot tell a source value from an allowed one. Keeping source values out of tha
 producer's job (F31 value-free event families). The envelope guarantees that its errors, `args`,
 notes, `__context__`/`__cause__` chains, `phase.py` traceback locals and `error_result` output
 (its `repr` and `to_wire`) carry no input value. The canary tests cover those error paths, not
-accepted content. `test_accepted_field_content_round_trips_unchanged` (11 fields) and
+accepted content. `test_accepted_field_content_round_trips_unchanged` (11 fields, each read back
+out of `to_wire` and `canonical_bytes` and compared for exact equality with the value given) and
 `test_accepted_payload_is_exported_exactly_as_given` pin the pass-through so it is not later
-"fixed" by scrubbing.
+"fixed" by scrubbing or recoding.
 
 ## Limits
 - Traceback locals are walked only for frames in `phase.py`. The dataclass-generated `__init__`

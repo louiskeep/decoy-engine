@@ -22,6 +22,7 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING, Any
 
+from decoy_engine import reasons
 from decoy_engine.quality.dp_budget import (
     _ALLOCATION_CACHE,
     _EPS_Q_FLOOR,
@@ -175,7 +176,7 @@ class OpenDpReleaseSession:
 
         def infeasible() -> DpBudgetError:
             return DpBudgetError(
-                code="dp_budget_infeasible",
+                code=reasons.quality.DP_BUDGET_INFEASIBLE,
                 message=(
                     f"the requested budget (epsilon={self._epsilon!r}, "
                     f"delta={self._delta!r}) cannot fund a schedule of "
@@ -254,7 +255,7 @@ class OpenDpReleaseSession:
             backend = self._backend
             if not isinstance(backend, _FlagCapableBackend):
                 raise DpBudgetError(
-                    code="dp_carrier_backend_unsupported",
+                    code=reasons.quality.DP_CARRIER_BACKEND_UNSUPPORTED,
                     message=(
                         "a 'flag' categorical needs a bool-domain-capable backend "
                         "(_FlagCapableBackend); this backend provides only the "
@@ -263,7 +264,7 @@ class OpenDpReleaseSession:
                 )
             return backend.categorical_measurements_flag(eps_q, delta_alloc)
         raise DpBudgetError(
-            code="dp_carrier_invalid",
+            code=reasons.quality.DP_CARRIER_INVALID,
             message=(
                 f"categorical carrier {carrier!r} is not releasable; only 'text' "
                 "and 'flag' have an OpenDP categorical mechanism (guide section 3.3)."
@@ -284,7 +285,7 @@ class OpenDpReleaseSession:
         admission fails structurally, not by accident of ordering."""
         if name not in self._schedule.query_names:
             raise DpBudgetError(
-                code="dp_unscheduled_release",
+                code=reasons.quality.DP_UNSCHEDULED_RELEASE,
                 message=(
                     f"query {name!r} is not in this fit's frozen schedule "
                     f"({self._schedule.query_names!r}). OpenDpReleaseSession refuses any "
@@ -293,7 +294,7 @@ class OpenDpReleaseSession:
             )
         if name in self._releases or name in self._reserved:
             raise DpBudgetError(
-                code="dp_duplicate_release",
+                code=reasons.quality.DP_DUPLICATE_RELEASE,
                 message=f"query {name!r} has already released once; a query may release only once.",
             )
         self._reserved.add(name)
@@ -333,7 +334,7 @@ class OpenDpReleaseSession:
         spec = next((q for q in self._schedule.numeric if q.name == name), None)
         if spec is None:
             raise DpBudgetError(
-                code="dp_unscheduled_release",
+                code=reasons.quality.DP_UNSCHEDULED_RELEASE,
                 message=f"query {name!r} is not a scheduled numeric query.",
             )
         self._admit(name)
@@ -377,7 +378,7 @@ class OpenDpReleaseSession:
             # str/text domain (which would only surface later as a bare OpenDP
             # TypeError on a genuine flag column).
             raise DpBudgetError(
-                code="dp_budget_categorical_pair_unscheduled",
+                code=reasons.quality.DP_BUDGET_CATEGORICAL_PAIR_UNSCHEDULED,
                 message=(
                     f"no scheduled categorical query pairs grouped={grouped_name!r} "
                     f"with total={total_name!r}; cannot determine the carrier"
@@ -410,7 +411,7 @@ class OpenDpReleaseSession:
         missing = [n for n in self._schedule.query_names if n not in self._releases]
         if missing:
             raise DpBudgetError(
-                code="dp_schedule_incomplete",
+                code=reasons.quality.DP_SCHEDULE_INCOMPLETE,
                 message=(
                     f"cannot report a fit-wide loss: {len(missing)} scheduled quer"
                     f"{'y has' if len(missing) == 1 else 'ies have'} not released yet "
@@ -422,7 +423,7 @@ class OpenDpReleaseSession:
         epsilon_total = composed.get_epsilon_for_delta(self._delta)
         if not math.isfinite(epsilon_total):
             raise DpBudgetError(
-                code="dp_budget_infeasible",
+                code=reasons.quality.DP_BUDGET_INFEASIBLE,
                 message=(
                     "the composed mechanism's delta floor exceeds the requested delta "
                     f"({self._delta!r}); no finite epsilon_total exists at this delta."
@@ -430,7 +431,7 @@ class OpenDpReleaseSession:
             )
         if epsilon_total > self._epsilon:
             raise DpBudgetError(
-                code="dp_budget_infeasible",
+                code=reasons.quality.DP_BUDGET_INFEASIBLE,
                 message=(
                     f"composed epsilon_total={epsilon_total!r} exceeds the requested "
                     f"epsilon={self._epsilon!r}."

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import importlib.util
 
+from decoy_engine import reasons
 from decoy_engine.providers_v2._adapter import BackendAdapter, CapabilityMatrix
 from decoy_engine.providers_v2._errors import ProviderError
 from decoy_engine.providers_v2._real_registry import get_default_catalog
@@ -55,7 +56,7 @@ class ProviderRegistry:
         entry = self._bindings.get(provider)
         if entry is None:
             raise ProviderError(
-                code="unknown_provider",
+                code=reasons.provider.UNKNOWN_PROVIDER,
                 message=(
                     f"Provider {provider!r} is not in the registry. Known "
                     f"providers: {sorted(self._bindings.keys())!r}."
@@ -71,7 +72,7 @@ class ProviderRegistry:
         entry = self._bindings.get(provider)
         if entry is None:
             raise ProviderError(
-                code="unknown_provider",
+                code=reasons.provider.UNKNOWN_PROVIDER,
                 message=(
                     f"Provider {provider!r} is not in the registry. Known "
                     f"providers: {sorted(self._bindings.keys())!r}."
@@ -200,7 +201,7 @@ def get_default_registry() -> ProviderRegistry:
             cap = caps_by_name.get(provider)
             if cap is None:
                 raise ProviderError(
-                    code="unknown_provider",
+                    code=reasons.provider.UNKNOWN_PROVIDER,
                     message=f"Provider {provider!r} is not in the default catalog.",
                 )
             return cap

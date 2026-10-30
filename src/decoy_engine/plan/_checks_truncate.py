@@ -25,6 +25,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from decoy_engine import reasons
 from decoy_engine.plan._errors import PlanCompileError
 
 
@@ -74,7 +75,7 @@ def check_truncate_config(config: dict[str, Any]) -> None:
             length = pc.get("length")
             if not isinstance(length, int) or length < 1:
                 raise PlanCompileError(
-                    code="truncate_length_invalid",
+                    code=reasons.plan.TRUNCATE_LENGTH_INVALID,
                     path=f"tables.{table_name}.columns.{col_name}.provider_config.length",
                     message=(
                         f"truncate column {col_name!r} in table {table_name!r} has "
@@ -88,7 +89,7 @@ def check_truncate_config(config: dict[str, Any]) -> None:
             keep = pc.get("keep")
             if keep is not None and keep not in ("head", "tail"):
                 raise PlanCompileError(
-                    code="truncate_keep_invalid",
+                    code=reasons.plan.TRUNCATE_KEEP_INVALID,
                     path=f"tables.{table_name}.columns.{col_name}.provider_config.keep",
                     message=(
                         f"truncate column {col_name!r} in table {table_name!r} has "
@@ -99,7 +100,7 @@ def check_truncate_config(config: dict[str, Any]) -> None:
             mask_char = pc.get("mask_char")
             if mask_char is not None and (not isinstance(mask_char, str) or len(mask_char) != 1):
                 raise PlanCompileError(
-                    code="truncate_mask_char_invalid",
+                    code=reasons.plan.TRUNCATE_MASK_CHAR_INVALID,
                     path=f"tables.{table_name}.columns.{col_name}.provider_config.mask_char",
                     message=(
                         f"truncate column {col_name!r} in table {table_name!r} has "

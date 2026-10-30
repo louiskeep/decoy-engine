@@ -1,4 +1,5 @@
-Status: plan (revision 4: Codex round-3 clarifications folded; build-ready). Plan-gate converged over 3 rounds (6 -> 3 -> 2 findings), all resolved; the final 2 were trivial test/preservation clarifications applied here.
+Status: built
+Shipped: docs/records/2026-10-04-c1-chunked-categorical-build.md
 
 Date: 2026-10-04. Program: `docs/plans/2026-09-30-rust-engine-program.md`, Phase C, slice **C1: "Chunked dispatcher: categorical (deterministic)."** Branch `feat/c1-chunked-categorical` off engine main `f8c8bf36`. Risk **R2-R3**: it moves native-admissible deterministic `categorical` from the pandas-oracle fallback onto the native chunked route, and pins that operator's chunked output type. Merges only with Cam's go, after Codex plan-gate, Sonnet build, dennis, Codex final. Merged on local gates while GitHub Actions is out of minutes.
 

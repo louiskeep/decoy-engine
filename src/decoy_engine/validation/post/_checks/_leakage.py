@@ -19,6 +19,7 @@ warning carries only a COUNT, never the value, so the manifest never echoes PII.
 
 from __future__ import annotations
 
+from decoy_engine import reasons
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.validation.post._scan import (
     ScanContext,
@@ -60,7 +61,7 @@ def run_leakage(ctx: ScanContext) -> ScanOutcome:
             if fixed_points:
                 warnings.append(
                     QualityWarning(
-                        code="value_reuse_fixed_point",
+                        code=reasons.warning.VALUE_REUSE_FIXED_POINT,
                         provider=strategy,
                         column=col_name,
                         detail={"table": table_name, "fixed_point_count": fixed_points},
@@ -77,7 +78,7 @@ def run_leakage(ctx: ScanContext) -> ScanOutcome:
             failed = True
             warnings.append(
                 QualityWarning(
-                    code="source_value_leak",
+                    code=reasons.warning.SOURCE_VALUE_LEAK,
                     provider=strategy,
                     column=col_name,
                     detail={"table": table_name, "leaked_count": len(leaked)},

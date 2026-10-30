@@ -95,6 +95,18 @@ def test_all_lists_every_public_name():
         "StructuredEventsSink",
         "TerminalEvent",
         "WarningEvent",
+        # F29: versioned reasons and progress groups.
+        "CheckpointEvent",
+        "CheckpointInfo",
+        "PublicationInfo",
+        "ReasonContext",
+        "ReasonRecord",
+        "RetryEvent",
+        "RetryInfo",
+        "event_to_dict",
+        "event_to_legacy_dict",
+        "reason_from_exception",
+        "reasons_from_report",
         # S22-CL-V1GRAPHRUNNER (2026-05-30): removed validate_graph,
         # validate_graph_full, normalize_config, run_graph, preview_graph,
         # RunResult, PreviewResult. V1 graph public surface retired.

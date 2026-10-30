@@ -13,6 +13,7 @@ from __future__ import annotations
 import math
 from typing import Any
 
+from decoy_engine import reasons
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.quality.dp_schema import (
     DP_ADJACENCY,
@@ -146,7 +147,7 @@ def check_flag_tokens_canonical(
     if kind != "categorical" or col_carrier != "flag" or _flag_tokens_are_canonical(col_snap):
         return
     raise PlanCompileError(
-        code="dp_flag_token_invalid",
+        code=reasons.plan.DP_FLAG_TOKEN_INVALID,
         path=f"tables.{table_name}.generate_columns.{col_name}.snapshot_file",
         message=(
             f"statistical column {col_name!r} in table {table_name!r}: source "
@@ -260,7 +261,7 @@ def check_numeric_release_shape(
         and numeric_bins >= 1
     ):
         raise PlanCompileError(
-            code="dp_snapshot_numeric_shape_mismatch", path=shape_path, message=shape_msg
+            code=reasons.plan.DP_SNAPSHOT_NUMERIC_SHAPE_MISMATCH, path=shape_path, message=shape_msg
         )
     # The conjunction above proved these; assert to narrow domain->list and
     # numeric_bins->int for the arithmetic below (mypy cannot narrow through the
@@ -275,7 +276,7 @@ def check_numeric_release_shape(
         )
     ):
         raise PlanCompileError(
-            code="dp_snapshot_numeric_shape_mismatch", path=shape_path, message=shape_msg
+            code=reasons.plan.DP_SNAPSHOT_NUMERIC_SHAPE_MISMATCH, path=shape_path, message=shape_msg
         )
     canonical = _canonical_bin_edges(lower, upper, numeric_bins)
     edges = col_snap.get("stats", {}).get("bin_edges")
@@ -287,7 +288,7 @@ def check_numeric_release_shape(
     )
     if not edges_ok:
         raise PlanCompileError(
-            code="dp_snapshot_numeric_edges_mismatch",
+            code=reasons.plan.DP_SNAPSHOT_NUMERIC_EDGES_MISMATCH,
             path=f"tables.{table_name}.generate_columns.{col_name}.snapshot_file",
             message=(
                 f"statistical column {col_name!r} in table {table_name!r}: source "
@@ -318,7 +319,7 @@ def check_release_compatibility(
         and codec.get("version") == DP_CODEC_VERSION
     ):
         raise PlanCompileError(
-            code="dp_snapshot_codec_unsupported",
+            code=reasons.plan.DP_SNAPSHOT_CODEC_UNSUPPORTED,
             path=f"tables.{table_name}.generate_columns.{col_name}.snapshot_file",
             message=(
                 f"statistical column {col_name!r} in table {table_name!r}: the snapshot "
@@ -333,7 +334,7 @@ def check_release_compatibility(
     boundary = dp_block.get("boundary")
     if scope != DP_RELEASE_SCOPE or adjacency != DP_ADJACENCY or boundary not in DP_BOUNDARY_VALUES:
         raise PlanCompileError(
-            code="dp_snapshot_release_shape_unsupported",
+            code=reasons.plan.DP_SNAPSHOT_RELEASE_SHAPE_UNSUPPORTED,
             path=f"tables.{table_name}.generate_columns.{col_name}.snapshot_file",
             message=(
                 f"statistical column {col_name!r} in table {table_name!r}: the snapshot "

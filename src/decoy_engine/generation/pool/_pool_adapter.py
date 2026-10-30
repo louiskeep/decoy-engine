@@ -16,6 +16,7 @@ import threading
 from collections.abc import Sequence
 from typing import Any
 
+from decoy_engine import reasons
 from decoy_engine.determinism import derive_index
 from decoy_engine.generation.pool._builder import PoolBuilder
 from decoy_engine.generation.pool._cache import PoolCache
@@ -77,7 +78,7 @@ class PoolAdapter:
         """
         if spec.seed is None:
             raise GenerationError(
-                code="deterministic_requires_source_and_namespace",
+                code=reasons.runtime.DETERMINISTIC_REQUIRES_SOURCE_AND_NAMESPACE,
                 message=(
                     "PoolAdapter deterministic path requires ProviderSpec.seed "
                     "to be set (the job seed bytes); got None."
@@ -138,7 +139,7 @@ class PoolAdapter:
         if spec.deterministic:
             if source_value is None:
                 raise ProviderError(
-                    code="deterministic_requires_source_value",
+                    code=reasons.provider.DETERMINISTIC_REQUIRES_SOURCE_VALUE,
                     message=(
                         "PoolAdapter.generate(deterministic=True) requires "
                         "source_value to key derive_index; got None."
@@ -150,7 +151,7 @@ class PoolAdapter:
             # are non-None here. Cast for mypy:
             if spec.seed is None or spec.namespace is None:
                 raise ProviderError(
-                    code="deterministic_requires_namespace_and_seed",
+                    code=reasons.provider.DETERMINISTIC_REQUIRES_NAMESPACE_AND_SEED,
                     message="seed/namespace must be set; defensive guard.",
                 )
             idx = derive_index(

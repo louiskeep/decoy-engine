@@ -28,6 +28,7 @@ from typing import Any
 
 import yaml
 
+from decoy_engine import reasons
 from decoy_engine.expressions._when_parser import validate_envelope_when
 from decoy_engine.plan._checks import check_statistical_columns
 from decoy_engine.plan._checks_dp import verify_dp_snapshots
@@ -292,7 +293,7 @@ def _pinned_snapshot_from_dict(data: dict[str, Any]) -> tuple[PinnedSnapshot, Re
     recomputed_sha256 = hashlib.sha256(raw).hexdigest()
     if recomputed_sha256 != stored_sha256:
         raise PlanCompileError(
-            code="dp_pinned_snapshot_digest_mismatch",
+            code=reasons.plan.DP_PINNED_SNAPSHOT_DIGEST_MISMATCH,
             path=f"<generation.snapshots source_path={source_path!r}>",
             message=(
                 f"embedded snapshot {source_path!r} recomputes to sha256="
@@ -319,7 +320,7 @@ def _pinned_snapshot_from_dict(data: dict[str, Any]) -> tuple[PinnedSnapshot, Re
         parsed = json.loads(raw)
     except json.JSONDecodeError as exc:
         raise PlanCompileError(
-            code="dp_pinned_snapshot_payload_not_json",
+            code=reasons.plan.DP_PINNED_SNAPSHOT_PAYLOAD_NOT_JSON,
             path=f"<generation.snapshots source_path={source_path!r}>",
             message=(
                 f"embedded snapshot {source_path!r}: payload_b64 decodes to bytes whose "
@@ -368,7 +369,7 @@ def _require_statistical_snapshots_pinned(
             col_name = col_entry.get("name", "?")
             if snapshot_file and str(snapshot_file) not in pinned:
                 raise PlanCompileError(
-                    code="statistical_snapshot_not_pinned",
+                    code=reasons.plan.STATISTICAL_SNAPSHOT_NOT_PINNED,
                     path=f"tables.{table_name}.generate_columns.{col_name}.snapshot_file",
                     message=(
                         f"statistical column {col_name!r} references snapshot_file "

@@ -48,6 +48,7 @@ from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from typing import Any
 
+from decoy_engine import reasons
 from decoy_engine.errors import DecoyError
 from decoy_engine.quality.snapshot import DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION
 
@@ -155,7 +156,7 @@ def _load_snapshot(path: str) -> tuple[str, dict[str, Any]]:
             raw = fh.read()
     except OSError as exc:
         raise StatisticalSpecError(
-            code="statistical_snapshot_unreadable",
+            code=reasons.plan.STATISTICAL_SNAPSHOT_UNREADABLE,
             message=f"snapshot_file {path!r} could not be read: {exc}",
         ) from exc
     digest = hashlib.sha256(raw).hexdigest()
@@ -163,18 +164,18 @@ def _load_snapshot(path: str) -> tuple[str, dict[str, Any]]:
         snap = json.loads(raw)
     except json.JSONDecodeError as exc:
         raise StatisticalSpecError(
-            code="statistical_snapshot_unreadable",
+            code=reasons.plan.STATISTICAL_SNAPSHOT_UNREADABLE,
             message=f"snapshot_file {path!r} could not be read: {exc}",
         ) from exc
     if not isinstance(snap, dict):
         raise StatisticalSpecError(
-            code="statistical_snapshot_schema_mismatch",
+            code=reasons.plan.STATISTICAL_SNAPSHOT_SCHEMA_MISMATCH,
             message=f"snapshot_file {path!r} does not contain a JSON object at the top level.",
         )
     version = snap.get("schema_version")
     if version != DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION:
         raise StatisticalSpecError(
-            code="statistical_snapshot_schema_mismatch",
+            code=reasons.plan.STATISTICAL_SNAPSHOT_SCHEMA_MISMATCH,
             message=(
                 f"snapshot_file {path!r} declares schema {version!r}; this engine "
                 f"consumes {DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION!r}."
@@ -242,7 +243,7 @@ def load_spec(
     if col_entry is None:
         available = sorted((snap.get("columns") or {}).keys())
         raise StatisticalSpecError(
-            code="statistical_column_not_in_snapshot",
+            code=reasons.plan.STATISTICAL_COLUMN_NOT_IN_SNAPSHOT,
             message=(
                 f"statistical column {name!r}: source column {source_column!r} is "
                 f"not in the snapshot (available: {available})."
@@ -264,7 +265,7 @@ def load_spec(
         carrier = col_entry.get("carrier")
         if carrier not in ("number", "flag", "text"):
             raise StatisticalSpecError(
-                code="statistical_dp_carrier_invalid",
+                code=reasons.plan.STATISTICAL_DP_CARRIER_INVALID,
                 message=(
                     f"statistical column {name!r}: source column {source_column!r} is a "
                     f"verified DP release but records carrier {carrier!r}, not one of "
@@ -292,7 +293,7 @@ def load_spec(
         # `carrier` and NO `dp` block stays on the legacy path (guide section
         # 3.9) -- hence the `snap["dp"]` presence condition.
         raise StatisticalSpecError(
-            code="statistical_flag_requires_dp_declaration",
+            code=reasons.plan.STATISTICAL_FLAG_REQUIRES_DP_DECLARATION,
             message=(
                 f"statistical column {name!r}: source column {source_column!r} is a DP "
                 "`flag` (bool-domain) release (the snapshot carries a `dp` block), but this "
@@ -306,7 +307,7 @@ def load_spec(
     kind = col_entry.get("kind")
     if kind not in _SUPPORTED_KINDS:
         raise StatisticalSpecError(
-            code="statistical_kind_unsupported",
+            code=reasons.plan.STATISTICAL_KIND_UNSUPPORTED,
             message=(
                 f"statistical column {name!r}: snapshot kind {kind!r} has no sampler "
                 f"(supported: {', '.join(_SUPPORTED_KINDS)})."
@@ -316,7 +317,7 @@ def load_spec(
     high_cardinality = col_cfg.get("high_cardinality")
     if high_cardinality is not None and not isinstance(high_cardinality, bool):
         raise StatisticalSpecError(
-            code="statistical_high_cardinality_invalid_type",
+            code=reasons.plan.STATISTICAL_HIGH_CARDINALITY_INVALID_TYPE,
             message=(
                 f"statistical column {name!r}: high_cardinality must be a bool, got "
                 f"{high_cardinality!r}."
@@ -331,7 +332,7 @@ def load_spec(
     allow_real = col_cfg.get("allow_real_categories")
     if allow_real is not None and not isinstance(allow_real, bool):
         raise StatisticalSpecError(
-            code="statistical_allow_real_categories_invalid_type",
+            code=reasons.plan.STATISTICAL_ALLOW_REAL_CATEGORIES_INVALID_TYPE,
             message=(
                 f"statistical column {name!r}: allow_real_categories must be a "
                 f"bool, got {allow_real!r}."
@@ -340,7 +341,7 @@ def load_spec(
 
     if high_cardinality and col_cfg.get("allow_real_categories") is not True:
         raise StatisticalSpecError(
-            code="statistical_high_cardinality_requires_real_categories",
+            code=reasons.plan.STATISTICAL_HIGH_CARDINALITY_REQUIRES_REAL_CATEGORIES,
             message=(
                 f"statistical column {name!r}: high_cardinality retains the FULL "
                 f"observed category vocabulary (no top-K collapse), a larger "
@@ -355,7 +356,7 @@ def load_spec(
         and col_cfg.get("allow_real_categories") is not True
     ):
         raise StatisticalSpecError(
-            code="statistical_real_categories_not_allowed",
+            code=reasons.plan.STATISTICAL_REAL_CATEGORIES_NOT_ALLOWED,
             message=(
                 f"statistical column {name!r}: the snapshot's top_values contain REAL "
                 f"source values; emitting them requires `allow_real_categories: true` "
@@ -366,7 +367,7 @@ def load_spec(
 
     if high_cardinality and kind != "categorical":
         raise StatisticalSpecError(
-            code="statistical_high_cardinality_kind_invalid",
+            code=reasons.plan.STATISTICAL_HIGH_CARDINALITY_KIND_INVALID,
             message=(
                 f"statistical column {name!r}: high_cardinality requires a "
                 f"categorical snapshot kind (got {kind!r}). Re-fit the source "
@@ -387,7 +388,7 @@ def load_spec(
     col_stats = col_entry.get("stats") if isinstance(col_entry.get("stats"), dict) else {}
     if high_cardinality and col_stats.get("high_cardinality") is not True:
         raise StatisticalSpecError(
-            code="statistical_high_cardinality_snapshot_mismatch",
+            code=reasons.plan.STATISTICAL_HIGH_CARDINALITY_SNAPSHOT_MISMATCH,
             message=(
                 f"statistical column {name!r}: high_cardinality is set but the "
                 f"snapshot column {source_column!r} was not fit with full-vocabulary "
@@ -401,7 +402,7 @@ def load_spec(
     other_mode = str(col_cfg.get("other_mode") or "redistribute")
     if other_mode not in _OTHER_MODES:
         raise StatisticalSpecError(
-            code="statistical_other_mode_invalid",
+            code=reasons.plan.STATISTICAL_OTHER_MODE_INVALID,
             message=(
                 f"statistical column {name!r}: other_mode {other_mode!r} is not one "
                 f"of {_OTHER_MODES}."
@@ -414,7 +415,7 @@ def load_spec(
     # true/false instead (guide section 3.4).
     if carrier == "flag" and other_mode == "emit":
         raise StatisticalSpecError(
-            code="statistical_flag_other_mode_emit_invalid",
+            code=reasons.plan.STATISTICAL_FLAG_OTHER_MODE_EMIT_INVALID,
             message=(
                 f"statistical column {name!r}: other_mode='emit' is not valid for a "
                 f"`flag` carrier column ({OTHER_TOKEN!r} is not a bool value); use "
@@ -429,7 +430,7 @@ def load_spec(
         condition_on = str(condition_on)
         if kind != "categorical":
             raise StatisticalSpecError(
-                code="statistical_condition_kind_invalid",
+                code=reasons.plan.STATISTICAL_CONDITION_KIND_INVALID,
                 message=(
                     f"statistical column {name!r}: condition_on is supported for "
                     f"categorical columns only (snapshot kind here: {kind!r})."
@@ -442,7 +443,7 @@ def load_spec(
                 break
         if joint is None:
             raise StatisticalSpecError(
-                code="statistical_joint_missing",
+                code=reasons.plan.STATISTICAL_JOINT_MISSING,
                 message=(
                     f"statistical column {name!r}: the snapshot has no joint "
                     f"contingency for ({condition_on!r}, {source_column!r}). "

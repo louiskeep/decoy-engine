@@ -26,6 +26,7 @@ from typing import Any
 
 import pyarrow as pa
 
+from decoy_engine import reasons
 from decoy_engine.plan._errors import PlanCompileError
 
 # text_mask's domain is text: a STRING / LARGE_STRING source ingests to a
@@ -102,7 +103,7 @@ def reject_unsafe_text_mask_chunk_schema(
     if not offending:
         return
     raise PlanCompileError(
-        code="chunked_text_mask_source_dtype_unsupported",
+        code=reasons.plan.CHUNKED_TEXT_MASK_SOURCE_DTYPE_UNSUPPORTED,
         path=f"tables.{table}.columns",
         message=(
             f"column(s) {', '.join(offending)} apply 'text_mask' to a non-string "
@@ -149,7 +150,7 @@ def reject_text_mask_when(table_cfg: dict[str, Any], *, table: str) -> None:
     if not text_mask_when_cols:
         return
     raise PlanCompileError(
-        code="chunked_text_mask_when_not_supported",
+        code=reasons.plan.CHUNKED_TEXT_MASK_WHEN_NOT_SUPPORTED,
         path=f"tables.{table}.columns",
         message=(
             f"column(s) {', '.join(text_mask_when_cols)} combine 'text_mask' "

@@ -32,6 +32,7 @@ from typing import TYPE_CHECKING
 
 import pandas as pd
 
+from decoy_engine import reasons
 from decoy_engine.errors import ValidationError
 from decoy_engine.execution._errors import StrategyError
 from decoy_engine.execution._exact_int_sources import gated_context, selected_positions
@@ -41,7 +42,6 @@ from decoy_engine.execution._gated_string_guard import (
 )
 from decoy_engine.execution._row_errors import RowError
 from decoy_engine.expressions._when_parser import (
-    WHEN_OUTSIDE_GRAMMAR_CODE,
     parse_when,
     parse_when_cached,
 )
@@ -106,7 +106,7 @@ def _require_closed_grammar(expression: object, strategy: str, column: str | Non
         pass
     # Raised outside the handler so `__context__` stays empty.
     raise StrategyError(
-        code=WHEN_OUTSIDE_GRAMMAR_CODE,
+        code=reasons.runtime.WHEN_OUTSIDE_CLOSED_GRAMMAR,
         strategy=strategy,
         message=f"when expression on column {column!r} is outside the closed grammar",
     )
@@ -162,7 +162,7 @@ def _eval_predicate(
                 )
     except ImportError as exc:
         raise StrategyError(
-            code="numexpr_required",
+            code=reasons.runtime.NUMEXPR_REQUIRED,
             strategy=strategy,
             message=("when: requires numexpr; install with: pip install numexpr"),
         ) from exc
@@ -179,7 +179,7 @@ def _eval_predicate(
         failed = True
     if failed:
         raise StrategyError(
-            code="when_expression_error",
+            code=reasons.runtime.WHEN_EXPRESSION_ERROR,
             strategy=strategy,
             message=(
                 f"when expression on column {column!r} failed to evaluate; "
@@ -194,7 +194,7 @@ def _eval_predicate(
     # both numpy bool and pandas nullable BooleanDtype.
     if not isinstance(mask, pd.Series) or not pd.api.types.is_bool_dtype(mask.dtype):
         raise StrategyError(
-            code="when_expression_not_boolean",
+            code=reasons.runtime.WHEN_EXPRESSION_NOT_BOOLEAN,
             strategy=strategy,
             message=(
                 f"when expression on column {column!r} did not produce a "

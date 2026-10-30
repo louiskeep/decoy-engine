@@ -52,7 +52,11 @@ Shared Python data engine for Decoy masking, generation, plan-compile execution,
 | `src/decoy_engine/generation/_reproducibility.py` | Reproducibility exclusion closure (fresh, custom provider, uncontrolled clock, dependents) and the `PinnedEnvelope` |
 | `src/decoy_engine/generation/_faker_pool.py` | GP2 generation-local pool bridge for scalar `faker_type` columns: `POOL_ELIGIBLE_FAKER_TYPES`, `pool_eligible`, `build_and_sample`. Called from `synthesize.py::_faker`; reuses `generation/pool`'s `ValuePool`/`PoolSampler`, not the V2 `PoolBuilder`/`ProviderRegistry` seam. |
 | `src/decoy_engine/profiling/profiler.py` | `profile_columns` |
-| `src/decoy_engine/validation_result.py` | `ValidationResult` wire shape + `VALIDATION_CODES` |
+| `src/decoy_engine/validation_result.py` | `ValidationResult` wire shape + `VALIDATION_CODES` (`CODES` are views of the `config` namespace of the reason registry) |
+| `src/decoy_engine/reasons/` | The versioned reason-code registry: `ReasonSpec` (identity, fixed safe summary, phase rules, retry class, outcome), `ReasonRecord`/`ReasonContext` (the safe occurrence), one catalog package per namespace (including `pre_scan` / `post_scan` for the phase envelopes), `manifest()` export, and the `decoy-reasons/v1` identity form `ReasonRef` with its fail-closed resolver `require_known` / `get_reason` (`_identity.py`). A leaf: imports no engine code |
+| `src/decoy_engine/reason_adapter.py` | `reason_from_exception`, `reasons_from_report`, `FailureScope` (the run's first failure, independent of any sink) |
+| `src/decoy_engine/progress.py`, `src/decoy_engine/_progress_events.py` | Versioned progress events (`event_to_dict` v1, `event_to_legacy_dict` v0), the channel and owner-reported retry/checkpoint groups |
+| `src/decoy_engine/execution/_publication_observer.py` | Publication evidence at write/close/commit/abort: `PublicationEvidence`, `observed_commit`, `observed_abort` |
 | `src/decoy_engine/sdk.py` | Public Connector SDK (`FileSource`, `FileSink`, capabilities) |
 | `src/decoy_engine/subset/__init__.py` | `run_subset_preflight` / `plan_subset` / `run_subset` (FK-aware subsetting: a pre-mask stage that carves a referentially-intact slice of a multi-table Parquet dataset; Sprint G) |
 | `src/decoy_engine/release.py` | `RELEASE_PHASE` / `is_pre_ga` (the pre-GA/GA switch the CI gates read) |

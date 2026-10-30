@@ -1,4 +1,5 @@
-Status: plan
+Status: built
+Shipped: CHANGELOG.md:2080 (Q3 slice 1, streaming native lane)
 
 # Q3 slice 1: a single-pass streaming native lane for string-column passthrough, redact, truncate
 

@@ -35,6 +35,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Literal
 
+from decoy_engine import reasons
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.release import is_pre_ga
@@ -51,7 +52,7 @@ UnconfiguredColumnPolicy = Literal["warn", "error"]
 # provider name.
 _PROJECTION_WARNING_SOURCE = "output_projection"
 
-_UNDECLARED_CODE = "undeclared_output_columns"
+_UNDECLARED_CODE = reasons.runtime.UNDECLARED_OUTPUT_COLUMNS
 
 
 def known_output_columns(plan: Plan, table: str) -> frozenset[str]:
@@ -137,7 +138,7 @@ def enforce_output_projection(
         )
     return [
         QualityWarning(
-            code=_UNDECLARED_CODE,
+            code=reasons.warning.UNDECLARED_OUTPUT_COLUMNS,
             provider=_PROJECTION_WARNING_SOURCE,
             column=None,
             detail={"table": table, "undeclared_columns": undeclared},

@@ -25,6 +25,8 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from decoy_engine import reasons
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Mapping
 
@@ -55,10 +57,10 @@ _IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 # Config keys that name a sibling column this column reads.
 _SIBLING_KEYS = ("group_by", "order_by", "column", "anchor", "condition_on", "references")
 
-REASON_FRESH = "determinism_fresh"
-REASON_CUSTOM_PROVIDER = "custom_provider_without_deterministic_contract"
-REASON_CLOCK = "clock_dependent_without_controlled_clock"
-REASON_DEPENDS = "depends_on_excluded_column"
+REASON_FRESH = reasons.route.DETERMINISM_FRESH
+REASON_CUSTOM_PROVIDER = reasons.route.CUSTOM_PROVIDER_WITHOUT_DETERMINISTIC_CONTRACT
+REASON_CLOCK = reasons.route.CLOCK_DEPENDENT_WITHOUT_CONTROLLED_CLOCK
+REASON_DEPENDS = reasons.route.DEPENDS_ON_EXCLUDED_COLUMN
 
 
 def is_clock_dependent_faker_type(faker_type: str) -> bool:

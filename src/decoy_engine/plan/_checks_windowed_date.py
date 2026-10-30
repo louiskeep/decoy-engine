@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from decoy_engine import reasons
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.transforms.windowed_date import WINDOWED_DATE_DISTRIBUTIONS
 
@@ -77,7 +78,7 @@ def check_windowed_date_refs(config: dict[str, Any]) -> None:
             distribution = pc.get("distribution")
             if distribution and str(distribution) not in WINDOWED_DATE_DISTRIBUTIONS:
                 raise PlanCompileError(
-                    code="windowed_date_distribution_invalid",
+                    code=reasons.plan.WINDOWED_DATE_DISTRIBUTION_INVALID,
                     path=(f"tables.{table_name}.columns.{col_name}.provider_config.distribution"),
                     message=(
                         f"windowed_date column {col_name!r} in table "
@@ -89,7 +90,7 @@ def check_windowed_date_refs(config: dict[str, Any]) -> None:
             anchor = pc.get("anchor")
             if anchor and str(anchor) not in all_col_names:
                 raise PlanCompileError(
-                    code="windowed_date_missing_anchor_ref",
+                    code=reasons.plan.WINDOWED_DATE_MISSING_ANCHOR_REF,
                     path=(f"tables.{table_name}.columns.{col_name}.provider_config.anchor"),
                     message=(
                         f"windowed_date column {col_name!r} in table "
@@ -109,7 +110,7 @@ def check_windowed_date_refs(config: dict[str, Any]) -> None:
             distribution = col_entry.get("distribution")
             if distribution and str(distribution) not in WINDOWED_DATE_DISTRIBUTIONS:
                 raise PlanCompileError(
-                    code="windowed_date_distribution_invalid",
+                    code=reasons.plan.WINDOWED_DATE_DISTRIBUTION_INVALID,
                     path=(f"tables.{table_name}.generate_columns.{col_name}.distribution"),
                     message=(
                         f"windowed_date column {col_name!r} in table "
@@ -121,7 +122,7 @@ def check_windowed_date_refs(config: dict[str, Any]) -> None:
             anchor = col_entry.get("anchor")
             if anchor and str(anchor) not in all_col_names:
                 raise PlanCompileError(
-                    code="windowed_date_missing_anchor_ref",
+                    code=reasons.plan.WINDOWED_DATE_MISSING_ANCHOR_REF,
                     path=(f"tables.{table_name}.generate_columns.{col_name}.anchor"),
                     message=(
                         f"windowed_date column {col_name!r} in table "

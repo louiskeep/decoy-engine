@@ -1,6 +1,7 @@
 # P4-A (slice 1): bounded-parent split-dedup
 
-Status: plan APPROVED for build (authored 2026-09-02, Opus; Codex PLAN-gate rounds 1-4: NO-GO x3 -> GO round 4). Build next (Sonnet); then VERIFY + dennis + Codex final gate. Held target
+Status: built
+Shipped: CHANGELOG.md:2116 (Phase 4 Task 4); Phase 4 bundle merged in cd6e993d (PR #126)
 branch `feat/native-phase3`; Phase 4 merges once at the end.
 
 > First of three ordered, gate-able slices toward a LIVE never-OOM FK reorder

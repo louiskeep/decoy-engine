@@ -31,6 +31,7 @@ from typing import Any
 
 import pyarrow as pa
 
+from decoy_engine import reasons
 from decoy_engine.execution import _chunked, _chunked_oracle
 from decoy_engine.execution import _chunked_bucket_perturb as bucket_perturb_gate
 from decoy_engine.execution import _chunked_dgrn as dgrn
@@ -98,7 +99,7 @@ def _validate_native_threads(native_threads: Any) -> None:
         or not 1 <= native_threads <= MAX_NATIVE_THREADS
     ):
         raise ExecutionError(
-            code="invalid_native_threads",
+            code=reasons.runtime.INVALID_NATIVE_THREADS,
             message=(
                 f"native_threads must be an int in 1..={MAX_NATIVE_THREADS}; "
                 f"got {native_threads!r}."

@@ -538,8 +538,7 @@ def test_sink_flags_the_commit_error_branch() -> None:
         "def f(exc):\n    return IsolatedRunResult(error=exception_error_text(exc))\n",
         "def f(exc):\n    emit_step(l, 's', error_msg=type(exc).__name__)\n",
         "def f(stderr):\n    n = len(stderr)\n    return IsolatedRunResult(error=f'{n} bytes')\n",
-        "def exception_error_text(exc):\n    head = type(exc).__name__\n"
-        "    markers = preserved_route_markers(str(exc))\n    return head + '; '.join(markers)\n",
+        "def exception_error_text(exc):\n    head = type(exc).__name__\n    return head\n",
     ],
 )
 def test_sink_accepts_the_safe_shapes(src: str) -> None:

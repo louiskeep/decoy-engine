@@ -1,5 +1,8 @@
 # Program: 100M-Row FK Scaling (engine + platform)
 
+Status: built
+Shipped: PRs #86, #88, #94 (commits 4932d25c, 042730b2, fc532558); docs/plans/2026-07-07-next-up-roadmap.md:2-4 records the program as COMPLETE
+
 Source of goal: Cam directive 2026-07-06 - "my goal with this app is 100M+ rows."
 Grounding evidence: `docs/relationships-memory-scaling.md` (memory model + Options 1–5),
 `decoy-platform/scripts/gcp-bench/BENCHMARK-QUESTIONS.md` (what's known vs. must-measure),

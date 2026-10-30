@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING
 import pyarrow as pa
 import pyarrow.compute as pc
 
+from decoy_engine import reasons
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution.out_of_core._external_sort import BoundedExternalSorter
 
@@ -44,7 +45,7 @@ if TYPE_CHECKING:
 
 def _contiguity_error(detail: str) -> ExecutionError:
     return ExecutionError(
-        code="out_of_core_fk_reorder_contiguity",
+        code=reasons.runtime.OUT_OF_CORE_FK_REORDER_CONTIGUITY,
         message=(
             "the order-restored FK join output is not exactly the child's own "
             f"0..N-1 row_nr domain: {detail}. N is taken from the INDEPENDENT "
@@ -436,7 +437,7 @@ def _assert_slim_sorter_schema(schema: pa.Schema) -> None:
     for name in schema.names:
         if name == "__decoy_fk_join_key" or name.startswith("__decoy_src_"):
             raise ExecutionError(
-                code="out_of_core_sorter_schema_not_slim",
+                code=reasons.runtime.OUT_OF_CORE_SORTER_SCHEMA_NOT_SLIM,
                 message=(
                     f"the reorder sorter's input schema {schema.names} still carries the "
                     f"raw child column {name!r}; the slim sort must project only "
@@ -485,7 +486,7 @@ def _concat_join_row_batches(batches: list[pa.RecordBatch]) -> pa.RecordBatch:
 
 def _row_alignment_error(detail: str) -> ExecutionError:
     return ExecutionError(
-        code="out_of_core_fk_row_alignment",
+        code=reasons.runtime.OUT_OF_CORE_FK_ROW_ALIGNMENT,
         message=(
             "out-of-core FK join output could not be row-aligned to the masked "
             f"payload: {detail}. The join row_nr must match the payload row_nr "

@@ -12,6 +12,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
 
+from decoy_engine import reasons
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution.out_of_core import _memory_estimate as _mem
 
@@ -39,7 +40,7 @@ _OUT_OF_CORE_ROUTE = "out_of_core"
 # while any OTHER `ExecutionError` (e.g. `out_of_core_concurrency_invalid`, a
 # caller-usage bug, not a capacity refusal) still propagates untouched (R3:
 # an unexpected estimator exception is never swallowed into a verdict).
-_FANIN_EXCEEDS_BUDGET_CODE = "out_of_core_fanin_exceeds_budget"
+_FANIN_EXCEEDS_BUDGET_CODE = reasons.runtime.OUT_OF_CORE_FANIN_EXCEEDS_BUDGET
 
 # WARN band lower edge, as a fraction of the ACTUAL per-table build cap
 # `cap(t)` (never the raw memory ceiling -- see the module docstring's
@@ -509,7 +510,7 @@ def enforce_ooc_memory_preflight(
         # fallback is a defensive type-narrowing (code is str | None) that
         # never actually fires, so mypy sees a str without a banned `assert`.
         raise ExecutionError(
-            code=estimate.code or "out_of_core_insufficient_memory",
+            code=estimate.code or reasons.runtime.OUT_OF_CORE_INSUFFICIENT_MEMORY,
             message=estimate.message,
         )
     if estimate.warned:

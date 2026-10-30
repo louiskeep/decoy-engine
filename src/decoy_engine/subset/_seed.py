@@ -29,6 +29,7 @@ from math import floor
 
 import polars as pl
 
+from decoy_engine import reasons
 from decoy_engine.determinism._derive import DeriveContext
 from decoy_engine.generation.pool._canonicalize import _canonicalize_source
 from decoy_engine.generation.pool._errors import GenerationError
@@ -79,7 +80,7 @@ def _select_sample(spec: SeedSpec, kf: pl.DataFrame, job_seed: bytes) -> tuple[f
             )
         except GenerationError as exc:
             raise SubsetConfigError(
-                code="subset_seed_key_uncanonicalizable",
+                code=reasons.config.SUBSET_SEED_KEY_UNCANONICALIZABLE,
                 message=f"table {spec.table!r}: seed key column value could not be "
                 f"canonicalized for sampling: {exc}",
             ) from exc
@@ -100,7 +101,7 @@ def _select_keys(spec: SeedSpec, kf: pl.DataFrame) -> frozenset[int]:
         key_df = key_df.select([pl.col(c).cast(kf.schema[c]) for c in spec.key_columns])
     except (pl.exceptions.PolarsError, TypeError, ValueError) as exc:
         raise SubsetConfigError(
-            code="subset_seed_key_type",
+            code=reasons.config.SUBSET_SEED_KEY_TYPE,
             message=f"table {spec.table!r}: explicit seed key(s) do not match the key "
             f"column dtypes: {exc}",
         ) from exc
@@ -129,7 +130,7 @@ def select_seed_rows(
     for spec in seeds:
         if spec.table in seen_tables:
             raise SubsetConfigError(
-                code="subset_duplicate_seed_table",
+                code=reasons.config.SUBSET_DUPLICATE_SEED_TABLE,
                 message=f"table {spec.table!r} has more than one SeedSpec; only one seed "
                 "spec per table is supported",
             )
