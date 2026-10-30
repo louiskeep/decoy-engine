@@ -20,7 +20,7 @@ The repeated Phase-1 gate failures on B-9, F26, STORM, F43, and F13 are the same
 
 ### Guarantee, precise and testable
 
-**Invariant:** No value derived from customer data, a source or output path, a credential or secret reference, an exception message or representation, a captured local, a library or driver message, or customer-controlled prose may reach an ordinary output surface except after conversion to an immutable `SafeEvent` by the engine-owned safe-output boundary. Conversion never preserves such a value. Every ordinary sink accepts only the serialized form of a `SafeEvent`.
+**Invariant:** No value derived from customer data, a source or output path, a credential or secret reference, an exception message or representation, a captured local, a library or driver message, or customer-controlled prose may reach an ordinary output surface except after conversion to a provenance-backed immutable `SafeEvent` by the engine-owned safe-output boundary. Conversion never preserves such a value. Application and renderer code accepts only a provenance-backed `SafeEvent` or an opaque sealed `SerializedSafePayload`. Only registered sink drivers can unwrap that payload directly into final bytes. No plain mapping is an authorized ordinary-output carrier.
 
 For this invariant, a **value** is any bytes, text, object representation, identifier, label, collection member, mapping key, or formatted derivative whose content or length can depend on:
 
@@ -36,8 +36,8 @@ Allowed ordinary output is limited to:
 - exact members of reviewed closed enums;
 - nonnegative bounded counts, ordinals, finite bounded measurements, booleans, and timestamps created by the boundary;
 - line, column, row, chunk, and component positions without a filename or source line;
-- exception type names accepted by a closed engine and builtin allowlist, with every other type represented as `Exception`;
-- exact UUID, ULID, or engine-minted opaque stable identifiers in a dedicated field, never a generic token field;
+- exception type labels returned by exact type identity lookup in a closed engine and builtin type-to-enum table, with every other exact type represented as `Exception`; no exception class name is read dynamically;
+- provenance-backed opaque stable identifiers minted at an engine-owned or server-owned creation seam; UUID or ULID syntax is only a secondary check and never sufficient, and there is no generic token field;
 - stable aliases such as `table-1` and `field-2`, allocated from first-seen order or a trusted ordinal without retaining the original name in the event.
 
 A short or clean-looking source identifier is still a value and is aliased. A generic bounded string is not safe merely because it matches a grammar. No ordinary event has a free-form string, `Any`, arbitrary mapping, exception, path, bytes, dataframe, row, or user-extensible metadata field.
@@ -49,13 +49,13 @@ The guarantee is tested twice. Runtime acceptance tests plant unique markers in 
 F31 is done only when all of the following are true:
 
 1. `decoy_engine.safe_output` is the public owner of `decoy-safe-output/v1`, and `decoy_engine` 0.8.0 exports its supported public names.
-2. Every `SafeEvent` field is immutable and construction-validated against a closed set or bounded non-string type. Emit-time validation reconstructs the canonical event and rejects forged or mutated instances.
-3. One serializer produces the canonical JSON-ready mapping. Text, JSON, log, audit, evidence, telemetry, diagnostic, support, and tracker renderers consume only that mapping or a registry lookup keyed by it.
+2. Every `SafeEvent`, `OpaqueId`, and `SerializedSafePayload` is immutable, construction-validated, and registered through a closure-held provenance capability that is absent from class attributes and public constructors. Emission verifies both exact type and provenance and rejects `object.__new__`, `object.__setattr__`, subclass, replacement, copied-token, and token-shaped-value forgeries.
+3. One internal serializer seals a canonical payload. Text, JSON, log, audit, evidence, telemetry, diagnostic, support, and tracker renderers accept only a provenance-backed `SafeEvent` or opaque `SerializedSafePayload`; no renderer accepts or returns an application-mutable mapping. Only registered final sink drivers turn the sealed payload into bytes.
 4. Invalid or unknown input produces the fixed registered `safe_output.invalid` event. Serializer or sink failure produces only the literal emergency `safe_output.failed` record. Neither path logs, formats, or falls back to the rejected object.
 5. Exceptions become a registry reason, a closed type label, and a closed component plus numeric position only. Ordinary exports hold no raw exception, chain, traceback, frame, source line, or local.
-6. The default engine file handler is removed. Ambient logging, warnings, Python stream output from extension calls, and subprocess output are contained and restored correctly.
+6. The default engine file handler is removed. Ambient logging, warnings, and Python stream output from extension calls are contained by a permanent `ContextVar`-aware proxy without process-wide stream swapping. Decoy-owned child workers redirect file descriptors 1 and 2 at operating-system level and use a separate structured channel.
 7. CLI and Platform pin exactly `decoy-engine==0.8.0` and replace their duplicate boundaries with thin adapters to the engine contract. No second value policy remains.
-8. The seeded corpus covers every listed surface and mode with a positive non-vacuity assertion. The AST sentry catches direct, aliased, assigned, and reflective sink access. Its self-tests prove each rule goes red.
+8. The seeded corpus covers every listed surface and mode with a positive non-vacuity assertion. It includes high-entropy, grammar-clean, UUID-shaped, short, numeric, and shape-preserving canaries. One shared analyzer runs in engine, CLI, and Platform CI with repository-specific sink manifests, catches direct, aliased, assigned, reflective, framework-implicit, and exception-state sink access, and proves each rule RED before implementation.
 9. Existing security assertions remain present and at least as strict. The new suite, each repository's full suite, static checks, and secret scanners pass on the exact reviewed commits.
 10. Documentation describes the ordinary channel, the isolated unsafe channel, schema compatibility, and the residual risks. The exact-artifact gate receipt is recorded only after all required reviews and documentation sync.
 
@@ -65,7 +65,7 @@ Ordinary output includes stdout, stderr, `--json`, ordinary `--output` reports, 
 
 Primary data artifacts are not ordinary output. Masked datasets, explicitly requested raw scan profiles, encrypted vaults, private isolated-worker payloads, and quarantine rows may necessarily contain data. They must use separately typed data-plane sinks, restrictive permissions where applicable, and can never be passed to an ordinary sink. Their status and failures are reported only as `SafeEvent` values. The static sentry maintains a reviewed exact list of data-plane writer functions, not a directory or filename wildcard.
 
-Native libraries or drivers that write directly to an inherited operating-system file descriptor are residual risk. F31 captures Python logging, warnings, Python streams, and child processes owned by Decoy, but does not claim portable interception of arbitrary native writes. Callers must use process isolation where this threat matters.
+Native libraries or drivers that write directly to file descriptors 1 or 2 remain a residual only for in-process execution. Every Decoy-owned isolated child redirects those descriptors with `os.dup2` before importing or invoking extensions and carries structured results over a dedicated descriptor or private 0600 file. Callers must use that isolated path where native output is in the threat model; a Python stream proxy cannot intercept native writes.
 
 The explicit unsafe diagnostic channel is out of the ordinary contract. It is disabled by default, requires an unmistakable `--unsafe-debug-log PATH` opt-in, writes mode 0600, labels every file as sensitive, is excluded from automatic upload, evidence, support bundles, and telemetry, and has a retention warning. Customer or administrator privilege never makes ordinary evidence less strict. The unsafe channel is tested for isolation, not for value freedom.
 
@@ -118,14 +118,14 @@ This inventory describes the engine baseline above. Cross-repository rows use `d
 | Current log sentry | `tests/sentry/test_log_interpolation.py:1-10`, `:23-83`, `:86-123`, `:244-355`, `:439-566` | It has useful alias and named-sink tracking, but scopes logger interpolation and intentionally ignores `print`. Generalize its analyzer rather than adding a separate weak scan. |
 | Current security corpus | `tests/security/test_reason_boundary.py:44-73`, `:107-169`, `:226-277`; `tests/unit/execution/test_isolated_safe_error.py` | Existing hostile markers cover reason and isolated paths. Retain every assertion and lift the corpus into the cross-surface matrix. |
 | Phase envelopes | No `src/decoy_engine/phase.py` exists at this baseline | Do not invent a prerequisite. If STORM merges first, adapt its `phase-result/v1` and `phase-event/v1` into safe-event payload families; its generic frozen strings and mappings are not sufficient for F31. |
-| CLI stdout, stderr, JSON, verbose, and files | `decoy/src/decoy/cli/scan.py:773-798`, `subset.py:278`, `:352-522`, `fit.py:321`, `:495-522`, `templates.py:113-148` | Main still has direct Rich, `sys.stdout`, file writes, full report dictionaries, free errors, and verbose tracebacks. After STORM lands, keep command behavior but replace local value policy with engine factories. |
-| CLI progress and report surfaces | `decoy/src/decoy/cli/run.py:207-219`, `:455-487`; `evidence.py:118`, `:459-492` | Progress, errors, evidence, and mode-specific rendering are distinct sinks today. All render from the canonical safe mapping. Data stdout for `run` remains a typed data-plane sink. |
+| CLI stdout, stderr, JSON, verbose, and files | `decoy/src/decoy/cli/scan.py:773-798`, `subset.py:278`, `:352-522`, `fit.py:321`, `:495-522`, `templates.py:113-148` | Main still has direct Rich, `sys.stdout`, file writes, full report dictionaries, free errors, and verbose tracebacks. The Slice 6 topology gate supplies the STORM structure whether or not it has merged, keeps command behavior, and replaces local value policy with engine factories. |
+| CLI progress and report surfaces | `decoy/src/decoy/cli/run.py:207-219`, `:455-487`; `evidence.py:118`, `:459-492` | Progress, errors, evidence, and mode-specific rendering are distinct sinks today. All render from a provenance-backed event or sealed payload. Data stdout for `run` remains a typed data-plane sink. |
 | Platform audit | `decoy-platform/api/audit/logger.py:19-28`, `:83-171` | `detail` is explicitly stored verbatim and before, after, and meta are arbitrary scrubbed objects. Ordinary audit fields become safe-event projections; existing audit integrity and blocking semantics remain unchanged. |
 | Platform request and server log context | `decoy-platform/api/logging/context.py:39-68`, `:71-146`, `:222-227` | Route templates and validated UUIDs are useful trusted fields, but IP, user agent, actor, and other values are not permitted in an F31 ordinary event. Keep security audit data only where policy explicitly classifies it outside the value-free event, and never mix it into safe evidence. |
 | Platform evidence and telemetry | `decoy-platform/api/evidence/redaction.py:142-204`; `api/evidence/assembly.py:1887-1888`; `api/jobs/routes_runtime_facts.py:76-87` | Existing redaction and fingerprints are defense in depth. Evidence assembly and runtime facts must accept typed engine projections, not arbitrary engine dictionaries. |
 | Platform child and driver output | `decoy-platform/api/generation/generation_parent.py:189-200`; `generation_child.py:277-291`, `:380`; `cloud/pg_probe.py:85-86`, `cloud/_pg_probe_child.py:6`, `:83-84` | Some subprocess paths already capture or discard streams and one probe emits a closed code. Standardize on the scoped silencer and safe-event conversion; never replay a captured line. |
 | Third-party trackers and locals | `decoy-platform/api/cloud/io.py:134-137`; `api/jobs/v2_cloud_materialize.py:409-410`; cloud credential tests using `TracebackException(..., capture_locals=True)` | The existing tests prove local variables are a live exfiltration channel. Configure trackers with locals and raw breadcrumbs disabled, then use a pre-send safe-event type check. |
-| STORM reference, not baseline | Branch `claude/eager-clarke-14deh1`: `decoy/src/decoy/cli/_value_free.py:303-417`, `_projections.py:1-24`, `tests/sentry/test_value_free_boundary.py`; `decoy-platform/api/jobs/fidelity_projection.py:1-16`; `decoy-engine/src/decoy_engine/phase.py:1-16` | Adopt the single boundary, fixed prose, typed projection, command guard, engine silencer, and canary sentry shape. Strengthen it by always aliasing field names and removing generic string or mapping payloads. Do not depend on the branch until merged. |
+| STORM reference, not baseline | Branch `claude/eager-clarke-14deh1`: `decoy/src/decoy/cli/_value_free.py:303-417`, `_projections.py:1-24`, `tests/sentry/test_value_free_boundary.py`; `decoy-platform/api/jobs/fidelity_projection.py:1-16`; `decoy-engine/src/decoy_engine/phase.py:1-16` | Adopt the single boundary, fixed prose, typed projection, command guard, engine silencer, and canary sentry shape. Strengthen it by always aliasing field names and removing generic string or mapping payloads. The Slice 6 and 7 topology gate uses the exact structural commits even when the branch is unmerged. |
 | F43 reference, not baseline | Branch `feat/f43-ci-integration`: `decoy/src/decoy/ci/contracts.py:1-11`, `:60-145`, `:227-277`; `ci/engine_logging.py:1-12`, `:24-61` | Adopt construction validation, renderer revalidation, and logger-state restoration. Do not retain its repository path field in the universal event. `SafeFinding` becomes an F31 event family, not another boundary. |
 
 The direct engine logging census is exhaustive for this baseline. The framing command was `rg -n '\.(debug|info|warning|warn|error|exception|critical)\(' src/decoy_engine --glob '*.py'`. Calls occur at:
@@ -136,7 +136,7 @@ The direct engine logging census is exhaustive for this baseline. The framing co
 - internal, profile, and profiling: `internal/crypto.py:30`; `internal/faker_setup.py:221-281`, `:631`; `internal/logging.py:129-247`; `internal/memory.py:39-54`; `profile/_pii.py:80`; `profile/_source.py:112`, `:195`; `profiling/model_pack/classify.py:178`; `model_pack/loader.py:161-164`, `:295-331`; `model_pack/provenance.py:254-261`; `profiling/profiler.py:491`, `:566-625`;
 - quality, reference, quarantine, and transforms: `quality/_freetext_advisory.py:245`; `quality/_retention_gate.py:140`; `quality/dp_policy.py:85`; `quarantine.py:498`; `reference_tables/_loader.py:127-138`; `transforms/_codeset_loader.py:442`; `_text_mask_splice.py:58`; `base.py:93-112`; `bucket_perturb.py:161`; `date_shift.py:92`, `:166-190`, `:246`; `formula.py:42`; `geo_generalize.py:281`, `:401`; `text_mask.py:385`.
 
-`reasons/warning/_part1.py:27` also matches the mechanical expression because it declares a reason named `warning.error`; it is registry data, not a logging call. Slice 0 turns this census into a parsed AST manifest, classifies each call as safe, unsafe, or registry false positive, and requires the unsafe count to reach zero. File, stream, warning, traceback, subprocess, callback, evidence, audit, telemetry, and tracker emitters are inventoried separately in the table because a logger-only search cannot find them.
+`reasons/warning/_part1.py:27` also matches the mechanical expression because it declares a reason named `warning.error`; it is registry data, not a logging call. Slice 1 turns this census into a parsed AST manifest, classifies each call as safe, unsafe, or registry false positive, and requires the unsafe count to reach zero. File, stream, warning, traceback, subprocess, callback, evidence, audit, telemetry, and tracker emitters are inventoried separately in the table because a logger-only search cannot find them.
 
 ## Design
 
@@ -147,24 +147,39 @@ The engine owns the contract because it is the lowest shared dependency and alre
 ```text
 src/decoy_engine/safe_output/
   __init__.py       public imports and schema constants
-  _model.py         frozen SafeEvent and closed component types
+  _model.py         closed value types; no public or class-held minting token
+  _provenance.py    closure-owned mint and verification functions
   _registry.py      safe-output reason and prose declarations via F29 registry
-  _aliases.py       per-operation ordinal alias allocator
+  _aliases.py       bounded keyed-digest ordinal alias allocator
   _exception.py     exception to SafeEvent conversion
-  _scope.py         ambient logging, warning, stream, and child containment
-  _serialize.py     the only canonical serializer and emergency literal
+  _scope.py         ambient logging, warning, and process-hook containment
+  _streams.py       ContextVar proxy streams and child FD policy
+  _serialize.py     canonical sealing and emergency literal
   _sink.py          SafeEventSink protocol and adapters
+  _testing.py       shared analyzer entrypoint; no production sink capability
+  families/
+    progress.py     progress and F29 compatibility factories
+    runtime.py      runtime, validation, and exception factories
+    quality.py      quality, fidelity, and diagnostic factories
+    evidence.py     evidence, audit, publication, and support factories
+    ci.py           F43 finding factories
 ```
 
-The supported imports are `decoy_engine.safe_output.SafeEvent`, `SafeLocation`, `SafeEventSink`, `SafeOutputScope`, `safe_event_from_exception`, and `serialize_safe_event`, plus named family factories such as `connection_failed` whose signatures contain only typed fields. Re-export these from `decoy_engine` for the 0.8 line. There is no generic public factory that accepts arbitrary metadata. Internal constructors, opaque-ID minting, and registry mutation are not public.
+Every Python module added or materially expanded by F31 has a hard plan budget below 450 physical lines, including tests for the existing repository size sentry. Factories live in the domain modules under `families/`; F31 does not add factories to `_progress_events.py` or turn `__init__.py` into an implementation module. If a module approaches 400 lines during a slice, split it by event family before review rather than spending the repository's 600/700 line limit.
 
-This is an additive public API with a coordinated behavioral tightening of unsafe output. Bump engine 0.7.0 to 0.8.0. The wire schema is `decoy-safe-output/v1`. `decoy-reasons/v1` stays readable and is nested canonically. Existing progress v1 and legacy dictionaries are compatibility projections produced inside `_serialize.py`; they cannot maintain independent validation or prose. Deprecate direct narrative `Logger`, `StructuredEvents`, and arbitrary telemetry callbacks in 0.8.0 and remove them before 1.0 after CLI and Platform migrate.
+The supported imports are `decoy_engine.safe_output.SafeEvent`, `SafeLocation`, `SerializedSafePayload`, `SafeEventSink`, `SafeOutputScope`, and `safe_event_from_exception`, plus named family factories such as `connection_failed` whose signatures contain only typed fields. `serialize_safe_event` remains as a compatibility spelling but returns only `SerializedSafePayload`, never a `dict`; new code calls `SafeEventSink.emit(event)` and lets the sink seal internally. Re-export the supported public names from `decoy_engine` for the 0.8 line without moving implementation into the root module. There is no generic public factory that accepts arbitrary metadata. Internal constructors, provenance registration, opaque-ID minting, payload unsealing, and registry mutation are not public.
+
+This is an additive public API with an explicitly coordinated pre-GA behavioral break for unsafe compatibility methods. Bump engine 0.7.0 to 0.8.0. The wire schema is `decoy-safe-output/v1`. `decoy-reasons/v1` stays readable and is nested canonically. Existing progress v1 and legacy wire shapes are projections produced only by registered sink drivers inside `_serialize.py`; they cannot maintain independent validation or prose and are never returned as authorization-bearing application dictionaries.
+
+`Logger`, `StructuredEvents`, `TelemetryClient.emit`, `event_to_dict`, and `event_to_legacy_dict` are neutered in the first 0.8.0 release, not merely deprecated. Their import and call signatures may remain temporarily, but they discard every free-form string, mapping, `error_msg`, and extra argument without inspecting or forwarding it. Logger and callback methods emit only a fixed `ambient.output_withheld` event through `SafeEventSink`. The two `event_to_*` names accept only provenance-backed events and return a sealed payload for the requested legacy wire projection; raw dictionaries, legacy objects with free fields, and forged events yield the sealed `safe_output.invalid` payload. Removal before 1.0 remains planned, but there is no raw compatibility lane in 0.8.0.
+
+F29 gains `ordinary_output: bool = False`. The default applies to every existing reason and every new declaration, so no pre-F31 reason becomes output-safe implicitly. Slice 0 creates an explicit reviewed compatibility manifest of existing reason identities that may be projected after every name-bearing context value has become a `SafeAlias`; all other existing reasons remain internal and map to `safe_output.invalid` at the ordinary boundary. Registry tests assert both the false default and the exact opted-in set.
 
 CLI and Platform each pin exactly `decoy-engine==0.8.0`, including lockfiles and deploy images. No compatible range is acceptable for the first contract release. Their work can land separately after the engine release.
 
 ### The single model
 
-`SafeEvent` is a frozen, slotted dataclass with these fields and no extension dictionary:
+`SafeEvent` is an exact, frozen, slotted type with these fields and no extension dictionary. Its apparent Python immutability is not the security proof. `_provenance.py` creates a closure-held capability object and a closure-held weak identity registry at module initialization. The capability is never placed on a class, instance, module export, default argument, or spellable `str` subclass. Named factories validate fields, construct exact instances, and register the object identity plus a canonical field digest in that closed registry. The serializer verifies the registry entry and current canonical digest. An instance made with a public constructor, `object.__new__`, copying, subclassing, dataclass replacement, or mutation through `object.__setattr__` has no matching registration and fails closed.
 
 - `schema_version`: literal `decoy-safe-output/v1`.
 - `reason`: a validated F29 `ReasonRecord` whose registry entry is marked `ordinary_output=True`.
@@ -174,40 +189,42 @@ CLI and Platform each pin exactly `decoy-engine==0.8.0`, including lockfiles and
 - `counts`: tuple of frozen `SafeCount(name_enum, value)` entries, with unique names and `0 <= value <= 2**63 - 1`.
 - `measurements`: tuple of frozen `SafeMeasurement(name_enum, finite_value, unit_enum)` entries with field-specific ranges. Scores and rates are `[0, 1]`; durations, byte counts, and throughput have documented nonnegative caps.
 - `aliases`: tuple of `SafeAlias(kind_enum, ordinal)`, serialized as `table-N`, `field-N`, `node-N`, or `artifact-N`. The original string is not stored.
-- `opaque_ids`: tuple of dedicated ID variants. A private boundary capability mints them only from an engine-owned or server-owned correlation-ID source that has already been typed at its creation seam. Exact UUID or ULID syntax and a cap are additional checks, not proof of provenance. A caller cannot turn an arbitrary source string into an opaque ID through the public API. Other identifiers receive an ordinal alias. There is no generic token constructor.
+- `opaque_ids`: tuple of dedicated exact ID variants. The same closure-held provenance service mints and registers them only from an engine-owned or server-owned correlation-ID source at its creation seam. It never reconstructs one from serialized text. Exact UUID or ULID syntax and a cap are additional checks, not proof of provenance. A UUID-shaped customer primary key, secret reference, `str` subclass, or object built through `__new__` is unregistered and cannot become an opaque ID. Other identifiers receive an ordinal alias. There is no generic token constructor.
 - `flags`: tuple of closed flag enums. Absence and false are distinct only where the schema requires it.
 
-Every field validates in `__post_init__`, copies input sequences to tuples, rejects booleans as integers, rejects duplicate names, rejects unknown enums, caps collection length, and refuses arbitrary subclasses where exact types matter. Named factories accept untrusted source objects, extract only permitted facts, catch fixed construction errors, and return either the intended event or `safe_output.invalid`. They never return the source dictionary after checking it. Direct construction remains available for typed consumers but can raise only a fixed programming error that never echoes input; ordinary emitters must use a named factory or handle that fixed error by producing the generic invalid event.
+Every field is validated before provenance registration, input sequences are copied to tuples, booleans as integers are rejected, names are unique, enums are exact, collection lengths are capped, and arbitrary subclasses are refused where exact types matter. Named factories accept untrusted source objects, extract only permitted facts, catch fixed construction errors, and return either the intended registered event or the registered `safe_output.invalid` event. They never return the source dictionary after checking it. Direct construction is deliberately not a supported route for typed consumers. The fixed programming error never echoes input.
+
+`SafeAliasAllocator` is per-run and receives a 32-byte ephemeral key from `os.urandom` when the root `SafeOutputScope` is established. It stores only keyed BLAKE2b digests mapped to ordinals, never the source identifier. Each alias kind is capped at 4096 distinct digests. Further inputs produce the fixed ordinal `kind-0` plus the closed `alias_overflow` flag without retaining another digest. A lock protects lookup and allocation. The coordinator pre-registers identifiers in canonical plan order before thread or process fan-out, and workers receive already assigned typed ordinals; first scheduler arrival never determines an alias. All sinks for one run share that allocator, so aliases are deterministic across surfaces within the run and deliberately unlinkable across runs.
 
 F29 `ReasonRecord` remains the reason authority. Add fixed `safe_output.invalid`, `safe_output.failed`, `runtime.unexpected`, `connection.failed`, `diagnostic.withheld`, and `ambient.output_withheld` entries only after the registry compatibility test approves the exact catalog. All human prose is read from that registry. Consumer-specific fixed messages become registry entries owned by their namespace, not local dictionaries.
 
 ### One serializer and fail-closed behavior
 
-`serialize_safe_event(event, projection=SAFE_OUTPUT_V1)` is the only function allowed to produce an ordinary output mapping. It:
+`serialize_safe_event(event, projection=SAFE_OUTPUT_V1)` is the compatibility entry to the one internal sealing operation. It:
 
-1. checks the exact supported type and schema;
-2. reconstructs every nested value through its constructor to defeat forged instances or post-construction mutation;
+1. checks exact supported type, schema, and the closure-held provenance registration for the event and every provenance-bearing nested object;
+2. recomputes the canonical field digest and rejects any post-construction mutation without reconstructing an `OpaqueId` from its textual value;
 3. resolves prose from the registered reason, never from an event field;
-4. builds a new closed-key mapping in canonical key order;
+4. builds the closed-key canonical representation inside the serializer closure;
 5. applies length and control-character pattern handling only to already-approved bounded tokens as defense in depth;
-6. returns only JSON-native primitives from the closed mapping.
+6. registers and returns an exact opaque `SerializedSafePayload` whose internals expose no mapping protocol, iteration, mutation, `__dict__`, or general unseal method.
 
-An unknown field cannot exist on the slotted event. An unknown enum, schema, registry identity, projection, or invalid numeric value causes serialization to discard the entire event and serialize a fresh registered `safe_output.invalid` event. If that construction or JSON encoding fails, the boundary writes the constant ASCII emergency record for `safe_output.failed`. It does not call `str`, `repr`, a logger, a warning, the rejected sink, or a general JSON `default` callback. Sink failure is counted in memory if possible and otherwise silent. It never invokes raw fallback logging.
+Only `_sink.py` receives a closure-bound driver function that can consume a registered payload and write canonical bytes directly to an already selected destination. Drivers cannot return the intermediate mapping to application code. Text, JSON, Rich, log, audit, evidence, telemetry, diagnostic, support, tracker, and framework response adapters accept `SafeEvent` or `SerializedSafePayload` and select a registered projection enum. They cannot accept a plain mapping, append extras, or combine the source event with arbitrary metadata. Registry prose is the only text renderer input.
 
-Text renderers, JSON envelopes, log handlers, audit adapters, evidence writers, telemetry exporters, and trackers accept the serialized mapping. They may select or format its known fields, but cannot receive the source event plus arbitrary extras. Registry prose is the only text renderer input.
+An unknown enum, schema, registry identity, projection, provenance identity, canonical digest, or invalid numeric value causes sealing to discard the entire event and seal a fresh registered `safe_output.invalid` event. If that construction or encoding fails, the boundary writes the constant ASCII emergency record for `safe_output.failed` through a literal-only emergency driver. It does not call `str`, `repr`, a logger, a warning, the rejected sink, or a general JSON `default` callback. Sink failure is counted in memory if possible and otherwise silent. It never invokes raw fallback logging.
 
-F29 `event_to_dict` and `event_to_legacy_dict` become compatibility projections within the same serializer. `ReasonRecord.to_payload` remains the nested reason serialization primitive, not an ordinary sink. STORM phase envelopes, if merged, become typed event families. Their current generic string and frozen mapping payloads are not permitted unchanged.
+F29 `event_to_dict` and `event_to_legacy_dict` are the neutered compatibility spellings described above, despite their historical names. `ReasonRecord.to_payload` remains an internal nested reason primitive and is not an ordinary sink authorization. STORM phase envelopes, if merged, become typed event families. Their current generic string and frozen mapping payloads are not permitted unchanged.
 
 ### Exception boundary
 
 Catch untrusted extension, provider, connector, validator, reader, and driver exceptions in the smallest engine-owned frame. `safe_event_from_exception(exc, reason, location)` does only the following while the exception is live:
 
 - select a reason through the existing `reason_adapter` without reading arbitrary message, `args`, `repr`, extension `code`, or attributes;
-- map `type(exc).__name__` through the closed safe-type allowlist, falling back to `Exception`;
+- perform only `_ALLOWED_EXCEPTION_TYPES.get(type(exc), SafeErrorType.EXCEPTION)`, where the dictionary keys are exact reviewed exception classes and the values are closed `SafeErrorType` enum members; never read, compare, log, or serialize `type(exc).__name__`;
 - attach a caller-supplied closed component and numeric position, not a traceback-derived filename or source line;
 - build the event and return it without storing `exc`.
 
-The catch wrapper itself binds no row, raw buffer, credential, path, or extension arguments. Where a current parser catches inside a frame that owns such locals, refactor to let that frame unwind into the wrapper. Before detaching the original error, walk its bounded cause and context chain without formatting it, call `traceback.clear_frames` on each available traceback after those frames have unwound, set each traceback to `None`, and break the cause and context links. This removes raw byte and row references from retained frame locals as well as preventing their export. A cycle or overlong chain stops at the fixed bound and the remaining link is severed, never formatted.
+The catch wrapper itself binds no row, raw buffer, credential, path, or extension arguments. Where a current parser catches inside a frame that owns such locals, refactor it into an inner worker and an outer boundary wrapper so the data-owning frame has unwound before conversion. While the outer `except` frame is executing, the implementation never calls `traceback.clear_frames(exc.__traceback__)`, because that traceback includes the executing catch frame. It may clear only `tb.tb_next` chains whose inner frames are known to have unwound, then assigns `exc.__traceback__ = None`. For a bounded cause and context chain it repeats that rule, severs each traceback and link without formatting, and stops cycles or overlong chains by severing the remaining link. If a traceback topology cannot prove a frame is inactive, it skips `clear_frames` and detaches the traceback instead. Frame clearing is memory hygiene, not an output-safety dependency.
 
 Only exact engine-owned exception families may expose a registered code, and the existing adapter determines trust. An extension subclass, arbitrary provider error, or lookalike `code` attribute is untrusted and maps to `runtime.unexpected` or a fixed family reason.
 
@@ -217,16 +234,23 @@ No ordinary path enables `capture_locals`. Tests monkeypatch traceback helpers a
 
 ### Third-party and ambient containment
 
-`SafeOutputScope` is a context manager around engine calls and each untrusted extension call. It snapshots and restores, in `finally`, logger handlers, filters, levels, disabled state, propagation, `warnings.showwarning`, warning filters, and any Python stream replacement it owns.
+`SafeOutputScope` is a context manager around engine calls and each untrusted extension call. It snapshots and restores, in `finally`, logger handlers, filters, levels, disabled state, propagation, `warnings.showwarning`, warning filters, process exception hooks, and context tokens. It never swaps `sys.stdout` or `sys.stderr` while holding a process-wide lock.
 
 - Python logging receives an allowlisted handler whose `emit` accepts only a `SafeEventLogRecord` created by `_sink.py`. All other records are withheld and counted by logger name category only. It never formats `record.msg`, `args`, `exc_info`, pathname, function, or stack info.
 - The default engine rotating file handler is removed. Library import installs `NullHandler` only. Applications may attach the safe handler explicitly. There is no import-time `logs/decoy_engine.log` creation.
 - `warnings.catch_warnings(record=True)` captures extension warnings. It reports only a count and a closed category if allowlisted; it never formats warning text, filename, or source.
-- Python stdout and stderr around in-process extension calls are redirected to bounded discard buffers under a process-wide reentrant guard because those globals are not task-local. The state restores under success, exception, cancellation, and nested use. Concurrency tests prove no state leak. For code that cannot tolerate serialization, run the extension in a child process instead.
-- Decoy-owned subprocesses use `PIPE` or `DEVNULL`, bounded reads, timeouts, and no inherited ordinary output descriptor. Return code and closed child role may become fields; stdout and stderr content never does.
-- Driver and library callbacks are adapted inside the scope. Third-party Sentry or OpenTelemetry exporters receive canonical safe mappings only. Tracker breadcrumbs, request bodies, locals, raw exceptions, and default integrations that capture them are disabled.
+- Process initialization installs one permanent proxy object on each Python stream. A `ContextVar` selects a bounded discard target for the current thread or async task while inside an extension scope; otherwise the proxy delegates to the captured original stream. A closure-held sink capability lets the authorized final driver write safe bytes while the scope is active. Nested scopes reset context tokens in LIFO order under success, exception, cancellation, and concurrent task switching. No lock is held across extension code or an `await`, and one task's discard state cannot suppress another task's authorized output.
+- Decoy-owned isolated children redirect operating-system file descriptors 1 and 2 with `os.dup2` to `/dev/null` or a private bounded pipe before extension imports. Structured payloads travel over a separate dedicated descriptor or private 0600 file, never stdout or stderr. Parent reads are bounded and timed out. Return code and closed child role may become fields; stream content never does.
+- Root CLI and worker initialization install safe `sys.excepthook`, `threading.excepthook`, `sys.unraisablehook`, and async loop exception handlers. They do not format the exception, traceback, thread, task, or unraisable object and emit only a fixed `runtime.unexpected` or literal emergency event. Embedding applications can scope and restore hooks; CLI and worker processes keep them for process lifetime.
+- Driver and library callbacks are adapted inside the scope. Third-party Sentry or OpenTelemetry exporters receive only a `SafeEvent` or sealed payload. Tracker breadcrumbs, request bodies, locals, raw exceptions, and default integrations that capture them are disabled.
 
-Containment failure emits only `safe_output.failed` through the emergency literal path. State restoration errors are never formatted. Native direct file-descriptor writes remain the declared residual risk.
+Containment failure emits only `safe_output.failed` through the emergency literal path. State restoration errors are never formatted. Native direct file-descriptor writes remain the declared residual for in-process extensions only; Decoy-owned isolated workers must use descriptor-level redirection.
+
+### CLI process-entry boundary
+
+The CLI wraps the entire process entry before invoking Typer or Click, not individual commands. `main()` establishes the permanent proxy streams, process hooks, alias scope, and `SafeOutputScope`, then invokes the root application with `standalone_mode=False` or an equivalent custom `Command.main`. Root callbacks, eager options, `--help`, parameter conversion, usage construction, and command dispatch therefore all execute inside the boundary.
+
+The process-entry adapter catches exact Click and Typer control-flow types including `ClickException`, `UsageError`, `BadParameter`, `Abort`, and their explicitly reviewed exact builtins. It does not call their `format_message`, `show`, `str`, `repr`, or framework default stderr path. It maps them to fixed registered usage events and a closed exit code. Help text is static application-authored text rendered through a registered help driver; option defaults, environment values, argument values, parameter hints derived from a value, and offending tokens are never echoed. The root callback and every early-exit path share this entry wrapper.
 
 ### Diagnostics, verbose mode, and unsafe opt-in
 
@@ -236,17 +260,22 @@ The one unsafe channel is an explicit product feature, not a fallback. The CLI f
 
 ### Cross-repository adoption and STORM/F43 convergence
 
-STORM reframe on `claude/eager-clarke-14deh1` is expected to land first across its four repositories, including `decoy-web`. The fourth repository was not present in this planning workspace, and the remote implementation handoff exposes engine, CLI, and Platform only, so F31 does not invent a web prerequisite. Engine, CLI, and Platform contain the value policy and require code changes. The web client requires contract verification against the unchanged Platform response shapes; it needs a separate slice only if that verification finds a schema consumer change. F31 does not require any unmerged branch to exist. After STORM lands:
+STORM reframe on `claude/eager-clarke-14deh1` and F43 on `feat/f43-ci-integration` are structural inputs, not timing assumptions. Before Slices 6 and 7, record one deterministic topology choice per consumer. If the relevant branch is merged, rebase the slice on that merge. If it is not merged, base the integration branch directly on the reviewed STORM or F43 commit, or cherry-pick the exact structural commits that introduce `_value_free.py`, `_boundary.py`, `_projections.py`, `fidelity_projection.py`, their tests, and `SafeFinding`, then replace the local policy before landing one unified migration. Do not implement a second main-based version and do not wait for a failed predecessor gate. If a cited branch or exact commit is unavailable remotely, stop the consumer slice and ask the owner for the source artifact rather than inventing its shape.
 
-- keep CLI command guards, renderers, mode behavior, and `integrity-report/v1` and `fidelity-report/v1` schemas;
-- replace `_value_free.py` model, registry, exception policy, engine silencer, and raw emit functions with thin imports and adapters over `decoy_engine.safe_output`;
-- replace `_projections.py` value policy with engine event factories, always aliasing source field names and dropping engine prose;
-- replace Platform `api/jobs/fidelity_projection.py` with a schema adapter over the same factories;
-- adapt engine `phase.py` results to explicit safe event families and prohibit its generic string and mapping evidence from ordinary serialization.
+The fourth STORM repository, `decoy-web`, was not present in this planning workspace, and the remote implementation handoff exposes engine, CLI, and Platform only, so F31 does not invent a web prerequisite. Engine, CLI, and Platform contain the value policy and require code changes. The web client requires contract verification against the unchanged Platform response shapes; it needs a separate slice only if that verification finds a schema consumer change.
 
-This avoids a conflict-prone command rewrite. Existing STORM files shrink but retain their consumer rendering responsibilities and tests.
+The migration targets are explicit:
 
-F43 `SafeFinding.create`, dataclass revalidation, fixed prose, renderer revalidation, and engine logger silencing are reference patterns. `SafeFinding` becomes a safe-event family and `engine_logging_silenced` delegates to `SafeOutputScope`. F43 repository paths are not admitted to the universal value-free event. Ordinary JSON, Markdown, stderr, and SARIF use an artifact alias plus numeric region. F31 does not create a raw-path CI exception. If a future product requirement needs one, it requires a separately approved artifact threat model rather than a hidden bypass in this contract.
+- STORM CLI `_value_free.py` migrates its local model, registry, exception policy, engine silencer, and serialization onto provenance-backed `decoy_engine.safe_output.SafeEvent`, named `families` factories, `SafeOutputScope`, and `SafeEventSink`. It retains only consumer mode selection and presentation adapters that accept `SafeEvent` or `SerializedSafePayload`.
+- STORM CLI `_boundary.py` migrates its per-command guards onto the engine `SafeOutputScope` plus the whole-process entry adapter described above. It owns wiring `main()` before Typer or Click parsing, static help handling, fixed usage conversion, safe process hooks, and the `ContextVar` stream proxy. It does not own another value policy.
+- STORM CLI `_projections.py` migrates onto engine family factories and sealed projection enums. It always aliases source field names and never reads engine prose, message, detail, or a plain event dictionary.
+- Platform `api/jobs/fidelity_projection.py` migrates onto `decoy_engine.safe_output.families.quality` fidelity factories plus a Platform response driver that consumes a sealed payload. It preserves the existing response schema and numeric facts but cannot accept an engine mapping or free detail.
+- Engine `phase.py`, if present in the selected topology, migrates onto explicit phase event families and cannot serialize generic string or mapping evidence.
+- F43 `SafeFinding` migrates onto `decoy_engine.safe_output.families.ci` named factories and the same sealed sink contract. Its JSON, Markdown, stderr, and SARIF renderers take `SafeEvent` or `SerializedSafePayload`; `engine_logging_silenced` delegates to `SafeOutputScope`. The local dataclass is removed after its callers migrate.
+
+Existing STORM and F43 command behavior, mode behavior, `integrity-report/v1` and `fidelity-report/v1` schemas, renderer coverage, and tests remain. Their duplicate construction and output authorization policies do not.
+
+F43 repository paths are not admitted to the universal value-free event. Ordinary JSON, Markdown, stderr, and SARIF use an artifact alias plus numeric region. F31 does not create a raw-path CI exception. If a future product requirement needs one, it requires a separately approved artifact threat model rather than a hidden bypass in this contract.
 
 The F43 stable fingerprint must also stop deriving from a repository path. Its F31 form uses the closed rule identity plus an engine-minted finding ID when one exists, or the run-local artifact alias and numeric region for a run-local finding. The ordinary event never carries a path hash, because a hash is still derived from the forbidden path value.
 
@@ -267,6 +296,8 @@ Create a shared corpus specification in the engine and consumer fixtures with di
 9. arbitrary evidence, validation, quality, audit, telemetry, breadcrumb, and tracker attributes;
 10. forged event fields, unknown schemas, invalid numerics, serializer exceptions, and sink exceptions.
 
+Alongside every high-entropy marker class, seed grammar-clean and shape-preserving canaries that exercise paths a noisy secret marker may not reach: short lowercase identifiers such as `canary_table_alpha` and `canary_col_beta`, clean eight-character tokens, lowercased and punctuation-stripped variants, a valid UUIDv4 placed only in a customer value and secret-reference position, and valid positive and negative integers and floats placed in fixed-width layout or configuration fields. Assertions scan both the original and every expected truncation, case-folding, punctuation removal, numeric formatting, and UUID normalization. The UUID must never acquire opaque-ID provenance; arbitrary numbers must never become counts or measurements.
+
 For every surface, the harness records at least one expected registered safe event and asserts it is present before checking marker absence. This non-vacuity assertion prevents a disconnected or empty sink from passing. For a surface expected not to exist, such as the default engine log file, assert both that the file is absent and that another known surface observed the operation.
 
 The matrix runs success and failure in default, quiet, verbose, JSON, and file modes where meaningful:
@@ -274,8 +305,8 @@ The matrix runs success and failure in default, quiet, verbose, JSON, and file m
 | Repository | Surfaces scanned byte-for-byte |
 |---|---|
 | engine | callback sink, progress v1 compatibility output, reason output, isolated envelope, in-process result, warnings capture, stdlib logs, attempted engine file, diagnostic and evidence projections, subset status, support payload fixture, subprocess captures |
-| CLI | stdout, stderr, Rich capture, `--json`, `--quiet`, `--verbose`, ordinary `--output` files, report files, evidence, progress, warnings, command usage errors, all uncaught-command guards |
-| Platform | API success and error bodies, server and worker logs, job progress and runtime facts, audit rows, evidence JSON and HTML, telemetry, diagnostics, support bundles, warnings, child logs, Sentry event fixture, OpenTelemetry attributes |
+| CLI | stdout, stderr, Rich capture, `--json`, `--quiet`, `--verbose`, ordinary `--output` files, report files, evidence, progress, warnings, root callback, eager option, `--help`, unknown option, malformed option value, `BadParameter`, `UsageError`, `Abort`, `sys.excepthook`, `threading.excepthook`, `sys.unraisablehook`, async task handler, all uncaught-command guards |
+| Platform | API success and error bodies, `HTTPException`, `JSONResponse`, base and text/HTML `Response` variants, SSE yields, server and worker logs, job progress and runtime facts, audit/evidence model constructors and persisted rows, evidence JSON and HTML, telemetry, diagnostics, support bundles, warnings, child logs, Sentry event fixture, OpenTelemetry attributes |
 
 Each recorder scans text, bytes, JSON keys and values, filenames created under its temporary root, captured log records before formatting, and nested database JSON. It also asserts no `Traceback`, source line, absolute path, URL user information, or traceback-local representation appears. Property tests generate Unicode, control characters, long values, path variants, nested containers, exception subclasses, and alias collisions.
 
@@ -286,18 +317,26 @@ The unsafe channel has a separate test. It proves explicit opt-in, label, permis
 Author tests before implementation for:
 
 - direct construction, dataclass replacement, subclassing, object mutation attempts, duplicate fields, unknown enums, booleans as integers, NaN and infinity, huge values, oversized collections, and arbitrary dictionaries;
+- `object.__new__`, `object.__setattr__`, copied instances, guessed module tokens, class-attribute inspection, `str` subclasses, fresh UUID-shaped customer values, and forged `SerializedSafePayload` objects all failing provenance verification;
+- serializer and every renderer returning no mapping protocol or mutable intermediate, plus a cross-function helper attempting to append `str(exc)` to a payload and failing before any sink write;
 - clean source names being aliased just like hostile names;
+- alias allocation storing only keyed digest bytes, capping at 4096 per kind, returning the fixed overflow alias, preserving canonical pre-fan-out order across threads and processes, and never retaining weak-referenceable source wrapper objects;
 - invalid construction raising fixed programming errors that do not echo the rejected value;
-- emit-time revalidation detecting forged nested state;
+- emit-time provenance and canonical-digest verification detecting forged or mutated nested state without reconstructing an opaque ID from text;
 - unknown field and schema mapping to `safe_output.invalid`;
 - registry or serializer failure producing the exact emergency literal with no logger call;
 - sink failure producing no raw fallback and restoring ambient state;
-- exception chains and locals becoming unreachable after conversion;
-- legacy F29 progress and STORM schemas being projections of the canonical event rather than independent validation paths.
+- dynamically named exception subclasses mapping to the fixed `Exception` enum without accessing `__name__`, plus exact allowed types mapping to the expected enum;
+- executing catch-frame tests proving `traceback.clear_frames` is never called on the active frame, inner unwound frames may be cleared, traceback links are detached, and chains and locals become unreachable after conversion;
+- concurrent threads and async tasks proving the proxy discards only the scoped writer, never suppresses another task's output, never holds a lock across `await`, restores nested tokens, and cannot be bypassed by the authorized sink;
+- isolated-child native-style `os.write(1, marker)` and `os.write(2, marker)` proving FD-level redirection while the separate structured channel remains non-vacuous;
+- legacy `Logger`, `StructuredEvents`, `TelemetryClient.emit`, `event_to_dict`, and `event_to_legacy_dict` calls proving free strings and mappings are discarded in 0.8.0 and only fixed or sealed events emerge;
+- F29 `ordinary_output` defaulting false for every existing reason, with the exact reviewed opt-in manifest and aliased compatibility projections;
+- legacy F29 progress and STORM schemas being sealed projections of the canonical event rather than independent validation paths.
 
 ### AST and taint sentry
 
-Generalize `tests/sentry/test_log_interpolation.py` into one symbol-aware analyzer shared by engine tests. Scan all production Python outside `safe_output` and exact reviewed data-plane sinks. Resolve:
+Generalize `tests/sentry/test_log_interpolation.py` into one symbol-aware analyzer exported from `decoy_engine.safe_output._testing`. Engine, CLI, and Platform import and run that exact implementation in CI with separate versioned sink manifests; consumers may add sink descriptors but may not fork analyzer logic. Scan all production Python outside the one exception module and exact reviewed data-plane sink functions. Resolve:
 
 - direct and aliased imports;
 - module and function aliases assigned through names and attributes;
@@ -309,10 +348,13 @@ Generalize `tests/sentry/test_log_interpolation.py` into one symbol-aware analyz
 - `json.dump` and serializer writes to streams;
 - subprocess creation with inherited output or later replay of captured output;
 - third-party tracker capture and telemetry attribute calls.
+- FastAPI and Starlette `HTTPException`, `JSONResponse`, `Response`, `PlainTextResponse`, `HTMLResponse`, framework-returned dictionaries and models, SSE event yields, and audit/evidence ORM or Pydantic model constructors.
 
-Outside the boundary, an ordinary sink call is legal only when its data argument is the direct result of `serialize_safe_event` or a branded safe mapping carried by `SafeEventSink`. No local variable named `safe` is trusted. The analyzer follows simple assignments and returns within a function, rejects reflective or unresolved dispatch near a sink, and fails closed on newly discovered sink APIs.
+Outside the boundary, an ordinary sink call is legal only when its data argument is a provenance-backed `SafeEvent` or `SerializedSafePayload` handed to a registered adapter. No dictionary, local variable named `safe`, class with a spellable brand, or helper return annotation is trusted. The analyzer follows assignments, parameters, returns, and calls across local helper functions, rejects mutation or enrichment of sealed payload flow, rejects reflective or unresolved dispatch near a sink, and fails closed on newly discovered sink APIs.
 
 For every `except ... as exc`, uses of the caught name are limited to `type(exc)`, `isinstance`, bare re-raise inside internal control flow, or direct handoff to `safe_event_from_exception`. Attribute access, formatting, string conversion, logging, returning, closure capture, container insertion, chaining, and passing to another function fail the sentry unless that exact function is the boundary.
+
+Regardless of whether an exception is bound with `as`, the analyzer bans `sys.exc_info`, every `traceback.*` access, `logging.exception`, logger `.exception`, and every `exc_info=` keyword outside `safe_output/_exception.py`. There is no directory exclusion or bare-except loophole. The exception module manifest permits only the exact operations required by the reviewed conversion design.
 
 An exact manifest names data-plane writer functions and their artifact class. A code review and sentry test fail if the manifest grows without a matching threat-model entry. Directory exclusions and generic `# noqa` are prohibited.
 
@@ -320,22 +362,41 @@ Add Semgrep taint rules from exception, path, config, report, row, connector, an
 
 ### Sentry self-tests
 
-Use in-memory source fixtures and temporary packages to seed one violation for every sink class and every evasion class: aliased `print`, assigned logger, `getattr(console, "print")`, `io.open`, `Path.write_text`, exception f-string, `logger.exception`, `exc_info`, warning text, JSON dump, subprocess inheritance, captured-output replay, tracker extras, and a fake branded variable. Assert the analyzer reports the expected file and rule.
+Use in-memory source fixtures and temporary packages to seed one violation for every sink class and every evasion class: aliased `print`, assigned logger, `getattr(console, "print")`, `io.open`, `Path.write_text`, exception f-string, a bare `except` with `sys.exc_info`, every `traceback` spelling, `logger.exception`, `logging.exception`, `exc_info`, warning text, JSON dump, subprocess inheritance, captured-output replay, tracker extras, a fake branded variable, cross-helper dictionary enrichment, `HTTPException(detail=...)`, each Response variant, framework model return, SSE yield, and audit/evidence model construction. Run the same core fixtures against all three repository manifests and assert the analyzer reports the expected file and rule.
 
 The runtime harness monkeypatches one renderer to append a marker after serialization and asserts the surface scan fails. It monkeypatches construction and serialization failure separately and asserts only the fixed fallback appears. CI records these as self-test passes, not by committing a broken production fixture.
+
+### Argon finding closure matrix
+
+Every row below is an acceptance commitment. The named test is authored and captured RED before the design change in that row is implemented.
+
+| Finding | Concrete design closure | RED-first acceptance witness | Slice and sizing effect |
+|---|---|---|---|
+| BLOCKER-1 | Closure-held provenance backs `SafeEvent`, `OpaqueId`, and `SerializedSafePayload`; application code never receives an authorized plain mapping. | Forge with `__new__`, `__setattr__`, copy, subclass, guessed token, customer UUID, fresh dictionary, and cross-helper enrichment; each must fail closed while a named factory remains non-vacuously renderable. | Slice 0 is limited to model, sealing, aliases, and registry. Analyzer work moves to Slice 1. |
+| BLOCKER-2 | The root CLI wrapper starts before Typer or Click parsing, uses `standalone_mode=False`, converts usage control flow without value echo, and installs process and async hooks. | Seed markers through root callback, help, unknown and malformed options, `BadParameter`, `UsageError`, `Abort`, main-thread, child-thread, unraisable, and task failures. | Generic hooks enter Slice 2; CLI process-entry integration is a dedicated part of Slice 6. |
+| BLOCKER-3 | Exact `type(exc)` lookup returns a closed enum, and traceback hygiene never clears the executing catch frame. | Use a secret-named subclass and a real active traceback to prove no `__name__` read and no `RuntimeError`; prove inner frames detach and locals become unreachable. | Slice 2 owns exception conversion alone; stream and child containment move to Slice 3. |
+| HIGH-1 | Permanent `ContextVar` proxy streams replace global swapping; owned children redirect FD 1 and 2 with `os.dup2` and use a separate structured channel. | Interleave tasks and threads, hold work across `await`, write safe output from another context, and call `os.write` in every child worker. | New Slice 3 isolates concurrency and FD mechanics for focused review. |
+| HIGH-2 | Legacy `Logger`, `StructuredEvents`, `TelemetryClient.emit`, `event_to_dict`, and `event_to_legacy_dict` discard free-form input in 0.8.0 and emit or return only fixed events or sealed payloads. | Call every legacy signature with markers in each string and mapping position and show that current behavior is RED before all forwarding is removed. | Slice 4 explicitly owns legacy neutering before broader engine family migration. |
+| HIGH-3 | One analyzer from `decoy_engine.safe_output._testing` runs with engine, CLI, and Platform manifests, covers implicit framework and persistence sinks, and bans all exception-state APIs outside `_exception.py`. | Shared fixtures exercise helper indirection, every Response and HTTP exception variant, SSE, model constructors, bare `except`, `sys.exc_info`, `traceback.*`, `logging.exception`, and `exc_info=`. | Shared analyzer becomes Slice 1; consumer manifest gates repeat in Slices 6 and 7. |
+| MEDIUM-1 | Alias state contains only keyed digests, is locked and capped, and is preallocated in canonical order before fan-out. | Inspect state for absent raw identifiers, overflow past 4096, race concurrent allocation, and compare aliases across every surface and schedule. | Alias work stays in narrow Slice 0 and is complete before event-family consumers. |
+| MEDIUM-2 | `families/` separates domains, every module stays below 450 lines, and F29 `ordinary_output` defaults false with an exact opt-in manifest. | Make module-size and registry-default tests RED before package creation, then prove existing reasons are rejected until explicitly projected with aliases. | Slice 0 owns the default and budgets; Slice 5 adds families one module at a time. |
+| MEDIUM-3 | A topology gate chooses merged commits or exact STORM/F43 structural commits and produces one migration, never dual implementations. | On a fixture branch without the merge, prove the slice resolves the cited structures and fails closed if their source commit is unavailable. | Slices 6 and 7 start with recorded topology gates and exact input commits. |
+| LOW-1 | The corpus includes clean, short, normalized, UUID-shaped, integer, float, and fixed-width canaries in addition to high-entropy markers. | Demonstrate at least one current regex, truncation, normalization, UUID, and numeric path that misses a noisy marker but leaks the shape-valid canary. | Corpus specification begins in Slice 0; analyzer and full recorder execution move to Slice 1 and repeat in consumer slices. |
 
 ## Implementation slices
 
 Every slice begins with its acceptance tests in RED, preserves the failure output, implements the smallest change, runs the self-check, then receives an adversarial review and remediation. No slice may weaken, delete, xfail, or broaden an assertion to turn green.
 
-### Slice 0: typed model, registry, RED corpus, and sentries
+The Argon remediation increases the plan from seven to nine slices. The former combined model/sentry slice is split, and exception handling is separated from concurrent stream and child-FD containment. This keeps provenance, analyzer, exception, and process-global work independently reviewable and keeps every new or expanded Python module below 450 lines.
+
+### Slice 0: provenance model, sealed payload, aliases, and registry
 
 Scope:
 
-- Add the `safe_output` package, schema constants, frozen model, aliases, registry entries, serializer, emergency literal, and public exports.
-- Add the shared marker corpus, construction tests, runtime surface recorder primitives, generalized AST analyzer, Semgrep rules, and sentry mutation fixtures.
-- Record baseline RED evidence showing current direct sinks, free fields, default log file, verbose tracebacks, and seeded markers.
-- Bump engine to 0.8.0 only when the model and compatibility manifest are green.
+- Author RED tests first for direct and forged construction, closure-held provenance, UUID-shaped opaque-ID laundering, mutation through `object.__setattr__`, non-mapping sealed payload behavior, cross-helper enrichment, alias digest-only storage, cap and overflow, concurrent canonical allocation, F29's false default, exact opt-in manifest, and the 450-line module budgets.
+- Add the `safe_output` package skeleton, schema constants, provenance service, exact model, sealed payload, sink driver capability, alias allocator, registry entries, emergency literal, and minimal family factories.
+- Add the grammar-clean, shape-preserving, UUID, and numeric canaries to the shared corpus specification and prove the current behavior RED where applicable.
+- Bump engine to 0.8.0 only when provenance, sealing, aliases, registry compatibility, and module-size tests are green.
 
 Self-check:
 
@@ -345,14 +406,34 @@ ruff check src/decoy_engine/safe_output tests/unit/safe_output tests/security te
 mypy src/decoy_engine/safe_output
 ```
 
-Adversarial review: attempt direct dataclass construction, forged internals, generic token secrets, hostile numeric objects, serializer monkeypatches, aliases, reflective sink access, and sentry bypass. Remediate every BLOCKER and HIGH before Slice 1.
+Adversarial review: attempt direct dataclass construction, `object.__new__`, `object.__setattr__`, copied or subclassed objects, guessed tokens, class inspection, generic token secrets, valid customer UUIDs, hostile numeric objects, payload mapping access, cross-function mutation, alias flooding and reordering, and serializer monkeypatches. Remediate every BLOCKER and HIGH before Slice 1.
 
-### Slice 1: exceptions and ambient containment
+### Slice 1: shared analyzer, sink manifests, and RED surface corpus
 
 Scope:
 
-- Implement exception conversion over `reason_adapter` and closed `SafeBoundaryError` propagation.
-- Implement `SafeOutputScope`, logging handler, warnings capture, Python stream containment, subprocess policy, and exact state restoration.
+- Author analyzer self-tests RED first for every direct, aliased, assigned, reflective, cross-helper, framework-implicit, bare-except, exception-state, and fake-brand evasion listed above.
+- Export the one analyzer from `decoy_engine.safe_output._testing` and add versioned engine, CLI, and Platform sink manifest fixtures. Platform fixtures include `HTTPException`, every Response variant, returned Pydantic and dataclass models, SSE yields, and audit/evidence constructors.
+- Add runtime recorder primitives, Semgrep rules, shared marker corpus harness, and baseline RED evidence showing current direct sinks, free fields, default log file, verbose tracebacks, process-entry leaks, and seeded markers.
+- Fail closed on unknown sink APIs and ban `sys.exc_info`, `traceback.*`, `logging.exception`, and `exc_info=` outside `_exception.py`.
+
+Self-check:
+
+```bash
+pytest -q tests/sentry/test_value_free_boundary.py tests/sentry/test_log_interpolation.py tests/security/test_safe_output_boundary.py
+ruff check src/decoy_engine/safe_output/_testing.py tests/sentry tests/security
+mypy src/decoy_engine/safe_output/_testing.py
+```
+
+Adversarial review: add local helper indirection, framework auto-serialization, dynamically assigned constructors, bare `except`, reflection, and one unlisted sink to temporary fixtures. Each must fail with the expected rule and location before Slice 2.
+
+### Slice 2: exact exception conversion and process hooks
+
+Scope:
+
+- Author RED tests first for dynamically named subclasses, exact type-to-enum lookup, active catch-frame behavior, inner-frame clearing, traceback detachment, bounded chains, safe hooks, and unreachable locals.
+- Implement exception conversion over `reason_adapter`, the exact `_ALLOWED_EXCEPTION_TYPES` map, and closed `SafeBoundaryError` propagation.
+- Implement `SafeOutputScope` logging handler, warnings capture, `sys.excepthook`, `threading.excepthook`, `sys.unraisablehook`, async exception handler, and exact state restoration. Stream containment and child descriptors remain Slice 3.
 - Remove the default engine file handler and raw fallback warning.
 - Migrate fixed-width and extension/provider catch seams first because they exercise raw buffers and arbitrary errors.
 
@@ -363,16 +444,36 @@ pytest -q tests/unit/execution/test_isolated_safe_error.py tests/unit/profile te
 pytest -q tests/unit/transforms/test_text_mask.py tests/connectors
 ```
 
-Adversarial review: nested contexts, threads, cancellation, handler failure, warning formatter failure, malicious `__str__`, chained exceptions, raw bytes in locals, child output floods, and state-restore exceptions. Confirm no original exception remains reachable from an exported object.
+Adversarial review: dynamic secret-named exception classes, exact allowed classes, nested contexts, handler failure, warning formatter failure, malicious `__str__`, active and unwound traceback shapes, chained exceptions, raw bytes in locals, hook re-entry, and state-restore exceptions. Confirm no class name is read and no original exception remains reachable from an exported object.
 
-### Slice 2: engine progress, logging, callbacks, and isolation
+### Slice 3: concurrent stream proxy and isolated child descriptors
 
 Scope:
 
+- Author RED tests first with interleaved threads and async tasks, nested cancellation, safe-driver output, extension output, and native-style `os.write` calls in each owned child type.
+- Install permanent `ContextVar`-aware stdout and stderr proxies without swapping streams under a lock. Restore only context tokens, and keep authorized safe driver writes distinct from ordinary writes.
+- Redirect file descriptors 1 and 2 with `os.dup2` at startup in `_isolated_worker.py`, `generation_child.py`, `_pg_probe_child.py`, and every other owned worker before extension import. Move structured transport to a dedicated descriptor or private 0600 file.
+- Preserve the explicit residual for native writes in non-isolated in-process extensions and route high-risk drivers to isolation.
+
+Self-check:
+
+```bash
+pytest -q tests/unit/safe_output/test_stream_proxy.py tests/unit/execution/test_isolated_safe_error.py tests/security/test_safe_output_boundary.py
+pytest -q tests/unit/execution tests/connectors
+```
+
+Adversarial review: attempt cross-task suppression, lock starvation, nested proxy misuse, direct original-stream access, output floods, native writes before and after child initialization, communication-channel corruption, cancellation, and descriptor restoration. Remediate every BLOCKER and HIGH before Slice 4.
+
+### Slice 4: engine progress, legacy API neutering, logging, and callbacks
+
+Scope:
+
+- Author RED tests first showing that each legacy API currently forwards a marker and that each `event_to_*` path returns an application-mutable dictionary.
 - Convert F29 progress events and `context.py` callbacks to `SafeEventSink` factories.
+- Neuter `Logger`, `StructuredEvents`, `TelemetryClient.emit`, `event_to_dict`, and `event_to_legacy_dict` in 0.8.0. Keep signatures only where transition requires them; discard free-form arguments and return or emit only fixed events or sealed payloads.
 - Replace all direct production narrative logs and warning emissions with safe events.
-- Convert isolated worker envelopes, `IsolatedRunResult.error`, row error summaries, child exit reporting, and serializer `default=str` paths.
-- Maintain progress v1 and legacy compatibility only through serializer projections.
+- Convert isolated worker envelopes, `IsolatedRunResult.error`, row error summaries, child exit reporting, and serializer `default=str` paths without undoing Slice 3's descriptor boundary.
+- Maintain progress v1 and legacy wire compatibility only through registered sealed projections.
 
 Self-check:
 
@@ -381,16 +482,18 @@ pytest -q tests/unit/execution tests/unit/progress tests/security/test_reason_bo
 rg -n 'default=str|logger\.exception|exc_info=True|print_exception|format_exc' src/decoy_engine
 ```
 
-The final `rg` must produce only reviewed internal data-plane or boundary definitions recorded in the sentry manifest. Adversarial review injects markers through every logger callback, warning, isolated envelope key, child stream, and compatibility serializer.
+The final `rg` must produce only the exact `_exception.py` boundary definitions recorded in the sentry manifest. Adversarial review injects markers through every legacy method argument, logger callback, warning, isolated envelope key, child stream, and compatibility serializer and verifies that deprecation does not preserve a raw forwarding lane.
 
-### Slice 3: engine evidence, diagnostics, validation, and manifests
+### Slice 5: engine event families, evidence, diagnostics, and manifests
 
 Scope:
 
+- Author the family-specific RED projection and module-size tests before each family module.
 - Add explicit safe event families for validation, quality, row-error counts, fidelity, diagnostics, subset status, publication, and support facts.
 - Replace exported `quality_metrics`, warning details, `repr(exc)`, real schema names, row-error prose, and arbitrary evidence dictionaries with typed projections and aliases.
 - Preserve raw data only inside typed data-plane artifacts and private computation. Do not relabel a report dictionary as safe.
 - If STORM phase envelopes have landed, adapt them here through explicit event families.
+- Keep each family and support module below 450 physical lines; split by change reason before adding another concern.
 
 Self-check:
 
@@ -401,16 +504,20 @@ python scripts/test_flight.py
 
 Adversarial review traces one marker from each internal raw report to every exported projection, checks alias stability and collisions, and verifies customer diagnostic privilege does not change the output class.
 
-### Slice 4: CLI consumer, independently releasable
+### Slice 6: CLI consumer and whole-process boundary, independently releasable
 
 Prerequisite: published engine 0.8.0. Pin it exactly.
 
 Scope:
 
-- After STORM merges, retain `_value_free.py` command guards and renderers but delegate construction, prose, exception conversion, silencing, and serialization to engine 0.8.0.
-- Convert `_projections.py` into thin schema adapters over engine event factories. Always alias table and field names. Never read engine message or detail fields.
+- Run the topology gate first. Use the merged STORM structure or base/cherry-pick the exact `_value_free.py`, `_boundary.py`, `_projections.py`, tests, and F43 structural commits as one integration branch. Record exact input commits. Do not build a parallel main-only boundary.
+- Author RED tests first for root callback, eager options, `--help`, unknown option, malformed value, usage error, `BadParameter`, `Abort`, each process hook, and background task failure. Every test seeds an offending value and proves the current pre-command boundary leaks it.
+- Migrate `_value_free.py` onto engine provenance-backed models, named factories, sealed payloads, `SafeEventSink`, and `SafeOutputScope`, retaining only presentation responsibility.
+- Migrate `_boundary.py` onto a wrapper established before `app()` or Click parsing, with `standalone_mode=False`, fixed usage events, permanent stream proxies, safe hooks, and no default framework echo or exception formatting.
+- Convert `_projections.py` into thin sealed schema adapters over engine event factories. Always alias table and field names. Never read engine message, detail, or a plain event mapping.
 - Migrate every command's stdout, stderr, JSON, quiet, verbose, ordinary file, report, evidence, warning, and progress path.
-- Integrate F43 `SafeFinding` and engine logger suppression as event families and scope delegation. Preserve raw data stdout only for commands explicitly documented as data-plane operations.
+- Migrate F43 `SafeFinding` onto `families.ci` and sealed JSON, Markdown, stderr, and SARIF adapters; delegate engine logger suppression to `SafeOutputScope` and remove the local model after callers move. Preserve raw data stdout only for commands explicitly documented as data-plane operations.
+- Import and run the engine analyzer with the CLI sink manifest; do not fork it.
 
 Self-check:
 
@@ -421,17 +528,20 @@ ruff check src tests
 mypy src/decoy
 ```
 
-Adversarial review runs every command mode with hostile paths, reports, extension exceptions, usage errors, layout failures, engine logs, and output-file failures. Existing STORM and F43 assertions must remain at least as strict.
+Adversarial review runs every command mode and every pre-command path with hostile paths, reports, extension exceptions, usage errors that would echo option values, help, root callbacks, layout failures, process hooks, engine logs, and output-file failures. Existing STORM and F43 assertions must remain at least as strict.
 
-### Slice 5: Platform consumer, independently releasable
+### Slice 7: Platform consumer and framework sinks, independently releasable
 
-Prerequisite: published engine 0.8.0. Pin it exactly. It does not depend on Slice 4.
+Prerequisite: published engine 0.8.0. Pin it exactly. It does not depend on Slice 6.
 
 Scope:
 
-- Replace `fidelity_projection.py` policy with a thin adapter to engine event factories while preserving route schema and numeric facts.
+- Run the topology gate first. Use the merged STORM structure or base/cherry-pick the exact `fidelity_projection.py` structural commit and tests, then replace its policy in the same integration branch.
+- Author RED tests first for raw and forged payloads reaching `HTTPException`, `JSONResponse`, `Response`, `PlainTextResponse`, `HTMLResponse`, SSE yields, audit/evidence constructors, and concurrent Platform output.
+- Replace `fidelity_projection.py` policy with a thin sealed adapter to `safe_output.families.quality` while preserving route schema and numeric facts.
 - Migrate API errors, job and progress events, server and worker logs, audit event details, evidence, telemetry, runtime facts, diagnostics, support bundles, warnings, and third-party tracker events.
-- Install Platform sink adapters for database audit, structured logs, Sentry, and OpenTelemetry. These accept canonical mappings only.
+- Install Platform sink adapters for framework responses, SSE, database audit/evidence models, structured logs, Sentry, and OpenTelemetry. These accept only `SafeEvent` or `SerializedSafePayload`.
+- Import and run the engine analyzer with the Platform manifest containing every implicit framework and persistence sink; do not fork it.
 - Preserve audit chain, transaction, authorization, and retention behavior. F31 changes payload representation, not audit durability.
 - Standardize owned child processes on bounded captured streams and closed-code results.
 
@@ -446,7 +556,7 @@ mypy api
 
 Use the actual test module names present after rebase if a listed aggregate file is split, but do not reduce the named surface coverage. Adversarial review queries persisted database JSON and rendered HTML in addition to captured HTTP and logs.
 
-### Slice 6: convergence, release evidence, and duplicate removal
+### Slice 8: convergence, release evidence, and duplicate removal
 
 Scope:
 
@@ -498,13 +608,18 @@ The objective gate is green only if:
 7. invalid construction, serialization, redaction, and sink failures return only registered or literal fallbacks;
 8. all prior security tests remain and pass;
 9. full repository gates pass on the exact candidate commits;
-10. CLI and Platform lock exactly to the released engine contract.
+10. CLI and Platform lock exactly to the released engine contract;
+11. provenance forgery, mutable payload, helper enrichment, and UUID-laundering tests fail before implementation and pass only through registered factories and drivers;
+12. CLI parsing, help, root callbacks, usage errors, and process hooks are inside the root boundary with seeded values absent;
+13. concurrent stream tests prove task isolation, and every owned child proves FD 1 and 2 redirection with a live dedicated structured channel;
+14. all three repositories run the same analyzer implementation with their reviewed manifest, and all legacy free-form APIs are neutered;
+15. every new or expanded F31 Python module remains below 450 physical lines.
 
 Coverage percentage alone is not acceptance evidence. Add branch and mutation attention specifically to constructors, emit-time revalidation, emergency fallback, exception conversion, state restoration, alias allocation, AST resolution, and tracker adapters. A surviving mutation in one of those functions blocks release.
 
 ### Rollback
 
-Engine 0.8.0 is additive at import level but coordinated at output behavior. Rollback means pinning CLI or Platform back to their previous exact engine version and previous consumer commit together. Never roll back only the engine beneath an F31 consumer. Keep `decoy-safe-output/v1` readers forward-compatible with unknown registered reasons by mapping them to `safe_output.invalid`; do not silently re-enable raw output. Database migrations are not required for the contract. If a consumer adds typed columns, its slice supplies its own reversible migration and rollback test.
+Engine 0.8.0 is additive at import level and intentionally breaking for unsafe legacy output behavior. Rollback means pinning CLI or Platform back to their previous exact engine version and previous consumer commit together. Never roll back only the engine beneath an F31 consumer. Keep `decoy-safe-output/v1` readers forward-compatible with unknown registered reasons by mapping them to `safe_output.invalid`; do not silently re-enable raw output. Database migrations are not required for the contract. If a consumer adds typed columns, its slice supplies its own reversible migration and rollback test.
 
 ## Documentation plan
 
@@ -537,21 +652,21 @@ Barry performs the repository documentation sync after code review as required b
 
 | Risk | Mitigation and acceptance evidence |
 |---|---|
-| A safe-looking token contains a secret | No generic token field. Only registry enums, exact UUID or ULID variants, and ordinal aliases. Seed clean identifiers and token-shaped secrets. |
-| A forged event bypasses construction | Frozen slotted types, exact nested types, canonical reconstruction at emit time, and mutation tests. |
+| A safe-looking token contains a secret | No generic token field. Only registry enums, provenance-backed opaque variants, and ordinal aliases. UUID or ULID syntax alone grants nothing. Seed clean identifiers and token-shaped secrets. |
+| A forged event or customer UUID bypasses construction | Closure-held provenance registration for events, opaque IDs, and sealed payloads; canonical digest verification; no textual reconstruction; mutation, `__new__`, `__setattr__`, copy, subclass, and UUID-laundering tests. |
 | Failure handling leaks the rejected value | Fixed error messages, generic invalid event, literal emergency record, and monkeypatched serializer and logger failures. |
 | Logging filters miss descendants or last-resort handlers | Boundary-owned handler, no default engine handler, propagation and last-resort tests, exact snapshot and restoration. |
-| Global stream capture races | Reentrant process guard, nested and concurrent tests, process isolation option, declared native FD residual risk. |
-| Exception locals survive in chains or frames | Convert in the smallest frame, do not store the exception, clear cause and context, drop traceback, ban locals capture, weak-reference reachability tests. |
-| Aliases reveal ordering or cardinality | Ordering and bounded counts are explicitly allowed. Alias spaces are per operation and contain no hash of the source value. Document this residual metadata. |
+| Global stream capture races | Permanent `ContextVar` proxy, no stream swapping or lock across extension work, nested thread and task tests, and descriptor-level isolation for owned children. |
+| Exception locals survive in chains or frames | Convert in an outer frame, never clear an executing frame, clear only proven unwound inner frames, detach tracebacks, sever cause and context, ban locals capture, and run weak-reference reachability tests. |
+| Aliases retain values, grow without bound, or reorder concurrently | Store keyed BLAKE2b digests only, cap each kind at 4096 plus a fixed overflow alias, lock allocation, pre-register canonical order before fan-out, and share one run scope across sinks. Ordering and bounded counts remain documented residual metadata. |
 | Numeric fields encode values | Closed field-specific semantics and ranges. No arbitrary metric name. Review each added numeric field as a schema change. |
 | Existing detailed diagnostics become less useful | Add safe type, component, position, counts, and registry reason. Use the explicit isolated unsafe channel only when approved. Verbose never weakens safety. |
 | Data-plane writers become a loophole | Exact function manifest, threat-model entry per writer, no directory exclusions, sentry review on growth, and status-only ordinary events. |
-| STORM or F43 merge conflicts | Preserve their command and renderer structure, replace only duplicated policy with adapters after rebase, and keep their tests. No dependency on unmerged code. |
-| Consumer schema drift | Exact engine pin, compatibility fixtures from canonical mappings, cross-repo corpus, and release engine first. |
-| Sentry evasion through aliases or reflection | Symbol and assignment resolution, conservative failure on unresolved sink dispatch, Semgrep backstop, and explicit evasion self-tests. |
+| STORM or F43 is unmerged or conflicts | Use the deterministic topology gate, base or cherry-pick exact structural commits, replace duplicated policy in one unified migration, and keep their tests. Do not build dual targets. |
+| Consumer schema drift | Exact engine pin, compatibility fixtures from sealed projections, cross-repo corpus, and release engine first. |
+| Sentry evasion through helpers, framework serialization, aliases, or reflection | One shared analyzer, repository sink manifests, interprocedural local flow, implicit framework and persistence sinks, conservative failure on unresolved dispatch, Semgrep backstop, and explicit evasion self-tests. |
 | Regex or secret scanners create false confidence | The construction model and sentries are the proof. Pattern scans are recorded only as defense-in-depth evidence. |
-| Native driver writes directly to an FD | Use subprocess isolation for high-risk drivers, close or redirect inherited descriptors where supported, document remaining platform-specific risk. |
+| Native driver writes directly to an FD | Redirect FD 1 and 2 before extension import in every owned child and use a dedicated structured channel. Require isolation for high-risk drivers and document the residual only for in-process native writes. |
 | Unsafe debug artifact is uploaded accidentally | New exclusive file, 0600, fixed label, no standard support or evidence discovery, separate retention, and exclusion tests. |
 
 ## Gate chain and handoff
