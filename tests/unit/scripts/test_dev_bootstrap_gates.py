@@ -57,7 +57,8 @@ def test_bootstrap_check_fails_on_a_lock_pin_that_differs_from_the_install(tmp_p
     assert "fix:" in out
 
 
-def test_gates_baseline_reports_a_seeded_failure_as_branch_only(tmp_path: Path) -> None:
+def _seeded_clone(tmp_path: Path) -> Path:
+    """A clone whose origin/main has one shared failure and whose HEAD adds one more."""
     clone = tmp_path / "repo"
     _git(tmp_path, "clone", "-q", "--shared", str(REPO), str(clone))
     # Test the scripts in this working tree, not whatever the clone's HEAD carries.
@@ -73,7 +74,11 @@ def test_gates_baseline_reports_a_seeded_failure_as_branch_only(tmp_path: Path) 
     (seed / "test_seed_branch.py").write_text("def test_branch():\n    assert False\n")
     _git(clone, "add", "-A")
     _git(clone, "commit", "-qm", "seed")
+    return clone
 
+
+def test_gates_baseline_reports_a_seeded_failure_as_branch_only(tmp_path: Path) -> None:
+    clone = _seeded_clone(tmp_path)
     argv = [str(BASH), "scripts/dev/gates.sh", "--steps", "tests", "--baseline", "tests/_seeded"]
     proc = _run(argv, clone)
     out = proc.stdout + proc.stderr
@@ -86,3 +91,48 @@ def test_gates_baseline_reports_a_seeded_failure_as_branch_only(tmp_path: Path) 
     assert "branch-only=1" in ids, out
     worktrees = _git(clone, "worktree", "list").splitlines()
     assert len(worktrees) == 1, f"baseline worktree was not cleaned up: {worktrees}"
+
+
+def test_gates_passes_a_green_run_with_an_evidence_block(tmp_path: Path) -> None:
+    clone = _seeded_clone(tmp_path)
+    argv = [str(BASH), "scripts/dev/gates.sh", "--steps", "tests", "tests/_seeded/test_seed_ok.py"]
+    proc = _run(argv, clone)
+    out = proc.stdout + proc.stderr
+    assert proc.returncode == 0, out
+    assert re.search(r"(?m)^=+ EVIDENCE =+$", proc.stdout), out
+    assert "[tests] PASS passed=1 failed=0" in proc.stdout, out
+
+
+_BROKEN_REPORTERS = {
+    "missing": None,
+    "crashing": "raise SystemExit('reporter crashed')\n",
+    "silent": "",
+    "truncated": "print('=' * 30 + ' EVIDENCE ' + '=' * 30)\n",
+}
+
+
+@pytest.mark.parametrize("kind", sorted(_BROKEN_REPORTERS))
+def test_gates_fails_when_the_reporter_does_not_print_evidence(tmp_path: Path, kind: str) -> None:
+    clone = _seeded_clone(tmp_path)
+    reporter = clone / "scripts" / "dev" / "_gates_report.py"
+    body = _BROKEN_REPORTERS[kind]
+    if body is None:
+        reporter.unlink()
+    else:
+        reporter.write_text(body)
+    argv = [str(BASH), "scripts/dev/gates.sh", "--steps", "tests", "tests/_seeded/test_seed_ok.py"]
+    proc = _run(argv, clone)
+    out = proc.stdout + proc.stderr
+    assert proc.returncode != 0, out
+    assert "gates: FAIL: no complete EVIDENCE block" in proc.stderr, out
+
+
+@pytest.mark.parametrize("steps", ["tests", ""])
+def test_gates_fails_when_no_step_ran(tmp_path: Path, steps: str) -> None:
+    # A gate that ran nothing is not a pass, even though nothing failed.
+    clone = _seeded_clone(tmp_path)
+    argv = [str(BASH), "scripts/dev/gates.sh", "--steps", steps, "tests/_seeded/absent.py"]
+    proc = _run(argv, clone)
+    out = proc.stdout + proc.stderr
+    assert proc.returncode != 0, out
+    assert "gates: FAIL: no step ran" in proc.stderr, out

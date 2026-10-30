@@ -37,6 +37,7 @@ done
 [ -x "$BIN/python" ] || { echo "gates: no venv at $VENV; run scripts/dev/bootstrap.sh" >&2; exit 2; }
 OUT=$(mktemp -d "${TMPDIR:-/tmp}/gates.XXXXXX")
 WT=$OUT/baseline-tree
+# shellcheck disable=SC2329  # invoked by the EXIT trap
 cleanup() { [ -d "$WT" ] && git -C "$ROOT" worktree remove --force "$WT" 2>/dev/null; }
 trap cleanup EXIT
 
@@ -46,6 +47,7 @@ changed_tests() {
   { git -C "$ROOT" diff --name-only "$base"; git -C "$ROOT" ls-files --others --exclude-standard; } |
     sort -u | while read -r f; do
       [ -f "$ROOT/$f" ] || continue
+      # shellcheck disable=SC2254  # SRC_MATCH is a glob on purpose
       case $f in
         tests/*test_*.py) echo "$f" ;;
         $SRC_MATCH)
@@ -125,6 +127,12 @@ if [ $BASELINE = 1 ]; then
 fi
 echo "logs:       $OUT" >>"$OUT/meta"
 
-"$BIN/python" "$ROOT/scripts/dev/_gates_report.py" "$OUT"
+# A gate passes only on a complete EVIDENCE block and at least one step that ran green.
+"$BIN/python" "$ROOT/scripts/dev/_gates_report.py" "$OUT" | tee "$OUT/evidence"
+report_rc=${PIPESTATUS[0]}
+if [ "$report_rc" != 0 ] || ! grep -qx '=* EVIDENCE =*' "$OUT/evidence" || ! tail -n 1 "$OUT/evidence" | grep -qx '=\{70\}'; then
+  echo "gates: FAIL: no complete EVIDENCE block (reporter exit $report_rc; logs in $OUT)" >&2; exit 3
+fi
 cut -f2 "$OUT/branch.steps" | grep -qvE '^(0|-1)$' && exit 1
+cut -f2 "$OUT/branch.steps" | grep -qx 0 || { echo "gates: FAIL: no step ran (all skipped or none selected)" >&2; exit 3; }
 exit 0
