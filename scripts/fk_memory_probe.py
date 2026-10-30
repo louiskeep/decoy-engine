@@ -221,6 +221,12 @@ _CAPPED_ENV = {
 }
 
 
+# Keyed strategies need a secret in every release phase; the probe measures memory, not secrecy.
+from decoy_engine.keyprovider import SecretKeyProvider  # noqa: E402
+
+_PROBE_KEY = SecretKeyProvider(b"decoy-bench-throwaway-secret-0123456789")
+
+
 def _peak_rss_mb() -> float:
     """This process's true peak RSS in MB.
 
@@ -348,6 +354,7 @@ def _run_full(
     result = PandasExecutionAdapter().run(
         plan,
         fixture.sources,
+        key_provider=_PROBE_KEY,
         registry=fixture.registry,
         relationship_graph=fixture.graph(policy),
         namespace_registry=fixture.namespace_registry,
@@ -397,6 +404,7 @@ def _run_sequential(
     PandasExecutionAdapter().run_sequential(
         plan,
         loader,
+        key_provider=_PROBE_KEY,
         registry=get_default_registry(),
         relationship_graph=make_graph(policy),
         namespace_registry=NamespaceRegistry(bindings=()),

@@ -231,6 +231,7 @@ def _run_pipeline_once(args: argparse.Namespace) -> dict[str, Any]:
     from tests.perf_fixtures.ooc_route_witness import witness_ooc_route
 
     from decoy_engine.execution import ParquetTransactionalSink, run_pipeline
+    from decoy_engine.keyprovider import SecretKeyProvider
     from decoy_engine.profile._readers import LazySource
 
     data_dir, work = Path(args.data_dir), Path(args.work_dir)
@@ -251,6 +252,8 @@ def _run_pipeline_once(args: argparse.Namespace) -> dict[str, Any]:
                 config,
                 {t: LazySource(path=p) for t, p in paths.items()},
                 engine_version="d4-scale-proof",
+                # Keyed strategies need a secret in every release phase; this bench measures memory.
+                key_provider=SecretKeyProvider(b"decoy-bench-throwaway-secret-0123456789"),
                 execution_mode="out_of_core" if args.force_ooc else "auto",
                 sink=ParquetTransactionalSink(committed),
                 out_of_core_budget_bytes=budget,
