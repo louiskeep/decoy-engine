@@ -26,6 +26,7 @@ from decoy_engine.plan._types import ColumnSeed, SeedEnvelope, TableSeed
 from decoy_engine.providers_v2 import get_default_registry
 from decoy_engine.relationships._graph import OrphanPolicy, RelationshipGraph
 from decoy_engine.relationships._namespace import NamespaceRegistry
+from tests._keyed_secret import THROWAWAY_KEY_PROVIDER
 from tests.parity import _strict_compare as sc
 from tests.parity._d1a_hash_data import (
     _PASSTHROUGH,
@@ -38,7 +39,6 @@ from tests.parity._d1a_hash_data import (
     hash_seeds,
     source_columns,
 )
-from tests._keyed_secret import THROWAWAY_KEY_PROVIDER
 
 REGISTRY = get_default_registry()
 NAMESPACES = NamespaceRegistry(bindings=())
