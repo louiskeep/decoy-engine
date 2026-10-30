@@ -370,8 +370,8 @@ def test_vault_writer_job_stays_whole_and_ends_with_the_same_entries(
 def test_vault_file_round_trip_equals_the_split_off_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from decoy_engine.plan._seed import _normalize_job_seed
     from decoy_engine.vault import load_vault
+    from tests._keyed_secret import THROWAWAY_KEY_PROVIDER
 
     cfg, sources = mt.build_job(
         tmp_path,
@@ -390,7 +390,7 @@ def test_vault_file_round_trip_equals_the_split_off_run(
         run_pipeline(cfg, sources=sources, vault_writer=writer, **mt.kw(**extra))
         path = tmp_path / f"{label}.vault"
         writer.write(path)
-        maps[label], ambiguous = load_vault(path, _normalize_job_seed(cfg))
+        maps[label], ambiguous = load_vault(path, THROWAWAY_KEY_PROVIDER.mask_key())
         assert ambiguous == 0
     assert calls == []
     assert maps["on"] == maps["off"]
@@ -514,11 +514,25 @@ def test_split_vetoed_random_columns_keep_the_full_frame_call(
     )
     calls = mt.spy_split(monkeypatch)
     adapter_calls = mt.spy_adapter_run(monkeypatch)
+    # Each run gets its own run-scoped prepared key provider (closed when the run ends), so the
+    # key material each call received is read at call time and compared by value below.
+    from decoy_engine.execution._pandas_adapter import PandasExecutionAdapter
+
+    run_keys: list[tuple[bytes, str]] = []
+    spied_run = PandasExecutionAdapter.run
+
+    def record_key(self: Any, *args: Any, **kwargs: Any) -> Any:
+        received = kwargs["key_provider"]
+        run_keys.append((received.mask_key(), received.key_version))
+        return spied_run(self, *args, **kwargs)
+
+    monkeypatch.setattr(PandasExecutionAdapter, "run", record_key)
     got = run_pipeline(cfg, sources=sources, **mt.kw())
     assert calls == []
     assert len(adapter_calls) == 1
     off = run_pipeline(cfg, sources=sources, **mt.kw(**mt.off_kw()))
     assert len(adapter_calls) == 2
+    assert run_keys[0] == run_keys[1] and len(run_keys[0][0]) >= 32
     _assert_same_adapter_call(adapter_calls[0], adapter_calls[1])
     assert mt.strip_elapsed(got.quality_metrics) == mt.strip_elapsed(off.quality_metrics)
     assert got.warnings == off.warnings
@@ -547,6 +561,10 @@ def _assert_same_adapter_call(a: tuple[Any, Any], b: tuple[Any, Any]) -> None:
             # One cache per job, so two jobs never share an instance.
             assert isinstance(value, PoolCache), key
             assert value is not b_kwargs[key], key
+            continue
+        if key == "key_provider":
+            # Per-run prepared wrappers; their key material is compared by the caller.
+            assert type(value) is type(b_kwargs[key]), key
             continue
         assert value == b_kwargs[key], key
 

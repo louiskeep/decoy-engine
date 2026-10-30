@@ -817,14 +817,16 @@ class TestRunMaskChunkedCallSites:
             list(run_mask_pipeline_chunked(cfg, [chunk], table="accounts", engine_version=_EV))
         assert exc.value.code == "undeclared_output_columns"
 
+    @pytest.mark.no_default_secret
     def test_empty_input_gate_profiles_the_real_table(self, tmp_path, monkeypatch) -> None:
         """The zero-chunk fail-closed gate must profile the REAL table so a keyed
         job's keyed strategy stays visible to require_mask_key. Kills
         empty_input_profile(table=None): a None-named profile table drops the
         config's keyed column from the seed envelope, so the GA gate no longer sees
         a keyed surface and silently returns an empty stream instead of demanding a
-        secret. (Pre-GA the gate accepts job_seed, so GA is where the profile's
-        table name is load-bearing.)"""
+        secret. (F13 removed the job_seed fallback in every release phase, so the
+        profile's table name is load-bearing everywhere; this test runs without the
+        default throwaway secret on purpose.)"""
         monkeypatch.setattr(release, "RELEASE_PHASE", "ga")
         cfg = _config(tmp_path, [{"name": "email", "strategy": "hash", "namespace": "e"}])
         with pytest.raises(KeyedStrategyRequiresSecret):

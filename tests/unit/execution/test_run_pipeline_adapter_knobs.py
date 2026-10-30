@@ -55,12 +55,15 @@ def _scalar_mask_sources(tmp_path) -> dict[str, pa.Table]:
     return {"customers": pa.Table.from_pandas(df, preserve_index=False)}
 
 
-# Captured from the original hardcoded `PandasExecutionAdapter()` path (seed 42).
+# Captured from the original hardcoded `PandasExecutionAdapter()` path. The email hashes were
+# re-pinned under F13 because job_seed keying was removed: they are now keyed by the shared
+# throwaway secret (and were cross-checked against the full-frame, auto_chunk=False and chunked
+# routes); zip and secret are unkeyed and unchanged.
 _GOLDEN = {
     "email": [
-        "fe41ab6a8df660b8689b220dedc9ed5bc4884e0b3aeeba7b37bbe7f75a82cefd",
-        "6618c5f5c09e40858005383ff376e4964778587a870e875015989e0be0d31405",
-        "e5aeefd8ad45bb1d8efbc1e70adf1512e89486daa5eb49579d52280521b8a9fc",
+        "9691a0a70e5dcd4651a01b1c148f18721f6605f4398c5ff2eaf412890c8c9919",
+        "073731728b9e3f323c9c49aba9496c0f330807e0640a85ed4e235643339f2576",
+        "4a21d5bb7eb3ebe85ec21b5573f2f0bf164b93a3ca0400424aeadd26af1496bc",
     ],
     "zip": ["902", "100", "606"],
     "secret": ["REDACTED", "REDACTED", "REDACTED"],

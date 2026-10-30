@@ -424,8 +424,8 @@ def test_streamed_vault_entries_and_file_equal_the_resident_run(
     route: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     pytest.importorskip("cryptography")
-    from decoy_engine.plan._seed import _normalize_job_seed
     from decoy_engine.vault import load_vault, vault_writer_for_config
+    from tests._keyed_secret import THROWAWAY_KEY_PROVIDER
 
     if route == "oracle":
         support.remove_companion(monkeypatch)
@@ -441,7 +441,7 @@ def test_streamed_vault_entries_and_file_equal_the_resident_run(
     for label, writer in (("streamed", streamed_writer), ("resident", resident_writer)):
         path = tmp_path / f"{label}.vault"
         writer.write(path)
-        maps[label], _ambiguous = load_vault(path, _normalize_job_seed(cfg))
+        maps[label], _ambiguous = load_vault(path, THROWAWAY_KEY_PROVIDER.mask_key())
     assert maps["streamed"] == maps["resident"]
 
 
