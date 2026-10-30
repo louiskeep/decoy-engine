@@ -598,6 +598,8 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
             "src/decoy_engine/execution/_chunked_profile.py",
             "src/decoy_engine/execution/native/_chunk_schema.py",
             "src/decoy_engine/execution/native/_chunked_entry.py",
+            # F13: pool/categorical helpers split out of `_chunked_entry.py` to hold its 700-LOC ceiling.
+            "src/decoy_engine/execution/native/_chunked_pools.py",
             # OBS-2: the non-empty-source preflight wiring split out of `_chunked_entry.py` for
             # module headroom (pure move); imports nothing from `execution.physical`.
             "src/decoy_engine/execution/native/_chunked_preflight_wiring.py",
