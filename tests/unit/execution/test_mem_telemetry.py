@@ -1,4 +1,4 @@
-"""Sprint B5: the TELEMETRY self-calibration loop (`_mem_telemetry.py`).
+"""Sprint B5: the TELEMETRY self-calibration loop (`scripts/mem_telemetry.py`).
 OOM-avoidance routing redesign, `docs/plans/2026-07-10-oom-avoidance-routing-
 redesign.md` §3.4, corrected by §11's §3.4 erratum and refined by §13.
 

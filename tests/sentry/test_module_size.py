@@ -50,6 +50,9 @@ import pytest
 
 SRC = Path(__file__).parents[2] / "src" / "decoy_engine"
 REPO = Path(__file__).parents[2]
+# Tooling under scripts/ is held to the same limits: moving a module out of src/
+# must not be a way to hide its size.
+SCRIPTS = REPO / "scripts"
 
 # Soft goal + hard ceiling (best-practices section 4.1; 2026-09-22 revision).
 # A module <= GOAL needs no entry. Nothing new may cross MAX -- decompose instead.
@@ -134,7 +137,23 @@ ALLOWLIST: dict[str, int] = {
     "src/decoy_engine/internal/faker_setup.py": 637,
     # FF1 span path and sub-floor policy; split into _text_mask_sub_floor.py when next touched.
     "src/decoy_engine/transforms/text_mask.py": 708,
+    # scripts/: pre-existing one-off tooling, recorded when the sentry started scanning scripts/.
+    # Legacy (> MAX) entries may only shrink; split each into sibling modules when next touched.
+    "scripts/audit/probe.py": 775,
+    "scripts/bench-generation-pool/bench_compare_gen.py": 908,
+    "scripts/bench-unified-slice/bench_compare.py": 894,
+    "scripts/build_golden_fixtures.py": 606,
+    "scripts/faker-determinism/check_determinism.py": 601,
+    "scripts/fk_memory_probe.py": 1093,
+    "scripts/gen_proof_manifest.py": 1241,
+    "scripts/native-baseline/bench_c1_oracle.py": 767,
+    "scripts/tb3_cgroup_validation.py": 603,
+    "scripts/tq_mutate.py": 822,
 }
+
+
+def _budgeted_files() -> list[Path]:
+    return sorted(SRC.rglob("*.py")) + sorted(SCRIPTS.rglob("*.py"))
 
 
 def _loc(py_file: Path) -> int:
@@ -187,7 +206,7 @@ def _size_verdict(rel: str, loc: int, ceiling: int | None) -> str | None:
 
 @pytest.mark.parametrize(
     "py_file",
-    sorted(SRC.rglob("*.py")),
+    _budgeted_files(),
     ids=lambda p: str(p.relative_to(REPO)),
 )
 def test_module_within_size_budget(py_file: Path) -> None:
@@ -238,6 +257,11 @@ def test_allowlist_entries_are_still_over_goal() -> None:
             f"Delete it so the {GOAL}-LOC goal applies normally. "
             f"(Recorded ceiling was {ceiling}.)"
         )
+
+
+def test_sentry_scans_scripts_dir() -> None:
+    """scripts/ is inside the budgeted set (a file moved out of src/ stays measured)."""
+    assert SCRIPTS / "mem_telemetry.py" in _budgeted_files()
 
 
 def test_sentry_catches_a_planted_violation(tmp_path: Path) -> None:

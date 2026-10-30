@@ -1,5 +1,5 @@
 """TQ isolated-substrate grade (branch `tq/isolated-substrate-grade`): mutation
-kills for the CALIBRATION CORE of `_mem_telemetry.py` -- `recalibrate_k` and
+kills for the CALIBRATION CORE of `scripts/mem_telemetry_calibration.py` -- `recalibrate_k` and
 `MemoryTelemetryStore.recalibrate`.
 
 These pin the EXACT machine field each surviving mutant flips: a validation

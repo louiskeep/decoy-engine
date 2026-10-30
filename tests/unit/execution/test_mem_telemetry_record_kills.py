@@ -1,4 +1,4 @@
-"""Mutation kill-tests for the RECORD + HELPER functions of `_mem_telemetry.py`
+"""Mutation kill-tests for the RECORD + HELPER functions of `scripts/mem_telemetry_records.py`
 (TQ isolated-substrate grade, branch `tq/isolated-substrate-grade`).
 
 One test per surviving LOGIC mutant, grouped by function, asserting the EXACT
