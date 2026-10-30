@@ -108,6 +108,8 @@ _BROKEN_REPORTERS = {
     "crashing": "raise SystemExit('reporter crashed')\n",
     "silent": "",
     "truncated": "print('=' * 30 + ' EVIDENCE ' + '=' * 30)\n",
+    # A complete block is still not a pass when the reporter itself fails.
+    "nonzero": "print('=' * 30 + ' EVIDENCE ' + '=' * 30)\nprint('=' * 70)\nraise SystemExit(1)\n",
 }
 
 
