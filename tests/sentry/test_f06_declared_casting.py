@@ -68,7 +68,7 @@ ROUTE_APPLIERS = {
     "out_of_core": (
         "execution/out_of_core/_runner.py",
         "run_fk_out_of_core",
-        {"stage_typed_sources", "finish"},
+        {"run_staged", "seal_evidence"},
     ),
 }
 # Route executors that own the run's lifetime: they open the boundary and abort it on failure.
