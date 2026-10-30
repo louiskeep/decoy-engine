@@ -144,6 +144,100 @@ The direct engine logging census is exhaustive for this baseline. The framing co
 
 `reasons/warning/_part1.py:27` also matches the mechanical expression because it declares a reason named `warning.error`; it is registry data, not a logging call. Slice 1 turns this census into a parsed AST manifest, classifies each call as safe, unsafe, or registry false positive, and requires the unsafe count to reach zero. File, stream, warning, traceback, subprocess, callback, evidence, audit, telemetry, and tracker emitters are inventoried separately in the table because a logger-only search cannot find them.
 
+## Defect-class closure table
+
+For class 1, this F31 plan is itself the closing structure: the engine-owned boundary, not a later local patch, defines which values can exist on ordinary output.
+
+| # | Catalog class | Applies or N/A | Closing structure | Proving test | Required mutation |
+|---|---|---|---|---|---|
+| 1 | Value-bearing output | Applies | This plan's exact-type `SafeEvent` boundary, provenance registry, aliases, sealed serializer, and process-entry adapters | Seed every enumerated field and surface, first prove a registered control event arrived, then assert marker absence | Remove one factory or entry boundary and require the surface scan to turn red |
+| 2 | Cleanup missing on an exit path | Applies | One `SafeOutputScope` owner for reversible handlers, hooks, streams, and child descriptors, with fixed emergency reporting | Exit-path matrix covers success, invalid input, sink failure, timeout, cancellation, exception, nested scope, and double close | Omit one restore or child-descriptor close and require leaked state or bytes to fail |
+| 3 | State machine and concurrency | Applies | Locked provenance and alias registries, identity-checked weak cleanup, distinct copied contexts, and a coordinator discovery barrier | Barrier-forced weakref reuse, late callback, task, thread, and alias-remap interleavings | Remove a lock, identity check, copied context, or remap barrier and require nondeterminism or cross-context output |
+| 4 | Route parity and silent fallback | Applies | One route and surface manifest plus one serializer for full-frame, sequential, mixed, chunked, out-of-core, and isolated routes | Run the hostile corpus on every enumerated route and assert a registered route event before absence | Bypass the boundary on one route or suppress its reason and require the route matrix to fail |
+| 5 | Referential integrity | N/A: F31 changes representation of FK reports, not masking, ordering, orphan, or publication semantics | Preserve `RelationshipGraph` and route behavior unchanged | Existing relational suites plus the FK-shape output matrix remain green | N/A: no FK behavior is mutated; a changed relational result is a regression |
+| 6 | Untrusted producer | Applies | Exact types, bounded parsers, fixed reason reconstruction, smallest-catch conversion, and child FD containment | Field walk uses hostile subclasses, mappings, exceptions, frames, extension writes, and child streams | Re-enable `str`, `repr`, dynamic `__name__`, unbounded mapping iteration, or inherited FD output and require red |
+| 7 | Check then use on a path | Applies to the unsafe diagnostic file and exact data-plane writer manifest | Open-once file or FD capability, no-follow exclusive creation, 0600 mode, and exact writer allowlist | Symlink-swap and path-substitution tests plus AST seeded evasions | Reopen a bare path or widen the writer exemption and require the sentry or isolation test to fail |
+| 8 | Weak tests and overclaimed evidence | Applies | RED artifacts, non-vacuous recorders, same-environment baselines, mutation evidence, and exact-commit receipts | Reviewer reruns every recorder and sentry self-test with `uv.lock` and checks each expected control | Disconnect a recorder, empty a sink, or weaken a bound and require the positive control or mutation gate to fail |
+| 9 | Behavior-preserving refactor drift | Applies | Characterization snapshots first, compatibility projections from one serializer, topology gates, and one integration branch | Preserve ordering, payload keys, OpenAPI, CLI modes, and route results while replacing only output authorization | Change one field, order, route result, or moved-file sentry scope per slice and require a characterization failure |
+| 10 | Frozen contract drift | Applies | The additive/breaking list below, schema snapshots, exact engine pins, and explicit 0.8.0 break declaration | Consumer fixtures and schema snapshots compare exact keys, enum members, versions, and public exports | Add, remove, or rename a frozen field without its declared version change and require snapshot failure |
+
+F25 note: its current plan has Slices 0 through 6 and no Slice 4b or 4c (`docs/plans/2026-10-29-f25-protected-scratch-quotas-orphan.md:226-286`). F31 does not fabricate that amendment. When it is supplied, the contract must be applied to Slice 4c and to every Slice 4b behavior the amendment touches in the F25 document itself; this F31 table cannot stand in for it.
+
+## Enumerations from the baseline code
+
+These are implementation checklists. A slice updates the relevant row when it removes a current carrier; it cannot silently narrow the list.
+
+### Exit paths
+
+- Transactional output has no-write, write failure, commit success, commit failure, and abort cleanup paths at `src/decoy_engine/execution/_transactional_sink.py:58-97` and `src/decoy_engine/execution/_transactional_sink.py:324-380`; streamed output adds exception, commit failure, and normal-without-commit exits at `src/decoy_engine/execution/_chunked_output_sink.py:128-175`.
+- Isolated execution has pre-spawn refusal, in-process failure and commit failure, owned work-root cleanup, timeout kill, callback failure, abnormal exit, self-reported failure, and commit failure at `src/decoy_engine/execution/_isolated_run.py:194-243`, `src/decoy_engine/execution/_isolated_run.py:258-319`, `src/decoy_engine/execution/_isolated_run.py:322-365`, and `src/decoy_engine/execution/_isolated_run.py:437-573`.
+- Progress has no sink, successful delivery, replacement or sink exception, phase error and completion, and terminal success or error emission paths at `src/decoy_engine/progress.py:162-197`, `src/decoy_engine/progress.py:243-266`, and `src/decoy_engine/progress.py:428-484`; F31 adds invalid construction, serializer failure, driver failure, nested scope, cancellation, and process-hook re-entry to this matrix.
+
+### Routes
+
+- Relationship jobs select `out_of_core`, `sequential`, `mixed`, `full_frame`, or reject before read; explicit modes fail closed rather than silently falling back (`src/decoy_engine/execution/_pipeline_routing.py:13-85`, `src/decoy_engine/execution/_pipeline_routing.py:300-321`).
+- Non-relationship work also has per-table full-frame or chunked dispatch, while independent multi-table jobs split tables only when no FK edge touches the job (`src/decoy_engine/execution/_pipeline_routing.py:68-85`, `src/decoy_engine/execution/_pipeline_multi_table.py:1-20`).
+- Every route runs either in-process or through the isolated subprocess wrapper; re-entry intentionally degrades to in-process and must still remain inside the same boundary (`src/decoy_engine/execution/_isolated_run.py:205-243`).
+
+### FK shapes
+
+- Single and composite keys are the same edge shape, distinguished by tuple arity; parent and child arity must match (`src/decoy_engine/relationships/_graph.py:71-92`).
+- Self-references remain routable, cross-table cycles cannot take a bounded ordered route, and multi-parent child tuples use declared-order first-hit-wins with one orphan policy (`src/decoy_engine/execution/_pipeline_routing.py:408-414`, `src/decoy_engine/relationships/_graph.py:163-180`).
+- Children may arrive in later streamed batches: each raw batch is staged with global row numbers, then the driver aligns staged child keys and payload batches through the bounded join (`src/decoy_engine/execution/out_of_core/_stream_join.py:244-281`, `src/decoy_engine/execution/out_of_core/_stream_driver.py:317-432`). Multi-parent relations are merged before the unchanged child join (`src/decoy_engine/execution/out_of_core/_multi_parent.py:49-103`). F31 aliases these identities in output but does not alter their values or orphan decisions.
+
+### Fields
+
+- The public reason carriers are all `ReasonContext` fields at `src/decoy_engine/reasons/_record.py:114-126` and all `ReasonRecord` fields at `src/decoy_engine/reasons/_record.py:241-254`; F31 retains identity and closed numeric facts but replaces source refs with provenance-backed aliases.
+- The complete progress field catalog is the seven dataclasses at `src/decoy_engine/_progress_events.py:273-425`, their exact legacy keys at `src/decoy_engine/_progress_events.py:430-457`, and their v1 additions at `src/decoy_engine/_progress_events.py:458-477`.
+- The result carriers touched by Slice 4 and Slice 5 are `ExecutionResult` at `src/decoy_engine/execution/_adapter.py:42-71`, `IsolatedRunResult` at `src/decoy_engine/execution/_isolated_common.py:320-388`, `RowError` and `RowErrorRecord` at `src/decoy_engine/execution/_row_errors.py:28-59`, and `RowErrorSummary` at `src/decoy_engine/execution/_row_error_summary.py:37-86`.
+- Validation output carries `severity`, `code`, `message`, `path`, `node_id`, `hint`, errors, warnings, and normalized config at `src/decoy_engine/validation_result.py:47-92`; no free-text or normalized-config field crosses an ordinary F31 projection.
+- The other root-public results are connector `CheckResult` and `WriteResult` (`src/decoy_engine/sdk.py:111-131`), `DiscoveryResult` (`src/decoy_engine/data_discovery.py:77-88`), `PlanCheckError` and `PlanValidationResult` (`src/decoy_engine/plan/validate/_consolidator.py:36-65`), and `UnmaskColumnReport` and `UnmaskResult` (`src/decoy_engine/unmask.py:76-94`). Their free detail, messages, names, and paths require fixed reasons or aliases; discovery rows, Arrow tables, attached plans, and path references are data-plane carriers and may not cross an ordinary projection.
+- The streamed-generation subpackage returns `GenerationResult(mode, reason, row_counts, tables, peak_reserved_bytes, declines)` at `src/decoy_engine/generation/_streamed.py:71-88`; resident `tables` is data-plane only, while ordinary status uses registered reason and decline identities plus closed numeric facts.
+- The public subset package returns `SubsetResult(plan, manifest, output_paths)` at `src/decoy_engine/subset/_types.py:217-223`; the plan, manifest, and output path references stay on the data plane, with only an aliased typed completion event on ordinary output.
+- The public walks package returns `WalkResult(snapshot_summary, edges, hazards)`, `DriftResult(added_tables, removed_tables, changed_columns, new_pii)`, and `CrossFileWalkResult(snapshot_summary, edges)` at `src/decoy_engine/walks/types.py:97-124` and `src/decoy_engine/walks/cross_file.py:39-49`. Their schema identities, descriptions, and open dictionaries are value-bearing; ordinary views use aliases, closed hazard/change codes, and bounded counts rather than serializing these result objects directly.
+
+### Output surfaces
+
+- Callback, versioned dictionary, legacy dictionary, and structured-logger bridges are separate current surfaces (`src/decoy_engine/progress.py:67-127`, `src/decoy_engine/_progress_events.py:581-599`).
+- Stdlib console and rotating-file handlers, fallback warnings, and narrative progress are current text/file surfaces (`src/decoy_engine/internal/logging.py:55-136`, `src/decoy_engine/internal/logging.py:139-247`).
+- Caller logger methods, structured callbacks, telemetry mappings, captured outputs, and per-node export mappings are current application surfaces (`src/decoy_engine/context.py:22-83`, `src/decoy_engine/context.py:97-231`, `src/decoy_engine/context.py:242-275`).
+- In-process results, isolated envelopes, subprocess stdout/stderr, row-error summaries, and validation records are current object/bytes/error surfaces (`src/decoy_engine/execution/_adapter.py:42-71`, `src/decoy_engine/execution/_isolated_run.py:430-530`, `src/decoy_engine/execution/_row_error_summary.py:55-87`, `src/decoy_engine/validation_result.py:47-92`). CLI and Platform surface cells remain the explicit cross-repository matrix under Acceptance tests and are topology-gated before their slices.
+
+## Reuse inventory
+
+| Existing capability | Verified source | Required reuse and reason new machinery remains necessary |
+|---|---|---|
+| F29 reason registry and closed records | `src/decoy_engine/reasons/_registry.py:24-44`; `src/decoy_engine/reasons/_record.py:241-366` | Reuse identities, fixed prose, semantics, and compatibility fallback. New provenance is needed because a valid reason alone does not authorize an enclosing output object. |
+| Exact exception classification | `src/decoy_engine/reason_adapter.py:38-100`, `src/decoy_engine/reason_adapter.py:146-189` | Reuse reason selection. Add exact closed type labels and traceback disposal because the adapter does not own ambient exception state. |
+| F29 event variants and projections | `src/decoy_engine/_progress_events.py:273-477`, `src/decoy_engine/_progress_events.py:581-599` | Preserve public compatibility through projections. Replace mutable dictionaries as authorized carriers with one sealed serializer. |
+| Progress binding and sink isolation | `src/decoy_engine/progress.py:162-197` | Reuse sequencing and failure counting. Add provenance checks and typed final drivers because the current sink accepts any event instance. |
+| Log interpolation sentry | `tests/sentry/test_log_interpolation.py:20-83`, `tests/sentry/test_log_interpolation.py:330-443` | Generalize its AST and mutation-fixture pattern. New rules are needed for non-log, framework, persistence, reflection, and cross-helper sinks. |
+| Module-size sentry | `tests/sentry/test_module_size.py:54-66` | Reuse the repository's exact-LOC ratchet and 600/700 limits unchanged. F31 adds the stricter plan-local rule that every new or expanded F31 Python module stays below 450 physical lines; neither threshold may be widened to pass. |
+| Physical-seam disconnection sentry | `tests/sentry/test_physical_seam_disconnection.py:156-203` | N/A to physical-plan wiring because F31 adds no such connection, so preserve this sentry unchanged. Reuse its repository-wide scan plus stale-allowlist failure pattern for the exact safe-output analyzer manifest. |
+| Existing hostile security corpus | `tests/security/test_reason_boundary.py:44-79`, `tests/security/test_reason_boundary.py:107-195`; `tests/security/test_f29_remediation.py:41-119` | Retain and expand it across the enumerated surfaces; never replace these assertions with a weaker aggregate scan. |
+| Publication and cleanup tests | `tests/unit/execution/test_transactional_sink.py:105-151`; `tests/unit/execution/test_isolated_run.py:390-420`, `tests/unit/execution/test_isolated_run.py:620-655` | Reuse their exit-path and non-vacuity patterns when output scope and child descriptors are added. |
+
+## Frozen contracts touched
+
+| Contract | Change classification and proof |
+|---|---|
+| `decoy-engine` public package, currently 0.7.0 | Additive public `safe_output` names plus intentional pre-GA 0.8.0 behavior break for unsafe legacy forwarding; current version and exports are at `pyproject.toml:5-13` and `src/decoy_engine/__init__.py:308-329`. |
+| Reason registry `1.0.0`, reason schema 1, event schema 1 | Add reason entries only, never remove or redefine; constants and duplicate rejection are at `src/decoy_engine/reasons/_registry.py:24-44`. |
+| Progress v0/v1 keys and positional constructors | Frozen compatibility projections from the sealed canonical event; exact snapshots and constructor checks are at `tests/unit/progress/test_versioned_contract.py:37-78` and `tests/unit/progress/test_versioned_contract.py:98-117`, `tests/unit/progress/test_versioned_contract.py:164-180`. |
+| `ReasonRecord` unknown-version and unknown-identity behavior | Additive only; future identities and unsupported majors retain their fixed degradation rules at `tests/security/test_reason_boundary.py:172-195`. |
+| `ExecutionResult`, `IsolatedRunResult`, row-error, and validation Python fields | Breaking ordinary serialization, unchanged computation and in-process data-plane access; field locations are enumerated above and compatibility adapters must snapshot the prior public shape. |
+| CLI and Platform JSON/OpenAPI/audit/evidence schemas | Frozen at each consumer topology gate. F31 changes the producer representation, not published keys; Slice 6 and Slice 7 must capture exact consumer fixtures before replacement and use an exact engine 0.8.0 pin. |
+
+## Pre-mortem: five likely gate findings
+
+| Likely gate finding | Catalog class | Prevention and RED-first witness |
+|---|---|---|
+| One output surface is missing, most likely pre-command CLI help/parse failure or Platform framework serialization | 1, 4 | The output-surface manifest is executable and each cell requires a positive registered event before marker absence; delete one surface adapter and its seeded marker must escape. |
+| A legacy helper still returns or enriches a mutable dictionary after validation | 1, 6, 9 | Exact provenance and non-mapping payload tests cover every helper edge; mutate `event_to_dict`, telemetry, or an evidence helper to append a marker and require emit-time rejection. |
+| Dynamic exception class text, traceback state, or a child stream escapes through a rare failure path | 1, 2, 6 | Exact type lookup, smallest-catch disposal, FD redirection, and the exit-path matrix use hostile `__str__`, subclass, active-frame, timeout, and abnormal-exit cases; re-enable one read or inherited stream and require red. |
+| Scoped output corrupts host state or loses containment across a task, thread, cancellation, or nested scope | 2, 3 | Exact-object restoration and barrier-forced copied-context tests cover all pairs; bypass one wrapper or restore the wrong stream and require identity or marker failure. |
+| The shared analyzer passes while a moved file, alias, reflection spelling, implicit response, or widened exemption bypasses it | 7, 8, 9 | Repository manifests contain exact functions, not directories, and self-tests seed every evasion in all three repositories; move a fixture or widen one exemption and require the analyzer to report the expected file and rule. |
+
 ## Design
 
 ### Ownership, layout, public API, and compatibility
