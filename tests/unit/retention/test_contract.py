@@ -324,3 +324,12 @@ def test_canonical_json_sorts_keys_and_has_no_whitespace():
     assert r.canonical_json({"b": 1, "a": [2, {"d": 1, "c": 2}]}) == '{"a":[2,{"c":2,"d":1}],"b":1}'
     with pytest.raises(ValueError):
         r.canonical_json({"x": float("nan")})
+
+
+def test_cloud_object_codes_are_retained_statuses_never_executable():
+    """Decoy never deletes from a customer bucket: the cloud codes are final retained reports."""
+    for code in (r.ReasonCode.CLOUD_OBJECT_UNFINISHED, r.ReasonCode.CLOUD_OBJECT_ABANDONED):
+        assert code.family == "retain" and r.REASON_SUMMARY[code]
+        item = r.ReportItem(ID_A, r.ArtifactClass.PUBLISHED_OUTPUT, r.Decision.RETAINED, code)
+        assert item.reason is code
+        assert r.ReasonCode.parse(code.value) is code

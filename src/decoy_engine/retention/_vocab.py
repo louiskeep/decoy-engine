@@ -155,6 +155,10 @@ class ReasonCode(_Closed):
     RETAIN_STATE_CHANGED = "retain_state_changed"
     RETAIN_PRODUCER_REQUIRED = "retain_producer_required"
     RETAIN_UNKNOWN = "retain_unknown"
+    # Cloud objects Decoy wrote are inventory + report only: Decoy never deletes from a customer
+    # bucket, so these are final statuses for the operator, never an executable decision.
+    CLOUD_OBJECT_UNFINISHED = "cloud_object_unfinished"
+    CLOUD_OBJECT_ABANDONED = "cloud_object_abandoned"
 
     # Item results of an execution
     RESULT_DELETED = "result_deleted"
@@ -185,7 +189,7 @@ class ReasonCode(_Closed):
         v = self.value
         if v == "eligible":
             return "eligible"
-        if v.startswith("retain_"):
+        if v.startswith(("retain_", "cloud_object_")):
             return "retain"
         if v.startswith("result_"):
             return "result"
@@ -240,6 +244,8 @@ REASON_SUMMARY: dict[ReasonCode, str] = {
     ReasonCode.RETAIN_STATE_CHANGED: "State changed after the preview; retained.",
     ReasonCode.RETAIN_PRODUCER_REQUIRED: "Artifact facts are not yet materialized in a finalizer.",
     ReasonCode.RETAIN_UNKNOWN: "Unrecognized reason; retained.",
+    ReasonCode.CLOUD_OBJECT_UNFINISHED: "An unfinished cloud object Decoy wrote; remove it on the cloud side.",
+    ReasonCode.CLOUD_OBJECT_ABANDONED: "An abandoned or expired cloud object Decoy wrote; remove it on the cloud side.",
     ReasonCode.RESULT_DELETED: "Deleted and exact absence confirmed.",
     ReasonCode.RESULT_ABSENT_CONFIRMED: "Already absent; exact absence confirmed.",
     ReasonCode.RESULT_RETRYABLE: "The backend outcome was transient or ambiguous; retryable.",
