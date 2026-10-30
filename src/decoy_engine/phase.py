@@ -47,9 +47,21 @@ FrozenValue = FrozenScalar | tuple["FrozenValue", ...]
 
 
 class FrozenMap(tuple):  # type: ignore[type-arg]
-    """An immutable JSON object: a tuple of `(str, FrozenValue)` pairs sorted by key."""
+    """An immutable JSON object: a tuple of `(str, FrozenValue)` pairs with unique `str` keys.
+
+    Validated at construction so a direct `FrozenMap(...)` cannot carry evidence that passes
+    the gate but cannot serialize.
+    """
 
     __slots__ = ()
+
+    def __new__(cls, pairs: Any = ()) -> FrozenMap:
+        items = tuple(tuple(p) for p in pairs)
+        if not all(len(p) == 2 and isinstance(p[0], str) for p in items):
+            raise PhaseContractError("FrozenMap entries must be (str, value) pairs")
+        if len({p[0] for p in items}) != len(items):
+            raise PhaseContractError("FrozenMap keys must be unique")
+        return super().__new__(cls, items)
 
 
 class PhaseContractError(DecoyError, ValueError):
@@ -137,7 +149,11 @@ class PhaseResult:
         # already hashed: frozen dataclass fields alone only block re-assignment.
         object.__setattr__(self, "reasons", tuple(self.reasons))
         ident = self.identity.items() if isinstance(self.identity, Mapping) else self.identity
-        pairs = tuple((str(k), str(v)) for k, v in ident)
+        pairs = tuple(tuple(p) for p in ident)
+        if not all(len(p) == 2 and isinstance(p[0], str) and isinstance(p[1], str) for p in pairs):
+            raise PhaseContractError("identity must be (str, str) pairs")
+        if len({k for k, _ in pairs}) != len(pairs):
+            raise PhaseContractError("identity keys must be unique")
         object.__setattr__(self, "identity", pairs)
         object.__setattr__(self, "payload", freeze(self.payload))
 

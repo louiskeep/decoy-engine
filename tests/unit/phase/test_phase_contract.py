@@ -202,3 +202,32 @@ def test_freeze_refuses_non_finite_numbers():
     for bad in (float("nan"), float("inf")):
         with pytest.raises(phase.PhaseContractError):
             phase.freeze({"x": bad})
+
+
+def test_identity_refuses_duplicate_keys_instead_of_dropping_evidence():
+    with pytest.raises(phase.PhaseContractError):
+        _result(identity=(("k", "a"), ("k", "b")))
+
+
+def test_identity_requires_string_pairs():
+    for bad in ((("k", 1),), ((1, "v"),), (("k",),), (("k", "v", "x"),)):
+        with pytest.raises(phase.PhaseContractError):
+            _result(identity=bad)
+    assert _result(identity={"k": "v"}).identity == (("k", "v"),)
+
+
+def test_frozenmap_construction_validates_keys():
+    with pytest.raises(phase.PhaseContractError):
+        phase.FrozenMap(((1, "a"), ("1", "b")))
+    with pytest.raises(phase.PhaseContractError):
+        phase.FrozenMap((("k", 1), ("k", 2)))
+    with pytest.raises(phase.PhaseContractError):
+        phase.FrozenMap((("k",),))
+
+
+def test_directly_built_malformed_evidence_cannot_satisfy_the_gate():
+    with pytest.raises(phase.PhaseContractError):
+        _result(payload=phase.FrozenMap(((1, "a"), ("1", "b"))))
+    ok = _result(payload=phase.FrozenMap((("a", 1),)))
+    assert phase.satisfies_required_gate(ok)
+    assert phase.canonical_bytes(ok)
