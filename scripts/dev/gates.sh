@@ -68,7 +68,7 @@ fi
 pypath() { local d out=""; for d in "${PYPATH_DIRS[@]}"; do out="$out${out:+:}$1/$d"; done; echo "$out"; }
 
 run_steps() {  # $1 label, $2 tree
-  local label=$1 tree=$2 name rc stop=0 p cmd tests=()
+  local label=$1 tree=$2 name rc stop=0 p cmd shown tests=()
   : >"$OUT/$label.steps"
   for name in ${STEPS//,/ }; do
     local junit=(-p no:cacheprovider -q -rfE "--junitxml=$OUT/$label-$name.xml" "${PYTEST_ARGS[@]}")
@@ -95,7 +95,8 @@ run_steps() {  # $1 label, $2 tree
         [ $KEEP = 1 ] || stop=1
       fi
     fi
-    printf '%s\t%s\t%s\n' "$name" "$rc" "${cmd[*]}" >>"$OUT/$label.steps"
+    [ $rc = -1 ] && shown=${cmd[*]} || shown=$(printf '%q ' "${cmd[@]}")
+    printf '%s\t%s\t%s\n' "$name" "$rc" "$shown" >>"$OUT/$label.steps"
   done
 }
 
