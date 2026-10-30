@@ -1,12 +1,15 @@
-"""V1 threat model: ordinary-shape canaries never reach an error, a repr or the wire.
+"""V1 threat model: ordinary-shape canaries never reach an error path.
 
-Callers pass ordinary values (str, int-as-string, list, dict, a dataclass whose repr holds the
-marker) and callees raise ordinary exceptions. Every `PhaseContractError` raised for them is
-walked: `str`, `repr`, `args`, `__notes__`, the whole `__context__`/`__cause__` chain, and
-`TracebackException(capture_locals=True)` locals of the frames in `phase.py`. Frames outside
-`phase.py` (the caller's own frames and the dataclass-generated `__init__`) hold the caller's own
-arguments and are out of the engine's reach, so they are not walked. Hostile in-process objects
-are deferred to V2 (`test_v2_hostile_deferred.py`).
+Scope: error paths, not accepted field content. The canaries sit in positions the envelope
+rejects (or in a callee's exception), and every `PhaseContractError` raised for them is walked:
+`str`, `repr`, `args`, `__notes__`, the whole `__context__`/`__cause__` chain, and
+`TracebackException(capture_locals=True)` locals of the frames in `phase.py`; `error_result`
+output (its `repr` and `to_wire`) is walked too. Frames outside `phase.py` (the caller's own
+frames and the dataclass-generated `__init__`) hold the caller's own arguments and are out of
+the engine's reach, so they are not walked. A value in an accepted field (payload, identity,
+check_id, ...) is caller-owned evidence passed through unchanged; keeping source values out of
+it is the producer's job (F31), and `test_accepted_field_content_*` pins that contract. Hostile
+in-process objects are deferred to V2 (`test_v2_hostile_deferred.py`).
 """
 
 from __future__ import annotations
@@ -325,3 +328,38 @@ def test_canary_corpus_detects_each_boundary_removed(monkeypatch, owner, attr):
     unwrapped = raw.__wrapped__
     monkeypatch.setattr(owner, attr, staticmethod(unwrapped) if attr == "__new__" else unwrapped)
     assert _canary_findings(), f"removing the boundary from {attr} went undetected"
+
+
+# ---- the payload contract: accepted field content is caller-owned evidence ----------------------
+# Characterization, not a leak test: the frozen `phase-result/v1` wire passes these through, and
+# the envelope cannot tell a source value from an allowed one. Scrubbing, hashing or rejecting
+# accepted content would break the wire; value-freeness of content is the producer's job (F31).
+
+_PASS_THROUGH = [
+    ("payload", lambda: _result(payload={"row": [_MARK], "n": _PAN})),
+    ("identity", lambda: _result(identity={"source": _MARK})),
+    ("check_id", lambda: _result(check_id=_MARK)),
+    ("method", lambda: _result(method=_MARK)),
+    ("method_version", lambda: _result(method_version=_MARK)),
+    ("requested_scope", lambda: _result(coverage=phase.PhaseCoverage(requested_scope=(_MARK,)))),
+    ("observed_scope", lambda: _result(coverage=phase.PhaseCoverage(observed_scope=(_MARK,)))),
+    ("limits", lambda: _result(coverage=phase.PhaseCoverage(limits=(_MARK,)))),
+    ("omissions", lambda: _result(coverage=phase.PhaseCoverage(omissions=(_MARK,)))),
+    ("sampling_method", lambda: _result(coverage=phase.PhaseCoverage(sampling_method=_MARK))),
+    ("event", lambda: phase.PhaseEvent("post_scan", _MARK, "passed")),
+]
+
+
+@pytest.mark.parametrize("name,build", _PASS_THROUGH, ids=[n for n, _ in _PASS_THROUGH])
+def test_accepted_field_content_round_trips_unchanged(name, build):
+    env = build()
+    wire = json.dumps(phase.to_wire(env))
+    assert _MARK in wire and _MARK in phase.canonical_bytes(env).decode()
+    assert _MARK in repr(env)
+
+
+def test_accepted_payload_is_exported_exactly_as_given():
+    payload = {"row": [_MARK], "n": _PAN, "nested": {"k": [1, None, 2.5, True]}}
+    res = _result(payload=payload)
+    assert phase.to_wire(res)["payload"] == payload
+    assert phase.satisfies_required_gate(res)

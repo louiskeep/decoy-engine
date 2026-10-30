@@ -20,8 +20,15 @@ constructor and serializer runs inside `_contained`. It catches `Exception`, kee
 from the closed `_FIXED_TEXTS` set (anything else becomes "malformed phase evidence"), leaves
 the handler and raises a fresh `PhaseContractError` outside it, so the error has no
 `__context__`, `__cause__`, notes or wrapper locals holding the input. `KeyboardInterrupt` and
-`SystemExit` pass through. Scalars and containers are matched by exact type. Hostile in-process
-objects (overridden dunders, forged instances) are V2 scope, not claimed here.
+`SystemExit` pass through. `freeze` matches scalars, `list`, `tuple` and `FrozenMap` by exact
+type but still accepts `Mapping`, `set` and `frozenset` subclasses; identity (also `Mapping`),
+reasons and coverage scopes accept `list`/`tuple` subclasses, then check each element by exact
+type. Hostile in-process objects are V2 scope.
+
+Payload contract: accepted field content (payload, identity, check_id, method, coverage scopes,
+event name) is caller-owned evidence, passed through `repr` and `to_wire` unchanged. Keeping
+source values out of it is the producer's job (F31). The envelope guarantees only that its
+errors, notes, chains and `error_result` output carry no input value.
 
 Gate rule: only a `passed` result of a known schema can satisfy a required gate;
 unknown schema, status or reason identity fails closed. Pattern: MLIR's split
