@@ -111,9 +111,9 @@ def run_full_frame_route(
     cast_run = open_cast_run(ctx.plan, ctx.quarantine_runtime)
     try:
         return _run_full_frame(ctx, decision, pregenerated=pregenerated, cast_run=cast_run)
-    except BaseException:
+    except BaseException as failure:
         if cast_run is not None:
-            cast_run.abort()
+            cast_run.abort(failure)
         raise
 
 

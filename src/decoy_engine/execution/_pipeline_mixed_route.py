@@ -160,9 +160,9 @@ def run_mixed_route(ctx: PipelineRunContext, decision: RouteDecision) -> Executi
     cast_run = open_cast_run(ctx.plan, ctx.quarantine_runtime)
     try:
         return _run_admitted(ctx, decision, static, generate_outputs, cast_run)
-    except BaseException:
+    except BaseException as failure:
         if cast_run is not None:
-            cast_run.abort()
+            cast_run.abort(failure)
         raise
 
 

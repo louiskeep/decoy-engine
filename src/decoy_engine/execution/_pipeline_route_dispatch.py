@@ -33,9 +33,9 @@ def execute_sequential_route(ctx: PipelineRunContext, decision: RouteDecision) -
     cast_run = open_cast_run(ctx.plan, ctx.quarantine_runtime)
     try:
         sequential_result = _sequential_route(ctx, decision, loader, cast_run)
-    except BaseException:
+    except BaseException as failure:
         if cast_run is not None:
-            cast_run.abort()
+            cast_run.abort(failure)
         raise
     stamp_out_of_core_declined(sequential_result.quality_metrics, decision.ooc_declined)
     return sequential_result
@@ -72,9 +72,9 @@ def execute_out_of_core_route(ctx: PipelineRunContext, decision: RouteDecision) 
     cast_run = open_cast_run(ctx.plan, ctx.quarantine_runtime)
     try:
         return _out_of_core_route(ctx, decision, cast_run)
-    except BaseException:
+    except BaseException as failure:
         if cast_run is not None:
-            cast_run.abort()
+            cast_run.abort(failure)
         raise
 
 

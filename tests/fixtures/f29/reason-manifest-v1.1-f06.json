@@ -679,6 +679,38 @@
       "symbol": "PROTECTED_QUARANTINE_ACCESS_DENIED"
     },
     {
+      "code": "protected_quarantine_cleanup_failed",
+      "context": [],
+      "deprecated_in": null,
+      "kind": "failure",
+      "namespace": "runtime",
+      "owner": "decoy_engine.declared_casting",
+      "replaced_by": null,
+      "rules": [
+        {
+          "outcome": "execution",
+          "phase": "cleanup",
+          "retry": "environment_repair",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "finalize",
+          "retry": "environment_repair",
+          "severity": "error"
+        },
+        {
+          "outcome": "execution",
+          "phase": "unknown",
+          "retry": "environment_repair",
+          "severity": "error"
+        }
+      ],
+      "since": "1.1.0",
+      "summary": "A sealed protected quarantine artifact of a failed run could not be removed and needs reconciliation.",
+      "symbol": "PROTECTED_QUARANTINE_CLEANUP_FAILED"
+    },
+    {
       "code": "protected_quarantine_expired",
       "context": [],
       "deprecated_in": null,

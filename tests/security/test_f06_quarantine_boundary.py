@@ -792,6 +792,7 @@ F06_CODES = {
         "declared_output_width_overflow",
         "protected_quarantine_write_failed",
         "protected_quarantine_seal_failed",
+        "protected_quarantine_cleanup_failed",
         "protected_quarantine_access_denied",
         "protected_quarantine_expired",
         "fixed_width_record_overlong",

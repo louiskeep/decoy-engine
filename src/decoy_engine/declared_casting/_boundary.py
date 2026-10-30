@@ -33,6 +33,13 @@ from decoy_engine.declared_casting import (
 from decoy_engine.declared_casting import (
     _quarantine_protocol as P,  # noqa: N812 -- short alias for the contract namespace
 )
+from decoy_engine.declared_casting._cleanup import (
+    CONFIRMED,
+    FAILED,
+    NOT_NEEDED,
+    CleanupOutcome,
+    report_cleanup_failure,
+)
 from decoy_engine.declared_casting._eligibility import contract_model
 
 _R = reasons.runtime
@@ -170,6 +177,7 @@ class DeclaredCastRun:
         self._whole: dict[str, CastBatch] = {}
         self._session: P.QuarantineSession | None = None
         self._receipt: P.QuarantineReceipt | None = None
+        self._last_cleanup = NOT_NEEDED
         self._written: set[tuple[str, int]] = set()
 
     # -- public entry points -------------------------------------------------------------------
@@ -333,17 +341,43 @@ class DeclaredCastRun:
             )
         return evidence, token
 
-    def abort(self) -> None:
-        """Remove every trace of the run's quarantine: the open session or an already sealed one."""
+    def abort(self, failing: BaseException | None = None) -> CleanupOutcome:
+        """Remove the run's quarantine: the open session or an already sealed artifact.
+
+        Never raises and never forgets what it could not remove: on a failed cleanup the session
+        or receipt is kept (a later ``abort`` retries), the outcome names the artifact, and
+        ``failing`` (the run's own failure, which still propagates) is amended with it."""
         if self._session is None and self._receipt is None:
-            return
+            return CleanupOutcome(self._last_cleanup)
         store = self._runtime.sink
+        ref = run_id = key_version = ""
+        expires_at: float | None = None
+        state = CONFIRMED
         if self._session is not None:
-            store.abort(self._session)
-            self._session = None
+            ref = str(self._session.session_id)
+            if self._attempt(store.abort, self._session) != CONFIRMED:
+                state = FAILED
+            else:
+                self._session = None
         if self._receipt is not None:
-            store.discard(self._receipt)
-            self._receipt = None
+            ref, run_id = self._receipt.ref, self._receipt.run_id
+            key_version, expires_at = self._receipt.key_version, self._receipt.expires_at
+            if self._attempt(store.discard, self._receipt) != CONFIRMED:
+                state = FAILED
+            else:
+                self._receipt = None
+        self._last_cleanup = state
+        if state == CONFIRMED:
+            return CleanupOutcome(CONFIRMED)
+        outcome = CleanupOutcome(FAILED, ref, run_id or self._run_id, key_version, expires_at)
+        return report_cleanup_failure(failing, outcome)
+
+    @staticmethod
+    def _attempt(step: Callable[[Any], Any], target: Any) -> str:
+        try:
+            return str(step(target))
+        except Exception:  # a store error must not replace the run's own failure
+            return FAILED
 
     def partial_counts(self) -> dict[str, Any]:
         return self._ledger.counts(completeness=K.PARTIAL)

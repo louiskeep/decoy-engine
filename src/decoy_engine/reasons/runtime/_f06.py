@@ -19,6 +19,7 @@ __all__ = [
     "DECLARED_OUTPUT_WIDTH_OVERFLOW",
     "FIXED_WIDTH_RECORD_OVERLONG",
     "PROTECTED_QUARANTINE_ACCESS_DENIED",
+    "PROTECTED_QUARANTINE_CLEANUP_FAILED",
     "PROTECTED_QUARANTINE_EXPIRED",
     "PROTECTED_QUARANTINE_SEAL_FAILED",
     "PROTECTED_QUARANTINE_WRITE_FAILED",
@@ -89,6 +90,11 @@ PROTECTED_QUARANTINE_SEAL_FAILED = _d(
     "protected_quarantine_seal_failed",
     "The protected quarantine artifact could not be sealed.",
     **_STORE,
+)
+PROTECTED_QUARANTINE_CLEANUP_FAILED = _d(
+    "protected_quarantine_cleanup_failed",
+    "A sealed protected quarantine artifact of a failed run could not be removed and needs reconciliation.",
+    **{**_STORE, "phases": (Phase.CLEANUP, Phase.FINALIZE, Phase.UNKNOWN)},
 )
 PROTECTED_QUARANTINE_ACCESS_DENIED = _d(
     "protected_quarantine_access_denied",
