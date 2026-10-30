@@ -1,5 +1,5 @@
 """TQ isolated-substrate grade (branch `tq/isolated-substrate-grade`): mutation
-kills for the CALIBRATION CORE of `_mem_telemetry.py` -- `recalibrate_k` and
+kills for the CALIBRATION CORE of `scripts/mem_telemetry_calibration.py` -- `recalibrate_k` and
 `MemoryTelemetryStore.recalibrate`.
 
 These pin the EXACT machine field each surviving mutant flips: a validation
@@ -23,13 +23,13 @@ Fixtures mirror `test_mem_telemetry.py`.
 from __future__ import annotations
 
 import pytest
-
-from decoy_engine.execution._mem_estimate import ExecutionPath, route_intercept_bytes
-from decoy_engine.execution._mem_telemetry import (
+from mem_telemetry import (
     MemoryTelemetryRecord,
     MemoryTelemetryStore,
     recalibrate_k,
 )
+
+from decoy_engine.execution._mem_estimate import ExecutionPath, route_intercept_bytes
 
 _MB = 1024 * 1024
 _GB = 1024 * _MB

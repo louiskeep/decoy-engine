@@ -1,4 +1,4 @@
-"""Sprint B5: the TELEMETRY self-calibration loop (`_mem_telemetry.py`).
+"""Sprint B5: the TELEMETRY self-calibration loop (`scripts/mem_telemetry.py`).
 OOM-avoidance routing redesign, `docs/plans/2026-07-10-oom-avoidance-routing-
 redesign.md` §3.4, corrected by §11's §3.4 erratum and refined by §13.
 
@@ -13,6 +13,15 @@ refuse to manufacture a record from data that is not trustworthy evidence
 from __future__ import annotations
 
 import pytest
+from mem_telemetry import (
+    KRecalibration,
+    MemoryTelemetryRecord,
+    MemoryTelemetryStore,
+    recalibrate_k,
+    schema_fingerprint,
+    telemetry_record_from_governor_trip,
+    telemetry_record_from_isolated_run,
+)
 
 from decoy_engine.execution._governor import GovernorTripRecord
 from decoy_engine.execution._isolated_common import IsolatedRunResult
@@ -26,15 +35,6 @@ from decoy_engine.execution._mem_estimate import (
     TableSizeSpec,
     estimator_basis_bytes,
     route_intercept_bytes,
-)
-from decoy_engine.execution._mem_telemetry import (
-    KRecalibration,
-    MemoryTelemetryRecord,
-    MemoryTelemetryStore,
-    recalibrate_k,
-    schema_fingerprint,
-    telemetry_record_from_governor_trip,
-    telemetry_record_from_isolated_run,
 )
 
 _MB = 1024 * 1024
