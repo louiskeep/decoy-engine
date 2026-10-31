@@ -695,3 +695,10 @@ M12-append-before-construct: rc=1 ['1 failed in 0.38s']
 M13-NaT-exclusion-dropped: rc=1 ['1 failed, 11 passed in 0.47s']
 M14-one-call-site-left-on-inference: rc=1 ['9 failed in 2.21s']
 M9 detail: dropping the router exemption reddens the hazard cells us->ns and s->ns (PRESERVE/WARN/REMAP) and test_mixed_unit_edge_is_routed_out_of_core_CH[resident-byte_estimate] (diverted to sequential). The sink-mode byte-estimate cells never consult the hazard (no fit is confirmed for lazy sources), which is existing routing behaviour.
+
+Full-suite regression found and fixed (3.10, at 12543a8): test_out_of_core_relation.py::
+test_child_fk_join_fractional_float_parent_matches_fractional_decimal_child[REMAP] failed because
+the shared REMAP mint typed every input through the joiners' up-front rule, refusing a decimal child
+on the whole-child path that accepts it (class 4, route parity). The mint now types only tz-naive
+timestamps and keeps inference otherwise (byte-identical to main for non-temporal keys).
+M6a re-proved on the new line: 2 failed, 94 passed.
