@@ -411,10 +411,10 @@ def mint_remap_values(
 ) -> tuple[pa.Array, ...]:
     """REMAP values for one batch of raw child keys, shared by every joiner.
 
-    Each key is normalized like the oracle's child keys (`fk_key_value`), built by the seam at
-    the normalized child key's own type (unit preserved, separate from the output type), then
-    masked by the parent strategy. Called under REMAP only: typing the input under FAIL would
-    give a zone-aware child a refusal the oracle does not have.
+    Each key is normalized like the oracle's child keys (`fk_key_value`) and masked by the
+    parent strategy. A tz-naive timestamp key is built by the seam at its own unit (separate
+    from the output type); every other key keeps inference, so no caller gains a refusal it
+    did not have (the whole-child path accepts keys the joiners refuse up front).
     """
     remapped = []
     for column, seed in zip(keys, seeds, strict=True):
@@ -422,7 +422,9 @@ def mint_remap_values(
             None if fk_key_value(value) is NULL_FK_KEY else fk_key_value(value)
             for value in column.to_pylist()
         ]
-        strategy_input = fk_output_array(normalized, _fk_key_value_roundtrip_type(column.type))
+        dtype = column.type
+        temporal = pa.types.is_timestamp(dtype) and dtype.tz is None
+        strategy_input = fk_output_array(normalized, dtype if temporal else None)
         remapped.append(mask_column(strategy_input, seed, job_seed))
     return tuple(remapped)
 

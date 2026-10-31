@@ -701,4 +701,6 @@ test_child_fk_join_fractional_float_parent_matches_fractional_decimal_child[REMA
 the shared REMAP mint typed every input through the joiners' up-front rule, refusing a decimal child
 on the whole-child path that accepts it (class 4, route parity). The mint now types only tz-naive
 timestamps and keeps inference otherwise (byte-identical to main for non-temporal keys).
-M6a re-proved on the new line: 2 failed, 94 passed.
+M6a re-proved on the new line: 2 failed, 94 passed. Note: that mutation run's restore
+(git checkout) discarded the then-uncommitted fix, so 6c34f9b carried only this note; the fix
+lands in the following commit and the branch full suites were re-run at that head.
