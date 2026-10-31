@@ -281,6 +281,13 @@ _MUTANTS: dict[str, str] = {
         def decide_the_route():
             return "adhoc_bare"
     """,
+    # A decider that is not named `*route` (the chunked sink's resident / streamed decision).
+    "decider_not_named_route": """
+        def decide_output_mode(sink):
+            if sink is None:
+                return "resident", "adhoc_no_sink"
+            return "streamed", "adhoc_streamed"
+    """,
     "unpacked_reason_producer": """
         def pick(x):
             return "out_of_core", "adhoc_unpacked"

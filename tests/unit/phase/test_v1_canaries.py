@@ -179,7 +179,7 @@ def _callee_error_class() -> type[Exception]:
 
 def _error_envelope() -> phase.PhaseResult:
     exc = _callee_error_class()(f"path /data/{_MARK}.csv value {_PAN}")
-    exc.add_note(f"note {_MARK}")
+    exc.__notes__ = [f"note {_MARK}"]  # add_note is 3.11+; the attribute is what the walk reads
     return phase.error_result(
         "post_scan",
         "integrity",

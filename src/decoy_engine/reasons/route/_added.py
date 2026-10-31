@@ -11,7 +11,6 @@ __all__ = [
     "MIXED_GENERATE_MASK_CHUNKED",
     "MIXED_RUNTIME_DECLINED",
     "OUT_OF_CORE_INELIGIBLE",
-    "POST_SCAN_INTEGRITY",
     "POST_SCAN_INTEGRITY_REQUESTED",
     "POST_VALIDATION_REQUESTED",
     "SEQUENTIAL_INELIGIBLE",
@@ -25,11 +24,6 @@ POST_VALIDATION_REQUESTED = _d(
 POST_SCAN_INTEGRITY_REQUESTED = _d(
     "post_scan_integrity_requested",
     "The Post-scan integrity checks need the full frame resident.",
-)
-# The chunked output sink keeps the output resident for the same whole-output reason.
-POST_SCAN_INTEGRITY = _catalog.route("decoy_engine.execution._chunked_output_sink")(
-    "post_scan_integrity",
-    "Resident output required by the requested Post-scan integrity checks.",
 )
 MIXED_GENERATE_MASK_CHUNKED = _d(
     "mixed_generate_mask_chunked",

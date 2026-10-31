@@ -70,6 +70,21 @@ EXCEPTIONS: tuple[Allowed, ...] = (
     Allowed("docs/decisions/*", "immutable ADRs", False),
     Allowed("docs/records/*", "immutable build/audit records", False),
     Allowed("CHANGELOG.md", "release history", True),
+    Allowed(
+        "src/decoy_engine/reasons/route/_retired.py",
+        "registry tombstones: identities that shipped in a tag stay resolvable by name",
+        True,
+    ),
+    Allowed(
+        "tests/fixtures/f29/reason-manifest-v1.json",
+        "pinned registry manifest, which carries the tombstones",
+        True,
+    ),
+    Allowed(
+        "tests/unit/test_shipped_reason_identities.py",
+        "the v0.16.0 shipped-identity table that must keep resolving",
+        False,
+    ),
     Allowed("tests/sentry/test_no_residual_removed_surface.py", "sentry definition", False),
 )
 

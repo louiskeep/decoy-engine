@@ -160,7 +160,7 @@ class TestWorkerEnvelope:
 
     @pytest.mark.parametrize(
         ("route", "raised"),
-        [("out_of_core", "OocIneligibleError"), ("sequential", "SeqIneligibleError")],
+        [("out_of_core", "ooc_ineligible"), ("sequential", "seq_ineligible")],
     )
     def test_the_typed_route_identity_survives_the_boundary_and_the_text_does_not(
         self, tmp_path, monkeypatch, route, raised
@@ -168,7 +168,7 @@ class TestWorkerEnvelope:
         message = f"execution_mode={route!r} requested but the job is ineligible ({_SENTINEL})."
         source = _ENVELOPE_WORKER.format(raised=f"{raised}({message!r})").replace(
             "from decoy_engine.errors import ConfigError",
-            "from decoy_engine.execution._errors import OocIneligibleError, SeqIneligibleError",
+            "from decoy_engine.execution._errors import ooc_ineligible, seq_ineligible",
         )
         result = _spawn(tmp_path, monkeypatch, source)
         assert result.outcome == "crashed"
@@ -327,10 +327,10 @@ class TestGovernorStillReroutes:
 
     def test_an_eligible_fallback_crash_still_reroutes(self, monkeypatch):
         _no_child(monkeypatch)
-        from decoy_engine.execution._errors import OocIneligibleError
+        from decoy_engine.execution._errors import ooc_ineligible
         from decoy_engine.reason_adapter import reason_from_exception
 
-        exc = OocIneligibleError(f"the job {_OOC_MARKER} ({_SENTINEL}).")
+        exc = ooc_ineligible(f"the job {_OOC_MARKER} ({_SENTINEL}).")
         ooc, reason = exception_error_text(exc), reason_from_exception(exc)
 
         def fake_run(config, sources, *, execution_mode, on_spawn=None, **kw):

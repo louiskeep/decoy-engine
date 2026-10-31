@@ -252,7 +252,8 @@ F29_REGISTRY_MIGRATION = frozenset(
         "src/decoy_engine/execution/_chunked_text_mask.py",
         "src/decoy_engine/execution/_fk_keys.py",
         "src/decoy_engine/execution/_isolated_reason.py",
-        "src/decoy_engine/execution/_output_projection.py",
+        # `_output_projection.py` is deliberately absent: its only allowance is the exact-line
+        # check below, so an unlisted edit to it trips this guard.
         "src/decoy_engine/execution/_publication_observer.py",
         "src/decoy_engine/execution/_residency_warning.py",
         "src/decoy_engine/execution/_strategies/_bucketize.py",

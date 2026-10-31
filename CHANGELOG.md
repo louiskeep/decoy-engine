@@ -28,12 +28,14 @@ phases: Pre-scan (`pre_scan`: profile / detect), Transform (`transform`: mask / 
   registry. The phase identities (`pre_scan`, `post_scan` namespaces; `route.post_scan_integrity_requested`,
   `route.post_scan_integrity`) are F29 catalog entries, `ReasonRef` / `require_known` / `get_reason` /
   `REASONS` / `REGISTRY_SCHEMA` resolve against that catalog, and the F29 `route.run_storm_requested`
-  identity is hard-renamed (pre-GA, manifest regenerated) to `route.post_scan_integrity_requested`.
+  identity and the v0.16.0 resident reason `route.run_storm` stay resolvable as deprecated tombstones
+  (`replaced_by` `route.post_scan_integrity_requested` / `route.post_scan_integrity`); the chunked output
+  sink's resident decisions are registry identities; the manifest pin is regenerated (pre-GA).
 
 ### Added (F29: stable machine-readable errors and progress, engine slices, 2026-10-29)
 
 New public `decoy_engine.reasons`: one engine-owned, versioned registry of reason codes (`registry_version`
-1.0.0, 868 identities across 12 namespaces; 841 of them are the frozen baseline, the rest were added while the change was built) with a fixed safe summary, kind, phase rules and, per phase,
+1.0.0; 868 identities across 12 namespaces when F29 landed, 884 across 14 after the STORM close-out merge below, of which 841 are the frozen baseline and 2 are tombstones) with a fixed safe summary, kind, phase rules and, per phase,
 a severity, outcome category and retry class (`never`, `configuration_repair`, `environment_repair`,
 `retry_operation`, `restart_attempt`, `unknown`). Every producer now references a registry symbol whose
 value is the legacy wire string, so existing `.code` values, `CODES` attributes and exception
