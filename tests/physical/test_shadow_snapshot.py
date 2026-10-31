@@ -58,5 +58,7 @@ def test_fixture_is_written_then_made_read_only(tmp_path: Path) -> None:
     path = write_read_only_fixture(tmp_path, table, "fixture")
     mode = stat.S_IMODE(os.stat(path).st_mode)
     assert not (mode & stat.S_IWUSR), "fixture must not be user-writable after capture"
+    if os.geteuid() == 0:
+        pytest.skip("file mode bits do not restrict root; run the suite as an unprivileged user")
     with pytest.raises(PermissionError):
         path.write_bytes(b"corrupt")

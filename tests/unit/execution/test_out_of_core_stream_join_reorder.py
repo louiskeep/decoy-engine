@@ -548,6 +548,35 @@ def test_close_releases_run_file_fd_on_partial_consumption(tmp_path) -> None:
         assert _spill_files(joiner) == []
 
 
+def test_closing_the_guarded_iter_runs_the_inner_cleanup_before_the_outer_is_collected() -> None:
+    # Platform-independent liveness probe for the FD-release contract: the inner
+    # iter_ordered generator holds the OSFile, so its `finally` must run when the guard is
+    # closed. On 3.12 an unclosed delegate only unwinds on deallocation of the outer.
+    from decoy_engine.execution.out_of_core._stream_join_cursors import _guarded_reorder_iter
+
+    state = {"opened": False, "released": False}
+    held: list = []  # a second owner of the inner generator: dropping the guard's frame cannot free it
+
+    def _batches():
+        state["opened"] = True
+        try:
+            yield pa.record_batch({"__decoy_row_nr": pa.array([0, 1], pa.int64())})
+            yield pa.record_batch({"__decoy_row_nr": pa.array([2, 3], pa.int64())})
+        finally:
+            state["released"] = True
+
+    class _Sorter:
+        def iter_ordered(self):
+            held.append(_batches())
+            return held[-1]
+
+    guard = _guarded_reorder_iter(_Sorter(), 4)  # type: ignore[arg-type]
+    next(guard)  # partial consumption: the inner generator is suspended mid-iteration
+    assert state == {"opened": True, "released": False}
+    guard.close()
+    assert state["released"], "closing the guard must release the inner resource explicitly"
+
+
 # ---------------------------------------------------------------------------
 # dennis LOW-2: plan guard tolerates an interposed operator, still detects a flip
 # ---------------------------------------------------------------------------
