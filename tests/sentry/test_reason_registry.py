@@ -450,6 +450,9 @@ UNCLASSIFIED: dict[str, str] = {
     "FileAccessDenied": "the one policy denial; text is the encoded config position only",
     "FileAccessReadError": "a library failure on an authorized file; text is the encoded position",
     "FileAccessUnavailable": "no policy where one is required, or an unservable strict route",
+    # A-4 x F13: an internal carrier between the file provider and the admission boundary, which
+    # rebuilds it into one closed-set class; it never reaches a caller.
+    "KeptFileFailure": "internal carrier; the admission boundary rebuilds it, never raised to callers",
 }
 
 

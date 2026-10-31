@@ -30,7 +30,7 @@ from decoy_engine.fileaccess._entry import (
 from decoy_engine.fileaccess._errors import encode_field_key, redact_locators, scrub
 from decoy_engine.fileaccess._local import LocalFileAccess, engine_dir_handle, engine_handle
 from decoy_engine.fileaccess._preopened import PreopenedFileAccess
-from decoy_engine.fileaccess._read import keeps_class, read_all, read_text, shown
+from decoy_engine.fileaccess._read import keeps_class, read_all, read_checked, read_text, shown
 from decoy_engine.fileaccess._rooted import Root, RootedFileAccess
 from decoy_engine.fileaccess._types import (
     CONTRACT_VERSION,
@@ -126,6 +126,7 @@ __all__ = [
     "map_in_context",
     "position_key",
     "read_all",
+    "read_checked",
     "read_text",
     "redact_locators",
     "require_ambient",

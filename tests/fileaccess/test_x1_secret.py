@@ -17,6 +17,7 @@ from decoy_engine.fileaccess import FileAccessDenied
 from decoy_engine.keyprovider import (
     MaskSecretError,
     MissingMaskSecret,
+    SecretKeyProvider,
     key_provider_from_ref,
 )
 from tests.fileaccess.support import RootRelative
@@ -45,7 +46,13 @@ def policy(tmp_path: Path) -> Iterator[RootRelative]:
 def _secret_file(policy: RootRelative, data: bytes) -> str:
     path = Path(policy._root_path) / f"s-{uuid.uuid4().hex[:6]}.key"
     path.write_bytes(data)
+    path.chmod(0o600)  # E1: a file: secret must be owner-only
     return f"file:{path}"
+
+
+def _decoded(text: str) -> bytes:
+    # The admitted mask key of material `text` (hex): the same derivation as a direct provider.
+    return SecretKeyProvider(bytes.fromhex(text)).mask_key()
 
 
 def _links(exc: BaseException) -> Iterator[BaseException]:
@@ -134,12 +141,13 @@ def test_a_weak_secret_inside_a_handler_leaves_nothing(policy: RootRelative) -> 
 
 def test_a_good_secret_still_resolves_strictly(policy: RootRelative) -> None:
     ref = _secret_file(policy, GOOD.encode())
-    assert key_provider_from_ref(ref, file_access=policy).mask_key() == bytes.fromhex(GOOD)
+    assert key_provider_from_ref(ref, file_access=policy).mask_key() == _decoded(GOOD)
 
 
 def test_a_policy_denial_keeps_its_class(policy: RootRelative, tmp_path: Path) -> None:
     outside = tmp_path / "outside.key"
     outside.write_text(GOOD)
+    outside.chmod(0o600)  # E1: a file: secret must be owner-only
     with pytest.raises(FileAccessDenied):
         key_provider_from_ref(f"file:{outside}", file_access=policy).mask_key()
 
@@ -148,7 +156,7 @@ def test_unavailable_keeps_its_class(monkeypatch: pytest.MonkeyPatch, policy: Ro
     def boom(*a: Any, **k: Any) -> str:
         raise fileaccess.FileAccessUnavailable("no")
 
-    monkeypatch.setattr(fileaccess, "read_text", boom)
+    monkeypatch.setattr(fileaccess, "read_checked", boom)
     with pytest.raises(fileaccess.FileAccessUnavailable):
         key_provider_from_ref("file:/x", file_access=policy).mask_key()
 
@@ -169,7 +177,7 @@ def test_resource_failures_during_the_read_keep_their_class(
     def boom(*a: Any, **k: Any) -> str:
         raise injected
 
-    monkeypatch.setattr(fileaccess, "read_text", boom)
+    monkeypatch.setattr(fileaccess, "read_checked", boom)
     with pytest.raises(type(injected)) as info:
         key_provider_from_ref("file:/x", file_access=policy).mask_key()
     if isinstance(injected, OSError):
@@ -183,7 +191,7 @@ def test_an_ordinary_read_failure_is_still_the_missing_secret_error(
     def boom(*a: Any, **k: Any) -> str:
         raise OSError(errno.EIO, "io")
 
-    monkeypatch.setattr(fileaccess, "read_text", boom)
+    monkeypatch.setattr(fileaccess, "read_checked", boom)
     with pytest.raises(MissingMaskSecret) as info:
         key_provider_from_ref("file:/x", file_access=policy).mask_key()
     assert "/x" not in str(info.value)
@@ -197,6 +205,7 @@ def test_an_ordinary_read_failure_is_still_the_missing_secret_error(
 def test_ambient_behavior_is_unchanged(tmp_path: Path, name: str) -> None:
     path = tmp_path / "ambient.key"
     path.write_bytes(CASES[name])
+    path.chmod(0o600)  # E1: a file: secret must be owner-only
     with pytest.raises(MaskSecretError) as info:
         key_provider_from_ref(f"file:{path}").mask_key()
     assert info.value.code == "bad_secret_ref"
@@ -205,6 +214,7 @@ def test_ambient_behavior_is_unchanged(tmp_path: Path, name: str) -> None:
 def test_ambient_good_secret_and_missing_file(tmp_path: Path) -> None:
     path = tmp_path / "ok.key"
     path.write_text(GOOD)
-    assert key_provider_from_ref(f"file:{path}").mask_key() == bytes.fromhex(GOOD)
+    path.chmod(0o600)  # E1: a file: secret must be owner-only
+    assert key_provider_from_ref(f"file:{path}").mask_key() == _decoded(GOOD)
     with pytest.raises(MissingMaskSecret):
         key_provider_from_ref(f"file:{tmp_path / 'nope'}").mask_key()

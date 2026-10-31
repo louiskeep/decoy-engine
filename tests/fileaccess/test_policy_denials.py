@@ -134,10 +134,12 @@ def test_v18_fingerprint_of_an_own_snapshot_matches_the_ambient_value(world: Wor
 
 def test_v9_secret_file_outside_the_root_is_denied(world: World) -> None:
     key = world.sentinel(f"{TOKEN}.key", ("ab" * 32).encode())
+    key.chmod(0o600)  # E1: a file: secret must be owner-only
     with pytest.raises(FileAccessDenied) as info:
         key_provider_from_ref(f"file:{key}", file_access=world.policy).mask_key()
     _assert_denial(info.value, "global_settings.mask_secret_ref")
     inside = world.inside("k.key", ("ab" * 32).encode())
+    inside.chmod(0o600)
     assert len(key_provider_from_ref(f"file:{inside}", file_access=world.policy).mask_key()) == 32
 
 

@@ -185,6 +185,7 @@ def test_a_non_utf8_secret_file_under_a_strict_policy_leaks_nothing(rooted, root
     from decoy_engine.keyprovider import MaskSecretError, key_provider_from_ref
 
     (root_dir / "secret.bin").write_bytes(b"abcdef\xfe\xfdSECRETTAIL" + b"z" * 40)
+    (root_dir / "secret.bin").chmod(0o600)  # E1: a file: secret must be owner-only
     with pytest.raises(MaskSecretError) as ei:
         key_provider_from_ref("file:secret.bin", file_access=rooted).mask_key()
     exc = ei.value

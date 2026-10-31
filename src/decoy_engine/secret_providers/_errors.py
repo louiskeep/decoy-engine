@@ -12,6 +12,8 @@ RFC 9457 problem types: the code is the contract, free-form detail is dropped at
 
 from __future__ import annotations
 
+import errno
+import os
 from collections.abc import Callable
 
 from decoy_engine import reasons
@@ -91,6 +93,13 @@ class SecretMaterialInvalid(SecretProviderError):  # noqa: N818 -- reason-named 
         super().__init__(code=reasons.runtime.SECRET_MATERIAL_INVALID, message=self._MESSAGE)
 
 
+class SecretFilePermissionsUnsafe(SecretProviderError):  # noqa: N818 -- reason-named error; the name mirrors its registered code
+    _MESSAGE = "The secret file is readable by other users; make it owner-only (mode 0600 or 0400)."
+
+    def __init__(self) -> None:
+        super().__init__(code=reasons.runtime.SECRET_FILE_PERMISSIONS_UNSAFE, message=self._MESSAGE)
+
+
 class SecretClosedError(DecoyError):
     """A closed secret buffer or prepared secret was used (an internal invariant breach)."""
 
@@ -108,6 +117,7 @@ _CLOSED: dict[str, Callable[[], MaskSecretError]] = {
         SecretExpired,
         SecretLeaseUnsupported,
         SecretMaterialInvalid,
+        SecretFilePermissionsUnsafe,
     )
 }
 _CLOSED[reasons.runtime.KEYED_STRATEGY_REQUIRES_SECRET] = lambda: KeyedStrategyRequiresSecret(
@@ -126,8 +136,90 @@ _UNAVAILABLE: Failure = (reasons.runtime.SECRET_PROVIDER_UNAVAILABLE, "")
 _REGISTERED = {code: code for code in _CLOSED}
 _CODE_TYPES = (str, ReasonCode)
 
+# The config position a `file:` secret is read at; the only text a rebuilt denial carries.
+SECRET_FIELD_KEY = "global_settings.mask_secret_ref"  # noqa: S105 - a config position, not a credential
+UNAVAILABLE_MESSAGE = "the installed file-access policy cannot serve the mask secret file"
+
+
+def _kept_os_error(code: int) -> Callable[[], BaseException]:
+    return lambda: OSError(code, os.strerror(code))
+
+
+def _kept_denied() -> BaseException:
+    from decoy_engine.fileaccess import FileAccessDenied
+
+    return FileAccessDenied(SECRET_FIELD_KEY)
+
+
+def _kept_unavailable() -> BaseException:
+    from decoy_engine.fileaccess import FileAccessUnavailable
+
+    return FileAccessUnavailable(UNAVAILABLE_MESSAGE)
+
+
+# A-4 x F13 (owner decision 2): the CLOSED set of classes a strict file-access policy's `file:`
+# secret read keeps across the admission boundary. Each entry rebuilds a fresh instance from
+# constants only; nothing of the original exception (args, errno text, filename, chain) survives.
+KEPT_FILE_FAILURES: dict[str, Callable[[], BaseException]] = {
+    "file_access_denied": _kept_denied,
+    "file_access_unavailable": _kept_unavailable,
+    "memory": MemoryError,
+    "enomem": _kept_os_error(errno.ENOMEM),
+    "enospc": _kept_os_error(errno.ENOSPC),
+    "edquot": _kept_os_error(errno.EDQUOT),
+}
+_KEPT_ERRNO = {errno.ENOMEM: "enomem", errno.ENOSPC: "enospc", errno.EDQUOT: "edquot"}
+_KEPT = "<kept file failure>"  # not a registered code: only `kept_error` turns it into an error
+
+
+class KeptFileFailure(DecoyError):  # noqa: N818 - a carrier, not an error a caller sees
+    """Raised only by the built-in file provider: names one member of the closed set, nothing
+    else (no args, no text). The admission boundary turns it back into that class."""
+
+    def __init__(self, kind: str) -> None:
+        super().__init__()
+        self.kind = kind
+
+    def __repr__(self) -> str:
+        return f"KeptFileFailure({self.kind!r})"
+
+
+def kept_kind(exc: BaseException) -> str | None:
+    """The closed-set member `exc` is, or None. Called by the file provider on its own read's
+    exception; exact types for the policy classes so a subclass is not admitted by accident."""
+    from decoy_engine.fileaccess import FileAccessDenied, FileAccessUnavailable
+
+    kind = type(exc)
+    if kind is FileAccessDenied:
+        return "file_access_denied"
+    if kind is FileAccessUnavailable:
+        return "file_access_unavailable"
+    if isinstance(exc, MemoryError):
+        return "memory"
+    if isinstance(exc, OSError) and type(exc.errno) is int:
+        return _KEPT_ERRNO.get(exc.errno)
+    return None
+
+
+def is_kept(failure: tuple[str, str]) -> bool:
+    return failure[0] == _KEPT
+
+
+def kept_error(failure: tuple[str, str], *, outermost: bool) -> BaseException:
+    """A fresh instance for a kept failure. An inner boundary re-raises the carrier so the next
+    boundary recognizes it; only the outermost one hands the caller the real class."""
+    _, kind = failure
+    if not outermost:
+        return KeptFileFailure(kind)
+    return KEPT_FILE_FAILURES[kind]()
+
 
 def _classify(exc: BaseException) -> Failure:
+    if type(exc) is KeptFileFailure:
+        kind = exc.kind
+        if type(kind) is str and kind in KEPT_FILE_FAILURES:
+            return (_KEPT, kind)
+        return _UNAVAILABLE
     code = getattr(exc, "code", None) if isinstance(exc, MaskSecretError) else None
     # Exact types: a foreign str subclass could run code on compare or hash.
     if not isinstance(code, str) or type(code) not in _CODE_TYPES:

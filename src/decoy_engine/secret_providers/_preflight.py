@@ -27,7 +27,7 @@ from __future__ import annotations
 import contextvars
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, NoReturn, TypeVar
 
 from decoy_engine.keyprovider import (
     KEY_REQUIRED_GUIDANCE,
@@ -40,13 +40,17 @@ from decoy_engine.secret_providers._buffer import SecretBuffer
 from decoy_engine.secret_providers._cache import default_cache
 from decoy_engine.secret_providers._errors import (
     Failure,
+    KeptFileFailure,
     SecretExpired,
     SecretLeaseUnsupported,
     SecretProviderUnavailable,
     SecretVersionUnavailable,
     error_for,
     failure_of,
+    is_kept,
+    kept_error,
 )
+from decoy_engine.secret_providers._local import FileSecretProvider, _LocalProvider
 from decoy_engine.secret_providers._registry import SecretProviderRegistry, default_registry
 from decoy_engine.secret_providers._requirements import (
     MASK_ROOT,
@@ -164,14 +168,67 @@ def _contained(
     return None, failure
 
 
+# How many admission boundaries enclose the current call. Only the outermost one turns a kept
+# file failure into its real class; an inner one re-raises the carrier for the next to recognize.
+_DEPTH: contextvars.ContextVar[int] = contextvars.ContextVar("decoy_admission_depth", default=0)
+
+
+def _rebuilt(failure: Failure, *, outermost: bool) -> BaseException:
+    if is_kept(failure):
+        return kept_error(failure, outermost=outermost)
+    return error_for(failure)
+
+
+def _raise_bare(error: BaseException) -> NoReturn:
+    """Raise `error` with no inherited chain. A caller may call admission while handling its own
+    exception (a secret-bearing decode error, say), which Python would attach as `__context__`;
+    so the error is raised, caught, cleared and re-raised bare (A-4 AT-X1, `raise_clean`)."""
+    try:
+        raise error.with_traceback(None)
+    except BaseException as fresh:
+        fresh.__cause__ = None
+        fresh.__context__ = None
+        fresh.__suppress_context__ = True
+        raise
+
+
 def _call_closed(work: Callable[[_OpaqueBox], _T], box: _OpaqueBox) -> _T:
     """Raise from a frame whose locals hold no value-bearing object (only the box)."""
-    result, failure = _contained(work, box)
+    depth = _DEPTH.get()
+    token = _DEPTH.set(depth + 1)
+    try:
+        result, failure = _contained(work, box)
+    finally:
+        _DEPTH.reset(token)
     if failure is not None:
-        raise error_for(failure).with_traceback(None) from None
+        _raise_bare(_rebuilt(failure, outermost=depth == 0))
     if result is None:  # unreachable: a failure raises above
         raise SecretProviderUnavailable
     return result
+
+
+def _file_provider_only(provider: object, call: Callable[[], _T]) -> _T:
+    """A kept file failure is honored only from the built-in file provider; from any other
+    provider it is an ordinary failure (``secret_provider_unavailable``)."""
+    foreign = False
+    try:
+        return call()
+    except KeptFileFailure:
+        if type(provider) is FileSecretProvider:
+            raise
+        foreign = True
+    if foreign:
+        raise SecretProviderUnavailable
+    raise AssertionError("unreachable")  # pragma: no cover
+
+
+def _is_local(provider: object) -> bool:
+    """env and file are never cached, whatever their descriptor says: a cached local secret could
+    be served to a run whose file-access policy would deny the read (A-4 x F13 decision 3)."""
+    return isinstance(provider, _LocalProvider) or getattr(provider, "scheme", None) in (
+        "env",
+        "file",
+    )
 
 
 def _resolve_context(provider: SecretProvider) -> ResolveContext:
@@ -190,9 +247,11 @@ def _prepare_boxed(box: _OpaqueBox) -> PreparedSecret:
     )
 
     def loader() -> PreparedSecret:
-        return _load(provider, ref, requirements, policy.clock, context)
+        return _file_provider_only(
+            provider, lambda: _load(provider, ref, requirements, policy.clock, context)
+        )
 
-    if policy.ttl_seconds > 0:
+    if policy.ttl_seconds > 0 and not _is_local(provider):
         return default_cache().get_or_load(
             key,
             owners=(provider, _ADMITTING_REGISTRY.get()),
@@ -255,7 +314,9 @@ def _ref_boxed(box: _OpaqueBox) -> PreparedSecret:
     if key_version is not None:
         ref = replace(ref, key_version=key_version)
     provider = default_registry().get(ref.scheme)
-    return provider.preflight(ref, (MASK_ROOT,), SecretCachePolicy())
+    return _file_provider_only(
+        provider, lambda: provider.preflight(ref, (MASK_ROOT,), SecretCachePolicy())
+    )
 
 
 def prepare_ref(ref: str, *, key_version: str | None = None) -> PreparedSecret:
@@ -322,7 +383,10 @@ def _admit_boxed(box: _OpaqueBox) -> AdmittedKey:
     # ``preflight`` is extension code: its errors cross the same closed boundary.
     scope = _ADMITTING_REGISTRY.set(registry)
     try:
-        admitted = provider.preflight(ref, requirements, cache_policy or SecretCachePolicy())
+        admitted = _file_provider_only(
+            provider,
+            lambda: provider.preflight(ref, requirements, cache_policy or SecretCachePolicy()),
+        )
     finally:
         _ADMITTING_REGISTRY.reset(scope)
     return AdmittedKey(admitted.key_provider(), admitted, requirements)

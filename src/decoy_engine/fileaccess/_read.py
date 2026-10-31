@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import os
+import stat
+from collections.abc import Callable
+
 from decoy_engine.fileaccess._entry import current, is_ambient
 from decoy_engine.fileaccess._errors import encode_field_key, passes_by_type, resurface_scrubbed
 from decoy_engine.fileaccess._types import FileRequest, FileRole
@@ -25,6 +29,32 @@ def read_text(role: FileRole, locator: str, field_key: str, encoding: str = "utf
     try:
         with handle.open_text(encoding) as stream:
             return stream.read()
+    finally:
+        handle.close()
+
+
+def read_checked(
+    role: FileRole, locator: str, field_key: str, check: Callable[[os.stat_result], None]
+) -> bytes:
+    """The bytes of one authorized file, with `check` run first on `fstat` of the descriptor the
+    bytes are then read from. Nothing re-resolves the locator after the check (a path `stat`
+    followed by a second open is the check-then-use race). A regular file is read with `pread`
+    from offset 0 so a shared descriptor's offset is untouched; anything else is read in order.
+    The descriptor is closed on every exit."""
+    handle = current().open_read(FileRequest(role, "read", locator, field_key))
+    try:
+        fd = handle.fileno()
+        info = os.fstat(fd)
+        check(info)
+        chunks: list[bytes] = []
+        regular = stat.S_ISREG(info.st_mode)
+        offset = 0
+        while True:
+            data = os.pread(fd, 1 << 16, offset) if regular else os.read(fd, 1 << 16)
+            if not data:
+                return b"".join(chunks)
+            chunks.append(data)
+            offset += len(data)
     finally:
         handle.close()
 

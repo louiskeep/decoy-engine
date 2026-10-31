@@ -160,10 +160,12 @@ def test_r6_mask_secret_file_errors() -> None:
     # Main's text since F13 (value-free; the earlier path-bearing text was removed upstream).
     assert _text(missing) == "missing_mask_secret: The mask secret could not be resolved."
     Path("bin.key").write_bytes(b"\xff\xfe\x00")
+    Path("bin.key").chmod(0o600)  # E1: a file: secret must be owner-only
     bad = _raises(lambda: key_provider_from_ref("file:bin.key").mask_key())
     assert isinstance(bad, MaskSecretError)
     assert _text(bad) == "bad_secret_ref: The secret material has an invalid encoding."
     Path("ok.key").write_text("ab" * 32)
+    Path("ok.key").chmod(0o600)  # E1: a file: secret must be owner-only
     assert len(key_provider_from_ref("file:ok.key").mask_key()) == 32
 
 
