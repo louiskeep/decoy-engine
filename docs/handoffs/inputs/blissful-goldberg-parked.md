@@ -15,7 +15,7 @@ up. Read the source commits there; nothing below was re-implemented.
 
 | Source commit | Subject | Disposition | Reason |
 | --- | --- | --- | --- |
-| `a9c4d256` | F6: dedupe text_redact NER config/version, window the OOC NER apply | LANDED | Stands alone. Ported onto main's layout: `storm/ner.py` is `detection/ner.py` (STORM split), the mismatch code is `reasons.runtime.NER_MODEL_VERSION_MISMATCH` (F29 registry), and the new `_strategies/_ner_config.py` is allowlisted in the physical-seam sentry. |
+| `a9c4d256` | F6: dedupe text_redact NER config/version, window the OOC NER apply | LANDED | Stands alone. Ported onto main's layout: the NER module now lives at `detection/ner.py` (post-scan split), the mismatch code is `reasons.runtime.NER_MODEL_VERSION_MISMATCH` (F29 registry), and the new `_strategies/_ner_config.py` is allowlisted in the physical-seam sentry. |
 | `7d736a6b` | F1: correct top_code capability to row-local (was falsely is_global) | LANDED | Stands alone; applied clean. Native route still rejects `top_code`, the reason moves from `requires_global_execution` to `no_native_kernel`. |
 | `4e801b6e` | F4/F5: make out-of-core strategy declines actionable and honest | LANDED | Stands alone; applied clean. Its docs describe the pre-F2/F3 decline set (`bucketize`/`date_shift`/`top_code` declined, cross-row set declined), which is main's truth today. A message-shape pin test was added alongside it. |
 | `fb0e3ec0` | F2: out-of-core row-error channel; admit bucketize and top_code | PARKED | The row-error bridge itself (`_row_error_bridge.py`, `_emit.py`, `_stream_driver.py`, `_runner.py` wiring) and the compat admission of `bucketize`/`top_code` on the OOC route. Channel work; route-coverage plan owns it. |
