@@ -3,8 +3,8 @@ Status: current
 ---
 # STORM engine close-out: fixes from the Codex gate on the main merge (addendum)
 
-Base: `ab29ef0c` (merge commit `a5152bf1`). Fix commit: `f41e1ad1`; this record and one doc
-wording fix follow it. `phase.py` is byte-identical to `aefed7d8` (595 lines); the wire shapes
+Base: `ab29ef0c` (merge commit `a5152bf1`). Fix commit: `f41e1ad1`; this record (`7c2c9ce7` and the
+full-suite follow-up) and one doc wording fix follow it. `phase.py` is byte-identical to `aefed7d8` (595 lines); the wire shapes
 `phase-result/v1` and `phase-event/v1` are untouched. `git merge-tree --write-tree origin/main HEAD`
 (origin/main at `a6e5c252`) reports no conflicts.
 
@@ -112,9 +112,29 @@ Other gates: ruff check clean, ruff format clean (1764 files); mypy 16 errors in
 installed there, on both trees); module-size sentry passes, `_pipeline_routing.py` stays at census
 699; `test_exception_hierarchy` passes.
 
-Full suite (`pytest tests -q`, 3.11 on the branch; 3.10 on `fdd08a89`): still running when this
-record was first committed; the failing ids and their baseline proof are appended in the follow-up
-commit.
+## Full suite (`pytest tests -q -p no:cacheprovider -rf`)
+
+| Tree | result |
+|---|---|
+| branch `f41e1ad1`, 3.11.17 | 16 failed, 28429 passed, 5335 skipped, 48 deselected, 6 xfailed, 65 xpassed (35:47) |
+| `fdd08a89`, 3.10.20 (worktree) | 18 failed, 28101 passed, 5335 skipped, 48 deselected, 4 xfailed, 60 xpassed (40:15) |
+
+The branch's 16 failing ids are exactly the baseline's 18 minus the two pinned trace tests, which
+the fix turns green. Every one of the 16 fails on `fdd08a89` too (same container, lock-pinned venvs):
+
+- Faker-value snapshots: `tests/unit/execution/test_c5c_a_unchanged_jobs.py::test_job_output_is_unchanged`
+  (4 cases), `tests/unit/execution/test_faker_strategy.py` (`test_provider_config_reaches_the_pool_build`,
+  `test_config_in_lookup_identity_prevents_sibling_pool_contamination`),
+  `tests/sentry/test_proof_manifest.py::test_proof_manifest_is_up_to_date`,
+  `tests/unit/generation/test_dob_anchor.py::test_composite_person_masking_matches_pre_change_golden_without_freeze`,
+  `tests/unit/providers_v2/test_registry.py::TestFakerProviders::test_known_faker_provider_present`,
+  `tests/parity/test_phase_f_f0_oracle.py::test_oracle_fixture` (4 composite cases),
+  `tests/parity/test_phase_f_f0_composite_repeatability.py::test_composite_person_repeats_byte_identically_in_process` (2 cases).
+- Shadow snapshot as root: `tests/physical/test_shadow_snapshot.py::test_fixture_is_written_then_made_read_only`.
+- `google.cloud`: not among the failures here because both venvs carry the `cloud` extra (`--all-extras`).
+- 3.12 only (listed suites, proven on `fdd08a89` under 3.12 above): the categorical CDF precision test
+  and the out-of-core stream-join fd test.
+
 
 ## Not run
 
