@@ -9,6 +9,14 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Changed (pre-GA: `type` is a reserved `when` name; main-health fixes, 2026-10-31)
+
+`type` is added to the frozen `RESERVED_NAMES` of the `when` grammar (it is a Python 3.12 soft keyword).
+It is listed on every interpreter, so validation does not depend on the running Python. A `when:`
+predicate that references a column named `type` now fails validation with `when_outside_closed_grammar`
+on 3.10, 3.11 and 3.12 alike (before, it was accepted). Pre-GA hard change with no shim; after GA a
+further addition to this list would break existing configs.
+
 ### Added (F13: secret-provider contract and preflight, engine slices, 2026-10-30)
 
 New `decoy_engine.secret_providers`: the versioned `secret-provider/v1` contract (`describe` / `resolve`
