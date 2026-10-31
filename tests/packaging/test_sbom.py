@@ -4,8 +4,8 @@ Runs the real script on a tiny fixture lock (tests/fixtures/sbom_lock) and check
 the output against the CycloneDX JSON schema, against the lock's own runtime
 closure (completeness), for byte-identical reruns, and for leaks of paths or
 environment values. Needs ``uv`` and network access to PyPI on first use (the
-pinned ``cyclonedx-py`` runs through ``uvx``); marked ``packaging`` like the other
-tests that shell out to build tooling.
+pinned ``cyclonedx-py`` runs from a throwaway venv built from sbom-tool-requirements.txt);
+marked ``packaging`` like the other tests that shell out to build tooling.
 """
 
 from __future__ import annotations
@@ -553,3 +553,397 @@ def test_every_component_has_a_pypi_purl_matching_its_name_and_version(tmp_path)
     assert sbom["components"]
     for c in sbom["components"]:
         assert c["purl"] == f"pkg:pypi/{_norm(c['name'])}@{c['version']}"
+
+
+# --- round 2: run-time isolation (class A) -----------------------------------
+
+
+def _shadow_dir(tmp_path: Path) -> Path:
+    shadow = tmp_path / "shadow"
+    (shadow / "cyclonedx_py").mkdir(parents=True)
+    (shadow / "cyclonedx_py" / "__init__.py").write_text('raise SystemExit("SHADOWED_TOOL")\n')
+    return shadow
+
+
+def test_pythonpath_cannot_shadow_the_hashed_tool(tmp_path):
+    out = tmp_path / "sbom.cdx.json"
+    r = _run(_FIXTURE / "uv.lock", out, env_extra={"PYTHONPATH": str(_shadow_dir(tmp_path))})
+    assert r.returncode == 0, r.stderr
+    assert "SHADOWED_TOOL" not in r.stderr
+    assert out.is_file()
+
+
+def _canary_uv_config(tmp_path: Path) -> dict[str, str]:
+    """A user uv.toml and a cwd uv.toml that both point uv at an unreachable index."""
+    cfg = '[pip]\nindex-url = "https://canary-index.invalid/simple"\n'
+    xdg = tmp_path / "xdg"
+    (xdg / "uv").mkdir(parents=True)
+    (xdg / "uv" / "uv.toml").write_text(cfg)
+    (tmp_path / "uv.toml").write_text(cfg)
+    return {"XDG_CONFIG_HOME": str(xdg)}
+
+
+def test_ambient_uv_config_files_cannot_change_the_tool_index(tmp_path):
+    out = tmp_path / "sbom.cdx.json"
+    r = _run(_FIXTURE / "uv.lock", out, env_extra=_canary_uv_config(tmp_path), cwd=tmp_path)
+    assert r.returncode == 0, r.stderr
+    assert out.is_file()
+
+
+@pytest.mark.parametrize("var", ["UV_INDEX_URL", "UV_DEFAULT_INDEX", "UV_EXTRA_INDEX_URL"])
+def test_ambient_uv_environment_cannot_change_the_tool_index(tmp_path, var):
+    out = tmp_path / "sbom.cdx.json"
+    r = _run(_FIXTURE / "uv.lock", out, env_extra={var: "https://canary-index.invalid/simple"})
+    assert r.returncode == 0, r.stderr
+    assert out.is_file()
+
+
+def test_ambient_uv_environment_cannot_change_the_export(tmp_path):
+    """UV_FROZEN would skip the --locked staleness check; the scrub must drop it."""
+    proj = tmp_path / "proj"
+    shutil.copytree(_FIXTURE, proj)
+    pyproject = proj / "pyproject.toml"
+    pyproject.write_text(
+        pyproject.read_text().replace(
+            'dependencies = ["python-dateutil==2.9.0.post0"]',
+            'dependencies = ["python-dateutil==2.9.0.post0", "six==1.17.0"]',
+        )
+    )
+    out = tmp_path / "sbom.cdx.json"
+    r = _run(proj / "uv.lock", out, env_extra={"UV_FROZEN": "1"})
+    assert r.returncode != 0
+    assert "uv export failed" in r.stderr
+    assert not out.exists()
+
+
+def _uv_shim(tmp_path: Path, venv_python: str) -> dict[str, str]:
+    """PATH shim: `uv venv` gets a different interpreter, everything else is real uv."""
+    real_uv = shutil.which("uv")
+    assert real_uv
+    shim_dir = tmp_path / "uv-shim"
+    shim_dir.mkdir()
+    shim = shim_dir / "uv"
+    shim.write_text(
+        "#!/usr/bin/env bash\n"
+        'if [ "$1" = venv ]; then\n'
+        "  args=()\n"
+        '  for a in "$@"; do\n'
+        f'    if [ "${{prev:-}}" = --python ]; then a={venv_python}; fi\n'
+        '    args+=("$a"); prev=$a\n'
+        "  done\n"
+        f'  exec {real_uv} "${{args[@]}}"\n'
+        "fi\n"
+        f'exec {real_uv} "$@"\n'
+    )
+    shim.chmod(0o755)
+    return {"PATH": f"{shim_dir}{os.pathsep}{os.environ['PATH']}"}
+
+
+def test_tool_interpreter_other_than_the_locked_minor_is_refused(tmp_path):
+    out = tmp_path / "sbom.cdx.json"
+    r = _run(_FIXTURE / "uv.lock", out, env_extra=_uv_shim(tmp_path, "3.13"))
+    assert r.returncode != 0
+    assert "tool interpreter is not CPython 3.12" in r.stderr
+    assert not out.exists()
+
+
+# docopt 0.6.2 is published as an sdist only.
+_SDIST_ONLY = (
+    "docopt==0.6.2 \\\n"
+    "    --hash=sha256:49b3a825280bd66b3aa83585ef59c4a8c82f2c8a522dbe754a8bc8d08c85c491\n"
+)
+
+
+def test_tool_install_never_builds_from_source(tmp_path):
+    script = _script_copy(tmp_path)
+    req = script.parent / "sbom-tool-requirements.txt"
+    req.write_text(req.read_text() + _SDIST_ONLY)
+    out = tmp_path / "sbom.cdx.json"
+    r = _run(_FIXTURE / "uv.lock", out, script=script)
+    assert r.returncode != 0
+    assert "tool environment install failed" in r.stderr
+    assert not out.exists()
+
+
+_SHA = "ab" * 32
+_BAD_TOOL_LINES = {
+    "index-url": "--index-url https://canary-index.invalid/simple\n",
+    "extra-index-url": "--extra-index-url https://canary-index.invalid/simple\n",
+    "find-links": "--find-links ./wheels\n",
+    "trusted-host": "--trusted-host canary-index.invalid\n",
+    "direct-url": f"six @ https://canary-index.invalid/six.whl \\\n    --hash=sha256:{_SHA}\n",
+    "path": f"./vendored/six \\\n    --hash=sha256:{_SHA}\n",
+    "unhashed-pin": "six==1.17.0\n",
+    "non-pep440-version": f"six==1..0 \\\n    --hash=sha256:{_SHA}\n",
+    "cr-in-comment": "# via\rsix==1.17.0\n",
+}
+
+
+@pytest.mark.parametrize("line", list(_BAD_TOOL_LINES.values()), ids=list(_BAD_TOOL_LINES))
+def test_tool_requirements_grammar_is_checked_before_install(tmp_path, line):
+    script = _script_copy(tmp_path)
+    req = script.parent / "sbom-tool-requirements.txt"
+    req.write_bytes((req.read_text() + line).encode())
+    out = tmp_path / "sbom.cdx.json"
+    r = _run(_FIXTURE / "uv.lock", out, script=script)
+    assert r.returncode != 0
+    assert "sbom-tool-requirements.txt is not hashed pins only" in r.stderr
+    assert "canary-index" not in r.stderr
+    assert not out.exists()
+
+
+def _run_lock(script: Path, env_extra: dict[str, str] | None = None, cwd: Path | None = None):
+    _require_uv()
+    return subprocess.run(  # noqa: S603 -- static argv (bash + copied repo script)
+        ["bash", str(script)],  # noqa: S607 -- bash from PATH
+        capture_output=True,
+        text=True,
+        env={**os.environ, **(env_extra or {})},
+        cwd=cwd,
+        check=False,
+    )
+
+
+def test_tool_lock_ignores_ambient_uv_config_and_environment(tmp_path):
+    script = _script_copy(tmp_path).parent / "sbom-tool-lock.sh"
+    env = {**_canary_uv_config(tmp_path), "UV_INDEX_URL": "https://canary-index.invalid/simple"}
+    r = _run_lock(script, env_extra=env, cwd=tmp_path)
+    assert r.returncode == 0, r.stderr
+    assert (script.parent / "sbom-tool-requirements.txt").read_bytes() == (
+        _TOOL_REQUIREMENTS.read_bytes()
+    )
+
+
+def test_tool_lock_refuses_a_dependency_without_wheels(tmp_path):
+    script = _script_copy(tmp_path).parent / "sbom-tool-lock.sh"
+    req_in = script.parent / "sbom-tool-requirements.in"
+    req_in.write_text(req_in.read_text() + "docopt==0.6.2\n")
+    r = _run_lock(script)
+    assert r.returncode != 0
+    assert "docopt" not in (script.parent / "sbom-tool-requirements.txt").read_text()
+
+
+def test_cdpath_does_not_redirect_or_pollute_the_script_directory(tmp_path):
+    decoy = tmp_path / "decoy-tree"
+    (decoy / "scripts" / "release").mkdir(parents=True)
+    out = tmp_path / "sbom.cdx.json"
+    r = subprocess.run(  # noqa: S603 -- static argv
+        ["bash", "scripts/release/sbom.sh", str(_FIXTURE / "uv.lock"), str(out)],  # noqa: S607
+        capture_output=True,
+        text=True,
+        env={**os.environ, "CDPATH": str(decoy)},
+        cwd=_REPO_ROOT,
+        check=False,
+    )
+    assert r.returncode == 0, r.stderr
+    assert out.is_file()
+
+
+def test_extra_positional_arguments_are_refused(tmp_path):
+    _require_uv()
+    out = tmp_path / "sbom.cdx.json"
+    r = subprocess.run(  # noqa: S603 -- static argv
+        ["bash", str(_SCRIPT), str(_FIXTURE / "uv.lock"), str(out), "surplus"],  # noqa: S607
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert r.returncode != 0
+    assert "usage:" in r.stderr
+    assert not out.exists()
+
+
+@pytest.mark.parametrize("extra", [[], ["a.json", "b.json"]], ids=["no-file", "two-files"])
+def test_validate_needs_exactly_one_file(extra):
+    _require_uv()
+    r = subprocess.run(  # noqa: S603 -- static argv
+        ["bash", str(_SCRIPT), "--validate", *extra],  # noqa: S607
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert r.returncode != 0
+    assert "usage:" in r.stderr
+
+
+# --- round 2: export checker versus parser (class B) ---------------------------
+
+_GRAMMAR = "non-public source or unsupported requirement"
+_SEPARATORS = ["\r", "\x0b", "\x0c", "\x1c", "\x1d", "\x1e", "\x85", "\u2028", "\u2029"]
+
+
+@pytest.mark.parametrize("sep", _SEPARATORS, ids=[f"U+{ord(s):04X}" for s in _SEPARATORS])
+def test_splitlines_separators_in_the_export_are_refused(tmp_path, sep):
+    r, out = _run_with_export_shim(tmp_path, ["six==1.17.0 \\", f"    {_H}", sep])
+    assert r.returncode != 0
+    assert _GRAMMAR in r.stderr
+    assert not out.exists()
+
+
+def test_crlf_export_is_refused(tmp_path):
+    r, out = _run_with_export_shim(tmp_path, ["six==1.17.0 \\\r", f"    {_H}\r"])
+    assert r.returncode != 0
+    assert _GRAMMAR in r.stderr
+    assert not out.exists()
+
+
+@pytest.mark.parametrize("version", ["1..0", "1.17.0-", "1.17.0_post1", ".1", "1.0+Local", "01.0"])
+def test_export_versions_must_be_canonical_pep440(tmp_path, version):
+    r, out = _run_with_export_shim(tmp_path, [f"six=={version} \\", f"    {_H}"])
+    assert r.returncode != 0
+    assert _GRAMMAR in r.stderr
+    assert not out.exists()
+
+
+@pytest.mark.parametrize(
+    "marker",
+    ["python_version >>= '3.0'", "platform_cpu == 'x86'", "(python_version >= '3.0'"],
+    ids=["bad-operator", "unknown-variable", "unbalanced"],
+)
+def test_export_pins_the_requirement_parser_rejects_are_refused(tmp_path, marker):
+    r, out = _run_with_export_shim(tmp_path, [f"six==1.17.0 ; {marker} \\", f"    {_H}"])
+    assert r.returncode != 0
+    assert _GRAMMAR in r.stderr
+    assert not out.exists()
+
+
+def test_exported_package_outside_the_checked_closure_is_refused(tmp_path):
+    # iniconfig is locked, but only for the `dev` extra: its source was never checked.
+    r, out = _run_with_export_shim(
+        tmp_path, ["six==1.17.0 \\", f"    {_H}", "iniconfig==2.0.0 \\", f"    {_H}"]
+    )
+    assert r.returncode != 0
+    assert "SBOM does not match the runtime closure" in r.stderr
+    assert not out.exists()
+
+
+def test_component_count_equals_export_pin_count(tmp_path):
+    sbom = json.loads(_generate(tmp_path).read_text())
+    closure = _normalized(_runtime_closure(_FIXTURE / "uv.lock"))
+    assert len(sbom["components"]) == len(closure)
+    assert sorted((_norm(c["name"]), c["version"]) for c in sbom["components"]) == sorted(closure)
+
+
+def test_completeness_check_flags_dropped_merged_or_added_components():
+    checks = _load_checks()
+    export = f"six==1.17.0 \\\n    {_H}\nleaf==1.0 \\\n    {_H}\n"
+    six = {"name": "six", "version": "1.17.0"}
+    leaf = {"name": "Leaf", "version": "1.0.0"}
+    root = {"metadata": {"component": {"name": "root"}}}
+    assert checks.completeness_violations(export, {**root, "components": [six, leaf]}) == []
+    assert checks.completeness_violations(export, {**root, "components": [six]}) == ["leaf 1.0"]
+    assert checks.completeness_violations(export, {**root, "components": [six, six, leaf]})
+    assert checks.completeness_violations(export, {"components": [six, leaf]})
+
+
+def test_pin_violations_treats_crlf_like_the_script_path():
+    checks = _load_checks()
+    assert checks.pin_violations(f"six==1.17.0 \\\r\n    {_H}\r\n", require_hashes=True)
+    assert checks.pin_violations(f"six==1.17.0 \\\n    {_H}\n", require_hashes=True) == []
+
+
+# --- round 2: source-keyed closure (item 5) ------------------------------------
+
+_GIT = '{ git = "https://example.invalid/six.git?rev=abc#abc" }'
+_PYPI = '{ registry = "https://pypi.org/simple" }'
+
+
+def _twin_lock(edge_source: str | None, git_first: bool, *, dev_edge: str | None = None) -> str:
+    """Two `six 1.17.0` entries (PyPI and git); the runtime edge names one by source."""
+    pypi = f'[[package]]\nname = "six"\nversion = "1.17.0"\nsource = {_PYPI}\n'
+    git = f'[[package]]\nname = "six"\nversion = "1.17.0"\nsource = {_GIT}\n'
+    twins = git + "\n" + pypi if git_first else pypi + "\n" + git
+    dev = (
+        f'\n[package.dev-dependencies]\ndev = [\n    {{ name = "six", version = "1.17.0", source = {dev_edge} }},\n]\n'
+        if dev_edge
+        else ""
+    )
+    return (
+        'version = 1\nrevision = 3\nrequires-python = ">=3.10"\n\n'
+        f'[[package]]\nname = "dateutil-ish"\nversion = "1.0"\nsource = {_PYPI}\n'
+        + (
+            f'dependencies = [\n    {{ name = "six", version = "1.17.0", source = {edge_source} }},\n]\n\n'
+            if edge_source
+            else 'dependencies = [\n    { name = "six", version = "1.17.0" },\n]\n\n'
+        )
+        + f"{twins}\n"
+        '[[package]]\nname = "root"\nversion = "1.0.0"\nsource = { virtual = "." }\n'
+        'dependencies = [\n    { name = "dateutil-ish" },\n]\n'
+        f"{dev}"
+    )
+
+
+@pytest.mark.parametrize("git_first", [False, True], ids=["pypi-first", "git-first"])
+def test_runtime_edge_to_the_git_twin_is_refused_in_either_order(git_first):
+    checks = _load_checks()
+    assert checks.lock_violations(_twin_lock(_GIT, git_first)) == ["six 1.17.0"]
+
+
+@pytest.mark.parametrize("git_first", [False, True], ids=["pypi-first", "git-first"])
+def test_dev_only_git_twin_does_not_hide_or_taint_the_public_one(git_first):
+    checks = _load_checks()
+    assert checks.lock_violations(_twin_lock(_PYPI, git_first, dev_edge=_GIT)) == []
+
+
+def test_closure_follows_requested_extras():
+    checks = _load_checks()
+    text = (
+        "version = 1\nrevision = 3\n\n"
+        f'[[package]]\nname = "bar"\nversion = "1.0"\nsource = {_GIT}\n\n'
+        f'[[package]]\nname = "foo"\nversion = "1.0"\nsource = {_PYPI}\n\n'
+        '[package.optional-dependencies]\nx = [\n    { name = "bar" },\n]\n\n'
+        '[[package]]\nname = "root"\nversion = "1.0.0"\nsource = { virtual = "." }\n'
+        'dependencies = [\n    { name = "foo", extra = ["x"] },\n]\n'
+    )
+    assert checks.lock_violations(text) == ["bar 1.0"]
+
+
+def test_versionless_runtime_package_gets_the_non_public_source_refusal(tmp_path, capsys):
+    checks = _load_checks()
+    lock = tmp_path / "uv.lock"
+    lock.write_text(
+        (_FIXTURE / "uv.lock")
+        .read_text()
+        .replace(
+            f'name = "six"\nversion = "1.17.0"\nsource = {_PYPI}',
+            f'name = "six"\nsource = {_GIT}',
+        )
+    )
+    assert 'name = "six"\nsource' in lock.read_text()
+    assert checks.main(["sbom_checks.py", "lock", str(lock)]) == 1
+    err = capsys.readouterr().err
+    assert "non-public source" in err
+    assert "no single root project" not in err
+    assert "example.invalid" not in err
+
+
+def test_project_uv_config_cannot_change_the_export(tmp_path):
+    baseline = _generate(tmp_path, "baseline.json")
+    proj = tmp_path / "proj"
+    shutil.copytree(_FIXTURE, proj)
+    (proj / "uv.toml").write_text('exclude-newer = "2020-01-01T00:00:00Z"\n')
+    out = tmp_path / "sbom.cdx.json"
+    r = _run(proj / "uv.lock", out)
+    assert r.returncode == 0, r.stderr
+    assert out.read_bytes() == baseline.read_bytes()
+
+
+@pytest.mark.parametrize("sep", _SEPARATORS, ids=[f"U+{ord(s):04X}" for s in _SEPARATORS])
+def test_splitlines_separators_in_a_tool_file_comment_are_refused(tmp_path, sep):
+    # Comments are allowed in the tool file, so only the printable-ASCII rule stops a
+    # separator from smuggling a pin past the checker.
+    script = _script_copy(tmp_path)
+    req = script.parent / "sbom-tool-requirements.txt"
+    req.write_bytes((req.read_text() + f"# via{sep}six==1.17.0\n").encode())
+    out = tmp_path / "sbom.cdx.json"
+    r = _run(_FIXTURE / "uv.lock", out, script=script)
+    assert r.returncode != 0
+    assert "sbom-tool-requirements.txt is not hashed pins only" in r.stderr
+    assert not out.exists()
+
+
+@pytest.mark.parametrize("git_first", [False, True], ids=["pypi-first", "git-first"])
+def test_sourceless_edge_reaching_both_twins_keeps_both_in_either_order(git_first):
+    checks = _load_checks()
+    assert checks.lock_violations(_twin_lock(None, git_first)) == ["six 1.17.0"]
+    assert len(checks._closure_packages(tomllib.loads(_twin_lock(None, git_first)))) == 3

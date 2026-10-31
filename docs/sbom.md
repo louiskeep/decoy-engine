@@ -23,9 +23,21 @@ CycloneDX schema. The format is never hand-written.
 
 The tool itself is pinned end to end. `scripts/release/sbom-tool-requirements.txt` is the
 fully resolved, hashed environment of `cyclonedx-bom==7.6.0` and `cyclonedx-python-lib==11.12.0`
-plus every transitive dependency (CPython 3.12, universal markers). Each run installs it into a
-throwaway venv with `uv pip install --require-hashes --no-deps`, so nothing floats at run time
-and a changed or tampered release fails the install. Regenerate it, after editing the pins in
+plus every transitive dependency (CPython 3.12, universal markers, wheels only). Each run:
+
+- creates a throwaway venv and refuses any interpreter but CPython 3.12;
+- checks the tool file's grammar with that bare interpreter before uv reads it (hashed
+  `name==version` pins and comments only: no index, find-links or trusted-host options,
+  URLs or paths);
+- installs it with `uv pip install --require-hashes --no-deps --only-binary :all:`, so
+  nothing is resolved or built at run time and a changed or tampered release fails;
+- runs the tool as `python -I -m cyclonedx_py`, so `PYTHONPATH` and user site cannot
+  shadow the hashed packages.
+
+Every `uv` call (venv, install, export) passes `--no-config`, and the script drops every
+`UV_*` variable except `UV_CACHE_DIR`, `UV_NATIVE_TLS` and `UV_HTTP_TIMEOUT` (`--no-config`
+skips `uv.toml` files but not `UV_*` variables such as `UV_INDEX_URL` or `UV_FROZEN`).
+Regenerate the tool file, after editing the pins in
 `scripts/release/sbom-tool-requirements.in`, with:
 
 ```bash
@@ -55,19 +67,32 @@ same pins give byte-identical output.
 
 The script exits non-zero and writes nothing when:
 
+- the arguments are not `[LOCK [OUT]]` or `--validate FILE` (a usage message);
 - the lock is missing, or stale against `pyproject.toml` (`uv export --locked`);
-- a package in the **runtime closure** (the root project's non-dev dependencies, per
-  name and version) comes from anything but the public PyPI index. Dev groups and extras
-  are out of scope, so a dev-only git or editable source does not block the SBOM;
+- a package in the **runtime closure** comes from anything but the public PyPI index, or
+  has no version (a git or path source). The closure is the root project's non-dev
+  dependencies, walked by name, version **and source**, so when the lock holds two entries
+  for one name and version (say PyPI and git), the edge's `source` decides which one ships
+  and a non-public twin cannot hide behind a public one. Extras that a runtime edge requests
+  are followed. Dev groups and the root's own extras are out of scope, so a dev-only git or
+  editable source does not block the SBOM;
 - the exported pin list is anything but well-formed `name==version [; marker]` lines, each
-  with at least one `sha256` hash line (options, comments, URLs, paths, orphan hashes);
-- the tool requirements file is missing, lacks a hash, or any hash does not match.
+  with at least one `sha256` hash line (options, comments, URLs, paths, orphan hashes), holds
+  any character outside printable ASCII and `\n` (`\r` so CRLF, and the other separators
+  `str.splitlines()` honours), has a non-canonical PEP 440 version, or has a pin that does
+  not re-parse with `packaging.requirements.Requirement` as exactly `name==version [; marker]`;
+- the generated SBOM's components are not exactly the exported pins (PEP 503 name and
+  PEP 440 version, counted), or an exported pin lies outside the checked runtime closure;
+- the tool requirements file is missing, breaks the grammar above, lacks a hash, any hash
+  does not match, or a dependency has no wheel; or the venv interpreter is not CPython 3.12.
 
 Error messages name files by basename only.
 
 ## Tests
 
 `tests/packaging/test_sbom.py` (marker `packaging`): schema validation (`sbom.sh --validate`),
-completeness against an independent walk of the lock (PEP 503 names, `pkg:pypi` purls), lock
-hashes, byte-identical reruns, leak canaries, and every refusal above. It needs `uv` and
+completeness against an independent walk of the lock (component count equals pin count,
+PEP 503 names, `pkg:pypi` purls), lock hashes, byte-identical reruns, leak canaries, every
+refusal above, and run-time isolation (`PYTHONPATH` shadowing, `uv.toml` and `UV_*`
+overrides, a different interpreter, an sdist-only dependency, `CDPATH`). It needs `uv` and
 network on first use.
