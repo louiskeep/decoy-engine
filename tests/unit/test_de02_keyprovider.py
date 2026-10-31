@@ -960,6 +960,7 @@ class TestSecretRefResolver:
         raw = os.urandom(32)
         p = tmp_path / "secret.hex"
         p.write_text(raw.hex())
+        p.chmod(0o600)
         assert key_provider_from_ref(f"file:{p}").mask_key() == SecretKeyProvider(raw).mask_key()
 
     def test_missing_env_raises(self):
@@ -982,6 +983,7 @@ class TestSecretRefResolver:
         CLI-mappable MaskSecretError every other bad-ref shape raises."""
         p = tmp_path / "secret.bin"
         p.write_bytes(b"\xff\xfe\x00\x01not-valid-utf8\x80\x81")
+        p.chmod(0o600)
         with pytest.raises(MaskSecretError) as exc:
             key_provider_from_ref(f"file:{p}")
         assert not isinstance(exc.value, MissingMaskSecret)

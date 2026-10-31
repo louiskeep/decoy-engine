@@ -29,6 +29,7 @@ def fk_job(
         # isolated child process too, which the in-process throwaway-secret fixture cannot.
         key_file = tmp_path / "throwaway.key"
         key_file.write_text(THROWAWAY_SECRET.hex())
+        key_file.chmod(0o600)
         mask_secret_ref = f"file:{key_file}"
     settings["mask_secret_ref"] = mask_secret_ref
     cfg = PipelineConfig.model_validate(

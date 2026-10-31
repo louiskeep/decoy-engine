@@ -1,0 +1,76 @@
+F13 slice E1 evidence: file: secret owner-only check (tests/secret_providers/test_file_permissions.py)
+
+== Red first: the new test file run against unmodified origin/main ==
+Environment: .venv from uv.lock (scripts/dev/bootstrap.sh), Python 3.10.20, uv.lock sha256 127c76b7.
+The 10 cells that pass on main are characterization of behavior that must not change
+(owner-only files admitted, directory and missing file -> missing_mask_secret, owner-only FIFO read,
+value-free directory/missing errors).
+
+ERROR    f13.sentry:test_leak_sentry.py:298 admission failed
+ERROR    f13.sentry:test_leak_sentry.py:298 admission failed
+PASSED tests/secret_providers/test_file_permissions.py::test_owner_only_modes_are_admitted[0o600]
+PASSED tests/secret_providers/test_file_permissions.py::test_owner_only_modes_are_admitted[0o400]
+PASSED tests/secret_providers/test_file_permissions.py::test_owner_only_modes_are_admitted[0o700]
+PASSED tests/secret_providers/test_file_permissions.py::test_a_directory_is_the_unreadable_file_case_not_a_permissions_refusal[0o755]
+PASSED tests/secret_providers/test_file_permissions.py::test_a_directory_is_the_unreadable_file_case_not_a_permissions_refusal[0o700]
+PASSED tests/secret_providers/test_file_permissions.py::test_a_missing_file_still_reports_missing_mask_secret
+PASSED tests/secret_providers/test_file_permissions.py::test_symlink_to_owner_only_target_is_admitted
+PASSED tests/secret_providers/test_file_permissions.py::test_owner_only_fifo_is_read_like_a_file
+PASSED tests/secret_providers/test_file_permissions.py::test_refusals_carry_no_path_mode_uid_or_secret[directory]
+PASSED tests/secret_providers/test_file_permissions.py::test_refusals_carry_no_path_mode_uid_or_secret[missing]
+FAILED tests/secret_providers/test_file_permissions.py::test_group_or_other_bits_are_refused[0o640]
+FAILED tests/secret_providers/test_file_permissions.py::test_group_or_other_bits_are_refused[0o644]
+FAILED tests/secret_providers/test_file_permissions.py::test_group_or_other_bits_are_refused[0o604]
+FAILED tests/secret_providers/test_file_permissions.py::test_group_or_other_bits_are_refused[0o660]
+FAILED tests/secret_providers/test_file_permissions.py::test_group_or_other_bits_are_refused[0o666]
+FAILED tests/secret_providers/test_file_permissions.py::test_group_or_other_bits_are_refused[0o440]
+FAILED tests/secret_providers/test_file_permissions.py::test_group_or_other_bits_are_refused[0o444]
+FAILED tests/secret_providers/test_file_permissions.py::test_group_or_other_bits_are_refused[0o610]
+FAILED tests/secret_providers/test_file_permissions.py::test_group_or_other_bits_are_refused[0o601]
+FAILED tests/secret_providers/test_file_permissions.py::test_group_or_other_bits_are_refused[0o602]
+FAILED tests/secret_providers/test_file_permissions.py::test_group_or_other_bits_are_refused[0o620]
+FAILED tests/secret_providers/test_file_permissions.py::test_group_or_other_bits_are_refused[0o777]
+FAILED tests/secret_providers/test_file_permissions.py::test_symlink_to_world_readable_target_is_refused
+FAILED tests/secret_providers/test_file_permissions.py::test_kubernetes_secret_volume_layout_with_0400_is_admitted
+FAILED tests/secret_providers/test_file_permissions.py::test_world_readable_fifo_is_refused
+FAILED tests/secret_providers/test_file_permissions.py::test_dev_null_is_refused_as_unsafe
+FAILED tests/secret_providers/test_file_permissions.py::test_path_swapped_to_unsafe_file_after_open_reads_the_opened_file
+FAILED tests/secret_providers/test_file_permissions.py::test_path_swapped_to_safe_file_after_open_still_refuses_the_opened_file
+FAILED tests/secret_providers/test_file_permissions.py::test_path_swapped_after_the_check_does_not_change_the_bytes_read
+FAILED tests/secret_providers/test_file_permissions.py::test_the_descriptor_is_closed_on_every_exit[admitted]
+FAILED tests/secret_providers/test_file_permissions.py::test_the_descriptor_is_closed_on_every_exit[unsafe]
+FAILED tests/secret_providers/test_file_permissions.py::test_the_descriptor_is_closed_on_every_exit[directory]
+FAILED tests/secret_providers/test_file_permissions.py::test_windows_skips_the_mode_check
+FAILED tests/secret_providers/test_file_permissions.py::test_the_code_is_registered_with_the_secret_provider_semantics
+FAILED tests/secret_providers/test_file_permissions.py::test_the_admission_boundary_rebuilds_it_from_the_code_alone
+FAILED tests/secret_providers/test_file_permissions.py::test_refusals_carry_no_path_mode_uid_or_secret[unsafe]
+FAILED tests/secret_providers/test_file_permissions.py::test_refusals_carry_no_path_mode_uid_or_secret[symlink]
+FAILED tests/secret_providers/test_file_permissions.py::test_an_admitted_file_secret_leaves_no_path_in_the_config_path_either
+28 failed, 10 passed in 0.69s
+base: 0090f6f96f163149009dcc524d910b6b6f64f30a origin/main, src unmodified, venv .venv (3.10.20, uv.lock 127c76b7)
+
+== Fixture corrections (default umask 0644 -> chmod 0600; no assertion changed) ==
+Under E1 and before the correction: 4 failures in tests/unit/test_de02_keyprovider.py and
+tests/property/test_keyprovider_invariants.py, 13 in the tests/integration/test_f29_* suites
+(via tests/integration/_f29_jobs.py). All green after the correction.
+- tests/unit/test_de02_keyprovider.py: TestSecretRefResolver.test_file_hex,
+  test_invalid_utf8_file_raises_clean_mask_secret_error
+- tests/property/test_keyprovider_invariants.py: test_resolve_ref_invalid_utf8_file_error_severs_original_exception,
+  test_resolve_ref_file_is_decoded_as_utf8_not_locale
+- tests/integration/_f29_jobs.py: fk_job throwaway key file
+Swept: no other test, testflight or script writes a file: secret (grep for file: refs).
+
+== Mutation proof (each applied alone to the branch, the E1 test file re-run, source restored) ==
+M1 path stat instead of descriptor fstat: RED (3 failed) e.g. ['test_path_swapped_to_unsafe_file_after_open_reads_the_opened_file', 'test_path_swapped_to_safe_file_after_open_still_refuses_the_opened_file', 'test_path_swapped_after_the_check_does_not_change_the_bytes_read']
+M1b lstat on the path: RED (5 failed) e.g. ['test_symlink_to_owner_only_target_is_admitted', 'test_kubernetes_secret_volume_layout_with_0400_is_admitted', 'test_path_swapped_to_unsafe_file_after_open_reads_the_opened_file']
+M2 mask weakened to other-only 0o007: RED (6 failed) e.g. ['test_group_or_other_bits_are_refused[0o640]', 'test_group_or_other_bits_are_refused[0o660]', 'test_group_or_other_bits_are_refused[0o440]']
+M3 S_ISDIR check removed: RED (2 failed) e.g. ['test_a_directory_is_the_unreadable_file_case_not_a_permissions_refusal[0o755]', 'test_refusals_carry_no_path_mode_uid_or_secret[directory]']
+M4 descriptor not closed: RED (3 failed) e.g. ['test_the_descriptor_is_closed_on_every_exit[admitted]', 'test_the_descriptor_is_closed_on_every_exit[unsafe]', 'test_the_descriptor_is_closed_on_every_exit[directory]']
+M5 Windows skip removed: RED (1 failed) e.g. ['test_windows_skips_the_mode_check']
+M6 reread the path after the check: RED (2 failed) e.g. ['test_path_swapped_to_unsafe_file_after_open_reads_the_opened_file', 'test_path_swapped_after_the_check_does_not_change_the_bytes_read']
+M7 code dropped from the closed table: RED (21 failed) e.g. ['test_group_or_other_bits_are_refused[0o640]', 'test_group_or_other_bits_are_refused[0o644]', 'test_group_or_other_bits_are_refused[0o604]']
+M8 unsafe mapped to missing: RED (21 failed) e.g. ['test_group_or_other_bits_are_refused[0o640]', 'test_group_or_other_bits_are_refused[0o644]', 'test_group_or_other_bits_are_refused[0o604]']
+M5 first survived: the Windows test patched os.name for the whole test, so a failure crashed pytest's
+own reporting (WindowsPath) instead of reporting FAILED. The patch is now scoped to the one call; M5 red.
+M6 ran with -k "not fifo": under that mutant the FIFO cell blocks on the second open (a hang, which
+is itself a detection); the two swap cells are red.

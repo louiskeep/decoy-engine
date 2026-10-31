@@ -8,6 +8,7 @@ from decoy_engine.reasons._types import Outcome, Phase, RetryClass
 __all__ = [
     "SECRET_ACCESS_DENIED",
     "SECRET_EXPIRED",
+    "SECRET_FILE_PERMISSIONS_UNSAFE",
     "SECRET_LEASE_UNSUPPORTED",
     "SECRET_MATERIAL_INVALID",
     "SECRET_PROVIDER_UNAVAILABLE",
@@ -62,6 +63,13 @@ SECRET_LEASE_UNSUPPORTED = _d(
 SECRET_MATERIAL_INVALID = _d(
     "secret_material_invalid",
     "The secret material does not meet the selected algorithm contract.",
+    phases=(Phase.RESOLVE,),
+    outcome=Outcome.CONFIGURATION,
+    retry=RetryClass.CONFIGURATION_REPAIR,
+)
+SECRET_FILE_PERMISSIONS_UNSAFE = _d(
+    "secret_file_permissions_unsafe",
+    "The secret file is readable or writable by its group or by others.",
     phases=(Phase.RESOLVE,),
     outcome=Outcome.CONFIGURATION,
     retry=RetryClass.CONFIGURATION_REPAIR,

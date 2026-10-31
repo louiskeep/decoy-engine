@@ -36,8 +36,8 @@ stores a secret itself:
   with `keyed_strategy_requires_secret`. `job_seed` is for generation only.
 - **`global_settings.mask_secret_ref`** is a *reference*, never the secret itself, resolved by the
   versioned `secret-provider/v1` contract (see [secret providers](secret-providers.md)): `env:NAME`,
-  `file:/PATH` (hex- or base64-decoded for the mask root; any other requirement needs an explicit
-  `?encoding=`) or a registered provider such as `vault://`. Admission runs before any source is
+  `file:/PATH` (owner-only file; hex- or base64-decoded for the mask root; any other requirement
+  needs an explicit `?encoding=`) or a registered provider such as `vault://`. Admission runs before any source is
   read (`decoy_engine.secret_providers.admit_mask_key`).
 - A programmatic `run(key_provider=...)` (any object implementing the
   `KeyProvider` protocol: `key_version` + `mask_key()`) takes precedence over
@@ -70,7 +70,8 @@ Error types (`decoy_engine.keyprovider`, all subclasses of `MaskSecretError`):
 | Error | Code | Raised when |
 |---|---|---|
 | `KeyedStrategyRequiresSecret` | `keyed_strategy_requires_secret` | A plan with a keyed strategy runs with no admitted secret (any release phase), is given a `SeedKeyProvider`, or its resolved key is < 32 bytes. |
-| `MissingMaskSecret` | `missing_mask_secret` | A `mask_secret_ref` points at an unset env var or an unreadable file. |
+| `MissingMaskSecret` | `missing_mask_secret` | A `mask_secret_ref` points at an unset env var or an unreadable file (or a directory). |
+| `SecretFilePermissionsUnsafe` | `secret_file_permissions_unsafe` | A `file:` secret has any group or other permission bit (POSIX only); see [secret providers](secret-providers.md#file-secret-permissions). |
 | `WeakMaskSecret` | `weak_mask_secret` | A resolved secret is shorter than 32 bytes (enforced at `SecretKeyProvider` construction, pre-GA or GA). |
 | `MaskSecretError` (`bad_secret_ref`) | `bad_secret_ref` | The reference is malformed, or the material is not decodable (an unrecognized scheme is `secret_provider_unknown`). |
 
@@ -94,8 +95,9 @@ global_settings:
 ## Implementation
 
 - `src/decoy_engine/keyprovider.py`: `KeyProvider` protocol, `SecretKeyProvider`,
-  `SeedKeyProvider`, ref resolution, and the fail-closed gate
-  (`require_mask_key` / `resolve_key_provider`).
+  `SeedKeyProvider` and the fail-closed gate (`require_mask_key`).
+- `src/decoy_engine/secret_providers/`: ref admission (`admit_mask_key`), the `env:`/`file:`
+  providers and the `file:` owner-only check (`_local.py`).
 - `src/decoy_engine/execution/_adapter.py`: `StrategyContext.mask_key`, the
   field every strategy handler reads.
 - `src/decoy_engine/execution/_pipeline.py`: `run_pipeline` resolves the

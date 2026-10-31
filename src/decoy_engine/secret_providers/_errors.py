@@ -91,6 +91,15 @@ class SecretMaterialInvalid(SecretProviderError):  # noqa: N818 -- reason-named 
         super().__init__(code=reasons.runtime.SECRET_MATERIAL_INVALID, message=self._MESSAGE)
 
 
+class SecretFilePermissionsUnsafe(SecretProviderError):  # noqa: N818 -- reason-named error; the name mirrors its registered code
+    _MESSAGE = (
+        "The secret file must be accessible by its owner only; remove group and other permissions."
+    )
+
+    def __init__(self) -> None:
+        super().__init__(code=reasons.runtime.SECRET_FILE_PERMISSIONS_UNSAFE, message=self._MESSAGE)
+
+
 class SecretClosedError(DecoyError):
     """A closed secret buffer or prepared secret was used (an internal invariant breach)."""
 
@@ -108,6 +117,7 @@ _CLOSED: dict[str, Callable[[], MaskSecretError]] = {
         SecretExpired,
         SecretLeaseUnsupported,
         SecretMaterialInvalid,
+        SecretFilePermissionsUnsafe,
     )
 }
 _CLOSED[reasons.runtime.KEYED_STRATEGY_REQUIRES_SECRET] = lambda: KeyedStrategyRequiresSecret(

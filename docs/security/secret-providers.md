@@ -22,7 +22,7 @@ row is read**. This page describes shipped behavior; the design record is
 | Scheme | Form | Notes |
 |---|---|---|
 | `env:` | `env:NAME[?encoding=<base64\|hex\|raw>&key_version=<v>]` | Legacy `env:NAME` still works for the mask root. |
-| `file:` | `file:/PATH[?encoding=...&key_version=...]` | The file is read as bytes. |
+| `file:` | `file:/PATH[?encoding=...&key_version=...]` | The file is read as bytes and must be owner-only ([below](#file-secret-permissions)). |
 | `vault:` | `vault://<mount>/<path>?version=<N>&field=<f>&encoding=<e>` | Version, field and encoding are all required; `latest`, `0`, aliases, userinfo, fragments, duplicate keys and traversal segments are rejected. |
 
 The default logical `key_version` of `env:`/`file:` is `v1`; change it to rotate output identity
@@ -55,7 +55,7 @@ rejected with `bad_secret_ref`. Pattern and entropy scans never certify key stre
 All provider failures are registered F29 reasons in the `runtime` namespace (phase `resolve`),
 mapped by exception *type* with fixed text: `secret_provider_unknown`, `secret_provider_unavailable`,
 `secret_access_denied`, `secret_version_unavailable`, `secret_expired`, `secret_lease_unsupported`,
-`secret_material_invalid`, plus the existing `bad_secret_ref`, `missing_mask_secret`,
+`secret_material_invalid`, `secret_file_permissions_unsafe`, plus the existing `bad_secret_ref`, `missing_mask_secret`,
 `weak_mask_secret`, `keyed_strategy_requires_secret`. The provider exception is not retained as
 `__cause__`/`__context__`, so `logging.exception` and excepthooks cannot print provider internals.
 
@@ -69,6 +69,66 @@ engine's constant text for that code. An unregistered code, a code that is not a
 `code`/`message` attribute that raises becomes `secret_provider_unavailable`. Rendering with `traceback.TracebackException(capture_locals=True)`
 therefore shows no frame that held secret material. Between the read and the derivation, material
 lives only in `SecretBuffer` objects, which render as `<redacted secret>`.
+
+## `file:` secret permissions
+
+A `file:` secret is admitted only when it is **owner-only**: any group or other permission bit
+(`mode & 0o077`) fails with `secret_file_permissions_unsafe`. This is the OpenSSH rule for private
+keys ("UNPROTECTED PRIVATE KEY FILE"). There is no bypass setting or environment override.
+
+- The mode is read with `fstat` on the descriptor the bytes are then read from, never a path
+  `stat` before the open, so a path swapped or re-pointed between the check and the read cannot
+  change the verdict or the bytes.
+- Symlinks are followed: the mode of the final file decides (the Kubernetes secret volume is a
+  `key -> ..data/key -> ..<timestamp>/key` chain).
+- A directory is reported as before, `missing_mask_secret` (an unreadable file), not as a
+  permissions failure. A FIFO or device is judged by its own mode like a file (`/dev/null` is
+  0666 and is refused).
+- The error carries constant text only: no path, mode or owner.
+- Not checked: the file's owner (root reading another user's 0600 file is admitted), POSIX ACL
+  entries beyond the group mask, and Windows (NTFS ACLs are not mode bits; the check is skipped).
+- A filesystem that reports every file as 0777 or 0644 (some network and FUSE mounts) is refused;
+  copy the secret to a local tmpfs or volume with mode 0400.
+
+Platform defaults that are refused, deliberately, and the settings that pass:
+
+| Source | Default | Set |
+|---|---|---|
+| Kubernetes Secret volume | `defaultMode: 0644` | `defaultMode: 0400` (or per-item `mode: 0400`). With `fsGroup` set the kubelet adds group read, which is refused; a non-root pod copies the secret into a memory-backed `emptyDir` with an init container (`install -m 0400`) or renders it with Vault Agent |
+| Docker / Compose secret | `0444` | `mode: 0400` in the long secret syntax, `uid` set to the process user |
+| Vault Agent template | `0644` (`perms` unset) | `perms = "0600"` |
+| Vault Agent file sink | `0640` | `mode = 0600` |
+| systemd `LoadCredential=` | owner-only under `$CREDENTIALS_DIRECTORY` | nothing (refer to it as `file:$CREDENTIALS_DIRECTORY/NAME`) |
+| A file you write | the umask (often 0644) | `umask 077` before writing, or `chmod 600` |
+
+## Consumers
+
+The engine never invents a secret and never falls back to `job_seed`; the consumer names one.
+
+- **Local development.** `umask 077; openssl rand -hex 32 > ~/.config/decoy/mask.key` and
+  `mask_secret_ref: file:~/.config/decoy/mask.key` (use the absolute path), or
+  `export DECOY_MASK_SECRET=$(openssl rand -hex 32)` with `env:DECOY_MASK_SECRET`. A trailing
+  newline is stripped by the mask-root decoder.
+- **CI.** `env:NAME` from the CI system's secret store.
+- **Vault, KMS, Kubernetes, systemd.** Render the secret to a file with Vault Agent (template or
+  file sink), a Kubernetes Secret volume or a systemd credential, and reference it as `file:`
+  with the modes above. The application then holds no store credential. The native `vault://`
+  adapter is opt-in and needs the caller to register an authenticated provider.
+- **Platform.** The platform derives the engine secret from its own instance master key and
+  passes it as a programmatic `key_provider`; job configs do not name a `mask_secret_ref`.
+
+Rotation, stated honestly:
+
+- Any change of key (a different secret behind the same reference, a different reference or a
+  different `key_version`) gives every keyed output a new identity: hashes, FPE, date shifts,
+  shuffles, tokens, deterministic and composite-FK columns. Joins against earlier output break.
+- Existing vaults are not re-encrypted, migrated, invalidated or detected. A vault opens only
+  under the key that wrote it; any other key fails `vault_key_mismatch`. The vault header names
+  no key, so Decoy cannot tell which key a vault needs. Keep the old reference (file, env value
+  or Vault `version=N`) as long as old vaults must be unmasked.
+- Vault KV: an old version stays readable until destroyed. Destroying it deliberately makes the
+  vaults written under it unmaskable (incident invalidation).
+- Seed-keyed vaults from engines before F13 have no migration or recovery path.
 
 ## Cache and lifetime
 

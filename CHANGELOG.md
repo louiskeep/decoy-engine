@@ -9,6 +9,19 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Changed (BREAKING, pre-GA: `file:` secrets must be owner-only, F13 slice E1, 2026-10-31)
+
+The `file:` secret provider refuses a file with any group or other permission bit (`mode & 0o077`)
+with the new registered reason `runtime.secret_file_permissions_unsafe` (error class
+`SecretFilePermissionsUnsafe`, constant text, no path, mode or owner). The mode is read with `fstat`
+on the opened descriptor the bytes are read from, so a path swapped after the open cannot change the
+verdict; symlinks are followed (Kubernetes secret volumes). A directory still fails
+`missing_mask_secret`. Skipped on Windows. No bypass setting. Docker secrets (0444), the Kubernetes
+Secret volume default (0644) and Vault Agent defaults (template 0644, file sink 0640) are refused:
+set `mode: 0400`, `defaultMode: 0400`, `perms = "0600"` / `mode = 0600`
+(`docs/security/secret-providers.md`). Test fixtures that wrote a `file:` secret under the default
+umask now create it 0600. Registry `REGISTRY_VERSION` stays 1.1.0 (unreleased); 892 identities.
+
 ### Changed (pre-GA: `type` is a reserved `when` name; main-health fixes, 2026-10-31)
 
 `type` is added to the frozen `RESERVED_NAMES` of the `when` grammar (it is a Python 3.12 soft keyword).
@@ -74,7 +87,7 @@ phases: Pre-scan (`pre_scan`: profile / detect), Transform (`transform`: mask / 
 ### Added (F29: stable machine-readable errors and progress, engine slices, 2026-10-29)
 
 New public `decoy_engine.reasons`: one engine-owned, versioned registry of reason codes (`registry_version`
-1.0.0; 868 identities across 12 namespaces when F29 landed, 884 across 14 after the STORM close-out merge below, 891 across 14 after the F13 merge (the seven `runtime` secret-provider identities, registry 1.1.0; the pinned manifest stays the 884-entry append-only baseline), of which 841 are the frozen baseline and 2 are tombstones) with a fixed safe summary, kind, phase rules and, per phase,
+1.0.0; 868 identities across 12 namespaces when F29 landed, 884 across 14 after the STORM close-out merge below, 891 across 14 after the F13 merge (the seven `runtime` secret-provider identities, registry 1.1.0; the pinned manifest stays the 884-entry append-only baseline), 892 after F13 slice E1 (`runtime.secret_file_permissions_unsafe`, still 1.1.0), of which 841 are the frozen baseline and 2 are tombstones) with a fixed safe summary, kind, phase rules and, per phase,
 a severity, outcome category and retry class (`never`, `configuration_repair`, `environment_repair`,
 `retry_operation`, `restart_attempt`, `unknown`). Every producer now references a registry symbol whose
 value is the legacy wire string, so existing `.code` values, `CODES` attributes and exception

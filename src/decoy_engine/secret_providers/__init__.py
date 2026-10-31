@@ -11,6 +11,7 @@ from decoy_engine.secret_providers._cache import SecretCache, default_cache
 from decoy_engine.secret_providers._errors import (
     SecretAccessDenied,
     SecretExpired,
+    SecretFilePermissionsUnsafe,
     SecretLeaseUnsupported,
     SecretMaterialInvalid,
     SecretProviderError,
@@ -78,6 +79,7 @@ __all__ = [
     "SecretCachePolicy",
     "SecretDescriptor",
     "SecretExpired",
+    "SecretFilePermissionsUnsafe",
     "SecretLeaseUnsupported",
     "SecretMaterialInvalid",
     "SecretProvider",
