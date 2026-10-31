@@ -339,6 +339,9 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
             # config resolver, and nothing under `execution.physical`.
             "src/decoy_engine/execution/_throughput_calibration.py",
             "src/decoy_engine/execution/_job_estimate.py",
+            # The B5 telemetry self-calibration loop had no engine, platform or CLI caller and
+            # moved to `scripts/mem_telemetry.py` as calibration tooling (a deletion here).
+            "src/decoy_engine/execution/_mem_telemetry.py",
             # F2 (production mixed generate+mask route): the semantic admission core and the
             # generate-parent FK bridge move OUT of `execution/physical/_shadow_mixed.py` /
             # `_shadow_fk.py` into `_mixed_admission.py` / `_mixed_fk_bridge.py` so the shadow and
@@ -476,6 +479,14 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
             # §WHEN-NUMERIC: a pure value-shape guard on the gated pandas write (no physical seam).
             "src/decoy_engine/execution/_gated_string_guard.py",
             "src/decoy_engine/execution/native/_determinism_protocol.py",
+            # DRAW_SITES split by family: the record type and enums, and the per-family data
+            # modules `_determinism_protocol.py` assembles (the two existing data siblings, already
+            # listed, only repoint their `DrawSite` import). Pure data moves; none imports
+            # `execution.physical`.
+            "src/decoy_engine/execution/native/_draw_site_types.py",
+            "src/decoy_engine/execution/native/_draw_sites_gen.py",
+            "src/decoy_engine/execution/native/_draw_sites_mask.py",
+            "src/decoy_engine/execution/native/_draw_sites_provider_backed.py",
             # C5c-ii (deterministic Faker over bool/int/uint on the native routes, 2026-10-09): the
             # closed metadata-shape admission classifier (`native/_faker_deterministic_admission.py`,
             # new) and the degenerate output-type pin shared by the chunked and from_pandas routes
@@ -493,6 +504,14 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
             "src/decoy_engine/execution/_strategies/_categorical.py",
             "src/decoy_engine/execution/native/_capabilities.py",
             "src/decoy_engine/execution/native/_draw_site_providers.py",
+            # Draw-site providers split into the `native/protocol/` package (shared base,
+            # masking-side, generation-side); `_draw_site_providers.py` keeps the registry and
+            # re-exports, and its gen-pool sibling repoints its base-class import. Pure moves;
+            # none imports `execution.physical`.
+            "src/decoy_engine/execution/native/protocol/__init__.py",
+            "src/decoy_engine/execution/native/protocol/providers_base.py",
+            "src/decoy_engine/execution/native/protocol/providers_gen.py",
+            "src/decoy_engine/execution/native/protocol/providers_mask.py",
             "src/decoy_engine/execution/out_of_core/_mask_group_b.py",
             # Slice C5b-i (position-keyed non-deterministic Faker, 2026-10-05): the oracle Faker
             # handler selects through a shared index-kernel helper and a shared uint64 position-key
@@ -549,6 +568,13 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
             "src/decoy_engine/execution/out_of_core/_compat.py",
             "src/decoy_engine/execution/_guards.py",
             "src/decoy_engine/execution/_strategies/_date_shift.py",
+            # Chunked FK gate split: `_chunked_fk.py` (already listed under F29) keeps the edge
+            # walk; the ordered edge checks, the per-chunk runtime guards and the shared
+            # strategy/dtype vocabulary move to these siblings. Pure moves; none imports
+            # `execution.physical`.
+            "src/decoy_engine/execution/_chunked_fk_edge_checks.py",
+            "src/decoy_engine/execution/_chunked_fk_runtime.py",
+            "src/decoy_engine/execution/_chunked_fk_vocab.py",
             # Phase 5 Track B (native categorical operator, 2026-09-21): the new
             # operator extends the NATIVE route -- its config/determinism gate
             # (`_requirements.py`), the config-only eligibility query (`_plan.py`),

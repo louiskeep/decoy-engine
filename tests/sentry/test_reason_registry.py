@@ -54,7 +54,7 @@ ADAPTERS: dict[tuple[str, str], str] = {
     ("execution/_errors.py", "StrategyError.__init__"): _CTOR,
     ("execution/_mixed_admission.py", "MixedDeclineError.__init__"): _CTOR,
     ("execution/_transforms.py", "TransformError.__init__"): _CTOR,
-    ("execution/native/_draw_site_providers.py", "DrawSiteProtocolError.__init__"): _CTOR,
+    ("execution/native/protocol/providers_base.py", "DrawSiteProtocolError.__init__"): _CTOR,
     ("execution/physical/_shadow_diff_codes.py", "ShadowDifference.__init__"): _CTOR,
     ("generation/_budget_ledger.py", "GenerationBudgetError.__init__"): _CTOR,
     ("generation/_window_admission.py", "GenerationAdmissionError.__init__"): _CTOR,
