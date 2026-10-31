@@ -81,17 +81,17 @@ class GlobalSettings(BaseModel):
     warning. Unset defaults to the release phase (`warn` pre-GA migration
     window, `error` at GA); an explicit value here overrides that. See
     `execution/_output_projection.resolve_unconfigured_column_policy`.
-    `mask_secret_ref` (DE-02) is a REFERENCE to the keyed-mask secret --
-    never the secret itself. Two ref kinds are supported: `env:NAME`
-    (resolved from an environment variable) and `file:/PATH` (resolved
-    from a file's contents), each hex- or base64-decoded to >=32 raw
-    bytes. The engine resolves it at the run edge into a
-    `SecretKeyProvider` and NEVER serializes the raw secret into the plan,
-    a log, or the manifest. A programmatically supplied
-    `run(key_provider=...)` takes precedence over this ref. Unset means no
-    secret: pre-GA the keyed surface falls back to `job_seed`
-    (byte-identical to today); at GA a keyed plan with no secret
-    hard-errors. See `decoy_engine.keyprovider`.
+    `mask_secret_ref` (DE-02, F13) is a REFERENCE to the keyed-mask secret
+    -- never the secret itself. `env:NAME` (an environment variable) and
+    `file:/PATH` (a file that must be owner-only, e.g. mode 0600/0400) work
+    out of the box; `vault://...` resolves only when a provider is
+    registered. The mask root is hex- or base64-decoded to >=32 raw bytes.
+    The engine admits it before any source read and NEVER serializes the
+    raw secret into the plan, a log, or the manifest. A programmatically
+    supplied `run(key_provider=...)` takes precedence over this ref. Unset
+    means no secret: a keyed plan then fails with
+    `keyed_strategy_requires_secret` in every release phase; there is no
+    `job_seed` fallback. See docs/security/secret-providers.md.
     `freetext_advisory_min_avg_length` / `freetext_advisory_min_distinctness`
     (HC-7) drive the compile-time clinical free-text advisory
     (`quality._freetext_advisory`): an unmasked (`strategy: passthrough`)
