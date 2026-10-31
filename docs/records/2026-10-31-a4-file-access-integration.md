@@ -11,7 +11,7 @@ the base chosen by `docs/records/2026-10-30-file-access-branch-inventory.md` (br
 
 ## Head and history
 
-Branch `claude/jolly-carson-3k5stf`, head `59abbb16`. Start `aa424af4`. Merges only; the pushed
+Branch `claude/jolly-carson-3k5stf`. Start `aa424af4`. Every run below is on `59abbb16`; the commits on top of it change only `docs/records/` (this file). Merges only; the pushed
 branch was never rebased.
 
 | Commit | What |
