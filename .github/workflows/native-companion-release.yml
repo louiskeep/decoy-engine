@@ -10,18 +10,33 @@
 # signs every wheel and a SHA256SUMS manifest and attaches them to a GitHub Release.
 #
 # Signing: Ed25519 via `openssl pkeyutl -sign -rawin` against the release private key
-# (repo secret DECOY_RELEASE_KEY_PEM), producing a detached raw signature per file. This
-# is the SAME key, algorithm, and raw-signature bytes the CLI verifies with openssl
-# (install.sh) and with decoy.distribution.signing (`decoy upgrade`) -- the established
-# in-repo Ed25519 pattern (decoy-platform/api/crypto/signed_envelope.py), reused, never a
-# hand-rolled scheme and never a second signer. The signing job runs ONCE and is the only
-# place the key is used, so key exposure is confined to one short job.
+# (environment secret DECOY_RELEASE_KEY_PEM), producing a detached raw signature per
+# file. This is the SAME key, algorithm, and raw-signature bytes the CLI verifies with
+# openssl (install.sh) and with decoy.distribution.signing (`decoy upgrade`) -- the
+# established in-repo Ed25519 pattern (decoy-platform/api/crypto/signed_envelope.py),
+# reused, never a hand-rolled scheme and never a second signer. The signing job runs
+# ONCE and is the only place the key is used, so key exposure is confined to one short
+# job. The shell logic lives in scripts/release/native_release_checks.sh so it is
+# dry-run locally by tests/sentry/test_native_release_workflow.py (Actions is off for
+# this repo).
 #
-# A missing signing key on a real tag is a HARD FAILURE: the release does not publish
-# unsigned artifacts.
+# Trust gates, in order, every one a hard failure (nothing unsigned or unverified is
+# ever published):
+#   1. preflight: the released commit must be an ancestor of origin/main. A tag or a
+#      dispatch on unmerged history cannot mint a signed release.
+#   2. the signing key's public half must EQUAL the committed release public key
+#      (.github/release-keys/decoy-release-key.pub.pem), which must not be the
+#      launch placeholder.
+#   3. the tag version must equal pyproject.toml, Cargo.toml and every wheel's version.
+#   4. the wheel set must be exactly the approved matrix: 4 targets x cp310-cp312 = 12.
+#   5. every .sig is verified against the COMMITTED public key (not one derived from the
+#      secret), and SHA256SUMS is checked against the wheels, before the release exists.
+#   6. the release is created as a DRAFT and un-drafted only after every asset uploaded.
+# The signing job also runs under the protected `native-release` GitHub Environment
+# (required reviewer + tag rule; see .github/release-keys/README.md for the owner setup).
 #
-# Additive: this adds a workflow file only. It does not touch engine source, the CI
-# workflow, or the build logic those already prove.
+# Additive: this adds a workflow file, the committed public-key pin, and the script.
+# It does not touch engine source, the CI workflow, or the build logic those prove.
 
 name: native-companion-release
 
@@ -37,12 +52,45 @@ on:
         description: "Companion version to build + sign (must match pyproject)."
         required: true
 
+# Read-only by default; only the release-minting job is granted write, below.
 permissions:
-  contents: write  # create the GitHub Release + upload assets
+  contents: read
+
+concurrency:
+  group: native-release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # The version this run releases: from the tag, or the dispatch input.
+  RELEASE_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || format('native-v{0}', inputs.version) }}
 
 jobs:
-  build-linux:
+  # Gate 1: refuse to build (let alone sign) anything main has not merged.
+  preflight:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Assert the released commit is an ancestor of origin/main
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main
+          bash scripts/release/native_release_checks.sh assert-on-main \
+            --sha "$GITHUB_SHA" --main-ref origin/main
+      - name: Assert the release version is well-formed and matches the tree
+        run: |
+          set -euo pipefail
+          # No wheels exist yet: tag == pyproject == Cargo only. The signing job
+          # re-runs this over the real wheels.
+          bash scripts/release/native_release_checks.sh check-version \
+            --expected "${RELEASE_VERSION#native-v}" --native-dir decoy-engine-native
+
+  build-linux:
+    needs: [preflight]
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -62,6 +110,10 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
+      # Same ref as native-companion.yml on main. Owner follow-up: pin to the v3
+      # tag's full commit SHA (the other third-party actions here are SHA-pinned);
+      # this build job never sees the signing key, and the wheel it produces is
+      # smoke-tested, hashed and signed only after it crosses into sign-publish.
       - name: Set up QEMU (aarch64 smoke)
         if: matrix.target == 'aarch64'
         uses: docker/setup-qemu-action@v3
@@ -98,7 +150,9 @@ jobs:
           retention-days: 90
 
   build-windows:
+    needs: [preflight]
     runs-on: windows-latest
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -132,7 +186,9 @@ jobs:
           retention-days: 90
 
   build-macos:
+    needs: [preflight]
     runs-on: macos-15
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -164,9 +220,18 @@ jobs:
           path: decoy-engine-native/dist/*.whl
           retention-days: 90
 
+  # The ONE job that sees the signing key and the ONE job that may write to the repo.
+  # `environment: native-release` puts it behind the owner-configured protection
+  # (required reviewer, `native-v*` tag rule, the key as an environment secret).
   sign-publish:
-    needs: [build-linux, build-windows, build-macos]
+    needs: [preflight, build-linux, build-windows, build-macos]
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: native-release
+    permissions:
+      contents: write  # create the GitHub Release + upload assets
+    env:
+      PUBKEY: .github/release-keys/decoy-release-key.pub.pem
     steps:
       - uses: actions/checkout@v7
       - uses: actions/download-artifact@v7
@@ -174,41 +239,54 @@ jobs:
           pattern: release-wheel-*
           merge-multiple: true
           path: wheels
-      - name: Collect wheels + SHA256SUMS
+      - name: Assert tag version == pyproject == Cargo == every wheel (gate 3)
         run: |
           set -euo pipefail
-          cd wheels
-          ls -1 *.whl | sort
-          sha256sum *.whl | sort -k2 > SHA256SUMS
-          cat SHA256SUMS
-      - name: Sign wheels + manifest (detached Ed25519 via openssl)
+          bash scripts/release/native_release_checks.sh check-version \
+            --expected "${RELEASE_VERSION#native-v}" --native-dir decoy-engine-native --dir wheels
+      - name: Collect SHA256SUMS + assert the 12-wheel target set (gate 4)
+        run: |
+          set -euo pipefail
+          (cd wheels && ls -1 *.whl | sort && sha256sum *.whl | sort -k2 > SHA256SUMS && cat SHA256SUMS)
+          bash scripts/release/native_release_checks.sh check-wheel-set --dir wheels
+      - name: Sign wheels + manifest (detached Ed25519 via openssl; gate 2 first)
         env:
           DECOY_RELEASE_KEY_PEM: ${{ secrets.DECOY_RELEASE_KEY_PEM }}
         run: |
           set -euo pipefail
           test -n "${DECOY_RELEASE_KEY_PEM:-}" \
             || { echo "FATAL: DECOY_RELEASE_KEY_PEM not set; refusing to publish unsigned release"; exit 1; }
-          key="$(mktemp)"; printf '%s' "$DECOY_RELEASE_KEY_PEM" > "$key"
-          cd wheels
-          sign() {
-            # raw detached Ed25519, base64-encoded into <file>.sig (matches
-            # decoy.distribution.signing.sign_bytes / what install.sh verifies).
-            openssl pkeyutl -sign -inkey "$key" -rawin -in "$1" -out "$1.sig.raw"
-            openssl base64 -A -in "$1.sig.raw" -out "$1.sig"
-            rm -f "$1.sig.raw"
-          }
-          for f in *.whl SHA256SUMS; do sign "$f"; echo "signed $f"; done
-          rm -f "$key"
-      - name: Publish GitHub Release (durable, versioned)
+          umask 077
+          key="$(mktemp)"
+          trap 'rm -f "$key"' EXIT
+          printf '%s\n' "$DECOY_RELEASE_KEY_PEM" > "$key"
+          # The secret's public half must be the committed pin, or the installers
+          # would reject everything this run signs.
+          bash scripts/release/native_release_checks.sh assert-key-matches --pubkey "$PUBKEY" --privkey "$key"
+          bash scripts/release/native_release_checks.sh sign --privkey "$key" --dir wheels
+      - name: Verify every signature against the COMMITTED public key (gate 5)
+        run: |
+          set -euo pipefail
+          bash scripts/release/native_release_checks.sh verify-signatures \
+            --pubkey .github/release-keys/decoy-release-key.pub.pem --dir wheels
+      - name: Create the GitHub Release as a DRAFT with every asset (gate 6)
         uses: softprops/action-gh-release@c95fe1489396fe8a9eb87c0abf8aa5b2ef267fda # v2.4.1
         with:
+          draft: true
           files: |
             wheels/*.whl
             wheels/*.sig
             wheels/SHA256SUMS
-          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || format('native-v{0}', inputs.version) }}
+            wheels/SHA256SUMS.sig
+          tag_name: ${{ env.RELEASE_VERSION }}
           fail_on_unmatched_files: true
           body: |
             Signed `decoy-engine-native` companion wheels (four-target matrix, cp310-cp312).
             Each wheel has a detached Ed25519 `.sig`; `SHA256SUMS` is signed too. Verify with
             the published Decoy release public key before consuming into a CLI bundle.
+      - name: Publish the release (un-draft) now that every asset is attached
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release edit "$RELEASE_VERSION" --repo "$GITHUB_REPOSITORY" --draft=false
