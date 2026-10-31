@@ -11,7 +11,7 @@ minimum engine version it was tested against via its
 
 ### Added (R1-c: CycloneDX SBOM generator, 2026-10-31)
 
-`scripts/release/sbom.sh` writes a reproducible CycloneDX 1.6 SBOM of the wheel's base runtime closure from `uv.lock` (pinned `cyclonedx-bom` via `uvx`, lock hashes, no timestamp or serial, public-index pins only). Not signed or published. Docs: `docs/sbom.md`.
+`scripts/release/sbom.sh` writes a reproducible CycloneDX 1.6 SBOM of the wheel's base runtime closure from `uv.lock` (tool environment pinned and hash-enforced from `scripts/release/sbom-tool-requirements.txt`, lock hashes, no timestamp or serial, public-index runtime closure only, well-formed hashed pins only). Not signed or published. Docs: `docs/sbom.md`.
 
 ### Changed (pre-GA: `type` is a reserved `when` name; main-health fixes, 2026-10-31)
 
