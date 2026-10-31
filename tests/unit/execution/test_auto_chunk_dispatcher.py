@@ -158,6 +158,19 @@ def test_routed_job_calls_run_mask_chunked_once_with_the_run_context(
     provider = SecretKeyProvider(secret=bytes(range(32)), key_version="v1")
     writer = vault_writer_for_config(cfg, key_provider=provider)
     spies = support.spy_lanes(monkeypatch)
+    # Admission wraps the supplied provider in a run-scoped prepared one (closed when the run
+    # ends), so the key the lane received is read at call time and compared by value.
+    from decoy_engine.execution.native import _chunked_entry
+
+    seen_keys: list[tuple[bytes, str]] = []
+    spied_entry = _chunked_entry.run_mask_chunked
+
+    def record_key(*args: Any, **kwargs: Any) -> Any:
+        received = kwargs["key_provider"]
+        seen_keys.append((received.mask_key(), received.key_version))
+        return spied_entry(*args, **kwargs)
+
+    monkeypatch.setattr(_chunked_entry, "run_mask_chunked", record_key)
     result = support.run_default(
         cfg, src, native_threads=3, vault_writer=writer, key_provider=provider
     )
@@ -169,7 +182,7 @@ def test_routed_job_calls_run_mask_chunked_once_with_the_run_context(
     assert type(kwargs["adapter"]) is PandasExecutionAdapter
     assert kwargs["registry"] is not None
     assert kwargs["vault_writer"] is writer
-    assert kwargs["key_provider"] is provider
+    assert seen_keys == [(provider.mask_key(), provider.key_version)]
     assert kwargs["native_threads"] == 3
     assert spies["oracle.run_mask_pipeline_chunked"] == []
     block = result.quality_metrics["auto_chunk"]
@@ -517,8 +530,8 @@ def test_vault_entries_equal_the_dispatcher_off_run(
 
 def test_vault_file_round_trip_equals_the_dispatcher_off_run(tmp_path: Path) -> None:
     pytest.importorskip("cryptography")
-    from decoy_engine.plan._seed import _normalize_job_seed
     from decoy_engine.vault import load_vault, vault_writer_for_config
+    from tests._keyed_secret import THROWAWAY_KEY_PROVIDER
 
     # Redact is lossy (every source maps to one masked value, so its entries are
     # ambiguous by design); the file round trip is checked on the hash column.
@@ -529,7 +542,7 @@ def test_vault_file_round_trip_equals_the_dispatcher_off_run(tmp_path: Path) -> 
         run(cfg, src, vault_writer=writer)
         path = tmp_path / f"{label}.vault"
         writer.write(path)
-        maps[label], ambiguous = load_vault(path, _normalize_job_seed(cfg))
+        maps[label], ambiguous = load_vault(path, THROWAWAY_KEY_PROVIDER.mask_key())
         assert ambiguous == 0
     assert maps["on"] == maps["off"]
     assert len(maps["on"]) == support.ROWS

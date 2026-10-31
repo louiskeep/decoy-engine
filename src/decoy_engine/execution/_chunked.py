@@ -435,17 +435,20 @@ def run_mask_pipeline_chunked(
         pool_cache=None,
     )
     if state.first is None:
-        # Gate cleared (or the plan is unkeyed / pre-GA); there is genuinely
-        # nothing to mask.
+        # Admission cleared (or the plan is unkeyed); there is genuinely nothing to mask.
+        state.close_secret()
         return iter(())
-    return _chunked_oracle._oracle_masked(
+    return _chunked_oracle.release_when_done(
+        _chunked_oracle._oracle_masked(
+            state,
+            config=config,
+            table=table,
+            vault_writer=vault_writer,
+            chunk_result_sink=chunk_result_sink,
+            base_row_offset=base_row_offset,
+            on_chunk=None,
+        ),
         state,
-        config=config,
-        table=table,
-        vault_writer=vault_writer,
-        chunk_result_sink=chunk_result_sink,
-        base_row_offset=base_row_offset,
-        on_chunk=None,
     )
 
 

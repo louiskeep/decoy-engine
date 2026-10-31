@@ -388,13 +388,13 @@ def test_run_pipeline_without_vault_fails_closed(tmp_path: Any) -> None:
     )
 
 
-def test_tokenize_at_ga_requires_a_secret_key(tmp_path: Any) -> None:
+@pytest.mark.no_default_secret
+def test_tokenize_requires_a_secret_key(tmp_path: Any) -> None:
     # tokenize persists a reversible mapping, so its token must come from the
-    # secret mask key, never the public job seed. At GA a tokenize job with no
-    # secret must be rejected (keyed_strategy_requires_secret), not derive
-    # dictionary-attackable tokens from the seed (Codex BLOCKER-1).
-    from unittest.mock import patch
-
+    # secret mask key, never the public job seed. A tokenize job with no secret
+    # must be rejected (keyed_strategy_requires_secret) in every release phase
+    # (F13 removed the job_seed fallback), not derive dictionary-attackable
+    # tokens from the seed (Codex BLOCKER-1).
     import pyarrow.parquet as pq
 
     import decoy_engine
@@ -416,12 +416,11 @@ def test_tokenize_at_ga_requires_a_secret_key(tmp_path: Any) -> None:
         ],
     }
     cfg = PipelineConfig.model_validate(raw).model_dump()
-    # GA (not pre-GA), a vault present but NO secret key provider.
-    with patch("decoy_engine.keyprovider.is_pre_ga", return_value=False):
-        with pytest.raises(KeyedStrategyRequiresSecret) as exc:
-            decoy_engine.run_pipeline(
-                cfg, {"t": tbl}, engine_version="ga", token_vault_writer=FakeVault()
-            )
+    # A vault present but NO secret key provider.
+    with pytest.raises(KeyedStrategyRequiresSecret) as exc:
+        decoy_engine.run_pipeline(
+            cfg, {"t": tbl}, engine_version="ga", token_vault_writer=FakeVault()
+        )
     assert getattr(exc.value, "code", "") == "keyed_strategy_requires_secret"
 
 

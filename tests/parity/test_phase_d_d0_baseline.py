@@ -13,6 +13,9 @@ error code below is a hardcoded literal asserted against the actual run. None is
 derived from the output under test. The literals were probed against the engine
 at origin/main 49b88677 before being pinned.
 
+The `_H` hash literals were re-pinned under F13 because job_seed keying was removed; they are now
+keyed on the shared throwaway secret.
+
 The witness half pins the negative baseline: the chain is served entirely by the
 legacy kernels, so `assert_legacy_path_only` holds and `assert_native_ran` fails.
 A kernel slice flips exactly that assertion for the cells it claims.
@@ -39,11 +42,11 @@ from tests.parity.test_out_of_core_fk_parity import (
     _run_oracle,
 )
 
-# derive(job_seed=b"\x11"*8, "ns_p", canonical(i)).hex() for i in 0, 1, 2.
+# hash_array(int64 [0, 1, 2], THROWAWAY_KEY_PROVIDER.mask_key(), "ns_p").
 _H = (
-    "9bcd47a35e88865673ce2eca131420544e90f20cef24ada1ee8c45bcb2a4fbcf",
-    "7447203bd08282ca180a2b57739f53a08845219aba087bfcd5a96f2ba0a911c5",
-    "4d6bbbb083042f6be7487c108d134a4c23aa5577467d423e999e88896caa96b0",
+    "615fa05252975052a3734a0d5a6d5e880ba3b8fd29ee4b77d368f04b30398b94",
+    "08a13b4caf4e739f4be2c955d1360f5c65c07b97432fd73eafb0d25b263ad86f",
+    "d3da9ec9554ff1e2c94fef1b22d7a3c5048df6a6d9ec5147487c36ffbcad9f1a",
 )
 _NAN = float("nan")
 _PP = ["pp0", "pp1", "pp2"]

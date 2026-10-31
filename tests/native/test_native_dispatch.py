@@ -1111,20 +1111,13 @@ def test_mask_native_resolves_key_provider_from_config_mask_secret_ref(
     assert auto_out == explicit_out
 
 
-def test_empty_chunk_stream_with_keyed_strategy_and_explicit_key_provider_succeeds(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # The empty-input short-circuit must still thread the caller's key_provider
-    # into its oracle delegation. Pre-GA, `require_mask_key` falls back to
-    # `job_seed` silently when no provider is resolved, so dropping the
-    # explicit key_provider on truly empty input has nothing observable to
-    # break -- zero rows means no masked value to compare against a wrong
-    # key. Forcing GA mode (the same pattern `test_de02_keyprovider.py` uses)
-    # makes the drop observable: the DE-02 gate then raises
-    # `KeyedStrategyRequiresSecret` for a keyed job with no resolved secret,
-    # exactly the "gate skippable by handing a keyed job zero rows" bug this
-    # empty-input path was built to close.
-    monkeypatch.setattr("decoy_engine.keyprovider.is_pre_ga", lambda: False)
+@pytest.mark.no_default_secret  # the default throwaway would mask a dropped explicit provider
+def test_empty_chunk_stream_with_keyed_strategy_and_explicit_key_provider_succeeds() -> None:
+    # The empty-input short-circuit must still thread the caller's key_provider into its
+    # oracle delegation. F13 removed the job_seed fallback in every release phase, so the DE-02
+    # gate raises `KeyedStrategyRequiresSecret` for a keyed job with no resolved secret, which
+    # makes a dropped explicit key_provider observable even on zero rows: exactly the "gate
+    # skippable by handing a keyed job zero rows" bug this empty-input path was built to close.
     config = {
         "global_settings": {"seed": 42},
         "tables": [

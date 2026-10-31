@@ -55,6 +55,11 @@ if TYPE_CHECKING:
     from decoy_engine.profile._types import Profile
     from decoy_engine.providers_v2 import ProviderRegistry
     from decoy_engine.relationships import RelationshipGraph
+    from decoy_engine.secret_providers import (
+        AdmissionScope,
+        SecretCachePolicy,
+        SecretProviderRegistry,
+    )
 
 __all__ = [
     "PipelineRunContext",
@@ -201,6 +206,9 @@ def build_run_context(
     unified_slice_enabled: bool,
     provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None,
     prepare_sources: Callable[..., PreparedSources],
+    secret_scope: AdmissionScope,
+    secret_registry: SecretProviderRegistry | None = None,
+    secret_cache_policy: SecretCachePolicy | None = None,
 ) -> PipelineRunContext:
     """Resolve and validate every run input, in the order the inline code did.
 
@@ -225,6 +233,7 @@ def build_run_context(
         build_relationship_graph,
         check_orphan_fk_policy_completeness,
     )
+    from decoy_engine.secret_providers import admit_mask_key, assert_plan_requirements_admitted
 
     # Adapter selection runs up front, before any profiling or plan
     # compilation, so an invalid substrate or count knob fails at submit
@@ -285,24 +294,29 @@ def build_run_context(
 
     job_seed = _normalize_job_seed_int(config)
 
+    # F13: admit the keyed-mask secret from configuration alone BEFORE any source is read, so a
+    # missing, inaccessible, expired or invalid secret fails closed while the source is untouched.
+    # A programmatic `key_provider` wins over `global_settings.mask_secret_ref`. There is no
+    # `job_seed` fallback for keyed work in any release phase. The owner (`secret_scope`) is
+    # closed by `run_pipeline` on every exit path.
+    from decoy_engine.keyprovider import mask_key_from_provider
+
+    admitted = secret_scope.adopt(
+        admit_mask_key(
+            config,
+            key_provider=key_provider,
+            registry=secret_registry,
+            cache_policy=secret_cache_policy,
+        )
+    )
+
     profile = profile_source(config, seed=job_seed)
 
     plan = compile_plan(config, profile, decoy_engine_version=engine_version)
 
-    # DE-02 fail-closed gate: resolve the keyed-mask secret ONCE, before any table
-    # / quarantine / vault / manifest is written. Pre-GA a keyed plan with no
-    # secret falls back to job_seed (byte-identical); at GA it hard-errors
-    # (KeyedStrategyRequiresSecret). The secret is a reference in config
-    # (`global_settings.mask_secret_ref`, env:/file:), never serialized raw, and a
-    # programmatic `key_provider` wins over the ref. The resolved provider threads
-    # into every execution route; None means "no secret -> job_seed".
-    from decoy_engine.keyprovider import mask_key_from_provider, resolve_key_provider
-
-    resolved_key_provider = resolve_key_provider(
-        plan=plan,
-        key_provider=key_provider,
-        mask_secret_ref=(config.get("global_settings") or {}).get("mask_secret_ref"),
-    )
+    # Late defense in depth: the compiled plan may not need more than admission covered.
+    assert_plan_requirements_admitted(plan, admitted)
+    resolved_key_provider = admitted.key_provider
     # DE-02 (Codex BLOCKER 5 / item 6a): the token vault holds reversible plaintext
     # PII and must be encrypted under the SAME resolved mask key as the masking
     # run. Fail closed (shared guard) if a caller-supplied vault writer is keyed

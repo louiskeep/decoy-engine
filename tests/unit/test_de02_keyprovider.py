@@ -1,11 +1,12 @@
 """DE-02 KeyProvider: fail-closed keyed-mask secret + full-surface rekey.
 
 Path-completeness proof (the design's acceptance bar): for every keyed
-re-identification strategy, masked output CHANGES when a real >=32-byte secret is
-supplied and is BYTE-IDENTICAL to the seed-only baseline when no secret is
-present. A site left on `job_seed` would show up here as "unchanged under a
-secret". Plus: the fail-closed gate (pre-GA fallback / GA hard-error), the
-`env:`/`file:` ref resolver (hex + base64, <32-byte rejection), and the
+re-identification strategy, masked output CHANGES between two distinct real
+>=32-byte secrets (or key versions) and is deterministic under a fixed one. A site
+left on `job_seed` would show up here as "unchanged when the secret changes".
+Plus: the fail-closed gate (keyed work with no admitted secret fails closed in
+EVERY release phase; there is no `job_seed` fallback), the `env:`/`file:` ref path
+through `key_provider_from_ref` (hex + base64, <32-byte rejection), and the
 no-secret-in-serialized-plan guarantee.
 
 code_set + joint_mask rekey (Codex BLOCKER 1 / HIGH, Cam decision): both
@@ -13,10 +14,8 @@ previously selected via a fixed PUBLIC salt (`decoy.code_set.keyed_access.v1`,
 `decoy.reference_tables.keyed_access.v1`), so their remap was globally reversible
 independent of any secret. Their HMAC key now derives from the run secret
 (`derive(mask_key, namespace, salt)`), so -- like every other keyed strategy --
-their output CHANGES under a secret and is byte-identical (deterministic) without
-one. `TestCodeSetJointMaskRekey` pins that. This was a reviewed determinism change
-(the no-secret output of the two golden jobs that use them moved and their
-fingerprints were regenerated).
+their output CHANGES when the secret changes and is deterministic under a fixed
+one. `TestCodeSetJointMaskRekey` pins that.
 """
 
 from __future__ import annotations
@@ -45,10 +44,9 @@ from decoy_engine.keyprovider import (
     MaskSecretError,
     MissingMaskSecret,
     key_provider_from_ref,
+    mask_key_from_provider,
     plan_has_keyed_strategy,
     require_mask_key,
-    resolve_key_provider,
-    resolve_mask_secret_ref,
 )
 from decoy_engine.plan import compile_plan
 from decoy_engine.plan._types import ColumnSeed
@@ -56,11 +54,23 @@ from decoy_engine.profile import profile_source
 from decoy_engine.providers_v2 import get_default_registry
 from decoy_engine.relationships._graph import RelationshipGraph
 from decoy_engine.relationships._namespace import NamespaceRegistry
+from decoy_engine.secret_providers import admit_mask_key
 
 _EV = "de02-accept"
 _JOB_SEED = (42).to_bytes(8, "big")
 # A real >=32-byte secret (distinct value; 40 bytes to exercise the >32 path).
 _SECRET = SecretKeyProvider(b"a-strong-32B+-managed-secret-value!!", key_version="v1")
+# A second, distinct real secret: the path-completeness proof compares output across two real
+# secrets, since keyed work can no longer run without one.
+_SECRET_B = SecretKeyProvider(b"another-distinct-32B+-secret-value!", key_version="v1")
+
+
+@pytest.fixture(params=["pre_ga", "ga"])
+def phase(request, monkeypatch):
+    """Keyed behavior is phase-independent: every gate test runs in both release phases."""
+    pre_ga = request.param == "pre_ga"
+    monkeypatch.setattr("decoy_engine.release.is_pre_ga", lambda: pre_ga)
+    return request.param
 
 
 def _validated(cfg: dict) -> dict:
@@ -159,24 +169,30 @@ def _run(tmp_path, cfg, *, key_provider=None, **kwargs):
 class TestEndToEndRekey:
     """The core path-completeness proof through run_pipeline."""
 
-    def test_no_secret_is_deterministic_and_masks(self, tmp_path):
+    def test_fixed_secret_is_deterministic_and_masks(self, tmp_path):
         cfg = _config(tmp_path)
-        base = _run(tmp_path, cfg)
-        again = _run(tmp_path, cfg)
-        assert base.equals(again), "no-secret output must be deterministic"
+        base = _run(tmp_path, cfg, key_provider=_SECRET)
+        again = _run(tmp_path, cfg, key_provider=_SECRET)
+        assert base.equals(again), "fixed-secret output must be deterministic"
         src = _frame()
         for col in _KEYED_COLUMN_NAMES:
             assert base[col].tolist() != src[col].tolist(), f"{col} should be masked"
 
     @pytest.mark.parametrize("column", _KEYED_COLUMN_NAMES)
-    def test_column_changes_under_secret(self, tmp_path, column):
+    def test_column_changes_between_secrets(self, tmp_path, column):
         cfg = _config(tmp_path)
-        base = _run(tmp_path, cfg)
-        secret = _run(tmp_path, cfg, key_provider=_SECRET)
-        assert base[column].tolist() != secret[column].tolist(), (
-            f"{column} is a keyed site but did not change under a secret -- "
+        base = _run(tmp_path, cfg, key_provider=_SECRET)
+        other = _run(tmp_path, cfg, key_provider=_SECRET_B)
+        assert base[column].tolist() != other[column].tolist(), (
+            f"{column} is a keyed site but did not change when the secret changed -- "
             "the rekey missed this call site (still on job_seed)."
         )
+
+    @pytest.mark.no_default_secret
+    def test_no_secret_fails_closed_in_both_phases(self, tmp_path, phase):
+        with pytest.raises(KeyedStrategyRequiresSecret) as exc:
+            _run(tmp_path, _config(tmp_path))
+        assert exc.value.code == "keyed_strategy_requires_secret"
 
     def test_secret_run_is_deterministic(self, tmp_path):
         cfg = _config(tmp_path)
@@ -295,27 +311,27 @@ class TestCompositeDeterministicRekey:
             .to_pandas()
         )
 
-    def test_changes_under_secret_and_is_deterministic(self, tmp_path):
-        base = self._run_composite(tmp_path, None)
-        again = self._run_composite(tmp_path, None)
-        secret = self._run_composite(tmp_path, _SECRET)
+    def test_changes_between_secrets_and_is_deterministic(self, tmp_path):
+        base = self._run_composite(tmp_path, _SECRET)
+        again = self._run_composite(tmp_path, _SECRET)
+        other = self._run_composite(tmp_path, _SECRET_B)
         assert base["email"].tolist() == again["email"].tolist()
-        assert base["email"].tolist() != secret["email"].tolist()
+        assert base["email"].tolist() != other["email"].tolist()
 
 
 class TestTransformBackedHandlersRekey:
-    def test_group_key_changes_under_secret(self):
+    def test_group_key_changes_between_secrets(self):
         from decoy_engine.execution._strategies._group_key import GroupKeyStrategyHandler
 
         h = GroupKeyStrategyHandler()
         seed = _cseed("group_key", pc={"group_by": "grp", "prefix": "EP-"})
         df = lambda: pd.DataFrame({"grp": ["a", "b", "a", "c", "b"], "episode": [""] * 5})
-        base = _handler_output(h, df, "episode", seed, _JOB_SEED)
-        secret = _handler_output(h, df, "episode", seed, _SECRET.mask_key())
-        assert base != secret
-        assert _handler_output(h, df, "episode", seed, _JOB_SEED) == base  # deterministic
+        base = _handler_output(h, df, "episode", seed, _SECRET.mask_key())
+        other = _handler_output(h, df, "episode", seed, _SECRET_B.mask_key())
+        assert base != other
+        assert _handler_output(h, df, "episode", seed, _SECRET.mask_key()) == base  # deterministic
 
-    def test_grouped_series_changes_under_secret(self):
+    def test_grouped_series_changes_between_secrets(self):
         from decoy_engine.execution._strategies._grouped_series import (
             GroupedSeriesStrategyHandler,
         )
@@ -328,11 +344,12 @@ class TestTransformBackedHandlersRekey:
         df = lambda: pd.DataFrame(
             {"grp": ["a", "b", "a", "c", "b"], "ord": [1, 2, 3, 4, 5], "visit": [0] * 5}
         )
-        base = _handler_output(h, df, "visit", seed, _JOB_SEED)
-        secret = _handler_output(h, df, "visit", seed, _SECRET.mask_key())
-        assert base != secret
+        base = _handler_output(h, df, "visit", seed, _SECRET.mask_key())
+        other = _handler_output(h, df, "visit", seed, _SECRET_B.mask_key())
+        assert base != other
+        assert _handler_output(h, df, "visit", seed, _SECRET.mask_key()) == base  # deterministic
 
-    def test_windowed_date_changes_under_secret(self):
+    def test_windowed_date_changes_between_secrets(self):
         from decoy_engine.execution._strategies._windowed_date import (
             WindowedDateStrategyHandler,
         )
@@ -340,30 +357,31 @@ class TestTransformBackedHandlersRekey:
         h = WindowedDateStrategyHandler()
         seed = _cseed("windowed_date", pc={"anchor": "anchor", "min_days": 1, "max_days": 30})
         df = lambda: pd.DataFrame({"anchor": ["2020-01-01"] * 5, "fu": [""] * 5})
-        base = _handler_output(h, df, "fu", seed, _JOB_SEED)
-        secret = _handler_output(h, df, "fu", seed, _SECRET.mask_key())
-        assert base != secret
+        base = _handler_output(h, df, "fu", seed, _SECRET.mask_key())
+        other = _handler_output(h, df, "fu", seed, _SECRET_B.mask_key())
+        assert base != other
+        assert _handler_output(h, df, "fu", seed, _SECRET.mask_key()) == base  # deterministic
 
 
 class TestCodeSetJointMaskRekey:
     """DE-02 (Codex BLOCKER 1 / HIGH, Cam decision): code_set + joint_mask mask
     selection now derives its HMAC key from the run secret (`derive(mask_key,
-    namespace, salt)`), not a fixed public constant, so their output CHANGES under
-    a secret and is byte-identical (deterministic) without one."""
+    namespace, salt)`), not a fixed public constant, so their output CHANGES when
+    the secret changes and is deterministic under a fixed one."""
 
-    def test_code_set_changes_under_secret_and_masks(self):
+    def test_code_set_changes_between_secrets_and_masks(self):
         from decoy_engine.execution._strategies._code_set import CodeSetHandler
 
         h = CodeSetHandler()
         seed = _cseed("code_set", provider="code_set", pc={"code_set": "icd10"})
         df = lambda: pd.DataFrame({"dx": ["E11.9", "I10", "J45.909", "E11.65", "I10"]})
-        base = _handler_output(h, df, "dx", seed, _JOB_SEED)
-        secret = _handler_output(h, df, "dx", seed, _SECRET.mask_key())
+        base = _handler_output(h, df, "dx", seed, _SECRET.mask_key())
+        other = _handler_output(h, df, "dx", seed, _SECRET_B.mask_key())
         assert base != ["E11.9", "I10", "J45.909", "E11.65", "I10"], "still masks"
-        assert base != secret, "code_set must rekey off the secret"
-        assert base == _handler_output(h, df, "dx", seed, _JOB_SEED), "deterministic"
+        assert base != other, "code_set must rekey off the secret"
+        assert base == _handler_output(h, df, "dx", seed, _SECRET.mask_key()), "deterministic"
 
-    def test_code_set_chapter_preserve_changes_under_secret(self):
+    def test_code_set_chapter_preserve_changes_between_secrets(self):
         from decoy_engine.execution._strategies._code_set import CodeSetHandler
 
         h = CodeSetHandler()
@@ -371,11 +389,12 @@ class TestCodeSetJointMaskRekey:
             "code_set", provider="code_set", pc={"code_set": "icd10", "chapter_preserve": True}
         )
         df = lambda: pd.DataFrame({"dx": ["E11.9", "I10", "J45.909", "E11.65", "I10"]})
-        base = _handler_output(h, df, "dx", seed, _JOB_SEED)
-        secret = _handler_output(h, df, "dx", seed, _SECRET.mask_key())
-        assert base != secret
+        base = _handler_output(h, df, "dx", seed, _SECRET.mask_key())
+        other = _handler_output(h, df, "dx", seed, _SECRET_B.mask_key())
+        assert base != other
+        assert _handler_output(h, df, "dx", seed, _SECRET.mask_key()) == base  # deterministic
 
-    def test_joint_mask_changes_under_secret(self):
+    def test_joint_mask_changes_between_secrets(self):
         from decoy_engine.execution._strategies._joint_mask import JointMaskHandler
 
         h = JointMaskHandler()
@@ -410,10 +429,10 @@ class TestCodeSetJointMaskRekey:
             )
             return h.run(frame.copy(), "city", seed, ctx)[0]["city"].tolist()
 
-        base = run(_JOB_SEED)
-        secret = run(_SECRET.mask_key())
-        assert base != secret, "joint_mask must rekey off the secret"
-        assert base == run(_JOB_SEED), "deterministic"
+        base = run(_SECRET.mask_key())
+        other = run(_SECRET_B.mask_key())
+        assert base != other, "joint_mask must rekey off the secret"
+        assert base == run(_SECRET.mask_key()), "deterministic"
 
 
 # --------------------------------------------------------------------------
@@ -435,13 +454,13 @@ _REKEY_COLUMNS = [
 
 class TestSubstrateRekey:
     @pytest.mark.parametrize("column", ["email", "dept", "dept2"])
-    def test_full_frame_changes_under_secret(self, tmp_path, column):
+    def test_full_frame_changes_between_secrets(self, tmp_path, column):
         cfg = _config(tmp_path, columns=_REKEY_COLUMNS)
-        base = _run(tmp_path, cfg)
-        secret = _run(tmp_path, cfg, key_provider=_SECRET)
-        assert base[column].tolist() != secret[column].tolist()
+        base = _run(tmp_path, cfg, key_provider=_SECRET)
+        other = _run(tmp_path, cfg, key_provider=_SECRET_B)
+        assert base[column].tolist() != other[column].tolist()
 
-    def test_out_of_core_mask_batch_changes_under_secret(self, tmp_path):
+    def test_out_of_core_mask_batch_changes_between_secrets(self, tmp_path):
         cols = [{"name": "email", "strategy": "hash", "namespace": "email_ns"}]
         cfg = _config(tmp_path, columns=cols)
         df = _frame(10)[["email"]]
@@ -449,28 +468,26 @@ class TestSubstrateRekey:
         prof = profile_source(cfg, seed=42)
         plan = compile_plan(cfg, prof, decoy_engine_version=_EV)
         batch = pa.RecordBatch.from_pandas(df, preserve_index=False)
-        base = mask_batch(plan, "t", batch, mask_key=_JOB_SEED).column("email").to_pylist()
-        secret = (
+        base = mask_batch(plan, "t", batch, mask_key=_SECRET.mask_key()).column("email").to_pylist()
+        again = (
             mask_batch(plan, "t", batch, mask_key=_SECRET.mask_key()).column("email").to_pylist()
         )
-        no_key = mask_batch(plan, "t", batch).column("email").to_pylist()
-        assert base == no_key, "out-of-core mask_key defaults to job_seed (byte-identical)"
-        assert base != secret, "out-of-core streaming mask did not rekey off the secret"
+        other = (
+            mask_batch(plan, "t", batch, mask_key=_SECRET_B.mask_key()).column("email").to_pylist()
+        )
+        assert base == again, "out-of-core mask is deterministic under a fixed secret"
+        assert base != other, "out-of-core streaming mask did not rekey off the secret"
 
-    def test_chunked_route_changes_under_secret(self, tmp_path):
+    def test_chunked_route_changes_between_secrets(self, tmp_path):
         cols = [{"name": "email", "strategy": "hash", "namespace": "email_ns"}]
         cfg = _config(tmp_path, columns=cols)
         # chunk_size below row count forces the chunked route.
-        base = _run(tmp_path, cfg, auto_chunk=True, chunk_size_rows=10, auto_chunk_threshold_rows=1)
-        secret = _run(
-            tmp_path,
-            cfg,
-            key_provider=_SECRET,
-            auto_chunk=True,
-            chunk_size_rows=10,
-            auto_chunk_threshold_rows=1,
-        )
-        assert base["email"].tolist() != secret["email"].tolist()
+        chunked = {"auto_chunk": True, "chunk_size_rows": 10, "auto_chunk_threshold_rows": 1}
+        base = _run(tmp_path, cfg, key_provider=_SECRET, **chunked)
+        again = _run(tmp_path, cfg, key_provider=_SECRET, **chunked)
+        other = _run(tmp_path, cfg, key_provider=_SECRET_B, **chunked)
+        assert base["email"].tolist() == again["email"].tolist()
+        assert base["email"].tolist() != other["email"].tolist()
 
 
 # --------------------------------------------------------------------------
@@ -549,9 +566,31 @@ class TestReversalSurfaceRekey:
             cfg, sources=sources, engine_version=_EV, vault_writer=writer, key_provider=_SECRET
         )
         writer.write(tmp_path / "vault.bin")
-        with pytest.raises(ExecutionError) as exc:  # no secret -> wrong Fernet key
-            unmask_pipeline(cfg, {"t": result.outputs["t"]}, vault_path=str(tmp_path / "vault.bin"))
+        with pytest.raises(ExecutionError) as exc:  # a different secret -> wrong Fernet key
+            unmask_pipeline(
+                cfg,
+                {"t": result.outputs["t"]},
+                vault_path=str(tmp_path / "vault.bin"),
+                key_provider=_SECRET_B,
+            )
         assert exc.value.code == "vault_key_mismatch"
+
+    @needs_crypto
+    @pytest.mark.no_default_secret
+    def test_vault_unmask_without_any_secret_fails_closed(self, tmp_path, phase):
+        from decoy_engine import unmask_pipeline
+
+        cfg = _config(tmp_path, columns=self._COLS, seed=3)
+        _df, sources = self._src(tmp_path)
+        from decoy_engine.vault import vault_writer_for_config
+
+        writer = vault_writer_for_config(cfg, key_provider=_SECRET)
+        result = run_pipeline(
+            cfg, sources=sources, engine_version=_EV, vault_writer=writer, key_provider=_SECRET
+        )
+        writer.write(tmp_path / "vault.bin")
+        with pytest.raises(KeyedStrategyRequiresSecret):
+            unmask_pipeline(cfg, {"t": result.outputs["t"]}, vault_path=str(tmp_path / "vault.bin"))
 
 
 # --------------------------------------------------------------------------
@@ -575,53 +614,66 @@ def _unkeyed_plan(tmp_path):
     return compile_plan(cfg, prof, decoy_engine_version=_EV)
 
 
+_KEYED_COLS = [{"name": "email", "strategy": "hash", "namespace": "e_ns"}]
+_UNKEYED_COLS = [{"name": "email", "strategy": "redact"}]
+
+
+@pytest.mark.no_default_secret
 class TestFailClosedGate:
     def test_plan_has_keyed_strategy_detects_keyed_and_unkeyed(self, tmp_path):
         assert plan_has_keyed_strategy(_keyed_plan(tmp_path)) is True
         assert plan_has_keyed_strategy(_unkeyed_plan(tmp_path)) is False
 
-    def test_pre_ga_keyed_no_secret_falls_back_to_seed(self, tmp_path):
-        provider = resolve_key_provider(plan=_keyed_plan(tmp_path), key_provider=None)
-        assert provider is None  # -> job_seed fallback, byte-identical
-
-    def test_ga_keyed_no_secret_hard_errors(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("decoy_engine.keyprovider.is_pre_ga", lambda: False)
+    def test_keyed_no_secret_fails_closed_in_both_phases(self, tmp_path, phase):
+        # Inverts the pre-GA seed fallback: keyed work with no admitted secret never runs.
+        cfg = _config(tmp_path, columns=_KEYED_COLS)
+        with pytest.raises(KeyedStrategyRequiresSecret) as exc:
+            admit_mask_key(cfg, key_provider=None)
+        assert exc.value.code == "keyed_strategy_requires_secret"
         with pytest.raises(KeyedStrategyRequiresSecret):
-            resolve_key_provider(plan=_keyed_plan(tmp_path), key_provider=None)
+            require_mask_key(_keyed_plan(tmp_path), None)
 
-    def test_ga_unkeyed_no_secret_is_allowed(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("decoy_engine.keyprovider.is_pre_ga", lambda: False)
-        assert resolve_key_provider(plan=_unkeyed_plan(tmp_path), key_provider=None) is None
+    def test_ga_keyed_no_secret_hard_errors(self, tmp_path, phase):
+        with pytest.raises(KeyedStrategyRequiresSecret):
+            admit_mask_key(_config(tmp_path, columns=_KEYED_COLS))
 
-    def test_ga_keyed_with_secret_passes(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("decoy_engine.keyprovider.is_pre_ga", lambda: False)
-        provider = resolve_key_provider(plan=_keyed_plan(tmp_path), key_provider=_SECRET)
-        assert provider is _SECRET
+    def test_unkeyed_no_secret_is_allowed_in_both_phases(self, tmp_path, phase):
+        cfg = _config(tmp_path, columns=_UNKEYED_COLS)
+        admitted = admit_mask_key(cfg, key_provider=None)
+        assert admitted.key_provider is None
+        plan = _unkeyed_plan(tmp_path)
+        assert require_mask_key(plan, None) == plan.seed_envelope.job_seed
+
+    def test_keyed_with_secret_passes_in_both_phases(self, tmp_path, phase):
+        cfg = _config(tmp_path, columns=_KEYED_COLS)
+        admitted = admit_mask_key(cfg, key_provider=_SECRET)
+        try:
+            assert admitted.key_provider.mask_key() == _SECRET.mask_key()
+            assert admitted.key_provider.key_version == _SECRET.key_version
+        finally:
+            admitted.close()
+        assert require_mask_key(_keyed_plan(tmp_path), _SECRET) == _SECRET.mask_key()
 
     def test_weak_secret_rejected_at_construction(self):
         with pytest.raises(WeakMaskSecret):
             SecretKeyProvider(os.urandom(31))
 
-    def test_end_to_end_ga_no_secret_raises(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("decoy_engine.keyprovider.is_pre_ga", lambda: False)
-        cfg = _config(
-            tmp_path, columns=[{"name": "email", "strategy": "hash", "namespace": "e_ns"}]
-        )
+    def test_end_to_end_no_secret_raises_in_both_phases(self, tmp_path, phase):
+        cfg = _config(tmp_path, columns=_KEYED_COLS)
         with pytest.raises(KeyedStrategyRequiresSecret):
             _run(tmp_path, cfg)
 
-    def test_ga_rejects_seed_provider_resolved_key_too_short(self, tmp_path, monkeypatch):
+    def test_rejects_seed_provider_resolved_key_too_short(self, tmp_path, phase):
         # Codex BLOCKER 2: presence is not enough -- an 8-byte SeedKeyProvider that
-        # resolves to mask_key == job_seed must be rejected at GA.
-        monkeypatch.setattr("decoy_engine.keyprovider.is_pre_ga", lambda: False)
+        # resolves to mask_key == job_seed is never a secret, in any phase.
         seed_provider = SeedKeyProvider((7).to_bytes(8, "big"))
         with pytest.raises(KeyedStrategyRequiresSecret):
             require_mask_key(_keyed_plan(tmp_path), seed_provider)
+        with pytest.raises(KeyedStrategyRequiresSecret):
+            admit_mask_key(_config(tmp_path, columns=_KEYED_COLS), key_provider=seed_provider)
 
-    def test_ga_rejects_empty_custom_provider(self, tmp_path, monkeypatch):
+    def test_rejects_empty_custom_provider(self, tmp_path, phase):
         # Codex BLOCKER 2: a custom provider whose mask_key() is < 32 bytes.
-        monkeypatch.setattr("decoy_engine.keyprovider.is_pre_ga", lambda: False)
-
         class _EmptyProvider:
             key_version = "empty"
 
@@ -630,8 +682,10 @@ class TestFailClosedGate:
 
         with pytest.raises(KeyedStrategyRequiresSecret):
             require_mask_key(_keyed_plan(tmp_path), _EmptyProvider())
+        with pytest.raises(KeyedStrategyRequiresSecret):
+            admit_mask_key(_config(tmp_path, columns=_KEYED_COLS), key_provider=_EmptyProvider())
 
-    def test_nested_keyed_child_is_classified_and_gated(self, tmp_path, monkeypatch):
+    def test_nested_keyed_child_is_classified_and_gated(self, tmp_path, phase):
         # Codex BLOCKER 3: nested(strategy=hash) hides a keyed child.
         cfg = _config(
             tmp_path,
@@ -649,14 +703,20 @@ class TestFailClosedGate:
         prof = profile_source(cfg, seed=42)
         plan = compile_plan(cfg, prof, decoy_engine_version=_EV)
         assert plan_has_keyed_strategy(plan) is True, "nested(hash) must classify keyed"
-        monkeypatch.setattr("decoy_engine.keyprovider.is_pre_ga", lambda: False)
         with pytest.raises(KeyedStrategyRequiresSecret):
             require_mask_key(plan, None)
+        with pytest.raises(KeyedStrategyRequiresSecret):
+            admit_mask_key(cfg, key_provider=None)
+
+    def test_mask_key_from_provider_is_ungated_passthrough(self):
+        assert mask_key_from_provider(_SECRET, _JOB_SEED) == _SECRET.mask_key()
+        assert mask_key_from_provider(None, _JOB_SEED) == _JOB_SEED
 
 
+@pytest.mark.no_default_secret
 class TestPublicEntryPointsGated:
     """Codex BLOCKER 4: every public masking entry point runs the gate, so none
-    can execute keyed masking off job_seed at GA without a secret."""
+    can execute keyed masking off job_seed, in any release phase, without a secret."""
 
     def _keyed_cfg(self, tmp_path):
         return _config(
@@ -675,10 +735,9 @@ class TestPublicEntryPointsGated:
         ns = build_namespace_registry(cfg, prof)
         return plan, sources, ns
 
-    def test_direct_pandas_adapter_run_gated(self, tmp_path, monkeypatch):
+    def test_direct_pandas_adapter_run_gated(self, tmp_path, phase):
         from decoy_engine.execution import PandasExecutionAdapter
 
-        monkeypatch.setattr("decoy_engine.keyprovider.is_pre_ga", lambda: False)
         plan, sources, ns = self._plan_and_sources(tmp_path)
         with pytest.raises(KeyedStrategyRequiresSecret):
             PandasExecutionAdapter().run(
@@ -689,10 +748,9 @@ class TestPublicEntryPointsGated:
                 namespace_registry=ns,
             )
 
-    def test_chunked_entry_point_gated(self, tmp_path, monkeypatch):
+    def test_chunked_entry_point_gated(self, tmp_path, phase):
         from decoy_engine import run_mask_pipeline_chunked
 
-        monkeypatch.setattr("decoy_engine.keyprovider.is_pre_ga", lambda: False)
         cfg = self._keyed_cfg(tmp_path)
         df = _frame(8)[["email"]]
         df.to_csv(tmp_path / "t.csv", index=False)
@@ -700,37 +758,32 @@ class TestPublicEntryPointsGated:
         with pytest.raises(KeyedStrategyRequiresSecret):
             list(run_mask_pipeline_chunked(cfg, [source], table="t", engine_version=_EV))
 
-    def test_chunked_entry_point_gated_on_empty_input(self, tmp_path, monkeypatch):
+    def test_chunked_entry_point_gated_on_empty_input(self, tmp_path, phase):
         """Codex-found: a chunked source with ZERO chunks used to return `[]`
         BEFORE the gate ran at all (the gate lived after the `first is None`
         short-circuit), so an empty keyed job with no secret silently
-        succeeded at GA instead of being rejected. Zero chunks must still
-        hit the same KeyedStrategyRequiresSecret as a non-empty one."""
+        succeeded instead of being rejected. Zero chunks must still
+        hit the same KeyedStrategyRequiresSecret as a non-empty one, in either phase."""
         from decoy_engine import run_mask_pipeline_chunked
 
-        monkeypatch.setattr("decoy_engine.keyprovider.is_pre_ga", lambda: False)
         cfg = self._keyed_cfg(tmp_path)
         with pytest.raises(KeyedStrategyRequiresSecret):
             list(run_mask_pipeline_chunked(cfg, [], table="t", engine_version=_EV))
 
-    def test_chunked_entry_point_empty_input_unkeyed_still_runs_at_ga(self, tmp_path, monkeypatch):
+    def test_chunked_entry_point_empty_input_unkeyed_still_runs(self, tmp_path, phase):
         """The empty-input gate fix must not over-gate: a non-keyed plan with
-        zero chunks and no secret still returns [] at GA (unkeyed path is
+        zero chunks and no secret still returns [] in either phase (unkeyed path is
         unaffected)."""
         from decoy_engine import run_mask_pipeline_chunked
 
-        monkeypatch.setattr("decoy_engine.keyprovider.is_pre_ga", lambda: False)
         cfg = _config(tmp_path, columns=[{"name": "email", "strategy": "redact"}])
         assert list(run_mask_pipeline_chunked(cfg, [], table="t", engine_version=_EV)) == []
 
-    def test_chunked_entry_point_empty_input_with_secret_still_runs_at_ga(
-        self, tmp_path, monkeypatch
-    ):
+    def test_chunked_entry_point_empty_input_with_secret_still_runs(self, tmp_path, phase):
         """A keyed plan with zero chunks but a real secret still clears the
-        gate and returns [] at GA (the fix doesn't break the satisfied case)."""
+        gate and returns [] in either phase (the fix doesn't break the satisfied case)."""
         from decoy_engine import run_mask_pipeline_chunked
 
-        monkeypatch.setattr("decoy_engine.keyprovider.is_pre_ga", lambda: False)
         cfg = self._keyed_cfg(tmp_path)
         kp = SecretKeyProvider(b"x" * 32)
         assert (
@@ -738,10 +791,9 @@ class TestPublicEntryPointsGated:
             == []
         )
 
-    def test_out_of_core_runner_gated(self, tmp_path, monkeypatch):
+    def test_out_of_core_runner_gated(self, tmp_path, phase):
         from decoy_engine.execution.out_of_core import run_fk_out_of_core
 
-        monkeypatch.setattr("decoy_engine.keyprovider.is_pre_ga", lambda: False)
         plan, sources, _ns = self._plan_and_sources(tmp_path)
         # No FK edges needed to exercise the gate: it runs before the stream loop.
         with pytest.raises(KeyedStrategyRequiresSecret):
@@ -776,10 +828,11 @@ class TestPublicEntryPointsGated:
             )
 
 
+@pytest.mark.no_default_secret
 class TestVaultIsKeyedSurface:
     """Codex item 6 (residual): a `vault: true` column is a KEYED surface (it
     persists reversible plaintext PII) regardless of the masking strategy, so the
-    GA gate requires a secret for it at EVERY entry point, and the vault-key guard
+    gate requires a secret for it at EVERY entry point, in every release phase, and the vault-key guard
     fires on the chunked route too."""
 
     _VAULT_REDACT = [
@@ -797,14 +850,12 @@ class TestVaultIsKeyedSurface:
         # 6b root cause: redact is anonymising, but vault:true makes it keyed.
         assert plan_has_keyed_strategy(self._plan(tmp_path)) is True
 
-    def test_ga_vault_no_secret_gate_raises(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("decoy_engine.keyprovider.is_pre_ga", lambda: False)
+    def test_vault_no_secret_gate_raises_in_both_phases(self, tmp_path, phase):
         with pytest.raises(KeyedStrategyRequiresSecret):
             require_mask_key(self._plan(tmp_path), None)
 
     @needs_crypto
-    def test_ga_vault_redact_no_secret_fails_closed_run_pipeline(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("decoy_engine.keyprovider.is_pre_ga", lambda: False)
+    def test_vault_redact_no_secret_fails_closed_run_pipeline(self, tmp_path, phase):
         cfg = _config(tmp_path, columns=self._VAULT_REDACT)
         df = _frame(8)[["email"]]
         df.to_csv(tmp_path / "t.csv", index=False)
@@ -813,10 +864,9 @@ class TestVaultIsKeyedSurface:
             run_pipeline(cfg, sources=sources, engine_version=_EV)
 
     @needs_crypto
-    def test_ga_vault_redact_no_secret_fails_closed_chunked(self, tmp_path, monkeypatch):
+    def test_vault_redact_no_secret_fails_closed_chunked(self, tmp_path, phase):
         from decoy_engine import run_mask_pipeline_chunked
 
-        monkeypatch.setattr("decoy_engine.keyprovider.is_pre_ga", lambda: False)
         cfg = _config(tmp_path, columns=self._VAULT_REDACT)
         df = _frame(8)[["email"]]
         df.to_csv(tmp_path / "t.csv", index=False)
@@ -889,29 +939,41 @@ class TestVaultIsKeyedSurface:
 
 
 class TestSecretRefResolver:
+    """`key_provider_from_ref` is the ref -> bytes path; equivalence to the raw secret is asserted
+    through the derived mask key, and error text is a fixed constant that never echoes the ref."""
+
     def test_env_hex(self, monkeypatch):
         raw = os.urandom(32)
         monkeypatch.setenv("DECOY_S_HEX", raw.hex())
-        assert resolve_mask_secret_ref("env:DECOY_S_HEX") == raw
+        assert (
+            key_provider_from_ref("env:DECOY_S_HEX").mask_key() == SecretKeyProvider(raw).mask_key()
+        )
 
     def test_env_base64(self, monkeypatch):
         raw = os.urandom(40)
         monkeypatch.setenv("DECOY_S_B64", base64.b64encode(raw).decode())
-        assert resolve_mask_secret_ref("env:DECOY_S_B64") == raw
+        assert (
+            key_provider_from_ref("env:DECOY_S_B64").mask_key() == SecretKeyProvider(raw).mask_key()
+        )
 
     def test_file_hex(self, tmp_path):
         raw = os.urandom(32)
         p = tmp_path / "secret.hex"
         p.write_text(raw.hex())
-        assert resolve_mask_secret_ref(f"file:{p}") == raw
+        assert key_provider_from_ref(f"file:{p}").mask_key() == SecretKeyProvider(raw).mask_key()
 
     def test_missing_env_raises(self):
-        with pytest.raises(MissingMaskSecret):
-            resolve_mask_secret_ref("env:DECOY_DOES_NOT_EXIST_XYZ")
+        with pytest.raises(MissingMaskSecret) as exc:
+            key_provider_from_ref("env:DECOY_DOES_NOT_EXIST_XYZ")
+        assert exc.value.code == "missing_mask_secret"
+        assert "DECOY_DOES_NOT_EXIST_XYZ" not in str(exc.value)
 
     def test_missing_file_raises(self, tmp_path):
-        with pytest.raises(MissingMaskSecret):
-            resolve_mask_secret_ref(f"file:{tmp_path / 'nope.bin'}")
+        path = tmp_path / "nope.bin"
+        with pytest.raises(MissingMaskSecret) as exc:
+            key_provider_from_ref(f"file:{path}")
+        assert exc.value.code == "missing_mask_secret"
+        assert str(path) not in str(exc.value)
 
     def test_invalid_utf8_file_raises_clean_mask_secret_error(self, tmp_path):
         """Codex-found: a `file:` secret ref pointing at non-UTF-8 bytes used
@@ -921,18 +983,28 @@ class TestSecretRefResolver:
         p = tmp_path / "secret.bin"
         p.write_bytes(b"\xff\xfe\x00\x01not-valid-utf8\x80\x81")
         with pytest.raises(MaskSecretError) as exc:
-            resolve_mask_secret_ref(f"file:{p}")
+            key_provider_from_ref(f"file:{p}")
         assert not isinstance(exc.value, MissingMaskSecret)
         assert exc.value.code == "bad_secret_ref"
+        assert str(p) not in str(exc.value)
 
     def test_unknown_ref_kind_raises(self):
-        with pytest.raises(MaskSecretError):
-            resolve_mask_secret_ref("kms://tenant/key")
+        with pytest.raises(MaskSecretError) as exc:
+            key_provider_from_ref("kms://tenant/key")
+        assert exc.value.code == "secret_provider_unknown"
+        assert "tenant/key" not in str(exc.value)
+
+    def test_malformed_ref_raises_bad_secret_ref(self):
+        with pytest.raises(MaskSecretError) as exc:
+            key_provider_from_ref("not a ref")
+        assert exc.value.code == "bad_secret_ref"
 
     def test_short_secret_via_ref_rejected(self, monkeypatch):
-        monkeypatch.setenv("DECOY_S_SHORT", os.urandom(16).hex())
-        with pytest.raises(WeakMaskSecret):
+        short = os.urandom(16).hex()
+        monkeypatch.setenv("DECOY_S_SHORT", short)
+        with pytest.raises(WeakMaskSecret) as exc:
             key_provider_from_ref("env:DECOY_S_SHORT")
+        assert short not in str(exc.value)
 
 
 # --------------------------------------------------------------------------

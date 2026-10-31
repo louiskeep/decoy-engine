@@ -10,7 +10,7 @@ lane really receives from a real `run_pipeline` call:
   `graph`, `route_reason`, `adapter`, `pool_cache`);
 * the RESOLVED registry and key provider are what flows through, never the raw arguments. The
   values are distinguishable on purpose: the raw `registry` and `key_provider` are `None` while
-  the resolved ones are a default registry and a provider built from `mask_secret_ref`, so a
+  the resolved ones are a default registry and a run-scoped prepared provider built from `mask_secret_ref`, so a
   raw-for-resolved swap fails;
 * the knobs reach the lane unchanged (distinguishable non-default values);
 * one `PoolCache` serves the unified lane and, when the lane declines, the full-frame oracle.
@@ -36,8 +36,8 @@ from decoy_engine.execution import (
 from decoy_engine.execution import _unified_slice_admission as admission
 from decoy_engine.execution._pandas_adapter import PandasExecutionAdapter
 from decoy_engine.generation.pool import PoolCache
-from decoy_engine.keyprovider import SecretKeyProvider
 from decoy_engine.providers_v2 import get_default_registry
+from decoy_engine.secret_providers import PreparedKeyProvider
 from tests.unit.execution import _r3_scenarios as sc
 
 pytestmark = pytest.mark.filterwarnings("ignore")
@@ -143,10 +143,10 @@ def test_the_lane_receives_resolved_values_not_the_raw_arguments(
     ctx = seen["lane"][0]["ctx"]
     # Raw `registry=None` / `key_provider=None` were passed; the lane must see the resolved ones.
     assert ctx.registry is get_default_registry()
-    assert isinstance(ctx.key_provider, SecretKeyProvider)
+    assert isinstance(ctx.key_provider, PreparedKeyProvider)
     for kw in (seen["execute"][0], seen["admission"][0]):
         assert kw["registry"] is get_default_registry()
-    assert isinstance(seen["execute"][0]["key_provider"], SecretKeyProvider)
+    assert isinstance(seen["execute"][0]["key_provider"], PreparedKeyProvider)
     assert seen["execute"][0]["key_provider"] is ctx.key_provider
 
 
@@ -157,7 +157,7 @@ def test_the_oracle_receives_the_same_resolved_objects(
     ctx, oracle = seen["lane"][0]["ctx"], seen["oracle"][0]
     assert oracle["registry"] is ctx.registry is get_default_registry()
     assert oracle["key_provider"] is ctx.key_provider
-    assert isinstance(oracle["key_provider"], SecretKeyProvider)
+    assert isinstance(oracle["key_provider"], PreparedKeyProvider)
     assert oracle["adapter"] is ctx.adapter
 
 

@@ -20,6 +20,7 @@ from decoy_engine.execution import PandasExecutionAdapter, _transforms
 from decoy_engine.execution._sequential import run_sequential
 from decoy_engine.execution._transforms import TransformError
 from decoy_engine.plan._errors import PlanCompileError
+from tests._keyed_secret import THROWAWAY_SECRET
 from tests.unit.execution._transform_testkit import (
     ENGINE_VERSION,
     base_table,
@@ -703,12 +704,16 @@ def _parsed(ops):
 
 
 class TestLazySources:
-    def test_isolated_fk_child_with_lazy_sources_applies_transforms(self, tmp_path):
+    def test_isolated_fk_child_with_lazy_sources_applies_transforms(self, tmp_path, monkeypatch):
         from decoy_engine.execution import run_pipeline_isolated
 
         parent, child = fk_tables()
         p_ops = [{"op": "filter", "expression": "n >= 2"}]
         cfg = fk_config(tmp_path, parent, child, parent_transforms=p_ops)
+        # The isolated child is a separate process, so the in-process default-secret fixture
+        # cannot reach it: both it and the reference run read the same throwaway secret from env.
+        monkeypatch.setenv("DECOY_TEST_THROWAWAY_SECRET", THROWAWAY_SECRET.hex())
+        cfg["global_settings"]["mask_secret_ref"] = "env:DECOY_TEST_THROWAWAY_SECRET"
         res = run_pipeline_isolated(
             cfg,
             {"parent": parent, "child": child},

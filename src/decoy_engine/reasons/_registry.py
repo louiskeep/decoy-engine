@@ -21,7 +21,7 @@ from decoy_engine.reasons._types import (
     Severity,
 )
 
-REGISTRY_VERSION = "1.0.0"
+REGISTRY_VERSION = "1.1.0"
 REASON_SCHEMA_VERSION = 1
 EVENT_SCHEMA_VERSION = 1
 
