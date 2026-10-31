@@ -51,5 +51,5 @@ def test_days_from_now_uses_a_specific_timedelta_unit() -> None:
 
 def test_days_from_now_still_fails_the_row_on_a_non_number() -> None:
     cg = ColumnGenerator(seed=42, reference_date=pd.Timestamp("2026-01-01"))
-    col = {"name": "y", "type": "formula", "formula": "days_from_now(float(\"nan\"))"}
+    col = {"name": "y", "type": "formula", "formula": 'days_from_now(float("nan"))'}
     assert cg.generate_column(2, col, "t", {}).tolist() == [None, None]
