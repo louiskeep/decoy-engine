@@ -316,7 +316,9 @@ class _FormulaMixin:
             # Wall-clock helpers bound to reference_date (H7).
             "now": lambda fmt="%Y-%m-%d": ref_date.strftime(fmt),
             "today": lambda fmt="%Y-%m-%d": ref_date.strftime(fmt),
-            "days_from_now": lambda days: (ref_date + pd.Timedelta(days=days)).strftime("%Y-%m-%d"),
+            "days_from_now": lambda days: (ref_date + pd.Timedelta(days, unit="D")).strftime(
+                "%Y-%m-%d"
+            ),
             "months_from_now": lambda months: (ref_date + pd.DateOffset(months=months)).strftime(
                 "%Y-%m-%d"
             ),

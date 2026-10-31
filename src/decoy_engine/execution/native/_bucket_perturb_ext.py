@@ -102,7 +102,7 @@ def native_range_exceeded(values: pa.Array, bucket: str, date_format: str) -> bo
     earliest, latest = parsed.min(), parsed.max()
     if pd.isna(earliest):
         return False
-    reach = pd.Timedelta(days=_BUCKET_REACH_DAYS[bucket])
+    reach = pd.Timedelta(_BUCKET_REACH_DAYS[bucket], unit="D")
     return bool(earliest < pd.Timestamp.min + reach or latest > pd.Timestamp.max - reach)
 
 
