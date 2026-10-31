@@ -246,7 +246,7 @@ def _decide(**overrides: Any) -> tuple[str, str]:
     ("flag", "expected"),
     [
         ({"post_validation": True}, "post_validation_requested"),
-        ({"run_storm": True}, "run_storm_requested"),
+        ({"post_scan_integrity": True}, "post_scan_integrity_requested"),
     ],
 )
 def test_requested_scan_routes_resolve_in_the_route_namespace(

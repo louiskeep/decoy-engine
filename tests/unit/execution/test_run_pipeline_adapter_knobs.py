@@ -21,7 +21,7 @@ _ENGINE_VERSION = "adapter-knobs-test"
 def _scalar_mask_config(tmp_path) -> dict:
     return PipelineConfig.model_validate(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 42},
             "sources": {
                 "customers": {"type": "file", "format": "csv", "path": str(tmp_path / "c.csv")},

@@ -148,7 +148,7 @@ python examples/ner_redaction_demo.py
 
 ## Tests
 
-- `tests/unit/storm/test_ner_spans.py` -- span detection, entity filtering,
+- `tests/unit/detection_verification/test_ner_spans.py` -- span detection, entity filtering,
   determinism, the compile-time availability check, the locale label-scheme
   mapping, and `text_redact` end to end via `TextRedactHandler`.
 - `tests/unit/execution/test_text_redact.py` -- the `TestF14bNerVersionGuard`

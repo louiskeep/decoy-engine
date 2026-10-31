@@ -410,7 +410,7 @@ def _fk_key_error_config(tmp_path: Path) -> dict[str, Any]:
         }
     )
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"job_name": "run-kills-keyerror", "seed": 42},
         "sources": {
             "parent": {
@@ -753,7 +753,7 @@ def _group_by_config(tmp_path: Path) -> dict[str, Any]:
         }
     )
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"job_name": "run-kills-groupby", "seed": 7},
         "sources": {"t": {"type": "file", "path": _write(tmp_path, src, "t"), "format": "parquet"}},
         "targets": {
@@ -1010,7 +1010,7 @@ class TestRunSequentialThreading:
         )
         qpath = str(tmp_path / "q.jsonl")
         config = {
-            "version": 1,
+            "version": 2,
             "global_settings": {"job_name": "run-seq-quar", "seed": 42},
             "sources": {
                 "parent": {

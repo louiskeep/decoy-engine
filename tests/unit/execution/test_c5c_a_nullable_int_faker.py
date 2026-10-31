@@ -154,7 +154,7 @@ def test_sampler_sees_exact_values_at_both_kernel_boundaries(
 def _config(path: str, columns: list[dict[str, Any]]) -> dict[str, Any]:
     return PipelineConfig.model_validate(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 42},
             "sources": {"t": {"type": "file", "format": "parquet", "path": path}},
             "tables": [{"name": "t", "columns": columns}],
@@ -266,7 +266,7 @@ def _fk_job(tmp_path: Path, n_values: list[int | None]) -> tuple[dict[str, Any],
         "provider_config": {"pool_size": 64},
     }
     cfg = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42},
         "sources": {k: {"type": "file", "path": v, "format": "parquet"} for k, v in paths.items()},
         "targets": {
@@ -552,7 +552,7 @@ def _fk_child_job(
         pq.write_table(table, paths[name])
     cfg = PipelineConfig.model_validate(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 42},
             "sources": {
                 k: {"type": "file", "path": v, "format": "parquet"} for k, v in paths.items()

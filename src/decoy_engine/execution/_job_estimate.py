@@ -36,6 +36,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from decoy_engine.config import post_scan_integrity_requested
 from decoy_engine.execution._throughput_calibration import (
     RuntimeBand,
     estimate_generation_runtime_band,
@@ -149,8 +150,8 @@ def _estimate(config_dump: dict[str, Any], base_dir: Path | str) -> JobEstimate:
         # run-time concern. Advisory estimate, so this is the honest coarse route.
         use_byte_estimate_routing=False,
         use_probe_routing=False,
-        # STORM needs the resident output, so it disqualifies sequential/out-of-core.
-        run_storm=bool(config.get("run_storm")),
+        # Post-scan integrity needs the resident output, so it disqualifies sequential/out-of-core.
+        post_scan_integrity=post_scan_integrity_requested(config),
     )
 
     # A mixed job's generated volume is not priced; refuse rather than under-price.

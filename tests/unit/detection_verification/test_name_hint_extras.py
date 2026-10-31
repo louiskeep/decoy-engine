@@ -4,7 +4,7 @@ The shipped YAML library lives at decoy_engine/detection/name_hints/v1/ and
 its coverage is pinned by tests/snapshots/test_name_hints_baseline.py.
 This file covers the OPT-IN per-scan additions the platform installs
 via the name_hint_extras() context manager when its
-storm_detector_overrides table has rows.
+detector_overrides table has rows.
 
 What this test surface guarantees:
   - Adding an extra term ADDS coverage; shipped patterns still apply.

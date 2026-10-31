@@ -40,7 +40,7 @@ def keyed_config(tmp_path: Any, *, mask_secret_ref: str | None = None, seed: int
         gs["mask_secret_ref"] = mask_secret_ref
     return PipelineConfig.model_validate(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": gs,
             "sources": {"t": {"type": "file", "format": "csv", "path": str(tmp_path / "t.csv")}},
             "tables": [

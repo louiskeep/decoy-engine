@@ -1,4 +1,4 @@
-"""PII / format detectors used by STORM.
+"""PII / format detectors used by Pre-scan.
 
 Each detector is a callable `(series, col_name) -> DetectorMatch | None`. The
 profiler runs every registered detector against every column and attaches the
@@ -246,7 +246,7 @@ _NAME_HINTS: dict[str, re.Pattern[str]] = {
 
 
 # Per-scan additive name-hint extras. The platform reads its
-# storm_detector_overrides table at scan start and stashes
+# detector_overrides table at scan start and stashes
 # {detector_id: re.Pattern} here via set_name_hint_extras(); the
 # detect_* functions consult this via _hits_name_hint().
 #
@@ -1000,7 +1000,7 @@ def iter_spans(
     overlap dedupe.
 
     ``extra_spans`` (WS2, 2026-06-12) injects pre-computed spans -- e.g.
-    NER hits from `storm.ner.iter_ner_spans` -- into the SAME overlap
+    NER hits from `detection.ner.iter_ner_spans` -- into the SAME overlap
     resolution as the regex spans, so a regex SSN and an NER person name
     covering overlapping text resolve leftmost-then-longest instead of
     double-splicing.

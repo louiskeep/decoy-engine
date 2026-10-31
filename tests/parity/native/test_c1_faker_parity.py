@@ -110,7 +110,7 @@ def _build_config(source: pa.Table, *, seed: int = 20260830) -> dict:
     path = f"{_SOURCE_DIR}/c1_{_source_file_counter}.parquet"
     pq.write_table(source, path)
     raw = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": seed, "post_validation": False},
         "sources": {"c1": {"type": "file", "format": "parquet", "path": path}},
         "targets": {"c1": {"type": "file", "format": "parquet", "path": f"{path}.out"}},

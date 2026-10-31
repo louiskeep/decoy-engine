@@ -68,7 +68,7 @@ def main() -> None:
     out_path = str(SCRATCH / "real_claim_out.csv")
 
     yaml_snapshot = (
-        "version: 1\n"
+        "version: 2\n"
         "global_settings:\n"
         "  seed: 20260930\n"
         "sources:\n"

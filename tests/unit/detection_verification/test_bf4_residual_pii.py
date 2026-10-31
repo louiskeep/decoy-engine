@@ -2,7 +2,7 @@
 
 Synthetic fixture tests that exercise ``check_residual_pii`` as a
 standalone post-mask pass. These tests represent BF4's behavioral
-contract: after a masking job runs, the engine re-runs the Storm
+contract: after a masking job runs, the engine re-runs the Pre-scan
 detectors over the OUTPUT and classifies any surviving PII hits.
 
 Security invariant: report findings carry only aggregate/identifier-

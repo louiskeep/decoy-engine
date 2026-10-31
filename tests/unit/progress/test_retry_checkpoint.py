@@ -103,7 +103,7 @@ def test_an_engine_route_without_a_store_never_claims_a_committed_checkpoint(tmp
     df.to_csv(tmp_path / "c.csv", index=False)
     cfg = PipelineConfig.model_validate(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 1},
             "sources": {"c": {"type": "file", "format": "csv", "path": str(tmp_path / "c.csv")}},
             "tables": [

@@ -100,7 +100,7 @@ def main() -> None:
     pandas_path = _write_fixture(n, "wrapper_timings_pandas")
 
     rust_config = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 1},
         "sources": {"t": {"type": "file", "format": "parquet", "path": rust_path}},
         "targets": {
@@ -120,7 +120,7 @@ def main() -> None:
     # (B017), matching the ledger's own established decline fixture, so the
     # SAME wrapper call path is exercised for both cells.
     pandas_config = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 1},
         "sources": {"t": {"type": "file", "format": "parquet", "path": pandas_path}},
         "targets": {

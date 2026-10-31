@@ -68,7 +68,7 @@ class TestDownscaleConfig:
 
     def test_scales_every_generate_table_row_count(self) -> None:
         config = {
-            "version": 1,
+            "version": 2,
             "tables": [self._generate_table("customers", 1_000_000)],
         }
         scaled = downscale_config(config, 0.01, floor_rows=0)
@@ -78,7 +78,7 @@ class TestDownscaleConfig:
         """FK fan-out preservation: a parent (1M) and a 5x-fanout child
         (5M) scaled by the SAME fraction keep their 1:5 ratio."""
         config = {
-            "version": 1,
+            "version": 2,
             "tables": [
                 self._generate_table("parent", 1_000_000),
                 self._generate_table("child", 5_000_000),
@@ -92,12 +92,12 @@ class TestDownscaleConfig:
         assert child_rows / parent_rows == pytest.approx(5.0)
 
     def test_leaves_mask_tables_untouched(self) -> None:
-        config = {"version": 1, "tables": [self._mask_table("people")]}
+        config = {"version": 2, "tables": [self._mask_table("people")]}
         scaled = downscale_config(config, 0.01, floor_rows=0)
         assert scaled["tables"][0] == self._mask_table("people")
 
     def test_does_not_mutate_the_original_config(self) -> None:
-        config = {"version": 1, "tables": [self._generate_table("customers", 1_000_000)]}
+        config = {"version": 2, "tables": [self._generate_table("customers", 1_000_000)]}
         downscale_config(config, 0.01, floor_rows=0)
         assert config["tables"][0]["row_count"] == 1_000_000
 
@@ -131,7 +131,7 @@ class TestDownscaleSources:
 class TestDownscaleJob:
     def test_row_counts_cover_both_resident_and_generate_tables(self) -> None:
         config = {
-            "version": 1,
+            "version": 2,
             "tables": [
                 {
                     "name": "gen",
@@ -147,7 +147,7 @@ class TestDownscaleJob:
         assert job.sources["mask_t"].num_rows == 20_000
 
     def test_none_sources_produces_an_empty_sources_dict(self) -> None:
-        config = {"version": 1, "tables": []}
+        config = {"version": 2, "tables": []}
         job = downscale_job(config, None, 0.5, floor_rows=0)
         assert job.sources == {}
         assert job.row_counts == {}

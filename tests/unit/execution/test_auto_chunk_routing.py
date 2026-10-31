@@ -57,7 +57,7 @@ def _validated_dump(cfg: dict) -> dict:
 def _config(tmp_path, columns: list[dict], table: str = "accounts") -> dict:
     return _validated_dump(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 42},
             "sources": {table: {"type": "file", "format": "csv", "path": str(tmp_path / "in.csv")}},
             "tables": [{"name": table, "columns": columns}],
@@ -401,7 +401,7 @@ class TestFailClosed:
         df = pd.DataFrame({"val": [f"v{i}" for i in range(_ROWS)]})
         cfg = _validated_dump(
             {
-                "version": 1,
+                "version": 2,
                 "global_settings": {"seed": 42},
                 "sources": {
                     name: {"type": "file", "format": "csv", "path": str(tmp_path / f"{name}.csv")}
@@ -478,7 +478,7 @@ class TestFailClosed:
         df.to_csv(tmp_path / "in.csv", index=False)
         cfg = _validated_dump(
             {
-                "version": 1,
+                "version": 2,
                 "global_settings": {"seed": 42},
                 "sources": {
                     "accounts": {"type": "file", "format": "csv", "path": str(tmp_path / "in.csv")}
@@ -530,7 +530,7 @@ class TestFailClosed:
         orders.to_csv(tmp_path / "orders.csv", index=False)
         cfg = _validated_dump(
             {
-                "version": 1,
+                "version": 2,
                 "global_settings": {"seed": 42},
                 "sources": {
                     "customers": {

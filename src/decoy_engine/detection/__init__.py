@@ -1,10 +1,7 @@
 """decoy_engine.detection - PII/format span detection (the base layer).
 
-Formerly part of the `storm` package; split by concern in the STORM taxonomy
-rename. Detection is the base layer: profiling and verification depend on it,
-never the reverse. `storm` is retained only as a product label on user-facing
-and wire surfaces (the `run_storm` config field, the `"storm.scan"` event, the
-`/storm/...` routes); the internal package name is descriptive.
+Detection is the base layer shared by the Pre-scan (profiling) and Post-scan
+(verification) phases: both depend on it, never the reverse.
 """
 
 from decoy_engine.detection.detectors import REGISTERED_DETECTORS, Span

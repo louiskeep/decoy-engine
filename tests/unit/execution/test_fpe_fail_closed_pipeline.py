@@ -52,7 +52,7 @@ _TABLE = "records"
 def _config(columns: list[dict], tmp_path, *, seed: int = 42) -> dict:
     """A real, pydantic-validated PipelineConfig dump (not a toy dict)."""
     cfg = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": seed},
         "sources": {_TABLE: {"type": "file", "format": "csv", "path": str(tmp_path / "in.csv")}},
         "tables": [{"name": _TABLE, "columns": columns}],

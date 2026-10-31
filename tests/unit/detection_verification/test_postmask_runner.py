@@ -19,15 +19,15 @@ from decoy_engine.verification.postmask import (
 
 class TestSchemaVersion:
     def test_schema_version_constant(self):
-        assert SCHEMA_VERSION == "storm-post-mask/v1"
+        assert SCHEMA_VERSION == "post-scan-integrity/v2"
 
 
-class TestRunStormPostMask:
+class TestRunPostMask:
     def test_empty_config_produces_empty_report(self):
         report = run_post_mask(
             source_frames={},
             output_frames={},
-            config={"version": 1, "tables": []},
+            config={"version": 2, "tables": []},
         )
         assert report["schema_version"] == SCHEMA_VERSION
         assert report["residual_pii"] == []

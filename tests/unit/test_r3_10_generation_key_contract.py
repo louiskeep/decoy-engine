@@ -265,7 +265,7 @@ def test_pooled_field_via_validated_config_does_not_shift_fingerprint_or_root():
 
     def _dumped_column(col: dict) -> dict:
         cfg = {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 42},
             "sources": {},
             "tables": [{"name": "t", "row_count": 10, "generate_columns": [col]}],

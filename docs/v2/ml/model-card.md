@@ -35,7 +35,7 @@ must decide what action to take (§B.1).
 
 **Intended uses:**
 
-- Classify database columns in the Decoy Engine STORM pipeline to decide
+- Classify database columns in the Decoy Engine Pre-scan pipeline to decide
   which masking/generation strategy to apply.
 - Serve as a second-opinion signal alongside the deterministic regex baseline.
 - Power the column-type recommendation UX (after ML3.1 classify-fields API is

@@ -29,7 +29,7 @@ _ENGINE_VERSION = "dps-pipeline-test"
 def _pure_generate_config() -> dict:
     return PipelineConfig.model_validate(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 42},
             "sources": {},
             "tables": [

@@ -2,7 +2,7 @@
 
 Off the public run path on purpose: this is measurement/eval tooling
 (labeled fixtures + a regex-detector baseline harness), not part of a
-scan. Namespaced to the storm subpackage and intentionally NOT
+scan. Namespaced to the pre-scan subpackage and intentionally NOT
 re-exported from ``decoy_engine.__init__``.
 
 Extended for ml-benchmarking-and-privacy.md §A.1 / §A.3 / §A.4 / §A.7:

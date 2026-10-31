@@ -3,7 +3,7 @@
 Reuses the token-boundary matching style of `detection/detectors.py`'s
 `_hint()` (case-insensitive, `._-`-delimited token boundaries), with one
 deliberate divergence: `_hint()` allows a matched term to sit anywhere in
-the name (prefix, infix, or suffix), which is right for STORM's PII
+the name (prefix, infix, or suffix), which is right for Pre-scan's PII
 detectors but wrong here -- it would match `note_id` and
 `description_code` on the bare `note` / `description` tokens, exactly the
 `*_id` / `*_code` noise this advisory must not produce (an identifier

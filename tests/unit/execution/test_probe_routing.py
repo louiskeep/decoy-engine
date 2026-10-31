@@ -477,7 +477,7 @@ def _fk_pure_mask_config(tmp_path: Path, n: int = 200_000) -> dict[str, Any]:
     parent_src = _write_source(tmp_path, parent, "parent")
     child_src = _write_source(tmp_path, child, "child")
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"job_name": "b2-probe-routing", "seed": 7},
         "sources": {
             "parent": {"type": "file", "path": parent_src, "format": "parquet"},

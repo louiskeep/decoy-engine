@@ -1,9 +1,9 @@
-"""Slice 3: STORM PII wiring in walk_dataframe.
+"""Slice 3: PII wiring in walk_dataframe.
 
 Covers: opt-in flag default (off), default-off preserves slice-2
 behavior, opt-in tags obvious-PII columns with the expected PIIClass,
 non-PII columns stay None, confidence threshold (only high-confidence
-matches tag), single STORM call per walk (not per-column), TableProfile
+matches tag), single Pre-scan call per walk (not per-column), TableProfile
 invariants still hold under PII tagging.
 """
 
@@ -60,7 +60,7 @@ class TestDefaultOff:
 
 
 class TestOptInTags:
-    """run_pii_detection=True tags columns whose high-confidence STORM
+    """run_pii_detection=True tags columns whose high-confidence Pre-scan
     match maps to a PIIClass enum value."""
 
     def test_email_column_tagged(self) -> None:
@@ -298,7 +298,7 @@ class TestCustomDetectorIdsSkipped:
         from decoy_engine.profile import _pii
         from decoy_engine.profiling import ColumnProfile, FieldStats
 
-        # Simulate a future built-in STORM detector ("dob_iso", say) that
+        # Simulate a future built-in detector ("dob_iso", say) that
         # lands before the enum catches up. The walker should drop the tag
         # but log a WARNING so the gap is operationally visible.
         fake_field = FieldStats(

@@ -97,7 +97,7 @@ def _never_called(config: Any = None, sources: Any = None, **kwargs: Any) -> Iso
 
 def _resident_job(rows: int) -> tuple[dict[str, Any], dict[str, pa.Table]]:
     config = {
-        "version": 1,
+        "version": 2,
         "tables": [{"name": "t", "columns": [{"name": "email", "strategy": "faker"}]}],
     }
     sources = {"t": pa.table({"id": list(range(rows))})}
@@ -166,7 +166,7 @@ class TestTwoPointMethod:
             ]
         )
         result = probe_peak_bytes(
-            {"version": 1, "tables": []},
+            {"version": 2, "tables": []},
             {"t": pa.table({"id": list(range(target_rows))})},
             reference_table="t",
             target_rows=target_rows,
@@ -199,7 +199,7 @@ class TestTwoPointMethod:
                 ]
             )
             result = probe_peak_bytes(
-                {"version": 1, "tables": []},
+                {"version": 2, "tables": []},
                 {"t": pa.table({"id": list(range(target_rows))})},
                 reference_table="t",
                 target_rows=target_rows,
@@ -685,7 +685,7 @@ def _real_probe_config(tmp_path: Path, rows: int) -> tuple[dict[str, Any], dict[
     src_path = tmp_path / "t.parquet"
     pq.write_table(table, src_path)
     raw_config = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 1, "mask_secret_ref": _SECRET_REF},
         "sources": {"t": {"type": "file", "path": str(src_path), "format": "parquet"}},
         "targets": {
@@ -812,7 +812,7 @@ def _non_aligned_fk_config(
     pq.write_table(child, child_src)
 
     config = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 3, "mask_secret_ref": _SECRET_REF},
         "sources": {
             "parent": {"type": "file", "path": str(parent_src), "format": "parquet"},

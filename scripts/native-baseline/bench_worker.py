@@ -80,7 +80,7 @@ def build_sources(n_rows: int) -> pa.Table:
 
 def build_config(source_path: str) -> dict:
     raw = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": FIXED_SEED, "post_validation": False},
         "sources": {
             "w2": {"type": "file", "format": "csv", "path": source_path},

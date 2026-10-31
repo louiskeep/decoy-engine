@@ -362,7 +362,7 @@ def test_dtype_field_reachable_through_validated_pipeline_config() -> None:
     from decoy_engine.execution._chunked import check_chunked_compatibility
 
     raw_config = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 7},
         "sources": {
             "customers": {"type": "file", "format": "csv", "path": "customers.csv"},

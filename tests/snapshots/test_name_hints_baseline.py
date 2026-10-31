@@ -1,4 +1,4 @@
-"""Snapshot harness for STORM detector name-hint coverage.
+"""Snapshot harness for detector name-hint coverage.
 
 Per engineering-best-practices §1.1 (snapshot before extraction): the
 ``_NAME_HINTS`` dict in ``decoy_engine/detection/detectors.py`` is being

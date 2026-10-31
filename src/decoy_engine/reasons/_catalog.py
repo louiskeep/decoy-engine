@@ -157,6 +157,32 @@ def physical(owner: str) -> Declarer:
     )
 
 
+def pre_scan(owner: str) -> Declarer:
+    """A Pre-scan (profile / detect) phase envelope that did not complete."""
+    return Declarer(
+        "pre_scan",
+        owner,
+        kind=Kind.FAILURE,
+        phases=(_P.RESOLVE,),
+        severity=Severity.ERROR,
+        outcome=Outcome.EXECUTION,
+        retry=RetryClass.UNKNOWN,
+    )
+
+
+def post_scan(owner: str) -> Declarer:
+    """A Post-scan (verify / leak / fidelity) phase envelope that did not complete."""
+    return Declarer(
+        "post_scan",
+        owner,
+        kind=Kind.FAILURE,
+        phases=(_P.VERIFY,),
+        severity=Severity.ERROR,
+        outcome=Outcome.VERIFICATION,
+        retry=RetryClass.UNKNOWN,
+    )
+
+
 def decoy(owner: str) -> Declarer:
     """A cross-cutting reason the engine itself assigns (fallbacks, outcomes, control)."""
     return Declarer(

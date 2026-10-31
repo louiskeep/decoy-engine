@@ -85,7 +85,7 @@ def _config(
         sources[name] = {"type": "file", "format": "csv", "path": str(tmp_path / f"{name}.csv")}
         targets[name] = {"type": "file", "format": "csv", "path": str(tmp_path / f"{name}_out.csv")}
     cfg: dict = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": seed},
         "sources": sources,
         "tables": tables,
@@ -314,7 +314,7 @@ class TestOutOfCoreSharedShapeParity:
         for name, tbl in [("parent", parent), ("child", child)]:
             pq.write_table(tbl, tmp_path / f"{name}.parquet")
         cfg = {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 909090},
             "sources": {
                 n_: {"type": "file", "path": str(tmp_path / f"{n_}.parquet"), "format": "parquet"}
@@ -572,7 +572,7 @@ class TestCorpusPinning:
         pcsv.write_csv(table_a, tmp_path / "a.csv")
         pcsv.write_csv(table_b, tmp_path / "b.csv")
         cfg = {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": _SEED},
             "sources": {
                 "a": {"type": "file", "format": "csv", "path": str(tmp_path / "a.csv")},

@@ -3,7 +3,7 @@
 
 Source of truth is the code, not the prose. This script imports decoy_engine
 and walks its registries (mask strategies, generation strategies, synthetic
-providers, connectors + capabilities, STORM detectors, disguises) and emits a
+providers, connectors + capabilities, detectors, disguises) and emits a
 markdown table set that is correct by construction.
 
 Run:  python scripts/gen_capability_matrix.py
@@ -199,7 +199,7 @@ def render() -> str:
         w(f"| `{cls_name}` | " + " | ".join(cells) + " |\n")
 
     det = _detectors()
-    w(f"\n## STORM detectors ({len(det)})\n\n")
+    w(f"\n## detectors ({len(det)})\n\n")
     w("| Detector | Match kind |\n| --- | --- |\n")
     for label, kind in det:
         w(f"| `{label}` | {kind} |\n")

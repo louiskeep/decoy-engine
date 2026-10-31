@@ -1,4 +1,4 @@
-"""Item 65 - STORM format-preservation detection tests.
+"""Item 65 - Pre-scan format-preservation detection tests.
 
 Two layers under test:
   - Per-detector ``format_pattern`` on DetectorMatch (dominant sub-variant
@@ -224,7 +224,7 @@ class TestFormatPatternFromDetectors:
         assert _format_pattern_from_detectors([]) is None
 
 
-# ── end-to-end: FieldStats carries the fields after run_storm ────────
+# ── end-to-end: FieldStats carries the fields after post_scan_integrity ────────
 
 
 class TestFieldStatsCarriesFormatHints:

@@ -89,7 +89,7 @@ def _csv_config(
     tmp_path: Path, table: str, csv_path: Path, columns: list[dict[str, Any]]
 ) -> dict[str, Any]:
     raw = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 20260929},
         "sources": {table: {"type": "file", "format": "csv", "path": str(csv_path)}},
         "targets": {
@@ -117,7 +117,7 @@ def _fixed_width_config(
     columns: list[dict[str, Any]],
 ) -> dict[str, Any]:
     raw = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 20260929},
         "sources": {
             table: {

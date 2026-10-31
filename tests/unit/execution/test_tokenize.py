@@ -246,7 +246,7 @@ def test_run_pipeline_threads_vault_and_forces_full_frame(tmp_path: Any) -> None
     src = tmp_path / "in.parquet"
     pq.write_table(tbl, src)
     raw = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 7},
         "sources": {"t": {"type": "file", "format": "parquet", "path": str(src)}},
         "targets": {
@@ -369,7 +369,7 @@ def test_run_pipeline_without_vault_fails_closed(tmp_path: Any) -> None:
     src = tmp_path / "in.parquet"
     pq.write_table(tbl, src)
     raw = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 7},
         "sources": {"t": {"type": "file", "format": "parquet", "path": str(src)}},
         "targets": {
@@ -405,7 +405,7 @@ def test_tokenize_requires_a_secret_key(tmp_path: Any) -> None:
     src = tmp_path / "in.parquet"
     pq.write_table(tbl, src)
     raw = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 7},
         "sources": {"t": {"type": "file", "format": "parquet", "path": str(src)}},
         "targets": {

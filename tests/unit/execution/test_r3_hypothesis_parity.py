@@ -137,7 +137,7 @@ def _op_column(name: str, op: str) -> dict[str, Any]:
 def build(case: Case, tmp: Path) -> tuple[dict[str, Any], dict[str, pa.Table], dict[str, Any]]:
     n = rows_of(case)
     nulls = case.data == "nulls"
-    base: dict[str, Any] = {"version": 1, "global_settings": {"seed": case.seed}}
+    base: dict[str, Any] = {"version": 2, "global_settings": {"seed": case.seed}}
     if case.family == "single":
         cols: dict[str, pa.Array] = {"s": _strings(n, "u", nulls, case.wide_string)}
         specs = [_op_column("s", case.op)]

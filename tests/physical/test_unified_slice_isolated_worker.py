@@ -36,7 +36,7 @@ ENGINE_VERSION = "unified-slice-isolated-worker-test"
 
 def _config(tmp_path) -> dict:
     raw = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42},
         "sources": {
             "t": {"type": "file", "format": "csv", "path": str(tmp_path / "t.csv")},
@@ -93,7 +93,7 @@ def test_isolated_worker_csv_classification_unchanged_by_the_flag(
 
 def _parquet_config(tmp_path) -> dict:
     raw = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42},
         "sources": {
             "t": {"type": "file", "format": "parquet", "path": str(tmp_path / "t.parquet")},

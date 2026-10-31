@@ -29,7 +29,7 @@ def _cfg(tmp_path, columns: list[dict]) -> dict:
     (tmp_path / "t.csv").write_text(names + "\n")
     return PipelineConfig.model_validate(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 42},
             "sources": {"t": {"type": "file", "format": "csv", "path": str(tmp_path / "t.csv")}},
             "tables": [{"name": "t", "columns": columns}],

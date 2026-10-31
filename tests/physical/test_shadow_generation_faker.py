@@ -77,7 +77,7 @@ def _generate_config(
     """A minimal pure-generate config carrying one `type: faker` column by
     default. Mirrors `test_shadow_generation.py`'s `_generate_config`."""
     raw: dict[str, Any] = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": seed},
         "sources": {},
         "targets": {table_name: {"type": "file", "format": "csv", "path": f"{table_name}.out.csv"}},
@@ -213,7 +213,7 @@ def _mixed_config(
     table shape these tests need."""
     path = _write_source(tmp_path, mask_source, mask_table)
     raw: dict[str, Any] = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": seed},
         "sources": {mask_table: {"type": "file", "format": "parquet", "path": str(path)}},
         "targets": {

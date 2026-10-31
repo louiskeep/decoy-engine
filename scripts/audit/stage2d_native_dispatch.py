@@ -110,7 +110,7 @@ def _build_config(*, with_categorical: bool, with_faker: bool = False) -> dict:
             }
         )
     raw = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 20260930},
         "sources": {"w": {"type": "file", "format": "parquet", "path": "/dev/null"}},
         "targets": {"w": {"type": "file", "format": "parquet", "path": "/dev/null.out"}},

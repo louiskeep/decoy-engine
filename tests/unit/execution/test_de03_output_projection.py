@@ -70,7 +70,7 @@ def _config(
     if policy is not None:
         global_settings["unconfigured_column_policy"] = policy
     cfg = {
-        "version": 1,
+        "version": 2,
         "global_settings": global_settings,
         "sources": {table: {"type": "file", "format": "csv", "path": str(tmp_path / "in.csv")}},
         "tables": [{"name": table, "columns": columns}],
@@ -383,7 +383,7 @@ class TestGenerateEchoExempt:
         # A pure-generate table's columns are declared by its generate config,
         # not the mask plan; even under error they must pass the gate cleanly.
         cfg = {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 7, "unconfigured_column_policy": "error"},
             "sources": {},
             "tables": [

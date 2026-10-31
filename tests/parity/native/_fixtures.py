@@ -322,7 +322,7 @@ def _materialize(key: str, source: pa.Table) -> str:
 def _build_config(table: str, key: str, column: dict[str, Any], source: pa.Table) -> dict[str, Any]:
     path = _materialize(key, source)
     raw = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42},
         "sources": {table: {"type": "file", "format": "parquet", "path": path}},
         "targets": {table: {"type": "file", "format": "parquet", "path": f"{path}.out"}},

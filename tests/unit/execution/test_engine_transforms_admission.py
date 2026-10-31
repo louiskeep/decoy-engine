@@ -133,7 +133,7 @@ def _cyclic_job(tmp_path: Path) -> tuple[dict[str, Any], dict[str, pa.Table]]:
     )
     cfg = validated(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 7},
             "sources": {
                 "a": {"type": "file", "format": "parquet", "path": write_parquet(tmp_path, a, "a")},

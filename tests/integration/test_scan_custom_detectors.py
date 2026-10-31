@@ -2,7 +2,7 @@
 
 Custom detectors let the platform register organization-specific PII
 patterns (UK NHS numbers, ABA routing numbers, etc.) at scan time
-without engine changes. The spec list is passed to run_storm via the
+without engine changes. The spec list is passed to post_scan_integrity via the
 `custom_detectors` kwarg; each spec runs against every column.
 """
 

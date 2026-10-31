@@ -48,7 +48,7 @@ def _native(fmt: Any) -> str | None:
 
 def _compile_rejects(fmt: Any) -> bool:
     cfg = {
-        "version": 1,
+        "version": 2,
         "tables": [
             {
                 "name": "t",

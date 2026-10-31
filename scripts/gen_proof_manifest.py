@@ -141,7 +141,7 @@ def _run_hero(
     tmp: Path,
 ) -> dict:
     config = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 1234567, "post_validation": False},
         # sources/targets: PipelineConfig requires both; profile_source reads
         # the sources block to build the column profile. We write temp CSVs so
@@ -326,7 +326,7 @@ def _mask_proof(
         "columns": [{"name": column, "strategy": strategy_id, **column_cfg}],
     }
     cfg = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 1234567, "post_validation": False},
         "tables": [table],
     }
@@ -769,7 +769,7 @@ def _derived_proof() -> dict:
         df.to_csv(csv_path, index=False)
 
         cfg = {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 1234567, "post_validation": False},
             "sources": {"t": {"type": "file", "format": "csv", "path": str(csv_path)}},
             "targets": {"t": {"type": "file", "format": "csv", "path": "/dev/null"}},
@@ -851,7 +851,7 @@ def _derived_aggregate_proof() -> dict:
         df.to_csv(csv_path, index=False)
 
         cfg = {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 1234567, "post_validation": False},
             "sources": {"t": {"type": "file", "format": "csv", "path": str(csv_path)}},
             "targets": {"t": {"type": "file", "format": "csv", "path": "/dev/null"}},
@@ -933,7 +933,7 @@ def _grouped_series_proof() -> dict:
         df.to_csv(csv_path, index=False)
 
         cfg = {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 42, "post_validation": False},
             "sources": {"t": {"type": "file", "format": "csv", "path": str(csv_path)}},
             "targets": {"t": {"type": "file", "format": "csv", "path": "/dev/null"}},
@@ -1023,7 +1023,7 @@ def _windowed_date_proof() -> dict:
         df.to_csv(csv_path, index=False)
 
         cfg = {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 99, "post_validation": False},
             "sources": {"t": {"type": "file", "format": "csv", "path": str(csv_path)}},
             "targets": {"t": {"type": "file", "format": "csv", "path": "/dev/null"}},
@@ -1112,7 +1112,7 @@ def _group_key_proof() -> dict:
         df.to_csv(csv_path, index=False)
 
         cfg = {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 77, "post_validation": False},
             "sources": {"t": {"type": "file", "format": "csv", "path": str(csv_path)}},
             "targets": {"t": {"type": "file", "format": "csv", "path": "/dev/null"}},

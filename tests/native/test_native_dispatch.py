@@ -42,7 +42,7 @@ def _key_provider() -> SecretKeyProvider:
 
 def _all_admitted_config() -> dict:
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42, "post_validation": False},
         "sources": {"w": {"type": "file", "format": "csv", "path": "/dev/null"}},
         "targets": {"w": {"type": "file", "format": "csv", "path": "/dev/null"}},

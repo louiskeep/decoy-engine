@@ -89,7 +89,7 @@ def _fk_config(tmp_path: Path, parent: pa.Table, child: pa.Table) -> dict[str, A
     child_path = _write(tmp_path, child, "child")
     return PipelineConfig.model_validate(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 1},
             "sources": {
                 "parent": {"type": "file", "format": "parquet", "path": str(parent_path)},
@@ -169,7 +169,7 @@ def test_relationship_alternatives_no_relationships_is_empty(tmp_path: Path) -> 
     path = _write(tmp_path, source, "t")
     config = PipelineConfig.model_validate(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 1},
             "sources": {"t": {"type": "file", "format": "parquet", "path": str(path)}},
             "targets": {
@@ -198,7 +198,7 @@ def test_select_driver_raises_on_impossible_route_chunked_without_decision(
     path = _write(tmp_path, source, "t")
     config = PipelineConfig.model_validate(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 1},
             "sources": {"t": {"type": "file", "format": "parquet", "path": str(path)}},
             "targets": {
@@ -230,7 +230,7 @@ def test_compile_physical_plan_node_fields_for_a_scalar_kernel_strategy(tmp_path
     path = _write(tmp_path, source, "t")
     config = PipelineConfig.model_validate(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 1},
             "sources": {"t": {"type": "file", "format": "parquet", "path": str(path)}},
             "targets": {
@@ -259,7 +259,7 @@ def test_compile_physical_plan_node_provider_class_for_faker_strategy(tmp_path: 
     path = _write(tmp_path, source, "t")
     config = PipelineConfig.model_validate(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 1},
             "sources": {"t": {"type": "file", "format": "parquet", "path": str(path)}},
             "targets": {
@@ -292,7 +292,7 @@ def test_compile_physical_plan_synthesis_none_for_pure_mask_job(tmp_path: Path) 
     path = _write(tmp_path, source, "t")
     config = PipelineConfig.model_validate(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 1},
             "sources": {"t": {"type": "file", "format": "parquet", "path": str(path)}},
             "targets": {
@@ -310,7 +310,7 @@ def test_compile_physical_plan_synthesis_none_for_pure_mask_job(tmp_path: Path) 
 def test_compile_physical_plan_no_tables_for_pure_generate_job(tmp_path: Path) -> None:
     config = PipelineConfig.model_validate(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 1},
             "sources": {},
             "targets": {
@@ -348,7 +348,7 @@ def test_select_driver_full_frame_reason_and_detail_are_route_reason(tmp_path: P
     path = _write(tmp_path, source, "t")
     config = PipelineConfig.model_validate(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 1},
             "sources": {"t": {"type": "file", "format": "parquet", "path": str(path)}},
             "targets": {
@@ -369,7 +369,7 @@ def test_select_driver_chunked_reason_detail_is_decision_reason(tmp_path: Path) 
     path = _write(tmp_path, source, "t")
     config = PipelineConfig.model_validate(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 1},
             "sources": {"t": {"type": "file", "format": "parquet", "path": str(path)}},
             "targets": {
@@ -491,7 +491,7 @@ def test_select_driver_chunked_full_selection_equality(tmp_path: Path) -> None:
     path = _write(tmp_path, source, "t")
     config = PipelineConfig.model_validate(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 1},
             "sources": {"t": {"type": "file", "format": "parquet", "path": str(path)}},
             "targets": {
@@ -740,7 +740,7 @@ def test_compile_physical_plan_wires_every_physical_table_field(tmp_path: Path) 
     path = _write(tmp_path, source, "t")
     config = PipelineConfig.model_validate(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 1},
             "sources": {"t": {"type": "file", "format": "parquet", "path": str(path)}},
             "targets": {
@@ -802,7 +802,7 @@ def test_layer2_chunk_decision_short_circuits_for_pure_generate_job(tmp_path: Pa
 
     config = PipelineConfig.model_validate(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 1},
             "sources": {},
             "targets": {
