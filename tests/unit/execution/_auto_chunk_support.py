@@ -40,7 +40,7 @@ def make_cfg(
     `sources` table the test passes, so the two must hold the same data."""
     return PipelineConfig.model_validate(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 42},
             "sources": {table: {"type": "file", "format": "parquet", "path": path}},
             "tables": [{"name": table, "columns": columns}],

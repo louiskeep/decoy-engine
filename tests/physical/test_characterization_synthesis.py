@@ -33,7 +33,7 @@ def _empty_profile() -> Profile:
 
 def _generate_config(row_count: int = 24) -> dict[str, Any]:
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42},
         "sources": {},
         "tables": [
@@ -83,7 +83,7 @@ def test_mixed_generate_and_mask_job_unaffected_by_the_seam(tmp_path: Path) -> N
     mask_path = tmp_path / "mask_src.parquet"
     pq.write_table(mask_source, mask_path)
     config = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 7},
         "sources": {"masked": {"type": "file", "format": "parquet", "path": str(mask_path)}},
         "targets": {

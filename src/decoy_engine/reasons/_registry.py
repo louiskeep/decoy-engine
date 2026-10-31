@@ -79,6 +79,8 @@ class Declarer:
         retry: RetryClass | None = None,
         context: tuple[str, ...] = (),
         since: str = "1.0.0",
+        deprecated_in: str | None = None,
+        replaced_by: tuple[str, str] | None = None,
     ) -> ReasonCode:
         rules = tuple(
             PhaseRule(
@@ -100,6 +102,8 @@ class Declarer:
                 rules=rules,
                 context=context,
                 since=since,
+                deprecated_in=deprecated_in,
+                replaced_by=replaced_by,
             )
         )
 

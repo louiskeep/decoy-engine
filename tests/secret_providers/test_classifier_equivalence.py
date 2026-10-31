@@ -48,7 +48,7 @@ _DIR = Path(tempfile.mkdtemp(prefix="f13-equiv-"))
 def _compile(_unused, columns):
     return PipelineConfig.model_validate(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 1},
             "sources": {"t": {"type": "file", "format": "csv", "path": str(_DIR / "t.csv")}},
             "tables": [{"name": "t", "columns": columns}],

@@ -40,10 +40,33 @@ messages are dropped) and raised without the failing frames' traceback; the boun
   `secret_provider_unknown` (was `bad_secret_ref`). Test and bench keyed fixtures were migrated to a
   shared throwaway secret and their pinned literals re-captured.
 
+### Changed (BREAKING, pre-GA: STORM removed; Pre-scan / Transform / Post-scan reframe, 2026-10-29)
+
+STORM is no longer a concept in the engine. Decoy is a data-manipulation compiler pipeline with three
+phases: Pre-scan (`pre_scan`: profile / detect), Transform (`transform`: mask / generate) and Post-scan
+(`post_scan`: verify / leak / fidelity). Hard rename, no aliases or dual reads:
+
+- Pipeline config `version: 2` is required (`version: 1` is rejected). `run_storm: true` is replaced by
+  `post_scan: {integrity: true}` (default `false`; the integrity suite stays report-only). Unknown keys fail.
+- `quality_metrics["storm_postmask"]` -> `quality_metrics["post_scan_integrity"]`; schema
+  `storm-post-mask/v1` -> `post-scan-integrity/v2`; event `storm.scan` -> `pre_scan.profile`; routing reason
+  `run_storm_requested` -> `post_scan_integrity_requested`; resident reason `run_storm` -> `post_scan_integrity`.
+- New `decoy_engine.reasons` (`decoy-reasons/v1`, the shared reason registry) and `decoy_engine.phase`
+  (`phase-result/v1`, `phase-event/v1`, deeply immutable, one safe serializer).
+- `PostMaskReport` findings are tuples; `PostValidationRunner.run` returns its summary and no longer writes
+  `quality_metrics` itself; a crashed post-validation scan records `{"error_type": ...}` instead of `repr(exc)`.
+- Merge note (2026-10-30): the two `decoy_engine.reasons` registries landed in the same window are one
+  registry. The phase identities (`pre_scan`, `post_scan` namespaces; `route.post_scan_integrity_requested`,
+  `route.post_scan_integrity`) are F29 catalog entries, `ReasonRef` / `require_known` / `get_reason` /
+  `REASONS` / `REGISTRY_SCHEMA` resolve against that catalog, and the F29 `route.run_storm_requested`
+  identity and the v0.16.0 resident reason `route.run_storm` stay resolvable as deprecated tombstones
+  (`replaced_by` `route.post_scan_integrity_requested` / `route.post_scan_integrity`); the chunked output
+  sink's resident decisions are registry identities; the manifest pin is regenerated (pre-GA).
+
 ### Added (F29: stable machine-readable errors and progress, engine slices, 2026-10-29)
 
 New public `decoy_engine.reasons`: one engine-owned, versioned registry of reason codes (`registry_version`
-1.0.0, 868 identities across 12 namespaces; 841 of them are the frozen baseline, the rest were added while the change was built) with a fixed safe summary, kind, phase rules and, per phase,
+1.0.0; 868 identities across 12 namespaces when F29 landed, 884 across 14 after the STORM close-out merge below, 891 across 14 after the F13 merge (the seven `runtime` secret-provider identities, registry 1.1.0; the pinned manifest stays the 884-entry append-only baseline), of which 841 are the frozen baseline and 2 are tombstones) with a fixed safe summary, kind, phase rules and, per phase,
 a severity, outcome category and retry class (`never`, `configuration_repair`, `environment_repair`,
 `retry_operation`, `restart_attempt`, `unknown`). Every producer now references a registry symbol whose
 value is the legacy wire string, so existing `.code` values, `CODES` attributes and exception

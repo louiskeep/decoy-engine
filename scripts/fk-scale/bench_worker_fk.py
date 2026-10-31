@@ -126,7 +126,7 @@ def _build_config(paths: dict[str, Path], out_dir: Path, strategy: str) -> dict[
         "namespace": ns,
     }
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 7},
         "sources": {
             t: {"type": "file", "path": str(paths[t]), "format": "parquet"} for t in TABLES

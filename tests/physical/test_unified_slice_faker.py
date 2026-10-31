@@ -646,7 +646,7 @@ def test_10_declines_an_fk_participating_table(tmp_path: Path) -> None:
     pq.write_table(parent, tmp_path / "parent.parquet")
     pq.write_table(child, tmp_path / "child.parquet")
     raw = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 5},
         "sources": {
             n: {"type": "file", "format": "parquet", "path": str(tmp_path / f"{n}.parquet")}

@@ -192,7 +192,7 @@ def test_generate_table_present_is_a_golden_no_split(
     cfg, sources = _two_big(tmp_path)
     gen = PipelineConfig.model_validate(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 42},
             "sources": {},
             "tables": [

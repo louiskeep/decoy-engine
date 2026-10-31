@@ -87,7 +87,7 @@ def build_config(policy: str) -> dict[str, Any]:
     ]
     return PipelineConfig.model_validate(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {
                 "seed": 42,
                 "post_validation": False,

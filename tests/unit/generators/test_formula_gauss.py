@@ -33,7 +33,7 @@ def _gauss_config(
 ) -> dict:
     """Return a validated generate config with one formula column: gauss(mu, sigma)."""
     raw = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": seed},
         "sources": {},
         "tables": [

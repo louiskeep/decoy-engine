@@ -508,7 +508,7 @@ def test_sink_flags_the_envelope_error_entry() -> None:
     assert _sink_findings(src, "other.py") == {}
 
 
-def test_sink_flags_the_storm_emit_step_message() -> None:
+def test_sink_flags_the_scan_emit_step_message() -> None:
     src = (
         "def scan(logger):\n    try:\n        pass\n    except Exception as exc:\n"
         "        emit_step(logger, 's', status='error', error_class=type(exc).__name__,\n"

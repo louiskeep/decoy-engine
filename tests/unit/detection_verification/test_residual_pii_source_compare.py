@@ -22,7 +22,7 @@ _EMAILS = [f"user{i}@realmail.com" for i in range(100)]
 
 def _cfg(strategy: str | None, column: str = "email") -> dict:
     columns = [] if strategy is None else [{"name": column, "strategy": strategy}]
-    return {"version": 1, "tables": [{"name": "t", "columns": columns}]}
+    return {"version": 2, "tables": [{"name": "t", "columns": columns}]}
 
 
 def _frames(src_vals: list, out_vals: list, column: str = "email"):

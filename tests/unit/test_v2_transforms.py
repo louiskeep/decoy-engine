@@ -42,7 +42,7 @@ from decoy_engine.execution._transforms import (
 
 def _base_config_with_transforms(transforms: list[dict]) -> dict:
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 0},
         "sources": {
             "t": {"type": "file", "format": "csv", "path": "/tmp/in.csv"},

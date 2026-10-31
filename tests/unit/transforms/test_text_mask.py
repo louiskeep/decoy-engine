@@ -3,7 +3,7 @@
 Tests cover all three spec slices:
   text_mask.1 - span detection + per-detector dispatch
   text_mask.2 - HMAC keyed cross-cell determinism + raw-value isolation
-  text_mask.3 - unmatched_span_policy + STORM library single-source-of-truth
+  text_mask.3 - unmatched_span_policy + Pre-scan library single-source-of-truth
 
 Raw-value isolation sentry: verifies that no raw matched_text appears in
 log records or QualityWarning evidence produced by mask_cell / TextMaskHandler.
@@ -391,7 +391,7 @@ class TestRawValueIsolation:
 
 
 class TestAllDetectorsHaveDefaultStrategy:
-    """text_mask.2: every STORM detector has a dispatch-table entry."""
+    """text_mask.2: every detector has a dispatch-table entry."""
 
     @pytest.mark.parametrize("detector_id", list(DETECTOR_DEFAULTS.keys()))
     def test_all_default_entries_are_valid_strategies(self, detector_id: str) -> None:
@@ -403,7 +403,7 @@ class TestAllDetectorsHaveDefaultStrategy:
         )
 
     def test_all_span_detectors_are_in_defaults(self) -> None:
-        """Every detector in _SPAN_DETECTORS (the STORM span library) has a default entry."""
+        """Every detector in _SPAN_DETECTORS (the Pre-scan span library) has a default entry."""
         for det_id in _SPAN_DETECTORS:
             assert det_id in DETECTOR_DEFAULTS, (
                 f"Detector {det_id!r} is in _SPAN_DETECTORS but missing from "
@@ -411,13 +411,13 @@ class TestAllDetectorsHaveDefaultStrategy:
             )
 
     def test_defaults_cover_all_25_registered_detectors(self) -> None:
-        """DETECTOR_DEFAULTS covers all STORM REGISTERED_DETECTORS (25 + street_address)."""
+        """DETECTOR_DEFAULTS covers all Pre-scan REGISTERED_DETECTORS (25 + street_address)."""
         from decoy_engine.detection.detectors import REGISTERED_DETECTORS
 
         registered_ids = {fn.__name__.replace("detect_", "") for fn in REGISTERED_DETECTORS}
         missing = registered_ids - set(DETECTOR_DEFAULTS.keys())
         assert not missing, (
-            f"These STORM registered detectors lack a DETECTOR_DEFAULTS entry: {missing}"
+            f"These Pre-scan registered detectors lack a DETECTOR_DEFAULTS entry: {missing}"
         )
 
 
@@ -445,7 +445,7 @@ class TestLocationDefault:
         assert DETECTOR_DEFAULTS["location"] == "faker"
 
 
-# ── spec slice 3: unmatched_span_policy + STORM library wiring ────────────────
+# ── spec slice 3: unmatched_span_policy + Pre-scan library wiring ────────────────
 
 
 class TestUnmatchedSpanPolicy:
@@ -524,7 +524,7 @@ class TestUnmatchedSpanPolicy:
         assert result == text
 
 
-class TestStormLibrarySingleSourceOfTruth:
+class TestDetectorLibrarySingleSourceOfTruth:
     """text_mask.3: text_mask uses iter_spans -> _SPAN_DETECTORS is the single source."""
 
     def test_span_detectors_available_via_mask_cell(self) -> None:
@@ -550,7 +550,7 @@ class TestStormLibrarySingleSourceOfTruth:
         )
         assert "123-45-6789" not in result
 
-    def test_storm_library_sync_all_span_detectors_have_dispatch(self) -> None:
+    def test_scan_library_sync_all_span_detectors_have_dispatch(self) -> None:
         """Adding a detector to _SPAN_DETECTORS makes it auto-available via DETECTOR_DEFAULTS.
 
         This test proves the single-source-of-truth property: if a NEW detector
@@ -565,7 +565,7 @@ class TestStormLibrarySingleSourceOfTruth:
         missing = span_ids - default_ids
         assert not missing, (
             f"_SPAN_DETECTORS detectors without DETECTOR_DEFAULTS entries: {missing}. "
-            "text_mask must maintain parity with the STORM library."
+            "text_mask must maintain parity with the Pre-scan library."
         )
 
 

@@ -80,7 +80,7 @@ relationships:
     namespace: person_identity
 
 config:
-  version: 1
+  version: 2
   global_settings:
     seed: 46
 

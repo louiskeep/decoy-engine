@@ -85,7 +85,7 @@ relationships:
 # calling run_pipeline. Generate tables need no source path; their targets are
 # also substituted by assemble_config.
 config:
-  version: 1
+  version: 2
   global_settings:
     seed: 44
 

@@ -1,7 +1,7 @@
-"""Tests for STORM's k-anonymity-based re-id risk scoring (Plan B-1).
+"""Tests for Pre-scan's k-anonymity-based re-id risk scoring (Plan B-1).
 
 Each test builds a small DataFrame with a known joint-uniqueness shape,
-runs `run_storm`, and asserts on `k_anonymity`, `quasi_identifier_groups`,
+runs `post_scan_integrity`, and asserts on `k_anonymity`, `quasi_identifier_groups`,
 and `reid_risk_score`. Fixtures are intentionally tiny so the expected
 k value is obvious by inspection.
 """
@@ -155,7 +155,7 @@ def test_too_few_rows_skips_inference():
 
 
 def test_existing_profile_json_without_k_anonymity_still_loads():
-    # Defensive: storm profiles persisted before Plan B-1 won't have
+    # Defensive: pre-scan profiles persisted before Plan B-1 won't have
     # k_anonymity in their JSON. Round-tripping through to_dict()
     # -> dict -> ColumnProfile-via-kwargs should still work because
     # k_anonymity has a default value of None on the dataclass.

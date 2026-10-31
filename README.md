@@ -33,7 +33,7 @@ import pyarrow.csv as pacsv
 from decoy_engine import PipelineConfig, run_pipeline
 
 config_dict = {
-    "version": 1,
+    "version": 2,
     "global_settings": {"seed": 42},
     "sources": {
         "people": {"type": "file", "format": "csv", "path": "./people.csv"},

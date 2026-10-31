@@ -244,7 +244,7 @@ class TestDetectionTrail:
 
 
 class TestSerialization:
-    def test_storm_profile_to_dict_includes_new_fields(self):
+    def test_scan_profile_to_dict_includes_new_fields(self):
         df = pd.DataFrame(
             {
                 "ssn": ["123-45-6789"] * 10,

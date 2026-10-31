@@ -1,6 +1,6 @@
 """text_redact strategy (engine-v2 MG-2, 2026-05-31): span-level PII redaction.
 
-Walks each cell of a free-text column with `storm.detectors.iter_spans(...)`
+Walks each cell of a free-text column with `detection.detectors.iter_spans(...)`
 and replaces matched PII spans with a configurable token. Non-PII text is
 preserved byte-for-byte. Deterministic by construction: output is a pure
 function of (input, detector_ids, token, label_token).

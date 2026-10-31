@@ -3,7 +3,7 @@
 The tricky negatives (`note_id`, `description_code`, `phone_number`) are
 the whole point of the suffix-anchored design documented in the module
 docstring: a naive "term appears anywhere as a bounded token" matcher
-(the STORM `_hits_name_hint` style) would false-positive on all three.
+(the Pre-scan `_hits_name_hint` style) would false-positive on all three.
 """
 
 from __future__ import annotations

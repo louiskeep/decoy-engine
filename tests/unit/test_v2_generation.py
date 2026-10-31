@@ -20,7 +20,7 @@ from tests.unit._dps_helpers import compile_and_generate
 
 def _generate_config(row_count: int = 5) -> dict:
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42},
         "sources": {},
         "tables": [
@@ -38,7 +38,7 @@ def _generate_config(row_count: int = 5) -> dict:
 
 def _mask_config() -> dict:
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 0},
         "sources": {"customers": {"type": "file", "format": "csv", "path": "in.csv"}},
         "tables": [
@@ -215,7 +215,7 @@ def _v2_run(
     """Run v2 ``generate_tables`` on a single-column generate config and return the
     values list for that column."""
     cfg = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": seed},
         "sources": {},
         "tables": [{"name": "t", "row_count": n, "generate_columns": [col]}],
@@ -562,7 +562,7 @@ class TestQA7Coverage:
 
         col = {"name": "fn", "type": "faker", "faker_type": "first_name"}
         cfg = {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 42},
             "sources": {},
             "tables": [
@@ -604,7 +604,7 @@ class TestQA7Coverage:
 
         def _cfg(seed: int) -> dict[str, Any]:
             return {
-                "version": 1,
+                "version": 2,
                 "global_settings": {"seed": seed},
                 "sources": {},
                 "tables": [
@@ -649,7 +649,7 @@ class TestQA7Coverage:
         import warnings as _warnings
 
         cfg = {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 42},
             "sources": {},
             "tables": [
@@ -688,7 +688,7 @@ class TestQA7Coverage:
         from tests.unit._dps_helpers import empty_profile
 
         cfg = {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": "not-a-number"},
             "sources": {},
             "tables": [
@@ -738,7 +738,7 @@ class TestFormulaParityV1:
         # after every sibling is built, instead of the pre-BF3 all-None stub.
         # `greet` reads a real `name` sibling, so the computed value lands.
         cfg = {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 42},
             "sources": {},
             "tables": [
@@ -782,7 +782,7 @@ def _v2_run_single_table(gcols: list[dict], n: int, seed: int = 42, derive_key=N
     ``{col: values_list}`` for every generated column. Used by the cross-column
     ``references`` post-pass cells, which need sibling columns visible together."""
     cfg = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": seed},
         "sources": {},
         "tables": [{"name": "t", "row_count": n, "generate_columns": gcols}],
@@ -912,7 +912,7 @@ class TestReferencedFormulaPostPass:
         # behavior). Raw dict bypasses validation (extra="allow" carries
         # `references`; there is no missing-column validator).
         cfg = {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 42},
             "sources": {},
             "tables": [
@@ -1017,7 +1017,7 @@ def _v2_run_multi(tables_cfg: list[dict], seed: int = 42, derive_key=None) -> di
     """Run v2 ``generate_tables`` against a multi-table generate config; returns
     ``{table: {col: values_list}}`` for parity comparison vs ``_v1_run_multi``."""
     cfg = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": seed},
         "sources": {},
         "tables": tables_cfg,
@@ -1190,7 +1190,7 @@ class TestReferenceConfigValidation:
         }
         child_col.update(child_extras)
         return {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 42},
             "sources": {},
             "tables": [
@@ -1285,7 +1285,7 @@ class TestReferenceConfigValidation:
             for i in range(depth)
         }
         cfg = {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 42},
             "sources": {},
             "tables": tables,
@@ -1321,7 +1321,7 @@ class TestReferenceConfigValidation:
             for i in range(depth)
         }
         cfg = {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 42},
             "sources": {},
             "tables": tables,
@@ -1596,7 +1596,7 @@ class TestFC1QAFindings:
         with pytest.raises(ValidationError) as exc_info:
             PipelineConfig.model_validate(
                 {
-                    "version": 1,
+                    "version": 2,
                     "global_settings": {"seed": 0},
                     "sources": {
                         "customers": {

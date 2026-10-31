@@ -98,7 +98,7 @@ class TestClassifyTableKinds:
 def _pure_generate_config() -> dict:
     return _validated_dump(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 42},
             "sources": {},
             "tables": [
@@ -142,7 +142,7 @@ class TestRunPipelinePureGenerate:
 def _pure_mask_config(tmp_path) -> dict:
     return _validated_dump(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 42},
             "sources": {
                 "customers": {
@@ -198,7 +198,7 @@ class TestRunPipelinePureMask:
 def _mixed_config(tmp_path) -> dict:
     return _validated_dump(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 42},
             "sources": {
                 "customers": {
@@ -312,7 +312,7 @@ def _fidelity_mask_config(tmp_path) -> dict:
     a real categorical column the snapshot can capture labels for."""
     return _validated_dump(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 42},
             "sources": {
                 "customers": {

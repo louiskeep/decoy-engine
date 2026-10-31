@@ -1,4 +1,4 @@
-"""Semantic domains over STORM detector IDs (gap-closure item 1).
+"""Semantic domains over detector IDs (gap-closure item 1).
 
 Detector IDs (``"ssn"``, ``"email"``, ...) are precise but ad-hoc; product
 surfaces want to group and filter by a human *domain* (Identity, Financial,
@@ -6,7 +6,7 @@ Health, Contact, Location). This module promotes the bare strings into a
 named :class:`Domain` enum plus a total ``detector_id -> Domain`` table.
 
 The mapping is **derived, never persisted**: detection still records bare
-detector IDs (so ``StormScan.column_overrides`` stays stable); ``domain`` is
+detector IDs (so ``PreScan.column_overrides`` stays stable); ``domain`` is
 attached at construction for display only.
 
 Taxonomy source pattern: the HEALTH and date/geo identifiers follow the
@@ -34,7 +34,7 @@ class Domain(str, Enum):
     OTHER = "OTHER"
 
 
-# Total over every detector registered in ``storm.detectors``. Kept as a pure
+# Total over every detector registered in ``detection.detectors``. Kept as a pure
 # data table so the engine stays narrow (the platform/web derive from it).
 # Decisions worth noting:
 #   - dates (iso/us/eu) -> IDENTITY: dates of birth/admission are HIPAA
@@ -87,7 +87,7 @@ def domain_for(detector_id: str) -> Domain:
 def registered_detector_ids() -> frozenset[str]:
     """The detector ids the built-in registry exposes.
 
-    Imported lazily to avoid a module-load cycle with ``storm.detectors``
+    Imported lazily to avoid a module-load cycle with ``detection.detectors``
     (which imports this module to stamp ``domain`` at match construction).
     """
     from decoy_engine.detection.detectors import REGISTERED_DETECTORS

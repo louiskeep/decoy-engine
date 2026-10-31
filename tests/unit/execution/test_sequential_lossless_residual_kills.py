@@ -124,7 +124,7 @@ def _top_code_config(tmp_path: Path) -> dict[str, Any]:
     # set -- rounding the > 2**53-magnitude value.
     src = pa.table({"n": pa.array([_BIG_NEG_IN_RANGE, 1, None, 90], type=pa.int64())})
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"job_name": "residual-top-code", "seed": 42},
         "sources": {
             "t": {"type": "file", "path": _write_source(tmp_path, src, "t"), "format": "parquet"}
@@ -179,7 +179,7 @@ def _group_by_config(tmp_path: Path) -> dict[str, Any]:
         }
     )
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"job_name": "residual-group-by", "seed": 7},
         "sources": {
             "t": {"type": "file", "path": _write_source(tmp_path, src, "t"), "format": "parquet"}

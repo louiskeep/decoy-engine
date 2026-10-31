@@ -65,7 +65,7 @@ def _supported_fk_config(tmp_path: Path, *, orphans: bool) -> dict[str, Any]:
     )
     tables = {"parent": parent, "child": child, "grandchild": grandchild}
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"job_name": "sc2-parity", "seed": 11},
         "sources": {
             name: {"type": "file", "path": _src(tmp_path, tbl, name), "format": "parquet"}

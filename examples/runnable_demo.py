@@ -74,7 +74,7 @@ providers.to_csv(IN / "providers.csv", index=False)
 # 2. Config (runnable variant - real strategies/providers).
 # --------------------------------------------------------------------------
 config = {
-    "version": 1,
+    "version": 2,
     "global_settings": {"seed": 1234567, "post_validation": False},
     "sources": {
         "members": {"type": "file", "format": "csv", "path": "examples/in/members.csv"},

@@ -63,7 +63,7 @@ def _write_config(source_path: str, target_path: str) -> str:
     import yaml
 
     cfg = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 20260930},
         "sources": {"t": {"type": "file", "format": "parquet", "path": source_path}},
         "targets": {"t": {"type": "file", "format": "parquet", "path": target_path}},

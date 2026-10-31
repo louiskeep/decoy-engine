@@ -234,7 +234,7 @@ def _fk_plan(tmp_path: Path) -> Any:
     child = pa.table({"id": pa.array([f"c{i}" for i in range(6)]), "parent_id": pa.array(ids)})
     sources = {"parent": parent, "child": child}
     cfg: dict[str, Any] = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42},
         "sources": {},
         "targets": {},

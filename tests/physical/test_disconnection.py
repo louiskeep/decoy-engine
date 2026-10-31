@@ -67,7 +67,7 @@ def test_full_frame_route_never_invokes_the_seam(tmp_path: Path) -> None:
     path = _write(tmp_path, source, "t")
     config = PipelineConfig.model_validate(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 1},
             "sources": {"t": {"type": "file", "format": "parquet", "path": str(path)}},
             "targets": {
@@ -90,7 +90,7 @@ def test_sequential_route_never_invokes_the_seam(tmp_path: Path) -> None:
     child_path = _write(tmp_path, child, "child")
     config = PipelineConfig.model_validate(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 1},
             "sources": {
                 "parent": {"type": "file", "format": "parquet", "path": str(parent_path)},
@@ -143,7 +143,7 @@ def test_chunked_route_never_invokes_the_seam(tmp_path: Path) -> None:
     path = _write(tmp_path, source, "t")
     config = PipelineConfig.model_validate(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 1},
             "sources": {"t": {"type": "file", "format": "parquet", "path": str(path)}},
             "targets": {
@@ -172,7 +172,7 @@ def test_out_of_core_route_never_invokes_the_seam(tmp_path: Path) -> None:
     child_path = _write(tmp_path, child, "child")
     config = PipelineConfig.model_validate(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 1},
             "sources": {
                 "parent": {"type": "file", "format": "parquet", "path": str(parent_path)},
@@ -225,7 +225,7 @@ def test_generate_and_mask_route_never_invokes_the_seam(tmp_path: Path) -> None:
     mask_path = _write(tmp_path, mask_source, "masked")
     config = PipelineConfig.model_validate(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 1},
             "sources": {"masked": {"type": "file", "format": "parquet", "path": str(mask_path)}},
             "targets": {

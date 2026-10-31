@@ -535,7 +535,7 @@ def _config(tmp_path: Path, deterministic: bool) -> tuple[dict[str, Any], dict[s
         "namespace": "ns_f",
     }
     config: dict[str, Any] = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"job_name": "faker-route", "seed": 7},
         "sources": {
             t: {"type": "file", "path": str(tmp_path / f"{t}.parquet"), "format": "parquet"}

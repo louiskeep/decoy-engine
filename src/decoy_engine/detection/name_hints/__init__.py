@@ -1,4 +1,4 @@
-"""STORM detector name-hint library.
+"""detector name-hint library.
 
 The 26 built-in detectors' column-name hint patterns live as YAML
 under ``v1/``; see ``loader.py`` for how they are read at import time

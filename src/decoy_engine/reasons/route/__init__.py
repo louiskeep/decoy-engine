@@ -4,3 +4,5 @@ from __future__ import annotations
 
 from decoy_engine.reasons.route._added import *  # noqa: F403
 from decoy_engine.reasons.route._part1 import *  # noqa: F403
+from decoy_engine.reasons.route._retired import *  # noqa: F403
+from decoy_engine.reasons.route._sink import *  # noqa: F403

@@ -109,7 +109,7 @@ def _fk_config(
     column-config-list); `relationships` is the raw relationships block.
     Mirrors `build_config`'s single-table shape, widened to N tables."""
     raw: dict[str, Any] = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": seed},
         "sources": {},
         "targets": {},
@@ -882,7 +882,7 @@ def test_harness_rejects_both_legacy_pair_and_sources(tmp_path: Path) -> None:
 
 
 def test_harness_rejects_neither_legacy_pair_nor_sources(tmp_path: Path) -> None:
-    config = {"version": 1}
+    config = {"version": 2}
     with pytest.raises(ValueError, match="must pass either"):
         run_shadow_and_oracle(config)
 
@@ -894,7 +894,7 @@ def test_harness_rejects_neither_legacy_pair_nor_sources(tmp_path: Path) -> None
 def test_harness_rejects_partial_legacy_pair(
     table_name: str | None, source: pa.Table | None
 ) -> None:
-    config = {"version": 1}
+    config = {"version": 2}
     with pytest.raises(ValueError, match="must both be given"):
         run_shadow_and_oracle(config, table_name, source)
 

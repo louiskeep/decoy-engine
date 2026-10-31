@@ -52,7 +52,7 @@ def walk_dataframe(
         df: source data as a pandas DataFrame. Column order is preserved
             in the output TableProfile.
         table_name: name to record in TableProfile.name. Also passed to
-            STORM as source_label when run_pii_detection=True.
+            Pre-scan as source_label when run_pii_detection=True.
         declared_pk_cols: columns the caller declared as PK in the config.
             Sets ColumnProfile.declared_pk for matching columns.
         fk_specs: mapping {column_name: (parent_table, parent_column)} for
@@ -64,9 +64,9 @@ def walk_dataframe(
             is True; is_candidate_key_sampled is forced to False.
         rng: stdlib random.Random instance, already seeded by the caller.
             Used only when sampling is triggered.
-        run_pii_detection: opt-in STORM PII tagging. Default False
+        run_pii_detection: opt-in PII tagging. Default False
             preserves the slice-2 behavior of every ColumnProfile carrying
-            pii_class=None. When True, the walker runs STORM once against
+            pii_class=None. When True, the walker runs Pre-scan once against
             the full DataFrame and tags columns whose high-confidence
             built-in detector match maps to a PIIClass enum value.
         total_row_count: SC7a bounded-profiling hook. When set, `df` is a
@@ -100,7 +100,7 @@ def walk_dataframe(
             f"column names {dupes!r}; column names must be unique."
         )
 
-    # Resolve PII tags before walking columns (slice 3). STORM runs once
+    # Resolve PII tags before walking columns (slice 3). Pre-scan runs once
     # on the full DataFrame, not per-column. When run_pii_detection is
     # False (default), pii_tags stays empty and every ColumnProfile gets
     # pii_class=None, preserving slice-2 behavior exactly.
@@ -161,7 +161,7 @@ def _walk_column(
     docs/plans/2026-07-09-consultant-f1-f2-bounded-profiling.md). distinct_count
     comes from sample_series, which equals series when not further sampling
     within that frame. pii_class is resolved by the caller (walk_dataframe)
-    from a STORM scan when run_pii_detection=True; otherwise None. avg_length /
+    from a Pre-scan when run_pii_detection=True; otherwise None. avg_length /
     max_length (HC-7) also come from sample_series, for the same reason as
     distinct_count.
     """

@@ -33,7 +33,7 @@ def fk_job(
     settings["mask_secret_ref"] = mask_secret_ref
     cfg = PipelineConfig.model_validate(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": settings,
             "sources": {
                 "customers": {"type": "file", "format": "csv", "path": str(cp)},

@@ -8,7 +8,7 @@ identifier values (PAN / NPI / IBAN) are constructed with their real
 checksums so the structural detectors actually fire.
 
 Intentionally reuses NO engine internals: the checksum-digit generators
-here are independent of ``storm.detectors`` so the fixtures cannot
+here are independent of ``detection.detectors`` so the fixtures cannot
 "cheat" by sharing the code under test. The harness then runs the real
 detectors over these columns to measure where they miss.
 

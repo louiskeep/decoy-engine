@@ -24,7 +24,7 @@ snapshot, all of which the pure gate rejects):
 - `require_pure_generation_shadowable` (§1b): `require_generation_shape`
   plus the pure-only exclusions (empty snapshot/sources/relationships/
   namespaces/subset/generate-table-transforms/validators/quarantine/
-  run_storm/mask_secret_ref, and every runtime carrier at its admitted
+  post_scan_integrity/mask_secret_ref, and every runtime carrier at its admitted
   value). This is slice 5a's original gate, behavior-preserved exactly
   under its new name.
 - `require_independent_mixed_shadowable` lives in `_shadow_mixed.py` (its
@@ -39,7 +39,7 @@ generate-table name set both match `physical_synthesis` (the identity bind
 cannot serve this role); every table is generate-kind with an admitted
 column `type` (`sequence`/`categorical`) and no `determinism: fresh`; the
 job-scope fields (`sources`/`relationships`/`namespaces`/`subset`/
-generate-table `transforms`/`validators`/`quarantine`/`run_storm`/
+generate-table `transforms`/`validators`/`quarantine`/`post_scan_integrity`/
 `mask_secret_ref`) are all empty/absent/`None`/`False`; and the
 runtime-admission record (`derive_key`/`instance_default_locale`/
 `key_provider`/`sink`/`source_loader`/`vault_writer`/`fidelity_report`) is
@@ -52,6 +52,7 @@ import hashlib
 import json
 from typing import TYPE_CHECKING, Any
 
+from decoy_engine.config import post_scan_integrity_requested
 from decoy_engine.execution._pipeline import classify_table_kinds
 from decoy_engine.execution.physical._shadow_diff_codes import (
     GENERATION_SHAPE_UNSUPPORTED,
@@ -390,7 +391,7 @@ def _require_shadow_admissible_faker_column(
 def _require_pure_job_scope(config: dict[str, Any], generate_table_names: frozenset[str]) -> None:
     """The rest of §1b, over the decoded config: the job-scope fields the
     coordinator does not own (sources/relationships/namespaces/subset/
-    validators/quarantine/run_storm/mask_secret_ref) all empty/absent/
+    validators/quarantine/post_scan_integrity/mask_secret_ref) all empty/absent/
     `None`/`False`, every table in `config.tables` is generate-kind (a pure
     job has no mask-kind entry at all), and no generate-table declares a
     `transforms` op."""
@@ -418,8 +419,10 @@ def _require_pure_job_scope(config: dict[str, Any], generate_table_names: frozen
         raise ShadowDifference(
             code=GENERATION_SHAPE_UNSUPPORTED, detail="config.quarantine is not None"
         )
-    if config.get("run_storm"):
-        raise ShadowDifference(code=GENERATION_SHAPE_UNSUPPORTED, detail="config.run_storm is true")
+    if post_scan_integrity_requested(config):
+        raise ShadowDifference(
+            code=GENERATION_SHAPE_UNSUPPORTED, detail="config.post_scan_integrity is true"
+        )
     global_settings = config.get("global_settings")
     if isinstance(global_settings, dict) and global_settings.get("mask_secret_ref") is not None:
         raise ShadowDifference(

@@ -582,7 +582,7 @@ def _fk_config(
     pq.write_table(child, tmp_path / "child.parquet")
     names = ("parent", "child")
     raw = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 5},
         "sources": {
             n: {"type": "file", "format": "parquet", "path": str(tmp_path / f"{n}.parquet")}
@@ -712,7 +712,7 @@ def _verdict(tmp_path: Path, columns: list[dict[str, Any]]) -> tuple[Any, ...]:
     path = tmp_path / "x.parquet"
     pq.write_table(source, path)
     raw = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 5},
         "sources": {"t": {"type": "file", "format": "parquet", "path": str(path)}},
         "targets": {
