@@ -30,6 +30,11 @@ from decoy_engine.reasons import ReasonCode
 
 BAD_REF_MESSAGE = "The secret reference is invalid."
 BAD_ENCODING_MESSAGE = "The secret material has an invalid encoding."
+# The config position a `file:` secret is read at; a strict file-access policy names it in text.
+SECRET_FIELD_KEY = "global_settings.mask_secret_ref"  # noqa: S105 - a config position, not a credential
+BAD_ENCODING_AT_POSITION_MESSAGE = (
+    f"The secret material at {SECRET_FIELD_KEY} has an invalid encoding."
+)
 NEEDS_ENCODING_MESSAGE = "This secret requirement needs an explicit encoding."
 MISSING_MESSAGE = "The mask secret could not be resolved."
 WEAK_MESSAGE = f"The mask secret must be at least {MIN_SECRET_BYTES} bytes."
@@ -127,7 +132,12 @@ _CLOSED[reasons.runtime.MISSING_MASK_SECRET] = lambda: MissingMaskSecret(MISSING
 _CLOSED[reasons.runtime.WEAK_MASK_SECRET] = lambda: WeakMaskSecret(WEAK_MESSAGE)
 
 # Engine-owned constant texts that keep their precision; any other text falls back to the first.
-_BAD_REF_TEXTS = (BAD_REF_MESSAGE, BAD_ENCODING_MESSAGE, NEEDS_ENCODING_MESSAGE)
+_BAD_REF_TEXTS = (
+    BAD_REF_MESSAGE,
+    BAD_ENCODING_MESSAGE,
+    NEEDS_ENCODING_MESSAGE,
+    BAD_ENCODING_AT_POSITION_MESSAGE,
+)
 
 Failure = tuple[str, str]
 """A registered code and an engine-owned text: the only things a failure keeps."""
@@ -136,8 +146,6 @@ _UNAVAILABLE: Failure = (reasons.runtime.SECRET_PROVIDER_UNAVAILABLE, "")
 _REGISTERED = {code: code for code in _CLOSED}
 _CODE_TYPES = (str, ReasonCode)
 
-# The config position a `file:` secret is read at; the only text a rebuilt denial carries.
-SECRET_FIELD_KEY = "global_settings.mask_secret_ref"  # noqa: S105 - a config position, not a credential
 UNAVAILABLE_MESSAGE = "the installed file-access policy cannot serve the mask secret file"
 
 

@@ -29,16 +29,20 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, NoReturn, TypeVar
 
+from decoy_engine import fileaccess, reasons
 from decoy_engine.keyprovider import (
     KEY_REQUIRED_GUIDANCE,
     MIN_SECRET_BYTES,
     KeyedStrategyRequiresSecret,
     KeyProvider,
+    MaskSecretError,
     SeedKeyProvider,
 )
 from decoy_engine.secret_providers._buffer import SecretBuffer
 from decoy_engine.secret_providers._cache import default_cache
 from decoy_engine.secret_providers._errors import (
+    BAD_ENCODING_AT_POSITION_MESSAGE,
+    BAD_ENCODING_MESSAGE,
     Failure,
     KeptFileFailure,
     SecretExpired,
@@ -103,6 +107,27 @@ def _derive(
         raise
 
 
+def _decoded(
+    provider: SecretProvider, raw: bytes, ref: SecretRef, requirement: SecretRequirement
+) -> bytes:
+    """`decode_material`; for a `file:` secret under a strict file-access policy a bad encoding
+    names its config position, with a fixed engine text (owner decision, A-4 x F13)."""
+    positioned = False
+    try:
+        return decode_material(raw, ref.encoding, requirement)
+    except MaskSecretError as exc:
+        positioned = (
+            type(provider) is FileSecretProvider
+            and not fileaccess.is_ambient()
+            and getattr(exc, "message", None) == BAD_ENCODING_MESSAGE
+        )
+        if not positioned:
+            raise
+    raise MaskSecretError(
+        code=reasons.runtime.BAD_SECRET_REF, message=BAD_ENCODING_AT_POSITION_MESSAGE
+    )
+
+
 def _load(
     provider: SecretProvider,
     ref: SecretRef,
@@ -120,7 +145,7 @@ def _load(
             if clock.wall() >= resolved.expires_at:
                 raise SecretExpired
         material = SecretBuffer.adopt(
-            bytearray(decode_material(bytes(resolved.buffer.view()), ref.encoding, requirements[0]))
+            bytearray(_decoded(provider, bytes(resolved.buffer.view()), ref, requirements[0]))
         )
         with material:
             derived = _derive(material, requirements, descriptor.key_version)

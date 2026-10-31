@@ -646,6 +646,11 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
             # OBS-2: the non-empty-source preflight wiring split out of `_chunked_entry.py` for
             # module headroom (pure move); imports nothing from `execution.physical`.
             "src/decoy_engine/execution/native/_chunked_preflight_wiring.py",
+            # A-4 x F13 merge: pure moves out of three modules to hold main's size ceilings
+            # (re-exported where callers import them); none imports `execution.physical`.
+            "src/decoy_engine/execution/native/_chunked_result.py",
+            "src/decoy_engine/execution/_chunked_aggregate.py",
+            "src/decoy_engine/execution/_pipeline_routing_samples.py",
             # OBS-2c: bounded value-free row-error summary (schema ids, trigger codes, counts);
             # pure, imports nothing from `execution.physical`.
             "src/decoy_engine/execution/_row_error_summary.py",
