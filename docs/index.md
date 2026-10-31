@@ -59,6 +59,7 @@ link to GitHub rather than into the rendered API reference.
 ## Development & planning
 
 - [CI regression gate](ci-regression-gate.md): the performance / regression gate contract.
+- [SBOM](sbom.md): generating the CycloneDX SBOM for the engine wheel.
 - Engine-scoped implementation plans, decision records, and the findings register live in `docs/plans/`, `docs/decisions/`, and `docs/remediation-source.md` (working docs, not guides).
 - Shipped-work history (sprint plans, review snapshots, superseded design discussions) is kept in `docs/archive/` for context; see `docs/archive/README.md`. None of it is current how-to guidance.
 
@@ -97,6 +98,7 @@ native/supported-matrix
 :caption: Development
 
 ci-regression-gate
+sbom
 ```
 
 ```{toctree}

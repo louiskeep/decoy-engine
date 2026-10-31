@@ -9,6 +9,10 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (R1-c: CycloneDX SBOM generator, 2026-10-31)
+
+`scripts/release/sbom.sh` writes a reproducible CycloneDX 1.6 SBOM of the wheel's base runtime closure from `uv.lock` (pinned `cyclonedx-bom` via `uvx`, lock hashes, no timestamp or serial, public-index pins only). Not signed or published. Docs: `docs/sbom.md`.
+
 ### Added (F13: secret-provider contract and preflight, engine slices, 2026-10-30)
 
 New `decoy_engine.secret_providers`: the versioned `secret-provider/v1` contract (`describe` / `resolve`

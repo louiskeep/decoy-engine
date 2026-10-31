@@ -1,0 +1,10 @@
+[project]
+name = "sbom-fixture"
+version = "1.0.0"
+description = "Fixture project for the SBOM generator tests"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+dependencies = ["python-dateutil==2.9.0.post0"]
+
+[project.optional-dependencies]
+dev = ["iniconfig==2.0.0"]
