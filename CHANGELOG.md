@@ -21,7 +21,8 @@ minimum engine version it was tested against via its
 - `env:` and `file:` secrets are never cached, even with a positive `SecretCachePolicy` TTL.
 - Admission errors no longer inherit an exception the caller was handling as `__context__`.
 - `keyprovider.key_provider_from_ref` takes `file_access=` and is a file-access entry point.
-- `FileAccessDenied` has the registry identity `decoy.file_access_denied`.
+- `FileAccessDenied` has the registry identity `decoy.file_access_denied`. With
+  `runtime.secret_file_permissions_unsafe` the registry has 893 identities; `REGISTRY_VERSION` 1.2.0.
 - A strict-policy table sink's abort records cleanup `attempted` (was `unknown`).
 - New `fileaccess.reset_for_tests()` for host test isolation (instead of `fileaccess._entry`).
 
