@@ -74,3 +74,15 @@ M5 first survived: the Windows test patched os.name for the whole test, so a fai
 own reporting (WindowsPath) instead of reporting FAILED. The patch is now scoped to the one call; M5 red.
 M6 ran with -k "not fifo": under that mutant the FIFO cell blocks on the second open (a hang, which
 is itself a detection); the two swap cells are red.
+
+== Full suite, branch d47a8491 versus origin/main 0090f6f9 ==
+Both from uv.lock (bootstrap profile extras dev,lint,vault,cloud + xdist), same venv per interpreter,
+`pytest tests -m 'not benchmark and not packaging and not codspeed' -n 2`, each tree on its own PYTHONPATH.
+3.10.20  main:   28903 passed, 0 failed, 5368 skipped, 6 xfailed, 65 xpassed
+3.10.20  branch: 28941 passed, 0 failed, 5368 skipped, 6 xfailed, 65 xpassed   (+38 = the new E1 file)
+3.12     main:   28902 passed, 1 failed, 5368 skipped, 6 xfailed, 65 xpassed
+3.12     branch: 28940 passed, 1 failed, 5368 skipped, 6 xfailed, 65 xpassed   (+38)
+The one 3.12 failure on both: tests/unit/execution/test_categorical_weighted.py::TestCdfBuilder::test_skewed_weights_skew_cdf (known).
+F13 suite with the hashicorp-vault extra (hvac): 502 passed, 5 skipped (live Vault only).
+Semgrep 1.183.0 .semgrep/f13-secret-providers.yml on src/decoy_engine: 0 findings; its pytest sentry passed.
+ruff check / ruff format --check clean; mypy src/decoy_engine testflight: 0 issues (main: 0).
