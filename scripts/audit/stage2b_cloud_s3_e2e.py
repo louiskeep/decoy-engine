@@ -98,7 +98,7 @@ def main() -> None:
 
         PipelineConfig.model_validate(
             {
-                "version": 1,
+                "version": 2,
                 "global_settings": {"seed": 1},
                 "sources": {"t": descriptor},
                 "targets": {
@@ -136,7 +136,7 @@ def main() -> None:
 
         staged_table = pq.read_table(staged_path)
         raw_config = {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 1},
             "sources": {"t": {"type": "file", "format": "parquet", "path": str(staged_path)}},
             "targets": {

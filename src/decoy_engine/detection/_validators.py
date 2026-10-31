@@ -1,4 +1,4 @@
-"""Checksum/format validators for storm detectors, split out of detectors.py (F11b).
+"""Checksum/format validators for pre-scan detectors, split out of detectors.py (F11b).
 
 Pure per-value validators (Luhn mod-10, IBAN mod-97, IPv4 range, CMS NPI
 check digit, ISO date plausibility, ICD-10 chapter range) plus their

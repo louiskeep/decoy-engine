@@ -147,7 +147,7 @@ def _mask_config(tmp_path, n_cols: int) -> dict:
     that makes a low `mem_cap_bytes` trip reliably without a slow test."""
     return _validated_dump(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 42},
             "sources": {
                 "customers": {
@@ -185,7 +185,7 @@ def _row_error_config(tmp_path) -> dict:
     `format_error` row error (MED-4 fixture)."""
     return _validated_dump(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 42},
             "sources": {
                 "customers": {

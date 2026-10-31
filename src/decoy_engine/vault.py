@@ -338,20 +338,19 @@ def vault_writer_for_config(
 
     Mirrors the mask path's key resolution (DE-02) so the vault always opens
     under the same key the masked output was produced with: a programmatic
-    `key_provider` wins, else `global_settings.mask_secret_ref` (env:/file:), else
-    the normalized `job_seed` (byte-identical to pre-DE-02). Normalization matches
+    `key_provider` wins, else `global_settings.mask_secret_ref` (any registered scheme), else
+    the normalized `job_seed` (a config with no keyed columns only). Normalization matches
     the plan compiler exactly (the same `global_settings.seed` rules).
     """
-    from decoy_engine.keyprovider import key_provider_from_ref
     from decoy_engine.plan._seed import _normalize_job_seed
+    from decoy_engine.secret_providers import AdmissionScope, admit_mask_key
 
     job_seed = _normalize_job_seed(config)
-    provider: KeyProvider | None = key_provider
-    if provider is None:
-        ref = (config.get("global_settings") or {}).get("mask_secret_ref")
-        if ref:
-            provider = key_provider_from_ref(ref)
-    mask_key = provider.mask_key() if provider is not None else job_seed
+    # F13: the secret is admitted through the shared preflight; keyed (vaulted) work with no
+    # secret fails closed in every release phase.
+    with AdmissionScope() as scope:
+        provider = scope.adopt(admit_mask_key(config, key_provider=key_provider)).key_provider
+        mask_key = provider.mask_key() if provider is not None else job_seed
     return VaultWriter(mask_key)
 
 

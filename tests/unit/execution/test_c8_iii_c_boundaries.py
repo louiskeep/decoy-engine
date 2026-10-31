@@ -295,7 +295,7 @@ def test_parse_when_names_the_position_and_attaches_no_lark_cause() -> None:
 def _validated_config_with_when(predicate: str) -> dict[str, Any]:
     """A schema-shaped raw config whose only fault is the `when`."""
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 1},
         "sources": {"t": {"type": "file", "format": "csv", "path": "/dev/null"}},
         "targets": {"t": {"type": "file", "format": "csv", "path": "/dev/null"}},

@@ -1,4 +1,4 @@
-"""STORM profiler - `profile_columns(df, source_label, ...) -> ColumnProfile`.
+"""column profiler - `profile_columns(df, source_label, ...) -> ColumnProfile`.
 
 Pure function over a pandas DataFrame. Computes per-field statistics, runs
 PII / format detectors, scans for sentinel values, and rolls everything up
@@ -101,7 +101,7 @@ _K_ANON_MAX_DISTINCT_ABSOLUTE = 20
 # noise rarely participate in linkage attacks because the values are
 # already too granular to share across rows; the cardinality filter
 # above also catches them, but being explicit keeps the groupby fast.
-# "mixed" is included because STORM infers it for short-string
+# "mixed" is included because Pre-scan infers it for short-string
 # categorical columns (gender, city, state) whose values don't match
 # a single narrow type pattern - these are valid quasi-id candidates.
 _K_ANON_TYPES = {"integer", "string", "boolean", "date", "mixed"}
@@ -465,7 +465,7 @@ def profile_columns(
     DetectorMatch.detector_id with whatever id the caller supplied.
 
     `extra_name_hints` is the per-scan additive name-hint overrides --
-    the platform reads its storm_detector_overrides table at scan
+    the platform reads its detector_overrides table at scan
     start and passes the resulting {detector_id: [terms]} mapping
     here. Behavior is additive: shipped patterns still apply
     unchanged; extras add coverage on top. Installed via the
@@ -473,17 +473,17 @@ def profile_columns(
     scans on the same process don't cross-contaminate.
 
     ``ctx`` (Item 71) routes structured events through the caller's
-    JobLogger so a standalone STORM scan shows up in the bottom-pane
+    JobLogger so a standalone Pre-scan shows up in the bottom-pane
     SSE stream + step timeline + lineage strip the same way a masking
     job does. None preserves the pure-function behavior for CLI / test
     callers that don't have a Job bound.
     """
     logger = ctx.logger if ctx is not None else None
     emit_lineage(logger, "source", source_label, "dataset")
-    emit_step(logger, "storm.scan", status="start")
+    emit_step(logger, "pre_scan.profile", status="start")
     # Narrative log lines so the Job Detail page tells the
-    # operator what STORM is actually doing. Before this, the
-    # log carried just "▶ storm.scan" / "✓ storm.scan" -- the
+    # operator what Pre-scan is actually doing. Before this, the
+    # log carried just "▶ pre_scan.profile" / "✓ pre_scan.profile" -- the
     # 30-second gap between them was a black box.
     custom_count = len(custom_detectors) if custom_detectors else 0
     extras_count = sum(len(v) for v in (extra_name_hints or {}).values())
@@ -533,7 +533,7 @@ def _profile_columns_inner(
     custom_detectors: list[CustomDetectorSpec] | None,
     logger: Any,
 ) -> ColumnProfile:
-    """The original run_storm body. Split out so profile_columns() can wrap
+    """The original profiling body. Split out so profile_columns() can wrap
     it in the name_hint_extras() context manager without indenting
     the whole 200-line block one level deeper."""
     # F-10 fix: initialize accumulators outside the try so the post-except
@@ -612,10 +612,10 @@ def _profile_columns_inner(
         )
     except Exception as exc:
         if logger is not None:
-            logger.error(f"✗ storm.scan failed: {type(exc).__name__}")
+            logger.error(f"✗ pre_scan.profile failed: {type(exc).__name__}")
         emit_step(
             logger,
-            "storm.scan",
+            "pre_scan.profile",
             status="error",
             error_class=type(exc).__name__,
             error_msg=type(exc).__name__,
@@ -623,12 +623,12 @@ def _profile_columns_inner(
         raise
     if logger is not None:
         logger.info(
-            f"✓ storm.scan complete: {len(fields)} fields "
+            f"✓ pre_scan.profile complete: {len(fields)} fields "
             f"({pii_count} PII, re-id risk {reid_score:.1f}%)"
         )
     emit_step(
         logger,
-        "storm.scan",
+        "pre_scan.profile",
         status="finish",
         rows_in=total,
         rows_out=len(fields),

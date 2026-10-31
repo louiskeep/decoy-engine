@@ -19,13 +19,10 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 from decoy_engine import reasons
+from decoy_engine._error_base import DecoyError
 
 if TYPE_CHECKING:
     from decoy_engine.execution._row_error_summary import RowErrorSummary
-
-
-class DecoyError(Exception):
-    """Base class for all decoy_engine exceptions."""
 
 
 class ConfigError(DecoyError):

@@ -1,4 +1,4 @@
-"""Compiled value-pattern regexes for storm detectors, split from detectors.py (F11b).
+"""Compiled value-pattern regexes for pre-scan detectors, split from detectors.py (F11b).
 
 Leaf module: just compiled ``re`` patterns, no dependency on detector logic.
 Imported back into detectors.py (and reused by the span scanner) so the

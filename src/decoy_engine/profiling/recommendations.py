@@ -1,7 +1,7 @@
 """Smart-default mask strategy per detector.
 
 Single source of truth that FORECAST and the platform's column-override
-endpoint both consume. When STORM (or a manual override) attaches a
+endpoint both consume. When Pre-scan (or a manual override) attaches a
 detector_id to a column, this table answers "what's the right default
 mask strategy + params?" so the user gets a sensible starting point
 without re-deriving it in three places.

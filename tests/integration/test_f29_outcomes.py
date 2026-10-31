@@ -30,7 +30,7 @@ def _luhn_job(tmp_path: Path, cc: str, extra: dict | None = None):
     path = tmp_path / "t.parquet"
     pq.write_table(src, path)
     cfg = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"job_name": "f29", "seed": 42},
         "sources": {"t": {"type": "file", "path": str(path), "format": "parquet"}},
         "targets": {"t": {"type": "file", "path": str(path) + ".out", "format": "parquet"}},
@@ -98,10 +98,10 @@ def test_findings_verification_and_publication_are_distinct(tmp_path: Path) -> N
 
 
 def test_report_only_findings_do_not_turn_a_successful_run_into_a_failure(tmp_path: Path) -> None:
-    cfg, sources = _luhn_job(tmp_path, "4532015112830366", {"run_storm": True})
+    cfg, sources = _luhn_job(tmp_path, "4532015112830366", {"post_scan": {"integrity": True}})
     result = run_pipeline(cfg, sources, engine_version=_ENGINE_VERSION)
-    assert result.outputs  # the run succeeded; STORM reports and never enforces
-    report = result.quality_metrics.get("storm_postmask")
+    assert result.outputs  # the run succeeded; Post-scan integrity reports and never enforces
+    report = result.quality_metrics.get("post_scan_integrity")
     assert report is not None
     # Whatever the report says, adapting it never raises and never changes the result.
     reasons_from_report(report)

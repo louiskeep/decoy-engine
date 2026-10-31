@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
+from decoy_engine.config import post_scan_integrity_requested
 from decoy_engine.execution._mem_estimate_arrow import column_arrow_types as _column_arrow_types
 from decoy_engine.execution._mem_estimate_arrow import source_nullable_columns
 from decoy_engine.execution._transforms_admission import admission_signals, decline_out_of_core
@@ -601,7 +602,7 @@ def resolve_execution_route(
         validators=validators,
         fidelity_report=fidelity_report,
         post_validation=post_validation,
-        run_storm=bool(config.get("run_storm")),
+        post_scan_integrity=post_scan_integrity_requested(config),
         vault_writer=vault_writer,
         execution_mode=execution_mode,
         graph=graph,

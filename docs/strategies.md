@@ -366,8 +366,8 @@ intact. Deterministic by construction. This is what lets you sanitize a
 
 ### text_mask
 
-Span-level PII masking for free-text columns: scans each cell with the STORM
-detector library (`iter_spans`) and masks only the PII-bearing spans,
+Span-level PII masking for free-text columns: scans each cell with the detector library
+(`iter_spans`) and masks only the PII-bearing spans,
 leaving surrounding prose intact. Contrast with `redact`, which replaces the
 whole cell, and with `text_redact`, which replaces every matched span with a
 single fixed token. `text_mask` dispatches each span to a per-detector

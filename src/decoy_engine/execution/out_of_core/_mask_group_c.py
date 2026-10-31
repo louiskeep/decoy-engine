@@ -21,7 +21,7 @@ out-of-core output is byte-identical rather than merely similar.
   TX-2 (2026-07-20): the `ner` opt-in mirrors `text_redact`'s OOC NER handling
   (`_text_redact_ner` above) -- resolve model/entities from cfg, enforce the
   same `ner_model_version_mismatch` fail-closed drift guard against
-  `ColumnSeed.ner_model_version`, then call `storm.ner.iter_ner_spans_batch`
+  `ColumnSeed.ner_model_version`, then call `detection.ner.iter_ner_spans_batch`
   once per record batch and forward each cell's spans as `mask_cell`'s
   `extra_spans`. NER is a pure per-value function of (text, model, entities)
   with no cross-row state, so a batch's spans are identical to per-cell calls

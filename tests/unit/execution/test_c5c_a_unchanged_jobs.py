@@ -3,6 +3,9 @@
 Each scenario's result (tables, schema, pandas metadata, warnings, row errors and quality
 metrics) is recorded in `c5c_a_unchanged_jobs.json`, captured from the tree before the fix.
 Regenerate only on purpose: `C5C_A_WRITE_GOLDENS=1 pytest <this file>`.
+
+The row values of the four faker/hash scenarios were re-pinned under F13 because job_seed keying
+was removed (they now derive from the shared throwaway secret); every other field is unchanged.
 """
 
 from __future__ import annotations

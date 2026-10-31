@@ -101,7 +101,7 @@ def build_config(source_dir: str) -> dict[str, Any]:
         targets[name] = {"type": "file", "format": "parquet", "path": "/dev/null"}
     return PipelineConfig.model_validate(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 42, "post_validation": False},
             "sources": sources,
             "tables": tables,

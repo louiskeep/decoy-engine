@@ -22,7 +22,7 @@ from typing import Any
 import pyarrow as pa
 import pytest
 
-from decoy_engine.detection import detectors as storm_detectors
+from decoy_engine.detection import detectors as detection_detectors
 from decoy_engine.detection._validators import (
     _iban_valid,
     _icd10_valid,
@@ -452,7 +452,7 @@ def test_the_lookaround_free_patterns_use_only_d_s_and_ascii_case_fold() -> None
     # The eight lookaround-free detectors use neither \w/\b nor any lookaround, so their
     # class-equivalence proof needs only \d, \s and ASCII case folding.
     for det_id in LOOKAROUND_FREE_DETECTORS:
-        pattern = storm_detectors._SPAN_DETECTORS[det_id][0].pattern
+        pattern = detection_detectors._SPAN_DETECTORS[det_id][0].pattern
         assert r"\w" not in pattern, det_id
         assert r"\b" not in pattern, det_id
         for lookaround in (r"(?=", r"(?!", r"(?<=", r"(?<!"):
@@ -469,7 +469,7 @@ def test_the_lookaround_patterns_use_only_classes_whose_ascii_membership_is_prov
     # hyphen, quote, backslash) that carry no Unicode-vs-ASCII ambiguity.
     allowed_escapes = {r"\d", r"\s", r"\w", r"\b", r"\.", r"\-", r"\\", '\\"'}
     for det_id in LOOKAROUND_DETECTORS:
-        pattern = storm_detectors._SPAN_DETECTORS[det_id][0].pattern
+        pattern = detection_detectors._SPAN_DETECTORS[det_id][0].pattern
         escapes = {pattern[i : i + 2] for i in range(len(pattern) - 1) if pattern[i] == "\\"}
         unexpected = escapes - allowed_escapes
         assert not unexpected, (det_id, unexpected)
@@ -551,7 +551,7 @@ def test_the_wrapper_actually_calls_rust_on_eligible_cells() -> None:
     the other way (Python, so it sees the poison), proving the per-cell routing split."""
     dead = re.compile(r"(?!x)x")  # matches nothing
     with pytest.MonkeyPatch.context() as mp:
-        mp.setitem(storm_detectors._SPAN_DETECTORS, "email", (dead, None))
+        mp.setitem(detection_detectors._SPAN_DETECTORS, "email", (dead, None))
         eligible = ["mail a@b.com now"]
         assert _native(eligible, detectors=("email",), token="T", label_token=False) == [
             "mail T now"
@@ -823,7 +823,7 @@ def test_the_oracle_patterns_and_flags_match_the_pinned_scanner_contract() -> No
     )
     live = {
         det_id: (rx.pattern, int(rx.flags))
-        for det_id, (rx, _validator) in storm_detectors._SPAN_DETECTORS.items()
+        for det_id, (rx, _validator) in detection_detectors._SPAN_DETECTORS.items()
     }
     expected = {
         det_id: (pat, int(flags)) for det_id, (pat, flags) in _FROZEN_ORACLE_PATTERNS.items()
@@ -846,8 +846,8 @@ def test_the_rust_street_vocabularies_reconstruct_the_oracle_pattern() -> None:
 
     rust_suffixes = tuple(compiled.text_redact_street_suffixes())
     # (a) Ordered list-equality against the Python oracle's suffix vocabulary.
-    assert rust_suffixes == storm_detectors._USPS_STREET_SUFFIXES
-    street_pattern = storm_detectors._SPAN_DETECTORS["street_address"][0].pattern
+    assert rust_suffixes == detection_detectors._USPS_STREET_SUFFIXES
+    street_pattern = detection_detectors._SPAN_DETECTORS["street_address"][0].pattern
     # (b) The suffix alternation the oracle builds is exactly join(rust suffixes) + the optional dot.
     assert "(?:" + "|".join(rust_suffixes) + r")\.?" in street_pattern
     # (c) The unit designators are embedded in the oracle body, not a standalone list, so tie the
@@ -861,7 +861,7 @@ def test_every_street_suffix_alternative_matches_like_the_oracle() -> None:
     """Targeted differential (plan section 7): every USPS suffix, plain AND with the optional
     trailing dot, drives a real match that equals the oracle span-for-span -- the random corpus
     draws mostly from fixed examples, so each alternative is exercised explicitly here."""
-    suffixes = storm_detectors._USPS_STREET_SUFFIXES
+    suffixes = detection_detectors._USPS_STREET_SUFFIXES
     cells: list[str] = []
     for suf in suffixes:
         cells.append(f"12 Main {suf} here")  # plain suffix

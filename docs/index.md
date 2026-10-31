@@ -33,6 +33,7 @@ link to GitHub rather than into the rendered API reference.
 
 - [Error reporting and data exposure](security/error-reporting-and-data-exposure.md): what error messages promise about the sensitive input data being masked, and why error trackers must not capture frame locals.
 - [Key derivation](security/key-derivation.md): the KeyProvider / `mask_secret_ref` model and HKDF-SHA256 derivation contract.
+- [Secret providers](security/secret-providers.md): the versioned `secret-provider/v1` contract, before-read admission, per-algorithm validation, cache/lifetime bounds and the HashiCorp Vault KV v2 adapter.
 - [SQL surfaces](security/sql-surfaces.md): parameter-binding posture across in-tree connectors.
 - [Token vault](security/token-vault.md): handling and threat model for the reversible token vault.
 - [DE-01: NIST SP 800-38G FF1 adoption](security/de-01-ff1-adoption.md): the FPE cipher, conformance claim, key/tweak model, and documented leakage (equality, fixed points, unauthenticated reversal).

@@ -10,7 +10,7 @@ what makes native output byte-identical to the shipped handlers: there is one
 logic source, and this module is just its Arrow-native entry point.
 
 `text_redact` is the one exception to "calls `kernel/_scalar.py`": its per-cell span logic lives
-in the oracle handler and the storm detectors, so `native_text_redact` calls `iter_spans` and
+in the oracle handler and the pre-scan detectors, so `native_text_redact` calls `iter_spans` and
 `_splice` from there. It runs the same Python per cell as the oracle, so the column's own speed
 is unchanged; the gain is that its table stays native.
 

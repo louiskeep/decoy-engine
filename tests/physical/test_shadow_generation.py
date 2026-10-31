@@ -76,9 +76,9 @@ def _generate_config(
 ) -> dict[str, Any]:
     """A minimal admitted pure-generate config: one generate table, sequence
     + categorical columns only, no sources/relationships/namespaces/subset/
-    validators/quarantine/run_storm/mask_secret_ref."""
+    validators/quarantine/post_scan_integrity/mask_secret_ref."""
     raw: dict[str, Any] = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": seed},
         "sources": {},
         "targets": {table_name: {"type": "file", "format": "csv", "path": f"{table_name}.out.csv"}},
@@ -343,7 +343,7 @@ def test_positive_multiple_columns() -> None:
 
 def test_positive_multiple_generate_tables() -> None:
     raw = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 20260916},
         "sources": {},
         "targets": {
@@ -572,7 +572,7 @@ def _assert_declines(
         ),
         ("validators", [{"name": "fk_intact"}]),
         ("quarantine", {"output_path": "q.parquet"}),
-        ("run_storm", True),
+        ("post_scan", {"integrity": True}),
     ],
     ids=[
         "non-empty-sources",
@@ -581,7 +581,7 @@ def _assert_declines(
         "non-none-subset",
         "non-empty-validators",
         "non-none-quarantine",
-        "run-storm-true",
+        "post-scan-integrity-true",
     ],
 )
 def test_decline_job_scope_field(field: str, value: Any, monkeypatch: pytest.MonkeyPatch) -> None:

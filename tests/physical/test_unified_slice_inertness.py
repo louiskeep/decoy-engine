@@ -168,7 +168,7 @@ out_path = {out_path!r}
 source = pa.table({{"c": pa.array(["a", "b", "c"], type=pa.string())}})
 pq.write_table(source, path)
 raw = {{
-    "version": 1,
+    "version": 2,
     "global_settings": {{"seed": 1}},
     "sources": {{"t": {{"type": "file", "format": "parquet", "path": path}}}},
     "targets": {{"t": {{"type": "file", "format": "parquet", "path": out_path}}}},

@@ -110,7 +110,7 @@ OPERATING_THRESHOLD: float = round(1.0 / (1 + FN_FP_COST_RATIO), 4)
 #
 # sklearn §1.16 quotes ~1000 samples as the rule of thumb for isotonic to avoid overfitting the
 # reliability curve, but that is a conservative general figure. On the expanded (2958-column)
-# STORM corpus -- clean, fully-synthetic, 11-class, calibration fold ~473 -- isotonic was measured
+# Pre-scan corpus -- clean, fully-synthetic, 11-class, calibration fold ~473 -- isotonic was measured
 # to STRICTLY dominate sigmoid (shipped pack): mean calibration error 0.0536 vs 0.097 sigmoid,
 # Brier 0.0043, and it makes the >=0.95 "high" band reachable at last (541 of 592 held-out columns
 # land there at 100% accuracy, vs 69 for sigmoid). 400 keeps the adaptive sigmoid fallback for a

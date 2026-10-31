@@ -17,7 +17,7 @@ from decoy_engine.plan._checks import check_non_poolable_provider_with_pool_back
 
 
 def _cfg(columns: list[dict]) -> dict:
-    return {"version": 1, "tables": [{"name": "t", "columns": columns}]}
+    return {"version": 2, "tables": [{"name": "t", "columns": columns}]}
 
 
 class TestNonPoolableProviderWithPoolBackend:
@@ -43,7 +43,7 @@ class TestNonPoolableProviderWithPoolBackend:
         check_non_poolable_provider_with_pool_backend(cfg)  # row 2 owns it
 
     def test_malformed_entries_skipped(self):
-        cfg = {"version": 1, "tables": [{"name": "t", "columns": ["junk", {"name": "a"}]}, "junk"]}
+        cfg = {"version": 2, "tables": [{"name": "t", "columns": ["junk", {"name": "a"}]}, "junk"]}
         check_non_poolable_provider_with_pool_backend(cfg)  # no raise
 
 

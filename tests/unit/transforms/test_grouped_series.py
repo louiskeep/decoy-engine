@@ -527,7 +527,7 @@ class TestGroupedSeriesGeneratePath:
         from tests.unit._dps_helpers import compile_and_generate
 
         cfg = {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 42},
             "sources": {},
             "tables": [

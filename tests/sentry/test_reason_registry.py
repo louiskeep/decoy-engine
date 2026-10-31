@@ -116,6 +116,10 @@ ADAPTERS: dict[tuple[str, str], str] = {
     ("quality/report.py", "_collect_warnings"): (
         "diagnostic check names are registry symbols in `verification`"
     ),
+    ("phase.py", "_reason_wire"): (
+        "exports the identity of a `ReasonRef` that `require_known` has just resolved against "
+        "the registry (an unknown identity fails closed before this dict is built)"
+    ),
 }
 # Functions whose return value is a registry symbol chosen from a table of registry symbols.
 REGISTRY_HELPERS = frozenset({"strategy_code_for_unencryptable", "strategy_code_for_checksum"})
@@ -277,6 +281,13 @@ _MUTANTS: dict[str, str] = {
         def decide_the_route():
             return "adhoc_bare"
     """,
+    # A decider that is not named `*route` (the chunked sink's resident / streamed decision).
+    "decider_not_named_route": """
+        def decide_output_mode(sink):
+            if sink is None:
+                return "resident", "adhoc_no_sink"
+            return "streamed", "adhoc_streamed"
+    """,
     "unpacked_reason_producer": """
         def pick(x):
             return "out_of_core", "adhoc_unpacked"
@@ -408,6 +419,8 @@ def test_ci_collects_the_registry_guards() -> None:
 # is a reviewed registry addition; this list may only shrink.
 UNCLASSIFIED: dict[str, str] = {
     "DecoyError": "the root class; a subclass without an identity is unclassified, not this",
+    "VaultClientConfigError": "a Vault client-construction error raised by the CLI helper before any run; fixed value-free text",
+    "SecretClosedError": "an internal invariant breach (a closed secret buffer was used); not a user-facing failure",
     "ConnectorError": "the connector base; Transient/Permanent subclasses carry the meaning",
     "ConnectorAuthError": "an authentication failure has no code yet; its text may echo a target",
     "FKPreservationError": "base of EmptyParentPool/UnknownFKColumn, which are classified",
@@ -426,6 +439,12 @@ UNCLASSIFIED: dict[str, str] = {
     "PoolBuildFailed": "an internal shadow-plan signal, never surfaced",
     "_RejectError": "an internal parser signal, never surfaced",
     "_InfeasibleAtEpsQError": "an internal DP control-flow signal, never surfaced",
+    "PhaseContractError": (
+        "a phase-envelope contract violation inside the producer boundary; never a run outcome"
+    ),
+    "UnknownReasonError": (
+        "an unregistered reason identity; the phase boundary converts it to PhaseContractError"
+    ),
 }
 
 

@@ -11,7 +11,7 @@
 #     information held by insurers. References: NAIC.org Model Law 668.
 #   - CCPA (Cal. Civ. Code 1798.100 et seq.) where policyholders are CA residents.
 #
-# What this pack covers (auto-routed via STORM detectors):
+# What this pack covers (auto-routed via detectors):
 #   SSN         -> fpe digits (policyholder Social Security Number)
 #   VIN         -> fpe ALPHANUM + checksum: vin (ISO 3779 / NHTSA 49 CFR Part 565)
 #   License     -> redact (driver license number; no universal state format)
@@ -23,10 +23,10 @@
 #   Phone       -> faker (policyholder contact phone)
 #   Account     -> fpe ALPHANUM (bank / payment account numbers detected as iban)
 #
-# Honest gaps -- fields NOT auto-routed by this pack (no STORM detectors):
+# Honest gaps -- fields NOT auto-routed by this pack (no detectors):
 #
 #   POLICY NUMBER:
-#     No STORM detector for policy numbers. Formats vary by insurer
+#     No detector for policy numbers. Formats vary by insurer
 #     (alphanumeric, numeric with check digits, etc.). Configure manually:
 #
 #       columns:
@@ -39,11 +39,11 @@
 #     format and length without validity-by-construction for arbitrary formats.
 #
 #   CLAIM NUMBER:
-#     No STORM detector for claim numbers. Same manual-config approach applies.
+#     No detector for claim numbers. Same manual-config approach applies.
 #
 #   PREMIUM / LOSS / RESERVE AMOUNTS:
 #     Numeric amount columns (premium, loss, reserve, deductible) have no
-#     STORM detector. Configure manually with bucketize:
+#     detector. Configure manually with bucketize:
 #
 #       columns:
 #         - name: loss_amount
@@ -54,7 +54,7 @@
 #
 #   LOSS DESCRIPTION / ADJUSTER NOTES:
 #     Free-text columns (loss descriptions, adjuster notes, repair narratives)
-#     have no STORM detector. Configure text_mask manually:
+#     have no detector. Configure text_mask manually:
 #
 #       columns:
 #         - name: loss_description
@@ -67,13 +67,13 @@
 #     text is known to be non-sensitive.
 #
 #   AGENT / ADJUSTER IDs:
-#     No STORM detector for agent or adjuster identifiers. Configure manually
+#     No detector for agent or adjuster identifiers. Configure manually
 #     with fpe (format-preserving) or redact as appropriate.
 #
 #   VEHICLE MAKE / MODEL / YEAR:
 #     Make, model, and year are quasi-identifiers that can narrow the pool of
 #     potential individuals when combined with ZIP, date, and claim data.
-#     No STORM detector exists for these fields. Generalize manually with
+#     No detector exists for these fields. Generalize manually with
 #     categorical (replace with a shuffled value from the same set) or bucketize
 #     (year ranges). joint_mask: vehicle_ref_table is the right long-term tool
 #     but the corpus is not yet shipped.
@@ -106,7 +106,7 @@
 id: pc
 version: "2026-06-29"
 name: "P&C Insurance"
-summary: "Property and Casualty insurance NPI protection under GLBA Safeguards Rule (16 CFR Part 314) and NAIC Model 668: policyholder SSN, VIN (ISO 3779 checksum-valid), driver license, names, contact, dates. SP-12. Honest gaps: policy number, claim number, amounts, loss descriptions, and agent IDs have no STORM detectors and require manual column config."
+summary: "Property and Casualty insurance NPI protection under GLBA Safeguards Rule (16 CFR Part 314) and NAIC Model 668: policyholder SSN, VIN (ISO 3779 checksum-valid), driver license, names, contact, dates. SP-12. Honest gaps: policy number, claim number, amounts, loss descriptions, and agent IDs have no detectors and require manual column config."
 regulation: "GLBA Safeguards Rule (16 CFR Part 314, 2023 update); NAIC Model Insurance Data Security Law (Model 668); CCPA where applicable"
 primary_buyer: "P&C insurance data engineers"
 
@@ -235,7 +235,7 @@ field_rules:
       faker_type: phone_number
     why: "Policyholder contact phone -> realistic fake. GLBA NPI."
 
-  # Bank / payment account (detected as IBAN by STORM): FPE ALPHANUM.
+  # Bank / payment account (detected as IBAN by Pre-scan): FPE ALPHANUM.
   # Preserves account-length shape; joins survive via determinism.
   - detectors: [iban]
     mask: fpe

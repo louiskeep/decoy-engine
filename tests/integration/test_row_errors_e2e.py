@@ -30,7 +30,7 @@ def _bucketize_config(
     src_path: str, target_path: str, *, quarantine: dict[str, Any] | None = None
 ) -> dict[str, Any]:
     cfg: dict[str, Any] = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"job_name": "sp2-row-errors-bucketize", "seed": 42},
         "sources": {"t": {"type": "file", "path": src_path, "format": "parquet"}},
         "targets": {"t": {"type": "file", "path": target_path, "format": "parquet"}},
@@ -53,7 +53,7 @@ def _date_shift_config(
     src_path: str, target_path: str, *, quarantine: dict[str, Any] | None = None
 ) -> dict[str, Any]:
     cfg: dict[str, Any] = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"job_name": "sp2-row-errors-date-shift", "seed": 42},
         "sources": {"t": {"type": "file", "path": src_path, "format": "parquet"}},
         "targets": {"t": {"type": "file", "path": target_path, "format": "parquet"}},
@@ -74,7 +74,7 @@ def _nested_config(
     src_path: str, target_path: str, *, quarantine: dict[str, Any] | None = None
 ) -> dict[str, Any]:
     cfg: dict[str, Any] = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"job_name": "test3-nested-row-errors", "seed": 42},
         "sources": {"t": {"type": "file", "path": src_path, "format": "parquet"}},
         "targets": {"t": {"type": "file", "path": target_path, "format": "parquet"}},
@@ -165,7 +165,7 @@ class TestNestedFailLoud:
         src_path = _write_source(tmp_path, src)
         qpath = str(tmp_path / "q.jsonl")
         cfg = {
-            "version": 1,
+            "version": 2,
             "global_settings": {"job_name": "p1-remap", "seed": 42},
             "sources": {"t": {"type": "file", "path": src_path, "format": "parquet"}},
             "targets": {
@@ -214,7 +214,7 @@ class TestNestedFailLoud:
         src_path = _write_source(tmp_path, src)
         qpath = str(tmp_path / "q.jsonl")
         cfg = {
-            "version": 1,
+            "version": 2,
             "global_settings": {"job_name": "p1-when", "seed": 42},
             "sources": {"t": {"type": "file", "path": src_path, "format": "parquet"}},
             "targets": {
@@ -356,7 +356,7 @@ class TestMixedValidatorAndRowErrorRun:
         src_path = _write_source(tmp_path, src)
         qpath = str(tmp_path / "quarantine.jsonl")
         config: dict[str, Any] = {
-            "version": 1,
+            "version": 2,
             "global_settings": {"job_name": "sp2-mixed-run", "seed": 42},
             "sources": {"t": {"type": "file", "path": src_path, "format": "parquet"}},
             "targets": {
@@ -394,7 +394,7 @@ def _code_set_config(
     src_path: str, target_path: str, corpus_path: str, *, quarantine: dict[str, Any] | None = None
 ) -> dict[str, Any]:
     cfg: dict[str, Any] = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"job_name": "sp2-row-errors-code-set", "seed": 42},
         "sources": {"t": {"type": "file", "path": src_path, "format": "parquet"}},
         "targets": {"t": {"type": "file", "path": target_path, "format": "parquet"}},
@@ -500,7 +500,7 @@ class TestQuarantineWriteTimingParity:
         src_path = _write_source(tmp_path, src)
         qpath = str(tmp_path / "quarantine.jsonl")
         config: dict[str, Any] = {
-            "version": 1,
+            "version": 2,
             "global_settings": {"job_name": "sp2-write-timing", "seed": 42},
             "sources": {"t": {"type": "file", "path": src_path, "format": "parquet"}},
             "targets": {

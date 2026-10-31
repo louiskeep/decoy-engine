@@ -64,6 +64,10 @@ FROZEN_PARAMETERS: tuple[tuple[str, str, str, str], ...] = (
     ("unified_slice_enabled", "KEYWORD_ONLY", "True", "bool"),
     ("progress", "KEYWORD_ONLY", "None", "ProgressSink | None"),
     ("progress_interval_s", "KEYWORD_ONLY", "1.0", "float"),
+    # secret_registry / secret_cache_policy: additive keyword-only params for F13 secret-provider
+    # admission (the keyed job_seed fallback was removed); re-pinned under F13.
+    ("secret_registry", "KEYWORD_ONLY", "None", "SecretProviderRegistry | None"),
+    ("secret_cache_policy", "KEYWORD_ONLY", "None", "SecretCachePolicy | None"),
     ("_provider_snapshot", "KEYWORD_ONLY", "None", "Mapping[str, Callable[[Faker], Any]] | None"),
 )
 FROZEN_RETURN = "ExecutionResult"
@@ -88,7 +92,7 @@ def test_run_pipeline_return_annotation_is_frozen() -> None:
 
 def test_the_frozen_table_covers_every_parameter_once() -> None:
     names = [row[0] for row in FROZEN_PARAMETERS]
-    assert len(names) == len(set(names)) == 37
+    assert len(names) == len(set(names)) == 39
     positional = [r[0] for r in FROZEN_PARAMETERS if r[1] == "POSITIONAL_OR_KEYWORD"]
     assert positional == ["config", "sources"]
 

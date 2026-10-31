@@ -14,11 +14,11 @@ Operators and CI integrations identify a failure, and what to do next, without p
 
 A producer references a symbol (`reasons.runtime.MISSING_MASK_SECRET`). The symbol's value is the legacy wire string, so every existing `.code` is byte-for-byte unchanged and `==`, `in`, f-strings and JSON behave as before. One wire string can exist in two namespaces (`truncate_keep_invalid` is both a compile-time plan rejection and a runtime check); the namespace tells a consumer which.
 
-Namespaces: `config`, `plan`, `runtime`, `provider`, `quality`, `connector`, `subset`, `route`, `warning`, `verification`, `physical` and `decoy` (reasons the engine assigns itself: fallbacks, outcomes, control).
+Namespaces: `config`, `plan`, `runtime`, `provider`, `quality`, `connector`, `subset`, `route`, `warning`, `verification`, `physical`, `decoy` (reasons the engine assigns itself: fallbacks, outcomes, control), and `pre_scan` / `post_scan` (the failures a phase envelope, `decoy_engine.phase`, can carry). A phase envelope carries a reason as identity only: `ReasonRef(namespace, code)`, resolved fail-closed by `require_known` / `get_reason` (`UnknownReasonError`); `REASONS` is the read-only `(namespace, code) -> ReasonSpec` view and `REGISTRY_SCHEMA` names that identity form (`decoy-reasons/v1`).
 
 ### Versioning
 
-`registry_version` (`1.0.0`), `reason_schema_version` (`1`) and `event_schema_version` (`1`) are independent. Codes are append-only: a code never disappears or changes meaning. A retired code stays as a tombstone with its replacement link. Additions raise the registry minor version, an editorial summary correction the patch version, and an incompatible reading needs a new identity or a schema major. `tests/fixtures/f29/reason-manifest-v1.json` pins the catalog and `tests/unit/test_reason_registry.py` rejects a deleted identity, a changed retry or outcome, or a changed summary without a version bump.
+`registry_version` (`1.0.0`), `reason_schema_version` (`1`) and `event_schema_version` (`1`) are independent. Codes are append-only: a code never disappears or changes meaning. A retired code stays as a tombstone with its replacement link. Two tombstones exist today, from the Pre-scan / Transform / Post-scan reframe (`reasons/route/_retired.py`): the v0.16.0 route reason and resident reason replaced by `route.post_scan_integrity_requested` and `route.post_scan_integrity`; both stay resolvable so persisted routing evidence from that release can be read. Additions raise the registry minor version, an editorial summary correction the patch version, and an incompatible reading needs a new identity or a schema major. `tests/fixtures/f29/reason-manifest-v1.json` pins the catalog and `tests/unit/test_reason_registry.py` rejects a deleted identity, a changed retry or outcome, or a changed summary without a version bump.
 
 An older consumer that reads a record whose identity it does not know (same registry major) degrades to `decoy.unknown_reason_from_future`, keeping the original identity in an uninterpreted context field. An unsupported major becomes `decoy.unsupported_schema_version`. Neither is ever read as success or as retry advice.
 
@@ -57,7 +57,7 @@ except Exception as exc:
 
 `reason_from_exception` trusts an exception's `.code` only for a registered engine exception class and a code registered for that class. Anything else is `decoy.unexpected_error` with retry advice `unknown`. It never reads the message, the class name, a cause or a traceback, and the exception keeps propagating unchanged. For an exception the engine observed at its boundary it returns that observation, including the phase and the publication and cleanup state captured there.
 
-`reasons_from_report(report, enforcing=False)` adapts a verification report (the STORM post-mask report or its dict form) without serializing it.
+`reasons_from_report(report, enforcing=False)` adapts a verification report (the Post-scan integrity report or its dict form) without serializing it.
 
 `IsolatedRunResult.reason` carries the same record across the worker boundary. The parent validates it: identity, phase and context are read from the worker, severity, outcome and retry class are recomputed from the parent's registry, and an old, corrupt or newer envelope degrades to a fixed diagnostic.
 

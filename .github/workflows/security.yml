@@ -47,3 +47,25 @@ jobs:
       # job on any known CVE.
       - name: Audit dependencies
         run: pip-audit --strict
+
+  # F13 structural leak sentry: secret-provider modules may not log, chain exceptions, render
+  # exception text or serialize, and execution modules may not reach a concrete provider.
+  # Runtime seeded-marker coverage lives in tests/secret_providers.
+  secret-provider-semgrep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install Semgrep
+        run: pip install 'semgrep==1.183.0'
+
+      - name: Scan
+        run: semgrep --config .semgrep/f13-secret-providers.yml --metrics=off --error src/decoy_engine

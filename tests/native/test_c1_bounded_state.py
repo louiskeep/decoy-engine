@@ -57,7 +57,7 @@ def _key_provider() -> SecretKeyProvider:
 
 def _faker_config(*, pool_size: int, namespace: str = "adv_ns") -> dict:
     raw = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 20260830, "post_validation": False},
         "sources": {"t": {"type": "file", "format": "csv", "path": "/dev/null"}},
         "targets": {"t": {"type": "file", "format": "csv", "path": "/dev/null"}},

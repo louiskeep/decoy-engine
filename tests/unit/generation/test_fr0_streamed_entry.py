@@ -194,7 +194,7 @@ def test_plan_without_a_generation_payload_is_rejected() -> None:
     from decoy_engine.profile import Profile  # noqa: F401
 
     mask_only = compile_plan(
-        {"version": 1, "global_settings": {}, "sources": {}, "tables": [], "targets": {}},
+        {"version": 2, "global_settings": {}, "sources": {}, "tables": [], "targets": {}},
         fx._profile(),
         decoy_engine_version="fr0",
     )

@@ -36,6 +36,20 @@ important cultural event at launch is recognizing that the frozen surface is now
 frozen, and that the team's reflex of "just delete it and refresh the fixtures"
 is, for that surface, now a breaking change to a customer.
 
+**Pre-GA corrections already taken (F13, 2026-10-30).** The keyed `job_seed` fallback is removed in
+every release phase: keyed work with no admitted secret fails with `keyed_strategy_requires_secret`, and
+`SeedKeyProvider` is import-compatible but never a secret. `KeyProvider` (the two-member protocol) is
+unchanged and duck-typed providers keep working through `secret_providers.prepare_legacy`; the new
+`secret-provider/v1` protocol, `decoy_engine.secret_providers` exports and the `secret_registry` /
+`secret_cache_policy` keywords of `run_pipeline` are additive. Removed pre-GA with no shim:
+`keyprovider.resolve_mask_secret_ref` and `resolve_key_provider`.
+
+**Pre-GA correction (main health, 2026-10-31).** `RESERVED_NAMES` of the `when` closed grammar gains `type`
+(additive to the list, breaking for a config whose `when:` references a column named `type`, which now fails
+with `when_outside_closed_grammar`). It is listed on every interpreter rather than derived from
+`keyword.softkwlist`, so a config validates identically on every supported Python. The list is frozen
+on purpose; after GA any further addition is a breaking change.
+
 Until GA: use this document as the design target so we don't paint ourselves
 into a corner. After GA: this document is binding.
 
@@ -62,7 +76,7 @@ As of this writing the tags include:
 distribution-snapshot/v1   decoy-vault/v2        vault-key/v1
 ff1-key/v1                 quality-report/v1     synth-report/v1
 quality-diagnostic/v1      quality-fidelity/v1   quality-policy/v1
-quality-shape-fidelity/v1  storm-post-mask/v1    name-hints/v1
+quality-shape-fidelity/v1  post-scan-integrity/v2    name-hints/v1
 ssn/v1  npi/v1  pan/v1  iban/v1  ein/v1  mrn/v1  ndc/v1  icd10/v1
 cusip/v1  address/v1  locality/v1  person/v1  provider/v1
 composite/v1  custom/v1   ... (every disguise spec)
@@ -561,7 +575,7 @@ major-version project with a migration story, not a feature PR.
 
 ### 4.4 Deprecation mechanics (when you must change CLI/API)
 
-The `storm scan` → `storm analyze` rename is the template. To retire or change a
+The `pre-scan scan` → `pre-scan analyze` rename is the template. To retire or change a
 public surface:
 
 1. Keep the old surface working as a shim.

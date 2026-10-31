@@ -656,7 +656,7 @@ class TestGenerateTablesIntegration:
         df = _source_df()
         snap = _write_snapshot(tmp_path, df, joints=[("state", "tier")])
         cfg = {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 42},
             "tables": [
                 {

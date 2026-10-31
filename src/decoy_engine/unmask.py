@@ -243,25 +243,23 @@ def unmask_pipeline(
             be opened under this config.
     """
     job_seed = _normalize_job_seed(config)
-    # DE-02: reverse the keyed surface under the SAME mask key the mask run used
-    # (a programmatic key_provider wins over global_settings.mask_secret_ref; both
-    # absent -> job_seed, byte-identical to pre-DE-02). Reversing under the wrong
-    # key surfaces as vault_key_mismatch (vault) or wrong plaintext (fpe).
-    from decoy_engine.keyprovider import key_provider_from_ref
+    # DE-02: reverse the keyed surface under the SAME mask key the mask run used (a
+    # programmatic key_provider wins over global_settings.mask_secret_ref). F13: the secret is
+    # admitted through the shared preflight before any masked source or vault file is read, and
+    # a keyed config with no secret fails closed in every release phase (no job_seed fallback).
+    # Reversing under the wrong key surfaces as vault_key_mismatch (vault) or wrong plaintext (fpe).
+    from decoy_engine.secret_providers import AdmissionScope, admit_mask_key
 
-    provider: KeyProvider | None = key_provider
-    if provider is None:
-        ref = (config.get("global_settings") or {}).get("mask_secret_ref")
-        if ref:
-            provider = key_provider_from_ref(ref)
-    mask_key = provider.mask_key() if provider is not None else job_seed
+    with AdmissionScope() as scope:
+        admitted = scope.adopt(admit_mask_key(config, key_provider=key_provider))
+        provider = admitted.key_provider
+        mask_key = provider.mask_key() if provider is not None else job_seed
     # DE-02 (Codex MEDIUM 6): unmask reverses KEYED surface (fpe + vaulted
     # columns). Route it through the same fail-closed gate: a resolved key < 32
     # bytes (the 8-byte job_seed fallback, or an empty custom provider) is NOT a
     # real secret. At GA, reversing keyed columns without one hard-errors instead
     # of silently producing wrong plaintext labelled "reversed".
     from decoy_engine.keyprovider import MIN_SECRET_BYTES, KeyedStrategyRequiresSecret
-    from decoy_engine.release import is_pre_ga
 
     _authenticated = len(mask_key) >= MIN_SECRET_BYTES
     _has_fpe = any(
@@ -270,11 +268,11 @@ def unmask_pipeline(
         for c in (t.get("columns") or [])
     )
     _keyed_reversal = vault_path is not None or _has_fpe
-    if _keyed_reversal and not _authenticated and not is_pre_ga():
+    if _keyed_reversal and not _authenticated:
         raise KeyedStrategyRequiresSecret(
-            "unmask reverses keyed columns (fpe / vaulted) which at GA require the "
-            "mask secret. Supply run(...)'s key_provider or global_settings."
-            "mask_secret_ref; the 8-byte job_seed fallback is not accepted."
+            "unmask reverses keyed columns (fpe / vaulted) which require the mask secret. "
+            "Supply run(...)'s key_provider or global_settings.mask_secret_ref; the 8-byte "
+            "job_seed fallback is not accepted."
         )
     vault_map: dict[tuple[str, str], str] | None = None
     vault_ambiguous = 0

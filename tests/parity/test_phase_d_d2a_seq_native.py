@@ -6,7 +6,8 @@ value. The real-kernel parity runs live in `test_phase_d_d2a_seq_real.py`.
 
 Covers the decision per column, the three FK paths (native parent, inherited child, REMAP),
 the pandas to Arrow boundary, the existing ingest guards, and the sink-scoped failure
-behavior. Expected tokens are the frozen literals of stage 1.
+behavior. Expected tokens are the frozen literals of stage 1, re-pinned under F13 because job_seed keying was
+removed (see `test_phase_d_d2a_seq_baseline.py`).
 """
 
 from __future__ import annotations
@@ -49,16 +50,16 @@ from tests.parity._seq_witness import (
 
 _COLUMNS = [*typed_columns()[0], "c_trunc", "c_other_ns"]
 _ORPHAN_TOKENS = [
-    "eec76cc0854f45170489845b902c4b25c8a159db8e3703ffe0672d377a6c6cdf",
-    "112054fc4071e2e01bace616c8f68ef3c7595d55b0f11633046610a06e1c3aef",
+    "5d9cd6fdcf3c2ba555c7b3adaf62b52eaa9f8be0ca5c9f26157cd72251769871",
+    "be1d93bbc6cfb23bd57442dc7e1a59a9f8be4feac5bc2ec6b19d1d3aedd3c48c",
 ]
 _INT_KEY_TOKENS = [
-    "fff6d07feba156f6826ff1d01f734e0c546250ad326e8928f64e6616ba752ccd",
-    "2281ce17d19092cdd3131a04ca5674fb4a18e93d6b00b11753d43108a6134f1f",
-    "27b0f2ce7c10728f371130bacdafc5cf362ca3eb8966093ca21972b07289e4b2",
-    "fb2f5df29035d1a294711f9e858996e775abf22ce35f564c666b5655da592885",
+    "9b93a019d45609396afb0d9ab6264d04f69533480a5fbe8faf9d91e581573e9e",
+    "df9df74e34b59ef619077d6e75abbf88bb53d07da1359d729541b21894c10ac0",
+    "01c587d046c8fb2fce3a9862864a32c7864ca3a7d4a2ee4f3dc2616570227195",
+    "7b0bc128750c49c8e23722c4a149e29dd2acb35a867a4f6536cf4b2d57b8f640",
 ]
-_INT_REMAP_300 = "fa05044540ef148d161877d3a9510e6dd2aa48a5c3562ee79e5f43f06b5c9ea0"
+_INT_REMAP_300 = "9d4d5ceef7e9a962dbcda218bd3a557d9cb42682b41f1cb224368da775add1d5"
 
 
 def _entries(result: object, path: str) -> list[dict[str, object]]:
@@ -213,9 +214,9 @@ def test_noncontiguous_when_selection_lands_on_the_selected_rows(
     out = run_seq(payload, (("a", with_when("fk == 1 or fk == 3")),)).outputs["t"]
     assert out.column("a").to_pylist() == [
         "w",
-        MARK + "396638be5d87d395d352c03a410a27cfe6531419520e706e69b01fa9f04b1eff",
+        MARK + "d299af0182676631ef59b1cd52de0fa402946c1cd7ea96e34ea231675a0323a6",
         "y",
-        MARK + "7931cf8b1bb2ea09557876229a27206c8449485be75ba2d2dfae80e42fe8269f",
+        MARK + "b8eb27966956d259b9aa89927b3efa0902a931928b267a540b470f4313102156",
     ]
 
 
@@ -230,9 +231,9 @@ def test_when_stitching_with_a_large_string_source_and_nulls(
     assert out.column("a").type == pa.string()
     assert out.column("a").to_pylist() == [
         "w",
-        MARK + "396638be5d87d395d352c03a410a27cfe6531419520e706e69b01fa9f04b1eff",
+        MARK + "d299af0182676631ef59b1cd52de0fa402946c1cd7ea96e34ea231675a0323a6",
         None,
-        MARK + "7931cf8b1bb2ea09557876229a27206c8449485be75ba2d2dfae80e42fe8269f",
+        MARK + "b8eb27966956d259b9aa89927b3efa0902a931928b267a540b470f4313102156",
         "v",
     ]
 
