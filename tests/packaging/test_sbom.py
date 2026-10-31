@@ -326,6 +326,7 @@ def test_well_formed_export_passes_the_shim_harness(tmp_path):
         pytest.param(["six==1.17.0 \\", "    --hash=sha256:xyz"], id="malformed-hash"),
         pytest.param(["six==1.17.0"], id="pin-without-hash"),
         pytest.param(["six==1.17.0,--no-binary=six \\", f"    {_H}"], id="version-token-smuggling"),
+        pytest.param(["six==1.17.0,!=1.0 \\", f"    {_H}"], id="version-specifier-list"),
         pytest.param([f"    {_H}"], id="orphan-hash"),
         pytest.param(["six==1.17.0 \\"], id="dangling-continuation"),
         pytest.param(["six==1.17.0", f"    {_H}"], id="hash-after-unterminated-pin"),
