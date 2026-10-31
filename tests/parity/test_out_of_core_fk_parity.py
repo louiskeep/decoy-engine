@@ -1886,3 +1886,47 @@ def test_multi_parent_members_with_different_units_are_refused_CH() -> None:
     with pytest.raises(ExecutionError) as exc:
         _dco.run_ooc(shape)
     assert exc.value.code == "out_of_core_fk_key_dtype_unsupported"
+
+
+def _far_date_redacted_parent(policy: OrphanPolicy) -> Any:
+    from tests.parity._d1a_hash_data import column_seed
+
+    far = _dt.datetime(9999, 1, 1)  # also the canary: it must not reach the error text
+    seed = column_seed("redact", namespace=None, provider_config=(("redact_with", far),))
+    plan = _d2b.make_plan(
+        {"P": _d2b.table_seed({"n": seed}), "C": _d2b.table_seed({"n": _d2b.passthrough()})}
+    )
+    return _d2b.Shape(
+        plan,
+        _d2b.graph(_d2b.edge("P", "n", "C", "n", "ns_n", policy)),
+        {
+            "P": pa.table({"n": _tf.instants_array("us", 3)}),
+            "C": pa.table({"n": _tf.instants_array("ns", 3)}),
+        },
+    )
+
+
+def test_a_far_date_masked_parent_refuses_value_free_under_warn_FB() -> None:
+    """The range rule end to end (plan section 4 asks whether it is reachable: it is, through a
+    non-identity masked parent). Parent `us` keys redacted to year 9999, child `ns`, WARN: the
+    fixed type is `ns`, the matched value is outside its range, so the run refuses with the one
+    code and the instant appears nowhere in the error chain; the oracle completes (SEMANTIC_
+    DIFFERENCES T-1). Main completes instead, publishing the child keys as false orphans."""
+    shape = _far_date_redacted_parent(OrphanPolicy.WARN)
+    _d2b.run_full(shape)
+    with pytest.raises(ExecutionError) as exc:
+        _dco.run_ooc(shape)
+    assert exc.value.code == "out_of_core_fk_key_dtype_unsupported"
+    link: BaseException | None = exc.value
+    while link is not None:
+        assert "9999" not in str(link) and "9999" not in repr(link.args)
+        link = link.__cause__ or link.__context__
+
+
+def test_a_far_date_masked_parent_completes_under_fail_FB() -> None:
+    """Under FAIL the fixed type is the masked-parent type (`us`), so no unification and no
+    range refusal: the run completes equal to the oracle. Main aborts on false orphans."""
+    shape = _far_date_redacted_parent(OrphanPolicy.FAIL)
+    reference = _d2b.run_full(shape).outputs["C"].column("n").combine_chunks()
+    got = _dco.run_ooc(shape).outputs["C"].column("n").combine_chunks()
+    _tf.assert_matches_reference(reference, got, _tf.ts("us"))
