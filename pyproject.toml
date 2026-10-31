@@ -84,7 +84,7 @@ dependencies = [
     # Upper bound pinned in S11: Polars ships a major every ~6 months and the
     # expression surface evolves; the execution-substrate path is validated
     # against the 1.x I/O API, so cap below 2.0 until a 2.x validation pass.
-    "polars>=1.0,<2.0",
+    "polars>=1.0,<3.0",
     "duckdb>=0.10.0",
     # QA Q16 (2026-05-30): execution/_transforms.py pins df.eval to engine=numexpr
     # so the Python-engine fallback (which can expose @var-based builtin escapes
