@@ -224,7 +224,10 @@ def test_sign_publish_verifies_version_set_and_signatures_before_creating_the_re
     # from the secret (a self-check with the private key proves nothing).
     assert first("verify-signatures") > first(" sign ")
     verify_run = runs[first("verify-signatures")][1]
-    assert ".github/release-keys/decoy-release-key.pub.pem" in verify_run
+    job = _wf()["jobs"]["sign-publish"]
+    assert '--pubkey "$PUBKEY"' in verify_run
+    assert job["env"]["PUBKEY"] == ".github/release-keys/decoy-release-key.pub.pem"
+    assert "PUBKEY" not in (steps[first("verify-signatures")].get("env") or {})
 
 
 def test_release_is_a_draft_until_every_asset_is_attached() -> None:
@@ -463,3 +466,195 @@ def test_script_refuses_unknown_subcommands_and_missing_args(tmp_path: Path) -> 
     assert _run("frobnicate").returncode != 0
     assert _run("verify-signatures").returncode != 0
     assert _run("check-version", "--expected", "0.1.0").returncode != 0
+
+
+# --- 3. paths are resolved before any cd, as the workflow passes them ---------
+# Class: a relative path invalidated by a cwd change. The workflow runs every
+# subcommand from the repo root with RELATIVE paths (.github/release-keys/...,
+# wheels, decoy-engine-native); `sign` and `verify-signatures` cd into --dir, so
+# each path option must be resolved against the caller's cwd first.
+
+
+def _relative_release_tree(tmp: Path) -> tuple[Path, Path]:
+    """A repo-root-shaped tree: keys under .github/release-keys, wheels/, native dir."""
+    root = tmp / "root"
+    keys = root / ".github" / "release-keys"
+    keys.mkdir(parents=True)
+    priv, pub = _keypair(keys, "decoy-release-key")
+    _wheel_dir(root)
+    _native_dir(root)
+    return root, priv
+
+
+REL_PUB = ".github/release-keys/decoy-release-key.pub.pem"
+REL_PRIV = ".github/release-keys/decoy-release-key.key.pem"
+
+
+def test_every_subcommand_accepts_relative_paths_from_the_repo_root(tmp_path: Path) -> None:
+    # The sign-publish job's sequence, verbatim in shape: relative key, dir and
+    # native-dir paths, cwd = repo root.
+    root, _priv = _relative_release_tree(tmp_path)
+    seq = [
+        (
+            "check-version",
+            "--expected",
+            "0.1.0",
+            "--native-dir",
+            "decoy-engine-native",
+            "--dir",
+            "wheels",
+        ),
+        ("check-wheel-set", "--expected", "0.1.0", "--dir", "wheels"),
+        ("assert-key-matches", "--pubkey", REL_PUB, "--privkey", REL_PRIV),
+        ("sign", "--privkey", REL_PRIV, "--dir", "wheels"),
+        ("verify-signatures", "--pubkey", REL_PUB, "--dir", "wheels"),
+    ]
+    for args in seq:
+        r = _run(*args, cwd=root)
+        assert r.returncode == 0, (args[0], r.stderr)
+    assert len(list((root / "wheels").glob("*.sig"))) == 13
+
+
+def test_relative_paths_resolve_against_the_callers_cwd_not_dir(tmp_path: Path) -> None:
+    # Non-vacuity for the class: a key that exists ONLY relative to --dir (not to
+    # the caller's cwd) must not be picked up after the cd.
+    root, _priv = _relative_release_tree(tmp_path)
+    wheels = root / "wheels"
+    shutil.copy(root / REL_PRIV, wheels / "only-here.key.pem")
+    r = _run("sign", "--privkey", "only-here.key.pem", "--dir", "wheels", cwd=root)
+    assert r.returncode != 0 and "private key file not found" in r.stderr
+    assert not list(wheels.glob("*.sig"))
+
+
+# --- 4. the wheel name is checked as a whole PEP 427 name ---------------------
+# Class: a glob or field cut that lets one wheel-name field absorb another. A
+# PEP 427 build tag (name-ver-BUILD-py-abi-plat) or a different version must not
+# satisfy a cell.
+
+_BUILD_TAGGED = "decoy_engine_native-0.1.0-1-cp310-cp310-win_amd64.whl"
+
+
+def _swap_cell(
+    d: Path, new_name: str, old: str = "decoy_engine_native-0.1.0-cp310-cp310-win_amd64.whl"
+) -> None:
+    (d / old).rename(d / new_name)
+    lines = [
+        f"{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.name}" for p in sorted(d.glob("*.whl"))
+    ]
+    (d / "SHA256SUMS").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        _BUILD_TAGGED,
+        "decoy_engine_native-0.2.0-cp310-cp310-win_amd64.whl",
+        "decoy_engine_native-0.1.0-x-cp310-cp310-win_amd64.whl",
+        "decoy_engine_native_evil-0.1.0-cp310-cp310-win_amd64.whl",
+    ],
+)
+def test_check_wheel_set_rejects_a_cell_filled_by_a_wrong_wheel_name(
+    tmp_path: Path, name: str
+) -> None:
+    d = _wheel_dir(tmp_path)
+    assert _run("check-wheel-set", "--expected", "0.1.0", "--dir", str(d)).returncode == 0
+    _swap_cell(d, name)
+    r = _run("check-wheel-set", "--expected", "0.1.0", "--dir", str(d))
+    assert r.returncode != 0, name
+    assert "cp310/win_amd64, found 0" in r.stderr
+
+
+def test_check_wheel_set_rejects_a_macos_tag_that_spans_fields(tmp_path: Path) -> None:
+    d = _wheel_dir(tmp_path)
+    _swap_cell(
+        d,
+        "decoy_engine_native-0.1.0-cp311-cp311-macosx_11_x86_64_arm64.whl",
+        old="decoy_engine_native-0.1.0-cp311-cp311-macosx_11_0_arm64.whl",
+    )
+    r = _run("check-wheel-set", "--expected", "0.1.0", "--dir", str(d))
+    assert r.returncode != 0 and "cp311/macosx_*_arm64, found 0" in r.stderr
+
+
+def test_check_wheel_set_without_expected_still_refuses_mixed_versions(tmp_path: Path) -> None:
+    d = _wheel_dir(tmp_path)
+    assert _run("check-wheel-set", "--dir", str(d)).returncode == 0
+    _swap_cell(d, "decoy_engine_native-0.2.0-cp310-cp310-win_amd64.whl")
+    r = _run("check-wheel-set", "--dir", str(d))
+    assert r.returncode != 0 and "cp310/win_amd64, found 0" in r.stderr
+
+
+def test_check_version_rejects_a_build_tagged_wheel(tmp_path: Path) -> None:
+    native = _native_dir(tmp_path)
+    d = _wheel_dir(tmp_path)
+    _swap_cell(d, _BUILD_TAGGED)
+    r = _run("check-version", "--expected", "0.1.0", "--native-dir", str(native), "--dir", str(d))
+    assert r.returncode != 0 and _BUILD_TAGGED in r.stderr
+
+
+def test_check_wheel_set_accepts_binary_mode_manifest_lines(tmp_path: Path) -> None:
+    # `sha256sum -b` writes `<hash> *<name>`; the manifest cross-check must read the
+    # same name sha256sum --check reads.
+    d = _wheel_dir(tmp_path)
+    lines = (d / "SHA256SUMS").read_text().splitlines()
+    (d / "SHA256SUMS").write_text(
+        "\n".join(ln[:64] + " *" + ln[66:] for ln in lines) + "\n", encoding="utf-8"
+    )
+    r = _run("check-wheel-set", "--expected", "0.1.0", "--dir", str(d))
+    assert r.returncode == 0, r.stderr
+    # still a cross-check, not a pass-through: a dropped line stays red
+    (d / "SHA256SUMS").write_text(
+        "\n".join(ln[:64] + " *" + ln[66:] for ln in lines[1:]) + "\n", encoding="utf-8"
+    )
+    assert _run("check-wheel-set", "--expected", "0.1.0", "--dir", str(d)).returncode != 0
+
+
+def test_check_wheel_set_rejects_a_malformed_manifest_line(tmp_path: Path) -> None:
+    d = _wheel_dir(tmp_path)
+    with (d / "SHA256SUMS").open("a", encoding="utf-8") as fh:
+        fh.write("not-a-digest  decoy_engine_native-0.1.0-cp310-cp310-win_amd64.whl\n")
+    assert _run("check-wheel-set", "--expected", "0.1.0", "--dir", str(d)).returncode != 0
+
+
+# --- 5. one key path in the signing job ---------------------------------------
+
+
+def test_sign_publish_names_the_committed_key_once_via_pubkey() -> None:
+    job = _wf()["jobs"]["sign-publish"]
+    assert job["env"]["PUBKEY"] == ".github/release-keys/decoy-release-key.pub.pem"
+    for s in job["steps"]:
+        assert "PUBKEY" not in (s.get("env") or {}), "a step must not override PUBKEY"
+        assert "decoy-release-key.pub.pem" not in s.get("run", ""), s.get("name")
+    runs = "\n".join(s.get("run", "") for s in job["steps"])
+    assert 'verify-signatures \\\n            --pubkey "$PUBKEY"' in runs or (
+        'verify-signatures --pubkey "$PUBKEY"' in runs
+    )
+    assert 'assert-key-matches --pubkey "$PUBKEY"' in runs
+
+
+def test_workflow_passes_the_expected_version_to_check_wheel_set() -> None:
+    runs = "\n".join(s.get("run", "") for s in _wf()["jobs"]["sign-publish"]["steps"])
+    assert 'check-wheel-set --expected "${RELEASE_VERSION#native-v}" --dir wheels' in runs
+
+
+def test_check_version_regex_alone_refuses_a_malformed_tag(tmp_path: Path) -> None:
+    # Isolates the PEP 440 gate: the tree agrees with the malformed value, so only
+    # the regex can refuse it.
+    native = _native_dir(tmp_path, "v0.1.0")
+    r = _run("check-version", "--expected", "v0.1.0", "--native-dir", str(native))
+    assert r.returncode != 0 and "not a plain PEP 440 version" in r.stderr
+
+
+def test_messages_name_dir_as_given_not_the_resolved_cwd(tmp_path: Path) -> None:
+    # Resolving paths must not put the runner's absolute cwd into the log.
+    canary = "rel-canary-7f3a"
+    (tmp_path / canary).mkdir()
+    priv, pub = _keypair(tmp_path)
+    native = _native_dir(tmp_path)
+    for args in (
+        ("sign", "--privkey", str(priv), "--dir", canary),
+        ("verify-signatures", "--pubkey", str(pub), "--dir", canary),
+        ("check-version", "--expected", "0.1.0", "--native-dir", str(native), "--dir", canary),
+    ):
+        r = _run(*args, cwd=tmp_path)
+        assert r.returncode != 0 and canary in r.stderr, args[0]
+        assert str(tmp_path) not in r.stderr, args[0]

@@ -14,14 +14,17 @@
 #   assert-key-matches --pubkey PEM --privkey PEM
 #   verify-signatures  --pubkey PEM --dir DIR
 #   check-version      --expected VER --native-dir DIR [--dir DIR]
-#   check-wheel-set    --dir DIR
+#   check-wheel-set    [--expected VER] --dir DIR
+#
+# Path options may be relative to the caller's cwd (the workflow passes repo-root
+# relative paths); parse_opts makes them absolute before any subcommand cd's.
 #   assert-on-main     --sha SHA --main-ref REF
 set -euo pipefail
 
 PLACEHOLDER='__DECOY_RELEASE_PUBLIC_KEY__'
 PYTHONS=(cp310 cp311 cp312)
-# Platform-tag patterns of the four approved companion targets. macOS carries the
-# deployment target in its tag (macosx_<major>_<minor>_arm64), so it is a glob.
+# Labels of the four approved companion targets (PLATFORM_RES holds the matching
+# rules). macOS carries the deployment target in its tag (macosx_<major>_<minor>_arm64).
 PLATFORMS=('manylinux_2_28_x86_64' 'manylinux_2_28_aarch64' 'win_amd64' 'macosx_*_arm64')
 
 die() { echo "native-release: $*" >&2; exit 1; }
@@ -35,7 +38,16 @@ refuse_placeholder() {  # $1 public key PEM path
 }
 
 # --- argument parsing: --name value pairs into $opt_<name> ----------------------
-opt_privkey= opt_pubkey= opt_dir= opt_expected= opt_native_dir= opt_sha= opt_main_ref=
+opt_privkey= opt_pubkey= opt_dir= opt_dir_shown= opt_expected= opt_native_dir= opt_sha= opt_main_ref=
+# Every option that names a file or directory. sign and verify-signatures cd into
+# --dir, so a relative path left as given would resolve against the wrong cwd.
+PATH_OPTS=(opt_privkey opt_pubkey opt_dir opt_native_dir)
+absolute() {  # $1 path; no symlink resolution, no existence requirement
+  case $1 in
+    /*) printf '%s\n' "$1" ;;
+    *) printf '%s/%s\n' "$PWD" "$1" ;;
+  esac
+}
 parse_opts() {
   while [ $# -gt 0 ]; do
     case $1 in
@@ -50,6 +62,12 @@ parse_opts() {
     esac
     [ $# -ge 2 ] || die "option $1 needs a value"
     shift 2
+  done
+  # Messages name --dir as the caller gave it, so the runner's cwd stays out of logs.
+  opt_dir_shown=$opt_dir
+  local v
+  for v in "${PATH_OPTS[@]}"; do
+    [ -z "${!v}" ] || printf -v "$v" '%s' "$(absolute "${!v}")"
   done
 }
 require() { for v in "$@"; do [ -n "${!v}" ] || die "missing required option --${v#opt_}"; done; }
@@ -75,7 +93,7 @@ cmd_sign() {
     openssl base64 -A -in "$raw" -out "$f.sig"
     n=$((n + 1))
   done < <(signed_files)
-  [ "$n" -gt 0 ] || die "nothing to sign in $opt_dir"
+  [ "$n" -gt 0 ] || die "nothing to sign in $opt_dir_shown"
   echo "signed $n file(s)"
 }
 
@@ -114,7 +132,7 @@ cmd_verify_signatures() {
       echo "native-release: INVALID signature for $f" >&2; bad=1
     fi
   done < <(signed_files)
-  [ "$n" -gt 0 ] || die "no wheels or manifest found in $opt_dir"
+  [ "$n" -gt 0 ] || die "no wheels or manifest found in $opt_dir_shown"
   [ -e SHA256SUMS ] || die "SHA256SUMS missing"
   # A signature with no corresponding release file is a stray; refuse rather than
   # publish an asset nobody can account for.
@@ -148,29 +166,65 @@ cmd_check_version() {
     for f in "$opt_dir"/*.whl; do
       [ -e "$f" ] || continue
       n=$((n + 1))
-      v=$(basename "$f" | cut -d- -f2)
-      [ "$v" = "$opt_expected" ] || { echo "native-release: wheel $(basename "$f") carries version '$v' != expected '$opt_expected'" >&2; bad=1; }
+      f=$(basename "$f")
+      if ! wheel_fields "$f"; then
+        echo "native-release: wheel $f is not a 5-field PEP 427 name (name-version-python-abi-platform; no build tag)" >&2; bad=1
+      elif [ "$w_ver" != "$opt_expected" ]; then
+        echo "native-release: wheel $f carries version '$w_ver' != expected '$opt_expected'" >&2; bad=1
+      fi
     done
-    [ "$n" -gt 0 ] || die "no wheels in $opt_dir"
+    [ "$n" -gt 0 ] || die "no wheels in $opt_dir_shown"
   fi
   [ "$bad" = 0 ] || die "version mismatch; refusing to publish"
   echo "version $opt_expected agrees across tag, pyproject.toml, Cargo.toml and $n wheel(s)"
 }
 
 # --- check-wheel-set ------------------------------------------------------------
-# Exactly one wheel per (python, platform) cell of the approved 4 x 3 matrix, every
-# wheel accounted for by a cell, and the manifest listing exactly those wheels.
+# Splits a wheel file name into its PEP 427 fields. Exactly five: a build tag (or any
+# extra dash) makes it a different name, never a looser match of an approved one.
+w_name= w_ver= w_py= w_abi= w_plat=
+wheel_fields() {  # $1 file name; sets w_*; non-zero unless exactly 5 non-empty fields
+  local stem=${1%.whl} extra
+  [ "$stem" != "$1" ] || return 1
+  IFS=- read -r w_name w_ver w_py w_abi w_plat extra <<<"$stem"
+  [ -z "$extra" ] && [ -n "$w_plat" ] && [ -n "$w_name" ] && [ -n "$w_ver" ] && [ -n "$w_py" ] && [ -n "$w_abi" ]
+}
+# Anchored platform-tag regexes, one per PLATFORMS label (same order).
+PLATFORM_RES=('^manylinux_2_28_x86_64$' '^manylinux_2_28_aarch64$' '^win_amd64$' '^macosx_[0-9]+_[0-9]+_arm64$')
+# File names listed in a sha256sum manifest, text (`<hash>  <name>`) or binary
+# (`<hash> *<name>`) mode -- the names `sha256sum --check` reads. Fails on any other line.
+manifest_names() {  # $1 manifest
+  local line
+  while IFS= read -r line || [ -n "$line" ]; do
+    [[ $line =~ ^[0-9a-f]{64}\ [\ *](.+)$ ]] || return 1
+    printf '%s\n' "${BASH_REMATCH[1]}"
+  done <"$1"
+}
+# Exactly one wheel per (python, platform) cell of the approved 4 x 3 matrix, each
+# named decoy_engine_native-<version>-<py>-<py>-<platform>.whl, every wheel accounted
+# for by a cell, and the manifest listing exactly those wheels. <version> is
+# --expected (the workflow always passes it); without it, every wheel must carry the
+# same version, so a set can never mix releases.
 cmd_check_wheel_set() {
   parse_opts "$@"; require opt_dir
   cd "$opt_dir"
-  local py plat f count bad=0 total=0 matched=0 expected=$(( ${#PYTHONS[@]} * ${#PLATFORMS[@]} ))
-  for f in *.whl; do [ -e "$f" ] && total=$((total + 1)); done
+  local py i f count want=$opt_expected bad=0 total=0 matched=0 expected=$(( ${#PYTHONS[@]} * ${#PLATFORMS[@]} ))
+  for f in *.whl; do
+    [ -e "$f" ] || continue
+    total=$((total + 1))
+    if [ -z "$want" ] && wheel_fields "$f"; then want=$w_ver; fi
+  done
   for py in "${PYTHONS[@]}"; do
-    for plat in "${PLATFORMS[@]}"; do
+    for i in "${!PLATFORMS[@]}"; do
       count=0
-      for f in decoy_engine_native-*-"$py"-"$py"-$plat.whl; do [ -e "$f" ] && count=$((count + 1)); done
+      for f in *.whl; do
+        [ -e "$f" ] && wheel_fields "$f" || continue
+        [ "$w_name" = decoy_engine_native ] && [ "$w_ver" = "$want" ] \
+          && [ "$w_py" = "$py" ] && [ "$w_abi" = "$py" ] && [[ $w_plat =~ ${PLATFORM_RES[$i]} ]] \
+          && count=$((count + 1))
+      done
       if [ "$count" != 1 ]; then
-        echo "native-release: expected exactly 1 wheel for $py/$plat, found $count" >&2; bad=1
+        echo "native-release: expected exactly 1 wheel for $py/${PLATFORMS[$i]}, found $count" >&2; bad=1
       fi
       matched=$((matched + count))
     done
@@ -179,9 +233,13 @@ cmd_check_wheel_set() {
   [ "$total" = "$expected" ] || { echo "native-release: expected $expected wheels, found $total" >&2; bad=1; }
   if [ -e SHA256SUMS ]; then
     local listed present
-    listed=$(awk '{print $2}' SHA256SUMS | sort)
-    present=$(for f in *.whl; do [ -e "$f" ] && echo "$f"; done | sort)
-    [ "$listed" = "$present" ] || { echo "native-release: SHA256SUMS does not list exactly the wheels present" >&2; bad=1; }
+    if listed=$(manifest_names SHA256SUMS); then
+      listed=$(sort <<<"$listed")
+      present=$(for f in *.whl; do [ -e "$f" ] && echo "$f"; done | sort)
+      [ "$listed" = "$present" ] || { echo "native-release: SHA256SUMS does not list exactly the wheels present" >&2; bad=1; }
+    else
+      echo "native-release: SHA256SUMS has a line that is not '<sha256> <space|*><name>'" >&2; bad=1
+    fi
   else
     echo "native-release: SHA256SUMS missing" >&2; bad=1
   fi
