@@ -41,7 +41,14 @@ from decoy_engine.execution._publication_observer import (
     PublicationEvidence,
     capture_publication_failure,
 )
-from decoy_engine.fileaccess import FileAccess, FileRequest, FileRole, OutputDir, OutputTxn
+from decoy_engine.fileaccess import (
+    FileAccess,
+    FileAccessUnavailable,
+    FileRequest,
+    FileRole,
+    OutputDir,
+    OutputTxn,
+)
 from decoy_engine.fileaccess.adapters import arrow as arrow_adapter
 from decoy_engine.progress import get_active_channel
 from decoy_engine.reasons import CleanupState, Operation, PublicationState
@@ -409,10 +416,22 @@ class ParquetTransactionalSink:
     def _cleanup_staging(self) -> None:
         evidence = self.publication_evidence
         txn, self._txn = self._txn, None
-        if txn is not None:
-            try:
-                txn.abort()
-            except Exception:
-                evidence.cleanup = CleanupState.FAILED
-            else:
-                evidence.cleanup = CleanupState.CONFIRMED
+        if txn is None:
+            return
+        # Confirm by looking where there is a path to look at (the ambient policy); a strict
+        # stage has none and its discard swallows removal errors, so its state stays unknown.
+        try:
+            stage: str | None = txn.local_stage_path()
+        except FileAccessUnavailable:
+            stage = None
+        try:
+            txn.abort()
+        except Exception:
+            evidence.cleanup = CleanupState.FAILED
+            return
+        if stage is None:
+            evidence.cleanup = CleanupState.UNKNOWN
+        else:
+            evidence.cleanup = (
+                CleanupState.FAILED if Path(stage).exists() else CleanupState.CONFIRMED
+            )

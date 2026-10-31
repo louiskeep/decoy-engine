@@ -41,6 +41,56 @@ def test_corrupt_parquet_is_a_read_error_not_a_denial(rooted, root_dir) -> None:
     _assert_clean(ei.value, root_dir)
 
 
+_CANARY = "CANARY-SSN-123456789"
+
+
+def _walk(exc: BaseException) -> list[str]:
+    """Every string a caller can reach from the exception: text, args, notes, cause, context."""
+    seen: set[int] = set()
+    parts: list[str] = []
+
+    def rec(e: BaseException | None) -> None:
+        if e is None or id(e) in seen:
+            return
+        seen.add(id(e))
+        parts.extend([str(e), repr(e), repr(e.args), repr(getattr(e, "__notes__", None))])
+        rec(e.__cause__)
+        rec(e.__context__)
+
+    rec(exc)
+    return parts
+
+
+@pytest.mark.parametrize("boundary", ["lazy_source_to_table", "reference_table_customer"])
+def test_the_pyarrow_24_dataset_text_never_reaches_a_strict_error(
+    boundary, rooted, root_dir
+) -> None:  # type: ignore[no-untyped-def]
+    """pyarrow 24 wraps a malformed-Parquet open in `Error creating dataset. Could not read
+    schema from '<path>'...`, which names the file twice. At both engine boundaries the
+    E1-0 characterization pins for the ambient policy (R1 `LazySource.to_table`, R4
+    `load_table("customer:...")`), a strict policy turns it into the typed read error with
+    the config position and nothing else: a value-bearing file name is in no reachable string."""
+    from decoy_engine import fileaccess
+    from decoy_engine.profile._readers import LazySource
+    from decoy_engine.reference_tables._loader import load_table
+
+    name = f"{_CANARY}.parquet"
+    (root_dir / name).write_text("x")
+    with fileaccess.scope(rooted), pytest.raises(FileAccessReadError) as ei:
+        if boundary == "lazy_source_to_table":
+            LazySource(Path(name)).to_table()
+        else:
+            load_table(f"customer:{name}")
+    _assert_clean(ei.value, root_dir)
+    reachable = " ".join(_walk(ei.value))
+    assert _CANARY not in reachable
+    assert "Error creating dataset" not in reachable and "Parquet" not in reachable
+    assert str(ei.value) in {
+        "file could not be read: source.path",
+        "file could not be read: joint_mask.reference",
+    }
+
+
 def test_malformed_yaml_and_json_are_read_errors(rooted, root_dir) -> None:  # type: ignore[no-untyped-def]
     (root_dir / "bad.yaml").write_text("a: [unclosed\n  - : :\n")
     (root_dir / "bad.json").write_text("{nope")

@@ -59,7 +59,7 @@ def test_capacity_exhausted_at_write_is_an_environment_repair_with_truthful_clea
     def full(*a, **k):
         raise OSError(fault, "No space left on device", f"{SECRET_PATH}/customers.parquet")
 
-    monkeypatch.setattr("decoy_engine.execution._transactional_sink.pq.write_table", full)
+    monkeypatch.setattr("decoy_engine.fileaccess.adapters.arrow.pq.write_table", full)
     sink = ParquetTransactionalSink(tmp_path / "out")
     with pytest.raises(OSError) as info:
         _run(tmp_path, sink)
@@ -87,7 +87,7 @@ def test_enospc_during_footer_close_reports_the_close_operation(
             super().close()
             raise OSError(errno.ENOSPC, "No space left on device", f"{SECRET_PATH}/footer")
 
-    monkeypatch.setattr("decoy_engine.execution._transactional_sink.pq.ParquetWriter", FullOnClose)
+    monkeypatch.setattr("decoy_engine.fileaccess.adapters.arrow.pq.ParquetWriter", FullOnClose)
     sink = ParquetTransactionalSink(tmp_path / "out")
     schema = pa.schema([("a", pa.int64())])
     with pytest.raises(OSError) as info:
@@ -107,7 +107,7 @@ def test_an_unrelated_oserror_is_a_publication_failure_not_a_capacity_claim(
     def broken(*a, **k):
         raise OSError(errno.EIO, "Input/output error", f"{SECRET_PATH}/x")
 
-    monkeypatch.setattr("decoy_engine.execution._transactional_sink.pq.write_table", broken)
+    monkeypatch.setattr("decoy_engine.fileaccess.adapters.arrow.pq.write_table", broken)
     with pytest.raises(OSError) as info:
         _run(tmp_path, ParquetTransactionalSink(tmp_path / "out"))
     record = reason_from_exception(info.value)

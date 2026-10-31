@@ -2,7 +2,7 @@
 # `ordinal` is the index of the call among identical sinks in the function. An entry may be
 # removed freely; adding one needs a `rule` (how the path is built), an `owner` and a `reason`.
 # `ambient_only` marks a caller-derived path that is reached only after `require_ambient`.
-# Count: 189 (asserted by the sentry).
+# Count: 190 (asserted by the sentry).
 
 [[entry]]
 module = "decoy_engine/connectors/sftp.py"
@@ -48,6 +48,16 @@ ordinal = 0
 rule = "`/proc/<pid>/status` or `/proc/self/status`, a constant procfs path"
 owner = "cam"
 reason = "process memory readout for the governor; no caller or config value reaches the path"
+
+[[entry]]
+module = "decoy_engine/execution/_isolated_reason.py"
+function = "commit_reason"
+sink = "Path.exists"
+ordinal = 0
+rule = "the caller's staging_dir (or the engine-created staging under its temp_dir) that run_pipeline_isolated already refused under every policy but the ambient one (`_require_ambient_for_paths`, before any I/O)"
+owner = "cam"
+reason = "F29 cleanup evidence for a failed isolated commit: confirms by looking whether the staging directory is gone; the same path class as the _isolated_commit.py sinks"
+ambient_only = true
 
 [[entry]]
 module = "decoy_engine/execution/_isolated_commit.py"

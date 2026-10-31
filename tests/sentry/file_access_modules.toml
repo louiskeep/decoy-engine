@@ -29,6 +29,8 @@ local_constructors = [
 ambient_only_modules = [
   "decoy_engine/connectors/postgres_snapshot.py",
   "decoy_engine/execution/_isolated_commit.py",
+  # F29 commit evidence: called only from _isolated_run.py with its staging_dir, after the guard.
+  "decoy_engine/execution/_isolated_reason.py",
   "decoy_engine/execution/_isolated_run.py",
   "decoy_engine/execution/out_of_core/_scratch.py",
 ]

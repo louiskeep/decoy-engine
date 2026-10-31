@@ -108,8 +108,12 @@ def test_r1_lazy_source_to_table_missing_and_malformed() -> None:
     Path("bad.parquet").write_text("x")
     exc = _raises(LazySource(Path("bad.parquet")).to_table)
     assert isinstance(exc, pa.ArrowInvalid)
+    # Recorded from unmodified origin/main a6e5c252 under the lock (pyarrow 24.0.0), which wraps
+    # the open failure in a dataset-creation prefix. The strict policy never shows this text
+    # (test_policy_errors: the pyarrow 24 shape is a read error naming only the position).
     assert _text(exc) == (
-        "Could not open Parquet input source 'bad.parquet': Parquet file size is 1 bytes, "
+        "Error creating dataset. Could not read schema from 'bad.parquet'. Is this a 'parquet' "
+        "file?: Could not open Parquet input source 'bad.parquet': Parquet file size is 1 bytes, "
         "smaller than the minimum file footer (8 bytes)"
     )
 
@@ -126,7 +130,10 @@ def test_r4_reference_table_errors() -> None:
     assert _text(missing) == "failed to read Parquet at nope.parquet: nope.parquet"
     Path("bad.parquet").write_text("x")
     bad = _raises(lambda: load_table("customer:bad.parquet"))
-    assert _text(bad).startswith("failed to read Parquet at bad.parquet: Could not open Parquet")
+    assert _text(bad).startswith(
+        "failed to read Parquet at bad.parquet: Error creating dataset. Could not read schema "
+        "from 'bad.parquet'. Is this a 'parquet' file?: Could not open Parquet"
+    )
     pq.write_table(pa.table({"x": [1]}), "noid.parquet")
     noid = _raises(lambda: load_table("customer:noid.parquet"))
     assert _text(noid) == (
