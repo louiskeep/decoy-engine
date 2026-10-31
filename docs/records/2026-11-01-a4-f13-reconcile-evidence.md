@@ -89,7 +89,12 @@ Dennis's boundary review together with item 2.
 - Module splits (pure moves, re-exported where callers import them): `_chunked.py` ->
   `_chunked_aggregate.py` (586 lines, entry removed, under the 600 goal);
   `_pipeline_routing_signals.py` -> `_pipeline_routing_samples.py` (639 -> 613);
-  `native/_chunked_entry.py` -> `native/_chunked_result.py` (666 -> 620). No ceiling raised.
+  `native/_chunked_entry.py` -> `native/_chunked_oracle_rows.py` (666 -> 665; `_oracle_preserved_rows`
+  only). A first cut also moved `_native_chunk_result`, which took `ExecutionResult` out of
+  `_chunked_entry`'s namespace and broke the monkeypatch in
+  `tests/native/test_chunked_entry_side_channels.py::test_native_route_builds_no_result_objects_without_a_sink`
+  (caught by the 3.12 full run). Class-level check afterwards: every name each split removed from its
+  module namespace was grepped against every test reference; that was the only one. No ceiling raised.
   Behavior equality: the route corpus golden (no re-capture after the split) and the full suite.
   The three new modules join the physical-seam permitted list (they import nothing from
   `execution.physical`).
