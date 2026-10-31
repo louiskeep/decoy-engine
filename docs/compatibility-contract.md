@@ -44,6 +44,12 @@ unchanged and duck-typed providers keep working through `secret_providers.prepar
 `secret_cache_policy` keywords of `run_pipeline` are additive. Removed pre-GA with no shim:
 `keyprovider.resolve_mask_secret_ref` and `resolve_key_provider`.
 
+**Pre-GA correction (main health, 2026-10-31).** `RESERVED_NAMES` of the `when` closed grammar gains `type`
+(additive to the list, breaking for a config whose `when:` references a column named `type`, which now fails
+with `when_outside_closed_grammar`). It is listed on every interpreter rather than derived from
+`keyword.softkwlist`, so a config validates identically on every supported Python. The list is frozen
+on purpose; after GA any further addition is a breaking change.
+
 Until GA: use this document as the design target so we don't paint ourselves
 into a corner. After GA: this document is binding.
 
