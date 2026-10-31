@@ -73,11 +73,11 @@ def load_name_hint_terms(
     else:
         policy = fileaccess.capture(file_access)
         handle = policy.open_dir(
-            FileRequest(FileRole.MODEL_PACK_ROOT, "read_dir", str(directory), "storm.name_hints")
+            FileRequest(FileRole.MODEL_PACK_ROOT, "read_dir", str(directory), "pre_scan.name_hints")
         )
         # Diagnostics name the directory by path under the ambient CLI policy and by config
         # position under any other.
-        target = directory if fileaccess.is_ambient(policy) else Path("storm.name_hints")
+        target = directory if fileaccess.is_ambient(policy) else Path("pre_scan.name_hints")
     try:
         return _load_terms(handle, target)
     finally:
@@ -87,7 +87,7 @@ def load_name_hint_terms(
 def _child_display(target: Path, name: str) -> str:
     """How a diagnostic names a file the manifest lists. Never `target / name`: an absolute or
     `..` member name would replace or climb out of the directory display and surface a real
-    locator (``Path("storm.name_hints") / "/etc/secret"`` is ``Path("/etc/secret")``). The
+    locator (``Path("pre_scan.name_hints") / "/etc/secret"`` is ``Path("/etc/secret")``). The
     ambient CLI keeps the real path; any other policy names the capability display and the bare
     member name only."""
     if fileaccess.is_ambient():

@@ -2,7 +2,7 @@
 # `ordinal` is the index of the call among identical sinks in the function. An entry may be
 # removed freely; adding one needs a `rule` (how the path is built), an `owner` and a `reason`.
 # `ambient_only` marks a caller-derived path that is reached only after `require_ambient`.
-# Count: 190 (asserted by the sentry).
+# Count: 191 (asserted by the sentry).
 
 [[entry]]
 module = "decoy_engine/connectors/sftp.py"
@@ -58,6 +58,15 @@ rule = "the caller's staging_dir (or the engine-created staging under its temp_d
 owner = "cam"
 reason = "F29 cleanup evidence for a failed isolated commit: confirms by looking whether the staging directory is gone; the same path class as the _isolated_commit.py sinks"
 ambient_only = true
+
+[[entry]]
+module = "decoy_engine/execution/_transactional_sink.py"
+function = "ParquetTransactionalSink._cleanup_staging"
+sink = "Path.exists"
+ordinal = 0
+rule = "the engine-created stage directory of the ambient output transaction, as `OutputTxn.local_stage_path()` returns it after the sink's own `begin`; a strict transaction raises FileAccessUnavailable there, so no path is ever looked at under a strict policy"
+owner = "cam"
+reason = "F29 cleanup evidence: after abort the sink confirms by looking that its stage is gone (truthful `cleanup_state`), the same check the pre-E1 sink made on its own staging path"
 
 [[entry]]
 module = "decoy_engine/execution/_isolated_commit.py"

@@ -131,7 +131,7 @@ class ModelPackLoader:
         self._label = (
             self._handle.display
             if self._handle is not None
-            else (str(pack_dir) if fileaccess.is_ambient(self._policy) else "storm.model_pack")
+            else (str(pack_dir) if fileaccess.is_ambient(self._policy) else "pre_scan.model_pack")
         )
         self._trusted = trusted
 
@@ -142,7 +142,7 @@ class ModelPackLoader:
             raise FileAccessUnavailable("no policy and no directory handle")
         return self._policy.open_dir(
             FileRequest(
-                FileRole.MODEL_PACK_ROOT, "read_dir", str(self._pack_dir), "storm.model_pack"
+                FileRole.MODEL_PACK_ROOT, "read_dir", str(self._pack_dir), "pre_scan.model_pack"
             )
         )
 

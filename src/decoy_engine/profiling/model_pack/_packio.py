@@ -15,7 +15,7 @@ from decoy_engine import fileaccess
 from decoy_engine.fileaccess import DirHandle, FileAccess, FileRequest, FileRole
 
 #: Config position a model-pack diagnostic names the directory by (X2).
-_PACK_POSITION = "storm.model_pack"
+_PACK_POSITION = "pre_scan.model_pack"
 
 
 def member_display(pack_dir: Path) -> str:
@@ -27,7 +27,7 @@ def member_display(pack_dir: Path) -> str:
 def open_pack_dir(pack_dir: Path, file_access: FileAccess | None = None) -> DirHandle:
     policy = fileaccess.capture(file_access)
     return policy.open_dir(
-        FileRequest(FileRole.MODEL_PACK_ROOT, "read_dir", str(pack_dir), "storm.model_pack")
+        FileRequest(FileRole.MODEL_PACK_ROOT, "read_dir", str(pack_dir), "pre_scan.model_pack")
     )
 
 
@@ -53,7 +53,7 @@ def write_member(
     policy = fileaccess.capture(file_access)
     out = policy.output_dir(
         FileRequest(
-            FileRole.MODEL_PACK_ROOT, "write", str(Path(pack_dir) / name), "storm.model_pack"
+            FileRole.MODEL_PACK_ROOT, "write", str(Path(pack_dir) / name), "pre_scan.model_pack"
         )
     )
     with out.begin("file", "replace", label="pack") as txn:

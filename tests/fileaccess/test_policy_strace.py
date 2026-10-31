@@ -154,7 +154,7 @@ mark("/COLD-END")
     window = run_traced(script, tmp_path).window("COLD-BEGIN", "COLD-END")
     grammar = [ln for ln in window if "when_grammar.lark" in ln and "openat" in ln]
     assert grammar, "the packaged when_grammar.lark read was not observed at import"
-    # Import-time reads that are registered: the shipped name-hint YAML (storm detectors load it
+    # Import-time reads that are registered: the shipped name-hint YAML (pre-scan detectors load it
     # at import) and the default log file. Anything else read at import is a new, unregistered one.
     registered = ("detection/name_hints/v1/", "logs/decoy_engine.log")
     package_data = [
