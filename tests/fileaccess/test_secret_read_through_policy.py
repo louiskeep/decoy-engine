@@ -81,3 +81,40 @@ def test_the_owner_only_check_runs_on_a_policy_issued_descriptor(
         key_provider_from_ref(f"file:{unsafe}", file_access=recorded)
     assert info.value.code == "secret_file_permissions_unsafe"
     assert recorded.requests == [(FileRole.SECRET, "read", FIELD, "granted")]
+
+
+def test_a_denied_secret_in_an_ordinary_job_leaks_no_path(
+    tmp_path: Path, root: Path, recorded: RecordingFileAccess, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Self-attack: a keyed job whose `file:` secret sits outside the policy root, with a
+    value-bearing canary in the path. Error text, repr, reason record and logs stay clean."""
+    import logging
+    import traceback
+
+    import pyarrow as pa
+
+    from decoy_engine.execution import run_pipeline
+    from decoy_engine.reason_adapter import reason_from_exception
+
+    canary = "tenant-a-prod-CANARY-9f3e"
+    secret = _secret(tmp_path, name=f"{canary}.key")
+    config = {
+        "version": 2,
+        "global_settings": {"seed": 1, "mask_secret_ref": f"file:{secret}"},
+        "tables": [{"name": "t", "columns": [{"name": "e", "strategy": "hash", "namespace": "e"}]}],
+    }
+    caplog.set_level(logging.DEBUG)
+    with pytest.raises(FileAccessDenied) as info:
+        run_pipeline(
+            config,
+            sources={"t": pa.table({"e": ["a@x.example"]})},
+            engine_version="self-attack",
+            file_access=recorded,
+        )
+    exc = info.value
+    record = reason_from_exception(exc)
+    assert (record.namespace, record.code) == ("decoy", "file_access_denied")
+    surfaces = [str(exc), repr(exc), repr(exc.args), "".join(traceback.format_exception(exc))]
+    surfaces += [repr(record), caplog.text]
+    assert all(canary not in text for text in surfaces)
+    assert recorded.requests[0] == (FileRole.SECRET, "read", FIELD, "denied")

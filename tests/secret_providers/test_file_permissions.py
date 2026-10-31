@@ -107,19 +107,32 @@ def test_the_mode_is_checked_on_the_descriptor_that_is_read(
     expected = _key(_write(tmp_path, 0o600, OTHER, name="control.key"))
     path = _write(tmp_path, 0o600, OTHER, name="target.key")
     swap = _write(tmp_path, 0o644, GOOD, name="swap.key")
-    real_fstat = os.fstat
-    calls: list[int] = []
+    real_fstat, real_stat = os.fstat, os.stat
+    calls: list[str] = []
 
-    def spy(fd: int) -> os.stat_result:
-        result = real_fstat(fd)
+    def swap_once() -> None:
         if not calls:
             os.replace(swap, path)
-        calls.append(fd)
+
+    def fstat_spy(fd: int) -> os.stat_result:
+        result = real_fstat(fd)
+        swap_once()
+        calls.append("fstat")
         return result
 
-    monkeypatch.setattr(os, "fstat", spy)
+    def stat_spy(target: object, *args: object, **kwargs: object) -> os.stat_result:
+        result = real_stat(target, *args, **kwargs)  # type: ignore[arg-type]
+        if str(target) == str(path):
+            swap_once()
+            calls.append("stat")
+        return result
+
+    # Whichever metadata call judges the mode, the file is swapped right after it: a path `stat`
+    # followed by an open would then read (and judge) the swapped 0644 file.
+    monkeypatch.setattr(os, "fstat", fstat_spy)
+    monkeypatch.setattr(os, "stat", stat_spy)
     assert _key(path) == expected
-    assert calls, "the provider never checked the opened descriptor"
+    assert calls and calls[0] == "fstat", calls
 
 
 @pytest.mark.parametrize("outcome", ["success", "refusal", "read_error", "missing"])

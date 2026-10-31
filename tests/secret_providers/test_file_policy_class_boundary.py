@@ -263,3 +263,16 @@ def test_the_ambient_policy_keeps_mains_behavior(
     assert called, "positive control: the ambient read went through the policy"
     assert isinstance(exc, MaskSecretError) and exc.code == code
     _assert_value_free(exc)
+
+
+def test_another_provider_cannot_raise_the_carrier(registry, root) -> None:
+    """The carrier is honored only from the built-in file provider: another provider raising it
+    (by mistake or by copying the engine's code) gets `secret_provider_unavailable`."""
+    from decoy_engine.secret_providers._errors import KeptFileFailure
+
+    registry.register(_ExtensionRaising(lambda: KeptFileFailure("file_access_denied")))
+    config = {"global_settings": {"mask_secret_ref": "ext:x?encoding=raw"}, "tables": []}
+    with fileaccess.scope(root):
+        exc = _caught(lambda: admit_mask_key(config, registry=registry))
+    assert isinstance(exc, MaskSecretError) and exc.code == "secret_provider_unavailable"
+    _assert_value_free(exc)
