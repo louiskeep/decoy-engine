@@ -39,6 +39,7 @@ from typing import TYPE_CHECKING, Any
 import pyarrow as pa
 
 from decoy_engine import reasons
+from decoy_engine.config import post_scan_integrity_requested
 from decoy_engine.execution._adapter import ExecutionResult
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._publication_observer import observed_abort, observed_commit
@@ -93,36 +94,36 @@ def decide_output_mode(
 
     The first failing condition names the reason and the run stays resident. The
     consumers declined last (validators, quarantine, fidelity, post-validation,
-    run_storm) read the whole output after the mask step, so a run that has one cannot
+    post_scan_integrity) read the whole output after the mask step, so a run that has one cannot
     stream."""
     if not stream_chunked_output:
-        return "resident", "streaming_disabled"
+        return "resident", reasons.route.STREAMING_DISABLED
     if sink is None:
-        return "resident", "no_sink"
+        return "resident", reasons.route.NO_SINK
     if not isinstance(sink, TransactionalSink):
-        return "resident", "sink_not_streaming"
+        return "resident", reasons.route.SINK_NOT_STREAMING
     if not dispatcher_enabled:
-        return "resident", "legacy_lane"
+        return "resident", reasons.route.LEGACY_LANE
     if split is not None:
         if split.full_frame:
-            return "resident", "split_full_frame_present"
+            return "resident", reasons.route.SPLIT_FULL_FRAME_PRESENT
         if any(name not in split.dispatched for name in resident_names):
-            return "resident", "split_extra_sources_present"
+            return "resident", reasons.route.SPLIT_EXTRA_SOURCES_PRESENT
     if config.get("validators"):
-        return "resident", "validators_present"
+        return "resident", reasons.route.VALIDATORS_PRESENT
     if (config.get("quarantine") or {}).get("enabled"):
-        return "resident", "quarantine_enabled"
+        return "resident", reasons.route.QUARANTINE_ENABLED
     if fidelity_report:
-        return "resident", "fidelity_report"
+        return "resident", reasons.route.FIDELITY_REPORT
     if post_validation:
-        return "resident", "post_validation"
-    if config.get("run_storm"):
-        # STORM post-mask (`compute_storm_postmask`) reads `result.outputs`; a streamed
+        return "resident", reasons.route.POST_VALIDATION
+    if post_scan_integrity_requested(config):
+        # Post-scan integrity (`compute_post_scan_integrity`) reads `result.outputs`; a streamed
         # run leaves it empty, so the requested check would silently no-op. Keep the
         # output resident -- masked values are chunk-invariant, so the resident chunked
-        # output is STORM-correct, matching how run_storm declines the sequential, mixed,
+        # output is Post-scan-correct, matching how post_scan_integrity declines the sequential, mixed,
         # out-of-core and unified-slice routes for the same whole-output reason.
-        return "resident", "run_storm"
+        return "resident", reasons.route.POST_SCAN_INTEGRITY
     return "streamed", REASON_ELIGIBLE
 
 

@@ -92,7 +92,7 @@ def _build_config(n_rows: int, faker_type: str, *, flag_on: bool) -> dict[str, A
     if not flag_on:
         column["pooled"] = False
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": _SEED},
         "sources": {},
         "tables": [{"name": "t", "row_count": n_rows, "generate_columns": [column]}],

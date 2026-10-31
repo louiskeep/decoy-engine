@@ -264,7 +264,7 @@ def _shift_and_format(anchor: pd.Timestamp, offset: int, position: int) -> str:
     # The pandas/strftime error text can quote the anchor or shifted date, so the cause is
     # dropped (raised outside the except block: no __cause__, no __context__).
     try:
-        out = anchor + pd.Timedelta(days=offset)
+        out = anchor + pd.Timedelta(offset, unit="D")
         if SUPPORTED_MIN <= out <= SUPPORTED_MAX:
             return str(out.strftime(_DATE_FMT))
     except (OverflowError, ValueError):

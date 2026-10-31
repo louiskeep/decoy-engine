@@ -173,7 +173,7 @@ def _mask_chunk_native(
             raise AssertionError(
                 f"native route admitted column {name!r} with strategy {strategy!r} but no "
                 "resolved operator parameters; the preflight admission check should have "
-                "excluded this table, or `_prepared_categoricals` should have prepared it."
+                "excluded this table, or `prepared_categoricals` should have prepared it."
             )
         source = chunk.column(name)
         t0 = time.perf_counter()

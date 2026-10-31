@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import math
 import tempfile
+from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -27,7 +28,7 @@ from hypothesis import HealthCheck, given, settings
 
 from decoy_engine.execution import ParquetTransactionalSink
 from decoy_engine.execution._errors import ExecutionError
-from decoy_engine.execution.out_of_core import run_fk_out_of_core
+from decoy_engine.execution.out_of_core import run_fk_out_of_core as _run_fk_out_of_core
 from decoy_engine.execution.out_of_core._batch_join import ChildFkBatchJoiner
 from decoy_engine.execution.out_of_core._external_sort import BoundedExternalSorter
 from decoy_engine.execution.out_of_core._stream_join import StreamFkJoiner
@@ -35,6 +36,7 @@ from decoy_engine.plan._types import ColumnSeed, SeedEnvelope, TableSeed
 from decoy_engine.providers_v2 import get_default_registry
 from decoy_engine.relationships._graph import OrphanPolicy, RelationshipEdge, RelationshipGraph
 from decoy_engine.relationships._namespace import NamespaceRegistry
+from tests._keyed_secret import THROWAWAY_KEY_PROVIDER
 from tests.parity.test_out_of_core_fk_parity import (
     _assert_value_equal,
     _build_chain,
@@ -47,11 +49,15 @@ from tests.parity.test_out_of_core_fk_parity import (
     _run_oracle,
     _single_edge_case,
 )
-from tests.unit.execution._stream_driver_harness import run_stream_driver
+from tests.unit.execution._stream_driver_harness import run_stream_driver as _run_stream_driver
 
 _REG = get_default_registry()
 _NS = NamespaceRegistry(bindings=())
 _SEED = b"\x55" * 8
+# Keyed masking has no job_seed fallback; both routes (and the direct driver, whose `mask_key`
+# would otherwise default to the job_seed) must run under the same admitted secret.
+run_fk_out_of_core = partial(_run_fk_out_of_core, key_provider=THROWAWAY_KEY_PROVIDER)
+run_stream_driver = partial(_run_stream_driver, mask_key=THROWAWAY_KEY_PROVIDER.mask_key())
 
 
 def _col(strategy: str, *, namespace: str | None = None) -> ColumnSeed:

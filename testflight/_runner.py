@@ -176,9 +176,13 @@ def run_pipeline_twice(
         Tuple (result_a, result_b) of ExecutionResult instances.
     """
     from decoy_engine.execution._pipeline import run_pipeline
+    from decoy_engine.keyprovider import SecretKeyProvider
 
     run_kwargs: dict[str, Any] = {
         "engine_version": ENGINE_VERSION,
+        # Keyed strategies need a secret in every release phase (F13); a fixed throwaway keeps
+        # the golden fingerprints reproducible.
+        "key_provider": SecretKeyProvider(b"decoy-testflight-throwaway-secret-0123"),
         "derive_key": key_resolver,
         "fidelity_report": True,
         "now_iso": FIXED_TS,

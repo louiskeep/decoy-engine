@@ -285,8 +285,7 @@ def test_compatibility_rejection_is_identical_on_both_entry_points(case: str) ->
     assert entry == want
 
 
-def _ga_keyed(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
-    monkeypatch.setattr("decoy_engine.keyprovider.is_pre_ga", lambda: False)
+def _keyed_config() -> dict[str, Any]:
     return make_config([redact("s"), hash_col("h")])
 
 
@@ -318,7 +317,16 @@ def _bucket_without_namespace() -> dict[str, Any]:
 
 
 @pytest.mark.parametrize("zero_chunks", [True, False], ids=["zero_chunks", "first_chunk_only"])
-@pytest.mark.parametrize("case", ["keyed_no_secret", "bad_corpus", "bucket_namespace", "vault_key"])
+@pytest.mark.parametrize(
+    "case",
+    [
+        # No secret at all is the point of this case, so it opts out of the default throwaway.
+        pytest.param("keyed_no_secret", marks=pytest.mark.no_default_secret),
+        "bad_corpus",
+        "bucket_namespace",
+        "vault_key",
+    ],
+)
 def test_eager_oracle_checks_fail_the_same_way_with_no_side_effects(
     case: str, zero_chunks: bool, monkeypatch: pytest.MonkeyPatch, tmp_path: Any
 ) -> None:
@@ -333,7 +341,7 @@ def test_eager_oracle_checks_fail_the_same_way_with_no_side_effects(
     kp: Any = key_provider()
     vault = VaultWriter(vault_key())
     if case == "keyed_no_secret":
-        config, kp = _ga_keyed(monkeypatch), None
+        config, kp = _keyed_config(), None
     elif case == "bad_corpus":
         config = _bad_corpus(tmp_path)
     elif case == "bucket_namespace":

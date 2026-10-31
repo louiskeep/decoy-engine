@@ -113,7 +113,7 @@ succeeded -- leaks nothing.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Generator
 from pathlib import Path
 
 import pyarrow as pa
@@ -495,7 +495,7 @@ class BoundedExternalSorter:
                 if out_batch.num_rows:
                     writer.write_batch(out_batch)
 
-    def iter_ordered(self) -> Iterator[pa.RecordBatch]:
+    def iter_ordered(self) -> Generator[pa.RecordBatch, None, None]:
         """Yield the fully ordered result, one stored batch at a time.
         Requires `finish()` to have run first."""
         if not self._finished:

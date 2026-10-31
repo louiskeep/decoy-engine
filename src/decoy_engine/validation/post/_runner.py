@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Mapping
-from dataclasses import asdict, replace
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 from decoy_engine import reasons
@@ -118,7 +118,7 @@ class PostValidationRunner:
                                 code=reasons.warning.SCAN_CRASHED,
                                 provider="post_validation",
                                 column=name,
-                                detail={"error": repr(exc)},
+                                detail={"error_type": type(exc).__name__},
                             ),
                         ),
                     )
@@ -126,10 +126,6 @@ class PostValidationRunner:
 
         elapsed_ms = (time.perf_counter() - t0) * 1000.0
         summary = _merge(outcomes, execution_result.warnings, elapsed_ms)
-        # Close the S9 quality_metrics={} carry-forward (Dennis S9 M2): write the
-        # serialized block into the mutable dict the frozen ExecutionResult holds.
-        # No S9 surface change -- quality_metrics was typed dict[str, Any] for this.
-        execution_result.quality_metrics["quality_summary"] = asdict(summary)
         return summary
 
 

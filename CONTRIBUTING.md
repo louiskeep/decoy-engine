@@ -49,7 +49,7 @@ The suite is parallel-safe and finishes in roughly 10 minutes this way, versus o
 - One topic per PR. Smaller diffs land faster.
 - Use `git commit -s` to sign off (Developer Certificate of Origin). The project is licensed Apache-2.0; contributions are accepted under the same license.
 - Public-API changes (`decoy_engine.__init__.__all__`) and YAML-surface changes (new strategy, new transform op, renamed key) need a `CHANGELOG.md` entry under `[Unreleased]`.
-- Capability changes (a new mask/generate strategy, synthetic provider, connector, STORM detector, or disguise) must regenerate the capability matrix: run `python scripts/gen_capability_matrix.py` and commit the updated `docs/capability-matrix.md`. The `tests/sentry/test_capability_matrix.py` guard fails CI if you forget, so a new capability cannot ship without its docs entry.
+- Capability changes (a new mask/generate strategy, synthetic provider, connector, detector, or disguise) must regenerate the capability matrix: run `python scripts/gen_capability_matrix.py` and commit the updated `docs/capability-matrix.md`. The `tests/sentry/test_capability_matrix.py` guard fails CI if you forget, so a new capability cannot ship without its docs entry.
 - If a change is more than one PR, file an Issue describing the plan first.
 
 ## Pre-merge gate for large engine blocks

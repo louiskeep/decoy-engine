@@ -176,7 +176,7 @@ def native_date_shift(
         )
         kept = np.flatnonzero(~preserved)
         return (
-            pc.replace_with_mask(col.cast(pa.string()), rest, computed),
+            pc.replace_with_mask(col.cast(pa.string()), rest, computed),  # type: ignore[attr-defined, unused-ignore]
             tuple(int(kept[p]) for p in positions),
         )
 

@@ -45,7 +45,7 @@ def _build_plan_and_inputs(tmp_path: Path):
     pq.write_table(source, path)
     config = PipelineConfig.model_validate(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 1},
             "sources": {"t": {"type": "file", "format": "parquet", "path": str(path)}},
             "targets": {

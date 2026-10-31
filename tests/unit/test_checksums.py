@@ -75,11 +75,11 @@ class TestNpi:
         assert checksums.calc_check_digit("npi", "123456789") == "3"
 
     def test_calc_check_digit_cms_example_2(self) -> None:
-        # From storm/_validators.py verified comment: 1679576722
+        # From pre-scan/_validators.py verified comment: 1679576722
         assert checksums.calc_check_digit("npi", "167957672") == "2"
 
     def test_calc_check_digit_cms_example_3(self) -> None:
-        # From storm/_validators.py: 1000000004
+        # From pre-scan/_validators.py: 1000000004
         assert checksums.calc_check_digit("npi", "100000000") == "4"
 
     def test_validate_valid(self) -> None:

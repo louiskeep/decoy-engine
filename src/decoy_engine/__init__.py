@@ -257,6 +257,15 @@ from decoy_engine.sdk import (
     TransientError,
     WriteResult,
 )
+from decoy_engine.secret_providers import (
+    SecretCachePolicy,
+    SecretDescriptor,
+    SecretProvider,
+    SecretProviderError,
+    SecretProviderRegistry,
+    SecretRef,
+    register_secret_provider,
+)
 from decoy_engine.unmask import UnmaskColumnReport, UnmaskResult, unmask_pipeline
 from decoy_engine.validation import validate_config
 from decoy_engine.validation.post import (
@@ -403,7 +412,13 @@ __all__ = [
     "RetryEvent",
     "RetryInfo",
     "RouteEvent",
+    "SecretCachePolicy",
+    "SecretDescriptor",
     "SecretKeyProvider",
+    "SecretProvider",
+    "SecretProviderError",
+    "SecretProviderRegistry",
+    "SecretRef",
     "SeedKeyProvider",
     "SentinelFlag",
     "StrategyError",
@@ -465,6 +480,7 @@ __all__ = [
     "register_faker_list_provider",
     "register_faker_provider",
     "register_faker_provider_v2",
+    "register_secret_provider",
     "run_config_only_checks",
     "run_discovery_sql",
     "run_mask_chunked",

@@ -14,7 +14,7 @@ def _base_config(tmp_path) -> dict[str, Any]:
     customers_path = str(tmp_path / "customers.parquet")
     orders_path = str(tmp_path / "orders.parquet")
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 1},
         "sources": {
             "customers": {"type": "file", "format": "parquet", "path": customers_path},

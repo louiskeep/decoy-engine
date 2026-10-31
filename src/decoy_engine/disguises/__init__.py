@@ -8,7 +8,7 @@ diff.
 Public entry point:
     load_disguises() -> list[Disguise]   # loads every *.yaml in this package
 
-Bones-only scope for `feature/storm-forecast-mvp`: the loader + schema + two
+Bones-only scope for `feature/pre-scan-forecast-mvp`: the loader + schema + two
 example bundles (`default.yaml`, `hipaa.yaml`) ship in this PR. The full 8-set
 of compliance Disguises (PCI/GLBA/GDPR/CCPA/FERPA/SOX + the rest of HIPAA's
 18 identifiers) follows in a separate PR - see DISGUISES.md.

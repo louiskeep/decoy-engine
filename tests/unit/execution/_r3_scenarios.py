@@ -101,7 +101,7 @@ def single_table(tmp: Path, *, hash_column: bool = True) -> tuple[dict[str, Any]
     table = pa.table(data)
     cfg = PipelineConfig.model_validate(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 42},
             "sources": {
                 "t": {"type": "file", "format": "parquet", "path": _write(tmp, table, "t")}
@@ -120,7 +120,7 @@ def two_tables(tmp: Path) -> tuple[dict[str, Any], dict[str, pa.Table]]:
     }
     cfg = PipelineConfig.model_validate(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 42},
             "sources": {
                 n: {"type": "file", "format": "parquet", "path": _write(tmp, t, n)}
@@ -152,7 +152,7 @@ def bad_date_table(tmp: Path, *, quarantine: Path | None) -> tuple[dict[str, Any
     values[7] = "not-a-date"
     table = pa.table({"d": pa.array(values), "k": pa.array(range(N))})
     raw: dict[str, Any] = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42},
         "sources": {"t": {"type": "file", "format": "parquet", "path": _write(tmp, table, "t")}},
         "tables": [
@@ -205,7 +205,7 @@ def fk_job(
         ),
     }
     cfg = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 7},
         "sources": {
             n: {"type": "file", "path": _write(tmp, t, n), "format": "parquet"}

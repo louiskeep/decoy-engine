@@ -1,4 +1,4 @@
-"""YAML loader for the STORM detector name-hint library.
+"""YAML loader for the detector name-hint library.
 
 Reads ``v1/manifest.yaml`` to find the file load order, walks each
 listed file, validates the entries, and returns a flat dict mapping

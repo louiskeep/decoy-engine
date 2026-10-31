@@ -18,7 +18,7 @@
     "namespace": "runtime",
     "outcome": "success",
     "phase": "resolve",
-    "registry_version": "1.0.0",
+    "registry_version": "1.1.0",
     "retry_class": "retry_operation",
     "schema_version": 1,
     "severity": "error"
@@ -39,7 +39,7 @@
     "namespace": "runtime",
     "outcome": "configuration",
     "phase": "resolve",
-    "registry_version": "1.0.0",
+    "registry_version": "1.1.0",
     "retry_class": "configuration_repair",
     "schema_version": 1,
     "severity": "error"
@@ -64,7 +64,7 @@
     "namespace": "decoy",
     "outcome": "execution",
     "phase": "unknown",
-    "registry_version": "1.0.0",
+    "registry_version": "1.1.0",
     "retry_class": "never",
     "schema_version": 1,
     "severity": "error"
@@ -88,7 +88,7 @@
     "namespace": "runtime",
     "outcome": "configuration",
     "phase": "resolve",
-    "registry_version": "1.0.0",
+    "registry_version": "1.1.0",
     "retry_class": "configuration_repair",
     "schema_version": 1,
     "severity": "error"
@@ -112,7 +112,7 @@
     "namespace": "decoy",
     "outcome": "execution",
     "phase": "resolve",
-    "registry_version": "1.0.0",
+    "registry_version": "1.1.0",
     "retry_class": "unknown",
     "schema_version": 1,
     "severity": "error"
@@ -141,7 +141,7 @@
     "namespace": "runtime",
     "outcome": "configuration",
     "phase": "resolve",
-    "registry_version": "1.0.0",
+    "registry_version": "1.1.0",
     "retry_class": "configuration_repair",
     "schema_version": 2,
     "severity": "error"
@@ -162,7 +162,7 @@
     "namespace": "decoy",
     "outcome": "execution",
     "phase": "unknown",
-    "registry_version": "1.0.0",
+    "registry_version": "1.1.0",
     "retry_class": "never",
     "schema_version": 1,
     "severity": "error"
@@ -192,7 +192,7 @@
     "object_ref": null,
     "phase": null,
     "reason": null,
-    "registry_version": "1.0.0",
+    "registry_version": "1.1.0",
     "sequence": 8,
     "table": null,
     "ts": 1700000000.0
@@ -239,12 +239,12 @@
      "namespace": "runtime",
      "outcome": "configuration",
      "phase": "resolve",
-     "registry_version": "1.0.0",
+     "registry_version": "1.1.0",
      "retry_class": "configuration_repair",
      "schema_version": 1,
      "severity": "error"
     },
-    "registry_version": "1.0.0",
+    "registry_version": "1.1.0",
     "retry": null,
     "rows_in": null,
     "rows_out": null,
@@ -280,7 +280,7 @@
     "phase": "mask",
     "publication": null,
     "reason": null,
-    "registry_version": "1.0.0",
+    "registry_version": "1.1.0",
     "retry": null,
     "rows_in": 3,
     "rows_out": null,
@@ -311,7 +311,7 @@
     "kind": "rate",
     "object_ref": "t",
     "phase": "mask",
-    "registry_version": "1.0.0",
+    "registry_version": "1.1.0",
     "retry": null,
     "rows_done": 10,
     "rows_per_sec": 100.0,
@@ -333,7 +333,7 @@
     "object_ref": null,
     "phase": null,
     "reason": null,
-    "registry_version": "1.0.0",
+    "registry_version": "1.1.0",
     "retry": {
      "attempt": 2,
      "delay_s": null,
@@ -363,7 +363,7 @@
     "phase": "resolve",
     "reason": null,
     "reason_code": null,
-    "registry_version": "1.0.0",
+    "registry_version": "1.1.0",
     "route": "sequential",
     "sequence": 4,
     "table": null,
@@ -408,12 +408,12 @@
      "namespace": "runtime",
      "outcome": "configuration",
      "phase": "resolve",
-     "registry_version": "1.0.0",
+     "registry_version": "1.1.0",
      "retry_class": "configuration_repair",
      "schema_version": 1,
      "severity": "error"
     },
-    "registry_version": "1.0.0",
+    "registry_version": "1.1.0",
     "sequence": 6,
     "sink_failures": 0,
     "status": "error",
@@ -436,7 +436,7 @@
     "object_ref": "t",
     "phase": null,
     "reason": null,
-    "registry_version": "1.0.0",
+    "registry_version": "1.1.0",
     "sequence": 5,
     "table": "t",
     "ts": 1700000000.0
@@ -460,7 +460,7 @@
    "namespace": "decoy",
    "outcome": "verification",
    "phase": "verify",
-   "registry_version": "1.0.0",
+   "registry_version": "1.1.0",
    "retry_class": "never",
    "schema_version": 1,
    "severity": "error"
@@ -481,7 +481,7 @@
    "namespace": "decoy",
    "outcome": "publication",
    "phase": "publish",
-   "registry_version": "1.0.0",
+   "registry_version": "1.1.0",
    "retry_class": "environment_repair",
    "schema_version": 1,
    "severity": "error"
@@ -502,7 +502,7 @@
    "namespace": "runtime",
    "outcome": "configuration",
    "phase": "resolve",
-   "registry_version": "1.0.0",
+   "registry_version": "1.1.0",
    "retry_class": "configuration_repair",
    "schema_version": 1,
    "severity": "error"
@@ -523,7 +523,7 @@
    "namespace": "decoy",
    "outcome": "cancelled",
    "phase": "unknown",
-   "registry_version": "1.0.0",
+   "registry_version": "1.1.0",
    "retry_class": "never",
    "schema_version": 1,
    "severity": "info"
@@ -544,7 +544,7 @@
    "namespace": "decoy",
    "outcome": "findings",
    "phase": "verify",
-   "registry_version": "1.0.0",
+   "registry_version": "1.1.0",
    "retry_class": "never",
    "schema_version": 1,
    "severity": "warning"
@@ -565,7 +565,7 @@
    "namespace": "decoy",
    "outcome": "publication",
    "phase": "publish",
-   "registry_version": "1.0.0",
+   "registry_version": "1.1.0",
    "retry_class": "never",
    "schema_version": 1,
    "severity": "error"
@@ -586,7 +586,7 @@
    "namespace": "decoy",
    "outcome": "execution",
    "phase": "publish",
-   "registry_version": "1.0.0",
+   "registry_version": "1.1.0",
    "retry_class": "retry_operation",
    "schema_version": 1,
    "severity": "error"
@@ -607,7 +607,7 @@
    "namespace": "decoy",
    "outcome": "execution",
    "phase": "mask",
-   "registry_version": "1.0.0",
+   "registry_version": "1.1.0",
    "retry_class": "unknown",
    "schema_version": 1,
    "severity": "error"
@@ -628,12 +628,12 @@
    "namespace": "decoy",
    "outcome": "verification",
    "phase": "verify",
-   "registry_version": "1.0.0",
+   "registry_version": "1.1.0",
    "retry_class": "unknown",
    "schema_version": 1,
    "severity": "error"
   }
  },
  "reason_schema_version": 1,
- "registry_version": "1.0.0"
+ "registry_version": "1.1.0"
 }

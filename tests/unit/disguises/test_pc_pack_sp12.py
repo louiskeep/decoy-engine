@@ -19,9 +19,9 @@ Key assertions:
   - Account rule: fpe (ALPHANUM).
 
 Honest scope notes baked into assertion messages:
-  - Policy numbers and claim numbers have NO registered STORM detector;
+  - Policy numbers and claim numbers have NO registered detector;
     those columns cannot be auto-routed by this pack.
-  - Premium/loss/reserve amounts have no STORM detector; configure bucketize
+  - Premium/loss/reserve amounts have no detector; configure bucketize
     manually in the recipe YAML.
   - Loss descriptions require manual text_mask configuration.
   - VIN checksum: vin is accurate (ISO 3779 / NHTSA 49 CFR Part 565).
@@ -340,11 +340,11 @@ class TestPcHonestCoverage:
     """Honesty guards: the P&C pack must not claim capabilities it lacks.
 
     These assertions prevent documentation drift where the pack summary or
-    field_rules over-claim coverage not backed by shipped STORM detectors.
+    field_rules over-claim coverage not backed by shipped detectors.
     """
 
     def test_H1_no_policy_number_detector_in_rules(self):
-        """Policy numbers have no registered STORM detector.
+        """Policy numbers have no registered detector.
 
         The pack must NOT carry a field_rule referencing a 'policy_number'
         or 'policy_num' detector because no such detector exists.
@@ -357,11 +357,11 @@ class TestPcHonestCoverage:
         ]
         assert not bad_rules, (
             f"P&C pack must NOT carry field_rules for policy number detectors "
-            f"(no such STORM detector registered). Found: {bad_rules}"
+            f"(no such detector registered). Found: {bad_rules}"
         )
 
     def test_H2_no_claim_number_detector_in_rules(self):
-        """Claim numbers have no registered STORM detector."""
+        """Claim numbers have no registered detector."""
         pack = _pc_pack()
         bad_rules = [
             r
@@ -370,11 +370,11 @@ class TestPcHonestCoverage:
         ]
         assert not bad_rules, (
             f"P&C pack must NOT carry field_rules for claim number detectors "
-            f"(no such STORM detector). Found: {bad_rules}"
+            f"(no such detector). Found: {bad_rules}"
         )
 
     def test_H3_no_loss_amount_detector_in_rules(self):
-        """Premium/loss/reserve amounts have no STORM detector."""
+        """Premium/loss/reserve amounts have no detector."""
         pack = _pc_pack()
         bad_rules = [
             r

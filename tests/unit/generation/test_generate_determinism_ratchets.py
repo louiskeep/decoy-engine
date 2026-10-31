@@ -32,7 +32,7 @@ def _multi_col_config(row_count: int = 24) -> dict:
     null_probability (numpy family), and a second distinct faker column so
     cross-column independence is observable."""
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42},
         "sources": {},
         "tables": [
@@ -142,7 +142,7 @@ class TestCrossColumnIndependence:
         # they cannot witness an F3 regression.
         cats = ["A", "B", "C", "D", "E", "F", "G", "H"]
         cfg = {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 42},
             "sources": {},
             "tables": [
@@ -195,7 +195,7 @@ _POOLED_ROW_COUNT = _faker_pool.N_THRESHOLD  # eligible: pool_eligible checks n 
 
 def _pooled_multi_col_config(row_count: int = _POOLED_ROW_COUNT) -> dict:
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42},
         "sources": {},
         "tables": [

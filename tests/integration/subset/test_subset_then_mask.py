@@ -25,7 +25,7 @@ def _hash_col(name: str, namespace: str) -> dict:
 
 def _mask_config(customers_path: str, orders_path: str, out_dir, seed: int) -> dict:
     raw = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": seed},
         "sources": {
             "customers": {"type": "file", "format": "parquet", "path": customers_path},

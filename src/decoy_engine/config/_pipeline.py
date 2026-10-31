@@ -1,7 +1,7 @@
 """PipelineConfig: the top-level model.
 
 Per advisory axis-by-axis ratification:
-- `version: Literal[1]` (axis 6 + 3: schema version, single pipeline per file)
+- `version: Literal[2]` (schema version 2; single pipeline per file)
 - `global_settings: GlobalSettings` required (axis 6: V1 naming convention kept)
 - `sources: dict[str, SourceDescriptor]` (axis 1=A: inline declarations;
   empty dict permitted IFF every table is generate-kind)
@@ -34,6 +34,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from decoy_engine.config._global_settings import GlobalSettings
 from decoy_engine.config._namespaces import NamespaceConfig
+from decoy_engine.config._post_scan import PostScanConfig
 from decoy_engine.config._relationships import RelationshipConfig
 from decoy_engine.config._sources import FileSource, SourceDescriptor
 from decoy_engine.config._subset import SubsetConfig
@@ -56,7 +57,7 @@ class PipelineConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
-    version: Literal[1]
+    version: Literal[2]
     # FC-1 (2026-06-02): top-level `mode` discriminator dropped. Per-table
     # kind is inferred from `columns` (mask) vs `generate_columns` (generate)
     # presence on each TableConfig; a config that lists both kinds is a
@@ -71,14 +72,9 @@ class PipelineConfig(BaseModel):
     relationships: list[RelationshipConfig] = Field(default_factory=list)
     targets: dict[str, TargetDescriptor] = Field(min_length=1)
     namespaces: dict[str, NamespaceConfig] = Field(default_factory=dict)
-    # Reframe-A (2026-05-31): per-pipeline opt-in for the Storm post-mask
-    # check. When True, the platform runner fires the storm.postmask hook
-    # after a successful mask job + persists the JobStormReport row. The
-    # engine validates the shape; the engine does NOT consume the value at
-    # run time -- the platform runner reads it. Default False so existing
-    # pipelines are unchanged (run_storm omitted -> False; no new behavior).
-    # Per PO lock 2026-05-30 docs/audit/po-decisions-storm-reframe-2026-05-30.md.
-    run_storm: bool = False
+    # Post-scan controls. `post_scan.integrity` runs the post-mask integrity suite
+    # (report-only) over the finished output; omitted -> disabled.
+    post_scan: PostScanConfig = Field(default_factory=PostScanConfig)
     # SP-05 (2026-06-27): job-level validator framework (P5.INFRA.4).
     # Each entry names a validator and supplies its per-validator config.
     # The engine runs them after all column passes complete. Default empty

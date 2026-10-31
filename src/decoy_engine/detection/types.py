@@ -1,6 +1,6 @@
 """Detection-layer dataclasses (PII/format detector output).
 
-Split out of the former `storm/types.py` by the STORM taxonomy rename: these
+Split out of the former `profiling/types.py` by the Pre-scan taxonomy rename: these
 are the detection-concern types (detector specs, matches, reasoning signals).
 The profiling-concern types (`FieldStats`, `ColumnProfile`, ...) live in
 `decoy_engine.profiling.types` and import `DetectorMatch` / `DetectionSignal`
@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 class CustomDetectorSpec:
     """Caller-supplied detector definition that runs alongside the built-ins.
 
-    PR6 of the storm port plan. The platform persists detectors in
+    PR6 of the pre-scan port plan. The platform persists detectors in
     custom_detectors and hands a list of these specs to profile_columns so
     users can add organization-specific PII patterns (e.g. UK NHS numbers, SBR
     routing numbers) without engine changes.

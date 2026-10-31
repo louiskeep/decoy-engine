@@ -418,5 +418,5 @@ def run_operator(
     evidence.batches_run += 1
     evidence.rows_seen = (evidence.rows_seen or 0) + len(array)
     if when_mask is not None:
-        evidence.rows_selected = (evidence.rows_selected or 0) + (pc.sum(when_mask).as_py() or 0)
+        evidence.rows_selected = (evidence.rows_selected or 0) + (pc.sum(when_mask).as_py() or 0)  # type: ignore[attr-defined, unused-ignore]
     return result.out, row_errors

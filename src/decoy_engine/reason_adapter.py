@@ -87,8 +87,6 @@ _CODED: tuple[tuple[str, str, str], ...] = (
 _FIXED: tuple[tuple[str, str, ReasonCode], ...] = (
     ("decoy_engine.errors", "EmptyParentPoolError", reasons.config.FK_EMPTY_PARENT_POOL),
     ("decoy_engine.errors", "UnknownFKColumnError", reasons.config.FK_UNKNOWN_COLUMN),
-    ("decoy_engine.execution._errors", "SeqIneligibleError", reasons.route.SEQUENTIAL_INELIGIBLE),
-    ("decoy_engine.execution._errors", "OocIneligibleError", reasons.route.OUT_OF_CORE_INELIGIBLE),
     ("decoy_engine.errors", "ConfigError", reasons.config.UNTAGGED),
     ("decoy_engine.config._errors", "PipelineConfigError", reasons.config.UNTAGGED),
     ("decoy_engine.errors", "FlagPauseSignal", reasons.decoy.RUN_PAUSED),
@@ -339,6 +337,18 @@ def _remember(exc: BaseException, record: ReasonRecord) -> None:
         exc.__dict__[_ATTR] = _Captured(_TOKEN, record)
     except Exception:
         pass
+
+
+def tag_exception(exc: BaseException, reason: ReasonCode, *, phase: Phase) -> BaseException:
+    """Name the registry reason of ``exc`` at its raise site and return ``exc``.
+
+    For a raise whose exception type is a pinned public contract (an exact ``ConfigError``) and
+    so cannot carry its identity as a subclass. The record rides the same capability channel as
+    a boundary capture, so ``reason_from_exception`` and every scope return it; the message is
+    never read. ``phase`` is the operation boundary the raise belongs to.
+    """
+    _remember(exc, ReasonRecord.for_reason(reason, phase=phase))
+    return exc
 
 
 def _stack() -> list[FailureScope]:

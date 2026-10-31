@@ -14,9 +14,10 @@ The invariants come from the module's own docstring and the `MaskSecretError`
 / `require_mask_key` docstrings in `src/decoy_engine/keyprovider.py`:
 
 - FAIL-CLOSED on a missing secret: a plan with a keyed strategy, given no
-  provider (or a provider whose resolved key is short) at GA, ALWAYS raises
-  `KeyedStrategyRequiresSecret` -- "an 8-byte job_seed fallback is NOT
-  accepted" (module docstring; `require_mask_key` docstring's gate table).
+  provider (a `SeedKeyProvider`, or a provider whose resolved key is short),
+  ALWAYS raises `KeyedStrategyRequiresSecret` in EVERY release phase -- "No
+  job_seed fallback exists in any release phase" (`require_mask_key` docstring).
+  Every such property runs in both phases by patching `decoy_engine.release.is_pre_ga`.
 - FAIL-CLOSED on a weak secret: `SecretKeyProvider.__post_init__` rejects any
   secret shorter than `MIN_SECRET_BYTES` (32, NIST SP 800-57 256-bit target;
   module docstring "Secret source" section) with `WeakMaskSecret`, always, and
@@ -35,7 +36,9 @@ The invariants come from the module's own docstring and the `MaskSecretError`
   `__repr__` overrides are explicitly there to redact (Codex MEDIUM 7,
   cited in both class docstrings) -- the raw bytes must never appear in a
   `repr()` or in any `MaskSecretError` message, including the WeakMaskSecret
-  path where a short secret is itself the offending value.
+  path where a short secret is itself the offending value. Ref-resolution
+  failures carry fixed constant messages: the ref, variable name, path and
+  secret text are absent from them.
 - ERROR TAXONOMY: each documented failure mode (`MaskSecretError.__doc__`'s
   "Codes:" list) raises the exact `code`, not merely *an* error.
 
@@ -46,6 +49,7 @@ from __future__ import annotations
 
 import base64
 import os
+from contextlib import contextmanager
 from dataclasses import dataclass
 from unittest import mock
 
@@ -54,7 +58,6 @@ from hypothesis import HealthCheck, assume, given, settings
 from hypothesis import strategies as st
 
 from decoy_engine.keyprovider import (
-    _ALWAYS_KEYED_STRATEGIES,
     MIN_SECRET_BYTES,
     KeyedStrategyRequiresSecret,
     KeyProvider,
@@ -63,17 +66,29 @@ from decoy_engine.keyprovider import (
     SecretKeyProvider,
     SeedKeyProvider,
     WeakMaskSecret,
-    _decode_secret_material,
-    _redact_ref,
     key_provider_from_ref,
     mask_key_from_provider,
     plan_has_keyed_strategy,
     require_mask_key,
-    resolve_key_provider,
     resolve_mask_key,
-    resolve_mask_secret_ref,
 )
 from decoy_engine.plan._types import ColumnSeed, SeedEnvelope, TableSeed
+from decoy_engine.secret_providers import admit_mask_key
+from decoy_engine.secret_providers._requirements import ALWAYS_KEYED_STRATEGIES
+
+# Every property here is about the ABSENCE or shape of a secret: opt out of the throwaway-secret
+# seam that would otherwise fill one in at admission.
+pytestmark = pytest.mark.no_default_secret
+
+_PHASES = (True, False)  # is_pre_ga() return values: pre-GA, GA
+
+
+@contextmanager
+def _phase(pre_ga: bool):
+    """Keyed behavior is phase-independent; prove it by pinning the release phase either way."""
+    with mock.patch("decoy_engine.release.is_pre_ga", return_value=pre_ga):
+        yield
+
 
 # Match the pilot's audit profile (tests/property/test_ri_graph_invariants.py):
 # more examples than the 100-example default, no deadline (crypto derivation is
@@ -104,6 +119,25 @@ class _MiniPlan:
         self.seed_envelope = seed_envelope
 
 
+def _config_for(plan: _MiniPlan) -> dict:
+    """The config `admit_mask_key` classifies up front (before any source read), equivalent to
+    the plan stand-in: the pre-read and compiled-plan classifiers must agree."""
+    tables = []
+    for name, table_seed in plan.seed_envelope.per_table:
+        columns = [
+            {
+                "name": col,
+                "strategy": seed.strategy,
+                "deterministic": seed.deterministic,
+                "vault": seed.vault,
+                "provider_config": dict(seed.provider_config),
+            }
+            for col, seed in table_seed.per_column
+        ]
+        tables.append({"name": name, "columns": columns})
+    return {"tables": tables}
+
+
 def _col_seed(strategy: str, *, deterministic: bool = False, vault: bool = False) -> ColumnSeed:
     return ColumnSeed(
         namespace="ns",
@@ -117,19 +151,19 @@ def _col_seed(strategy: str, *, deterministic: bool = False, vault: bool = False
     )
 
 
-# A strategy name that is NOT in `_ALWAYS_KEYED_STRATEGIES` and is neither
+# A strategy name that is NOT in `ALWAYS_KEYED_STRATEGIES` and is neither
 # `deterministic` nor `vault` by default here -- the inert baseline a plan's
 # non-keyed columns use.
 _INERT_STRATEGY = "redact"
 _non_keyed_column = _col_seed(_INERT_STRATEGY)
 
 # Three independent ways a single column becomes keyed, per
-# `_col_seed_is_keyed`'s own docstring: (1) an always-keyed strategy name,
+# `column_is_keyed`'s own docstring: (1) an always-keyed strategy name,
 # (2) the `deterministic` flag regardless of strategy, (3) `vault: true`
 # regardless of strategy (a vault column persists reversible plaintext even
 # under an anonymising strategy like `redact`).
 _keyed_column_strategy = st.one_of(
-    st.sampled_from(sorted(_ALWAYS_KEYED_STRATEGIES)).map(_col_seed),
+    st.sampled_from(sorted(ALWAYS_KEYED_STRATEGIES)).map(_col_seed),
     st.just(_col_seed(_INERT_STRATEGY, deterministic=True)),
     st.just(_col_seed(_INERT_STRATEGY, vault=True)),
 )
@@ -186,60 +220,93 @@ def test_custom_provider_satisfies_the_protocol() -> None:
 
 
 @given(keyed_plan())
-def test_keyed_plan_ga_no_provider_fails_closed(plan: _MiniPlan) -> None:
-    """A keyed plan with NO provider at GA always raises
-    `KeyedStrategyRequiresSecret`, never silently falls back to job_seed."""
+def test_keyed_plan_no_provider_fails_closed_in_both_phases(plan: _MiniPlan) -> None:
+    """A keyed plan with NO provider always raises `KeyedStrategyRequiresSecret`,
+    never silently falls back to job_seed, pre-GA or GA."""
     assert plan_has_keyed_strategy(plan)  # sanity: the strategy built a keyed plan
-    with mock.patch("decoy_engine.keyprovider.is_pre_ga", return_value=False):
-        with pytest.raises(KeyedStrategyRequiresSecret) as ei:
-            require_mask_key(plan, None)
-        assert ei.value.code == "keyed_strategy_requires_secret"
-        with pytest.raises(KeyedStrategyRequiresSecret):
-            resolve_key_provider(plan=plan, key_provider=None)
-        with pytest.raises(KeyedStrategyRequiresSecret):
-            resolve_mask_key(plan=plan, key_provider=None)
+    for pre_ga in _PHASES:
+        with _phase(pre_ga):
+            with pytest.raises(KeyedStrategyRequiresSecret) as ei:
+                require_mask_key(plan, None)
+            assert ei.value.code == "keyed_strategy_requires_secret"
+            with pytest.raises(KeyedStrategyRequiresSecret):
+                admit_mask_key(_config_for(plan), key_provider=None)
+            with pytest.raises(KeyedStrategyRequiresSecret):
+                resolve_mask_key(plan=plan, key_provider=None)
 
 
 @given(keyed_plan())
-def test_keyed_plan_pre_ga_no_provider_falls_back_to_job_seed(plan: _MiniPlan) -> None:
-    """Complement of the previous property: pre-GA the SAME keyed plan with
-    no provider legitimately returns `job_seed` (byte-identical to
-    pre-DE-02). This pins the GA gate to the `is_pre_ga()` branch, not to
-    some property of the plan shape."""
-    with mock.patch("decoy_engine.keyprovider.is_pre_ga", return_value=True):
-        assert require_mask_key(plan, None) == plan.seed_envelope.job_seed
+def test_keyed_plan_pre_ga_no_provider_does_not_fall_back_to_job_seed(plan: _MiniPlan) -> None:
+    """Complement of the previous property, inverted from the retired pre-GA fallback: the
+    SAME keyed plan with no provider pre-GA no longer returns `job_seed`; the gate is not a
+    function of `is_pre_ga()`, so neither the pre-GA return value nor any mask key is produced."""
+    with _phase(True):
+        with pytest.raises(KeyedStrategyRequiresSecret):
+            require_mask_key(plan, None)
+
+
+@given(keyed_plan(), st.integers(min_value=1, max_value=64))
+def test_keyed_plan_seed_key_provider_never_accepted(plan: _MiniPlan, size: int) -> None:
+    """`SeedKeyProvider` is never a secret for keyed work, whatever its length (even a
+    32+-byte `job_seed` that would pass a length check)."""
+    provider = SeedKeyProvider(b"\x07" * size)
+    for pre_ga in _PHASES:
+        with _phase(pre_ga):
+            with pytest.raises(KeyedStrategyRequiresSecret):
+                require_mask_key(plan, provider)
+            with pytest.raises(KeyedStrategyRequiresSecret):
+                admit_mask_key(_config_for(plan), key_provider=provider)
 
 
 @given(keyed_plan(), st.binary(min_size=0, max_size=MIN_SECRET_BYTES - 1))
-def test_keyed_plan_ga_short_resolved_key_fails_closed(plan: _MiniPlan, weak_key: bytes) -> None:
-    """Provenance-blind gate: PRESENCE of a provider is not enough at GA. A
-    resolved key shorter than `MIN_SECRET_BYTES` (a `SeedKeyProvider`'s
-    8-byte fallback, or a hollow custom provider) is rejected exactly like
-    no provider at all (Codex BLOCKER 2, cited in `require_mask_key`'s
+def test_keyed_plan_short_resolved_key_fails_closed(plan: _MiniPlan, weak_key: bytes) -> None:
+    """Provenance-blind gate: PRESENCE of a provider is not enough, in any phase. A
+    resolved key shorter than `MIN_SECRET_BYTES` (a hollow custom provider) is rejected
+    exactly like no provider at all (Codex BLOCKER 2, cited in `require_mask_key`'s
     docstring)."""
     provider = _CustomProvider(key_version="custom", _key=weak_key)
-    with mock.patch("decoy_engine.keyprovider.is_pre_ga", return_value=False):
-        with pytest.raises(KeyedStrategyRequiresSecret):
-            require_mask_key(plan, provider)
+    for pre_ga in _PHASES:
+        with _phase(pre_ga):
+            with pytest.raises(KeyedStrategyRequiresSecret):
+                require_mask_key(plan, provider)
+            with pytest.raises(KeyedStrategyRequiresSecret):
+                admit_mask_key(_config_for(plan), key_provider=provider)
 
 
 @given(keyed_plan(), st.binary(min_size=MIN_SECRET_BYTES, max_size=64))
-def test_keyed_plan_ga_strong_resolved_key_passes(plan: _MiniPlan, strong_key: bytes) -> None:
+def test_keyed_plan_strong_resolved_key_passes(plan: _MiniPlan, strong_key: bytes) -> None:
     """The mirror image of the short-key property: a resolved key that
-    clears the length bar at GA is accepted and returned verbatim."""
+    clears the length bar is accepted and returned verbatim, in either phase."""
     provider = _CustomProvider(key_version="custom", _key=strong_key)
-    with mock.patch("decoy_engine.keyprovider.is_pre_ga", return_value=False):
-        assert require_mask_key(plan, provider) == strong_key
+    for pre_ga in _PHASES:
+        with _phase(pre_ga):
+            assert require_mask_key(plan, provider) == strong_key
+            admitted = admit_mask_key(_config_for(plan), key_provider=provider)
+            try:
+                assert admitted.key_provider is not None
+                assert admitted.key_provider.mask_key() == strong_key
+            finally:
+                admitted.close()
 
 
 @given(unkeyed_plan())
-def test_unkeyed_plan_ga_no_provider_never_gates(plan: _MiniPlan) -> None:
+def test_unkeyed_plan_no_provider_never_gates(plan: _MiniPlan) -> None:
     """No over-gating: a plan with zero keyed columns is inert to the secret
-    gate at GA (the mask key is unused, but the call must not raise)."""
+    gate in either phase (the mask key is unused, but the call must not raise)."""
     assert not plan_has_keyed_strategy(plan)
-    with mock.patch("decoy_engine.keyprovider.is_pre_ga", return_value=False):
-        assert require_mask_key(plan, None) == plan.seed_envelope.job_seed
-        assert resolve_key_provider(plan=plan, key_provider=None) is None
+    for pre_ga in _PHASES:
+        with _phase(pre_ga):
+            assert require_mask_key(plan, None) == plan.seed_envelope.job_seed
+            assert admit_mask_key(_config_for(plan), key_provider=None).key_provider is None
+
+
+@given(keyed_plan())
+def test_config_and_plan_classifiers_agree_on_keyed_plans(plan: _MiniPlan) -> None:
+    """Up-front (config) keyed-ness is conservative: whatever the compiled plan calls keyed,
+    the pre-read classifier already called keyed, so admission covers the plan."""
+    from decoy_engine.secret_providers import secret_requirements_for_config
+
+    assert secret_requirements_for_config(_config_for(plan))
 
 
 # --------------------------------------------------------------------------
@@ -418,40 +485,83 @@ def test_weak_secret_error_never_contains_the_offending_secret_bytes(secret: byt
     assert str(len(secret)) in message  # the length itself IS load-bearing
 
 
-# The two FIXED (non-ref) fragments of `resolve_mask_secret_ref`'s
-# unknown-kind message, split around where `_redact_ref(ref)` is
-# interpolated (the digit run between them always breaks letter-contiguity,
-# so ref -- letters-only -- can never straddle the split). A random
-# letters-only ref of 5-40 chars occasionally draws an ordinary English
-# word that is ALSO plain English prose already in the template (e.g.
-# "start", from "...must start with...", or "chars", from the redaction
-# marker itself) -- a coincidental containment match, not a real leak. This
-# is not a hypothetical: `ref="start"` was an observed full-suite flake.
-# Filtering candidates against these exact fixed fragments removes every
-# such coincidence while leaving the leak-detection power intact: a
-# regression that made `_redact_ref` embed the real `ref` bytes would still
-# be caught, because the leaked text would NOT be a substring of either
-# static fragment alone -- it would be `ref` sitting where the length
-# digits belong.
-_BAD_SECRET_REF_MESSAGE_FRAGMENTS = (
-    "mask_secret_ref must start with 'env:' or 'file:'; got <redacted ref, ",
-    " chars>.",
-)
+def _fixed_text(ref: str) -> str:
+    """The constant error text a given ref shape produces, probed once from a known-bad ref."""
+    with pytest.raises(MaskSecretError) as ei:
+        key_provider_from_ref(ref)
+    return str(ei.value)
+
+
+# The constant text a malformed ref (and an unknown provider) produces. A random letters-only
+# ref occasionally draws an ordinary English word that is ALSO prose in the constant message
+# (e.g. "secret", "invalid"), a coincidental containment match and not a real leak; filtering
+# candidates against the exact fixed text removes every such coincidence while a regression
+# that echoed the real ref would still be caught, because the output would then differ from the
+# constant (the property asserts equality with it).
+_BAD_REF_TEXT = _fixed_text("x")
+_UNKNOWN_PROVIDER_TEXT = _fixed_text("kms:x")
 
 
 @given(st.text(alphabet=st.characters(whitelist_categories=("Ll", "Lu")), min_size=5, max_size=40))
-def test_redacted_ref_error_never_contains_the_raw_ref_content(ref: str) -> None:
-    """A `mask_secret_ref` of an unrecognized kind could itself be a raw
-    secret pasted directly as the ref (a plausible operator mistake); the
-    error must show only its length via `_redact_ref`, never the content.
-    Letters-only means `ref` can never start with `env:`/`file:` (no colon
-    in the alphabet), so every draw hits the redacted-ref branch."""
-    assume(all(ref not in fragment for fragment in _BAD_SECRET_REF_MESSAGE_FRAGMENTS))
+def test_malformed_ref_error_never_contains_the_raw_ref_content(ref: str) -> None:
+    """A `mask_secret_ref` that is not a reference at all could itself be a raw secret
+    pasted directly as the ref (a plausible operator mistake); the error is a fixed constant
+    that shows neither the content nor even its length. Letters-only means `ref` has no
+    scheme colon, so every draw hits the malformed-ref branch."""
+    assume(ref not in _BAD_REF_TEXT)
     with pytest.raises(MaskSecretError) as ei:
-        resolve_mask_secret_ref(ref)
+        key_provider_from_ref(ref)
     assert ei.value.code == "bad_secret_ref"
-    assert ref not in ei.value.message
-    assert f"<redacted ref, {len(ref)} chars>" in ei.value.message
+    assert ref not in str(ei.value)
+    assert str(ei.value) == _BAD_REF_TEXT
+    assert str(len(ref)) not in ei.value.message
+
+
+_NOT_REGISTERED = st.text(
+    alphabet=st.characters(min_codepoint=97, max_codepoint=122), min_size=3, max_size=12
+).filter(lambda scheme: scheme not in {"env", "file", "vault"})
+
+
+@given(
+    _NOT_REGISTERED,
+    st.text(
+        alphabet=st.characters(
+            min_codepoint=48, max_codepoint=122, whitelist_categories=("Ll", "Lu", "Nd")
+        ),
+        min_size=6,
+        max_size=40,
+    ),
+)
+def test_unknown_provider_error_never_contains_the_locator(scheme: str, locator: str) -> None:
+    """An unregistered provider scheme fails `secret_provider_unknown` with a fixed message;
+    the locator (a name, path or pasted secret) is never repeated."""
+    assume(locator not in _UNKNOWN_PROVIDER_TEXT)
+    with pytest.raises(MaskSecretError) as ei:
+        key_provider_from_ref(f"{scheme}:{locator}")
+    assert ei.value.code == "secret_provider_unknown"
+    assert locator not in str(ei.value)
+    assert str(ei.value) == _UNKNOWN_PROVIDER_TEXT
+
+
+@given(st.binary(min_size=4, max_size=31))
+def test_weak_secret_via_ref_error_never_contains_secret_or_ref(secret: bytes) -> None:
+    """The weak-secret path through a ref: the offending value IS the secret, so neither its
+    hex/base64 form nor the ref (variable name) may reach the error text."""
+    name = "DECOY_TQ_KP_WEAK_LEAK_VIA_REF"
+    previous = os.environ.get(name)
+    os.environ[name] = secret.hex()
+    try:
+        with pytest.raises(WeakMaskSecret) as ei:
+            key_provider_from_ref(f"env:{name}")
+    finally:
+        if previous is None:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = previous
+    rendered = str(ei.value)
+    assert secret.hex() not in rendered
+    assert base64.b64encode(secret).decode() not in rendered
+    assert name not in rendered
 
 
 # --------------------------------------------------------------------------
@@ -472,7 +582,7 @@ class TestErrorTaxonomy:
         assert exc.code == "bad_secret_ref"
         assert str(exc) == "bad_secret_ref"
 
-    def test_keyed_strategy_requires_secret_is_the_ga_gate_code(self) -> None:
+    def test_keyed_strategy_requires_secret_is_the_gate_code(self) -> None:
         exc = KeyedStrategyRequiresSecret("x")
         assert exc.code == "keyed_strategy_requires_secret"
         assert isinstance(exc, MaskSecretError)
@@ -498,29 +608,34 @@ class TestErrorTaxonomy:
         assert ei.value.code == "bad_secret_ref"
         assert not isinstance(ei.value, WeakMaskSecret)
 
-    def test_resolve_ref_unknown_kind_is_bad_secret_ref(self) -> None:
+    def test_resolve_ref_unknown_kind_is_secret_provider_unknown(self) -> None:
         with pytest.raises(MaskSecretError) as ei:
-            resolve_mask_secret_ref("kms://tenant/key")
+            key_provider_from_ref("kms://tenant/key")
+        assert ei.value.code == "secret_provider_unknown"
+
+    def test_resolve_ref_malformed_is_bad_secret_ref(self) -> None:
+        with pytest.raises(MaskSecretError) as ei:
+            key_provider_from_ref("no-scheme-here")
         assert ei.value.code == "bad_secret_ref"
 
     def test_resolve_ref_empty_env_name_is_bad_secret_ref(self) -> None:
         with pytest.raises(MaskSecretError) as ei:
-            resolve_mask_secret_ref("env:")
+            key_provider_from_ref("env:")
         assert ei.value.code == "bad_secret_ref"
 
     def test_resolve_ref_empty_file_path_is_bad_secret_ref(self) -> None:
         with pytest.raises(MaskSecretError) as ei:
-            resolve_mask_secret_ref("file:")
+            key_provider_from_ref("file:")
         assert ei.value.code == "bad_secret_ref"
 
     def test_resolve_ref_missing_env_is_missing_mask_secret(self) -> None:
         with pytest.raises(MissingMaskSecret) as ei:
-            resolve_mask_secret_ref("env:DECOY_TQ_KEYPROVIDER_TEST_UNSET_XYZ")
+            key_provider_from_ref("env:DECOY_TQ_KEYPROVIDER_TEST_UNSET_XYZ")
         assert ei.value.code == "missing_mask_secret"
 
     def test_resolve_ref_missing_file_is_missing_mask_secret(self, tmp_path) -> None:
         with pytest.raises(MissingMaskSecret) as ei:
-            resolve_mask_secret_ref(f"file:{tmp_path / 'does-not-exist.bin'}")
+            key_provider_from_ref(f"file:{tmp_path / 'does-not-exist.bin'}")
         assert ei.value.code == "missing_mask_secret"
 
     def test_resolve_ref_invalid_material_is_bad_secret_ref_not_missing(self, monkeypatch) -> None:
@@ -528,7 +643,7 @@ class TestErrorTaxonomy:
         `bad_secret_ref`, not `missing_mask_secret`."""
         monkeypatch.setenv("DECOY_TQ_KEYPROVIDER_BAD", "not-hex-not-base64!!!")
         with pytest.raises(MaskSecretError) as ei:
-            resolve_mask_secret_ref("env:DECOY_TQ_KEYPROVIDER_BAD")
+            key_provider_from_ref("env:DECOY_TQ_KEYPROVIDER_BAD")
         assert ei.value.code == "bad_secret_ref"
         assert not isinstance(ei.value, MissingMaskSecret)
 
@@ -538,7 +653,7 @@ class TestErrorTaxonomy:
             key_provider_from_ref("env:DECOY_TQ_KEYPROVIDER_WEAK")
         assert ei.value.code == "weak_mask_secret"
 
-    def test_ga_missing_secret_is_keyed_strategy_requires_secret_not_other_codes(
+    def test_missing_secret_is_keyed_strategy_requires_secret_not_other_codes(
         self,
     ) -> None:
         plan = _MiniPlan(
@@ -547,120 +662,112 @@ class TestErrorTaxonomy:
                 per_table=(("t", TableSeed(per_column=(("k", _col_seed("hash")),))),),
             )
         )
-        with mock.patch("decoy_engine.keyprovider.is_pre_ga", return_value=False):
-            with pytest.raises(KeyedStrategyRequiresSecret) as ei:
-                require_mask_key(plan, None)
-        assert ei.value.code == "keyed_strategy_requires_secret"
-        assert not isinstance(ei.value, (MissingMaskSecret, WeakMaskSecret))
+        for pre_ga in _PHASES:
+            with _phase(pre_ga):
+                with pytest.raises(KeyedStrategyRequiresSecret) as ei:
+                    require_mask_key(plan, None)
+            assert ei.value.code == "keyed_strategy_requires_secret"
+            assert not isinstance(ei.value, (MissingMaskSecret, WeakMaskSecret))
 
 
 # --------------------------------------------------------------------------
 # TQ crown-jewels mutation-kill pass (docs/quality/mutation-ledgers/keyprovider.md).
 # The properties/taxonomy above already pin every documented invariant; the
-# tests below target LOGIC survivors from the mutmut run that no existing
-# test happened to exercise: an internal join separator, the b64decode
-# `validate` flag, the `_redact_ref` prefix check, exception chaining on the
-# two `from exc` re-raises, `key_version` threading through
-# `key_provider_from_ref`, the explicit `utf-8` file-open encoding, and
-# `resolve_mask_key`'s provider/ref precedence. Equivalent (message-prose-only
-# or no-op) survivors are left alive and ledgered, not tested here.
+# tests below target LOGIC survivors from the mutmut run: the whitespace-join
+# separator, the b64decode `validate` flag, the empty-material guard, sever-the-
+# chain error hygiene, UTF-8 file decoding, `key_version` threading through
+# `key_provider_from_ref`, and `admit_mask_key`'s provider/ref precedence. They
+# now drive the admission path (`key_provider_from_ref` / `admit_mask_key`)
+# instead of the retired private decode/redact helpers.
 # --------------------------------------------------------------------------
 
 
-def test_decode_secret_material_strips_whitespace_without_inserting_separator() -> None:
-    """`stripped = "".join(text.split())` joins on the EMPTY string. Any other
-    separator (a string-literal mutation of the join target) would splice
-    junk between whitespace-separated chunks of an otherwise-valid hex
-    secret, corrupting the decoded bytes instead of merely stripping
-    whitespace."""
-    raw_hex = os.urandom(MIN_SECRET_BYTES).hex()
+def test_ref_material_strips_whitespace_without_inserting_separator(monkeypatch) -> None:
+    """Whitespace is removed by joining on the EMPTY string. Any other separator would
+    splice junk between whitespace-separated chunks of an otherwise-valid hex secret,
+    corrupting the decoded bytes instead of merely stripping whitespace."""
+    raw = os.urandom(MIN_SECRET_BYTES)
+    raw_hex = raw.hex()
     split_point = len(raw_hex) // 2
-    with_internal_whitespace = f"{raw_hex[:split_point]}  \n\t {raw_hex[split_point:]}"
-    assert _decode_secret_material(with_internal_whitespace) == bytes.fromhex(raw_hex)
+    monkeypatch.setenv("DECOY_TQ_KP_WS", f"{raw_hex[:split_point]}  \n\t {raw_hex[split_point:]}")
+    assert (
+        key_provider_from_ref("env:DECOY_TQ_KP_WS").mask_key() == SecretKeyProvider(raw).mask_key()
+    )
 
 
-def test_decode_secret_material_whitespace_only_is_bad_secret_ref_code() -> None:
-    """A secret string that is whitespace-only strips to empty; the empty-
-    material guard must raise with the exact `bad_secret_ref` code (not a
-    mutated code string, and not a bare `TypeError` from a dropped required
-    `code=` kwarg)."""
+def test_ref_material_whitespace_only_is_bad_secret_ref_code(monkeypatch) -> None:
+    """A secret that is whitespace-only strips to empty; the empty-material guard must
+    raise with the exact `bad_secret_ref` code (not a mutated code, and not a bare
+    `TypeError` from a dropped required `code=` kwarg)."""
+    monkeypatch.setenv("DECOY_TQ_KP_WS_ONLY", "   \t\n  ")
     with pytest.raises(MaskSecretError) as ei:
-        _decode_secret_material("   \t\n  ")
+        key_provider_from_ref("env:DECOY_TQ_KP_WS_ONLY")
     assert ei.value.code == "bad_secret_ref"
 
 
-def test_decode_secret_material_rejects_invalid_base64_characters() -> None:
-    """`base64.b64decode(stripped, validate=True)` must reject any character
-    outside the base64 alphabet rather than silently discarding it
-    (`validate=False`/`None` strips the junk and decodes the remaining valid
-    characters, masking corruption in the secret material)."""
+def test_ref_material_rejects_invalid_base64_characters(monkeypatch) -> None:
+    """base64 decoding must be strict (`validate=True`): a character outside the base64
+    alphabet is rejected rather than silently discarded, which would mask corruption."""
     clean = base64.b64encode(os.urandom(MIN_SECRET_BYTES)).decode()
-    corrupted = clean[:4] + "!" + clean[4:]  # "!" is outside the base64 alphabet
+    monkeypatch.setenv("DECOY_TQ_KP_B64_BAD", clean[:4] + "!" + clean[4:])
     with pytest.raises(MaskSecretError) as ei:
-        _decode_secret_material(corrupted)
+        key_provider_from_ref("env:DECOY_TQ_KP_B64_BAD")
     assert ei.value.code == "bad_secret_ref"
 
 
-def test_decode_secret_material_bad_material_error_chains_original_exception() -> None:
-    """The `bad_secret_ref` raise on undecodable material must chain the
-    original `base64`/`binascii` failure (`raise ... from exc`) so an
-    operator debugging a corrupted secret sees the real root cause instead of
-    a re-raised wrapper with no history."""
+def test_bad_material_error_severs_the_original_exception(monkeypatch) -> None:
+    """Inverted from the old 'chains the original exception': the contract is now that
+    provider/decoder internals never survive as `__cause__` or `__context__`, so
+    `logging.exception` and excepthooks cannot print them."""
+    monkeypatch.setenv("DECOY_TQ_KP_CHAIN", "not-hex-not-base64!!!")
     with pytest.raises(MaskSecretError) as ei:
-        _decode_secret_material("not-hex-not-base64!!!")
-    assert ei.value.__cause__ is not None
+        key_provider_from_ref("env:DECOY_TQ_KP_CHAIN")
+    assert ei.value.code == "bad_secret_ref"
+    assert ei.value.__cause__ is None
+    assert ei.value.__context__ is None
 
 
-def test_redact_ref_shows_env_and_file_refs_verbatim() -> None:
-    """`env:`/`file:` refs carry a var name or path, never the secret itself,
-    so they are safe to show verbatim -- pins both the exact prefix strings
-    the `startswith` check matches on and that the shown value is the real
-    `ref`, not a nulled stand-in."""
-    assert _redact_ref("env:FOO") == repr("env:FOO")
-    assert _redact_ref("file:/tmp/x") == repr("file:/tmp/x")
-
-
-def test_redact_ref_redacts_anything_else_to_length_only() -> None:
-    """A ref of any other shape could be a raw secret pasted directly as the
-    ref; only its length may be shown."""
+def test_error_text_never_echoes_env_or_file_refs(tmp_path, monkeypatch) -> None:
+    """Inverted from 'env:/file: refs are shown verbatim': error text is now a fixed
+    constant, so a variable name or path is absent, as is a pasted raw-secret lookalike."""
+    monkeypatch.setenv("DECOY_TQ_KP_ECHO_ENV", "not-hex-not-base64!!!")
+    with pytest.raises(MaskSecretError) as ei:
+        key_provider_from_ref("env:DECOY_TQ_KP_ECHO_ENV")
+    assert "DECOY_TQ_KP_ECHO_ENV" not in str(ei.value)
+    missing = tmp_path / "echo-missing.bin"
+    with pytest.raises(MissingMaskSecret) as ei:
+        key_provider_from_ref(f"file:{missing}")
+    assert str(missing) not in str(ei.value)
+    assert str(tmp_path) not in str(ei.value)
     raw_secret_lookalike = "s3cr3t-not-a-ref"
-    redacted = _redact_ref(raw_secret_lookalike)
-    assert raw_secret_lookalike not in redacted
-    assert redacted == f"<redacted ref, {len(raw_secret_lookalike)} chars>"
+    with pytest.raises(MaskSecretError) as ei:
+        key_provider_from_ref(raw_secret_lookalike)
+    assert raw_secret_lookalike not in str(ei.value)
+    assert str(len(raw_secret_lookalike)) not in ei.value.message
 
 
-def test_resolve_ref_invalid_utf8_file_error_chains_original_exception(tmp_path) -> None:
-    """The `bad_secret_ref` raise on a non-UTF-8 secret file must likewise
-    chain the original `UnicodeDecodeError` (`raise ... from exc`)."""
+def test_resolve_ref_invalid_utf8_file_error_severs_original_exception(tmp_path) -> None:
+    """A non-UTF-8 secret file is `bad_secret_ref` and its `UnicodeDecodeError` is
+    severed (never chained), so decoder internals and the path cannot leak."""
     bad_path = tmp_path / "bad-utf8.bin"
     bad_path.write_bytes(b"\xff\xfe\x00secret")
     with pytest.raises(MaskSecretError) as ei:
-        resolve_mask_secret_ref(f"file:{bad_path}")
+        key_provider_from_ref(f"file:{bad_path}")
     assert ei.value.code == "bad_secret_ref"
-    assert ei.value.__cause__ is not None
+    assert ei.value.__cause__ is None
+    assert str(bad_path) not in str(ei.value)
 
 
-def test_resolve_ref_file_open_uses_utf8_encoding_explicitly(tmp_path, monkeypatch) -> None:
-    """The secret file must be opened with an EXPLICIT `utf-8` codec, not the
-    locale-dependent default (`encoding=None`, or the kwarg dropped
-    entirely) -- a mask secret file must decode identically regardless of
-    the host's locale. (A same-codec case variant like `"UTF-8"` is a true
-    no-op -- Python's codec lookup is case-insensitive -- so this asserts
-    case-insensitively, not on the literal string.)"""
-    secret_path = tmp_path / "secret.txt"
-    secret_path.write_text(os.urandom(MIN_SECRET_BYTES).hex())
-    captured: dict[str, object] = {}
-    real_open = open
-
-    def spy_open(*args, **kwargs):
-        captured.update(kwargs)
-        return real_open(*args, **kwargs)
-
-    monkeypatch.setattr("builtins.open", spy_open)
-    resolve_mask_secret_ref(f"file:{secret_path}")
-    encoding = captured.get("encoding")
-    assert encoding is not None
-    assert str(encoding).lower() == "utf-8"
+def test_resolve_ref_file_is_decoded_as_utf8_not_locale(tmp_path) -> None:
+    """The secret file must decode as UTF-8 regardless of the host locale: a hex secret split
+    by a UTF-8 NO-BREAK SPACE (U+00A0, whitespace to `str.split`) decodes to the real key only
+    under UTF-8, never under a locale/latin-1 default."""
+    raw = os.urandom(MIN_SECRET_BYTES)
+    raw_hex = raw.hex()
+    half = len(raw_hex) // 2
+    path = tmp_path / "secret-nbsp.txt"
+    path.write_bytes(f"{raw_hex[:half]}\u00a0{raw_hex[half:]}".encode())
+    assert key_provider_from_ref(f"file:{path}").mask_key() == SecretKeyProvider(raw).mask_key()
 
 
 def test_key_provider_from_ref_uses_the_given_key_version(monkeypatch) -> None:
@@ -669,8 +776,12 @@ def test_key_provider_from_ref_uses_the_given_key_version(monkeypatch) -> None:
     class's own default."""
     name = "DECOY_TQ_KP_KEY_VERSION_REF"
     monkeypatch.setenv(name, os.urandom(MIN_SECRET_BYTES).hex())
+    raw = os.urandom(MIN_SECRET_BYTES)
+    monkeypatch.setenv(name, raw.hex())
     provider = key_provider_from_ref(f"env:{name}", key_version="custom-v7")
     assert provider.key_version == "custom-v7"
+    assert provider.mask_key() == SecretKeyProvider(raw, key_version="custom-v7").mask_key()
+    assert provider.mask_key() != SecretKeyProvider(raw, key_version="v1").mask_key()
 
 
 def _inert_mini_plan() -> _MiniPlan:
@@ -692,25 +803,33 @@ def test_resolve_mask_key_prefers_explicit_key_provider() -> None:
     assert result != plan.seed_envelope.job_seed
 
 
-def test_resolve_mask_key_resolves_via_mask_secret_ref_when_no_provider(monkeypatch) -> None:
-    """With no explicit `key_provider`, a given `mask_secret_ref` must be
-    resolved to a provider and used -- not skipped, and not resolved from a
-    nulled ref."""
+def test_admit_mask_key_resolves_via_mask_secret_ref_when_no_provider(monkeypatch) -> None:
+    """With no explicit `key_provider`, a configured `global_settings.mask_secret_ref` must be
+    admitted to a provider and used -- not skipped, and not resolved from a nulled ref."""
     name = "DECOY_TQ_KP_RESOLVE_MASK_KEY_REF"
     secret = os.urandom(MIN_SECRET_BYTES)
     monkeypatch.setenv(name, secret.hex())
-    plan = _inert_mini_plan()
-    result = resolve_mask_key(plan=plan, key_provider=None, mask_secret_ref=f"env:{name}")
-    assert result == SecretKeyProvider(secret).mask_key()
+    admitted = admit_mask_key({"global_settings": {"mask_secret_ref": f"env:{name}"}})
+    try:
+        assert admitted.key_provider is not None
+        assert admitted.key_provider.mask_key() == SecretKeyProvider(secret).mask_key()
+    finally:
+        admitted.close()
 
 
-def test_resolve_mask_key_explicit_key_provider_wins_over_mask_secret_ref(monkeypatch) -> None:
-    """'A programmatic `key_provider` wins over `mask_secret_ref`' (module
-    docstring): when both are given, the explicit provider must NOT be
-    overwritten by resolving the ref."""
+def test_admit_mask_key_explicit_key_provider_wins_over_mask_secret_ref(monkeypatch) -> None:
+    """'A programmatic `key_provider` wins over `mask_secret_ref`': when both are given on a keyed
+    config, the explicit provider must NOT be overwritten by resolving the ref."""
     name = "DECOY_TQ_KP_PRECEDENCE_REF"
     monkeypatch.setenv(name, os.urandom(MIN_SECRET_BYTES).hex())
-    plan = _inert_mini_plan()
+    config = {
+        "global_settings": {"mask_secret_ref": f"env:{name}"},
+        "tables": [{"name": "t", "columns": [{"name": "c", "strategy": "hash"}]}],
+    }
     provider = SecretKeyProvider(os.urandom(MIN_SECRET_BYTES))
-    result = resolve_mask_key(plan=plan, key_provider=provider, mask_secret_ref=f"env:{name}")
-    assert result == provider.mask_key()
+    admitted = admit_mask_key(config, key_provider=provider)
+    try:
+        assert admitted.key_provider is not None
+        assert admitted.key_provider.mask_key() == provider.mask_key()
+    finally:
+        admitted.close()

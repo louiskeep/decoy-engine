@@ -92,7 +92,7 @@ def _mixed_config(
     unless `relationships` says otherwise. Mirrors `test_shadow_ooc_fk.
     py`'s `_fk_config` shape, widened with a generate-kind table entry."""
     raw: dict[str, Any] = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": seed},
         "sources": {},
         "targets": {

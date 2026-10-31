@@ -82,7 +82,7 @@ def build_job(
     The parquet file each `sources` entry names holds the same data as the Arrow table the
     test passes, because `profile_source` reads the file and the execution reads the table."""
     raw: dict[str, Any] = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": seed},
         "sources": {},
         "tables": [],

@@ -9,7 +9,7 @@
 # financial reporting data. Section 802 adds criminal liability for altering
 # or destroying records relevant to an investigation.
 #
-# For STORM / FORECAST purposes, the SOX Disguise is not a substitute for
+# For Pre-scan / FORECAST purposes, the SOX Disguise is not a substitute for
 # audit logging - it's a masking layer that prevents developers and testers
 # from accessing production financial data in non-production environments.
 # Insider names and contact details are protected as personal identifiers;

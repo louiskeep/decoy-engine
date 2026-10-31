@@ -258,7 +258,7 @@ class ExecutionContext:
         # connector store; CLI leaves it None and users supply inline `dsn:`.
         self.resolve_connector = resolve_connector
         # Side channel for ops that produce out-of-band artifacts the runner
-        # can't reach via the dataframe stream (e.g. `run_storm` produces a
+        # can't reach via the dataframe stream (e.g. a profile op produces a
         # ColumnProfile, not row data). Each entry is a dict shaped like
         # {"kind": "<artifact-kind>", ...}; the platform reads it after the
         # graph completes and persists each entry per its kind. List rather

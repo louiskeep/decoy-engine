@@ -13,6 +13,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from decoy_engine.reasons._identity import ReasonRef
 
 
 class Phase(str, Enum):
@@ -92,6 +96,13 @@ class ReasonSpec:
     @property
     def identity(self) -> tuple[str, str]:
         return (self.namespace, self.code)
+
+    @property
+    def ref(self) -> ReasonRef:
+        """The identity-only wire form a phase envelope carries."""
+        from decoy_engine.reasons._identity import ReasonRef
+
+        return ReasonRef(self.namespace, self.code)
 
     @property
     def default_rule(self) -> PhaseRule:

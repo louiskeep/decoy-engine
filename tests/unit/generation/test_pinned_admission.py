@@ -52,7 +52,7 @@ def _dp_generation(*, statistical: bool, receipt: bool) -> GenerationPlan:
     if statistical:
         columns.append({"name": "s", "type": "statistical", "snapshot_file": "unused.json"})
     config = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 1, "dp": {"epsilon": 1.0, "delta": 1e-6}},
         "sources": {},
         "tables": [{"name": "t", "row_count": 3, "generate_columns": columns}],

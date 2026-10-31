@@ -393,7 +393,7 @@ class TestDerivedAggregateGeneratePath:
         from tests.unit._dps_helpers import compile_and_generate
 
         cfg = {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 0},
             "sources": {},
             "tables": [
@@ -429,7 +429,7 @@ class TestDerivedAggregateGeneratePath:
         from tests.unit._dps_helpers import compile_and_generate
 
         cfg = {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 0},
             "sources": {},
             "tables": [

@@ -126,7 +126,7 @@ def build_config(
         {"name": c, "strategy": "hash", "namespace": f"ns_{c}"} for c in payload_names(width)
     ]
     raw = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": SEED},
         "sources": {CHILD: {"type": "file", "format": "parquet", "path": str(child_path)}},
         "targets": {
