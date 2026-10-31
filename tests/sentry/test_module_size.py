@@ -74,7 +74,7 @@ ALLOWLIST: dict[str, int] = {
     # wiring of the fk-dtype hazard and D3a validator signals into the one routing call site, plus
     # the B4 source-type admission threading (_source_arrow_types + the source_types param); split
     # the probe-recovery resolver into its own module.
-    "src/decoy_engine/execution/_pipeline_routing_signals.py": 639,
+    "src/decoy_engine/execution/_pipeline_routing_signals.py": 613,
     # fan-in guard on the budget resolver; split the disk-preflight helpers into _disk_budget.py.
     "src/decoy_engine/execution/out_of_core/_budget.py": 609,
     # float FK key token pricing; split the disk-width helpers into _spill_widths.py.
@@ -92,12 +92,10 @@ ALLOWLIST: dict[str, int] = {
     "src/decoy_engine/plan/_checks.py": 712,
     # statistical-column check threading; same per-strategy-check decomposition target as _checks.py.
     "src/decoy_engine/plan/_compile.py": 665,
-    # chunk-parity invariant text and admission gate calls; dense exception.
-    "src/decoy_engine/execution/_chunked.py": 630,
     # dispatch entry plus the table-keyed params, the job-seed hand-off and the eager string-pool
     # check for the position-keyed faker; dense exception, the pool check itself lives in _chunk_masking.
     # OBS-2: threads the decline records and branch-call snapshot onto each chunk's evidence.
-    "src/decoy_engine/execution/native/_chunked_entry.py": 666,
+    "src/decoy_engine/execution/native/_chunked_entry.py": 620,
     # OBS-2b: one structured decline record paired with each existing decision source; the record
     # types live in _route_decline_codes.py. Split the static admission pass out next.
     "src/decoy_engine/execution/native/_dispatch.py": 666,

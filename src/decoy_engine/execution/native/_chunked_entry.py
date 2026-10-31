@@ -36,7 +36,6 @@ from decoy_engine.execution import _chunked, _chunked_oracle
 from decoy_engine.execution import _chunked_bucket_perturb as bucket_perturb_gate
 from decoy_engine.execution import _chunked_dgrn as dgrn
 from decoy_engine.execution import _chunked_text_mask as text_mask_gate
-from decoy_engine.execution._adapter import ExecutionResult
 from decoy_engine.execution._chunked import _chain_first
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._guards import run_chunk_ingest_guards
@@ -64,6 +63,10 @@ from decoy_engine.execution.native._chunked_pools import (
     resolve_admitted_pools,
 )
 from decoy_engine.execution.native._chunked_preflight_wiring import wire_nonempty_preflight
+from decoy_engine.execution.native._chunked_result import (
+    _native_chunk_result,
+    _oracle_preserved_rows,
+)
 from decoy_engine.execution.native._chunked_row_errors import format_error_records
 from decoy_engine.execution.native._chunked_schema_rule import (
     SchemaRule,
@@ -85,7 +88,6 @@ from decoy_engine.execution.native._route_decline_codes import (
 from decoy_engine.execution.native._when_mask import plan_when_masks
 from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.generation.pool import PoolCache, ValuePool
-from decoy_engine.instrumentation.timing import StrategyTimingRecord
 from decoy_engine.progress import get_active_channel
 
 # Matches `MAX_NATIVE_THREADS` in decoy-engine-native/src/threads.rs: the compiled
@@ -171,57 +173,6 @@ def _oracle_route(
         chunk_result_sink=chunk_result_sink,
         base_row_offset=base_row_offset,
         on_chunk=on_chunk,
-    )
-
-
-def _oracle_preserved_rows(quality_metrics: dict[str, Any]) -> dict[str, int]:
-    """The oracle leg's D1c sentinel counts per column, from the handlers' own metrics."""
-    return {e["column"]: e["preserved_rows"] for e in quality_metrics.get("date_preserve", ())}
-
-
-def _native_chunk_result(
-    *,
-    table: str,
-    out: pa.Table,
-    warnings: tuple[Any, ...],
-    elapsed_s: dict[str, float],
-    col_seed_by_name: dict[str, Any],
-    columns: tuple[ColumnPlan, ...],
-    read_passthrough: tuple[str, ...],
-    kernel_idle: set[str],
-    row_errors: tuple[Any, ...],
-    preserved_rows: dict[str, int],
-    decision: NativeRouteEvidence,
-) -> ExecutionResult:
-    elapsed_ms = {col: s * 1000.0 for col, s in elapsed_s.items()}
-    return ExecutionResult(
-        outputs={table: out},
-        timings=tuple(
-            StrategyTimingRecord(
-                strategy_type=col_seed_by_name[col].strategy,
-                column=col,
-                elapsed_ms=ms,
-                peak_memory_delta_kb=0,
-            )
-            for col, ms in elapsed_ms.items()
-        ),
-        boundary_conversion_ms=0.0,
-        warnings=warnings,
-        quality_metrics={
-            "chunked_route": chunk_route_evidence(
-                table=table,
-                native_admitted=True,
-                reroute_reason=None,
-                decline_records=decision.decline_records,
-                strategy_branch_calls=decision.kernel_calls,
-                columns=columns,
-                elapsed_ms=elapsed_ms,
-                pandas_read_passthrough=read_passthrough,
-                kernel_idle_columns=kernel_idle,
-                preserved_rows=preserved_rows,
-            )
-        },
-        row_errors=row_errors,
     )
 
 
