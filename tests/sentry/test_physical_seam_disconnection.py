@@ -824,6 +824,10 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
             # are DuckDB EXPLAIN strings, not an import).
             "src/decoy_engine/execution/out_of_core/_payload_store.py",
             "src/decoy_engine/execution/out_of_core/_stream_join.py",
+            # Typed temporal FK seam (slice 0 item 2): `empty_output_table` types a zero-row temporal
+            # FK column at the joiner's fixed type through `_join.fk_output_array`. Imports nothing
+            # from `execution.physical`.
+            "src/decoy_engine/execution/out_of_core/_emit.py",
             # D3a (validators on the bounded out-of-core route): `_validate_batch.py` is new -- it
             # computes validator admission, evaluates the admitted per-cell validators per masked
             # batch, and assembles the ValidationReport. `_runner.py` / `_stream_driver.py` hook it at
