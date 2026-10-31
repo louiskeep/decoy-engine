@@ -9,6 +9,8 @@ Validates:
 Gate reference: ml-benchmarking-and-privacy.md §A.4; ml0.3-confidence-bands.md.
 """
 
+import pytest
+
 from decoy_engine.profiling.eval import build_fixtures
 from decoy_engine.profiling.eval.bands import (
     HIGH_PRECISION_FLOOR,
@@ -94,6 +96,7 @@ class TestBaselineBands:
 class TestLatencyBenchmark:
     """Per-column latency stays under the 50ms dev-tier budget."""
 
+    @pytest.mark.benchmark
     def test_single_column_within_budget(self):
         fx = build_fixtures()[0]  # hipaa fixture
         ms = benchmark_column_latency(fx.df["mrn"], "mrn")
@@ -101,6 +104,7 @@ class TestLatencyBenchmark:
             f"mrn detection took {ms:.1f}ms, exceeding {LATENCY_BUDGET_MS}ms budget"
         )
 
+    @pytest.mark.benchmark
     def test_all_fixture_columns_within_budget(self):
         timings = benchmark_all_fixture_columns()
         violations = {k: v for k, v in timings.items() if v >= LATENCY_BUDGET_MS}
