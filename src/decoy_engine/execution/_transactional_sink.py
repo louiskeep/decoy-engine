@@ -418,8 +418,9 @@ class ParquetTransactionalSink:
         txn, self._txn = self._txn, None
         if txn is None:
             return
-        # Confirm by looking where there is a path to look at (the ambient policy); a strict
-        # stage has none and its discard swallows removal errors, so its state stays unknown.
+        # Confirm by looking where there is a path to look at (the ambient policy). A strict
+        # stage has none and its discard swallows removal errors: the discard ran but cannot be
+        # confirmed, which is F29's `attempted`.
         try:
             stage: str | None = txn.local_stage_path()
         except FileAccessUnavailable:
@@ -430,7 +431,7 @@ class ParquetTransactionalSink:
             evidence.cleanup = CleanupState.FAILED
             return
         if stage is None:
-            evidence.cleanup = CleanupState.UNKNOWN
+            evidence.cleanup = CleanupState.ATTEMPTED
         else:
             evidence.cleanup = (
                 CleanupState.FAILED if Path(stage).exists() else CleanupState.CONFIRMED

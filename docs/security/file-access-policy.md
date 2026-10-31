@@ -95,10 +95,15 @@ parse error quoting a cell, say). Cell values in logs are a separate program.
 - Engine messages name a file by `display`, the encoded config position, wherever a strict policy
   is installed (`fileaccess.shown`). Third-party text that names the file it was handed goes
   through `fileaccess.redact_locators`.
-- A mask secret read and decoded under a strict policy is one function; a failure is a fixed
-  reason code, and the error is built after the handler closes and re-raised with its cause and
-  context cleared, so a decode error holding the file never rides along, even when the caller was
-  already handling one.
+- A `file:` mask secret is a `FileRole.SECRET` read at `global_settings.mask_secret_ref` through
+  `fileaccess.read_checked`: the owner-only check (`secret_file_permissions_unsafe`) runs on `fstat`
+  of the policy-issued descriptor and the bytes come from that descriptor. The F13 admission boundary
+  rebuilds every failure from a fixed code and raises it with cause and context cleared, so a decode
+  error holding the file never rides along, even when the caller was already handling one. Under a
+  strict policy exactly `FileAccessDenied`, `FileAccessUnavailable`, `MemoryError` and
+  `ENOMEM`/`ENOSPC`/`EDQUOT` from that read keep their class, as fresh value-free instances; nothing
+  else does, and no other secret provider can pass them. `env:` and `file:` secrets are never cached,
+  so a secret admitted under one policy is never served to a run under another.
 - Translating, typed, stored-error and fallback handlers re-raise what callers classify by
   type (`fileaccess.keeps_class`): the policy errors, memory failures and `ENOSPC`/`EDQUOT`.
 - Scratch paths built from a table, column or edge name use opaque per-run ids. A shipped name
@@ -128,6 +133,11 @@ names, publish and failure semantics of the table sink, error text.
 - `load_vault(path)`, `VaultWriter.write(path)` and `unmask_pipeline(vault_path=)` accept a path string
   only under the ambient policy; under any other, pass a `FileHandle` or `OutputDir`.
 - The log file setting is ignored unless the ambient policy is installed.
+- The Vault KV secret provider's TLS material (`VAULT_CACERT`, `VAULT_CLIENT_CERT`,
+  `VAULT_CLIENT_KEY`) is a path the HTTP library opens from operator-set environment, outside the
+  policy. It is a documented exception (`operator_environment` in
+  `tests/sentry/file_access_modules.toml`, kept current by the boundary sentry), never a job-config
+  value; it goes away when the adapter takes TLS material through policy handles.
 - The probe-recovery step of routing (`resolve_probe_recovery`) runs the job in a child process; under
   a strict policy it answers "inconclusive" and routing falls back to the static estimate. The
   isolated and governor routes themselves fail closed with `FileAccessUnavailable`.

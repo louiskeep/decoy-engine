@@ -102,6 +102,14 @@ def _reset_for_tests() -> None:
     _strict_in_use = False
 
 
+def reset_for_tests() -> None:
+    """Test isolation for hosts: lift both one-way latches (`forbid_ambient()` and the
+    strict-policy-in-use latch). Production code never calls this."""
+    global _ambient_forbidden
+    _ambient_forbidden = False
+    _reset_for_tests()
+
+
 def _resolve(explicit: FileAccess | None) -> FileAccess:
     if explicit is not None:
         if _ambient_forbidden and isinstance(explicit, LocalFileAccess):

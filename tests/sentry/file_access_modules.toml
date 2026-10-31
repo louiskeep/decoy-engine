@@ -41,3 +41,15 @@ ambient_guards = [
   "decoy_engine/execution/_isolated_run.py",
   "decoy_engine/execution/out_of_core/_scratch.py",
 ]
+# Documented exception (owner decision 2026-10-31, A-4 x F13): file paths a third-party library
+# opens that come only from OPERATOR-set process environment, never from a job config or a caller
+# argument. The sink scan cannot see them (the library opens the file), so each entry names the
+# function and the exact variables; `test_operator_environment_exceptions_are_current` fails when
+# the function goes away or reads a variable not listed here.
+[[operator_environment]]
+module = "decoy_engine/secret_providers/vault.py"
+function = "client_from_env"
+variables = ["VAULT_CACERT", "VAULT_CLIENT_CERT", "VAULT_CLIENT_KEY"]
+owner = "cam"
+reason = "Vault KV TLS CA bundle and client certificate/key paths: hvac/requests open them; set by the operator, like VAULT_ADDR and VAULT_TOKEN"
+removal = "remove when the Vault adapter takes TLS material through FileRole handles (or when a policy-issued SSLContext is passed in)"

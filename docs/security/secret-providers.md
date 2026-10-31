@@ -56,8 +56,19 @@ All provider failures are registered F29 reasons in the `runtime` namespace (pha
 mapped by exception *type* with fixed text: `secret_provider_unknown`, `secret_provider_unavailable`,
 `secret_access_denied`, `secret_version_unavailable`, `secret_expired`, `secret_lease_unsupported`,
 `secret_material_invalid`, plus the existing `bad_secret_ref`, `missing_mask_secret`,
-`weak_mask_secret`, `keyed_strategy_requires_secret`. The provider exception is not retained as
-`__cause__`/`__context__`, so `logging.exception` and excepthooks cannot print provider internals.
+`weak_mask_secret`, `keyed_strategy_requires_secret`, and `secret_file_permissions_unsafe` (below).
+The provider exception is not retained as `__cause__`/`__context__`, and neither is an exception the
+caller was already handling when it called admission (the error is raised with its chain cleared), so
+`logging.exception` and excepthooks cannot print provider internals.
+
+`file:` secrets are read through the installed file-access policy (`FileRole.SECRET` at
+`global_settings.mask_secret_ref`, see `file-access-policy.md`) and must be owner-only: group or other
+permission bits refuse the file with `secret_file_permissions_unsafe`, checked with `fstat` on the
+descriptor the bytes are read from (OpenSSH's rule for private keys; Windows ACLs are not inspected).
+Kubernetes secret volumes need `defaultMode: 0400`, Docker secrets `mode: 0400`. There is no bypass.
+Under a strict file-access policy, exactly `FileAccessDenied`, `FileAccessUnavailable`, `MemoryError`
+and `ENOMEM`/`ENOSPC`/`EDQUOT` from that read keep their class across the boundary, rebuilt fresh
+from constants; only the built-in file provider can pass them.
 
 No caught exception is ever re-raised. The admission boundary (`prepare_secret`, `prepare_legacy`,
 `prepare_ref` behind `keyprovider.key_provider_from_ref`, and a provider's own `preflight` called
@@ -74,6 +85,8 @@ lives only in `SecretBuffer` objects, which render as `<redacted secret>`.
 
 - One admitted secret is reused for the whole run; it is closed (best-effort overwritten) when the
   run or chunk stream ends, however it ends.
+- `env:` and `file:` secrets are **never** cached, whatever the policy says: the resolver enforces
+  it, so a secret admitted under one file-access policy is never served to a run under another.
 - Cross-run caching is **off by default**. `SecretCachePolicy(ttl_seconds=N)` allows `1..60`.
   Entries live at most `min(ttl, provider_expiry - 5s)` on a monotonic clock, are never extended
   by a hit, and are evicted on expiry or error. Concurrent preflights of one uncached secret read

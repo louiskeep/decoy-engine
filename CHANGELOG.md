@@ -9,6 +9,22 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Changed (BREAKING, pre-GA: the file-access policy meets F13 secret admission, 2026-11-01)
+
+- A `file:` mask secret is read through the installed file-access policy (`FileRole.SECRET` at
+  `global_settings.mask_secret_ref`) and must be owner-only: group or other permission bits refuse
+  it with the new `runtime.secret_file_permissions_unsafe`, checked with `fstat` on the descriptor
+  the bytes are read from. Windows ACLs are not inspected. No bypass setting.
+- Under a strict policy, `FileAccessDenied`, `FileAccessUnavailable`, `MemoryError` and
+  `ENOMEM`/`ENOSPC`/`EDQUOT` from that read keep their class across the admission boundary, as fresh
+  value-free instances; every other failure is still a `MaskSecretError`.
+- `env:` and `file:` secrets are never cached, even with a positive `SecretCachePolicy` TTL.
+- Admission errors no longer inherit an exception the caller was handling as `__context__`.
+- `keyprovider.key_provider_from_ref` takes `file_access=` and is a file-access entry point.
+- `FileAccessDenied` has the registry identity `decoy.file_access_denied`.
+- A strict-policy table sink's abort records cleanup `attempted` (was `unknown`).
+- New `fileaccess.reset_for_tests()` for host test isolation (instead of `fileaccess._entry`).
+
 ### Changed (pre-GA: `type` is a reserved `when` name; main-health fixes, 2026-10-31)
 
 `type` is added to the frozen `RESERVED_NAMES` of the `when` grammar (it is a Python 3.12 soft keyword).

@@ -9,6 +9,7 @@ __all__ = [
     "CLEANUP_FAILED",
     "CONNECTOR_PERMANENT_FAILURE",
     "CONNECTOR_TRANSIENT_FAILURE",
+    "FILE_ACCESS_DENIED",
     "FINDINGS_REPORTED",
     "ISOLATED_RUN_TIMED_OUT",
     "ISOLATED_WORKER_DIED",
@@ -41,6 +42,14 @@ UNKNOWN_REASON_FROM_FUTURE = _d(
     "unknown_reason_from_future",
     "A reason code from a newer registry version.",
     retry=RetryClass.UNKNOWN,
+)
+# The file-access policy's one denial (`decoy_engine.fileaccess.FileAccessDenied`): the principal
+# may not read or write the file at that config position. Its text is the encoded position only.
+FILE_ACCESS_DENIED = _d(
+    "file_access_denied",
+    "The file-access policy does not allow this file for this job.",
+    outcome=Outcome.CONFIGURATION,
+    retry=RetryClass.CONFIGURATION_REPAIR,
 )
 STORAGE_CAPACITY_EXHAUSTED = _d(
     "storage_capacity_exhausted",

@@ -104,6 +104,33 @@ def test_every_engine_module_still_exists_for_the_module_lists() -> None:
             assert (SRC / rel).is_file(), rel
 
 
+def test_operator_environment_exceptions_are_current() -> None:
+    """Each documented exception names a live function that reads exactly the listed variables
+    (as string literals), and carries an owner, a reason and a removal note."""
+    from tests.sentry.fa.rules import toml_reader
+
+    data = toml_reader.loads((HERE / "file_access_modules.toml").read_text(encoding="utf-8"))
+    entries = data.get("operator_environment", [])
+    assert entries, "positive control: the Vault TLS exception is documented"
+    for entry in entries:
+        for key in ("module", "function", "variables", "owner", "reason", "removal"):
+            assert entry.get(key), f"{entry.get('module')}: missing `{key}`"
+        tree = ast.parse((SRC / entry["module"]).read_text(encoding="utf-8"))
+        funcs = [
+            n
+            for n in ast.walk(tree)
+            if isinstance(n, ast.FunctionDef) and n.name == entry["function"]
+        ]
+        assert len(funcs) == 1, f"{entry['module']}::{entry['function']} not found"
+        read = {
+            n.value
+            for n in ast.walk(funcs[0])
+            if isinstance(n, ast.Constant) and isinstance(n.value, str) and n.value.isupper()
+        }
+        path_vars = {v for v in read if v.endswith(("_CACERT", "_CERT", "_KEY", "_FILE", "_PATH"))}
+        assert path_vars == set(entry["variables"]), (entry["function"], sorted(path_vars))
+
+
 def test_ambient_only_entries_sit_behind_the_ambient_guard() -> None:
     entries = load_registry(REGISTRY_PATH)
     flagged = {e["module"] for e in entries if e.get("ambient_only")}

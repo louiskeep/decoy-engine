@@ -24,6 +24,7 @@ from decoy_engine.fileaccess._entry import (
     map_in_context,
     position_key,
     require_ambient,
+    reset_for_tests,
     run_in_context,
     scope,
 )
@@ -130,6 +131,7 @@ __all__ = [
     "read_text",
     "redact_locators",
     "require_ambient",
+    "reset_for_tests",
     "run_in_context",
     "scope",
     "scrub",
