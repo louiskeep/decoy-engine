@@ -1,5 +1,7 @@
 # Sprint G: FK-Aware Subsetting Core (engine)
 
+Status: plan
+
 Source spec: `decoy-platform` `docs/backlog/capability-review-2026-07/sprint-g-fk-subsetting-core.md`
 (read that for full current-code evidence + acceptance detail). Scoping input:
 `decoy-platform` `docs/backlog/subsetting/00-overview.md`. This is the FINAL sprint of the

@@ -1,6 +1,6 @@
 """text_redact strategy (engine-v2 MG-2, 2026-05-31): span-level PII redaction.
 
-Walks each cell of a free-text column with `storm.detectors.iter_spans(...)`
+Walks each cell of a free-text column with `detection.detectors.iter_spans(...)`
 and replaces matched PII spans with a configurable token. Non-PII text is
 preserved byte-for-byte. Deterministic by construction: output is a pure
 function of (input, detector_ids, token, label_token).
@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import pandas as pd
 
+from decoy_engine import reasons
 from decoy_engine.detection.detectors import Span, iter_spans
 from decoy_engine.execution._adapter import StrategyContext, provider_config_to_dict
 from decoy_engine.execution._errors import StrategyError
@@ -99,7 +100,7 @@ class TextRedactHandler:
             current_version = installed_model_version(ner_model)
             if current_version is not None and current_version != plan.ner_model_version:
                 raise StrategyError(
-                    code="ner_model_version_mismatch",
+                    code=reasons.runtime.NER_MODEL_VERSION_MISMATCH,
                     strategy="text_redact",
                     message=(
                         f"column {column!r}: NER model {ner_model!r} is installed at "

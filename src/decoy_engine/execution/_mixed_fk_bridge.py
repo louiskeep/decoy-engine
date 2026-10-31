@@ -42,6 +42,7 @@ from typing import TYPE_CHECKING
 import pyarrow as pa
 import pyarrow.compute as pc
 
+from decoy_engine import reasons
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._fk_keys import (
     fk_all_null_array,
@@ -232,7 +233,7 @@ def _reject_remap(edge: RelationshipEdge) -> Callable[[list[_KeyTuple]], list[_K
     def _remap(orphan_keys: list[_KeyTuple]) -> list[_KeyTuple]:
         del orphan_keys  # unused: this edge shape always rejects, never remaps
         raise ExecutionError(
-            code="orphan_remap_parent_missing",
+            code=reasons.runtime.ORPHAN_REMAP_PARENT_MISSING,
             message=(
                 f"REMAP needs the parent column {parent_table}.{parent_column} to be a "
                 "masked scalar node, but it is absent from the work list."

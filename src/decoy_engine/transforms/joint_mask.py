@@ -53,7 +53,7 @@ from typing import Any, NoReturn
 import numpy as np
 import pandas as pd
 
-from decoy_engine import fileaccess
+from decoy_engine import fileaccess, reasons
 from decoy_engine.determinism import derive
 from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.plan._errors import PlanCompileError
@@ -166,7 +166,7 @@ def validate_joint_mask_config(
     """
     if "columns" not in cfg or not cfg["columns"]:
         raise PlanCompileError(
-            code="joint_mask_columns_missing",
+            code=reasons.plan.JOINT_MASK_COLUMNS_MISSING,
             path="joint_masks.columns",
             message=(
                 "'columns' is required for joint_mask and must be a non-empty list. "
@@ -176,7 +176,7 @@ def validate_joint_mask_config(
 
     if "key_by" not in cfg:
         raise PlanCompileError(
-            code="joint_mask_key_by_missing",
+            code=reasons.plan.JOINT_MASK_KEY_BY_MISSING,
             path="joint_masks.key_by",
             message=(
                 "'key_by' is required for joint_mask (the source column used for "
@@ -188,7 +188,7 @@ def validate_joint_mask_config(
     ref_name = cfg.get("reference")
     if not ref_name:
         raise PlanCompileError(
-            code="joint_mask_reference_missing",
+            code=reasons.plan.JOINT_MASK_REFERENCE_MISSING,
             path="joint_masks.reference",
             message=(
                 "'reference' is required for joint_mask and must name a shipped or "
@@ -207,7 +207,7 @@ def validate_joint_mask_config(
         # context is nulled outright.
         _raise_without_chain(
             PlanCompileError(
-                code="joint_mask_reference_not_found",
+                code=reasons.plan.JOINT_MASK_REFERENCE_NOT_FOUND,
                 path="joint_masks.reference",
                 message=(
                     f"reference table {shown_ref!r} not found. "
@@ -220,7 +220,7 @@ def validate_joint_mask_config(
     except ValueError as exc:
         _raise_without_chain(
             PlanCompileError(
-                code="joint_mask_reference_invalid",
+                code=reasons.plan.JOINT_MASK_REFERENCE_INVALID,
                 path="joint_masks.reference",
                 message=f"reference table {shown_ref!r} failed to load: {exc}",
             )
@@ -230,7 +230,7 @@ def validate_joint_mask_config(
     for col in cfg["columns"]:
         if col not in ref_cols:
             raise PlanCompileError(
-                code="joint_mask_column_not_in_reference",
+                code=reasons.plan.JOINT_MASK_COLUMN_NOT_IN_REFERENCE,
                 path=f"joint_masks.columns.{col}",
                 message=(
                     f"column {col!r} is not in reference table {ref_name!r}. "

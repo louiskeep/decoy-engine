@@ -52,6 +52,7 @@ link to GitHub rather than into the rendered API reference.
 
 - [Capability matrix](capability-matrix.md): what the engine can and cannot do, by strategy and route.
 - [Execution backends and route coverage](execution-backends.md): which backend (compiled Rust, Arrow, or Python) computes each masking strategy per route, and where a shape is declined with a caller-visible reason; generation is Python/NumPy by design.
+- [Reason codes and progress events](reasons.md): the versioned reason registry, retry classes, outcome categories and the version-1 progress event schema.
 - [Compatibility contract](compatibility-contract.md): the frozen public surface and what changing it means.
 - [Supported production matrix](native/supported-matrix.md): supported Python/OS/arch combinations for the core, the compiled native companion's prebuilt wheels, and the official production image.
 

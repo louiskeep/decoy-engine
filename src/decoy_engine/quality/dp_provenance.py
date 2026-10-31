@@ -63,7 +63,7 @@ from typing import NamedTuple
 
 from packaging.utils import canonicalize_name
 
-from decoy_engine import fileaccess
+from decoy_engine import fileaccess, reasons
 from decoy_engine.errors import DecoyError
 from decoy_engine.fileaccess import FileHandle, FileRequest, FileRole
 
@@ -143,7 +143,7 @@ def installed_distribution_set() -> tuple[tuple[str, str], ...]:
         raw_name = dist.metadata["Name"]
         if raw_name is None:
             raise ProvenanceError(
-                code="dp_provenance_distribution_unnamed",
+                code=reasons.quality.DP_PROVENANCE_DISTRIBUTION_UNNAMED,
                 message=(
                     "an installed distribution reports no 'Name' metadata; the "
                     "proof-stack fingerprint cannot be computed unambiguously"
@@ -158,7 +158,7 @@ def installed_distribution_set() -> tuple[tuple[str, str], ...]:
             # ambiguity the fingerprint cannot resolve; those fail closed.
             if seen[name] != version:
                 raise ProvenanceError(
-                    code="dp_provenance_duplicate_distribution",
+                    code=reasons.quality.DP_PROVENANCE_DUPLICATE_DISTRIBUTION,
                     message=(
                         f"distribution {name!r} is installed at two different "
                         f"versions ({seen[name]!r} and {version!r}); the proof-stack "
@@ -353,7 +353,7 @@ def check_fit_environment() -> None:
     plat = current_platform()
     if plat != CERTIFIED_PLATFORM:
         raise ProvenanceError(
-            code="dp_platform_uncertified",
+            code=reasons.quality.DP_PLATFORM_UNCERTIFIED,
             message=(
                 f"the DP fit is certified only on {CERTIFIED_PLATFORM!r}; this "
                 f"environment is {plat!r}. The (epsilon, delta) guarantee is not "
@@ -366,7 +366,7 @@ def check_fit_environment() -> None:
     certified = _CERTIFIED_STACKS.get((plat, cpython))
     if certified is None or fingerprint not in certified:
         raise ProvenanceError(
-            code="dp_stack_uncertified",
+            code=reasons.quality.DP_STACK_UNCERTIFIED,
             message=(
                 f"no certified proof-stack row for (cpython {cpython!r}, "
                 f"fingerprint {fingerprint!r}) on {plat!r}. The installed "
@@ -389,7 +389,7 @@ def validate_recorded_provenance(recorded: object) -> None:
     prov = _coerce_recorded(recorded)
     if prov.platform != CERTIFIED_PLATFORM:
         raise ProvenanceError(
-            code="dp_platform_uncertified",
+            code=reasons.quality.DP_PLATFORM_UNCERTIFIED,
             message=(
                 f"artifact records platform {prov.platform!r}, which is not the "
                 f"certified {CERTIFIED_PLATFORM!r}"
@@ -398,7 +398,7 @@ def validate_recorded_provenance(recorded: object) -> None:
     certified = _CERTIFIED_STACKS.get((prov.platform, prov.cpython))
     if certified is None or prov.fingerprint not in certified:
         raise ProvenanceError(
-            code="dp_stack_uncertified",
+            code=reasons.quality.DP_STACK_UNCERTIFIED,
             message=(
                 f"artifact's recorded proof stack (cpython {prov.cpython!r}, "
                 f"fingerprint {prov.fingerprint!r}) is not a certified row"
@@ -415,7 +415,7 @@ def _coerce_recorded(recorded: object) -> Provenance:
         return recorded
     if not isinstance(recorded, Mapping):
         raise ProvenanceError(
-            code="dp_provenance_record_malformed",
+            code=reasons.quality.DP_PROVENANCE_RECORD_MALFORMED,
             message=f"recorded provenance must be a mapping, got {type(recorded).__name__}",
         )
     try:
@@ -424,12 +424,12 @@ def _coerce_recorded(recorded: object) -> Provenance:
         fingerprint = recorded["fingerprint"]
     except KeyError as exc:
         raise ProvenanceError(
-            code="dp_provenance_record_malformed",
+            code=reasons.quality.DP_PROVENANCE_RECORD_MALFORMED,
             message=f"recorded provenance missing required key {exc.args[0]!r}",
         ) from exc
     if not isinstance(cpython, str) or not isinstance(fingerprint, str):
         raise ProvenanceError(
-            code="dp_provenance_record_malformed",
+            code=reasons.quality.DP_PROVENANCE_RECORD_MALFORMED,
             message="recorded 'cpython' and 'fingerprint' must both be strings",
         )
     return Provenance(platform=plat, cpython=cpython, fingerprint=fingerprint)
@@ -449,19 +449,19 @@ def _coerce_platform(value: object) -> PlatformTriple:
             )
         except KeyError as exc:
             raise ProvenanceError(
-                code="dp_provenance_record_malformed",
+                code=reasons.quality.DP_PROVENANCE_RECORD_MALFORMED,
                 message=f"recorded platform missing required key {exc.args[0]!r}",
             ) from exc
     elif isinstance(value, (list, tuple)):
         if len(value) != 4:
             raise ProvenanceError(
-                code="dp_provenance_record_malformed",
+                code=reasons.quality.DP_PROVENANCE_RECORD_MALFORMED,
                 message=f"recorded platform sequence must have 4 fields, got {len(value)}",
             )
         fields = (value[0], value[1], value[2], value[3])
     else:
         raise ProvenanceError(
-            code="dp_provenance_record_malformed",
+            code=reasons.quality.DP_PROVENANCE_RECORD_MALFORMED,
             message=(
                 "recorded platform must be a PlatformTriple, a mapping, or a "
                 f"4-element sequence, got {type(value).__name__}"
@@ -469,7 +469,7 @@ def _coerce_platform(value: object) -> PlatformTriple:
         )
     if not all(isinstance(field, str) for field in fields):
         raise ProvenanceError(
-            code="dp_provenance_record_malformed",
+            code=reasons.quality.DP_PROVENANCE_RECORD_MALFORMED,
             message="recorded platform fields must all be strings",
         )
     return PlatformTriple(*fields)
@@ -532,14 +532,14 @@ def assert_lock_matches_installed(lock_path: str | Path | None = None) -> None:
         if fileaccess.keeps_class(exc):
             raise
         raise ProvenanceError(
-            code="dp_lock_parse_error",
+            code=reasons.quality.DP_LOCK_PARSE_ERROR,
             message=f"could not read/parse lockfile {fileaccess.shown(str(path), 'dp.lock_path')!r}: {exc}",
         ) from exc
 
     packages = lock.get("package")
     if not isinstance(packages, list):
         raise ProvenanceError(
-            code="dp_lock_parse_error",
+            code=reasons.quality.DP_LOCK_PARSE_ERROR,
             message=f"lockfile {fileaccess.shown(str(path), 'dp.lock_path')!r} has no [[package]] array",
         )
 
@@ -565,7 +565,7 @@ def assert_lock_matches_installed(lock_path: str | Path | None = None) -> None:
 
     if strays or drift:
         raise ProvenanceError(
-            code="dp_lock_installed_mismatch",
+            code=reasons.quality.DP_LOCK_INSTALLED_MISMATCH,
             message=(
                 "installed distributions do not match the marker-selected lock. "
                 f"strays (installed, not in lock): {strays}; "

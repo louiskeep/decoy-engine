@@ -85,7 +85,7 @@ def _payload_fk_config(
         return col
 
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"job_name": f"sc4-{strategy}-routing", "seed": 11},
         "sources": {
             name: {"type": "file", "path": _src(tmp_path, tbl, name), "format": "parquet"}

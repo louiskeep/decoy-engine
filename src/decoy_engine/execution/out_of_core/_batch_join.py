@@ -61,6 +61,7 @@ from typing import TYPE_CHECKING
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from decoy_engine import reasons
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._fk_keys import FK_KEY_DTYPE_UNSUPPORTED_CODE, NULL_FK_KEY, fk_key_value
 from decoy_engine.execution._fk_resolve import orphan_fk_violation_error
@@ -110,19 +111,19 @@ class ChildFkBatchJoiner:
     ) -> None:
         if len(child_key_types) != len(edge.child_columns):
             raise ExecutionError(
-                code="out_of_core_child_key_types_mismatch",
+                code=reasons.runtime.OUT_OF_CORE_CHILD_KEY_TYPES_MISMATCH,
                 message="one child key type is required per FK child column.",
             )
         if edge.orphan_policy is OrphanPolicy.REMAP:
             if remap_seeds is None or job_seed is None:
                 raise ExecutionError(
-                    code="out_of_core_remap_seeds_missing",
+                    code=reasons.runtime.OUT_OF_CORE_REMAP_SEEDS_MISSING,
                     message="orphan_policy='remap' requires the parent key seeds and job seed.",
                 )
             for parent_col, seed in zip(edge.parent_columns, remap_seeds, strict=True):
                 if seed is None:
                     raise ExecutionError(
-                        code="out_of_core_parent_seed_missing",
+                        code=reasons.runtime.OUT_OF_CORE_PARENT_SEED_MISSING,
                         message=f"parent key {edge.parent_table}.{parent_col} is not in the plan.",
                     )
         self._edge = edge
@@ -295,7 +296,7 @@ class ChildFkBatchJoiner:
         for child_col in self._edge.child_columns:
             if batch.schema.get_field_index(child_col) < 0:
                 raise ExecutionError(
-                    code="out_of_core_child_column_missing",
+                    code=reasons.runtime.OUT_OF_CORE_CHILD_COLUMN_MISSING,
                     message=f"child source table has no column {child_col!r}.",
                 )
 
@@ -554,7 +555,7 @@ def _remap_values(
         parent_seed = _column_seed(plan, edge.parent_table, parent_column)
         if parent_seed is None:
             raise ExecutionError(
-                code="out_of_core_parent_seed_missing",
+                code=reasons.runtime.OUT_OF_CORE_PARENT_SEED_MISSING,
                 message=f"parent key {edge.parent_table}.{parent_column} is not in the plan.",
             )
         normalized = [

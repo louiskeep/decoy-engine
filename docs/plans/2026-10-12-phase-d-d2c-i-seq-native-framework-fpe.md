@@ -1,6 +1,7 @@
 # Phase D / D2c-i: generalize the SEQ-native seam + wire `fpe`
 
-Status: plan (rev 2, GATE GO - ready to build; round-2 Codex plan-gate GO, all 4 rev-1 findings closed). First slice of D2c's ENGINE half (remaining SEQ payload
+Status: built
+Shipped: merge PR #243 (b52fe688)
 operators native). D2c's platform-sequential-activation half is PARKED (needs A3 + Cam go).
 Branches off origin/main (f9885434, includes D2a #241 + D2b #242) on
 feat/phase-d-d2c-seq-operators (worktree phase-d-d2c).

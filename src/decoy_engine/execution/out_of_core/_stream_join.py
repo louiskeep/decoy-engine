@@ -43,12 +43,10 @@ import pyarrow as pa
 import pyarrow.compute as pc
 import pyarrow.parquet as pq
 
+from decoy_engine import reasons
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._fk_keys import NULL_FK_KEY, fk_key_value
-from decoy_engine.execution.out_of_core._batch_join import (
-    _cast_chunks,
-    _resolve_output_types,
-)
+from decoy_engine.execution.out_of_core._batch_join import _cast_chunks, _resolve_output_types
 from decoy_engine.execution.out_of_core._duckdb import connect_duckdb
 from decoy_engine.execution.out_of_core._external_sort import BoundedExternalSorter
 from decoy_engine.execution.out_of_core._join import (
@@ -145,19 +143,19 @@ class StreamFkJoiner:
     ) -> None:
         if len(child_key_types) != len(edge.child_columns):
             raise ExecutionError(
-                code="out_of_core_child_key_types_mismatch",
+                code=reasons.runtime.OUT_OF_CORE_CHILD_KEY_TYPES_MISMATCH,
                 message="one child key type is required per FK child column.",
             )
         if edge.orphan_policy is OrphanPolicy.REMAP:
             if remap_seeds is None or job_seed is None:
                 raise ExecutionError(
-                    code="out_of_core_remap_seeds_missing",
+                    code=reasons.runtime.OUT_OF_CORE_REMAP_SEEDS_MISSING,
                     message="orphan_policy='remap' requires the parent key seeds and job seed.",
                 )
             for parent_col, seed in zip(edge.parent_columns, remap_seeds, strict=True):
                 if seed is None:
                     raise ExecutionError(
-                        code="out_of_core_parent_seed_missing",
+                        code=reasons.runtime.OUT_OF_CORE_PARENT_SEED_MISSING,
                         message=f"parent key {edge.parent_table}.{parent_col} is not in the plan.",
                     )
         self._edge = edge
@@ -427,19 +425,19 @@ class StreamFkJoiner:
         )
         if raw is None:
             raise ExecutionError(
-                code="out_of_core_fk_join_plan_unverified",
+                code=reasons.runtime.OUT_OF_CORE_FK_JOIN_PLAN_UNVERIFIED,
                 message="EXPLAIN (FORMAT JSON) returned no 'physical_plan' row.",
             )
         try:
             parsed = json.loads(raw)
         except (TypeError, ValueError) as exc:
             raise ExecutionError(
-                code="out_of_core_fk_join_plan_unverified",
+                code=reasons.runtime.OUT_OF_CORE_FK_JOIN_PLAN_UNVERIFIED,
                 message="EXPLAIN (FORMAT JSON) output was not valid JSON.",
             ) from exc
         if not isinstance(parsed, list) or len(parsed) != 1 or not isinstance(parsed[0], dict):
             raise ExecutionError(
-                code="out_of_core_fk_join_plan_unverified",
+                code=reasons.runtime.OUT_OF_CORE_FK_JOIN_PLAN_UNVERIFIED,
                 message=(
                     f"EXPLAIN (FORMAT JSON) plan had an unexpected top-level shape: {parsed!r}."
                 ),
@@ -675,7 +673,7 @@ class StreamFkJoiner:
         for child_col in self._child_columns:
             if schema.get_field_index(child_col) < 0:
                 raise ExecutionError(
-                    code="out_of_core_child_column_missing",
+                    code=reasons.runtime.OUT_OF_CORE_CHILD_COLUMN_MISSING,
                     message=f"child source table has no column {child_col!r}.",
                 )
 

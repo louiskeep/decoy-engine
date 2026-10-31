@@ -61,7 +61,7 @@ class _ReadlineCountingFile:
 def _base_config() -> dict[str, Any]:
     """A minimum PipelineConfig the schema accepts; tests mutate `sources`."""
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 0},
         "sources": {},
         "tables": [

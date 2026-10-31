@@ -17,7 +17,7 @@
 - **Reuse the `text_redact` pattern verbatim in shape** — do not design a new NER integration. The reference implementation is `execution/_strategies/_text_redact.py` (config read `:71-88`, `iter_ner_spans` call `:154-158`, version guard `:96-112`) + its OOC twin `execution/out_of_core/_mask_group_b.py:199-249` + compile check `plan/_checks.py:360-391`.
 - **Out-of-core parity is strict.** Any `text_mask` NER change MUST touch both the in-core handler AND the group_c OOC path, or the parity harness (`tests/parity/test_out_of_core_group_b_parity.py:320-321`) fails. Never land one without the other.
 - **Determinism.** spaCy greedy decoding is deterministic per pinned model; a new NER-consuming strategy must stamp `ner_model_version` and raise on drift, exactly like `text_redact`.
-- **Optional dep discipline.** NER is off by default (per-cell model cost is real — `iter_ner_spans` runs inside the row loop). Tests gate on the existing `@needs_ner` skipif (`tests/unit/storm/test_ner_spans.py:22`), mirroring the ml/geo `importorskip` convention.
+- **Optional dep discipline.** NER is off by default (per-cell model cost is real — `iter_ner_spans` runs inside the row loop). Tests gate on the existing `@needs_ner` skipif (`tests/unit/detection_verification/test_ner_spans.py:22`), mirroring the ml/geo `importorskip` convention.
 - **Gate.** Dennis review before merge; this is de-identification-critical (a missed entity is a PII leak), so a Codex cross-model pass on TX-2 is warranted.
 
 **Where things live today (reconcile against these):**
@@ -56,7 +56,7 @@ For person names + locations, `text_redact` NER is done in code. Deliverable is 
 ```python
 # tests/unit/execution/test_text_redact.py  (add)
 import pytest
-from tests.helpers.ner import needs_ner   # reconcile: the @needs_ner marker at tests/unit/storm/test_ner_spans.py:22
+from tests.helpers.ner import needs_ner   # reconcile: the @needs_ner marker at tests/unit/detection_verification/test_ner_spans.py:22
 
 @needs_ner
 def test_text_redact_ner_redacts_person_name():
@@ -337,7 +337,7 @@ Expected: PASS
 
 - [ ] **Step 5: Run the full text-mask + NER suites (no regression)**
 
-Run: `pytest tests/unit/execution/test_text_mask_ner.py tests/unit/transforms/test_text_mask.py tests/unit/storm/test_ner_spans.py -v`
+Run: `pytest tests/unit/execution/test_text_mask_ner.py tests/unit/transforms/test_text_mask.py tests/unit/detection_verification/test_ner_spans.py -v`
 Expected: PASS (NER-gated cases SKIPPED if model absent)
 
 - [ ] **Step 6: Commit**

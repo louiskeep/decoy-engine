@@ -358,7 +358,7 @@ def _config(tmp_path: Path) -> tuple[dict[str, Any], dict[str, pa.Table]]:
     for name, table in (("P", parent), ("C", child)):
         pq.write_table(table, tmp_path / f"{name}.parquet")
     config: dict[str, Any] = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"job_name": "text-redact-route", "seed": 7},
         "sources": {
             t: {"type": "file", "path": str(tmp_path / f"{t}.parquet"), "format": "parquet"}

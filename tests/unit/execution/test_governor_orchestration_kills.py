@@ -2,7 +2,7 @@
 (`decoy_engine.execution._governor`, branch `tq/isolated-substrate-grade`).
 
 Scope: the five orchestration functions `run_job_with_governor`,
-`_run_one_rung`, `_run_flag_off`, `_is_route_ineligible_error`,
+`_run_one_rung`, `_run_flag_off`, `_is_route_ineligible`,
 `_observed_peak_mb` (`_validate_call` + `_exhausted_diagnostic` are a sibling
 file). Every test here asserts an EXACT machine field the mutation flips -- a
 reroute-ladder decision/outcome, a rung selection, a route-ineligible verdict,
@@ -19,6 +19,7 @@ values unpinned -- exactly what mutmut survived on).
 
 from __future__ import annotations
 
+import dataclasses
 import signal
 import types
 from typing import Any
@@ -29,7 +30,7 @@ from decoy_engine.execution import _governor, _governor_monitor
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._governor import (
     GovernorTripRecord,
-    _is_route_ineligible_error,
+    _is_route_ineligible,
     _observed_peak_mb,
     run_job_with_governor,
 )
@@ -48,6 +49,16 @@ _OOC_INELIGIBLE_ERROR = (
     "execution_mode='out_of_core' requested but the job is not "
     "out-of-core-eligible (no_relationships)."
 )
+
+
+def _typed_ooc_ineligible() -> IsolatedRunResult:
+    from decoy_engine.execution._errors import OocIneligibleError
+    from decoy_engine.reason_adapter import reason_from_exception
+
+    return dataclasses.replace(
+        _crashed_result(_OOC_INELIGIBLE_ERROR),
+        reason=reason_from_exception(OocIneligibleError(_OOC_INELIGIBLE_ERROR)),
+    )
 
 
 def _oom_killed_result(peak_rss_mb: float | None = None) -> IsolatedRunResult:
@@ -104,31 +115,29 @@ def _no_child(monkeypatch) -> None:
 
 
 # ==========================================================================
-# `_is_route_ineligible_error` (#2, #4, #6, #8): the route-ineligible verdict.
+# `_is_route_ineligible` (#2, #4, #6, #8): the route-ineligible verdict.
 # ==========================================================================
 
 
-class TestIsRouteIneligibleError:
-    def test_empty_error_is_never_ineligible(self):
-        # #2: `if not error: return False` -> `return True`. A missing error
-        # string must NOT be read as an ineligibility verdict.
-        assert _is_route_ineligible_error("out_of_core", None) is False
-        assert _is_route_ineligible_error("out_of_core", "") is False
+class TestIsRouteIneligible:
+    def test_a_result_without_a_reason_is_never_ineligible(self):
+        assert _is_route_ineligible("out_of_core", _crashed_result("x")) is False
+        assert _is_route_ineligible("out_of_core", _crashed_result(_OOC_INELIGIBLE_ERROR)) is False
 
-    def test_error_without_any_marker_is_not_ineligible(self):
-        # #4: `marker in error` -> `marker not in error`. An unrelated error
-        # (no marker present) must be False; the inverted membership would
-        # report True because every marker is absent.
-        assert _is_route_ineligible_error("out_of_core", "some unrelated failure") is False
-        # Correctness companion: a real marker IS ineligible.
-        assert _is_route_ineligible_error("out_of_core", _OOC_INELIGIBLE_ERROR) is True
+    def test_the_typed_identity_is_ineligible_only_for_its_own_route_and_only_when_crashed(self):
+        from decoy_engine.execution._errors import OocIneligibleError
+        from decoy_engine.reason_adapter import reason_from_exception
 
-    def test_unmapped_route_falls_back_to_empty_markers_not_none(self):
-        # #6 / #8: the `.get(route, ())` default -> `None` (both the explicit
-        # `None` and the dropped-arg form). The `()` fallback must keep an
-        # unmapped route a clean `False`; a `None` default makes `any(... for
-        # marker in None)` raise TypeError instead.
-        assert _is_route_ineligible_error("bogus_route", "some error text") is False  # type: ignore[arg-type]
+        crashed = _crashed_result("x")
+        record = reason_from_exception(OocIneligibleError("t"))
+        typed = dataclasses.replace(crashed, reason=record)
+        assert _is_route_ineligible("out_of_core", typed) is True
+        assert _is_route_ineligible("sequential", typed) is False
+        assert _is_route_ineligible("full_frame", typed) is False  # type: ignore[arg-type]
+        assert (
+            _is_route_ineligible("out_of_core", dataclasses.replace(typed, outcome="oom_killed"))
+            is False
+        )
 
 
 # ==========================================================================
@@ -284,7 +293,7 @@ class TestRerouteTripFields:
             if execution_mode == "full_frame":
                 return _oom_killed_result(peak_rss_mb=200.0)
             if execution_mode == "out_of_core":
-                return _crashed_result(_OOC_INELIGIBLE_ERROR)
+                return _typed_ooc_ineligible()
             return _completed_result()  # sequential
 
         monkeypatch.setattr(_governor, "run_pipeline_isolated", fake_run)

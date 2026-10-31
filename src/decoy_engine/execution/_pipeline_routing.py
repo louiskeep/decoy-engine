@@ -103,8 +103,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from decoy_engine.errors import ConfigError
-from decoy_engine.execution._errors import ExecutionError
+from decoy_engine import reasons
+from decoy_engine.execution._errors import ExecutionError, OocIneligibleError, SeqIneligibleError
 
 # The size + out-of-core-admission signal helpers, and the S3 auto-chunk
 # routing layer, live in sibling modules to hold the 600-LOC orchestration
@@ -182,7 +182,7 @@ def _sequential_eligible(
     vault_writer: Any,
     post_validation: bool = False,
     resolved_substrate: str = "pandas",
-    run_storm: bool = False,
+    post_scan_integrity: bool = False,
 ) -> tuple[bool, str]:
     """Decide whether a mask job may take the bounded-memory sequential path.
 
@@ -217,23 +217,23 @@ def _sequential_eligible(
     without a substrate argument are unaffected.
     """
     if not profile.relationships:
-        return False, "no_relationships"
+        return False, reasons.route.NO_RELATIONSHIPS
     if has_generate_table:
-        return False, "generate_plus_mask"
+        return False, reasons.route.GENERATE_PLUS_MASK
     if validators:
-        return False, "validators_present"
+        return False, reasons.route.VALIDATORS_PRESENT
     if fidelity_report:
-        return False, "fidelity_report_requested"
+        return False, reasons.route.FIDELITY_REPORT_REQUESTED
     if post_validation:
-        return False, "post_validation_requested"
-    if run_storm:
-        # STORM post-mask checks need the resident output (full-frame), like post_validation.
-        return False, "run_storm_requested"
+        return False, reasons.route.POST_VALIDATION_REQUESTED
+    if post_scan_integrity:
+        # Post-scan integrity checks need the resident output (full-frame), like post_validation.
+        return False, reasons.route.POST_SCAN_INTEGRITY_REQUESTED
     if vault_writer is not None:
-        return False, "vault_writer_requested"
+        return False, reasons.route.VAULT_WRITER_REQUESTED
     if resolved_substrate != "pandas":
-        return False, "non_pandas_substrate_requested"
-    return True, "pure_mask_fk"
+        return False, reasons.route.NON_PANDAS_SUBSTRATE_REQUESTED
+    return True, reasons.route.PURE_MASK_FK
 
 
 def reject_explicit_sequential(
@@ -241,12 +241,12 @@ def reject_explicit_sequential(
 ) -> None:
     """The fail-closed checks behind an explicit `execution_mode="sequential"`."""
     if not eligible:
-        raise ConfigError(
+        raise SeqIneligibleError(
             f"execution_mode='sequential' requested but the job is not "
             f"sequential-eligible ({route_reason})."
         )
     if cyclic:
-        raise ConfigError(
+        raise SeqIneligibleError(
             "execution_mode='sequential' requested but the FK graph has a "
             "cross-table cycle, which the sequential path cannot order; "
             "use execution_mode='full_frame' or 'auto'."
@@ -255,7 +255,7 @@ def reject_explicit_sequential(
         # Without a mask-kind table the sequential branch in run_pipeline would
         # silently no-op and fall through to full-frame, ignoring the explicit
         # request. Fail closed instead.
-        raise ConfigError(
+        raise SeqIneligibleError(
             "execution_mode='sequential' requested but the job has no "
             "mask-kind table to run through the sequential path."
         )
@@ -267,13 +267,13 @@ def lazy_transform_route(eligible: bool, route_reason: str, cyclic: bool) -> tup
     if eligible and not cyclic:
         return "sequential", route_reason
     raise ExecutionError(
-        code="fk_full_frame_oom_risk_rejected",
+        code=reasons.runtime.FK_FULL_FRAME_OOM_RISK_REJECTED,
         message=(
             "FK job rejected before read: a table that declares transforms is not "
             "resident when routing runs (a LazySource or loader-supplied source; the "
             "isolated worker reads relationship sources lazily), so its transformed "
             "size cannot be priced or probed and full-frame is not admitted, and no "
-            f"bounded route applies ({'cross_table_cycle' if cyclic else route_reason}). "
+            f"bounded route applies ({reasons.route.CROSS_TABLE_CYCLE if cyclic else route_reason}). "
             "Make the job sequential-eligible, or force execution_mode='full_frame' "
             "(or isolate=False when running isolated) to override at your own memory risk."
         ),
@@ -291,7 +291,7 @@ def decide_execution_route(
     execution_mode: str,
     graph: RelationshipGraph,
     post_validation: bool = False,
-    run_storm: bool = False,
+    post_scan_integrity: bool = False,
     resolved_substrate: str = "pandas",
     out_of_core_compatible: bool = False,
     out_of_core_reject_code: str | None = None,
@@ -446,7 +446,7 @@ def decide_execution_route(
         vault_writer=vault_writer,
         post_validation=post_validation,
         resolved_substrate=resolved_substrate,
-        run_storm=run_storm,
+        post_scan_integrity=post_scan_integrity,
     )
     cyclic = _has_cross_table_fk_cycle(graph)
     # D3b: the vault is the ONLY disqualifier lifted, and only onto out-of-core.
@@ -465,7 +465,7 @@ def decide_execution_route(
             vault_writer=None,
             post_validation=post_validation,
             resolved_substrate=resolved_substrate,
-            run_storm=run_storm,
+            post_scan_integrity=post_scan_integrity,
         )[0]
     )
     # D3a: validators are the only disqualifier lifted here, and only onto out-of-core.
@@ -484,7 +484,7 @@ def decide_execution_route(
             vault_writer=vault_writer,
             post_validation=post_validation,
             resolved_substrate=resolved_substrate,
-            run_storm=run_storm,
+            post_scan_integrity=post_scan_integrity,
         )[0]
     )
     # `eligible` is a job-SHAPE check and stays true for a cross-table cycle, so
@@ -510,37 +510,37 @@ def decide_execution_route(
     if execution_mode == "full_frame":
         # Explicit operator escape hatch: force full-frame even when large.
         # Bypasses the reject -- the operator owns the OOM risk they requested.
-        return "full_frame", "override_full_frame"
+        return "full_frame", reasons.route.OVERRIDE_FULL_FRAME
 
     if execution_mode == "out_of_core":
         # Fail closed, mirroring the sequential override: never silently ignore
         # an explicit request by falling through to another route.
         if not has_mask_table:
-            raise ConfigError(
+            raise OocIneligibleError(
                 "execution_mode='out_of_core' requested but the job has no "
                 "mask-kind table to run through the out-of-core path."
             )
         if not eligible:
-            raise ConfigError(
+            raise OocIneligibleError(
                 f"execution_mode='out_of_core' requested but the job is not "
                 f"out-of-core-eligible ({route_reason})."
             )
         if not out_of_core_compatible:
-            raise ConfigError(
+            raise OocIneligibleError(
                 f"execution_mode='out_of_core' requested but the job is not "
                 f"out-of-core-compatible "
                 f"({out_of_core_reject_code or 'unsupported_recipe'}); use "
                 f"execution_mode='full_frame' or 'auto'."
             )
-        return "out_of_core", "override_out_of_core"
+        return "out_of_core", reasons.route.OVERRIDE_OUT_OF_CORE
 
     if execution_mode == "sequential":
         reject_explicit_sequential(eligible, route_reason, cyclic, has_mask_table)
         return "sequential", route_reason
 
-    # `not run_storm`: STORM needs the resident full-frame output, so a storm job declines mixed here.
-    if mixed_admitted and not run_storm:
-        return "mixed", "mixed_generate_mask_chunked"
+    # `not post_scan_integrity`: Post-scan integrity needs the resident full-frame output, so such a job declines mixed here.
+    if mixed_admitted and not post_scan_integrity:
+        return "mixed", reasons.route.MIXED_GENERATE_MASK_CHUNKED
 
     if lazy_transform_bearing and has_relationships and has_mask_table:
         # A transform-bearing mask table that is not resident cannot be priced or
@@ -569,14 +569,14 @@ def decide_execution_route(
             # through to the full-frame-fit check (which also fails) and is rejected, exactly as a
             # too-big vault job is today. The vault cannot be bounded for an oversized job; a
             # spillable-vault follow-on could lift this. (Codex final gate HIGH.)
-            return "out_of_core", "byte_estimate_bounded_out_of_core"
+            return "out_of_core", reasons.route.BYTE_ESTIMATE_BOUNDED_OUT_OF_CORE
         # §13's ruling: admit full_frame ONLY when the conservative
         # estimate clears the budget with margin (`fits` already applied
         # the asymmetric error_band). UNPRICEABLE (`None`) is treated
         # exactly like "does not fit" -- never admit an unknown estimate to
         # full_frame; B2's probe is the future fast-path recovery for it.
         if full_frame_fits_estimate is True and not bounded_eligible:
-            return "full_frame", "byte_estimate_full_frame_fits"
+            return "full_frame", reasons.route.BYTE_ESTIMATE_FULL_FRAME_FITS
         # B2 (§13): the static estimate did NOT confirm a fit -- give the
         # probe a chance to RECOVER full_frame with a real measurement
         # before falling back to bounded-by-eligibility. `probe_recovers_
@@ -590,7 +590,7 @@ def decide_execution_route(
         # defense-in-depth discipline above.
         probe_fits = use_probe_routing and probe_recovers_full_frame is True
         if probe_fits and not bounded_eligible:
-            return "full_frame", "probe_recovered_full_frame"
+            return "full_frame", reasons.route.PROBE_RECOVERED_FULL_FRAME
         # Only a bounded-eligible job gets past the two returns above with a fit, and it
         # falls through to a bounded route (the oracle is far slower per row). Out-of-core
         # rejects some key types the oracle and sequential both complete, so such a job
@@ -600,10 +600,9 @@ def decide_execution_route(
         # Does not fit (or UNPRICEABLE): route bounded by ELIGIBILITY alone,
         # never by an estimate of out_of_core/sequential peak -- their k's
         # are unmeasured placeholders (§13), and out_of_core's own runtime
-        # budget (Sprint 1b) caps it regardless of how this job got routed
-        # there.
+        # budget (Sprint 1b) caps it regardless of how this job got routed there.
         if eligible and not cyclic and out_of_core_compatible:
-            return "out_of_core", "byte_estimate_bounded_out_of_core"
+            return "out_of_core", reasons.route.BYTE_ESTIMATE_BOUNDED_OUT_OF_CORE
         if eligible and not cyclic:
             return "sequential", route_reason
         # Irreducible reject class (§13): no bounded route applies (a
@@ -615,10 +614,10 @@ def decide_execution_route(
         # row-count basis, not the reject itself, so this remains the one
         # irreducible reject class byte-based routing cannot absorb.
         byte_estimate_full_frame_reason = (
-            "cross_table_cycle" if (eligible and cyclic) else route_reason
+            reasons.route.CROSS_TABLE_CYCLE if (eligible and cyclic) else route_reason
         )
         raise ExecutionError(
-            code="fk_full_frame_oom_risk_rejected",
+            code=reasons.runtime.FK_FULL_FRAME_OOM_RISK_REJECTED,
             message=(
                 "FK job rejected before read: the byte-level memory estimator "
                 "(docs/plans/2026-07-10-oom-avoidance-routing-redesign.md §13) "
@@ -632,13 +631,13 @@ def decide_execution_route(
             ),
         )
     if out_of_core_ready:
-        return "out_of_core", "out_of_core_large_fk"
+        return "out_of_core", reasons.route.OUT_OF_CORE_LARGE_FK
     if eligible and not cyclic:
         return "sequential", route_reason
     # Full-frame-bound: no relationships, a cyclic FK graph (eligible), or a
     # relationship job disqualified from sequential. A cyclic pure-mask job
     # keeps its historical `cross_table_cycle` reason.
-    full_frame_reason = "cross_table_cycle" if (eligible and cyclic) else route_reason
+    full_frame_reason = reasons.route.CROSS_TABLE_CYCLE if (eligible and cyclic) else route_reason
     # Reject before read (fail-closed): a LARGE relationship job that no bounded
     # route can take would risk a silent full-frame OOM. Divert to a clean typed
     # error instead of the OOM-killer (GATE-1 #4 prevention half). Reaching this
@@ -667,7 +666,7 @@ def decide_execution_route(
         # fine, and point at the exact-count fix (Parquet) or the escape hatch.
         if not largest_table_rows_exact:
             raise ExecutionError(
-                code="fk_full_frame_oom_risk_rejected_estimated",
+                code=reasons.runtime.FK_FULL_FRAME_OOM_RISK_REJECTED_ESTIMATED,
                 message=(
                     f"FK job rejected before read: the largest mask table's row "
                     f"count is a CSV size estimate (~{rows:,} rows), at or above "
@@ -683,7 +682,7 @@ def decide_execution_route(
                 ),
             )
         raise ExecutionError(
-            code="fk_full_frame_oom_risk_rejected",
+            code=reasons.runtime.FK_FULL_FRAME_OOM_RISK_REJECTED,
             message=(
                 f"FK job rejected before read: largest mask table has {rows:,} "
                 f"rows, at or above the full-frame reject threshold "

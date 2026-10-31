@@ -102,11 +102,13 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
+from decoy_engine import reasons
 from decoy_engine.execution._governor_monitor import _RssMonitor
-from decoy_engine.execution._isolated_common import ROUTE_INELIGIBLE_MARKERS, IsolatedRunResult
+from decoy_engine.execution._isolated_common import IsolatedRunResult
 from decoy_engine.execution._isolated_run import run_pipeline_isolated
 from decoy_engine.execution._substrate import require_bool
 from decoy_engine.fileaccess import FileAccess, entry_point
+from decoy_engine.progress import RetryInfo, get_active_channel
 
 if TYPE_CHECKING:
     import pyarrow as pa
@@ -143,28 +145,26 @@ _DEFAULT_POLL_INTERVAL_S = 1.5
 
 GovernorTripKind = Literal["governor_kill", "self_oom", "route_ineligible", "crashed"]
 
-# `decide_execution_route` (`_pipeline_routing.py`) raises a `ConfigError`
-# with one of these stable, already-load-bearing message fragments when an
-# explicit `execution_mode` override names a route the job is NOT eligible
-# for -- see its "sequential"/"out_of_core" `execution_mode` branches. A
-# `ConfigError` crossing the isolated-run process boundary is not memory-
-# shaped (`_isolated_common.is_memory_failure` never matches it), so it comes
-# back as a `crashed` `IsolatedRunResult` carrying this exact text in
-# `.error`. Matching on it (rather than trying to re-derive eligibility from
-# `config`/`sources` here, which would require compiling a `Plan` +
-# `RelationshipGraph` this generic wrapper never sees) is the same marker-
-# based cross-process classification `_isolated_common`'s own
-# `_ABNORMAL_EXIT_MEMORY_MARKERS` already uses for the OOM/crash split -- an
-# established pattern in this module family, not a new heuristic.
-# The fragments live in `_isolated_common` so the safe-error-summary builder that writes the
-# `error` field and this matcher cannot drift apart.
-_INELIGIBLE_ROUTE_MARKERS = ROUTE_INELIGIBLE_MARKERS
+# `decide_execution_route` raises a typed `SeqIneligibleError` / `OocIneligibleError` when an explicit
+# `execution_mode` names a route the job is NOT eligible for. Across the process boundary it arrives
+# as `IsolatedRunResult.reason` with a closed registry identity, and that identity (never the
+# `error` text, the child's output, or the text of a general `ConfigError`) is what the governor
+# reroutes on. A `crashed` run whose reason is anything else is a genuine failure.
+_INELIGIBLE_BY_ROUTE: dict[str, Any] = {
+    "sequential": reasons.route.SEQUENTIAL_INELIGIBLE,
+    "out_of_core": reasons.route.OUT_OF_CORE_INELIGIBLE,
+}
 
 
-def _is_route_ineligible_error(route: GovernorRoute, error: str | None) -> bool:
-    if not error:
-        return False
-    return any(marker in error for marker in _INELIGIBLE_ROUTE_MARKERS.get(route, ()))
+def _is_route_ineligible(route: GovernorRoute, result: IsolatedRunResult) -> bool:
+    expected = _INELIGIBLE_BY_ROUTE.get(route)
+    reason = result.reason
+    return (
+        result.outcome == "crashed"
+        and expected is not None
+        and reason is not None
+        and (reason.namespace, reason.code) == (expected.namespace, str(expected))
+    )
 
 
 @dataclass(frozen=True)
@@ -336,8 +336,12 @@ def run_job_with_governor(
 
     hard_threshold_bytes = int(budget_bytes * hard_threshold_fraction)
     trips: list[GovernorTripRecord] = []
+    # The governor owns route attempts (a reroute is its retry), so it, and only it, reports them
+    # to a bound progress channel. Job attempts belong to the caller's scheduler, not to this loop.
+    progress = get_active_channel()
 
     for index, route in enumerate(ladder):
+        progress.retry_report(RetryInfo("route", index + 1, index, "running"), table=None)
         result, monitor = _run_one_rung(
             config,
             sources,
@@ -354,7 +358,7 @@ def run_job_with_governor(
 
         next_route = _next_rung(ladder, index)
 
-        if result.outcome == "crashed" and _is_route_ineligible_error(route, result.error):
+        if _is_route_ineligible(route, result):
             trip = GovernorTripRecord(
                 route=route,
                 budget_bytes=budget_bytes,
@@ -415,6 +419,9 @@ def run_job_with_governor(
             on_trip(trip)
 
         if next_route is None:
+            progress.retry_report(
+                RetryInfo("route", index + 1, index, "exhausted"), reason=result.reason
+            )
             return GovernorResult(
                 outcome="exhausted",
                 final_route=None,
@@ -423,6 +430,9 @@ def run_job_with_governor(
                 diagnostic=_exhausted_diagnostic(tuple(trips), budget_bytes),
             )
         # else: loop continues to the next rung -- this IS the reroute.
+        progress.retry_report(
+            RetryInfo("route", index + 2, index + 1, "scheduled"), reason=result.reason
+        )
 
     # Unreachable (the loop above always returns on its last iteration), kept
     # only so mypy sees an exhaustive return on every path.

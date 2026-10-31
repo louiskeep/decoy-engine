@@ -28,7 +28,7 @@ import pyarrow as pa
 import pyarrow.compute as pc
 import pyarrow.csv as pa_csv
 
-from decoy_engine import fileaccess
+from decoy_engine import fileaccess, reasons
 from decoy_engine.errors import DecoyError
 from decoy_engine.fileaccess import FileAccess, FileRequest, FileRole
 from decoy_engine.fileaccess.adapters import arrow as arrow_adapter
@@ -79,7 +79,7 @@ class BoundedReadError(DecoyError):
     """A coded bounded-read failure. ``code`` is stable; the message carries
     identifiers and positions, never row data."""
 
-    code = "bounded_read_error"
+    code = reasons.runtime.BOUNDED_READ_ERROR
 
     def __init__(self, **detail: Any) -> None:
         text = ", ".join(f"{k}={v!r}" for k, v in detail.items())
@@ -88,19 +88,19 @@ class BoundedReadError(DecoyError):
 
 
 class RowExceedsMaxRowBytes(BoundedReadError):  # noqa: N818 - coded condition
-    code = "row_exceeds_max_row_bytes"
+    code = reasons.runtime.ROW_EXCEEDS_MAX_ROW_BYTES
 
 
 class CsvRecordExceedsMaxRowBytes(BoundedReadError):  # noqa: N818 - coded condition
-    code = "csv_record_exceeds_max_row_bytes"
+    code = reasons.runtime.CSV_RECORD_EXCEEDS_MAX_ROW_BYTES
 
 
 class CsvMalformed(BoundedReadError):  # noqa: N818 - coded condition
-    code = "csv_malformed"
+    code = reasons.runtime.CSV_MALFORMED
 
 
 class UnsupportedColumnType(BoundedReadError):  # noqa: N818 - coded condition
-    code = "unsupported_column_type"
+    code = reasons.connector.UNSUPPORTED_COLUMN_TYPE
 
 
 @dataclass(frozen=True)

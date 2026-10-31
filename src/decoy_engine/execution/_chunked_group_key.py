@@ -71,6 +71,7 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
+from decoy_engine import reasons
 from decoy_engine.execution._adapter import provider_config_to_dict
 from decoy_engine.execution._strategies._text_redact import _DEFAULT_TOKEN
 from decoy_engine.plan._errors import PlanCompileError
@@ -316,7 +317,7 @@ def reject_unsafe_group_key_group_by_dtype(
     if not offending:
         return
     raise PlanCompileError(
-        code="chunked_group_key_group_by_dtype_unsupported",
+        code=reasons.plan.CHUNKED_GROUP_KEY_GROUP_BY_DTYPE_UNSUPPORTED,
         path=f"tables.{table}.columns",
         message=(
             f"group_key column(s) {', '.join(offending)} on table {table!r} read a "
@@ -350,7 +351,7 @@ def reject_group_key_when(table_cfg: dict[str, Any], *, table: str) -> None:
     if not when_cols:
         return
     raise PlanCompileError(
-        code="chunked_group_key_when_not_supported",
+        code=reasons.plan.CHUNKED_GROUP_KEY_WHEN_NOT_SUPPORTED,
         path=f"tables.{table}.columns",
         message=(
             f"column(s) {', '.join(when_cols)} combine 'group_key' with a 'when:' "

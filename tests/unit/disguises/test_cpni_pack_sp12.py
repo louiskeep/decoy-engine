@@ -21,7 +21,7 @@ Key assertions:
 
 Honest-gap guards:
   - Pack does NOT carry a field_rule for 'imei', 'imsi', 'iccid', 'msisdn'
-    (no such STORM detectors exist).
+    (no such detectors exist).
   - Pack does NOT carry checksum: luhn on the device_id rule (would over-claim
     IMEI-specific Luhn for IMSI/ICCID columns that also match device_id).
   - Cell tower lat/lng has no detector; pack must not claim to auto-route it.
@@ -315,38 +315,38 @@ class TestCpniHonestCoverage:
     """Honesty guards: the CPNI pack must not claim capabilities it lacks.
 
     These tests prevent documentation drift that would over-promise
-    auto-routing for fields that have no STORM detectors.
+    auto-routing for fields that have no detectors.
     """
 
     def test_H1_no_imei_detector_in_rules(self):
-        """IMEI has no registered STORM detector; pack must not reference it."""
+        """IMEI has no registered detector; pack must not reference it."""
         pack = _cpni_pack()
         bad = [r for r in pack.field_rules if "imei" in r.detectors]
         assert not bad, (
             f"CPNI pack must NOT carry field_rules for 'imei' detector "
-            f"(no such STORM detector). Found: {bad}"
+            f"(no such detector). Found: {bad}"
         )
 
     def test_H2_no_imsi_detector_in_rules(self):
-        """IMSI has no registered STORM detector."""
+        """IMSI has no registered detector."""
         pack = _cpni_pack()
         bad = [r for r in pack.field_rules if "imsi" in r.detectors]
         assert not bad, (
             f"CPNI pack must NOT carry field_rules for 'imsi' detector "
-            f"(no such STORM detector). Found: {bad}"
+            f"(no such detector). Found: {bad}"
         )
 
     def test_H3_no_iccid_detector_in_rules(self):
-        """ICCID has no registered STORM detector."""
+        """ICCID has no registered detector."""
         pack = _cpni_pack()
         bad = [r for r in pack.field_rules if "iccid" in r.detectors]
         assert not bad, (
             f"CPNI pack must NOT carry field_rules for 'iccid' detector "
-            f"(no such STORM detector). Found: {bad}"
+            f"(no such detector). Found: {bad}"
         )
 
     def test_H4_no_msisdn_detector_in_rules(self):
-        """MSISDN (as a distinct detector) has no registered STORM detector.
+        """MSISDN (as a distinct detector) has no registered detector.
 
         MSISDN detection is handled via us_phone value pattern for US numbers;
         international MSISDNs are an honest gap. The pack must not pretend
@@ -355,19 +355,19 @@ class TestCpniHonestCoverage:
         pack = _cpni_pack()
         bad = [r for r in pack.field_rules if "msisdn" in r.detectors]
         assert not bad, (
-            f"CPNI pack must NOT carry a field_rule for 'msisdn' (no such STORM "
+            f"CPNI pack must NOT carry a field_rule for 'msisdn' (no such Pre-scan "
             f"detector). International MSISDN is an honest gap; US phone numbers "
             f"route via us_phone value-pattern matching. Found: {bad}"
         )
 
     def test_H5_no_cell_tower_detector_in_rules(self):
-        """Cell tower lat/lng has no STORM detector; pack must not claim it."""
+        """Cell tower lat/lng has no detector; pack must not claim it."""
         pack = _cpni_pack()
         cell_tower_detectors = ("cell_tower", "cell_lat", "cell_lng", "tower_location")
         bad = [r for r in pack.field_rules if any(d in cell_tower_detectors for d in r.detectors)]
         assert not bad, (
             f"CPNI pack must NOT carry field_rules for cell tower detectors "
-            f"(no such STORM detectors). Configure geo_generalize: lat_lng manually. "
+            f"(no such detectors). Configure geo_generalize: lat_lng manually. "
             f"Found: {bad}"
         )
 

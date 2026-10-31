@@ -1,6 +1,7 @@
 # Phase D / D2a: SEQ-route parity contract + hash on the compiled kernel
 
-Status: plan (rev 2, plan-gate GO); built on `feat/phase-d-d2a-seq-hash-native`, pending the
+Status: built
+Shipped: merge PR #241 (262f031f)
 quality gate. rev 1 NO-GO (4 HIGH/1 MEDIUM, no blocker); rev 2 folds all five, grounded on
 Codex-verified SEQ routing/conversion probes.
 

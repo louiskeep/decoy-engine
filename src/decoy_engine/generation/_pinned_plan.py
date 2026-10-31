@@ -22,6 +22,7 @@ import platform
 from dataclasses import dataclass
 from typing import Any
 
+from decoy_engine import reasons
 from decoy_engine._reference_date import PinnedModeError
 
 PINNED_PLAN_SCHEMA = "pinned-plan/v1"
@@ -122,7 +123,7 @@ class PinnedPlan:
             )
         except (KeyError, TypeError, ValueError, AttributeError) as exc:
             raise PinnedModeError(
-                code="pinned_plan_malformed",
+                code=reasons.plan.PINNED_PLAN_MALFORMED,
                 message=f"serialized pinned plan is malformed ({type(exc).__name__})",
             ) from None
 
@@ -158,7 +159,7 @@ def runtime_identity() -> tuple[tuple[str, str], ...]:
 def validate_seed(seed: Any) -> int:
     if isinstance(seed, bool) or not isinstance(seed, int) or not 0 <= seed < MAX_SEED:
         raise PinnedModeError(
-            code="pinned_seed_invalid",
+            code=reasons.plan.PINNED_SEED_INVALID,
             message="seed is required and must be an integer in [0, 2**64)",
         )
     return seed

@@ -10,7 +10,7 @@ what makes native output byte-identical to the shipped handlers: there is one
 logic source, and this module is just its Arrow-native entry point.
 
 `text_redact` is the one exception to "calls `kernel/_scalar.py`": its per-cell span logic lives
-in the oracle handler and the storm detectors, so `native_text_redact` calls `iter_spans` and
+in the oracle handler and the pre-scan detectors, so `native_text_redact` calls `iter_spans` and
 `_splice` from there. It runs the same Python per cell as the oracle, so the column's own speed
 is unchanged; the gain is that its table stays native.
 
@@ -48,6 +48,7 @@ from typing import Any
 
 import pyarrow as pa
 
+from decoy_engine import reasons
 from decoy_engine.detection.detectors import Span, iter_spans
 from decoy_engine.errors import FpeUnencryptableError
 from decoy_engine.execution._errors import StrategyError
@@ -115,7 +116,7 @@ def native_truncate(
     """
     if not isinstance(length, int) or length < 1:
         raise StrategyError(
-            code="truncate_length_invalid",
+            code=reasons.runtime.TRUNCATE_LENGTH_INVALID,
             strategy="truncate",
             message=(
                 f"truncate requires an integer length >= 1, got {length!r} "
@@ -124,13 +125,13 @@ def native_truncate(
         )
     if keep not in ("head", "tail"):
         raise StrategyError(
-            code="truncate_keep_invalid",
+            code=reasons.runtime.TRUNCATE_KEEP_INVALID,
             strategy="truncate",
             message=f"truncate requires keep in ('head', 'tail'), got {keep!r}.",
         )
     if mask_char is not None and (not isinstance(mask_char, str) or len(mask_char) != 1):
         raise StrategyError(
-            code="truncate_mask_char_invalid",
+            code=reasons.runtime.TRUNCATE_MASK_CHAR_INVALID,
             strategy="truncate",
             message=(
                 f"truncate requires mask_char to be a single character, got "

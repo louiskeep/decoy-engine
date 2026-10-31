@@ -32,13 +32,19 @@ from __future__ import annotations
 import os
 from collections.abc import Iterable
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 import pyarrow as pa
 
 from decoy_engine import fileaccess
+from decoy_engine.execution._publication_observer import (
+    PublicationEvidence,
+    capture_publication_failure,
+)
 from decoy_engine.fileaccess import FileAccess, FileRequest, FileRole, OutputDir, OutputTxn
 from decoy_engine.fileaccess.adapters import arrow as arrow_adapter
+from decoy_engine.progress import get_active_channel
+from decoy_engine.reasons import CleanupState, Operation, PublicationState
 
 
 # NOTE: isinstance(obj, TransactionalSink) matches write/write_batches/commit/
@@ -101,9 +107,24 @@ class _CallableSinkAdapter:
 
     def __init__(self, fn: object) -> None:
         self._fn = fn
+        # The callable publishes as it goes, so a failure leaves the output state unknowable.
+        self.publication_evidence = PublicationEvidence()
+
+    def _written(self, table: str, call: Any) -> None:
+        evidence = self.publication_evidence
+        evidence.last_operation = Operation.WRITE
+        try:
+            call()
+        except BaseException as exc:
+            evidence.state = PublicationState.UNKNOWN
+            evidence.cleanup = CleanupState.UNKNOWN
+            capture_publication_failure(exc, self, Operation.WRITE, table=table)
+            raise
+        evidence.state = PublicationState.PARTIAL
+        evidence.cleanup = CleanupState.UNKNOWN
 
     def write(self, table: str, data: pa.Table) -> None:
-        self._fn(table, data)  # type: ignore[operator]
+        self._written(table, lambda: self._fn(table, data))  # type: ignore[operator]
 
     def write_batches(
         self, table: str, batches: Iterable[pa.RecordBatch], *, schema: pa.Schema
@@ -113,12 +134,15 @@ class _CallableSinkAdapter:
         before the single legacy call. The out-of-core streaming path is
         ParquetTransactionalSink.write_batches, not this adapter."""
         data = pa.Table.from_batches(list(batches), schema=schema)
-        self._fn(table, data)  # type: ignore[operator]
+        self._written(table, lambda: self._fn(table, data))  # type: ignore[operator]
 
     def commit(self) -> None:
-        pass
+        self.publication_evidence.state = PublicationState.PUBLISHED
+        self.publication_evidence.cleanup = CleanupState.NOT_NEEDED
 
     def abort(self) -> None:
+        # Nothing is undone: whatever the callable already published stays, and cleanup is not
+        # claimed. `unknown` until a write is known not to have happened.
         pass
 
 
@@ -174,6 +198,7 @@ class ParquetTransactionalSink:
             self._out = target_dir
             self._target = Path(target_dir.locator)
         self._txn: OutputTxn | None = None
+        self.publication_evidence = PublicationEvidence()
 
     def write(self, table: str, data: pa.Table) -> None:
         """Stage one masked table as Parquet in the private staging directory.
@@ -192,8 +217,16 @@ class ParquetTransactionalSink:
         """
         self._validate_table_name(table)
         txn = self._stage()
-        self._replace_staged(txn, f"{table}.parquet")
-        arrow_adapter.write_table(data, txn, f"{table}.parquet")
+        component = f"{table}.parquet"
+        self._replace_staged(txn, component)
+        self.publication_evidence.last_operation = Operation.WRITE
+        try:
+            arrow_adapter.write_table(data, txn, component)
+        except BaseException as exc:
+            # Staged only: nothing is visible at the target until the single rename.
+            capture_publication_failure(exc, self, Operation.WRITE, table=table)
+            raise
+        self._stored(table, txn, component)
 
     def write_batches(
         self, table: str, batches: Iterable[pa.RecordBatch], *, schema: pa.Schema
@@ -235,19 +268,49 @@ class ParquetTransactionalSink:
         """
         self._validate_table_name(table)
         txn = self._stage()
-        self._replace_staged(txn, f"{table}.parquet")
-        writer = arrow_adapter.parquet_writer(txn, f"{table}.parquet", schema)
+        component = f"{table}.parquet"
+        self._replace_staged(txn, component)
+        evidence = self.publication_evidence
+        evidence.last_operation = Operation.WRITE
+        writer = arrow_adapter.parquet_writer(txn, component, schema)
         try:
             for batch in batches:
                 writer.write_batch(batch)
-        except BaseException:
+        except BaseException as exc:
+            capture_publication_failure(exc, self, Operation.WRITE, table=table)
             # Close best-effort so a close error cannot mask the original.
             try:
                 writer.close()
             except Exception:
                 pass
             raise
-        writer.close()
+        evidence.last_operation = Operation.CLOSE
+        try:
+            writer.close()
+        except BaseException as exc:
+            capture_publication_failure(exc, self, Operation.CLOSE, table=table)
+            raise
+        self._stored(table, txn, component)
+
+    def _stored(self, table: str, txn: OutputTxn, component: str) -> None:
+        """Record and report the serialized size of a closed staged file (`stored_output`).
+
+        The size comes from the staged component's own descriptor: the stage has no path under
+        a strict policy, and a name-based stat would race the publish rename."""
+        try:
+            fd = txn.open_file(component)
+        except OSError:
+            return
+        try:
+            size = os.fstat(fd).st_size
+        except OSError:
+            return
+        finally:
+            os.close(fd)
+        self.publication_evidence.stored_bytes[table] = size
+        channel = get_active_channel()
+        if channel.active:
+            channel.publish_stored(table, size)
 
     @property
     def spill_parent(self) -> Path:
@@ -286,6 +349,8 @@ class ParquetTransactionalSink:
         if self._txn is None:
             # The stage lives beside the target (same filesystem) so publication is one rename.
             self._txn = self._out.begin("dir", "exclusive", label="table_sink")
+            # Staged files exist and nothing has cleaned them yet.
+            self.publication_evidence.cleanup = CleanupState.UNKNOWN
         return self._txn
 
     @staticmethod
@@ -314,13 +379,25 @@ class ParquetTransactionalSink:
                 permission denied). Nothing is published on failure; staging
                 is intact for abort().
         """
-        if self._txn is None:
-            # Nothing was written; create an empty target directory directly.
-            self._out.ensure_dir()
-            return
-        self._txn.publish()
+        evidence = self.publication_evidence
+        evidence.last_operation = Operation.COMMIT
+        try:
+            if self._txn is None:
+                # Nothing was written; create an empty target directory directly.
+                self._out.ensure_dir()
+                evidence.state = PublicationState.PUBLISHED
+                return
+            self._txn.publish()
+        except BaseException as exc:
+            # The rename is atomic: a failure leaves nothing published and staging intact.
+            evidence.state = PublicationState.NOT_PUBLISHED
+            evidence.cleanup = CleanupState.NOT_NEEDED
+            capture_publication_failure(exc, self, Operation.COMMIT)
+            raise
         # Rename succeeded: staging is now the target directory; clear state.
         self._txn = None
+        evidence.state = PublicationState.PUBLISHED
+        evidence.cleanup = CleanupState.NOT_NEEDED
 
     def abort(self) -> None:
         """Remove the staging directory so nothing partial reaches the target.
@@ -330,9 +407,12 @@ class ParquetTransactionalSink:
         self._cleanup_staging()
 
     def _cleanup_staging(self) -> None:
+        evidence = self.publication_evidence
         txn, self._txn = self._txn, None
         if txn is not None:
             try:
                 txn.abort()
             except Exception:
-                pass
+                evidence.cleanup = CleanupState.FAILED
+            else:
+                evidence.cleanup = CleanupState.CONFIRMED

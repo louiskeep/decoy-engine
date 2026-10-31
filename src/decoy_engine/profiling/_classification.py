@@ -1,4 +1,4 @@
-"""Column-shape classification helpers for the STORM profiler (F11c split).
+"""Column-shape classification helpers for the column profiler (F11c split).
 
 Pure per-column shape signals (alphabet class, cardinality band, numeric
 range band, mode, casing) the FORECAST chooser branches on. Self-contained

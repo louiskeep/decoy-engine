@@ -38,9 +38,9 @@ from typing import Any
 import pyarrow as pa
 import pyarrow.compute as pc
 
+from decoy_engine import reasons
 from decoy_engine.execution._chunked_fk_dtype_safety import declared_fk_hash_dtype_is_safe
 from decoy_engine.execution._errors import ExecutionError
-from decoy_engine.execution._fk_keys import FK_KEY_DTYPE_UNSUPPORTED_CODE
 from decoy_engine.plan._errors import PlanCompileError
 
 # Mirrors `_fk_keys._EXACT_FLOAT_INT_BOUND`: IEEE-754 double precision (53-bit
@@ -406,7 +406,7 @@ def gate_fk_child_edges(config: dict[str, Any], *, table: str) -> None:
             # WARN/FAIL/PRESERVE require the parent key set resident.
             if orphan_policy != "remap":
                 raise PlanCompileError(
-                    code="chunked_fk_orphan_policy_not_remap",
+                    code=reasons.plan.CHUNKED_FK_ORPHAN_POLICY_NOT_REMAP,
                     path=f"{path_prefix}.orphan_policy",
                     message=(
                         f"FK edge {parent_table}->{child_table}: chunked self-masking "
@@ -420,7 +420,7 @@ def gate_fk_child_edges(config: dict[str, Any], *, table: str) -> None:
             # First cut: single-column FK edges only.
             if len(parent_cols) != 1 or len(child_cols) != 1:
                 raise PlanCompileError(
-                    code="chunked_fk_composite_unsupported",
+                    code=reasons.plan.CHUNKED_FK_COMPOSITE_UNSUPPORTED,
                     path=f"{path_prefix}.columns",
                     message=(
                         f"FK edge {parent_table}->{child_table}: composite FK edges "
@@ -443,7 +443,7 @@ def gate_fk_child_edges(config: dict[str, Any], *, table: str) -> None:
             parent_strategy = parent_cfg.get("strategy")
             if parent_strategy != "hash":
                 raise PlanCompileError(
-                    code="chunked_fk_parent_strategy_not_self_mask_safe",
+                    code=reasons.plan.CHUNKED_FK_PARENT_STRATEGY_NOT_SELF_MASK_SAFE,
                     path=f"tables.{parent_table}.columns.{parent_col}.strategy",
                     message=(
                         f"FK edge {parent_table}.{parent_col}"
@@ -482,7 +482,7 @@ def gate_fk_child_edges(config: dict[str, Any], *, table: str) -> None:
             if parent_strategy in NAMESPACE_REQUIRING_STRATEGIES:
                 if parent_ns is None:
                     raise PlanCompileError(
-                        code="chunked_fk_parent_namespace_missing",
+                        code=reasons.plan.CHUNKED_FK_PARENT_NAMESPACE_MISSING,
                         path=f"tables.{parent_table}.columns.{parent_col}.namespace",
                         message=(
                             f"FK edge {parent_table}.{parent_col}"
@@ -496,7 +496,7 @@ def gate_fk_child_edges(config: dict[str, Any], *, table: str) -> None:
                     )
                 if rel_ns is not None and rel_ns != parent_ns:
                     raise PlanCompileError(
-                        code="chunked_fk_parent_namespace_mismatch",
+                        code=reasons.plan.CHUNKED_FK_PARENT_NAMESPACE_MISMATCH,
                         path=f"{path_prefix}.namespace",
                         message=(
                             f"FK edge {parent_table}.{parent_col}"
@@ -515,7 +515,7 @@ def gate_fk_child_edges(config: dict[str, Any], *, table: str) -> None:
                 child_ns: str | None = child_cfg.get("namespace")
                 if child_ns is None:
                     raise PlanCompileError(
-                        code="chunked_fk_child_namespace_missing",
+                        code=reasons.plan.CHUNKED_FK_CHILD_NAMESPACE_MISSING,
                         path=f"tables.{child_table}.columns.{child_col}.namespace",
                         message=(
                             f"FK edge {parent_table}.{parent_col}"
@@ -528,7 +528,7 @@ def gate_fk_child_edges(config: dict[str, Any], *, table: str) -> None:
                     )
                 if child_ns != parent_ns:
                     raise PlanCompileError(
-                        code="chunked_fk_child_namespace_mismatch",
+                        code=reasons.plan.CHUNKED_FK_CHILD_NAMESPACE_MISMATCH,
                         path=f"tables.{child_table}.columns.{child_col}.namespace",
                         message=(
                             f"FK edge {parent_table}.{parent_col}"
@@ -545,7 +545,7 @@ def gate_fk_child_edges(config: dict[str, Any], *, table: str) -> None:
             child_strategy: str | None = child_cfg.get("strategy")
             if child_strategy is None:
                 raise PlanCompileError(
-                    code="chunked_fk_child_strategy_missing",
+                    code=reasons.plan.CHUNKED_FK_CHILD_STRATEGY_MISSING,
                     path=f"tables.{child_table}.columns.{child_col}.strategy",
                     message=(
                         f"FK edge {parent_table}.{parent_col}"
@@ -558,7 +558,7 @@ def gate_fk_child_edges(config: dict[str, Any], *, table: str) -> None:
                 )
             if child_strategy != parent_strategy:
                 raise PlanCompileError(
-                    code="chunked_fk_child_strategy_mismatch",
+                    code=reasons.plan.CHUNKED_FK_CHILD_STRATEGY_MISMATCH,
                     path=f"tables.{child_table}.columns.{child_col}.strategy",
                     message=(
                         f"FK edge {parent_table}.{parent_col}"
@@ -591,7 +591,7 @@ def gate_fk_child_edges(config: dict[str, Any], *, table: str) -> None:
             parent_component = (str(parent_table), str(parent_col))
             if parent_component in child_endpoint_columns:
                 raise PlanCompileError(
-                    code="chunked_fk_parent_not_root",
+                    code=reasons.plan.CHUNKED_FK_PARENT_NOT_ROOT,
                     path=f"tables.{parent_table}.columns.{parent_col}",
                     message=(
                         f"FK edge {parent_table}.{parent_col}"
@@ -618,7 +618,7 @@ def gate_fk_child_edges(config: dict[str, Any], *, table: str) -> None:
 
             if _has_effective_when(parent_cfg):
                 raise PlanCompileError(
-                    code="chunked_fk_parent_when_unsupported",
+                    code=reasons.plan.CHUNKED_FK_PARENT_WHEN_UNSUPPORTED,
                     path=f"tables.{parent_table}.columns.{parent_col}.when",
                     message=(
                         f"FK edge {parent_table}.{parent_col}"
@@ -633,7 +633,7 @@ def gate_fk_child_edges(config: dict[str, Any], *, table: str) -> None:
                 )
             if _has_effective_when(child_cfg):
                 raise PlanCompileError(
-                    code="chunked_fk_child_when_unsupported",
+                    code=reasons.plan.CHUNKED_FK_CHILD_WHEN_UNSUPPORTED,
                     path=f"tables.{child_table}.columns.{child_col}.when",
                     message=(
                         f"FK edge {parent_table}.{parent_col}"
@@ -655,7 +655,7 @@ def gate_fk_child_edges(config: dict[str, Any], *, table: str) -> None:
             # provider on either endpoint is rejected conservatively.
             if parent_cfg.get("provider") is not None:
                 raise PlanCompileError(
-                    code="chunked_fk_endpoint_not_scalar",
+                    code=reasons.plan.CHUNKED_FK_ENDPOINT_NOT_SCALAR,
                     path=f"tables.{parent_table}.columns.{parent_col}.provider",
                     message=(
                         f"FK edge {parent_table}.{parent_col}"
@@ -670,7 +670,7 @@ def gate_fk_child_edges(config: dict[str, Any], *, table: str) -> None:
                 )
             if child_cfg.get("provider") is not None:
                 raise PlanCompileError(
-                    code="chunked_fk_endpoint_not_scalar",
+                    code=reasons.plan.CHUNKED_FK_ENDPOINT_NOT_SCALAR,
                     path=f"tables.{child_table}.columns.{child_col}.provider",
                     message=(
                         f"FK edge {parent_table}.{parent_col}"
@@ -698,7 +698,7 @@ def gate_fk_child_edges(config: dict[str, Any], *, table: str) -> None:
             child_provider_cfg = child_cfg.get("provider_config") or {}
             if parent_provider_cfg != child_provider_cfg:
                 raise PlanCompileError(
-                    code="chunked_fk_child_config_mismatch",
+                    code=reasons.plan.CHUNKED_FK_CHILD_CONFIG_MISMATCH,
                     path=f"tables.{child_table}.columns.{child_col}.provider_config",
                     message=(
                         f"FK edge {parent_table}.{parent_col}"
@@ -744,7 +744,7 @@ def gate_fk_child_edges(config: dict[str, Any], *, table: str) -> None:
                 child_dtype = child_cfg.get("dtype")
                 if parent_dtype is None or child_dtype is None:
                     raise PlanCompileError(
-                        code="chunked_fk_child_key_dtype_unprovable",
+                        code=reasons.plan.CHUNKED_FK_CHILD_KEY_DTYPE_UNPROVABLE,
                         path=f"tables.{child_table}.columns.{child_col}.dtype",
                         message=(
                             f"FK edge {parent_table}.{parent_col}"
@@ -764,7 +764,7 @@ def gate_fk_child_edges(config: dict[str, Any], *, table: str) -> None:
                     )
                 if _dtype_family(parent_dtype) != _dtype_family(child_dtype):
                     raise PlanCompileError(
-                        code="chunked_fk_child_key_dtype_mismatch",
+                        code=reasons.plan.CHUNKED_FK_CHILD_KEY_DTYPE_MISMATCH,
                         path=f"tables.{child_table}.columns.{child_col}.dtype",
                         message=(
                             f"FK edge {parent_table}.{parent_col}"
@@ -804,7 +804,7 @@ def gate_fk_child_edges(config: dict[str, Any], *, table: str) -> None:
                 ):
                     if not declared_fk_hash_dtype_is_safe(str(endpoint_dtype)):
                         raise PlanCompileError(
-                            code="chunked_fk_key_dtype_not_cross_adapter_safe",
+                            code=reasons.plan.CHUNKED_FK_KEY_DTYPE_NOT_CROSS_ADAPTER_SAFE,
                             path=f"tables.{endpoint_table}.columns.{endpoint_col}.dtype",
                             message=(
                                 f"FK edge {parent_table}.{parent_col}"
@@ -958,7 +958,7 @@ def reject_lossy_chunked_fk_passthrough(
             continue  # every value null; nothing to lose
         if col_max > _EXACT_FLOAT_INT_BOUND or col_min < -_EXACT_FLOAT_INT_BOUND:
             raise ExecutionError(
-                code=FK_KEY_DTYPE_UNSUPPORTED_CODE,
+                code=reasons.runtime.OUT_OF_CORE_FK_KEY_DTYPE_UNSUPPORTED,
                 message=(
                     f"Column {table}.{column} is a null-bearing passthrough FK "
                     "key column carrying a value beyond exactly-representable "

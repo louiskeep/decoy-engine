@@ -45,6 +45,7 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
+from decoy_engine import reasons
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.validators._registry import _REGISTRY
 from decoy_engine.validators._types import ValidationReport, ValidatorFinding
@@ -281,7 +282,7 @@ def build_validator_collector(
     entries = admitted_validators(config, graph, plan, schemas)
     if entries is None:
         raise ExecutionError(
-            code="out_of_core_validators_not_admitted",
+            code=reasons.runtime.OUT_OF_CORE_VALIDATORS_NOT_ADMITTED,
             message=(
                 "the out-of-core route can only validate per-cell checks on route-stable string "
                 "columns without quarantine; use execution_mode='full_frame' for this job."

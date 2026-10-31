@@ -71,6 +71,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from decoy_engine import reasons
 from decoy_engine.errors import DecoyError
 from decoy_engine.internal.pandas_compat import canonical_dtype_label
 
@@ -125,9 +126,9 @@ _DEFAULT_CATEGORICAL_TOP_K = 20
 _DEFAULT_CONTINGENCY_TOP_K = 25
 
 # Cardinality cap that splits "categorical" from "freetext" for object
-# columns. Mirrors storm/_distributions._STORM_CATEGORICAL_DISTINCT_CAP (30)
+# columns. Mirrors profiling/_distributions._PROFILE_CATEGORICAL_DISTINCT_CAP (30)
 # so the kind assignment is consistent across the engine. This is the SINGLE
-# fit source of truth (HC-5 D4): the STORM copy is a deliberately independent
+# fit source of truth (HC-5 D4): the Pre-scan copy is a deliberately independent
 # profiler-chart constant, not derived from this one.
 _CATEGORICAL_DISTINCT_CAP = 30
 
@@ -191,7 +192,7 @@ def compute_distribution_snapshot(
     # before it can silently disable the feature.
     if isinstance(high_cardinality_columns, (str, bytes)):
         raise DistributionSnapshotError(
-            code="high_cardinality_columns_not_collection",
+            code=reasons.quality.HIGH_CARDINALITY_COLUMNS_NOT_COLLECTION,
             message=(
                 "high_cardinality_columns must be a collection of column names "
                 "(e.g. a list/set/tuple), not a bare string. Pass ['code'], not 'code'."
@@ -313,7 +314,7 @@ def _high_cardinality_categorical_stats(non_null: pd.Series) -> dict[str, Any]:
     )
     if not is_allowed:
         raise DistributionSnapshotError(
-            code="high_cardinality_non_string_dtype",
+            code=reasons.quality.HIGH_CARDINALITY_NON_STRING_DTYPE,
             message=(
                 f"high_cardinality column {name!r}: source dtype "
                 f"{canonical_dtype_label(dtype)!r} is not string/object/category. "
@@ -342,7 +343,7 @@ def _high_cardinality_categorical_stats(non_null: pd.Series) -> dict[str, Any]:
     n_pairs = len(set(zip(raw_codes.tolist(), str_codes.tolist(), strict=True)))
     if n_pairs != n_raw or n_pairs != len(distinct):
         raise DistributionSnapshotError(
-            code="high_cardinality_ambiguous_string_coercion",
+            code=reasons.quality.HIGH_CARDINALITY_AMBIGUOUS_STRING_COERCION,
             message=(
                 f"high_cardinality column {name!r}: string coercion does not "
                 f"preserve the source categories 1:1 ({n_raw} source values, "
@@ -353,7 +354,7 @@ def _high_cardinality_categorical_stats(non_null: pd.Series) -> dict[str, Any]:
         )
     if len(distinct) > _HIGH_CARDINALITY_MAX_DISTINCT:
         raise DistributionSnapshotError(
-            code="high_cardinality_distinct_limit_exceeded",
+            code=reasons.quality.HIGH_CARDINALITY_DISTINCT_LIMIT_EXCEEDED,
             message=(
                 f"high_cardinality column {name!r}: {len(distinct)} distinct values "
                 f"exceeds the {_HIGH_CARDINALITY_MAX_DISTINCT} safety limit for full "
@@ -368,7 +369,7 @@ def _high_cardinality_categorical_stats(non_null: pd.Series) -> dict[str, Any]:
         label_bytes = sum(len(v.encode("utf-8")) for v in distinct)
     except UnicodeEncodeError as exc:
         raise DistributionSnapshotError(
-            code="high_cardinality_invalid_label_encoding",
+            code=reasons.quality.HIGH_CARDINALITY_INVALID_LABEL_ENCODING,
             message=(
                 f"high_cardinality column {name!r}: a category label could not be "
                 f"encoded as UTF-8 (e.g. a lone surrogate). Normalize the column's "
@@ -377,7 +378,7 @@ def _high_cardinality_categorical_stats(non_null: pd.Series) -> dict[str, Any]:
         ) from exc
     if label_bytes > _HIGH_CARDINALITY_MAX_LABEL_BYTES:
         raise DistributionSnapshotError(
-            code="high_cardinality_label_bytes_limit_exceeded",
+            code=reasons.quality.HIGH_CARDINALITY_LABEL_BYTES_LIMIT_EXCEEDED,
             message=(
                 f"high_cardinality column {name!r}: {label_bytes} combined UTF-8 "
                 f"category-label bytes exceeds the "

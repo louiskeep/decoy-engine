@@ -29,6 +29,7 @@ from typing import Any
 
 import numpy as np
 
+from decoy_engine import reasons
 from decoy_engine.determinism import derive
 from decoy_engine.generation.pool._errors import PoolCapacityError
 from decoy_engine.generation.pool._value_pool import ValuePool, _freeze_array
@@ -182,7 +183,7 @@ class PoolBuilder:
         caps = self._registry.get_capabilities(provider)
         if not caps.poolable:
             raise PoolCapacityError(
-                code="provider_not_poolable",
+                code=reasons.runtime.PROVIDER_NOT_POOLABLE,
                 message=(
                     f"Provider {provider!r} declares `poolable: False`; "
                     "PoolBuilder cannot build a pool for it. Route through "

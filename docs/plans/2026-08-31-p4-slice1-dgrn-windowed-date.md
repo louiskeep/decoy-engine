@@ -1,4 +1,5 @@
-Status: plan
+Status: built
+Shipped: src/decoy_engine/execution/_chunked_dgrn.py:1 and :66 (CHUNK_DGRN_STRATEGIES = windowed_date)
 
 # Phase 4 Slice 1: durable row offset -> windowed_date on the chunked route
 

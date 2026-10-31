@@ -22,6 +22,7 @@ from typing import Any
 
 import pyarrow as pa
 
+from decoy_engine import reasons
 from decoy_engine.determinism import DeterminismError
 from decoy_engine.transforms.fpe import (
     FF1_TWEAK_SCOPE_COLUMN,
@@ -247,7 +248,7 @@ def native_fpe(
         from decoy_engine.execution._errors import StrategyError
 
         raise StrategyError(
-            code="fpe_requires_namespace",
+            code=reasons.runtime.FPE_REQUIRES_NAMESPACE,
             strategy="fpe",
             message="the fpe strategy requires a namespace; got None.",
         )

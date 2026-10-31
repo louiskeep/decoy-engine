@@ -1,4 +1,5 @@
-Status: plan (C-phase / text_redact native on the sequential route. DRAFT rev 2, after Codex plan-gate NO-GO on rev 1 (1 HIGH + 2 MED + 1 LOW). text_redact as the 7th SEQ-native payload tenant.)
+Status: built
+Shipped: commit 4038b7c0 (PR #254)
 
 # text_redact native on the sequential route
 

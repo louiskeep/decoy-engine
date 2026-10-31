@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import pandas as pd
 
+from decoy_engine import reasons
 from decoy_engine.determinism import derive
 from decoy_engine.generation.composite._bundle_pool import BundlePool
 from decoy_engine.generation.composite._city_state_zip import load_locality_table
@@ -82,7 +83,7 @@ class CompositeAddress:
     def _check_pool_size(self, size: int) -> None:
         if size > _POOL_SIZE_MAX:
             raise CompositeError(
-                code="pool_size_overflow",
+                code=reasons.plan.POOL_SIZE_OVERFLOW,
                 message=(
                     f"pool size {size} exceeds {_POOL_SIZE_MAX}; the sub-byte "
                     "modulo-bias bound requires <= 2**56."
@@ -164,12 +165,12 @@ class CompositeAddress:
         if deterministic:
             if source is None or spec.seed is None:
                 raise CompositeError(
-                    code="deterministic_requires_source_and_seed",
+                    code=reasons.plan.DETERMINISTIC_REQUIRES_SOURCE_AND_SEED,
                     message="Deterministic composite_address requires source + seed.",
                 )
             if len(source) != count:
                 raise CompositeError(
-                    code="source_length_mismatch",
+                    code=reasons.plan.SOURCE_LENGTH_MISMATCH,
                     message=f"source length {len(source)} != count {count}.",
                 )
             return self._generate_deterministic(spec, source)

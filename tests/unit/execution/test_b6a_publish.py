@@ -38,7 +38,7 @@ def _job(tmp_path: Path, **extra_config: Any) -> tuple[dict[str, Any], pa.Table]
     )
     path = support.write_source(src, tmp_path / "s.parquet")
     raw = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42},
         "sources": {"t": {"type": "file", "format": "parquet", "path": path}},
         "tables": [{"name": "t", "columns": [support.hash_col("h"), support.redact_col("r")]}],
@@ -227,8 +227,8 @@ def _resident_case(name: str, tmp_path: Path) -> tuple[dict[str, Any], dict[str,
         kwargs["fidelity_report"] = True
     elif name == "post_validation":
         kwargs["post_validation"] = True
-    elif name == "run_storm":
-        extra["run_storm"] = True
+    elif name == "post_scan_integrity":
+        extra["post_scan"] = {"integrity": True}
     elif name == "streaming_disabled":
         kwargs["stream_chunked_output"] = False
     elif name == "no_sink":
@@ -252,7 +252,7 @@ def _resident_case(name: str, tmp_path: Path) -> tuple[dict[str, Any], dict[str,
         "quarantine_enabled",
         "fidelity_report",
         "post_validation",
-        "run_storm",
+        "post_scan_integrity",
     ],
 )
 def test_each_eligibility_reason_keeps_the_run_resident_and_the_sink_untouched(

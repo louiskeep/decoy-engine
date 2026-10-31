@@ -28,7 +28,7 @@ def _fs(
     is_likely_unique: bool = False,
     distinct_count: int = 100,
 ) -> FieldStats:
-    """Minimal FieldStats. STORM normally fills more, but the cross-file
+    """Minimal FieldStats. Pre-scan normally fills more, but the cross-file
     walk only reads name, inferred_type, null_rate, is_likely_unique."""
     return FieldStats(
         name=name,
@@ -192,7 +192,7 @@ def test_emits_multiple_edges_for_a_three_file_chain():
 
 def test_tie_break_when_fk_column_is_also_100_percent_unique():
     # 1:1:1 referential integrity: every customer has exactly one order,
-    # every order exactly one orderline. STORM flags both customer_id
+    # every order exactly one orderline. Pre-scan flags both customer_id
     # columns (in customers and in orders) as is_likely_unique because
     # both have unique_rate == 1.0. The tie-break should pick the table
     # whose name matches the column's `<stem>_id` stem ("customer" /

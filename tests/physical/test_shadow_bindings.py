@@ -28,7 +28,7 @@ def _plan_for(tmp_path: Path, source: pa.Table, columns: list[dict]):
     path = _write(tmp_path, source, "t")
     config = PipelineConfig.model_validate(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 1},
             "sources": {"t": {"type": "file", "format": "parquet", "path": str(path)}},
             "targets": {
@@ -166,7 +166,7 @@ def test_hash_without_namespace_is_not_bound(tmp_path: Path) -> None:
     path = _write(tmp_path, source, "t")
     config = PipelineConfig.model_validate(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 1},
             "sources": {"t": {"type": "file", "format": "parquet", "path": str(path)}},
             "targets": {
@@ -263,7 +263,7 @@ def test_deterministic_faker_when_binds_but_the_table_still_declines(tmp_path: P
     path = _write(tmp_path, source, "t")
     config = PipelineConfig.model_validate(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 1},
             "sources": {"t": {"type": "file", "format": "parquet", "path": str(path)}},
             "targets": {
@@ -321,7 +321,7 @@ def test_faker_non_poolable_provider_hand_built_node_is_unbound(tmp_path: Path) 
     plan_inputs_source = _write(tmp_path, source, "t")
     config = PipelineConfig.model_validate(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 1},
             "sources": {
                 "t": {"type": "file", "format": "parquet", "path": str(plan_inputs_source)}
@@ -408,7 +408,7 @@ def _fk_plan_for(tmp_path: Path, *, parent_columns: list[dict], child_columns: l
     cp = _write(tmp_path, child, "child")
     config = PipelineConfig.model_validate(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 1},
             "sources": {
                 "parent": {"type": "file", "format": "parquet", "path": str(pp)},

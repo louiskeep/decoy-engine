@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from decoy_engine import reasons
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.transforms._codeset_loader import _SHIPPED_CORPORA
 from decoy_engine.transforms._codeset_provenance import RESERVED_LICENSED_NAMES
@@ -54,7 +55,7 @@ def validate_code_set_config(cfg: dict[str, Any]) -> None:
         # tests below would otherwise raise a raw `TypeError: unhashable type`
         # instead of a coded compile error.
         raise PlanCompileError(
-            code="code_set_name_missing",
+            code=reasons.plan.CODE_SET_NAME_MISSING,
             path="provider_config.code_set",
             message=(
                 "'code_set' is required and must be a string naming a corpus "
@@ -72,7 +73,7 @@ def validate_code_set_config(cfg: dict[str, Any]) -> None:
     # pass the `isinstance(..., (str, int))` allow-list.
     if isinstance(version, bool) or (version is not None and not isinstance(version, (str, int))):
         raise PlanCompileError(
-            code="code_set_corpus_source_version_invalid",
+            code=reasons.plan.CODE_SET_CORPUS_SOURCE_VERSION_INVALID,
             path="provider_config.corpus_source_version",
             message=(
                 f"corpus_source_version must be a string or numeric release id "
@@ -91,7 +92,7 @@ def validate_code_set_config(cfg: dict[str, Any]) -> None:
 
     if str(name).strip().lower() in RESERVED_LICENSED_NAMES and is_shipped_source:
         raise PlanCompileError(
-            code="code_set_reserved_licensed_name",
+            code=reasons.plan.CODE_SET_RESERVED_LICENSED_NAME,
             path="provider_config.code_set",
             message=(
                 f"{name!r} is a licensed code set the engine never ships "
@@ -102,7 +103,7 @@ def validate_code_set_config(cfg: dict[str, Any]) -> None:
 
     if is_shipped_source and name not in _SHIPPED_CORPORA:
         raise PlanCompileError(
-            code="code_set_corpus_not_found",
+            code=reasons.plan.CODE_SET_CORPUS_NOT_FOUND,
             path="provider_config.code_set",
             message=(
                 f"corpus {name!r} not found in shipped corpora. "

@@ -47,6 +47,7 @@ from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 import pandas as pd
 
+from decoy_engine import reasons
 from decoy_engine.determinism import derive
 from decoy_engine.errors import FpeChecksumError, FpeUnencryptableError
 from decoy_engine.execution._adapter import StrategyContext, provider_config_to_dict
@@ -79,11 +80,11 @@ _FF1_MIN_DOMAIN = _ff1.FF1_MIN_DOMAIN
 # `FpeUnencryptableError` whose `.code` isn't listed, matching pre-Task-5.2
 # behavior for the DE-01 guards verbatim).
 _UNENCRYPTABLE_STRATEGY_CODE: dict[str, str] = {
-    "fpe.unencryptable_domain": "fpe_unencryptable_domain",
-    "fpe.unencryptable_length": "fpe_unencryptable_length",
+    reasons.runtime.FPE__UNENCRYPTABLE_DOMAIN: reasons.runtime.FPE_UNENCRYPTABLE_DOMAIN,
+    reasons.runtime.FPE__UNENCRYPTABLE_LENGTH: reasons.runtime.FPE_UNENCRYPTABLE_LENGTH,
 }
 _CHECKSUM_STRATEGY_CODE: dict[str, str] = {
-    "fpe.checksum_invalid_source": "fpe_checksum_invalid_source",
+    reasons.runtime.FPE__CHECKSUM_INVALID_SOURCE: reasons.runtime.FPE_CHECKSUM_INVALID_SOURCE,
 }
 
 
@@ -114,7 +115,7 @@ class FpeStrategyHandler:
     ) -> tuple[pd.DataFrame, list[QualityWarning]]:
         if plan.namespace is None:
             raise StrategyError(
-                code="fpe_requires_namespace",
+                code=reasons.runtime.FPE_REQUIRES_NAMESPACE,
                 strategy="fpe",
                 message=f"column {column!r} uses fpe but has no namespace.",
             )
@@ -125,7 +126,7 @@ class FpeStrategyHandler:
             check_charset_unique(charset_spec, charset)
         except FpeUnencryptableError as exc:
             raise StrategyError(
-                code="fpe_charset_duplicate_symbols",
+                code=reasons.runtime.FPE_CHARSET_DUPLICATE_SYMBOLS,
                 strategy="fpe",
                 message=f"column {column!r}: {exc}",
             ) from exc
@@ -134,7 +135,7 @@ class FpeStrategyHandler:
             # the V1 passthrough. `check_fpe_charset_config` rejects this at
             # compile time; this is the execution-time backstop.
             raise StrategyError(
-                code="fpe_charset_degenerate",
+                code=reasons.runtime.FPE_CHARSET_DEGENERATE,
                 strategy="fpe",
                 message=(
                     f"column {column!r} uses fpe but its resolved charset "
@@ -259,7 +260,7 @@ class FpeStrategyHandler:
         if join_group:
             run_warnings.append(
                 QualityWarning(
-                    code="fpe_join_group_active",
+                    code=reasons.warning.FPE_JOIN_GROUP_ACTIVE,
                     provider="fpe",
                     column=column,
                     detail={
@@ -307,7 +308,7 @@ class FpeStrategyHandler:
         if partial_prefix:
             warnings.append(
                 QualityWarning(
-                    code="fpe_partial_plaintext_disclosure",
+                    code=reasons.warning.FPE_PARTIAL_PLAINTEXT_DISCLOSURE,
                     provider="fpe",
                     column=column,
                     detail={

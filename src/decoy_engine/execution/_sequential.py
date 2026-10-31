@@ -139,6 +139,7 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
+from decoy_engine import reasons
 from decoy_engine.errors import RowErrorsFailedError
 from decoy_engine.execution._adapter import ExecutionResult, StrategyContext
 from decoy_engine.execution._errors import ExecutionError
@@ -151,6 +152,11 @@ from decoy_engine.execution._guards import (
 from decoy_engine.execution._output_projection import (
     UnconfiguredColumnPolicy,
     enforce_output_projection,
+)
+from decoy_engine.execution._publication_observer import (
+    observed_abort,
+    observed_commit,
+    report_partial_publication,
 )
 from decoy_engine.execution._row_errors import RowErrorRecord, drain_row_errors
 from decoy_engine.execution._runner import (
@@ -585,7 +591,7 @@ def run_sequential(
         # already exists (from its own successful rename) by the time
         # anything is staged beside it, so there is nothing left to collide.
         if _tsink is not None:
-            _tsink.commit()
+            observed_commit(_tsink)
             # Past this point abort() must never run (Codex finding #2): a
             # custom sink's abort() could delete tables it just durably
             # committed. Any failure below is a quarantine-sidecar problem,
@@ -621,18 +627,17 @@ def run_sequential(
         if quarantine_metrics is not None:
             quality_metrics["quarantine"] = quarantine_metrics
 
-    except BaseException:
+    except BaseException as _failure:
         if _tsink is not None and not _committed:
             # Only abort a sink whose commit() has not succeeded (Codex #2):
             # past that point, failures reachable here are quarantine-sidecar
             # failures, which discard their own staged file above and must
             # leave the legitimately committed tables alone.
-            try:
-                _tsink.abort()
-            except Exception:
-                # Abort is best-effort; swallow cleanup errors so the original
-                # exception propagates unmasked via the bare raise below.
-                pass
+            # Abort is best-effort; `observed_abort` swallows cleanup errors so the original
+            # exception propagates unmasked via the bare raise below.
+            observed_abort(_tsink, _failure)
+        elif _tsink is not None:
+            report_partial_publication(_failure)
         raise
 
     return ExecutionResult(
@@ -685,7 +690,7 @@ def table_topo_order(plan: Plan, graph: RelationshipGraph) -> list[str]:
 
     if len(result) != len(order_seed):
         raise ExecutionError(
-            code="relationship_cycle",
+            code=reasons.runtime.RELATIONSHIP_CYCLE,
             message=(
                 "FK relationship graph has a cycle across tables; cannot order "
                 "tables for sequential masking."

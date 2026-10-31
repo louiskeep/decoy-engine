@@ -63,6 +63,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from decoy_engine import reasons
 from decoy_engine.determinism._derive import DeriveContext
 from decoy_engine.execution._adapter import StrategyContext, provider_config_to_dict
 from decoy_engine.execution._errors import StrategyError
@@ -93,7 +94,7 @@ class DateShiftStrategyHandler:
     ) -> tuple[pd.DataFrame, list[QualityWarning]]:
         if plan.namespace is None:
             raise StrategyError(
-                code="date_shift_requires_namespace",
+                code=reasons.runtime.DATE_SHIFT_REQUIRES_NAMESPACE,
                 strategy="date_shift",
                 message=f"column {column!r} uses date_shift but has no namespace.",
             )
@@ -107,13 +108,13 @@ class DateShiftStrategyHandler:
             preserve = preserve_set_from_config(cfg)
         except ValueError as exc:
             raise StrategyError(
-                code="date_shift_invalid_config",
+                code=reasons.runtime.DATE_SHIFT_INVALID_CONFIG,
                 strategy="date_shift",
                 message=f"date_shift column {column!r}: {exc}",
             ) from exc
         if preserve is not None and cfg.get("group_by"):
             raise StrategyError(
-                code="date_preserve_values_with_group_by_unsupported",
+                code=reasons.runtime.DATE_PRESERVE_VALUES_WITH_GROUP_BY_UNSUPPORTED,
                 strategy="date_shift",
                 message=(
                     f"date_shift column {column!r} sets both preserve_values and group_by. "
@@ -137,7 +138,7 @@ class DateShiftStrategyHandler:
             snapshot = ctx.group_anchor_snapshots.get((ctx.current_table, group_by))
             if snapshot is None:
                 raise StrategyError(
-                    code="date_shift_group_anchor_snapshot_missing",
+                    code=reasons.runtime.DATE_SHIFT_GROUP_ANCHOR_SNAPSHOT_MISSING,
                     strategy="date_shift",
                     message=(
                         f"column {column!r} uses date_shift group_by {group_by!r} "
@@ -160,7 +161,7 @@ class DateShiftStrategyHandler:
             # loud fail-closed raise.
             if not snapshot.index.equals(col.index):
                 raise StrategyError(
-                    code="date_shift_group_anchor_snapshot_misaligned",
+                    code=reasons.runtime.DATE_SHIFT_GROUP_ANCHOR_SNAPSHOT_MISALIGNED,
                     strategy="date_shift",
                     message=(
                         f"column {column!r} date_shift group_by {group_by!r}: the "

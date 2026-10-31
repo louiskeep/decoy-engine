@@ -214,7 +214,7 @@ def test_cheap_admission_declines_duplicate_column_declaration(tmp_path: Path) -
     from decoy_engine.config import PipelineConfig
 
     raw = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 1},
         "sources": {"t": {"type": "file", "format": "parquet", "path": str(path)}},
         "targets": {
@@ -326,7 +326,7 @@ def test_cheap_admission_declines_profile_columns(tmp_path: Path) -> None:
     source = pa.table({"c": pa.array(["a", "b", "c"], type=pa.string())})
     config, source = _build(tmp_path, [{"name": "c", "strategy": "passthrough"}], source)
     config = dict(config)
-    config["run_storm"] = True
+    config["post_scan"] = {"integrity": True}
     profile, _ = _profile_and_plan(config, source)
     assert _cheap_ok(config, profile, source) is None
 

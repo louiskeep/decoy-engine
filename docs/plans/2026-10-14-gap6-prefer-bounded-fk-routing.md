@@ -1,4 +1,6 @@
-Status: plan (Phase D / audit GAP6. rev 3 (Codex plan-gate GO: 0 BLOCKER/0 HIGH/1 LOW-wording-folded; build HELD for Cam A/B/C), Codex plan-gate rev1+rev2 REVISE folded (cycle BLOCKER, OOC-selection, perf, and the schema-aware no-new-failing-job retention on both admission paths covering decimal + uint64 FK-key reject classes). Stop auto-routing a bounded-eligible FK job to the full-frame oracle just because it "fits" RAM; prefer the measured-faster bounded route. HOLD build + merge for Cam: the diverted-output envelope exceeds the NFC-only shift Cam pre-approved -- see the DECISION NEEDED block.)
+Status: built
+Shipped: commit e0653781 (PR #258)
+Prior status (kept because it records a hold): plan (Phase D / audit GAP6. rev 3 (Codex plan-gate GO: 0 BLOCKER/0 HIGH/1 LOW-wording-folded; build HELD for Cam A/B/C), Codex plan-gate rev1+rev2 REVISE folded (cycle BLOCKER, OOC-selection, perf, and the schema-aware no-new-failing-job retention on both admission paths covering decimal + uint64 FK-key reject classes). Stop auto-routing a bounded-eligible FK job to the full-frame oracle just because it "fits" RAM; prefer the measured-faster bounded route. HOLD build + merge for Cam: the diverted-output envelope exceeds the NFC-only shift Cam pre-approved -- see the DECISION NEEDED block.)
 
 # Prefer the bounded route over the full-frame oracle for RAM-fitting FK jobs
 

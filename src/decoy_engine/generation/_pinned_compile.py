@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from decoy_engine import fileaccess
+from decoy_engine import fileaccess, reasons
 from decoy_engine._reference_date import normalize_reference_date
 from decoy_engine.fileaccess import FileAccess
 from decoy_engine.generation._pinned_plan import (
@@ -109,7 +109,7 @@ def refuse_live_tokens(value: Any, root: str) -> None:
     if hit is not None:
         where = f"{root}.{hit}" if hit and not hit.startswith("[") else f"{root}{hit}"
         raise PinnedModeError(
-            code="pinned_live_token",
+            code=reasons.plan.PINNED_LIVE_TOKEN,
             message=f"{where or root} holds an unresolved variable token",
         )
 
@@ -123,19 +123,19 @@ def reject_unpinnable(config: dict[str, Any]) -> None:
     tables = config.get("tables")
     if not isinstance(tables, list) or not tables:
         raise PinnedModeError(
-            code="pinned_not_generation_only", message="the job declares no tables"
+            code=reasons.plan.PINNED_NOT_GENERATION_ONLY, message="the job declares no tables"
         )
     for table in tables:
         tname = str(table.get("name"))
         gcols = table.get("generate_columns")
         if table.get("source") or table.get("sources"):
             raise PinnedModeError(
-                code="pinned_not_generation_only",
+                code=reasons.plan.PINNED_NOT_GENERATION_ONLY,
                 message=f"table {tname!r} declares a source; pinned mode is generation-only",
             )
         if not gcols:
             raise PinnedModeError(
-                code="pinned_not_generation_only",
+                code=reasons.plan.PINNED_NOT_GENERATION_ONLY,
                 message=f"table {tname!r} has no generate_columns; pinned mode is generation-only",
             )
         by_name = {c.get("name"): c for c in gcols}
@@ -151,17 +151,17 @@ def _reject_column(tname: str, col: dict[str, Any], siblings: dict[Any, dict[str
         raise PinnedModeError(code=code, message=f"{_where(tname, cname)}: {why}")
     if kind not in PINNABLE_TYPES:
         raise PinnedModeError(
-            code="pinned_type_not_allowlisted",
+            code=reasons.plan.PINNED_TYPE_NOT_ALLOWLISTED,
             message=f"{_where(tname, cname)}: generator type is not pinnable",
         )
     if col.get("determinism") == "fresh":
         raise PinnedModeError(
-            code="pinned_determinism_fresh",
+            code=reasons.plan.PINNED_DETERMINISM_FRESH,
             message=f"{_where(tname, cname)}: determinism 'fresh' draws OS entropy",
         )
     if kind != "statistical" and col.get("snapshot_file"):
         raise PinnedModeError(
-            code="pinned_snapshot_file_not_statistical",
+            code=reasons.plan.PINNED_SNAPSHOT_FILE_NOT_STATISTICAL,
             message=f"{_where(tname, cname)}: snapshot_file is only pinnable on statistical columns",
         )
     if kind == "windowed_date":
@@ -170,7 +170,7 @@ def _reject_column(tname: str, col: dict[str, Any], siblings: dict[Any, dict[str
             for category in anchor.get("categories") or []:
                 if isinstance(category, str) and not anchor_is_absolute(category):
                     raise PinnedModeError(
-                        code="pinned_windowed_anchor_not_absolute",
+                        code=reasons.plan.PINNED_WINDOWED_ANCHOR_NOT_ABSOLUTE,
                         message=(
                             f"{_where(tname, cname)}: anchor column {anchor.get('name')!r} "
                             "declares a category that is not an absolute date"
@@ -243,7 +243,7 @@ def compile_pinned_plan_with_generation(
         reference_date = (config.get("global_settings") or {}).get("reference_date")
     if reference_date is None:
         raise PinnedModeError(
-            code="pinned_reference_date_invalid",
+            code=reasons.plan.PINNED_REFERENCE_DATE_INVALID,
             message="reference_date is required: pass it or set global_settings.reference_date",
         )
     reference = normalize_reference_date(reference_date)
@@ -260,7 +260,8 @@ def compile_pinned_plan_with_generation(
     gen = plan.generation
     if gen is None:
         raise PinnedModeError(
-            code="pinned_not_generation_only", message="the job compiled with nothing to generate"
+            code=reasons.plan.PINNED_NOT_GENERATION_ONLY,
+            message="the job compiled with nothing to generate",
         )
     resolved = json.loads(gen.config_json)
     # Re-run on the resolved config: compilation may fill defaults, and the pinned plan is
@@ -291,7 +292,7 @@ def compile_pinned_plan_with_generation(
                 pinned_digest = digest_for.get((tname, str(cfg["name"])))
                 if pinned_digest is None:
                     raise PinnedModeError(
-                        code="pinned_statistical_digest_missing",
+                        code=reasons.plan.PINNED_STATISTICAL_DIGEST_MISSING,
                         message=f"{_where(tname, str(cfg['name']))}: no pinned snapshot digest",
                     )
                 # The path is a deployment detail; the digest is the identity.

@@ -22,10 +22,11 @@ from typing import Any
 
 import pyarrow as pa
 
+from decoy_engine import reasons
 from decoy_engine.plan._errors import PlanCompileError
 
-CAT_WHEN_CODE = "chunked_categorical_nondeterministic_when_not_supported"
-FAKER_WHEN_CODE = "chunked_faker_nondeterministic_when_not_supported"
+CAT_WHEN_CODE = reasons.plan.CHUNKED_CATEGORICAL_NONDETERMINISTIC_WHEN_NOT_SUPPORTED
+FAKER_WHEN_CODE = reasons.plan.CHUNKED_FAKER_NONDETERMINISTIC_WHEN_NOT_SUPPORTED
 
 
 def closed_grammar_when(when: str) -> bool:

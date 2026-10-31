@@ -1,4 +1,6 @@
-Status: plan (rev 4, BUILD-READY: review cap reached at Codex round 3; Cam approved folding the round-3 fixes and building, 2026-10-07)
+Status: built
+Shipped: docs/records/2026-10-07-oom-vmdata-monitor-build.md
+Prior status (kept because it records a hold): plan (rev 4, BUILD-READY: review cap reached at Codex round 3; Cam approved folding the round-3 fixes and building, 2026-10-07)
 
 Rules consulted: 00-universal, development-loop, risk-and-exceptions, debugging, testing, observability-and-resilience, code-review.
 

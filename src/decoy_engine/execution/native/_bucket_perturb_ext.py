@@ -44,6 +44,7 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.compute as pc
 
+from decoy_engine import reasons
 from decoy_engine.generation.pool import GenerationError
 
 if TYPE_CHECKING:
@@ -139,7 +140,7 @@ def _bucket_start_and_size(
         return start, size
     # Admission guarantees membership; this is the fail-closed second line.
     raise GenerationError(
-        code="bucket_perturb_unrecognized_bucket",
+        code=reasons.runtime.BUCKET_PERTURB_UNRECOGNIZED_BUCKET,
         message=f"bucket_perturb reached the native kernel with unrecognized bucket {bucket!r}",
     )
 
@@ -178,25 +179,25 @@ def _grouped_offsets(
         if not isinstance(idx, pa.Array) or idx.type != pa.uint64():
             got = idx.type if isinstance(idx, pa.Array) else type(idx).__name__
             raise GenerationError(
-                code="index_batch_type_mismatch",
+                code=reasons.runtime.INDEX_BATCH_TYPE_MISMATCH,
                 message=f"derive_index_batch returned {got}, expected a uint64 Arrow array",
             )
         if len(idx) != len(subset):
             raise GenerationError(
-                code="index_batch_length_mismatch",
+                code=reasons.runtime.INDEX_BATCH_LENGTH_MISMATCH,
                 message=f"derive_index_batch returned {len(idx)} indices for {len(subset)} rows",
             )
         if idx.null_count != 0:
             # The subset is the non-null valid rows, so the kernel must return a
             # fully-valid offset column; a null here means a null-mask drift.
             raise GenerationError(
-                code="index_batch_null_mask_mismatch",
+                code=reasons.runtime.INDEX_BATCH_NULL_MASK_MISMATCH,
                 message="derive_index_batch returned a null offset for a non-null source row",
             )
         idx_np = idx.to_numpy(zero_copy_only=False)
         if idx_np.size and int(idx_np.max()) >= int(s):
             raise GenerationError(
-                code="index_batch_out_of_bounds",
+                code=reasons.runtime.INDEX_BATCH_OUT_OF_BOUNDS,
                 message=f"derive_index_batch returned an offset >= bucket_size {int(s)}",
             )
         offsets[group_mask] = idx_np

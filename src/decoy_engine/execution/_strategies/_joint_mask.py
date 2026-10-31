@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from decoy_engine import fileaccess
+from decoy_engine import fileaccess, reasons
 from decoy_engine.execution._adapter import StrategyContext, provider_config_to_dict
 from decoy_engine.execution._errors import StrategyError
 from decoy_engine.generation.pool._events import QualityWarning
@@ -83,7 +83,7 @@ class JointMaskHandler:
                 # reference tuple. A missing snapshot means key_by names no source
                 # column or an adapter failed to snapshot it: either way, raise.
                 raise StrategyError(
-                    code="joint_mask_key_by_snapshot_missing",
+                    code=reasons.runtime.JOINT_MASK_KEY_BY_SNAPSHOT_MISSING,
                     strategy="joint_mask",
                     message=(
                         f"joint_mask on {','.join(joint_cfg.columns)!r} reads key_by "
@@ -102,7 +102,7 @@ class JointMaskHandler:
             # closed rather than key off the wrong source row.
             if not df.index.isin(key_series.index).all():
                 raise StrategyError(
-                    code="joint_mask_key_by_snapshot_misaligned",
+                    code=reasons.runtime.JOINT_MASK_KEY_BY_SNAPSHOT_MISALIGNED,
                     strategy="joint_mask",
                     message=(
                         f"joint_mask key_by {joint_cfg.key_by!r}: the pre-mask source "

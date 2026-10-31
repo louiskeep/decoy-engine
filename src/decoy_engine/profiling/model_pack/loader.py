@@ -204,7 +204,7 @@ class ModelPackLoader:
     def load_with_fallback(self) -> dict[str, Any] | None:
         """Try to load the pack; return ``None`` on any failure + log a warning.
 
-        The caller (e.g. a STORM scanner) should treat ``None`` as "use the
+        The caller (e.g. a Pre-scanner) should treat ``None`` as "use the
         deterministic regex baseline" -- the pack not loading must NEVER crash
         the host process (ml2.1-model-pack-loading.md Done-state requirement).
         """

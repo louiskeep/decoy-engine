@@ -27,7 +27,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any
 
-from decoy_engine import fileaccess
+from decoy_engine import fileaccess, reasons
 from decoy_engine.fileaccess import FileRole
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.plan._types import (
@@ -133,7 +133,7 @@ def read_and_pin_snapshots(
                 raise
             if fileaccess.is_ambient():
                 failures[path] = StatisticalSpecError(
-                    code="statistical_snapshot_unreadable",
+                    code=reasons.plan.STATISTICAL_SNAPSHOT_UNREADABLE,
                     message=f"snapshot_file {shown!r} could not be read: {exc}",
                 )
                 continue
@@ -142,13 +142,13 @@ def read_and_pin_snapshots(
             # Strict: the failure is recorded after the handler closes, with no library error
             # attached (its text can name the file).
             failures[path] = StatisticalSpecError(
-                code="statistical_snapshot_unreadable",
+                code=reasons.plan.STATISTICAL_SNAPSHOT_UNREADABLE,
                 message=f"snapshot_file {shown!r} could not be read: {failure}",
             )
             continue
         if len(raw) > EMBEDDED_SNAPSHOT_MAX_BYTES:
             raise PlanCompileError(
-                code="dp_snapshot_embedded_artifact_too_large",
+                code=reasons.plan.DP_SNAPSHOT_EMBEDDED_ARTIFACT_TOO_LARGE,
                 path=f"<snapshot_file={shown}>",
                 message=(
                     f"snapshot_file {shown!r} is {len(raw)} bytes, exceeding the "
@@ -164,7 +164,7 @@ def read_and_pin_snapshots(
             parsed = json.loads(raw)
         except json.JSONDecodeError as exc:
             failures[path] = StatisticalSpecError(
-                code="statistical_snapshot_unreadable",
+                code=reasons.plan.STATISTICAL_SNAPSHOT_UNREADABLE,
                 message=f"snapshot_file {shown!r} could not be read: {exc}",
             )
             continue
@@ -174,7 +174,7 @@ def read_and_pin_snapshots(
         version = parsed.get("schema_version") if isinstance(parsed, dict) else None
         if not isinstance(parsed, dict) or version != DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION:
             failures[path] = StatisticalSpecError(
-                code="statistical_snapshot_schema_mismatch",
+                code=reasons.plan.STATISTICAL_SNAPSHOT_SCHEMA_MISMATCH,
                 message=(
                     f"snapshot_file {shown!r} declares schema {version!r}; this engine "
                     f"consumes {DISTRIBUTION_SNAPSHOT_SCHEMA_VERSION!r}."
@@ -213,7 +213,7 @@ def resolve_pinned_snapshot(
         raise failures.get(
             snapshot_file,
             StatisticalSpecError(
-                code="statistical_snapshot_unreadable",
+                code=reasons.plan.STATISTICAL_SNAPSHOT_UNREADABLE,
                 message=(
                     f"snapshot_file {fileaccess.shown(snapshot_file, 'snapshot_file')!r} has no "
                     "pinned content and no "

@@ -1,4 +1,5 @@
-Status: plan (Phase D prerequisite refactor. DRAFT rev 1, pre Codex plan-gate. Behavior-preserving split of `_sequential_native.py`.)
+Status: built
+Shipped: merge PR #250 (06348c84)
 
 # Phase D prereq: split the SEQ-native decision types into `_sequential_native_decisions.py`
 

@@ -35,6 +35,7 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.compute as pc
 
+from decoy_engine import reasons
 from decoy_engine.execution._adapter import provider_config_to_dict
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._row_errors import RowError
@@ -294,7 +295,7 @@ def _fpe_apply(bound: BoundFpeKernel, values: pa.Array, call: FpeCall) -> Native
     out = result.values
     if not isinstance(out, pa.Array) or out.type != pa.string() or len(out) != len(values):
         raise ExecutionError(
-            code="sequential_fpe_native_result_invalid",
+            code=reasons.runtime.SEQUENTIAL_FPE_NATIVE_RESULT_INVALID,
             message="the native fpe kernel returned an array that is not one string per input row.",
         )
     return NativeResult(out, tuple(result.errors))

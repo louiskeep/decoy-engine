@@ -79,7 +79,7 @@ def _config(
         sources[name] = {"type": "file", "format": "csv", "path": str(tmp_path / f"{name}.csv")}
         targets[name] = {"type": "file", "format": "csv", "path": str(tmp_path / f"{name}_out.csv")}
     cfg: dict = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": seed},
         "sources": sources,
         "tables": tables,

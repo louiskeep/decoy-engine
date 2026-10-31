@@ -65,7 +65,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from decoy_engine import fileaccess
+from decoy_engine import fileaccess, reasons
 from decoy_engine.execution._adapter import StrategyContext, provider_config_to_dict
 from decoy_engine.execution._errors import StrategyError
 from decoy_engine.execution._row_errors import RowError
@@ -85,7 +85,7 @@ from decoy_engine.transforms.code_set import (
 # every other code (corpus load/schema/emptiness, missing chapter column,
 # single-row corpus) affects every row and stays job-fatal.
 _PER_VALUE_CODE_SET_ERRORS: frozenset[str] = frozenset(
-    {"code_set_chapter_absent", "code_set_sole_member_bucket"}
+    {reasons.plan.CODE_SET_CHAPTER_ABSENT, reasons.plan.CODE_SET_SOLE_MEMBER_BUCKET}
 )
 
 
@@ -138,7 +138,7 @@ class CodeSetHandler:
 
         if mode == "gen" and plan.namespace is None:
             raise StrategyError(
-                code="code_set_gen_requires_namespace",
+                code=reasons.runtime.CODE_SET_GEN_REQUIRES_NAMESPACE,
                 strategy="code_set",
                 message=(
                     f"column {column!r} uses code_set gen mode but has no namespace. "

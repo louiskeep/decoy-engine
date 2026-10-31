@@ -35,7 +35,7 @@ def _config(
         table.to_pandas().to_csv(tmp_path / f"{name}.csv", index=False)
     key_cfg = {**OPERATORS[strategy], "date_format": "%Y-%m-%d", **pc}
     raw = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 7},
         "sources": {
             t: {"type": "file", "format": "csv", "path": str(tmp_path / f"{t}.csv")}

@@ -40,11 +40,9 @@ class TestQualityMetricsForward:
         result = ExecutionResult(outputs={"t": pa.table({"a": ["MX"]})}, warnings=())
         summary = _run(result, {"post_validation": True})
         assert summary is not None
-        block = result.quality_metrics["quality_summary"]  # the S9 M2 carry-forward, now filled
-        assert isinstance(block, dict)
-        assert "failed_checks" in block
-        assert "timing_per_phase" in block
-        assert "post_validation_phase_ms" in block["timing_per_phase"]
+        # The runner returns the summary; the orchestrator (not the runner) attaches it.
+        assert "quality_summary" not in result.quality_metrics
+        assert "post_validation_phase_ms" in summary.timing_per_phase
 
     def test_flag_off_leaves_quality_metrics_empty(self) -> None:
         result = ExecutionResult(outputs={"t": pa.table({"a": ["MX"]})}, warnings=())
@@ -65,5 +63,5 @@ class TestFailedJobEvidence:
         assert summary is not None
         assert "boom" in summary.failed_checks  # the crash fails the job
         assert any(w.code == "scan_crashed" for w in summary.quality_warnings)
-        # The manifest block is STILL written despite the crash (atomic finalize).
-        assert list(result.quality_metrics["quality_summary"]["failed_checks"]) == ["boom"]
+        # The summary is STILL returned despite the crash (the orchestrator attaches it).
+        assert list(summary.failed_checks) == ["boom"]

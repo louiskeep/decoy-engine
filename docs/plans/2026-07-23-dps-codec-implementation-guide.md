@@ -1,6 +1,7 @@
 # DPS-CODEC implementation guide
 
-Status: PLAN COMPLETE / BUILD-READY (Codex round-6 verdict: A -- BUILD NOW),
+Status: built
+Shipped: merge ae563468 (PR #110, DPS-CODEC 0.5.0); phase 8 closeout d6bc4c1c
 revision 6 (remediated against Codex plan-review rounds 1-5, all
 BLOCK but each spec-detail-not-design; round 5 confirmed the carrier architecture is
 sound, the `carrier=None` non-DP compatibility CLOSED, 1,273 tests pass, and returned

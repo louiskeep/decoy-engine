@@ -108,6 +108,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from decoy_engine import reasons
 from decoy_engine.determinism import derive, derive_index
 from decoy_engine.internal.crypto import hmac_hex
 from decoy_engine.plan._errors import PlanCompileError
@@ -407,7 +408,7 @@ def apply_code_set(
     if mode == "gen":
         if namespace is None:
             raise PlanCompileError(
-                code="code_set_gen_requires_namespace",
+                code=reasons.plan.CODE_SET_GEN_REQUIRES_NAMESPACE,
                 path="namespace",
                 message=(
                     "code_set gen mode requires a column namespace. "
@@ -438,7 +439,7 @@ def _apply_chapter_preserve(
     rows = record.rows
     if not rows or "chapter" not in rows[0]:
         raise PlanCompileError(
-            code="code_set_chapter_column_missing",
+            code=reasons.plan.CODE_SET_CHAPTER_COLUMN_MISSING,
             path="provider_config.chapter_preserve",
             message=(
                 "chapter_preserve=True requires the corpus to have a 'chapter' column. "
@@ -462,7 +463,7 @@ def _apply_chapter_preserve(
         # full-corpus selection would return a code from a different chapter,
         # silently breaking the invariant (same posture as sole-member below).
         raise PlanCompileError(
-            code="code_set_chapter_absent",
+            code=reasons.plan.CODE_SET_CHAPTER_ABSENT,
             path="provider_config.chapter_preserve",
             message=(
                 f"chapter_preserve: chapter {input_chapter!r} (derived from input "
@@ -481,7 +482,7 @@ def _apply_chapter_preserve(
 
     if candidate_count == 0:
         raise PlanCompileError(
-            code="code_set_sole_member_bucket",
+            code=reasons.plan.CODE_SET_SOLE_MEMBER_BUCKET,
             path="provider_config.chapter_preserve",
             message=(
                 f"chapter_preserve: chapter {input_chapter!r} has only one code "
@@ -498,7 +499,7 @@ def _apply_chapter_preserve(
     # chapter_preserve gen path symmetric with mask (input is not a gen hint).
     if namespace is None:
         raise PlanCompileError(
-            code="code_set_gen_requires_namespace",
+            code=reasons.plan.CODE_SET_GEN_REQUIRES_NAMESPACE,
             path="namespace",
             message=(
                 "code_set gen mode requires a column namespace. "
@@ -528,7 +529,7 @@ def _pick_mask(value: str, record: _CorpusRecord, *, mask_key: bytes, namespace:
     if candidate_count == 0:
         # Only one code in corpus and it equals the input -- cannot differ.
         raise PlanCompileError(
-            code="code_set_single_row_corpus",
+            code=reasons.plan.CODE_SET_SINGLE_ROW_CORPUS,
             path="provider_config.code_set",
             message=(
                 f"Corpus has only one code ({value!r}) and it equals the input. "

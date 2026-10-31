@@ -203,7 +203,7 @@ class TestChunkSafety:
 
     def _cfg(self, tmp_path) -> dict:
         cfg = {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 42},
             "sources": {"t": {"type": "file", "format": "csv", "path": str(tmp_path / "in.csv")}},
             "tables": [{"name": "t", "columns": self._CFG_COLUMNS}],
@@ -252,7 +252,7 @@ class TestChunkSafety:
         big = -9007199254740993  # |v| > 2**53: not exactly representable in float64
         src = pa.table({"n": pa.array([big, 1, None, 90], type=pa.int64())})
         cfg = {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 42},
             "sources": {"t": {"type": "file", "format": "csv", "path": str(tmp_path / "in.csv")}},
             "tables": [

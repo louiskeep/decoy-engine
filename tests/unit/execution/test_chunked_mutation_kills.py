@@ -58,7 +58,7 @@ def _validated(cfg: dict) -> dict:
 def _config(tmp_path, columns: list[dict], table: str = "accounts") -> dict:
     return _validated(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 42},
             "sources": {table: {"type": "file", "format": "csv", "path": str(tmp_path / "in.csv")}},
             "tables": [{"name": table, "columns": columns}],
@@ -647,7 +647,7 @@ class TestRunMaskKeyedGate:
         monkeypatch.setenv("DECOY_CHUNKED_MUTKILL_SECRET", "a" * 64)
         cfg = _validated(
             {
-                "version": 1,
+                "version": 2,
                 "global_settings": {
                     "seed": 42,
                     "mask_secret_ref": "env:DECOY_CHUNKED_MUTKILL_SECRET",
@@ -689,7 +689,7 @@ class TestRunMaskKeyedGate:
         monkeypatch.delenv("DECOY_SUBSTRATE", raising=False)
         monkeypatch.setenv("DECOY_CHUNKED_MUTKILL_SECRET", "b" * 64)
         base = {
-            "version": 1,
+            "version": 2,
             "sources": {
                 "accounts": {"type": "file", "format": "csv", "path": str(tmp_path / "in.csv")}
             },
@@ -790,7 +790,7 @@ class TestRunMaskChunkedCallSites:
         silently instead of raising."""
         cfg = _validated(
             {
-                "version": 1,
+                "version": 2,
                 "global_settings": {"seed": 42, "unconfigured_column_policy": "error"},
                 "sources": {
                     "accounts": {"type": "file", "format": "csv", "path": str(tmp_path / "in.csv")}

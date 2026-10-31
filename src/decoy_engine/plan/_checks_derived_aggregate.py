@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from decoy_engine import reasons
 from decoy_engine.plan._errors import PlanCompileError
 
 
@@ -74,7 +75,7 @@ def check_derived_aggregate_refs(config: dict[str, Any]) -> None:
             op = pc.get("op")
             if op and str(op) not in AGGREGATE_OPS:
                 raise PlanCompileError(
-                    code="derived_aggregate_op_invalid",
+                    code=reasons.plan.DERIVED_AGGREGATE_OP_INVALID,
                     path=f"tables.{table_name}.columns.{col_name}.provider_config.op",
                     message=(
                         f"derived_aggregate column {col_name!r} in table "
@@ -85,7 +86,7 @@ def check_derived_aggregate_refs(config: dict[str, Any]) -> None:
             source_col = pc.get("column")
             if source_col and str(source_col) not in all_col_names:
                 raise PlanCompileError(
-                    code="derived_aggregate_missing_column_ref",
+                    code=reasons.plan.DERIVED_AGGREGATE_MISSING_COLUMN_REF,
                     path=(f"tables.{table_name}.columns.{col_name}.provider_config.column"),
                     message=(
                         f"derived_aggregate column {col_name!r} in table "
@@ -105,7 +106,7 @@ def check_derived_aggregate_refs(config: dict[str, Any]) -> None:
             op = col_entry.get("op")
             if op and str(op) not in AGGREGATE_OPS:
                 raise PlanCompileError(
-                    code="derived_aggregate_op_invalid",
+                    code=reasons.plan.DERIVED_AGGREGATE_OP_INVALID,
                     path=f"tables.{table_name}.generate_columns.{col_name}.op",
                     message=(
                         f"derived_aggregate column {col_name!r} in table "
@@ -116,7 +117,7 @@ def check_derived_aggregate_refs(config: dict[str, Any]) -> None:
             source_col = col_entry.get("column")
             if source_col and str(source_col) not in all_col_names:
                 raise PlanCompileError(
-                    code="derived_aggregate_missing_column_ref",
+                    code=reasons.plan.DERIVED_AGGREGATE_MISSING_COLUMN_REF,
                     path=(f"tables.{table_name}.generate_columns.{col_name}.column"),
                     message=(
                         f"derived_aggregate column {col_name!r} in table "

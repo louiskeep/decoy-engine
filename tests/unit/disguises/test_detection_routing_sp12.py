@@ -1,6 +1,6 @@
 """SP-12 end-to-end detection routing tests for CPNI and P&C packs.
 
-These tests run STORM detectors against representative column data and assert
+These tests run detectors against representative column data and assert
 that each column routes to the expected detector. They pin the prose coverage
 claims in cpni.yaml and pc.yaml to real detection behaviour so that incorrect
 name-hint configuration shows up in CI rather than at runtime.

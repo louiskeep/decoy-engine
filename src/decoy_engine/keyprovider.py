@@ -39,7 +39,7 @@ import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, NoReturn, Protocol, runtime_checkable
 
-from decoy_engine import fileaccess
+from decoy_engine import fileaccess, reasons
 from decoy_engine.determinism._hkdf import hkdf_sha256
 from decoy_engine.errors import DecoyError
 from decoy_engine.fileaccess import FileAccess, FileRole
@@ -84,21 +84,21 @@ class KeyedStrategyRequiresSecret(MaskSecretError):  # noqa: N818 -- design-name
     """Raised at GA when a plan with a keyed strategy has no mask secret."""
 
     def __init__(self, message: str = "") -> None:
-        super().__init__(code="keyed_strategy_requires_secret", message=message)
+        super().__init__(code=reasons.runtime.KEYED_STRATEGY_REQUIRES_SECRET, message=message)
 
 
 class MissingMaskSecret(MaskSecretError):  # noqa: N818 -- design-named gate error (subclasses MaskSecretError).
     """Raised when a `mask_secret_ref` cannot be resolved to any bytes."""
 
     def __init__(self, message: str = "") -> None:
-        super().__init__(code="missing_mask_secret", message=message)
+        super().__init__(code=reasons.runtime.MISSING_MASK_SECRET, message=message)
 
 
 class WeakMaskSecret(MaskSecretError):  # noqa: N818 -- design-named gate error (subclasses MaskSecretError).
     """Raised when a resolved mask secret is shorter than 32 bytes."""
 
     def __init__(self, message: str = "") -> None:
-        super().__init__(code="weak_mask_secret", message=message)
+        super().__init__(code=reasons.runtime.WEAK_MASK_SECRET, message=message)
 
 
 @runtime_checkable
@@ -139,7 +139,7 @@ class SecretKeyProvider:
     def __post_init__(self) -> None:
         if not isinstance(self.secret, (bytes, bytearray)):
             raise MaskSecretError(
-                code="bad_secret_ref",
+                code=reasons.runtime.BAD_SECRET_REF,
                 message=f"secret must be bytes; got {type(self.secret).__name__}.",
             )
         if len(self.secret) < MIN_SECRET_BYTES:
@@ -189,7 +189,9 @@ def _decode_secret_material(text: str) -> bytes:
     """
     stripped = "".join(text.split())
     if not stripped:
-        raise MaskSecretError(code="bad_secret_ref", message="secret material is empty.")
+        raise MaskSecretError(
+            code=reasons.runtime.BAD_SECRET_REF, message="secret material is empty."
+        )
     try:
         return bytes.fromhex(stripped)
     except ValueError:
@@ -198,7 +200,7 @@ def _decode_secret_material(text: str) -> bytes:
         return base64.b64decode(stripped, validate=True)
     except (base64.binascii.Error, ValueError) as exc:  # type: ignore[attr-defined]
         raise MaskSecretError(
-            code="bad_secret_ref",
+            code=reasons.runtime.BAD_SECRET_REF,
             message="secret material is neither valid hex nor base64.",
         ) from exc
 
@@ -267,7 +269,7 @@ def _strict_secret_from_file(path: str) -> bytes:
         message = f"mask secret file ({_SECRET_FIELD_KEY}) {_STRICT_SECRET_MESSAGES[reason]}"
         if reason == "unreadable":
             raise_clean(MissingMaskSecret(message))
-        raise_clean(MaskSecretError(code="bad_secret_ref", message=message))
+        raise_clean(MaskSecretError(code=reasons.runtime.BAD_SECRET_REF, message=message))
     return secret
 
 
@@ -300,7 +302,9 @@ def resolve_mask_secret_ref(ref: str, *, file_access: FileAccess | None = None) 
     if ref.startswith("env:"):
         name = ref[len("env:") :]
         if not name:
-            raise MaskSecretError(code="bad_secret_ref", message="env ref has no variable name.")
+            raise MaskSecretError(
+                code=reasons.runtime.BAD_SECRET_REF, message="env ref has no variable name."
+            )
         raw = os.environ.get(name)
         if raw is None:
             raise MissingMaskSecret(
@@ -310,7 +314,9 @@ def resolve_mask_secret_ref(ref: str, *, file_access: FileAccess | None = None) 
     if ref.startswith("file:"):
         path = ref[len("file:") :]
         if not path:
-            raise MaskSecretError(code="bad_secret_ref", message="file ref has no path.")
+            raise MaskSecretError(
+                code=reasons.runtime.BAD_SECRET_REF, message="file ref has no path."
+            )
         if not fileaccess.is_ambient():
             return _strict_secret_from_file(path)
         try:
@@ -324,14 +330,14 @@ def resolve_mask_secret_ref(ref: str, *, file_access: FileAccess | None = None) 
             # EXIT_USAGE. Read stays TEXT; bytes would change key derivation for existing
             # file-backed secrets.
             raise MaskSecretError(
-                code="bad_secret_ref",
+                code=reasons.runtime.BAD_SECRET_REF,
                 message=(
                     f"mask secret file {path!r} (from mask_secret_ref) is not valid UTF-8: {exc}."
                 ),
             ) from exc
         return _decode_secret_material(raw)
     raise MaskSecretError(
-        code="bad_secret_ref",
+        code=reasons.runtime.BAD_SECRET_REF,
         message=f"mask_secret_ref must start with 'env:' or 'file:'; got {_redact_ref(ref)}.",
     )
 

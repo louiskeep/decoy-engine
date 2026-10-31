@@ -17,6 +17,7 @@ from typing import Any
 import numpy as np
 import pyarrow as pa
 
+from decoy_engine import reasons
 from decoy_engine.execution._errors import StrategyError
 from decoy_engine.execution._positional_keys import positional_key_array
 from decoy_engine.generation.pool._sampler import (
@@ -25,8 +26,8 @@ from decoy_engine.generation.pool._sampler import (
     _validated_index_array,
 )
 
-_DOMAIN_CODE = "faker_position_out_of_domain"
-_TABLE_UNKNOWN_CODE = "faker_positional_table_unknown"
+_DOMAIN_CODE = reasons.runtime.FAKER_POSITION_OUT_OF_DOMAIN
+_TABLE_UNKNOWN_CODE = reasons.runtime.FAKER_POSITIONAL_TABLE_UNKNOWN
 
 
 def faker_selection_namespace(table: str, column: str, namespace: str | None) -> str:

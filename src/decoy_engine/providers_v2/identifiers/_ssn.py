@@ -26,6 +26,7 @@ from typing import Any
 
 import numpy as np
 
+from decoy_engine import reasons
 from decoy_engine.determinism import derive_value
 from decoy_engine.generation.pool._canonicalize import _canonicalize_source
 from decoy_engine.providers_v2._adapter import CapabilityMatrix, ProviderSpec
@@ -76,7 +77,7 @@ class SsnDomain:
     def from_bytes(self, b: bytes) -> str:
         if len(b) != 32:
             raise IdentifierError(
-                code="invalid_input_length",
+                code=reasons.provider.INVALID_INPUT_LENGTH,
                 message=f"SsnDomain.from_bytes expects 32 bytes; got {len(b)}.",
             )
         for offset in (0, 8, 16, 24):
@@ -85,7 +86,7 @@ class SsnDomain:
             if not _is_blocklisted(candidate):
                 return _format_ssn_display(candidate)
         raise IdentifierError(
-            code="blocklist_exhausted",
+            code=reasons.provider.BLOCKLIST_EXHAUSTED,
             message=(
                 "All 4 derive() rehash offsets produced SSA POMS-blocklisted "
                 "SSNs. Practically unreachable (~1.5e-4 probability); suggests "
@@ -110,7 +111,7 @@ def generate_random(rng: np.random.Generator, locale: str = "en_US") -> str:
     """Non-deterministic SSN generator. Loops until a non-blocklisted draw."""
     if locale != "en_US":
         raise ProviderError(
-            code="unsupported_locale",
+            code=reasons.provider.UNSUPPORTED_LOCALE,
             message=f"SSN is US-only; got locale={locale!r}.",
         )
     while True:
@@ -138,7 +139,7 @@ class SsnAdapter:
     ) -> Any:
         if provider != "synthetic_ssn":
             raise ProviderError(
-                code="unknown_provider",
+                code=reasons.provider.UNKNOWN_PROVIDER,
                 message=f"SsnAdapter only handles synthetic_ssn; got {provider!r}.",
             )
         if spec.deterministic and source_value is not None:
@@ -148,12 +149,12 @@ class SsnAdapter:
                 canonical = _canonicalize_source(source_value)
             if spec.seed is None:
                 raise ProviderError(
-                    code="missing_seed",
+                    code=reasons.provider.MISSING_SEED,
                     message="SsnAdapter: deterministic mode requires spec.seed.",
                 )
             if spec.namespace is None:
                 raise ProviderError(
-                    code="missing_namespace",
+                    code=reasons.provider.MISSING_NAMESPACE,
                     message="SsnAdapter: deterministic mode requires spec.namespace.",
                 )
             return derive_value(
@@ -168,7 +169,7 @@ class SsnAdapter:
     def generate_batch(self, provider: str, *, spec: ProviderSpec, count: int) -> Sequence[Any]:
         if spec.deterministic:
             raise ProviderError(
-                code="batch_deterministic_unsupported",
+                code=reasons.provider.BATCH_DETERMINISTIC_UNSUPPORTED,
                 message=(
                     "SsnAdapter.generate_batch does not support deterministic mode; "
                     "deterministic callers use generate(...) per row. PoolAdapter "

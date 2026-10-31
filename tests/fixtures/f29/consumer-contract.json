@@ -1,0 +1,639 @@
+{
+ "degraded_readings": {
+  "a_forged_retry_class": {
+   "consumer_rule": "read severity, outcome and retry_class from the record, never from the input",
+   "input": {
+    "code": "missing_mask_secret",
+    "context": {
+     "cleanup_state": null,
+     "counts": {},
+     "object_ref": null,
+     "operation": null,
+     "original_identity": null,
+     "publication_state": null,
+     "storage_ref": null,
+     "truncated": false
+    },
+    "kind": "failure",
+    "namespace": "runtime",
+    "outcome": "success",
+    "phase": "resolve",
+    "registry_version": "1.0.0",
+    "retry_class": "retry_operation",
+    "schema_version": 1,
+    "severity": "error"
+   },
+   "read_as": {
+    "code": "missing_mask_secret",
+    "context": {
+     "cleanup_state": null,
+     "counts": {},
+     "object_ref": null,
+     "operation": null,
+     "original_identity": null,
+     "publication_state": null,
+     "storage_ref": null,
+     "truncated": false
+    },
+    "kind": "failure",
+    "namespace": "runtime",
+    "outcome": "configuration",
+    "phase": "resolve",
+    "registry_version": "1.0.0",
+    "retry_class": "configuration_repair",
+    "schema_version": 1,
+    "severity": "error"
+   }
+  },
+  "a_payload_that_is_not_a_mapping": {
+   "consumer_rule": "read severity, outcome and retry_class from the record, never from the input",
+   "input": "text",
+   "read_as": {
+    "code": "reason_record_invalid",
+    "context": {
+     "cleanup_state": null,
+     "counts": {},
+     "object_ref": null,
+     "operation": null,
+     "original_identity": null,
+     "publication_state": null,
+     "storage_ref": null,
+     "truncated": false
+    },
+    "kind": "failure",
+    "namespace": "decoy",
+    "outcome": "execution",
+    "phase": "unknown",
+    "registry_version": "1.0.0",
+    "retry_class": "never",
+    "schema_version": 1,
+    "severity": "error"
+   }
+  },
+  "an_identity_from_a_newer_registry": {
+   "consumer_rule": "read severity, outcome and retry_class from the record, never from the input",
+   "input": {
+    "code": "a_code_from_a_newer_registry",
+    "context": {
+     "cleanup_state": null,
+     "counts": {},
+     "object_ref": null,
+     "operation": null,
+     "original_identity": null,
+     "publication_state": null,
+     "storage_ref": null,
+     "truncated": false
+    },
+    "kind": "failure",
+    "namespace": "runtime",
+    "outcome": "configuration",
+    "phase": "resolve",
+    "registry_version": "1.0.0",
+    "retry_class": "configuration_repair",
+    "schema_version": 1,
+    "severity": "error"
+   },
+   "read_as": {
+    "code": "unknown_reason_from_future",
+    "context": {
+     "cleanup_state": null,
+     "counts": {},
+     "object_ref": null,
+     "operation": null,
+     "original_identity": [
+      "runtime",
+      "a_code_from_a_newer_registry"
+     ],
+     "publication_state": null,
+     "storage_ref": null,
+     "truncated": false
+    },
+    "kind": "failure",
+    "namespace": "decoy",
+    "outcome": "execution",
+    "phase": "resolve",
+    "registry_version": "1.0.0",
+    "retry_class": "unknown",
+    "schema_version": 1,
+    "severity": "error"
+   }
+  },
+  "an_old_engine_with_no_reason": {
+   "consumer_rule": "no reason key: treat as unknown (decoy.unexpected_error), never success",
+   "input": null,
+   "read_as": null
+  },
+  "an_unsupported_schema_major": {
+   "consumer_rule": "read severity, outcome and retry_class from the record, never from the input",
+   "input": {
+    "code": "missing_mask_secret",
+    "context": {
+     "cleanup_state": null,
+     "counts": {},
+     "object_ref": null,
+     "operation": null,
+     "original_identity": null,
+     "publication_state": null,
+     "storage_ref": null,
+     "truncated": false
+    },
+    "kind": "failure",
+    "namespace": "runtime",
+    "outcome": "configuration",
+    "phase": "resolve",
+    "registry_version": "1.0.0",
+    "retry_class": "configuration_repair",
+    "schema_version": 2,
+    "severity": "error"
+   },
+   "read_as": {
+    "code": "unsupported_schema_version",
+    "context": {
+     "cleanup_state": null,
+     "counts": {},
+     "object_ref": null,
+     "operation": null,
+     "original_identity": null,
+     "publication_state": null,
+     "storage_ref": null,
+     "truncated": false
+    },
+    "kind": "failure",
+    "namespace": "decoy",
+    "outcome": "execution",
+    "phase": "unknown",
+    "registry_version": "1.0.0",
+    "retry_class": "never",
+    "schema_version": 1,
+    "severity": "error"
+   }
+  }
+ },
+ "event_schema_version": 1,
+ "events": {
+  "checkpoint_report": {
+   "v0": {
+    "kind": "checkpoint",
+    "table": null,
+    "ts": 1700000000.0
+   },
+   "v1": {
+    "byte_basis": null,
+    "bytes_done": null,
+    "checkpoint": {
+     "bytes": 80,
+     "reference": "ckpt-1",
+     "rows": 10,
+     "sequence": 1,
+     "state": "committed"
+    },
+    "event_schema_version": 1,
+    "kind": "checkpoint",
+    "object_ref": null,
+    "phase": null,
+    "reason": null,
+    "registry_version": "1.0.0",
+    "sequence": 8,
+    "table": null,
+    "ts": 1700000000.0
+   }
+  },
+  "phase_error": {
+   "v0": {
+    "elapsed_s": 0.5,
+    "error_class": "Exception",
+    "kind": "phase",
+    "name": "resolve",
+    "rows_in": null,
+    "rows_out": null,
+    "status": "error",
+    "table": null,
+    "ts": 1700000000.0
+   },
+   "v1": {
+    "byte_basis": null,
+    "bytes_done": null,
+    "bytes_total_estimate": null,
+    "checkpoint": null,
+    "elapsed_s": 0.5,
+    "error_class": "Exception",
+    "event_schema_version": 1,
+    "kind": "phase",
+    "name": "resolve",
+    "object_ref": null,
+    "phase": "resolve",
+    "publication": null,
+    "reason": {
+     "code": "missing_mask_secret",
+     "context": {
+      "cleanup_state": null,
+      "counts": {},
+      "object_ref": null,
+      "operation": null,
+      "original_identity": null,
+      "publication_state": null,
+      "storage_ref": null,
+      "truncated": false
+     },
+     "kind": "failure",
+     "namespace": "runtime",
+     "outcome": "configuration",
+     "phase": "resolve",
+     "registry_version": "1.0.0",
+     "retry_class": "configuration_repair",
+     "schema_version": 1,
+     "severity": "error"
+    },
+    "registry_version": "1.0.0",
+    "retry": null,
+    "rows_in": null,
+    "rows_out": null,
+    "sequence": 2,
+    "status": "error",
+    "table": null,
+    "ts": 1700000000.0
+   }
+  },
+  "phase_start": {
+   "v0": {
+    "elapsed_s": null,
+    "error_class": null,
+    "kind": "phase",
+    "name": "mask",
+    "rows_in": 3,
+    "rows_out": null,
+    "status": "start",
+    "table": "t",
+    "ts": 1700000000.0
+   },
+   "v1": {
+    "byte_basis": null,
+    "bytes_done": null,
+    "bytes_total_estimate": null,
+    "checkpoint": null,
+    "elapsed_s": null,
+    "error_class": null,
+    "event_schema_version": 1,
+    "kind": "phase",
+    "name": "mask",
+    "object_ref": "t",
+    "phase": "mask",
+    "publication": null,
+    "reason": null,
+    "registry_version": "1.0.0",
+    "retry": null,
+    "rows_in": 3,
+    "rows_out": null,
+    "sequence": 1,
+    "status": "start",
+    "table": "t",
+    "ts": 1700000000.0
+   }
+  },
+  "rate_sample": {
+   "v0": {
+    "elapsed_s": 0.1,
+    "final": false,
+    "kind": "rate",
+    "rows_done": 10,
+    "rows_per_sec": 100.0,
+    "rows_total_estimate": 20,
+    "table": "t",
+    "ts": 1700000000.0
+   },
+   "v1": {
+    "byte_basis": "arrow_logical",
+    "bytes_done": 800,
+    "bytes_total_estimate": null,
+    "elapsed_s": 0.1,
+    "event_schema_version": 1,
+    "final": false,
+    "kind": "rate",
+    "object_ref": "t",
+    "phase": "mask",
+    "registry_version": "1.0.0",
+    "retry": null,
+    "rows_done": 10,
+    "rows_per_sec": 100.0,
+    "rows_total_estimate": 20,
+    "sequence": 3,
+    "table": "t",
+    "ts": 1700000000.0
+   }
+  },
+  "retry_report": {
+   "v0": {
+    "kind": "retry",
+    "table": null,
+    "ts": 1700000000.0
+   },
+   "v1": {
+    "event_schema_version": 1,
+    "kind": "retry",
+    "object_ref": null,
+    "phase": null,
+    "reason": null,
+    "registry_version": "1.0.0",
+    "retry": {
+     "attempt": 2,
+     "delay_s": null,
+     "retries_completed": 1,
+     "scope": "route",
+     "state": "scheduled"
+    },
+    "sequence": 7,
+    "table": null,
+    "ts": 1700000000.0
+   }
+  },
+  "route": {
+   "v0": {
+    "kind": "route",
+    "lane": null,
+    "reason_code": null,
+    "route": "sequential",
+    "table": null,
+    "ts": 1700000000.0
+   },
+   "v1": {
+    "event_schema_version": 1,
+    "kind": "route",
+    "lane": null,
+    "object_ref": null,
+    "phase": "resolve",
+    "reason": null,
+    "reason_code": null,
+    "registry_version": "1.0.0",
+    "route": "sequential",
+    "sequence": 4,
+    "table": null,
+    "ts": 1700000000.0
+   }
+  },
+  "terminal_error": {
+   "v0": {
+    "elapsed_s": 0.6,
+    "error_class": "Exception",
+    "kind": "terminal",
+    "sink_failures": 0,
+    "status": "error",
+    "ts": 1700000000.0
+   },
+   "v1": {
+    "elapsed_s": 0.6,
+    "error_class": "Exception",
+    "event_schema_version": 1,
+    "kind": "terminal",
+    "object_ref": null,
+    "phase": null,
+    "publication": {
+     "cleanup_state": "confirmed",
+     "operation": "commit",
+     "publication_state": "not_published",
+     "storage_ref": "output"
+    },
+    "reason": {
+     "code": "missing_mask_secret",
+     "context": {
+      "cleanup_state": null,
+      "counts": {},
+      "object_ref": null,
+      "operation": null,
+      "original_identity": null,
+      "publication_state": null,
+      "storage_ref": null,
+      "truncated": false
+     },
+     "kind": "failure",
+     "namespace": "runtime",
+     "outcome": "configuration",
+     "phase": "resolve",
+     "registry_version": "1.0.0",
+     "retry_class": "configuration_repair",
+     "schema_version": 1,
+     "severity": "error"
+    },
+    "registry_version": "1.0.0",
+    "sequence": 6,
+    "sink_failures": 0,
+    "status": "error",
+    "ts": 1700000000.0
+   }
+  },
+  "warning": {
+   "v0": {
+    "code": "top_code_generalized",
+    "column": "c",
+    "kind": "warning",
+    "table": "t",
+    "ts": 1700000000.0
+   },
+   "v1": {
+    "code": "top_code_generalized",
+    "column": "c",
+    "event_schema_version": 1,
+    "kind": "warning",
+    "object_ref": "t",
+    "phase": null,
+    "reason": null,
+    "registry_version": "1.0.0",
+    "sequence": 5,
+    "table": "t",
+    "ts": 1700000000.0
+   }
+  }
+ },
+ "reason_records": {
+  "enforced_negative_verdict_is_verification": {
+   "code": "verification_failed",
+   "context": {
+    "cleanup_state": null,
+    "counts": {},
+    "object_ref": null,
+    "operation": null,
+    "original_identity": null,
+    "publication_state": null,
+    "storage_ref": null,
+    "truncated": false
+   },
+   "kind": "failure",
+   "namespace": "decoy",
+   "outcome": "verification",
+   "phase": "verify",
+   "registry_version": "1.0.0",
+   "retry_class": "never",
+   "schema_version": 1,
+   "severity": "error"
+  },
+  "full_sink_is_environment_repair": {
+   "code": "storage_capacity_exhausted",
+   "context": {
+    "cleanup_state": "confirmed",
+    "counts": {},
+    "object_ref": null,
+    "operation": "commit",
+    "original_identity": null,
+    "publication_state": "not_published",
+    "storage_ref": "output",
+    "truncated": false
+   },
+   "kind": "failure",
+   "namespace": "decoy",
+   "outcome": "publication",
+   "phase": "publish",
+   "registry_version": "1.0.0",
+   "retry_class": "environment_repair",
+   "schema_version": 1,
+   "severity": "error"
+  },
+  "missing_secret_is_configuration_repair": {
+   "code": "missing_mask_secret",
+   "context": {
+    "cleanup_state": null,
+    "counts": {},
+    "object_ref": null,
+    "operation": null,
+    "original_identity": null,
+    "publication_state": null,
+    "storage_ref": null,
+    "truncated": false
+   },
+   "kind": "failure",
+   "namespace": "runtime",
+   "outcome": "configuration",
+   "phase": "resolve",
+   "registry_version": "1.0.0",
+   "retry_class": "configuration_repair",
+   "schema_version": 1,
+   "severity": "error"
+  },
+  "pause_is_a_control_outcome": {
+   "code": "run_paused",
+   "context": {
+    "cleanup_state": null,
+    "counts": {},
+    "object_ref": null,
+    "operation": null,
+    "original_identity": null,
+    "publication_state": null,
+    "storage_ref": null,
+    "truncated": false
+   },
+   "kind": "control",
+   "namespace": "decoy",
+   "outcome": "cancelled",
+   "phase": "unknown",
+   "registry_version": "1.0.0",
+   "retry_class": "never",
+   "schema_version": 1,
+   "severity": "info"
+  },
+  "report_only_findings_are_findings": {
+   "code": "findings_reported",
+   "context": {
+    "cleanup_state": null,
+    "counts": {},
+    "object_ref": null,
+    "operation": null,
+    "original_identity": null,
+    "publication_state": null,
+    "storage_ref": null,
+    "truncated": false
+   },
+   "kind": "finding",
+   "namespace": "decoy",
+   "outcome": "findings",
+   "phase": "verify",
+   "registry_version": "1.0.0",
+   "retry_class": "never",
+   "schema_version": 1,
+   "severity": "warning"
+  },
+  "sidecar_after_commit_is_partial_publication": {
+   "code": "publication_partial",
+   "context": {
+    "cleanup_state": "not_needed",
+    "counts": {},
+    "object_ref": null,
+    "operation": "sidecar",
+    "original_identity": null,
+    "publication_state": "partial",
+    "storage_ref": "output",
+    "truncated": false
+   },
+   "kind": "failure",
+   "namespace": "decoy",
+   "outcome": "publication",
+   "phase": "publish",
+   "registry_version": "1.0.0",
+   "retry_class": "never",
+   "schema_version": 1,
+   "severity": "error"
+  },
+  "transient_connector_is_retry_operation": {
+   "code": "connector_transient_failure",
+   "context": {
+    "cleanup_state": null,
+    "counts": {},
+    "object_ref": null,
+    "operation": null,
+    "original_identity": null,
+    "publication_state": null,
+    "storage_ref": null,
+    "truncated": false
+   },
+   "kind": "failure",
+   "namespace": "decoy",
+   "outcome": "execution",
+   "phase": "publish",
+   "registry_version": "1.0.0",
+   "retry_class": "retry_operation",
+   "schema_version": 1,
+   "severity": "error"
+  },
+  "unknown_exception_has_unknown_retry": {
+   "code": "unexpected_error",
+   "context": {
+    "cleanup_state": null,
+    "counts": {},
+    "object_ref": null,
+    "operation": null,
+    "original_identity": null,
+    "publication_state": null,
+    "storage_ref": null,
+    "truncated": false
+   },
+   "kind": "failure",
+   "namespace": "decoy",
+   "outcome": "execution",
+   "phase": "mask",
+   "registry_version": "1.0.0",
+   "retry_class": "unknown",
+   "schema_version": 1,
+   "severity": "error"
+  },
+  "verifier_outage_is_verification": {
+   "code": "verification_unavailable",
+   "context": {
+    "cleanup_state": null,
+    "counts": {},
+    "object_ref": null,
+    "operation": null,
+    "original_identity": null,
+    "publication_state": null,
+    "storage_ref": null,
+    "truncated": false
+   },
+   "kind": "failure",
+   "namespace": "decoy",
+   "outcome": "verification",
+   "phase": "verify",
+   "registry_version": "1.0.0",
+   "retry_class": "unknown",
+   "schema_version": 1,
+   "severity": "error"
+  }
+ },
+ "reason_schema_version": 1,
+ "registry_version": "1.0.0"
+}

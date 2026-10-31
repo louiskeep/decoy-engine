@@ -1,4 +1,5 @@
-Status: plan (Phase D / OOC fpe native. GATES GREEN: Codex plan-gate GO -> build -> VERIFY green (abi-3 141 / ci-mirror 71) + perf 16.1x on the fpe step -> dennis APPROVE 0/0/0/2LOW -> Codex final GO. Ready to merge; graphify refresh deferred per the keyless blocker.)
+Status: built
+Shipped: commit c81f397a (PR #255)
 
 # fpe native on the out-of-core route
 

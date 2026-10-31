@@ -1,6 +1,6 @@
 """text_mask strategy (SP-07, 2026-06-28): span-level PII masking with per-detector dispatch.
 
-Walks each cell with ``storm.detectors.iter_spans`` and masks each matched span
+Walks each cell with ``detection.detectors.iter_spans`` and masks each matched span
 using a per-detector strategy. Non-matched text portions are controlled by
 ``unmatched_span_policy`` (default: ``redact``).
 
@@ -8,8 +8,7 @@ Cross-cell keyed determinism: for the ``faker`` and ``date_shift`` span
 strategies, each span is masked by deriving a per-value key as
 HMAC-SHA256(mask_key, matched_text) (``_span_key``). The same real value in
 any two cells always produces the same masked value regardless of surrounding
-context; the context is intentionally excluded from the key so cross-cell
-consistency holds.
+context; the context is intentionally excluded from the key so cross-cell consistency holds.
 
 FF1 keying (Task 5.2 plan P3-final; BEHAVIOR CHANGE from the pre-FF1 model):
 the ``fpe`` span strategy does NOT use ``_span_key``. It is keyed like the
@@ -28,7 +27,7 @@ reproducibility and in-core/out-of-core parity always hold for every span
 source, and the cross-cell guarantee above holds in full for the regex
 detectors (whose detector_id is a function of the value's shape alone). It
 does NOT hold for the one context-SENSITIVE span source: opt-in spaCy NER
-(``extra_spans=`` from ``storm.ner.iter_ner_spans``). NER assigns the
+(``extra_spans=`` from ``detection.ner.iter_ner_spans``). NER assigns the
 ``detector_id`` (person_name vs location) from surrounding context, and the
 synthesis STRATEGY + faker method are selected by detector_id, so an
 ambiguous surface string (e.g. "Jordan" classified as a person in one cell
@@ -38,8 +37,8 @@ therefore the chosen faker method, differs. Cross-cell synthetic consistency
 is thus guaranteed only for unambiguous entities under NER; it is not a
 regression in key/mask determinism.
 
-STORM single source of truth: ``iter_spans`` is called directly from
-``storm.detectors``; any detector added to ``_SPAN_DETECTORS`` is automatically
+Pre-scan single source of truth: ``iter_spans`` is called directly from
+``detection.detectors``; any detector added to ``_SPAN_DETECTORS`` is automatically
 available to ``text_mask`` in the same release. No separate detector registry.
 
 Raw-value isolation: ``matched_text`` is never emitted to logs or evidence.
@@ -86,7 +85,7 @@ NIST SP 800-38G FF1 (AES-256) for the fpe span strategy, matching the column
 ``fpe`` strategy (``transforms/fpe.py``, ``transforms/_ff1.py``).
 See: https://datatracker.ietf.org/doc/html/rfc2104
 
-Methodology: reuses STORM ``iter_spans`` (single detector source),
+Methodology: reuses Pre-scan ``iter_spans`` (single detector source),
 ``fpe_encrypt_value`` (NIST SP 800-38G FF1; see ``transforms/fpe.py``), and
 stdlib HMAC for the faker/date_shift per-span key derivation. Per-detector
 defaults documented in ``DETECTOR_DEFAULTS``.
@@ -94,7 +93,7 @@ defaults documented in ``DETECTOR_DEFAULTS``.
 TX-2 (2026-07-20): the ``text_mask`` strategy handler (``execution/_strategies/
 _text_mask.py``) and its out-of-core twin (``execution/out_of_core/
 _mask_group_c.py``) opt-in NER the same way ``text_redact`` does (WS2): resolve
-``storm.ner.iter_ner_spans`` and pass the result as this module's ``extra_spans``.
+``detection.ner.iter_ner_spans`` and pass the result as this module's ``extra_spans``.
 No new methodology here -- it reuses the spaCy NER pattern already registered for
 ``detection/ner.py`` and this module's own already-registered HMAC-SHA256 keyed span
 determinism. The one addition specific to this module is a ``location`` entry in
@@ -112,6 +111,7 @@ from collections.abc import Sequence
 from datetime import datetime, timedelta
 from typing import Any
 
+from decoy_engine import reasons
 from decoy_engine.detection.detectors import Span, iter_spans
 from decoy_engine.determinism import derive
 from decoy_engine.errors import FpeChecksumError, FpeUnencryptableError
@@ -143,7 +143,7 @@ _DEFAULT_TOKEN: str = "[REDACTED]"  # noqa: S105 - redaction placeholder, not a 
 # TIER 2 - NER/custom-only detectors (defaults apply ONLY when spans are
 #   supplied via extra_spans= or custom=):
 #   These entries define sensible defaults for operators who inject spans
-#   from NER (storm.ner.iter_ner_spans -> extra_spans=) or custom= patterns.
+#   from NER (detection.ner.iter_ner_spans -> extra_spans=) or custom= patterns.
 #   Under the BUILT-IN path they are UNREACHABLE - iter_spans never emits
 #   a span with these detector_ids because name-hint-only regexes are
 #   intentionally excluded from _SPAN_DETECTORS.
@@ -370,13 +370,13 @@ def _apply_sub_floor_span_policy(
             f"({reason_code}) and no `sub_floor_span` policy ('redact' or "
             "'synthetic') is configured. The engine fails closed rather than "
             "silently choose a fallback; set sub_floor_span on this column.",
-            code="fpe.unencryptable_domain",
+            code=reasons.runtime.FPE__UNENCRYPTABLE_DOMAIN,
         )
     if sub_floor_span_policy not in ("redact", "synthetic"):
         raise FpeUnencryptableError(
             f"unknown sub_floor_span policy {sub_floor_span_policy!r} for detector "
             f"{detector_id!r}; expected 'redact' or 'synthetic'.",
-            code="fpe.unencryptable_domain",
+            code=reasons.runtime.FPE__UNENCRYPTABLE_DOMAIN,
         )
     if sub_floor_notices is not None:
         sub_floor_notices[detector_id] = sub_floor_notices.get(detector_id, 0) + 1
@@ -452,7 +452,7 @@ def _mask_fpe(
             key,
             detector_id,
             token,
-            reason_code="sub_minimum_domain",
+            reason_code=reasons.runtime.SUB_MINIMUM_DOMAIN,
             sub_floor_span_policy=sub_floor_span_policy,
             sub_floor_notices=sub_floor_notices,
         )
@@ -464,7 +464,7 @@ def _mask_fpe(
             key,
             detector_id,
             token,
-            reason_code="checksum_invalid",
+            reason_code=reasons.runtime.CHECKSUM_INVALID,
             sub_floor_span_policy=sub_floor_span_policy,
             sub_floor_notices=sub_floor_notices,
         )
@@ -640,7 +640,7 @@ def mask_cell(
 ) -> Any:
     """Mask PII spans in a single free-text cell and return the masked string.
 
-    Detects PII spans via ``storm.detectors.iter_spans`` (STORM single source
+    Detects PII spans via ``detection.detectors.iter_spans`` (Pre-scan single source
     of truth), dispatches each span to its configured strategy, and applies
     ``unmatched_span_policy`` to the non-PII portions. Returns the reassembled
     string.
@@ -659,7 +659,7 @@ def mask_cell(
                               Unknown IDs are silently skipped (``iter_spans``
                               contract).
         extra_spans:          Pre-computed spans to merge with built-in detection
-                              results (e.g. NER hits from ``storm.ner.iter_ner_spans``).
+                              results (e.g. NER hits from ``detection.ner.iter_ner_spans``).
                               Resolved via the same leftmost-then-longest overlap
                               sweep as built-in spans. Use this to mask Tier-2
                               detectors (person_name, iso_date, etc.) that are

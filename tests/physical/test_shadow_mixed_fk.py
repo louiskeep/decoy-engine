@@ -78,7 +78,7 @@ def _fk_mixed_config(
     seed: int = 20260917,
 ) -> dict[str, Any]:
     raw: dict[str, Any] = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": seed},
         "sources": {},
         "targets": {
@@ -646,7 +646,7 @@ def test_run_pipeline_fk_output_pinned_after_fk_resolve_extraction(tmp_path: Pat
     parent = pa.table({"pk": pa.array(["p0", "p1", "p2"], type=pa.string())})
     child = pa.table({"fk": pa.array(["p0", "p1", "orphan"], type=pa.string())})
     config: dict[str, Any] = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 20260917},
         "sources": {},
         "targets": {},

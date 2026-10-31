@@ -67,6 +67,7 @@ import math
 import uuid
 from typing import TYPE_CHECKING, Any
 
+from decoy_engine import reasons
 from decoy_engine.errors import DecoyError
 from decoy_engine.quality.carriers import (
     CarrierTable,
@@ -151,25 +152,26 @@ def _validate_fit_params(*, epsilon: float, delta: float, numeric_bins: int) -> 
         epsilon = float(epsilon)
     except (TypeError, ValueError) as exc:
         raise DpError(
-            code="dp_epsilon_invalid", message=f"epsilon must be a number; got {epsilon!r}."
+            code=reasons.quality.DP_EPSILON_INVALID,
+            message=f"epsilon must be a number; got {epsilon!r}.",
         ) from exc
     if not math.isfinite(epsilon) or epsilon <= 0:
         raise DpError(
-            code="dp_epsilon_invalid",
+            code=reasons.quality.DP_EPSILON_INVALID,
             message=f"epsilon must be a finite float > 0; got {epsilon!r}.",
         )
     try:
         delta = float(delta)
     except (TypeError, ValueError) as exc:
         raise DpError(
-            code="dp_delta_invalid", message=f"delta must be a number; got {delta!r}."
+            code=reasons.quality.DP_DELTA_INVALID, message=f"delta must be a number; got {delta!r}."
         ) from exc
     # Settled (guide section 9.10 item 2): delta=0 is rejected even for a
     # numeric-only fit. Uniformity across fits wins over the marginally
     # stronger pure-epsilon claim a numeric-only fit could otherwise carry.
     if not math.isfinite(delta) or not (0.0 < delta < 1.0):
         raise DpError(
-            code="dp_delta_invalid",
+            code=reasons.quality.DP_DELTA_INVALID,
             message=(
                 f"delta must be a finite float in (0, 1); got {delta!r}. delta=0 is "
                 "rejected even for an all-numeric fit (uniformity across fits), and "
@@ -178,7 +180,7 @@ def _validate_fit_params(*, epsilon: float, delta: float, numeric_bins: int) -> 
         )
     if not isinstance(numeric_bins, int) or isinstance(numeric_bins, bool) or numeric_bins < 2:
         raise DpError(
-            code="dp_numeric_bins_invalid",
+            code=reasons.quality.DP_NUMERIC_BINS_INVALID,
             message=f"numeric_bins must be an int >= 2; got {numeric_bins!r}.",
         )
 
@@ -204,7 +206,7 @@ def _check_derived_edges(name: str, lower: float, upper: float, numeric_bins: in
     full = [lower, *_interior_edges(lower, upper, numeric_bins), upper]
     if not all(math.isfinite(e) for e in full) or any(b <= a for a, b in itertools.pairwise(full)):
         raise DpError(
-            code="dp_numeric_domain_invalid",
+            code=reasons.quality.DP_NUMERIC_DOMAIN_INVALID,
             message=(
                 f"column {name!r}=({lower!r}, {upper!r}) with numeric_bins={numeric_bins} "
                 "derives bin edges that are not finite and strictly increasing (the domain is "
@@ -464,7 +466,7 @@ def _fit_dp_snapshot_with_backend(
         # scheduled query is released exactly once by construction here. Kept as
         # a hard assertion because it is what proves the schedule was exhausted.
         raise DpBudgetError(
-            code="dp_schedule_mismatch",
+            code=reasons.quality.DP_SCHEDULE_MISMATCH,
             message=(
                 f"certified {session.certificate_count()} releases but the schedule "
                 f"declares {schedule.query_count} queries."

@@ -1,4 +1,5 @@
-Status: plan (rev 2, BUILD-READY: Codex plan gate GO in round 2)
+Status: built
+Shipped: docs/records/2026-10-07-fpe-reference-empty-build.md
 
 Rules consulted: 00-universal, development-loop, risk-and-exceptions, testing, code-review.
 

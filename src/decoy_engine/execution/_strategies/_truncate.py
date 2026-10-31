@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import pandas as pd
 
+from decoy_engine import reasons
 from decoy_engine.execution._adapter import (
     StrategyContext,
     pandas_column_to_kernel_input,
@@ -62,7 +63,7 @@ class TruncateHandler:
             # Invalid config: fail closed (Sprint 13 finding 0.4). A masking
             # strategy must never silently pass the source value through.
             raise StrategyError(
-                code="truncate_length_invalid",
+                code=reasons.runtime.TRUNCATE_LENGTH_INVALID,
                 strategy="truncate",
                 message=(
                     f"column {column!r} uses truncate with invalid length "
@@ -78,7 +79,7 @@ class TruncateHandler:
             keep = "tail" if from_end_legacy else "head"
         if keep not in ("head", "tail"):
             raise StrategyError(
-                code="truncate_keep_invalid",
+                code=reasons.runtime.TRUNCATE_KEEP_INVALID,
                 strategy="truncate",
                 message=f"column {column!r} uses truncate with invalid keep {keep!r}.",
             )
@@ -86,7 +87,7 @@ class TruncateHandler:
         if mask_char is not None:
             if not isinstance(mask_char, str) or len(mask_char) != 1:
                 raise StrategyError(
-                    code="truncate_mask_char_invalid",
+                    code=reasons.runtime.TRUNCATE_MASK_CHAR_INVALID,
                     strategy="truncate",
                     message=(
                         f"column {column!r} uses truncate with invalid mask_char "

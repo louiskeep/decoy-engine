@@ -1,6 +1,8 @@
 # Engine-owned table transforms (Rust engine program A8)
 
-Status: plan (revision 15: patches the five findings of remediation round 3 and goes to build (Cam, 2026-10-01); the code gates check the rest. Revision 14: specifies the contracts revision 13 needs (transformed-table size adapter, per-table prepared state, lazy sources unprobeable, shared preparation for physical-plan capture) after Codex round 2 of this remediation; next review is round 3 of 3. Revision 13 chose pricing the actual transformed tables (Cam, 2026-10-01).)
+Status: built
+Shipped: CHANGELOG.md:1797 (engine-owned table transforms, 2026-09-30); src/decoy_engine/execution/_transforms_prepare.py
+Prior status (kept because it records a hold): plan (revision 15: patches the five findings of remediation round 3 and goes to build (Cam, 2026-10-01); the code gates check the rest. Revision 14: specifies the contracts revision 13 needs (transformed-table size adapter, per-table prepared state, lazy sources unprobeable, shared preparation for physical-plan capture) after Codex round 2 of this remediation; next review is round 3 of 3. Revision 13 chose pricing the actual transformed tables (Cam, 2026-10-01).)
 
 Date: 2026-09-30. Program: `docs/plans/2026-09-30-rust-engine-program.md`, Phase A, item A8 (Cam decision 2, 2026-09-30: transforms move into the engine's `run_pipeline` so the engine, CLI and platform behave the same). Branch `feat/engine-owned-transforms`, off engine main `8dc559e5`. Paired platform work: A8p-0 and A8p below, each its own platform branch.
 

@@ -122,7 +122,7 @@ def _build_config(
     path = f"{_SOURCE_DIR}/{key}.parquet"
     pq.write_table(source, path)
     raw = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 20260828, "post_validation": False},
         "sources": {"w2": {"type": "file", "format": "parquet", "path": path}},
         "targets": {"w2": {"type": "file", "format": "parquet", "path": f"{path}.out"}},

@@ -38,6 +38,7 @@ from typing import TYPE_CHECKING, Any
 import pyarrow as pa
 import pyarrow.types as pat
 
+from decoy_engine import reasons
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.profile._readers import FooterFacts, LazySource, OpenedLazyBatches
 
@@ -70,8 +71,8 @@ __all__ = [
 # benchmark bars, not tuned after measuring.
 INPUT_BUFFER_BYTES = 8 * 1024 * 1024
 
-REASON_LAZY = "eligible"
-REASON_RESIDENT_SOURCE = "resident_source"
+REASON_LAZY = reasons.route.ELIGIBLE
+REASON_RESIDENT_SOURCE = reasons.route.RESIDENT_SOURCE
 MODE_NOT_DISPATCHED = "not_dispatched"
 
 
@@ -246,7 +247,7 @@ def _slices(source: pa.Table, chunk_size_rows: int) -> Iterator[pa.Table]:
 
 def _changed(table: str, detail: str) -> ExecutionError:
     return ExecutionError(
-        code="lazy_source_changed",
+        code=reasons.runtime.LAZY_SOURCE_CHANGED,
         message=f"the source of table {table!r} changed between routing and the read: {detail}.",
     )
 
@@ -270,7 +271,7 @@ def _guarded(
             yield chunk
         if rows != owner.num_rows:
             raise ExecutionError(
-                code="lazy_source_row_count_mismatch",
+                code=reasons.runtime.LAZY_SOURCE_ROW_COUNT_MISMATCH,
                 message=(
                     f"the source of table {table!r} yielded {rows} rows, "
                     f"but its footer says {owner.num_rows}."

@@ -62,7 +62,7 @@ As of this writing the tags include:
 distribution-snapshot/v1   decoy-vault/v2        vault-key/v1
 ff1-key/v1                 quality-report/v1     synth-report/v1
 quality-diagnostic/v1      quality-fidelity/v1   quality-policy/v1
-quality-shape-fidelity/v1  storm-post-mask/v1    name-hints/v1
+quality-shape-fidelity/v1  post-scan-integrity/v2    name-hints/v1
 ssn/v1  npi/v1  pan/v1  iban/v1  ein/v1  mrn/v1  ndc/v1  icd10/v1
 cusip/v1  address/v1  locality/v1  person/v1  provider/v1
 composite/v1  custom/v1   ... (every disguise spec)
@@ -556,7 +556,7 @@ major-version project with a migration story, not a feature PR.
 
 ### 4.4 Deprecation mechanics (when you must change CLI/API)
 
-The `storm scan` → `storm analyze` rename is the template. To retire or change a
+The `pre-scan scan` → `pre-scan analyze` rename is the template. To retire or change a
 public surface:
 
 1. Keep the old surface working as a shim.

@@ -28,6 +28,7 @@ from __future__ import annotations
 
 from typing import Final
 
+from decoy_engine import reasons
 from decoy_engine.errors import FpeUnencryptableError
 from decoy_engine.transforms import _ff1
 
@@ -86,7 +87,7 @@ def check_charset_unique(charset_spec: str, charset: str) -> None:
             f"fpe charset {charset_spec!r} -> {charset!r} contains duplicate "
             "symbols; FF1 requires an ordered, duplicate-free alphabet. Remove "
             "the repeated character(s) from the charset.",
-            code="fpe.unencryptable_length",
+            code=reasons.runtime.FPE__UNENCRYPTABLE_LENGTH,
         )
 
 
@@ -118,7 +119,7 @@ def check_charset_ascii_printable(charset: str) -> None:
             f"ASCII (0x21-0x7E): {codepoints}. Custom fpe charsets are "
             "restricted to printable ASCII so one code point is always "
             "exactly one symbol; use only characters in that range.",
-            code="fpe.unencryptable_length",
+            code=reasons.runtime.FPE__UNENCRYPTABLE_LENGTH,
         )
 
 
@@ -164,7 +165,7 @@ def build_ff1_tweak(scope: int, identity: str) -> bytes:
             f"fpe tweak identity is {len(identity_bytes)} bytes, exceeding the "
             "uint16 length field (65535 bytes max). Use a shorter column/"
             "join_group/detector identity.",
-            code="fpe.unencryptable_length",
+            code=reasons.runtime.FPE__UNENCRYPTABLE_LENGTH,
         )
     tweak = (
         bytes([FF1_TWEAK_VERSION, scope]) + len(identity_bytes).to_bytes(2, "big") + identity_bytes
@@ -173,7 +174,7 @@ def build_ff1_tweak(scope: int, identity: str) -> bytes:
         raise FpeUnencryptableError(
             f"fpe tweak is {len(tweak)} bytes, exceeding the deployed profile's "
             f"maximum tweak length ({_ff1.FF1_MAX_TWEAK_LEN} bytes).",
-            code="fpe.unencryptable_length",
+            code=reasons.runtime.FPE__UNENCRYPTABLE_LENGTH,
         )
     return tweak
 
@@ -227,19 +228,19 @@ def _permute(s: str, key: bytes, charset: str, tweak: bytes, *, forward: bool) -
         raise FpeUnencryptableError(
             f"fpe key must be exactly {_ff1.FF1_KEY_BYTES} bytes (AES-256 only); "
             f"got {len(key)}. This indicates a key-derivation bug, not a data issue.",
-            code="fpe.unencryptable_length",
+            code=reasons.runtime.FPE__UNENCRYPTABLE_LENGTH,
         )
     if not (_ff1.FF1_MIN_RADIX <= radix <= _ff1.FF1_MAX_RADIX):
         raise FpeUnencryptableError(
             f"fpe charset resolves to radix {radix}, outside the deployed profile's "
             f"[{_ff1.FF1_MIN_RADIX}, {_ff1.FF1_MAX_RADIX}] range.",
-            code="fpe.unencryptable_length",
+            code=reasons.runtime.FPE__UNENCRYPTABLE_LENGTH,
         )
     if len(set(charset)) != radix:
         raise FpeUnencryptableError(
             "fpe charset contains duplicate symbols; FF1 requires an ordered, "
             "duplicate-free alphabet (a duplicate would make decode ambiguous).",
-            code="fpe.unencryptable_length",
+            code=reasons.runtime.FPE__UNENCRYPTABLE_LENGTH,
         )
     check_charset_ascii_printable(charset)
     min_len = _ff1.min_domain_length(radix)
@@ -249,19 +250,19 @@ def _permute(s: str, key: bytes, charset: str, tweak: bytes, *, forward: bool) -
             f"{radix}**{n} = {radix**n}) is below the FF1 minimum admissible domain "
             f"({_ff1.FF1_MIN_DOMAIN}). Use a wider charset, a longer/covering format, "
             "or route this column through a different strategy.",
-            code="fpe.unencryptable_domain",
+            code=reasons.runtime.FPE__UNENCRYPTABLE_DOMAIN,
         )
     if n > _ff1.FF1_MAX_LEN:
         raise FpeUnencryptableError(
             f"value has {n} in-charset characters, exceeding the deployed FF1 "
             f"profile's maximum length of {_ff1.FF1_MAX_LEN}.",
-            code="fpe.unencryptable_length",
+            code=reasons.runtime.FPE__UNENCRYPTABLE_LENGTH,
         )
     if len(tweak) > _ff1.FF1_MAX_TWEAK_LEN:
         raise FpeUnencryptableError(
             f"fpe tweak is {len(tweak)} bytes, exceeding the deployed profile's "
             f"maximum tweak length ({_ff1.FF1_MAX_TWEAK_LEN} bytes).",
-            code="fpe.unencryptable_length",
+            code=reasons.runtime.FPE__UNENCRYPTABLE_LENGTH,
         )
 
     char_to_idx = _char_lookup(charset)
@@ -276,7 +277,7 @@ def _permute(s: str, key: bytes, charset: str, tweak: bytes, *, forward: bool) -
         raise FpeUnencryptableError(
             "fpe body contains a character outside the configured alphabet; "
             "every body character must be a member of the resolved charset.",
-            code="fpe.unencryptable_length",
+            code=reasons.runtime.FPE__UNENCRYPTABLE_LENGTH,
         )
     numerals = [char_to_idx[ch] for ch in s]
 
@@ -288,7 +289,7 @@ def _permute(s: str, key: bytes, charset: str, tweak: bytes, *, forward: bool) -
         )
     except _ff1.Ff1Error as exc:
         raise FpeUnencryptableError(
-            f"FF1 rejected this input: {exc}", code="fpe.unencryptable_length"
+            f"FF1 rejected this input: {exc}", code=reasons.runtime.FPE__UNENCRYPTABLE_LENGTH
         ) from exc
     return "".join(charset[i] for i in result)
 
@@ -392,7 +393,7 @@ def _fpe_value(
             "string is not a null (nulls never reach this layer) and carries "
             "no format-preserving domain to permute over.",
             value=val,
-            code="fpe.unencryptable_domain",
+            code=reasons.runtime.FPE__UNENCRYPTABLE_DOMAIN,
         )
     charset_set = set(charset)
     if preserve_separators:

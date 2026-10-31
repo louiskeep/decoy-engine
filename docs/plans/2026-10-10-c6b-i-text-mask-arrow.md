@@ -1,4 +1,5 @@
-Status: plan (rev 2, pending Codex plan re-gate)
+Status: built
+Shipped: merge PR #233 (35db29c6)
 
 Rules consulted: 00-universal, development-loop, risk-and-exceptions, feature-dev, testing, documentation; CLAUDE.md "use established methodology".
 

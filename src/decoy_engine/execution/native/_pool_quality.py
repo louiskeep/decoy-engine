@@ -36,6 +36,7 @@ from typing import Any
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from decoy_engine import reasons
 from decoy_engine.errors import DecoyError
 from decoy_engine.execution.out_of_core._duckdb import connect_duckdb
 from decoy_engine.generation.pool._events import QualityWarning
@@ -150,7 +151,7 @@ class PoolQualityError(DecoyError):
     `.threshold` carry the values named in the message.
     """
 
-    code: str = "pool_quality.threshold_exceeded"
+    code: str = reasons.runtime.POOL_QUALITY_THRESHOLD_EXCEEDED
 
     def __init__(
         self,

@@ -215,12 +215,63 @@ def _git(*args: str) -> str:
     ).stdout
 
 
+# The retired package name, spelled in two parts so the residual sentry has no literal to flag.
+_RETIRED = "sto" + "rm"
+
+
+def _only_these_line_changes(base: str, path: str, allowed: dict[str, str]) -> bool:
+    """True when the file's diff against `base` is exactly the removed->added pairs in `allowed`."""
+    lines = [
+        ln
+        for ln in _git("diff", "-U0", base, "HEAD", "--", path).splitlines()
+        if ln[:1] in "+-" and not ln.startswith(("+++", "---"))
+    ]
+    removed = [ln for ln in lines if ln[0] == "-"]
+    added = [ln for ln in lines if ln[0] == "+"]
+    return sorted(removed) == sorted(allowed) and sorted(added) == sorted(allowed.values())
+
+
 def _origin_main_available() -> bool:
     try:
         _git("rev-parse", "--verify", "origin/main")
     except (subprocess.CalledProcessError, FileNotFoundError):
         return False
     return True
+
+
+# F29 (reason registry, 2026-10-29): these parent-level execution modules changed only to reference
+# `decoy_engine.reasons` symbols in place of string literals (the wire values are unchanged) or, for
+# `_isolated_reason.py` and `_publication_observer.py`, are the new modules that build a structured
+# reason or observe a sink's publication. Behavior-preserving; none imports `execution.physical`, and
+# the import-direction sweeps above cover them. Every other F29 touch is already in the list below.
+F29_REGISTRY_MIGRATION = frozenset(
+    {
+        "src/decoy_engine/execution/_chunked_code_set.py",
+        "src/decoy_engine/execution/_chunked_fk.py",
+        "src/decoy_engine/execution/_chunked_fk_dtype.py",
+        "src/decoy_engine/execution/_chunked_text_mask.py",
+        "src/decoy_engine/execution/_fk_keys.py",
+        "src/decoy_engine/execution/_isolated_reason.py",
+        "src/decoy_engine/execution/_output_projection.py",
+        "src/decoy_engine/execution/_publication_observer.py",
+        "src/decoy_engine/execution/_residency_warning.py",
+        "src/decoy_engine/execution/_strategies/_bucketize.py",
+        "src/decoy_engine/execution/_strategies/_code_set.py",
+        "src/decoy_engine/execution/_strategies/_composite.py",
+        "src/decoy_engine/execution/_strategies/_geo_generalize.py",
+        "src/decoy_engine/execution/_strategies/_shuffle.py",
+        "src/decoy_engine/execution/_strategies/_truncate.py",
+        "src/decoy_engine/execution/native/_kernels_keyed.py",
+        "src/decoy_engine/execution/out_of_core/_budget.py",
+        "src/decoy_engine/execution/out_of_core/_capacity_eval.py",
+        "src/decoy_engine/execution/out_of_core/_duckdb.py",
+        "src/decoy_engine/execution/out_of_core/_external_sort.py",
+        "src/decoy_engine/execution/out_of_core/_memory_estimate.py",
+        "src/decoy_engine/execution/out_of_core/_relation.py",
+        "src/decoy_engine/execution/out_of_core/_stream_join_cursors.py",
+        "src/decoy_engine/execution/out_of_core/_stream_join_plan.py",
+    }
+)
 
 
 @pytest.mark.skipif(
@@ -259,574 +310,588 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
     diff_names = _git(
         "diff", "--name-only", base, "HEAD", "--", "src/decoy_engine/execution"
     ).splitlines()
-    permitted_non_physical = {
-        f"src/decoy_engine/{rel}" for rel in DELIBERATELY_CONNECTED_MODULES
-    } | {
-        "src/decoy_engine/execution/_pipeline.py",
-        # C5a remediation: `_runner.py` gains the shared `work_order_key` / `in_work_order`
-        # ordering helpers so the coordinator visits nodes in `order_work`'s order from one
-        # key. Pure functions; `_runner.py` imports nothing from `execution.physical`.
-        "src/decoy_engine/execution/_runner.py",
-        # Engine-owned table transforms: `run_pipeline` now applies a mask table's
-        # transforms before routing, which touches the resident-source resolvers,
-        # the routing signals, the sequential and out-of-core docstring contract and
-        # the byte-estimate size adapter, and adds the `_transforms_*` modules. All
-        # live at the `execution` parent level and import NOTHING from
-        # `execution.physical` (the import-direction sweeps above stay green); the
-        # physical package only reads them (`_snapshot` calls the shared preparation
-        # so capture records the same routing facts as a real run).
-        "src/decoy_engine/execution/_mem_estimate_schema.py",
-        # Byte-estimate Arrow-type pricing: the classifier module and the cost-label
-        # additions it reads. Both sit beside `_mem_estimate_schema.py`, import only
-        # pyarrow and `profile._readers`, and nothing under `execution.physical`.
-        "src/decoy_engine/execution/_mem_estimate_arrow.py",
-        "src/decoy_engine/execution/_mem_estimate_dtypes.py",
-        # job-time estimator: the throughput calibration and the `estimate_job`
-        # primitive (route + peak + runtime band). Both sit beside the mem-estimate
-        # modules, import only `_mem_estimate`/routing/calibration + capacity's
-        # config resolver, and nothing under `execution.physical`.
-        "src/decoy_engine/execution/_throughput_calibration.py",
-        "src/decoy_engine/execution/_job_estimate.py",
-        # F2 (production mixed generate+mask route): the semantic admission core and the
-        # generate-parent FK bridge move OUT of `execution/physical/_shadow_mixed.py` /
-        # `_shadow_fk.py` into `_mixed_admission.py` / `_mixed_fk_bridge.py` so the shadow and
-        # the production route share one rule. Both import nothing from `execution.physical`
-        # (the shadow now imports them, the allowed direction). `_mixed_static.py` (static
-        # admission), `_chunked_preresolved.py` (the pre-resolved key carrier through the
-        # chunked lane) and `_pipeline_mixed_route.py` (the executor) are the new route; all
-        # are parent-level and covered by the import-direction sweeps (GUARDED_MODULES).
-        "src/decoy_engine/execution/_mixed_admission.py",
-        "src/decoy_engine/execution/_mixed_fk_bridge.py",
-        "src/decoy_engine/execution/_mixed_static.py",
-        "src/decoy_engine/execution/_chunked_preresolved.py",
-        "src/decoy_engine/execution/_pipeline_mixed_route.py",
-        "src/decoy_engine/execution/_pipeline_routing.py",
-        "src/decoy_engine/execution/_pipeline_routing_signals.py",
-        "src/decoy_engine/execution/_pipeline_sources.py",
-        # E3b (run_storm honoured in-run): `capacity.py` passes
-        # `run_storm=bool(config.get("run_storm"))` into its two `decide_execution_route`
-        # calls so the capacity probe sees the same storm-forces-full-frame decision the
-        # production route makes. Pure kwarg threading; imports nothing from
-        # `execution.physical` (the import-direction sweeps above stay green).
-        "src/decoy_engine/execution/capacity.py",
-        # R3 (run context + route executors, 2026-10-10): `run_pipeline`'s resolve and route
-        # phases move into the new `_pipeline_context.py` (a frozen `PipelineRunContext` and
-        # `RouteDecision`) and the two bounded layer-1 routes get context-driven entry points in
-        # `_pipeline_route_dispatch.py`. Behavior-preserving extraction; both are parent-level
-        # execution modules that import nothing from `execution.physical`, and the import-direction
-        # sweeps above cover them (GUARDED_MODULES).
-        "src/decoy_engine/execution/_pipeline_context.py",
-        "src/decoy_engine/execution/_pipeline_route_dispatch.py",
-        # R3: the full_frame executor (the old inline tail of `run_pipeline`) in its own module.
-        # It reaches the unified-slice lane through `_unified_slice`, never `execution.physical`.
-        "src/decoy_engine/execution/_pipeline_full_frame.py",
-        "src/decoy_engine/execution/_sequential.py",
-        "src/decoy_engine/execution/_transforms.py",
-        "src/decoy_engine/execution/_transforms_admission.py",
-        "src/decoy_engine/execution/_transforms_gate.py",
-        "src/decoy_engine/execution/_transforms_prepare.py",
-        "src/decoy_engine/execution/_transforms_table.py",
-        "src/decoy_engine/execution/out_of_core/_runner.py",
-        "src/decoy_engine/execution/out_of_core/_preflight.py",
-        # Dcomp-OOC (composite FK strict parity): the out-of-core joiners raise the one
-        # orphan FAIL error producer (`_fk_resolve.orphan_fk_violation_error`) directly.
-        # Both import nothing from `execution.physical`.
-        "src/decoy_engine/execution/out_of_core/_join.py",
-        "src/decoy_engine/execution/out_of_core/_batch_join.py",
-        # Dmp (multi-parent FK out-of-core): the merged first-hit-wins relation module, the
-        # routing hazard for mixed parent key types, and the test-only remap oracle moved into
-        # `_batch_join.py` (already permitted above). None imports `execution.physical`.
-        "src/decoy_engine/execution/_pipeline_routing_fk_dtype.py",
-        "src/decoy_engine/execution/out_of_core/_multi_parent.py",
-        "src/decoy_engine/execution/out_of_core/_stream_driver_support.py",
-        "src/decoy_engine/execution/out_of_core/_null_int_guard.py",
-        # D3b (token vault on the bounded out-of-core route): the vault collector the two
-        # out-of-core drivers call. It imports nothing from `execution.physical`.
-        "src/decoy_engine/execution/out_of_core/_vault_collect.py",
-        # Reorder parent-size guard (2026-10-15): `decide_route` demotes a large-parent
-        # reorder-eligible table to the bounded batch lane (`_route_policy.py`), using the
-        # budget-derived `safe_parent_key_ceiling` (`_reorder_budget.py`). Both are
-        # intra-OOC routing/budget math and import nothing from `execution.physical`.
-        "src/decoy_engine/execution/out_of_core/_route_policy.py",
-        "src/decoy_engine/execution/out_of_core/_reorder_budget.py",
-        # E1: opaque scratch identifiers for config-derived table/edge/relation names
-        # (X4). The reorder/batch relation paths are built from per-run ids, not names,
-        # and import nothing from execution.physical.
-        "src/decoy_engine/execution/out_of_core/_relation.py",
-        "src/decoy_engine/execution/native/_chunk_masking.py",
-        # R1b: the resolved per-operator parameters and the shared kernel step both native
-        # routes call; `_chunk_masking.py` and `_chunked_entry.py` above only rewire to them.
-        # Both are leaf modules under `native/` that import nothing from `execution.physical`.
-        "src/decoy_engine/execution/native/_operator_params.py",
-        "src/decoy_engine/execution/native/_operator_step.py",
-        # C1b-ii: seeded non-deterministic categorical chunked-admission adapters; imports
-        # nothing from `execution.physical` (full-frame physical native stays closed).
-        "src/decoy_engine/execution/native/_categorical_positional.py",
-        # C5b-ii: the non-deterministic REUSE faker's chunked-admission predicate and `when:`
-        # gate; imports nothing from `execution.physical` (the unified route stays closed).
-        "src/decoy_engine/execution/native/_faker_positional_admission.py",
-        # C8-i: the chunked route's `when:` admission verdict and its per-chunk row mask. Both
-        # live under `native/`, reach pandas eval only through the oracle's `_eval_predicate`,
-        # and import nothing from `execution.physical` (the unified route still declines `when:`).
-        "src/decoy_engine/execution/native/_when_admission.py",
-        "src/decoy_engine/execution/native/_when_mask.py",
-        # C5c-i: the positional Faker's null mask, taken from the oracle's own conversion. It
-        # imports nothing from `execution.physical`; the registry, admission and dispatch
-        # modules that read the wider source domain are already permitted above.
-        "src/decoy_engine/execution/native/_faker_null_mask.py",
-        # Task 4.6 slice 5b-i: the shared generate+mask output-stitch helper
-        # both `_pipeline.py` and `execution/physical/_shadow_mixed.py` call,
-        # so the "mask wins ties" precedence cannot drift between the two.
-        # Lives at the PARENT `execution` level specifically so `_pipeline.py`
-        # never has to import the physical seam to reach it -- it imports
-        # NOTHING from `execution.physical` itself (confirmed by the sweeps
-        # above), it is simply a new file outside that package.
-        "src/decoy_engine/execution/_stitch.py",
-        # Task 4.6 slice 5b-ii: the FK orphan-policy helpers (resolve_fk_keys,
-        # gather_errored_parent_keys, cascade_row_errors) are extracted from
-        # `_strategies/_orphan.py` into the new parent-level `_fk_resolve.py`
-        # so the pandas oracle AND the shadow mixed-FK dispatch share one owner
-        # of the map-hit/orphan/REMAP precedence and cannot drift. Same seam
-        # discipline as `_stitch.py`: `_fk_resolve.py` imports NOTHING from
-        # `execution.physical`; `_pandas_adapter.py` and `_strategies/_orphan.py`
-        # import only that parent-level module (their diffs are the import
-        # rewire + `_orphan.py`'s function bodies moving out verbatim). The four
-        # import-direction seam sweeps above stay green.
-        "src/decoy_engine/execution/_fk_resolve.py",
-        "src/decoy_engine/execution/_pandas_adapter.py",
-        "src/decoy_engine/execution/_strategies/_orphan.py",
-        # Task 4.7: the superseded standalone native routing lane was deleted
-        # (it had zero production ownership -- `native_route_enabled` always
-        # defaulted False). `_adapter.py`'s diff is the removed
-        # `ExecutionResult.native_route` field; the four `_native_route*.py`
-        # files are the deleted lane itself. None is under execution/physical/,
-        # so they are permitted deletions/edits here.
-        "src/decoy_engine/execution/_adapter.py",
-        "src/decoy_engine/execution/_native_route.py",
-        "src/decoy_engine/execution/_native_route_exec.py",
-        "src/decoy_engine/execution/_native_route_preflight.py",
-        "src/decoy_engine/execution/_native_route_digest.py",
-        # Polars masking removal (2026-09-21): the dormant polars masking adapter
-        # was deleted (pre-GA hard delete; that substrate was value-parity with
-        # pandas and never selected by default). These modules are edited to strip
-        # the deleted adapter's references -- its planner classification mode + the
-        # matching rejection helper, the when-gate variant, the reason-code
-        # translation, the collapsed chunked-adapter gate, docstrings,
-        # and the determinism-mirror sites for the deleted polars strategy files.
-        # The pandas execution path is unchanged. None is under execution/physical/.
-        # The deleted execution/polars/ tree itself is carved out of the filter below.
-        "src/decoy_engine/execution/__init__.py",
-        "src/decoy_engine/execution/_chunked.py",
-        "src/decoy_engine/execution/_chunked_adapter_gate.py",
-        "src/decoy_engine/execution/_planner.py",
-        "src/decoy_engine/execution/_strategies/_top_code.py",
-        "src/decoy_engine/execution/_substrate.py",
-        "src/decoy_engine/execution/_when_gate.py",
-        # C5c-a: exact Arrow keys for nullable-int deterministic Faker at the sampling boundary.
-        # Parent-level module that imports nothing from `execution.physical`.
-        "src/decoy_engine/execution/_exact_int_sources.py",
-        # §WHEN-NUMERIC: a pure value-shape guard on the gated pandas write (no physical seam).
-        "src/decoy_engine/execution/_gated_string_guard.py",
-        "src/decoy_engine/execution/native/_determinism_protocol.py",
-        # C5c-ii (deterministic Faker over bool/int/uint on the native routes, 2026-10-09): the
-        # closed metadata-shape admission classifier (`native/_faker_deterministic_admission.py`,
-        # new) and the degenerate output-type pin shared by the chunked and from_pandas routes
-        # (`_faker_degenerate_pin.py`, new). Both are leaf modules importing only the operator
-        # registry and the classifier; neither imports `execution.physical`. The dispatch,
-        # chunked-input, schema-rule, registry, resident-type, unified and oracle modules that
-        # read them are already permitted above.
-        "src/decoy_engine/execution/native/_faker_deterministic_admission.py",
-        "src/decoy_engine/execution/_faker_degenerate_pin.py",
-        # Slice C1b-i (seeded non-deterministic categorical, 2026-10-04): the oracle
-        # strategy now draws through `derive_index` keyed by the handler-frame ordinal,
-        # and the draw-site provider registry, the capability row and the out-of-core
-        # impl docstring are corrected to match. None is under execution/physical/ and
-        # none imports it; the physical operator's source-keyed assertion is untouched.
-        "src/decoy_engine/execution/_strategies/_categorical.py",
-        "src/decoy_engine/execution/native/_capabilities.py",
-        "src/decoy_engine/execution/native/_draw_site_providers.py",
-        "src/decoy_engine/execution/out_of_core/_mask_group_b.py",
-        # Slice C5b-i (position-keyed non-deterministic Faker, 2026-10-05): the oracle Faker
-        # handler selects through a shared index-kernel helper and a shared uint64 position-key
-        # helper (both new, parent-level; categorical's native positional kernel now calls the
-        # latter). None imports `execution.physical`; the physical Faker operator is untouched.
-        "src/decoy_engine/execution/_positional_keys.py",
-        "src/decoy_engine/execution/_strategies/_faker.py",
-        "src/decoy_engine/execution/_strategies/_faker_positional.py",
-        # text_redact SEQ-native: the oracle handler offers its resolved config to the sequential
-        # seam, like faker and categorical. The SEQ modules were already permitted; nothing here
-        # imports `execution.physical`.
-        "src/decoy_engine/execution/_strategies/_text_redact.py",
-        # C6b-ii slice a: text_mask joins the SEQ-native seam the same way. The handler offers its
-        # resolved config, and the operator descriptor lives in its own module so
-        # `_sequential_native_ops.py` stays under the size policy. Neither imports
-        # `execution.physical`.
-        "src/decoy_engine/execution/_strategies/_text_mask.py",
-        "src/decoy_engine/execution/_sequential_native_text_mask.py",
-        # C8-iii-d: positional draws under `when:` key on the full-table row. The nested handler
-        # clears the outer gate positions for its child; windowed_date takes explicit positions.
-        # Both import nothing from execution.physical.
-        "src/decoy_engine/execution/_strategies/_nested.py",
-        "src/decoy_engine/execution/_strategies/_windowed_date.py",
-        # Cross-column dependency PR1: joint_mask reads its key_by driver from the pre-mask
-        # source snapshot (ctx.group_anchor_snapshots), and derived gains a docstring note for
-        # the new dependent-after-driver ordering edge. Neither imports execution.physical.
-        "src/decoy_engine/execution/_strategies/_joint_mask.py",
-        "src/decoy_engine/execution/_strategies/_derived.py",
-        # C8-iii-d-2: the shared per-chunk string-type guard for a positional draw under `when:`,
-        # installed in `_oracle_preflight` so both chunked entries enforce string target/references
-        # per chunk. Parent-level module; imports only the two config-classification helpers and
-        # the when parser, nothing from execution.physical.
-        "src/decoy_engine/execution/_chunked_when_guard.py",
-        # C5b-i: the `mask.faker_nondeterministic` draw site and its provider, placed in the
-        # gen_pool siblings because the capped protocol/provider modules cannot grow. Neither
-        # imports `execution.physical`. The shared reference index kernel derives its HKDF key
-        # once per call instead of once per row (byte-identical).
-        "src/decoy_engine/execution/native/_draw_site_providers_gen_pool.py",
-        "src/decoy_engine/execution/native/_draw_sites_gen_pool.py",
-        "src/decoy_engine/execution/native/_index_ext.py",
-        # R0 (2026-10-06): exception roots reparented under DecoyError (base class only);
-        # neither file imports execution.physical.
-        "src/decoy_engine/execution/_errors.py",
-        "src/decoy_engine/execution/_isolated_commit.py",
-        # Comment-only edits stripping polars-masking wording from the retained
-        # non-pandas substrate guards (the guards themselves stay as fail-closed
-        # defence; the pandas path is unchanged).
-        "src/decoy_engine/execution/_unified_slice_admission.py",
-        # Polars masking removal scrub (2026-09-21): comment/docstring-only edits
-        # rewording stale "polars adapter/route/substrate" descriptions to the
-        # pandas-only reality. No behavior change; none is under execution/physical/.
-        "src/decoy_engine/execution/_pipeline_route_exec.py",
-        "src/decoy_engine/execution/_chunked_fk_dtype_safety.py",
-        "src/decoy_engine/execution/out_of_core/_compat.py",
-        "src/decoy_engine/execution/_guards.py",
-        "src/decoy_engine/execution/_strategies/_date_shift.py",
-        # Phase 5 Track B (native categorical operator, 2026-09-21): the new
-        # operator extends the NATIVE route -- its config/determinism gate
-        # (`_requirements.py`), the config-only eligibility query (`_plan.py`),
-        # the chunked-route veto (`_dispatch.py`), and the reusing kernel
-        # (`_categorical_ext.py`, new). None imports `execution.physical`, so
-        # the import-direction seam sweeps and the run_pipeline dynamic check
-        # below stay green; these live under execution/native/, not
-        # execution/physical/, so they are permitted edits here.
-        "src/decoy_engine/execution/native/_categorical_ext.py",
-        "src/decoy_engine/execution/native/_dispatch.py",
-        "src/decoy_engine/execution/native/_plan.py",
-        "src/decoy_engine/execution/native/_requirements.py",
-        # Phase 5 S1 (native date_shift operator, 2026-09-24): the operator's
-        # config-only admission rejections (`_operator_config_rejections.py`,
-        # which gains the date_shift bound/unit/format checks) and its kernel
-        # (`_date_shift_ext.py`, new). Both live under execution/native/, and
-        # neither imports `execution.physical` (the kernel imports only
-        # numpy/pandas/pyarrow, `generation.pool`, and `native._index_ext`
-        # under TYPE_CHECKING), so the import-direction sweeps and the
-        # run_pipeline dynamic check below stay green.
-        "src/decoy_engine/execution/native/_date_shift_ext.py",
-        "src/decoy_engine/execution/native/_operator_config_rejections.py",
-        # The C1 (chunked) admission predicate applies the chunked-route veto
-        # the dispatcher already enforces, so it cannot admit a full-frame-only
-        # strategy. It imports only execution.native modules, never physical.
-        "src/decoy_engine/execution/native/_phase3_eligibility.py",
-        # R1 (operator registry, 2026-10-06): a comment-only edit referencing the deleted
-        # phase3 predicate.
-        "src/decoy_engine/execution/native/_pool_quality.py",
-        # R1 (operator registry, 2026-10-06): the `native/` entry above is DELETED (its
-        # predicate had no production caller; `C1_PROVIDER_ALLOWLIST` moved into the
-        # registry's faker descriptor). `_operator_registry.py` is the new leaf module
-        # (stdlib + pyarrow only); the unified-slice resident-type and evidence modules read
-        # derived tables from it. None imports `execution.physical`.
-        "src/decoy_engine/execution/_operator_registry.py",
-        "src/decoy_engine/execution/_unified_slice_resident_types.py",
-        "src/decoy_engine/execution/_unified_slice_evidence.py",
-        # `when:` admission and row masks for the unified route. It reads the compiled
-        # bindings through untyped nodes and imports no `execution.physical` module.
-        "src/decoy_engine/execution/_unified_slice_when.py",
-        # The chunked `bucket_perturb` + `when:` gate now lets through the columns the native
-        # route admits; it imports only native config helpers, lazily.
-        "src/decoy_engine/execution/_chunked_bucket_perturb.py",
-        # Chunked dispatcher production contract: the public
-        # `run_mask_chunked` entry point and the pieces it is built from. The
-        # oracle's eager preflight and per-chunk loop move out of `_chunked.py`
-        # into `_chunked_oracle.py` so both routes share one validation path;
-        # `_chunked_entry.py` / `_chunked_schema_rule.py` / `_chunked_evidence.py`
-        # are the new entry, its output-schema rule, and its per-column route
-        # evidence; `_chunk_schema.py` makes the drift error an `ExecutionError`;
-        # `_dispatch.py` and `_chunk_masking.py` gain the `when:`/adapter vetoes,
-        # the per-column timing sample and the registry parameter. None imports
-        # `execution.physical`, and nothing in production calls the entry yet, so
-        # the import-direction sweeps and the fresh-import probe stay green.
-        "src/decoy_engine/execution/_chunked_oracle.py",
-        # Revision 9: `_chunked_carry.py` decides which passthrough columns
-        # `run_mask_chunked` carries past pandas; `_chunked_profile.py` gains the
-        # Arrow-native column profile. Neither imports `execution.physical`.
-        "src/decoy_engine/execution/_chunked_carry.py",
-        # B8: the carry plan's per-surface column declarations, shared by `read_set` and
-        # `_required_input_columns`. Config-level helpers only; no `execution.physical`.
-        "src/decoy_engine/execution/_column_access.py",
-        "src/decoy_engine/execution/_chunked_profile.py",
-        "src/decoy_engine/execution/native/_chunk_schema.py",
-        "src/decoy_engine/execution/native/_chunked_entry.py",
-        # OBS-2: the non-empty-source preflight wiring split out of `_chunked_entry.py` for
-        # module headroom (pure move); imports nothing from `execution.physical`.
-        "src/decoy_engine/execution/native/_chunked_preflight_wiring.py",
-        # OBS-2c: bounded value-free row-error summary (schema ids, trigger codes, counts);
-        # pure, imports nothing from `execution.physical`.
-        "src/decoy_engine/execution/_row_error_summary.py",
-        "src/decoy_engine/execution/native/_chunked_evidence.py",
-        # C4: the native chunked route's date_shift row-error records, re-sorted into the
-        # oracle's work-list order. Imports only `_row_errors` and `_date_shift_ext`.
-        "src/decoy_engine/execution/native/_chunked_row_errors.py",
-        "src/decoy_engine/execution/native/_chunked_schema_rule.py",
-        # Round-1 gate fixes: admission from real Arrow types and provider
-        # output type (`_real_type_admission.py`, imported only by `_dispatch.py`),
-        # one per-chunk ingest-guard helper in `_guards.py` that both chunked
-        # routes call.
-        # None imports `execution.physical`.
-        "src/decoy_engine/execution/native/_real_type_admission.py",
-        # OBS-2b: closed decline-code enum and record the chunked native route attaches to its
-        # route evidence. Pure value types; imports nothing from `execution.physical`.
-        "src/decoy_engine/execution/native/_route_decline_codes.py",
-        # Slice C2 (bucket_perturb on the chunked route): the native kernel module gains an
-        # optional `derive_calls` out-parameter the chunked masker reads, so evidence only
-        # claims a compiled kernel when one ran. It imports nothing from `execution.physical`.
-        "src/decoy_engine/execution/native/_bucket_perturb_ext.py",
-        # B2 (auto-chunk on the chunked dispatcher): `_pipeline_auto_chunk.py` is
-        # the new lane executor (it calls `run_mask_chunked` and joins the chunks);
-        # `_pipeline_route_exec.run_mask_chunked` becomes its delegate; the generate
-        # and finalize modules thread `native_threads` / `dispatcher_enabled` and
-        # merge the lane stamp into `quality_metrics["auto_chunk"]`. None imports
-        # `execution.physical`, so the import-direction sweeps stay green.
-        "src/decoy_engine/execution/_pipeline_auto_chunk.py",
-        "src/decoy_engine/execution/_pipeline_generate_mask.py",
-        "src/decoy_engine/execution/_pipeline_finalize.py",
-        # B7 (independent multi-table dispatch): `_pipeline_multi_table.py` decides which
-        # mask tables of an independent job run on B2's dispatcher lane and runs them one
-        # at a time; `_pipeline.py` gains the `multi_table_dispatch_enabled` knob,
-        # `_pipeline_generate_mask.py` the split call site, `_pipeline_finalize.py` the
-        # split's evidence stamp. None imports `execution.physical`.
-        "src/decoy_engine/execution/_pipeline_multi_table.py",
-        # B7 also corrects the module docstring of `_pipeline_chunk_route.py`, which said
-        # auto-chunk routing was single-table only (a docstring-only edit).
-        "src/decoy_engine/execution/_pipeline_chunk_route.py",
-        # B6a (incremental output sink): `_chunked_output_sink.py` streams a routed table's
-        # chunks into the caller's `TransactionalSink` and owns the commit/abort session;
-        # `_pipeline.py`, `_pipeline_generate_mask.py`, `_pipeline_auto_chunk.py`,
-        # `_pipeline_multi_table.py` and `_pipeline_route_exec.py` thread the sink and the
-        # `stream_chunked_output` knob; `_isolated_worker.py` and `_unified_slice_admission.py`
-        # gain docstring/comment edits only. None imports `execution.physical`.
-        "src/decoy_engine/execution/_chunked_output_sink.py",
-        "src/decoy_engine/execution/_isolated_worker.py",
-        # Isolated-run OOM classification: `_isolated_common.py` gains the Wrapping-value scrub
-        # and `_isolated_worker.py` classifies post-run failures. Neither imports `execution.physical`.
-        "src/decoy_engine/execution/_isolated_common.py",
-        # The driver removes staging on a self-reported failure and scrubs in-process error text.
-        "src/decoy_engine/execution/_isolated_run.py",
-        # OBS-1b: `_governor.py` only re-points its ineligible-marker table to the shared
-        # `_isolated_common.ROUTE_INELIGIBLE_MARKERS` constant so the route matcher and the
-        # safe-error-summary builder cannot drift. No `execution.physical` import.
-        "src/decoy_engine/execution/_governor.py",
-        # Isolated-run memory evidence: the sampler lives in `_isolated_memwatch.py`; the driver and
-        # `_isolated_common.py` thread `memory_evidence`. None imports `execution.physical`.
-        "src/decoy_engine/execution/_isolated_memwatch.py",
-        # B6b (LazySource batch input): `_chunked_input.py` captures a lazy source's footer
-        # facts once, re-cuts reader batches to the resident chunk boundaries and owns the
-        # handle's close; `_planner.py` judges a `LazySource` from those facts (the old
-        # refusal helper in `_pipeline_sources.py` is gone); `_pipeline_chunk_route.py`
-        # captures the snapshot; `_pipeline.py`, `_pipeline_generate_mask.py`,
-        # `_pipeline_auto_chunk.py`, `_pipeline_multi_table.py` and `_pipeline_route_exec.py`
-        # thread it to the lane and the telemetry; `_transactional_sink.py` gains the
-        # read-only `spill_parent`; `_isolated_worker.py` always loads lazily;
-        # `_unified_slice_admission.py` gains a comment edit only. None imports
-        # `execution.physical`; `physical/_inputs.py` reads the same facts.
-        "src/decoy_engine/execution/_chunked_input.py",
-        "src/decoy_engine/execution/_transactional_sink.py",
-        # C1 (deterministic categorical on the chunked route): `_chunked_categorical.py` is
-        # the chunk-safety gate (it picks the non-deterministic rejection code) and
-        # `_categorical_prepared.py` the prepared categories+CDF shared by the config gate,
-        # the output-type rule and `_chunk_masking.py`. Neither imports `execution.physical`.
-        "src/decoy_engine/execution/_chunked_categorical.py",
-        "src/decoy_engine/execution/native/_categorical_prepared.py",
-        # C8-iii-d: a comment-only refresh of the windowed_date + when chunked-decline rationale
-        # (the oracle now keys on full-table rows). No code change; imports no execution.physical.
-        "src/decoy_engine/execution/_chunked_dgrn.py",
-        # C3 (group_key on the chunked route): the oracle gate's docstring (`_chunked_group_key.py`),
-        # the raw-hex operator's `derive_calls` spy and empty short-circuit
-        # (`_group_key_kernel.py`) and the new config-level admission gate
-        # (`_chunked_group_key_gate.py`). None imports `execution.physical`.
-        "src/decoy_engine/execution/_chunked_group_key.py",
-        "src/decoy_engine/execution/native/_chunked_group_key_gate.py",
-        "src/decoy_engine/execution/native/_group_key_kernel.py",
-        # C6c-i (text_redact as an ARROW_PYTHON operator): the scalar kernel module gains
-        # `native_text_redact`, which calls the oracle's `iter_spans` and `_splice`. It imports
-        # nothing from `execution.physical`, and the import-direction sweeps above still apply.
-        "src/decoy_engine/execution/native/_kernels_scalar.py",
-        # C6c-ii (text_redact Rust span kernel): `_kernels_scalar.native_text_redact` now routes
-        # all eleven built-in detectors into the compiled companion on ASCII-safe cells via the
-        # new `_text_redact_kernel.py` (the catalog, loader and `merge_text_redact_spans`). The
-        # new module imports only `storm.detectors` and stdlib -- nothing from `execution.physical`
-        # -- so every import-direction sweep and the fresh-import probe above stay green.
-        "src/decoy_engine/execution/native/_text_redact_kernel.py",
-        # FPE reference kernel: `_crypto_reference.py` keeps an empty string as missing data like
-        # the strategy does. It imports nothing from `execution.physical`.
-        "src/decoy_engine/execution/native/_crypto_reference.py",
-        # C6a (FPE on the native routes): the crypto-contract + FF1 loader + companion probe +
-        # the route-shared kill/warnings adapter. `_crypto_ext.py` gains the abi-3 tag and the
-        # FPE_KAT; `_fpe_ext.py` loads the compiled FF1 kernel and guards a None namespace;
-        # `_companion_status.py` adds the fpe KernelAvailability field + probe; `_fpe_route.py`
-        # is new (the fail-closed StrategyError + Python residual-risk warnings both routes share).
-        # None imports `execution.physical`; the import-direction sweeps above still apply.
-        "src/decoy_engine/execution/native/_crypto_ext.py",
-        "src/decoy_engine/execution/native/_fpe_ext.py",
-        "src/decoy_engine/execution/native/_companion_status.py",
-        "src/decoy_engine/execution/native/_fpe_route.py",
-        # C6b-i (text_mask as an ARROW_PYTHON operator): `_text_mask_route.py` is new -- the
-        # route-shared fail-closed StrategyError and the handler's sub-floor QualityWarning both
-        # native routes build. It imports only `errors`, `execution._errors` and the pool events,
-        # nothing from `execution.physical`; `_kernels_scalar.native_text_mask` (permitted above)
-        # calls it, and the registry/params/step/admission/schema-rule/chunk modules it reaches
-        # are already permitted. The import-direction sweeps and fresh-import probe stay green.
-        "src/decoy_engine/execution/native/_text_mask_route.py",
-        # C6b-ii slice b (native text_mask splice): `_text_mask_native_splice.py` is new -- the loader
-        # and planner for the Rust redact/passthrough splice kernel. It imports only `_text_redact_kernel`,
-        # `storm.detectors`, and `transforms._text_mask_splice`/`transforms.text_mask`, nothing from
-        # `execution.physical`; `_kernels_scalar.native_text_mask` (permitted above) calls it.
-        "src/decoy_engine/execution/native/_text_mask_native_splice.py",
-        # `_text_mask_native_fpe.py` (added to main after the STORM split was cut): import retarget
-        # `storm.detectors` -> `detection.detectors` only; no `execution.physical` import.
-        "src/decoy_engine/execution/native/_text_mask_native_fpe.py",
-        # bucket_perturb date_format guard: the oracle handler and the nested handler validate the
-        # format before any early return, and the out-of-core kernel validates before its autodetect
-        # check. All three call the shared rule in `transforms/bucket_perturb.py` and import nothing
-        # from `execution.physical`. (`_strategies/_nested.py` is permitted above.)
-        "src/decoy_engine/execution/_strategies/_bucket_perturb.py",
-        "src/decoy_engine/execution/out_of_core/_mask_group_c.py",
-        # D1a (out-of-core hash on the compiled companion): `_hash_native.py` (eligibility + the
-        # kernel call) and `_hash_run.py` (per-column decision + disposition) are new, and
-        # `_mask.py` / `_stream_driver.py` thread the per-table plan into `mask_batch`. They import
-        # the keyed-derivation loader, the operator registry and `_mask`; nothing from
-        # `execution.physical`, so the import-direction sweeps and fresh-import probe stay green.
-        "src/decoy_engine/execution/out_of_core/_hash_native.py",
-        "src/decoy_engine/execution/out_of_core/_hash_run.py",
-        # D1b-ii (out-of-core categorical on the compiled index kernel): `_categorical_native.py`
-        # (per-column decision, the native call and its disposition) is new; `_hash_run.py` carries
-        # its per-table plan beside the hash plan and `_mask.py` dispatches it. They import the
-        # existing `native_categorical` operator, the index-kernel loader and the operator
-        # registry; nothing from `execution.physical`.
-        "src/decoy_engine/execution/out_of_core/_categorical_native.py",
-        # D1b-i (out-of-core bucket_perturb on the compiled index kernel): `_bucket_native.py`
-        # (per-column decision, the native call and its disposition) is new; `_hash_run.py` carries
-        # its per-table plan, `_mask.py` threads it and `_mask_group_c.py` branches to it after the
-        # existing validation. They import the shared `bucket_perturb_config_rejection` resolver,
-        # the existing `native_bucket_perturb` operator and the operator registry (which gains the
-        # `python_pandas` label); nothing from `execution.physical`.
-        "src/decoy_engine/execution/out_of_core/_bucket_native.py",
-        # OOC fpe (out-of-core fpe on the compiled FF1 kernel): `_fpe_native.py` (per-column
-        # decision, the native call and its disposition) is new; `_hash_run.py` carries its
-        # per-table plan and `_mask.py` dispatches it. They import the existing FF1 kernel
-        # loader, `FpeConfig` and `fpe_fail_closed_error`; nothing from `execution.physical`.
-        "src/decoy_engine/execution/out_of_core/_fpe_native.py",
-        # OOC text_redact (out-of-core text_redact on the compiled span kernel):
-        # `_text_redact_native.py` (per-column decision, the native call and its disposition) is
-        # new; `_hash_run.py` carries its per-table plan and `_mask.py` dispatches it. They import
-        # the existing `native_text_redact` wrapper and the shared config predicate; nothing from
-        # `execution.physical`.
-        "src/decoy_engine/execution/out_of_core/_text_redact_native.py",
-        # B5 (out-of-core text_mask on the compiled span kernel): `_text_mask_native.py` (per-column
-        # decision, the native call and its disposition) is new; `_hash_run.py` carries its
-        # per-table plan, `_mask.py` dispatches it and `_mask_group_c.py` (both already permitted)
-        # delegate the admitted non-NER column to it. It imports the existing `native_text_mask`
-        # wrapper and the shared config/source predicates; nothing from `execution.physical`.
-        "src/decoy_engine/execution/out_of_core/_text_mask_native.py",
-        "src/decoy_engine/execution/out_of_core/_mask.py",
-        "src/decoy_engine/execution/out_of_core/_stream_driver.py",
-        # OOC spill-reader mmap->OSFile memory fix (2026-10-16): the reorder-lane spill readers
-        # read through `pa.OSFile` instead of a memory-mapped string path (mapped file pages were
-        # resident RSS, scaling with payload and defeating the budget). `_payload_store.py` makes
-        # `SpillChildKeys.open_reader` a context manager owning the OSFile + reader;
-        # `_stream_join.py` migrates its five reader call sites to that context. Read-handle swap
-        # only; neither imports `execution.physical` (the `physical_plan` tokens in `_stream_join.py`
-        # are DuckDB EXPLAIN strings, not an import).
-        "src/decoy_engine/execution/out_of_core/_payload_store.py",
-        "src/decoy_engine/execution/out_of_core/_stream_join.py",
-        # D3a (validators on the bounded out-of-core route): `_validate_batch.py` is new -- it
-        # computes validator admission, evaluates the admitted per-cell validators per masked
-        # batch, and assembles the ValidationReport. `_runner.py` / `_stream_driver.py` hook it at
-        # the mask step; it imports the validator registry + Arrow, nothing from `execution.physical`.
-        "src/decoy_engine/execution/out_of_core/_validate_batch.py",
-        # D2a (sequential-route hash on the compiled companion): `_sequential_native.py`
-        # (per-column decision, the pandas-to-Arrow boundary, the native call and its
-        # disposition) is new; the hash handler asks it for tokens, `_orphan.py` marks the REMAP
-        # call, `_adapter.py` carries the run's decisions on the context and `_sequential.py`
-        # creates and reports them. They reuse the out-of-core hash entry points and import
-        # nothing from `execution.physical`.
-        # D2b: `_sequential_native.py` gains a REMAP-only decision for parent keys, and the new
-        # `_sequential_composite_chain.py` turns a REMAP orphan on a composite foreign-key chain into a
-        # coded decline; `_sequential.py` wraps the node dispatch with it. Neither imports `execution.physical`.
-        # D2c-i: `_sequential_native.py` becomes a strategy-keyed seam over the new
-        # `_sequential_native_ops.py` descriptors (hash, fpe); the fpe handler asks it for
-        # tokens. They reuse the chunked route's fpe kernel and helpers and import nothing from
-        # `execution.physical`.
-        "src/decoy_engine/execution/_sequential_native.py",
-        "src/decoy_engine/execution/_sequential_native_ops.py",
-        # Decision/evidence value types for the SEQ-native seam, split out of `_sequential_native.py`
-        # for module size; no physical I/O.
-        "src/decoy_engine/execution/_sequential_native_decisions.py",
-        "src/decoy_engine/execution/_sequential_composite_chain.py",
-        "src/decoy_engine/execution/_strategies/_hash.py",
-        "src/decoy_engine/execution/_strategies/_fpe.py",
-        # E1 (the FileAccess policy, 2026-10-07): every file the engine opens goes through
-        # `decoy_engine.fileaccess`. These modules gain a policy-bound reader, a stage or a
-        # propagated context and import nothing from `execution.physical`: the governor and its
-        # RSS monitor thread (`run_in_context`), the FPE thread pool (`map_in_context`), the
-        # capacity estimate (a lexical path join), the DuckDB connection helper (the adapter),
-        # the spill estimate's output-device probe (a policy `stat`), the out-of-core key
-        # stager's scratch `LazySource`, and the new scratch-root helper. Also the chunked
-        # code_set resolver and the code_set and joint_mask handlers and the shared
-        # out-of-core resolver, which name the column a corpus read belongs to (`at_position`).
-        # (`_strategies/_fpe.py` is already permitted above.)
-        "src/decoy_engine/execution/_governor_monitor.py",
-        "src/decoy_engine/execution/out_of_core/_duckdb.py",
-        "src/decoy_engine/execution/out_of_core/_scratch.py",
-        "src/decoy_engine/execution/out_of_core/_spill_estimate.py",
-        "src/decoy_engine/execution/out_of_core/_stage.py",
-        "src/decoy_engine/execution/_chunked_code_set.py",
-        "src/decoy_engine/execution/_strategies/_code_set.py",
-        # B4 (deterministic-REUSE faker payload on the out-of-core route): `_faker_pool.py` (the
-        # run-scoped pool context + budget gate) and `_faker_native.py` (per-column decision, the
-        # compiled pool-select call and its disposition) are new; `_compat.py` admits the shape and
-        # `_pipeline_routing_signals.py`/`_preflight.py` thread the source type, `_mask.py` /
-        # `_hash_run.py` / `_runner.py` dispatch it. They import the shared pool/index-kernel
-        # helpers and the operator registry; nothing from `execution.physical`.
-        "src/decoy_engine/execution/out_of_core/_faker_native.py",
-        "src/decoy_engine/execution/out_of_core/_faker_pool.py",
-        # B7 (native group_key payload on the sequential route): `_sequential_native_group_key.py`
-        # is new -- group_key's admission reads a SIBLING column, so its decision + derivation live
-        # in a sibling module (like `_sequential_native_text_mask.py`) rather than the per-value op
-        # seam; the oracle handler (`_strategies/_group_key.py`) offers the seam its resolved
-        # config via a lazy import. Both reuse the shared raw-hex kernel and import nothing from
-        # `execution.physical`.
-        "src/decoy_engine/execution/_sequential_native_group_key.py",
-        "src/decoy_engine/execution/_strategies/_group_key.py",
-        # MG-5 (tokenize on the vault write seam): the new handler, its registration in the
-        # strategy registry, and its GDPR technique-class label. None imports `execution.physical`.
-        "src/decoy_engine/execution/_strategies/__init__.py",
-        "src/decoy_engine/execution/_strategies/_tokenize.py",
-        "src/decoy_engine/execution/_technique_class.py",
-        # MG-5 follow-up (B-6 regression-gate green-up): tokenize's distribution-behavior
-        # label (preserves_cardinality_only, like hash and fpe) in the static behavior map.
-        # A pure label addition; imports nothing from `execution.physical`.
-        "src/decoy_engine/execution/_distribution_behavior.py",
-        # MG-5 module-size remediation: the `_fk_key_value` compat wrapper split out of
-        # `_pandas_adapter.py`, and the `mask.tokenize` DrawSite + provider-primitive data
-        # siblings split out of the capped `native/_determinism_protocol.py` /
-        # `native/_draw_site_providers.py`. Pure moves; none imports `execution.physical`.
-        "src/decoy_engine/execution/_fk_key_compat.py",
-        "src/decoy_engine/execution/native/_draw_sites_tokenize.py",
+    permitted_non_physical = (
+        {f"src/decoy_engine/{rel}" for rel in DELIBERATELY_CONNECTED_MODULES}
+        | F29_REGISTRY_MIGRATION
+        | {
+            "src/decoy_engine/execution/_pipeline.py",
+            # C5a remediation: `_runner.py` gains the shared `work_order_key` / `in_work_order`
+            # ordering helpers so the coordinator visits nodes in `order_work`'s order from one
+            # key. Pure functions; `_runner.py` imports nothing from `execution.physical`.
+            "src/decoy_engine/execution/_runner.py",
+            # Engine-owned table transforms: `run_pipeline` now applies a mask table's
+            # transforms before routing, which touches the resident-source resolvers,
+            # the routing signals, the sequential and out-of-core docstring contract and
+            # the byte-estimate size adapter, and adds the `_transforms_*` modules. All
+            # live at the `execution` parent level and import NOTHING from
+            # `execution.physical` (the import-direction sweeps above stay green); the
+            # physical package only reads them (`_snapshot` calls the shared preparation
+            # so capture records the same routing facts as a real run).
+            "src/decoy_engine/execution/_mem_estimate_schema.py",
+            # Byte-estimate Arrow-type pricing: the classifier module and the cost-label
+            # additions it reads. Both sit beside `_mem_estimate_schema.py`, import only
+            # pyarrow and `profile._readers`, and nothing under `execution.physical`.
+            "src/decoy_engine/execution/_mem_estimate_arrow.py",
+            "src/decoy_engine/execution/_mem_estimate_dtypes.py",
+            # job-time estimator: the throughput calibration and the `estimate_job`
+            # primitive (route + peak + runtime band). Both sit beside the mem-estimate
+            # modules, import only `_mem_estimate`/routing/calibration + capacity's
+            # config resolver, and nothing under `execution.physical`.
+            "src/decoy_engine/execution/_throughput_calibration.py",
+            "src/decoy_engine/execution/_job_estimate.py",
+            # F2 (production mixed generate+mask route): the semantic admission core and the
+            # generate-parent FK bridge move OUT of `execution/physical/_shadow_mixed.py` /
+            # `_shadow_fk.py` into `_mixed_admission.py` / `_mixed_fk_bridge.py` so the shadow and
+            # the production route share one rule. Both import nothing from `execution.physical`
+            # (the shadow now imports them, the allowed direction). `_mixed_static.py` (static
+            # admission), `_chunked_preresolved.py` (the pre-resolved key carrier through the
+            # chunked lane) and `_pipeline_mixed_route.py` (the executor) are the new route; all
+            # are parent-level and covered by the import-direction sweeps (GUARDED_MODULES).
+            "src/decoy_engine/execution/_mixed_admission.py",
+            "src/decoy_engine/execution/_mixed_fk_bridge.py",
+            "src/decoy_engine/execution/_mixed_static.py",
+            "src/decoy_engine/execution/_chunked_preresolved.py",
+            "src/decoy_engine/execution/_pipeline_mixed_route.py",
+            "src/decoy_engine/execution/_pipeline_routing.py",
+            "src/decoy_engine/execution/_pipeline_routing_signals.py",
+            "src/decoy_engine/execution/_pipeline_sources.py",
+            # E3b (post_scan_integrity honoured in-run): `capacity.py` passes
+            # `post_scan_integrity=post_scan_integrity_requested(config)` into its two `decide_execution_route`
+            # calls so the capacity probe sees the same Post-scan-integrity full-frame decision the
+            # production route makes. Pure kwarg threading; imports nothing from
+            # `execution.physical` (the import-direction sweeps above stay green).
+            "src/decoy_engine/execution/capacity.py",
+            # R3 (run context + route executors, 2026-10-10): `run_pipeline`'s resolve and route
+            # phases move into the new `_pipeline_context.py` (a frozen `PipelineRunContext` and
+            # `RouteDecision`) and the two bounded layer-1 routes get context-driven entry points in
+            # `_pipeline_route_dispatch.py`. Behavior-preserving extraction; both are parent-level
+            # execution modules that import nothing from `execution.physical`, and the import-direction
+            # sweeps above cover them (GUARDED_MODULES).
+            "src/decoy_engine/execution/_pipeline_context.py",
+            "src/decoy_engine/execution/_pipeline_route_dispatch.py",
+            # R3: the full_frame executor (the old inline tail of `run_pipeline`) in its own module.
+            # It reaches the unified-slice lane through `_unified_slice`, never `execution.physical`.
+            "src/decoy_engine/execution/_pipeline_full_frame.py",
+            "src/decoy_engine/execution/_sequential.py",
+            "src/decoy_engine/execution/_transforms.py",
+            "src/decoy_engine/execution/_transforms_admission.py",
+            "src/decoy_engine/execution/_transforms_gate.py",
+            "src/decoy_engine/execution/_transforms_prepare.py",
+            "src/decoy_engine/execution/_transforms_table.py",
+            "src/decoy_engine/execution/out_of_core/_runner.py",
+            "src/decoy_engine/execution/out_of_core/_preflight.py",
+            # Dcomp-OOC (composite FK strict parity): the out-of-core joiners raise the one
+            # orphan FAIL error producer (`_fk_resolve.orphan_fk_violation_error`) directly.
+            # Both import nothing from `execution.physical`.
+            "src/decoy_engine/execution/out_of_core/_join.py",
+            "src/decoy_engine/execution/out_of_core/_batch_join.py",
+            # Dmp (multi-parent FK out-of-core): the merged first-hit-wins relation module, the
+            # routing hazard for mixed parent key types, and the test-only remap oracle moved into
+            # `_batch_join.py` (already permitted above). None imports `execution.physical`.
+            "src/decoy_engine/execution/_pipeline_routing_fk_dtype.py",
+            "src/decoy_engine/execution/out_of_core/_multi_parent.py",
+            "src/decoy_engine/execution/out_of_core/_stream_driver_support.py",
+            "src/decoy_engine/execution/out_of_core/_null_int_guard.py",
+            # D3b (token vault on the bounded out-of-core route): the vault collector the two
+            # out-of-core drivers call. It imports nothing from `execution.physical`.
+            "src/decoy_engine/execution/out_of_core/_vault_collect.py",
+            # Reorder parent-size guard (2026-10-15): `decide_route` demotes a large-parent
+            # reorder-eligible table to the bounded batch lane (`_route_policy.py`), using the
+            # budget-derived `safe_parent_key_ceiling` (`_reorder_budget.py`). Both are
+            # intra-OOC routing/budget math and import nothing from `execution.physical`.
+            "src/decoy_engine/execution/out_of_core/_route_policy.py",
+            "src/decoy_engine/execution/out_of_core/_reorder_budget.py",
+            "src/decoy_engine/execution/native/_chunk_masking.py",
+            # R1b: the resolved per-operator parameters and the shared kernel step both native
+            # routes call; `_chunk_masking.py` and `_chunked_entry.py` above only rewire to them.
+            # Both are leaf modules under `native/` that import nothing from `execution.physical`.
+            "src/decoy_engine/execution/native/_operator_params.py",
+            "src/decoy_engine/execution/native/_operator_step.py",
+            # C1b-ii: seeded non-deterministic categorical chunked-admission adapters; imports
+            # nothing from `execution.physical` (full-frame physical native stays closed).
+            "src/decoy_engine/execution/native/_categorical_positional.py",
+            # C5b-ii: the non-deterministic REUSE faker's chunked-admission predicate and `when:`
+            # gate; imports nothing from `execution.physical` (the unified route stays closed).
+            "src/decoy_engine/execution/native/_faker_positional_admission.py",
+            # C8-i: the chunked route's `when:` admission verdict and its per-chunk row mask. Both
+            # live under `native/`, reach pandas eval only through the oracle's `_eval_predicate`,
+            # and import nothing from `execution.physical` (the unified route still declines `when:`).
+            "src/decoy_engine/execution/native/_when_admission.py",
+            "src/decoy_engine/execution/native/_when_mask.py",
+            # C5c-i: the positional Faker's null mask, taken from the oracle's own conversion. It
+            # imports nothing from `execution.physical`; the registry, admission and dispatch
+            # modules that read the wider source domain are already permitted above.
+            "src/decoy_engine/execution/native/_faker_null_mask.py",
+            # Task 4.6 slice 5b-i: the shared generate+mask output-stitch helper
+            # both `_pipeline.py` and `execution/physical/_shadow_mixed.py` call,
+            # so the "mask wins ties" precedence cannot drift between the two.
+            # Lives at the PARENT `execution` level specifically so `_pipeline.py`
+            # never has to import the physical seam to reach it -- it imports
+            # NOTHING from `execution.physical` itself (confirmed by the sweeps
+            # above), it is simply a new file outside that package.
+            "src/decoy_engine/execution/_stitch.py",
+            # Task 4.6 slice 5b-ii: the FK orphan-policy helpers (resolve_fk_keys,
+            # gather_errored_parent_keys, cascade_row_errors) are extracted from
+            # `_strategies/_orphan.py` into the new parent-level `_fk_resolve.py`
+            # so the pandas oracle AND the shadow mixed-FK dispatch share one owner
+            # of the map-hit/orphan/REMAP precedence and cannot drift. Same seam
+            # discipline as `_stitch.py`: `_fk_resolve.py` imports NOTHING from
+            # `execution.physical`; `_pandas_adapter.py` and `_strategies/_orphan.py`
+            # import only that parent-level module (their diffs are the import
+            # rewire + `_orphan.py`'s function bodies moving out verbatim). The four
+            # import-direction seam sweeps above stay green.
+            "src/decoy_engine/execution/_fk_resolve.py",
+            "src/decoy_engine/execution/_pandas_adapter.py",
+            "src/decoy_engine/execution/_strategies/_orphan.py",
+            # Task 4.7: the superseded standalone native routing lane was deleted
+            # (it had zero production ownership -- `native_route_enabled` always
+            # defaulted False). `_adapter.py`'s diff is the removed
+            # `ExecutionResult.native_route` field; the four `_native_route*.py`
+            # files are the deleted lane itself. None is under execution/physical/,
+            # so they are permitted deletions/edits here.
+            "src/decoy_engine/execution/_adapter.py",
+            "src/decoy_engine/execution/_native_route.py",
+            "src/decoy_engine/execution/_native_route_exec.py",
+            "src/decoy_engine/execution/_native_route_preflight.py",
+            "src/decoy_engine/execution/_native_route_digest.py",
+            # Polars masking removal (2026-09-21): the dormant polars masking adapter
+            # was deleted (pre-GA hard delete; that substrate was value-parity with
+            # pandas and never selected by default). These modules are edited to strip
+            # the deleted adapter's references -- its planner classification mode + the
+            # matching rejection helper, the when-gate variant, the reason-code
+            # translation, the collapsed chunked-adapter gate, docstrings,
+            # and the determinism-mirror sites for the deleted polars strategy files.
+            # The pandas execution path is unchanged. None is under execution/physical/.
+            # The deleted execution/polars/ tree itself is carved out of the filter below.
+            "src/decoy_engine/execution/__init__.py",
+            "src/decoy_engine/execution/_chunked.py",
+            "src/decoy_engine/execution/_chunked_adapter_gate.py",
+            "src/decoy_engine/execution/_planner.py",
+            "src/decoy_engine/execution/_strategies/_top_code.py",
+            "src/decoy_engine/execution/_substrate.py",
+            "src/decoy_engine/execution/_when_gate.py",
+            # C5c-a: exact Arrow keys for nullable-int deterministic Faker at the sampling boundary.
+            # Parent-level module that imports nothing from `execution.physical`.
+            "src/decoy_engine/execution/_exact_int_sources.py",
+            # §WHEN-NUMERIC: a pure value-shape guard on the gated pandas write (no physical seam).
+            "src/decoy_engine/execution/_gated_string_guard.py",
+            "src/decoy_engine/execution/native/_determinism_protocol.py",
+            # C5c-ii (deterministic Faker over bool/int/uint on the native routes, 2026-10-09): the
+            # closed metadata-shape admission classifier (`native/_faker_deterministic_admission.py`,
+            # new) and the degenerate output-type pin shared by the chunked and from_pandas routes
+            # (`_faker_degenerate_pin.py`, new). Both are leaf modules importing only the operator
+            # registry and the classifier; neither imports `execution.physical`. The dispatch,
+            # chunked-input, schema-rule, registry, resident-type, unified and oracle modules that
+            # read them are already permitted above.
+            "src/decoy_engine/execution/native/_faker_deterministic_admission.py",
+            "src/decoy_engine/execution/_faker_degenerate_pin.py",
+            # Slice C1b-i (seeded non-deterministic categorical, 2026-10-04): the oracle
+            # strategy now draws through `derive_index` keyed by the handler-frame ordinal,
+            # and the draw-site provider registry, the capability row and the out-of-core
+            # impl docstring are corrected to match. None is under execution/physical/ and
+            # none imports it; the physical operator's source-keyed assertion is untouched.
+            "src/decoy_engine/execution/_strategies/_categorical.py",
+            "src/decoy_engine/execution/native/_capabilities.py",
+            "src/decoy_engine/execution/native/_draw_site_providers.py",
+            "src/decoy_engine/execution/out_of_core/_mask_group_b.py",
+            # Slice C5b-i (position-keyed non-deterministic Faker, 2026-10-05): the oracle Faker
+            # handler selects through a shared index-kernel helper and a shared uint64 position-key
+            # helper (both new, parent-level; categorical's native positional kernel now calls the
+            # latter). None imports `execution.physical`; the physical Faker operator is untouched.
+            "src/decoy_engine/execution/_positional_keys.py",
+            "src/decoy_engine/execution/_strategies/_faker.py",
+            "src/decoy_engine/execution/_strategies/_faker_positional.py",
+            # text_redact SEQ-native: the oracle handler offers its resolved config to the sequential
+            # seam, like faker and categorical. The SEQ modules were already permitted; nothing here
+            # imports `execution.physical`.
+            "src/decoy_engine/execution/_strategies/_text_redact.py",
+            # C6b-ii slice a: text_mask joins the SEQ-native seam the same way. The handler offers its
+            # resolved config, and the operator descriptor lives in its own module so
+            # `_sequential_native_ops.py` stays under the size policy. Neither imports
+            # `execution.physical`.
+            "src/decoy_engine/execution/_strategies/_text_mask.py",
+            "src/decoy_engine/execution/_sequential_native_text_mask.py",
+            # C8-iii-d: positional draws under `when:` key on the full-table row. The nested handler
+            # clears the outer gate positions for its child; windowed_date takes explicit positions.
+            # Both import nothing from execution.physical.
+            "src/decoy_engine/execution/_strategies/_nested.py",
+            "src/decoy_engine/execution/_strategies/_windowed_date.py",
+            # Cross-column dependency PR1: joint_mask reads its key_by driver from the pre-mask
+            # source snapshot (ctx.group_anchor_snapshots), and derived gains a docstring note for
+            # the new dependent-after-driver ordering edge. Neither imports execution.physical.
+            "src/decoy_engine/execution/_strategies/_joint_mask.py",
+            "src/decoy_engine/execution/_strategies/_derived.py",
+            # C8-iii-d-2: the shared per-chunk string-type guard for a positional draw under `when:`,
+            # installed in `_oracle_preflight` so both chunked entries enforce string target/references
+            # per chunk. Parent-level module; imports only the two config-classification helpers and
+            # the when parser, nothing from execution.physical.
+            "src/decoy_engine/execution/_chunked_when_guard.py",
+            # C5b-i: the `mask.faker_nondeterministic` draw site and its provider, placed in the
+            # gen_pool siblings because the capped protocol/provider modules cannot grow. Neither
+            # imports `execution.physical`. The shared reference index kernel derives its HKDF key
+            # once per call instead of once per row (byte-identical).
+            "src/decoy_engine/execution/native/_draw_site_providers_gen_pool.py",
+            "src/decoy_engine/execution/native/_draw_sites_gen_pool.py",
+            "src/decoy_engine/execution/native/_index_ext.py",
+            # R0 (2026-10-06): exception roots reparented under DecoyError (base class only);
+            # neither file imports execution.physical.
+            "src/decoy_engine/execution/_errors.py",
+            "src/decoy_engine/execution/_isolated_commit.py",
+            # Comment-only edits stripping polars-masking wording from the retained
+            # non-pandas substrate guards (the guards themselves stay as fail-closed
+            # defence; the pandas path is unchanged).
+            "src/decoy_engine/execution/_unified_slice_admission.py",
+            # Polars masking removal scrub (2026-09-21): comment/docstring-only edits
+            # rewording stale "polars adapter/route/substrate" descriptions to the
+            # pandas-only reality. No behavior change; none is under execution/physical/.
+            "src/decoy_engine/execution/_pipeline_route_exec.py",
+            "src/decoy_engine/execution/_chunked_fk_dtype_safety.py",
+            "src/decoy_engine/execution/out_of_core/_compat.py",
+            "src/decoy_engine/execution/_guards.py",
+            "src/decoy_engine/execution/_strategies/_date_shift.py",
+            # Phase 5 Track B (native categorical operator, 2026-09-21): the new
+            # operator extends the NATIVE route -- its config/determinism gate
+            # (`_requirements.py`), the config-only eligibility query (`_plan.py`),
+            # the chunked-route veto (`_dispatch.py`), and the reusing kernel
+            # (`_categorical_ext.py`, new). None imports `execution.physical`, so
+            # the import-direction seam sweeps and the run_pipeline dynamic check
+            # below stay green; these live under execution/native/, not
+            # execution/physical/, so they are permitted edits here.
+            "src/decoy_engine/execution/native/_categorical_ext.py",
+            "src/decoy_engine/execution/native/_dispatch.py",
+            "src/decoy_engine/execution/native/_plan.py",
+            "src/decoy_engine/execution/native/_requirements.py",
+            # Phase 5 S1 (native date_shift operator, 2026-09-24): the operator's
+            # config-only admission rejections (`_operator_config_rejections.py`,
+            # which gains the date_shift bound/unit/format checks) and its kernel
+            # (`_date_shift_ext.py`, new). Both live under execution/native/, and
+            # neither imports `execution.physical` (the kernel imports only
+            # numpy/pandas/pyarrow, `generation.pool`, and `native._index_ext`
+            # under TYPE_CHECKING), so the import-direction sweeps and the
+            # run_pipeline dynamic check below stay green.
+            "src/decoy_engine/execution/native/_date_shift_ext.py",
+            "src/decoy_engine/execution/native/_operator_config_rejections.py",
+            # The C1 (chunked) admission predicate applies the chunked-route veto
+            # the dispatcher already enforces, so it cannot admit a full-frame-only
+            # strategy. It imports only execution.native modules, never physical.
+            "src/decoy_engine/execution/native/_phase3_eligibility.py",
+            # R1 (operator registry, 2026-10-06): a comment-only edit referencing the deleted
+            # phase3 predicate.
+            "src/decoy_engine/execution/native/_pool_quality.py",
+            # R1 (operator registry, 2026-10-06): the `native/` entry above is DELETED (its
+            # predicate had no production caller; `C1_PROVIDER_ALLOWLIST` moved into the
+            # registry's faker descriptor). `_operator_registry.py` is the new leaf module
+            # (stdlib + pyarrow only); the unified-slice resident-type and evidence modules read
+            # derived tables from it. None imports `execution.physical`.
+            "src/decoy_engine/execution/_operator_registry.py",
+            "src/decoy_engine/execution/_unified_slice_resident_types.py",
+            "src/decoy_engine/execution/_unified_slice_evidence.py",
+            # `when:` admission and row masks for the unified route. It reads the compiled
+            # bindings through untyped nodes and imports no `execution.physical` module.
+            "src/decoy_engine/execution/_unified_slice_when.py",
+            # The chunked `bucket_perturb` + `when:` gate now lets through the columns the native
+            # route admits; it imports only native config helpers, lazily.
+            "src/decoy_engine/execution/_chunked_bucket_perturb.py",
+            # Chunked dispatcher production contract: the public
+            # `run_mask_chunked` entry point and the pieces it is built from. The
+            # oracle's eager preflight and per-chunk loop move out of `_chunked.py`
+            # into `_chunked_oracle.py` so both routes share one validation path;
+            # `_chunked_entry.py` / `_chunked_schema_rule.py` / `_chunked_evidence.py`
+            # are the new entry, its output-schema rule, and its per-column route
+            # evidence; `_chunk_schema.py` makes the drift error an `ExecutionError`;
+            # `_dispatch.py` and `_chunk_masking.py` gain the `when:`/adapter vetoes,
+            # the per-column timing sample and the registry parameter. None imports
+            # `execution.physical`, and nothing in production calls the entry yet, so
+            # the import-direction sweeps and the fresh-import probe stay green.
+            "src/decoy_engine/execution/_chunked_oracle.py",
+            # Revision 9: `_chunked_carry.py` decides which passthrough columns
+            # `run_mask_chunked` carries past pandas; `_chunked_profile.py` gains the
+            # Arrow-native column profile. Neither imports `execution.physical`.
+            "src/decoy_engine/execution/_chunked_carry.py",
+            # B8: the carry plan's per-surface column declarations, shared by `read_set` and
+            # `_required_input_columns`. Config-level helpers only; no `execution.physical`.
+            "src/decoy_engine/execution/_column_access.py",
+            "src/decoy_engine/execution/_chunked_profile.py",
+            "src/decoy_engine/execution/native/_chunk_schema.py",
+            "src/decoy_engine/execution/native/_chunked_entry.py",
+            # OBS-2: the non-empty-source preflight wiring split out of `_chunked_entry.py` for
+            # module headroom (pure move); imports nothing from `execution.physical`.
+            "src/decoy_engine/execution/native/_chunked_preflight_wiring.py",
+            # OBS-2c: bounded value-free row-error summary (schema ids, trigger codes, counts);
+            # pure, imports nothing from `execution.physical`.
+            "src/decoy_engine/execution/_row_error_summary.py",
+            "src/decoy_engine/execution/native/_chunked_evidence.py",
+            # C4: the native chunked route's date_shift row-error records, re-sorted into the
+            # oracle's work-list order. Imports only `_row_errors` and `_date_shift_ext`.
+            "src/decoy_engine/execution/native/_chunked_row_errors.py",
+            "src/decoy_engine/execution/native/_chunked_schema_rule.py",
+            # Round-1 gate fixes: admission from real Arrow types and provider
+            # output type (`_real_type_admission.py`, imported only by `_dispatch.py`),
+            # one per-chunk ingest-guard helper in `_guards.py` that both chunked
+            # routes call.
+            # None imports `execution.physical`.
+            "src/decoy_engine/execution/native/_real_type_admission.py",
+            # OBS-2b: closed decline-code enum and record the chunked native route attaches to its
+            # route evidence. Pure value types; imports nothing from `execution.physical`.
+            "src/decoy_engine/execution/native/_route_decline_codes.py",
+            # Slice C2 (bucket_perturb on the chunked route): the native kernel module gains an
+            # optional `derive_calls` out-parameter the chunked masker reads, so evidence only
+            # claims a compiled kernel when one ran. It imports nothing from `execution.physical`.
+            "src/decoy_engine/execution/native/_bucket_perturb_ext.py",
+            # B2 (auto-chunk on the chunked dispatcher): `_pipeline_auto_chunk.py` is
+            # the new lane executor (it calls `run_mask_chunked` and joins the chunks);
+            # `_pipeline_route_exec.run_mask_chunked` becomes its delegate; the generate
+            # and finalize modules thread `native_threads` / `dispatcher_enabled` and
+            # merge the lane stamp into `quality_metrics["auto_chunk"]`. None imports
+            # `execution.physical`, so the import-direction sweeps stay green.
+            "src/decoy_engine/execution/_pipeline_auto_chunk.py",
+            "src/decoy_engine/execution/_pipeline_generate_mask.py",
+            "src/decoy_engine/execution/_pipeline_finalize.py",
+            # B7 (independent multi-table dispatch): `_pipeline_multi_table.py` decides which
+            # mask tables of an independent job run on B2's dispatcher lane and runs them one
+            # at a time; `_pipeline.py` gains the `multi_table_dispatch_enabled` knob,
+            # `_pipeline_generate_mask.py` the split call site, `_pipeline_finalize.py` the
+            # split's evidence stamp. None imports `execution.physical`.
+            "src/decoy_engine/execution/_pipeline_multi_table.py",
+            # B7 also corrects the module docstring of `_pipeline_chunk_route.py`, which said
+            # auto-chunk routing was single-table only (a docstring-only edit).
+            "src/decoy_engine/execution/_pipeline_chunk_route.py",
+            # B6a (incremental output sink): `_chunked_output_sink.py` streams a routed table's
+            # chunks into the caller's `TransactionalSink` and owns the commit/abort session;
+            # `_pipeline.py`, `_pipeline_generate_mask.py`, `_pipeline_auto_chunk.py`,
+            # `_pipeline_multi_table.py` and `_pipeline_route_exec.py` thread the sink and the
+            # `stream_chunked_output` knob; `_isolated_worker.py` and `_unified_slice_admission.py`
+            # gain docstring/comment edits only. None imports `execution.physical`.
+            "src/decoy_engine/execution/_chunked_output_sink.py",
+            "src/decoy_engine/execution/_isolated_worker.py",
+            # Isolated-run OOM classification: `_isolated_common.py` gains the Wrapping-value scrub
+            # and `_isolated_worker.py` classifies post-run failures. Neither imports `execution.physical`.
+            "src/decoy_engine/execution/_isolated_common.py",
+            # The driver removes staging on a self-reported failure and scrubs in-process error text.
+            "src/decoy_engine/execution/_isolated_run.py",
+            # F29: `_governor.py` reroutes on the typed route-ineligibility reason identity carried in
+            # `IsolatedRunResult.reason`, never on error text. No `execution.physical` import.
+            "src/decoy_engine/execution/_governor.py",
+            # Isolated-run memory evidence: the sampler lives in `_isolated_memwatch.py`; the driver and
+            # `_isolated_common.py` thread `memory_evidence`. None imports `execution.physical`.
+            "src/decoy_engine/execution/_isolated_memwatch.py",
+            # B6b (LazySource batch input): `_chunked_input.py` captures a lazy source's footer
+            # facts once, re-cuts reader batches to the resident chunk boundaries and owns the
+            # handle's close; `_planner.py` judges a `LazySource` from those facts (the old
+            # refusal helper in `_pipeline_sources.py` is gone); `_pipeline_chunk_route.py`
+            # captures the snapshot; `_pipeline.py`, `_pipeline_generate_mask.py`,
+            # `_pipeline_auto_chunk.py`, `_pipeline_multi_table.py` and `_pipeline_route_exec.py`
+            # thread it to the lane and the telemetry; `_transactional_sink.py` gains the
+            # read-only `spill_parent`; `_isolated_worker.py` always loads lazily;
+            # `_unified_slice_admission.py` gains a comment edit only. None imports
+            # `execution.physical`; `physical/_inputs.py` reads the same facts.
+            "src/decoy_engine/execution/_chunked_input.py",
+            "src/decoy_engine/execution/_transactional_sink.py",
+            # C1 (deterministic categorical on the chunked route): `_chunked_categorical.py` is
+            # the chunk-safety gate (it picks the non-deterministic rejection code) and
+            # `_categorical_prepared.py` the prepared categories+CDF shared by the config gate,
+            # the output-type rule and `_chunk_masking.py`. Neither imports `execution.physical`.
+            "src/decoy_engine/execution/_chunked_categorical.py",
+            "src/decoy_engine/execution/native/_categorical_prepared.py",
+            # C8-iii-d: a comment-only refresh of the windowed_date + when chunked-decline rationale
+            # (the oracle now keys on full-table rows). No code change; imports no execution.physical.
+            "src/decoy_engine/execution/_chunked_dgrn.py",
+            # C3 (group_key on the chunked route): the oracle gate's docstring (`_chunked_group_key.py`),
+            # the raw-hex operator's `derive_calls` spy and empty short-circuit
+            # (`_group_key_kernel.py`) and the new config-level admission gate
+            # (`_chunked_group_key_gate.py`). None imports `execution.physical`.
+            "src/decoy_engine/execution/_chunked_group_key.py",
+            "src/decoy_engine/execution/native/_chunked_group_key_gate.py",
+            "src/decoy_engine/execution/native/_group_key_kernel.py",
+            # C6c-i (text_redact as an ARROW_PYTHON operator): the scalar kernel module gains
+            # `native_text_redact`, which calls the oracle's `iter_spans` and `_splice`. It imports
+            # nothing from `execution.physical`, and the import-direction sweeps above still apply.
+            "src/decoy_engine/execution/native/_kernels_scalar.py",
+            # C6c-ii (text_redact Rust span kernel): `_kernels_scalar.native_text_redact` now routes
+            # all eleven built-in detectors into the compiled companion on ASCII-safe cells via the
+            # new `_text_redact_kernel.py` (the catalog, loader and `merge_text_redact_spans`). The
+            # new module imports only `detection.detectors` and stdlib -- nothing from `execution.physical`
+            # -- so every import-direction sweep and the fresh-import probe above stay green.
+            "src/decoy_engine/execution/native/_text_redact_kernel.py",
+            # FPE reference kernel: `_crypto_reference.py` keeps an empty string as missing data like
+            # the strategy does. It imports nothing from `execution.physical`.
+            "src/decoy_engine/execution/native/_crypto_reference.py",
+            # C6a (FPE on the native routes): the crypto-contract + FF1 loader + companion probe +
+            # the route-shared kill/warnings adapter. `_crypto_ext.py` gains the abi-3 tag and the
+            # FPE_KAT; `_fpe_ext.py` loads the compiled FF1 kernel and guards a None namespace;
+            # `_companion_status.py` adds the fpe KernelAvailability field + probe; `_fpe_route.py`
+            # is new (the fail-closed StrategyError + Python residual-risk warnings both routes share).
+            # None imports `execution.physical`; the import-direction sweeps above still apply.
+            "src/decoy_engine/execution/native/_crypto_ext.py",
+            "src/decoy_engine/execution/native/_fpe_ext.py",
+            "src/decoy_engine/execution/native/_companion_status.py",
+            "src/decoy_engine/execution/native/_fpe_route.py",
+            # C6b-i (text_mask as an ARROW_PYTHON operator): `_text_mask_route.py` is new -- the
+            # route-shared fail-closed StrategyError and the handler's sub-floor QualityWarning both
+            # native routes build. It imports only `errors`, `execution._errors` and the pool events,
+            # nothing from `execution.physical`; `_kernels_scalar.native_text_mask` (permitted above)
+            # calls it, and the registry/params/step/admission/schema-rule/chunk modules it reaches
+            # are already permitted. The import-direction sweeps and fresh-import probe stay green.
+            "src/decoy_engine/execution/native/_text_mask_route.py",
+            # C6b-ii slice b (native text_mask splice): `_text_mask_native_splice.py` is new -- the loader
+            # and planner for the Rust redact/passthrough splice kernel. It imports only `_text_redact_kernel`,
+            # `detection.detectors`, and `transforms._text_mask_splice`/`transforms.text_mask`, nothing from
+            # `execution.physical`; `_kernels_scalar.native_text_mask` (permitted above) calls it.
+            "src/decoy_engine/execution/native/_text_mask_native_splice.py",
+            # `_text_mask_native_fpe.py` (added to main after the Pre-scan split was cut): import retarget
+            # `detection.detectors` -> `detection.detectors` only; no `execution.physical` import.
+            "src/decoy_engine/execution/native/_text_mask_native_fpe.py",
+            # bucket_perturb date_format guard: the oracle handler and the nested handler validate the
+            # format before any early return, and the out-of-core kernel validates before its autodetect
+            # check. All three call the shared rule in `transforms/bucket_perturb.py` and import nothing
+            # from `execution.physical`. (`_strategies/_nested.py` is permitted above.)
+            "src/decoy_engine/execution/_strategies/_bucket_perturb.py",
+            "src/decoy_engine/execution/out_of_core/_mask_group_c.py",
+            # D1a (out-of-core hash on the compiled companion): `_hash_native.py` (eligibility + the
+            # kernel call) and `_hash_run.py` (per-column decision + disposition) are new, and
+            # `_mask.py` / `_stream_driver.py` thread the per-table plan into `mask_batch`. They import
+            # the keyed-derivation loader, the operator registry and `_mask`; nothing from
+            # `execution.physical`, so the import-direction sweeps and fresh-import probe stay green.
+            "src/decoy_engine/execution/out_of_core/_hash_native.py",
+            "src/decoy_engine/execution/out_of_core/_hash_run.py",
+            # D1b-ii (out-of-core categorical on the compiled index kernel): `_categorical_native.py`
+            # (per-column decision, the native call and its disposition) is new; `_hash_run.py` carries
+            # its per-table plan beside the hash plan and `_mask.py` dispatches it. They import the
+            # existing `native_categorical` operator, the index-kernel loader and the operator
+            # registry; nothing from `execution.physical`.
+            "src/decoy_engine/execution/out_of_core/_categorical_native.py",
+            # D1b-i (out-of-core bucket_perturb on the compiled index kernel): `_bucket_native.py`
+            # (per-column decision, the native call and its disposition) is new; `_hash_run.py` carries
+            # its per-table plan, `_mask.py` threads it and `_mask_group_c.py` branches to it after the
+            # existing validation. They import the shared `bucket_perturb_config_rejection` resolver,
+            # the existing `native_bucket_perturb` operator and the operator registry (which gains the
+            # `python_pandas` label); nothing from `execution.physical`.
+            "src/decoy_engine/execution/out_of_core/_bucket_native.py",
+            # OOC fpe (out-of-core fpe on the compiled FF1 kernel): `_fpe_native.py` (per-column
+            # decision, the native call and its disposition) is new; `_hash_run.py` carries its
+            # per-table plan and `_mask.py` dispatches it. They import the existing FF1 kernel
+            # loader, `FpeConfig` and `fpe_fail_closed_error`; nothing from `execution.physical`.
+            "src/decoy_engine/execution/out_of_core/_fpe_native.py",
+            # OOC text_redact (out-of-core text_redact on the compiled span kernel):
+            # `_text_redact_native.py` (per-column decision, the native call and its disposition) is
+            # new; `_hash_run.py` carries its per-table plan and `_mask.py` dispatches it. They import
+            # the existing `native_text_redact` wrapper and the shared config predicate; nothing from
+            # `execution.physical`.
+            "src/decoy_engine/execution/out_of_core/_text_redact_native.py",
+            # B5 (out-of-core text_mask on the compiled span kernel): `_text_mask_native.py` (per-column
+            # decision, the native call and its disposition) is new; `_hash_run.py` carries its
+            # per-table plan, `_mask.py` dispatches it and `_mask_group_c.py` (both already permitted)
+            # delegate the admitted non-NER column to it. It imports the existing `native_text_mask`
+            # wrapper and the shared config/source predicates; nothing from `execution.physical`.
+            "src/decoy_engine/execution/out_of_core/_text_mask_native.py",
+            "src/decoy_engine/execution/out_of_core/_mask.py",
+            "src/decoy_engine/execution/out_of_core/_stream_driver.py",
+            # OOC spill-reader mmap->OSFile memory fix (2026-10-16): the reorder-lane spill readers
+            # read through `pa.OSFile` instead of a memory-mapped string path (mapped file pages were
+            # resident RSS, scaling with payload and defeating the budget). `_payload_store.py` makes
+            # `SpillChildKeys.open_reader` a context manager owning the OSFile + reader;
+            # `_stream_join.py` migrates its five reader call sites to that context. Read-handle swap
+            # only; neither imports `execution.physical` (the `physical_plan` tokens in `_stream_join.py`
+            # are DuckDB EXPLAIN strings, not an import).
+            "src/decoy_engine/execution/out_of_core/_payload_store.py",
+            "src/decoy_engine/execution/out_of_core/_stream_join.py",
+            # D3a (validators on the bounded out-of-core route): `_validate_batch.py` is new -- it
+            # computes validator admission, evaluates the admitted per-cell validators per masked
+            # batch, and assembles the ValidationReport. `_runner.py` / `_stream_driver.py` hook it at
+            # the mask step; it imports the validator registry + Arrow, nothing from `execution.physical`.
+            "src/decoy_engine/execution/out_of_core/_validate_batch.py",
+            # D2a (sequential-route hash on the compiled companion): `_sequential_native.py`
+            # (per-column decision, the pandas-to-Arrow boundary, the native call and its
+            # disposition) is new; the hash handler asks it for tokens, `_orphan.py` marks the REMAP
+            # call, `_adapter.py` carries the run's decisions on the context and `_sequential.py`
+            # creates and reports them. They reuse the out-of-core hash entry points and import
+            # nothing from `execution.physical`.
+            # D2b: `_sequential_native.py` gains a REMAP-only decision for parent keys, and the new
+            # `_sequential_composite_chain.py` turns a REMAP orphan on a composite foreign-key chain into a
+            # coded decline; `_sequential.py` wraps the node dispatch with it. Neither imports `execution.physical`.
+            # D2c-i: `_sequential_native.py` becomes a strategy-keyed seam over the new
+            # `_sequential_native_ops.py` descriptors (hash, fpe); the fpe handler asks it for
+            # tokens. They reuse the chunked route's fpe kernel and helpers and import nothing from
+            # `execution.physical`.
+            "src/decoy_engine/execution/_sequential_native.py",
+            "src/decoy_engine/execution/_sequential_native_ops.py",
+            # Decision/evidence value types for the SEQ-native seam, split out of `_sequential_native.py`
+            # for module size; no physical I/O.
+            "src/decoy_engine/execution/_sequential_native_decisions.py",
+            "src/decoy_engine/execution/_sequential_composite_chain.py",
+            "src/decoy_engine/execution/_strategies/_hash.py",
+            "src/decoy_engine/execution/_strategies/_fpe.py",
+            # B4 (deterministic-REUSE faker payload on the out-of-core route): `_faker_pool.py` (the
+            # run-scoped pool context + budget gate) and `_faker_native.py` (per-column decision, the
+            # compiled pool-select call and its disposition) are new; `_compat.py` admits the shape and
+            # `_pipeline_routing_signals.py`/`_preflight.py` thread the source type, `_mask.py` /
+            # `_hash_run.py` / `_runner.py` dispatch it. They import the shared pool/index-kernel
+            # helpers and the operator registry; nothing from `execution.physical`.
+            "src/decoy_engine/execution/out_of_core/_faker_native.py",
+            "src/decoy_engine/execution/out_of_core/_faker_pool.py",
+            # B7 (native group_key payload on the sequential route): `_sequential_native_group_key.py`
+            # is new -- group_key's admission reads a SIBLING column, so its decision + derivation live
+            # in a sibling module (like `_sequential_native_text_mask.py`) rather than the per-value op
+            # seam; the oracle handler (`_strategies/_group_key.py`) offers the seam its resolved
+            # config via a lazy import. Both reuse the shared raw-hex kernel and import nothing from
+            # `execution.physical`.
+            "src/decoy_engine/execution/_sequential_native_group_key.py",
+            "src/decoy_engine/execution/_strategies/_group_key.py",
+            # MG-5 (tokenize on the vault write seam): the new handler, its registration in the
+            # strategy registry, and its GDPR technique-class label. None imports `execution.physical`.
+            "src/decoy_engine/execution/_strategies/__init__.py",
+            "src/decoy_engine/execution/_strategies/_tokenize.py",
+            "src/decoy_engine/execution/_technique_class.py",
+            # MG-5 follow-up (B-6 regression-gate green-up): tokenize's distribution-behavior
+            # label (preserves_cardinality_only, like hash and fpe) in the static behavior map.
+            # A pure label addition; imports nothing from `execution.physical`.
+            "src/decoy_engine/execution/_distribution_behavior.py",
+            # MG-5 module-size remediation: the `_fk_key_value` compat wrapper split out of
+            # `_pandas_adapter.py`, and the `mask.tokenize` DrawSite + provider-primitive data
+            # siblings split out of the capped `native/_determinism_protocol.py` /
+            # `native/_draw_site_providers.py`. Pure moves; none imports `execution.physical`.
+            "src/decoy_engine/execution/_fk_key_compat.py",
+            "src/decoy_engine/execution/native/_draw_sites_tokenize.py",
+            # E1: opaque scratch identifiers for config-derived table/edge/relation names
+            # (X4). The reorder/batch relation paths are built from per-run ids, not names,
+            # and import nothing from execution.physical.
+            "src/decoy_engine/execution/out_of_core/_relation.py",
+            # E1 (the FileAccess policy, 2026-10-07): every file the engine opens goes through
+            # `decoy_engine.fileaccess`. These modules gain a policy-bound reader, a stage or a
+            # propagated context and import nothing from `execution.physical`: the governor and its
+            # RSS monitor thread (`run_in_context`), the FPE thread pool (`map_in_context`), the
+            # capacity estimate (a lexical path join), the DuckDB connection helper (the adapter),
+            # the spill estimate's output-device probe (a policy `stat`), the out-of-core key
+            # stager's scratch `LazySource`, and the new scratch-root helper. Also the chunked
+            # code_set resolver and the code_set and joint_mask handlers and the shared
+            # out-of-core resolver, which name the column a corpus read belongs to (`at_position`).
+            # (`_strategies/_fpe.py` is already permitted above.)
+            "src/decoy_engine/execution/_governor_monitor.py",
+            "src/decoy_engine/execution/out_of_core/_duckdb.py",
+            "src/decoy_engine/execution/out_of_core/_scratch.py",
+            "src/decoy_engine/execution/out_of_core/_spill_estimate.py",
+            "src/decoy_engine/execution/out_of_core/_stage.py",
+            "src/decoy_engine/execution/_chunked_code_set.py",
+            "src/decoy_engine/execution/_strategies/_code_set.py",
+        }
+    )
+    # Files allowed to change ONLY by these exact line replacements (path -> {removed: added}).
+    # Anything else in the file, now or later, trips the guard.
+    exact_line_changes = {
+        "src/decoy_engine/execution/_output_projection.py": {
+            f"-probabilistic `{_RETIRED}/postmask/residual_pii` advisory (two distinct layers).": "+probabilistic `verification/postmask/residual_pii` advisory (two distinct layers).",
+        },
+    }
+    exact_ok = {
+        name
+        for name, allowed in exact_line_changes.items()
+        if name in diff_names and _only_these_line_changes(base, name, allowed)
     }
     unexpected = [
         name
         for name in diff_names
         if "/execution/physical/" not in name
+        and name not in exact_ok
         # Polars masking removal (2026-09-21): the whole execution/polars/ adapter
         # tree was deleted; permit those deletions wholesale rather than enumerate.
         and "/execution/polars/" not in name

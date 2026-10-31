@@ -1,6 +1,7 @@
 # Phase D / D2b: SEQ-route hash native across all acyclic FK shapes + composite keys
 
-Status: plan (rev 2, pre-gate). rev 1 NO-GO (2 HIGH, both reproduced). rev 2 folds
+Status: built
+Shipped: merge PR #242 (f9885434)
 both: the scalar-chain child-as-parent REMAP gap (HIGH-1, a real decision-model fix,
 in scope) and the composite-multi-hop-chain case (HIGH-2), which raises on BOTH SEQ
 and the oracle today, so per Cam (2026-10-12: "build what exists today in rust, defer

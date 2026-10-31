@@ -31,6 +31,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from decoy_engine import reasons
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.generation.pool._builder import PoolBuilder
 from decoy_engine.generation.pool._cache import PoolCache
@@ -95,12 +96,12 @@ class OocFakerPoolContext:
     ) -> None:
         if max_pool_bytes <= 0:
             raise ExecutionError(
-                code="out_of_core_faker_pool_budget_invalid",
+                code=reasons.runtime.OUT_OF_CORE_FAKER_POOL_BUDGET_INVALID,
                 message=f"max_pool_bytes must be positive, got {max_pool_bytes}.",
             )
         if reserve_bytes_per_value <= 0:
             raise ExecutionError(
-                code="out_of_core_faker_pool_budget_invalid",
+                code=reasons.runtime.OUT_OF_CORE_FAKER_POOL_BUDGET_INVALID,
                 message=f"reserve_bytes_per_value must be positive, got {reserve_bytes_per_value}.",
             )
         self._registry = registry
@@ -141,7 +142,7 @@ class OocFakerPoolContext:
         )
         if pool_size <= 0:
             raise ExecutionError(
-                code="out_of_core_faker_pool_size_invalid",
+                code=reasons.runtime.OUT_OF_CORE_FAKER_POOL_SIZE_INVALID,
                 message=(
                     f"faker pool for provider {provider!r} resolved to a non-positive "
                     f"pool_size {pool_size}; a bounded positive pool size is required."
@@ -180,7 +181,7 @@ class OocFakerPoolContext:
         reservation = prepared.pool_size * self._reserve_per_value
         if self._reserved_bytes + reservation > self._max_pool_bytes:
             raise ExecutionError(
-                code="out_of_core_faker_pool_budget_exceeded",
+                code=reasons.runtime.OUT_OF_CORE_FAKER_POOL_BUDGET_EXCEEDED,
                 message=(
                     f"faker pool for provider {prepared.provider!r} "
                     f"(pool_size {prepared.pool_size}) needs {reservation} reserved bytes; "

@@ -26,7 +26,7 @@ sections and names the first sweep batches.
 | `generation` + `generators` + `generation/statistical` | 11 | 3.7k | 115 | **P1** | synthetic-data generation correctness |
 | `config` | 13 | 1.7k | 49 | **P2** | config validation; fail-closed but lower blast radius |
 | `profile` | 9 | 2.1k | 23 | **P2** | source profiling feeds routing/planning |
-| `storm` | 11 | 3.3k | 69 | **P3** | ML detector; advisory, off by default, lower correctness stakes |
+| `pre-scan` | 11 | 3.3k | 69 | **P3** | ML detector; advisory, off by default, lower correctness stakes |
 | `providers_v2`, `disguises`, `connectors`, `sdk`, `expressions`, `validation*` | ~16 | ~3k | low | **P3** | narrower surface / already example-tested |
 
 ## Sweep order (step 4 batches, ~6-8 modules per wave, blast x churn within a section)
@@ -49,7 +49,7 @@ survivors -> ledger. Same parallel-author + grade harness as the crown jewels.
 - **Batch E (quality remainder + config):** `quality/snapshot.py`,
   `synth_report.py`, `quarantine.py`, `validation_result.py`, `context.py`,
   `config/_tables.py`, `config/_global_settings.py`.
-- **Batch F (P3 tail):** storm, profile, providers_v2, connectors, expressions
+- **Batch F (P3 tail):** pre-scan, profile, providers_v2, connectors, expressions
   as budget allows.
 
 ## Explicitly deferred / skipped (log, do not silently drop)

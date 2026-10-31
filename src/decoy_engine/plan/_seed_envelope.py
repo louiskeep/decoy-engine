@@ -1,7 +1,7 @@
 """SeedEnvelope construction, split from _compile.py (F11d).
 
 Builds the per-table / per-column / per-group SeedEnvelope from config +
-profile + the provider registry. The providers_v2 and storm.ner imports stay
+profile + the provider registry. The providers_v2 and detection.ner imports stay
 deferred inside the function body (real runtime cycle; see F12). Imported back
 into _compile.py; SEED_PROTOCOL_VERSION and the persisted format are untouched.
 """
@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from decoy_engine import reasons
 from decoy_engine.execution._distribution_behavior import distribution_behavior_for
 from decoy_engine.execution._technique_class import technique_class_for
 from decoy_engine.plan._errors import PlanCompileError
@@ -162,7 +163,7 @@ def _build_seed_envelope(
                 # enum; rename error directs to the new shape.
                 if cardinality_mode_raw == "deterministic_map":
                     raise PlanCompileError(
-                        code="plan_schema_deterministic_map_renamed",
+                        code=reasons.plan.PLAN_SCHEMA_DETERMINISTIC_MAP_RENAMED,
                         path=(f"tables.{table_profile.name}.columns.{col_name}.cardinality_mode"),
                         message=(
                             f"Column {table_profile.name}.{col_name}: "
@@ -204,7 +205,7 @@ def _build_seed_envelope(
                     explicit_mode = col_entry.get("cardinality_mode")
                     if explicit_mode is not None and explicit_mode != "reuse":
                         raise PlanCompileError(
-                            code="allow_collisions_mode_conflict",
+                            code=reasons.plan.ALLOW_COLLISIONS_MODE_CONFLICT,
                             path=(
                                 f"tables.{table_profile.name}.columns.{col_name}.allow_collisions"
                             ),
@@ -284,7 +285,7 @@ def _build_seed_envelope(
                             )
                 if when is not None and coherent_with:
                     raise PlanCompileError(
-                        code="when_with_coherent_with_unsupported",
+                        code=reasons.plan.WHEN_WITH_COHERENT_WITH_UNSUPPORTED,
                         path=f"tables.{table_profile.name}.columns.{col_name}.when",
                         message=(
                             f"Column {table_profile.name}.{col_name}: `when:` is "

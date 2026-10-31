@@ -1,6 +1,6 @@
 """Profiler honours FileSource delimited params (has_header/column_names/delimiter).
 
-The engine profiler (scan / STORM) and the CLI mask reader consume the same
+The engine profiler (scan / Pre-scan) and the CLI mask reader consume the same
 FileSource fields. This guards that profiling a headerless file under supplied
 names yields the same frame as the equivalent headered file, and that a
 non-comma delimiter is respected.

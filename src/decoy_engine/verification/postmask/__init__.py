@@ -1,14 +1,14 @@
-"""Storm post-mask check pass (Reframe-A; PO lock 2026-05-30).
+"""Post-scan integrity check pass (Reframe-A; PO lock 2026-05-30).
 
 This subpackage runs AFTER a successful mask job to produce a
-JobStormReport. It is the engine half of the "per-pipeline opt-in
+JobPostScanIntegrityReport. It is the engine half of the "per-pipeline opt-in
 post-mask check" reframe. The platform runner calls
-``run_post_mask`` when ``pipeline.run_storm`` is true; the
-returned dict is persisted as the JobStormReport row.
+``run_post_mask`` when ``pipeline.post_scan.integrity`` is true; the
+returned dict is persisted as the JobPostScanIntegrityReport row.
 
 Three net-new check categories ship here:
 
-- ``residual_pii``: re-runs the Storm detectors over the masked
+- ``residual_pii``: re-runs the detectors over the masked
   output. Flags columns that still match a detector pattern AND
   weren't configured to produce that pattern (faker name on a
   person_name column is expected; an unconfigured detector hit
@@ -25,7 +25,7 @@ Three net-new check categories ship here:
 
 Two more categories (distribution drift + schema integrity) are
 NOT computed here -- per Reframe-A spec Finding R-4, the FE reads
-those from the existing ``JobQualityReport``. Storm reports + Quality
+those from the existing ``JobQualityReport``. Post-scan integrity reports + Quality
 reports are joined at the UI layer.
 
 Best-effort contract: ``run_post_mask`` raises only on
@@ -34,7 +34,7 @@ relationships failures are captured as findings with severity
 ``error``; they do NOT fail the mask job. This matches the Quality
 hook precedent.
 
-Schema version: ``storm-post-mask/v1``. Bump when the report dict
+Schema version: ``post-scan-integrity/v2``. Bump when the report dict
 shape changes in a non-backward-compatible way.
 """
 

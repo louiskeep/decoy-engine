@@ -15,7 +15,7 @@ Codes used in S9:
 
 from __future__ import annotations
 
-from decoy_engine.errors import DecoyError
+from decoy_engine.errors import ConfigError, DecoyError
 
 
 class ExecutionError(DecoyError):
@@ -33,3 +33,14 @@ class StrategyError(ExecutionError):
     def __init__(self, *, code: str, strategy: str, message: str = "") -> None:
         self.strategy = strategy
         super().__init__(code=code, message=f"strategy={strategy!r}: {message}")
+
+
+class SeqIneligibleError(ConfigError):
+    """An explicit ``execution_mode="sequential"`` for a job that is not eligible for it.
+
+    A typed, engine-authored identity (the governor reroutes on it, never on message text), so a
+    general `ConfigError` whose text happens to say the same thing cannot steer routing."""
+
+
+class OocIneligibleError(ConfigError):
+    """An explicit ``execution_mode="out_of_core"`` for a job that is not eligible for it."""

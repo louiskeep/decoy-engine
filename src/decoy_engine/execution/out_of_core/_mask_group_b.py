@@ -15,7 +15,7 @@ out-of-core output is byte-identical rather than merely similar.
   single-key/varying-tweak model) with the exact key derivation the
   `_strategies/_fpe.FpeStrategyHandler` uses (`derive(job_seed, namespace,
   FF1_KEY_LABEL)`, column-or-join_group tweak per `build_ff1_tweak`).
-- text_redact: reuses `storm.detectors.iter_spans` + `_text_redact._splice`
+- text_redact: reuses `detection.detectors.iter_spans` + `_text_redact._splice`
   (span-level PII redaction; deterministic pure function of input + config).
 - categorical: reuses `determinism.derive_index` over the plan's category pool
   (source-conditioned deterministic remap), including the `_categorical`
@@ -50,6 +50,7 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
+from decoy_engine import reasons
 from decoy_engine.detection.detectors import Span, iter_spans
 from decoy_engine.determinism import derive, derive_index
 from decoy_engine.errors import FpeChecksumError, FpeUnencryptableError
@@ -100,11 +101,11 @@ def _fpe_charset(cfg: dict[str, Any]) -> str:
         check_charset_unique(charset_spec, charset)
     except FpeUnencryptableError as exc:
         raise StrategyError(
-            code="fpe_charset_duplicate_symbols", strategy="fpe", message=str(exc)
+            code=reasons.runtime.FPE_CHARSET_DUPLICATE_SYMBOLS, strategy="fpe", message=str(exc)
         ) from exc
     if len(charset) < 2:
         raise StrategyError(
-            code="fpe_charset_degenerate",
+            code=reasons.runtime.FPE_CHARSET_DEGENERATE,
             strategy="fpe",
             message=(
                 f"fpe resolved charset {charset_spec!r} -> {charset!r} has fewer than "
@@ -125,7 +126,7 @@ def fpe_array(
     """Format-preserving-encrypt each non-null value, byte-identical to the oracle."""
     if namespace is None:
         raise StrategyError(
-            code="fpe_requires_namespace",
+            code=reasons.runtime.FPE_REQUIRES_NAMESPACE,
             strategy="fpe",
             message="fpe strategy requires a namespace.",
         )
@@ -144,7 +145,7 @@ def fpe_array(
         # FK-key/remap caller). The compat gate keeps fpe off the parent-key
         # surface, so this fails closed rather than silently mis-tweaking.
         raise ExecutionError(
-            code="out_of_core_fpe_column_required",
+            code=reasons.runtime.OUT_OF_CORE_FPE_COLUMN_REQUIRED,
             message="fpe out-of-core masking needs a column name (or fpe_join_group) for the tweak.",
         )
     tweak = build_ff1_tweak(
@@ -283,7 +284,7 @@ def _text_redact_ner(cfg: dict[str, Any], plan: ColumnSeed) -> tuple[str | None,
         current_version = installed_model_version(ner_model)
         if current_version is not None and current_version != plan.ner_model_version:
             raise StrategyError(
-                code="ner_model_version_mismatch",
+                code=reasons.runtime.NER_MODEL_VERSION_MISMATCH,
                 strategy="text_redact",
                 message=(
                     f"NER model {ner_model!r} installed at {current_version!r} but the plan "
@@ -314,7 +315,7 @@ def _categorical_config(cfg: dict[str, Any]) -> tuple[list[Any], list[float] | N
         and not isinstance(raw_categories, (list, tuple))
     ):
         raise StrategyError(
-            code="categorical_categories_not_list",
+            code=reasons.runtime.CATEGORICAL_CATEGORIES_NOT_LIST,
             strategy="categorical",
             message=(
                 f"categorical categories={raw_categories!r} "
@@ -324,7 +325,7 @@ def _categorical_config(cfg: dict[str, Any]) -> tuple[list[Any], list[float] | N
     categories = list(cfg.get("categories", []))
     if not categories:
         raise StrategyError(
-            code="categorical_requires_categories",
+            code=reasons.runtime.CATEGORICAL_REQUIRES_CATEGORIES,
             strategy="categorical",
             message="categorical strategy provided no categories.",
         )
@@ -333,7 +334,7 @@ def _categorical_config(cfg: dict[str, Any]) -> tuple[list[Any], list[float] | N
     if weights_raw is not None:
         if not isinstance(weights_raw, (list, tuple)) or len(weights_raw) != len(categories):
             raise StrategyError(
-                code="categorical_weights_shape",
+                code=reasons.runtime.CATEGORICAL_WEIGHTS_SHAPE,
                 strategy="categorical",
                 message=(
                     f"categorical weights must be a list the same length as categories "
@@ -361,12 +362,12 @@ def categorical_array(
     categories, weights = _categorical_config(cfg)
     if not deterministic:
         raise ExecutionError(
-            code="out_of_core_categorical_nondeterministic_unsupported",
+            code=reasons.runtime.OUT_OF_CORE_CATEGORICAL_NONDETERMINISTIC_UNSUPPORTED,
             message="out-of-core categorical requires deterministic mode (gate should reject).",
         )
     if namespace is None:
         raise StrategyError(
-            code="categorical_requires_namespace",
+            code=reasons.runtime.CATEGORICAL_REQUIRES_NAMESPACE,
             strategy="categorical",
             message="deterministic categorical requires a namespace.",
         )
@@ -422,7 +423,7 @@ def group_b_output_type(
         if not isinstance(token, str):
             if source_type is None:
                 raise ExecutionError(
-                    code="out_of_core_source_schema_required",
+                    code=reasons.runtime.OUT_OF_CORE_SOURCE_SCHEMA_REQUIRED,
                     message="text_redact with a non-string token passes the source type through.",
                 )
             return source_type

@@ -7,7 +7,7 @@
 # slow and we don't want to spam every commit.
 #
 # Catches the catastrophic-regression scenario: a refactor lands and the
-# STORM Arrow→pandas overhead jumps from 4% to 30%; the comment on the PR
+# Pre-scan Arrow→pandas overhead jumps from 4% to 30%; the comment on the PR
 # makes that visible at review time.
 
 name: Benchmark
@@ -30,7 +30,7 @@ permissions:
   pull-requests: write
 
 jobs:
-  storm-arrow-boundary:
+  pre-scan-arrow-boundary:
     # Only fire on the `run-bench` label, or on manual workflow_dispatch.
     # Skips the run if someone applies an unrelated label like `bug`.
     if: |
@@ -38,7 +38,7 @@ jobs:
       (github.event_name == 'pull_request' && github.event.label.name == 'run-bench')
 
     runs-on: ubuntu-latest
-    # 30 minutes is generous for the STORM benchmark (~1 minute today);
+    # 30 minutes is generous for the Pre-scan benchmark (~1 minute today);
     # bumps up when Bug 5's calibration tier (8M-row HIPAA) lands here too.
     timeout-minutes: 30
 
@@ -50,7 +50,7 @@ jobs:
 
       # Pin Python explicitly. The benchmark is sensitive to the Python
       # version (string-handling path differs between 3.10 and 3.11+,
-      # which is part of why STORM overhead measured 2.4% on Linux/3.11
+      # which is part of why Pre-scan overhead measured 2.4% on Linux/3.11
       # vs 56% on Windows/3.10 — see plans/2026-05-09-hybrid-engine-bug-followup.md).
       # Cache pip so subsequent runs skip the dependency download phase.
       - name: Set up Python

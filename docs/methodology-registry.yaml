@@ -210,7 +210,7 @@ modules:
 
   # Removed 2026-06-02: the entire `forecast/` module (Recommender +
   # ForecastReport + DisguiseRecommendation + FieldRecommendation +
-  # RiskFlag) was deleted under the storm-reframe-C clean break
+  # RiskFlag) was deleted under the pre-scan-reframe-C clean break
   # (2026-05-31). The directory survives as an empty shell with stale
   # __pycache__/; the registry entry was orphaned and tripped the
   # sentry test. Removing both the registry entry AND the empty

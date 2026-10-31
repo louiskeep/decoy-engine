@@ -22,7 +22,7 @@ from typing import Any
 
 import pyarrow as pa
 
-from decoy_engine import fileaccess
+from decoy_engine import fileaccess, reasons
 from decoy_engine.fileaccess import FileAccess, FileAccessDenied, FileHandle, FileRequest, FileRole
 from decoy_engine.fileaccess.adapters import arrow as arrow_adapter
 from decoy_engine.plan._errors import PlanCompileError
@@ -53,7 +53,7 @@ def _unknown_shipped_corpus() -> PlanCompileError:
     """The one message for a name that is not a registry key; it echoes neither the name nor a
     path."""
     return PlanCompileError(
-        code="code_set_corpus_not_found",
+        code=reasons.plan.CODE_SET_CORPUS_NOT_FOUND,
         path="provider_config.code_set",
         message=(
             "shipped corpus name is not one of the registered corpora. "
@@ -208,7 +208,7 @@ def _resolve_read_path(name: str, path: Path | None) -> Path:
         shipped = _SHIPPED_PATHS[name]
         if not shipped.exists():
             raise PlanCompileError(
-                code="code_set_corpus_not_found",
+                code=reasons.plan.CODE_SET_CORPUS_NOT_FOUND,
                 path="provider_config.code_set",
                 message=(
                     "a registered shipped corpus file is missing from this installation. "
@@ -222,7 +222,7 @@ def _resolve_read_path(name: str, path: Path | None) -> Path:
         handle.stat()
     except (FileNotFoundError, NotADirectoryError):
         raise PlanCompileError(
-            code="code_set_corpus_path_not_found",
+            code=reasons.plan.CODE_SET_CORPUS_PATH_NOT_FOUND,
             path="provider_config.corpus_source",
             message=f"customer corpus not found at path {handle.display}.",
         ) from None
@@ -283,7 +283,7 @@ def _get_corpus_record(
             stat = handle.stat()
         except FileNotFoundError as exc:
             raise PlanCompileError(
-                code="code_set_corpus_path_not_found",
+                code=reasons.plan.CODE_SET_CORPUS_PATH_NOT_FOUND,
                 path="provider_config.corpus_source",
                 message=f"customer corpus at {handle.display} became unavailable after the existence check.",
             ) from exc
@@ -291,7 +291,7 @@ def _get_corpus_record(
             if fileaccess.keeps_class(exc):
                 raise
             raise PlanCompileError(
-                code="code_set_corpus_read_error",
+                code=reasons.plan.CODE_SET_CORPUS_READ_ERROR,
                 path="provider_config.corpus_source",
                 message=f"failed to stat customer corpus at {handle.display}: {exc}",
             ) from exc
@@ -338,7 +338,7 @@ def _check_source_version_pin(
     if actual != expected_source_version:
         at = f" at {_where(path)}" if path is not None else ""
         raise PlanCompileError(
-            code="code_set_corpus_version_mismatch",
+            code=reasons.plan.CODE_SET_CORPUS_VERSION_MISMATCH,
             path="provider_config.corpus_source_version",
             message=(
                 f"corpus {name!r}{at}: corpus_source_version pins "
@@ -366,7 +366,7 @@ def _check_corpus_schema(tbl: pa.Table, path: Path) -> None:
     where = _where(path)
     if "code" not in tbl.schema.names:
         raise PlanCompileError(
-            code="code_set_corpus_missing_code_column",
+            code=reasons.plan.CODE_SET_CORPUS_MISSING_CODE_COLUMN,
             path="provider_config.corpus_source",
             message=(
                 f"corpus at {where} is missing required 'code' column. "
@@ -377,7 +377,7 @@ def _check_corpus_schema(tbl: pa.Table, path: Path) -> None:
 
     if tbl.num_rows == 0:
         raise PlanCompileError(
-            code="code_set_corpus_empty",
+            code=reasons.plan.CODE_SET_CORPUS_EMPTY,
             path="provider_config.corpus_source",
             message=f"corpus at {where} has 0 rows. Corpus must be non-empty.",
         )
@@ -385,7 +385,7 @@ def _check_corpus_schema(tbl: pa.Table, path: Path) -> None:
     code_col = tbl.column("code")
     if code_col.null_count > 0:
         raise PlanCompileError(
-            code="code_set_corpus_null_code",
+            code=reasons.plan.CODE_SET_CORPUS_NULL_CODE,
             path="provider_config.corpus_source",
             message=(
                 f"corpus at {where} has {code_col.null_count} null value(s) in the "
@@ -401,7 +401,7 @@ def _check_corpus_schema(tbl: pa.Table, path: Path) -> None:
     empty = sum(1 for c in codes if c.strip() == "")
     if empty:
         raise PlanCompileError(
-            code="code_set_corpus_empty_code",
+            code=reasons.plan.CODE_SET_CORPUS_EMPTY_CODE,
             path="provider_config.corpus_source",
             message=(
                 f"corpus at {where} has {empty} empty-string value(s) in the 'code' "
@@ -412,7 +412,7 @@ def _check_corpus_schema(tbl: pa.Table, path: Path) -> None:
     duplicates = len(codes) - len(set(codes))
     if duplicates:
         raise PlanCompileError(
-            code="code_set_corpus_duplicate_codes",
+            code=reasons.plan.CODE_SET_CORPUS_DUPLICATE_CODES,
             path="provider_config.corpus_source",
             message=(
                 f"corpus at {where} has {duplicates} duplicate code value(s). code_set "
@@ -426,7 +426,7 @@ def _check_corpus_schema(tbl: pa.Table, path: Path) -> None:
         incoherent = sum(1 for c in chapters if c is None or str(c).strip() == "")
         if incoherent:
             raise PlanCompileError(
-                code="code_set_corpus_incoherent_chapter",
+                code=reasons.plan.CODE_SET_CORPUS_INCOHERENT_CHAPTER,
                 path="provider_config.corpus_source",
                 message=(
                     f"corpus at {where} has {incoherent} row(s) with a null/empty "
@@ -460,7 +460,7 @@ def _read_corpus_record(
             if fileaccess.keeps_class(exc):
                 raise
             raise PlanCompileError(
-                code="code_set_corpus_read_error",
+                code=reasons.plan.CODE_SET_CORPUS_READ_ERROR,
                 path="provider_config.corpus_source",
                 message=f"failed to read corpus Parquet at {handle.display}: {exc}",
             ) from exc
@@ -506,7 +506,7 @@ def _validate_provenance(
     if provenance is None:
         if is_shipped:
             raise PlanCompileError(
-                code="code_set_corpus_missing_provenance",
+                code=reasons.plan.CODE_SET_CORPUS_MISSING_PROVENANCE,
                 path="provider_config.code_set",
                 message=(
                     f"shipped corpus {name!r} at {where} has no provenance metadata "
@@ -538,7 +538,7 @@ def _validate_provenance(
         # not apply to the customer path.
         if is_shipped and provenance.corpus != name:
             raise PlanCompileError(
-                code="code_set_corpus_provenance_identity_mismatch",
+                code=reasons.plan.CODE_SET_CORPUS_PROVENANCE_IDENTITY_MISMATCH,
                 path="provider_config.code_set",
                 message=(
                     f"shipped corpus {name!r} at {where} carries provenance "
@@ -559,7 +559,7 @@ def _validate_provenance(
             stamp_defects = provenance.shipped_stamp_defects()
             if stamp_defects:
                 raise PlanCompileError(
-                    code="code_set_corpus_provenance_malformed_stamp",
+                    code=reasons.plan.CODE_SET_CORPUS_PROVENANCE_MALFORMED_STAMP,
                     path="provider_config.code_set",
                     message=(
                         f"shipped corpus {name!r} at {where} has a malformed "
@@ -572,7 +572,7 @@ def _validate_provenance(
         return
     if is_shipped:
         raise PlanCompileError(
-            code="code_set_corpus_missing_provenance",
+            code=reasons.plan.CODE_SET_CORPUS_MISSING_PROVENANCE,
             path="provider_config.code_set",
             message=(
                 f"shipped corpus {name!r} at {where} has incomplete provenance "
@@ -580,7 +580,7 @@ def _validate_provenance(
             ),
         )
     raise PlanCompileError(
-        code="code_set_corpus_missing_provenance",
+        code=reasons.plan.CODE_SET_CORPUS_MISSING_PROVENANCE,
         path="provider_config.corpus_source",
         message=(
             f"customer corpus {name!r} at {where} has partial provenance metadata "

@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from decoy_engine import reasons
 from decoy_engine.plan._errors import PlanCompileError
 
 
@@ -51,7 +52,7 @@ def check_faker_requires_provider(config: dict[str, Any]) -> None:
             col_name = col_entry.get("name", "?")
             if not col_entry.get("provider"):
                 raise PlanCompileError(
-                    code="faker_requires_provider",
+                    code=reasons.plan.FAKER_REQUIRES_PROVIDER,
                     path=f"tables.{table_name}.columns.{col_name}.provider",
                     message=(
                         f"faker column {col_name!r} in table {table_name!r} declares "

@@ -32,10 +32,9 @@ Dennis review remediation (this module's own hardening pass):
     missing `PPid:` line.
   - MED-2: `isolate=False` in `isolated_kwargs` is rejected outright --
     an in-process run never spawns a child, so no monitor can ever attach.
-  - MED-3: `_INELIGIBLE_ROUTE_MARKERS` is pinned against the REAL
-    `ConfigError` text `decide_execution_route` emits (see
-    `TestIneligibleRouteMarkersMatchRealConfigErrorText` below) so message
-    drift breaks CI, not production.
+  - MED-3: the typed route-ineligibility errors are pinned against the REAL
+    emitters in `decide_execution_route` (see `TestIneligibleRoutesRaiseTypedErrors`
+    below) so a producer that stops raising them breaks CI, not production.
   - LOW-1: the flag-off exhausted path surfaces the underlying
     `IsolatedRunResult` on `GovernorResult.result` instead of dropping it.
   - LOW-2: `hard_threshold_fraction` and `poll_interval_s` are bounds-checked.
@@ -57,6 +56,7 @@ import pytest
 from decoy_engine.config import PipelineConfig
 from decoy_engine.errors import ConfigError
 from decoy_engine.execution import _governor, _governor_monitor
+from decoy_engine.execution._errors import OocIneligibleError, SeqIneligibleError
 from decoy_engine.execution._governor import (
     GovernorResult,
     GovernorTripRecord,
@@ -81,7 +81,7 @@ def _validated_dump(cfg: dict[str, Any]) -> dict[str, Any]:
 def _mask_config(tmp_path, n_cols: int) -> dict[str, Any]:
     return _validated_dump(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 42},
             "sources": {
                 "customers": {
@@ -144,7 +144,7 @@ def _completed_result() -> IsolatedRunResult:
     )
 
 
-def _crashed_result(error: str) -> IsolatedRunResult:
+def _crashed_result(error: str, reason: Any = None) -> IsolatedRunResult:
     return IsolatedRunResult(
         outcome="crashed",
         peak_rss_mb=None,
@@ -156,6 +156,7 @@ def _crashed_result(error: str) -> IsolatedRunResult:
         error=error,
         isolated=True,
         pid=4242,
+        reason=reason,
     )
 
 
@@ -167,6 +168,15 @@ _SEQUENTIAL_INELIGIBLE_ERROR = (
     "execution_mode='sequential' requested but the job is not "
     "sequential-eligible (no_relationships)."
 )
+
+
+def _ineligible_result(route: str, error: str) -> IsolatedRunResult:
+    """A crash carrying the engine's typed route-ineligibility identity, as the worker sends it."""
+    from decoy_engine.execution._errors import OocIneligibleError, SeqIneligibleError
+    from decoy_engine.reason_adapter import reason_from_exception
+
+    exc_type = OocIneligibleError if route == "out_of_core" else SeqIneligibleError
+    return _crashed_result(error, reason_from_exception(exc_type(error)))
 
 
 # --------------------------------------------------------------------------
@@ -312,7 +322,7 @@ class TestRerouteLadder:
             if execution_mode == "full_frame":
                 return _oom_killed_result(peak_rss_mb=200.0)
             if execution_mode == "out_of_core":
-                return _crashed_result(_OOC_INELIGIBLE_ERROR)
+                return _ineligible_result("out_of_core", _OOC_INELIGIBLE_ERROR)
             assert execution_mode == "sequential"
             return _completed_result()
 
@@ -341,7 +351,7 @@ class TestRerouteLadder:
             if on_spawn is not None:
                 on_spawn(1)
             if execution_mode == "sequential":
-                return _crashed_result(_SEQUENTIAL_INELIGIBLE_ERROR)
+                return _ineligible_result("sequential", _SEQUENTIAL_INELIGIBLE_ERROR)
             return _oom_killed_result(peak_rss_mb=300.0)
 
         monkeypatch.setattr(_governor, "run_pipeline_isolated", fake_run_pipeline_isolated)
@@ -915,22 +925,16 @@ class TestRealSubprocessIntegration:
 
 
 # --------------------------------------------------------------------------
-# MED-3 sentry: `_INELIGIBLE_ROUTE_MARKERS` must stay a real substring of the
-# ACTUAL `ConfigError` text `decide_execution_route` emits for each
-# forced-mode ineligibility. The governor classifies a rerouted rung's
-# crash as `route_ineligible` (skip to the next rung) vs `crashed` (give
-# up) purely by matching these marker strings against the error text that
-# crosses the isolated-process boundary -- correct today, but brittle: if
-# `_pipeline_routing.py`'s wording ever drifts, a genuinely-ineligible rung
-# would silently misclassify as `crashed`, and the governor would give up
-# instead of skipping to the next rung. This test calls
-# `decide_execution_route` DIRECTLY (no process boundary, no mocking of
-# its error text) for every marker in the table, so drift breaks CI here,
-# never production.
+# MED-3 sentry: every forced-mode ineligibility `decide_execution_route` can
+# raise must be the TYPED error for its route (`SeqIneligibleError` /
+# `OocIneligibleError`). The governor reroutes on the typed reason identity
+# those classes carry across the isolated-process boundary, never on message
+# text; this calls `decide_execution_route` DIRECTLY so a producer that raises
+# a plain `ConfigError` (which would silently stop rerouting) breaks CI here.
 # --------------------------------------------------------------------------
 
 
-class TestIneligibleRouteMarkersMatchRealConfigErrorText:
+class TestIneligibleRoutesRaiseTypedErrors:
     class _FakeProfile:
         def __init__(self, relationships: tuple[Any, ...]) -> None:
             self.relationships = relationships
@@ -1005,71 +1009,126 @@ class TestIneligibleRouteMarkersMatchRealConfigErrorText:
         kwargs.update(overrides)
         return decide_execution_route(profile, **kwargs)
 
-    def _assert_marker_matches(self, marker: str, **decide_overrides: Any) -> None:
-        with pytest.raises(ConfigError) as exc:
+    def _assert_typed(self, error_type: type[ConfigError], **decide_overrides: Any) -> None:
+        with pytest.raises(error_type):
             self._decide(**decide_overrides)
-        assert marker in str(exc.value), (
-            f"_INELIGIBLE_ROUTE_MARKERS marker {marker!r} is no longer a "
-            f"substring of decide_execution_route's real message: {str(exc.value)!r}"
-        )
 
-    def test_every_declared_marker_is_covered_by_this_test(self) -> None:
-        # Belt-and-suspenders: a future edit that adds a new marker to the
-        # governor's table without a matching case below must fail loudly
-        # HERE instead of silently under-covering the sentry.
-        covered = {
-            ("out_of_core", "is not out-of-core-eligible"),
-            ("out_of_core", "is not out-of-core-compatible"),
-            ("out_of_core", "no mask-kind table to run through the out-of-core path"),
-            ("sequential", "is not sequential-eligible"),
-            ("sequential", "FK graph has a cross-table cycle"),
-            ("sequential", "no mask-kind table to run through the sequential path"),
-        }
-        declared = {
-            (route, marker)
-            for route, markers in _governor._INELIGIBLE_ROUTE_MARKERS.items()
-            for marker in markers
-        }
-        assert declared == covered
+    def test_the_governor_table_covers_exactly_the_routes_with_a_typed_error(self) -> None:
+        assert set(_governor._INELIGIBLE_BY_ROUTE) == {"out_of_core", "sequential"}
 
     def test_out_of_core_not_eligible_marker(self) -> None:
-        self._assert_marker_matches(
-            "is not out-of-core-eligible",
+        self._assert_typed(
+            OocIneligibleError,
             execution_mode="out_of_core",
             has_generate_table=True,  # disqualifies _sequential_eligible -> not OOC-eligible
         )
 
     def test_out_of_core_not_compatible_marker(self) -> None:
-        self._assert_marker_matches(
-            "is not out-of-core-compatible",
+        self._assert_typed(
+            OocIneligibleError,
             execution_mode="out_of_core",
             out_of_core_compatible=False,
         )
 
     def test_out_of_core_no_mask_table_marker(self) -> None:
-        self._assert_marker_matches(
-            "no mask-kind table to run through the out-of-core path",
+        self._assert_typed(
+            OocIneligibleError,
             execution_mode="out_of_core",
             has_mask_table=False,
         )
 
     def test_sequential_not_eligible_marker(self) -> None:
-        self._assert_marker_matches(
-            "is not sequential-eligible",
+        self._assert_typed(
+            SeqIneligibleError,
             execution_mode="sequential",
             has_generate_table=True,
         )
 
     def test_sequential_cross_table_cycle_marker(self) -> None:
-        self._assert_marker_matches(
-            "FK graph has a cross-table cycle",
+        self._assert_typed(
+            SeqIneligibleError,
             execution_mode="sequential",
             graph=self._cyclic_graph(),
         )
 
     def test_sequential_no_mask_table_marker(self) -> None:
-        self._assert_marker_matches(
-            "no mask-kind table to run through the sequential path",
+        self._assert_typed(
+            SeqIneligibleError,
             execution_mode="sequential",
             has_mask_table=False,
         )
+
+
+class TestRoutingNeverReadsErrorText:
+    """F29 HIGH 1: only the typed engine identity reroutes; text (any text) never does."""
+
+    def _run(self, monkeypatch, make_result):
+        monkeypatch.setattr(_governor_monitor, "_read_child_status", lambda pid: None)
+        calls: list[str] = []
+
+        def fake(config, sources, *, execution_mode, on_spawn=None, **kw):
+            if on_spawn is not None:
+                on_spawn(1)
+            calls.append(execution_mode)
+            return make_result(execution_mode)
+
+        monkeypatch.setattr(_governor, "run_pipeline_isolated", fake)
+        result = run_job_with_governor(
+            {"sentinel": "config"},
+            {"sentinel": "sources"},
+            budget_bytes=100 * _MB,
+            use_runtime_governor=True,
+            poll_interval_s=0.01,
+        )
+        return result, calls
+
+    def test_a_non_routing_config_error_with_marker_text_does_not_reroute(self, monkeypatch):
+        from decoy_engine.reason_adapter import reason_from_exception
+
+        hostile = ConfigError(f"the job {_SEQUENTIAL_INELIGIBLE_ERROR} is not sequential-eligible")
+
+        def make(mode):
+            return _crashed_result(f"ConfigError: {hostile}", reason_from_exception(hostile))
+
+        result, calls = self._run(monkeypatch, make)
+        assert calls == ["full_frame"]
+        assert result.outcome == "exhausted"
+        assert [t.trip_kind for t in result.trips] == ["crashed"]
+        assert result.trips[0].reroute_to is None
+
+    def test_marker_text_with_no_typed_reason_does_not_reroute(self, monkeypatch):
+        result, calls = self._run(monkeypatch, lambda mode: _crashed_result(_OOC_INELIGIBLE_ERROR))
+        assert calls == ["full_frame"]
+        assert result.trips[0].trip_kind == "crashed"
+
+    def test_the_typed_error_still_reroutes(self, monkeypatch):
+        def make(mode):
+            if mode == "full_frame":
+                return _oom_killed_result(peak_rss_mb=200.0)
+            if mode == "out_of_core":
+                return _ineligible_result("out_of_core", "irrelevant text")
+            return _completed_result()
+
+        result, calls = self._run(monkeypatch, make)
+        assert calls == ["full_frame", "out_of_core", "sequential"]
+        assert result.final_route == "sequential"
+        assert result.trips[1].trip_kind == "route_ineligible"
+
+    def test_the_identity_for_another_route_does_not_reroute(self, monkeypatch):
+        def make(mode):
+            if mode == "full_frame":
+                return _oom_killed_result(peak_rss_mb=200.0)
+            return _ineligible_result("sequential", "x")
+
+        result, calls = self._run(monkeypatch, make)
+        assert calls == ["full_frame", "out_of_core"]
+        assert result.trips[1].trip_kind == "crashed"
+
+    def test_the_identity_survives_the_worker_envelope(self):
+        from decoy_engine.execution._isolated_reason import reason_from_envelope
+        from decoy_engine.reason_adapter import reason_from_exception
+
+        record = reason_from_exception(SeqIneligibleError("any text"))
+        parsed = reason_from_envelope({"reason": record.to_payload()})
+        assert _governor._is_route_ineligible("sequential", _crashed_result("e", parsed))
+        assert not _governor._is_route_ineligible("out_of_core", _crashed_result("e", parsed))

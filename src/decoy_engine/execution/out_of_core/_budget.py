@@ -128,6 +128,7 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
+from decoy_engine import reasons
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution.out_of_core._join import _JOIN_BATCH_ROWS
 
@@ -219,7 +220,7 @@ def detect_host_memory_bytes() -> int:
     except (OSError, ValueError, IndexError):
         pass
     raise ExecutionError(
-        code="out_of_core_memory_detection_failed",
+        code=reasons.runtime.OUT_OF_CORE_MEMORY_DETECTION_FAILED,
         message=(
             "host RAM could not be detected (no sysconf, no /proc/meminfo); "
             "pass an explicit budget_bytes instead."
@@ -371,12 +372,12 @@ def resolve_budget(
     """
     if budget_bytes is not None and budget_bytes <= 0:
         raise ExecutionError(
-            code="out_of_core_budget_invalid",
+            code=reasons.runtime.OUT_OF_CORE_BUDGET_INVALID,
             message=f"budget_bytes must be positive, got {budget_bytes}.",
         )
     if reserved_bytes < 0:
         raise ExecutionError(
-            code="out_of_core_reserved_bytes_invalid",
+            code=reasons.runtime.OUT_OF_CORE_RESERVED_BYTES_INVALID,
             message=f"reserved_bytes must be >= 0, got {reserved_bytes}.",
         )
     if budget_bytes is None:
@@ -449,17 +450,17 @@ def resolve_ooc_memory_limit(
     """
     if budget_bytes is not None and budget_bytes <= 0:
         raise ExecutionError(
-            code="out_of_core_budget_invalid",
+            code=reasons.runtime.OUT_OF_CORE_BUDGET_INVALID,
             message=f"budget_bytes must be positive, got {budget_bytes}.",
         )
     if reserved_bytes < 0:
         raise ExecutionError(
-            code="out_of_core_reserved_bytes_invalid",
+            code=reasons.runtime.OUT_OF_CORE_RESERVED_BYTES_INVALID,
             message=f"reserved_bytes must be >= 0, got {reserved_bytes}.",
         )
     if max_concurrent_instances is not None and max_concurrent_instances < 1:
         raise ExecutionError(
-            code="out_of_core_concurrency_invalid",
+            code=reasons.runtime.OUT_OF_CORE_CONCURRENCY_INVALID,
             message=(f"max_concurrent_instances must be >= 1, got {max_concurrent_instances}."),
         )
     if max_concurrent_instances is None:
@@ -489,7 +490,7 @@ def resolve_ooc_memory_limit(
     if per_instance_mib < 1:
         if max_concurrent_instances * 1_000_000 > budget_bytes:
             raise ExecutionError(
-                code="out_of_core_fanin_exceeds_budget",
+                code=reasons.runtime.OUT_OF_CORE_FANIN_EXCEEDS_BUDGET,
                 message=(
                     f"{max_concurrent_instances} co-live DuckDB instances over a "
                     f"{budget_bytes}-byte budget cannot each hold DuckDB's 1 MB minimum "
@@ -532,7 +533,7 @@ def check_temp_disk_budget(temp_dir: Path, *, max_bytes: int) -> int:
     used = temp_disk_bytes(temp_dir)
     if used > max_bytes:
         raise ExecutionError(
-            code="out_of_core_temp_disk_exceeded",
+            code=reasons.runtime.OUT_OF_CORE_TEMP_DISK_EXCEEDED,
             message=(
                 f"out-of-core temp disk footprint {used} bytes exceeds the "
                 f"{max_bytes}-byte budget under {temp_dir}."
@@ -581,7 +582,7 @@ def check_disk_spill_preflight(path: Path, *, predicted_spill_bytes: int) -> Dis
     """
     if predicted_spill_bytes < 0:
         raise ExecutionError(
-            code="out_of_core_predicted_spill_bytes_invalid",
+            code=reasons.runtime.OUT_OF_CORE_PREDICTED_SPILL_BYTES_INVALID,
             message=f"predicted_spill_bytes must be >= 0, got {predicted_spill_bytes}.",
         )
     usage = shutil.disk_usage(_nearest_existing_ancestor(path))

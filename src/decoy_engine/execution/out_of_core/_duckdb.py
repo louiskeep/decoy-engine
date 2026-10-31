@@ -6,6 +6,7 @@ import os
 import re
 from pathlib import Path
 
+from decoy_engine import reasons
 from decoy_engine.execution._errors import ExecutionError
 
 # `_budget.py` (`resolve_budget` / `resolve_ooc_memory_limit`) is the only
@@ -30,7 +31,7 @@ def connect_duckdb(*, temp_dir: Path, memory_limit: str | None = None):
         from decoy_engine.fileaccess.adapters import duckdb as duckdb_adapter
     except ModuleNotFoundError as exc:  # pragma: no cover - covered in no-duckdb envs
         raise ExecutionError(
-            code="out_of_core_backend_unavailable",
+            code=reasons.runtime.OUT_OF_CORE_BACKEND_UNAVAILABLE,
             message="DuckDB is required for the out-of-core relationship route.",
         ) from exc
 

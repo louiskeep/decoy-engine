@@ -56,6 +56,7 @@ from typing import Any
 import jsonpath_ng
 import pandas as pd
 
+from decoy_engine import reasons
 from decoy_engine.execution._adapter import StrategyContext, provider_config_to_dict
 from decoy_engine.execution._errors import StrategyError
 from decoy_engine.execution._row_errors import RowError
@@ -136,7 +137,7 @@ class NestedStrategyHandler:
 
         if not isinstance(child_strategy_name, str) or not child_strategy_name:
             raise StrategyError(
-                code="nested_strategy_unset",
+                code=reasons.runtime.NESTED_STRATEGY_UNSET,
                 strategy="nested",
                 message=(
                     "nested child strategy is required and must be a non-empty "
@@ -146,7 +147,7 @@ class NestedStrategyHandler:
 
         if child_strategy_name == "nested":
             raise StrategyError(
-                code="nested_recursive_nested_rejected",
+                code=reasons.runtime.NESTED_RECURSIVE_NESTED_REJECTED,
                 strategy="nested",
                 message=f"nested cannot wrap itself recursively{column_suffix}.",
             )
@@ -154,7 +155,7 @@ class NestedStrategyHandler:
         child_handler = SCALAR_HANDLERS.get(child_strategy_name)
         if child_handler is None:
             raise StrategyError(
-                code="nested_child_strategy_unknown",
+                code=reasons.runtime.NESTED_CHILD_STRATEGY_UNKNOWN,
                 strategy="nested",
                 message=(
                     f"nested child strategy {child_strategy_name!r} is not a "
@@ -234,14 +235,14 @@ class NestedStrategyHandler:
         # df UNCHANGED with a QualityWarning -- a misconfigured target
         # (e.g. `$.patient_name` typoed as `$.patientName`, or a child
         # strategy name typo) silently passed PII through. The warning
-        # surfaced only in the Storm report, not at job failure, and
-        # operators who don't audit Storm output had no signal.
+        # surfaced only in the Post-scan integrity report, not at job failure, and
+        # operators who don't audit Post-scan integrity output had no signal.
         # Sparse-path passthrough (some cells have matches, some don't)
         # stays a non-error case per spec; that branch is handled below
         # by the "if not leaf_values" early-return without raising.
         if not isinstance(target_path, str) or not target_path:
             raise StrategyError(
-                code="nested_target_unset",
+                code=reasons.runtime.NESTED_TARGET_UNSET,
                 strategy="nested",
                 message=(
                     f"nested target is required and must be a non-empty string "
@@ -269,7 +270,7 @@ class NestedStrategyHandler:
             jsonpath_expr = jsonpath_ng.parse(target_path)
         except Exception as exc:
             raise StrategyError(
-                code="nested_jsonpath_parse_error",
+                code=reasons.runtime.NESTED_JSONPATH_PARSE_ERROR,
                 strategy="nested",
                 message=(
                     f"nested target {target_path!r} is not a valid JSONPath "
@@ -338,7 +339,7 @@ class NestedStrategyHandler:
                 )
                 warnings.append(
                     QualityWarning(
-                        code="nested_cell_json_parse_error",
+                        code=reasons.warning.NESTED_CELL_JSON_PARSE_ERROR,
                         provider="nested",
                         column=column,
                         detail={"row_pos": str(pos)},
@@ -361,12 +362,12 @@ class NestedStrategyHandler:
             # writeback. This makes the ordering deterministic and the
             # outer container's masked value always reflects the last
             # write. We also emit a typed QualityWarning so operators
-            # auditing the Storm report can see the path was ambiguous.
+            # auditing the Post-scan integrity report can see the path was ambiguous.
             ordered_matches = _order_matches_deepest_first(matches)
             if _has_prefix_overlap(ordered_matches):
                 warnings.append(
                     QualityWarning(
-                        code="nested_jsonpath_path_overlap",
+                        code=reasons.warning.NESTED_JSONPATH_PATH_OVERLAP,
                         provider="nested",
                         column=column,
                         detail={
@@ -392,7 +393,7 @@ class NestedStrategyHandler:
             # by the null passthrough / the malformed-cell RowError above.
             if saw_parseable:
                 raise StrategyError(
-                    code="nested_target_matched_nothing",
+                    code=reasons.runtime.NESTED_TARGET_MATCHED_NOTHING,
                     strategy="nested",
                     message=(
                         f"nested target {target_path!r} matched no value in any "
@@ -457,7 +458,7 @@ class NestedStrategyHandler:
                         # rather than guess an outer row and risk quarantining the wrong
                         # one (dennis LOW-2 / Codex P2).
                         raise StrategyError(
-                            code="nested_child_row_error_unmappable",
+                            code=reasons.runtime.NESTED_CHILD_ROW_ERROR_UNMAPPABLE,
                             strategy="nested",
                             message=(
                                 f"nested child recorded a RowError at leaf position "
@@ -497,7 +498,7 @@ class NestedStrategyHandler:
                 # reliable write must not leak, so reject the whole run.
                 if _writeback_would_corrupt(m.full_path, parsed):
                     raise StrategyError(
-                        code="nested_target_unwritable_container",
+                        code=reasons.runtime.NESTED_TARGET_UNWRITABLE_CONTAINER,
                         strategy="nested",
                         message=(
                             f"nested target resolved to a match whose masked value "

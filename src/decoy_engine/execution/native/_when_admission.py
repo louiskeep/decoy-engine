@@ -25,6 +25,7 @@ from typing import Any
 
 import pyarrow as pa
 
+from decoy_engine import reasons
 from decoy_engine.execution._column_access import column_access, has_when
 from decoy_engine.execution.native._route_decline_codes import (
     CodedDecline,
@@ -37,9 +38,9 @@ from decoy_engine.expressions._when_parser import (
     when_column_refs,
 )
 
-NOT_NATIVE_CODE = "when_predicate_not_native"
-OUTSIDE_SUBSET_CODE = "when_predicate_outside_native_subset"
-READS_MASKED_CODE = "when_predicate_reads_masked_column"
+NOT_NATIVE_CODE = reasons.runtime.WHEN_PREDICATE_NOT_NATIVE
+OUTSIDE_SUBSET_CODE = reasons.runtime.WHEN_PREDICATE_OUTSIDE_NATIVE_SUBSET
+READS_MASKED_CODE = reasons.runtime.WHEN_PREDICATE_READS_MASKED_COLUMN
 
 ADMITTED_WHEN_STRATEGIES = frozenset(
     {"hash", "redact", "truncate", "categorical", "text_redact", "bucket_perturb", "date_shift"}
@@ -187,7 +188,7 @@ def first_when_rejection(
     return None if decline is None else decline.reason
 
 
-_WHEN_DECLINE_CODES = {
+_WHEN_DECLINE_CODES: dict[str, RouteDeclineCode] = {
     NOT_NATIVE_CODE: RouteDeclineCode.WHEN_PREDICATE_NOT_NATIVE,
     OUTSIDE_SUBSET_CODE: RouteDeclineCode.WHEN_OUTSIDE_SUBSET,
     READS_MASKED_CODE: RouteDeclineCode.WHEN_READS_MASKED_COLUMN,

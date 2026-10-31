@@ -75,7 +75,7 @@ def _fk_pure_mask_config(tmp_path: Path) -> dict[str, Any]:
     parent_src = _write_source(tmp_path, parent, "parent")
     child_src = _write_source(tmp_path, child, "child")
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"job_name": "s2-routing-fk", "seed": 7},
         "sources": {
             "parent": {"type": "file", "path": parent_src, "format": "parquet"},
@@ -123,7 +123,7 @@ def _no_relationships_config(tmp_path: Path) -> dict[str, Any]:
     src = pa.table({"email": pa.array([f"u{i}@x.com" for i in range(5)], type=pa.string())})
     src_path = _write_source(tmp_path, src, "t")
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"job_name": "s2-routing-no-fk", "seed": 7},
         "sources": {"t": {"type": "file", "path": src_path, "format": "parquet"}},
         "targets": {
@@ -141,7 +141,7 @@ def _generate_plus_mask_config(tmp_path: Path) -> dict[str, Any]:
     parent_src = _write_source(tmp_path, parent, "parent")
     child_src = _write_source(tmp_path, child, "child")
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"job_name": "s2-routing-mixed", "seed": 7},
         "sources": {
             "parent": {"type": "file", "path": parent_src, "format": "parquet"},
@@ -359,7 +359,7 @@ class TestNonFkNoRegression:
         )
 
         config: dict[str, Any] = {
-            "version": 1,
+            "version": 2,
             "global_settings": {"job_name": "s2-routing-nit", "seed": 7},
             "sources": {},
             "targets": {
@@ -529,7 +529,7 @@ def _cycle_config(tmp_path: Path) -> dict[str, Any]:
     a_src = _write_source(tmp_path, a, "a")
     b_src = _write_source(tmp_path, b, "b")
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"job_name": "s2-cycle-routing", "seed": 7},
         "sources": {
             "a": {"type": "file", "path": a_src, "format": "parquet"},
@@ -607,7 +607,7 @@ class TestCrossTableFkCycleRoutingGuard:
         )
         src = _write_source(tmp_path, employees, "employees")
         config: dict[str, Any] = {
-            "version": 1,
+            "version": 2,
             "global_settings": {"job_name": "s2-selfref-routing", "seed": 7},
             "sources": {"employees": {"type": "file", "path": src, "format": "parquet"}},
             "targets": {

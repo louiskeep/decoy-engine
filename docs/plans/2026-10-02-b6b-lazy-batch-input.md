@@ -1,6 +1,7 @@
 # LazySource batch input on the auto-chunk lane (Rust engine program B6b)
 
-Status: plan (revision 2.1: folds the Codex plan-gate round 2 REVISE on revision 2; revision 2 folded round 1 and dennis's B6a MEDIUM-3)
+Status: built
+Shipped: docs/records/2026-10-03-b6b-lazy-batch-input-build.md
 
 Revision 2.1 note (Codex plan gate round 2 on revision 2, `61733349`: REVISE, 0 BLOCKER, 2 HIGH, 2 MEDIUM, 1 LOW; round 1's BLOCKER and nine other findings closed; Codex's plan-text patches applied as given):
 

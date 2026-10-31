@@ -1,6 +1,7 @@
 # Phase D / D1c: date sentinel-preserve
 
-Status: plan (rev 4, pre-gate). rev 1 NO-GO (6 HIGH/1 MEDIUM), rev 2 NO-GO (4
+Status: built
+Shipped: merge PR #240 (888b596a)
 HIGH/2 MEDIUM/1 LOW), rev 3 NO-GO (1 HIGH/2 MEDIUM; core design confirmed sound).
 rev 4 folds the final three: compile-reject `preserve_values` + `group_by`
 (the group-anchor snapshot index conflict); reject `%Z` and make pandas the

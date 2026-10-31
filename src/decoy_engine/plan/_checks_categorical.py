@@ -27,6 +27,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from decoy_engine import reasons
 from decoy_engine.plan._errors import PlanCompileError
 
 
@@ -84,7 +85,7 @@ def check_categorical_categories(config: dict[str, Any]) -> None:
 
             if categories is not None and not isinstance(categories, (list, tuple)):
                 raise PlanCompileError(
-                    code="categorical_categories_not_list",
+                    code=reasons.plan.CATEGORICAL_CATEGORIES_NOT_LIST,
                     path=f"tables.{table_name}.columns.{col_name}.provider_config.categories",
                     message=(
                         f"categorical column {col_name!r} in table {table_name!r} has "
@@ -99,7 +100,7 @@ def check_categorical_categories(config: dict[str, Any]) -> None:
 
             if categories is None or len(categories) == 0:
                 raise PlanCompileError(
-                    code="categorical_categories_missing",
+                    code=reasons.plan.CATEGORICAL_CATEGORIES_MISSING,
                     path=f"tables.{table_name}.columns.{col_name}.provider_config.categories",
                     message=(
                         f"categorical column {col_name!r} in table {table_name!r} has "

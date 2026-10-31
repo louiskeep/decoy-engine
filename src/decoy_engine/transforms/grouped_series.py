@@ -50,6 +50,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from decoy_engine import reasons
 from decoy_engine.determinism._derive import derive
 from decoy_engine.plan._errors import PlanCompileError
 
@@ -105,7 +106,7 @@ class GroupedSeriesConfig:
         group_by = cfg.get("group_by")
         if not group_by:
             raise PlanCompileError(
-                code="grouped_series_group_by_missing",
+                code=reasons.plan.GROUPED_SERIES_GROUP_BY_MISSING,
                 path="provider_config.group_by",
                 message=(
                     "'group_by' is required for the grouped_series strategy. "
@@ -116,7 +117,7 @@ class GroupedSeriesConfig:
         order_by = cfg.get("order_by")
         if not order_by:
             raise PlanCompileError(
-                code="grouped_series_order_by_missing",
+                code=reasons.plan.GROUPED_SERIES_ORDER_BY_MISSING,
                 path="provider_config.order_by",
                 message=(
                     "'order_by' is required for the grouped_series strategy. "
@@ -128,7 +129,7 @@ class GroupedSeriesConfig:
         generator = str(cfg.get("generator", "cumcount"))
         if generator not in GROUPED_SERIES_GENERATORS:
             raise PlanCompileError(
-                code="grouped_series_generator_invalid",
+                code=reasons.plan.GROUPED_SERIES_GENERATOR_INVALID,
                 path="provider_config.generator",
                 message=(
                     f"'generator' must be one of "
@@ -144,7 +145,7 @@ class GroupedSeriesConfig:
 
         if step < 0 or step > max_step:
             raise PlanCompileError(
-                code="grouped_series_step_out_of_range",
+                code=reasons.plan.GROUPED_SERIES_STEP_OUT_OF_RANGE,
                 path="provider_config.step",
                 message=(
                     f"'step' ({step}) must be in [0, max_step ({max_step})]. "

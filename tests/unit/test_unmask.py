@@ -31,7 +31,7 @@ def _validated(cfg: dict) -> dict:
 def _config(tmp_path, columns: list[dict], seed: int = 42) -> dict:
     return _validated(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": seed},
             "sources": {
                 "accounts": {

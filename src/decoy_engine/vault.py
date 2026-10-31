@@ -72,7 +72,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import pyarrow as pa
 
-from decoy_engine import fileaccess
+from decoy_engine import fileaccess, reasons
 from decoy_engine.determinism import SEED_PROTOCOL_VERSION, derive
 from decoy_engine.errors import DecoyError
 from decoy_engine.fileaccess import (
@@ -117,12 +117,16 @@ def _read_frame(blob: bytes, offset: int) -> tuple[bytes, int]:
     fails cleanly instead of slicing past the end.
     """
     if offset + 4 > len(blob):
-        raise VaultError(code="vault_unreadable", message="vault file truncated (length prefix)")
+        raise VaultError(
+            code=reasons.runtime.VAULT_UNREADABLE, message="vault file truncated (length prefix)"
+        )
     length = int.from_bytes(blob[offset : offset + 4], "big")
     start = offset + 4
     end = start + length
     if end > len(blob):
-        raise VaultError(code="vault_unreadable", message="vault file truncated (block body)")
+        raise VaultError(
+            code=reasons.runtime.VAULT_UNREADABLE, message="vault file truncated (block body)"
+        )
     return blob[start:end], end
 
 
@@ -144,7 +148,7 @@ def _fernet(mask_key: bytes) -> Any:
         from cryptography.fernet import Fernet
     except ImportError as exc:
         raise VaultError(
-            code="vault_crypto_not_installed",
+            code=reasons.runtime.VAULT_CRYPTO_NOT_INSTALLED,
             message=(
                 f"the vault needs the `cryptography` package; install the "
                 f"vault extra: {_INSTALL_HINT}"
@@ -237,7 +241,7 @@ class VaultWriter:
         """
         if not hmac.compare_digest(self._mask_key, mask_key):
             raise VaultError(
-                code="vault_key_mismatch",
+                code=reasons.runtime.VAULT_KEY_MISMATCH,
                 message=(
                     "the supplied vault writer is keyed with a different secret than "
                     "the masking run resolved. Build the vault writer from the same "
@@ -350,7 +354,7 @@ def assert_vault_writer_keyed(vault_writer: object, mask_key: bytes) -> None:
     """
     if not isinstance(vault_writer, VaultWriter):
         raise VaultError(
-            code="vault_writer_unsupported",
+            code=reasons.runtime.VAULT_WRITER_UNSUPPORTED,
             message=(
                 "vault_writer must be a decoy_engine.vault.VaultWriter so its "
                 "keyed-mask key can be verified against the run secret "
@@ -441,7 +445,7 @@ def load_vault(
         if fileaccess.keeps_class(exc):
             raise
         raise VaultError(
-            code="vault_unreadable",
+            code=reasons.runtime.VAULT_UNREADABLE,
             message=f"vault file {shown!r} could not be read: {exc}",
         ) from exc
     finally:
@@ -449,7 +453,7 @@ def load_vault(
             handle.close()
     if not blob.startswith(_MAGIC):
         raise VaultError(
-            code="vault_unreadable",
+            code=reasons.runtime.VAULT_UNREADABLE,
             message=f"{shown!r} is not a decoy vault file (bad magic header).",
         )
 
@@ -463,12 +467,13 @@ def load_vault(
         header = json.loads(header_bytes)
     except (ValueError, UnicodeDecodeError) as exc:
         raise VaultError(
-            code="vault_unreadable", message=f"vault {shown!r} has an unreadable header"
+            code=reasons.runtime.VAULT_UNREADABLE,
+            message=f"vault {shown!r} has an unreadable header",
         ) from exc
     fmt = header.get("format")
     if fmt != VAULT_FORMAT_VERSION:
         raise VaultError(
-            code="vault_format_unsupported",
+            code=reasons.runtime.VAULT_FORMAT_UNSUPPORTED,
             message=(
                 f"vault {shown!r} declares format {fmt!r}; this engine "
                 f"consumes {VAULT_FORMAT_VERSION!r}."
@@ -477,7 +482,7 @@ def load_vault(
     vault_version = header.get("seed_protocol_version")
     if vault_version != SEED_PROTOCOL_VERSION:
         raise VaultError(
-            code="vault_protocol_version_mismatch",
+            code=reasons.runtime.VAULT_PROTOCOL_VERSION_MISMATCH,
             message=(
                 f"vault {shown!r} was written under seed protocol version "
                 f"{vault_version!r}; this engine runs version {SEED_PROTOCOL_VERSION!r}. "
@@ -497,7 +502,7 @@ def load_vault(
             payload = fernet.decrypt(token)
         except InvalidToken as exc:
             raise VaultError(
-                code="vault_key_mismatch",
+                code=reasons.runtime.VAULT_KEY_MISMATCH,
                 message=(
                     "the config's seed does not decrypt this vault; pass the SAME "
                     "pipeline config the mask run that wrote the vault used."

@@ -15,6 +15,7 @@ from typing import Any
 
 import polars as pl
 
+from decoy_engine import reasons
 from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.fileaccess.adapters import serial
 from decoy_engine.plan._types import PlanRelationship
@@ -207,7 +208,7 @@ def subset_inputs_from_config(
     subset_block = config.get("subset")
     if subset_block is None:
         raise SubsetConfigError(
-            code="subset_config_missing",
+            code=reasons.config.SUBSET_CONFIG_MISSING,
             message="config has no `subset:` block; subset_inputs_from_config requires one",
         )
 
@@ -215,7 +216,7 @@ def subset_inputs_from_config(
     for name, src in config.get("sources", {}).items():
         if src.get("type") != "file":
             raise SubsetConfigError(
-                code="subset_source_type_unsupported",
+                code=reasons.config.SUBSET_SOURCE_TYPE_UNSUPPORTED,
                 message=f"table {name!r}: subsetting only supports local file sources "
                 f"(got type={src.get('type')!r}); DB / cloud sources are deferred (GATE-1 #2)",
             )

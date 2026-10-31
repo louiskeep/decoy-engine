@@ -55,7 +55,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 
-from decoy_engine import fileaccess
+from decoy_engine import fileaccess, reasons
 from decoy_engine.sdk import PermanentError
 
 __all__ = [
@@ -237,7 +237,9 @@ def _open_connection(config: PostgresSnapshotConfig, spill_dir: Path) -> Any:
             }
         )
     except Exception as exc:
-        raise PostgresSnapshotError("duckdb_unavailable", cause_type=type(exc).__name__) from None
+        raise PostgresSnapshotError(
+            reasons.connector.DUCKDB_UNAVAILABLE, cause_type=type(exc).__name__
+        ) from None
     return conn
 
 
@@ -250,15 +252,15 @@ def _load_postgres_extension(conn: Any, config: PostgresSnapshotConfig) -> None:
         ).fetchone()
     except Exception as exc:
         raise PostgresSnapshotError(
-            "extension_unavailable", cause_type=type(exc).__name__
+            reasons.connector.EXTENSION_UNAVAILABLE, cause_type=type(exc).__name__
         ) from None
     if not row or not row[0]:
-        raise PostgresSnapshotError("extension_unavailable")
+        raise PostgresSnapshotError(reasons.connector.EXTENSION_UNAVAILABLE)
     installed_under = str(row[1] or "")
     # An extension that loaded from anywhere but the bundled directory means the
     # offline pin was bypassed, so refuse it.
     if not installed_under.startswith(str(ext_dir)):
-        raise PostgresSnapshotError("extension_untrusted_location")
+        raise PostgresSnapshotError(reasons.connector.EXTENSION_UNTRUSTED_LOCATION)
 
 
 # ----- type fidelity ------------------------------------------------------
@@ -321,17 +323,17 @@ def _check_types(conn: Any, sel: RelationSelection) -> dict[str, str]:
         ).fetchall()
     except Exception as exc:
         raise PostgresSnapshotError(
-            "catalog_read_failed", location=sel.key, cause_type=type(exc).__name__
+            reasons.connector.CATALOG_READ_FAILED, location=sel.key, cause_type=type(exc).__name__
         ) from None
     # DuckDB resolves schema, table and column names case-insensitively, so a
     # source with names differing only by case would export the wrong object
     # without any error. Fetch case-insensitive matches and reject ambiguity,
     # then require an exact-case match so a near miss is never resolved.
     if len({r[0] for r in rows}) > 1 or len({(r[0], r[1]) for r in rows}) > 1:
-        raise PostgresSnapshotError("ambiguous_name", location=sel.key)
+        raise PostgresSnapshotError(reasons.connector.AMBIGUOUS_NAME, location=sel.key)
     rows = [r for r in rows if r[0] == sel.schema_name and r[1] == sel.table]
     if not rows:
-        raise PostgresSnapshotError("relation_not_found", location=sel.key)
+        raise PostgresSnapshotError(reasons.connector.RELATION_NOT_FOUND, location=sel.key)
     folded: dict[str, int] = {}
     for r in rows:
         folded[r[2].lower()] = folded.get(r[2].lower(), 0) + 1
@@ -341,15 +343,19 @@ def _check_types(conn: Any, sel: RelationSelection) -> dict[str, str]:
     # a, A_1), which can then shadow a real column like a_1 and export the
     # wrong column with no error. The whole relation is unsafe, so refuse it.
     if any(count > 1 for count in folded.values()):
-        raise PostgresSnapshotError("ambiguous_name", location=sel.key)
+        raise PostgresSnapshotError(reasons.connector.AMBIGUOUS_NAME, location=sel.key)
     declared = {r[2]: (r[3], r[4]) for r in rows}
     classes: dict[str, str] = {}
     for col in sel.columns:
         if col not in declared:
-            raise PostgresSnapshotError("column_not_found", location=f"{sel.key}.{col}")
+            raise PostgresSnapshotError(
+                reasons.connector.COLUMN_NOT_FOUND, location=f"{sel.key}.{col}"
+            )
         cls = _classify(*declared[col])
         if cls is None:
-            raise PostgresSnapshotError("unsupported_column_type", location=f"{sel.key}.{col}")
+            raise PostgresSnapshotError(
+                reasons.connector.UNSUPPORTED_COLUMN_TYPE, location=f"{sel.key}.{col}"
+            )
         classes[col] = cls
     return classes
 
@@ -398,11 +404,13 @@ def _guard_values(conn: Any, sel: RelationSelection, classes: dict[str, str]) ->
         ).fetchone()
     except Exception as exc:
         raise PostgresSnapshotError(
-            "value_guard_failed", location=sel.key, cause_type=type(exc).__name__
+            reasons.connector.VALUE_GUARD_FAILED, location=sel.key, cause_type=type(exc).__name__
         ) from None
     for (col, _), n in zip(checks, counts or (), strict=True):
         if n:
-            raise PostgresSnapshotError("value_not_representable", location=f"{sel.key}.{col}")
+            raise PostgresSnapshotError(
+                reasons.connector.VALUE_NOT_REPRESENTABLE, location=f"{sel.key}.{col}"
+            )
 
 
 # ----- export -------------------------------------------------------------
@@ -438,10 +446,10 @@ def snapshot_tables_to_parquet(
     """
     fileaccess.require_ambient("the Postgres snapshot")
     if not selections:
-        raise PostgresSnapshotError("no_selections")
+        raise PostgresSnapshotError(reasons.connector.NO_SELECTIONS)
     keys = [s.key for s in selections]
     if len(set(keys)) != len(keys):
-        raise PostgresSnapshotError("duplicate_relation")
+        raise PostgresSnapshotError(reasons.connector.DUPLICATE_RELATION)
 
     run_id = uuid.uuid4().hex
     dest_dir.mkdir(parents=True, exist_ok=True)
@@ -480,7 +488,7 @@ def snapshot_tables_to_parquet(
             )
         except Exception as exc:
             raise PostgresSnapshotError(
-                "source_unreachable", cause_type=type(exc).__name__
+                reasons.connector.SOURCE_UNREACHABLE, cause_type=type(exc).__name__
             ) from None
 
         staged: dict[str, Path] = {}
@@ -498,15 +506,17 @@ def snapshot_tables_to_parquet(
             conn.execute("COMMIT")
         except PostgresSnapshotError:
             if timed_out.is_set():
-                raise PostgresSnapshotError("deadline_exceeded") from None
+                raise PostgresSnapshotError(reasons.connector.DEADLINE_EXCEEDED) from None
             raise
         except Exception as exc:
             if timed_out.is_set():
-                raise PostgresSnapshotError("deadline_exceeded") from None
-            raise PostgresSnapshotError("export_failed", cause_type=type(exc).__name__) from None
+                raise PostgresSnapshotError(reasons.connector.DEADLINE_EXCEEDED) from None
+            raise PostgresSnapshotError(
+                reasons.connector.EXPORT_FAILED, cause_type=type(exc).__name__
+            ) from None
 
         if timed_out.is_set():
-            raise PostgresSnapshotError("deadline_exceeded")
+            raise PostgresSnapshotError(reasons.connector.DEADLINE_EXCEEDED)
         os.replace(stage_dir, final_dir)
         published = True
         _log.info("postgres_snapshot published relations=%d", len(staged))
