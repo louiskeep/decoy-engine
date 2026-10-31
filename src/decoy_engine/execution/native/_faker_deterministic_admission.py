@@ -37,7 +37,7 @@ from decoy_engine.execution.native._route_decline_codes import CodedDecline, Rou
 
 # The string-output provider allowlist (the frozen C1 recipe). A deterministic Faker over a
 # numeric source draws through the string pool, so the admitted set is bounded to these
-# providers, whose output is string by construction; `_resolve_admitted_pools` still validates
+# providers, whose output is string by construction; `resolve_admitted_pools` still validates
 # the actual pool values (M7). This mirrors the position-keyed variant's allowlist.
 _FAKER_PROVIDER_ALLOWLIST = OPERATORS["faker"].provider_allowlist or frozenset()
 
@@ -311,7 +311,7 @@ def deterministic_faker_decline(
     physical type. This gate adds the two conditions that prove the oracle's pandas conversion is
     an identity on the source value: a chunked stream guarantee, and the closed metadata-shape
     allowlist over the guaranteed schema. The string-output provider / pool check is the shared
-    `_resolve_admitted_pools` validator, not repeated here."""
+    `resolve_admitted_pools` validator, not repeated here."""
     if source_type not in DETERMINISTIC_FAKER_SOURCE_TYPES or not provider_allowlisted:
         # float / temporal / decimal / ... and any non-allowlisted (non-string-output) provider
         # keep the existing non-string decline reason, so they run the oracle unchanged.

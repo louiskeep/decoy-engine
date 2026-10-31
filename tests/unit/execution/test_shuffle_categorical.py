@@ -15,6 +15,7 @@ from decoy_engine.plan._types import ColumnSeed, SeedEnvelope, TableSeed
 from decoy_engine.providers_v2 import get_default_registry
 from decoy_engine.relationships._graph import RelationshipGraph
 from decoy_engine.relationships._namespace import NamespaceRegistry
+from tests._keyed_secret import THROWAWAY_KEY_PROVIDER
 
 _REG = get_default_registry()
 _GRAPH = RelationshipGraph(edges=(), ordering=())
@@ -63,7 +64,7 @@ class _Ctx:
     conversion the pipeline applies)."""
 
     job_seed = _SEED
-    mask_key = _SEED
+    mask_key = THROWAWAY_KEY_PROVIDER.mask_key()
 
 
 def _direct_seed() -> ColumnSeed:
@@ -123,7 +124,18 @@ class TestShuffle:
         src = pa.table({"c": ["a", "b", "c", "d", "e"]})
         seed = _col("shuffle", namespace="sh", deterministic=True)
         out = _run(_plan("c", seed), src).output.column("c").to_pylist()
-        assert out == ["c", "d", "e", "a", "b"]
+        # Re-pinned under F13 because job_seed keying was removed (was c,d,e,a,b).
+        assert out == ["c", "b", "d", "e", "a"]
+        # The direct handler, keyed by the same secret, reproduces it independently.
+        from decoy_engine.execution._strategies._shuffle import ShuffleStrategyHandler
+
+        direct, _ = ShuffleStrategyHandler().run(
+            src.to_pandas(),
+            "c",
+            seed,
+            _Ctx(),  # type: ignore[arg-type]
+        )
+        assert direct["c"].tolist() == out
 
     def test_output_keeps_object_dtype_and_null_not_nan(self) -> None:
         # Q13: an int column widens to float64 in pandas once it carries a null;
@@ -157,13 +169,19 @@ class TestShuffle:
             _plan("d", _col("shuffle", namespace="sh", deterministic=True)), src
         ).output.column("d")
         assert col.type == pa.timestamp("us")
-        assert [str(pd.Timestamp(v).date()) for v in col.to_pylist()] == [
-            "2024-04-04",
-            "2024-05-05",
-            "2024-02-02",
-            "2024-01-01",
-            "2024-03-03",
-        ]
+        # Re-pinned under F13 because job_seed keying was removed (was 04-04, 05-05, 02-02,
+        # 01-01, 03-03); the direct handler under the same secret reproduces it.
+        expected = ["2024-05-05", "2024-04-04", "2024-03-03", "2024-01-01", "2024-02-02"]
+        assert [str(pd.Timestamp(v).date()) for v in col.to_pylist()] == expected
+        from decoy_engine.execution._strategies._shuffle import ShuffleStrategyHandler
+
+        direct, _ = ShuffleStrategyHandler().run(
+            src.to_pandas(),
+            "d",
+            _col("shuffle", namespace="sh", deterministic=True),
+            _Ctx(),  # type: ignore[arg-type]
+        )
+        assert [str(pd.Timestamp(v).date()) for v in direct["d"]] == expected
 
     def test_non_default_index_preserved_and_aligned(self) -> None:
         # The output Series must carry the source index; a RangeIndex (index=None

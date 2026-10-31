@@ -9,6 +9,37 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Added (F13: secret-provider contract and preflight, engine slices, 2026-10-30)
+
+New `decoy_engine.secret_providers`: the versioned `secret-provider/v1` contract (`describe` / `resolve`
+/ `preflight`), per-algorithm validation (`decoy-mask-root-v1`, `fernet-v1`, `hmac-sha256-v1`, `aes-gcm-v1`;
+no universal 32-byte rule), a redacted `SecretBuffer`, a thread-safe bounded cache (off by default, 60 s
+maximum, `min(ttl, provider_expiry - 5 s)`, 128 entries, expired entries and single-flight locks pruned on
+access, entries scoped to the provider instance, the admitting registry and every field of the
+provider's immutable `ResolveContext`, the same object `resolve(ref, context)` reads with),
+`env:`/`file:` providers with explicit `?encoding=`, and an
+optional HashiCorp Vault KV v2 adapter (`pip install decoy-engine[hashicorp-vault]`, `hvac==2.4.0`,
+exact-version references, TLS verification mandatory; the provider is immutable and copies the
+client's address, namespace, token and TLS settings at construction). The keyed-mask secret is now admitted from
+configuration BEFORE `profile_source`, before a chunk iterator is touched (`run_mask_chunked`,
+`run_mask_pipeline_chunked`) and before unmask / vault-writer reads. Seven registered `runtime` reasons
+(`secret_provider_unknown`, `secret_provider_unavailable`, `secret_access_denied`,
+`secret_version_unavailable`, `secret_expired`, `secret_lease_unsupported`, `secret_material_invalid`);
+`REGISTRY_VERSION` 1.1.0. Admission failures are rebuilt from their registered code (provider-supplied
+messages are dropped) and raised without the failing frames' traceback; the boundary covers every
+`BaseException` except `KeyboardInterrupt` and `SystemExit`. Docs:
+`docs/security/secret-providers.md`.
+
+### Removed (pre-GA hard delete, F13)
+
+- The keyed `job_seed` fallback: keyed work with no admitted secret fails with
+  `keyed_strategy_requires_secret` in every release phase. `SeedKeyProvider` remains importable but is never
+  a secret. Removed from `decoy_engine.keyprovider`: `resolve_mask_secret_ref`, `resolve_key_provider`
+  (use `secret_providers.admit_mask_key`); `resolve_mask_key` no longer takes `mask_secret_ref`;
+  `key_provider_from_ref` is now a wrapper over the admission choke point. An unknown ref scheme is
+  `secret_provider_unknown` (was `bad_secret_ref`). Test and bench keyed fixtures were migrated to a
+  shared throwaway secret and their pinned literals re-captured.
+
 ### Added (F29: stable machine-readable errors and progress, engine slices, 2026-10-29)
 
 New public `decoy_engine.reasons`: one engine-owned, versioned registry of reason codes (`registry_version`

@@ -36,6 +36,14 @@ important cultural event at launch is recognizing that the frozen surface is now
 frozen, and that the team's reflex of "just delete it and refresh the fixtures"
 is, for that surface, now a breaking change to a customer.
 
+**Pre-GA corrections already taken (F13, 2026-10-30).** The keyed `job_seed` fallback is removed in
+every release phase: keyed work with no admitted secret fails with `keyed_strategy_requires_secret`, and
+`SeedKeyProvider` is import-compatible but never a secret. `KeyProvider` (the two-member protocol) is
+unchanged and duck-typed providers keep working through `secret_providers.prepare_legacy`; the new
+`secret-provider/v1` protocol, `decoy_engine.secret_providers` exports and the `secret_registry` /
+`secret_cache_policy` keywords of `run_pipeline` are additive. Removed pre-GA with no shim:
+`keyprovider.resolve_mask_secret_ref` and `resolve_key_provider`.
+
 Until GA: use this document as the design target so we don't paint ourselves
 into a corner. After GA: this document is binding.
 

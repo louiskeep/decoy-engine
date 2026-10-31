@@ -42,7 +42,7 @@ from decoy_engine.generation.pool import GenerationError
 from decoy_engine.relationships._graph import OrphanPolicy
 from tests.native._chunked_faker_support import oracle_pool_for
 from tests.parity import _d2b_shapes as s
-from tests.parity._d1a_hash_data import JOB_SEED
+from tests.parity._d1a_hash_data import JOB_SEED, MASK_KEY
 from tests.parity._d2b_shapes import hashed, make_plan, run_full, run_seq, strs, table_seed
 from tests.parity._d2c_cat_data import (
     CatMarkingKernel,
@@ -111,7 +111,7 @@ def test_deterministic_leg_hands_the_kernel_the_source_keyed_on_the_mask_key(
         len(SRC),
         pa.string(),
         POOL,
-        JOB_SEED,
+        MASK_KEY,
     )
     first = _expected_value(seed)
     assert out.outputs["P"].column("f").to_pylist() == [None if v is None else first for v in SRC]

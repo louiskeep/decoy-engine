@@ -408,6 +408,8 @@ def test_ci_collects_the_registry_guards() -> None:
 # is a reviewed registry addition; this list may only shrink.
 UNCLASSIFIED: dict[str, str] = {
     "DecoyError": "the root class; a subclass without an identity is unclassified, not this",
+    "VaultClientConfigError": "a Vault client-construction error raised by the CLI helper before any run; fixed value-free text",
+    "SecretClosedError": "an internal invariant breach (a closed secret buffer was used); not a user-facing failure",
     "ConnectorError": "the connector base; Transient/Permanent subclasses carry the meaning",
     "ConnectorAuthError": "an authentication failure has no code yet; its text may echo a target",
     "FKPreservationError": "base of EmptyParentPool/UnknownFKColumn, which are classified",

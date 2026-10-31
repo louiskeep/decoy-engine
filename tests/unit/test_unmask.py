@@ -118,17 +118,20 @@ class TestRoundTrip:
         result = unmask_pipeline(cfg, masked)
         assert result.outputs["accounts"].column("pan").to_pylist() == source
 
-    def test_wrong_seed_does_not_recover(self, tmp_path):
-        """A single value recovering by coincidence under the wrong seed is
+    def test_wrong_secret_does_not_recover(self, tmp_path):
+        """A single value recovering by coincidence under the wrong secret is
         legal for a permutation, so the guard is aggregate across several
-        independent values rather than a universal per-value claim."""
+        independent values rather than a universal per-value claim. job_seed no
+        longer keys fpe, so the wrong key is a wrong secret."""
         cfg = _config(tmp_path, [_fpe_col("acct")], seed=42)
         source = ["123456789", "987654321", "000000042"]
-        masked = _mask(tmp_path, cfg, pd.DataFrame({"acct": source}))
-        wrong = _config(tmp_path, [_fpe_col("acct")], seed=43)
-        result = unmask_pipeline(wrong, masked)
+        masked = _mask(tmp_path, cfg, pd.DataFrame({"acct": source}), key_provider=_SECRET)
+        wrong = SecretKeyProvider(b"a-different-32B+-secret-value-xyz!!", key_version="v1")
+        result = unmask_pipeline(cfg, masked, key_provider=wrong)
         recovered = result.outputs["accounts"].column("acct").to_pylist()
         assert any(r != s for r, s in zip(recovered, source, strict=True))
+        right = unmask_pipeline(cfg, masked, key_provider=_SECRET)
+        assert right.outputs["accounts"].column("acct").to_pylist() == source
 
 
 class TestReport:
