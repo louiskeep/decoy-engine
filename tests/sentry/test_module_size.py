@@ -74,7 +74,7 @@ ALLOWLIST: dict[str, int] = {
     # wiring of the fk-dtype hazard and D3a validator signals into the one routing call site, plus
     # the B4 source-type admission threading (_source_arrow_types + the source_types param); split
     # the probe-recovery resolver into its own module.
-    "src/decoy_engine/execution/_pipeline_routing_signals.py": 645,
+    "src/decoy_engine/execution/_pipeline_routing_signals.py": 639,
     # fan-in guard on the budget resolver; split the disk-preflight helpers into _disk_budget.py.
     "src/decoy_engine/execution/out_of_core/_budget.py": 609,
     # float FK key token pricing; split the disk-width helpers into _spill_widths.py.
@@ -97,7 +97,7 @@ ALLOWLIST: dict[str, int] = {
     # dispatch entry plus the table-keyed params, the job-seed hand-off and the eager string-pool
     # check for the position-keyed faker; dense exception, the pool check itself lives in _chunk_masking.
     # OBS-2: threads the decline records and branch-call snapshot onto each chunk's evidence.
-    "src/decoy_engine/execution/native/_chunked_entry.py": 684,
+    "src/decoy_engine/execution/native/_chunked_entry.py": 666,
     # OBS-2b: one structured decline record paired with each existing decision source; the record
     # types live in _route_decline_codes.py. Split the static admission pass out next.
     "src/decoy_engine/execution/native/_dispatch.py": 666,
@@ -139,8 +139,8 @@ ALLOWLIST: dict[str, int] = {
     "scripts/bench-unified-slice/bench_compare.py": 894,
     "scripts/build_golden_fixtures.py": 606,
     "scripts/faker-determinism/check_determinism.py": 601,
-    "scripts/fk_memory_probe.py": 1093,
-    "scripts/gen_proof_manifest.py": 1241,
+    "scripts/fk_memory_probe.py": 1056,
+    "scripts/gen_proof_manifest.py": 1237,
     "scripts/native-baseline/bench_c1_oracle.py": 767,
     "scripts/tb3_cgroup_validation.py": 603,
     "scripts/tq_mutate.py": 822,

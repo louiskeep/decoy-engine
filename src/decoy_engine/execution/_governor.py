@@ -145,7 +145,8 @@ _DEFAULT_POLL_INTERVAL_S = 1.5
 
 GovernorTripKind = Literal["governor_kill", "self_oom", "route_ineligible", "crashed"]
 
-# `decide_execution_route` raises a typed `SeqIneligibleError` / `OocIneligibleError` when an explicit
+# `decide_execution_route` raises an exact `ConfigError` tagged with the typed `route.sequential_ineligible`
+# / `route.out_of_core_ineligible` identity (`_errors.seq_ineligible` / `ooc_ineligible`) when an explicit
 # `execution_mode` names a route the job is NOT eligible for. Across the process boundary it arrives
 # as `IsolatedRunResult.reason` with a closed registry identity, and that identity (never the
 # `error` text, the child's output, or the text of a general `ConfigError`) is what the governor

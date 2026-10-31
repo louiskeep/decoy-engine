@@ -123,11 +123,6 @@ _POLICY_MARKERS = (
 
 # (module path relative to decoy_engine, qualified function, variable) -> (count, reason).
 WAIVERS: dict[tuple[str, str, str], tuple[int, str]] = {
-    ("keyprovider.py", "resolve_mask_secret_ref", "path"): (
-        2,
-        "ambient-only branch: under a strict policy the read returns via _strict_secret_from_file "
-        "(X1), so these two raises only run on the ambient CLI, which may name the secret file",
-    ),
     ("profile/_readers.py", "_build_file_source", "path"): (
         1,
         "reports a malformed non-string `path` config field (repr of a non-str), not a locator",

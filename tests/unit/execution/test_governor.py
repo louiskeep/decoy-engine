@@ -56,7 +56,7 @@ import pytest
 from decoy_engine.config import PipelineConfig
 from decoy_engine.errors import ConfigError
 from decoy_engine.execution import _governor, _governor_monitor
-from decoy_engine.execution._errors import OocIneligibleError, SeqIneligibleError
+from decoy_engine.execution._errors import ooc_ineligible, seq_ineligible
 from decoy_engine.execution._governor import (
     GovernorResult,
     GovernorTripRecord,
@@ -172,11 +172,10 @@ _SEQUENTIAL_INELIGIBLE_ERROR = (
 
 def _ineligible_result(route: str, error: str) -> IsolatedRunResult:
     """A crash carrying the engine's typed route-ineligibility identity, as the worker sends it."""
-    from decoy_engine.execution._errors import OocIneligibleError, SeqIneligibleError
     from decoy_engine.reason_adapter import reason_from_exception
 
-    exc_type = OocIneligibleError if route == "out_of_core" else SeqIneligibleError
-    return _crashed_result(error, reason_from_exception(exc_type(error)))
+    make = ooc_ineligible if route == "out_of_core" else seq_ineligible
+    return _crashed_result(error, reason_from_exception(make(error)))
 
 
 # --------------------------------------------------------------------------
@@ -926,11 +925,12 @@ class TestRealSubprocessIntegration:
 
 # --------------------------------------------------------------------------
 # MED-3 sentry: every forced-mode ineligibility `decide_execution_route` can
-# raise must be the TYPED error for its route (`SeqIneligibleError` /
-# `OocIneligibleError`). The governor reroutes on the typed reason identity
-# those classes carry across the isolated-process boundary, never on message
-# text; this calls `decide_execution_route` DIRECTLY so a producer that raises
-# a plain `ConfigError` (which would silently stop rerouting) breaks CI here.
+# raise must be an exact `ConfigError` (the pinned public type) that carries the
+# TYPED identity for its route (`route.sequential_ineligible` /
+# `route.out_of_core_ineligible`). The governor reroutes on that identity across
+# the isolated-process boundary, never on message text; this calls
+# `decide_execution_route` DIRECTLY so a producer that raises an untagged
+# `ConfigError` (which would silently stop rerouting) breaks CI here.
 # --------------------------------------------------------------------------
 
 
@@ -1009,51 +1009,56 @@ class TestIneligibleRoutesRaiseTypedErrors:
         kwargs.update(overrides)
         return decide_execution_route(profile, **kwargs)
 
-    def _assert_typed(self, error_type: type[ConfigError], **decide_overrides: Any) -> None:
-        with pytest.raises(error_type):
+    def _assert_typed(self, identity: str, **decide_overrides: Any) -> None:
+        from decoy_engine.reason_adapter import reason_from_exception
+
+        with pytest.raises(ConfigError) as info:
             self._decide(**decide_overrides)
+        assert type(info.value) is ConfigError
+        record = reason_from_exception(info.value)
+        assert (record.namespace, record.code) == ("route", identity)
 
     def test_the_governor_table_covers_exactly_the_routes_with_a_typed_error(self) -> None:
         assert set(_governor._INELIGIBLE_BY_ROUTE) == {"out_of_core", "sequential"}
 
     def test_out_of_core_not_eligible_marker(self) -> None:
         self._assert_typed(
-            OocIneligibleError,
+            "out_of_core_ineligible",
             execution_mode="out_of_core",
             has_generate_table=True,  # disqualifies _sequential_eligible -> not OOC-eligible
         )
 
     def test_out_of_core_not_compatible_marker(self) -> None:
         self._assert_typed(
-            OocIneligibleError,
+            "out_of_core_ineligible",
             execution_mode="out_of_core",
             out_of_core_compatible=False,
         )
 
     def test_out_of_core_no_mask_table_marker(self) -> None:
         self._assert_typed(
-            OocIneligibleError,
+            "out_of_core_ineligible",
             execution_mode="out_of_core",
             has_mask_table=False,
         )
 
     def test_sequential_not_eligible_marker(self) -> None:
         self._assert_typed(
-            SeqIneligibleError,
+            "sequential_ineligible",
             execution_mode="sequential",
             has_generate_table=True,
         )
 
     def test_sequential_cross_table_cycle_marker(self) -> None:
         self._assert_typed(
-            SeqIneligibleError,
+            "sequential_ineligible",
             execution_mode="sequential",
             graph=self._cyclic_graph(),
         )
 
     def test_sequential_no_mask_table_marker(self) -> None:
         self._assert_typed(
-            SeqIneligibleError,
+            "sequential_ineligible",
             execution_mode="sequential",
             has_mask_table=False,
         )
@@ -1128,7 +1133,7 @@ class TestRoutingNeverReadsErrorText:
         from decoy_engine.execution._isolated_reason import reason_from_envelope
         from decoy_engine.reason_adapter import reason_from_exception
 
-        record = reason_from_exception(SeqIneligibleError("any text"))
+        record = reason_from_exception(seq_ineligible("any text"))
         parsed = reason_from_envelope({"reason": record.to_payload()})
         assert _governor._is_route_ineligible("sequential", _crashed_result("e", parsed))
         assert not _governor._is_route_ineligible("out_of_core", _crashed_result("e", parsed))

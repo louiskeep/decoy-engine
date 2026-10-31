@@ -32,6 +32,7 @@ from decoy_engine.execution.out_of_core._batch_join import ChildFkBatchJoiner
 from decoy_engine.execution.out_of_core._reorder_budget import resolve_reorder_budgets
 from decoy_engine.execution.out_of_core._route_policy import REORDER_PARENT_KEY_THRESHOLD
 from decoy_engine.execution.out_of_core._stream_join import StreamFkJoiner
+from tests._keyed_secret import THROWAWAY_KEY_PROVIDER
 
 pytestmark = pytest.mark.filterwarnings("ignore")
 
@@ -169,6 +170,8 @@ def run(
 
 def _batch_reference(tmp: Path, cfg: Any, tables: Any, **kw: Any) -> dict[str, Any]:
     (tmp / "ref").mkdir()
+    # monkeypatch.undo() above also removes the default-secret fixture, so the key is explicit.
+    kw.setdefault("key_provider", THROWAWAY_KEY_PROVIDER)
     return run(tmp / "ref", cfg, tables, **kw)[1]
 
 

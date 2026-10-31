@@ -71,9 +71,10 @@ def test_a_streamed_run_touches_the_tree_only_through_the_policy(tmp_path: Path)
         + """
 lazy = LazySource(__import__("pathlib").Path(path), access=policy)
 sink = ParquetTransactionalSink(os.path.join(root, "out"), file_access=policy)
+from tests._keyed_secret import THROWAWAY_KEY_PROVIDER  # keyed work needs a secret (F13)
 mark("/ATE3-BEGIN")
 run_pipeline(cfg, sources={"t": lazy}, sink=sink, file_access=policy,
-             **support.run_kwargs())
+             key_provider=THROWAWAY_KEY_PROVIDER, **support.run_kwargs())
 mark("/ATE3-END")
 assert os.path.isdir(os.path.join(root, "out"))
 """

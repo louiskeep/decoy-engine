@@ -52,12 +52,12 @@ _OOC_INELIGIBLE_ERROR = (
 
 
 def _typed_ooc_ineligible() -> IsolatedRunResult:
-    from decoy_engine.execution._errors import OocIneligibleError
+    from decoy_engine.execution._errors import ooc_ineligible
     from decoy_engine.reason_adapter import reason_from_exception
 
     return dataclasses.replace(
         _crashed_result(_OOC_INELIGIBLE_ERROR),
-        reason=reason_from_exception(OocIneligibleError(_OOC_INELIGIBLE_ERROR)),
+        reason=reason_from_exception(ooc_ineligible(_OOC_INELIGIBLE_ERROR)),
     )
 
 
@@ -125,11 +125,11 @@ class TestIsRouteIneligible:
         assert _is_route_ineligible("out_of_core", _crashed_result(_OOC_INELIGIBLE_ERROR)) is False
 
     def test_the_typed_identity_is_ineligible_only_for_its_own_route_and_only_when_crashed(self):
-        from decoy_engine.execution._errors import OocIneligibleError
+        from decoy_engine.execution._errors import ooc_ineligible
         from decoy_engine.reason_adapter import reason_from_exception
 
         crashed = _crashed_result("x")
-        record = reason_from_exception(OocIneligibleError("t"))
+        record = reason_from_exception(ooc_ineligible("t"))
         typed = dataclasses.replace(crashed, reason=record)
         assert _is_route_ineligible("out_of_core", typed) is True
         assert _is_route_ineligible("sequential", typed) is False

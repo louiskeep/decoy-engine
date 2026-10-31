@@ -21,7 +21,7 @@ import pytest
 from decoy_engine.data_discovery import DiscoverySqlError, run_discovery_sql
 from decoy_engine.fileaccess import FileAccessDenied, scope
 from decoy_engine.generators.derivation import strategy_config_fingerprint
-from decoy_engine.keyprovider import resolve_mask_secret_ref
+from decoy_engine.keyprovider import key_provider_from_ref
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.plan._generation import read_and_pin_snapshots
 from decoy_engine.profile import profile_source
@@ -135,10 +135,10 @@ def test_v18_fingerprint_of_an_own_snapshot_matches_the_ambient_value(world: Wor
 def test_v9_secret_file_outside_the_root_is_denied(world: World) -> None:
     key = world.sentinel(f"{TOKEN}.key", ("ab" * 32).encode())
     with pytest.raises(FileAccessDenied) as info:
-        resolve_mask_secret_ref(f"file:{key}", file_access=world.policy)
+        key_provider_from_ref(f"file:{key}", file_access=world.policy).mask_key()
     _assert_denial(info.value, "global_settings.mask_secret_ref")
     inside = world.inside("k.key", ("ab" * 32).encode())
-    assert len(resolve_mask_secret_ref(f"file:{inside}", file_access=world.policy)) == 32
+    assert len(key_provider_from_ref(f"file:{inside}", file_access=world.policy).mask_key()) == 32
 
 
 @pytest.mark.parametrize("ref", ["../../x", "/abs/x", "us_zip5_city_state/../../x", "a\0b"])

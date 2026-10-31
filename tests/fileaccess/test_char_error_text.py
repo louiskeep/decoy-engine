@@ -18,7 +18,7 @@ import pytest
 from decoy_engine.errors import ConfigError
 from decoy_engine.generation.statistical._spec import StatisticalSpecError, _load_snapshot
 from decoy_engine.generators.derivation import _snapshot_content_digest
-from decoy_engine.keyprovider import MaskSecretError, MissingMaskSecret, resolve_mask_secret_ref
+from decoy_engine.keyprovider import MaskSecretError, MissingMaskSecret, key_provider_from_ref
 from decoy_engine.profile._readers import LazySource, build_profile_source
 from decoy_engine.reference_tables._loader import load_table
 from decoy_engine.validation import validate_config
@@ -155,21 +155,16 @@ def test_r4_shipped_names_load() -> None:
 
 
 def test_r6_mask_secret_file_errors() -> None:
-    missing = _raises(lambda: resolve_mask_secret_ref("file:nope.key"))
+    missing = _raises(lambda: key_provider_from_ref("file:nope.key").mask_key())
     assert isinstance(missing, MissingMaskSecret)
-    assert _text(missing) == (
-        "missing_mask_secret: mask secret file 'nope.key' (from mask_secret_ref) could not be "
-        "read: [Errno 2] No such file or directory: 'nope.key'."
-    )
+    # Main's text since F13 (value-free; the earlier path-bearing text was removed upstream).
+    assert _text(missing) == "missing_mask_secret: The mask secret could not be resolved."
     Path("bin.key").write_bytes(b"\xff\xfe\x00")
-    bad = _raises(lambda: resolve_mask_secret_ref("file:bin.key"))
+    bad = _raises(lambda: key_provider_from_ref("file:bin.key").mask_key())
     assert isinstance(bad, MaskSecretError)
-    assert _text(bad) == (
-        "bad_secret_ref: mask secret file 'bin.key' (from mask_secret_ref) is not valid UTF-8: "
-        "'utf-8' codec can't decode byte 0xff in position 0: invalid start byte."
-    )
+    assert _text(bad) == "bad_secret_ref: The secret material has an invalid encoding."
     Path("ok.key").write_text("ab" * 32)
-    assert len(resolve_mask_secret_ref("file:ok.key")) == 32
+    assert len(key_provider_from_ref("file:ok.key").mask_key()) == 32
 
 
 def test_r10_vault_read_errors() -> None:

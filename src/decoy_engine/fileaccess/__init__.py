@@ -70,7 +70,6 @@ ENTRY_POINTS: tuple[str, ...] = (
     "decoy_engine.io.bounded_reader.iter_csv_chunks",
     "decoy_engine.io.bounded_reader.iter_parquet_chunks",
     "decoy_engine.keyprovider.key_provider_from_ref",
-    "decoy_engine.keyprovider.resolve_mask_secret_ref",
     "decoy_engine.plan._compile.compile_plan",
     "decoy_engine.plan._compile.run_config_only_checks",
     "decoy_engine.plan._serialize.plan_from_yaml",

@@ -102,7 +102,7 @@ def native_range_exceeded(values: pa.Array, bucket: str, date_format: str) -> bo
     earliest, latest = parsed.min(), parsed.max()
     if pd.isna(earliest):
         return False
-    reach = pd.Timedelta(days=_BUCKET_REACH_DAYS[bucket])
+    reach = pd.Timedelta(_BUCKET_REACH_DAYS[bucket], unit="D")
     return bool(earliest < pd.Timestamp.min + reach or latest > pd.Timestamp.max - reach)
 
 
@@ -255,7 +255,7 @@ def native_bucket_perturb(
             native_threads=native_threads,
             derive_calls=derive_calls,
         )
-        return pc.replace_with_mask(col.cast(pa.string()), rest, computed)
+        return pc.replace_with_mask(col.cast(pa.string()), rest, computed)  # type: ignore[attr-defined, unused-ignore]
 
     # Reproduce the oracle's own series preparation (`apply_bucket_perturb`): an
     # extension-dtype column is coerced to object first, then parsed with the

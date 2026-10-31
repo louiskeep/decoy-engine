@@ -1,0 +1,28 @@
+F13 r3 red baseline: the new tests against d888e81 (the r2 head), Python 3.10.20.
+Command: pytest tests/secret_providers/test_r3_contract.py tests/secret_providers/test_leak_sentry.py
+Result: 13 failed, 33 passed in 2.62s
+
+FAILED tests/secret_providers/test_r3_contract.py::test_a_client_mutated_mid_load_never_poisons_the_cache[describe]
+FAILED tests/secret_providers/test_r3_contract.py::test_a_client_mutated_mid_load_never_poisons_the_cache[resolve-before]
+FAILED tests/secret_providers/test_r3_contract.py::test_a_client_mutated_mid_load_never_poisons_the_cache[resolve-after]
+FAILED tests/secret_providers/test_r3_contract.py::test_a_mid_load_mutation_of_a_vault_client_never_poisons_the_cache
+FAILED tests/secret_providers/test_r3_contract.py::test_invalidate_during_an_inflight_read_inserts_nothing
+FAILED tests/secret_providers/test_r3_contract.py::test_clear_during_an_inflight_read_inserts_nothing
+FAILED tests/secret_providers/test_r3_contract.py::test_a_hit_is_not_served_past_the_calling_policys_shorter_ttl
+FAILED tests/secret_providers/test_leak_sentry.py::test_value_bearing_objects_never_reach_traceback_locals[admit-key-provider]
+FAILED tests/secret_providers/test_leak_sentry.py::test_value_bearing_objects_never_reach_traceback_locals[admit-registry-and-clock]
+FAILED tests/secret_providers/test_leak_sentry.py::test_value_bearing_objects_never_reach_traceback_locals[admit-registry-and-provider]
+FAILED tests/secret_providers/test_leak_sentry.py::test_value_bearing_objects_never_reach_traceback_locals[prepare_legacy-key-provider]
+FAILED tests/secret_providers/test_leak_sentry.py::test_value_bearing_objects_never_reach_traceback_locals[prepare_secret-clock]
+FAILED tests/secret_providers/test_leak_sentry.py::test_value_bearing_objects_never_reach_traceback_locals[prepare_secret-provider]
+
+Not in this list, by design: the audit-count test (the document is already correct at the r2 head;
+it fails only if the document is reverted) and the invalidation tests that assert a fence does not
+apply (they pass both before and after).
+
+Full suite, `pytest tests -n 8` on this branch: 20 failed, 28357 passed. 18 fail identically on the
+unmodified fdd08a89 and on d888e81 in this environment (composite goldens, Faker provider/golden
+tests, the out-of-core trace tests, shadow-snapshot read-only test as root, proof manifest); the other
+2 (throughput and latency budgets) pass when run alone and fail only under the 8-worker load.
+This environment shows 18 baseline failures, not the 4 recorded elsewhere; the set is identical on
+the baseline, so none is caused by r3.

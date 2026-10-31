@@ -182,11 +182,11 @@ def test_the_local_policy_leaves_library_errors_alone() -> None:
 
 
 def test_a_non_utf8_secret_file_under_a_strict_policy_leaks_nothing(rooted, root_dir) -> None:  # type: ignore[no-untyped-def]
-    from decoy_engine.keyprovider import MaskSecretError, resolve_mask_secret_ref
+    from decoy_engine.keyprovider import MaskSecretError, key_provider_from_ref
 
     (root_dir / "secret.bin").write_bytes(b"abcdef\xfe\xfdSECRETTAIL" + b"z" * 40)
     with pytest.raises(MaskSecretError) as ei:
-        resolve_mask_secret_ref("file:secret.bin", file_access=rooted)
+        key_provider_from_ref("file:secret.bin", file_access=rooted).mask_key()
     exc = ei.value
     text = f"{exc!s} {exc!r}"
     assert "secret.bin" not in text and "SECRETTAIL" not in text and "0xfe" not in text
@@ -195,10 +195,10 @@ def test_a_non_utf8_secret_file_under_a_strict_policy_leaks_nothing(rooted, root
 
 
 def test_an_unreadable_secret_under_a_strict_policy_is_a_denial_not_a_path(rooted) -> None:  # type: ignore[no-untyped-def]
-    from decoy_engine.keyprovider import resolve_mask_secret_ref
+    from decoy_engine.keyprovider import key_provider_from_ref
 
     with pytest.raises(FileAccessDenied) as ei:
-        resolve_mask_secret_ref("file:missing.txt", file_access=rooted)
+        key_provider_from_ref("file:missing.txt", file_access=rooted).mask_key()
     assert "missing.txt" not in str(ei.value)
 
 

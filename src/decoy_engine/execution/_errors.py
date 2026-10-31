@@ -15,7 +15,10 @@ Codes used in S9:
 
 from __future__ import annotations
 
+from decoy_engine import reasons
 from decoy_engine.errors import ConfigError, DecoyError
+from decoy_engine.reason_adapter import tag_exception
+from decoy_engine.reasons import Phase, ReasonCode
 
 
 class ExecutionError(DecoyError):
@@ -35,12 +38,21 @@ class StrategyError(ExecutionError):
         super().__init__(code=code, message=f"strategy={strategy!r}: {message}")
 
 
-class SeqIneligibleError(ConfigError):
+def seq_ineligible(message: str) -> ConfigError:
     """An explicit ``execution_mode="sequential"`` for a job that is not eligible for it.
 
-    A typed, engine-authored identity (the governor reroutes on it, never on message text), so a
-    general `ConfigError` whose text happens to say the same thing cannot steer routing."""
+    Exactly a ``ConfigError`` (the public type is pinned) carrying the typed, engine-authored
+    ``route.sequential_ineligible`` identity, so the governor reroutes on the identity and never
+    on message text: a general `ConfigError` whose text says the same thing cannot steer routing.
+    """
+    return _tagged(ConfigError(message), reasons.route.SEQUENTIAL_INELIGIBLE)
 
 
-class OocIneligibleError(ConfigError):
+def ooc_ineligible(message: str) -> ConfigError:
     """An explicit ``execution_mode="out_of_core"`` for a job that is not eligible for it."""
+    return _tagged(ConfigError(message), reasons.route.OUT_OF_CORE_INELIGIBLE)
+
+
+def _tagged(exc: ConfigError, reason: ReasonCode) -> ConfigError:
+    tag_exception(exc, reason, phase=Phase.RESOLVE)
+    return exc

@@ -10,3 +10,7 @@ from __future__ import annotations
 
 class DecoyError(Exception):
     """Base class for all decoy_engine exceptions."""
+
+
+# Pickles, tracebacks and `__module__` consumers keep seeing the public home, not this leaf.
+DecoyError.__module__ = "decoy_engine.errors"

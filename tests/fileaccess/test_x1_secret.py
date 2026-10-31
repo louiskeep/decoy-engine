@@ -18,7 +18,6 @@ from decoy_engine.keyprovider import (
     MaskSecretError,
     MissingMaskSecret,
     key_provider_from_ref,
-    resolve_mask_secret_ref,
 )
 from tests.fileaccess.support import RootRelative
 
@@ -104,7 +103,7 @@ def _assert_clean(exc: BaseException, *, secret_path: str) -> None:
 def test_a_bad_secret_leaves_nothing_in_the_error(policy: RootRelative, name: str) -> None:
     ref = _secret_file(policy, CASES[name])
     with pytest.raises(MaskSecretError) as info:
-        resolve_mask_secret_ref(ref, file_access=policy)
+        key_provider_from_ref(ref, file_access=policy).mask_key()
     _assert_clean(info.value, secret_path=ref[len("file:") :])
 
 
@@ -117,7 +116,7 @@ def test_the_same_inside_a_callers_active_handler(policy: RootRelative, name: st
         carrier.decode("utf-8")
     except UnicodeDecodeError:
         with pytest.raises(MaskSecretError) as info:
-            resolve_mask_secret_ref(ref, file_access=policy)
+            key_provider_from_ref(ref, file_access=policy).mask_key()
     _assert_clean(info.value, secret_path=ref[len("file:") :])
 
 
@@ -135,14 +134,14 @@ def test_a_weak_secret_inside_a_handler_leaves_nothing(policy: RootRelative) -> 
 
 def test_a_good_secret_still_resolves_strictly(policy: RootRelative) -> None:
     ref = _secret_file(policy, GOOD.encode())
-    assert resolve_mask_secret_ref(ref, file_access=policy) == bytes.fromhex(GOOD)
+    assert key_provider_from_ref(ref, file_access=policy).mask_key() == bytes.fromhex(GOOD)
 
 
 def test_a_policy_denial_keeps_its_class(policy: RootRelative, tmp_path: Path) -> None:
     outside = tmp_path / "outside.key"
     outside.write_text(GOOD)
     with pytest.raises(FileAccessDenied):
-        resolve_mask_secret_ref(f"file:{outside}", file_access=policy)
+        key_provider_from_ref(f"file:{outside}", file_access=policy).mask_key()
 
 
 def test_unavailable_keeps_its_class(monkeypatch: pytest.MonkeyPatch, policy: RootRelative) -> None:
@@ -151,7 +150,7 @@ def test_unavailable_keeps_its_class(monkeypatch: pytest.MonkeyPatch, policy: Ro
 
     monkeypatch.setattr(fileaccess, "read_text", boom)
     with pytest.raises(fileaccess.FileAccessUnavailable):
-        resolve_mask_secret_ref("file:/x", file_access=policy)
+        key_provider_from_ref("file:/x", file_access=policy).mask_key()
 
 
 @pytest.mark.parametrize(
@@ -172,7 +171,7 @@ def test_resource_failures_during_the_read_keep_their_class(
 
     monkeypatch.setattr(fileaccess, "read_text", boom)
     with pytest.raises(type(injected)) as info:
-        resolve_mask_secret_ref("file:/x", file_access=policy)
+        key_provider_from_ref("file:/x", file_access=policy).mask_key()
     if isinstance(injected, OSError):
         assert info.value.errno == injected.errno
     assert not isinstance(info.value, MissingMaskSecret)
@@ -186,7 +185,7 @@ def test_an_ordinary_read_failure_is_still_the_missing_secret_error(
 
     monkeypatch.setattr(fileaccess, "read_text", boom)
     with pytest.raises(MissingMaskSecret) as info:
-        resolve_mask_secret_ref("file:/x", file_access=policy)
+        key_provider_from_ref("file:/x", file_access=policy).mask_key()
     assert "/x" not in str(info.value)
     assert info.value.__cause__ is None and info.value.__context__ is None
 
@@ -199,13 +198,13 @@ def test_ambient_behavior_is_unchanged(tmp_path: Path, name: str) -> None:
     path = tmp_path / "ambient.key"
     path.write_bytes(CASES[name])
     with pytest.raises(MaskSecretError) as info:
-        resolve_mask_secret_ref(f"file:{path}")
+        key_provider_from_ref(f"file:{path}").mask_key()
     assert info.value.code == "bad_secret_ref"
 
 
 def test_ambient_good_secret_and_missing_file(tmp_path: Path) -> None:
     path = tmp_path / "ok.key"
     path.write_text(GOOD)
-    assert resolve_mask_secret_ref(f"file:{path}") == bytes.fromhex(GOOD)
+    assert key_provider_from_ref(f"file:{path}").mask_key() == bytes.fromhex(GOOD)
     with pytest.raises(MissingMaskSecret):
-        resolve_mask_secret_ref(f"file:{tmp_path / 'nope'}")
+        key_provider_from_ref(f"file:{tmp_path / 'nope'}").mask_key()

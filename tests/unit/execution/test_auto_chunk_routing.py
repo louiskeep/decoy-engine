@@ -1218,8 +1218,8 @@ class TestVault:
 
     def test_vault_file_round_trip_identical(self, tmp_path, monkeypatch):
         pytest.importorskip("cryptography")
-        from decoy_engine.plan._seed import _normalize_job_seed
         from decoy_engine.vault import load_vault, vault_writer_for_config
+        from tests._keyed_secret import THROWAWAY_KEY_PROVIDER
 
         cfg, sources = self._vault_job(tmp_path)
         monkeypatch.delenv("DECOY_SUBSTRATE", raising=False)
@@ -1238,7 +1238,7 @@ class TestVault:
             )
             path = tmp_path / f"{label}.vault"
             writer.write(path)
-            maps[label], ambiguous = load_vault(path, _normalize_job_seed(cfg))
+            maps[label], ambiguous = load_vault(path, THROWAWAY_KEY_PROVIDER.mask_key())
             assert ambiguous == 0
         assert maps["auto"] == maps["forced"]
         assert len(maps["auto"]) == _ROWS

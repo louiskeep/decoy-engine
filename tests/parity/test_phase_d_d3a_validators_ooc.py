@@ -38,6 +38,7 @@ from decoy_engine.execution.out_of_core._validate_batch import (
 from decoy_engine.plan._types import ColumnSeed, SeedEnvelope, TableSeed
 from decoy_engine.relationships._graph import OrphanPolicy, RelationshipEdge, RelationshipGraph
 from decoy_engine.validators import _registry
+from tests._keyed_secret import THROWAWAY_KEY_PROVIDER
 from tests.parity import _strict_compare as sc
 
 pytestmark = pytest.mark.filterwarnings("ignore")
@@ -218,7 +219,7 @@ def standard(
 
 
 def run(cfg: dict[str, Any], tables: dict[str, pa.Table], *, full: bool = False, **kw: Any) -> Any:
-    kwargs: dict[str, Any] = {"engine_version": "d3a"}
+    kwargs: dict[str, Any] = {"engine_version": "d3a", "key_provider": THROWAWAY_KEY_PROVIDER}
     kwargs.update(
         {"execution_mode": "full_frame"} if full else {"out_of_core_budget_bytes": BUDGET}
     )
@@ -1304,6 +1305,7 @@ def test_the_validator_hook_does_not_perturb_masked_output(
         no_validators,
         tables,
         engine_version="d3a",
+        key_provider=THROWAWAY_KEY_PROVIDER,
         execution_mode="out_of_core",
         out_of_core_budget_bytes=BUDGET,
         sink=ParquetTransactionalSink(tmp_path / "sink_out"),
@@ -1324,6 +1326,7 @@ def test_resident_masked_output_is_identical_with_and_without_validators(tmp_pat
         {k: v for k, v in cfg.items() if k != "validators"},
         tables,
         engine_version="d3a",
+        key_provider=THROWAWAY_KEY_PROVIDER,
         execution_mode="out_of_core",
         out_of_core_budget_bytes=BUDGET,
     )

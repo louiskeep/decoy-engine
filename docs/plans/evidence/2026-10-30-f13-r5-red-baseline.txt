@@ -1,0 +1,166 @@
+F13 r5 evidence: the two test gaps of the r4 contract (Codex narrow gate on ee12b248: HIGH, MEDIUM) and
+the full-suite baseline the BLOCKER ruling asked for.
+
+Environment (every count below): CPython 3.10.20 (uv-managed), Linux x86_64, 4 CPUs, run as root, one
+.venv from `uv sync --frozen --extra dev --extra mutation --extra xdist --extra lint --extra hashicorp-vault`
+off this branch's uv.lock (identical to main's lock for these extras; `cloud` is NOT installed, which is
+why the google.cloud test fails). The baseline trees are git worktrees (fdd08a89 for the full suite,
+ee12b248 for the red records) imported through pytest's `pythonpath = ["src"]`; each run checked that
+`decoy_engine.__file__` is under the worktree. Commands are given per section.
+
+== HIGH: `_types._parse_vault` mutants 73 and 75 (class: validation strictness at a parse boundary) ==
+
+Decision. The field of a `vault:` reference was percent-decoded twice: once by `parse_qsl(...,
+errors="strict")` and again by `unquote(fld, errors="strict")`. Mutants 73/75 made the second decode
+lenient; they survived because no test pinned the field for any input where the two decodes differ.
+Of the two closures the handoff allows, "make the second decode strict as well" is already the shipped
+code (that IS what 73/75 mutate), so pinning it would freeze the double decode (`%25ff` rejected, `%2525`
+read as `%`, `%2541` read as `A`: a KV key holding a literal `%` could not be named). The fix removes the
+second decode: each component (mount, path, field) is decoded exactly once, strictly. Blast radius: only
+refs whose field contains `%25` followed by two hex digits change meaning (they now mean the literal
+`%xx`); every other accepted ref parses to the same SecretRef as before.
+
+Fixed at the class, not the instance (two more accept-by-default holes on the same boundary, both
+behavior changes, both noted here and pinned in the same table):
+  - a `%` not followed by two hex digits (`%`, `%zz`, `%4`) passed through `unquote` unchanged in the
+    mount, path and field; RFC 3986 2.1 says `%` only ever starts an escape, and the module docstring
+    claims RFC 3986 strictness, so it is now `bad_secret_ref`;
+  - a control character in the decoded field (`%00`, `%0a`) was accepted while the mount and path
+    segments already rejected one; the field now follows the same rule.
+Not changed (pinned as-is so the contract is explicit): the query is form-decoded as `parse_qsl`
+defines it (`a+b` is `a b`, `%2B` is `+`); the mount and path are not (`+` literal). Local refs
+(`env:`, `file:`) are not URIs and are untouched (a file path may contain a bare `%`).
+
+Tests: tests/secret_providers/test_r5_contract.py (21-row field table, 12-row locator table, each row
+asserting accept or reject AND the exact decoded value, plus a two-sidedness check: 34 tests).
+
+Red record on the unchanged ee12b248 source (main checkout before the fix commit, same .venv):
+  .venv/bin/python -m pytest -q -p no:cacheprovider tests/secret_providers/test_r5_contract.py --tb=line -rf
+  11 failed, 23 passed
+  FAILED ...[escaped-percent-then-hex]        bad_secret_ref            (expected field "%ff")
+  FAILED ...[escaped-percent-twice]           assert '%' == '%25'
+  FAILED ...[escaped-percent-then-ascii-hex]  assert 'A' == '%41'
+  FAILED ...[bare-percent]                    DID NOT RAISE  (field "%" accepted)
+  FAILED ...[percent-non-hex]                 DID NOT RAISE  ("%zz")
+  FAILED ...[percent-one-hex-digit]           DID NOT RAISE  ("%4")
+  FAILED ...[nul]                             DID NOT RAISE  ("\x00")
+  FAILED ...[newline]                         DID NOT RAISE  ("\n")
+  FAILED ...[bare-percent-in-path]            DID NOT RAISE
+  FAILED ...[percent-non-hex-in-path]         DID NOT RAISE
+  FAILED ...[percent-one-hex-digit-in-mount]  DID NOT RAISE
+The 23 green rows pin behavior that was already right (strict UTF-8 on every component, `%20`, `+`,
+valid multibyte) and exist so a lenient or doubled decode of any component turns a row red.
+
+Mutants 73 and 75, honestly. mutmut refuses to grade while the clean run is red, so the tests could not
+be graded against the ee12b248 source by mutmut; the two mutants were applied by hand in a worktree at
+ee12b248 with the new test file copied in (scratch script, same .venv, `decoy_engine.__file__` checked
+under the worktree). Row `escaped-percent-then-hex` (`%25ff` -> `%ff`):
+  ee12b248 unmutated:          bad_secret_ref                 -> row red (the double decode rejects it)
+  ee12b248 + mutant 73:        assert '�' == '%ff'       -> row red (the lenient decode accepts U+FFFD)
+  ee12b248 + mutant 75:        assert '�' == '%ff'       -> row red
+So the table constrains that line in both directions; on the fixed source the line no longer exists
+(the fix IS its removal), and the mutation rerun grades the one remaining decode per component instead:
+see 2026-10-30-f13-r5-mutation-report.md.
+
+Each new mechanism mutated once by hand on the fixed source (scratch script; every mutation reverted,
+`git status` clean afterwards). Unmutated: 34 passed.
+  H1 malformed-escape check removed            6 failed  (bare-percent, percent-non-hex, percent-one-hex-digit, x field/path/mount)
+  H2 control-character check on the field removed   2 failed  (nul, newline)
+  H3 the second decode of the field put back   3 failed  (escaped-percent-then-hex / -twice / -then-ascii-hex)
+  H4 the query decode made lenient (`errors="replace"`, the 73/75 shape on the remaining decode)
+                                               6 failed  (lone-ff-byte, lone-lead-byte, lone-continuation-byte, overlong-slash, truncated-three-byte, utf16-surrogate)
+  H5 the path decode made lenient              1 failed  (lone-ff-in-path)
+  H6 the mount decode made lenient             1 failed  (lone-ff-in-mount)
+
+== MEDIUM: the r3 assertions deleted in r4 (class 8: removed assertions) ==
+
+Both deleted tests are restored in tests/secret_providers/test_r3_contract.py under their original
+names, with the r3 scenario verbatim (the same `_MutatingProvider` with flips at describe /
+resolve-before / resolve-after; the same `StubClient` whose shared token is re-authenticated mid-read).
+The one adaptation the r4 API forces: r3 closed the class by DETECTION (snapshot the client context,
+verify after the read, fail the load), so the r3 assertions were `SecretProviderUnavailable` and
+`len(default_cache()) == 0`. r4 closed it STRUCTURALLY (one immutable ResolveContext per load keys the
+cache and is handed to `resolve`), so the mutation cannot reach the read: the load succeeds for the
+keyed tenant. The restored assertions are therefore: the read used the keyed context (tenant A /
+tok-a) whatever the client says after the flip; the cache holds exactly that tenant's entry and
+nothing under the other tenant's key (a B read misses, a later A read hits and still holds A's secret);
+a cache miss after `clear()` re-reads with the keyed context, never with the re-authenticated token.
+Nothing was weakened: every r3 assertion that is still true under r4 is kept, and the two that r4 made
+false by design (fail + empty cache) are replaced by the stronger r4 outcome (correct value + correct
+key), stated in the test.
+
+Mapping (deleted case -> restoring test -> the mutation it goes red under). Hand mutations applied one
+at a time to src/decoy_engine/secret_providers/_preflight.py or vault.py and reverted (scratch script;
+`git status` clean afterwards). Unmutated: 4 passed (restored tests only, `-k poisons`).
+
+  deleted r3 case                                   restored as (same file)                               red under
+  test_a_client_mutated_mid_load_never_poisons_the_cache[describe]
+                                                    test_a_client_mutated_mid_load_never_poisons_the_cache[describe]
+                                                                                                          M1' context re-read at resolve time; M2 key without context; M3 resolve handed no context (live client)
+  ...[resolve-before]                               ...[resolve-before]                                   M2; M3
+  ...[resolve-after]                                ...[resolve-after]                                    M2
+  test_a_mid_load_mutation_of_a_vault_client_never_poisons_the_cache
+                                                    test_a_mid_load_mutation_of_a_vault_client_never_poisons_the_cache
+                                                                                                          M3; Va VaultContext drops the token; Vb provider keeps and reads through the caller's client
+
+  M1  (loader passes `_resolve_context(provider)` to `_load`, i.e. a second context taken BEFORE
+      describe): 4 passed. Equivalent for these flips (the flip happens after both context reads);
+      this shape is what test_r4_contract.py::...[context] exists for, and it stays red there.
+  M1' (`provider.resolve(ref, _resolve_context(provider))` inside `_load`: the r2/r3 live-client read
+      shape, the mutation the original tests caught): [describe] red, "tenant B's secret served for
+      tenant A".
+  M2  (`context=()` in the cache key): all three cases red ("tenant A's entry served for tenant B").
+  M3  (`provider.resolve(ref, None)`): [describe], [resolve-before] and the Vault case red.
+  Va  (`token=""` in `_context_of`): Vault case red (connects log shows no token).
+  Vb  (module-level `_LIVE` list; `resolve` reads through `_LIVE[-1]` instead of `_connect(context)`):
+      Vault case red (`client.connects == []`: no transport was built from the keyed context).
+  The restored tests are green on ee12b248 by design (they guard the r4 property); their red proof is
+  the mutation column above, not a red-first run.
+
+Note on the Vault case: the r4 cache scopes entries by provider identity as well as by context, so a
+provider built over the re-pointed client is always its own scope; the context-binding assertions in
+that test are the `connects` token log and the miss-after-clear re-read, not the new-provider miss.
+
+== BLOCKER ruling: full Python 3.10 suite, exact failing ids, each also failing on fdd08a89 ==
+
+Command (each tree, from its root): .venv/bin/python -m pytest -q -p no:cacheprovider -n 4 -rfE tests
+(for the fdd08a89 worktree with PYTHONPATH=/home/user/wt-base/src:/home/user/wt-base; decoy_engine.__file__
+checked under the worktree). The two runs were sequential on an otherwise idle machine, not concurrent.
+
+r5 head 8dc35a9:  4 failed, 28323 passed, 5366 skipped, 4 xfailed, 60 xpassed, 70 warnings in 1154.59s
+fdd08a89 (main):  4 failed, 28286 passed, 5365 skipped, 4 xfailed, 60 xpassed, 68 warnings in 1223.93s
+(The head-minus-main delta covers the whole F13 branch, not this round alone, so it is not decomposed;
+ this round's own delta is the secret_providers line below.)
+
+The exact failing ids, identical on both trees:
+  FAILED tests/physical/test_shadow_snapshot.py::test_fixture_is_written_then_made_read_only
+      (runs as root: the read-only fixture stays writable)
+  FAILED tests/unit/execution/test_r3_failure_publication_trace.py::test_failure_and_publication_trace_is_unchanged[f_forced_ooc_incompatible]
+  FAILED tests/unit/execution/test_r3_failure_publication_trace.py::test_forced_out_of_core_on_an_ineligible_job_is_a_config_error_before_any_write
+  FAILED tests/unit/test_v2_cloud_sources.py::TestCloudSourceEndToEnd::test_profile_gcs_source_via_mocked_client
+      (google.cloud not installed: the `cloud` extra is not in this environment)
+tests/unit/test_storm_eval_bands.py::...::test_all_fixture_columns_within_budget passed on both trees in
+these runs; it was not edited (per the ruling). Same four ids as the r2 and r4 evidence lists.
+
+== Gates on the r5 head ==
+
+Head 8dc35a9 (code), evidence commit on top. Same .venv.
+- tests/secret_providers: 327 passed, 5 skipped (r4: 289 passed, 5 skipped). The 38 new passes are the
+  34 tests of test_r5_contract.py (21 field rows, 12 locator rows, the two-sidedness check) and the 4
+  restored r3 cases (3 parametrized + the Vault case). The 5 skipped are the live-Vault tests.
+- tests/sentry: 3131 passed, 2 skipped; tests/sentry/test_module_size.py: 636 passed (_types.py is 464
+  lines).
+- ruff check src tests testflight scripts: all checks passed (one pre-existing warning on
+  scripts/audit/stage2d_cloud_full_path.py:89, unchanged). ruff format --check: 1771 files already formatted.
+- mypy src/decoy_engine testflight (the CI invocation): "Found 18 errors in 8 files" on the head and the
+  identical 18 error lines (file and message, sorted and diffed) on fdd08a89 in this environment; the count
+  differs from the 16 in the r4 handoff because this environment lacks the `cloud` extra (two google.*
+  import-not-found lines), and it is unchanged by this round.
+- mutation: 1505 mutants, 1455 killed, 47 survived, 3 timeout, 0 no-tests (r4: 1509 / 1457 / 51 / 1 / 0);
+  2026-10-30-f13-r5-mutation-report.md lists every survivor with its reason and the two new ff1 timeouts
+  (genuine hangs, re-run standalone).
+
+Not run: the 5 live-Vault tests (no Vault service here; they skip), Python 3.11/3.12 and the 3.12 parity
+suite, semgrep (not in the lock extras installed here), the mutmut re-adjudication post-processor
+(scripts/tq_mutate.py); the r4 report's traceback-locals tests remain skipped under MUTANT_UNDER_TEST
+as before.

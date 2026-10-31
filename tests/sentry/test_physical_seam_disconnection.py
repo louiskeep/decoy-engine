@@ -252,7 +252,8 @@ F29_REGISTRY_MIGRATION = frozenset(
         "src/decoy_engine/execution/_chunked_text_mask.py",
         "src/decoy_engine/execution/_fk_keys.py",
         "src/decoy_engine/execution/_isolated_reason.py",
-        "src/decoy_engine/execution/_output_projection.py",
+        # `_output_projection.py` is deliberately absent: its only allowance is the exact-line
+        # check below, so an unlisted edit to it trips this guard.
         "src/decoy_engine/execution/_publication_observer.py",
         "src/decoy_engine/execution/_residency_warning.py",
         "src/decoy_engine/execution/_strategies/_bucketize.py",
@@ -640,6 +641,8 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
             "src/decoy_engine/execution/_chunked_profile.py",
             "src/decoy_engine/execution/native/_chunk_schema.py",
             "src/decoy_engine/execution/native/_chunked_entry.py",
+            # F13: pool/categorical helpers split out of `_chunked_entry.py` to hold its 700-LOC ceiling.
+            "src/decoy_engine/execution/native/_chunked_pools.py",
             # OBS-2: the non-empty-source preflight wiring split out of `_chunked_entry.py` for
             # module headroom (pure move); imports nothing from `execution.physical`.
             "src/decoy_engine/execution/native/_chunked_preflight_wiring.py",

@@ -27,6 +27,7 @@ import yaml
 
 from decoy_engine.config._pipeline import PipelineConfig
 from decoy_engine.execution._pipeline import run_pipeline
+from decoy_engine.keyprovider import SecretKeyProvider
 
 SAMPLE_ROWS = 5
 
@@ -76,6 +77,8 @@ def _released_engine_version() -> str:
 # the sentry diff is stable. GENERATED_AT is bumped by hand when refreshing
 # benchmarks or samples; ENGINE_VERSION is derived from the CHANGELOG release
 # section (see _released_engine_version) so it follows the real release.
+_PROOF_SECRET = b"decoy-proof-manifest-throwaway-secret!"
+_PROOF_KEY = SecretKeyProvider(_PROOF_SECRET)
 ENGINE_VERSION = _released_engine_version()
 GENERATED_AT = "2026-06-14"
 
@@ -272,7 +275,9 @@ def _run_hero(
         "claims": pa.Table.from_pandas(claims),
         "providers": pa.Table.from_pandas(providers),
     }
-    result = run_pipeline(cfg, sources, engine_version=ENGINE_VERSION)
+    # Keyed strategies need a secret in every release phase; a fixed throwaway keeps the manifest
+    # reproducible (it documents behavior, not secrecy).
+    result = run_pipeline(cfg, sources, engine_version=ENGINE_VERSION, key_provider=_PROOF_KEY)
     out = result.outputs
 
     inputs = {"members": members, "claims": claims, "providers": providers}
@@ -620,6 +625,15 @@ CAPABILITY_PROOFS: list[CapabilityProof] = [
 ]
 
 
+def _run_single_table(cfg: dict, df: pd.DataFrame) -> pd.DataFrame:
+    validated = PipelineConfig.model_validate(cfg).model_dump()
+    sources = {"t": pa.Table.from_pandas(df)}
+    result = run_pipeline(
+        validated, sources, engine_version=ENGINE_VERSION, key_provider=_PROOF_KEY
+    )
+    return result.outputs["t"].to_pandas()
+
+
 def _yaml_for(proof: CapabilityProof) -> str:
     table = proof.config["tables"][0]
     snippet = {"tables": [{"name": table["name"], "columns": table["columns"]}]}
@@ -642,10 +656,7 @@ def _run_capability(proof: CapabilityProof) -> dict:
                 "t": {"type": "file", "format": "csv", "path": "/dev/null"},
             },
         }
-        validated = PipelineConfig.model_validate(cfg).model_dump()
-        sources = {"t": pa.Table.from_pandas(df)}
-        result = run_pipeline(validated, sources, engine_version=ENGINE_VERSION)
-        out_df = result.outputs["t"].to_pandas()
+        out_df = _run_single_table(cfg, df)
 
     inp = _records(df, n=len(df))
     out = _records(out_df, n=len(out_df))
@@ -780,10 +791,7 @@ def _derived_proof() -> dict:
                 }
             ],
         }
-        validated = PipelineConfig.model_validate(cfg).model_dump()
-        sources = {"t": pa.Table.from_pandas(df)}
-        result = run_pipeline(validated, sources, engine_version=ENGINE_VERSION)
-        out_df = result.outputs["t"].to_pandas()
+        out_df = _run_single_table(cfg, df)
 
     # Invariant: b = a * 2 for every row; all outputs differ from the placeholder
     # placeholder (0.0) except when a=0.
@@ -860,10 +868,7 @@ def _derived_aggregate_proof() -> dict:
                 }
             ],
         }
-        validated = PipelineConfig.model_validate(cfg).model_dump()
-        sources = {"t": pa.Table.from_pandas(df)}
-        result = run_pipeline(validated, sources, engine_version=ENGINE_VERSION)
-        out_df = result.outputs["t"].to_pandas()
+        out_df = _run_single_table(cfg, df)
 
     # Invariant: every row of total == sum(amount)
     for idx, row in out_df.iterrows():
@@ -947,10 +952,7 @@ def _grouped_series_proof() -> dict:
                 }
             ],
         }
-        validated = PipelineConfig.model_validate(cfg).model_dump()
-        sources = {"t": pa.Table.from_pandas(df)}
-        result = run_pipeline(validated, sources, engine_version=ENGINE_VERSION)
-        out_df = result.outputs["t"].to_pandas()
+        out_df = _run_single_table(cfg, df)
 
     # Invariant: within each group, counter values are consecutive from 0.
     for group, gdf in out_df.groupby("group_id"):
@@ -1033,10 +1035,7 @@ def _windowed_date_proof() -> dict:
                 }
             ],
         }
-        validated = PipelineConfig.model_validate(cfg).model_dump()
-        sources = {"t": pa.Table.from_pandas(df)}
-        result = run_pipeline(validated, sources, engine_version=ENGINE_VERSION)
-        out_df = result.outputs["t"].to_pandas()
+        out_df = _run_single_table(cfg, df)
 
     # Invariant: each output date is within [min_days, max_days] of its anchor.
     for idx, row in out_df.iterrows():
@@ -1119,10 +1118,7 @@ def _group_key_proof() -> dict:
                 }
             ],
         }
-        validated = PipelineConfig.model_validate(cfg).model_dump()
-        sources = {"t": pa.Table.from_pandas(df)}
-        result = run_pipeline(validated, sources, engine_version=ENGINE_VERSION)
-        out_df = result.outputs["t"].to_pandas()
+        out_df = _run_single_table(cfg, df)
 
     # Invariant 1: same group_by value -> same key within the result.
     group_keys: dict[str, str] = {}

@@ -88,6 +88,7 @@ from decoy_engine.execution._transforms_prepare import prepare_transform_sources
 from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.profile._readers import LazySource
 from decoy_engine.progress import ProgressChannel, ProgressSink, use_progress
+from decoy_engine.secret_providers import AdmissionScope
 
 if TYPE_CHECKING:
     from faker import Faker
@@ -95,6 +96,7 @@ if TYPE_CHECKING:
     from decoy_engine.execution._transactional_sink import TransactionalSink
     from decoy_engine.keyprovider import KeyProvider
     from decoy_engine.providers_v2 import ProviderRegistry
+    from decoy_engine.secret_providers import SecretCachePolicy, SecretProviderRegistry
 
 
 __all__ = ["classify_table_kinds", "run_pipeline"]
@@ -147,6 +149,8 @@ def run_pipeline(
     unified_slice_enabled: bool = True,
     progress: ProgressSink | None = None,
     progress_interval_s: float = 1.0,
+    secret_registry: SecretProviderRegistry | None = None,
+    secret_cache_policy: SecretCachePolicy | None = None,
     _provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None = None,
     file_access: FileAccess | None = None,
 ) -> ExecutionResult:
@@ -232,6 +236,9 @@ def run_pipeline(
       that receives value-free run events (phases, route, per-table rate samples at most
       once per interval, terminal). Observation only: output bytes never depend on it and
       a raising sink is counted, never propagated.
+    - `secret_registry` / `secret_cache_policy`: optional `secret_providers` registry and
+      cross-run cache policy (default: the process registry, cache disabled). The keyed-mask
+      secret is admitted before any source is read.
 
     It forwards to `select_execution_adapter`, which validates it
     up front: a non-positive-int count knob raises `ExecutionError`
@@ -265,6 +272,7 @@ def run_pipeline(
         execution_mode = "full_frame"
         auto_chunk = False
     with (
+        AdmissionScope() as secret_scope,
         use_progress(progress, interval_s=progress_interval_s) as _progress,
         _progress.run_scope(),
     ):
@@ -306,6 +314,9 @@ def run_pipeline(
                 unified_slice_enabled=unified_slice_enabled,
                 provider_snapshot=_provider_snapshot,
                 prepare_sources=prepare_transform_sources,
+                secret_scope=secret_scope,
+                secret_registry=secret_registry,
+                secret_cache_policy=secret_cache_policy,
             )
         decision = _ctx.decide_route(ctx)
         _emit_route(_progress, decision)

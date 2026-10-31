@@ -27,8 +27,12 @@ from decoy_engine.plan._types import ColumnSeed, GroupSeed, SeedEnvelope, TableS
 from decoy_engine.providers_v2 import get_default_registry
 from decoy_engine.relationships._graph import OrphanPolicy, RelationshipEdge, RelationshipGraph
 from decoy_engine.relationships._namespace import NamespaceRegistry
+from tests._keyed_secret import THROWAWAY_KEY_PROVIDER
 
 _SEED = b"\x00" * 8
+# The pandas route in these comparisons is keyed by the shared throwaway secret, so the
+# internal helpers (which default to job_seed) are given that same key explicitly.
+_KEY = THROWAWAY_KEY_PROVIDER.mask_key()
 _REG = get_default_registry()
 _NS = NamespaceRegistry(bindings=())
 
@@ -179,6 +183,7 @@ def test_parent_key_relation_projects_masked_unique_non_null_keys(tmp_path) -> N
         parent=parent,
         edge=_edge(),
         temp_dir=tmp_path,
+        mask_key=_KEY,
     )
 
     out = pq.read_table(relation.path)
@@ -193,7 +198,7 @@ def test_parent_key_relation_projects_masked_unique_non_null_keys(tmp_path) -> N
     }
     expected_masked = hash_array(
         pa.array(["c1", "c2"], from_pandas=True),
-        seed=_SEED,
+        seed=_KEY,
         namespace="cust",
     ).to_pylist()
     assert rows == {
@@ -208,7 +213,9 @@ def test_child_fail_join_matches_pandas_fk_output(tmp_path) -> None:
     edge = _edge()
     parent = pa.table({"customer_id": ["c1", "c2"], "name": ["A", "B"]})
     child = pa.table({"customer_id": ["c2", None, "c1"], "amount": [20, 0, 10]})
-    relation = build_parent_key_relation(plan=plan, parent=parent, edge=edge, temp_dir=tmp_path)
+    relation = build_parent_key_relation(
+        plan=plan, parent=parent, edge=edge, temp_dir=tmp_path, mask_key=_KEY
+    )
 
     out = mask_child_fk_fail(
         child=child,
@@ -233,7 +240,9 @@ def test_child_fail_join_raises_on_orphan_before_returning_output(tmp_path) -> N
     edge = _edge()
     parent = pa.table({"customer_id": ["c1"]})
     child = pa.table({"customer_id": ["c1", "missing"], "amount": [10, 99]})
-    relation = build_parent_key_relation(plan=plan, parent=parent, edge=edge, temp_dir=tmp_path)
+    relation = build_parent_key_relation(
+        plan=plan, parent=parent, edge=edge, temp_dir=tmp_path, mask_key=_KEY
+    )
 
     with pytest.raises(ExecutionError) as exc:
         mask_child_fk_fail(
@@ -1227,7 +1236,9 @@ def test_child_fk_join_normalizes_decimal_parent_against_numeric_child(
         relationship_graph=graph,
         namespace_registry=_NS,
     )
-    relation = build_parent_key_relation(plan=plan, parent=parent, edge=edge, temp_dir=tmp_path)
+    relation = build_parent_key_relation(
+        plan=plan, parent=parent, edge=edge, temp_dir=tmp_path, mask_key=_KEY
+    )
     remap_values = None
     if policy is OrphanPolicy.REMAP:
         remap_values = _batch_join_mod._remap_values(plan, edge, child)
@@ -1299,7 +1310,9 @@ def test_child_fk_join_fractional_float_parent_matches_fractional_decimal_child(
         relationship_graph=graph,
         namespace_registry=_NS,
     )
-    relation = build_parent_key_relation(plan=plan, parent=parent, edge=edge, temp_dir=tmp_path)
+    relation = build_parent_key_relation(
+        plan=plan, parent=parent, edge=edge, temp_dir=tmp_path, mask_key=_KEY
+    )
     remap_values = None
     if policy is OrphanPolicy.REMAP:
         remap_values = _batch_join_mod._remap_values(plan, edge, child)
@@ -1351,7 +1364,9 @@ def test_child_fk_join_decimal_parent_does_not_over_normalize_distinct_keys(tmp_
         )
     assert pandas_exc.value.code == "orphan_fk_violation"
 
-    relation = build_parent_key_relation(plan=plan, parent=parent, edge=edge, temp_dir=tmp_path)
+    relation = build_parent_key_relation(
+        plan=plan, parent=parent, edge=edge, temp_dir=tmp_path, mask_key=_KEY
+    )
     with pytest.raises(ExecutionError) as ooc_exc:
         mask_child_fk_fail(child=child, edge=edge, parent_relation=relation, temp_dir=tmp_path)
     assert ooc_exc.value.code == "orphan_fk_violation"
@@ -1391,7 +1406,9 @@ def test_child_fk_join_bool_parent_matches_int_child(tmp_path, policy: OrphanPol
         relationship_graph=graph,
         namespace_registry=_NS,
     )
-    relation = build_parent_key_relation(plan=plan, parent=parent, edge=edge, temp_dir=tmp_path)
+    relation = build_parent_key_relation(
+        plan=plan, parent=parent, edge=edge, temp_dir=tmp_path, mask_key=_KEY
+    )
     remap_values = None
     if policy is OrphanPolicy.REMAP:
         remap_values = _batch_join_mod._remap_values(plan, edge, child)
@@ -1433,7 +1450,9 @@ def test_child_fk_join_bool_parent_does_not_over_normalize_distinct_keys(tmp_pat
         )
     assert pandas_exc.value.code == "orphan_fk_violation"
 
-    relation = build_parent_key_relation(plan=plan, parent=parent, edge=edge, temp_dir=tmp_path)
+    relation = build_parent_key_relation(
+        plan=plan, parent=parent, edge=edge, temp_dir=tmp_path, mask_key=_KEY
+    )
     with pytest.raises(ExecutionError) as ooc_exc:
         mask_child_fk_fail(child=child, edge=edge, parent_relation=relation, temp_dir=tmp_path)
     assert ooc_exc.value.code == "orphan_fk_violation"
