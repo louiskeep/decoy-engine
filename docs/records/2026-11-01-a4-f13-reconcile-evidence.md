@@ -188,7 +188,17 @@ For the B-5 re-merge and F13 slice 3a:
 The handoff's "646 passed / 1 skipped" could not be matched to any lane in the 2026-10-31 record; the
 same-environment numbers above replace it.
 
-Full suite, pyproject addopts, from the lock: see section 7a.
+### 7a. Full suite (pyproject addopts, `pytest tests`, venvs from `uv.lock` with the bootstrap extras)
+
+| Python | main 0090f6f9 | head 2cea0ecc |
+|---|---|---|
+| 3.10.20 | 0 failed, 28982 passed, 5286 skipped, 6 xfailed, 65 xpassed | 0 failed, 29836 passed, 5288 skipped, 6 xfailed, 65 xpassed |
+| 3.12.3 | 1 failed (`tests/unit/execution/test_categorical_weighted.py::TestCdfBuilder::test_skewed_weights_skew_cdf`, known), 28897 passed, 5370 skipped | 1 failed (the same id), 29751 passed, 5372 skipped |
+
+main 3.12 exact: 1 failed, 28897 passed, 5370 skipped. Failing ids head vs main: identical on both
+interpreters. An earlier full run at e0e7f274 failed
+`tests/native/test_chunked_entry_side_channels.py::test_native_route_builds_no_result_objects_without_a_sink`
+on both interpreters (the first `_chunked_entry` split, section 4); 2cea0ecc fixes it.
 
 ## 8. What was not run
 
