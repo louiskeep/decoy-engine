@@ -48,6 +48,7 @@ from decoy_engine.plan._types import ColumnSeed
 from decoy_engine.providers_v2 import get_default_registry
 from decoy_engine.relationships import RelationshipGraph
 from decoy_engine.transforms.group_key import GroupKeyConfig, apply_group_key
+from tests._keyed_secret import THROWAWAY_KEY_PROVIDER
 
 _ENGINE_VERSION = "p4-slice2-group-key-test"
 _LOW_THRESHOLD = 10
@@ -214,12 +215,27 @@ class TestLiteralPinnedKey:
     # "group_key/household_key", b"H-1001")[:8].hex()`; hardcoded here so the
     # assertion is not a derive(...) call recomputing the same thing.
     _EXPECTED_KEY = "a95d6cece5608252"
+    # The run routes are keyed by the shared throwaway secret (F13 removed the job_seed key), so
+    # they pin this literal instead: re-pinned under F13, the same `derive(...)[:8].hex()` over
+    # the throwaway mask key, reproduced independently by the direct handler below.
+    _EXPECTED_KEY_UNDER_SECRET = "d43ace1cde2799fe"
 
     def test_direct_handler_matches_pinned_literal(self) -> None:
         config = GroupKeyConfig.from_dict({"group_by": "household_id"})
         df = pd.DataFrame({"household_id": ["H-1001"]})
         keys = apply_group_key(config, df, seed=_JOB_SEED, namespace="group_key/household_key")
         assert keys == [self._EXPECTED_KEY]
+
+    def test_direct_handler_matches_pinned_literal_under_the_secret(self) -> None:
+        config = GroupKeyConfig.from_dict({"group_by": "household_id"})
+        df = pd.DataFrame({"household_id": ["H-1001"]})
+        keys = apply_group_key(
+            config,
+            df,
+            seed=THROWAWAY_KEY_PROVIDER.mask_key(),
+            namespace="group_key/household_key",
+        )
+        assert keys == [self._EXPECTED_KEY_UNDER_SECRET]
 
     def test_chunked_and_full_frame_both_equal_the_pinned_literal(self, tmp_path) -> None:
         n = 20
@@ -253,8 +269,14 @@ class TestLiteralPinnedKey:
             cfg, sources=sources, engine_version=_ENGINE_VERSION, auto_chunk=False
         )
         assert auto.quality_metrics["auto_chunk"]["mode"] == "chunked"
-        assert auto.outputs["people"].column("household_key")[5].as_py() == self._EXPECTED_KEY
-        assert forced.outputs["people"].column("household_key")[5].as_py() == self._EXPECTED_KEY
+        assert (
+            auto.outputs["people"].column("household_key")[5].as_py()
+            == self._EXPECTED_KEY_UNDER_SECRET
+        )
+        assert (
+            forced.outputs["people"].column("household_key")[5].as_py()
+            == self._EXPECTED_KEY_UNDER_SECRET
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -312,7 +334,10 @@ class TestIntNullGroupBy:
         oracle_cfg = GroupKeyConfig.from_dict({"group_by": "household_id"})
         oracle_df = pd.DataFrame({"household_id": pd.array(household_ids, dtype="Int64")})
         oracle_keys = apply_group_key(
-            oracle_cfg, oracle_df, seed=_JOB_SEED, namespace="group_key/household_key"
+            oracle_cfg,
+            oracle_df,
+            seed=THROWAWAY_KEY_PROVIDER.mask_key(),
+            namespace="group_key/household_key",
         )
         assert chunked.column("household_key").to_pylist() == oracle_keys
         # A value >= 2**53 must key on its EXACT string, not a rounded
@@ -320,7 +345,9 @@ class TestIntNullGroupBy:
         # re-derive directly from the string the un-widened value produces.
         from decoy_engine.determinism._derive import derive
 
-        expected0 = derive(_JOB_SEED, "group_key/household_key", str(large).encode())[:8].hex()
+        expected0 = derive(
+            THROWAWAY_KEY_PROVIDER.mask_key(), "group_key/household_key", str(large).encode()
+        )[:8].hex()
         assert oracle_keys[0] == expected0
 
 

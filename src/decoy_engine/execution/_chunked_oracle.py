@@ -74,6 +74,12 @@ class OraclePreflightState:
     hash_fk_key_columns: Any = None
     # `run_mask_chunked` only (revision 9): which passthrough columns never enter pandas.
     carry: Any = None
+    # The admitted secret this stream owns; `close_secret` releases it when the stream ends.
+    secret_owner: Any = None
+
+    def close_secret(self) -> None:
+        if self.secret_owner is not None:
+            self.secret_owner.close()
 
 
 def _oracle_preflight(
@@ -90,6 +96,82 @@ def _oracle_preflight(
     pool_cache: Any = None,
     warm_pools: bool = True,
     carry_passthrough: bool = False,
+    secret_registry: Any = None,
+    secret_cache_policy: Any = None,
+) -> OraclePreflightState:
+    """Admit the keyed-mask secret, THEN run the eager half of the oracle.
+
+    The secret is admitted from configuration alone before `chunks` is iterated or advanced
+    (F13), so a missing, inaccessible, expired or invalid secret fails closed while the source
+    is untouched. The admitted secret is owned by the returned state (`secret_owner`) and is
+    closed here if any later check fails; the caller closes it when the chunk stream ends.
+    """
+    from decoy_engine.secret_providers import admit_mask_key
+
+    dgrn.validate_base_row_offset(base_row_offset)
+    # Config-only, so it runs before admission without touching the source.
+    _chunked_mod.check_chunked_compatibility(
+        config, table=table, registry=registry if registry is not None else _default_registry()
+    )
+    admitted = admit_mask_key(
+        config,
+        key_provider=key_provider,
+        registry=secret_registry,
+        cache_policy=secret_cache_policy,
+    )
+    try:
+        state = _oracle_preflight_admitted(
+            config,
+            chunks,
+            table=table,
+            engine_version=engine_version,
+            registry=registry,
+            adapter=adapter,
+            vault_writer=vault_writer,
+            key_provider=admitted.key_provider,
+            admitted=admitted,
+            base_row_offset=base_row_offset,
+            pool_cache=pool_cache,
+            warm_pools=warm_pools,
+            carry_passthrough=carry_passthrough,
+        )
+    except BaseException:
+        admitted.close()
+        raise
+    state.secret_owner = admitted
+    return state
+
+
+def release_when_done(stream: Iterator[Any], state: OraclePreflightState) -> Iterator[Any]:
+    """Yield `stream`, then release the admitted secret however the stream ends (drained,
+    raised, or closed early by the caller)."""
+    try:
+        yield from stream
+    finally:
+        state.close_secret()
+
+
+def _default_registry() -> Any:
+    from decoy_engine.providers_v2 import get_default_registry
+
+    return get_default_registry()
+
+
+def _oracle_preflight_admitted(
+    config: dict[str, Any],
+    chunks: Iterable[pa.Table],
+    *,
+    table: str,
+    engine_version: str,
+    registry: Any,
+    adapter: Any,
+    vault_writer: Any,
+    key_provider: Any,
+    admitted: Any,
+    base_row_offset: int,
+    pool_cache: Any,
+    warm_pools: bool,
+    carry_passthrough: bool,
 ) -> OraclePreflightState:
     """The eager half of the oracle: every check that runs before a chunk masks.
 
@@ -100,7 +182,6 @@ def _oracle_preflight(
     columns are carried: the profile and the adapter then see them as all-null
     placeholders (see `_chunked_carry`). The public oracle never sets it.
     """
-    dgrn.validate_base_row_offset(base_row_offset)
     from decoy_engine.execution._chunked_profile import empty_input_profile, first_chunk_profile
     from decoy_engine.execution._output_projection import resolve_unconfigured_column_policy
     from decoy_engine.execution._pandas_adapter import PandasExecutionAdapter
@@ -112,7 +193,6 @@ def _oracle_preflight(
     # The registry decides which providers are composites, so it is resolved first and
     # used by the admission check, the carry plan and the schema rule alike.
     resolved_registry = registry if registry is not None else get_default_registry()
-    _chunked_mod.check_chunked_compatibility(config, table=table, registry=resolved_registry)
     chunk_iter = iter(chunks)
     first = next(chunk_iter, None)
     if first is not None:
@@ -159,18 +239,12 @@ def _oracle_preflight(
             carry.diagnose_profile(exc, profile_input(first, carry.carried), table=table)
             raise
     plan = compile_plan(config, profile, decoy_engine_version=engine_version, no_profile=True)
-    # Public entry point: resolve the config's `mask_secret_ref` when no
-    # programmatic provider was passed, then run the fail-closed gate up front.
-    # The per-chunk adapter.run() re-gates via require_mask_key, so a keyed
-    # chunked job cannot run off job_seed at GA.
-    if key_provider is None:
-        _ref = (config.get("global_settings") or {}).get("mask_secret_ref")
-        if _ref:
-            from decoy_engine.keyprovider import key_provider_from_ref
-
-            key_provider = key_provider_from_ref(_ref)
+    # Late defense in depth: the plan may not need more than admission (config-only) covered.
+    # The per-chunk adapter.run() re-gates via require_mask_key.
     from decoy_engine.keyprovider import require_mask_key
+    from decoy_engine.secret_providers import assert_plan_requirements_admitted
 
+    assert_plan_requirements_admitted(plan, admitted)
     _resolved_mask_key = require_mask_key(plan, key_provider)
     # The vault holds reversible plaintext PII and cannot be written under a key
     # that differs from the resolved mask key, so this entry runs the same

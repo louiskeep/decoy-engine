@@ -13,6 +13,10 @@ compare structure only.
 Do not weaken a scenario, drop a field or regenerate the baseline to make a refactor pass:
 a diff here is a behavior change in a route. Regenerate only with reviewer approval:
 `R3_WRITE_BASELINES=1 pytest tests/unit/execution/test_r3_within_route_baseline.py`.
+
+Re-pinned under F13 because job_seed keying was removed: only key-dependent row values (hash,
+fpe, date_shift outputs) changed, now under the shared throwaway secret; structure, routes,
+telemetry and every other field are byte-identical to the original capture.
 """
 
 from __future__ import annotations

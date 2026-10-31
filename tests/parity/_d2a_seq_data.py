@@ -26,6 +26,7 @@ from decoy_engine.plan._types import ColumnSeed, SeedEnvelope, TableSeed
 from decoy_engine.providers_v2 import get_default_registry
 from decoy_engine.relationships._graph import OrphanPolicy, RelationshipGraph
 from decoy_engine.relationships._namespace import NamespaceRegistry
+from tests._keyed_secret import THROWAWAY_KEY_PROVIDER
 from tests.parity import _strict_compare as sc
 from tests.parity._d1a_hash_data import (
     _PASSTHROUGH,
@@ -137,6 +138,7 @@ def run_seq(
         relationship_graph=chain_graph(policy),
         namespace_registry=NAMESPACES,
         sink=sink,
+        key_provider=THROWAWAY_KEY_PROVIDER,
     )
 
 
@@ -154,6 +156,7 @@ def run_full(
         registry=REGISTRY,
         relationship_graph=chain_graph(policy),
         namespace_registry=NAMESPACES,
+        key_provider=THROWAWAY_KEY_PROVIDER,
     )
 
 

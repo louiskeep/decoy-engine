@@ -43,6 +43,7 @@ from decoy_engine.transforms.windowed_date import (
     _sample_offset,
     apply_windowed_date,
 )
+from tests._keyed_secret import THROWAWAY_KEY_PROVIDER
 
 _ENGINE_VERSION = "p4-slice1-dgrn-test"
 _LOW_THRESHOLD = 10
@@ -185,8 +186,13 @@ class TestHandlerWritesRealValues:
         oracle_cfg = WindowedDateConfig.from_dict(
             {"anchor": "start_date", "min_days": -4, "max_days": 17}
         )
+        # The adapter keys windowed_date by the admitted mask key (not job_seed), so the oracle is
+        # derived under that same key.
         expected = apply_windowed_date(
-            oracle_cfg, df, seed=seed, namespace="windowed_date/end_date"
+            oracle_cfg,
+            df,
+            seed=THROWAWAY_KEY_PROVIDER.mask_key(),
+            namespace="windowed_date/end_date",
         )
         assert actual == expected
         assert all(v is not None for v in actual)

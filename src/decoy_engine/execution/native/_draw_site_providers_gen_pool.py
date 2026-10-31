@@ -19,11 +19,11 @@ from typing import Any
 import numpy as np
 
 from decoy_engine.execution.native._determinism_protocol import DrawSite
-from decoy_engine.execution.native._draw_site_providers import (
+from decoy_engine.execution.native.protocol.providers_base import (
     DrawSiteProvider,
     SourceKeyedHmacProvider,
-    _SeededFromBytesNumpyProvider,
 )
+from decoy_engine.execution.native.protocol.providers_gen import _SeededFromBytesNumpyProvider
 from decoy_engine.generators.derivation import GenDeriveContext
 
 

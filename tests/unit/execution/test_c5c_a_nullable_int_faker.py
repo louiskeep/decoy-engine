@@ -23,6 +23,7 @@ from decoy_engine.execution._strategies._faker import FakerStrategyHandler
 from decoy_engine.generation.pool import _sampler
 from decoy_engine.generation.pool._cache import PoolCache
 from decoy_engine.generation.pool._errors import GenerationError
+from tests._keyed_secret import THROWAWAY_KEY_PROVIDER
 from tests.unit.execution import _c5c_a_support as sup
 
 pytestmark = pytest.mark.filterwarnings("ignore")
@@ -411,6 +412,8 @@ def _ctx(sources: dict[tuple[str, str], pa.ChunkedArray], **kw: Any) -> Strategy
         relationship_graph=sup.GRAPH,
         namespace_registry=sup.NS,
         job_seed=sup.SEED,
+        # The handler is driven directly, so it gets the key the run() route is admitted under.
+        mask_key=THROWAWAY_KEY_PROVIDER.mask_key(),
         current_table="t",
         exact_int_sources=sources,
         **kw,

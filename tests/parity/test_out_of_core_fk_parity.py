@@ -60,6 +60,7 @@ from decoy_engine.plan._types import ColumnSeed, GroupSeed, SeedEnvelope, TableS
 from decoy_engine.providers_v2 import get_default_registry
 from decoy_engine.relationships._graph import OrphanPolicy, RelationshipEdge, RelationshipGraph
 from decoy_engine.relationships._namespace import NamespaceRegistry
+from tests._keyed_secret import THROWAWAY_KEY_PROVIDER
 
 _REG = get_default_registry()
 _NS = NamespaceRegistry(bindings=())
@@ -100,12 +101,23 @@ def _plan(per_table: tuple[tuple[str, TableSeed], ...]) -> Any:
 
 def _run_oracle(plan: Any, sources: dict[str, pa.Table], graph: RelationshipGraph):
     return PandasExecutionAdapter().run(
-        plan, sources, registry=_REG, relationship_graph=graph, namespace_registry=_NS
+        plan,
+        sources,
+        registry=_REG,
+        relationship_graph=graph,
+        namespace_registry=_NS,
+        key_provider=THROWAWAY_KEY_PROVIDER,
     )
 
 
 def _run_ooc(plan: Any, sources: dict[str, pa.Table], graph: RelationshipGraph):
-    return run_fk_out_of_core(plan, sources, registry=_REG, relationship_graph=graph)
+    return run_fk_out_of_core(
+        plan,
+        sources,
+        registry=_REG,
+        relationship_graph=graph,
+        key_provider=THROWAWAY_KEY_PROVIDER,
+    )
 
 
 def _gate_admits(plan: Any, graph: RelationshipGraph) -> bool:

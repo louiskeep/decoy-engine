@@ -66,8 +66,8 @@
         ],
         "output": [
           {
-            "member_id": "621067875",
-            "ssn": "769-09-6725",
+            "member_id": "191244612",
+            "ssn": "708-05-5553",
             "first_name": "Heather",
             "last_name": "Smith",
             "email": "heather.smith@example.net",
@@ -76,8 +76,8 @@
             "zip": "27601"
           },
           {
-            "member_id": "842078876",
-            "ssn": "967-75-6485",
+            "member_id": "741802456",
+            "ssn": "927-48-8012",
             "first_name": "Katie",
             "last_name": "Thomas",
             "email": "katie.thomas@corp.example.com",
@@ -86,8 +86,8 @@
             "zip": "63101"
           },
           {
-            "member_id": "611418145",
-            "ssn": "460-48-9848",
+            "member_id": "950023739",
+            "ssn": "287-88-8452",
             "first_name": "Sonia",
             "last_name": "Hall",
             "email": "sonia.hall@mail.example.com",
@@ -96,8 +96,8 @@
             "zip": "19101"
           },
           {
-            "member_id": "301467856",
-            "ssn": "511-51-5529",
+            "member_id": "276857948",
+            "ssn": "054-83-0675",
             "first_name": "Victoria",
             "last_name": "Reeves",
             "email": "victoria.reeves@mail.example.com",
@@ -106,8 +106,8 @@
             "zip": "10001"
           },
           {
-            "member_id": "661897357",
-            "ssn": "305-80-2379",
+            "member_id": "697618065",
+            "ssn": "741-24-5926",
             "first_name": "Nicole",
             "last_name": "Mitchell",
             "email": "nicole.mitchell@example.org",
@@ -148,28 +148,28 @@
         ],
         "output": [
           {
-            "member_id": "621067875",
-            "claim_id": "605108",
+            "member_id": "191244612",
+            "claim_id": "774570",
             "billed_amount": "100.0"
           },
           {
-            "member_id": "842078876",
-            "claim_id": "029848",
+            "member_id": "741802456",
+            "claim_id": "085726",
             "billed_amount": "113.5"
           },
           {
-            "member_id": "611418145",
-            "claim_id": "312360",
+            "member_id": "950023739",
+            "claim_id": "181351",
             "billed_amount": "127.0"
           },
           {
-            "member_id": "301467856",
-            "claim_id": "512363",
+            "member_id": "276857948",
+            "claim_id": "424073",
             "billed_amount": "140.5"
           },
           {
-            "member_id": "661897357",
-            "claim_id": "694418",
+            "member_id": "697618065",
+            "claim_id": "727719",
             "billed_amount": "154.0"
           }
         ]
@@ -200,24 +200,24 @@
         ],
         "output": [
           {
-            "npi": "9605602698",
-            "pan": "8102802635372245"
+            "npi": "7957758823",
+            "pan": "9452259261590711"
           },
           {
-            "npi": "7610263395",
-            "pan": "8102802635372245"
+            "npi": "2054245581",
+            "pan": "9452259261590711"
           },
           {
-            "npi": "9909786450",
-            "pan": "8102802635372245"
+            "npi": "9989234447",
+            "pan": "9452259261590711"
           },
           {
-            "npi": "4599267540",
-            "pan": "8102802635372245"
+            "npi": "7806952634",
+            "pan": "9452259261590711"
           },
           {
-            "npi": "0133796805",
-            "pan": "8102802635372245"
+            "npi": "4882011883",
+            "pan": "9452259261590711"
           }
         ]
       }
@@ -276,13 +276,13 @@
       ],
       "output": [
         {
-          "account": "827097706"
+          "account": "103273642"
         },
         {
-          "account": "936758993"
+          "account": "896044053"
         },
         {
-          "account": "125340253"
+          "account": "506179065"
         }
       ],
       "invariant": "Output preserves the exact length and digit charset of the input, and is reversible with the key."
@@ -336,13 +336,13 @@
       ],
       "output": [
         {
-          "user_id": "67208a15cfeafe0c343a444b9e59a2bb2235800ed60026ed2fb59d5a65665c6c"
+          "user_id": "9f868f953b59c5724fb10a0f0daa8edae0fa48f37232060552451270201eabab"
         },
         {
-          "user_id": "56770d460af74f8da1744125a1ba0704e6422d6a4b704ef393790bdc20dea902"
+          "user_id": "e444ba487eb14ee5be47833d94044442e9c813f55ce5e176abe8c1df797b8892"
         },
         {
-          "user_id": "423500d584fd207c6e554d04b008b01f6a3824507574dccb5f15164e180a9680"
+          "user_id": "a7c009471bd18ef2c884819a995196294a354ab8b79dc5400e8c4ce4b02b9476"
         }
       ],
       "invariant": "Each value becomes a fixed-length keyed hex token; equal inputs hash equally, so joins survive."
@@ -456,13 +456,13 @@
       ],
       "output": [
         {
-          "tier": "silver"
+          "tier": "bronze"
         },
         {
-          "tier": "silver"
+          "tier": "bronze"
         },
         {
-          "tier": "silver"
+          "tier": "bronze"
         }
       ],
       "invariant": "Every value is remapped onto the configured category pool; equal inputs map to the same category."
@@ -486,13 +486,13 @@
       ],
       "output": [
         {
-          "dob": "1980-02-21"
+          "dob": "1980-02-24"
         },
         {
-          "dob": "1991-09-18"
+          "dob": "1991-08-07"
         },
         {
-          "dob": "2003-12-08"
+          "dob": "2004-01-11"
         }
       ],
       "invariant": "Each date is shifted by a keyed offset inside the configured window, preserving the date format."
@@ -516,13 +516,13 @@
       ],
       "output": [
         {
-          "event_date": "2024-01-06"
+          "event_date": "2024-01-22"
         },
         {
-          "event_date": "2024-04-21"
+          "event_date": "2024-04-07"
         },
         {
-          "event_date": "2024-07-08"
+          "event_date": "2024-07-02"
         }
       ],
       "invariant": "Each date is snapped to a deterministic position within its calendar month. The output is always a valid date in the same month as the input; exact day is derived from (job_seed, namespace, value) so the same input always produces the same output across runs."
@@ -546,13 +546,13 @@
       ],
       "output": [
         {
-          "salary": "92000"
-        },
-        {
           "salary": "50000"
         },
         {
           "salary": "75000"
+        },
+        {
+          "salary": "92000"
         }
       ],
       "invariant": "Values are permuted within the column; the exact multiset of values is preserved."
@@ -666,13 +666,13 @@
       ],
       "output": [
         {
-          "note": "Patient SSN 985-79-6664 on file"
+          "note": "Patient SSN 439-69-3371 on file"
         },
         {
-          "note": "SSN 546-01-2785 updated on record"
+          "note": "SSN 728-60-5446 updated on record"
         },
         {
-          "note": "Contact SSN 816-64-4824 verified"
+          "note": "Contact SSN 047-16-8517 verified"
         }
       ],
       "invariant": "PII spans are detected and masked per-detector (FPE for SSN by default); unmatched surrounding text is controlled by unmatched_span_policy."
@@ -726,13 +726,13 @@
       ],
       "output": [
         {
-          "diag_code": "H35.30"
+          "diag_code": "C61"
         },
         {
-          "diag_code": "D64.9"
+          "diag_code": "H25.10"
         },
         {
-          "diag_code": "A04.7"
+          "diag_code": "P07.30"
         }
       ],
       "invariant": "Each diagnosis code is replaced with a different real ICD-10 code drawn from the shipped corpus via HMAC-keyed selection. Output is always a valid corpus code and is always different from the input."
@@ -968,15 +968,15 @@
       "output": [
         {
           "anchor": "2024-01-15",
-          "event_date": "2024-01-28"
+          "event_date": "2024-01-18"
         },
         {
           "anchor": "2024-06-30",
-          "event_date": "2024-07-15"
+          "event_date": "2024-07-14"
         },
         {
           "anchor": "2024-11-02",
-          "event_date": "2024-11-30"
+          "event_date": "2024-11-17"
         }
       ],
       "invariant": "Each output date falls within [min_days, max_days] of the anchor column value in the same row. The exact offset is seeded per-row from the job seed; the same input always produces the same output across runs. The original column value is not preserved."
@@ -1012,23 +1012,23 @@
       "output": [
         {
           "cluster_id": "X",
-          "key": "GK-4eb7d8466d4bd97b"
+          "key": "GK-fdbc907eea38f89d"
         },
         {
           "cluster_id": "X",
-          "key": "GK-4eb7d8466d4bd97b"
+          "key": "GK-fdbc907eea38f89d"
         },
         {
           "cluster_id": "Y",
-          "key": "GK-edba65caae3eb8d4"
+          "key": "GK-376814e62dd1b65c"
         },
         {
           "cluster_id": "Y",
-          "key": "GK-edba65caae3eb8d4"
+          "key": "GK-376814e62dd1b65c"
         },
         {
           "cluster_id": "Z",
-          "key": "GK-b2b54b800e2f3fb2"
+          "key": "GK-fba0ea3066c6f4cd"
         }
       ],
       "invariant": "Every row sharing the same group_by value receives the same HKDF-SHA256 derived hex key. Distinct group_by values produce distinct keys (collision probability negligible under 32-byte HMAC output). The original column value is not preserved. Deterministic: same seed + same group_by -> same key on every run."

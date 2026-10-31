@@ -56,8 +56,11 @@ _ALL_TRUE = dict.fromkeys(sc.DIMENSIONS, True)
 # "a" + U+0897 + U+0316: the post-Unicode-14 mark reorders under Unicode >= 16 only.
 _SENSITIVE = "a\u0897\u0316"
 _ORDERED = "a\u0316\u0897"
-_SENSITIVE_NATIVE_TOKEN = "18a1e2bb3115db92ca35562b009f759d454959777614e4d9d7a00d27eb2b5ae4"
-_SENSITIVE_PYTHON_14_TOKEN = "3682379fae9e7a059e7dc794535530f5a3141c2cc37c5b61be770201c7719686"
+# Re-pinned under F13 (job_seed keying removed): Python hash of the reordered / unreordered form
+# under THROWAWAY_KEY_PROVIDER; the real companion is unavailable here so these skip-guarded
+# tokens are unverified against the kernel.
+_SENSITIVE_NATIVE_TOKEN = "8db248d3f22ce7e8d7faa6ccb6a4ac7d25345afb124f6a09a85c6e827ba1e7e9"
+_SENSITIVE_PYTHON_14_TOKEN = "376687f6c8fada32210019cf0c8063b7021044377c37949395cbae20efc58bc5"
 
 
 class RecordingRealKernel:

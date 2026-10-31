@@ -54,7 +54,7 @@ ADAPTERS: dict[tuple[str, str], str] = {
     ("execution/_errors.py", "StrategyError.__init__"): _CTOR,
     ("execution/_mixed_admission.py", "MixedDeclineError.__init__"): _CTOR,
     ("execution/_transforms.py", "TransformError.__init__"): _CTOR,
-    ("execution/native/_draw_site_providers.py", "DrawSiteProtocolError.__init__"): _CTOR,
+    ("execution/native/protocol/providers_base.py", "DrawSiteProtocolError.__init__"): _CTOR,
     ("execution/physical/_shadow_diff_codes.py", "ShadowDifference.__init__"): _CTOR,
     ("generation/_budget_ledger.py", "GenerationBudgetError.__init__"): _CTOR,
     ("generation/_window_admission.py", "GenerationAdmissionError.__init__"): _CTOR,
@@ -419,6 +419,8 @@ def test_ci_collects_the_registry_guards() -> None:
 # is a reviewed registry addition; this list may only shrink.
 UNCLASSIFIED: dict[str, str] = {
     "DecoyError": "the root class; a subclass without an identity is unclassified, not this",
+    "VaultClientConfigError": "a Vault client-construction error raised by the CLI helper before any run; fixed value-free text",
+    "SecretClosedError": "an internal invariant breach (a closed secret buffer was used); not a user-facing failure",
     "ConnectorError": "the connector base; Transient/Permanent subclasses carry the meaning",
     "ConnectorAuthError": "an authentication failure has no code yet; its text may echo a target",
     "FKPreservationError": "base of EmptyParentPool/UnknownFKColumn, which are classified",

@@ -26,7 +26,7 @@ from decoy_engine.execution.out_of_core._hash_run import OocHashRun
 from decoy_engine.kernel import hash_array
 from decoy_engine.relationships._graph import OrphanPolicy
 from tests.parity._d1a_hash_data import (
-    JOB_SEED,
+    MASK_KEY,
     NS,
     column_seed,
     hash_seeds,
@@ -193,7 +193,7 @@ def test_tz_aware_timestamp_is_declined_even_with_the_companion(
     run, entry = _declined(monkeypatch, column)
     assert entry["executed_backend"] == PYTHON_SCALAR
     assert entry["reason"] == "hash_input_type_tz_timestamp_deferred:c"
-    want = hash_array(column, seed=JOB_SEED, namespace=NS).to_pylist()
+    want = hash_array(column, seed=MASK_KEY, namespace=NS).to_pylist()
     assert run.tables["t"].column("c").to_pylist() == want
 
 
@@ -204,7 +204,7 @@ def test_non_admitted_type_runs_python_and_reports_its_type(
     run, entry = _declined(monkeypatch, column)
     assert entry["executed_backend"] == PYTHON_SCALAR
     assert entry["reason"] == "hash_input_type_not_native_admitted:c:date32[day]"
-    want = hash_array(column, seed=JOB_SEED, namespace=NS).to_pylist()
+    want = hash_array(column, seed=MASK_KEY, namespace=NS).to_pylist()
     assert run.tables["t"].column("c").to_pylist() == want
 
 

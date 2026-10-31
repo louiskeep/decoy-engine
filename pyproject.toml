@@ -224,6 +224,12 @@ ner = [
 # .[vault]` invocation, script, or Dockerfile still works unchanged. New
 # installs need no extra flag for either the vault or fpe/FF1.
 vault = []
+# F13: the sole external secret-provider adapter (HashiCorp Vault KV v2). Lazy-imported in
+# `secret_providers.vault`; the base install and env:/file: providers work without it. NOT the
+# `vault` alias above, which names Decoy's own token-vault feature. Exact pin: hvac 2.4.0,
+# Apache-2.0, pure-Python (requests + pyhcl); any change from this pin returns to owner review
+# (docs/security/secret-providers.md, "Dependency decision").
+hashicorp-vault = ["hvac==2.4.0"]
 # Sphinx + sphinx-autoapi build the API reference site published to
 # GitHub Pages. Build from the repo root via `pip install -e .[docs]`
 # then `make -C docs html`. CI lives at `.github/workflows/docs.yml`.
@@ -401,6 +407,7 @@ pythonpath = ["src", "scripts"]
 # `pytest -m determinism_harness` or `python scripts/faker-determinism/check_determinism.py`.
 addopts = "-m 'not benchmark and not testflight and not packaging and not codspeed and not determinism_harness'"
 markers = [
+    "no_default_secret: opt out of the shared throwaway secret (tests/_keyed_secret.py); the test asserts behavior with no secret supplied",
     "benchmark: informational performance benchmarks; not a regression gate",
     "determinism_harness: full faker-pool determinism matrix sweep (scripts/faker-determinism/check_determinism.py against golden_digests.json); excluded from the default loop for runtime, run explicitly via pytest -m determinism_harness",
     "codspeed: pytest-codspeed instrumented microbenchmarks (tests/codspeed/); needs the [perf] extra; run only by the codspeed CI workflow, gated on the CODSPEED_TOKEN secret",
@@ -761,7 +768,6 @@ module = [
     "decoy_engine.execution._probe_scale",
     "decoy_engine.execution._governor",
     "decoy_engine.execution._governor_monitor",
-    "decoy_engine.execution._mem_telemetry",
     "decoy_engine.execution._pipeline_chunk_route",
     "decoy_engine.execution._isolated_run",
     "decoy_engine.execution._isolated_worker",
@@ -901,6 +907,10 @@ module = [
     # installed in default-extras CI.
     "decoy_engine_native",
     "decoy_engine_native.*",
+    # hvac (HashiCorp Vault client) is the OPTIONAL `hashicorp-vault` extra, imported lazily in
+    # secret_providers.vault; absent from the base install and untyped when present.
+    "hvac",
+    "hvac.*",
 ]
 ignore_missing_imports = true
 
@@ -1027,9 +1037,20 @@ fail_under = 0
 # the covering tests' conftest transitively needs). Keep source_paths at the
 # package root and use only_mutate to restrict actual mutation to the target.
 source_paths = ["src/decoy_engine"]
-only_mutate = ["src/decoy_engine/transforms/_ff1.py"]
+only_mutate = [
+    "src/decoy_engine/transforms/_ff1.py",
+    "src/decoy_engine/secret_providers/_cache.py",
+    "src/decoy_engine/secret_providers/_preflight.py",
+    "src/decoy_engine/secret_providers/_errors.py",
+    "src/decoy_engine/secret_providers/_types.py",
+    "src/decoy_engine/secret_providers/vault.py",
+    "src/decoy_engine/keyprovider.py",
+]
 pytest_add_cli_args_test_selection = [
     "tests/unit/transforms/test_ff1_primitive.py",
+    "tests/secret_providers",
+    "tests/unit/test_de02_keyprovider.py",
+    "tests/property/test_keyprovider_invariants.py",
     "-k",
     "not test_exhaustive_six_digit_permutation",
 ]
