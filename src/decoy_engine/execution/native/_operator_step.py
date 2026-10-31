@@ -520,19 +520,19 @@ def run_kernel_step_masked(
     kernel sees the selected rows' missingness.
     """
     plain = source.combine_chunks() if isinstance(source, pa.ChunkedArray) else source
-    if not (pc.sum(mask).as_py() or 0):
+    if not (pc.sum(mask).as_py() or 0):  # type: ignore[attr-defined, unused-ignore]
         return StepResult(plain, False)
     selected = np.flatnonzero(mask.to_numpy(zero_copy_only=False))
     result = run_kernel_step(
         params,
-        pc.filter(plain, mask),
+        pc.filter(plain, mask),  # type: ignore[attr-defined, unused-ignore]
         mask_key=mask_key,
         native_threads=native_threads,
         index_kernel=index_kernel,
         pool=pool,
         row_offset=row_offset,
         job_seed=job_seed,
-        missing_mask=pc.filter(missing_mask, mask) if missing_mask is not None else None,
+        missing_mask=pc.filter(missing_mask, mask) if missing_mask is not None else None,  # type: ignore[attr-defined, unused-ignore]
         gate_positions=selected,
     )
     positions = result.format_error_positions
@@ -540,7 +540,7 @@ def run_kernel_step_masked(
         # The kernel numbered its errors within the selected subset; callers need chunk positions.
         positions = tuple(int(selected[p]) for p in positions)
     return StepResult(
-        pc.replace_with_mask(plain, mask, result.out),
+        pc.replace_with_mask(plain, mask, result.out),  # type: ignore[attr-defined, unused-ignore]
         result.ran,
         positions,
         preserved_rows=result.preserved_rows,
