@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 
 import pyarrow as pa
 
-from decoy_engine.execution.out_of_core._join import _unified_chunk_type
+from decoy_engine.execution.out_of_core._join import _unified_chunk_type, fk_output_array
 from decoy_engine.execution.out_of_core._mask import mask_table
 from decoy_engine.execution.out_of_core._relation import build_parent_key_relation_aligned
 from decoy_engine.execution.out_of_core._stage import MaskedKeyStager
@@ -191,7 +191,9 @@ def empty_output_table(
     An empty stream has no batches to derive types from, and the analytic
     fixed schema is NOT what a whole-table build yields: value-inferring
     kernels type an empty column null, and an FK column concatenates zero
-    chunks into a null-typed empty array. Reproduce both exactly.
+    chunks into a null-typed empty array. Reproduce both exactly, except a
+    temporal FK column, which the seam types at the joiner's fixed type (the
+    full-frame route keeps a zero-row timestamp key typed).
     """
     table = mask_table(
         plan,
@@ -199,9 +201,9 @@ def empty_output_table(
         source_schema.empty_table(),
         skip_columns=frozenset(fk_components),
     )
-    for col in fk_components:
+    for col, (joiner, component) in fk_components.items():
         idx = table.schema.get_field_index(col)
-        table = table.set_column(idx, col, pa.array([], from_pandas=True))
+        table = table.set_column(idx, col, fk_output_array([], joiner.output_types[component]))
     return table
 
 

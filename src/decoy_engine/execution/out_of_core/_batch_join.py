@@ -74,12 +74,14 @@ from decoy_engine.execution.out_of_core._join import (
     _sql_string,
     _unified_chunk_type,
     cast_fk_chunk,
+    fk_output_array,
 )
 from decoy_engine.execution.out_of_core._mask import mask_column, masked_output_type
 from decoy_engine.execution.out_of_core._relation import _column_seed
 from decoy_engine.relationships._graph import OrphanPolicy
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from pathlib import Path
 
     from decoy_engine.execution.out_of_core._relation import ParentKeyRelation
@@ -265,6 +267,7 @@ class ChildFkBatchJoiner:
                     edge=edge,
                     remap_values=remap_values,
                     output_chunks=output_chunks,
+                    output_types=self._output_types,
                 )
         finally:
             self._conn.unregister("child_batch_keys")
@@ -337,16 +340,8 @@ class ChildFkBatchJoiner:
         # values either way, and `_append_output_batch` can then index by row
         # number unchanged (rows are batch-local here, the staging table is
         # numbered from zero). Bounded by batch size, never child cardinality.
-        remapped = []
-        for child_col, seed in zip(self._edge.child_columns, self._remap_seeds, strict=True):
-            normalized = [
-                None if fk_key_value(value) is NULL_FK_KEY else fk_key_value(value)
-                for value in batch.column(child_col).to_pylist()
-            ]
-            remapped.append(
-                mask_column(pa.array(normalized, from_pandas=True), seed, self._job_seed)
-            )
-        return tuple(remapped)
+        keys = [batch.column(col) for col in self._edge.child_columns]
+        return mint_remap_values(keys, self._remap_seeds, self._job_seed)
 
     def _replace_fk_columns(
         self, batch: pa.RecordBatch, fk_arrays: list[pa.Array]
@@ -377,7 +372,8 @@ def _resolve_output_types(
     rows), plus the fk_key_value-normalized child key type under PRESERVE/WARN
     (orphans keep their source key) or the parent strategy's output type under
     REMAP (orphans are re-masked). FAIL contributes nothing beyond the masked
-    type: orphans raise before output and null keys are null under any type.
+    type: orphans raise before output and null keys are null under any type, so
+    under FAIL the fixed type is the masked-parent type (unit preserved).
     """
     policy = edge.orphan_policy
     resolved: list[pa.DataType] = []
@@ -410,11 +406,41 @@ def _resolve_output_types(
     return tuple(resolved)
 
 
+def mint_remap_values(
+    keys: Sequence[pa.Array], seeds: Sequence[ColumnSeed], job_seed: bytes
+) -> tuple[pa.Array, ...]:
+    """REMAP values for one batch of raw child keys, shared by every joiner.
+
+    Each key is normalized like the oracle's child keys (`fk_key_value`), built by the seam at
+    the normalized child key's own type (unit preserved, separate from the output type), then
+    masked by the parent strategy. Called under REMAP only: typing the input under FAIL would
+    give a zone-aware child a refusal the oracle does not have.
+    """
+    remapped = []
+    for column, seed in zip(keys, seeds, strict=True):
+        normalized = [
+            None if fk_key_value(value) is NULL_FK_KEY else fk_key_value(value)
+            for value in column.to_pylist()
+        ]
+        strategy_input = fk_output_array(normalized, _fk_key_value_roundtrip_type(column.type))
+        remapped.append(mask_column(strategy_input, seed, job_seed))
+    return tuple(remapped)
+
+
+_UNIT_RANK = {"s": 0, "ms": 1, "us": 2, "ns": 3}
+
+
 def _fixed_component_type(candidates: set[pa.DataType]) -> pa.DataType:
+    """One output type per FK component. tz-naive timestamps unify to the finest unit, Arrow's
+    own rule (`pa.unify_schemas([us, ns], promote_options="permissive")` is `timestamp[ns]`);
+    values enter through a safe conversion (`fk_output_array`), so an out-of-range instant
+    refuses. date32 unifies only with itself; zone-aware types are refused upstream."""
     non_null = {dtype for dtype in candidates if not pa.types.is_null(dtype)}
     if len(non_null) <= 1:
         merged = _unified_chunk_type(candidates)
         return merged if merged is not None else pa.null()
+    if all(pa.types.is_timestamp(dtype) and dtype.tz is None for dtype in non_null):
+        return max(non_null, key=lambda dtype: _UNIT_RANK[dtype.unit])
     if non_null == {pa.bool_(), pa.int64()}:
         # Codex round-5 Finding B: a matched row's masked value is a real
         # bool, verbatim; an orphan/REMAP-minted value went through
@@ -477,7 +503,8 @@ def _fk_key_value_roundtrip_type(dtype: pa.DataType) -> pa.DataType:
 
 
 def _python_roundtrip_type(dtype: pa.DataType) -> pa.DataType:
-    """The type `pa.array(values, from_pandas=True)` infers for values of dtype.
+    """The FK output image of dtype: `pa.array(values, from_pandas=True)` inference, except a
+    tz-naive timestamp, which `fk_output_array` builds at its own unit.
 
     The whole-child path rebuilds every FK output chunk from Python values, so
     parity requires candidate types in that same inference image. Types whose
@@ -506,7 +533,8 @@ def _python_roundtrip_type(dtype: pa.DataType) -> pa.DataType:
     if pa.types.is_timestamp(dtype):
         if dtype.tz is not None:
             raise _dtype_unsupported(dtype, "zone-aware round trips are not pinned by tests")
-        return pa.timestamp("us")
+        # Unit preserved: the seam builds timestamps at the fixed type, never by inference.
+        return dtype
     if pa.types.is_date32(dtype):
         return pa.date32()
     if pa.types.is_decimal(dtype):
@@ -558,11 +586,8 @@ def _remap_values(
                 code=reasons.runtime.OUT_OF_CORE_PARENT_SEED_MISSING,
                 message=f"parent key {edge.parent_table}.{parent_column} is not in the plan.",
             )
-        normalized = [
-            None if fk_key_value(value) is NULL_FK_KEY else fk_key_value(value)
-            for value in source_child.column(child_column).combine_chunks().to_pylist()
-        ]
-        remapped.append(mask_column(pa.array(normalized, from_pandas=True), parent_seed, key))
+        column = source_child.column(child_column).combine_chunks()
+        remapped += mint_remap_values([column], [parent_seed], key)
     return tuple(remapped)
 
 

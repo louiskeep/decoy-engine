@@ -299,3 +299,89 @@ class TestLazySourcesReadTheFooter:
         }
         assert not fk_out_of_core_dtype_hazard(_plan("passthrough"), _graph(), caller_sources=ok)
         assert fk_out_of_core_dtype_hazard(_plan("passthrough"), _graph(), caller_sources=bad)
+
+
+# ---------------------------------------------------------------------------
+# Slice 0 item 2 (Codex round 3 MEDIUM): the approved temporal promotion is not a hazard.
+# Out-of-core now unifies tz-naive timestamps to the finer unit, so a us/ns edge resolves
+# `ns` while its matched (masked-parent) image stays `us`. That one promotion, with an identity
+# parent key (passthrough or unseeded), cannot drift or range-refuse: every published value is
+# an instant one side already holds. Labels: CH = green on main and after (main resolves `us`
+# for both sides, so it never diverted); FB = red on main.
+# ---------------------------------------------------------------------------
+
+_US, _NS, _MS, _S = (pa.timestamp(u) for u in ("us", "ns", "ms", "s"))
+_DT = dt.datetime(2020, 1, 1)
+_TEMPORAL_PROMOTIONS = [(_US, _NS), (_NS, _US), (_MS, _S), (_S, _NS), (_US, _US)]
+
+
+@pytest.mark.parametrize(
+    "policy",
+    [OrphanPolicy.PRESERVE, OrphanPolicy.WARN, OrphanPolicy.REMAP, OrphanPolicy.FAIL],
+    ids=lambda p: f"{p.value}-CH",
+)
+@pytest.mark.parametrize(
+    ("parent_type", "child_type"),
+    _TEMPORAL_PROMOTIONS,
+    ids=[f"{p.unit}->{c.unit}" for p, c in _TEMPORAL_PROMOTIONS],
+)
+def test_the_temporal_unit_promotion_is_not_a_hazard(parent_type, child_type, policy) -> None:
+    parent, child = pa.array([_DT], parent_type), pa.array([_DT], child_type)
+    assert _hazard(parent, child, policy=policy) is False
+    if policy is not OrphanPolicy.REMAP:  # REMAP without a parent seed is always a hazard
+        plan = _plan("passthrough", parent_seeded=False)
+        sources = _sources(parent, child)
+        assert fk_out_of_core_dtype_hazard(plan, _graph(policy), caller_sources=sources) is False
+
+
+# The exemption must not weaken the other hazards: each stays flagged after the change.
+_STILL_HAZARDS = {
+    "int64_parent_float_child": (pa.array([1], pa.int64()), pa.array([1.5])),
+    "float_parent_int_child": (pa.array([1.5]), pa.array([_BIG], pa.int64())),
+    "bool_parent_int_child": (pa.array([True]), pa.array([1], pa.int64())),
+    "timestamp_parent_date32_child": (pa.array([_DT], _US), pa.array([_DT.date()], pa.date32())),
+    "date32_parent_timestamp_child": (pa.array([_DT.date()], pa.date32()), pa.array([_DT], _NS)),
+    "naive_parent_tz_aware_child": (pa.array([_DT], _US), pa.array([_T], _UTC)),
+    "tz_aware_ns_parent_naive_child": (
+        pa.array([_T], pa.timestamp("ns", tz="UTC")),
+        pa.array([_DT], _NS),
+    ),
+}
+
+
+@pytest.mark.parametrize("policy", [OrphanPolicy.PRESERVE, OrphanPolicy.WARN, OrphanPolicy.REMAP])
+@pytest.mark.parametrize("name", [f"{n}-CH" for n in sorted(_STILL_HAZARDS)])
+def test_numeric_boolean_and_cross_family_hazards_still_divert(name, policy) -> None:
+    parent, child = _STILL_HAZARDS[name.removesuffix("-CH")]
+    assert _hazard(parent, child, policy=policy) is True
+
+
+def test_a_promotion_of_non_identity_masked_timestamps_is_a_hazard_FB() -> None:
+    """FB: a parent key masked to arbitrary timestamps (redact with a datetime replacement, here
+    in year 9999) widened to `ns` can fall outside the `ns` range, which out-of-core refuses at
+    run time while the oracle completes. Only the identity promotion is exempt. Main returns
+    False (it resolves `us` on both sides and then publishes false orphans)."""
+    seed = ColumnSeed(
+        namespace=None,
+        strategy="redact",
+        provider="redact",
+        backend_type="faker",
+        backend_version="v",
+        cardinality_mode="reuse",
+        deterministic=False,
+        provider_config=(("redact_with", dt.datetime(9999, 1, 1)),),
+        coherent_with=(),
+    )
+    plan = SimpleNamespace(
+        seed_envelope=SeedEnvelope(
+            job_seed=b"\x01" * 8,
+            per_table=(
+                ("parent", TableSeed(per_column=(("pk", seed),), per_group=())),
+                ("child", TableSeed(per_column=(), per_group=())),
+            ),
+        )
+    )
+    sources = _sources(pa.array([_DT], _US), pa.array([_DT], _NS))
+    assert (
+        fk_out_of_core_dtype_hazard(plan, _graph(OrphanPolicy.WARN), caller_sources=sources) is True
+    )

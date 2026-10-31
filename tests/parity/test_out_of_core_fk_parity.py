@@ -1541,3 +1541,348 @@ def test_non_fk_int_payload_reject_parity(strategy: str, payload: list[int | Non
         expect_reject_code="null_bearing_int_unsupported" if reject else None,
     )
     assert outcome == ("both-raised" if reject else "parity")
+
+
+# ---------------------------------------------------------------------------
+# Slice 0 item 2: typed out-of-core temporal FK seam
+# (docs/plans/2026-10-31-slice0-ooc-fk-typed-seam.md, T1, T2, T3). Every test id ends in
+# its plan label: FB = FAIL-BEFORE (red on main), CH = CHARACTERIZATION (green before and
+# after). The reference is the full-frame route (P5), cast safely to the fixed type.
+# ---------------------------------------------------------------------------
+
+import datetime as _dt  # noqa: E402
+
+import pandas as pd  # noqa: E402
+
+from tests.parity import _d2b_shapes as _d2b  # noqa: E402
+from tests.parity import _dcomp_ooc_shapes as _dco  # noqa: E402
+from tests.parity import _ooc_temporal_fk as _tf  # noqa: E402
+
+_FINER = {"s": 0, "ms": 1, "us": 2, "ns": 3}
+
+
+def _fixed_unit(p: str, c: str, policy: OrphanPolicy) -> str:
+    """The plan's rule: FAIL has no child candidate, so its fixed type is the masked parent's;
+    every other policy unifies to the finer unit. The masked-parent type is the relation's
+    Parquet footer (authoritative, `_batch_join.py`), and the DuckDB COPY stores `s`/`ms` keys
+    as `timestamp[us]` (`_tf.RELATION_UNIT`)."""
+    parent = _tf.RELATION_UNIT[p]
+    if policy is OrphanPolicy.FAIL:
+        return parent
+    return max(parent, c, key=_FINER.__getitem__)
+
+
+@pytest.mark.parametrize("gate", _tf.GATES, ids=[f"{g}-FB" for g in _tf.GATES])
+@pytest.mark.parametrize("mode", _tf.MODES)
+def test_ns_timestamp_fk_matches_full_frame(tmp_path, mode: str, gate: str) -> None:
+    """T1 (FB, every cell): 20 parent keys 1 ns apart, child equal. Main publishes
+    `timestamp[us]` with ONE distinct value; the full-frame reference keeps all 20."""
+    keys = _tf.ns_keys(20)
+    config, sources = _tf.job(tmp_path, keys, keys)
+    reference = _tf.run(config, sources, gate="full_frame")
+    got = _tf.run(config, sources, gate=gate, mode=mode, tmp=tmp_path)
+    assert got.mode[0] == "out_of_core"
+    child = got.outputs["child"].column("parent_id").combine_chunks()
+    _tf.assert_matches_reference(
+        reference.outputs["child"].column("parent_id").combine_chunks(), child, _tf.ts("ns")
+    )
+    assert len(set(child.to_pylist())) == 20
+    assert set(child.to_pylist()) <= set(got.outputs["parent"].column("id").to_pylist())
+
+
+_DIRECTIONS = [("us", "ns"), ("ns", "us"), ("ms", "s"), ("s", "ns")]
+_POLICIES = [OrphanPolicy.PRESERVE, OrphanPolicy.WARN, OrphanPolicy.REMAP, OrphanPolicy.FAIL]
+_NULLS = {
+    "none": [i % 6 for i in range(8)],
+    "first": [None] + [i % 6 for i in range(1, 8)],
+    "last": [i % 6 for i in range(7)] + [None],
+    "all": [None] * 8,
+}
+
+
+def _t2_cells(assertion: str) -> list[Any]:
+    cells = []
+    for p, c in _DIRECTIONS:
+        one_ns = (p == "ns") != (c == "ns")
+        for policy in _POLICIES:
+            for nulls in _NULLS:
+                for composite in (False, True):
+                    nonnull = nulls != "all"
+                    main_raises = policy is OrphanPolicy.FAIL and one_ns and nonnull
+                    if assertion == "orphans":
+                        red = one_ns and nonnull
+                    elif assertion == "type":
+                        # Main types every temporal FK output `timestamp[us]`, an all-null one
+                        # `null`, and aborts FAIL on the false orphans.
+                        red = main_raises or not nonnull or _fixed_unit(p, c, policy) != "us"
+                    else:
+                        # Values: a passthrough orphan publishes the same instant a match would,
+                        # except the composite's hashed `k`, which PRESERVE/WARN keep raw.
+                        red = main_raises or (
+                            composite
+                            and one_ns
+                            and nonnull
+                            and policy in (OrphanPolicy.PRESERVE, OrphanPolicy.WARN)
+                        )
+                    shape = "composite" if composite else "single"
+                    label = "FB" if red else "CH"
+                    cells.append(
+                        pytest.param(
+                            p,
+                            c,
+                            policy,
+                            nulls,
+                            composite,
+                            id=f"{p}->{c}-{policy.value}-{nulls}-{shape}-{label}",
+                        )
+                    )
+    return cells
+
+
+def _t2_run(p: str, c: str, policy: OrphanPolicy, nulls: str, composite: bool):
+    parent = _tf.instants(6)
+    shape = _tf.shape_for(composite, policy, _tf.ts(p), _tf.ts(c), parent, _NULLS[nulls])
+    with _tf.counted_orphans() as orphans:
+        run = _dco.run_ooc(shape)
+    return shape, run, orphans[0]
+
+
+def _fk_columns(composite: bool) -> tuple[str, ...]:
+    return ("k", "n") if composite else ("n",)
+
+
+@pytest.mark.parametrize(("p", "c", "policy", "nulls", "composite"), _t2_cells("orphans"))
+def test_mixed_unit_timestamp_keys_are_not_orphans(p, c, policy, nulls, composite) -> None:
+    """T2 (orphans): equal instants at two units are matches, under every policy (FAIL
+    completes instead of aborting on false orphans)."""
+    _shape, _run, orphans = _t2_run(p, c, policy, nulls, composite)
+    assert orphans == 0
+
+
+@pytest.mark.parametrize(("p", "c", "policy", "nulls", "composite"), _t2_cells("type"))
+def test_mixed_unit_timestamp_fk_has_the_fixed_type(p, c, policy, nulls, composite) -> None:
+    """T2 (type): the finer unit under PRESERVE/WARN/REMAP; the masked-parent unit under FAIL."""
+    _shape, run, _orphans = _t2_run(p, c, policy, nulls, composite)
+    assert run.outputs["C"].column("n").type == _tf.ts(_fixed_unit(p, c, policy))
+
+
+@pytest.mark.parametrize(("p", "c", "policy", "nulls", "composite"), _t2_cells("values"))
+def test_mixed_unit_timestamp_fk_values_equal_full_frame(p, c, policy, nulls, composite) -> None:
+    """T2 (values): every FK column equals the full-frame reference, compared at `ns`."""
+    shape, run, _orphans = _t2_run(p, c, policy, nulls, composite)
+    reference = _d2b.run_full(shape)
+    for col in _fk_columns(composite):
+        got = run.outputs["C"].column(col).combine_chunks()
+        want = reference.outputs["C"].column(col).combine_chunks()
+        if col == "n":
+            got, want = got.cast(_tf.ts("ns")), want.cast(_tf.ts("ns"))
+        assert got.equals(want), (col, got.to_pylist(), want.to_pylist())
+
+
+def test_ns_only_shifted_by_one_ns_keeps_exactly_one_orphan_CH() -> None:
+    """T2 (CH): a real 1 ns orphan stays an orphan on main and after."""
+    keys = _tf.ns_keys(20).to_pylist()
+    shape = _tf.scalar_shape(
+        OrphanPolicy.WARN,
+        _tf.ts("ns"),
+        _tf.ts("ns"),
+        keys,
+        [k + pd.Timedelta(1, "ns") for k in keys],
+    )
+    with _tf.counted_orphans() as orphans:
+        _dco.run_ooc(shape)
+    assert orphans[0] == 1
+
+
+@pytest.mark.parametrize("gate", _tf.GATES)
+@pytest.mark.parametrize("mode", _tf.MODES)
+def test_mixed_unit_edge_is_routed_out_of_core_CH(tmp_path, mode: str, gate: str) -> None:
+    """T2 route (CH on main, probed: the hazard compares `us` with `us` there, so no gate
+    diverts). After the fix this pins the router exemption: `resolved` (`ns`) differs from
+    `matched` (`us`), and only the approved temporal promotion keeps byte-estimate off
+    sequential."""
+    config, sources = _tf.job(tmp_path, _tf.instants_array("us", 12), _tf.instants_array("ns", 12))
+    got = _tf.run(config, sources, gate=gate, mode=mode, tmp=tmp_path)
+    expected = {
+        "forced": "override_out_of_core",
+        "large_fk": "out_of_core_large_fk",
+        "byte_estimate": "byte_estimate_bounded_out_of_core",
+    }[gate]
+    assert got.mode == ("out_of_core", expected)
+
+
+@pytest.mark.parametrize("gate", _tf.GATES)
+@pytest.mark.parametrize("mode", _tf.MODES)
+def test_mixed_unit_edge_has_no_false_orphans_on_every_route_FB(
+    tmp_path, mode: str, gate: str
+) -> None:
+    """T2 route (FB): parent `us`, child `ns`, equal instants, WARN. Main: 12 of 12 rows are
+    false orphans on every gate and mode."""
+    config, sources = _tf.job(tmp_path, _tf.instants_array("us", 12), _tf.instants_array("ns", 12))
+    reference = _tf.run(config, sources, gate="full_frame")
+    got = _tf.run(config, sources, gate=gate, mode=mode, tmp=tmp_path)
+    assert _tf.orphan_rows(got) == 0
+    _tf.assert_matches_reference(
+        reference.outputs["child"].column("parent_id").combine_chunks(),
+        got.outputs["child"].column("parent_id").combine_chunks(),
+        _tf.ts("ns"),
+    )
+
+
+# T3: key-type matrix. Same-unit temporal, date32, string, ints, uint32, float64, each with a
+# null key (and an orphan where the policy allows one), single and composite; plus the
+# refusal cells, whose code is policy-specific.
+
+_ORPHANABLE = (OrphanPolicy.PRESERVE, OrphanPolicy.WARN, OrphanPolicy.REMAP)
+
+
+def _t3_values(kind: str) -> tuple[pa.DataType, list[Any], Any]:
+    if kind in _tf.UNITS:
+        if kind == "ns":
+            keys = _tf.ns_keys(4).to_pylist()
+            return _tf.ts("ns"), keys, keys[-1] + pd.Timedelta(7, "ns")
+        return _tf.ts(kind), _tf.instants(4), _dt.datetime(2030, 1, 1)
+    if kind == "date32":
+        return pa.date32(), [_dt.date(2020, 1, 1 + i) for i in range(4)], _dt.date(2030, 1, 1)
+    if kind == "string":
+        return pa.string(), ["w", "x", "y", "z"], "orphan"
+    if kind == "float64":
+        return pa.float64(), [0.5, 1.5, 2.5, 3.5], 99.5
+    return getattr(pa, kind)(), [1, 2, 3, 4], 99
+
+
+_T3_KINDS = [
+    "s",
+    "ms",
+    "us",
+    "ns",
+    "date32",
+    "string",
+    "int8",
+    "int16",
+    "int32",
+    "int64",
+    "uint32",
+    "float64",
+]
+_T3_FB = {"ns"}
+
+
+def _t3_expected_type(kind: str, dtype: pa.DataType) -> pa.DataType:
+    if kind in _tf.UNITS:
+        return _tf.ts(_tf.RELATION_UNIT[kind])
+    if kind in ("date32", "string", "float64"):
+        return dtype
+    return pa.int64()
+
+
+@pytest.mark.parametrize("composite", [False, True], ids=["single", "composite"])
+@pytest.mark.parametrize("policy", _POLICIES, ids=lambda p: p.value)
+@pytest.mark.parametrize(
+    "kind", [pytest.param(k, id=f"{k}-{'FB' if k in _T3_FB else 'CH'}") for k in _T3_KINDS]
+)
+def test_fk_key_type_matrix(kind: str, policy: OrphanPolicy, composite: bool) -> None:
+    """T3: the out-of-core FK output equals the full-frame reference after a safe cast to the
+    out-of-core type, and that type is the documented image (temporal keeps its unit)."""
+    dtype, parent, orphan = _t3_values(kind)
+    refs: list[int | None] = [0, 1, None, 3, 2]
+    if policy in _ORPHANABLE:
+        refs.append(-1)
+    shape = _tf.shape_for(composite, policy, dtype, dtype, parent, refs, orphan)
+    run, reference = _dco.run_ooc(shape), _d2b.run_full(shape)
+    got = run.outputs["C"].column("n").combine_chunks()
+    assert got.type == _t3_expected_type(kind, dtype)
+    assert got.equals(reference.outputs["C"].column("n").combine_chunks().cast(got.type))
+    if composite:
+        assert run.outputs["C"].column("k").equals(reference.outputs["C"].column("k"))
+
+
+_UTC_US = pa.timestamp("us", tz="UTC")
+
+
+def _refusal_cells() -> list[Any]:
+    cells = []
+    for name, ptype, ctype, pvals, cvals in [
+        ("decimal128", pa.decimal128(10, 0), pa.decimal128(10, 0), [Decimal(1)], [Decimal(1)]),
+        ("uint64", pa.uint64(), pa.uint64(), [1], [1]),
+        (
+            "date32_child_of_timestamp",
+            _tf.ts("us"),
+            pa.date32(),
+            [_tf.BASE],
+            [_dt.date(2020, 1, 1)],
+        ),
+        (
+            "tz_aware_child_of_naive",
+            _tf.ts("us"),
+            _UTC_US,
+            [_tf.BASE],
+            [_tf.BASE.replace(tzinfo=_dt.timezone.utc)],
+        ),
+    ]:
+        for policy in _POLICIES:
+            mixed = name in ("date32_child_of_timestamp", "tz_aware_child_of_naive")
+            code = (
+                "orphan_fk_violation"
+                if mixed and policy is OrphanPolicy.FAIL
+                else "out_of_core_fk_key_dtype_unsupported"
+            )
+            for composite in (False, True):
+                cells.append(
+                    pytest.param(
+                        ptype,
+                        ctype,
+                        pvals,
+                        cvals,
+                        policy,
+                        composite,
+                        code,
+                        id=f"{name}-{policy.value}-{'composite' if composite else 'single'}-CH",
+                    )
+                )
+    return cells
+
+
+@pytest.mark.parametrize(
+    ("ptype", "ctype", "pvals", "cvals", "policy", "composite", "code"), _refusal_cells()
+)
+def test_fk_key_type_matrix_refusals(ptype, ctype, pvals, cvals, policy, composite, code) -> None:
+    """T3 refusals (CH): decimal and uint64 refuse under every policy (the masked-parent
+    candidate); a date32 or zone-aware child of a naive timestamp parent refuses under
+    PRESERVE/WARN/REMAP and raises `orphan_fk_violation` under FAIL, because FAIL never consults
+    the child type and its tokens never equal the parent's."""
+    if composite:
+        shape = _tf.composite_shape(policy, ptype, ctype, pvals, cvals, ["a"] * len(cvals))
+    else:
+        shape = _tf.scalar_shape(policy, ptype, ctype, pvals, cvals)
+    with pytest.raises(ExecutionError) as exc:
+        _dco.run_ooc(shape)
+    assert exc.value.code == code
+
+
+def test_multi_parent_members_with_different_units_are_refused_CH() -> None:
+    """T3 (CH): the merged multi-parent relation needs one masked type; `us` and `ns` members
+    stay refused (pinned divergence, SEMANTIC_DIFFERENCES.md)."""
+    plan = _d2b.make_plan(
+        {
+            "P1": _d2b.table_seed({"k": _d2b.passthrough()}),
+            "P2": _d2b.table_seed({"k": _d2b.passthrough()}),
+            "X": _d2b.table_seed({"ref": _d2b.passthrough()}),
+        }
+    )
+    graph = _d2b.graph(
+        _d2b.edge("P1", "k", "X", "ref", "ns_x", OrphanPolicy.PRESERVE),
+        _d2b.edge("P2", "k", "X", "ref", "ns_x", OrphanPolicy.PRESERVE),
+    )
+    shape = _d2b.Shape(
+        plan,
+        graph,
+        {
+            "P1": pa.table({"k": _tf.instants_array("us", 2)}),
+            "P2": pa.table({"k": _tf.instants_array("ns", 3)}),
+            "X": pa.table({"ref": _tf.instants_array("ns", 3)}),
+        },
+    )
+    with pytest.raises(ExecutionError) as exc:
+        _dco.run_ooc(shape)
+    assert exc.value.code == "out_of_core_fk_key_dtype_unsupported"

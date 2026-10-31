@@ -114,9 +114,26 @@ def fk_out_of_core_dtype_hazard(
         # A fixed type that an orphan or remapped candidate changed (bool with int64,
         # int64 with float64), or a float type fed by integer keys, is exact only while
         # the run's values happen to fit it. That depends on the data, not the schema.
-        if resolved != matched or (
+        # The one exemption is a tz-naive timestamp unified to a finer unit over an identity
+        # parent key: every published value is an instant one side already holds, so the
+        # widening is exact and in range whatever the data.
+        changed = (
+            r != m and not _identity_temporal_promotion(r, m, seed)
+            for r, m, seed in zip(resolved, matched, seeds, strict=True)
+        )
+        if any(changed) or (
             any(pa.types.is_floating(t) for t in resolved)
             and any(pa.types.is_integer(t) for t in parent_types + child_types)
         ):
             return True
     return False
+
+
+def _identity_temporal_promotion(resolved: pa.DataType, matched: pa.DataType, seed: object) -> bool:
+    from decoy_engine.execution.out_of_core._batch_join import _UNIT_RANK
+
+    return (
+        (seed is None or getattr(seed, "strategy", None) == "passthrough")
+        and all(pa.types.is_timestamp(t) and t.tz is None for t in (resolved, matched))
+        and _UNIT_RANK[resolved.unit] > _UNIT_RANK[matched.unit]
+    )

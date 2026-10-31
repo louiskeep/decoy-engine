@@ -47,6 +47,7 @@ contract now covers signed, unsigned, and narrower-than-int64 FK keys, not
 
 from __future__ import annotations
 
+import datetime as dt
 import decimal
 import math
 import numbers
@@ -205,7 +206,28 @@ def fk_join_key(value: object) -> str:
         # child's own scale; the join token still must fold scale-only
         # differences the oracle's dict already folds for free.
         return f"\x00DEC:{_decimal_join_token(normalized)}"
+    if isinstance(normalized, dt.datetime):
+        # The oracle's dict folds one instant read at two Arrow units (`as_py()` gives
+        # `pd.Timestamp` for ns, `datetime` otherwise), so the token is the canonical instant:
+        # exact epoch nanoseconds (pandas `Timestamp.value`, Arrow's storage) as an unbounded
+        # Python int. NaT (unequal to itself) and zone-aware values keep the OBJ path.
+        if normalized.tzinfo is None and normalized == normalized:
+            return f"\x00TS:{_epoch_nanoseconds(normalized)}"
+    elif isinstance(normalized, dt.date):
+        return f"\x00DATE:{normalized.toordinal()}"
     return f"\x00OBJ:{type(normalized).__qualname__}:{normalized!r}"
+
+
+_EPOCH: Final = dt.datetime(1970, 1, 1)
+
+
+def _epoch_nanoseconds(value: dt.datetime) -> int:
+    nanosecond = 0
+    if isinstance(value, pd.Timestamp):
+        nanosecond = value.nanosecond
+        value = value.to_pydatetime(warn=False)
+    delta = value - _EPOCH
+    return (delta.days * 86_400 + delta.seconds) * 10**9 + delta.microseconds * 1_000 + nanosecond
 
 
 def fk_join_key_tuple(values: tuple[object, ...]) -> str:
