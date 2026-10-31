@@ -1,306 +1,274 @@
-Status: plan only, revision 1 after the Opus hostile review (NO-GO). No implementation or release approval is granted by this document.
+Status: plan only, revision 2 after the Codex hostile review of revision 1 (NO-GO). No implementation or release approval is granted by this document.
 
-Summary: Every output surface is classified as operational, owner result, or data plane. Operational output is value-free by construction through one engine-owned typed event, one sealed serializer and one shared analyzer; owner results keep real schema names but never cell values; the data plane is untouched.
+Summary: F31 is the sanitizer behind F29. The F29 reason registry, reason records and typed progress events already carry no free text; F31 decides what may be NAMED on each output surface (real schema names on owner results, aliases on operational output, nothing on the data plane), gives the engine one plain typed operational event with one serializer and one parser, one exact-type exception policy, a run identity that survives a process and a database, and sentries that keep every emitter behind those choke points. Under the V1 threat model the boundary is validated typed data plus static enforcement, not provenance or sealing.
 
-Baselines: engine `fdd08a8` (equal to `origin/main` on 2026-10-30); CLI `decoy` `origin/main` `730d3de` (contains F43, merged as #69 at `b2209e1`); Platform `origin/main` `ea68d8e`. Planning branch: `plan/f31-safe-output`. Platform citations below were re-read at `ea68d8e`.
+Baselines: engine `ab29ef0c` (`claude/eager-clarke-14deh1`, the STORM close-out tip; it contains `origin/main` `b509c7e8` and F29 `fdd08a89`, merged as #336). `origin/main` has since taken #347 (`scripts/dev/`) and #348 (an execution module split); F31 cites nothing that #348 moved, and the E1 census is re-recorded on the merged tip. CLI `decoy` `origin/main` `d28fae2` (contains F43, merged as #69 at `b2209e1`). Platform `origin/main` `00e55c27`. Planning branch: `plan/f31-safe-output`.
 
-Rules consulted: `DEFECT-CATALOG.md` (decoy-platform `handoffs/queue`), the engine, CLI and Platform `CLAUDE.md`.
+Rules consulted: dev-rules `00-universal.md`, `risk-and-exceptions.md`, `development-loop.md` (PLAN, "Established solutions", "Design notes"), `security.md`, `api-and-compatibility.md`, `testing.md`, `data-and-migrations.md`, `observability-and-resilience.md` (log content rule), `architecture.md`, `reuse-first.md`, `refactoring.md`; `DEFECT-CATALOG.md` and `OWNER-DECISIONS-2026-10-30.md` (decoy-platform `handoffs/queue`); the engine, CLI and Platform `CLAUDE.md`.
 
-# F31: Shared safe-output boundary, PLAN (revision 1)
+# F31: Shared safe-output boundary, PLAN (revision 2)
 
-Risk: R2 (security boundary, public API addition, wire-contract change, three-repository migration). The owner approves. Owner decisions B1 (three-way classification) and B2 (run identity) are binding inputs to this revision and are not reopened here.
+Risk: R2 (public API addition, wire contract, three-repository migration, two schema migrations). The owner decisions of 2026-10-30 are applied as written and are not reopened: three-class surface table; progress views are owner results with real names; a per-job owner-only alias legend; legacy `Job.log` rows withheld at read, never purged; run identity is a Platform-minted UUID beside the integer `Job.id`; the F25 4c, F34 and F36 rulings in section 9; the V1 threat model below.
 
 ## 1. Guarantee (invariants as properties)
 
-**Output classes.** Every output surface is exactly one of three classes. The table in section 5.5 assigns every surface; a surface with no row is a build failure (test T0).
+**Threat model (V1, binding).** Self-hosted, single-org; the engine process is trusted. The leak is ACCIDENTAL: a source value or path in exception text, `args`, `__notes__`, a normal `__cause__`/`__context__` chain, a log line, a `repr`, a progress message, a result field or a serialized report. Canaries are ordinary shapes (str, int, list, dict, a dataclass with a marker in its repr, an ordinary exception raised by a callee). Hostile in-process objects (forged instances, hostile dunders, `BaseException` from dunders, frame and `gc` games, descriptor aliasing) are V2 (section 1, last paragraph).
 
-| Class | Shows | Never shows | Who reads it |
+| Class | Shows | Never shows | Surfaces |
 |---|---|---|---|
-| (a) operational | registry prose, closed enums, bounded numbers, positions, opaque run ID, aliases `table-N` / `field-N` / `node-N` / `artifact-N` | any schema name, path, DSN, credential, exception text or class name, cell value, free prose | logs, progress, diagnostics, error text, API error bodies, metrics, trackers, support bundles |
-| (b) owner result | everything (a) may show, plus real schema names (table, column, node, repository-relative config path) as a typed `SchemaName` | any source or masked CELL VALUE, sample, path outside the owner's project, credential, exception text or class name, free prose | the authenticated owner (Decoy is self-hosted single-org; the owner is the data owner) |
-| (c) data plane | the data itself | n/a: written only by the exact writer manifest | the masked dataset, vault, quarantine rows, explicit raw profile file |
+| (a) operational | registry prose, closed enums, bounded integers, positions, the run UUID, aliases `table-N` / `field-N` / `node-N` / `artifact-N` | any schema name, path, DSN, credential, exception text or dynamic class name, cell value, free prose | engine and server logs, `Job.log`, diagnostics, metrics, support bundles, CLI stderr |
+| (b) owner result | everything (a) may show plus real schema names (table, column, node id, repository-relative config pointer) | any source or masked CELL VALUE, sample, statistic computed from values, path outside the owner's project, credential, exception text or dynamic class name | progress views, results and reports, evidence, `scan --json`, API success and error bodies, audit, node runs, the alias legend |
+| (c) data plane | the data itself | n/a: written only by the exact writer manifest; read only by data-plane routes | masked and subset output, vault, quarantine rows, raw profile artifact, discovery rows |
 
-**Invariant P1 (operational).** For every operational surface S and every input value v of the classes below, the bytes S emits contain no derivative of v except through a provenance-backed `SafeEvent` built by a named engine factory. Value classes: cell contents, samples, raw rows and buffers; schema names; paths; URLs, DSNs, credentials, secret references; exception `str`, `repr`, `args`, attributes, class names, chains, tracebacks and locals; free text from extensions, drivers, warnings or loggers.
+**P1 (operational).** For every (a) surface S and every value v of the classes in the threat model, the bytes S emits contain no derivative of v. The only producers of (a) bytes are `safe_output.to_line`, `safe_output.render_text` and the Platform OBS-3 formatters (3.5).
 
-**Invariant P2 (owner result).** For every owner-result surface, no cell value (source or masked) and no exception text or dynamic class name is reachable; schema names appear only as `SchemaName` (exact type, NFC, length at most 256, no control characters), which only owner-result drivers accept and which no operational driver can render.
+**P2 (owner result).** No (b) surface carries a cell value, a value-derived statistic, exception text or a dynamic class name. Names appear as the owner declared them. The fields in 5.4 marked (c) are absent from every (b) projection.
 
-**Invariant P3 (data plane).** A data-plane writer is an exact function in the writer manifest; no other function writes data bytes, and no data-plane object is accepted by an (a) or (b) driver.
+**P3 (data plane).** A data-plane writer is an exact function in the generated writer manifest; no (a) or (b) renderer accepts a data-plane object.
 
-**Invariant P4 (re-ingest).** An event that crosses a process or a database is re-validated on read against the closed v1 registry and the run ID of the record that owns it; a line that fails validation is never replayed, only counted.
+**P4 (re-ingest).** A `Job.log` line is replayed only after `from_line(line, expected_run=job.run_uuid)` accepts it; a line that fails is counted and withheld. Server logs are not replayed as events (3.5).
 
-**Invariant P5 (exception types).** Exception type labels come only from `_ALLOWED_EXCEPTION_TYPES.get(type(exc), SafeErrorType.EXCEPTION)`. No production code reads `__name__` or `__qualname__` of an exception type or `exc.__class__`.
+**P5 (exception types).** Exception type labels come only from `safe_error_type(exc)`, an exact-type lookup `_ALLOWED_EXCEPTION_TYPES.get(type(exc), SafeErrorType.EXCEPTION)`. No production code reads `__name__`, `__qualname__` or `__class__` of an exception.
 
-Residual for P2: a schema name is shown on (b) surfaces as the owner declared it; if an owner declares a header row on a file whose first row is data, those names are that owner's own values shown to that owner. Headerless inference keeps generated `col_N` names.
+Non-goals: no new encryption or hashing; regex scrubbing (`api/logging/redaction.py`) stays a backstop; no `--unsafe-debug-log`. V2 note (hostile in-process hardening, recorded, not planned): provenance tokens, sealed payloads, forged-instance detection past `__post_init__`, hostile dunder defenses, process-wide stream ownership, child fd bootstrap, sentries over aliases and descriptors.
 
-Non-goals: no new encryption or hashing algorithm; regex scrubbing, Sentry scrubbing, `detect-secrets` and Gitleaks stay defense in depth only; closure-held provenance stops accidental misuse, not malicious same-process code (that needs the isolated worker). The earlier `--unsafe-debug-log` channel is cut from F31: it fits none of the three classes and needs its own owner decision.
+## 2. Established solutions and design notes
 
-## 2. Run identity and crossing a process or database (B2)
+Established solutions (what the design follows; cited again in module docstrings per the engine rule): RFC 9457 identity-versus-occurrence split, already the F29 pattern (`src/decoy_engine/reasons/_record.py:1-17`); OpenTelemetry semantic conventions, `error.type` as a low-cardinality identifier, already the `reason_adapter` pattern (`src/decoy_engine/reason_adapter.py:1-7`); the OWASP Logging Cheat Sheet (log the event and its location, never the data); python-json-logger's single exception field, already the Platform `exc_safe` shape (`api/logging/exc_safe.py:1-18`); SARIF fingerprints and fixed message registries, already F43 `SafeFinding` (`decoy/src/decoy/ci/contracts.py:1-11`, `:228-275`); "Parse, don't validate" for the stored-line parser; RFC 9562 UUIDv4 version and variant bits for the run id; SQLAlchemy `@validates` plus a CHECK constraint for a database-boundary invariant; the Alembic add-nullable, backfill, then constrain pattern the repo already uses (`api/migrations/versions/obs3_request_id.py:1-16`). Remaining custom code: the alias table and the `decoy-safe-output/v1` record, because no library knows the engine's plan order or reason registry.
 
-- **Run.** One run is one job. The caller supplies the run ID. Platform mints `uuid.uuid4()` at job creation and stores it in a new non-null unique `jobs.run_uuid` column beside the integer `Job.id` (`api/models.py:329`). The engine never sees `Job.id`. The CLI mints `uuid4()` per process invocation.
-- **Engine entry.** `SafeOutputScope.for_run(run_id: uuid.UUID)` accepts only an exact `uuid.UUID` of version 4 and registers it with provenance as `SafeRunId`. The Platform analyzer manifest admits only `Job.run_uuid` or a `uuid.uuid4()` call as its argument, so a customer UUID cannot be laundered into a run ID.
-- **Aliases.** An alias identity is the triple (run ID, kind, ordinal). Ordinals are a pure function of canonical plan order and stable source position: the coordinator pre-registers every static name before fan-out, and dynamic discoveries are deduplicated and canonical-sorted at the coordinator barrier before any event that names them is released. The keyed BLAKE2b dedup table lives only in the coordinating process memory and dies with it. A retried attempt of the same job therefore reproduces the same ordinals; two jobs never share an alias identity because every event carries its run ID. Each kind is capped at 4096; overflow is `kind-0` plus the `alias_overflow` flag.
-- **Isolated child.** The parent passes pre-assigned ordinals through the private data-plane envelope; a child never allocates.
-- **Wire form `decoy-safe-output/v1`.** One event per line, UTF-8, `json.dumps(sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False)`, at most 4096 bytes, nesting depth at most 3. Closed keys: `s` (schema literal), `rv` (registry version), `run` (canonical UUID), `seq` (int), `ts` (UTC millisecond ISO-8601), `sev`, `kind`, `phase`, `op`, `outcome` (closed enums), `reason` (`{"id","v"}`), `loc` (`component` enum plus integer `line`, `column`, `row`, `chunk`, `ordinal`), `err` (`SafeErrorType` label), `counts` (`[[enum,int]]`), `meas` (`[[enum,float,unit]]`), `aliases` (`["table-3"]`), `edges` (`[[alias,alias,relation_enum,arity]]`), `ver` (`[[dist_enum,[int,...]]]`), `flags` (enums).
-- **Registry for cross-process validation.** The reader is the same exactly pinned engine version as the writer and validates with its compiled-in reason registry (`src/decoy_engine/reasons/_registry.py:24-44`). A line whose `rv` minor is newer than the reader, whose reason is unknown or not `ordinary_output=True`, or whose any field fails its closed check becomes `safe_output.invalid`. The re-ingest factory `reingest_line(line: bytes, *, expected_run: uuid.UUID) -> SafeEvent` takes `expected_run` from the owning database row, never from the line; a mismatch is invalid.
-- **Stored `Job.log`.** `Job.log` (`api/models.py:424`) holds only v1 lines written by the Platform job-log sink driver. The SSE replay (`api/jobs/routes_streaming.py:86-101`), the job `log` field (`api/jobs/schemas.py:264`) and `JobNodeRunOut.logs` (`api/jobs/routes_runtime_facts.py:46-100`) all call one Platform reader that re-ingests each line and renders it with the existing text shape `ISO_TS  LEVEL  STEP  MSG`, where STEP is `node-N` or `job` and MSG is registry prose plus safe facts. The web client (`web/src/hooks/useLiveJob.ts:212-215`, `web/src/pages/JobDetail.tsx:229`) appends `ev.data` as text and needs no change.
-- **Legacy free-text rows.** A line that does not parse as v1 is never replayed. Each maximal run of such lines renders as one fixed line from the registered reason `safe_output.legacy_withheld` with a count. No data migration rewrites old rows (pre-GA; retention purges them). For legacy jobs `JobNodeRunOut.logs` is empty.
-- **Runtime-facts join.** `StructuredEvents.step` (`src/decoy_engine/context.py:64-74`) keeps its owner-result `name` and `node_id` (real node IDs, class b) and gains a `node_alias: SafeAlias` keyword. Platform stores the ordinal in a new `JobNodeRun.node_alias` column, and `_split_log_by_node` groups re-ingested events by alias and joins on it. The route shape and real `node_id` stay unchanged.
-- **F30.** The OpenTelemetry correlation ID is the run UUID as a span attribute; aliases may be span attributes (operational). Prometheus labels never carry the run ID or aliases (cardinality and cross-run linkage); they carry closed enums only.
-- **F32.** A support bundle built after the run reads stored v1 lines by `run_uuid`, re-ingests each with `expected_run`, and carries aliases verbatim. It never allocates aliases and never includes a name legend (matches MASTER F32 "Schema labels are not reversible mappings"). One bundle covers one run; a multi-run bundle must namespace aliases by run and is F32's decision.
+Design notes: new structure is one engine package `decoy_engine.safe_output` (`_event.py`, `_exception.py`, `_wire.py`, `_scope.py`, `_alias.py`, `_sink.py`, `families/`) and one Platform module `api/jobs/job_log.py`. Principles applied: one place per fact (prose lives only in the registry; the alias legend lives only in `job_alias_legend`; the exception table lives only in `_exception.py`); typed context objects (`SafeEvent`, `SafeOutputScope`) over keyword soup; single-purpose functions (`safe_error_type`, `to_line`, `from_line`); no flag arguments. House style: comments say why.
 
 ## 3. Design
 
-### 3.1 Single model and serializer
+### 3.1 F29 is the model, F31 is the sanitizer behind it
 
-Package `src/decoy_engine/safe_output/`: `_model.py`, `_provenance.py`, `_registry.py`, `_aliases.py`, `_exception.py`, `_scope.py`, `_streams.py`, `child.py` (public child bootstrap), `_serialize.py`, `_reingest.py`, `_sink.py`, `_testing.py` (shared analyzer), `families/{progress,runtime,quality,evidence,phase}.py`. Survey citations (OWASP logging, Python `logging`/`traceback`/`contextvars`/`weakref`/`faulthandler`, FastAPI direct responses, OpenTelemetry sensitive data, Sentry `before_send`, Parse don't validate, Semgrep taint) go in each module docstring, per the engine rule.
+Kept unchanged: `ReasonRecord`/`ReasonContext` (`src/decoy_engine/reasons/_record.py:115-212`, `:242-260`), the progress variants and their allowlisted projections `event_to_dict` and `event_to_legacy_dict` (`src/decoy_engine/_progress_events.py:513-599`), which stay JSON-ready dicts with the documented key sets (`tests/unit/progress/test_versioned_contract.py:37-78`, `:101-112`), and the `decoy-reasons/v1` identity form (`src/decoy_engine/reasons/_identity.py:19-57`). Progress is an owner result: `table` and `column` keep real names through `approve_name` (`_record.py:83`, `_progress_events.py:530-531`). STORM symbols relied on: `phase._ERROR_KINDS` and `error_result` (`src/decoy_engine/phase.py:555-595`), `_contained` and `_fixed_text` (`:160-181`), `REGISTRY_SCHEMA`, `ReasonRef`, `require_known`, `UnknownReasonError` (`_identity.py:19-57`), and the sentry `tests/sentry/test_phase_containment.py:17`.
 
-`SafeEvent` is exact, frozen, slotted with explicit `__weakref__`. `_provenance.py` holds a closure capability and an `id(obj)` registry entry of (weak reference, canonical digest); a cleanup callback removes an entry only if its stored weak reference is the callback's own. Any instance not made by a named factory (public constructor, `object.__new__`, copy, subclass, `replace`, `object.__setattr__`, reused stale ID) fails emit-time verification. Fields are those of the wire form in section 2, typed: `ReasonRecord` with `ordinary_output=True` (F29 gains `ordinary_output: bool = False`; Slice E0 commits the exact opt-in manifest), closed enums, `SafeLocation`, `SafeErrorType`, `SafeCount`, `SafeMeasurement`, `SafeAlias(kind, ordinal, dtype: SafeDtype | None)`, `SafeEdge(parent, child, relation, arity)`, `SafeVersion(dist, release)` built only by the factory from `importlib.metadata` for a closed distribution enum, `SafeRunId`, flags. There is no string, `Any`, mapping or extension field. Owner-result projections additionally carry `SchemaName`, which has its own provenance kind and is rejected by every operational driver.
+Added, `SafeEvent` (`safe_output/_event.py`): an ordinary frozen dataclass validated in `__post_init__` and again in `to_dict`, with exact-type checks on nested groups exactly as `_V1Fields` does (`_progress_events.py:262-270`). Fields: `run: uuid.UUID | None`, `seq: int`, `ts_ms: int`, `sev: reasons.Severity`, `kind: EventKind` (closed enum), `phase: reasons.Phase | None`, `op: reasons.Operation | None`, `outcome: reasons.Outcome | None`, `reason: ReasonRef`, `err: SafeErrorType | None`, `loc: SafeLocation | None` (component enum plus integer `line`, `column`, `row`, `chunk`, `ordinal`), `counts: tuple[tuple[str, int], ...]` under `COUNT_KEYS` (`_record.py:34-36`, extended additively), `aliases: tuple[SafeAlias, ...]`, `edges: tuple[SafeEdge, ...]`, `ver: tuple[SafeVersion, ...]`, `flags: frozenset[Flag]`. There is no `str`, `Any`, mapping or extension field. `operational_view(progress_event, scope)` projects an F29 progress event onto a `SafeEvent` with names replaced by aliases; that projection, not the progress dict, is what logs receive.
 
-Serialization: the sink seals a `SerializedSafePayload` (opaque, no mapping protocol). Only closure-bound drivers in `_sink.py` turn a payload into bytes; each driver is registered with exactly one class (a) or (b). Unknown enum, schema, provenance or digest mismatch seals a fresh `safe_output.invalid`; a failure of that seals the constant ASCII `safe_output.failed` literal. No path calls `str`, `repr`, a logger or a JSON `default`.
-
-Metrics projection: `SafeEvent.metric_labels(projection: MetricProjection) -> SealedLabels` yields closed-enum label values only; only a registered metrics driver (Prometheus `.labels(...)`, OpenTelemetry attributes) consumes it, inside `_sink.py`. Platform keeps its closed `_pick` pickers (`api/observability/metrics.py:192`).
-
-Compatibility: `event_to_dict` and `event_to_legacy_dict` return sealed payloads of the legacy key shape; `Logger` narrative methods are no longer called by engine code (analyzer rule) and engine narrative goes through `SafeEventSink`; `StructuredEvents` keeps `step`, `lineage`, `fidelity`, `quarantine` as owner-result calls with `error_msg` removed, `error_class` typed `SafeErrorType`, and `quarantine.reason` a registered reason ID.
+Serializers (`safe_output/_wire.py`), the only producers of (a) bytes: `to_dict(event) -> dict` (the `decoy-safe-output/v1` record, closed keys `s`, `rv`, `run`, `seq`, `ts`, `sev`, `kind`, `phase`, `op`, `outcome`, `reason`, `err`, `loc`, `counts`, `aliases`, `edges`, `ver`, `flags`); `to_line(event) -> bytes` (`json.dumps(sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False)`, at most 4096 bytes, depth at most 3; a record that fails becomes the registered `safe_output.invalid`, and a failure of that is the constant ASCII literal `safe_output.failed`); `render_text(record) -> str` (`ISO_TS  LEVEL  STEP  MSG`, STEP is `node-N` or `job`, MSG is the registry summary plus closed facts); `from_line(line: bytes, *, expected_run: uuid.UUID) -> SafeEvent | None` (bounded parse, closed keys, every field re-checked, `rv` minor not newer than the reader, reason known via `require_known`, `run` equal to `expected_run`; anything else is `None`). `metric_labels(event) -> dict[str, str]` yields closed-enum values only.
 
 ### 3.2 Exception boundary
 
-`safe_event_from_exception(exc, reason, location)` selects a reason through `reason_adapter` (`src/decoy_engine/reason_adapter.py:38-100`), looks up `_ALLOWED_EXCEPTION_TYPES.get(type(exc), SafeErrorType.EXCEPTION)` by exact type identity, and returns without storing `exc`. Exported promise for STORM and others: `safe_error_type(exc: BaseException) -> SafeErrorType` and `SafeErrorType.label` (closed string). Two existing policies are replaced by this one table: `_progress_events.safe_error_class` (`src/decoy_engine/_progress_events.py:86-98`, an allowlist over name strings) and the `postgres_snapshot` pattern `cause_type=type(exc).__name__` (`src/decoy_engine/connectors/postgres_snapshot.py:242`, `:256`, `:327`, `:408`, `:491`, `:515`, joined into error text at `:130-131`), which is banned, not preserved. Platform `api/observability/metrics.py:391` logs `type(exc).__name__` and is migrated in P2.
+`SafeErrorType` is a closed `str` enum built once at import from exact classes: every builtin exception class (enumerated from `builtins` as `_safe_error_names` does today, `_progress_events.py:69-81`), the engine families in `reason_adapter._CODED` (`reason_adapter.py:39-85`) and the exception classes of `decoy_engine.errors`, plus `EXCEPTION`; `_ALLOWED_EXCEPTION_TYPES` maps each exact class to its member and the member's label is that class's name as engine code recorded it. The label set therefore equals today's `_SAFE_NAMES` set, and `phase._ERROR_KINDS` (`phase.py:555-570`, 15 builtins) is a subset of it. `safe_error_type(exc)` is the one lookup (P5). Consumers migrated: `phase.error_result` (`phase.py:594`; its `error_type` domain widens from 15 labels to the closed table, an additive change recorded in section 7), `_progress_events.safe_error_class` (`:86-98`, deleted; the `error_class` sanitizer becomes `SafeErrorType.from_label`, so the progress value domain is unchanged), `progress.run_scope` (`progress.py:445`), `exception_error_text` and `commit_error_text` (`src/decoy_engine/execution/_isolated_common.py:246`, `:253`), the six `postgres_snapshot` `cause_type` sites (`src/decoy_engine/connectors/postgres_snapshot.py:242`, `:256`, `:327`, `:408`, `:491`, `:515`; `cause_type` becomes the label), Platform `api/observability/metrics.py:391`.
 
-Frame hygiene: convert in an outer frame after the data-owning frame unwound; never `clear_frames` the executing frame; detach `__traceback__`, sever bounded `__cause__`/`__context__` chains; propagate only a new `SafeBoundaryError` with no cause, context or traceback. No ordinary path calls `traceback.format_exc`, `print_exception`, `TracebackException`, Rich `print_exception`, `logger.exception` or passes `exc_info`.
+`safe_event_from_exception(exc, *, reason=None, loc=None) -> SafeEvent` takes the reason from `reason_from_exception` (`reason_adapter.py:146`) and the label from `safe_error_type`; it stores nothing of `exc`. `contain(fn)` lifts `phase._contained` (`phase.py:168-181`) into `safe_output._exception`; `phase` keeps the `__phase_contained__` mark so its sentry is unchanged. Frame contract, "no original or data-owning frames": a `SafeBoundaryError` is raised outside the handler after the boundary deletes its own arguments, with `__cause__` and `__context__` `None`, `__suppress_context__` set, no `__notes__`; its `__traceback__` starts at the boundary frame. No ordinary path calls `traceback.format_exc`, `print_exception`, `TracebackException`, `logger.exception` or passes `exc_info` (the engine has zero such sites today; `tests/sentry/test_log_interpolation.py:23-71` already lists the risky names).
 
-### 3.3 Containment and process entry
+### 3.3 Run identity, scope, aliases, legend
 
-States of process output ownership (closes class 3):
+- Run: one run is one job. Platform mints `uuid.uuid4()` in one function `api/jobs/run_identity.py:mint_run_uuid` at job creation and stores it in `jobs.run_uuid` (`String(36)`, unique, not null after backfill) beside `Job.id` (`api/models.py:329`). DB-boundary enforcement: the column default is `mint_run_uuid`, so each of the 8 `Job(...)` constructions at `00e55c27` gets one without naming it; a SQLAlchemy `@validates("run_uuid")` accepts only the canonical form of a version-4 UUID; a CHECK constraint enforces length 36, version nibble `4` and variant `[89ab]`; an AST sentry forbids any explicit `run_uuid=` argument or `.run_uuid` assignment outside `mint_run_uuid`; every request schema excludes the field (a body that carries `run_uuid` is rejected, test T11). The CLI mints one UUID per invocation in `main`. The engine never sees `Job.id`.
+- Scope: `SafeOutputScope.for_run(run)` accepts only `type(run) is uuid.UUID and run.version == 4`, binds a `ContextVar`, owns the alias table and the event sequence. `SafeOutputScope.current()` returns the bound scope or the process scope (`run=None`). A record with `run=None` is process-scoped (allowed in engine and server logs, never storable in `Job.log`).
+- Aliases: identity is `(run, kind, ordinal)`, kinds `table`, `field`, `node`, `artifact`. The coordinator pre-registers every static name in canonical plan order before execution; later names are appended in first-seen order; allocation is allowed only in the coordinator thread (a worker thread or an isolated child gets `kind-0` plus flag `alias_unknown`); each kind caps at 4096 (`kind-0` plus `alias_overflow`). The isolated child receives the frozen table in the existing payload (`src/decoy_engine/execution/_isolated_run.py:368`) and never allocates. A retry of the same job on the same input reproduces the ordinals (T9).
+- Legend: `scope.legend()` is `tuple[(kind, ordinal, name)]`, an owner result. Platform stores it in a new `job_alias_legend` table (`job_id`, `kind`, `ordinal`, `name`), written in the same transaction as the terminal `Job.log` record and read only by `GET /api/jobs/{id}/alias-legend` behind `require_job_owner_or_404`. A crash before terminal leaves no legend; the UI shows raw aliases with flag `legend_unavailable`. F32 bundles never include it.
+- Runtime-facts join: `StructuredEvents.step` (`src/decoy_engine/context.py:46-72`) keeps real `name` and `node_id` (owner results), drops `error_msg` (pre-GA hard delete; `JobLogger.step` never wrote it, `api/persistence/logger.py:179-205`), and gains `node_alias: SafeAlias | None`. Platform stores the ordinal in `job_node_runs.node_alias` and `_split_log_by_node` (`api/jobs/routes_runtime_facts.py:45-66`) groups re-ingested records by alias; the route shape is unchanged.
 
-| From \ event | `install_process_safe_output()` | `SafeOutputScope` enter | scope exit | proxy replaced by host | `uninstall_for_tests()` lease exit |
-|---|---|---|---|---|---|
-| uninstalled | owned | scoped | forbidden (fixed error) | ignored | forbidden |
-| owned | forbidden (idempotent check fails closed) | owned+scoped (nested) | n/a | violated | uninstalled, exact restore |
-| scoped (library) | forbidden | nested (LIFO) | uninstalled, exact restore | violated | forbidden |
-| owned+scoped | forbidden | nested (LIFO) | owned | violated | forbidden while scoped |
-| violated | forbidden | forbidden | fixed `safe_output.failed`, then failed | failed | uninstalled |
+### 3.4 Stored `Job.log`
 
-Import and library calls install nothing. The analyzer bans importing `safe_output._testing` from production modules and reading `Job.log` outside the one Platform reader. Process-owned mode (CLI `main()`, Platform server and worker startup, isolated child) installs `ContextVar` stream proxies that discard unscoped writes and the safe `sys.excepthook`, `threading.excepthook`, `sys.unraisablehook` and asyncio handler. Engine-owned threads and pool submissions run through a distinct `copy_context().run`. `uninstall_for_tests()` is a test-only lease (importable only from `decoy_engine.safe_output._testing`) that restores exact objects, so in-process CLI tests can enter through `main()` without poisoning pytest (closes M1).
+`Job.log` (`api/models.py:424`) keeps its `Text` column and holds only v1 lines written by `api/jobs/job_log.py:append(db, job, event)`; the two resets (`api/jobs/iteration.py:499`, `api/jobs/runner.py:499`) become `job_log.clear(db, job)`, the only other writer. One reader `job_log.read(job)` parses each line with `from_line(expected_run=job.run_uuid)` and renders it with `render_text`; each maximal run of lines that fail is one fixed `safe_output.legacy_withheld` line with a count. A job whose `run_uuid` fails validation at read (a non-v4 or malformed stored value) renders its whole log as withheld with `safe_output.run_identity_invalid`. The four readers call it: the SSE stream (`api/jobs/routes_streaming.py:92-101`, which keeps `data: <text>` so `web/src/hooks/useLiveJob.ts:215` is unchanged), the job `log` field (`api/jobs/_shared.py:203-211`, `:229`), node runs (`routes_runtime_facts.py:96`) and the storm failure summary (`api/storm/router.py:1671-1680`). Every Platform writer in 5.6 moves to `append`, each free-text message becoming a registered reason in a new `platform` namespace that the engine declares (owner decision: Platform has no registry). Legacy rows are never rewritten or purged.
 
-Child bootstrap (public `decoy_engine.safe_output.child.bootstrap_child_streams(transport_fd)`): before any extension import, flush Python streams, call the manifest-pinned `fflush(NULL)` / `_flushall()`, disable `faulthandler`, set the transport non-inheritable, register an at-fork close, `os.dup2` descriptors 1 and 2 to `/dev/null`. Structured results travel only on the dedicated descriptor or a private 0600 file. Residual: native code that opens `/dev/tty`, a socket, a pre-bootstrap duplicate, or native `fork()` is outside containment.
+### 3.5 Surfaces that keep their own boundary
 
-CLI entry: the console script changes from `decoy.__main__:app` (`decoy/pyproject.toml:178`) to `decoy.__main__:main`, which installs process mode then calls `app(standalone_mode=False)`. Exact Click/Typer control-flow types (`UsageError`, `BadParameter`, `Abort`, `ClickException`) map to fixed usage events and exit codes; no `format_message`, `show` or echo of option values. Help text is static.
+- Platform server logs are the OBS-3 JSON record (`api/logging/formatters.py:78-97`): `request_id`, `user_id`, `route`, scrubbed `msg`, contract-checked extras (`api/logging/extras.py:25-138`), exception summary without messages (`api/logging/exc_safe.py:76`). A server-log record is a request-scoped or process-scoped operational record, class (a), correlated by `request_id`; it carries no `run` unless job code is executing, in which case F31 adds `run` (canonical UUIDv4) as an approved extra. Server logs are parsed by one parser (`api/server_logs/line_parser.py:90-117`) for the tail, aggregation, request lookup, grouping and download readers and are never replayed as events; P4 does not apply to them. The primary guarantee is the existing sentry `tests/sentry/test_obs3_log_interpolation.py`.
+- Child processes are already contained at the parent: the engine reads child stderr only into a classifier and a marker scan and stores none of its text (`_isolated_run.py:434`, `:504-519`; `_isolated_common.py:277`); the Platform generation parent writes child stdio to files it never surfaces (`api/generation/generation_parent.py:193-199`); the probe child returns a closed token (`api/cloud/_pg_probe_child.py:79-84`). F31 promises only "child stdio never reaches an (a) or (b) surface" and proves it with a sentry (P5). No child bootstrap is built.
+- CLI entry: the console script changes from `decoy.__main__:app` (`decoy/pyproject.toml:178`) to `decoy.__main__:main`, which mints the run UUID, enters the scope, calls `app(standalone_mode=False)`, maps exact Click control-flow types (`UsageError`, `BadParameter`, `NoSuchOption`, `MissingParameter`, `Abort`, `Exit`, `ClickException`) to fixed usage prose plus the option name and `EXIT_USAGE` (`decoy/src/decoy/cli/exit_codes.py:44`), and any other exception to registry prose plus the `SafeErrorType` label and `EXIT_RUNTIME` (`:59`). Option values are never echoed. The five `print_exception()` sites (`decoy/src/decoy/cli/scan.py:794`, `run.py:1127`, `subset.py:278`, `report.py:2183`, `demo.py:555`) become `safe_frames(exc)` (type-name chain plus `file:line:function`, the `exc_safe` shape) under `--verbose`. F43's silencer (`decoy/src/decoy/ci/engine_logging.py:25`) stays.
 
 ## 4. Defect-class table
 
 | # | Class | Closing structure | Proving test | Mutation that must turn it red |
 |---|---|---|---|---|
-| 1 | Value-bearing output | Three-way surface classification (5.5), provenance-backed `SafeEvent`, sealed payload, class-bound drivers, exact exception-type table, `__name__` ban | T0 classification completeness plus the seeded corpus T1-T10 over every (a) and (b) surface with a positive control first | Remove one factory call, register an (a) driver as (b), or re-add `type(exc).__name__` in `postgres_snapshot`: a marker or the analyzer fails |
-| 2 | Cleanup missing on an exit path | One owner per state: `SafeOutputScope` (handlers, streams, hooks), the test lease, the child transport | Exit-path matrix (6.3): success, invalid input, sink failure, cancel, exception, nested scope, double exit, lease exit | Drop one restore in `__exit__` or the at-fork close: identity or leaked-bytes check fails |
-| 3 | State machine and concurrency | The ownership transition table (3.3); locked provenance and alias registries; coordinator barrier | Barrier-forced test per table cell including every forbidden pair; deterministic stale-ID collision | Allow one forbidden transition or remove the alias lock: the interleaving test fails |
-| 4 | Route parity and silent fallback | One sink manifest covering every engine route and the re-ingest route (SSE, job `log`, node-runs, server-log tail, F32 reader) | Corpus over every route in 5.2 with a registered route event before absence; T3 re-ingest | Replay one stored line without `reingest_line`: T3 fails |
-| 5 | Referential integrity | F31 changes no FK semantics; FK reports are projected: `FkValidityReport.relationship` is (b) `SchemaName`s or (a) `SafeEdge` aliases | FK-shape output matrix (6.4) over single, composite, self, multi-parent, later-batch children | Render `relationship` raw on an (a) surface: the matrix fails |
-| 6 | Untrusted producer | Exact types, bounded `reingest_line` parser, rebuilt reasons, child FD redirection | Field walk derived from `decoy_engine.__all__` at test time with hostile values; hostile-line corpus for `reingest_line` | Accept a subclass or an unknown key in `reingest_line`: the corpus fails |
-| 7 | TOCTOU / check-then-use on a path | Child transport is an inherited descriptor, never a reopened path; data-plane writers are exact functions | Analyzer fixture that reopens the transport by path; symlink swap on the private envelope file | Open the envelope by path after the check: the fixture fails |
-| 8 | Weak tests and overclaimed evidence | Shrink-only analyzer baseline (6.5); positive control in every recorder; schema snapshots on values; reuse-observation test advisory only | Recorder self-test with a disconnected sink; baseline-growth test | Add a baseline entry or disconnect a recorder: the sentry fails |
-| 9 | Behavior-preserving refactor drift | Characterization tests first for `routes_runtime_facts`, `assembly.py` node join, progress legacy keys, CLI `scan --json` | Snapshot of node-runs grouping and evidence `nodes` before P1 | Change the alias join to name join: characterization fails |
-| 10 | Frozen contract drift | Section 7 list with value semantics; additive-only v1 | Schema snapshot tests that assert value domains (regex or enum per field), not only keys (T5) | Emit `field-3` where (b) requires a name, or a name where (a) requires an alias: T5 fails |
+| 1 | Value-bearing output | Three-class table (5.5), `SafeEvent` with no string field, two serializers, exact-type exception table, generated export classification (5.4), sentries R1-R5 | T0 census coverage, T1-T8 marker corpus with a positive control first, T6 killing test | Re-add `type(exc).__name__` in `postgres_snapshot`, add a `str` field to `SafeEvent`, or route a (c) field into a (b) projection: a sentry or a marker check fails |
+| 2 | Cleanup missing on an exit path | `SafeOutputScope` is a context manager that unbinds the ContextVar and freezes the alias table on every exit; the legend write shares the terminal transaction | Exit-path matrix (6.3) | Drop the `finally` unbind: the nested-run test sees the previous run's aliases |
+| 3 | State machine and concurrency | Alias table states: open (coordinator only), frozen (after the first child handoff or scope exit); allocation outside the coordinator thread is `kind-0` | Barrier-forced test: a worker thread and the coordinator allocate concurrently; a child allocates after handoff | Remove the coordinator-thread check or the freeze: the thread gets a fresh ordinal and T9 fails |
+| 4 | Route parity and silent fallback | One operational sink per route (5.2) and one `Job.log` reader for every stored-line route; a withheld line is counted, never dropped silently | Corpus over every route in 5.2 with a registered event before absence; T3 over all four readers | Replay a stored line in one reader without `from_line`: T3 fails on that reader |
+| 5 | Referential integrity | F31 changes no FK semantics; FK reports are projected: (b) real names, (a) `SafeEdge` aliases | FK-shape output matrix (6.4) | Render `FkValidityReport.relationship` on an (a) surface: the matrix fails |
+| 6 | Untrusted producer | Exact types at construction and serialization; bounded `from_line`; reasons rebuilt from identities; child stdio never read into output | Field walk with ordinary canaries over every exported type; hostile-line corpus for `from_line` | Accept an unknown key or a subclass in `from_line`: the corpus fails |
+| 7 | TOCTOU / check-then-use on a path | N/A: F31 opens no path after a check; the child payload is the existing payload file and data-plane writers are exact functions in the manifest (P3) | Manifest test that each writer is a real function at the recorded `file:line` | Rename a writer without updating the manifest: the test fails |
+| 8 | Weak tests and overclaimed evidence | Shrink-only baselines (6.5); positive control in every recorder; value-domain snapshots | Recorder self-test with a disconnected sink; baseline-growth test | Add a baseline entry or disconnect a recorder: T10 fails |
+| 9 | Behavior-preserving refactor drift | Characterization tests first for node-runs grouping, evidence `nodes`, progress keys and values, `scan fields --json`, phase `error_type` | Snapshots taken before P1, E2 and E5 | Change the alias join to a name join or a label value: the snapshot fails |
+| 10 | Frozen contract drift | Section 7 with value semantics; `decoy-safe-output/v1` additive only | Snapshot tests that assert value domains per field (T5) | Emit `field-3` where (b) requires a name, or a name where (a) requires an alias: T5 fails |
 
 ## 5. Enumerations from the code
 
 ### 5.1 Exit paths
 
-- Transactional sink: no-write, write failure, commit success, commit failure, abort (`src/decoy_engine/execution/_transactional_sink.py:58-97`, `:324-380`); chunked sink exception, commit failure, normal without commit (`src/decoy_engine/execution/_chunked_output_sink.py:128-175`).
-- Isolated execution: pre-spawn refusal, in-process failure, timeout kill, callback failure, abnormal exit, self-reported failure, commit failure (`src/decoy_engine/execution/_isolated_run.py:194-243`, `:437-573`).
-- Progress: no sink, delivery, sink exception, terminal emission (`src/decoy_engine/progress.py:162-197`, `:428-484`).
-- New in F31: every cell of the ownership table (3.3), invalid construction, serializer failure, driver failure, re-ingest rejection, lease exit, process-hook re-entry.
+- Transactional sink: commit success, commit failure, abort, staging cleanup (`src/decoy_engine/execution/_transactional_sink.py:88-92`, `:324-380`); chunked publish `__exit__` on exception and on normal exit (`src/decoy_engine/execution/_chunked_output_sink.py:166-178`).
+- Isolated execution: in-process fallback, spawn and classify (timeout kill, abnormal exit, self-reported failure), commit (`src/decoy_engine/execution/_isolated_run.py:258`, `:409-519`, `:590`).
+- Progress: no sink, sink exception counted, terminal `ok` and `error` with open phases closed (`src/decoy_engine/progress.py:186-197`, `:429-485`).
+- New in F31: scope exit (normal, exception, nested), alias freeze, serializer failure, parser rejection, legend write failure (terminal line still written; flag `legend_unavailable`).
 
 ### 5.2 Routes
 
-- Relationship jobs: `out_of_core`, `sequential`, `mixed`, `full_frame`, or reject (`src/decoy_engine/execution/_pipeline_routing.py:13-85`, `:300-321`).
-- Non-relationship per-table full-frame or chunked; independent multi-table split (`src/decoy_engine/execution/_pipeline_multi_table.py:1-20`).
-- Every route in-process or isolated; re-entry degrades to in-process inside the same scope (`src/decoy_engine/execution/_isolated_run.py:205-243`).
-- Re-ingest route (new): stored `Job.log` to SSE, job `log` and node-runs (`api/jobs/routes_streaming.py:86-101`, `api/jobs/routes_runtime_facts.py:46-100`); server-log files to the tail SSE (`api/server_logs/tail_stream.py`); isolated envelope to parent (`src/decoy_engine/execution/_isolated_worker.py:70`); F32 reader.
+- Relationship jobs: `out_of_core`, `sequential`, `mixed`, `full_frame`, or reject (`src/decoy_engine/execution/_pipeline_routing.py:22-61`).
+- Independent multi-table split, one table at a time (`src/decoy_engine/execution/_pipeline_multi_table.py:1-7`); in-process or isolated for every route (`_isolated_run.py:141`, `:258`).
+- Stored-line routes (re-ingest): SSE, job `log`, node runs, storm summary (3.4); F32 reader (section 9).
+- Server-log readers: tail SSE (`api/server_logs/tail_stream.py:260`, `:429`), aggregation (`aggregate.py:263`), request lookup (`request_lookup.py:109`), grouping, download (`router.py:399`); all through `line_parser.parse_line` (`line_parser.py:117`).
 
 ### 5.3 FK shapes
 
-- Single and composite edges by tuple arity (`src/decoy_engine/relationships/_graph.py:71-92`).
-- Self-reference, cross-table cycle refusal, multi-parent first-hit (`src/decoy_engine/execution/_pipeline_routing.py:408-414`, `src/decoy_engine/relationships/_graph.py:163-180`).
-- Children in later streamed batches (`src/decoy_engine/execution/out_of_core/_stream_join.py:244-281`); multi-parent merge (`src/decoy_engine/execution/out_of_core/_multi_parent.py:49-103`). F31 projects these as `SafeEdge` only; values and orphan decisions are unchanged.
+- Single and composite edges by column-tuple arity, `RelationshipEdge` (`src/decoy_engine/relationships/_graph.py:72-92`); graph build and orphan-policy completeness (`:134`, `:316`).
+- Multi-parent children (`src/decoy_engine/execution/out_of_core/_multi_parent.py:49-106`); children in later streamed batches (`src/decoy_engine/execution/out_of_core/_stream_join.py:84`). F31 projects these as `SafeEdge` (aliases, relation enum, arity) on (a) and as real names on (b); values and orphan decisions are unchanged.
 
 ### 5.4 Fields
 
-The field walk is generated at test time from `decoy_engine.__all__` plus every public exception class's attributes; this list is the review baseline, and the generated walk fails if a public type is missing from it.
+The classification is generated, not hand-listed: `tools/safe_output_inventory.py` walks `src/decoy_engine/__init__.py` (`__all__`, 169 names at `:310-480`) and resolves every name to its definition. At `ab29ef0c`: 46 dataclasses, 29 classes, 27 exception classes, 54 functions, 3 enums, 10 constants, 0 unresolved. The committed `tests/sentry/safe_output_exports.json` records, for every dataclass field typed `str`, `Any`, `object` or a container of them, one class: `id` (fixed engine identifier), `b` (owner name or registry text) or `c` (data). Test R3 regenerates the file and fails on any difference, so a new export or field must be classified in the same change. Decisions the file must carry:
 
-- `ReasonContext` and `ReasonRecord` (`src/decoy_engine/reasons/_record.py:114-126`, `:241-254`): (a), source refs become aliases.
-- Seven progress variants and legacy keys (`src/decoy_engine/_progress_events.py:273-477`): (a); `table` and `column` values become aliases (see open question Q1).
-- `ExecutionResult` (`src/decoy_engine/execution/_adapter.py:42-71`), `IsolatedRunResult` (`src/decoy_engine/execution/_isolated_common.py:320-388`), `RowError`, `RowErrorRecord`, `RowErrorSummary` (`src/decoy_engine/execution/_row_errors.py:28-59`, `src/decoy_engine/execution/_row_error_summary.py:37-86`): (b) projection; `error` and row-error prose become reasons.
-- `QualitySummary` (`src/decoy_engine/validation/post/_types.py:61-74`): `distinct_counts`, `null_counts`, `duplicate_counts`, `fk_validity`, `composite_coherence`, `timing_per_phase`, `failed_checks`, `quality_warnings` are (b) with names as `SchemaName`; **`sampled_values: dict[str, list[Any]]` (`:70`) holds masked cell samples and is data plane (c) only**: dropped from every (a) and (b) projection, including the isolated envelope `quality_metrics` (`src/decoy_engine/execution/_isolated_worker.py:55-70`).
-- `FkValidityReport.relationship` (`src/decoy_engine/validation/post/_types.py:39`) and `CompositeCoherenceReport.generator`, `.columns` (`:53-54`): (b) as `SchemaName`; (a) as `SafeEdge` and aliases.
-- `QualityWarning.detail` (`src/decoy_engine/generation/pool/_events.py:14-39`): free text, replaced by a reason ID.
-- `ValidationMessage` (`src/decoy_engine/validation_result.py:47-92`): (b); `message` and `hint` become registry prose; `path` and `node_id` are config pointers (`SchemaName`).
-- `CheckResult`, `WriteResult` (`src/decoy_engine/sdk.py:111-131`), `DiscoveryResult` (`src/decoy_engine/data_discovery.py:77-88`), `PlanValidationResult` (`src/decoy_engine/plan/validate/_consolidator.py:36-65`), `UnmaskResult` (`src/decoy_engine/unmask.py:76-94`), `GenerationResult` (`src/decoy_engine/generation/_streamed.py:71-88`), `SubsetResult` (`src/decoy_engine/subset/_types.py:217-223`), `WalkResult`, `DriftResult` (`src/decoy_engine/walks/types.py:97-124`): free detail becomes reasons; tables and output paths are (c).
-- Public exception attributes, for example `PostgresSnapshotError.cause_type` (`src/decoy_engine/connectors/postgres_snapshot.py:123-126`): retyped to `SafeErrorType`.
+- (c), absent from every (a) and (b) projection: `QualitySummary.sampled_values` (`src/decoy_engine/validation/post/_types.py:70`); `FieldStats.min_value`, `max_value`, `mean_value`, `mode_value`, `date_min`, `date_max`, `sample_invalid` (`src/decoy_engine/profiling/types.py:64-92`); `SentinelFlag.value` (`:54`); `DetectorMatch.sample_misses` (`src/decoy_engine/detection/types.py:50`); `DiscoveryResult.rows` (`src/decoy_engine/data_discovery.py:88`); `ExecutionResult.outputs` (`src/decoy_engine/execution/_adapter.py:43`); `UnmaskResult.outputs` (`src/decoy_engine/unmask.py:90`); `ValuePool.values` (`src/decoy_engine/generation/pool/_value_pool.py:35`). `scan fields --json` already excludes the profile values (`decoy/src/decoy/cli/scan.py:518-522`); the raw profile `--output` (`:798`) is (c).
+- (b) free-text fields that become registry text or a closed label: `CheckResult.detail` (`src/decoy_engine/sdk.py:123`), `UnmaskColumnReport.detail` (`unmask.py:86`), `QualityWarning.detail` (`src/decoy_engine/generation/pool/_events.py:39`, closed keys with numeric or name values), `ExecutionEvent.detail` (`src/decoy_engine/execution/_events.py:19`), `CapacityEstimate.message` (`src/decoy_engine/execution/out_of_core/_capacity_eval.py:153`), `PlanCheckError.message` and `ValidationMessage.message`/`hint` (`src/decoy_engine/plan/validate/_consolidator.py:47`, `src/decoy_engine/validation_result.py:48`), `JobEstimate.notes` (`src/decoy_engine/execution/_job_estimate.py:59`), `IsolatedRunResult.error` (`_isolated_common.py:369`, label plus registered code).
+- (b) names kept: `FkValidityReport.relationship` (`post/_types.py:39`), `RelationshipEdge` tables and columns, `FileMeta.path` and `WriteResult.path` (owner paths), progress `table`/`column`.
+- Public exception classes (27): their text is class (b), returned to the caller who wrote the input; it reaches no (a) surface because R1, R2 and the log sentry ban every path that would copy `str(exc)` into a log, event or record.
 
-### 5.5 Output surfaces (three-way classification)
+### 5.5 Output surfaces (three-class classification)
+
+Emitters are enumerated by the E1 AST census (`tests/sentry/safe_output_surfaces.json`): at `ab29ef0c` the engine has 67 logger calls in 32 files (54 with arguments), 4 `warnings.warn`, 1 `sys.stderr.write`, 0 `print`, 5 `json.dumps(default=...)` and 1080 `raise` sites with f-strings (class (b) by 5.4, policed by R1 and the log sentry). Test T0 fails if a census category has no row here.
 
 | # | Surface | Source | Class | Rule |
 |---|---|---|---|---|
-| S1 | Engine progress callback, v0 and v1 dicts | `src/decoy_engine/_progress_events.py:430-477` | a | keys frozen; `table`/`column` values are aliases (Q1) |
-| S2 | Engine stdlib logs, default file `logs/decoy_engine.log` | `src/decoy_engine/internal/logging.py:16-60` | a | file handler removed; safe handler only |
-| S3 | Warnings, error text, `IsolatedRunResult.error`, exception messages | `src/decoy_engine/execution/_isolated_common.py:178-286` | a | reason plus `SafeErrorType` |
-| S4 | `Logger` narrative, `TelemetryClient.emit` | `src/decoy_engine/context.py:22-45`, `:227-275` | a | `SafeEventSink` only |
-| S5 | `StructuredEvents.step/lineage/fidelity/quarantine` | `src/decoy_engine/context.py:64-83` | b | real node IDs and labels; `error_msg` removed; adds `node_alias` |
-| S6 | In-process results and reports (5.4) | `src/decoy_engine/execution/_adapter.py:42-71` | b | names as `SchemaName`; no samples |
-| S7 | Masked output, subset output, vault, quarantine rows, raw profile `--output` | `decoy/src/decoy/cli/scan.py:796` | c | exact writer manifest |
-| S8 | Isolated envelope file and child transport | `src/decoy_engine/execution/_isolated_worker.py:70` | c transport, a/b content | content typed; `default=str` removed |
-| S9 | Diagnostics, support payloads | `src/decoy_engine/quality/diagnostic.py:127-225` | a | aliases |
-| S10 | STORM `phase-result/v1`, `phase-event/v1` | STORM `src/decoy_engine/phase.py:459-478` | b | `error_type` from `safe_error_type` |
-| S11 | CLI stdout and stderr text, errors, help, usage and parse errors, root callback, hooks, `--verbose`, progress | `decoy/src/decoy/__main__.py:164` | a | entry wrapper |
-| S12 | CLI `scan --json`, `scan fields --json` | `decoy/src/decoy/cli/scan.py:151` | b | real names for the `jq '.fields[].name'` use; no samples |
-| S13 | CLI evidence and report files | `decoy/src/decoy/cli/evidence.py:118` | b | no cell values |
-| S14 | CLI `decoy ci` JSON, SARIF, Markdown (`decoy-ci/v1`) | `decoy/src/decoy/ci/contracts.py:153-178` | b | repository-relative paths of owner files stay; stderr is a |
-| S15 | Platform API error bodies, `HTTPException.detail` (33 f-string details at `ea68d8e`) | `api/admin/custom_faker_providers_router.py:216` | a | `SafeJSONResponse` |
-| S16 | Platform API success bodies, fidelity view, evidence views | `api/evidence/assembly.py:1885-1890` | b | OpenAPI unchanged |
-| S17 | `Job.log` column (stored) | `api/models.py:424` | a | v1 lines only |
-| S18 | Job SSE, job `log` field, `JobNodeRunOut.logs` | `api/jobs/routes_streaming.py:86-101`, `api/jobs/schemas.py:264` | a inside a b response | re-ingest then render |
-| S19 | `JobStep`, `JobNodeRun`, lineage, fidelity tables | `api/models.py:1449-1460` | b | real `node_id` join kept |
-| S20 | Server log files and `/server-logs/tail` SSE | `api/server_logs/tail_stream.py` | a | v1 lines with no `run`; tail re-ingests |
-| S21 | Audit rows (`detail`, before, after, meta) | `api/audit/logger.py:83-92` | b | `detail` becomes reason ID; no cell values |
-| S22 | `/api/metrics` Prometheus exposition | `api/observability/metrics.py:208-266`, `:351` | a | closed-enum labels only |
-| S23 | OpenTelemetry spans and attributes (F30, not yet built) | none at `ea68d8e` | a | `SealedLabels`; run UUID and aliases allowed, names not |
-| S24 | Sentry and third-party trackers | `api/cloud/io.py:134-137` | a | `before_send` accepts only sealed payloads; locals off |
-| S25 | Platform child stdout and stderr | `api/generation/generation_child.py:277-291`, `api/cloud/_pg_probe_child.py:80-84` | a (discarded) | dedicated transport |
-| S26 | Support bundles (F32, not yet built) | none | a | stored v1 lines re-ingested; no legend |
+| S1 | Engine progress dicts v0 and v1 | `src/decoy_engine/_progress_events.py:581-599` | b | keys and value domains unchanged; `error_class` from `SafeErrorType` |
+| S2 | Engine stdlib logs, file `logs/decoy_engine.log` | `src/decoy_engine/internal/logging.py:109`, `:136`, `:139` (`ProgressLogger` f-strings) | a | records are v1 lines via `LoggingSink`; R2 bans value arguments |
+| S3 | `IsolatedRunResult.error`, `PostgresSnapshotError` text, engine exception text | `_isolated_common.py:238-290`, `postgres_snapshot.py:115-131` | b | label plus registered code; never copied to (a) |
+| S4 | `StructuredEventsSink` narrative, `Logger` methods | `src/decoy_engine/progress.py:84-128` (`:119` names a table and column) | a | replaced by `operational_view` events |
+| S5 | `StructuredEvents.step/lineage/fidelity/quarantine` | `src/decoy_engine/context.py:46-83` | b | real names; `error_msg` deleted; `node_alias` added |
+| S6 | In-process results and reports (5.4) | `src/decoy_engine/execution/_adapter.py:43` | b | (c) fields never projected |
+| S7 | Masked, subset, vault, quarantine, raw profile output | `decoy/src/decoy/cli/scan.py:798`, writer manifest | c | exact writer manifest |
+| S8 | Isolated envelope file | `src/decoy_engine/execution/_isolated_worker.py:57-70` | b content | typed envelope; `default=str` removed |
+| S9 | STORM `phase-result/v1`, `phase-event/v1` | `src/decoy_engine/phase.py:487`, `:574` | b | `error_type` from `safe_error_type`; payload is caller evidence |
+| S10 | CLI stderr, usage and parse errors, `--verbose` | `decoy/src/decoy/__main__.py:164`, five `print_exception` sites (3.5) | a | entry wrapper; `safe_frames` |
+| S11 | CLI `scan --json`, `scan fields --json`, evidence files | `decoy/src/decoy/cli/scan.py:150`, `:936`, `evidence.py:118` | b | unchanged; no values |
+| S12 | CLI `decoy ci` JSON, SARIF, Markdown | `decoy/src/decoy/ci/contracts.py:374` | b | unchanged (F43) |
+| S13 | Platform API error bodies (`HTTPException.detail`) | 89 f-string details in 31 files at `00e55c27` (AST count) | b | rule `detail-closed` (P4) |
+| S14 | Platform API success bodies, fidelity, evidence views | `api/evidence/assembly.py:1884` | b | (c) fields never projected |
+| S15 | `Job.log` (stored) | `api/models.py:424`; writers in 5.6 | a | v1 lines via `job_log.append` only |
+| S16 | Job SSE, job `log` field, node-run `logs`, storm summary | `api/jobs/routes_streaming.py:92-101`, `_shared.py:203-211`, `routes_runtime_facts.py:96`, `storm/router.py:1671` | a text inside a b response | one reader; re-ingest then render |
+| S17 | `JobStep`, `JobNodeRun`, lineage, fidelity tables | `api/models.py:1308-1323`, `:1454` | b | real `node_id`; `node_alias` added |
+| S18 | Server log files and the five server-log readers | `api/logging/formatters.py:78-97`, 5.2 | a | OBS-3 record; `run` extra when job-scoped; no re-ingest |
+| S19 | Audit rows (`detail`) | `api/audit/logger.py:83-92` | b | `detail` is registry text or an identifier (P5 rule) |
+| S20 | `/api/metrics` Prometheus exposition | `api/observability/metrics.py:192`, `:351`, `:391`, `:433` | a | closed labels from `metric_labels` and `_pick` |
+| S21 | Platform child stdio | `generation_parent.py:193-199`, `pg_probe.py:85`, `_pg_probe_child.py:83` | a (never surfaced) | child-stdio sentry |
+| S22 | Alias legend route | new `GET /api/jobs/{id}/alias-legend` | b | owner only |
+| S23 | OpenTelemetry (F30) and support bundles (F32), not yet built | none at the baselines | a | section 9 promises |
+
+Sentry and third-party trackers: no `sentry_sdk` exists in Platform at `00e55c27`; the revision 1 row is deleted, not kept.
+
+### 5.6 Platform `Job.log` writers (every assignment site at `00e55c27`)
+
+30 direct assignments in 16 files: `api/quality/runner_hook.py:628`; `api/jobs/iteration.py:492`, `:499`, `:516`, `:523`, `:617`, `:638`; `api/jobs/job_terminal_cas.py:150`; `api/jobs/reaper.py:233`; `api/jobs/queue_worker.py:385`, `:595`; `api/jobs/runner.py:62` (the `_append_log` helper, called at `:123`, `:139`, `:171`, `:508`, `:545`, `:598`), `:499`, `:646`, `:674`; `api/jobs/job_principal.py:88`; `api/jobs/scheduler_claim_loop.py:94`; `api/jobs/iteration_dispatch.py:153`, `:417`; `api/jobs/binding_resolve.py:429`; `api/worker_main.py:125`; `api/storm/router.py:580`, `:680`, `:981`; `api/storm/post_mask_hook.py:372`, `:373`; `api/synth/runner_hook.py:333`; `api/main.py:1189`, `:1196`; `api/persistence/logger.py:448` (`JobLogger._append_narrative`, reached by `debug`/`info`/`warning`/`error`/`step` at `:152-205`, constructed at `api/jobs/route_narrative.py:223`, `api/jobs/v2_orchestrator.py:351`, `api/storm/router.py:989` and handed to the engine at `:1131`). P2 moves all of them to `job_log.append`; sentry R5 fails on any `.log` assignment outside `api/jobs/job_log.py`, and the census is regenerated by AST, so the list above is the review baseline, not the mechanism.
 
 ## 6. Acceptance tests, red first
 
 ### 6.1 Seeded corpus
 
-Distinct high-entropy markers plus grammar-clean canaries (`canary_table_alpha`, a valid UUIDv4 in a cell, small integers in layout fields) for every value class in P1. Every recorder first asserts a registered control event arrived, then asserts marker absence over bytes, JSON keys and values, created filenames, captured log records before formatting, and persisted database JSON. On (b) surfaces the recorder asserts the clean schema-name canary IS present (non-vacuity of P2) and every cell-value marker is absent.
+Distinct high-entropy markers plus grammar-clean canaries (`canary_table_alpha`, a UUIDv4 in a cell, small integers in layout fields) for every value class in the threat model, in ordinary shapes. Every recorder first asserts a registered control event arrived, then asserts marker absence over bytes, JSON keys and values, created filenames, log records before formatting, and persisted database text. On (b) surfaces the recorder asserts the clean schema-name canary IS present and every cell-value marker is absent.
 
 ### 6.2 The ten ways a gate reviewer breaks it (each RED first)
 
 | # | Break | RED-first test | Slice |
 |---|---|---|---|
-| T1 | `--help` or a parse error echoes a seeded option value | `tests/e2e/test_entry_boundary.py`: subprocess of the console script with markers in option values, unknown options, `BadParameter`, root callback | C1 |
-| T2 | A test calls `CliRunner(app)` and skips the entry wrapper | `tests/sentry/test_cli_entry_only.py`: AST scan fails any e2e test invoking `app` not via `main`; plus one subprocess cell per command through `decoy.__main__:main` | C1 |
-| T3 | Job SSE replays a marker from `Job.log` | `tests/test_safe_output_sse_replay.py`: seed a legacy free-text row and a forged v1 line with a wrong `run`; SSE, job `log` and node-runs show only `safe_output.legacy_withheld` / invalid | P1 |
-| T4 | A `/metrics` label carries a value | `tests/test_safe_output_metrics.py`: markers into every metrics helper argument; scrape `/api/metrics` bytes; `metrics.py:391` path raises a secret-named subclass | P2 |
-| T5 | A schema snapshot passes while value meaning changes | Value-domain snapshots: (b) fidelity, `scan --json` and node-runs assert real canary names; (a) progress and SSE assert `^(table|field|node)-\d+$`; keys alone never pass | E4, C2, P1 |
-| T6 | A secret-named exception subclass flows through `postgres_snapshot` `cause=` | Runtime test raising `type("SECRET_x", (OSError,), {})` in each of the six sites, plus analyzer rule `no-dynamic-exc-name` with fixtures for `type(e).__name__`, `__qualname__`, `e.__class__.__name__`, `getattr(type(e), "__name__")` | E2 |
-| T7 | `QualitySummary.sampled_values` reaches the manifest or evidence | Field walk seeds a marker in `sampled_values`; scan the isolated envelope, Platform manifest JSON and evidence bundle | E5, P2 |
-| T8 | The `default=str` gate is red on `_reproducibility.py` | Analyzer rule `json-default-str` scoped to functions reaching an (a)/(b) driver; the four digest functions are in the non-output manifest; a fixture that routes a `default=str` dump to a sink fails | E4 |
-| T9 | Child and parent ordinals disagree, or a re-rendered row relabels | Isolated run with dynamic discovery: aliases in child-emitted and parent-emitted events and in a later re-render are identical; retry of the same `run_uuid` reproduces them | E3, P1 |
-| T10 | Analyzer CI is red in E1-E4, or an allowlist creeps in | `tests/sentry/test_safe_output_baseline.py`: fails on a violation not in the baseline, on a stale entry, and on any entry or per-rule count added after E1 | E1 |
+| T1 | `--help` or a parse error echoes a seeded option value | `tests/e2e/test_entry_boundary.py`: console-script subprocess with markers in option values, unknown options, `BadParameter` | C1 |
+| T2 | A command's crash shows exception text or a dynamic class name | one subprocess cell per registered command (generated from `app` at test time) raising a marker-bearing engine exception; stderr shows registry prose and a `SafeErrorType` label; `--verbose` shows safe frames only | C1 |
+| T3 | A reader replays a marker from `Job.log` | `tests/test_job_log_reader.py`: seed a legacy free-text row, a v1 line with a wrong `run`, a line over 4096 bytes and a line with an unknown key; each of the four readers shows only `legacy_withheld`; positive control: a valid line renders | P1 |
+| T4 | A `/metrics` label carries a value | markers into every metrics helper argument; scrape `/api/metrics`; `metrics.py:391` path raises a marker-named subclass | P5 |
+| T5 | A key snapshot passes while value meaning changes | value-domain snapshots: (b) progress, fidelity, `scan fields --json`, node runs assert real canary names; (a) `Job.log` and engine log assert `^(table|field|node|artifact)-\d+$` | E4, C2, P1 |
+| T6 | Exact-type lookup is weakened to `isinstance` or an MRO walk | `safe_error_type(type("Sub", (ValueError,), {})())` is `SafeErrorType.EXCEPTION` and not `VALUE_ERROR`; `safe_error_type(ValueError())` is `VALUE_ERROR` (positive control); the six `postgres_snapshot` sites raise `type("SECRET_x", (OSError,), {})` and the text shows `Exception`; analyzer rule R1 fixtures for `type(e).__name__`, `__qualname__`, `e.__class__.__name__`, `getattr(type(e), "__name__")` | E0, E2 |
+| T7 | A (c) field reaches a (b) projection | field walk seeds markers in every (c) field of 5.4; scan the isolated envelope, Platform manifest JSON, evidence bundle and API bodies | E5, P5 |
+| T8 | `json.dumps(default=...)` reaches an output surface | rule R4: only the four digest functions (`generation/_reproducibility.py:204`, `pool/_builder.py:42`, `plan/_generation.py:260`, `profiling/model_pack/trainer.py:593`) are allowed; `_isolated_worker.py:70` is red until E5 | E1, E5 |
+| T9 | Child and parent ordinals disagree, or a re-rendered row relabels | isolated run with dynamic discovery: aliases in child and parent events and in a later re-render are identical; a retry of the same `run_uuid` reproduces them; a worker-thread allocation is `kind-0` | E3, P1 |
+| T10 | A baseline grows or a stale entry stays | `tests/sentry/test_safe_output_baseline.py`: fails on a violation not in the baseline, on a stale entry, and on any count that grows | E1 |
 
-T0: a test enumerates the sink manifest and fails if any registered driver has no row in 5.5.
+T0: the census categories of 5.5 and the writer manifest are enumerated at test time; a category or writer with no row fails. T11 (run identity): a migration test backfills three pre-existing rows with distinct v4 UUIDs; a raw-SQL non-v4 value, a 35-character value and a duplicate are rejected by the constraint or, when read, render the log as `run_identity_invalid`; a request body carrying `run_uuid` is rejected; no explicit `run_uuid=` argument or assignment exists outside `mint_run_uuid` (AST). T12 (legend): the legend is readable only by the owner (non-owner 404), matches the aliases in the stored lines exactly, and is absent after a simulated crash before terminal. T13 (frames): the `SafeBoundaryError` test in 3.2; a plain `raise ... from None` inside the handler is the positive control that fails.
 
 ### 6.3 Exit-path matrix
 
-One parametrized test over every row of 5.1 and every cell of the 3.3 table, asserting exact restoration of handlers, streams and hooks, no leaked bytes, and the expected registered event.
+One parametrized test over every row of 5.1: the scope is unbound and the alias table frozen after normal exit, exception, nested scope and double exit; the legend write failure leaves the terminal line; no sink receives an event after exit.
 
 ### 6.4 FK-shape output matrix
 
 For each shape in 5.3 and each route in 5.2: (a) surfaces show `SafeEdge` aliases and no names; (b) `FkValidityReport` shows real names; relational results are byte-identical to the baseline.
 
-### 6.5 Analyzer ratchet
+### 6.5 Sentry ratchet
 
-Slice E1 lands the analyzer with a committed baseline `tests/sentry/safe_output_baseline.json` keyed by (file, enclosing qualname, rule), not by line. At `fdd08a8` there are 260 `except ... as` sites (`git grep -nE "except .* as [a-z_]+:" -- src/decoy_engine`) and 55 dynamic exception-name reads (`git grep -nE "type\((exc|e|err|error|ex)\)\.__(qual)?name__|__class__\.__name__"`); E1 records the analyzer's exact counts per rule. The rule mirrors the module-size census (`tests/sentry/test_module_size.py:54-66`): entries and per-rule counts may only shrink, stale entries fail, and the final engine slice requires the baseline empty. The reproducibility-observation GC test is advisory; the deterministic stale-entry collision test is mandatory.
+E1 lands `tests/sentry/test_safe_output_boundary.py` with a committed baseline `tests/sentry/safe_output_baseline.json` keyed by (file, enclosing qualname, rule). Rules: R1 dynamic exception-name reads (56 sites in 30 files at `ab29ef0c`, `git grep -nE "type\((exc|e|err|error|ex|cause)\)\.__(qual)?name__|__class__\.__name__"`; the only allowed reader is `safe_output/_exception.py`, plus `scratch/_os_error.py:classify_os_error` for `.errno` once 4c lands); R2 logger arguments must be ints, floats, enums or aliases (54 sites with arguments); R3 export classification (5.4); R4 `json.dumps(default=...)` (5 sites, 4 allowed); R5 (Platform) `.log` assignment and read sites. The baseline mirrors the module-size census (`tests/sentry/test_module_size.py:66`): counts only shrink, stale entries fail, and E5 requires the engine baseline empty.
 
 ## 7. Frozen contracts touched
 
 | Contract | Change |
 |---|---|
-| `decoy-engine` public API (0.7.0, `pyproject.toml:5-13`) | Additive `safe_output`; pre-GA break: `StructuredEvents.step` drops `error_msg`, gains `node_alias`; legacy dict helpers return sealed payloads. Version: the next engine minor released after E5 (recorded at release; consumers pin exactly that, per F36's lineage rule) |
-| Reason registry 1.0.0 (`src/decoy_engine/reasons/_registry.py:24-44`) | Additive entries and the `ordinary_output` flag |
-| Progress v0/v1 (`tests/unit/progress/test_versioned_contract.py:37-78`) | Keys unchanged; `table`/`column` value domain becomes aliases (breaking value change, Q1); snapshot asserts values |
-| `phase-result/v1`, `phase-event/v1` (STORM) | Keys unchanged; `error_type` value domain is the closed `SafeErrorType` labels (STORM swaps `phase.py:478` to `safe_error_type`) |
-| `fidelity-report/v1`, `integrity-report/v1` | Unchanged (class b); value snapshot asserts real names |
-| `decoy-ci/v1` (CLI main, `src/decoy/ci/contracts.py`) | Unchanged (class b) |
-| CLI `scan --json` / `scan fields --json` (`decoy/src/decoy/cli/scan.py:151`, `docs/cli-reference.md:1120`) | Unchanged (class b) |
-| Platform OpenAPI and web client | Unchanged shapes. Content changes: `log` text and SSE `data:` lines become rendered v1 events (class a). Additive DB columns `jobs.run_uuid`, `job_node_runs.node_alias` |
+| `decoy-engine` public API (0.7.0, `pyproject.toml:10`) | Additive `decoy_engine.safe_output` (`SafeEvent`, `SafeErrorType`, `safe_error_type`, `safe_event_from_exception`, `contain`, `SafeOutputScope`, `SafeAlias`, `SafeEdge`, `to_dict`, `to_line`, `from_line`, `render_text`, `metric_labels`, `families`). Pre-GA breaks (`src/decoy_engine/release.py:45-48`): `StructuredEvents.step` drops `error_msg` and gains `node_alias`; `_progress_events.safe_error_class` deleted. Version: the next engine minor released after E5, taken from the release lineage; consumers pin exactly that |
+| Reason registry 1.0.0 (`src/decoy_engine/reasons/_registry.py:24`) | Additive `platform` and `safe_output` namespaces; minor bump to 1.1.0 per `tests/unit/test_reason_registry.py:151` |
+| Progress v0/v1 (`tests/unit/progress/test_versioned_contract.py:37-78`) | Keys and value domains unchanged; `error_class` labels are the same names, now by exact type; snapshot asserts values |
+| `phase-result/v1`, `phase-event/v1` | Keys unchanged; the `error_type` value domain widens additively from the 15 builtins of `_ERROR_KINDS` to the closed `SafeErrorType` table (STORM's snapshot of the 15 is re-recorded as a subset check) |
+| `fidelity-report/v1`, `integrity-report/v1`, `decoy-ci/v1`, `scan --json` | Unchanged (class b); value snapshots assert real names |
+| Platform OpenAPI and web client | Unchanged shapes. Content: `log` text and SSE `data:` lines become rendered v1 records. Additive: `jobs.run_uuid`, `job_node_runs.node_alias`, table `job_alias_legend`, route `/jobs/{id}/alias-legend`, server-log extra `run` |
 | `decoy-safe-output/v1` (new) | Additive only after release |
 
 ## 8. Reuse inventory
 
 | Existing | Source | Use |
 |---|---|---|
-| F29 reason registry and records | `src/decoy_engine/reasons/_registry.py:24-44`, `src/decoy_engine/reasons/_record.py:241-366` | Prose authority and nested reason |
-| Reason adapter | `src/decoy_engine/reason_adapter.py:38-100` | Reason selection under `safe_event_from_exception` |
-| Progress sequencing | `src/decoy_engine/progress.py:162-197` | Kept; drivers added |
-| Log interpolation sentry | `tests/sentry/test_log_interpolation.py:20-83` | Generalized into the shared analyzer |
-| Module-size census | `tests/sentry/test_module_size.py:54-66` | 600/700 unchanged; ratchet pattern for 6.5 |
-| Hostile corpora | `tests/security/test_reason_boundary.py:44-195` | Retained and lifted into 6.1 |
-| Platform closed metric pickers | `api/observability/metrics.py:192` | Reused as the metrics label domain |
-| F43 value-free CI boundary | `decoy/src/decoy/ci/contracts.py:1-11`, `ci/engine_logging.py:1-12` | Kept as the class (b) CI renderer; `engine_logging` silencer replaced by `SafeOutputScope` in C3 |
+| F29 registry, records, identity form | `src/decoy_engine/reasons/_registry.py:24-38`, `_record.py:115-260`, `_identity.py:19-57` | Prose authority, `ReasonRef`, `COUNT_KEYS`, `approve_name` on (b) |
+| Reason adapter | `src/decoy_engine/reason_adapter.py:146`, `:352-368` | Reason selection in `safe_event_from_exception` |
+| STORM exact-type table and containment | `src/decoy_engine/phase.py:160-181`, `:555-595` | Lifted into `safe_output._exception`; phase delegates |
+| Progress projections and channel | `src/decoy_engine/_progress_events.py:513-599`, `progress.py:162-197` | Kept; `operational_view` added beside them |
+| Log interpolation sentry | `tests/sentry/test_log_interpolation.py:23-71` | Risky-name detector reused by R2 |
+| Module-size census ratchet | `tests/sentry/test_module_size.py:66` | Baseline pattern for 6.5 |
+| Hostile reason corpus | `tests/security/test_reason_boundary.py:22` | Lifted into 6.1 |
+| F43 `SafeFinding` choke point | `decoy/src/decoy/ci/contracts.py:64`, `:128-135`, `:228-275` | Pattern for `SafeEvent` construction and fixed registries; `decoy ci` unchanged |
+| Platform OBS-3 formatter, extras, exc summary, sentry | `api/logging/formatters.py:78`, `extras.py:117-138`, `exc_safe.py:76`, `tests/sentry/test_obs3_log_interpolation.py` | Server-log boundary kept; `run` extra and `safe_frames` shape |
+| Platform closed metric pickers | `api/observability/metrics.py:192` | Metrics label domain |
+| Alembic backfill pattern | `api/migrations/versions/obs3_request_id.py` | `run_uuid` migration |
 
-New machinery (provenance, sealed payload, re-ingest, class-bound drivers) exists because no current carrier authorizes a whole output object or validates a stored line.
+New machinery (the alias table, the v1 record and parser, the sentries) exists because no current carrier aliases names per run or validates a stored line.
 
-## 9. Pre-mortem
+## 9. Consumer promises
+
+- F25 4c (owner): `scratch._os_error.classify_os_error` is admitted as a reviewed exception boundary (R1 allows `.errno` there only). The public `QuotaReport.errno` field is deleted by 4c (pre-GA); F31's export classification lists `QuotaReport` without it. 4c-5a may merge before engine slice E3; F31 rebases onto it and E1 re-records the baseline. At `ab29ef0c` no `scratch` package exists; the symbols live on `plan/f25-4c-consumer-capabilities`.
+- F34 (owner): the CLI reports COMPLETE from a verified local manifest labeled `binding_source=cli-local-1`; Platform ships first; exit code 6; the engine pin is taken from the release lineage. F31 promises `SafeOutputScope`, `safe_error_type`, a `families/canary.py` module built in the engine by F34, and additive `COUNT_KEYS`. Not promised, and F34's assumptions table must be reconciled: `SerializedSafePayload`, sealed drivers, an `ordinary_output` opt-in (every registered reason is ordinary-safe by construction), child fd bootstrap (F34 owns its `DEVNULL` stdio), an atomic ordinary-file sink (F34 `:88` does not need one).
+- F36 (owner): Linux-only relationship and reconciliation checks with `not_run` elsewhere; no persisted report without a job attempt; exact checksums above 10M rows; both reason codes engine-owned in `decoy-reasons/v1`. F31 keeps X1 (`families/invariants.py`), X2 (closed count names), X4 as the generated data-plane writer manifest, X5, X6 as `SafeOutputScope` (no process install), X7; X3 is dropped.
+- STORM: `safe_error_type` and `SafeErrorType` exported; `phase.error_result` delegates; phase schemas frozen; the containment sentry unchanged.
+- F30: the run UUID is the span correlation id; aliases may be span attributes; names may not; Prometheus labels carry closed enums only.
+- F32: reads stored v1 lines by `run_uuid` through `from_line(expected_run)`, carries aliases verbatim, never includes the legend; `SafeEdge` and `ver` give topology and versions.
+
+## 10. Pre-mortem
 
 | Likely gate finding | Class | Prevention |
 |---|---|---|
-| A surface is missing from 5.5 | 1, 4 | T0 fails on a driver with no row |
-| A (b) driver accepts an operational event or renders a `SchemaName` on an (a) surface | 1, 10 | Drivers are class-bound at registration; T5 value snapshots |
-| SSE or node-runs replays a stored line raw | 4, 6 | One reader; T3; analyzer rule bans `Job.log` reads outside it |
-| CLI tests bypass `main()` | 8 | T2 plus the test lease |
-| Analyzer passes while the baseline grows | 8 | T10 |
+| An emitter category or writer has no row | 1, 4 | T0 over the generated census and writer manifest |
+| A (c) field reaches evidence or an API body | 1, 10 | R3 classification plus T7 |
+| A reader replays a stored line raw | 4, 6 | one reader, R5, T3 |
+| A customer UUID becomes a run id | 6 | schema exclusion, `mint_run_uuid` sentry, constraint, T11 |
+| The alias order differs between child and parent, or between retries | 3 | coordinator-only allocation, frozen handoff, T9 |
+| Progress names are aliased by mistake | 10 | T5 asserts real names on (b) |
+| A slice exceeds the size bound | 8 | the bound is checked in the slice's own evidence; split before starting |
 
-## 10. Slices
+## 11. Slices
 
-Each slice: RED tests first with output recorded, smallest change, self-check, review, at most two remediation rounds. Production modules stay below 450 physical lines (plan rule); test files follow the repository sentry (600/700).
+Size bound (objective): a slice touches at most 10 production files and changes at most 800 production lines (insertions plus deletions from `git diff --stat`, tests and generated JSON excluded); a slice that would exceed it is split before it starts. Each slice: RED tests first with output recorded, smallest change, self-check, review, at most two remediation rounds. New F31 production modules stay below 450 physical lines; the repository sentry stays 600/700.
 
-| Slice | Repo | Scope | Size | Depends on |
+| Slice | Repo | Scope | Bound | Depends on |
 |---|---|---|---|---|
-| E0 | engine | Model, provenance, sealed payload, aliases and coordinator barrier, `SafeRunId`, wire form, `reingest_line`, registry flag and opt-in manifest | M | none |
-| E1 | engine | Shared analyzer in `_testing.py`, engine sink manifest, writer and non-output manifests, ratchet baseline, corpus harness, T0, T10 | M | E0 |
-| E2 | engine | Exception table, `safe_error_type` export, replace `safe_error_class` and the six `postgres_snapshot` sites, drain `no-dynamic-exc-name` baseline, T6 | M | E1 |
-| E3 | engine | Ownership state machine, stream proxies, process hooks, test lease, public `child.bootstrap_child_streams`, isolated worker, T9 (engine half) | M | E2 |
-| E4 | engine | Progress drivers, logging handler, `Logger`/`StructuredEvents` changes, envelope typing, `default=str` rule, T5 (progress), T8 | M | E3 |
-| E5 | engine | Families: quality, evidence, diagnostics, phase; `QualitySummary` projections, T7 (engine half); baseline empty; release | M | E4 |
-| C1 | CLI | Console script to `main`, entry wrapper, usage mapping, test lease use, T1, T2 | S | engine release |
-| C2 | CLI | Command migration: (a) text/progress; (b) `scan --json`, evidence; T5 (CLI) | M | C1 |
-| C3 | CLI | `decoy ci` silencer to `SafeOutputScope`, CLI analyzer manifest | S | C2 |
-| P1 | Platform | Alembic: `jobs.run_uuid`, `job_node_runs.node_alias`; job-log sink driver; `JobLogger` free-text narrative methods (`api/persistence/logger.py:152-175`) removed so Platform code also writes `Job.log` only through the driver; one re-ingest reader for SSE, `log`, node-runs; characterization first; T3, T5, T9 | M | engine release |
-| P2 | Platform | `SafeJSONResponse`, `SafeSSEResponse`, API errors, audit `detail`, evidence projections, metrics labels and `metrics.py:391`, server-log tail re-ingest, Sentry `before_send`, T4, T7 | M | P1 |
-| P3 | Platform | Children: `generation_child.py`, `_pg_probe_child.py` moved off stdout to a dedicated descriptor plus `bootstrap_child_streams`; Platform analyzer manifest | S | P2 |
-| X | all | Cross-repo corpus on the exact released engine and pinned consumer commits | S | C3, P3 |
+| E0 | engine | `_event.py`, `_exception.py` (table lifted from `phase`), `_wire.py`; field walk, T6, parser corpus, record snapshot | 5 files | none |
+| E1 | engine | `tools/safe_output_inventory.py`, `tests/sentry/test_safe_output_boundary.py` with R1-R4, generated `safe_output_exports.json` and `safe_output_surfaces.json`, baseline, T0, T10 | tests and tools only | E0 |
+| E2 | engine | `safe_error_type` consumers: `phase.error_result`, `_progress_events` (`safe_error_class` deleted), `progress.run_scope`, `_isolated_common`, the six `postgres_snapshot` sites; characterization of `error_class` and `error_type` first | 6 files | E1 |
+| E2b | engine | Drain the remaining R1 sites (about 40 in 25 files) to zero, mechanically, in parts of at most 10 files, each part gated alone | 10 files per part | E2 |
+| E3 | engine | `_scope.py`, `_alias.py`, child handoff in `_isolated_run._write_payload`, T9, exit matrix | 5 files | E2 |
+| E4 | engine | `_sink.py` (`SafeEventSink`, `LoggingSink`), `operational_view`, `StructuredEventsSink` narrative removed, `internal/logging.py` free text to events, `StructuredEvents.step` change, `platform` and `safe_output` reason namespaces (1.1.0), R2 drained | 9 files | E3 |
+| E5 | engine | Typed isolated envelope (`sampled_values` dropped, `default=str` removed), R3 (c) projections, R4 to four, T7 engine half, baseline empty, release | 8 files | E4 |
+| C1 | CLI | Console script to `main`, usage mapping, run UUID, T1, T2 | 3 files | engine release |
+| C2 | CLI | Five `print_exception` sites to `safe_frames`, CLI marker corpus, T5 (CLI) | 6 files | C1 |
+| P0 | Platform | Migration `f31_run_uuid` (add nullable, backfill per row, constrain), `mint_run_uuid`, `@validates`, schema exclusion, T11, engine pin | 6 files | engine release |
+| P1 | Platform | `api/jobs/job_log.py` reader, the four readers, `job_node_runs.node_alias` migration and join, characterization first, T3, T5 (Platform) | 8 files | P0 |
+| P2 | Platform | Every writer in 5.6 to `job_log.append`, `JobLogger` narrative methods removed, R5 | 16 files, split in two halves by the bound | P1 |
+| P3 | Platform | `job_alias_legend` migration, route, write at terminal, T12 | 5 files | P2 |
+| P4 | Platform | Rule `detail-closed` over `HTTPException.detail` and audit `detail` with a committed baseline (89 sites) that only shrinks; no response wrapper | tests plus baseline | P1 |
+| P5 | Platform | `metrics.py:391`, `metric_labels`, evidence (c) projections, child-stdio sentry, server-log `run` extra, T4, T7 Platform half | 7 files | P2 |
+| X | all | Cross-repo corpus on the exact released engine and pinned consumer commits | tests only | C2, P5 |
 
-All Platform edits (including children) are after the engine release; no engine slice edits another repository. STORM CLI and Platform rebase onto F31 after C1 and P2 respectively and are not F31 slices; F31's promise to them is the exported API in 3.1-3.3.
+No engine slice edits another repository. STORM CLI and Platform rebase onto F31 after C1 and P2; F25 4c-5a may land before E3. Self-check per slice: the slice's named tests, then `scripts/dev/gates.sh --baseline` where it exists (engine `origin/main` after #347, CLI `d28fae2`, Platform `00e55c27`), run from `uv.lock` (`uv sync --locked`); the STORM tip `ab29ef0c` predates #347, so engine slices state the exact commands until the merge.
 
-Self-check per slice: the slice's named tests, then `pytest -q`, `ruff check`, `mypy` on the touched package, run from `uv.lock` (`uv sync --locked`). `scripts/dev/gates.sh` does not exist in the engine at `fdd08a8`; until it lands, evidence states the exact commands.
-
-## 11. Worker evidence rules
+## 12. Worker evidence rules
 
 - Name the class of every finding and fix the class structure, not only the instance.
 - Write the generated tests first (field walk, exit-path matrix, interleavings, marker corpus) and record them red.
 - Attack your own diff: mutate each new mechanism once and show the test goes red.
 - Run baselines with `uv.lock` in the same environment as the branch; state what you did not run.
-- Never widen a threshold, skip a test, grow the analyzer baseline, or reduce a budget to pass.
+- Never widen a threshold, skip a test, grow a baseline, or reduce a budget to pass.
 - If a defect of a class already in the catalog recurs, stop and report it; do not patch a third time.
-
-## 12. Review finding disposition (Opus review on `review/f31-opus`)
-
-| Finding | Disposition | Where |
-|---|---|---|
-| B1 aliasing scope vs frozen contracts | Fixed (owner decision B1) | 1, 5.5, 7, T5 |
-| B2 persisted and cross-process semantics | Fixed (owner decision B2) | 2, 5.2, T3, T9 |
-| H1 F32 not expressible | Fixed: `SafeEdge`, `SafeVersion`, `SafeDtype` in v1 | 2, 3.1 |
-| H2 F30 telemetry and `/metrics` | Fixed: `SealedLabels`, S22, S23 | 3.1, 5.5, T4 |
-| H3 STORM type label and phase schemas | Fixed: exported `safe_error_type`; phase schemas frozen | 3.2, 7 |
-| H4 phantom F43 branch | Fixed: F43 cited from CLI main `b2209e1`; F43 is class (b) and not migrated beyond its silencer | Baselines, 8, C3 |
-| H5 `default=str` gate | Fixed: rule scoped to sink-reaching functions; four digest functions (`generation/_reproducibility.py:204`, `pool/_builder.py:42`, `plan/_generation.py:260`, `profiling/model_pack/trainer.py:593`) in a non-output manifest; no hash change | T8 |
-| H6 two exception policies, no `__name__` ban | Fixed: one table, analyzer rule, `postgres_snapshot` banned | 1 P5, 3.2, T6 |
-| H7 field walk misses raw samples | Fixed: walk generated from `__all__`; `sampled_values` is (c) | 5.4, T7 |
-| H8 slice size and cross-repo Slice 3 | Fixed: 13 slices, no engine slice edits another repo, public child bootstrap | 3.3, 10 |
-| M1 install has no test lifecycle | Fixed: test lease plus T2 | 3.3, 6.2 |
-| M2 analyzer ratchet | Fixed: shrink-only baseline | 6.5, T10 |
-| M3 no transition table | Fixed | 3.3 |
-| M4 flaky ID-reuse test | Fixed: advisory | 6.5 |
-| M5 version pin | Fixed: next minor after E5, exact pin | 7 |
-| L1 Platform pin | Fixed: `ea68d8e` | Baselines |
-| L2 undefined FK-shape matrix | Fixed | 6.4 |
-| L3 450-line budget ambiguity | Fixed: production modules only | 10 |
-| Grounding: `run.py:207-219`, missing Slice 0 test file, missing `gates.sh` | Fixed: citation and file removed; `gates.sh` absence stated | 10 |
-
-## 13. Open questions for the owner
-
-- Q1. Progress v0/v1 is listed as operational, so `table` and `column` values become aliases. Do the CLI progress bar and any Platform progress view need real names (which would make progress class b)?
-- Q2. Should Platform persist a full owner-result alias legend so the owner UI can resolve `table-N` in job log lines? Default in this plan: node aliases only (via `job_node_runs.node_alias`).
-- Q3. Legacy free-text `Job.log` rows are withheld at read, not purged. Purge them with a migration instead?
