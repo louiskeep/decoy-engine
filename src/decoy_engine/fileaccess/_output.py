@@ -43,8 +43,9 @@ STAGE_SUFFIX: dict[str, str] = {"quarantine": ".jsonl", "quarantine_direct": ".j
 # Every output but a vault leaf may create missing parent directories; a vault leaf sits
 # directly in a directory the caller already provided.
 CREATES_PARENTS: frozenset[str] = frozenset(STAGE_PREFIX) - {"vault"}
-# The stage's creation mode, given to `open(2)` so no umask widens it and no later chmod leaves
-# a window; a hardlinked leaf shares it. Private artifacts are owner-only (`mkstemp` is 0600).
+# A private stage's exact mode: created with it (so no wider mode is ever visible), then restored
+# with `fchmod` (`open(2)` applies the umask, and 0777 would publish a 0000 file its owner cannot
+# reopen). A hardlinked leaf shares it. Other labels keep `0o666 & ~umask`.
 STAGE_MODE: dict[str, int] = {"quarantine": 0o600, "vault": 0o600}
 DEFAULT_STAGE_MODE = 0o666
 # Labels published durably and exclusively (B-6 D1): the stage is fsynced by its writer
@@ -68,6 +69,21 @@ def _call(fn: Callable[..., T], *args: Any, **kwargs: Any) -> T:
     except OSError as exc:
         code = exc.errno or errno.EIO
     raise OSError(code, os.strerror(code)) from None
+
+
+def _restore_private_mode(fd: int, mode: int) -> int:
+    """Give a freshly created private stage its exact mode before the first byte. On failure
+    the descriptor is closed and only the errno is kept; the caller removes the stage."""
+    if mode == DEFAULT_STAGE_MODE:
+        return fd
+    code = 0
+    try:
+        os.fchmod(fd, mode)
+        return fd
+    except OSError as exc:
+        code = exc.errno or errno.EIO
+    _close(fd)
+    raise OSError(code, os.strerror(code))
 
 
 def _close(fd: int) -> None:
@@ -165,7 +181,8 @@ class _StageDir:
 
     def create_file(self, component: str) -> int:
         self._check(component)
-        return _call(os.open, component, _FILE_CREATE, self._mode, dir_fd=self._fd)
+        fd = _call(os.open, component, _FILE_CREATE, self._mode, dir_fd=self._fd)
+        return _restore_private_mode(fd, self._mode)
 
     def open_file(self, component: str) -> int:
         self._check(component)
@@ -244,13 +261,18 @@ class RootedOutputTxn(_StageDir):
             if self._state.file_created:
                 raise FileAccessUnavailable("a file stage holds exactly one file")
             self._state.file_created = True
-            return _call(
+            fd = _call(
                 os.open,
                 self._state.stage_name,
                 _FILE_CREATE,
                 self._mode,
                 dir_fd=self._state.parent_fd,
             )
+            try:
+                return _restore_private_mode(fd, self._mode)
+            except OSError:
+                _discard(self._state)
+                raise
         return super().create_file(component)
 
     def publish(self) -> None:

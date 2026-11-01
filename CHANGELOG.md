@@ -38,14 +38,16 @@ Plan: `docs/plans/2026-11-01-b6-vault-crypto-remediation.md` (slices S1, S2, S2b
   pair before it repins to this release.
 - BREAKING (pre-GA): the file vault is published privately, durably and exclusively.
   `VaultWriter.write` (both a path string under the ambient policy and a policy `OutputDir`)
-  creates a `0600` stage beside the vault (creation mode, so no umask widens it), writes and
+  creates a stage beside the vault with mode exactly `0600` whatever the umask, writes and
   fsyncs it, links it to the vault name, fsyncs the directory and removes the stage. An existing
   vault is refused with the new `runtime.vault_exists` (was: overwritten in place under the
   ambient policy, which also wrote through hard links); a write, fsync or link failure is the new
   `runtime.vault_commit_failed`. Both texts are fixed and name no path. No failure path removes a
   published vault. The ambient in-place write (`vault_direct` stage label) is deleted. Stage
   files of every policy now take their mode from `fileaccess._output.STAGE_MODE` (quarantine and
-  vault `0600`).
+  vault `0600`); a private stage's mode is restored with `fchmod` before the first byte, so a
+  umask that masks owner bits (`0777`) no longer publishes a `0000` vault or quarantine sidecar
+  its owner cannot reopen.
 - `tests/unit/test_reason_registry_bump.py`: a branch that adds reason identities must set the
   registry to its merge base's next minor and give every added identity that `since`.
   `engine-v2-substrate-matrix.yml` now checks out with `fetch-depth: 0` for it.

@@ -28,6 +28,7 @@ from decoy_engine.fileaccess._output import (
     STAGE_MODE,
     STAGE_PREFIX,
     STAGE_SUFFIX,
+    _restore_private_mode,
 )
 from decoy_engine.fileaccess._types import (
     FileAccessUnavailable,
@@ -242,28 +243,43 @@ class LocalOutputTxn(_LocalStageDir):
                 return os.open(self._target, os.O_WRONLY | os.O_TRUNC | os.O_CLOEXEC)
             prefix = STAGE_PREFIX[self._label]
             suffix = STAGE_SUFFIX.get(self._label, "")
+            mode = STAGE_MODE.get(self._label, DEFAULT_STAGE_MODE)
             if self._label == "quarantine":
                 fd, name = tempfile.mkstemp(prefix=prefix, suffix=suffix, dir=self._target.parent)
-                self._staged_file = Path(name)
-                return fd
-            stage = self._target.parent / f"{prefix}{secrets.token_hex(6)}{suffix}"
+                stage = Path(name)
+            else:
+                stage = self._target.parent / f"{prefix}{secrets.token_hex(6)}{suffix}"
+                fd = os.open(stage, _CREATE, mode)
             self._staged_file = stage
-            return os.open(stage, _CREATE, STAGE_MODE.get(self._label, DEFAULT_STAGE_MODE))
+            try:
+                _restore_private_mode(fd, mode)
+            except OSError:
+                self.abort()
+                raise
+            return fd
         return super().create_file(component)
 
     def _create_durable_stage(self) -> int:
-        """Open the parent, then create the stage beside the leaf with mode 0600. A failure here
-        created nothing and keeps the ambient error shape: the class and the target's path."""
+        """Open the parent, then create the stage beside the leaf with mode exactly 0600. A
+        failure here leaves nothing and keeps the ambient error shape: the class and the target's
+        path."""
         name = f"{STAGE_PREFIX[self._label]}{secrets.token_hex(6)}"
         failed: OSError | None = None
+        created = False
         try:
             self._parent_fd = os.open(self._target.parent, _DIR)
             fd = os.open(name, _CREATE, STAGE_MODE[self._label], dir_fd=self._parent_fd)
+            created = True
+            _restore_private_mode(fd, STAGE_MODE[self._label])
         except OSError as exc:
             failed = exc
         if failed is not None:
             code, cls = failed.errno, type(failed)
             del failed
+            if created:
+                self._staged_file = self._target.parent / name
+                self._unlink_stage()
+                self._staged_file = None
             self._close_parent()
             raise cls(code, os.strerror(code or errno.EIO), str(self._target))
         self._staged_file = self._target.parent / name

@@ -1,8 +1,8 @@
 """The file vault is published privately, durably and exclusively, and never deleted (B-6 D1).
 
 Steps (both policies): open the parent directory, create the stage `_decoy_vault_stage_*` with
-creation mode 0600 (`os.open`, so no umask widens it), write every byte, fsync and close the
-stage, `link(2)` it to the leaf (the compare-and-set; an existing leaf is `vault_exists`), fsync
+creation mode 0600, restored with `fchmod` before the first byte (`open(2)` applies the
+umask), write every byte, fsync and close the stage, `link(2)` it to the leaf (the compare-and-set; an existing leaf is `vault_exists`), fsync
 the parent (the commit point), unlink the stage. A failure before the link leaves no vault and
 no stage; a failure after it never removes the vault.
 
@@ -109,8 +109,14 @@ def _summary(code: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("umask", [0o000, 0o077], ids=["permissive", "strict"])
+@pytest.mark.parametrize(
+    "umask",
+    [0o000, 0o077, 0o700, 0o770, 0o777],
+    ids=["permissive", "strict", "owner-masked", "owner-group-masked", "all-masked"],
+)
 def test_vault_is_0600_under_any_umask(route: _Route, umask: int) -> None:
+    """`open(2)` applies `mode & ~umask`; a umask that masks the owner bits must not publish
+    a vault its owner cannot reopen (0000 under 0777)."""
     previous = os.umask(umask)
     try:
         route.write()
@@ -118,6 +124,7 @@ def test_vault_is_0600_under_any_umask(route: _Route, umask: int) -> None:
         os.umask(previous)
     assert stat.S_IMODE(route.leaf.stat().st_mode) == 0o600
     assert _stages(route.directory) == []
+    assert route.load() == {("ns", "m"): "s"}
 
 
 # ---------------------------------------------------------------------------
