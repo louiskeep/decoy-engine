@@ -546,3 +546,63 @@ the wipe removed at `derive_pack_signing_key` and at `sign_pack`, a census entry
 removed, `read_checked`'s clear removed, a kernel wipe removed (frame cell and verdict checker),
 the expected MAC bound again: all ten red. Record:
 `docs/plans/evidence/2026-11-01-a4-f13-reconcile-r6-red.txt`.
+
+## 13. Round 7: main 51548303 merged, round-6 regressions fixed
+
+Round 6's final report was lost: its regression fixes were never pushed, so origin a19889a5 still
+carried them. Evidence: `docs/plans/evidence/2026-11-01-a4-f13-reconcile-r7.txt`.
+
+### 13.1 Merge (`d8f19393`)
+
+- `CHANGELOG.md`: both Unreleased blocks kept (main's typed-seam Fixed entry, then the branch's).
+- `out_of_core/_batch_join.py` `_remap_values`: main's loop (`combine_chunks`, `mint_remap_values`)
+  inside round 6's `try`/`except BaseException: del mask_key; raise`. Two comments shortened to
+  keep the module at 599 LOC, so no module-size entry.
+- Auto-merged, re-checked: `_stream_join.py` (main's `mint_remap_values` call beside round 6's
+  wiped constructor; ceiling 645, main's lowered value), `test_module_size.py` (main's 650 -> 645
+  kept), `test_physical_seam_disconnection.py` (main's `_emit.py` entry kept).
+
+### 13.2 Class 1 the merge brought in (`84b382f5`)
+
+main's new `mint_remap_values(keys, seeds, job_seed)`, the REMAP mint of the whole-child oracle and
+both joiners, held the key as a parameter with no wipe. The census caught it as missing. Wiped on
+raise and entered as `wiped` (AST-verified). `test_ooc_fk_remap_oom_keeps_no_key.py` injects
+`ArrowMemoryError` and `MemoryError` at the seam's value build on all four minting routes and int
+and `timestamp[ns]` keys. It asserts the same object propagates and no engine frame local holds the
+key. Red: on the merged head before the wipe (16/20), on main alone (16/20, key in
+`_remap_values` and `mint_remap_values`), on a19889a5 alone (17/20: REMAP minting there never
+reaches a seam that propagates the error), and with each half's mechanism mutated out in the
+merged tree (MemoryError re-raise 8/20, mint wipe 16/20, `_remap_values` wipe 4/20).
+
+### 13.3 The nine round-6 regressions (red at d8f19393 on 3.10 and 3.12)
+
+| Failing ids | Class | Root cause | Fix |
+|---|---|---|---|
+| `test_draw_site_inventory_coverage::test_static_scan_finds_no_uncatalogued_draw_site` (1) | 10 | Moving the keyed picks to `_codeset_pick.py` put the `mask.code_set` draw in a file DRAW_SITES does not name | `c1cdbbe9`: picks back in `code_set.py` (wipes kept), `CodeSetConfig` moved to `_codeset_config.py` and re-exported (`961352cb`, explicit for mypy). Catalogue and digests unchanged |
+| `test_physical_seam_disconnection::test_production_execution_modules_are_byte_identical_to_origin_main` (1) | 10 | Round 6 changed `native/_group_key_ext.py` (key wipes, `repr=False`), which the fence did not name | `c1cdbbe9`: entry added with that reason. The pinned fact really changed: the file differs from main. It imports nothing from `execution.physical` |
+| `test_out_of_core_batch_join` REMAP cells (7) | 9 | Round 6 moved `_column_seed` from `_runner` to `_compat`. This fixture still read `runner_mod._column_seed` | `16d72eca`: imports it from `_compat`. A static sweep of every `decoy_engine` attribute and import in tests, testflight and scripts finds no other name the branch removed |
+
+Census (`tests/sentry/secret_material_census.json`): 258 entries, 228 functions, 86 files.
+Verdicts: wiped 184, boxed 28, hidden 20, not-secret 15, no-raise 7, unbound 2, contained 2.
+Line numbers refreshed; `not-secret` and `no-raise` unchanged. Mutants: the ten round-6 mutants
+were rebuilt as `scripts/dev/secret_census_mutants.py` (round 6 left no runner) plus the
+round-7 one (M11). Run on c1cdbbe9, one at a time, restored and hash-checked: all eleven red.
+
+### 13.4 Suites (16d72eca vs main 51548303, same lock venvs, each worktree on its own `src`)
+
+| Interpreter | Head | Main |
+|---|---|---|
+| 3.10.20 | 0 failed, 32060 passed, 5289 skipped | 0 failed, 30832 passed, 5286 skipped |
+| 3.12.3 | 1 failed (`test_skewed_weights_skew_cdf`), 31975 passed, 5373 skipped | 1 failed (the same id), 30747 passed, 5370 skipped |
+
+Failing ids, head versus main: identical on both interpreters. The 3.12 column uses the system
+3.12.3, as in sections 7 to 11. On uv's 3.12.13, CPython words a NUL in a path "embedded null
+character in path". The branch-only `tests/fileaccess/test_char_sink_publish.py::
+test_nul_and_overlong_names_fail_at_write_not_at_validation` expects "embedded null byte", so it
+fails there. That is an interpreter-version dependency, not a branch change, and it is left as is.
+Main on 3.12.13: only `test_skewed_weights_skew_cdf`.
+
+ruff check and format (`src tests testflight scripts`): clean on 3.10 and 3.12. mypy
+(`src/decoy_engine testflight`, 3.10): 0 errors, 706 files.
+
+Not run: native companion, CI, platform or CLI suites, live Vault, Windows, mutmut, mypy on 3.12.
