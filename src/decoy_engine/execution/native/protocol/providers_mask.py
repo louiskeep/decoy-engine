@@ -39,7 +39,7 @@ from decoy_engine.execution.native.protocol.providers_base import DrawSiteProvid
 # transforms/fpe.py (FF1_KEY_LABEL). Task 5.2: retired the Feistel-era
 # `b"fpe-key/v1"` label; the drift test now pins this to the FF1 key label.
 _FPE_KEY_LABEL = b"ff1-key/v1"
-# transforms/_codeset_pick.py (_KEYED_SALT).
+# transforms/code_set.py (_KEYED_SALT).
 _CODE_SET_KEYED_SALT = b"decoy.code_set.keyed_access.v1"
 # transforms/joint_mask.py:64 (_KEYED_ROW_SOURCE).
 _JOINT_MASK_KEYED_ROW_SOURCE = b"joint_mask/keyed_row/v1"
@@ -101,7 +101,7 @@ class FpeKeyProvider(DrawSiteProvider):
 class CodeSetKeyedSelectProvider(DrawSiteProvider):
     """``mask.code_set`` (mask mode): two-step keyed selection index.
 
-    Shipped mask-mode selection (``transforms/_codeset_pick.py:_pick_from_seq``):
+    Shipped mask-mode selection (``transforms/code_set.py:_pick_from_seq``):
     ``hmac_key = derive(mask_key, namespace or "code_set", _KEYED_SALT)``, then
     ``idx = int(hmac_hex(hmac_key, key_value)[:8], 16) % candidate_count``, then
     ``seq[hole_resolve(idx, position)]``. Keyed on the masked key value, so

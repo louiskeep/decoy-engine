@@ -104,16 +104,18 @@ VERSION DIVERGENCE remediation, 2026-07-17)
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from decoy_engine import reasons
+from decoy_engine.determinism import derive, derive_index
+from decoy_engine.internal.crypto import hmac_hex
 from decoy_engine.plan._errors import PlanCompileError
-from decoy_engine.transforms._codeset_config_checks import (
+from decoy_engine.transforms._codeset_config import CodeSetConfig
+from decoy_engine.transforms._codeset_config_checks import (  # noqa: F401 -- re-exported
     validate_code_set_config,
 )
-from decoy_engine.transforms._codeset_index import hole_candidate_count
+from decoy_engine.transforms._codeset_index import hole_candidate_count, hole_resolve
 from decoy_engine.transforms._codeset_loader import (
     _SHIPPED_CORPORA,  # noqa: F401 -- re-exported (validate_code_set_config moved out)
     CorpusVerifyReport,  # noqa: F401 -- re-exported public API (see below)
@@ -124,12 +126,11 @@ from decoy_engine.transforms._codeset_loader import (
     load_corpus_provenance,  # noqa: F401 -- re-exported public API (see below)
     verify_corpus,  # noqa: F401 -- re-exported public API (see below)
 )
-from decoy_engine.transforms._codeset_pick import (  # noqa: F401 -- _KEYED_SALT re-exported
-    _KEYED_SALT,
-    _pick_from_seq,
-    _pick_gen,
-    _pick_mask,
-)
+
+# Stable salt for HMAC-keyed row derivation. Same purpose as
+# reference_tables._KEYED_ACCESS_SALT: determinism, not secrecy.
+# RFC 2104: HMAC(key, msg) -- here key = salt, msg = str(input_value).
+_KEYED_SALT = b"decoy.code_set.keyed_access.v1"
 
 # `load_corpus` / `load_corpus_provenance` / `verify_corpus` /
 # `CorpusVerifyReport` / `_get_corpus_record` and the `_SHIPPED_CORPORA` name
@@ -137,76 +138,6 @@ from decoy_engine.transforms._codeset_pick import (  # noqa: F401 -- _KEYED_SALT
 # under its LOC cap; see that module's docstring). Imported above and
 # used/re-exported here unchanged -- `from decoy_engine.transforms.code_set
 # import load_corpus` keeps working exactly as before the split.
-
-
-@dataclass(frozen=True)
-class CodeSetConfig:
-    """Configuration for a code_set masking/generation operation.
-
-    Attributes:
-        code_set: Corpus name (e.g. "icd10", "hcpcs", "ndc", "mcc") or an
-            arbitrary name when corpus_source is a customer path.
-        chapter_preserve: When True, restrict replacement candidates to the
-            same chapter/category bucket as the input. Requires the corpus to
-            have a ``chapter`` column. Defaults to False.
-        corpus_source: "shipped" (default) or "customer:<absolute_path>".
-        corpus_source_version: Optional expected SOURCE release id (e.g.
-            "FY2024"), independently verified (HC-2 D2a) against the loaded
-            corpus's embedded ``CodeSetProvenance.source_version`` at load
-            time. The engine fails closed (``code_set_corpus_version_mismatch``)
-            if the loaded corpus's ``source_version`` differs from this pin
-            or is absent. Distinct from ``corpus_version`` /
-            ``CORPUS_METADATA_VERSION``, which is the metadata FORMAT
-            version, not the source's own release. ``None`` (default) means
-            no pin: today's unversioned behavior, unchanged.
-
-    SP-06 keyed-access cross-version caveat:
-        Keyed selection is HMAC(...) % candidate_count on the code-sorted
-        corpus. Deterministic WITHIN a corpus version. NOT stable across
-        corpus versions with different row counts (rows added/removed remaps
-        the modular index). Do not assume that a given input maps to the same
-        output code after a corpus update.
-    """
-
-    code_set: str
-    chapter_preserve: bool = False
-    corpus_source: str = "shipped"
-    corpus_source_version: str | None = None
-
-    @classmethod
-    def from_dict(cls, cfg: dict[str, Any]) -> CodeSetConfig:
-        """Parse a config dict; raise PlanCompileError on invalid input.
-
-        Structural validation only (code_set name present, corpus_source
-        format legal). Corpus loading happens at apply time, pre-mutation,
-        so this is a fast compile-time check.
-
-        Args:
-            cfg: Config dict with key ``code_set`` (required), plus optional
-                ``chapter_preserve``, ``corpus_source``, and
-                ``corpus_source_version``.
-
-        Raises:
-            PlanCompileError: Missing ``code_set``, unrecognised shipped
-                corpus name (when corpus_source is "shipped"), or a reserved
-                licensed name (e.g. "cpt") requested with corpus_source
-                "shipped"/absent.
-        """
-        validate_code_set_config(cfg)
-        raw_version = cfg.get("corpus_source_version")
-        return cls(
-            code_set=cfg["code_set"],
-            chapter_preserve=bool(cfg.get("chapter_preserve", False)),
-            corpus_source=str(cfg.get("corpus_source", "shipped")),
-            # Coerce to str so an unquoted-YAML numeric release id
-            # (corpus_source_version: 2024 -> int) compares equal to the
-            # corpus's always-string embedded source_version ("2024"); an
-            # absent/empty pin stays None (unpinned). bool/list/dict are
-            # rejected by validate_code_set_config above, so they never reach
-            # here to be str()'d into a bogus pin (a `false` pin must fail
-            # closed, not silently disable verification).
-            corpus_source_version=(str(raw_version) if raw_version not in (None, "") else None),
-        )
 
 
 # ── Corpus loading ────────────────────────────────────────────────────────────
@@ -525,6 +456,100 @@ def _apply_chapter_preserve(
             position=position,
             candidate_count=candidate_count,
         )
+    except BaseException:
+        del job_seed
+        raise
+
+
+def _pick_mask(value: str, record: _CorpusRecord, *, mask_key: bytes, namespace: str | None) -> str:
+    """HMAC-keyed selection from the corpus, excluding the input value.
+
+    code_index locates the input's hole in O(1), then _pick_from_seq picks
+    from the corpus minus that hole (output != input, domain-exclusion idiom).
+    SP-06 caveat: candidate_count changes if corpus rows are added/removed.
+    """
+    try:
+        rows = record.rows
+        position = record.selection.code_index.get(value)
+        candidate_count = hole_candidate_count(len(rows), position)
+        if candidate_count == 0:
+            # Only one code in corpus and it equals the input -- cannot differ.
+            raise PlanCompileError(
+                code=reasons.plan.CODE_SET_SINGLE_ROW_CORPUS,
+                path="provider_config.code_set",
+                message=(
+                    f"Corpus has only one code ({value!r}) and it equals the input. "
+                    "Mask mode requires at least two distinct codes in the corpus."
+                ),
+            )
+        return _pick_from_seq(
+            value, rows, position, candidate_count, mask_key=mask_key, namespace=namespace
+        )
+    except BaseException:
+        del mask_key
+        raise
+
+
+def _pick_from_seq(
+    key_value: str,
+    seq: list[dict[str, Any]],
+    position: int | None,
+    candidate_count: int,
+    *,
+    mask_key: bytes,
+    namespace: str | None,
+) -> str:
+    """Pick one row from seq, excluding the row at ``position``, using
+    HMAC(key, key_value) % candidate_count.
+
+    ``seq`` sorted by code (guaranteed by _read_corpus_record). ``position``/
+    ``candidate_count`` drive the "index with hole" selection (see
+    ``_codeset_index``) that reproduces `[r for r in seq if code != value][idx]`
+    without materializing the filtered list. HMAC primitive: RFC 2104. DE-02:
+    the HMAC key is SECRET-derived (`derive(mask_key, namespace, _KEYED_SALT)`),
+    so the remap is not globally reversible (Codex BLOCKER 1); `mask_key ==
+    job_seed` on the no-secret path keeps it deterministic.
+    """
+    try:
+        hex_digest = hmac_hex(derive(mask_key, namespace or "code_set", _KEYED_SALT), key_value)
+        if hex_digest is None:
+            raise ValueError("hmac_hex returned None for a non-None key_value")
+        # First 8 hex chars -> 32-bit int, modulo candidate count.
+        idx = int(hex_digest[:8], 16) % candidate_count
+        return str(seq[hole_resolve(idx, position)]["code"])
+    except BaseException:
+        del mask_key
+        raise
+
+
+def _pick_gen(
+    rows: list[dict[str, Any]],
+    *,
+    job_seed: bytes,
+    namespace: str,
+    row_index: int = 0,
+    position: int | None = None,
+    candidate_count: int | None = None,
+) -> str:
+    """Pick one row via ``derive_index`` keyed on namespace and row_index.
+
+    Callers validate namespace first (validate-then-call keeps the hot path
+    free of repeated None checks). Deterministic: same job_seed + namespace +
+    row_index + corpus -> same code. Decorrelated: different namespaces sharing
+    a job_seed produce independent sequences (HKDF binds namespace into the key
+    material, SP-09c). ``position``/``candidate_count``, when given, exclude the
+    row at ``position`` (chapter_preserve gen exclusion, same hole_resolve math
+    as mask); omitted, draws from the full pool.
+    """
+    try:
+        pool_size = len(rows) if candidate_count is None else candidate_count
+        idx = derive_index(
+            job_seed[:8],
+            namespace,
+            row_index.to_bytes(8, "big"),
+            pool_size=pool_size,
+        )
+        return str(rows[hole_resolve(idx, position)]["code"])
     except BaseException:
         del job_seed
         raise

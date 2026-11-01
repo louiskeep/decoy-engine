@@ -743,6 +743,9 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
             "src/decoy_engine/execution/_chunked_group_key.py",
             "src/decoy_engine/execution/native/_chunked_group_key_gate.py",
             "src/decoy_engine/execution/native/_group_key_kernel.py",
+            # A-4 secret-material census: both raw-hex derivations wipe the mask key on raise and the
+            # KAT vector's key field is `repr=False` (adds `dataclasses.field`); no `execution.physical`.
+            "src/decoy_engine/execution/native/_group_key_ext.py",
             # C6c-i (text_redact as an ARROW_PYTHON operator): the scalar kernel module gains
             # `native_text_redact`, which calls the oracle's `iter_spans` and `_splice`. It imports
             # nothing from `execution.physical`, and the import-direction sweeps above still apply.
