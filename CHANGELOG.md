@@ -9,6 +9,21 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Fixed (categorical CDF: exact integer builder, 2026-11-01)
+
+The weighted categorical CDF summed weights with the builtin `sum()`, which CPython 3.12 made
+compensated, so about 2.3% of weight vectors got thresholds one slot apart on 3.12 versus 3.10/3.11 and
+masked output depended on the interpreter. `_build_cdf` now converts each weight to its exact dyadic
+rational and computes `(2 * C_i * RES + T) // (2 * T)` (round half up) over exact integers. Plan:
+`docs/plans/2026-10-31-categorical-cdf-exact-arithmetic.md` (branch `plan/cdf-exact-arithmetic`).
+
+- Output: thresholds move by at most one slot for about 2.2% of vectors versus 3.10 output; `[1, 1, 1]`
+  becomes `[333333, 666667, 1000000]` (was `[333333, 666666, 1000000]`). `[1.0, 2e-6, 1.0]` is now
+  refused as below resolution (0.999999 of a slot); `[1e308, 1e308]` is refused as an overflowing total.
+- Weights must be `int`, a numpy integer, `float` or numpy `float16/32/64`, by exact type: `bool`, `str`,
+  `None`, `Decimal`, `Fraction` and subclasses are refused. NaN and infinity raise `StrategyError`
+  (`categorical_weights_nonpositive`) instead of a bare `ValueError`. Refusals run as whole-vector passes
+  (type, non-finite, negative, total, resolution) and their messages carry the index only, no value.
 ### Changed (licensing: generated NOTICE, license gate, SDV citations, 2026-11-01)
 
 - `NOTICE` (shipped in the wheel) is generated from `uv.lock` by `scripts/dev/licenses_write.sh`: name,
