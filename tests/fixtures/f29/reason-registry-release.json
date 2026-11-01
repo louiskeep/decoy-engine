@@ -1,9 +1,10 @@
 {
-  "registry_version": "1.1.0",
-  "manifest_sha256": "0dc162a3c38b37fb1ad4944e8cc77b70c141051ee92cbc20b3134de4e6b89df4",
-  "identities": 891,
+  "registry_version": "1.2.0",
+  "manifest_sha256": "8effa84c02204d7a35965af2643db0d45df2b87d518226e33dd7134a7c92fc26",
+  "identities": 893,
   "since_counts": {
     "1.0.0": 884,
-    "1.1.0": 7
+    "1.1.0": 7,
+    "1.2.0": 2
   }
 }

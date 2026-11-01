@@ -297,10 +297,10 @@ _CERTIFIED_STACKS: dict[tuple[PlatformTriple, str], frozenset[str]] = {
             # above): still 77 dists, and setting only decoy-engine back to
             # 0.6.0 in the installed set reproduces 56bff582... exactly, so
             # the change is the version string alone.
-            # 0.7.0 -> 0.17.0 re-pin (prior 72c03428...): same check, 77 dists;
-            # the 0.8.0-0.16.0 off-main stamps skipped it (rows admit 0.7.0 only).
-            "5a76ea92769d62cb0124d89d24c2ec0e4116828e34e0611d80bf5e36edef1a23",
-            # decoy-cli pristine RUNTIME profile: engine 0.17.0 + CLI (typer/rich/
+            # 0.7.0 -> 0.17.0 (prior 72c03428..., the 0.8.0-0.16.0 stamps skipped it) and
+            # 0.17.0 -> 0.18.0 (prior 5a76ea92...) re-pins: same check, 77 dists each.
+            "31ecf94503eff107631191426072eee757af72a2229ab594d2fc2e8e6bfac7b1",
+            # decoy-cli pristine RUNTIME profile: engine 0.18.0 + CLI (typer/rich/
             # duckdb) + the DP closure, no dev tooling (pytest/ruff/mypy absent).
             # The exact third-party set is pinned in the CLI repo's
             # requirements-certified.txt (proof-critical opendp/
@@ -319,9 +319,9 @@ _CERTIFIED_STACKS: dict[tuple[PlatformTriple, str], frozenset[str]] = {
             # (65 dists, fresh 3.10.20 venv from requirements-certified.txt +
             # this engine + decoy-cli): setting only decoy-engine back to
             # 0.6.0 reproduces e75c87e9... exactly.
-            # 0.7.0 -> 0.17.0 re-pin (prior f2a5910f...): derived, not installed;
-            # the CLI's 63 pins + engine 0.7.0 + cli 0.1.0 reproduce f2a5910f....
-            "a7b40d54f68488ecbcc253c35a03517eefc456625a9b0240470e765e2bbc4476",
+            # 0.7.0 -> 0.17.0 (prior f2a5910f...) and 0.17.0 -> 0.18.0 (prior a7b40d54...)
+            # re-pins: derived; the CLI's 63 pins + the prior engine + cli 0.1.0 reproduce each.
+            "b643894ded2ab84c4a0a9d9032a1de3d2330db89161f231e509024428b7533f3",
         }
     ),
 }

@@ -9,6 +9,48 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-11-01
+
+Pre-GA release (`RELEASE_PHASE = "pre-ga"`): the minor bump carries breaking changes with no shims. It is
+0.17.0 plus the A-4 file-access policy reconciled with F13 secret admission, the typed out-of-core temporal
+FK seam, and the SBOM error-handling fixes.
+
+### Breaking for consumers (since v0.17.0)
+
+- A `file:` mask secret (`global_settings.mask_secret_ref: file:<path>`, or `keyprovider.key_provider_from_ref
+  ("file:...")`) must be owner-only. Any group or other permission bit (0640, 0644, 0444, 0660 ...) refuses it
+  with `runtime.secret_file_permissions_unsafe`, checked with `fstat` on the descriptor that is read; no bypass
+  setting. Deployed secret mounts and test fixtures that write a secret file under the default umask must
+  `chmod 0600` (or 0400) it. Windows ACLs are not inspected.
+- `env:` and `file:` secrets are never cached, whatever the `SecretCachePolicy` TTL.
+- Reason registry `1.1.0` -> `1.2.0` (891 -> 893 identities). New: `runtime.secret_file_permissions_unsafe`,
+  `decoy.file_access_denied` (the identity of `FileAccessDenied`). A consumer that pins the registry version or
+  the identity count, or maps reason codes to its own messages, must add both.
+- `keyprovider.key_provider_from_ref(ref, *, key_version=None, file_access=None)`: `file_access=` is new and
+  the function is a file-access entry point (`key_version=None` is unchanged since 0.17.0).
+- `quarantine.write_jsonl_staged` returns the staged `OutputTxn` (was the final `Path`); the caller publishes it.
+- 42 file-reading or file-writing entry points (`decoy_engine.fileaccess.ENTRY_POINTS`, `run_pipeline`
+  included) take a keyword-only `file_access=None`. Additive with no policy installed; under an installed
+  policy an explicit `file_access=` must be that policy or narrower, else `FileAccessUnavailable`.
+- Out-of-core temporal FK columns publish the resolved unit of their key (were always `timestamp[us]`); a key
+  outside the resolved type is refused with `out_of_core_fk_key_dtype_unsupported`.
+- `ProviderSpec.seed`, `ValuePool.seed`, `StrategyContext.job_seed`/`mask_key` and `ShadowContext.job_seed`
+  are `repr=False`: they no longer appear in `repr()` output.
+- No public module or exported symbol was removed or renamed (`CodeSetConfig` moved to a private module and is
+  still importable from `decoy_engine.transforms.code_set`).
+- DP: the certified rows are re-pinned for 0.18.0 (`31ecf945...`, engine dev/CI profile; `b643894d...`, the
+  decoy-cli runtime profile). The CLI's `requirements-certified.txt` header fingerprint moves to `b643894d...`;
+  a CLI install of 0.18.0 cannot run a certified fit until it does.
+
+### Changed (release R-b, 2026-11-01)
+
+`pyproject.toml`, `decoy_engine.__version__`, the `uv.lock` root entry and the proof-manifest stamp move to
+0.18.0, and both DP certified rows are re-pinned (reverting only the engine version to 0.17.0 reproduces the old
+rows exactly). The reason release pin (`tests/fixtures/f29/reason-registry-release.json`) is re-captured at
+registry 1.2.0 (893 identities: 884 `since` 1.0.0, 7 `since` 1.1.0, 2 `since` 1.2.0). The Phase F FR0
+manifest is re-frozen for engine minor `0.18` (envelope digests only; every golden table digest is
+unchanged).
+
 ### Fixed (out-of-core: typed temporal FK seam, release R-b, 2026-11-01)
 
 The out-of-core FK join rebuilt every child FK value from Python scalars by type inference, so a
