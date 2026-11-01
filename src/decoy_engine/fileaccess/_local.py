@@ -279,15 +279,18 @@ class LocalOutputTxn(_LocalStageDir):
             self._finished = True
             _sync_dir(self._target.parent)
             return
+        occupied = False
         try:
             os.link(staged, self._target)
         except FileExistsError:
+            occupied = True
+        if occupied:  # raised outside the handler: the link error (both paths) never rides
             try:
                 staged.unlink(missing_ok=True)
             except OSError:
                 pass
             self._finished = True
-            raise FileExistsError(errno.EEXIST, "output exists") from None
+            raise FileExistsError(errno.EEXIST, "output exists")
         self._finished = True
         try:
             os.unlink(staged)

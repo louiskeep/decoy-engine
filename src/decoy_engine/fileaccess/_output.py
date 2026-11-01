@@ -365,17 +365,20 @@ class RootedOutputDir:
             raise deny(self._field_key) from None
 
     def is_empty_or_absent(self) -> bool:
-        parent = -1
+        failed = False
+        parent = child = -1
         try:
             parent = self._open_parent(create=False)
             child = _openat2._confined_open(parent, self._leaf, os.O_RDONLY | os.O_DIRECTORY)
         except FileNotFoundError:
             return True
         except OSError:
-            raise deny(self._field_key) from None
+            failed = True
         finally:
             if parent >= 0:
                 _close(parent)
+        if failed:  # raised outside the handler: the OSError (which names the leaf) never rides
+            raise deny(self._field_key)
         try:
             with os.scandir(child) as it:
                 return next(it, None) is None
