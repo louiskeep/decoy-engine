@@ -77,6 +77,10 @@ def mask_child_fk(
     join processing holds nothing sized by total child cardinality. The
     resident `child` frame itself (and the runner-precomputed `remap_values`)
     are bounded by later sprints, not here.
+
+    No production route calls this: it is the whole-child test oracle. It keeps value inference
+    (`output_types=None`), so temporal keys come back `timestamp[us]`; the batch joiners publish
+    the resolved unit (characterized in test_ooc_fk_seam_round2.py).
     """
     if edge.orphan_policy is OrphanPolicy.REMAP and remap_values is None:
         raise ExecutionError(
@@ -335,7 +339,7 @@ def fk_output_array(values: list[object], target: pa.DataType | None) -> pa.Arra
             array = pa.array(values, from_pandas=True)
             if target is not None:
                 cast_fk_chunk(array, target)
-    except (pa.ArrowInvalid, pa.ArrowTypeError, OverflowError):
+    except (pa.ArrowException, OverflowError):
         array = None
     if array is None or (temporal and not _holds_exactly(values, array)):
         raise _unrepresentable(target)
@@ -462,7 +466,14 @@ def cast_fk_chunk(chunk: pa.Array, target: pa.DataType) -> pa.Array:
                 ),
             )
         return widened
-    return chunk.cast(target)
+    # pyarrow's cast error quotes the value. The same Arrow class is re-raised with the types
+    # only, after the `except` block (no cause or context): `fk_output_array` turns it into the
+    # coded refusal, and the whole-column parity battery expects the Arrow family here.
+    try:
+        return chunk.cast(target)
+    except pa.ArrowException as exc:
+        failed = type(exc)
+    raise failed(f"cannot cast an FK key chunk {chunk.type} -> {target} exactly")
 
 
 def _unified_chunk_type(types: set[pa.DataType]) -> pa.DataType | None:

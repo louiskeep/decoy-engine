@@ -115,8 +115,10 @@ def fk_out_of_core_dtype_hazard(
         # int64 with float64), or a float type fed by integer keys, is exact only while
         # the run's values happen to fit it. That depends on the data, not the schema.
         # The one exemption is a tz-naive timestamp unified to a finer unit over an identity
-        # parent key: every published value is an instant one side already holds, so the
-        # widening is exact and in range whatever the data.
+        # parent key. The finer unit comes from the child side (a parent at that unit is no
+        # promotion), and every published value is a child instant or a parent instant equal to
+        # one on the exact epoch-ns token, so it is held by the child's own unit, `ns` included:
+        # a parent key outside the `ns` range has no child (tests/parity/test_ooc_temporal_ns_range.py).
         changed = (
             r != m and not _identity_temporal_promotion(r, m, seed)
             for r, m, seed in zip(resolved, matched, seeds, strict=True)
