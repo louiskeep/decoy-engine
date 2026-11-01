@@ -20,7 +20,7 @@ import pyarrow.parquet as pq
 import pytest
 
 from decoy_engine import fileaccess
-from decoy_engine.data_discovery import DiscoverySqlError, run_discovery_sql
+from decoy_engine.data_discovery import SQL_FAILED, DiscoverySqlError, run_discovery_sql
 from decoy_engine.fileaccess.adapters import duckdb as duckdb_adapter
 from tests.fileaccess.x_support import (
     LOCATOR_SENTINEL,
@@ -198,17 +198,14 @@ def test_discovery_errors_at_execute_and_fetch_name_no_locator(
         return duckdb.IOException(f"IO Error: cannot read {shown} or {table}")
 
     _patch_session(monkeypatch, (None, None), texts)
-    # ambient control: the unsanitized text names the path
+    # Ambient: the library text names the path, and is not forwarded at either stage.
     ambient = duckdb.IOException(f"IO Error: cannot read {table}")
+    assert LOCATOR_SENTINEL in str(ambient)
     _patch_session(monkeypatch, (ambient, None) if stage == "execute" else (None, ambient), texts)
-    if stage == "execute":
-        with pytest.raises(DiscoverySqlError) as control:
-            run_discovery_sql("select 1", {"t": str(table)})
-        assert LOCATOR_SENTINEL in str(control.value)
-    else:
-        with pytest.raises(duckdb.Error) as control_fetch:
-            run_discovery_sql("select 1", {"t": str(table)})
-        assert LOCATOR_SENTINEL in str(control_fetch.value)
+    with pytest.raises(DiscoverySqlError) as control:
+        run_discovery_sql("select 1", {"t": str(table)})
+    assert str(control.value) == SQL_FAILED
+    assert control.value.__cause__ is None and control.value.__context__ is None
     texts.clear()
     handle_text = f"IO Error: cannot read /proc/self/fd/7 or {table}"
     err = duckdb.IOException(handle_text)
@@ -217,7 +214,7 @@ def test_discovery_errors_at_execute_and_fetch_name_no_locator(
         run_discovery_sql("select 1", {"t": str(table)})
     assert_no_locator(xworld, rendered(info.value))
     assert info.value.__cause__ is None and info.value.__context__ is None
-    assert "discovery.tables.t" in str(info.value)
+    assert str(info.value) == SQL_FAILED
 
 
 # -- corpora ---------------------------------------------------------------------------------

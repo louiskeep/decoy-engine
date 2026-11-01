@@ -58,6 +58,22 @@ def _predicate_expr(p: Predicate) -> pl.Expr:
     return _OPS[p.op](c, pl.lit(p.value))
 
 
+# The reason is chosen by code, never by the library text: a GenerationError names the value.
+_UNCANONICALIZABLE_REASON: dict[str, str] = {
+    reasons.runtime.FLOAT_CANONICALIZATION_UNSUPPORTED: "float values are not supported",
+    reasons.runtime.TIMEZONE_NAIVE_DATETIME: "timezone-naive datetimes are not supported",
+}
+
+
+def _uncanonicalizable(spec: SeedSpec, position: int, code: str) -> SubsetConfigError:
+    reason = _UNCANONICALIZABLE_REASON.get(code, "the value type is not supported")
+    return SubsetConfigError(
+        code=reasons.config.SUBSET_SEED_KEY_UNCANONICALIZABLE,
+        message=f"table {spec.table!r}: seed key column {spec.key_columns[position]!r} holds "
+        f"a value that cannot be canonicalized for sampling: {reason}",
+    )
+
+
 def _select_sample(spec: SeedSpec, kf: pl.DataFrame, job_seed: bytes) -> tuple[frozenset[int], int]:
     try:
         ns = f"subset/sample/{spec.table}"
@@ -74,18 +90,19 @@ def _select_sample(spec: SeedSpec, kf: pl.DataFrame, job_seed: bytes) -> tuple[f
         digests: list[tuple[bytes, int]] = []
         for row in non_null.iter_rows():
             ri, key = row[0], row[1:]
-            try:
-                source = b"".join(
-                    len(part := _canonicalize_source(component)).to_bytes(4, "big") + part
-                    for component in key
-                )
-            except GenerationError as exc:
-                raise SubsetConfigError(
-                    code=reasons.config.SUBSET_SEED_KEY_UNCANONICALIZABLE,
-                    message=f"table {spec.table!r}: seed key column value could not be "
-                    f"canonicalized for sampling: {exc}",
-                ) from exc
-            digests.append((ctx.derive_source(ns, source), ri))
+            parts: list[bytes] = []
+            for position, component in enumerate(key):
+                try:
+                    part = _canonicalize_source(component)
+                except GenerationError as exc:
+                    rejected: tuple[int, str] | None = (position, exc.code)
+                    break
+                parts.append(len(part).to_bytes(4, "big") + part)
+            else:
+                rejected = None
+            if rejected is not None:
+                raise _uncanonicalizable(spec, *rejected)
+            digests.append((ctx.derive_source(ns, b"".join(parts)), ri))
         digests.sort()
         selected = frozenset(ri for _, ri in digests[:k])
         return selected, seed_null_excluded
@@ -103,12 +120,15 @@ def _select_keys(spec: SeedSpec, kf: pl.DataFrame) -> frozenset[int]:
     try:
         key_df = pl.DataFrame(list(spec.keys), schema=list(spec.key_columns), orient="row")
         key_df = key_df.select([pl.col(c).cast(kf.schema[c]) for c in spec.key_columns])
-    except (pl.exceptions.PolarsError, TypeError, ValueError) as exc:
+    except (pl.exceptions.PolarsError, TypeError, ValueError):
+        key_df = None
+    if key_df is None:
+        # Polars quotes the mismatched keys, which are source values: fixed text, no cause.
         raise SubsetConfigError(
             code=reasons.config.SUBSET_SEED_KEY_TYPE,
             message=f"table {spec.table!r}: explicit seed key(s) do not match the key "
-            f"column dtypes: {exc}",
-        ) from exc
+            f"column dtypes (key columns: {list(spec.key_columns)!r})",
+        )
     matched = kf.join(
         key_df, left_on=list(spec.key_columns), right_on=list(spec.key_columns), how="semi"
     )

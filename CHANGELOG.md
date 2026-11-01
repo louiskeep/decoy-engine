@@ -9,6 +9,28 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Fixed (value-free discovery, subset-seed and derived-expression errors, 2026-11-01)
+
+Several public error texts forwarded library or engine text that can quote a source cell, and that
+text reaches API responses and job logs through `str(exc)`. Each one now carries a fixed message per
+failure class and no cause or context chain:
+
+- `run_discovery_sql`: `DiscoverySqlError` no longer includes DuckDB's text (a failed cast quoted the
+  string, e.g. an SSN). Its message is one of `SQL_CONVERSION_FAILED` (conversion, out of range,
+  invalid input), `SQL_NOT_EXECUTABLE` (parser, binder, catalog) or `SQL_FAILED`, under both the
+  ambient and strict policies. An execution error at the fetch step under the ambient policy used to
+  escape as a raw `duckdb.Error`; it is now a `DiscoverySqlError`, as at the execute step. A
+  statement DuckDB cannot parse used to raise a raw `ParserException` from the statement-kind check;
+  it is now `DiscoverySqlError(SQL_NOT_EXECUTABLE)`. Memory and policy failures under a strict policy
+  still keep their class.
+- `select_seed_rows` (`SubsetConfigError`): `subset_seed_key_type` names the table and key columns
+  instead of quoting Polars' text with the mismatched keys. `subset_seed_key_uncanonicalizable` names
+  the key column and a reason chosen by reason code (float, timezone-naive datetime).
+- `_canonicalize_source` (`GenerationError`, `float_canonicalization_unsupported`,
+  `timezone_naive_datetime`) no longer formats the value with `!r`.
+- Derived expressions: a row-evaluation failure gives the column and row with a closed-set reason
+  instead of the evaluator's text, and the `slice()` argument error names the argument's type, not
+  its value.
 ### Fixed (categorical CDF: exact integer builder, 2026-11-01)
 
 The weighted categorical CDF summed weights with the builtin `sum()`, which CPython 3.12 made
