@@ -7,10 +7,13 @@ tokenization is an auth + persistence problem, not a data-behavior one). The
 engine holds no vault -- library code does not know its callers -- so with no
 vault the strategy fails closed.
 
-Token shape: ``tok_`` + 32 hex chars of ``derive(mask_key, namespace,
-nfc_normalize(str(value)).encode())``, keyed on the run's mask key AND the
-column namespace, so the same value tokenizes differently in a different
-namespace/vault. The token is deterministic, but the VAULT is the identity
+Token shape: ``tok_`` + 32 hex chars of ``derive(K_tok, namespace,
+nfc_normalize(str(value)).encode())`` where ``K_tok`` is the vault-scoped subkey
+of ``_tokenize_key`` (the run's mask key, the column namespace, the
+``tokenize-key/v1`` label and the vault's own ``derivation_scope``). The same
+value therefore tokenizes differently in a different namespace or a different
+vault, and never equals a ``hash`` output. A writer without a scope is refused
+before any row is read. The token is deterministic, but the VAULT is the identity
 boundary: if a token is already stored for a ``(namespace, plaintext)`` pair it
 is REUSED, so a value's token is stable across jobs and across key rotations.
 On a miss the strategy only PROPOSES the derived token; ``put`` returns the
@@ -22,8 +25,8 @@ one (namespaces cannot be linked through a shared token, and execution order
 does not decide the token).
 
 Established methodology: reuses the engine's HKDF-SHA256 ``derive`` (the same
-keyed derivation every re-identification-protecting strategy draws from), not a
-hand-rolled hash, AND the same Unicode NFC string normalization ``mask.hash``
+keyed derivation every re-identification-protecting strategy draws from) under a
+purpose-separated subkey (RFC 5869 §3.2), not a hand-rolled hash, AND the same Unicode NFC string normalization ``mask.hash``
 routes its derive input through (via ``_canonicalize_source``'s string branch)
 rather than a bare ``str(value)`` -- tokenize is a REVERSIBLE primitive used as
 an FK key, so two values that mean the same thing must canonicalize (and
@@ -46,14 +49,15 @@ import unicodedata
 import pandas as pd
 
 from decoy_engine import reasons
-from decoy_engine.determinism import derive
 from decoy_engine.execution._adapter import StrategyContext
 from decoy_engine.execution._errors import StrategyError
+from decoy_engine.execution._strategies._tokenize_key import (
+    require_derivation_scope,
+    token_from,
+    tokenize_context,
+)
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.plan._types import ColumnSeed
-
-_TOKEN_PREFIX = "tok_"  # noqa: S105 - a surrogate-token prefix, not a secret
-_TOKEN_HEX_LEN = 32
 
 
 class TokenizeStrategyHandler:
@@ -80,6 +84,7 @@ class TokenizeStrategyHandler:
                     "provided by the platform; tokenize requires a vault-backed runner."
                 ),
             )
+        scope = require_derivation_scope(vault)
         if plan.namespace is None:
             raise StrategyError(
                 code=reasons.runtime.TOKENIZE_REQUIRES_NAMESPACE,
@@ -127,6 +132,7 @@ class TokenizeStrategyHandler:
                 ),
             )
 
+        keyed = tokenize_context(ctx.mask_key, namespace, scope)
         out: list[str | None] = []
         for value in col.tolist():
             if pd.isna(value):
@@ -144,10 +150,7 @@ class TokenizeStrategyHandler:
             if existing is not None:
                 out.append(existing)  # the vault is authoritative for identity
                 continue
-            token = (
-                _TOKEN_PREFIX
-                + derive(ctx.mask_key, namespace, plaintext.encode("utf-8")).hex()[:_TOKEN_HEX_LEN]
-            )
+            token = token_from(keyed, namespace, plaintext)
             try:
                 stored = vault.put(namespace, plaintext, token)
             except Exception:

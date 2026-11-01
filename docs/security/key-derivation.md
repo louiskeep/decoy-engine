@@ -149,3 +149,19 @@ rule over the primitive: an empty salt is refused on both `hkdf_extract` and the
 `hkdf_sha256`, because RFC 5869 and PyCA would otherwise derive under the all-zero salt. Moving
 from the earlier stdlib implementation changed no derived byte: the RFC 5869 §A vectors and a
 corpus captured from the stdlib function (`tests/fixtures/hkdf/engine-vectors.json`) pin it.
+
+## Token keys (tokenize)
+
+The `tokenize` strategy does not use `derive(mask_key, namespace, ...)` directly,
+which is `hash`'s derivation. It first derives a per-vault subkey and then the
+per-value token under it (`execution/_strategies/_tokenize_key.py`):
+
+```
+K_tok = derive(mask_key, namespace, b"tokenize-key/v1" || len(scope) || scope)
+token = "tok_" + hex(derive(K_tok, namespace, NFC(plaintext))[:16])
+```
+
+`scope` is the vault's own `derivation_scope` (non-secret, vault-unique, 16-64
+bytes). The label is purpose separation in the RFC 5869 §3.2 sense, carried in
+`derive`'s framed source like `vault-key/v1` and `ff1-key/v1`. Neither
+`SEED_PROTOCOL_VERSION` nor `derive`, its salt or its info format changes.

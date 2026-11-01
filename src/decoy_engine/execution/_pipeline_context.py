@@ -265,6 +265,12 @@ def build_run_context(
     if execution_mode == "out_of_core":
         # Config-only, so nothing is profiled or read before the refusal.
         reject_any_per_table_transforms(config, route="execution_mode='out_of_core'")
+    if token_vault_writer is not None:
+        # B-6 D2: a token vault without a derivation scope predates vault-scoped tokens; refuse
+        # it before any source is profiled or read.
+        from decoy_engine.execution._strategies._tokenize_key import require_derivation_scope
+
+        require_derivation_scope(token_vault_writer)
 
     # None-normalize the skip list here (a mutable [] default would be shared across calls).
     skip = list(post_validation_skip) if post_validation_skip else []

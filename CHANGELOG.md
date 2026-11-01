@@ -17,6 +17,18 @@ Plan: `docs/plans/2026-11-01-b6-vault-crypto-remediation.md` (slices S1, S2, S2b
   `HMAC`) instead of a hand-written loop. Every derived key is byte-identical (RFC 5869 §A vectors
   and a corpus captured from the stdlib implementation); the empty-salt refusal holds on both
   `hkdf_extract` and the one-shot `hkdf_sha256`.
+- BREAKING (pre-GA, hard cut): `tokenize` derives each token under a per-vault subkey,
+  `derive(mask_key, namespace, b"tokenize-key/v1" || len(scope) || scope)`, where `scope` is the
+  new required `TokenVaultWriter.derivation_scope` (16 to 64 non-secret bytes the vault owner mints
+  once). Two vaults with the same key, namespace and plaintext now mint different tokens, and a
+  `hash` output (any `truncate`) is no longer a token payload. A writer without a scope (a vault
+  from before this change) is refused with the new `runtime.token_vault_derivation_unsupported`,
+  a malformed scope with `runtime.tokenize_vault_scope_required`; both are raised before any
+  source is read, with the registered summary as their only text. No dual derivation and no
+  migration: old vaults stop working with this release. Reason registry 1.3.0.
+- `tests/unit/test_reason_registry_bump.py`: a branch that adds reason identities must set the
+  registry to its merge base's next minor and give every added identity that `since`.
+  `engine-v2-substrate-matrix.yml` now checks out with `fetch-depth: 0` for it.
 
 ### Fixed (out-of-core: typed temporal FK seam, release R-b, 2026-11-01)
 

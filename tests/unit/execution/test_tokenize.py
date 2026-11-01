@@ -25,6 +25,7 @@ from decoy_engine.relationships._graph import RelationshipGraph
 from decoy_engine.relationships._namespace import build_namespace_registry
 
 _VERSION = "0.1.0"
+VAULT_SCOPE = b"fake-vault-scope-0123456789abcde"
 
 
 class FakeVault:
@@ -33,7 +34,15 @@ class FakeVault:
     Identity is the ``(namespace, plaintext)`` pair, so the same plaintext under
     two namespaces is two distinct entries with two distinct tokens."""
 
-    def __init__(self, preloaded: dict[tuple[str, str], str] | None = None) -> None:
+    def __init__(
+        self,
+        preloaded: dict[tuple[str, str], str] | None = None,
+        *,
+        scope: bytes = VAULT_SCOPE,
+    ) -> None:
+        # The vault's own derivation scope (B-6 D2): minted once per vault, so two vaults
+        # tokenize the same plaintext apart.
+        self.derivation_scope = scope
         self.map: dict[tuple[str, str], str] = dict(preloaded or {})
         self.puts: list[tuple[str, str, str]] = []
         self.lookups: list[tuple[str, str]] = []

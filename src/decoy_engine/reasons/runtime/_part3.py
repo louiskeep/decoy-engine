@@ -61,6 +61,8 @@ __all__ = [
     "TOKENIZE_REQUIRES_STRING_DTYPE",
     "TOKENIZE_REQUIRES_VAULT",
     "TOKENIZE_VAULT_ERROR",
+    "TOKENIZE_VAULT_SCOPE_REQUIRED",
+    "TOKEN_VAULT_DERIVATION_UNSUPPORTED",
     "TOP_CODE_BOUNDS_UNRESOLVABLE",
     "TOP_CODE_NON_INTEGRAL_OBJECT_COLUMN",
     "TOP_CODE_WITH_WHEN_UNSUPPORTED",
@@ -156,6 +158,22 @@ TOKENIZE_REQUIRES_STRING_DTYPE = _d(
 )
 TOKENIZE_REQUIRES_VAULT = _d("tokenize_requires_vault", "Tokenize requires vault.")
 TOKENIZE_VAULT_ERROR = _d("tokenize_vault_error", "Tokenize vault error.")
+# B-6 D2: the token key is bound to the vault's own derivation scope. A writer with no scope was
+# minted under the earlier derivation and is refused (pre-release hard cut, no migration).
+TOKENIZE_VAULT_SCOPE_REQUIRED = _d(
+    "tokenize_vault_scope_required",
+    "The token vault writer has no valid derivation scope (16 to 64 bytes).",
+    outcome=Outcome.CONFIGURATION,
+    retry=RetryClass.CONFIGURATION_REPAIR,
+    since="1.3.0",
+)
+TOKEN_VAULT_DERIVATION_UNSUPPORTED = _d(
+    "token_vault_derivation_unsupported",
+    "The token vault was created before vault-scoped token derivation; use a new vault.",
+    outcome=Outcome.CONFIGURATION,
+    retry=RetryClass.CONFIGURATION_REPAIR,
+    since="1.3.0",
+)
 TOP_CODE_BOUNDS_UNRESOLVABLE = _d("top_code_bounds_unresolvable", "Top code bounds unresolvable.")
 TOP_CODE_NON_INTEGRAL_OBJECT_COLUMN = _d(
     "top_code_non_integral_object_column", "Top code non integral object column."

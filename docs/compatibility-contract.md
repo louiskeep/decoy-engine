@@ -548,6 +548,17 @@ so at GA it requires a resolved >=32-byte secret like every other keyed
 surface (`keyed_strategy_requires_secret`); it never derives tokens from the
 public job seed.
 
+`TokenVaultWriter` gained a required `derivation_scope: bytes` attribute on
+2026-11-01 (B-6 D2; a breaking protocol change, legal pre-GA only): a non-secret,
+vault-unique 16-to-64-byte value the vault owner mints once and stores with the
+vault. Tokens are derived under it (`tokenize-key/v1` subkey), so two vaults never
+mint the same token for one plaintext and a token payload is never a `hash`
+output. Tokens minted before this change cannot be reproduced: a writer without a
+scope is refused with `token_vault_derivation_unsupported`, and a malformed one
+with `tokenize_vault_scope_required`, before any source is read. There is no
+compatibility derivation and no migration (hard cut); an old vault stays readable
+only by the release that wrote it.
+
 ### 3.5 Disguises
 
 Disguises are dated/versioned specs (`disguises/`, `disguises/loader.py`,

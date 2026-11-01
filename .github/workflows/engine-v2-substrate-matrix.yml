@@ -33,6 +33,9 @@ jobs:
       DECOY_SUBSTRATE: ${{ matrix.substrate }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          # tests/unit/test_reason_registry_bump.py reads origin/main's registry at the merge base.
+          fetch-depth: 0
       - uses: actions/setup-python@v6
         with:
           python-version: "3.10"
