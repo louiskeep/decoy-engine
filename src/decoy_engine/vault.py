@@ -11,9 +11,12 @@ mask run never writes a vault otherwise.
 
 Security model. The vault is a re-identification database: anyone
 holding the vault file AND the run's mask key (the secret behind
-`mask_secret_ref` / a programmatic `key_provider` when one is
-configured, or the job seed in the no-secret fallback) can recover
-every vaulted source value. Store the vault and the config separately,
+`mask_secret_ref` / a programmatic `key_provider`) can recover every
+vaulted source value. A vault is never keyed on the public job seed:
+every key that writes, opens or is matched against a vault must be at
+least `keyprovider.MIN_SECRET_BYTES` (the 32-byte mask root), checked at
+construction and again at every write, load and key-match, because an
+8-byte public seed gives a KDF nothing to amplify. Store the vault and the config separately,
 with the handling the source data itself would get; never ship a
 vault alongside its masked output. The encryption is
 Fernet from the `cryptography` package (AES-128-CBC + HMAC-SHA256,
@@ -31,9 +34,10 @@ derivation by a fresh label: `derive(mask_key, "vault",
 b"vault-key/v1")` (HKDF-style HMAC-SHA256 expansion, RFC 5869 model;
 the same envelope FPE keys use with their own label). `mask_key` is
 the run's keyed-mask IKM -- the 32-byte `SecretKeyProvider` HKDF root
-under a configured secret, or the 8-byte `job_seed` in the no-secret
-fallback (DE-02) -- so the vault is bound to the run's masking key,
-not the public seed. `derive` mixes `SEED_PROTOCOL_VERSION` into the
+of the configured secret (DE-02) -- so the vault is bound to the run's
+masking key, never the public seed. A vault written by an older engine
+under the 8-byte `job_seed` no longer opens and is regenerated, together
+with its masked output, under a secret (pre-GA hard delete; no migration). `derive` mixes `SEED_PROTOCOL_VERSION` into the
 key, so a vault written under one protocol version is undecryptable
 under another. The `decoy-vault/v2` file format stamps that version in
 its unencrypted header, so a cross-version load fails with a clear
@@ -85,6 +89,11 @@ from decoy_engine.fileaccess import (
     OutputDir,
 )
 from decoy_engine.fileaccess.adapters import serial
+from decoy_engine.keyprovider import (
+    KEY_REQUIRED_GUIDANCE,
+    MIN_SECRET_BYTES,
+    KeyedStrategyRequiresSecret,
+)
 
 if TYPE_CHECKING:
     from decoy_engine.keyprovider import KeyProvider
@@ -140,12 +149,32 @@ class VaultError(DecoyError):
         super().__init__(f"[{code}] {message}")
 
 
+_WEAK_KEY_MESSAGE = (
+    f"the vault key must be bytes of at least {MIN_SECRET_BYTES} bytes (the mask root of a "
+    "secret); a vault is never keyed on the job seed. Build the writer with "
+    "vault_writer_for_config(config, key_provider=...) or global_settings.mask_secret_ref."
+)
+
+
+def _require_vault_key(mask_key: bytes) -> bytes:
+    """Return `mask_key` as immutable `bytes`, or refuse it with `weak_mask_secret`.
+
+    The floor is `SecretKeyProvider`'s (`MIN_SECRET_BYTES`); the exact-type check keeps a
+    32-character `str` or a caller-held view from passing `len`. The refusal text is fixed.
+    """
+    try:
+        if not isinstance(mask_key, (bytes, bytearray)) or len(mask_key) < MIN_SECRET_BYTES:
+            raise VaultError(code=reasons.runtime.WEAK_MASK_SECRET, message=_WEAK_KEY_MESSAGE)
+        return bytes(mask_key)
+    except BaseException:
+        del mask_key  # a traceback keeps this frame: the key must not be among its locals
+        raise
+
+
 def _fernet(mask_key: OpaqueBox) -> Any:
-    # DE-02: the Fernet key derives from the keyed-mask IKM -- the 8-byte job_seed
-    # when no secret is present (byte-identical to pre-DE-02) or a 32-byte
-    # KeyProvider mask root under a secret. A vault written under job_seed cannot
-    # be opened under a secret key (pre-GA = hard-delete/regenerate; no dual-read).
-    # The IKM arrives boxed and the derived key is never a local (`_opaque`).
+    # The Fernet key derives from the run's mask root; the floor is rechecked here, so every
+    # write and load refuses a short key before any file is touched. The IKM arrives boxed and
+    # the derived key is never a local (`_opaque`).
     try:
         from cryptography.fernet import Fernet
     except ImportError as exc:
@@ -157,7 +186,9 @@ def _fernet(mask_key: OpaqueBox) -> Any:
             ),
         ) from exc
     return Fernet(
-        base64.urlsafe_b64encode(derive(mask_key.open()[0], VAULT_NAMESPACE, VAULT_KEY_LABEL))
+        base64.urlsafe_b64encode(
+            derive(_require_vault_key(mask_key.open()[0]), VAULT_NAMESPACE, VAULT_KEY_LABEL)
+        )
     )
 
 
@@ -226,10 +257,10 @@ class VaultWriter:
     """
 
     def __init__(self, mask_key: bytes, *, file_access: FileAccess | None = None) -> None:
-        # DE-02: the vault's keyed-mask IKM (job_seed when no secret is present). The policy
-        # lookup below can raise; this frame must not hold the key then (`_opaque`).
+        # Stored as a `bytes` copy so a caller-held buffer cannot change the key after
+        # admission. The policy lookup below can raise; this frame must not hold the key then.
         try:
-            self._mask_key = mask_key
+            self._mask_key = _require_vault_key(mask_key)
             self._entries: set[tuple[str, str, str]] = set()
             # The writer writes after the entry point that built it returned, so it keeps the
             # policy it was built under and never looks one up later.
@@ -246,8 +277,12 @@ class VaultWriter:
         used -- never the public `job_seed` while the output masks under a real
         secret. `run_pipeline` calls this against the run's resolved `mask_key`
         before any masking. Constant-time compare; never echoes the key bytes.
+
+        The writer's own key is revalidated first: a non-keyed run's key is the
+        8-byte `job_seed`, and a writer whose key drifted to it would otherwise match.
         """
         try:
+            _require_vault_key(self._mask_key)
             if not hmac.compare_digest(self._mask_key, mask_key):
                 raise VaultError(
                     code=reasons.runtime.VAULT_KEY_MISMATCH,
@@ -287,7 +322,9 @@ class VaultWriter:
 
         Raises:
             VaultError: ``code='vault_crypto_not_installed'`` when the
-                `cryptography` package is missing.
+                `cryptography` package is missing; ``code='weak_mask_secret'``
+                when the writer's key is shorter than the mask root (no file is
+                created or changed).
         """
         by_key: dict[tuple[str, str], str | None] = {}
         for namespace, masked, source in self._entries:
@@ -389,19 +426,22 @@ def vault_writer_for_config(
 
     Mirrors the mask path's key resolution (DE-02) so the vault always opens
     under the same key the masked output was produced with: a programmatic
-    `key_provider` wins, else `global_settings.mask_secret_ref` (any registered scheme), else
-    the normalized `job_seed` (a config with no keyed columns only). Normalization matches
-    the plan compiler exactly (the same `global_settings.seed` rules).
+    `key_provider` wins, else `global_settings.mask_secret_ref` (any registered scheme).
+    With neither, it raises `KeyedStrategyRequiresSecret` for every config, keyed or not:
+    a vault is never keyed on `job_seed`. The seed is still validated with the plan
+    compiler's rules, so a bad `global_settings.seed` fails the same way it does on a run.
     """
     from decoy_engine.plan._seed import _normalize_job_seed
     from decoy_engine.secret_providers import AdmissionScope, admit_mask_key
 
-    job_seed = _normalize_job_seed(config)
-    # F13: the secret is admitted through the shared preflight; keyed (vaulted) work with no
-    # secret fails closed in every release phase. A-4: the writer carries the caller's policy.
+    _normalize_job_seed(config)
+    # F13: the secret is admitted through the shared preflight. A-4: the writer carries the
+    # caller's policy. No job_seed fallback exists for a vault in any release phase.
     with AdmissionScope() as scope:
         provider = scope.adopt(admit_mask_key(config, key_provider=key_provider)).key_provider
-        key = OpaqueBox(provider.mask_key() if provider is not None else job_seed)
+        if provider is None:
+            raise KeyedStrategyRequiresSecret(KEY_REQUIRED_GUIDANCE)
+        key = OpaqueBox(provider.mask_key())
     return VaultWriter(key.open()[0], file_access=file_access)
 
 
@@ -416,7 +456,8 @@ def load_vault(
     """Decrypt a vault file into `{(namespace, masked): source}`.
 
     DE-02: `mask_key` is the keyed-mask IKM the vault was written under (the
-    8-byte `job_seed` when no secret, or a 32-byte KeyProvider root).
+    32-byte KeyProvider root). A shorter key, such as the 8-byte `job_seed`
+    an older engine keyed vaults on, is refused before the file is read.
 
     `vault` is a handle the policy issued for the vault file and takes the place of `path`;
     a path string is accepted only under the ambient CLI policy and raises
@@ -427,6 +468,8 @@ def load_vault(
     Raises:
         VaultError: ``code='vault_crypto_not_installed'`` when the
             `cryptography` package is missing;
+            ``code='weak_mask_secret'`` when `mask_key` is not bytes of at
+            least `MIN_SECRET_BYTES` (checked before the file is read);
             ``code='vault_unreadable'`` when the file is missing or not
             a vault; ``code='vault_format_unsupported'`` on a format
             version this engine does not consume;

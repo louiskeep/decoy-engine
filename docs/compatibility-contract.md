@@ -54,6 +54,16 @@ KeyProvider` is one of them. New registered reasons: `runtime.secret_file_permis
 refused; `env:` and `file:` secrets are never cached even with a positive `SecretCachePolicy` TTL.
 `resolve_mask_secret_ref` stays deleted (F13).
 
+**Pre-GA correction (vault key floor, 2026-11-01).** Breaking, no shim: `VaultWriter`, `load_vault` and
+the run-entry vault key-match guard refuse a key shorter than `MIN_SECRET_BYTES` (32) with
+`weak_mask_secret`, and `vault_writer_for_config` raises `keyed_strategy_requires_secret` when no secret
+is admitted, for every config. Seed-keyed vaults written by older engines no longer open and are
+regenerated with their masked output under a secret; there is no migration. The section 3.2
+forever-readable freeze takes effect at the first real `decoy-vault/v2` vault, which after slice 0 can
+only be written under a secret of at least 32 bytes; from that vault on, the v2 reader, the
+`MIN_SECRET_BYTES` floor and `VAULT_KEY_LABEL` are permanent, per this contract's own pre-GA to GA rule
+(section 1).
+
 **Pre-GA correction (main health, 2026-10-31).** `RESERVED_NAMES` of the `when` closed grammar gains `type`
 (additive to the list, breaking for a config whose `when:` references a column named `type`, which now fails
 with `when_outside_closed_grammar`). It is listed on every interpreter rather than derived from
@@ -135,6 +145,12 @@ by `decoy-vault/v2` without a v1 reader. This is legal only pre-GA because no
 vaults exist in the wild. The forever-readable rule begins at the first
 in-the-wild `decoy-vault/v2` vault. From that point forward, a v2 reader is
 permanent and any future format bump must add a v3 alongside a kept v2 reader.
+
+**GA-flip checklist (vault key floor, 2026-11-01).** The section 3.2 forever-readable freeze takes effect
+at the first real `decoy-vault/v2` vault, which after slice 0 can only be written under a secret of at
+least 32 bytes; from that vault on, the v2 reader, the `MIN_SECRET_BYTES` floor and `VAULT_KEY_LABEL` are
+permanent, per this contract's own pre-GA to GA rule (section 1). Before that vault, narrowing which keys
+open a v2 file was a legal pre-GA hard delete: seed-keyed vaults stopped opening and are regenerated.
 
 ### 3.3 The determinism guarantee (the silent one)
 
