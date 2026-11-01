@@ -9,8 +9,11 @@ committed by accident.
     python scripts/dev/ooc_fk_seam_mutants.py R3-1 R1-M9   # selected ids
     python scripts/dev/ooc_fk_seam_mutants.py --list
 
-Round-1 mutants (R1-*) are reconstructed from the names recorded in the evidence file; the
-original round-1 script was not committed. Round 2 (R2-*) and round 3 (R3-*) are the originals.
+Every round-1 mutant (R1-*) is RECONSTRUCTED: the round-1 script was not committed, so each edit
+is rebuilt from its recorded name and the plan's class-table mutation column. `basis` says how
+close it is: "exact" when the name or plan defines a single edit and the runner applies it (moved
+code adjusted only), "approximate" when the name admits several edits and the runner picks one.
+Round 2 (R2-*) and round 3 (R3-*) are the originals ("original").
 Evidence: docs/plans/evidence/2026-10-31-slice0-ooc-red-baseline.txt.
 """
 
@@ -50,6 +53,7 @@ class Mutant:
     path: str
     old: str
     new: str
+    basis: str
 
 
 _IDENTITY = "r != m and not _identity_temporal_promotion(r, m, seed)"
@@ -81,6 +85,7 @@ MUTANTS: tuple[Mutant, ...] = (
         KEYS,
         "if normalized.tzinfo is None and normalized == normalized:",
         "if False:",
+        "exact",
     ),
     Mutant(
         "R1-M2",
@@ -88,6 +93,7 @@ MUTANTS: tuple[Mutant, ...] = (
         BATCH,
         "        return dtype\n    if pa.types.is_date32(dtype):",
         '        return pa.timestamp("us")\n    if pa.types.is_date32(dtype):',
+        "exact",
     ),
     Mutant(
         "R1-M3",
@@ -95,6 +101,7 @@ MUTANTS: tuple[Mutant, ...] = (
         BATCH,
         "return max(non_null, key=lambda dtype: _UNIT_RANK[dtype.unit])",
         "return min(non_null, key=lambda dtype: _UNIT_RANK[dtype.unit])",
+        "exact",
     ),
     Mutant(
         "R1-M4",
@@ -102,13 +109,16 @@ MUTANTS: tuple[Mutant, ...] = (
         BATCH,
         "if policy in (OrphanPolicy.PRESERVE, OrphanPolicy.WARN):",
         "if policy in (OrphanPolicy.PRESERVE, OrphanPolicy.WARN, OrphanPolicy.FAIL):",
+        "exact",
     ),
     Mutant(
         "R1-M5",
-        "REMAP input typed for every key type",
+        "REMAP input typed for every policy (child key typed up front under FAIL too)",
         BATCH,
-        "fk_output_array(normalized, dtype if temporal else None)",
-        "fk_output_array(normalized, dtype)",
+        "        candidates = {_python_roundtrip_type(masked_types[idx])}\n",
+        "        candidates = {_python_roundtrip_type(masked_types[idx])}\n"
+        "        _fk_key_value_roundtrip_type(child_key_types[idx])\n",
+        "approximate",
     ),
     Mutant(
         "R1-M6a",
@@ -116,6 +126,7 @@ MUTANTS: tuple[Mutant, ...] = (
         BATCH,
         "fk_output_array(normalized, dtype if temporal else None)",
         "fk_output_array(normalized, None)",
+        "exact",
     ),
     Mutant(
         "R1-M6b",
@@ -123,6 +134,7 @@ MUTANTS: tuple[Mutant, ...] = (
         EMIT,
         "fk_output_array([], joiner.output_types[component])",
         "pa.array([], from_pandas=True)",
+        "exact",
     ),
     Mutant(
         "R1-M7a",
@@ -130,6 +142,7 @@ MUTANTS: tuple[Mutant, ...] = (
         JOIN,
         "(temporal and not _holds_exactly(values, array))",
         "False",
+        "exact",
     ),
     Mutant(
         "R1-M7b",
@@ -137,6 +150,7 @@ MUTANTS: tuple[Mutant, ...] = (
         JOIN,
         "array = pa.array(values, type=target, from_pandas=True)",
         "array = pa.array(values, type=target, from_pandas=True, safe=False)",
+        "exact",
     ),
     Mutant(
         "R1-M8",
@@ -145,14 +159,16 @@ MUTANTS: tuple[Mutant, ...] = (
         "    except (pa.ArrowException, OverflowError):\n        array = None",
         "    except (pa.ArrowException, OverflowError) as exc:\n"
         "        raise _unrepresentable(target) from exc",
+        "exact",
     ),
-    Mutant("R1-M9", "router identity exemption dropped", ROUTER, _IDENTITY, "r != m"),
+    Mutant("R1-M9", "router identity exemption dropped", ROUTER, _IDENTITY, "r != m", "exact"),
     Mutant(
         "R1-M10",
         "exemption ignores the identity requirement",
         ROUTER,
         '(seed is None or getattr(seed, "strategy", None) == "passthrough")',
         "True",
+        "exact",
     ),
     Mutant(
         "R1-M11",
@@ -161,9 +177,15 @@ MUTANTS: tuple[Mutant, ...] = (
         "        and all(pa.types.is_timestamp(t) and t.tz is None for t in (resolved, matched))\n"
         "        and _UNIT_RANK[resolved.unit] > _UNIT_RANK[matched.unit]\n",
         "",
+        "approximate",
     ),
     Mutant(
-        "R1-M12", "append an inferred array before the typed build", JOIN, _BUILD_ALL, _APPEND_EACH
+        "R1-M12",
+        "append an inferred array before the typed build",
+        JOIN,
+        _BUILD_ALL,
+        _APPEND_EACH,
+        "approximate",
     ),
     Mutant(
         "R1-M13",
@@ -171,6 +193,7 @@ MUTANTS: tuple[Mutant, ...] = (
         KEYS,
         "if normalized.tzinfo is None and normalized == normalized:",
         "if normalized.tzinfo is None:",
+        "exact",
     ),
     Mutant(
         "R1-M14",
@@ -178,6 +201,7 @@ MUTANTS: tuple[Mutant, ...] = (
         BATCH,
         "output_types=self._output_types,",
         "output_types=None,",
+        "approximate",
     ),
     Mutant(
         "R2-N1",
@@ -185,6 +209,7 @@ MUTANTS: tuple[Mutant, ...] = (
         JOIN,
         "    except pa.ArrowException as exc:\n        failed = type(exc)\n    raise failed(",
         "    except pa.ArrowException as exc:\n        raise\n    raise failed(",
+        "original",
     ),
     Mutant(
         "R2-N2",
@@ -194,6 +219,7 @@ MUTANTS: tuple[Mutant, ...] = (
         "    except MemoryError:\n        raise\n    except pa.ArrowException as exc:\n"
         '        raise type(exc)(f"cannot cast an FK key chunk {chunk.type} -> {target}'
         ' exactly") from exc',
+        "original",
     ),
     Mutant(
         "R2-N3",
@@ -201,8 +227,16 @@ MUTANTS: tuple[Mutant, ...] = (
         JOIN,
         "    except (pa.ArrowException, OverflowError):\n        array = None",
         "    except (pa.ArrowInvalid, pa.ArrowTypeError, OverflowError):\n        array = None",
+        "original",
     ),
-    Mutant("R2-N4", "router identity exemption dropped (as R1-M9)", ROUTER, _IDENTITY, "r != m"),
+    Mutant(
+        "R2-N4",
+        "router identity exemption dropped (as R1-M9)",
+        ROUTER,
+        _IDENTITY,
+        "r != m",
+        "original",
+    ),
     Mutant(
         "R2-N5",
         "promotion to ns diverted",
@@ -210,6 +244,7 @@ MUTANTS: tuple[Mutant, ...] = (
         "        and _UNIT_RANK[resolved.unit] > _UNIT_RANK[matched.unit]\n",
         "        and _UNIT_RANK[resolved.unit] > _UNIT_RANK[matched.unit]\n"
         '        and resolved.unit != "ns"\n',
+        "original",
     ),
     Mutant(
         "R2-N6",
@@ -218,6 +253,7 @@ MUTANTS: tuple[Mutant, ...] = (
         "result.set_column(child_idx, child_col, _concat_fk_chunks(output_chunks[idx]))",
         "result.set_column(child_idx, child_col, _concat_fk_chunks(output_chunks[idx])"
         ".cast(source_table.column(child_col).type))",
+        "original",
     ),
     Mutant(
         "R3-1",
@@ -227,6 +263,7 @@ MUTANTS: tuple[Mutant, ...] = (
         "        # `pa.ArrowMemoryError` is also an ArrowException: exhaustion is not a key type.\n"
         "        raise\n",
         "",
+        "original",
     ),
     Mutant(
         "R3-2",
@@ -234,6 +271,7 @@ MUTANTS: tuple[Mutant, ...] = (
         JOIN,
         "    except MemoryError:\n        raise\n    except pa.ArrowException as exc:",
         "    except pa.ArrowException as exc:",
+        "original",
     ),
 )
 
@@ -283,7 +321,7 @@ def run(mutant: Mutant, workers: int) -> tuple[bool, str]:
 def main(argv: list[str]) -> int:
     if "--list" in argv:
         for m in MUTANTS:
-            print(f"{m.id}\t{m.path}\t{m.what}")
+            print(f"{m.id}\t{m.basis}\t{m.path}\t{m.what}")
         return 0
     chosen = [m for m in MUTANTS if not argv or m.id in argv]
     dirty = _dirty({m.path for m in chosen})
@@ -295,7 +333,8 @@ def main(argv: list[str]) -> int:
     for m in chosen:
         red, detail = run(m, workers)
         survivors += not red
-        print(f"{m.id}\t{'RED ' if red else 'GREEN'}\t{m.what}\t{detail}", flush=True)
+        verdict = "RED " if red else "GREEN"
+        print(f"{m.id}\t{m.basis}\t{verdict}\t{m.what}\t{detail}", flush=True)
     print(f"{len(chosen) - survivors}/{len(chosen)} red")
     return 1 if survivors else 0
 
