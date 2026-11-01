@@ -14,12 +14,14 @@ replaced here (that file pinned the rewrite this removes).
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 import stat
 import subprocess
 import sys
-from collections.abc import Iterator
+import threading
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -27,7 +29,7 @@ import pytest
 
 from decoy_engine import reasons
 from decoy_engine.fileaccess import FileRequest, FileRole, Root, RootedFileAccess
-from decoy_engine.vault import VaultWriter, load_vault
+from decoy_engine.vault import VaultError, VaultWriter, load_vault
 
 KEY = b"12345678"
 LEAF = "v.dcyvault"
@@ -185,13 +187,198 @@ def test_sigkill_after_each_publish_step(route_name: str, point: str, tmp_path: 
             )
             assert second.load() == CHILD_ENTRIES
         else:
-            with pytest.raises(FileExistsError):
+            with pytest.raises(VaultError) as exc:
                 second.write()
+            assert exc.value.code == "vault_exists"
             assert leaf.read_bytes() == leaf_before
     finally:
         second.close()
     # whatever the kill left is byte-identical, and the second write left no stage of its own
     assert {p.name: p.read_bytes() for p in _stages(tmp_path)} == residue
+
+
+# ---------------------------------------------------------------------------
+# T5b: an injected failure at each step (fault injection, not a crash test)
+# ---------------------------------------------------------------------------
+
+
+class _Faults:
+    """Wraps one `os` call to raise for the matching invocation; everything else is real."""
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch, directory: Path) -> None:
+        self.mp = monkeypatch
+        self.directory = directory
+        self.stage_fds: set[int] = set()
+        real_open = os.open
+
+        def tracking_open(path: Any, flags: int, *args: Any, **kw: Any) -> int:
+            fd = real_open(path, flags, *args, **kw)
+            name = os.path.basename(os.fsdecode(path)) if isinstance(path, (str, bytes)) else ""
+            if name.startswith(STAGE_PREFIX) and flags & os.O_CREAT:
+                self.stage_fds.add(fd)
+            return fd
+
+        monkeypatch.setattr(os, "open", tracking_open)
+
+    def fail(
+        self, name: str, when: Callable[..., bool], err: int = errno.EIO, *, after: bool = False
+    ) -> None:
+        real = getattr(os, name)
+
+        def wrapped(*args: Any, **kw: Any) -> Any:
+            if when(*args, **kw):
+                if after:
+                    real(*args, **kw)
+                raise OSError(err, os.strerror(err), str(self.directory / LEAF))
+            return real(*args, **kw)
+
+        self.mp.setattr(os, name, wrapped)
+
+
+def _arm(case: str, faults: _Faults) -> None:
+    is_stage = lambda fd, *a, **k: fd in faults.stage_fds
+    is_dir = lambda fd, *a, **k: stat.S_ISDIR(os.fstat(fd).st_mode)
+    if case == "dir_open":
+        real_open = os.open
+
+        def refuse(path: Any, flags: int, *args: Any, **kw: Any) -> int:
+            if flags & os.O_DIRECTORY:
+                raise PermissionError(errno.EACCES, os.strerror(errno.EACCES), os.fsdecode(path))
+            return real_open(path, flags, *args, **kw)
+
+        faults.mp.setattr(os, "open", refuse)
+    elif case == "write":
+        faults.fail("write", is_stage)
+    elif case == "file_fsync":
+        faults.fail("fsync", is_stage)
+    elif case == "stage_close":
+        faults.fail("close", is_stage, after=True)
+    elif case == "link_eio":
+        faults.fail("link", lambda *a, **k: True)
+    elif case == "dir_fsync":
+        faults.fail("fsync", is_dir)
+    elif case == "unlink":
+        faults.fail("unlink", lambda p, *a, **k: os.fsdecode(p).startswith(STAGE_PREFIX))
+    elif case == "dir_close":
+        faults.fail("close", is_dir, after=True)
+
+
+# case -> (expected error code or None, leaf after: "absent" | "kept", stage remains)
+_FAULT_TABLE = {
+    "write": ("vault_commit_failed", "absent", False),
+    "file_fsync": ("vault_commit_failed", "absent", False),
+    "stage_close": ("vault_commit_failed", "absent", False),
+    "link_eio": ("vault_commit_failed", "absent", False),
+    "dir_fsync": ("vault_commit_failed", "kept", False),
+    "unlink": (None, "kept", True),
+    "dir_close": (None, "kept", False),
+}
+
+
+@pytest.mark.parametrize("case", sorted(_FAULT_TABLE))
+def test_an_injected_failure_at_each_step(
+    route: _Route, case: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    code, leaf_after, stage_remains = _FAULT_TABLE[case]
+    writer = route.writer()
+    target = route.target()
+    faults = _Faults(monkeypatch, route.directory)
+    _arm(case, faults)
+    if code is None:
+        assert writer.write(target) == 1
+    else:
+        with pytest.raises(VaultError) as exc:
+            writer.write(target)
+        assert exc.value.code == code
+        text = str(exc.value)
+        assert text == f"[{code}] {_summary(code)}"
+        assert str(route.directory) not in text and os.strerror(errno.EIO) not in text
+        assert exc.value.__cause__ is None and exc.value.__context__ is None
+    monkeypatch.undo()
+    if leaf_after == "absent":
+        assert not route.leaf.exists()
+    else:
+        assert route.load() == {("ns", "m"): "s"}
+    assert bool(_stages(route.directory)) is stage_remains
+
+
+def test_a_parent_that_cannot_be_opened_keeps_the_ambient_error_shape(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    route = _Route("ambient", tmp_path)
+    writer = route.writer()
+    faults = _Faults(monkeypatch, tmp_path)
+    _arm("dir_open", faults)
+    with pytest.raises(PermissionError) as exc:
+        writer.write(str(route.leaf))
+    monkeypatch.undo()
+    assert str(route.leaf) in str(exc.value)
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_link_eexist_is_vault_exists_and_keeps_the_existing_vault(route: _Route) -> None:
+    route.write(route.writer([("ns", "old", "x")]))
+    before = (route.leaf.read_bytes(), route.leaf.stat().st_ino)
+    with pytest.raises(VaultError) as exc:
+        route.write()
+    assert exc.value.code == "vault_exists"
+    assert str(exc.value) == f"[vault_exists] {_summary('vault_exists')}"
+    assert (route.leaf.read_bytes(), route.leaf.stat().st_ino) == before
+    assert _stages(route.directory) == []
+
+
+# ---------------------------------------------------------------------------
+# T6: two concurrent writers to one vault path
+# ---------------------------------------------------------------------------
+
+
+def _race(route_name: str, directory: Path) -> list[Any]:
+    """Two writers stage in parallel and are released together onto `link(2)`."""
+    routes = [_Route(route_name, directory) for _ in range(2)]
+    writers = [r.writer([("ns", f"m{i}", f"s{i}")]) for i, r in enumerate(routes)]
+    targets = [r.target() for r in routes]
+    barrier = threading.Barrier(2)
+    real_link = os.link
+    results: list[Any] = [None, None]
+
+    def run(i: int) -> None:
+        try:
+            results[i] = writers[i].write(targets[i])
+        except VaultError as exc:
+            results[i] = exc.code
+
+    def synced_link(*a: Any, **k: Any) -> None:
+        barrier.wait(timeout=30)  # both stages are complete before either links
+        real_link(*a, **k)
+
+    os.link = synced_link  # type: ignore[assignment]
+    try:
+        threads = [threading.Thread(target=run, args=(i,)) for i in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(60)
+    finally:
+        os.link = real_link  # type: ignore[assignment]
+        for r in routes:
+            r.close()
+    return results
+
+
+@pytest.mark.parametrize("route_name", ROUTES)
+def test_two_real_writers_one_publishes_one_fails_closed(route_name: str, tmp_path: Path) -> None:
+    for trial in range(10):
+        directory = tmp_path / f"t{trial}"
+        directory.mkdir()
+        results = _race(route_name, directory)
+        assert sorted(results, key=str) == [1, "vault_exists"], results
+        winner = results.index(1)
+        check = _Route(route_name, directory)
+        try:
+            assert check.load() == {("ns", f"m{winner}"): f"s{winner}"}
+        finally:
+            check.close()
+        assert _stages(directory) == []
 
 
 # ---------------------------------------------------------------------------
@@ -206,8 +393,9 @@ def test_an_existing_hardlinked_vault_is_refused_and_both_names_are_unchanged(
     vault.write_bytes(b"old")
     twin = tmp_path / "twin"
     os.link(vault, twin)
-    with pytest.raises(FileExistsError):
+    with pytest.raises(VaultError) as exc:
         _Route("ambient", tmp_path).write()
+    assert exc.value.code == "vault_exists"
     for name in (vault, twin):
         st = name.stat()
         assert name.read_bytes() == b"old" and st.st_nlink == 2

@@ -270,8 +270,10 @@ class VaultWriter:
         """Encrypt and write the vault file. Returns the entry count written.
 
         `path` is an `OutputDir` the policy issued, or, under the ambient CLI policy only, a
-        path string (any other policy raises `FileAccessUnavailable`). Either way the file is
-        created exclusively through a private, durable stage: an existing leaf is refused.
+        path string (any other policy raises `FileAccessUnavailable`). Either way the vault is
+        published privately, durably and exclusively (B-6 D1, `_publish`): an existing vault
+        is never overwritten (`vault_exists`), and a vault this call published is never
+        removed by any later failure.
 
         Conflicting sources for one `(namespace, masked)` key are
         dropped (see the module docstring's ambiguity policy); the
@@ -286,7 +288,12 @@ class VaultWriter:
 
         Raises:
             VaultError: ``code='vault_crypto_not_installed'`` when the
-                `cryptography` package is missing.
+                `cryptography` package is missing; ``code='vault_exists'`` when the target
+                already exists; ``code='vault_commit_failed'`` when writing, syncing or
+                linking the vault failed (no vault was published, or the directory entry of
+                the published one could not be made durable; it is kept either way).
+            OSError: the parent directory could not be opened or the stage created (nothing
+                was created; under the ambient policy the error names the path as before).
         """
         by_key: dict[tuple[str, str], str | None] = {}
         for namespace, masked, source in self._entries:
@@ -340,15 +347,42 @@ class VaultWriter:
             out = self._access.output_dir(FileRequest(FileRole.VAULT, "write", str(path), "vault"))
         else:
             out = path
-        # A 0600 stage, written and fsynced, linked exclusively, then the parent fsynced
-        # (`fileaccess` `DURABLE_LABELS`); an existing vault is refused, never rewritten.
-        with out.begin("file", "exclusive", label="vault") as txn:
-            serial.write_durable(txn.create_file("vault"), b"".join(parts))
-            txn.publish()
+        _publish(out, b"".join(parts))
         return len(rows)
 
     def _fernet(self) -> Any:
         return _fernet(OpaqueBox(self._mask_key))
+
+
+def _publish(out: OutputDir, data: bytes) -> None:
+    """Publish the vault through a 0600 stage beside the leaf (B-6 D1).
+
+    Pattern: stage, fsync, exclusive `link(2)`, fsync the directory (POSIX durable rename as in
+    SQLite's atomic commit and PostgreSQL's `durable_rename`); the link is the compare-and-set,
+    the directory fsync the commit point. Steps 2-5 fail with one fixed text and no path or
+    errno: `vault_exists` for an existing leaf, `vault_commit_failed` otherwise. Only the
+    unpublished stage is ever removed (`fileaccess` `DURABLE_LABELS`)."""
+    failure = ""
+    with out.begin("file", "exclusive", label="vault") as txn:
+        fd = txn.create_file("vault")  # step 1: its errors keep the policy's shape
+        try:
+            serial.write_durable(fd, data)
+            txn.publish()
+        except FileExistsError:
+            failure = "exists"
+        except OSError:
+            failure = "commit"
+    # Raised outside the handlers: neither the cause nor the context rides on the error.
+    if failure == "exists":
+        raise VaultError(
+            code=reasons.runtime.VAULT_EXISTS,
+            message=reasons.get("runtime", reasons.runtime.VAULT_EXISTS).summary,
+        )
+    if failure:
+        raise VaultError(
+            code=reasons.runtime.VAULT_COMMIT_FAILED,
+            message=reasons.get("runtime", reasons.runtime.VAULT_COMMIT_FAILED).summary,
+        )
 
 
 def assert_vault_writer_keyed(vault_writer: object, mask_key: bytes) -> None:

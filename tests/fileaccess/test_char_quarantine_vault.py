@@ -2,7 +2,7 @@
 
 The quarantine helpers stage a JSONL file beside the final path and publish it with an
 exclusive hardlink (refusing any existing file). The vault writer does the same since B-6 D1:
-it refuses an existing vault and keeps it.
+it refuses an existing vault (`vault_exists`) and keeps it.
 """
 
 from __future__ import annotations
@@ -70,6 +70,8 @@ def test_discard_is_idempotent_and_none_is_a_no_op(tmp_path: Path) -> None:
 
 
 def test_vault_write_refuses_an_existing_vault_and_keeps_it(tmp_path: Path) -> None:
+    from decoy_engine.vault import VaultError
+
     key = b"12345678"
     path = tmp_path / "v.dcyvault"
     first = VaultWriter(key)
@@ -77,8 +79,9 @@ def test_vault_write_refuses_an_existing_vault_and_keeps_it(tmp_path: Path) -> N
     assert first.write(path) == 1
     second = VaultWriter(key)
     second.add([("ns", "m2", "s2"), ("ns", "m3", "s3")])
-    with pytest.raises(FileExistsError):
+    with pytest.raises(VaultError) as exc:
         second.write(str(path))
+    assert exc.value.code == "vault_exists"
     mapping, ambiguous = load_vault(path, key)
     assert mapping == {("ns", "m1"): "s1"} and ambiguous == 0
 

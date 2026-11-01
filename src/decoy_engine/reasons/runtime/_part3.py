@@ -72,7 +72,9 @@ __all__ = [
     "TRUNCATE_MASK_CHAR_INVALID",
     "UNIFIED_SLICE_INVARIANT_VIOLATION",
     "UNKNOWN_TRANSFORM_OP",
+    "VAULT_COMMIT_FAILED",
     "VAULT_CRYPTO_NOT_INSTALLED",
+    "VAULT_EXISTS",
     "VAULT_FORMAT_UNSUPPORTED",
     "VAULT_KEY_MISMATCH",
     "VAULT_PROTOCOL_VERSION_MISMATCH",
@@ -247,6 +249,19 @@ VAULT_KEY_MISMATCH = _d(
     "Vault key mismatch.",
     outcome=Outcome.CONFIGURATION,
     retry=RetryClass.CONFIGURATION_REPAIR,
+)
+# B-6 D1: the vault is published durably and exclusively; neither text names a path or errno.
+VAULT_COMMIT_FAILED = _d(
+    "vault_commit_failed",
+    "The vault could not be written durably; publish no output that it would reverse.",
+    since="1.3.0",
+)
+VAULT_EXISTS = _d(
+    "vault_exists",
+    "A vault already exists at the target; choose a new path or remove it with its outputs.",
+    outcome=Outcome.CONFIGURATION,
+    retry=RetryClass.CONFIGURATION_REPAIR,
+    since="1.3.0",
 )
 VAULT_PROTOCOL_VERSION_MISMATCH = _d(
     "vault_protocol_version_mismatch",
