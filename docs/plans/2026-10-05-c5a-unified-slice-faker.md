@@ -1,4 +1,6 @@
-Status: plan (revision 4.1, BUILD-READY; author = Opus). Codex plan gate rounds 1-3 all REVISE with 0 BLOCKER; at the 3-round cap Cam chose (2026-10-05) "narrow scope + one confirming review": 3h (lane-wide route evidence) moved to a follow-up slice, and the shared pool cache keeps the default 256 MiB budget. Awaiting the confirming review.
+Status: built
+Shipped: docs/records/2026-10-05-c5a-unified-slice-faker-build.md
+Prior status (kept because it records a hold): plan (revision 4.1, BUILD-READY; author = Opus). Codex plan gate rounds 1-3 all REVISE with 0 BLOCKER; at the 3-round cap Cam chose (2026-10-05) "narrow scope + one confirming review": 3h (lane-wide route evidence) moved to a follow-up slice, and the shared pool cache keeps the default 256 MiB budget. Awaiting the confirming review.
 
 # C5a: pooled Faker on the unified slice
 

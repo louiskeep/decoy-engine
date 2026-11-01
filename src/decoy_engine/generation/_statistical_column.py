@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from decoy_engine import reasons
 from decoy_engine.generation.statistical import StatisticalSpec
 from decoy_engine.generators.derivation import GenDeriveContext
 
@@ -49,7 +50,7 @@ def statistical_generate(
     spec = statistical_specs.get((table_name, col_name))
     if spec is None:
         raise StatisticalSpecError(
-            code="statistical_spec_not_pinned",
+            code=reasons.plan.STATISTICAL_SPEC_NOT_PINNED,
             message=(
                 f"statistical column {col_name!r} in table {table_name!r} has no pinned "
                 "spec in this Plan's GenerationPlan. This should be unreachable through "
@@ -62,7 +63,7 @@ def statistical_generate(
         parent_values = generated.get(spec.condition_on)
         if parent_values is None:
             raise StatisticalSpecError(
-                code="statistical_condition_column_unavailable",
+                code=reasons.plan.STATISTICAL_CONDITION_COLUMN_UNAVAILABLE,
                 message=(
                     f"statistical column {spec.column!r} conditions on "
                     f"{spec.condition_on!r}, which is not generated yet. Declare "

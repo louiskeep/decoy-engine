@@ -32,6 +32,7 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING, Any, NoReturn
 
+from decoy_engine import reasons
 from decoy_engine.plan._checks_dp_carrier import (
     carrier_aware_query_count,
     check_flag_tokens_canonical,
@@ -96,7 +97,7 @@ def parse_dp_ceiling(config: dict[str, Any]) -> tuple[float, float] | None:
     dp_settings = _dp_raw(config)
     if not isinstance(dp_settings, dict) or not dp_settings:
         raise PlanCompileError(
-            code="dp_budget_declaration_malformed",
+            code=reasons.plan.DP_BUDGET_DECLARATION_MALFORMED,
             path="global_settings.dp",
             message=(
                 f"global_settings.dp is declared but is not a nonempty mapping (got "
@@ -120,7 +121,7 @@ def parse_dp_ceiling(config: dict[str, Any]) -> tuple[float, float] | None:
     )
     if not (eps_ok and delta_ok):
         raise PlanCompileError(
-            code="dp_budget_declaration_malformed",
+            code=reasons.plan.DP_BUDGET_DECLARATION_MALFORMED,
             path="global_settings.dp",
             message=(
                 "global_settings.dp is declared but its budget ceiling is malformed "
@@ -163,7 +164,7 @@ def check_dp_generate_contract(config: dict[str, Any]) -> None:
             where = f"{col_name!r} in table {table_name!r}"
             if col_entry.get("condition_on") is not None:
                 raise PlanCompileError(
-                    code="dp_joint_unsupported",
+                    code=reasons.plan.DP_JOINT_UNSUPPORTED,
                     path=f"tables.{table_name}.generate_columns.{col_name}.condition_on",
                     message=(
                         f"statistical column {where} sets condition_on under "
@@ -176,7 +177,7 @@ def check_dp_generate_contract(config: dict[str, Any]) -> None:
             # high_cardinality checked first (larger disclosure).
             if col_entry.get("high_cardinality") is True:
                 raise PlanCompileError(
-                    code="dp_generate_high_cardinality_unsupported",
+                    code=reasons.plan.DP_GENERATE_HIGH_CARDINALITY_UNSUPPORTED,
                     path=f"tables.{table_name}.generate_columns.{col_name}.high_cardinality",
                     message=(
                         f"statistical column {where} sets high_cardinality: true under "
@@ -187,7 +188,7 @@ def check_dp_generate_contract(config: dict[str, Any]) -> None:
                 )
             if col_entry.get("allow_real_categories") is True:
                 raise PlanCompileError(
-                    code="dp_generate_allow_real_categories_unsupported",
+                    code=reasons.plan.DP_GENERATE_ALLOW_REAL_CATEGORIES_UNSUPPORTED,
                     path=(f"tables.{table_name}.generate_columns.{col_name}.allow_real_categories"),
                     message=(
                         f"statistical column {where} sets allow_real_categories: true under "
@@ -567,7 +568,7 @@ def verify_dp_snapshots(
         delta_used = ledger.total_delta()
         if eps_used > declared_epsilon or delta_used > declared_delta:
             raise PlanCompileError(
-                code="dp_budget_exceeded",
+                code=reasons.plan.DP_BUDGET_EXCEEDED,
                 path="global_settings.dp",
                 message=(
                     f"global_settings.dp declares a budget ceiling of "

@@ -21,6 +21,7 @@ import pytest
 from decoy_engine import run_mask_pipeline_chunked, run_pipeline, unmask_pipeline
 from decoy_engine.config import PipelineConfig
 from decoy_engine.execution import ExecutionError
+from decoy_engine.keyprovider import SecretKeyProvider
 from decoy_engine.plan import PlanCompileError, compile_plan, run_config_only_checks
 from decoy_engine.vault import (
     VaultError,
@@ -48,7 +49,7 @@ def _validated(cfg: dict) -> dict:
 def _config(tmp_path, columns: list[dict], seed: int = 42) -> dict:
     return _validated(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": seed},
             "sources": {
                 "accounts": {
@@ -258,9 +259,10 @@ class TestVaultFile:
         df = _frame(5)
         cfg = _config(tmp_path, _VAULT_COLUMNS)
         outputs, vault_path = _mask_with_vault(tmp_path, cfg, df)
-        wrong_cfg = _config(tmp_path, _VAULT_COLUMNS, seed=99)
+        # job_seed no longer keys the vault; the secret does, so the wrong key is a wrong secret.
+        wrong_secret = SecretKeyProvider(b"a-different-32B+-secret-value-xyz!!")
         with pytest.raises(ExecutionError) as exc:
-            unmask_pipeline(wrong_cfg, outputs, vault_path=str(vault_path))
+            unmask_pipeline(cfg, outputs, vault_path=str(vault_path), key_provider=wrong_secret)
         assert exc.value.code == "vault_key_mismatch"
 
 

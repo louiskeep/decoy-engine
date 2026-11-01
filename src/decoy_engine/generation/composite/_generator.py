@@ -23,6 +23,7 @@ from typing import Any, NoReturn, Protocol, runtime_checkable
 
 import pandas as pd
 
+from decoy_engine import reasons
 from decoy_engine.generation.composite._bundle_pool import BundlePool
 from decoy_engine.generation.composite._errors import CompositeError
 from decoy_engine.providers_v2._adapter import CapabilityMatrix, ProviderSpec
@@ -69,7 +70,7 @@ def composite_capability(provider: str) -> CapabilityMatrix:
     """Build the CapabilityMatrix for a composite provider (registry fold-in)."""
     if provider not in _COMPOSITE_NAMES:
         raise CompositeError(
-            code="unknown_composite",
+            code=reasons.plan.UNKNOWN_COMPOSITE,
             message=f"{provider!r} is not a composite; known: {sorted(_COMPOSITE_NAMES)!r}.",
         )
     return CapabilityMatrix(
@@ -99,14 +100,14 @@ class CompositeAdapter:
     def __init__(self, composite_name: str) -> None:
         if composite_name not in _COMPOSITE_NAMES:
             raise CompositeError(
-                code="unknown_composite",
+                code=reasons.plan.UNKNOWN_COMPOSITE,
                 message=f"{composite_name!r} is not a composite.",
             )
         self._composite_name = composite_name
 
     def _reject_single_column(self, provider: str) -> NoReturn:
         raise CompositeError(
-            code="composite_requires_bundle_path",
+            code=reasons.plan.COMPOSITE_REQUIRES_BUNDLE_PATH,
             message=(
                 f"{provider!r} is a composite generator; it writes multiple coherent "
                 "columns in one pass and cannot be routed through a single-column "

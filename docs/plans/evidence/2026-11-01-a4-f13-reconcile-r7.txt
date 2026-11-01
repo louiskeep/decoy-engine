@@ -1,0 +1,108 @@
+Round 7: main 51548303 merged, round-6 regressions fixed, combined seam/census test, mutants.
+
+## Combined property test (tests/unit/execution/test_ooc_fk_remap_oom_keeps_no_key.py), 3.10.20 lock venv
+Merged head d8f19393 + test, before the mint_remap_values wipe:
+          exc = exc_type("injected: allocation failed")
+          exc = exc_type("injected: allocation failed")
+          exc = exc_type("injected: allocation failed")
+          exc = exc_type("injected: allocation failed")
+          exc = exc_type("injected: allocation failed")
+          exc = exc_type("injected: allocation failed")
+          exc = exc_type("injected: allocation failed")
+          exc = exc_type("injected: allocation failed")
+          exc = exc_type("injected: allocation failed")
+          exc = exc_type("injected: allocation failed")
+          exc = exc_type("injected: allocation failed")
+          exc = exc_type("injected: allocation failed")
+          exc = exc_type("injected: allocation failed")
+          exc = exc_type("injected: allocation failed")
+          exc = exc_type("injected: allocation failed")
+          exc = exc_type("injected: allocation failed")
+    ArrowMemoryError-batch_joiner-int]
+    ArrowMemoryError-batch_joiner-timestamp_ns]
+    ArrowMemoryError-shared-int]
+    ArrowMemoryError-shared-timestamp_ns]
+    ArrowMemoryError-stream_joiner-int]
+    ArrowMemoryError-stream_joiner-timestamp_ns]
+    ArrowMemoryError-whole_child-int]
+    ArrowMemoryError-whole_child-timestamp_ns]
+    MemoryError-batch_joiner-int]
+    MemoryError-batch_joiner-timestamp_ns]
+    MemoryError-shared-int]
+    MemoryError-shared-timestamp_ns]
+    MemoryError-stream_joiner-int]
+    MemoryError-stream_joiner-timestamp_ns]
+    MemoryError-whole_child-int]
+    MemoryError-whole_child-timestamp_ns]
+  16 failed, 4 passed in 0.31s
+Main 51548303 alone (scratch worktree; test + tests/fileaccess helpers copied in): key left in frames
+       16         exc = exc_type("injected: allocation failed")
+       12 E         Left contains one more item: "mint_remap_values() 'job_seed' holds the canary"
+        4 E         Left contains 3 more items, first extra item: "_remap_values() 'mask_key' holds the canary"
+        1 16 failed, 4 passed in 0.32s
+Round-6 head a19889a5 alone (scratch worktree; test copied in): REMAP minting never reaches a seam that propagates the injected error
+       16         exc = exc_type("injected: allocation failed")
+        6 E       Failed: DID NOT RAISE MemoryError
+        6 E               decoy_engine.generation.pool._errors.GenerationError: [timezone_naive_datetime] Datetime datetime.datetime(2026, 1, 1, 0, 0) has no tzinfo. Deterministic canonicalization requires explicit UTC; localize upstream or use a date if intra-day precision is not needed.
+        5 E       AttributeError: module 'decoy_engine.execution.out_of_core._batch_join' has no attribute 'mint_remap_values'. Did you mean: '_remap_values'?
+        1 17 failed, 3 passed in 0.43s
+Mutants of each half inside the merged tree (scratch worktree at the fix, restored and hash-checked, none committed):
+  M1 fk_output_array MemoryError re-raise removed -> 8 failed, 12 passed in 0.46s | restored eacf15323775
+  M2 mint_remap_values wipe removed -> 16 failed, 4 passed in 0.32s | restored 71c1c119a9df
+  M3 _remap_values wipe removed -> 4 failed, 16 passed in 0.27s | restored 71c1c119a9df
+  (M1 leaves the plain-MemoryError cells green by construction: only ArrowMemoryError is an ArrowException.)
+After the fix (84b382f5): 20 passed.
+
+## Regressions at the merged head d8f19393, full suite (red before the fixes)
+3.10.20:
+  FAILED tests/native/test_draw_site_inventory_coverage.py::test_static_scan_finds_no_uncatalogued_draw_site
+  FAILED tests/sentry/test_physical_seam_disconnection.py::test_production_execution_modules_are_byte_identical_to_origin_main
+  FAILED tests/sentry/test_secret_material_census.py::test_the_census_matches_the_code
+  FAILED tests/sentry/test_secret_material_census.py::test_a_new_secret_function_is_missing_from_the_census
+  FAILED tests/unit/execution/test_out_of_core_batch_join.py::test_single_fk_policies_match_whole_child[OrphanPolicy.REMAP]
+  FAILED tests/unit/execution/test_out_of_core_batch_join.py::test_composite_fk_policies_match_whole_child[OrphanPolicy.REMAP]
+  FAILED tests/unit/execution/test_out_of_core_batch_join.py::test_strategy_parent_policies_match_whole_child[OrphanPolicy.REMAP-redact-provider_config0]
+  FAILED tests/unit/execution/test_out_of_core_batch_join.py::test_strategy_parent_policies_match_whole_child[OrphanPolicy.REMAP-truncate-provider_config1]
+  FAILED tests/unit/execution/test_out_of_core_batch_join.py::test_strategy_parent_policies_match_whole_child[OrphanPolicy.REMAP-passthrough-provider_config2]
+  FAILED tests/unit/execution/test_out_of_core_batch_join.py::test_all_integral_numeric_output_widens_where_whole_child_narrows[OrphanPolicy.REMAP]
+  FAILED tests/unit/execution/test_out_of_core_batch_join.py::test_remap_masks_per_batch_not_per_child
+  11 failed, 32028 passed, 5289 skipped, 185 deselected, 6 xfailed, 65 xpassed, 76 warnings in 2708.84s (0:45:08)
+3.12.13 (uv-managed interpreter; see the note on the 3.12 interpreter below):
+  FAILED tests/fileaccess/test_char_sink_publish.py::test_nul_and_overlong_names_fail_at_write_not_at_validation
+  FAILED tests/native/test_draw_site_inventory_coverage.py::test_static_scan_finds_no_uncatalogued_draw_site
+  FAILED tests/sentry/test_physical_seam_disconnection.py::test_production_execution_modules_are_byte_identical_to_origin_main
+  FAILED tests/sentry/test_secret_material_census.py::test_the_census_matches_the_code
+  FAILED tests/sentry/test_secret_material_census.py::test_a_new_secret_function_is_missing_from_the_census
+  FAILED tests/unit/execution/test_categorical_weighted.py::TestCdfBuilder::test_skewed_weights_skew_cdf
+  FAILED tests/unit/execution/test_out_of_core_batch_join.py::test_single_fk_policies_match_whole_child[OrphanPolicy.REMAP]
+  FAILED tests/unit/execution/test_out_of_core_batch_join.py::test_composite_fk_policies_match_whole_child[OrphanPolicy.REMAP]
+  FAILED tests/unit/execution/test_out_of_core_batch_join.py::test_strategy_parent_policies_match_whole_child[OrphanPolicy.REMAP-redact-provider_config0]
+  FAILED tests/unit/execution/test_out_of_core_batch_join.py::test_strategy_parent_policies_match_whole_child[OrphanPolicy.REMAP-truncate-provider_config1]
+  FAILED tests/unit/execution/test_out_of_core_batch_join.py::test_strategy_parent_policies_match_whole_child[OrphanPolicy.REMAP-passthrough-provider_config2]
+  FAILED tests/unit/execution/test_out_of_core_batch_join.py::test_all_integral_numeric_output_widens_where_whole_child_narrows[OrphanPolicy.REMAP]
+  FAILED tests/unit/execution/test_out_of_core_batch_join.py::test_remap_masks_per_batch_not_per_child
+  13 failed, 31942 passed, 5373 skipped, 185 deselected, 6 xfailed, 65 xpassed, 323 warnings in 2205.66s (0:36:45)
+
+## Mutants on c1cdbbe9 (3.10.20 lock venv), one at a time, file restored and sha256 re-checked, none committed
+Baseline on the four target files: 230 passed, 1 skipped.
+  M1 _check_signature unboxed | src/decoy_engine/profiling/model_pack/loader.py | RED | 2 failed, 198 passed, 1 skipped in 1.57s | restored sha256 3a0580a73580
+  M2 derive_pack_signing_key not wiped | src/decoy_engine/profiling/model_pack/provenance.py | RED | 3 failed, 197 passed, 1 skipped in 9.86s | restored sha256 c5824e13d679
+  M3 sign_pack not wiped | src/decoy_engine/profiling/model_pack/provenance.py | RED | 3 failed, 197 passed, 1 skipped in 0.77s | restored sha256 c5824e13d679
+  M4 census entry dropped (sign_pack.key) | tests/sentry/secret_material_census.json | RED | 3 failed, 7 passed in 20.34s | restored sha256 20f7644883b5
+  M5 ShadowContext validated inside __init__ | src/decoy_engine/execution/physical/_shadow_context.py | RED | 1 failed, 199 passed, 1 skipped in 0.66s | restored sha256 c3a0caef4857
+  M6 closure owner not wiped (native_text_mask) | src/decoy_engine/execution/native/_kernels_scalar.py | RED | 2 failed, 198 passed, 1 skipped in 0.66s | restored sha256 10ea933297d7
+  M7 read_checked keeps chunks | src/decoy_engine/fileaccess/_read.py | RED | 1 failed, 15 passed in 0.55s | restored sha256 cf81f7644727
+  M8 kernel wipe removed (fpe_encrypt_value), frame cell | src/decoy_engine/transforms/fpe.py | RED | 1 failed in 0.24s | restored sha256 462e3b5c9690
+  M9 verify_manifest binds the expected MAC | src/decoy_engine/profiling/model_pack/provenance.py | RED | 1 failed, 15 passed in 0.33s | restored sha256 c5824e13d679
+  M10 verdict checker (fpe_encrypt_value wipe removed) | src/decoy_engine/transforms/fpe.py | RED | 3 failed, 7 passed in 20.32s | restored sha256 462e3b5c9690
+  M11 mint_remap_values wipe removed (round 7) | src/decoy_engine/execution/out_of_core/_batch_join.py | RED | 19 failed, 11 passed in 20.08s | restored sha256 71c1c119a9df
+
+## Full suites at 16d72eca vs main 51548303 (pytest tests, pyproject addopts, lock venvs extras dev, lint, vault, cloud; PYTHONPATH at each worktree's src)
+final310: 32060 passed, 5289 skipped, 185 deselected, 6 xfailed, 65 xpassed, 74 warnings in 2388.13s (0:39:48)
+main310: 30832 passed, 5286 skipped, 185 deselected, 6 xfailed, 65 xpassed, 68 warnings in 2575.23s (0:42:55)
+final3123: 1 failed, 31975 passed, 5373 skipped, 185 deselected, 6 xfailed, 65 xpassed, 324 warnings in 1968.33s (0:32:48)
+  FAILED tests/unit/execution/test_categorical_weighted.py::TestCdfBuilder::test_skewed_weights_skew_cdf
+main3123: 1 failed, 30747 passed, 5370 skipped, 185 deselected, 6 xfailed, 65 xpassed, 319 warnings in 1861.25s (0:31:01)
+  FAILED tests/unit/execution/test_categorical_weighted.py::TestCdfBuilder::test_skewed_weights_skew_cdf
+main312: 1 failed, 30747 passed, 5370 skipped, 185 deselected, 6 xfailed, 65 xpassed, 319 warnings in 2109.03s (0:35:09)
+  FAILED tests/unit/execution/test_categorical_weighted.py::TestCdfBuilder::test_skewed_weights_skew_cdf

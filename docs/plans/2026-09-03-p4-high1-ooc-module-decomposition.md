@@ -1,6 +1,7 @@
 # Phase 4 HIGH-1: out-of-core module-size decomposition
 
-Status: plan
+Status: built
+Shipped: CHANGELOG.md:2120 (Phase 4 slice 5, HIGH-1); PR #126 (cd6e993d)
 
 ## Why
 

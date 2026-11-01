@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import pyarrow as pa
 
+from decoy_engine import reasons
 from decoy_engine.execution import _chunked_input
 from decoy_engine.execution import _chunked_output_sink as _output_sink
 from decoy_engine.execution._adapter import ExecutionResult
@@ -54,7 +55,7 @@ _LOG = logging.getLogger(__name__)
 
 LANE_DISPATCHER = "dispatcher"
 LANE_LEGACY = "legacy_oracle"
-REASON_DISPATCHER_DISABLED = "dispatcher_disabled"
+REASON_DISPATCHER_DISABLED = reasons.route.DISPATCHER_DISABLED
 
 
 def require_lane_knobs(native_threads: Any, chunked_dispatcher_enabled: Any) -> None:
@@ -68,7 +69,7 @@ def require_lane_knobs(native_threads: Any, chunked_dispatcher_enabled: Any) -> 
     require_positive_int("native_threads", native_threads)
     if native_threads > MAX_NATIVE_THREADS:
         raise ExecutionError(
-            code="invalid_execution_knob",
+            code=reasons.runtime.INVALID_EXECUTION_KNOB,
             message=(
                 f"native_threads must be at most {MAX_NATIVE_THREADS}; got {native_threads!r}."
             ),
@@ -128,7 +129,7 @@ def join_dispatcher_chunks(chunks: list[pa.Table], *, table: str) -> pa.Table:
 
 def _mismatch(table: str, detail: str) -> ExecutionError:
     return ExecutionError(
-        code="chunked_schema_mismatch",
+        code=reasons.runtime.CHUNKED_SCHEMA_MISMATCH,
         message=f"cannot join the chunks of table {table!r}: {detail}.",
     )
 

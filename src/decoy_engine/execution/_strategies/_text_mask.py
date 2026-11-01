@@ -36,6 +36,7 @@ from typing import Any
 
 import pandas as pd
 
+from decoy_engine import reasons
 from decoy_engine.detection.detectors import Span
 from decoy_engine.errors import FpeUnencryptableError
 from decoy_engine.execution._adapter import StrategyContext, provider_config_to_dict
@@ -116,7 +117,7 @@ class TextMaskHandler:
             current_version = installed_model_version(ner_model)
             if current_version is not None and current_version != plan.ner_model_version:
                 raise StrategyError(
-                    code="ner_model_version_mismatch",
+                    code=reasons.runtime.NER_MODEL_VERSION_MISMATCH,
                     strategy="text_mask",
                     message=(
                         f"column {column!r}: NER model {ner_model!r} is installed at "
@@ -215,7 +216,7 @@ class TextMaskHandler:
                         )
         except FpeUnencryptableError as exc:
             raise StrategyError(
-                code="fpe_unencryptable_domain",
+                code=reasons.runtime.FPE_UNENCRYPTABLE_DOMAIN,
                 strategy="text_mask",
                 message=(
                     f"column {column!r}: {exc}. The engine fails closed rather than "
@@ -234,7 +235,7 @@ class TextMaskHandler:
             # `fpe_partial_plaintext_disclosure`).
             warnings.append(
                 QualityWarning(
-                    code="text_mask_sub_floor_span_handled",
+                    code=reasons.warning.TEXT_MASK_SUB_FLOOR_SPAN_HANDLED,
                     provider="text_mask",
                     column=column,
                     detail={

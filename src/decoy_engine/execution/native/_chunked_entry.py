@@ -31,6 +31,7 @@ from typing import Any
 
 import pyarrow as pa
 
+from decoy_engine import reasons
 from decoy_engine.execution import _chunked, _chunked_oracle
 from decoy_engine.execution import _chunked_bucket_perturb as bucket_perturb_gate
 from decoy_engine.execution import _chunked_dgrn as dgrn
@@ -47,12 +48,9 @@ from decoy_engine.execution._row_error_summary import chunk_row_error_summary
 from decoy_engine.execution._transforms import stored_index_fields
 from decoy_engine.execution.native._categorical_prepared import (
     PreparedCategorical,
-    prepare_chunked_categoricals,
 )
 from decoy_engine.execution.native._chunk_masking import (
     _mask_chunk_native,
-    _resolve_faker_pools,
-    pool_values_are_strings,
 )
 from decoy_engine.execution.native._chunk_schema import cast_null_columns
 from decoy_engine.execution.native._chunked_evidence import (
@@ -60,6 +58,11 @@ from decoy_engine.execution.native._chunked_evidence import (
     aggregate_chunked_route_evidence,
     chunk_route_evidence,
     plan_column_backends,
+)
+from decoy_engine.execution.native._chunked_oracle_rows import _oracle_preserved_rows
+from decoy_engine.execution.native._chunked_pools import (
+    prepared_categoricals,
+    resolve_admitted_pools,
 )
 from decoy_engine.execution.native._chunked_preflight_wiring import wire_nonempty_preflight
 from decoy_engine.execution.native._chunked_row_errors import format_error_records
@@ -78,10 +81,10 @@ from decoy_engine.execution.native._faker_null_mask import plan_faker_null_masks
 from decoy_engine.execution.native._operator_params import TextMaskParams, resolve_params_by_column
 from decoy_engine.execution.native._route_decline_codes import (
     RouteDeclineCode,
-    column_decline,
     table_decline,
 )
 from decoy_engine.execution.native._when_mask import plan_when_masks
+from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.generation.pool import PoolCache, ValuePool
 from decoy_engine.instrumentation.timing import StrategyTimingRecord
 from decoy_engine.progress import get_active_channel
@@ -98,7 +101,7 @@ def _validate_native_threads(native_threads: Any) -> None:
         or not 1 <= native_threads <= MAX_NATIVE_THREADS
     ):
         raise ExecutionError(
-            code="invalid_native_threads",
+            code=reasons.runtime.INVALID_NATIVE_THREADS,
             message=(
                 f"native_threads must be an int in 1..={MAX_NATIVE_THREADS}; "
                 f"got {native_threads!r}."
@@ -170,11 +173,6 @@ def _oracle_route(
         base_row_offset=base_row_offset,
         on_chunk=on_chunk,
     )
-
-
-def _oracle_preserved_rows(quality_metrics: dict[str, Any]) -> dict[str, int]:
-    """The oracle leg's D1c sentinel counts per column, from the handlers' own metrics."""
-    return {e["column"]: e["preserved_rows"] for e in quality_metrics.get("date_preserve", ())}
 
 
 def _native_chunk_result(
@@ -251,12 +249,14 @@ def _native_route(
     the plan does not cover; they are carried unchanged. A group_key column reads its sibling
     from the raw chunk, so the loop keeps both tables (see `_mask_chunk_native`); everything else
     works on the cast one."""
+    from decoy_engine._opaque import OpaqueBox
     from decoy_engine.errors import RowErrorsFailedError
     from decoy_engine.keyprovider import require_mask_key
 
     first = state.first
     plan = state.plan
-    mask_key = require_mask_key(plan, state.key_provider)
+    # Boxed (`_opaque`): the generator below and this frame outlive many raises.
+    key_box = OpaqueBox(require_mask_key(plan, state.key_provider))
     table_seed = next((ts for (name, ts) in plan.seed_envelope.per_table if name == table), None)
     if table_seed is None:  # pragma: no cover - admission implies a seed envelope
         raise AssertionError(
@@ -311,7 +311,7 @@ def _native_route(
             masked = _mask_chunk_native(
                 chunk,
                 col_seed_by_name=col_seed_by_name,
-                mask_key=mask_key,
+                mask_key=key_box.open()[0],
                 evidence=decision,
                 pool_by_column=pool_by_column,
                 native_threads=native_threads,
@@ -332,11 +332,10 @@ def _native_route(
                 table=table,
                 preserved_rows=preserved_rows,
             )
-            # The one enforcement point: the same call the stock adapter makes, so the
-            # warning (and, if a table were ever admitted under `error`, the refusal)
-            # cannot drift from the oracle route's. The operator warnings (fpe residual, C6a §3e;
-            # text_mask sub-floor, C6b-i) are already in work order and ride FIRST, with the
-            # projection warnings LAST, which is the oracle route's order.
+            # The one enforcement point: the same call the stock adapter makes, so the warning
+            # (and, if a table were ever admitted under `error`, the refusal) cannot drift from the
+            # oracle route's. The operator warnings (fpe residual, C6a §3e; text_mask sub-floor,
+            # C6b-i) ride FIRST, in work order, the projection warnings LAST: the oracle's order.
             warnings = (
                 *operator_warnings,
                 *enforce_output_projection(
@@ -345,10 +344,9 @@ def _native_route(
             )
             row_errors = format_error_records(table, format_errors)
             if row_errors:
-                # The oracle leg's rule: a per-row error cannot be routed anywhere on the
-                # chunked path, and yielding the chunk would leave the raw value in the
-                # output. Record the failing chunk, then fail before the offset advances,
-                # the vault is written or the chunk is yielded.
+                # The oracle leg's rule: a per-row error cannot be routed on the chunked path, and
+                # yielding the chunk would leave the raw value in the output. Record the failing
+                # chunk, then fail before the offset advances, the vault is written or it yields.
                 if chunk_result_sink is not None:
                     chunk_result_sink.append(
                         _native_chunk_result(
@@ -406,59 +404,6 @@ def _native_route(
     return _masked()
 
 
-def _resolve_admitted_pools(
-    state: Any, *, table: str, decision: NativeRouteEvidence
-) -> tuple[NativeRouteEvidence, dict[str, ValuePool]]:
-    """Resolve every faker column's pool once, from the caller's registry, before
-    the route is committed; the native loop then uses these same pools.
-
-    A provider whose non-null output is not string-compatible cannot go through
-    the string pool the native sampler gathers from, so the table reroutes to the
-    oracle with a coded reason instead of failing after admission. The pools stay
-    in `state.pool_cache`, so the oracle route's own warm-up is a cache hit.
-    """
-    plan = state.plan
-    table_seed = next((ts for (name, ts) in plan.seed_envelope.per_table if name == table), None)
-    if table_seed is None:  # pragma: no cover - admission implies a seed envelope
-        raise AssertionError(
-            f"native route admitted {table!r} but the compiled plan has no seed envelope for it."
-        )
-    col_seed_by_name = dict(table_seed.per_column)
-    pools = _resolve_faker_pools(
-        col_seed_by_name,
-        job_seed=plan.seed_envelope.job_seed,
-        pool_cache=state.pool_cache,
-        registry=state.registry,
-    )
-    for column, pool in pools.items():
-        if not pool_values_are_strings(pool):
-            provider = col_seed_by_name[column].provider
-            return (
-                _downgrade_to_oracle(
-                    decision,
-                    f"faker_provider_output_not_string:{column}:{provider}",
-                    column_decline(
-                        RouteDeclineCode.FAKER_PROVIDER_OUTPUT_NOT_STRING, table, column
-                    ),
-                ),
-                {},
-            )
-    return decision, pools
-
-
-def _prepared_categoricals(state: Any, *, table: str) -> dict[str, PreparedCategorical]:
-    """The native-admissible categorical columns of `table`, prepared once for the run.
-
-    Config-admissible AND a string first-chunk source, whichever route the table takes:
-    the output-type pin and the native chunk call read this one result."""
-    table_seed = next(
-        (ts for (name, ts) in state.plan.seed_envelope.per_table if name == table), None
-    )
-    if table_seed is None:  # pragma: no cover - a validated mask table always has a seed envelope
-        return {}
-    return prepare_chunked_categoricals(dict(table_seed.per_column), state.first.schema)
-
-
 def _run_chunked(
     config: dict[str, Any],
     chunks: Iterable[pa.Table],
@@ -499,9 +444,47 @@ def _run_chunked(
         carry_passthrough=enforce_schema_rule,
     )
     if state.first is None:
+        state.close_secret()
         if route_evidence_sink is not None:
             route_evidence_sink.append(_oracle_evidence(table, "empty_input"))
         return iter(())
+    try:
+        stream = _route_chunked(
+            state,
+            config=config,
+            table=table,
+            engine_version=engine_version,
+            adapter=adapter,
+            vault_writer=vault_writer,
+            chunk_result_sink=chunk_result_sink,
+            base_row_offset=base_row_offset,
+            native_threads=native_threads,
+            route_evidence_sink=route_evidence_sink,
+            enforce_schema_rule=enforce_schema_rule,
+            captured_schema=captured_schema,
+        )
+    except BaseException:
+        state.close_secret()
+        raise
+    return _chunked_oracle.release_when_done(stream, state)
+
+
+def _route_chunked(
+    state: Any,
+    *,
+    config: dict[str, Any],
+    table: str,
+    engine_version: str,
+    adapter: Any,
+    vault_writer: Any,
+    chunk_result_sink: list[Any] | None,
+    base_row_offset: int,
+    native_threads: int | None,
+    route_evidence_sink: list[NativeRouteEvidence] | None,
+    enforce_schema_rule: bool,
+    captured_schema: Any,
+) -> Iterator[pa.Table]:
+    """Everything after admission and preflight: route choice and the two chunk loops."""
 
     c5c_ii_admission = wire_nonempty_preflight(
         state, config=config, table=table, captured_schema=captured_schema
@@ -535,7 +518,7 @@ def _run_chunked(
             )
     pools: dict[str, ValuePool] = {}
     if decision.native_admitted and any(n.strategy == "faker" for n in decision.node_routes):
-        decision, pools = _resolve_admitted_pools(state, table=table, decision=decision)
+        decision, pools = resolve_admitted_pools(state, table=table, decision=decision)
     if route_evidence_sink is not None:
         route_evidence_sink.append(decision)
     columns = (
@@ -550,7 +533,7 @@ def _run_chunked(
         if chunk_result_sink is not None
         else ()
     )
-    categoricals = _prepared_categoricals(state, table=table)
+    categoricals = prepared_categoricals(state, table=table)
     rule = (
         build_schema_rule(
             config,
@@ -597,6 +580,7 @@ def _run_chunked(
     )
 
 
+@entry_point
 def run_mask_chunked(
     config: dict[str, Any],
     chunks: Iterable[pa.Table],
@@ -612,6 +596,7 @@ def run_mask_chunked(
     native_threads: int = 1,
     route_evidence_sink: list[NativeRouteEvidence] | None = None,
     pool_cache: PoolCache | None = None,
+    file_access: FileAccess | None = None,
 ) -> Iterator[pa.Table]:
     """Mask `table` chunk-by-chunk, natively when the whole table admits.
 

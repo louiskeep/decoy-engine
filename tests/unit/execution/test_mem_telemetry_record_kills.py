@@ -1,4 +1,4 @@
-"""Mutation kill-tests for the RECORD + HELPER functions of `_mem_telemetry.py`
+"""Mutation kill-tests for the RECORD + HELPER functions of `scripts/mem_telemetry_records.py`
 (TQ isolated-substrate grade, branch `tq/isolated-substrate-grade`).
 
 One test per surviving LOGIC mutant, grouped by function, asserting the EXACT
@@ -15,6 +15,19 @@ from __future__ import annotations
 
 import pytest
 
+# `_percentile` and `_width_class` are private helpers with their own contracts
+# (numpy's default linear-interpolation percentile; the width-bucket ladder).
+# The public `recalibrate_k` only ever calls `_percentile` at pct=1.0, which
+# never reaches the interpolation tail, so that mutant set is only reachable by
+# testing the helper directly. `_width_class` is exercised through the public
+# `schema_fingerprint` below.
+from mem_telemetry import (
+    _percentile,
+    schema_fingerprint,
+    telemetry_record_from_governor_trip,
+    telemetry_record_from_isolated_run,
+)
+
 from decoy_engine.execution._governor import GovernorTripRecord
 from decoy_engine.execution._isolated_common import IsolatedRunResult
 from decoy_engine.execution._mem_estimate import (
@@ -22,19 +35,6 @@ from decoy_engine.execution._mem_estimate import (
     FkCardinalityInput,
     TableSizeSpec,
     estimator_basis_bytes,
-)
-
-# `_percentile` and `_width_class` are private helpers with their own contracts
-# (numpy's default linear-interpolation percentile; the width-bucket ladder).
-# The public `recalibrate_k` only ever calls `_percentile` at pct=1.0, which
-# never reaches the interpolation tail, so that mutant set is only reachable by
-# testing the helper directly. `_width_class` is exercised through the public
-# `schema_fingerprint` below.
-from decoy_engine.execution._mem_telemetry import (
-    _percentile,
-    schema_fingerprint,
-    telemetry_record_from_governor_trip,
-    telemetry_record_from_isolated_run,
 )
 
 _MB = 1024 * 1024

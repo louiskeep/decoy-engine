@@ -22,6 +22,7 @@ from typing import Any
 
 import pyarrow as pa
 
+from decoy_engine import reasons
 from decoy_engine.determinism import DeterminismError
 from decoy_engine.transforms.fpe import (
     FF1_TWEAK_SCOPE_COLUMN,
@@ -77,14 +78,18 @@ class _CompiledFpeKernel:
         tweak_column: str,
         config: FpeConfig,
     ) -> FpeBatchResult:
-        return self.run(
-            values,
-            mask_key=mask_key,
-            namespace=namespace,
-            tweak_column=tweak_column,
-            config=config,
-            forward=True,
-        )
+        try:
+            return self.run(
+                values,
+                mask_key=mask_key,
+                namespace=namespace,
+                tweak_column=tweak_column,
+                config=config,
+                forward=True,
+            )
+        except BaseException:
+            del mask_key
+            raise
 
     def decrypt_batch(
         self,
@@ -95,14 +100,18 @@ class _CompiledFpeKernel:
         tweak_column: str,
         config: FpeConfig,
     ) -> FpeBatchResult:
-        return self.run(
-            values,
-            mask_key=mask_key,
-            namespace=namespace,
-            tweak_column=tweak_column,
-            config=config,
-            forward=False,
-        )
+        try:
+            return self.run(
+                values,
+                mask_key=mask_key,
+                namespace=namespace,
+                tweak_column=tweak_column,
+                config=config,
+                forward=False,
+            )
+        except BaseException:
+            del mask_key
+            raise
 
     def run(
         self,
@@ -117,34 +126,40 @@ class _CompiledFpeKernel:
     ) -> FpeBatchResult:
         # Fail before the compiled kernel is called, matching `_ReferenceFpe._run`'s pre-loop
         # `_require_mask_key` exactly (same message, same exception type).
-        key = _require_mask_key(mask_key, "fpe")
-        charset, preserve_sep, validate_luhn, checksum = config._resolve()
-        if checksum is not None:  # pragma: no cover - checksum declines to the oracle before here
-            raise AssertionError(
-                "fpe checksum mode must decline to the pandas oracle before the native kernel "
-                f"(column {tweak_column!r}); the native FF1 kernel has no checksum path."
-            )
-        tweak = build_ff1_tweak(
-            FF1_TWEAK_SCOPE_JOIN_GROUP if config.join_group else FF1_TWEAK_SCOPE_COLUMN,
-            config.join_group or tweak_column,
-        )
-        array = values.combine_chunks() if isinstance(values, pa.ChunkedArray) else values
         try:
-            out, raw_errors = self._fpe_fn(
-                array,
-                mask_key=key,
-                namespace=namespace,
-                tweak=tweak,
-                charset=charset,
-                preserve_separators=preserve_sep,
-                validate_luhn=validate_luhn,
-                forward=forward,
-                native_threads=native_threads,
+            mask_key = _require_mask_key(mask_key, "fpe")
+            charset, preserve_sep, validate_luhn, checksum = config._resolve()
+            if (
+                checksum is not None
+            ):  # pragma: no cover - checksum declines to the oracle before here
+                raise AssertionError(
+                    "fpe checksum mode must decline to the pandas oracle before the native kernel "
+                    f"(column {tweak_column!r}); the native FF1 kernel has no checksum path."
+                )
+            tweak = build_ff1_tweak(
+                FF1_TWEAK_SCOPE_JOIN_GROUP if config.join_group else FF1_TWEAK_SCOPE_COLUMN,
+                config.join_group or tweak_column,
             )
-        except ValueError as exc:
-            raise _translate_compiled_fpe_error(exc) from exc
-        errors = tuple(_row_error(int(row_index), code) for row_index, code in raw_errors)
-        return FpeBatchResult(values=out, errors=errors, warnings=())
+            array = values.combine_chunks() if isinstance(values, pa.ChunkedArray) else values
+            try:
+                out, raw_errors = self._fpe_fn(
+                    array,
+                    mask_key=mask_key,
+                    namespace=namespace,
+                    tweak=tweak,
+                    charset=charset,
+                    preserve_separators=preserve_sep,
+                    validate_luhn=validate_luhn,
+                    forward=forward,
+                    native_threads=native_threads,
+                )
+            except ValueError as exc:
+                raise _translate_compiled_fpe_error(exc) from exc
+            errors = tuple(_row_error(int(row_index), code) for row_index, code in raw_errors)
+            return FpeBatchResult(values=out, errors=errors, warnings=())
+        except BaseException:
+            del mask_key
+            raise
 
 
 def load_compiled_fpe_kernel() -> FpeKernel:
@@ -243,21 +258,25 @@ def native_fpe(
     A `None` namespace fails closed the way the oracle handler does (`fpe_requires_namespace`),
     checked here before the compiled kernel is loaded so the failure never depends on whether the
     companion is installed -- the same guard `native_keyed_hash` applies for `hash`."""
-    if namespace is None:
-        from decoy_engine.execution._errors import StrategyError
+    try:
+        if namespace is None:
+            from decoy_engine.execution._errors import StrategyError
 
-        raise StrategyError(
-            code="fpe_requires_namespace",
-            strategy="fpe",
-            message="the fpe strategy requires a namespace; got None.",
+            raise StrategyError(
+                code=reasons.runtime.FPE_REQUIRES_NAMESPACE,
+                strategy="fpe",
+                message="the fpe strategy requires a namespace; got None.",
+            )
+        kernel = load_compiled_fpe_kernel()
+        return kernel.run(  # type: ignore[attr-defined]
+            array,
+            mask_key=mask_key,
+            namespace=namespace,
+            tweak_column=tweak_column,
+            config=config,
+            forward=forward,
+            native_threads=native_threads,
         )
-    kernel = load_compiled_fpe_kernel()
-    return kernel.run(  # type: ignore[attr-defined]
-        array,
-        mask_key=mask_key,
-        namespace=namespace,
-        tweak_column=tweak_column,
-        config=config,
-        forward=forward,
-        native_threads=native_threads,
-    )
+    except BaseException:
+        del mask_key
+        raise

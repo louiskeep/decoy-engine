@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import pandas as pd
 
+from decoy_engine import reasons
 from decoy_engine.execution._adapter import StrategyContext, provider_config_to_dict
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.plan._types import ColumnSeed
@@ -83,7 +84,7 @@ class GeoGeneralizeHandler:
             }
             warnings.append(
                 QualityWarning(
-                    code="geo_generalize_cascade",
+                    code=reasons.warning.GEO_GENERALIZE_CASCADE,
                     provider="geo_generalize",
                     column=column,
                     detail={"cascade_decisions": decisions_map},

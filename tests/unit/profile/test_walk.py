@@ -3,7 +3,7 @@
 Covers: column-level counts, dtype reporting, FK and PK propagation,
 full-scan vs sampled candidate-key flag (H6), null counting, distinct
 counting under sampling, determinism under explicit seeding, empty
-DataFrames, and pii_class=None invariant (STORM wires later).
+DataFrames, and pii_class=None invariant (Pre-scan wires later).
 """
 
 from __future__ import annotations
@@ -331,7 +331,7 @@ class TestEdgeCases:
             sample_rows=None,
             rng=_rng(),
         )
-        # STORM wiring lands in a later slice; slice 2 must not invent PII tags.
+        # Pre-scan wiring lands in a later slice; slice 2 must not invent PII tags.
         assert profile.columns[0].pii_class is None
 
 

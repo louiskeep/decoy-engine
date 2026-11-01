@@ -68,12 +68,23 @@ import hmac
 import json
 from collections.abc import Iterable, Mapping
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import pyarrow as pa
 
+from decoy_engine import fileaccess, reasons
+from decoy_engine._opaque import OpaqueBox
 from decoy_engine.determinism import SEED_PROTOCOL_VERSION, derive
 from decoy_engine.errors import DecoyError
+from decoy_engine.fileaccess import (
+    FileAccess,
+    FileAccessUnavailable,
+    FileHandle,
+    FileRequest,
+    FileRole,
+    OutputDir,
+)
+from decoy_engine.fileaccess.adapters import serial
 
 if TYPE_CHECKING:
     from decoy_engine.keyprovider import KeyProvider
@@ -107,12 +118,16 @@ def _read_frame(blob: bytes, offset: int) -> tuple[bytes, int]:
     fails cleanly instead of slicing past the end.
     """
     if offset + 4 > len(blob):
-        raise VaultError(code="vault_unreadable", message="vault file truncated (length prefix)")
+        raise VaultError(
+            code=reasons.runtime.VAULT_UNREADABLE, message="vault file truncated (length prefix)"
+        )
     length = int.from_bytes(blob[offset : offset + 4], "big")
     start = offset + 4
     end = start + length
     if end > len(blob):
-        raise VaultError(code="vault_unreadable", message="vault file truncated (block body)")
+        raise VaultError(
+            code=reasons.runtime.VAULT_UNREADABLE, message="vault file truncated (block body)"
+        )
     return blob[start:end], end
 
 
@@ -125,23 +140,25 @@ class VaultError(DecoyError):
         super().__init__(f"[{code}] {message}")
 
 
-def _fernet(mask_key: bytes) -> Any:
+def _fernet(mask_key: OpaqueBox) -> Any:
     # DE-02: the Fernet key derives from the keyed-mask IKM -- the 8-byte job_seed
     # when no secret is present (byte-identical to pre-DE-02) or a 32-byte
     # KeyProvider mask root under a secret. A vault written under job_seed cannot
     # be opened under a secret key (pre-GA = hard-delete/regenerate; no dual-read).
+    # The IKM arrives boxed and the derived key is never a local (`_opaque`).
     try:
         from cryptography.fernet import Fernet
     except ImportError as exc:
         raise VaultError(
-            code="vault_crypto_not_installed",
+            code=reasons.runtime.VAULT_CRYPTO_NOT_INSTALLED,
             message=(
                 f"the vault needs the `cryptography` package; install the "
                 f"vault extra: {_INSTALL_HINT}"
             ),
         ) from exc
-    key = derive(mask_key, VAULT_NAMESPACE, VAULT_KEY_LABEL)
-    return Fernet(base64.urlsafe_b64encode(key))
+    return Fernet(
+        base64.urlsafe_b64encode(derive(mask_key.open()[0], VAULT_NAMESPACE, VAULT_KEY_LABEL))
+    )
 
 
 def iter_vault_columns(config: dict[str, Any]) -> list[tuple[str, str, str]]:
@@ -208,10 +225,18 @@ class VaultWriter:
     before encryption.
     """
 
-    def __init__(self, mask_key: bytes) -> None:
-        # DE-02: the vault's keyed-mask IKM (job_seed when no secret is present).
-        self._mask_key = mask_key
-        self._entries: set[tuple[str, str, str]] = set()
+    def __init__(self, mask_key: bytes, *, file_access: FileAccess | None = None) -> None:
+        # DE-02: the vault's keyed-mask IKM (job_seed when no secret is present). The policy
+        # lookup below can raise; this frame must not hold the key then (`_opaque`).
+        try:
+            self._mask_key = mask_key
+            self._entries: set[tuple[str, str, str]] = set()
+            # The writer writes after the entry point that built it returned, so it keeps the
+            # policy it was built under and never looks one up later.
+            self._access = fileaccess.capture(file_access)
+        except BaseException:
+            del mask_key
+            raise
 
     def assert_keyed_with(self, mask_key: bytes) -> None:
         """Fail closed if this writer's key does not match `mask_key`.
@@ -222,23 +247,32 @@ class VaultWriter:
         secret. `run_pipeline` calls this against the run's resolved `mask_key`
         before any masking. Constant-time compare; never echoes the key bytes.
         """
-        if not hmac.compare_digest(self._mask_key, mask_key):
-            raise VaultError(
-                code="vault_key_mismatch",
-                message=(
-                    "the supplied vault writer is keyed with a different secret than "
-                    "the masking run resolved. Build the vault writer from the same "
-                    "key_provider / mask_secret_ref (vault_writer_for_config(config, "
-                    "key_provider=...)) so the vault decrypts under the run secret."
-                ),
-            )
+        try:
+            if not hmac.compare_digest(self._mask_key, mask_key):
+                raise VaultError(
+                    code=reasons.runtime.VAULT_KEY_MISMATCH,
+                    message=(
+                        "the supplied vault writer is keyed with a different secret than "
+                        "the masking run resolved. Build the vault writer from the same "
+                        "key_provider / mask_secret_ref (vault_writer_for_config(config, "
+                        "key_provider=...)) so the vault decrypts under the run secret."
+                    ),
+                )
+        except BaseException:
+            del mask_key  # a traceback keeps this frame: the key must not be among its locals
+            raise
 
     def add(self, entries: Iterable[tuple[str, str, str]]) -> None:
         """Accumulate `(namespace, masked, source)` triples."""
         self._entries.update(entries)
 
-    def write(self, path: str | Path) -> int:
+    def write(self, path: str | Path | OutputDir) -> int:
         """Encrypt and write the vault file. Returns the entry count written.
+
+        `path` is an `OutputDir` the policy issued (the file is created exclusively,
+        refusing an existing leaf), or, under the ambient CLI policy only, a path that is
+        overwritten as it always was. A path under any other policy raises
+        `FileAccessUnavailable`.
 
         Conflicting sources for one `(namespace, masked)` key are
         dropped (see the module docstring's ambiguity policy); the
@@ -297,11 +331,27 @@ class VaultWriter:
             pq.write_table(chunk_table, buf)
             # Encrypt this chunk and drop its plaintext before the next one.
             parts.append(_frame(fernet.encrypt(buf.getvalue().to_pybytes())))
-        Path(path).write_bytes(b"".join(parts))
+        out: OutputDir
+        if isinstance(path, (str, Path)):
+            if not fileaccess.is_ambient(self._access):
+                raise FileAccessUnavailable(
+                    "a vault path string is accepted only under the ambient policy; "
+                    "pass an OutputDir issued by the policy"
+                )
+            out = self._access.output_dir(FileRequest(FileRole.VAULT, "write", str(path), "vault"))
+            mode: Literal["exclusive", "replace"] = "replace"
+            label: Literal["vault", "vault_direct"] = "vault_direct"
+        else:
+            out = path
+            mode = "exclusive"
+            label = "vault"
+        with out.begin("file", mode, label=label) as txn:
+            serial.write_bytes(txn, "vault", b"".join(parts))
+            txn.publish()
         return len(rows)
 
     def _fernet(self) -> Any:
-        return _fernet(self._mask_key)
+        return _fernet(OpaqueBox(self._mask_key))
 
 
 def assert_vault_writer_keyed(vault_writer: object, mask_key: bytes) -> None:
@@ -314,47 +364,63 @@ def assert_vault_writer_keyed(vault_writer: object, mask_key: bytes) -> None:
     under a key that does not match the masking run's resolved secret. A
     duck-typed writer without the key-match contract is rejected outright.
     """
+    key = OpaqueBox(mask_key)
+    del mask_key  # a traceback keeps this frame: the key must not be among its locals
     if not isinstance(vault_writer, VaultWriter):
         raise VaultError(
-            code="vault_writer_unsupported",
+            code=reasons.runtime.VAULT_WRITER_UNSUPPORTED,
             message=(
                 "vault_writer must be a decoy_engine.vault.VaultWriter so its "
                 "keyed-mask key can be verified against the run secret "
                 "(DE-02 fail-closed vault-key guard)."
             ),
         )
-    vault_writer.assert_keyed_with(mask_key)
+    vault_writer.assert_keyed_with(key.open()[0])
 
 
+@fileaccess.entry_point
 def vault_writer_for_config(
-    config: dict[str, Any], *, key_provider: KeyProvider | None = None
+    config: dict[str, Any],
+    *,
+    key_provider: KeyProvider | None = None,
+    file_access: FileAccess | None = None,
 ) -> VaultWriter:
     """Build a `VaultWriter` keyed by the run's mask key.
 
     Mirrors the mask path's key resolution (DE-02) so the vault always opens
     under the same key the masked output was produced with: a programmatic
-    `key_provider` wins, else `global_settings.mask_secret_ref` (env:/file:), else
-    the normalized `job_seed` (byte-identical to pre-DE-02). Normalization matches
+    `key_provider` wins, else `global_settings.mask_secret_ref` (any registered scheme), else
+    the normalized `job_seed` (a config with no keyed columns only). Normalization matches
     the plan compiler exactly (the same `global_settings.seed` rules).
     """
-    from decoy_engine.keyprovider import key_provider_from_ref
     from decoy_engine.plan._seed import _normalize_job_seed
+    from decoy_engine.secret_providers import AdmissionScope, admit_mask_key
 
     job_seed = _normalize_job_seed(config)
-    provider: KeyProvider | None = key_provider
-    if provider is None:
-        ref = (config.get("global_settings") or {}).get("mask_secret_ref")
-        if ref:
-            provider = key_provider_from_ref(ref)
-    mask_key = provider.mask_key() if provider is not None else job_seed
-    return VaultWriter(mask_key)
+    # F13: the secret is admitted through the shared preflight; keyed (vaulted) work with no
+    # secret fails closed in every release phase. A-4: the writer carries the caller's policy.
+    with AdmissionScope() as scope:
+        provider = scope.adopt(admit_mask_key(config, key_provider=key_provider)).key_provider
+        key = OpaqueBox(provider.mask_key() if provider is not None else job_seed)
+    return VaultWriter(key.open()[0], file_access=file_access)
 
 
-def load_vault(path: str | Path, mask_key: bytes) -> tuple[dict[tuple[str, str], str], int]:
+@fileaccess.entry_point
+def load_vault(
+    path: str | Path | None,
+    mask_key: bytes,
+    *,
+    vault: FileHandle | None = None,
+    file_access: FileAccess | None = None,
+) -> tuple[dict[tuple[str, str], str], int]:
     """Decrypt a vault file into `{(namespace, masked): source}`.
 
     DE-02: `mask_key` is the keyed-mask IKM the vault was written under (the
     8-byte `job_seed` when no secret, or a 32-byte KeyProvider root).
+
+    `vault` is a handle the policy issued for the vault file and takes the place of `path`;
+    a path string is accepted only under the ambient CLI policy and raises
+    `FileAccessUnavailable` under any other.
 
     Returns the map plus the recorded `ambiguous_dropped` count.
 
@@ -374,18 +440,36 @@ def load_vault(path: str | Path, mask_key: bytes) -> tuple[dict[tuple[str, str],
     # vault_crypto_not_installed even when the file is absent (preserves the
     # pre-streaming ordering the absent-dep contract test pins). Building the
     # object only derives the key; it does not decrypt.
-    fernet = _fernet(mask_key)
+    key = OpaqueBox(mask_key)
+    del mask_key  # a traceback keeps this frame: the key must not be among its locals
+    fernet = _fernet(key)
+    handle = vault
+    if handle is None:
+        if path is None or not fileaccess.is_ambient():
+            raise FileAccessUnavailable(
+                "load_vault needs a vault handle from the policy; a path string is accepted "
+                "only under the ambient policy"
+            )
+        handle = fileaccess.current().open_read(
+            FileRequest(FileRole.VAULT, "read", str(path), "vault")
+        )
+    shown = handle.display
     try:
-        blob = Path(path).read_bytes()
+        blob = handle.read_all()
     except OSError as exc:
+        if fileaccess.keeps_class(exc):
+            raise
         raise VaultError(
-            code="vault_unreadable",
-            message=f"vault file {str(path)!r} could not be read: {exc}",
+            code=reasons.runtime.VAULT_UNREADABLE,
+            message=f"vault file {shown!r} could not be read: {exc}",
         ) from exc
+    finally:
+        if vault is None:
+            handle.close()
     if not blob.startswith(_MAGIC):
         raise VaultError(
-            code="vault_unreadable",
-            message=f"{str(path)!r} is not a decoy vault file (bad magic header).",
+            code=reasons.runtime.VAULT_UNREADABLE,
+            message=f"{shown!r} is not a decoy vault file (bad magic header).",
         )
 
     # Parse + validate the UNENCRYPTED header before any decrypt, so a
@@ -398,23 +482,24 @@ def load_vault(path: str | Path, mask_key: bytes) -> tuple[dict[tuple[str, str],
         header = json.loads(header_bytes)
     except (ValueError, UnicodeDecodeError) as exc:
         raise VaultError(
-            code="vault_unreadable", message=f"vault {str(path)!r} has an unreadable header"
+            code=reasons.runtime.VAULT_UNREADABLE,
+            message=f"vault {shown!r} has an unreadable header",
         ) from exc
     fmt = header.get("format")
     if fmt != VAULT_FORMAT_VERSION:
         raise VaultError(
-            code="vault_format_unsupported",
+            code=reasons.runtime.VAULT_FORMAT_UNSUPPORTED,
             message=(
-                f"vault {str(path)!r} declares format {fmt!r}; this engine "
+                f"vault {shown!r} declares format {fmt!r}; this engine "
                 f"consumes {VAULT_FORMAT_VERSION!r}."
             ),
         )
     vault_version = header.get("seed_protocol_version")
     if vault_version != SEED_PROTOCOL_VERSION:
         raise VaultError(
-            code="vault_protocol_version_mismatch",
+            code=reasons.runtime.VAULT_PROTOCOL_VERSION_MISMATCH,
             message=(
-                f"vault {str(path)!r} was written under seed protocol version "
+                f"vault {shown!r} was written under seed protocol version "
                 f"{vault_version!r}; this engine runs version {SEED_PROTOCOL_VERSION!r}. "
                 f"Cross-version unmask is not supported; re-mask under this engine "
                 f"or use an engine at protocol version {vault_version!r}."
@@ -432,7 +517,7 @@ def load_vault(path: str | Path, mask_key: bytes) -> tuple[dict[tuple[str, str],
             payload = fernet.decrypt(token)
         except InvalidToken as exc:
             raise VaultError(
-                code="vault_key_mismatch",
+                code=reasons.runtime.VAULT_KEY_MISMATCH,
                 message=(
                     "the config's seed does not decrypt this vault; pass the SAME "
                     "pipeline config the mask run that wrote the vault used."

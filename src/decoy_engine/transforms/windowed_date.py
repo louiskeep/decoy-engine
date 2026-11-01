@@ -51,6 +51,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from decoy_engine import reasons
 from decoy_engine.determinism._derive import derive
 from decoy_engine.errors import DecoyError
 from decoy_engine.plan._errors import PlanCompileError
@@ -126,7 +127,7 @@ class WindowedDateConfig:
         anchor = cfg.get("anchor")
         if not anchor:
             raise PlanCompileError(
-                code="windowed_date_anchor_missing",
+                code=reasons.plan.WINDOWED_DATE_ANCHOR_MISSING,
                 path="provider_config.anchor",
                 message=(
                     "'anchor' is required for the windowed_date strategy. "
@@ -136,7 +137,7 @@ class WindowedDateConfig:
 
         if "max_days" not in cfg or cfg.get("max_days") is None:
             raise PlanCompileError(
-                code="windowed_date_max_days_missing",
+                code=reasons.plan.WINDOWED_DATE_MAX_DAYS_MISSING,
                 path="provider_config.max_days",
                 message=(
                     "'max_days' is required for the windowed_date strategy. "
@@ -149,7 +150,7 @@ class WindowedDateConfig:
 
         if min_days > max_days:
             raise PlanCompileError(
-                code="windowed_date_min_exceeds_max",
+                code=reasons.plan.WINDOWED_DATE_MIN_EXCEEDS_MAX,
                 path="provider_config.min_days",
                 message=(f"'min_days' ({min_days}) must be <= 'max_days' ({max_days})."),
             )
@@ -157,7 +158,7 @@ class WindowedDateConfig:
         distribution = str(cfg.get("distribution", "uniform"))
         if distribution not in WINDOWED_DATE_DISTRIBUTIONS:
             raise PlanCompileError(
-                code="windowed_date_distribution_invalid",
+                code=reasons.plan.WINDOWED_DATE_DISTRIBUTION_INVALID,
                 path="provider_config.distribution",
                 message=(
                     f"'distribution' must be one of "
@@ -263,7 +264,7 @@ def _shift_and_format(anchor: pd.Timestamp, offset: int, position: int) -> str:
     # The pandas/strftime error text can quote the anchor or shifted date, so the cause is
     # dropped (raised outside the except block: no __cause__, no __context__).
     try:
-        out = anchor + pd.Timedelta(days=offset)
+        out = anchor + pd.Timedelta(offset, unit="D")
         if SUPPORTED_MIN <= out <= SUPPORTED_MAX:
             return str(out.strftime(_DATE_FMT))
     except (OverflowError, ValueError):
@@ -312,23 +313,31 @@ def apply_windowed_date(
             ``""`` and ``"NaT"``), lies outside ``SUPPORTED_MIN``..``SUPPORTED_MAX``, or the
             window arithmetic or formatting overflows. Fail-closed: no row is clamped.
     """
-    anchor_series = df[config.anchor]
-    result: list[str | None] = []
+    try:
+        anchor_series = df[config.anchor]
+        result: list[str | None] = []
 
-    # C8-iii-d: `positions` gives each row its full-table row number under a `when:` gate, so a
-    # selected row seeds the same as in an ungated run. Without it, rows are contiguous from
-    # `row_offset`, byte-identical to the previous `enumerate(..., start=row_offset)`.
-    row_numbers: Sequence[int] = (
-        positions if positions is not None else range(row_offset, row_offset + len(anchor_series))
-    )
-    for i, raw_anchor in zip(row_numbers, anchor_series, strict=True):
-        if _is_null_cell(raw_anchor):
-            result.append(None)
-            continue
-        anchor_ts = _parse_anchor(raw_anchor, int(i))
-        row_seed_int = int.from_bytes(derive(seed, namespace, int(i).to_bytes(8, "big"))[:8], "big")
-        row_rng = np.random.default_rng(row_seed_int)
-        offset = _sample_offset(row_rng, config.min_days, config.max_days, config.distribution)
-        result.append(_shift_and_format(anchor_ts, offset, int(i)))
+        # C8-iii-d: `positions` gives each row its full-table row number under a `when:` gate, so a
+        # selected row seeds the same as in an ungated run. Without it, rows are contiguous from
+        # `row_offset`, byte-identical to the previous `enumerate(..., start=row_offset)`.
+        row_numbers: Sequence[int] = (
+            positions
+            if positions is not None
+            else range(row_offset, row_offset + len(anchor_series))
+        )
+        for i, raw_anchor in zip(row_numbers, anchor_series, strict=True):
+            if _is_null_cell(raw_anchor):
+                result.append(None)
+                continue
+            anchor_ts = _parse_anchor(raw_anchor, int(i))
+            row_seed_int = int.from_bytes(
+                derive(seed, namespace, int(i).to_bytes(8, "big"))[:8], "big"
+            )
+            row_rng = np.random.default_rng(row_seed_int)
+            offset = _sample_offset(row_rng, config.min_days, config.max_days, config.distribution)
+            result.append(_shift_and_format(anchor_ts, offset, int(i)))
 
-    return result
+        return result
+    except BaseException:
+        del seed
+        raise

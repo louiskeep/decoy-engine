@@ -11,8 +11,9 @@ from __future__ import annotations
 
 from typing import Any
 
+from decoy_engine import reasons
 from decoy_engine.errors import ValidationError
-from decoy_engine.expressions._when_parser import WHEN_OUTSIDE_GRAMMAR_CODE, parse_when
+from decoy_engine.expressions._when_parser import parse_when
 from decoy_engine.plan._errors import PlanCompileError
 
 
@@ -43,7 +44,7 @@ def check_when_with_coherent_with(config: dict[str, Any]) -> None:
                 and len(coherent_with) > 0
             ):
                 raise PlanCompileError(
-                    code="when_with_coherent_with_unsupported",
+                    code=reasons.plan.WHEN_WITH_COHERENT_WITH_UNSUPPORTED,
                     path=f"tables.{table_name}.columns.{col_name}.when",
                     message=(
                         f"Column {table_name}.{col_name}: `when:` is not "
@@ -78,7 +79,7 @@ def check_when_grammar(config: dict[str, Any]) -> None:
             path = f"tables.{table_name}.columns.{col_name}.when"
             if not isinstance(when, str):
                 raise PlanCompileError(
-                    code=WHEN_OUTSIDE_GRAMMAR_CODE,
+                    code=reasons.plan.WHEN_OUTSIDE_CLOSED_GRAMMAR,
                     path=path,
                     message=(
                         f"Column {table_name}.{col_name}: `when:` must be a string "
@@ -94,7 +95,7 @@ def check_when_grammar(config: dict[str, Any]) -> None:
                 reason = exc.raw_message
             # Raised outside the handler so `__context__` stays empty.
             raise PlanCompileError(
-                code=WHEN_OUTSIDE_GRAMMAR_CODE,
+                code=reasons.plan.WHEN_OUTSIDE_CLOSED_GRAMMAR,
                 path=path,
                 message=(
                     f"Column {table_name}.{col_name}: {reason}. See the "

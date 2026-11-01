@@ -27,6 +27,7 @@ from typing import Any
 
 import pyarrow as pa
 
+from decoy_engine import reasons
 from decoy_engine.generation.pool._events import QualityWarning
 
 __all__ = [
@@ -37,7 +38,7 @@ __all__ = [
 ]
 
 #: The `QualityWarning.code` a caller filters on to find the residency heads-up.
-RESIDENCY_WARNING_CODE = "out_of_core_caller_managed_residency"
+RESIDENCY_WARNING_CODE = reasons.warning.OUT_OF_CORE_CALLER_MANAGED_RESIDENCY
 
 
 def caller_managed_residency_shapes(

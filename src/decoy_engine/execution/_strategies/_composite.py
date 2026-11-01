@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import pandas as pd
 
+from decoy_engine import reasons
 from decoy_engine.execution._adapter import StrategyContext
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._runner import WorkNode
@@ -45,7 +46,7 @@ class CompositeHandler:
         coherent_namespace = ctx.namespace_registry.for_column(node.table, node.columns)
         if coherent_namespace is None:
             raise ExecutionError(
-                code="composite_namespace_unresolved",
+                code=reasons.runtime.COMPOSITE_NAMESPACE_UNRESOLVED,
                 message=(
                     f"composite group ({node.table!r}, {node.columns}) has no namespace "
                     "binding; build_namespace_registry should auto-bind the whole tuple."
@@ -54,7 +55,7 @@ class CompositeHandler:
         col_seed = node.plan_slice
         if not isinstance(col_seed, ColumnSeed):
             raise ExecutionError(
-                code="unsupported_strategy",
+                code=reasons.runtime.UNSUPPORTED_STRATEGY,
                 message=f"composite node {node.columns} has no ColumnSeed plan slice.",
             )
 
@@ -97,7 +98,7 @@ class CompositeHandler:
             bundle_decl = cfg.get("bundle") or []
             if not isinstance(bundle_decl, list):
                 raise ExecutionError(
-                    code="composite_custom_bundle_shape",
+                    code=reasons.runtime.COMPOSITE_CUSTOM_BUNDLE_SHAPE,
                     message=(
                         f"composite_custom on {node.columns}: provider_config['bundle'] "
                         f"must be a list, got {type(bundle_decl).__name__}."
@@ -110,7 +111,7 @@ class CompositeHandler:
             )
         else:
             raise ExecutionError(
-                code="unsupported_strategy",
+                code=reasons.runtime.UNSUPPORTED_STRATEGY,
                 message=f"unknown composite provider {node.provider!r}.",
             )
 
@@ -135,7 +136,7 @@ class CompositeHandler:
                 # A composite that cannot write a declared output column is a
                 # wiring error, not a silent partial-write (Dennis slice-2h M1).
                 raise ExecutionError(
-                    code="composite_output_column_missing",
+                    code=reasons.runtime.COMPOSITE_OUTPUT_COLUMN_MISSING,
                     message=(
                         f"composite {node.provider!r} produced output column {out_col!r} "
                         f"which is not in table {node.table!r}; columns={node.columns}."

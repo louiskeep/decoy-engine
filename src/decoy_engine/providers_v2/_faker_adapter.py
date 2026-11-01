@@ -27,6 +27,7 @@ from typing import Any
 
 import faker as faker_module
 
+from decoy_engine import reasons
 from decoy_engine.providers_v2._adapter import (
     CapabilityMatrix,
     ProviderSpec,
@@ -137,7 +138,7 @@ class FakerAdapter:
         method_name = _FAKER_METHOD_MAP.get(provider)
         if method_name is None:
             raise AdapterError(
-                code="unknown_provider",
+                code=reasons.provider.UNKNOWN_PROVIDER,
                 message=(
                     f"FakerAdapter has no method mapping for {provider!r}. "
                     "Built-in catalog covers the 25 documented semantic names; "
@@ -156,7 +157,7 @@ class FakerAdapter:
             return getattr(fake, method_name)(**kwargs)
         except Exception as exc:
             raise AdapterError(
-                code="capability_violation",
+                code=reasons.provider.CAPABILITY_VIOLATION,
                 message=(
                     f"FakerAdapter.generate({provider!r}) failed: {type(exc).__name__}: {exc}"
                 ),
@@ -179,7 +180,7 @@ class FakerAdapter:
         """
         if spec.deterministic:
             raise ProviderError(
-                code="capability_violation",
+                code=reasons.provider.CAPABILITY_VIOLATION,
                 message=(
                     f"FakerAdapter does not support deterministic mode for "
                     f"{provider!r} at S4 close (catalog declares "
@@ -201,7 +202,7 @@ class FakerAdapter:
         consume this for the S5 PoolAdapter wrap."""
         if spec.deterministic:
             raise ProviderError(
-                code="capability_violation",
+                code=reasons.provider.CAPABILITY_VIOLATION,
                 message=(
                     "generate_batch does not support deterministic mode; "
                     "deterministic callers use generate(...) per row, or "
@@ -238,7 +239,7 @@ class FakerAdapter:
         """
         if self._caps_lookup is None:
             raise AdapterError(
-                code="capability_violation",
+                code=reasons.provider.CAPABILITY_VIOLATION,
                 message=(
                     "FakerAdapter constructed without a capabilities_lookup; "
                     "use ProviderRegistry to instantiate, not bare FakerAdapter()."

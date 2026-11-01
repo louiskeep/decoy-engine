@@ -29,6 +29,7 @@ from typing import Literal, TypeAlias
 
 import pyarrow as pa
 
+from decoy_engine import reasons
 from decoy_engine.errors import DecoyError
 from decoy_engine.transforms.fpe import FF1_TWEAK_SCOPE_COLUMN, build_ff1_tweak
 
@@ -57,7 +58,7 @@ class NativeCompanionCheckError(DecoyError):
     is informative on every path, not just the ones a loader happened to
     raise on."""
 
-    code: str = "native_companion.check_failed"
+    code: str = reasons.runtime.NATIVE_COMPANION_CHECK_FAILED
 
     def __init__(
         self,

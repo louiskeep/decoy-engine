@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING
 import pyarrow as pa
 import pyarrow.compute as pc
 
+from decoy_engine import reasons
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution.out_of_core._external_sort import BoundedExternalSorter
 
@@ -44,7 +45,7 @@ if TYPE_CHECKING:
 
 def _contiguity_error(detail: str) -> ExecutionError:
     return ExecutionError(
-        code="out_of_core_fk_reorder_contiguity",
+        code=reasons.runtime.OUT_OF_CORE_FK_REORDER_CONTIGUITY,
         message=(
             "the order-restored FK join output is not exactly the child's own "
             f"0..N-1 row_nr domain: {detail}. N is taken from the INDEPENDENT "
@@ -68,34 +69,42 @@ def _guarded_reorder_iter(
     """
     expected_next = 0
     seen = 0
-    for batch in sorter.iter_ordered():
-        n = batch.num_rows
-        if n == 0:
-            continue
-        row_nr = batch.column("__decoy_row_nr")
-        # Reject nulls explicitly: `pc.all` below SKIPS null diffs, so a null
-        # row_nr would slip the adjacent-difference check while still counting
-        # toward `seen`/`expected_next`. The sorter's own key contract already
-        # rejects null keys, but the guard must not depend on that to stay
-        # fail-closed on its own.
-        if row_nr.null_count > 0:
-            raise _contiguity_error("the ordered stream contains a null row_nr")
-        first = row_nr[0].as_py()
-        if first != expected_next:
-            raise _contiguity_error(f"a batch started at row_nr {first}, expected {expected_next}")
-        if n > 1:
-            # pc.* funcs are dynamically generated; stubs miss them.
-            diffs = pc.subtract(  # type: ignore[attr-defined, unused-ignore]
-                row_nr.slice(1, n - 1), row_nr.slice(0, n - 1)
-            )
-            if not pc.all(pc.equal(diffs, 1)).as_py():  # type: ignore[attr-defined, unused-ignore]
+    # Closed explicitly: 3.12 runs a delegated generator's `finally` only when the outer one is
+    # deallocated, which would leave iter_ordered's run-file FD open after close().
+    inner = sorter.iter_ordered()
+    try:
+        for batch in inner:
+            n = batch.num_rows
+            if n == 0:
+                continue
+            row_nr = batch.column("__decoy_row_nr")
+            # Reject nulls explicitly: `pc.all` below SKIPS null diffs, so a null
+            # row_nr would slip the adjacent-difference check while still counting
+            # toward `seen`/`expected_next`. The sorter's own key contract already
+            # rejects null keys, but the guard must not depend on that to stay
+            # fail-closed on its own.
+            if row_nr.null_count > 0:
+                raise _contiguity_error("the ordered stream contains a null row_nr")
+            first = row_nr[0].as_py()
+            if first != expected_next:
                 raise _contiguity_error(
-                    f"row_nr [{first}..{row_nr[n - 1].as_py()}] is not a "
-                    "contiguous ascending run (duplicate or missing value)"
+                    f"a batch started at row_nr {first}, expected {expected_next}"
                 )
-        expected_next = first + n
-        seen += n
-        yield batch
+            if n > 1:
+                # pc.* funcs are dynamically generated; stubs miss them.
+                diffs = pc.subtract(  # type: ignore[attr-defined, unused-ignore]
+                    row_nr.slice(1, n - 1), row_nr.slice(0, n - 1)
+                )
+                if not pc.all(pc.equal(diffs, 1)).as_py():  # type: ignore[attr-defined, unused-ignore]
+                    raise _contiguity_error(
+                        f"row_nr [{first}..{row_nr[n - 1].as_py()}] is not a "
+                        "contiguous ascending run (duplicate or missing value)"
+                    )
+            expected_next = first + n
+            seen += n
+            yield batch
+    finally:
+        inner.close()
     # The per-batch first-of-batch check makes `expected_next` telescope to
     # exactly `seen` (each batch begins where the last ended), so the second
     # clause is provably redundant with the first -- kept as intentional
@@ -436,7 +445,7 @@ def _assert_slim_sorter_schema(schema: pa.Schema) -> None:
     for name in schema.names:
         if name == "__decoy_fk_join_key" or name.startswith("__decoy_src_"):
             raise ExecutionError(
-                code="out_of_core_sorter_schema_not_slim",
+                code=reasons.runtime.OUT_OF_CORE_SORTER_SCHEMA_NOT_SLIM,
                 message=(
                     f"the reorder sorter's input schema {schema.names} still carries the "
                     f"raw child column {name!r}; the slim sort must project only "
@@ -485,7 +494,7 @@ def _concat_join_row_batches(batches: list[pa.RecordBatch]) -> pa.RecordBatch:
 
 def _row_alignment_error(detail: str) -> ExecutionError:
     return ExecutionError(
-        code="out_of_core_fk_row_alignment",
+        code=reasons.runtime.OUT_OF_CORE_FK_ROW_ALIGNMENT,
         message=(
             "out-of-core FK join output could not be row-aligned to the masked "
             f"payload: {detail}. The join row_nr must match the payload row_nr "

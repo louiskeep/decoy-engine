@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
+from decoy_engine import reasons
 from decoy_engine.execution._adapter import provider_config_to_dict
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._operator_registry import PYTHON_SCALAR, RUST_COMPANION
@@ -39,9 +40,9 @@ from decoy_engine.execution.out_of_core._mask_group_b import _text_redact_detect
 if TYPE_CHECKING:
     from decoy_engine.plan._types import ColumnSeed
 
-REASON_UNAVAILABLE = "text_redact_extension_unavailable"
+REASON_UNAVAILABLE = reasons.route.TEXT_REDACT_EXTENSION_UNAVAILABLE
 _NO_BACKEND_RAN = "none"
-_REASON_NO_NATIVE_CALLS = "no_native_kernel_calls"
+_REASON_NO_NATIVE_CALLS = reasons.route.NO_NATIVE_KERNEL_CALLS
 
 
 @dataclass(frozen=True)
@@ -157,7 +158,7 @@ class TableTextRedactPlan:
         if decision.native:
             if idx < 0:
                 raise ExecutionError(
-                    code="out_of_core_text_redact_column_missing",
+                    code=reasons.runtime.OUT_OF_CORE_TEXT_REDACT_COLUMN_MISSING,
                     message=(
                         f"text_redact column {column!r} of table {decision.table!r} is missing "
                         "from a streamed batch; the run is aborted rather than skipping it."
@@ -165,7 +166,7 @@ class TableTextRedactPlan:
                 )
             if batch.schema.field(idx).type != decision.pinned_type:
                 raise ExecutionError(
-                    code="out_of_core_text_redact_source_type_drift",
+                    code=reasons.runtime.OUT_OF_CORE_TEXT_REDACT_SOURCE_TYPE_DRIFT,
                     message=(
                         f"text_redact column {column!r} of table {decision.table!r} was pinned "
                         f"as {decision.pinned_type} but a batch carries "
@@ -216,7 +217,7 @@ def native_text_redact_array(
     config = native.decision.config
     if config is None:  # pragma: no cover - a native decision always carries its config
         raise ExecutionError(
-            code="out_of_core_text_redact_unprepared",
+            code=reasons.runtime.OUT_OF_CORE_TEXT_REDACT_UNPREPARED,
             message="a native text_redact column reached the kernel without a resolved config.",
         )
     native.decision.native_calls += 1
@@ -228,7 +229,7 @@ def native_text_redact_array(
     )
     if not isinstance(out, pa.Array) or out.type != pa.string() or len(out) != len(values):
         raise ExecutionError(
-            code="out_of_core_text_redact_native_result_invalid",
+            code=reasons.runtime.OUT_OF_CORE_TEXT_REDACT_NATIVE_RESULT_INVALID,
             message=(
                 "the native text_redact kernel returned an array that is not one string per "
                 "input row."

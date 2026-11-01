@@ -35,7 +35,7 @@ named:
 Built-in span detectors do not emit the Tier-2 (date/faker/NER-routed)
 detector ids without a real spaCy model. `_install_fake_ner` bypasses the
 spaCy dependency (absent in this environment) and stubs
-`storm.ner.iter_ner_spans` to return hand-picked `Span` objects for a
+`detection.ner.iter_ner_spans` to return hand-picked `Span` objects for a
 literal marker substring, reaching the `date_shift`/`faker`/unknown-fallback
 branches through the SAME `extra_spans` merge path real NER would use --
 deterministically, with no model install. Any real-spaCy path stays gated
@@ -112,7 +112,7 @@ def _config(
         sources[name] = {"type": "file", "format": "csv", "path": str(tmp_path / f"{name}.csv")}
         targets[name] = {"type": "file", "format": "csv", "path": str(tmp_path / f"{name}_out.csv")}
     cfg: dict = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": seed},
         "sources": sources,
         "tables": tables,

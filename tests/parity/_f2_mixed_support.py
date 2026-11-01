@@ -83,7 +83,7 @@ def mixed_config(
     pq.write_table(child, path)
     columns = [{"name": FK, "strategy": "passthrough"}, *(child_columns or payload_columns())]
     raw: dict[str, Any] = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": seed},
         "sources": {CHILD: {"type": "file", "format": "parquet", "path": str(path)}},
         "targets": {

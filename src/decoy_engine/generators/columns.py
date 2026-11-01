@@ -1,10 +1,8 @@
-"""
-Column data generators for the decoy_engine package.
-Provides various strategies for generating synthetic column data.
-"""
+"""Column data generators for the decoy_engine package: strategies for synthetic column data."""
 
 import random
 import time
+from collections.abc import Callable
 from typing import Any
 
 import numpy as np
@@ -30,7 +28,7 @@ class ColumnGenerator(_DistributionMixin, _FormulaMixin):
         self,
         seed: int = 42,
         logger=None,
-        derive_key=None,
+        derive_key: Callable[[str], bytes] | None = None,
         instance_default_locale: str | None = None,
         reference_date: pd.Timestamp | None = None,
     ):

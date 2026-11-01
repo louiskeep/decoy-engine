@@ -33,6 +33,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
+from decoy_engine import reasons
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._row_errors import RowError
 from decoy_engine.generation.pool._events import QualityWarning
@@ -61,7 +62,7 @@ def orphan_fk_violation_error(edge: RelationshipEdge, orphan_count: int) -> Exec
     only: the message names tables and columns, never a key value.
     """
     return ExecutionError(
-        code="orphan_fk_violation",
+        code=reasons.runtime.ORPHAN_FK_VIOLATION,
         message=(
             f"{orphan_count} orphan row(s) in "
             f"{edge.child_table}.{edge.child_columns} reference no parent key in "
@@ -158,7 +159,7 @@ def resolve_fk_keys(
     if policy is OrphanPolicy.WARN:
         warnings.append(
             QualityWarning(
-                code="orphan_fk",
+                code=reasons.warning.ORPHAN_FK,
                 provider=edge.namespace,
                 column=",".join(edge.child_columns),
                 detail={

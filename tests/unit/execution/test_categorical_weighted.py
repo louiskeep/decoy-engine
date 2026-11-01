@@ -104,12 +104,17 @@ class TestCdfBuilder:
             _build_cdf([1.0, 1e-20, 1.0])
 
     def test_weight_just_above_resolution_passes(self):
-        """A weight at ~1e-6 of the total moves the CDF by one slot
-        and passes the new guard. Cited in the F9 audit but not
-        actually broken: float64 precision means 1e-6 still moves the
-        threshold."""
-        cdf = _build_cdf([1.0, 2.0e-6, 1.0])
+        """A weight of ~1.5 slots (3e-6 of a 2.000003 total) keeps a
+        non-empty band and passes the guard."""
+        cdf = _build_cdf([1.0, 3.0e-6, 1.0])
         assert cdf[1] > cdf[0]  # middle category has at least one slot
+
+    def test_weight_just_below_one_slot_raises(self):
+        """2e-6 of a 2.000002 total is 0.999999 of a slot: the exact
+        round-half-up thresholds give it zero width. The old truncating
+        float builder happened to give it one slot."""
+        with pytest.raises(StrategyError, match="below the CDF"):
+            _build_cdf([1.0, 2.0e-6, 1.0])
 
 
 # ── V1 byte identity (no weights) ─────────────────────────────────

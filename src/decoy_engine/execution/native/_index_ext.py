@@ -22,11 +22,12 @@ this module's job.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol
 
 import pyarrow as pa
 
+from decoy_engine import reasons
 from decoy_engine.determinism import DeterminismError, derive_index
 from decoy_engine.determinism._derive import DeriveContext
 from decoy_engine.generation.pool._canonicalize import _canonicalize_source
@@ -56,7 +57,7 @@ from ._crypto_ext import (
 
 @dataclass(frozen=True)
 class IndexKatVector:
-    mask_key: bytes
+    mask_key: bytes = field(repr=False)
     namespace: str
     pool_size: int
     values: tuple[str | None, ...]
@@ -107,7 +108,7 @@ def _translate_compiled_index_kernel_error(exc: ValueError) -> Exception:
         # Arrow type with one coded ValueError, where the reference's canonicalizer
         # raises a finer-grained GenerationError code per value type. The exception
         # TYPE is the drop-in guarantee, not the specific code.
-        return GenerationError(code="native_type_not_admitted", message=detail)
+        return GenerationError(code=reasons.runtime.NATIVE_TYPE_NOT_ADMITTED, message=detail)
     return exc
 
 
@@ -132,20 +133,24 @@ class _CompiledIndexKernel:
         # Fail before the compiled kernel is even called, matching
         # `_ReferenceIndexDerivation.derive_index_batch`'s unconditional pre-loop
         # guard exactly (same message, same exception type).
-        key = _require_mask_key(mask_key, "index_derivation")
-        # A ChunkedArray is still one Arrow-typed column in more than one buffer;
-        # combine to the single pa.Array the compiled entry point accepts.
-        array = values.combine_chunks() if isinstance(values, pa.ChunkedArray) else values
         try:
-            return self._derive_index_batch_fn(
-                array,
-                mask_key=key,
-                namespace=namespace,
-                pool_size=pool_size,
-                native_threads=native_threads,
-            )
-        except ValueError as exc:
-            raise _translate_compiled_index_kernel_error(exc) from exc
+            mask_key = _require_mask_key(mask_key, "index_derivation")
+            # A ChunkedArray is still one Arrow-typed column in more than one buffer;
+            # combine to the single pa.Array the compiled entry point accepts.
+            array = values.combine_chunks() if isinstance(values, pa.ChunkedArray) else values
+            try:
+                return self._derive_index_batch_fn(
+                    array,
+                    mask_key=mask_key,
+                    namespace=namespace,
+                    pool_size=pool_size,
+                    native_threads=native_threads,
+                )
+            except ValueError as exc:
+                raise _translate_compiled_index_kernel_error(exc) from exc
+        except BaseException:
+            del mask_key
+            raise
 
 
 # ---------------------------------------------------------------------------
@@ -285,29 +290,33 @@ class _ReferenceIndexDerivation:
         # single-threaded Python reference is the parity oracle, and the compiled
         # kernel's output is thread-invariant (proven at every thread count), so
         # the thread count never changes indices on either side.
-        del native_threads
-        key = _require_mask_key(mask_key, "index_derivation")
-        # The HKDF key depends only on (key, namespace), so derive it once per call
-        # instead of once per row. Errors keep the per-row order of the scalar path
-        # (and of the Rust kernel): the first non-null row is canonicalized and run
-        # through scalar `derive_index`, so its value, pool-size, seed and namespace
-        # checks come first; later rows are canonicalized lazily, in row order, as
-        # the batched HMAC consumes them. An all-null column validates nothing.
-        pylist = _array_to_pylist(values)
-        out: list[int | None] = [None] * len(pylist)
-        first = next((i for i, v in enumerate(pylist) if not _is_missing(v)), None)
-        if first is None:
+        try:
+            del native_threads
+            mask_key = _require_mask_key(mask_key, "index_derivation")
+            # The HKDF key depends only on (key, namespace), so derive it once per call
+            # instead of once per row. Errors keep the per-row order of the scalar path
+            # (and of the Rust kernel): the first non-null row is canonicalized and run
+            # through scalar `derive_index`, so its value, pool-size, seed and namespace
+            # checks come first; later rows are canonicalized lazily, in row order, as
+            # the batched HMAC consumes them. An all-null column validates nothing.
+            pylist = _array_to_pylist(values)
+            out: list[int | None] = [None] * len(pylist)
+            first = next((i for i, v in enumerate(pylist) if not _is_missing(v)), None)
+            if first is None:
+                return pa.array(out, type=pa.uint64())
+            out[first] = derive_index(
+                mask_key, namespace, _canonicalize_source(pylist[first]), pool_size=pool_size
+            )
+            rest = [i for i in range(first + 1, len(pylist)) if not _is_missing(pylist[i])]
+            digests = DeriveContext.for_column(mask_key, namespace).derive_sources(
+                namespace, (_canonicalize_source(pylist[i]) for i in rest)
+            )
+            for i, digest in zip(rest, digests, strict=True):
+                out[i] = int.from_bytes(digest[:8], "big") % pool_size
             return pa.array(out, type=pa.uint64())
-        out[first] = derive_index(
-            key, namespace, _canonicalize_source(pylist[first]), pool_size=pool_size
-        )
-        rest = [i for i in range(first + 1, len(pylist)) if not _is_missing(pylist[i])]
-        digests = DeriveContext.for_column(key, namespace).derive_sources(
-            namespace, (_canonicalize_source(pylist[i]) for i in rest)
-        )
-        for i, digest in zip(rest, digests, strict=True):
-            out[i] = int.from_bytes(digest[:8], "big") % pool_size
-        return pa.array(out, type=pa.uint64())
+        except BaseException:
+            del mask_key
+            raise
 
 
 def reference_index_derivation() -> IndexDerivationKernel:

@@ -101,41 +101,45 @@ def encrypt_spans(
     to `_mask_span`. Equal matched texts share one result because FF1 here depends only on
     (key, tweak, text).
     """
-    fpe_fn = load_fpe_batch() if detectors else None
-    if fpe_fn is None:
-        return {}
-    wanted: dict[str, dict[str, None]] = {}  # detector -> ordered distinct texts
-    for spans in spans_by_cell:
-        for span in spans or ():
-            if span.detector_id in detectors and span.matched_text.isascii():
-                wanted.setdefault(span.detector_id, {})[span.matched_text] = None
-    out: dict[tuple[str, str], str] = {}
-    for det_id, texts_map in wanted.items():
-        texts = list(texts_map)
-        charset = _CHARSETS[_FPE_CONFIG[det_id][0]]
-        try:
-            enc, errors = fpe_fn(
-                pa.array(texts, type=pa.string()),
-                mask_key=mask_key,
-                namespace=f"text.{det_id}",
-                tweak=build_ff1_tweak(FF1_TWEAK_SCOPE_TEXT_SPAN, det_id),
-                charset=charset,
-                preserve_separators=True,
-                validate_luhn=False,
-                forward=True,
-                native_threads=None,
-            )
-        except Exception:
-            # Any kernel failure -- a coded ValueError (bad seed length, ...) or an unexpected
-            # companion-side error -- declines the whole detector to the proven oracle, which
-            # either reproduces the value byte-identically or raises/handles sub-floor from its
-            # own call site in its own order. Fail safe to the byte-exact Python path.
-            continue
-        rejected = {int(i) for i, _ in errors}
-        for i, (text, value) in enumerate(zip(texts, enc.to_pylist(), strict=True)):
-            if i not in rejected and value is not None:
-                out[(det_id, text)] = value
-    return out
+    try:
+        fpe_fn = load_fpe_batch() if detectors else None
+        if fpe_fn is None:
+            return {}
+        wanted: dict[str, dict[str, None]] = {}  # detector -> ordered distinct texts
+        for spans in spans_by_cell:
+            for span in spans or ():
+                if span.detector_id in detectors and span.matched_text.isascii():
+                    wanted.setdefault(span.detector_id, {})[span.matched_text] = None
+        out: dict[tuple[str, str], str] = {}
+        for det_id, texts_map in wanted.items():
+            texts = list(texts_map)
+            charset = _CHARSETS[_FPE_CONFIG[det_id][0]]
+            try:
+                enc, errors = fpe_fn(
+                    pa.array(texts, type=pa.string()),
+                    mask_key=mask_key,
+                    namespace=f"text.{det_id}",
+                    tweak=build_ff1_tweak(FF1_TWEAK_SCOPE_TEXT_SPAN, det_id),
+                    charset=charset,
+                    preserve_separators=True,
+                    validate_luhn=False,
+                    forward=True,
+                    native_threads=None,
+                )
+            except Exception:
+                # Any kernel failure -- a coded ValueError (bad seed length, ...) or an unexpected
+                # companion-side error -- declines the whole detector to the proven oracle, which
+                # either reproduces the value byte-identically or raises/handles sub-floor from its
+                # own call site in its own order. Fail safe to the byte-exact Python path.
+                continue
+            rejected = {int(i) for i, _ in errors}
+            for i, (text, value) in enumerate(zip(texts, enc.to_pylist(), strict=True)):
+                if i not in rejected and value is not None:
+                    out[(det_id, text)] = value
+        return out
+    except BaseException:
+        del mask_key
+        raise
 
 
 def has_native_span(spans: Sequence[Span], outputs: FpeOutputs) -> bool:
@@ -161,36 +165,40 @@ def mask_cell_hybrid(
     `outputs` goes through `_mask_span` unchanged, so it raises, counts notices, and logs in span
     order exactly as in the all-Python run.
     """
-    if unmatched_span_policy == "passthrough":
-        warn_passthrough_unmatched(_TEXT_MASK_LOG)
-    effective_map: dict[str, str] = dict(DETECTOR_DEFAULTS)
-    if strategy_map:
-        effective_map.update(strategy_map)
-    extra_cfg: dict[str, Any] = dict(cfg or {})
-    extra_cfg.setdefault("token", token)
+    try:
+        if unmatched_span_policy == "passthrough":
+            warn_passthrough_unmatched(_TEXT_MASK_LOG)
+        effective_map: dict[str, str] = dict(DETECTOR_DEFAULTS)
+        if strategy_map:
+            effective_map.update(strategy_map)
+        extra_cfg: dict[str, Any] = dict(cfg or {})
+        extra_cfg.setdefault("token", token)
 
-    def mask_span(span: Span) -> str:
-        strategy = effective_map.get(span.detector_id, "redact")
-        if strategy == "fpe":
-            native = outputs.get((span.detector_id, span.matched_text))
-            if native is not None:
-                return native
-        return _mask_span(
-            span,
-            mask_key,
-            strategy,
-            extra_cfg,
-            sub_floor_span_policy=sub_floor_span_policy,
-            sub_floor_notices=sub_floor_notices,
+        def mask_span(span: Span) -> str:
+            strategy = effective_map.get(span.detector_id, "redact")
+            if strategy == "fpe":
+                native = outputs.get((span.detector_id, span.matched_text))
+                if native is not None:
+                    return native
+            return _mask_span(
+                span,
+                mask_key,
+                strategy,
+                extra_cfg,
+                sub_floor_span_policy=sub_floor_span_policy,
+                sub_floor_notices=sub_floor_notices,
+            )
+
+        return splice_spans(
+            text,
+            spans,
+            mask_span=mask_span,
+            unmatched_span_policy=unmatched_span_policy,
+            token=token,
         )
-
-    return splice_spans(
-        text,
-        spans,
-        mask_span=mask_span,
-        unmatched_span_policy=unmatched_span_policy,
-        token=token,
-    )
+    except BaseException:
+        del mask_key
+        raise
 
 
 __all__ = [

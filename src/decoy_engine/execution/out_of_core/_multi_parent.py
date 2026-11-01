@@ -31,6 +31,7 @@ from typing import TYPE_CHECKING
 
 import pyarrow.parquet as pq
 
+from decoy_engine import reasons
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._fk_keys import FK_KEY_DTYPE_UNSUPPORTED_CODE
 from decoy_engine.execution.out_of_core._duckdb import connect_duckdb
@@ -79,7 +80,7 @@ def resolve_incoming(
             # The planner rejects this at graph build (`orphan_policy_conflict`); a graph
             # that bypassed it must not be resolved under the first edge's policy silently.
             raise ExecutionError(
-                code="orphan_policy_conflict",
+                code=reasons.runtime.ORPHAN_POLICY_CONFLICT,
                 message=(
                     f"out-of-core multi-parent FK: the edges into {first.child_table}."
                     f"{first.child_columns} declare different orphan policies "

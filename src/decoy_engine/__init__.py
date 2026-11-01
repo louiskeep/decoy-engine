@@ -168,13 +168,20 @@ from decoy_engine.profile._fixed_width_writer import write_fixed_width
 from decoy_engine.profiling import ColumnProfile, FieldStats, SentinelFlag, profile_columns
 from decoy_engine.progress import (
     CallbackSink,
+    CheckpointEvent,
+    CheckpointInfo,
     PhaseEvent,
     ProgressSink,
+    PublicationInfo,
     RateSample,
+    RetryEvent,
+    RetryInfo,
     RouteEvent,
     StructuredEventsSink,
     TerminalEvent,
     WarningEvent,
+    event_to_dict,
+    event_to_legacy_dict,
 )
 from decoy_engine.providers import (
     atomic_swap_db_providers,
@@ -217,6 +224,8 @@ from decoy_engine.providers_v2.identifiers import (
     SsnDomain,
     SsnValidator,
 )
+from decoy_engine.reason_adapter import reason_from_exception, reasons_from_report
+from decoy_engine.reasons import ReasonContext, ReasonRecord
 from decoy_engine.relationships import (
     NamespaceBinding,
     NamespaceConfigError,
@@ -247,6 +256,15 @@ from decoy_engine.sdk import (
     PermanentError,
     TransientError,
     WriteResult,
+)
+from decoy_engine.secret_providers import (
+    SecretCachePolicy,
+    SecretDescriptor,
+    SecretProvider,
+    SecretProviderError,
+    SecretProviderRegistry,
+    SecretRef,
+    register_secret_provider,
 )
 from decoy_engine.unmask import UnmaskColumnReport, UnmaskResult, unmask_pipeline
 from decoy_engine.validation import validate_config
@@ -296,7 +314,7 @@ _F9_KEPT_BINDINGS = (
     SsnValidator,
 )
 
-__version__ = "0.7.0"
+__version__ = "0.17.0"
 
 __all__ = [
     "CAP_DRY_RUN",
@@ -317,6 +335,8 @@ __all__ = [
     "CapacityVerdict",
     "CardinalityMode",
     "CheckResult",
+    "CheckpointEvent",
+    "CheckpointInfo",
     "ColumnProfile",
     "CompositeAdapter",
     "CompositeCoherenceReport",
@@ -380,14 +400,25 @@ __all__ = [
     "ProviderError",
     "ProviderRegistry",
     "ProviderSpec",
+    "PublicationInfo",
     "QualitySummary",
     "QualityWarning",
     "RateSample",
+    "ReasonContext",
+    "ReasonRecord",
     "RelationshipEdge",
     "RelationshipGraph",
     "ReleasePhase",
+    "RetryEvent",
+    "RetryInfo",
     "RouteEvent",
+    "SecretCachePolicy",
+    "SecretDescriptor",
     "SecretKeyProvider",
+    "SecretProvider",
+    "SecretProviderError",
+    "SecretProviderRegistry",
+    "SecretRef",
     "SeedKeyProvider",
     "SentinelFlag",
     "StrategyError",
@@ -429,6 +460,8 @@ __all__ = [
     "emit_throughput_sample",
     "estimate_job",
     "estimate_job_capacity",
+    "event_to_dict",
+    "event_to_legacy_dict",
     "generate_tables",
     "get_default_executor",
     "get_default_pool_cache",
@@ -442,9 +475,12 @@ __all__ = [
     "native_companion_status",
     "profile_columns",
     "read_fixed_width",
+    "reason_from_exception",
+    "reasons_from_report",
     "register_faker_list_provider",
     "register_faker_provider",
     "register_faker_provider_v2",
+    "register_secret_provider",
     "run_config_only_checks",
     "run_discovery_sql",
     "run_mask_chunked",

@@ -43,26 +43,28 @@ from __future__ import annotations
 import re
 from typing import Final
 
+from decoy_engine import reasons
+
 # ---------------------------------------------------------------------------
 # Layer-1 route-reason tokens (`_pipeline_routing.py`), emitted verbatim by
 # `decide_execution_route` / `_sequential_eligible` -- already stable single
 # tokens in production, no translation needed.
 # ---------------------------------------------------------------------------
 
-ROUTE_NO_RELATIONSHIPS: Final = "no_relationships"
-ROUTE_GENERATE_PLUS_MASK: Final = "generate_plus_mask"
-ROUTE_VALIDATORS_PRESENT: Final = "validators_present"
-ROUTE_FIDELITY_REPORT_REQUESTED: Final = "fidelity_report_requested"
-ROUTE_VAULT_WRITER_REQUESTED: Final = "vault_writer_requested"
-ROUTE_NON_PANDAS_SUBSTRATE_REQUESTED: Final = "non_pandas_substrate_requested"
-ROUTE_PURE_MASK_FK: Final = "pure_mask_fk"
-ROUTE_OVERRIDE_FULL_FRAME: Final = "override_full_frame"
-ROUTE_OVERRIDE_OUT_OF_CORE: Final = "override_out_of_core"
-ROUTE_BYTE_ESTIMATE_FULL_FRAME_FITS: Final = "byte_estimate_full_frame_fits"
-ROUTE_PROBE_RECOVERED_FULL_FRAME: Final = "probe_recovered_full_frame"
-ROUTE_BYTE_ESTIMATE_BOUNDED_OUT_OF_CORE: Final = "byte_estimate_bounded_out_of_core"
-ROUTE_OUT_OF_CORE_LARGE_FK: Final = "out_of_core_large_fk"
-ROUTE_CROSS_TABLE_CYCLE: Final = "cross_table_cycle"
+ROUTE_NO_RELATIONSHIPS: Final = reasons.route.NO_RELATIONSHIPS
+ROUTE_GENERATE_PLUS_MASK: Final = reasons.route.GENERATE_PLUS_MASK
+ROUTE_VALIDATORS_PRESENT: Final = reasons.route.VALIDATORS_PRESENT
+ROUTE_FIDELITY_REPORT_REQUESTED: Final = reasons.route.FIDELITY_REPORT_REQUESTED
+ROUTE_VAULT_WRITER_REQUESTED: Final = reasons.route.VAULT_WRITER_REQUESTED
+ROUTE_NON_PANDAS_SUBSTRATE_REQUESTED: Final = reasons.route.NON_PANDAS_SUBSTRATE_REQUESTED
+ROUTE_PURE_MASK_FK: Final = reasons.route.PURE_MASK_FK
+ROUTE_OVERRIDE_FULL_FRAME: Final = reasons.route.OVERRIDE_FULL_FRAME
+ROUTE_OVERRIDE_OUT_OF_CORE: Final = reasons.route.OVERRIDE_OUT_OF_CORE
+ROUTE_BYTE_ESTIMATE_FULL_FRAME_FITS: Final = reasons.route.BYTE_ESTIMATE_FULL_FRAME_FITS
+ROUTE_PROBE_RECOVERED_FULL_FRAME: Final = reasons.route.PROBE_RECOVERED_FULL_FRAME
+ROUTE_BYTE_ESTIMATE_BOUNDED_OUT_OF_CORE: Final = reasons.route.BYTE_ESTIMATE_BOUNDED_OUT_OF_CORE
+ROUTE_OUT_OF_CORE_LARGE_FK: Final = reasons.route.OUT_OF_CORE_LARGE_FK
+ROUTE_CROSS_TABLE_CYCLE: Final = reasons.route.CROSS_TABLE_CYCLE
 
 # ---------------------------------------------------------------------------
 # `out_of_core_not_ready_reason` codes (`_compiler.py`): the first-failing-
@@ -74,13 +76,13 @@ ROUTE_CROSS_TABLE_CYCLE: Final = "cross_table_cycle"
 # the remaining ones the pre-H2 compiler omitted (Task 4.3 remediation H2).
 # ---------------------------------------------------------------------------
 
-OUT_OF_CORE_NOT_READY_CYCLIC: Final = "out_of_core_cross_table_cycle"
-OUT_OF_CORE_NOT_READY_NO_MASK_TABLE: Final = "out_of_core_no_mask_table"
-OUT_OF_CORE_NOT_READY_INCOMPATIBLE: Final = "out_of_core_incompatible"
-OUT_OF_CORE_NOT_READY_NO_SIZE_SIGNAL: Final = "out_of_core_no_size_signal"
-OUT_OF_CORE_NOT_READY_BELOW_THRESHOLD_PREFIX: Final = "out_of_core_below_threshold"
-OUT_OF_CORE_NOT_READY_FK_DTYPE_HAZARD: Final = "out_of_core_fk_key_dtype_hazard"
-OUT_OF_CORE_READY_CONTRADICTION: Final = "out_of_core_ready"
+OUT_OF_CORE_NOT_READY_CYCLIC: Final = reasons.route.OUT_OF_CORE_CROSS_TABLE_CYCLE
+OUT_OF_CORE_NOT_READY_NO_MASK_TABLE: Final = reasons.route.OUT_OF_CORE_NO_MASK_TABLE
+OUT_OF_CORE_NOT_READY_INCOMPATIBLE: Final = reasons.route.OUT_OF_CORE_INCOMPATIBLE
+OUT_OF_CORE_NOT_READY_NO_SIZE_SIGNAL: Final = reasons.route.OUT_OF_CORE_NO_SIZE_SIGNAL
+OUT_OF_CORE_NOT_READY_BELOW_THRESHOLD_PREFIX: Final = reasons.route.OUT_OF_CORE_BELOW_THRESHOLD
+OUT_OF_CORE_NOT_READY_FK_DTYPE_HAZARD: Final = reasons.route.OUT_OF_CORE_FK_KEY_DTYPE_HAZARD
+OUT_OF_CORE_READY_CONTRADICTION: Final = reasons.route.OUT_OF_CORE_READY
 
 OUT_OF_CORE_NOT_READY_CODES: Final[frozenset[str]] = frozenset(
     {
@@ -115,8 +117,10 @@ ROUTE_REASON_CODES: Final[frozenset[str]] = frozenset(
 # reject-before-read branch. Compile/admission codes: the compiler's
 # `layer1_route` propagates these verbatim (it calls the live function
 # directly), so D4 equality is definitional.
-EXC_FK_FULL_FRAME_OOM_RISK_REJECTED: Final = "fk_full_frame_oom_risk_rejected"
-EXC_FK_FULL_FRAME_OOM_RISK_REJECTED_ESTIMATED: Final = "fk_full_frame_oom_risk_rejected_estimated"
+EXC_FK_FULL_FRAME_OOM_RISK_REJECTED: Final = reasons.runtime.FK_FULL_FRAME_OOM_RISK_REJECTED
+EXC_FK_FULL_FRAME_OOM_RISK_REJECTED_ESTIMATED: Final = (
+    reasons.runtime.FK_FULL_FRAME_OOM_RISK_REJECTED_ESTIMATED
+)
 
 EXECUTION_ERROR_CODES: Final[frozenset[str]] = frozenset(
     {EXC_FK_FULL_FRAME_OOM_RISK_REJECTED, EXC_FK_FULL_FRAME_OOM_RISK_REJECTED_ESTIMATED}
@@ -128,12 +132,12 @@ EXECUTION_ERROR_CODES: Final[frozenset[str]] = frozenset(
 # code -- see this module's docstring.
 # ---------------------------------------------------------------------------
 
-FORCED_OUT_OF_CORE_NO_MASK_TABLE: Final = "forced_out_of_core_no_mask_table"
-FORCED_OUT_OF_CORE_INELIGIBLE: Final = "forced_out_of_core_ineligible"
-FORCED_OUT_OF_CORE_INCOMPATIBLE: Final = "forced_out_of_core_incompatible"
-FORCED_SEQUENTIAL_INELIGIBLE: Final = "forced_sequential_ineligible"
-FORCED_SEQUENTIAL_CYCLIC: Final = "forced_sequential_cyclic"
-FORCED_SEQUENTIAL_NO_MASK_TABLE: Final = "forced_sequential_no_mask_table"
+FORCED_OUT_OF_CORE_NO_MASK_TABLE: Final = reasons.route.FORCED_OUT_OF_CORE_NO_MASK_TABLE
+FORCED_OUT_OF_CORE_INELIGIBLE: Final = reasons.route.FORCED_OUT_OF_CORE_INELIGIBLE
+FORCED_OUT_OF_CORE_INCOMPATIBLE: Final = reasons.route.FORCED_OUT_OF_CORE_INCOMPATIBLE
+FORCED_SEQUENTIAL_INELIGIBLE: Final = reasons.route.FORCED_SEQUENTIAL_INELIGIBLE
+FORCED_SEQUENTIAL_CYCLIC: Final = reasons.route.FORCED_SEQUENTIAL_CYCLIC
+FORCED_SEQUENTIAL_NO_MASK_TABLE: Final = reasons.route.FORCED_SEQUENTIAL_NO_MASK_TABLE
 
 FORCED_MODE_BRANCH_IDENTITIES: Final[frozenset[str]] = frozenset(
     {
@@ -153,7 +157,7 @@ FORCED_MODE_BRANCH_IDENTITIES: Final[frozenset[str]] = frozenset(
 # compiler names its own positive-admission code).
 # ---------------------------------------------------------------------------
 
-DRIVER_REASON_CHUNKED_ADMITTED: Final = "chunked_admitted"
+DRIVER_REASON_CHUNKED_ADMITTED: Final = reasons.route.CHUNKED_ADMITTED
 
 DRIVER_SELECTION_CODES: Final[frozenset[str]] = frozenset({DRIVER_REASON_CHUNKED_ADMITTED})
 
@@ -164,10 +168,10 @@ DRIVER_SELECTION_CODES: Final[frozenset[str]] = frozenset({DRIVER_REASON_CHUNKED
 
 PRECOMPILATION_EXCLUDED_CODES: Final[frozenset[str]] = frozenset(
     {
-        "invalid_substrate",
-        "invalid_execution_knob",
-        "out_of_core_reorder_threshold_invalid",
-        "out_of_core_memory_detection_failed",
+        reasons.route.INVALID_SUBSTRATE,
+        reasons.runtime.INVALID_EXECUTION_KNOB,
+        reasons.runtime.OUT_OF_CORE_REORDER_THRESHOLD_INVALID,
+        reasons.runtime.OUT_OF_CORE_MEMORY_DETECTION_FAILED,
     }
 )
 
@@ -200,19 +204,21 @@ _CHUNKED_SUBSTRATE_RE: Final = re.compile(
     r"resolved substrate is '([^']*)'; the chunked route constructs"
 )
 
-CODE_NO_MASK_TABLES: Final = "no_mask_tables"
-CODE_GENERATE_TABLES_PRESENT: Final = "generate_tables_present"
-CODE_MASKS_ONE_TABLE_PER_RUN: Final = "masks_one_table_per_run"
-CODE_NON_SCALAR_COMPOSITE: Final = "non_scalar_composite"
-CODE_FPE_JOIN_GROUP: Final = "fpe_join_group"
-CODE_CHUNKED_EXTRA_SOURCE_FRAME: Final = "chunked_extra_source_frame"
-CODE_CHUNKED_SOURCE_FRAME_MISSING: Final = "chunked_source_frame_missing"
-CODE_CHUNKED_SOURCE_BELOW_THRESHOLD: Final = "chunked_source_below_threshold"
-CODE_CHUNKED_SOURCE_DTYPE_UNSTABLE: Final = "chunked_source_dtype_unstable"
-CODE_CHUNKED_LAZY_SOURCE_UNSUPPORTED: Final = "chunked_lazy_source_unsupported"
+CODE_NO_MASK_TABLES: Final = reasons.route.NO_MASK_TABLES
+CODE_GENERATE_TABLES_PRESENT: Final = reasons.route.GENERATE_TABLES_PRESENT
+CODE_MASKS_ONE_TABLE_PER_RUN: Final = reasons.route.MASKS_ONE_TABLE_PER_RUN
+CODE_NON_SCALAR_COMPOSITE: Final = reasons.route.NON_SCALAR_COMPOSITE
+CODE_FPE_JOIN_GROUP: Final = reasons.route.FPE_JOIN_GROUP
+CODE_CHUNKED_EXTRA_SOURCE_FRAME: Final = reasons.route.CHUNKED_EXTRA_SOURCE_FRAME
+CODE_CHUNKED_SOURCE_FRAME_MISSING: Final = reasons.route.CHUNKED_SOURCE_FRAME_MISSING
+CODE_CHUNKED_SOURCE_BELOW_THRESHOLD: Final = reasons.route.CHUNKED_SOURCE_BELOW_THRESHOLD
+CODE_CHUNKED_SOURCE_DTYPE_UNSTABLE: Final = reasons.route.CHUNKED_SOURCE_DTYPE_UNSTABLE
+CODE_CHUNKED_LAZY_SOURCE_UNSUPPORTED: Final = reasons.route.CHUNKED_LAZY_SOURCE_UNSUPPORTED
 # B6b: the planner writes this code itself as a `code: ` prefix, which `_CODE_PREFIX_RE`
 # already extracts, so no pattern below matches it (a pattern would emit the code twice).
-CODE_CHUNKED_LAZY_SOURCE_NULL_COUNT_UNAVAILABLE: Final = "lazy_source_null_count_unavailable"
+CODE_CHUNKED_LAZY_SOURCE_NULL_COUNT_UNAVAILABLE: Final = (
+    reasons.route.LAZY_SOURCE_NULL_COUNT_UNAVAILABLE
+)
 
 _CHUNKED_PATTERNS: Final[tuple[tuple[re.Pattern[str], str], ...]] = (
     (re.compile(r"no mask-kind tables to stream"), CODE_NO_MASK_TABLES),
@@ -269,8 +275,8 @@ def translate_chunked_rejection(prose: str) -> tuple[str, ...]:
 # literal text (avoids drift if that module's wording changes).
 # ---------------------------------------------------------------------------
 
-CODE_RELATIONSHIP_ROUTE_DEFERRED: Final = "relationship_route_deferred"
-CODE_NO_RELATIONSHIP_ROUTE: Final = "no_relationship_route"
+CODE_RELATIONSHIP_ROUTE_DEFERRED: Final = reasons.route.RELATIONSHIP_ROUTE_DEFERRED
+CODE_NO_RELATIONSHIP_ROUTE: Final = reasons.route.NO_RELATIONSHIP_ROUTE
 
 
 def translate_relationship_mode_reason(prose: str) -> str:

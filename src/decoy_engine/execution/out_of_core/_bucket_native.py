@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
+from decoy_engine import reasons
 from decoy_engine.execution._adapter import provider_config_to_dict
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._operator_registry import PYTHON_PANDAS, RUST_COMPANION
@@ -45,12 +46,12 @@ if TYPE_CHECKING:
     from decoy_engine.execution.out_of_core._categorical_native import BoundIndexKernel
     from decoy_engine.plan._types import ColumnSeed
 
-REASON_UNAVAILABLE = "index_extension_unavailable"
-REASON_NOT_STRING = "bucket_perturb_source_not_string"
-REASON_CONFIG_DECLINED = "bucket_perturb_config_declined"
-REASON_OUT_OF_NATIVE_RANGE = "out_of_core_bucket_perturb_date_out_of_native_range"
+REASON_UNAVAILABLE = reasons.route.INDEX_EXTENSION_UNAVAILABLE
+REASON_NOT_STRING = reasons.route.BUCKET_PERTURB_SOURCE_NOT_STRING
+REASON_CONFIG_DECLINED = reasons.route.BUCKET_PERTURB_CONFIG_DECLINED
+REASON_OUT_OF_NATIVE_RANGE = reasons.runtime.OUT_OF_CORE_BUCKET_PERTURB_DATE_OUT_OF_NATIVE_RANGE
 _NO_BACKEND_RAN = "none"
-_REASON_NO_NATIVE_CALLS = "no_native_kernel_calls"
+_REASON_NO_NATIVE_CALLS = reasons.route.NO_NATIVE_KERNEL_CALLS
 
 
 def decline_reason(table: str, column: str, schema: pa.Schema, seed: ColumnSeed) -> str | None:
@@ -151,7 +152,7 @@ class TableBucketPlan:
         if decision.native:
             if idx < 0:
                 raise ExecutionError(
-                    code="out_of_core_bucket_perturb_column_missing",
+                    code=reasons.runtime.OUT_OF_CORE_BUCKET_PERTURB_COLUMN_MISSING,
                     message=(
                         f"bucket_perturb column {column!r} of table {decision.table!r} is missing "
                         "from a streamed batch; the run is aborted rather than skipping it."
@@ -159,7 +160,7 @@ class TableBucketPlan:
                 )
             if batch.schema.field(idx).type != decision.pinned_type:
                 raise ExecutionError(
-                    code="out_of_core_bucket_perturb_source_type_drift",
+                    code=reasons.runtime.OUT_OF_CORE_BUCKET_PERTURB_SOURCE_TYPE_DRIFT,
                     message=(
                         f"bucket_perturb column {column!r} of table {decision.table!r} was pinned "
                         f"as {decision.pinned_type} but a batch carries "
@@ -248,35 +249,41 @@ def native_bucket_perturb_array(
     With `preserve`, the sentinel rows are found first and the range guard sees only the rest, so
     a sentinel next to the pandas bounds does not abort the run; those rows then bypass the
     kernel entirely."""
-    bound = native.bound
-    if bound is None:  # pragma: no cover - the seam routes a Python column elsewhere
-        raise AssertionError("native_bucket_perturb_array called for a column without a kernel.")
-    column = native.decision.column
-    n = len(values)
-    if n == 0 or values.null_count == n:
-        return pa.nulls(n)
-    array = values.combine_chunks() if isinstance(values, pa.ChunkedArray) else values
-    preserved = preserve.mask(array.to_pandas()) if preserve is not None else None
-    if preserved is not None and preserved.any():
-        native.decision.preserved_rows += int(preserved.sum())
-        guarded = array.filter(pa.array(~preserved))
-    else:
-        guarded = array
-    _guard_native_range(guarded, bucket, date_format, column)
-    derive_calls: list[int] = []
-    out = native_bucket_perturb(
-        array,
-        bucket=bucket,
-        date_format=date_format,
-        mask_key=mask_key,
-        namespace=namespace,
-        index_kernel=bound.kernel,
-        native_threads=bound.native_threads,
-        derive_calls=derive_calls,
-        preserved=preserved,
-    )
-    native.decision.native_calls += sum(derive_calls)
-    return out
+    try:
+        bound = native.bound
+        if bound is None:  # pragma: no cover - the seam routes a Python column elsewhere
+            raise AssertionError(
+                "native_bucket_perturb_array called for a column without a kernel."
+            )
+        column = native.decision.column
+        n = len(values)
+        if n == 0 or values.null_count == n:
+            return pa.nulls(n)
+        array = values.combine_chunks() if isinstance(values, pa.ChunkedArray) else values
+        preserved = preserve.mask(array.to_pandas()) if preserve is not None else None
+        if preserved is not None and preserved.any():
+            native.decision.preserved_rows += int(preserved.sum())
+            guarded = array.filter(pa.array(~preserved))
+        else:
+            guarded = array
+        _guard_native_range(guarded, bucket, date_format, column)
+        derive_calls: list[int] = []
+        out = native_bucket_perturb(
+            array,
+            bucket=bucket,
+            date_format=date_format,
+            mask_key=mask_key,
+            namespace=namespace,
+            index_kernel=bound.kernel,
+            native_threads=bound.native_threads,
+            derive_calls=derive_calls,
+            preserved=preserved,
+        )
+        native.decision.native_calls += sum(derive_calls)
+        return out
+    except BaseException:
+        del mask_key
+        raise
 
 
 __all__ = [

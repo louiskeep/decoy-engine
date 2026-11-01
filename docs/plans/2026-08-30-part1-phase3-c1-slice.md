@@ -1,4 +1,5 @@
-Status: plan
+Status: built
+Shipped: commit 08ffcab3 (C1 Phase 3 engine gate and certification); docs/plans/native-phase3-C1-gate.md
 
 # Part 1 Phase 3: C1 masking vertical slice (bounded Faker pools + native source-keyed selection)
 

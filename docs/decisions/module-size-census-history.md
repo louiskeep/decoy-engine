@@ -716,6 +716,53 @@ import-time `_assert_forwarding_covers_signature`) was deleted when `maybe_run_u
 taking the typed run context and routing decision, taking the file from 605 to 469 LOC. At or under
 GOAL the entry is deleted.
 
+## E1 follow-up: main merged into the file-access branch (2026-10-29)
+
+Census values re-measured after merging main: `_isolated_run.py` 637, `_pipeline_routing_signals.py` 644,
+`_sequential.py` 694, `native/_chunked_entry.py` 683, `profiling/profiler.py` 640 (each carries main's
+growth plus the E1 keyword or ambient guard), and `profiling/model_pack/trainer.py` 712 (a shrink from
+main's 715). `profile/_readers.py` fell to 520 because main moved `CsvFileSource` into `_readers_csv.py`
+(261) and the shared `_PolicyBound` base now lives in `_policy_bound.py`.
+
+## E1 integration with the STORM close-out, F29 and H-1 (2026-10-31)
+
+Census values re-measured on the merged tree after merging `origin/claude/eager-clarke-14deh1`
+(STORM close-out, carrying F29) and then `origin/main` (#347, #348) into the file-access branch.
+Every number is the exact LOC the sentry measured; no cap was raised and no file crossed 700:
+
+- Dense entries that grew by the union of F29's reason symbols, the STORM `post_scan` names and the
+  E1 keyword or guard: `_isolated_run.py` 622 -> 651, `_pipeline_routing_signals.py` 638 -> 645,
+  `_chunked.py` 627 -> 630, `native/_chunked_entry.py` 681 -> 684, `_sequential.py` 696 -> 699 (one
+  under the cap; the forced-mode extraction named above is now the next touch), `profiling/profiler.py`
+  637 -> 640, `plan/_compile.py` 663 -> 665, `out_of_core/_spill_estimate.py` 623 -> 645,
+  `internal/faker_setup.py` 637 -> 668, `transforms/_codeset_loader.py` 607 -> 683 (the policy-bound
+  stat, cache key and read of the customer corpus; the `verify_corpus` split is still the target).
+- Shrinks: `quarantine.py` 645 -> 638 and the legacy `profiling/model_pack/trainer.py` 715 -> 712.
+- New entry: `quality/dp_provenance.py` 602 (the lockfile read through a policy handle).
+- Entries retired because H-1 Wave A (#348) on main split the module below the goal or moved it:
+  `native/_determinism_protocol.py`, `native/_draw_site_providers.py`, `execution/_mem_telemetry.py`,
+  `quality/synth_report.py`.
+
+## E1: the `FileAccess` policy port (2026-10-07)
+
+Growth under a reviewed census bump, each from routing a file access through `decoy_engine.fileaccess`
+(plan `docs/plans/2026-10-02-file-access-authz-engine-platform.md`, slice E1):
+
+- `transforms/_codeset_loader.py` 606 -> 648: the customer corpus is opened through the policy before
+  the existence check and again before the cache lookup, so a cached record is never served to a request
+  the policy refuses. Decomposition target unchanged: split `verify_corpus` into `_codeset_verify.py`.
+- `internal/faker_setup.py` 622 -> 648: `load_custom_providers` reads the directory through a directory
+  capability (stat, then entries and children beneath its descriptor). No new concern was added.
+- `execution/out_of_core/_spill_estimate.py` 623 -> 641: the output-device probe asks the policy to
+  `stat` each target's nearest existing ancestor.
+- `profile/_readers.py` (new entry, 604): `LazySource` and the three file sources keep the policy they
+  were built under and open their file through it on every read; the handle outlives the batches.
+- `execution/_isolated_run.py` (new entry, 620): the ambient guard for the subprocess route.
+- `+3` each in `_chunked.py`, `_sequential.py`, `native/_chunked_entry.py`, `profiling/profiler.py`: the
+  `file_access=` keyword and its `entry_point` decorator.
+- Shrinks: `quarantine.py` 645 -> 637, `plan/_compile.py` 703 -> 701 and `profiling/model_pack/trainer.py`
+  715 -> 712 (legacy over-max files may only shrink, so each gave back what the keyword and the policy
+  calls added by tightening comments and a helper).
 
 ## `src/decoy_engine/execution/_pipeline_routing.py` (census 691 -> 700)
 

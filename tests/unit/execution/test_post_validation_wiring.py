@@ -51,7 +51,7 @@ def _single_mask_config(
     src_path = tmp_path / f"{column}.parquet"
     pq.write_table(src, src_path)
     raw = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 7},
         "sources": {"t": {"type": "file", "path": str(src_path), "format": "parquet"}},
         "targets": {
@@ -130,7 +130,7 @@ def _dup_pk_fk_config(tmp_path: Path) -> tuple[dict[str, Any], dict[str, pa.Tabl
     pq.write_table(child, cp)
     trunc = {"strategy": "truncate", "provider": "person_email", "provider_config": {"length": 1}}
     raw = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 7},
         "sources": {
             "parent": {"type": "file", "path": str(pp), "format": "parquet"},
@@ -175,7 +175,7 @@ def _value_reuse_and_leak_config(tmp_path: Path) -> tuple[dict[str, Any], dict[s
     src_path = tmp_path / "t.parquet"
     pq.write_table(src, src_path)
     raw = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 7},
         "sources": {"t": {"type": "file", "path": str(src_path), "format": "parquet"}},
         "targets": {
@@ -212,7 +212,7 @@ def _quarantine_config(tmp_path: Path) -> tuple[dict[str, Any], dict[str, pa.Tab
     src_path = tmp_path / "cc.parquet"
     pq.write_table(src, src_path)
     raw = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 7},
         "sources": {"t": {"type": "file", "path": str(src_path), "format": "parquet"}},
         "targets": {
@@ -249,7 +249,7 @@ def _quarantine_hides_leak_config(tmp_path: Path) -> tuple[dict[str, Any], dict[
     src_path = tmp_path / "t.parquet"
     pq.write_table(src, src_path)
     raw = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 7},
         "sources": {"t": {"type": "file", "path": str(src_path), "format": "parquet"}},
         "targets": {

@@ -67,6 +67,7 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
+from decoy_engine import fileaccess, reasons
 from decoy_engine.execution._adapter import provider_config_to_dict
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.plan._types import ColumnSeed
@@ -170,7 +171,7 @@ def reject_unsafe_code_set_chunk_schema(
     if not offending:
         return
     raise PlanCompileError(
-        code="chunked_code_set_source_dtype_unsupported",
+        code=reasons.plan.CHUNKED_CODE_SET_SOURCE_DTYPE_UNSUPPORTED,
         path=f"tables.{table}.columns",
         message=(
             f"column(s) {', '.join(offending)} apply 'code_set' to a non-string "
@@ -198,7 +199,7 @@ def reject_code_set_when(table_cfg: dict[str, Any], *, table: str) -> None:
     if not when_cols:
         return
     raise PlanCompileError(
-        code="chunked_code_set_when_not_supported",
+        code=reasons.plan.CHUNKED_CODE_SET_WHEN_NOT_SUPPORTED,
         path=f"tables.{table}.columns",
         message=(
             f"column(s) {', '.join(when_cols)} combine 'code_set' with a "
@@ -246,7 +247,7 @@ def reject_code_set_fk_keys(config: dict[str, Any], *, table: str) -> None:
     if not offending:
         return
     raise PlanCompileError(
-        code="chunked_code_set_fk_key_unsupported",
+        code=reasons.plan.CHUNKED_CODE_SET_FK_KEY_UNSUPPORTED,
         path=f"tables.{table}.columns",
         message=(
             f"column(s) {', '.join(sorted(offending))} on table {table!r} use "
@@ -290,7 +291,8 @@ def resolve_pinned_code_set_records(
         if not isinstance(plan_slice, ColumnSeed):
             continue
         code_cfg = CodeSetConfig.from_dict(provider_config_to_dict(plan_slice.provider_config))
-        records[(table, node.columns[0])] = resolve_corpus_record(code_cfg)
+        with fileaccess.at_position(f"tables.{table}.columns.{node.columns[0]}"):
+            records[(table, node.columns[0])] = resolve_corpus_record(code_cfg)
     return records
 
 

@@ -28,7 +28,9 @@ from typing import Any
 
 import yaml
 
+from decoy_engine import reasons
 from decoy_engine.expressions._when_parser import validate_envelope_when
+from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.plan._checks import check_statistical_columns
 from decoy_engine.plan._checks_dp import verify_dp_snapshots
 from decoy_engine.plan._errors import PlanCompileError
@@ -58,7 +60,8 @@ def plan_to_yaml(plan: Plan) -> str:
     return rendered
 
 
-def plan_from_yaml(s: str) -> Plan:
+@entry_point
+def plan_from_yaml(s: str, *, file_access: FileAccess | None = None) -> Plan:
     """Deserialize a YAML string back into a Plan."""
     data = yaml.safe_load(s)
     if not isinstance(data, dict):
@@ -272,7 +275,9 @@ def _plan_from_dict(data: dict[str, Any]) -> Plan:
     )
 
 
-def _pinned_snapshot_from_dict(data: dict[str, Any]) -> tuple[PinnedSnapshot, ReadSnapshot]:
+def _pinned_snapshot_from_dict(
+    data: dict[str, Any], index: int
+) -> tuple[PinnedSnapshot, ReadSnapshot]:
     """Decode one embedded snapshot and revalidate its digest against the
     embedded bytes themselves (guide section 4.7: "revalidate embedded
     digests... during deserialization"). A YAML file is untrusted input;
@@ -282,24 +287,27 @@ def _pinned_snapshot_from_dict(data: dict[str, Any]) -> tuple[PinnedSnapshot, Re
     `verify_dp_snapshots` can be re-run against the SAME verified bytes,
     exactly like a fresh compile would.
 
+    A refusal names the snapshot's position in the manifest
+    (``generation.snapshots[<index>]``) in closed-set text: never the
+    embedded ``source_path`` (a file path from wherever the plan was
+    compiled) and never the decoder's failure.
+
     Raises:
         PlanCompileError: ``code='dp_pinned_snapshot_digest_mismatch'``
             when the recomputed digest disagrees with the stored one.
     """
+    position = f"generation.snapshots[{index}]"
     source_path = data["source_path"]
     stored_sha256 = data["sha256"]
     raw = base64.b64decode(data["payload_b64"])
-    recomputed_sha256 = hashlib.sha256(raw).hexdigest()
-    if recomputed_sha256 != stored_sha256:
+    if hashlib.sha256(raw).hexdigest() != stored_sha256:
         raise PlanCompileError(
-            code="dp_pinned_snapshot_digest_mismatch",
-            path=f"<generation.snapshots source_path={source_path!r}>",
+            code=reasons.plan.DP_PINNED_SNAPSHOT_DIGEST_MISMATCH,
+            path=position,
             message=(
-                f"embedded snapshot {source_path!r} recomputes to sha256="
-                f"{recomputed_sha256!r}, but the manifest declares sha256="
-                f"{stored_sha256!r}. A Plan's pinned bytes are verified evidence, "
-                "not a trusted claim; a mismatch means the manifest was edited or "
-                "corrupted after compile."
+                f"the embedded snapshot at {position} does not match its recorded sha256. "
+                "A Plan's pinned bytes are verified evidence, not a trusted claim; a mismatch "
+                "means the manifest was edited or corrupted after compile."
             ),
         )
     pinned_snapshot = PinnedSnapshot(
@@ -308,26 +316,23 @@ def _pinned_snapshot_from_dict(data: dict[str, Any]) -> tuple[PinnedSnapshot, Re
         payload_b64=data["payload_b64"],
         release_id=data.get("release_id"),
     )
-    # LOW (round-3 remediation): a digest match is proof the bytes are
-    # what the manifest claims, not proof those bytes are JSON. A manifest
-    # whose sha256 happens to match non-JSON `payload_b64` (hand-edited,
-    # or a genuinely corrupted write) must not raise a bare
-    # `JSONDecodeError` out of `plan_from_yaml` -- same shape as the
-    # already-fixed `IndexError`: every malformed-manifest path here is a
-    # typed `PlanCompileError`, never an unguarded stdlib exception.
+    # A digest match proves the bytes are what the manifest claims, not that they are JSON: a
+    # non-JSON payload is a typed refusal, raised outside the handler so no decoder error rides.
+    parsed: Any = None
+    not_json = False
     try:
         parsed = json.loads(raw)
-    except json.JSONDecodeError as exc:
+    except json.JSONDecodeError:
+        not_json = True
+    if not_json:
         raise PlanCompileError(
-            code="dp_pinned_snapshot_payload_not_json",
-            path=f"<generation.snapshots source_path={source_path!r}>",
+            code=reasons.plan.DP_PINNED_SNAPSHOT_PAYLOAD_NOT_JSON,
+            path=position,
             message=(
-                f"embedded snapshot {source_path!r}: payload_b64 decodes to bytes whose "
-                f"sha256 matches the manifest ({stored_sha256!r}), but is not valid JSON "
-                f"({exc}). A digest match is not proof the payload is a JSON snapshot "
-                "artifact."
+                f"the embedded snapshot at {position} matches its recorded sha256 but is not "
+                "valid JSON. A digest match is not proof the payload is a JSON snapshot artifact."
             ),
-        ) from exc
+        )
     read_snapshot = ReadSnapshot(
         path=source_path,
         sha256=stored_sha256,
@@ -368,12 +373,12 @@ def _require_statistical_snapshots_pinned(
             col_name = col_entry.get("name", "?")
             if snapshot_file and str(snapshot_file) not in pinned:
                 raise PlanCompileError(
-                    code="statistical_snapshot_not_pinned",
+                    code=reasons.plan.STATISTICAL_SNAPSHOT_NOT_PINNED,
                     path=f"tables.{table_name}.generate_columns.{col_name}.snapshot_file",
                     message=(
-                        f"statistical column {col_name!r} references snapshot_file "
-                        f"{snapshot_file!r}, not among this Plan's pinned snapshots -- "
-                        "a malformed manifest, not a fallback to a fresh filesystem read."
+                        f"statistical column {col_name!r} references a snapshot_file that is "
+                        "not among this Plan's pinned snapshots -- a malformed manifest, not a "
+                        "fallback to a fresh filesystem read."
                     ),
                 )
 
@@ -403,7 +408,9 @@ def _generation_plan_from_dict(data: dict[str, Any]) -> GenerationPlan:
     config-referenced snapshot absent from the pinned set is refused
     before `check_statistical_columns`'s own compile-time fallback (a
     direct filesystem read) can ever run against this untrusted manifest."""
-    decoded = [_pinned_snapshot_from_dict(s) for s in data.get("snapshots", []) or []]
+    decoded = [
+        _pinned_snapshot_from_dict(s, i) for i, s in enumerate(data.get("snapshots", []) or [])
+    ]
     pinned_by_path: dict[str, ReadSnapshot] = {read.path: read for _pinned, read in decoded}
 
     config = json.loads(data["config_json"])

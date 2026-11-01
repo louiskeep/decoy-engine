@@ -10,7 +10,7 @@ what makes native output byte-identical to the shipped handlers: there is one
 logic source, and this module is just its Arrow-native entry point.
 
 `text_redact` is the one exception to "calls `kernel/_scalar.py`": its per-cell span logic lives
-in the oracle handler and the storm detectors, so `native_text_redact` calls `iter_spans` and
+in the oracle handler and the pre-scan detectors, so `native_text_redact` calls `iter_spans` and
 `_splice` from there. It runs the same Python per cell as the oracle, so the column's own speed
 is unchanged; the gain is that its table stays native.
 
@@ -48,6 +48,7 @@ from typing import Any
 
 import pyarrow as pa
 
+from decoy_engine import reasons
 from decoy_engine.detection.detectors import Span, iter_spans
 from decoy_engine.errors import FpeUnencryptableError
 from decoy_engine.execution._errors import StrategyError
@@ -115,7 +116,7 @@ def native_truncate(
     """
     if not isinstance(length, int) or length < 1:
         raise StrategyError(
-            code="truncate_length_invalid",
+            code=reasons.runtime.TRUNCATE_LENGTH_INVALID,
             strategy="truncate",
             message=(
                 f"truncate requires an integer length >= 1, got {length!r} "
@@ -124,13 +125,13 @@ def native_truncate(
         )
     if keep not in ("head", "tail"):
         raise StrategyError(
-            code="truncate_keep_invalid",
+            code=reasons.runtime.TRUNCATE_KEEP_INVALID,
             strategy="truncate",
             message=f"truncate requires keep in ('head', 'tail'), got {keep!r}.",
         )
     if mask_char is not None and (not isinstance(mask_char, str) or len(mask_char) != 1):
         raise StrategyError(
-            code="truncate_mask_char_invalid",
+            code=reasons.runtime.TRUNCATE_MASK_CHAR_INVALID,
             strategy="truncate",
             message=(
                 f"truncate requires mask_char to be a single character, got "
@@ -238,33 +239,45 @@ def native_text_mask(
     admission, so the `str()` coercion is the handler's own null-safe identity for strings. `ner`
     declines to the oracle at admission (3c), so this reproduces only the non-NER handler path.
     """
-    if mask_key is None:  # pragma: no cover - the routes always thread the resolved mask key
-        raise AssertionError(
-            "native_text_mask reached with mask_key=None; text_mask is keyed and the routes "
-            "resolve a concrete mask key (the job seed when no secret) before dispatch."
-        )
-    strategy_map = dict(per_detector_strategy) if per_detector_strategy else None
-    # Mirror the handler's `for key in ("min_days","max_days"): if key in cfg` exactly: a bound
-    # that is PRESENT-but-null passes through (so the per-span date_shift crashes identically to
-    # the oracle) rather than silently defaulting when the key is absent (literal flag-on/off parity).
-    extra: dict[str, Any] = dict(date_shift_bounds)
-    detector_ids = list(detectors) if detectors is not None else None
-    sub_floor_notices: dict[str, int] = {}
-    texts = [
-        None if v is None else (v if isinstance(v, str) else str(v)) for v in array.to_pylist()
-    ]
-    kernel = load_text_redact_kernel()
-    out: list[Any] = []
+    try:
+        if mask_key is None:  # pragma: no cover - the routes always thread the resolved mask key
+            raise AssertionError(
+                "native_text_mask reached with mask_key=None; text_mask is keyed and the routes "
+                "resolve a concrete mask key (the job seed when no secret) before dispatch."
+            )
+        strategy_map = dict(per_detector_strategy) if per_detector_strategy else None
+        # Mirror the handler's `for key in ("min_days","max_days"): if key in cfg` exactly: a bound
+        # that is PRESENT-but-null passes through (so the per-span date_shift crashes identically to
+        # the oracle) rather than silently defaulting when the key is absent (literal flag-on/off parity).
+        extra: dict[str, Any] = dict(date_shift_bounds)
+        detector_ids = list(detectors) if detectors is not None else None
+        sub_floor_notices: dict[str, int] = {}
+        texts = [
+            None if v is None else (v if isinstance(v, str) else str(v)) for v in array.to_pylist()
+        ]
+        kernel = load_text_redact_kernel()
+        out: list[Any] = []
 
-    def mask(text: str, spans: list[Span] | None) -> str:
-        # `spans is None` is the oracle's own path (kernel absent), so that branch is `mask_cell`
-        # itself and stays byte-identical to it.
-        if spans is None:
-            return mask_cell(
+        def mask(text: str, spans: list[Span] | None) -> str:
+            # `spans is None` is the oracle's own path (kernel absent), so that branch is `mask_cell`
+            # itself and stays byte-identical to it.
+            if spans is None:
+                return mask_cell(
+                    text,
+                    mask_key,
+                    detector_ids=detector_ids,
+                    extra_spans=None,
+                    strategy_map=strategy_map,
+                    unmatched_span_policy=unmatched_span_policy,
+                    token=token,
+                    cfg=extra or None,
+                    sub_floor_span_policy=sub_floor_span_policy,
+                    sub_floor_notices=sub_floor_notices,
+                )
+            return mask_cell_with_spans(
                 text,
+                spans,
                 mask_key,
-                detector_ids=detector_ids,
-                extra_spans=None,
                 strategy_map=strategy_map,
                 unmatched_span_policy=unmatched_span_policy,
                 token=token,
@@ -272,92 +285,86 @@ def native_text_mask(
                 sub_floor_span_policy=sub_floor_span_policy,
                 sub_floor_notices=sub_floor_notices,
             )
-        return mask_cell_with_spans(
-            text,
-            spans,
-            mask_key,
-            strategy_map=strategy_map,
-            unmatched_span_policy=unmatched_span_policy,
-            token=token,
-            cfg=extra or None,
-            sub_floor_span_policy=sub_floor_span_policy,
-            sub_floor_notices=sub_floor_notices,
-        )
 
-    try:
-        if kernel is None:
-            out = [None if t is None else mask(t, None) for t in texts]
-        else:
-            from decoy_engine.execution.native._text_redact_kernel import CATALOG_VERSION
+        try:
+            if kernel is None:
+                out = [None if t is None else mask(t, None) for t in texts]
+            else:
+                from decoy_engine.execution.native._text_redact_kernel import CATALOG_VERSION
 
-            rust_ids = requested_rust_ids(detector_ids)
-            splice = load_splice_kernel()
-            plan = (
-                plan_native_splice(detector_ids, strategy_map, unmatched_span_policy, token)
-                if splice is not None
-                else None
-            )
-            fpe_detectors = plan_native_fpe(detector_ids, strategy_map)
-            # Fixed sub-batches bound the resident candidate lists, as in `native_text_redact`.
-            for base in range(0, len(texts), _TEXT_REDACT_KERNEL_BATCH):
-                batch = texts[base : base + _TEXT_REDACT_KERNEL_BATCH]
-                if plan is not None and splice is not None:
-                    # Slice b: redact/passthrough configs splice in Rust; a declined cell runs
-                    # the same Python splice as below.
-                    out.extend(
-                        splice_batch(
-                            batch,
-                            plan=plan,
-                            splice=splice,
-                            kernel=kernel,
-                            detector_ids=detector_ids,
-                            rust_ids=rust_ids,
-                            fallback=mask,
-                        )
-                    )
-                    continue
-                per_cell = kernel.text_redact_candidates(batch, rust_ids, CATALOG_VERSION)
-                cell_spans: list[list[Span]] = []
-                # Spans of kernel-eligible (ASCII-safe) cells only: a non-ASCII cell never
-                # reaches the compiled FF1 path, so its fpe spans stay on `_mask_span`.
-                native_cells: list[list[Span] | None] = []
-                for text, cands in zip(batch, per_cell, strict=True):
-                    if text is None:
-                        cell_spans.append([])
-                        native_cells.append(None)
-                    elif cands is None:
-                        # Ineligible cell (non-ASCII or a 0x1c-0x1f control): full Python.
-                        cell_spans.append(iter_spans(text, detector_ids, extra_spans=None))
-                        native_cells.append(None)
-                    else:
-                        merged = merge_text_redact_spans(text, detector_ids, rust_candidates=cands)
-                        cell_spans.append(merged)
-                        native_cells.append(merged)
-                fpe_out = encrypt_spans(native_cells, fpe_detectors, mask_key)
-                for text, spans, native in zip(batch, cell_spans, native_cells, strict=True):
-                    if text is None:
-                        out.append(None)
-                    elif native is not None and text and has_native_span(native, fpe_out):
-                        # Slice c: native FF1 for the plain-digit spans, `_mask_span` for the rest.
-                        out.append(
-                            mask_cell_hybrid(
-                                text,
-                                native,
-                                fpe_out,
-                                mask_key,
-                                strategy_map=strategy_map,
-                                unmatched_span_policy=unmatched_span_policy,
-                                token=token,
-                                cfg=extra or None,
-                                sub_floor_span_policy=sub_floor_span_policy,
-                                sub_floor_notices=sub_floor_notices,
+                rust_ids = requested_rust_ids(detector_ids)
+                splice = load_splice_kernel()
+                plan = (
+                    plan_native_splice(detector_ids, strategy_map, unmatched_span_policy, token)
+                    if splice is not None
+                    else None
+                )
+                fpe_detectors = plan_native_fpe(detector_ids, strategy_map)
+                # Fixed sub-batches bound the resident candidate lists, as in `native_text_redact`.
+                for base in range(0, len(texts), _TEXT_REDACT_KERNEL_BATCH):
+                    batch = texts[base : base + _TEXT_REDACT_KERNEL_BATCH]
+                    if plan is not None and splice is not None:
+                        # Slice b: redact/passthrough configs splice in Rust; a declined cell runs
+                        # the same Python splice as below.
+                        out.extend(
+                            splice_batch(
+                                batch,
+                                plan=plan,
+                                splice=splice,
+                                kernel=kernel,
+                                detector_ids=detector_ids,
+                                rust_ids=rust_ids,
+                                fallback=mask,
                             )
                         )
-                    else:
-                        out.append(mask(text, spans))
-    except FpeUnencryptableError as exc:
-        raise text_mask_fail_closed_error(exc, column) from exc
-    return pa.array(out, type=pa.string()), sub_floor_notices
+                        continue
+                    per_cell = kernel.text_redact_candidates(batch, rust_ids, CATALOG_VERSION)
+                    cell_spans: list[list[Span]] = []
+                    # Spans of kernel-eligible (ASCII-safe) cells only: a non-ASCII cell never
+                    # reaches the compiled FF1 path, so its fpe spans stay on `_mask_span`.
+                    native_cells: list[list[Span] | None] = []
+                    for text, cands in zip(batch, per_cell, strict=True):
+                        if text is None:
+                            cell_spans.append([])
+                            native_cells.append(None)
+                        elif cands is None:
+                            # Ineligible cell (non-ASCII or a 0x1c-0x1f control): full Python.
+                            cell_spans.append(iter_spans(text, detector_ids, extra_spans=None))
+                            native_cells.append(None)
+                        else:
+                            merged = merge_text_redact_spans(
+                                text, detector_ids, rust_candidates=cands
+                            )
+                            cell_spans.append(merged)
+                            native_cells.append(merged)
+                    fpe_out = encrypt_spans(native_cells, fpe_detectors, mask_key)
+                    for text, spans, native in zip(batch, cell_spans, native_cells, strict=True):
+                        if text is None:
+                            out.append(None)
+                        elif native is not None and text and has_native_span(native, fpe_out):
+                            # Slice c: native FF1 for the plain-digit spans, `_mask_span` for the rest.
+                            out.append(
+                                mask_cell_hybrid(
+                                    text,
+                                    native,
+                                    fpe_out,
+                                    mask_key,
+                                    strategy_map=strategy_map,
+                                    unmatched_span_policy=unmatched_span_policy,
+                                    token=token,
+                                    cfg=extra or None,
+                                    sub_floor_span_policy=sub_floor_span_policy,
+                                    sub_floor_notices=sub_floor_notices,
+                                )
+                            )
+                        else:
+                            out.append(mask(text, spans))
+        except FpeUnencryptableError as exc:
+            raise text_mask_fail_closed_error(exc, column) from exc
+        return pa.array(out, type=pa.string()), sub_floor_notices
+    except BaseException:
+        del mask_key
+        raise
 
 
 __all__ = [

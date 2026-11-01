@@ -28,7 +28,7 @@ from decoy_engine.config import PipelineConfig
 def _base_config() -> dict[str, Any]:
     """A minimum PipelineConfig the schema accepts; tests mutate `sources`."""
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 0},
         "sources": {},
         "tables": [
@@ -313,6 +313,7 @@ class TestCloudSourceEndToEnd:
         """Patches google.cloud.storage.Client to return a fake bucket whose
         blob downloads predictable bytes; verifies the engine's GCS dispatch
         reads through the same Arrow path as file/s3."""
+        pytest.importorskip("google.cloud.storage", reason="cloud extra not installed")
         from decoy_engine.profile import profile_source
 
         fake_csv = b"email\nx@a.com\ny@b.com\n"

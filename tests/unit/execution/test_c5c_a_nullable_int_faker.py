@@ -23,6 +23,7 @@ from decoy_engine.execution._strategies._faker import FakerStrategyHandler
 from decoy_engine.generation.pool import _sampler
 from decoy_engine.generation.pool._cache import PoolCache
 from decoy_engine.generation.pool._errors import GenerationError
+from tests._keyed_secret import THROWAWAY_KEY_PROVIDER
 from tests.unit.execution import _c5c_a_support as sup
 
 pytestmark = pytest.mark.filterwarnings("ignore")
@@ -153,7 +154,7 @@ def test_sampler_sees_exact_values_at_both_kernel_boundaries(
 def _config(path: str, columns: list[dict[str, Any]]) -> dict[str, Any]:
     return PipelineConfig.model_validate(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 42},
             "sources": {"t": {"type": "file", "format": "parquet", "path": path}},
             "tables": [{"name": "t", "columns": columns}],
@@ -265,7 +266,7 @@ def _fk_job(tmp_path: Path, n_values: list[int | None]) -> tuple[dict[str, Any],
         "provider_config": {"pool_size": 64},
     }
     cfg = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42},
         "sources": {k: {"type": "file", "path": v, "format": "parquet"} for k, v in paths.items()},
         "targets": {
@@ -411,6 +412,8 @@ def _ctx(sources: dict[tuple[str, str], pa.ChunkedArray], **kw: Any) -> Strategy
         relationship_graph=sup.GRAPH,
         namespace_registry=sup.NS,
         job_seed=sup.SEED,
+        # The handler is driven directly, so it gets the key the run() route is admitted under.
+        mask_key=THROWAWAY_KEY_PROVIDER.mask_key(),
         current_table="t",
         exact_int_sources=sources,
         **kw,
@@ -549,7 +552,7 @@ def _fk_child_job(
         pq.write_table(table, paths[name])
     cfg = PipelineConfig.model_validate(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 42},
             "sources": {
                 k: {"type": "file", "path": v, "format": "parquet"} for k, v in paths.items()

@@ -1,4 +1,4 @@
-# Corpus Datasheet: Decoy Engine STORM Extended Fixture Corpus
+# Corpus Datasheet: Decoy Engine Pre-scan Extended Fixture Corpus
 
 Gate reference: ml-benchmarking-and-privacy.md §B.3 (7-section datasheet).
 
@@ -8,7 +8,7 @@ Gate reference: ml-benchmarking-and-privacy.md §B.3 (7-section datasheet).
 
 **Why was this dataset created?**
 
-To train and evaluate the Decoy Engine STORM LightGBM column classifier
+To train and evaluate the Decoy Engine Pre-scan LightGBM column classifier
 (lgbm-v1, Sprint B / ML2.x). A synthetic-only corpus is required so that
 no real PII enters the model weights, feature vectors, or evaluation reports
 (§B.4 privacy invariant).

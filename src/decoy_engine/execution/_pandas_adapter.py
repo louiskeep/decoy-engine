@@ -36,6 +36,7 @@ from typing import TYPE_CHECKING
 import pandas as pd
 import pyarrow as pa
 
+from decoy_engine import reasons
 from decoy_engine.execution._adapter import (
     ExecutionAdapter,
     ExecutionResult,
@@ -142,7 +143,7 @@ class PandasExecutionAdapter:
             names = [name for name, _ in plan.seed_envelope.per_table]
             if len(names) != 1:
                 raise ExecutionError(
-                    code="run_single_requires_table",
+                    code=reasons.runtime.RUN_SINGLE_REQUIRES_TABLE,
                     message=(
                         f"run_single needs an explicit table= for a {len(names)}-table "
                         "plan; use run(sources=...) for multi-table jobs."
@@ -396,7 +397,7 @@ class PandasExecutionAdapter:
             return node_warnings
         if node.kind != "scalar":
             raise ExecutionError(
-                code="composite_fk_group_no_edge",
+                code=reasons.runtime.COMPOSITE_FK_GROUP_NO_EDGE,
                 message=(
                     f"node kind {node.kind!r} (columns={node.columns}) on table "
                     f"{node.table!r} is not an FK child but is not a scalar/composite "
@@ -406,13 +407,13 @@ class PandasExecutionAdapter:
         handler = self._handlers.get(node.strategy)
         if handler is None:
             raise ExecutionError(
-                code="unsupported_strategy",
+                code=reasons.runtime.UNSUPPORTED_STRATEGY,
                 message=f"no handler for strategy {node.strategy!r} on {node.columns}.",
             )
         plan_slice = node.plan_slice
         if not isinstance(plan_slice, ColumnSeed):  # narrows for the scalar handler
             raise ExecutionError(
-                code="unsupported_strategy",
+                code=reasons.runtime.UNSUPPORTED_STRATEGY,
                 message=f"scalar node {node.columns} has a non-ColumnSeed plan slice.",
             )
         with timed_strategy(node.strategy, ",".join(node.columns)):

@@ -33,6 +33,8 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.compute as pc
 
+from decoy_engine import fileaccess, reasons
+from decoy_engine.fileaccess import FileAccess
 from decoy_engine.generation._window_admission import (
     CODE_NOT_CLASS_A,
     CODE_TIMEOUT,
@@ -216,7 +218,8 @@ def _build_streams(
             draws[name] = draw_windowed
         else:  # the classifier already routed every other family to Class B
             raise GenerationWindowError(
-                code=CODE_NOT_CLASS_A, message=f"column {name!r}: {kind!r} is not Class A"
+                code=reasons.runtime.GENERATION_NOT_CLASS_A,
+                message=f"column {name!r}: {kind!r} is not Class A",
             )
     return draws
 
@@ -234,6 +237,7 @@ def _row_bytes(tbl: pa.Table) -> np.ndarray:
     return total
 
 
+@fileaccess.entry_point
 def generate_rows(
     plan: Any,
     *,
@@ -248,6 +252,7 @@ def generate_rows(
     derive_key: Any = None,
     instance_default_locale: str | None = None,
     provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None = None,
+    file_access: FileAccess | None = None,
 ) -> GeneratedWindow:
     """Rows `[offset, offset + count)` of `table`, identical to a full run at those positions.
 

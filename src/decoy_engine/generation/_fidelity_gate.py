@@ -41,6 +41,7 @@ from typing import Any
 
 import pandas as pd
 
+from decoy_engine import reasons
 from decoy_engine.generation.statistical import StatisticalSpec
 from decoy_engine.generation.statistical._spec import StatisticalSpecError
 from decoy_engine.quality.fidelity import compute_fidelity
@@ -127,7 +128,7 @@ def score_generated_fidelity(
         # condition in this feature area raises.
         if not 0 <= index < len(snapshot_artifacts):
             raise StatisticalSpecError(
-                code="statistical_snapshot_index_out_of_range",
+                code=reasons.plan.STATISTICAL_SNAPSHOT_INDEX_OUT_OF_RANGE,
                 message=(
                     f"fidelity gate: snapshot_index={index!r} is out of range for "
                     f"{len(snapshot_artifacts)} pinned snapshot artifact(s). The Plan's "

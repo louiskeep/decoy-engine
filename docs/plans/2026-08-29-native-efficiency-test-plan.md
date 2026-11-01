@@ -1,4 +1,5 @@
-Status: plan
+Status: built
+Shipped: batch records docs/plans/native-testing-T0-harness.md through docs/plans/native-testing-P3T4-e2e-consolidation.md (Status: record)
 
 # Engine-efficiency native surface: thorough testing plan
 

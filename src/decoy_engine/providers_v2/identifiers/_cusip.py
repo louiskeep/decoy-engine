@@ -41,6 +41,7 @@ from typing import Any
 
 import numpy as np
 
+from decoy_engine import reasons
 from decoy_engine.determinism import derive_value
 from decoy_engine.generation.pool._canonicalize import _canonicalize_source
 from decoy_engine.providers_v2._adapter import CapabilityMatrix, ProviderSpec
@@ -68,7 +69,7 @@ def _char_value(ch: str) -> int:
     if ch == "#":
         return 38
     raise IdentifierError(
-        code="invalid_cusip_char",
+        code=reasons.provider.INVALID_CUSIP_CHAR,
         message=f"CUSIP character {ch!r} not in alphabet 0-9A-Z*@#.",
     )
 
@@ -132,7 +133,7 @@ class CusipDomain:
     def from_bytes(self, b: bytes) -> str:
         if len(b) != 32:
             raise IdentifierError(
-                code="invalid_input_length",
+                code=reasons.provider.INVALID_INPUT_LENGTH,
                 message=f"CusipDomain.from_bytes expects 32 bytes; got {len(b)}.",
             )
         # 39**8 ~ 5.3e12 fits in int64; use the first 8 bytes.
@@ -170,7 +171,7 @@ class CusipAdapter:
         source_value: bytes | int | str | None = None,
     ) -> Any:
         if provider != "synthetic_cusip":
-            raise ProviderError(code="unknown_provider", message=f"got {provider!r}")
+            raise ProviderError(code=reasons.provider.UNKNOWN_PROVIDER, message=f"got {provider!r}")
         if spec.deterministic and source_value is not None:
             canonical = (
                 source_value
@@ -179,12 +180,12 @@ class CusipAdapter:
             )
             if spec.seed is None:
                 raise ProviderError(
-                    code="missing_seed",
+                    code=reasons.provider.MISSING_SEED,
                     message="CusipAdapter: deterministic mode requires spec.seed.",
                 )
             if spec.namespace is None:
                 raise ProviderError(
-                    code="missing_namespace",
+                    code=reasons.provider.MISSING_NAMESPACE,
                     message="CusipAdapter: deterministic mode requires spec.namespace.",
                 )
             return derive_value(
@@ -199,7 +200,7 @@ class CusipAdapter:
     def generate_batch(self, provider: str, *, spec: ProviderSpec, count: int) -> Sequence[Any]:
         if spec.deterministic:
             raise ProviderError(
-                code="batch_deterministic_unsupported",
+                code=reasons.provider.BATCH_DETERMINISTIC_UNSUPPORTED,
                 message="CusipAdapter.generate_batch does not support deterministic mode.",
             )
         rng = np.random.default_rng()

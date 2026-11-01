@@ -21,6 +21,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from decoy_engine import reasons
 from decoy_engine.errors import DecoyError
 
 if TYPE_CHECKING:
@@ -110,7 +111,7 @@ class GenerationBudgetLedger:
             self.ceiling_bytes
         ):
             raise GenerationBudgetExceeded(
-                code="generation_budget_exceeded",
+                code=reasons.runtime.GENERATION_BUDGET_EXCEEDED,
                 message=(
                     f"stage {stage!r} needs {upper_bound_bytes} bytes but only "
                     f"{self.ceiling_bytes - self.charged_bytes} of {self.ceiling_bytes} remain."

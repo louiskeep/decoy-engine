@@ -48,7 +48,7 @@ def _scalar_job(tmp_path: Path, rows: int = 3):
     df.to_csv(src, index=False)
     cfg = _dump(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 42},
             "sources": {"customers": {"type": "file", "format": "csv", "path": str(src)}},
             "tables": [
@@ -76,7 +76,7 @@ def _fk_job(tmp_path: Path):
     orders.to_csv(op, index=False)
     cfg = _dump(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 42},
             "sources": {
                 "customers": {"type": "file", "format": "csv", "path": str(cp)},
@@ -115,7 +115,7 @@ def _fk_job(tmp_path: Path):
 def _generate_job(tmp_path: Path, rows: int = 50):
     cfg = _dump(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 7},
             "sources": {},
             "tables": [

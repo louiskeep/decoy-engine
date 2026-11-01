@@ -3,7 +3,7 @@
 S9: V1 mask + V1 generate config shapes are no longer validated by
 ``validate_config``. The V1 validators (``MaskerConfigValidator`` +
 ``GeneratorConfigValidator``) were deleted with the V1 Masker / DataGenerator
-paths. ``validate_config`` now only accepts ``version: 1`` PipelineConfig
+paths. ``validate_config`` now only accepts ``version: 2`` PipelineConfig
 shapes (the v2 substrate); V1 shapes raise PipelineValidationError pointing
 at the v2 path. Cells that previously asserted V1 dicts validated successfully
 were removed; the loading-error cells (file-not-found, malformed YAML, etc.)
@@ -19,7 +19,7 @@ from decoy_engine import ConfigError, PipelineValidationError, validate_config
 
 def _valid_v2_pipeline_config() -> dict:
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42},
         "sources": {
             "customers": {"type": "file", "format": "csv", "path": "uploads/customers.csv"},

@@ -20,6 +20,7 @@ the estimate).
 
 from __future__ import annotations
 
+from decoy_engine import reasons
 from decoy_engine.plan._types import PlanRelationship
 from decoy_engine.subset._errors import SubsetPreflightError
 from decoy_engine.subset._types import FkPreflightReport, PreflightFailure, SubsetEdge
@@ -98,7 +99,7 @@ def relationships_from_config(config: dict) -> tuple[PlanRelationship, ...]:
                 passed=False,
                 failures=(
                     PreflightFailure(
-                        code="subset_relationship_composite_length",
+                        code=reasons.subset.SUBSET_RELATIONSHIP_COMPOSITE_LENGTH,
                         relationship=edge_id,
                         message=str(exc),
                     ),
@@ -107,6 +108,8 @@ def relationships_from_config(config: dict) -> tuple[PlanRelationship, ...]:
                 edges=(),
             )
             raise SubsetPreflightError(
-                code="subset_relationship_composite_length", report=report, message=str(exc)
+                code=reasons.subset.SUBSET_RELATIONSHIP_COMPOSITE_LENGTH,
+                report=report,
+                message=str(exc),
             ) from exc
     return tuple(relationships)

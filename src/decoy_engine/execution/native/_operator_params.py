@@ -208,7 +208,7 @@ def resolve_operator_params(
     `target` is the column the operator writes (group_key's namespace is derived from it).
     `prepared_categorical` is the artifact the caller already holds for a categorical column:
     unified binding takes it from `prepare_categorical`, the chunked route from
-    `_prepared_categoricals`. Its absence is a wiring bug, never an input condition.
+    `prepared_categoricals`. Its absence is a wiring bug, never an input condition.
     """
     cfg = provider_config
     if strategy == "passthrough":

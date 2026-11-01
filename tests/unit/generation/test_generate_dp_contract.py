@@ -423,7 +423,7 @@ class TestFailClosedDpDeclaration:
         from decoy_engine.config import PipelineConfig
 
         raw = {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 1},
             "sources": {"people": {"type": "file", "format": "csv", "path": "/tmp/dps-in.csv"}},
             "tables": [
@@ -472,7 +472,7 @@ class TestFailClosedDpDeclaration:
         from decoy_engine.plan._checks_dp import _dp_declared
 
         base = {
-            "version": 1,
+            "version": 2,
             "sources": {"people": {"type": "file", "format": "csv", "path": "/tmp/dps-in.csv"}},
             "tables": [
                 {
@@ -508,7 +508,7 @@ class TestFailClosedDpDeclaration:
         from decoy_engine.config import PipelineConfig
 
         raw = {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 1, "dp": None},
             "sources": {"people": {"type": "file", "format": "csv", "path": "/tmp/dps-in.csv"}},
             "tables": [
@@ -630,7 +630,7 @@ class TestFailClosedDpDeclaration:
         from decoy_engine.plan._checks_dp import _dp_declared
 
         base = {
-            "version": 1,
+            "version": 2,
             "sources": {"people": {"type": "file", "format": "csv", "path": "/tmp/dps-in.csv"}},
             "tables": [
                 {

@@ -18,14 +18,18 @@ out-of-core output is byte-identical rather than merely similar.
   NIST SP 800-38G FF1 keyed per detector (Task 5.2 plan P3-final), not this
   HMAC. Either way it is a pure function of (job_seed, cell), with no
   cross-row state, so it chunks cleanly.
-  TX-2 (2026-07-20): the `ner` opt-in mirrors `text_redact`'s OOC NER handling
-  (`_text_redact_ner` above) -- resolve model/entities from cfg, enforce the
-  same `ner_model_version_mismatch` fail-closed drift guard against
-  `ColumnSeed.ner_model_version`, then call `storm.ner.iter_ner_spans_batch`
-  once per record batch and forward each cell's spans as `mask_cell`'s
-  `extra_spans`. NER is a pure per-value function of (text, model, entities)
-  with no cross-row state, so a batch's spans are identical to per-cell calls
-  and the kernel chunks cleanly the same way the rest of this module does.
+  TX-2 (2026-07-20): the `ner` opt-in resolves model/entities from cfg
+  (`_text_mask_ner` below), enforces the same `ner_model_version_mismatch`
+  fail-closed drift guard against `ColumnSeed.ner_model_version`, then calls
+  `detection.ner.iter_ner_spans_batch` once per record batch and forwards each
+  cell's spans as `mask_cell`'s `extra_spans`. NER is a pure per-value function
+  of (text, model, entities) with no cross-row state, so a batch's spans are
+  identical to per-cell calls and the kernel chunks cleanly the same way the
+  rest of this module does. Follow-up (2026-10-25): `text_redact`'s OOC kernel
+  moved its config resolution + version guard to the shared
+  `_strategies/_ner_config` module and windows its apply at `_NER_APPLY_WINDOW`
+  rows (F6); this `text_mask` path still carries its own mirrored copy and does
+  not yet window, tracked for the same treatment.
 - code_set (mask mode, no chapter_preserve): reuses
   `transforms.code_set.apply_code_set` (HMAC-SHA256-keyed modular selection over
   the code-sorted corpus). Mask mode is `HMAC(salt, value) % candidate_count`, a
@@ -77,6 +81,7 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
+from decoy_engine import reasons
 from decoy_engine.detection.detectors import Span
 from decoy_engine.errors import FpeUnencryptableError
 from decoy_engine.execution._adapter import provider_config_to_dict
@@ -124,7 +129,7 @@ def text_mask_sub_floor_warning(
     accumulated `sub_floor_notices` dict `_text_mask_array` threads through
     `mask_cell` for every batch of a table."""
     return QualityWarning(
-        code="text_mask_sub_floor_span_handled",
+        code=reasons.warning.TEXT_MASK_SUB_FLOOR_SPAN_HANDLED,
         provider="text_mask",
         column=column,
         detail={
@@ -163,32 +168,36 @@ def group_c_array(
     `mask_batch`, for a bucket_perturb column its table plan decided to run on the compiled
     index kernel.
     """
-    if seed.strategy == "text_mask":
-        return _text_mask_array(
-            values,
-            seed,
-            job_seed=job_seed,
-            cfg=cfg,
-            column=column,
-            sub_floor_notices=sub_floor_notices,
-            text_mask_native=text_mask_native,
+    try:
+        if seed.strategy == "text_mask":
+            return _text_mask_array(
+                values,
+                seed,
+                job_seed=job_seed,
+                cfg=cfg,
+                column=column,
+                sub_floor_notices=sub_floor_notices,
+                text_mask_native=text_mask_native,
+            )
+        if seed.strategy == "code_set":
+            return _code_set_array(
+                values,
+                job_seed=job_seed,
+                namespace=seed.namespace,
+                cfg=cfg,
+                corpus_record=corpus_record,
+            )
+        if seed.strategy == "bucket_perturb":
+            return _bucket_perturb_array(
+                values, job_seed=job_seed, namespace=seed.namespace, cfg=cfg, native=bucket_native
+            )
+        raise ExecutionError(
+            code=reasons.runtime.OUT_OF_CORE_STRATEGY_UNSUPPORTED,
+            message=f"strategy {seed.strategy!r} is not a Group (c) out-of-core kernel.",
         )
-    if seed.strategy == "code_set":
-        return _code_set_array(
-            values,
-            job_seed=job_seed,
-            namespace=seed.namespace,
-            cfg=cfg,
-            corpus_record=corpus_record,
-        )
-    if seed.strategy == "bucket_perturb":
-        return _bucket_perturb_array(
-            values, job_seed=job_seed, namespace=seed.namespace, cfg=cfg, native=bucket_native
-        )
-    raise ExecutionError(
-        code="out_of_core_strategy_unsupported",
-        message=f"strategy {seed.strategy!r} is not a Group (c) out-of-core kernel.",
-    )
+    except BaseException:
+        del job_seed
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -228,83 +237,95 @@ def _text_mask_array(
     warning channel while `outputs` stays byte-identical either way, since
     `mask_cell`'s per-span log line at WARNING was always emitted regardless.
     """
-    # B5: a column the per-table plan admitted (non-NER, exact-string source, companion present)
-    # runs through the compiled span path instead of this per-cell loop. native_text_mask returns
-    # its own notice dict, merged into the per-table accumulator inside native_text_mask_array, and
-    # raises the identical fail-closed StrategyError itself, so this stays byte-identical.
-    if text_mask_native is not None:
-        return native_text_mask_array(
-            values, native=text_mask_native, mask_key=job_seed, sub_floor_notices=sub_floor_notices
-        )
-    detectors_raw = cfg.get("detectors")
-    detector_ids: list[str] | None
-    if isinstance(detectors_raw, (list, tuple)):
-        detector_ids = [str(d) for d in detectors_raw] or None
-    else:
-        detector_ids = None
-    per_detector: dict[str, str] = dict(cfg.get("per_detector_strategy") or {})
-    policy = str(cfg.get("unmatched_span_policy", "redact"))
-    token = str(cfg.get("token", "[REDACTED]"))
-    sub_floor_raw = cfg.get("sub_floor_span")
-    sub_floor_span_policy = str(sub_floor_raw) if sub_floor_raw is not None else None
-    extra: dict[str, Any] = {key: cfg[key] for key in ("min_days", "max_days") if key in cfg}
-
-    ner_model, ner_entities = _text_mask_ner(cfg, plan)
-
-    # Phase 5 (docs/plans/2026-09-08-p5-ner-batch-helper.md): collect the
-    # batch's non-null cells and run ONE `iter_ner_spans_batch` call over them
-    # instead of one `nlp(text)` call per cell. This kernel already runs on a
-    # single (bounded) record batch, so no extra windowing is needed here --
-    # the batch itself is the bound.
-    pylist = _array_to_pylist(values)
-    out: list[Any] = [None] * len(pylist)
-    non_null_positions: list[int] = []
-    texts: list[str] = []
-    for pos, value in enumerate(pylist):
-        if _is_missing(value):
-            continue
-        texts.append(value if isinstance(value, str) else str(value))
-        non_null_positions.append(pos)
-
-    ner_spans_by_pos: list[list[Span]] | None = None
-    if ner_model is not None:
-        from decoy_engine.detection.ner import iter_ner_spans_batch
-
-        ner_spans_by_pos = iter_ner_spans_batch(texts, model=ner_model, entities=ner_entities)
-
     try:
-        for i, pos in enumerate(non_null_positions):
-            out[pos] = mask_cell(
-                texts[i],
-                job_seed,
-                detector_ids=detector_ids,
-                extra_spans=ner_spans_by_pos[i] if ner_spans_by_pos is not None else None,
-                strategy_map=per_detector or None,
-                unmatched_span_policy=policy,
-                token=token,
-                cfg=extra or None,
-                sub_floor_span_policy=sub_floor_span_policy,
+        # B5: a column the per-table plan admitted (non-NER, exact-string source, companion present)
+        # runs through the compiled span path instead of this per-cell loop. native_text_mask returns
+        # its own notice dict, merged into the per-table accumulator inside native_text_mask_array, and
+        # raises the identical fail-closed StrategyError itself, so this stays byte-identical.
+        if text_mask_native is not None:
+            return native_text_mask_array(
+                values,
+                native=text_mask_native,
+                mask_key=job_seed,
                 sub_floor_notices=sub_floor_notices,
             )
-    except FpeUnencryptableError as exc:
-        # Matches the full-frame handler's fail-closed mapping
-        # (`_strategies/_text_mask.TextMaskHandler.run`) so a consumer keying
-        # on `StrategyError.code` sees an identical event on both routes.
-        raise StrategyError(
-            code="fpe_unencryptable_domain",
-            strategy="text_mask",
-            message=(
-                f"column {column!r}: {exc}. The engine fails closed rather than "
-                "silently choose a sub_floor_span fallback."
-            ),
-        ) from exc
-    return pa.array(out, type=pa.string())
+        detectors_raw = cfg.get("detectors")
+        detector_ids: list[str] | None
+        if isinstance(detectors_raw, (list, tuple)):
+            detector_ids = [str(d) for d in detectors_raw] or None
+        else:
+            detector_ids = None
+        per_detector: dict[str, str] = dict(cfg.get("per_detector_strategy") or {})
+        policy = str(cfg.get("unmatched_span_policy", "redact"))
+        token = str(cfg.get("token", "[REDACTED]"))
+        sub_floor_raw = cfg.get("sub_floor_span")
+        sub_floor_span_policy = str(sub_floor_raw) if sub_floor_raw is not None else None
+        extra: dict[str, Any] = {key: cfg[key] for key in ("min_days", "max_days") if key in cfg}
+
+        ner_model, ner_entities = _text_mask_ner(cfg, plan)
+
+        # Phase 5 (docs/plans/2026-09-08-p5-ner-batch-helper.md): collect the
+        # batch's non-null cells and run ONE `iter_ner_spans_batch` call over them
+        # instead of one `nlp(text)` call per cell. This kernel already runs on a
+        # single (bounded) record batch, so no extra windowing is needed here --
+        # the batch itself is the bound.
+        pylist = _array_to_pylist(values)
+        out: list[Any] = [None] * len(pylist)
+        non_null_positions: list[int] = []
+        texts: list[str] = []
+        for pos, value in enumerate(pylist):
+            if _is_missing(value):
+                continue
+            texts.append(value if isinstance(value, str) else str(value))
+            non_null_positions.append(pos)
+
+        ner_spans_by_pos: list[list[Span]] | None = None
+        if ner_model is not None:
+            from decoy_engine.detection.ner import iter_ner_spans_batch
+
+            ner_spans_by_pos = iter_ner_spans_batch(texts, model=ner_model, entities=ner_entities)
+
+        try:
+            for i, pos in enumerate(non_null_positions):
+                out[pos] = mask_cell(
+                    texts[i],
+                    job_seed,
+                    detector_ids=detector_ids,
+                    extra_spans=ner_spans_by_pos[i] if ner_spans_by_pos is not None else None,
+                    strategy_map=per_detector or None,
+                    unmatched_span_policy=policy,
+                    token=token,
+                    cfg=extra or None,
+                    sub_floor_span_policy=sub_floor_span_policy,
+                    sub_floor_notices=sub_floor_notices,
+                )
+        except FpeUnencryptableError as exc:
+            # Matches the full-frame handler's fail-closed mapping
+            # (`_strategies/_text_mask.TextMaskHandler.run`) so a consumer keying
+            # on `StrategyError.code` sees an identical event on both routes.
+            raise StrategyError(
+                code=reasons.runtime.FPE_UNENCRYPTABLE_DOMAIN,
+                strategy="text_mask",
+                message=(
+                    f"column {column!r}: {exc}. The engine fails closed rather than "
+                    "silently choose a sub_floor_span fallback."
+                ),
+            ) from exc
+        return pa.array(out, type=pa.string())
+    except BaseException:
+        del job_seed
+        raise
 
 
 def _text_mask_ner(cfg: dict[str, Any], plan: ColumnSeed) -> tuple[str | None, list[str] | None]:
-    """Resolve NER config + enforce the compile-vs-runtime model-version pin,
-    mirroring `_mask_group_b._text_redact_ner` (same `ner_model_version_mismatch`
-    code, `strategy="text_mask"` instead of `"text_redact"`)."""
+    """Resolve NER config + enforce the compile-vs-runtime model-version pin
+    (same `ner_model_version_mismatch` code as text_redact, `strategy="text_mask"`).
+
+    Follow-up (2026-10-25): text_redact's OOC kernel moved this exact logic to
+    the shared `_strategies/_ner_config` module (F6). This `text_mask` copy can
+    adopt it too (`resolve_ner_config` + `enforce_ner_model_version(...,
+    strategy="text_mask")`); kept separate for now to hold F6's stated scope to
+    the text_redact pair."""
     ner_cfg = cfg.get("ner")
     if not ner_cfg:
         return None, None
@@ -326,7 +347,7 @@ def _text_mask_ner(cfg: dict[str, Any], plan: ColumnSeed) -> tuple[str | None, l
         current_version = installed_model_version(ner_model)
         if current_version is not None and current_version != plan.ner_model_version:
             raise StrategyError(
-                code="ner_model_version_mismatch",
+                code=reasons.runtime.NER_MODEL_VERSION_MISMATCH,
                 strategy="text_mask",
                 message=(
                     f"NER model {ner_model!r} installed at {current_version!r} but the plan "
@@ -374,40 +395,44 @@ def _code_set_array(
     one version. `None` falls back to a fresh per-value resolve, preserving
     every existing (non-runner) caller.
     """
-    mode = str(cfg.get("mode", "mask"))
-    if mode != "mask" or cfg.get("chapter_preserve"):
-        raise ExecutionError(
-            code="out_of_core_code_set_shape_unsupported",
-            message="out-of-core code_set requires mask mode without chapter_preserve "
-            "(gate should reject).",
-        )
-    code_cfg = CodeSetConfig.from_dict(cfg)
-
-    def _select(code: str) -> str:
-        return apply_code_set(
-            code,
-            code_cfg,
-            mode=mode,
-            job_seed=job_seed,
-            namespace=namespace,
-            corpus_record=corpus_record,
-        )
-
-    # B6: select once per DISTINCT non-null value and expand with an Arrow take (`code_set_map`),
-    # byte-identical to the former per-cell loop (the selection is a pure function of the value).
     try:
-        return code_set_map(values, _select)
-    except PlanCompileError as exc:
-        # Defense-in-depth: the admitted shape cannot raise a per-value code (those need
-        # chapter_preserve, which the gate rejects). If one ever surfaced, fail closed rather than
-        # leak the raw value.
-        if exc.code in _PER_VALUE_CODE_SET_ERRORS:
+        mode = str(cfg.get("mode", "mask"))
+        if mode != "mask" or cfg.get("chapter_preserve"):
             raise ExecutionError(
-                code="out_of_core_code_set_row_error_unreachable",
-                message=f"code_set raised a per-value defect ({exc.code}) on a shape the "
-                "gate should have rejected; failing closed.",
-            ) from exc
-        raise  # corpus/config-level defect: job-fatal, same as the oracle.
+                code=reasons.runtime.OUT_OF_CORE_CODE_SET_SHAPE_UNSUPPORTED,
+                message="out-of-core code_set requires mask mode without chapter_preserve "
+                "(gate should reject).",
+            )
+        code_cfg = CodeSetConfig.from_dict(cfg)
+
+        def _select(code: str) -> str:
+            return apply_code_set(
+                code,
+                code_cfg,
+                mode=mode,
+                job_seed=job_seed,
+                namespace=namespace,
+                corpus_record=corpus_record,
+            )
+
+        # B6: select once per DISTINCT non-null value and expand with an Arrow take (`code_set_map`),
+        # byte-identical to the former per-cell loop (the selection is a pure function of the value).
+        try:
+            return code_set_map(values, _select)
+        except PlanCompileError as exc:
+            # Defense-in-depth: the admitted shape cannot raise a per-value code (those need
+            # chapter_preserve, which the gate rejects). If one ever surfaced, fail closed rather than
+            # leak the raw value.
+            if exc.code in _PER_VALUE_CODE_SET_ERRORS:
+                raise ExecutionError(
+                    code=reasons.runtime.OUT_OF_CORE_CODE_SET_ROW_ERROR_UNREACHABLE,
+                    message=f"code_set raised a per-value defect ({exc.code}) on a shape the "
+                    "gate should have rejected; failing closed.",
+                ) from exc
+            raise  # corpus/config-level defect: job-fatal, same as the oracle.
+    except BaseException:
+        del job_seed
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -437,58 +462,62 @@ def _bucket_perturb_array(
     instead. The namespace, bucket and format checks above run first either way, so a config that
     errors on the Python path errors identically here and never reaches the kernel.
     """
-    if namespace is None:
-        raise StrategyError(
-            code="bucket_perturb_requires_namespace",
-            strategy="bucket_perturb",
-            message="bucket_perturb strategy requires a namespace.",
-        )
-    bucket = str(cfg.get("bucket", "month"))
     try:
-        validate_bucket_perturb_config({**cfg, "bucket": bucket})
-    except ValueError as exc:
-        raise StrategyError(
-            code="bucket_perturb_invalid_config",
-            strategy="bucket_perturb",
-            message=str(exc),
-        ) from exc
-    date_format: str | None = cfg.get("date_format") or None
-    if date_format is None:
-        raise ExecutionError(
-            code="out_of_core_bucket_perturb_autodetect_unsupported",
-            message="out-of-core bucket_perturb requires an explicit date_format "
-            "(gate should reject); whole-column format detection does not chunk.",
-        )
+        if namespace is None:
+            raise StrategyError(
+                code=reasons.runtime.BUCKET_PERTURB_REQUIRES_NAMESPACE,
+                strategy="bucket_perturb",
+                message="bucket_perturb strategy requires a namespace.",
+            )
+        bucket = str(cfg.get("bucket", "month"))
+        try:
+            validate_bucket_perturb_config({**cfg, "bucket": bucket})
+        except ValueError as exc:
+            raise StrategyError(
+                code=reasons.runtime.BUCKET_PERTURB_INVALID_CONFIG,
+                strategy="bucket_perturb",
+                message=str(exc),
+            ) from exc
+        date_format: str | None = cfg.get("date_format") or None
+        if date_format is None:
+            raise ExecutionError(
+                code=reasons.runtime.OUT_OF_CORE_BUCKET_PERTURB_AUTODETECT_UNSUPPORTED,
+                message="out-of-core bucket_perturb requires an explicit date_format "
+                "(gate should reject); whole-column format detection does not chunk.",
+            )
 
-    preserve = preserve_set_from_config(cfg)
-    if native is not None and native.bound is not None:
-        return native_bucket_perturb_array(
-            values,
-            native=native,
-            mask_key=job_seed,
-            namespace=namespace,
-            bucket=bucket,
-            date_format=date_format,
-            preserve=preserve,
-        )
-    series = _to_series(values)
+        preserve = preserve_set_from_config(cfg)
+        if native is not None and native.bound is not None:
+            return native_bucket_perturb_array(
+                values,
+                native=native,
+                mask_key=job_seed,
+                namespace=namespace,
+                bucket=bucket,
+                date_format=date_format,
+                preserve=preserve,
+            )
+        series = _to_series(values)
 
-    def perturb(batch: pd.Series) -> pd.Series:
-        return apply_bucket_perturb(
-            batch,
-            bucket=bucket,
-            job_seed=job_seed,
-            namespace=namespace,
-            date_format=date_format,
-        )
+        def perturb(batch: pd.Series) -> pd.Series:
+            return apply_bucket_perturb(
+                batch,
+                bucket=bucket,
+                job_seed=job_seed,
+                namespace=namespace,
+                date_format=date_format,
+            )
 
-    if preserve is None:
-        perturbed = perturb(series)
-    else:
-        perturbed, preserved = apply_excluding_preserved(series, preserve, perturb)
-        if native is not None:
-            native.decision.preserved_rows += preserved
-    return pa.array(perturbed, from_pandas=True)
+        if preserve is None:
+            perturbed = perturb(series)
+        else:
+            perturbed, preserved = apply_excluding_preserved(series, preserve, perturb)
+            if native is not None:
+                native.decision.preserved_rows += preserved
+        return pa.array(perturbed, from_pandas=True)
+    except BaseException:
+        del job_seed
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -525,7 +554,7 @@ def group_c_output_type(seed: ColumnSeed, cfg: dict[str, Any]) -> pa.DataType:
             validate_bucket_perturb_config({**cfg, "bucket": bucket})
         except ValueError as exc:
             raise StrategyError(
-                code="bucket_perturb_invalid_config",
+                code=reasons.runtime.BUCKET_PERTURB_INVALID_CONFIG,
                 strategy="bucket_perturb",
                 message=str(exc),
             ) from exc

@@ -1,5 +1,7 @@
 # Program: Bounded-Memory Profiling + Reject-Before-Read (consultant-2026-07-09 F1/F2)
 
+Status: plan
+
 Source of goal: external architecture review `docs/engine-consultant-findings-2026-07-09.md`
 (Codex/gpt-5.5), findings **consultant-2026-07-09 F1** and **F2**, independently code-verified
 2026-07-09 against commit `02b18cc` on `main`.

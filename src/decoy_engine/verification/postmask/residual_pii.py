@@ -1,6 +1,6 @@
 """Residual PII check (Reframe-A).
 
-Re-runs the existing Storm detectors over the MASKED OUTPUT to find
+Re-runs the existing detectors over the MASKED OUTPUT to find
 columns that still match a PII pattern. Distinguishes three cases:
 
 1. Detector hit on a column that was NOT configured to be masked.

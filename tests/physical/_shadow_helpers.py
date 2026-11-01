@@ -70,7 +70,7 @@ def build_config(
     seed: int = 20260914,
 ) -> dict[str, Any]:
     raw: dict[str, Any] = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": seed},
         "sources": {table_name: {"type": "file", "format": "parquet", "path": str(source_path)}},
         "targets": {

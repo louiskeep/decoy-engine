@@ -36,6 +36,7 @@ from typing import Any
 
 import pyarrow as pa
 
+from decoy_engine import reasons
 from decoy_engine.execution._chunked_fk import (
     _DECIMAL_UNPROVABLE_FAMILY,
     CHUNK_SAFE_STRATEGIES,
@@ -120,7 +121,7 @@ def _reject_unsafe_hash_fk_key_real_type(table: str, column: str, real_type: pa.
     if arrow_type_is_fk_hash_safe(real_type):
         return
     raise ExecutionError(
-        code="chunked_fk_key_dtype_not_cross_adapter_safe",
+        code=reasons.runtime.CHUNKED_FK_KEY_DTYPE_NOT_CROSS_ADAPTER_SAFE,
         message=(
             f"Column {table}.{column} is a hash-strategy FK key whose "
             f"REAL chunk dtype is {real_type}, which is outside predicate "
@@ -194,7 +195,7 @@ def reject_mismatched_chunked_fk_declared_dtype(
         # str form the scale regex might not parse concretely.
         if declared_family == _DECIMAL_UNPROVABLE_FAMILY:
             raise ExecutionError(
-                code="chunked_fk_declared_dtype_mismatch",
+                code=reasons.runtime.CHUNKED_FK_DECLARED_DTYPE_MISMATCH,
                 message=(
                     f"Column {table}.{column} declares an UNPROVABLE FK key dtype "
                     f"{declared_dtype!r}: a bare decimal/numeric with no precision "
@@ -207,7 +208,7 @@ def reject_mismatched_chunked_fk_declared_dtype(
             )
         if real_family != declared_family:
             raise ExecutionError(
-                code="chunked_fk_declared_dtype_mismatch",
+                code=reasons.runtime.CHUNKED_FK_DECLARED_DTYPE_MISMATCH,
                 message=(
                     f"Column {table}.{column} declares FK key dtype "
                     f"{declared_dtype!r} (family {declared_family!r}) but the real "

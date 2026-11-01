@@ -1,6 +1,7 @@
 # Phase D / D2c-iii: `bucket_perturb` native on the SEQ route
 
-Status: plan
+Status: built
+Shipped: merge PR #245 (91fefec7)
 
 Rules consulted: 00-universal, development-loop, risk-and-exceptions, feature-dev, testing
 

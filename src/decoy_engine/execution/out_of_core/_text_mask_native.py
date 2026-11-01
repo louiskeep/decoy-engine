@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
+from decoy_engine import reasons
 from decoy_engine.execution._adapter import provider_config_to_dict
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._operator_registry import PYTHON_SCALAR, RUST_COMPANION
@@ -39,9 +40,9 @@ from decoy_engine.execution.native._real_type_admission import string_source_typ
 if TYPE_CHECKING:
     from decoy_engine.plan._types import ColumnSeed
 
-REASON_UNAVAILABLE = "text_mask_extension_unavailable"
+REASON_UNAVAILABLE = reasons.route.TEXT_MASK_EXTENSION_UNAVAILABLE
 _NO_BACKEND_RAN = "none"
-_REASON_NO_NATIVE_CALLS = "no_native_kernel_calls"
+_REASON_NO_NATIVE_CALLS = reasons.route.NO_NATIVE_KERNEL_CALLS
 
 _DEFAULT_TOKEN = "[REDACTED]"  # noqa: S105 - redaction placeholder, not a credential
 _DEFAULT_POLICY = "redact"
@@ -177,7 +178,7 @@ class TableTextMaskPlan:
         if decision.native:
             if idx < 0:
                 raise ExecutionError(
-                    code="out_of_core_text_mask_column_missing",
+                    code=reasons.runtime.OUT_OF_CORE_TEXT_MASK_COLUMN_MISSING,
                     message=(
                         f"text_mask column {column!r} of table {decision.table!r} is missing "
                         "from a streamed batch; the run is aborted rather than skipping it."
@@ -185,7 +186,7 @@ class TableTextMaskPlan:
                 )
             if batch.schema.field(idx).type != decision.pinned_type:
                 raise ExecutionError(
-                    code="out_of_core_text_mask_source_type_drift",
+                    code=reasons.runtime.OUT_OF_CORE_TEXT_MASK_SOURCE_TYPE_DRIFT,
                     message=(
                         f"text_mask column {column!r} of table {decision.table!r} was pinned "
                         f"as {decision.pinned_type} but a batch carries "
@@ -238,36 +239,40 @@ def native_text_mask_array(
     same `StrategyError(code='fpe_unencryptable_domain')` on a fail-closed span, so this route
     raises where the per-cell loop did. Its per-call notices are merged into the caller's per-table
     accumulator so the one aggregate `text_mask_sub_floor_span_handled` warning is unchanged."""
-    config = native.decision.config
-    if config is None:  # pragma: no cover - a native decision always carries its config
-        raise ExecutionError(
-            code="out_of_core_text_mask_unprepared",
-            message="a native text_mask column reached the kernel without a resolved config.",
+    try:
+        config = native.decision.config
+        if config is None:  # pragma: no cover - a native decision always carries its config
+            raise ExecutionError(
+                code=reasons.runtime.OUT_OF_CORE_TEXT_MASK_UNPREPARED,
+                message="a native text_mask column reached the kernel without a resolved config.",
+            )
+        native.decision.native_calls += 1
+        out, notices = native_text_mask(
+            values,
+            mask_key=mask_key,
+            column=native.decision.column,
+            detectors=config.detectors,
+            per_detector_strategy=config.per_detector,
+            unmatched_span_policy=config.unmatched_span_policy,
+            token=config.token,
+            date_shift_bounds=config.date_shift_bounds,
+            sub_floor_span_policy=config.sub_floor_span_policy,
         )
-    native.decision.native_calls += 1
-    out, notices = native_text_mask(
-        values,
-        mask_key=mask_key,
-        column=native.decision.column,
-        detectors=config.detectors,
-        per_detector_strategy=config.per_detector,
-        unmatched_span_policy=config.unmatched_span_policy,
-        token=config.token,
-        date_shift_bounds=config.date_shift_bounds,
-        sub_floor_span_policy=config.sub_floor_span_policy,
-    )
-    if sub_floor_notices is not None:
-        for detector_id, count in notices.items():
-            sub_floor_notices[detector_id] = sub_floor_notices.get(detector_id, 0) + count
-    if not isinstance(out, pa.Array) or out.type != pa.string() or len(out) != len(values):
-        raise ExecutionError(
-            code="out_of_core_text_mask_native_result_invalid",
-            message=(
-                "the native text_mask kernel returned an array that is not one string per "
-                "input row."
-            ),
-        )
-    return out
+        if sub_floor_notices is not None:
+            for detector_id, count in notices.items():
+                sub_floor_notices[detector_id] = sub_floor_notices.get(detector_id, 0) + count
+        if not isinstance(out, pa.Array) or out.type != pa.string() or len(out) != len(values):
+            raise ExecutionError(
+                code=reasons.runtime.OUT_OF_CORE_TEXT_MASK_NATIVE_RESULT_INVALID,
+                message=(
+                    "the native text_mask kernel returned an array that is not one string per "
+                    "input row."
+                ),
+            )
+        return out
+    except BaseException:
+        del mask_key
+        raise
 
 
 __all__ = [

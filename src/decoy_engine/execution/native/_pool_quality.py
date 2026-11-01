@@ -36,6 +36,7 @@ from typing import Any
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from decoy_engine import reasons
 from decoy_engine.errors import DecoyError
 from decoy_engine.execution.out_of_core._duckdb import connect_duckdb
 from decoy_engine.generation.pool._events import QualityWarning
@@ -150,7 +151,7 @@ class PoolQualityError(DecoyError):
     `.threshold` carry the values named in the message.
     """
 
-    code: str = "pool_quality.threshold_exceeded"
+    code: str = reasons.runtime.POOL_QUALITY_THRESHOLD_EXCEEDED
 
     def __init__(
         self,
@@ -200,7 +201,7 @@ def measure_pool_quality(
 
     Collision measurement never materializes an `O(distinct sources)`
     Python-side structure (no `set()` over sources or outputs): the
-    (source, masked) pairs are spooled to a per-call `pairs_<column>_<uuid
+    (source, masked) pairs are spooled to a per-call `pairs_<uuid
     hex>.parquet` file (the random suffix keeps two overlapping measurements
     of the same column from sharing one spool) and the frozen `GROUP BY
     source` aggregation runs inside a spill-backed DuckDB connection, so peak
@@ -241,7 +242,7 @@ def measure_pool_quality(
     # fixed `pairs_{column}.parquet` name would let a second call's write (or
     # unlink) clobber the first's in-flight spool, corrupting or losing its
     # in-progress read.
-    pairs_path = temp_dir / f"pairs_{column}_{uuid.uuid4().hex}.parquet"
+    pairs_path = temp_dir / f"pairs_{uuid.uuid4().hex}.parquet"
     conn = connect_duckdb(temp_dir=temp_dir, memory_limit=memory_limit)
     try:
         pq.write_table(pa.table({"source": source, "masked": masked}), pairs_path)

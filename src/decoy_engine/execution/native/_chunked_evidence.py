@@ -19,6 +19,7 @@ from typing import Any
 
 import pyarrow as pa
 
+from decoy_engine import reasons
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._operator_registry import (
     ARROW_PYTHON,
@@ -216,7 +217,7 @@ def check_decline_records_consistent(
     """Decline records are preflight-constant, so every chunk must carry the head's list."""
     if copy_decline_records(evidence) != copy_decline_records(head):
         raise ExecutionError(
-            code="chunked_route_evidence_inconsistent",
+            code=reasons.runtime.CHUNKED_ROUTE_EVIDENCE_INCONSISTENT,
             message=f"{who} takes the results of one call; chunk evidence disagrees on decline_records.",
         )
 
@@ -235,7 +236,7 @@ def aggregate_chunked_route_evidence(results: Iterable[Any]) -> dict[str, Any]:
             head = evidence
         elif evidence["table"] != head["table"]:
             raise ExecutionError(
-                code="chunked_route_evidence_mixed_tables",
+                code=reasons.runtime.CHUNKED_ROUTE_EVIDENCE_MIXED_TABLES,
                 message=(
                     "aggregate_chunked_route_evidence takes the results of one table; got "
                     f"{head['table']!r} and {evidence['table']!r}."
@@ -246,7 +247,7 @@ def aggregate_chunked_route_evidence(results: Iterable[Any]) -> dict[str, Any]:
             read_head = listed
         elif listed != read_head:
             raise ExecutionError(
-                code="chunked_route_evidence_inconsistent",
+                code=reasons.runtime.CHUNKED_ROUTE_EVIDENCE_INCONSISTENT,
                 message=(
                     "aggregate_chunked_route_evidence takes the results of one call; chunk "
                     f"evidence disagrees on pandas_read_passthrough ({read_head!r} then "

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import pandas as pd
 
+from decoy_engine import reasons
 from decoy_engine.execution._errors import ExecutionError
 
 
@@ -76,7 +77,7 @@ def reject_gated_string_on_numeric(
     if not _column_would_be_mixed(source, produced, mask):
         return
     raise ExecutionError(
-        code="gated_string_output_on_numeric_unsupported",
+        code=reasons.runtime.GATED_STRING_OUTPUT_ON_NUMERIC_UNSUPPORTED,
         message=(
             f"Column {table}.{column} is a numeric column masked under {strategy!r} with a "
             "`when:` row gate, and the result would hold both strings and numbers (the "

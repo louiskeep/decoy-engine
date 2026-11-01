@@ -8,6 +8,7 @@ from typing import Any
 
 import pyarrow as pa
 
+from decoy_engine import reasons
 from decoy_engine.plan._checks import _is_integer_dtype
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.profile._types import Profile
@@ -137,7 +138,7 @@ def check_when_string_output_on_numeric_unsupported(
             if not numeric_lookup.get((table_name, col_name), False):
                 continue
             raise PlanCompileError(
-                code="when_string_output_on_numeric_unsupported",
+                code=reasons.plan.WHEN_STRING_OUTPUT_ON_NUMERIC_UNSUPPORTED,
                 path=f"tables.{table_name}.columns.{col_name}.when",
                 message=(
                     f"Column {table_name}.{col_name} is a numeric column masked under "
@@ -192,7 +193,7 @@ def check_vault_columns(config: dict[str, Any]) -> None:
                 crypto_ok = importlib.util.find_spec("cryptography") is not None
             if not crypto_ok:
                 raise PlanCompileError(
-                    code="vault_requires_cryptography",
+                    code=reasons.plan.VAULT_REQUIRES_CRYPTOGRAPHY,
                     path=f"tables.{table_name}.columns.{col_name}.vault",
                     message=(
                         f"column {col_name!r} in table {table_name!r} declares "
@@ -203,7 +204,7 @@ def check_vault_columns(config: dict[str, Any]) -> None:
                 )
             if col_entry.get("strategy") == "fpe":
                 raise PlanCompileError(
-                    code="vault_strategy_reversible",
+                    code=reasons.plan.VAULT_STRATEGY_REVERSIBLE,
                     path=f"tables.{table_name}.columns.{col_name}.vault",
                     message=(
                         f"column {col_name!r} in table {table_name!r} declares "
@@ -219,7 +220,7 @@ def check_vault_columns(config: dict[str, Any]) -> None:
                 # dates and the -2^63 marker and silently truncates time64[ns].
                 # Reject at compile rather than crash at vault-write time.
                 raise PlanCompileError(
-                    code="vault_strategy_unmasked",
+                    code=reasons.plan.VAULT_STRATEGY_UNMASKED,
                     path=f"tables.{table_name}.columns.{col_name}.vault",
                     message=(
                         f"column {col_name!r} in table {table_name!r} declares "
@@ -230,7 +231,7 @@ def check_vault_columns(config: dict[str, Any]) -> None:
                 )
             if not col_entry.get("namespace"):
                 raise PlanCompileError(
-                    code="vault_requires_namespace",
+                    code=reasons.plan.VAULT_REQUIRES_NAMESPACE,
                     path=f"tables.{table_name}.columns.{col_name}.vault",
                     message=(
                         f"column {col_name!r} in table {table_name!r} declares "

@@ -65,6 +65,7 @@ from typing import Any
 import pyarrow as pa
 import pyarrow.compute as pc
 
+from decoy_engine import reasons
 from decoy_engine.execution._column_access import handler_written_columns
 from decoy_engine.execution._errors import ExecutionError
 
@@ -309,7 +310,7 @@ def _safe_cast(column: Any, target: pa.DataType, *, table: str, name: str, chunk
         return pc.cast(column, target, safe=True)
     except (pa.ArrowInvalid, pa.ArrowNotImplementedError) as exc:
         raise ExecutionError(
-            code="chunked_schema_mismatch",
+            code=reasons.runtime.CHUNKED_SCHEMA_MISMATCH,
             message=(
                 f"{table!r} chunk {chunk_index}: column {name!r} came back as "
                 f"{column.type} but every chunk of this call must be {target}, and the "

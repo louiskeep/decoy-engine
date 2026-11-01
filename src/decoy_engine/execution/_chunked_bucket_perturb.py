@@ -56,6 +56,7 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
+from decoy_engine import reasons
 from decoy_engine.execution._errors import StrategyError
 from decoy_engine.plan._errors import PlanCompileError
 
@@ -159,7 +160,7 @@ def reject_bucket_perturb_missing_namespace(
         seed = node.plan_slice
         if isinstance(seed, ColumnSeed) and seed.namespace is None:
             raise StrategyError(
-                code="bucket_perturb_requires_namespace",
+                code=reasons.runtime.BUCKET_PERTURB_REQUIRES_NAMESPACE,
                 strategy="bucket_perturb",
                 message=f"column {node.columns[0]!r} uses bucket_perturb but has no namespace.",
             )
@@ -181,7 +182,7 @@ def reject_unsafe_bucket_perturb_chunk_schema(
     if not offending:
         return
     raise PlanCompileError(
-        code="chunked_bucket_perturb_source_dtype_unsupported",
+        code=reasons.plan.CHUNKED_BUCKET_PERTURB_SOURCE_DTYPE_UNSUPPORTED,
         path=f"tables.{table}.columns",
         message=(
             f"column(s) {', '.join(offending)} apply 'bucket_perturb' to a "
@@ -240,7 +241,7 @@ def reject_bucket_perturb_when(table_cfg: dict[str, Any], *, table: str) -> None
     if not when_cols:
         return
     raise PlanCompileError(
-        code="chunked_bucket_perturb_when_not_supported",
+        code=reasons.plan.CHUNKED_BUCKET_PERTURB_WHEN_NOT_SUPPORTED,
         path=f"tables.{table}.columns",
         message=(
             f"column(s) {', '.join(when_cols)} combine 'bucket_perturb' with a "
@@ -294,7 +295,7 @@ def reject_bucket_perturb_fk_keys(config: dict[str, Any], *, table: str) -> None
     if not offending:
         return
     raise PlanCompileError(
-        code="chunked_bucket_perturb_fk_key_unsupported",
+        code=reasons.plan.CHUNKED_BUCKET_PERTURB_FK_KEY_UNSUPPORTED,
         path=f"tables.{table}.columns",
         message=(
             f"column(s) {', '.join(sorted(offending))} on table {table!r} use "

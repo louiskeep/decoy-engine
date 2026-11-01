@@ -98,7 +98,12 @@ def test_an_unbuildable_weight_config_raises_the_oracle_error_not_a_native_one()
 
 
 @pytest.mark.parametrize("weights", [(float("nan"), 1), (float("inf"), 1)], ids=["nan", "inf"])
-def test_non_finite_weights_raise_the_oracle_value_error(weights: tuple[float, float]) -> None:
+def test_non_finite_weights_raise_the_oracle_strategy_error(weights: tuple[float, float]) -> None:
     seeds = (("c", categorical_seed(categories=("x", "y"), weights=weights)),)
-    with pytest.raises(ValueError, match="cannot convert float NaN to integer"):
+    with pytest.raises(StrategyError) as caught:
         run_chain(pa.table({"c": pa.array(["a", "b"], pa.string())}), seeds)
+    assert caught.value.code == "categorical_weights_nonpositive"
+    assert caught.value.message == (
+        "strategy='categorical': categorical weight at index 0 is NaN or infinite; "
+        "cannot normalize."
+    )

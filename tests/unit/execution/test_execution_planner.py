@@ -46,7 +46,7 @@ def _write_csv(tmp_path, name: str, df: pd.DataFrame) -> str:
 def _base_config(tmp_path, tables: list[dict], sources: dict[str, str]) -> dict:
     return _validated_dump(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 42},
             "sources": {
                 name: {"type": "file", "format": "csv", "path": path}
@@ -155,7 +155,7 @@ def _fk_job(tmp_path) -> tuple[dict, dict[str, pa.Table]]:
     opath = _write_csv(tmp_path, "orders", orders)
     cfg = _validated_dump(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 42},
             "sources": {
                 "customers": {"type": "file", "format": "csv", "path": cpath},
@@ -367,7 +367,7 @@ class TestModeClassification:
     def test_pure_generate_job_falls_back_with_synthesize_reason(self, tmp_path, monkeypatch):
         cfg = _validated_dump(
             {
-                "version": 1,
+                "version": 2,
                 "global_settings": {"seed": 42},
                 "sources": {},
                 "tables": [

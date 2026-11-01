@@ -15,6 +15,9 @@ from typing import Any
 
 import polars as pl
 
+from decoy_engine import reasons
+from decoy_engine.fileaccess import FileAccess, entry_point
+from decoy_engine.fileaccess.adapters import serial
 from decoy_engine.plan._types import PlanRelationship
 from decoy_engine.subset._closure import ClosureResult, compute_closure, verify_closure
 from decoy_engine.subset._edges import build_subset_edges, relationships_from_config
@@ -89,46 +92,51 @@ def _compute(
     dict[str, EdgeDirection],
     ClosureResult,
 ]:
-    report = run_subset_preflight(sources=sources, relationships=relationships, seeds=seeds)
-    if not report.passed:
-        first = report.failures[0]
-        raise SubsetPreflightError(code=first.code, report=report, message=first.message)
+    try:
+        report = run_subset_preflight(sources=sources, relationships=relationships, seeds=seeds)
+        if not report.passed:
+            first = report.failures[0]
+            raise SubsetPreflightError(code=first.code, report=report, message=first.message)
 
-    edges = build_subset_edges(relationships)
-    directions = resolve_edge_directions(edges, policy)
-    key_frames = load_key_frames(sources, edges, seeds)
-    seed_rows, seed_counts, seed_null_excluded = select_seed_rows(
-        seeds=seeds, key_frames=key_frames, job_seed=job_seed
-    )
-    total_seed_rows = sum(seed_counts.values())
-    budget_check = make_budget_check(policy.budget, total_seed_rows)
-    closure = compute_closure(
-        edges=edges,
-        directions=directions,
-        key_frames=key_frames,
-        seed_rows=seed_rows,
-        budget_check=budget_check,
-    )
-    # Runs in BOTH plan_subset and run_subset (nice-to-have, dennis review):
-    # the dry-run estimate is exactly the surface an operator inspects to
-    # trust a subset before committing to it, so it deserves the same
-    # cheap, in-memory, no-I/O invariant guard as the real run, not just a
-    # guard on the write path.
-    verify_closure(edges=edges, directions=directions, key_frames=key_frames, result=closure)
-    seed_specs_public = tuple(_seed_spec_public(s) for s in seeds)
-    plan = build_estimate(
-        engine_version=engine_version,
-        seed_specs_public=seed_specs_public,
-        key_frames=key_frames,
-        seed_counts=seed_counts,
-        seed_null_excluded=seed_null_excluded,
-        closure=closure,
-        budget=policy.budget,
-        preflight=report,
-    )
-    return plan, key_frames, edges, directions, closure
+        edges = build_subset_edges(relationships)
+        directions = resolve_edge_directions(edges, policy)
+        key_frames = load_key_frames(sources, edges, seeds)
+        seed_rows, seed_counts, seed_null_excluded = select_seed_rows(
+            seeds=seeds, key_frames=key_frames, job_seed=job_seed
+        )
+        total_seed_rows = sum(seed_counts.values())
+        budget_check = make_budget_check(policy.budget, total_seed_rows)
+        closure = compute_closure(
+            edges=edges,
+            directions=directions,
+            key_frames=key_frames,
+            seed_rows=seed_rows,
+            budget_check=budget_check,
+        )
+        # Runs in BOTH plan_subset and run_subset (nice-to-have, dennis review):
+        # the dry-run estimate is exactly the surface an operator inspects to
+        # trust a subset before committing to it, so it deserves the same
+        # cheap, in-memory, no-I/O invariant guard as the real run, not just a
+        # guard on the write path.
+        verify_closure(edges=edges, directions=directions, key_frames=key_frames, result=closure)
+        seed_specs_public = tuple(_seed_spec_public(s) for s in seeds)
+        plan = build_estimate(
+            engine_version=engine_version,
+            seed_specs_public=seed_specs_public,
+            key_frames=key_frames,
+            seed_counts=seed_counts,
+            seed_null_excluded=seed_null_excluded,
+            closure=closure,
+            budget=policy.budget,
+            preflight=report,
+        )
+        return plan, key_frames, edges, directions, closure
+    except BaseException:
+        del job_seed
+        raise
 
 
+@entry_point
 def plan_subset(
     *,
     sources: dict[str, SubsetSource],
@@ -137,21 +145,27 @@ def plan_subset(
     policy: FanOutPolicy,
     job_seed: bytes,
     engine_version: str,
+    file_access: FileAccess | None = None,
 ) -> SubsetPlan:
     """The dry-run. Never writes anything; reads only key columns plus any
     columns named in a filter seed's predicates (needed to evaluate the
     predicate), never ordinary payload columns."""
-    plan, _key_frames, _edges, _directions, _closure = _compute(
-        sources=sources,
-        relationships=relationships,
-        seeds=seeds,
-        policy=policy,
-        job_seed=job_seed,
-        engine_version=engine_version,
-    )
-    return plan
+    try:
+        plan, _key_frames, _edges, _directions, _closure = _compute(
+            sources=sources,
+            relationships=relationships,
+            seeds=seeds,
+            policy=policy,
+            job_seed=job_seed,
+            engine_version=engine_version,
+        )
+        return plan
+    except BaseException:
+        del job_seed
+        raise
 
 
+@entry_point
 def run_subset(
     *,
     sources: dict[str, SubsetSource],
@@ -161,6 +175,7 @@ def run_subset(
     job_seed: bytes,
     engine_version: str,
     output_dir: str | Path,
+    file_access: FileAccess | None = None,
 ) -> SubsetResult:
     """Plan, verify, then materialize + write the manifest.
 
@@ -169,24 +184,31 @@ def run_subset(
     (also inside `_compute`, shared with `plan_subset`) is the last line of
     defense on the upward-completeness invariant before any write happens.
     """
-    plan, _key_frames, _edges, _directions, closure = _compute(
-        sources=sources,
-        relationships=relationships,
-        seeds=seeds,
-        policy=policy,
-        job_seed=job_seed,
-        engine_version=engine_version,
-    )
+    try:
+        plan, _key_frames, _edges, _directions, closure = _compute(
+            sources=sources,
+            relationships=relationships,
+            seeds=seeds,
+            policy=policy,
+            job_seed=job_seed,
+            engine_version=engine_version,
+        )
 
-    output_dir = Path(output_dir)
-    output_paths = materialize_subset(
-        sources=sources, survivors=closure.survivors, output_dir=output_dir
-    )
-    manifest = build_manifest(plan, engine_version)
-    (output_dir / "subset-manifest.json").write_text(
-        json.dumps(to_json_dict(manifest), sort_keys=True, indent=2)
-    )
-    return SubsetResult(plan=plan, manifest=manifest, output_paths=output_paths)
+        txn, output_paths = materialize_subset(
+            sources=sources, survivors=closure.survivors, output_dir=Path(output_dir)
+        )
+        try:
+            manifest = build_manifest(plan, engine_version)
+            text = json.dumps(to_json_dict(manifest), sort_keys=True, indent=2)
+            serial.write_text(txn, "subset-manifest.json", text)
+            txn.publish()
+        except BaseException:
+            txn.abort()
+            raise
+        return SubsetResult(plan=plan, manifest=manifest, output_paths=output_paths)
+    except BaseException:
+        del job_seed
+        raise
 
 
 def subset_inputs_from_config(
@@ -198,7 +220,7 @@ def subset_inputs_from_config(
     subset_block = config.get("subset")
     if subset_block is None:
         raise SubsetConfigError(
-            code="subset_config_missing",
+            code=reasons.config.SUBSET_CONFIG_MISSING,
             message="config has no `subset:` block; subset_inputs_from_config requires one",
         )
 
@@ -206,7 +228,7 @@ def subset_inputs_from_config(
     for name, src in config.get("sources", {}).items():
         if src.get("type") != "file":
             raise SubsetConfigError(
-                code="subset_source_type_unsupported",
+                code=reasons.config.SUBSET_SOURCE_TYPE_UNSUPPORTED,
                 message=f"table {name!r}: subsetting only supports local file sources "
                 f"(got type={src.get('type')!r}); DB / cloud sources are deferred (GATE-1 #2)",
             )

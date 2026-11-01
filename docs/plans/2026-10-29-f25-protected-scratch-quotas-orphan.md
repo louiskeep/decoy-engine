@@ -1,0 +1,322 @@
+Status: plan
+
+Summary: Make every engine temporary byte an owned, quota-enforced, encrypted resource, with fenced cleanup and explicit recovery semantics.
+
+Baseline commit: `2a44723ff26ffd16c69f026582ec93998d67ca5d` (`git rev-parse HEAD`, this checkout, 2026-10-29).
+
+# F25: Protected scratch, quotas, orphan recovery
+
+First draft for the Codex -> Gemini -> Dennis plan gate. No implementation approval, benchmark result, or review pass is claimed.
+
+Rules consulted: `/home/cam/dev-rules/` README, 00-universal, risk-and-exceptions, development-loop, workspace-and-vcs, reuse-first, exploration, scope-discipline, architecture, feature-dev, api-and-compatibility, security, config-secrets-and-supply-chain, observability-and-resilience, performance, testing, verification, documentation. Repository guidance: AGENTS.md, README.md, CODEMAP.md, CONTRIBUTING.md, CLAUDE.md, SECURITY.md.
+
+Risk: R2 design and implementation, because this changes confidentiality, storage ownership, compatibility, concurrency, and recovery. Executing destructive recovery against production resources is a separate operational authorization boundary. This task produces only the plan. Gemini and Dennis review this exact document before build; the author cannot certify it.
+
+## 1. FRAME
+
+### 1.1 Problem, guarantee, and boundaries
+
+The MASTER F25 contract supplied with this task is authoritative. F25 is PARTIAL. Existing protections are useful but distributed: some directories are private, some writes stage before rename, and OOC has memory limits plus a periodic disk check. None creates one enforceable resource boundary.
+
+The root cause is independent path allocation and independent lifecycles. A new `mkdtemp`, Arrow writer, SQL `COPY`, or library-managed spill can bypass both protection and capacity policy. Deleting directories named like scratch cannot prove ownership or distinguish a checkpoint from garbage.
+
+**Guarantee:** before any engine-controlled temporary data write, one engine ScratchManager registers the resource under a job/attempt-owned restrictive arena and an enforced byte quota. Protection remains effective during native-library writes, cancellation, crash, restart, and publication. Every actual temporary path in the inventory below must migrate. An unsupported storage capability fails before data is written; it never silently becomes ordinary `/tmp` storage.
+
+The shared ResourceLedger is the enforcement record for allocations, ownership, reservations, retention, and transitions. It is a new deliverable, not an existing class assumed by this plan. Filesystem quota counters remain the authority for actual usage. F25 does not implement a parallel Python disk-accounting algorithm.
+
+Scope includes engine connectors, low-level exported primitives, output staging, subset intermediates, and isolated execution. Permanent inputs and successfully published outputs have their own retention policies; their temporary representations remain in scope. Dependencies F13, F23-F24, F26, and F45 come from the supplied MASTER contract. Their feature numbers do not prove that a specific engine interface exists. Resolve their actual contracts at the cross-surface gate without inventing prerequisite implementations.
+
+Non-goals: a new cipher, a userspace encrypted random-access filesystem, a distributed lock service inside this library, general mid-query resume, changed masking results, a rewrite of memory routing, or protection against arbitrary code running with the engine's own privileges. F25's checkpoint support is a safe storage/retention contract. It does not make DuckDB query state or current operators resumable.
+
+### 1.2 Grounding record and limitations
+
+Searches actually run used `rg`, the repository's preferred equivalent of the requested recursive grep:
+
+```text
+rg -n 'tempfile|TemporaryDirectory|mkdtemp|spill|scratch|\.parquet|NamedTemporary' src/decoy_engine
+rg -n 'cryptography|Fernet|HKDF|AES' src/decoy_engine
+```
+
+A second write census covered `open`, `write_*`, Arrow IPC/OSFile/ParquetWriter, `COPY`, all `duckdb.connect` calls, mkdir/rename, pandas serializers, joblib, logging, and Rust file creation. The broader repository scan separated scripts, test fixtures, and historical prose from production writers. No Rust file-write site was found by that scan. This is source evidence, not proof about compiled dependencies.
+
+All file:line anchors below were opened in this checkout. Bare proposed paths are explicitly new deliverables. Existing line numbers describe this baseline, not the future implementation.
+
+* `docs/plans/2026-09-26-s10-s11-tmpdir-localstage.md` is absent here. The corresponding platform plan, G14, P-C4, MX-04, platform orphaned-lock recovery, and `decoy-platform/docs/ROADMAP.md` are **asserted, verify before build**. Do not invent their line numbers or recovery API.
+* The qmd recall attempt failed with `SQLITE_READONLY` during initialization. No indexed snippet was used as evidence. There is no `graphify-out/graph.json` in this checkout; direct source inspection grounds this draft.
+* The OOC cap is a tree walk using logical file lengths, with stat errors ignored: `src/decoy_engine/execution/out_of_core/_budget.py:507`. It is explicitly point-in-time at `:524`; the runner checks after each table at `src/decoy_engine/execution/out_of_core/_runner.py:300`. It is not a hard write-time quota.
+* `src/decoy_engine/execution/out_of_core/_duckdb.py:37` creates/chmods the spill directory and configures memory and threads at `:54`. It does not set `max_temp_directory_size`. Keep these memory controls; do not describe them as a process-wide memory guarantee.
+* Atomic visibility is not automatically crash durability. The transactional sink renames at `src/decoy_engine/execution/_transactional_sink.py:295`; fixed-width publication already flushes, fsyncs, renames, and fsyncs its parent at `src/decoy_engine/profile/_fixed_width_writer.py:339`.
+* The governor explicitly has no mid-job checkpointing: `src/decoy_engine/execution/_governor.py:28`. No persistent engine checkpoint writer was found. A checkpoint resource kind and real storage-level restart tests are proposed below, not claimed as shipped functionality.
+
+### 1.3 Complete production temporary-path inventory
+
+This is the migration checklist and the initial sentry manifest. An inventory row can own several physical files, but no row permits an unbounded exemption for its module. Allocate before opening. Register opaque native spill directories before handing them to a library.
+
+| ID | Actual producer and verified anchors | Bytes and required migration |
+|---|---|---|
+| T01 | `src/decoy_engine/execution/out_of_core/_runner.py:207`, `:269`, `:332` | Default `decoy-ooc-*` or caller `temp_dir`; `joins`, `relations`, `staged` trees. Replace reuse/chmod of a caller root with a fresh owned child and one attempt capability. Replace subtree deletion with ledger release. |
+| T02 | `src/decoy_engine/execution/out_of_core/_stage.py:65`; `_runner.py:271` in the same package | `staged/<table>/masked_keys.parquet`, incremental ParquetWriter. Allocate registered staged-key file. |
+| T03 | `src/decoy_engine/execution/out_of_core/_relation.py:448`, `:459`, `:513` | Per-parent `*_key_relation.parquet`, `duckdb/*_key_staged.parquet`, `*_key_winners.parquet`, plus native dedup spill. Register all three files and the opaque DB directory. |
+| T04 | `src/decoy_engine/execution/out_of_core/_multi_parent.py:134`, `:146` | `merged_key_relation.parquet`, `duckdb/merged_key_staged.parquet`, `merged_key_winners.parquet`, native merge/dedup spill. Same registration, including partial COPY failure. |
+| T05 | `src/decoy_engine/execution/out_of_core/_duckdb.py:27`; `_batch_join.py:150`, `_join.py:107`, `_stream_join.py:587` in that package | All helper-created DuckDB connections: batch parent TEMP TABLE, legacy child TEMP TABLE, streaming join/order operations, relation builders T03/T04, and quality T08. Managed opaque spill-directory handles replace arbitrary paths. Native filenames inherit quota and encryption automatically. |
+| T06 | `src/decoy_engine/execution/out_of_core/_stream_driver.py:253`, `:273`; `_stream_join.py:242`; `_payload_store.py:94`, `:146`, `:206` in that package | `payload.arrow`, `raw_parent_keys.arrow`, per-edge `child_keys.arrow`. Preserve Arrow IPC and repeatable sequential reads. Do not convert types that Parquet cannot represent. |
+| T07 | `src/decoy_engine/execution/out_of_core/_stream_join.py:554`; `_external_sort.py:352`, `:380`, `:420` in that package | Per-edge `reorder/`, initial Arrow runs, merge-pass runs, final run. Input and output runs coexist during merging and all count. Register before write, release after last reader closes. |
+| T08 | `src/decoy_engine/execution/native/_pool_quality.py:244` | `pairs_<column>_<uuid>.parquet` with source/masked values, plus helper-created DuckDB spill. Register even if this helper is called independently. Preserve overlap isolation. |
+| T09 | `src/decoy_engine/execution/_transactional_sink.py:174`, `:216`, `:262` | `_decoy_stage_*/<table>.parquet`, whole-table and streaming writes. Managed publication arena on destination filesystem, counted until durable ownership transfer. |
+| T10 | `src/decoy_engine/execution/_chunked_output_sink.py:450`, `:459` | `_decoy_hold_*/00000000.arrow` etc., currently beside `sink.spill_parent`. Replace the naked spill-parent capability with manager allocation. Preserve schema hold-back replay and missing-capability failure. |
+| T11 | `src/decoy_engine/execution/_isolated_run.py:328`, `:371`, `:387`, `:417` | `decoy-isolated-run-*` or supplied work root, `sources/<name>.parquet`, `payload.json`, result envelope. Payload can contain credentials. Parent registers before serialization; child receives attempt-scoped capability, never a fresh independent quota. |
+| T12 | `src/decoy_engine/execution/_isolated_commit.py:56`, `:65`, `:89`; `src/decoy_engine/execution/_isolated_worker.py:123`, `:185`, `:64` | Sibling output stage or `work_root/staging_output`, output Parquet, `row_errors.json`, envelope writer. Include in-process fallback staging and child staging. These files remain owned after abnormal child exit. |
+| T13 | `src/decoy_engine/connectors/postgres_snapshot.py:215`, `:418`, `:445`, `:494`, `:509` | Separate `spill-<run_id>` and `.stage-<run_id>/<schema>.<table>.parquet`, then `snapshot-<run_id>`. Migrate both. Preserve snapshot transaction, ordered COPY, timeout and extension controls. |
+| T14 | `src/decoy_engine/subset/_materialize.py:52`, `:71`; `src/decoy_engine/subset/_api.py:181` | Filtered `<table>.parquet` and `subset-manifest.json`. Current API writes caller output directly, not a hidden temporary directory. When consumed by masking these are intermediates and must stay registered; standalone subset publication must stage under the manager then transfer ownership. Closure's row budget is not a byte quota. |
+| T15 | `src/decoy_engine/quarantine.py:358` | `_decoy_quarantine_stage_*.jsonl`, raw quarantine data. Move single-file stage inside a 0700 destination-side arena and preserve primary-error/cleanup behavior. Direct durable JSONL at `:304` is separately classified below. |
+| T16 | `src/decoy_engine/profile/_fixed_width_writer.py:322`, `:339` | `.decoy-fw-*.tmp`, potentially raw fixed-width rows. Manager allocates within destination-side arena; retain current fsync/rename discipline. |
+| T17 | `src/decoy_engine/data_discovery.py:158`, `:179` | Independent in-memory DuckDB connection with no configured spill root. A result row limit does not bound query workspace. Register/configure its native spill path or disable spilling and reject the workload before unprotected spill. Do not overlook this non-execution-package consumer. |
+
+Additional classifications, to prevent misleading census totals:
+
+* S3/GCS/SFTP source adapters yield network chunks, not local spool files: `src/decoy_engine/connectors/s3.py:259`, `src/decoy_engine/connectors/gcs.py:188`, `src/decoy_engine/connectors/sftp.py:321`. Profiling's seekable remote reader is memory/range backed at `src/decoy_engine/profile/_cloud_readers.py:49`. Caller-side cloud-to-local spools remain a required integration inventory, **asserted, verify before build**. Do not fabricate an engine spool producer for these readers.
+* Vault persistence at `src/decoy_engine/vault.py:286` serializes Parquet into an in-memory buffer, encrypts it, then writes the requested durable vault at `:300`. It is not plaintext temporary Parquet. Any caller temporary vault path or future staging must register. Do not change the vault format as part of F25.
+* Direct quarantine JSONL (`src/decoy_engine/quarantine.py:304`), model-pack output (`src/decoy_engine/profiling/model_pack/trainer.py:539`), and rotating operational logs (`src/decoy_engine/internal/logging.py:101`) are durable writers, not scratch exemptions for their entire modules. Register them as explicit durable-output sinks in the write census. A new temporary sibling cannot inherit that classification.
+* Shipped reference Parquet and input-only Parquet readers are not allocations. Benchmark/test fixture directories are test infrastructure, not production jobs. Run their engine work with managed arenas; maintain separate exact exemptions for fixture creation in syscall tests.
+* New ledger storage, journals, key envelopes, checkpoint files, publication records, and sweep tombstones are themselves controlled resources. The manager cannot create a recursive exception for its own metadata.
+
+### 1.4 Established solutions, surveyed before design
+
+Online searches included `site.kernel.org fscrypt project quota encryption filesystems`, `site.man7.org fsync rename quotactl project quota`, `site.etcd.io concurrency lock lease fencing revision`, and `site.cryptography.io Fernet limitations memory`. Primary documentation was opened. The following selection is a proposed engineering composition, not a claim that these sources document Decoy's design.
+
+| Problem | Established pattern and source | Decision |
+|---|---|---|
+| Private allocation | Python [tempfile](https://docs.python.org/3/library/tempfile.html), explicit parent and secure creation | Manager alone creates random private arenas; 0700 dirs and 0600 metadata, with parent/owner verification before exposing paths. |
+| Durable publication | Linux [fsync](https://man7.org/linux/man-pages/man2/fsync.2.html) and [rename](https://man7.org/linux/man-pages/man2/rename.2.html) | Flush/close data, fsync files and affected directories, atomic rename on one filesystem, then durable completion record. No cross-device copy masquerading as atomic rename. |
+| Actual capacity enforcement | Linux [quotactl project hard limits](https://man7.org/linux/man-pages/man2/quotactl.2.html) | Kernel-enforced project quotas, including native writes and deleted-but-open files. Tree scans remain diagnostics only. |
+| Transparent at-rest coverage | Linux [fscrypt](https://docs.kernel.org/filesystems/fscrypt.html), managed through [fscryptctl](https://github.com/google/fscryptctl) | Qualify ext4 encryption plus project quota support on the actual deployment. Existing tools configure policy; no new encryption filesystem or raw ioctl implementation. |
+| Small authenticated key envelopes | PyCA [Fernet](https://cryptography.io/en/stable/fernet/) | Reuse the installed crypto stack for bounded key envelopes. Fernet requires each message in memory; do not encrypt an entire spill file with it. |
+| Local durable authority and live-writer exclusion | SQLite [transactions](https://www.sqlite.org/lang_transaction.html), [temporary-file inventory](https://www.sqlite.org/tempfiles.html), and Linux [flock](https://man7.org/linux/man-pages/man2/flock.2.html) | Short serialized ownership transactions plus a lifetime lock. SQLite sidecars are controlled resources; locks use a stable identity and survive child handoff. |
+| Safe ownership expiry | etcd's [expired-lease/fencing example](https://github.com/etcd-io/etcd/blob/main/contrib/lock/README.md) | Lease expiry alone is insufficient. Compare ownership generation transactionally and fence resource access before deletion. This is a pattern source, not a new etcd dependency. |
+
+Rejected alternatives: permission-only scratch does not protect an offline disk; post-write encryption leaves a plaintext window; Parquet-only encryption misses Arrow, JSON and native spill; DuckDB's own temp cap cannot account for other writers; periodic `du`/stat sampling cannot enforce a hard quota; a custom encrypted seekable stream and Python quota counter would recreate established storage mechanisms. Stop and return to the plan gate if the builder proposes either.
+
+Every new scratch, quota-adapter, crypto-envelope, and sweep module must cite its applicable primary pattern in its module docstring and state its limitations. Local code reuse includes the vault's PyCA pattern, the existing canonical HKDF, and fixed-width fsync discipline. A thin lifecycle adapter is custom because Decoy must bind storage resources to its attempts and publication contract. Crypto and filesystem accounting are not custom.
+
+### 1.5 Scratch manager, registration API, and quota construction
+
+Proposed new package: `src/decoy_engine/scratch/`. Public types and operations are provisional names to freeze at plan gate:
+
+```text
+ScratchPolicy(job_id, attempt_id, quota_bytes, quota_inodes, retention, storage_profile)
+ScratchManager.open_attempt(policy, storage_provider, ownership_authority)
+Arena.allocate_file(kind, opaque_name) -> RegisteredFile
+Arena.allocate_native_dir(kind, writer_id) -> NativeDirectory
+Arena.allocate_publication(destination, retention_owner) -> PublicationStage
+Arena.checkpoint(resource, recovery_descriptor, validator_or_manifest) -> CheckpointRef
+Arena.release(resource) -> CleanupReport
+ScratchManager.sweep(scope, authority) -> SweepReport
+```
+
+Pass a narrow typed arena capability through execution context and into each low-level producer. It contains attempt identity, fence generation, approved roots, quota assignment, and resource kind. A raw `Path` does not authorize writing. Registration is durable before a writable path/FD is returned. Opaque DB directories register their whole inherited namespace before connect; a bounded directory-level record is sufficient for filenames controlled by DuckDB. Python-created files have individual records. No retrospective `register(existing_path)` for arbitrary data. A subprocess child receives the arena capability and the liveness-lock file descriptor only through a dedicated restricted pipe or an inherited file descriptor cleared after a single read, never through argv, environment, or a discoverable path; A04 asserts this transport security.
+
+Use generated opaque resource components, not table names or tenant strings as filesystem traversal. Reject symlinks, unexpected owner/mode, hard-link aliases, mount substitution, and path escape. Resolve beneath approved root directory descriptors. Never chmod, adopt, or recursively delete an arbitrary caller root. All child creation inherits an already verified encryption and quota domain. A crash during creation leaves a registered CREATING resource or a conservatively retained unknown object, not an unowned data directory.
+
+The selected first deployment profile is Linux local ext4 with verified fscrypt v2 and enforced project quotas. This is a **qualification target**, not an assertion about the current host. A deployment-owned provisioning adapter supplies privileged setup; the engine does not acquire root or mount volumes. Pin tool/kernel/filesystem/library versions in the qualification evidence. Other platforms require equivalent independently proven adapters. Ordinary memory-only operations may continue; operations requiring temporary storage reject with `scratch_backend_unavailable` if no qualified profile exists. This is an intentional compatibility change requiring coordinated release, not an optional safety toggle.
+
+Quota semantics:
+
+1. The declared byte cap bounds filesystem-allocated data blocks charged to the attempt's project quota, including native spill, file tails, metadata files charged by that filesystem, and open-but-unlinked files. Report logical lengths separately. Round an unrepresentable requested cap down to the provider's enforcement unit, expose the effective cap, and reject a cap below the minimum usable allocation. Bound inode count separately and reserve filesystem metadata headroom.
+2. On one filesystem, all attempt arenas share one project quota domain. On several filesystems, immutable sublimits sum to at most the attempt cap. Initial V1 does not dynamically rebalance them. Do not allocate the whole cap independently to each sink/connection/worker.
+3. Host admission reserves these hard limits plus an explicit control-plane/metadata margin transactionally before allocation. All Decoy jobs on the managed volume use that allocator. A shared volume with uncontrolled writers cannot promise remaining free space; use a dedicated managed pool or reject that capacity guarantee. `statvfs` preflight is advisory, not a reservation.
+4. Set/verify project inheritance and hard limits before any writer starts. Quota accounting comes from the kernel through maintained provisioning tools. The ledger stores allocation reservations and kernel observations, not a running sum of intercepted Python writes. Keep DuckDB memory/thread caps and add its temp-size limit as a second backstop only after testing the selected versions.
+5. Quota/ENOSPC failures during write, writer close, footer flush, fsync, or SQL execution stop the attempt and prohibit publication. Return typed failure with effective cap, observed usage, arena/resource IDs, and retained-resource disposition. Preserve the primary failure if cleanup also fails. The shared failure reason is `scratch_quota_exceeded`; existing public wrappers retain their documented error code where required, including `out_of_core_temp_disk_exceeded`, and attach the shared report. Freeze other adapter mappings at Slice 0. Do not identify EDQUOT by parsing potentially sensitive native exception strings; use errno where preserved and provider quota evidence otherwise, with an explicit unknown-I/O classification.
+6. Release capacity only after writers and descriptors close and the quota provider confirms reclamation or durable-output ownership transfer. A failed cleanup retains its charge and inventory. Never report zero just because a pathname disappeared.
+
+ResourceLedger records: format version, opaque job/attempt/arena/resource IDs, root device/inode identity, resource kind, owner principal, monotonic fence generation, lease reference, quota-domain ID/limit, encryption-policy/key-version reference, recovery/retention classification, and lifecycle state. No DSNs, source values, raw keys, or user-derived filenames in control records.
+
+For standalone local use, a proposed SQLite transactional ownership adapter uses the standard library, short `BEGIN IMMEDIATE` transactions, and conditional updates that verify affected-row counts. Select durable rollback journaling with full synchronization for V1; bound busy waits and treat timeout as unavailable authority. Do not disable journaling to avoid accounting for it. Use one durable control database per managed local pool, not one independent authority per process. Its DB/journal/WAL/SHM and bounded lock records live in a provider-provisioned, encrypted, quota-reserved control arena. That bootstrap arena has an explicit control-job owner, 0700 directory, finite byte/inode quota and durable retention policy, and is registered in the provisioning inventory before opening SQLite. Its temporary sidecars are owned by that control job; bootstrap is not an unregistered scratch exemption. Failure to reserve control space rejects admission; it must still be possible to record a data-quota breach. Set query temporary storage to memory for the bounded metadata workload; this does not eliminate durable rollback journals. Reject operations that can create uncontrolled auxiliary databases, including online VACUUM. Any remaining SQLite temporary storage must stay in a registered native directory. Test its actual files. The platform adapter must bind to its existing durable ownership authority, not run competing local lease decisions. The control arena's reservation is sized so it can always record a terminal failure (for example `scratch_quota_exceeded`) for every other active arena even when near its own limit: recording a data-quota breach can never itself fail on a control-quota limit, and a new acceptance test proves it. The control-arena bootstrap verifies its DB, journal/WAL, and liveness-lock paths all resolve to one device and filesystem, failing otherwise (covered by A13).
+
+Design notes: one resource descriptor is the source of truth for identity and retention; policy is separated from storage capabilities because Linux provisioning and platform lease authority have different owners. Typed contexts avoid long path/key/limit argument lists. Small focused modules hide crypto and quota mechanics from producers. Avoid a universal resource framework for unrelated memory/CPU budgets; expose the scratch ledger seam for the named carrier features to consume.
+
+### 1.6 At-rest protection and publication
+
+The package already depends on `cryptography` (`pyproject.toml:157`). `src/decoy_engine/vault.py:128` uses Fernet and domain-separated derivation; `src/decoy_engine/keyprovider.py:123` validates real secrets. `src/decoy_engine/context.py:348` delegates HKDF to the canonical implementation. Reuse these dependencies and derivation practice, not vault private functions, its seed fallback, or its file format.
+
+Data-path encryption is transparent filesystem encryption, so Arrow IPC, Parquet random access, native DuckDB spills, JSON, and temporary fixed-width files remain ordinary library formats inside the protected mount. Use a fresh OS-CSPRNG arena data key of the size required by the approved fscrypt policy. The key provider supplies entropy and purpose-separated wrapping material; no seed-derived or masking-output-derived scratch key is allowed. Protect a resumable arena's small recovery envelope with PyCA Fernet under a separately versioned scratch wrapping key derived using the existing HKDF. Authenticate the arena/job/policy/version binding inside that envelope and verify it against the trusted ledger. Do not invent chunk framing, nonce management, or an encrypted random-access file protocol.
+
+The fscrypt source documents inherited file/name encryption, visible filesystem metadata, lack of protection against root with loaded keys, policy restrictions on rename, and potentially incomplete key removal. These limits constrain the design. Content authentication for mutable scratch is not claimed by filesystem encryption; authenticated key envelopes do not turn it into tamper-proof storage. Cross-host or hostile-storage checkpoint integrity needs the checkpoint owner's validated format and is outside this local profile.
+
+**Publication must not break encryption or atomicity.** Ephemeral scratch and durable publication stages are different retention classes under the same manager. A publication stage is allocated on the destination filesystem under the destination's approved persistent encryption policy and a per-attempt quota domain. Its key lifetime is owned by the durable destination, not the ephemeral arena. The manager verifies same-filesystem and compatible encryption policy before data production. Unsupported destinations fail before staging; there is no plaintext sibling or copy fallback. Where a copy from ephemeral scratch is necessary, it goes only to another registered, quota-charged protected stage, then the existing single rename publishes it.
+
+Before rename: seal/close writers, fsync data and stage directory, and durably record PUBLISHING with source/destination identity and retention owner. After rename: fsync affected parents, then record PUBLISHED and transfer quota/retention ownership. A crash between rename and ledger completion is reconciled under the publication lock using recorded identities. The sweep always retains ambiguous publication state. Promotion must not remove encryption keys needed by final output or allow quota transfer to exceed the durable storage budget. F25 preserves each existing publisher's transaction boundary; it does not promise one atomic transaction across independently published output and quarantine artifacts.
+
+### 1.7 Threat model and key recovery
+
+Assets include raw source columns, source-to-masked mappings, credentials in isolated payloads, raw quarantine rows, and checkpoint state. Private directories protect against other Unix users; encryption protects storage when keys are unavailable. Neither protects against root, a compromised engine process, or another job sharing that principal and key access. Strong inter-tenant isolation requires the worker's process/identity boundary.
+
+| Policy | Custody and crash behavior | Cleanup/resume rule |
+|---|---|---|
+| Ephemeral, non-resumable | Fresh arena key, no durable recovery envelope. Worker/key custodian holds it only for the attempt. A process crash may leave a kernel-loaded key, so “lost on crash” is a recovery promise, not instant cryptographic erasure. | Never advertise resume. After fencing and closing users, attempt key removal and record busy/incomplete removal. A host restart without retained keys cannot recover the arena. Authorized orphan cleanup can still delete it. |
+| Resumable storage | Persist and fsync the authenticated recovery envelope under a durable approved wrapping-key reference before marking a checkpoint valid. Keep the versioned wrapping key accessible across worker/host restart through the caller's key service. | A new owner must obtain a new fence, authorize unwrap, authenticate identity, and validate checkpoint format/completeness before resume. Unsupported key-provider recovery refuses checkpoint creation. |
+| Durable publication | Persistent destination policy and key custody, established before publication. | Survives attempt cleanup. It is not swept or rendered unreadable when ephemeral keys are removed. |
+
+Checkpoint validity is a committed state, never a filename convention. Register a fresh checkpoint generation as WRITING; write its payload and recovery envelope, close and fsync both, then atomically publish and fsync the checkpoint manifest that binds their identities and the consumer format/version. Only then CAS the durable ledger to CHECKPOINT_VALID under the current owner fence. Keep the previous valid generation until this transition completes. A crash leaves the previous checkpoint valid and the new generation incomplete or ambiguous, which startup retains for reconciliation. Resume requires the consumer to validate the complete format before returning a usable checkpoint handle. `Arena.checkpoint` accepts a validator callable or an expected-contents manifest (files, sizes, checksums); after `CHECKPOINT_VALID` the manager can run `verify()` to distinguish a structurally complete but encrypted checkpoint from a corrupted or partially written one, so provably broken checkpoints can be garbage-collected rather than retained forever. A09 exercises this verification step.
+
+Missing, revoked, wrong-version, or unavailable wrapping keys produce `scratch_recovery_key_unavailable`; authentication failure produces `scratch_recovery_invalid`. Both retain the checkpoint and emit a safe diagnostic. Key failure is never evidence that the checkpoint is disposable. Rotation preserves old versions while referenced, or rewraps and durably verifies envelopes before retiring them. Rewrap failure leaves the old valid envelope. Never place key bytes in configs, manifests, argv, environment dumps, or the isolated JSON payload; use an inherited restricted channel or caller key service.
+
+Swap, core dumps, hibernation and backups are deployment controls: disable them for the worker or independently encrypt/protect them with documented custody. Filesystem encryption does not cover plaintext RAM or an application-level backup taken while unlocked. Exclude ephemeral arenas from backups; align checkpoint backup retention with key retention. Ordinary unlink is not secure erasure on SSDs, snapshots, journaled storage or backups. Key removal cannot erase copied keys, unlocked backups, page caches, or busy kernel users. Reports must distinguish deleted, retained, key-removal-pending, and unknown; no unconditional “securely erased” claim.
+
+### 1.8 Lease-checked orphan sweep
+
+The engine exports a bounded sweep operation; the CLI/worker decides when to call it. No engine background daemon or import-time recursive cleanup.
+
+Ownership authority operations must atomically compare `(owner, attempt, generation, lease, state)` and advance the fence. Local leases use one transactional authority and conservative clock handling: expiry is only candidate selection. Clock jumps, authority outage, unverifiable schema/ownership, and partial manifests retain resources. PID existence, PID absence, mtime, and a directory prefix are never deletion authority.
+
+A writer holds an arena liveness lock for the complete lifetime of open native/Arrow handles. The local profile uses kernel advisory locks with verified single-host filesystem semantics. Every child that can write must hold or inherit the liveness lock independently of parent survival; an untracked subprocess is inadmissible. Inherited lock descriptors close only after that participant stops writing; do not issue a shared-description unlock while another participant still writes. Lock files have stable identities in the control arena and are never replaced while referenced. A sweep must obtain the exclusive lock as well as a successful authority CAS. This closes the stale-native-writer gap: changing a database fence cannot revoke an already open native file descriptor. If an expired worker is paused but still holds its lock, retain the arena. Worker lifecycle may first stop and reap its isolated execution group, then retry. Cross-host shared filesystems are unsupported until equivalent storage-level fencing is proven.
+
+Sweep sequence:
+
+1. Enumerate only registered arenas under provisioned roots; validate device/inode, ownership and format without following links. Unknown entries are reported for reconciliation, not deleted by prefix.
+2. Read retention/publication/checkpoint state from the durable authority. Active lease, valid checkpoint, resumable hold, PUBLISHING, PUBLISHED, or unknown state is ineligible. An expired lease alone does not cancel checkpoint retention.
+3. Acquire exclusive liveness lock; transactionally recheck lease, retention, identity and generation, then claim REAPING with a new generation. Renewal/resume and the reaper race through the same CAS; only one wins.
+4. Hold the lock through deletion. Fence all new allocations, checkpointing and publishing. Revalidate immediately before destructive work. No caller may recreate the same arena identity.
+5. Delete only the owned arena. Close/revoke keys as applicable, fsync removal, query quota reclamation, then mark REAPED. Partial deletion stays REAPING with remaining charges and bounded retries. A second sweep is idempotent.
+
+Startup runs reconciliation or this same conservative sweep, never unconditional `rmtree`. Old unregistered directories require a separate authorized legacy-inventory procedure. They cannot be retroactively attributed from their names. This composes with platform orphaned-lock recovery through one authority adapter; its exact integration is **asserted, verify before build**.
+
+### 1.9 Behavior contract, failure modes, and acceptance tests
+
+Acceptance is specified here before implementation slices. New test names below are deliverables, not existing files. Use synthetic sentinels, never production source data. Each negative test must demonstrate that it exercises a real allocation/write or contested transition.
+
+| Test | Scenario and observable acceptance |
+|---|---|
+| A01 Ownership and isolation | Create two concurrent attempts under permissive umask. All arenas are 0700, metadata 0600 from creation, IDs differ, and registration precedes the first data write. Reject traversal, symlink substitution, mount/owner mismatch, and a caller root containing unrelated files without changing that root. |
+| A02 Hard quota and report | Force each writer family T02-T17 beyond a small real quota, including one large write before any table boundary and a footer/close failure. The write fails without exceeding the effective kernel cap; attempt stops and output is uncommitted. Typed report identifies cap/usage/resources and cleanup outcome without data values. Another job still writes within its allocation and pool reserve remains available. Separately exhaust the inode quota with zero-byte files and assert the correct typed failure and report, so a runaway tiny-file producer cannot evade the byte cap. |
+| A03 Concurrency/accounting | Concurrent DuckDB connections, Arrow writes, multi-mount sublimits, merge-input/output overlap, and parent/child writers share one attempt budget. Exercise truncate, replacement and deleted-but-open files. Kernel usage controls release; failed cleanup remains charged. No per-connection multiplication of quota. |
+| A04 Coverage and parity | Execute every T row with actual writes and real spill, both OOC lanes, all applicable native/no-companion paths, full and streamed sinks, isolated/fallback runs, subset-then-mask, snapshot, discovery, quarantine and fixed-width. OS tracing finds every data write under a registered resource or an exact durable-output exemption. Values, schema, order, warnings and existing deterministic output-byte contracts match baseline. |
+| A05 Encryption demonstration | On the selected backend, round-trip IPC, Parquet, JSON, fixed-width and actual DuckDB spill. Verify encryption policy on created files; force spill and observe nonzero charged bytes. Offline/remounted ciphertext inspection cannot find known plaintext sentinels; unauthorized keyless reads fail. Reinserting the correct key restores data. A plaintext control makes the sentinel detector fail as expected. Mounted plaintext absence alone is not evidence. |
+| A06 Envelopes and key failures | Property-test authenticated envelope round-trips. Wrong key, tampering, arena-envelope substitution, wrong version, missing service and revocation fail closed. No key/data in exceptions, repr, logs, manifests, payload.json or process arguments. Preserve existing vault round-trips unchanged. |
+| A07 Active arena safety | Expired candidate races heartbeat, resume, second sweeper and paused native writer. Active or lock-held arenas survive unchanged. CAS loser cannot delete. Reused PID has no effect. Inject clock jumps, authority errors and ownership mismatch; all retain safely. |
+| A08 Orphan recovery | Kill worker after registration, first write, flush and cleanup start. After authority expiry and exclusive fencing, sweep removes only abandoned ephemeral arena, releases quota, and reports it. Kill sweeper mid-delete; retry completes idempotently. Cleanup failure reports retained bytes/resources, not success. |
+| A09 Checkpoint survival | Write a real registered storage checkpoint and durable recovery envelope, restart a fresh manager/process, expire the old lease, and run startup cleanup. Checkpoint bytes and key reference survive and authorized reopen round-trips. Repeat with unavailable key, interrupted checkpoint commit, old schema and expiry racing retention renewal: no valid checkpoint is erased. A fixture is storage-level evidence, not operator-resume evidence. |
+| A10 Publication crash matrix | Fault before/after file fsync, stage fsync, PUBLISHING record, rename, parent fsync and PUBLISHED record. Existing output remains untouched or new output is complete. No partial output is reported committed. Ambiguous durable state is retained for reconciliation. Final output stays readable after ephemeral key destruction. Cross-device/policy mismatch rejects before data staging. |
+| A11 Ephemeral versus resumable | Crash ephemeral owner: no durable key envelope and resume rejected. Simulate lingering kernel key and incomplete removal; report limitations truthfully. Resumable owner restart plus key rotation succeeds under the retained version; unavailable old key retains data. |
+| A12 Sentry teeth | Inject an unregistered tempfile, aliased Arrow writer, new DuckDB connect, SQL COPY, hardcoded temporary path, new execution module, and changed allowlisted producer. Each makes the sentry fail. An unused stale manifest entry also fails. An integration mutation that spills outside the arena is detected at the OS boundary, including a native write. Add an `O_TMPFILE` / `open`+`unlink` producer whose write the syscall trace must catch as unregistered, since such files consume quota until the last descriptor closes. |
+| A13 Unsupported backend/control failure | No quotas, encryption policy missing, provider revoked, unsafe destination, control arena full, or unsupported shared filesystem: reject before raw bytes, with no plaintext fallback. Inject a crash during arena setup and confirm reconciliation never deletes unrelated files. |
+| A14 Measured overhead | Run the benchmark protocol below with correctness assertions and archive raw measurements plus environment. A summary without actual native-spill evidence or without the plaintext/quota-only controls fails this acceptance. |
+
+Encryption/ledger benchmark protocol: fixed synthetic datasets and seeds; tiny job for setup latency, large sequential spool, wide IPC reorder with multiple merge passes, DuckDB join/dedup forced beyond memory, subset-then-mask, and destination staging. Measure the baseline checkout, manager plus quota on disposable plaintext synthetic storage as an experimental control, and the full encrypted profile. Only the protected profile is production-admissible. Keep library versions, compression, row groups, memory/thread caps and hardware constant. Run warmup then at least five measured repetitions per case, cold and warm cache separately where controllable. Record all samples, median, range and p95 with sample-count caveat; wall time, throughput, CPU, RSS, allocated-byte peak, IO bytes, setup/cleanup/unwrap latency and quota/fence outcomes. Include concurrent attempts. Record kernel, filesystem flags, tool versions and CPU crypto capabilities.
+
+Do not adopt a percentage overhead estimate. Before implementation acceptance, reviewers set deployment throughput/latency budgets from the measured baseline and workload requirements; preserve those budgets for the full-profile comparison. Correctness, hard quota, no bypass and checkpoint safety are unconditional gates. A performance miss returns to profile selection/optimization and cannot disable encryption or weaken tests. Existing bounded-RSS behavior must remain intact: buffered readers at `src/decoy_engine/execution/out_of_core/_payload_store.py:244` and `_external_sort_run.py:37` must not become whole-file decryptions or new memory maps.
+
+## 2. Single choke-point and CI SENTRY
+
+Deliverable: **Scratch Allocation Sentry**, proposed `tests/sentry/test_scratch_allocation_sentry.py`, with one machine-readable producer manifest under `tests/sentry/` (new). T01-T17 seed it. It mirrors the broad scan plus deliberate connection allowlist at `tests/sentry/test_physical_seam_disconnection.py:173` and stale-entry check at `:192`. That precedent is verified, not a claim that scratch enforcement already exists.
+
+The runtime choke-point is ScratchManager. All temporary producers require RegisteredFile, NativeDirectory or PublicationStage capabilities. Only storage adapters unwrap native paths. Lower-level APIs cannot opt out by accepting an arbitrary directory. Root creation, project/quota assignment, key/policy setup, durable ownership registration and lease validation precede capability issuance. Nested producers reuse the same attempt ledger. Directory-based native writers inherit the storage boundary without intercepting each write.
+
+The sentry has three complementary checks:
+
+1. Scan all production sources, not a hand-maintained subset of execution modules. Resolve Python imports/aliases and inspect calls for allocation, write/create modes, serializers, DuckDB connections/configuration, SQL export and deletion. Include string/name scans as a conservative backstop, plus native-source and subprocess writer surfaces. Any new candidate must be classified. Existing durable writes require exact call-site exemptions with rationale.
+2. Each allowed producer has a qualified symbol, normalized AST/body fingerprint, resource kind, allocation wrapper and acceptance witness. A new or changed producer fails until its binding and witness are reviewed. Whole-module exclusions are prohibited. Stale entries fail. Changes to entrypoints or dependency spill capabilities require updated route coverage; mere presence of an `import scratch` is not proof of use.
+3. Run A04/A12 in fresh subprocesses with native syscalls traced. Trace create/write/rename/unlink and inherited descriptors, including files created then unlinked; an end-of-run directory listing is insufficient. Correlate with ledger registration timing. Include actual library-induced spill and its cleanup. Tests must fail if a workload did not spill when it was intended to.
+
+Static analysis is a drift guard, not a proof against arbitrary dynamic Python. The capability boundary, inherited kernel protection, exact producer review and OS-level tests provide the combined evidence. CI must not label a mocked filesystem test as encryption/quota qualification. Keep the fast sentry in the existing regression suite (`.github/workflows/ci.yml:124`, `:143`); add a required Linux storage integration job with a provisioned test volume. Missing privileges/backend must fail that job's setup, not skip it green. Other OS jobs assert the documented fail-closed behavior until qualified.
+
+## 3. PLAN
+
+Every slice starts by implementing its named acceptance witnesses, preserving the FRAME criteria. Proposed package/test/benchmark paths below are new deliverables. Existing anchors identify integration seams, not files to invent. All source slices require lint, format, typing, relevant existing suites, sentries, per-unit branch coverage and mutation evidence for security-critical transitions. Never weaken an accepted assertion to pass a gate.
+
+### Slice 0: Qualify the storage profile and freeze integration contracts
+
+**Scope:** reconcile the inventory against current build HEAD; obtain the missing platform plan and lifecycle/key contracts; prove ext4 quota/encryption coexistence, native spill, same-policy publication and quota transfer on the intended deployment. Open actual F13/F23-F24/F26/F45 contracts and record their interfaces. Prototype through maintained tools using disposable synthetic fixtures only. Freeze limits, supported versions, output-directory requirements and public failure behavior. Deliver a dependency-verification report as the hard gate that blocks all later slices: a working `fscryptctl` + `quotactl` prototype demonstrating the exact arena-creation sequence and proving a test binary's native writes are charged to the project quota; the explicit contract subordinating the engine's local SQLite ledger to the platform's durable ownership authority (never two competing lease sources of truth); the worker/CLI hooks for secret injection, lease maintenance and sweep invocation; and the caller-side cloud-to-local spool contract. An unavailable or divergent contract forces a plan revision before build.
+
+**Anchors:** `src/decoy_engine/execution/out_of_core/_duckdb.py:27`, `src/decoy_engine/data_discovery.py:179`, `src/decoy_engine/connectors/postgres_snapshot.py:221`, `src/decoy_engine/execution/_transactional_sink.py:295`, `pyproject.toml:88`, `:157`. The broad DuckDB lower bound is not a certified encryption/spill matrix.
+
+**Acceptance:** qualifying probes for A02, A05, A10, A13 and baseline A14. Freeze exact platform authority/lock integration from real source. Establish whether destination quota/project transfer and encryption-policy-preserving rename work as required.
+
+**Gate:** Gemini/Dennis plan findings resolved on the exact document; backend evidence supports the proposed contract. If the deployment cannot provide the hard boundary, stop and revise the profile. Do not substitute hand-written crypto/accounting or claim F25 complete on the strength of an interface alone. Run this qualification against the ACTUAL shipped self-hosted deployment baseline, not a lab ext4 box; the owner must explicitly accept that temp-storage operations hard-fail with `scratch_backend_unavailable` on any customer host lacking ext4 + fscrypt v2 + project quotas, or the profile is revised before build. (Owner-decision carry-forward: Decoy ships self-hosted to customers who control their own filesystems.)
+
+### Slice 1: Scratch manager, ResourceLedger, registration and sentry
+
+**Scope:** introduce typed capabilities, storage-provider interface, local transactional ledger, restrictive allocation, hard quota assignment, control-arena bootstrap, safe errors and cleanup reports. Implement the initial producer manifest and sentry mutation tests. Include the full retention/state schema now so later sweep/key slices do not reinterpret old records unsafely. Initially disconnected from production execution until the selected backend is qualified.
+
+**Anchors:** `src/decoy_engine/execution/out_of_core/_budget.py:507`, `:524`; `tests/sentry/test_physical_seam_disconnection.py:173`, `:192`; `.github/workflows/ci.yml:143`.
+
+**Acceptance:** A01-A03, A12-A13 using real quota enforcement plus deterministic authority-fault tests. Verify control DB sidecars and setup-crash recovery. Mutation tests kill removal of ownership check, quota assignment, registration ordering and generation predicate.
+
+**Gate:** no permissive fallback backend; no rolling Python actual-byte counter; no production bypass through raw paths; new module sizes meet repository caps. The temporary migration manifest may identify legacy producers explicitly, but final F25 activation cannot retain them.
+
+### Slice 2: Migrate every OOC and native-quality allocation, T01-T08
+
+**Scope:** thread the attempt capability through both OOC lanes and every helper caller. Replace root creation, masked-key staging, relation/merged relation files, IPC payload/raw/child key spools, all sorter runs and quality-pair spools. Register every DuckDB spill directory. Preserve format/schema/order and existing memory models. Route the old disk diagnostic through provider observations without treating it as enforcement.
+
+**Anchors:** `_runner.py:207`, `:269`, `:300`; `_stage.py:65`; `_relation.py:448`; `_multi_parent.py:134`; `_payload_store.py:94`, `:146`, `:206`; `_external_sort.py:352`; `_batch_join.py:150`; `_join.py:107`; `_stream_join.py:587`, all under `src/decoy_engine/execution/out_of_core/`; `src/decoy_engine/execution/native/_pool_quality.py:244`.
+
+**Acceptance:** A02-A04, including actual forced native spill and all direct low-level callers. Existing relation, batch-join, stream-join, multi-parent, runner, route-seam parity and bounded-memory suites remain meaningful. Early consumer close, writer constructor failure and native exception must release handles before quota reservations.
+
+**Gate:** T01-T08 have no legacy exemption; syscall evidence and sentry agree. Both reorder and batch lanes pass with and without the native companion where supported. No mmap or whole-file buffering regression.
+
+### Slice 3: Migrate remaining temporary surfaces, T09-T17
+
+**Scope:** transactional and hold-back sinks; isolated parent/child/fallback staging and envelopes; PostgreSQL snapshot spill/export; subset output-as-intermediate and standalone publication; quarantine and fixed-width staging; discovery DuckDB. Coordinate caller spool contracts. Publication uses registered destination-side arenas, not a bypass for same-filesystem rename.
+
+**Anchors:** `src/decoy_engine/execution/_transactional_sink.py:262`; `_chunked_output_sink.py:450`, `_isolated_run.py:328`, `_isolated_commit.py:56`, `_isolated_worker.py:123` under `src/decoy_engine/execution/`; `src/decoy_engine/connectors/postgres_snapshot.py:445`; `src/decoy_engine/subset/_api.py:181`; `src/decoy_engine/quarantine.py:358`; `src/decoy_engine/profile/_fixed_width_writer.py:322`; `src/decoy_engine/data_discovery.py:179`.
+
+**Acceptance:** A01-A04, A10, A12-A13. Preserve subset closure-before-write behavior, snapshot ordering/transaction checks, quarantine commit fate, fixed-width output, isolated failure classification, and custom-sink failure behavior. A cloud spool consumes one source stream and stops reading on quota failure; no extra unregistered download.
+
+**Gate:** all T rows have acceptance witnesses, no production legacy allowances remain, and destination incompatibility is visible before data writes. Confirm that parent and child do not get separate full-size quotas. Cross-surface consumers are either migrated or explicitly rejected; they cannot be silently excluded from the completion claim.
+
+### Slice 4: At-rest encryption, key envelopes and measured overhead
+
+**Scope:** wire the qualified encrypted backend for every arena and publication domain. Add purpose-separated PyCA key-envelope handling without changing vault/masking crypto. Transport child capabilities/key access safely. Deliver a reproducible benchmark driver and result record under the repository's existing scripts/docs conventions (new artifacts, names frozen at build).
+
+**Anchors:** `src/decoy_engine/vault.py:128`, `:286`; `src/decoy_engine/keyprovider.py:123`; `src/decoy_engine/context.py:348`; `src/decoy_engine/execution/_isolated_run.py:387`; `src/decoy_engine/execution/out_of_core/_payload_store.py:244`; `pyproject.toml:157`.
+
+**Acceptance:** A04-A06, A10-A11, A13-A14 on the qualified backend; retain byte-identical output guarantees while allowing nondeterministic encrypted storage bytes. Inspect swap/dump/backup policy evidence. Benchmark forced-spill workloads rather than quoting an estimate.
+
+**Gate:** no file family uncovered; no decrypt-to-unmanaged-temp helper; actual native/library compatibility demonstrated. Publish measured overhead and limits for review. Slices 1-3 are internal migration increments and cannot ship as completed F25 before this gate. No release flips the default production write path onto a managed-but-unencrypted arena; managed-plaintext scratch is never shipped as an interim improvement.
+
+### Slice 5: Lease/fence-checked orphan recovery
+
+**Scope:** implement candidate selection, transactional claim, exclusive liveness fencing, bounded deletion and reconciliation. Replace cleanup that suppresses resource accounting with reported outcomes. Add startup entrypoint for callers, with no implicit cleanup in engine imports. Compose with the platform lock authority once verified.
+
+**Anchors:** current cleanup to replace or wrap: `src/decoy_engine/execution/out_of_core/_runner.py:324`; `src/decoy_engine/execution/_transactional_sink.py:306`; `src/decoy_engine/execution/_isolated_run.py:357`; `src/decoy_engine/connectors/postgres_snapshot.py:517`. No current engine lease-reaper implementation is asserted.
+
+**Acceptance:** A07-A10, A13. Include a paused live native writer, child surviving parent death, two simultaneous sweepers, renewal CAS, interrupted publication, partial deletion and unavailable authority. Kill/restart real subprocesses as well as testing state transitions.
+
+**Gate:** no PID-only inference, no prefix-only deletion, no generation check without access fencing, no deletion of valid/unknown checkpoint or publication state. Platform orphan-lock recovery must consume the same decision instead of independently deleting paths.
+
+### Slice 6: Recovery policy, compatibility and end-to-end completion
+
+**Scope:** finalize versioned ephemeral/resumable policy, checkpoint storage commit/reopen, key rotation and retention behavior. Wire actual resume-capable consumers only where independently supported; unsupported operator resume fails clearly. Publish engine API/storage contract, CLI migration guidance, deployment requirements and measured limits. Keep legacy arenas out of automatic sweeping.
+
+**Anchors:** `src/decoy_engine/execution/_governor.py:28` proves restart semantics to preserve; `src/decoy_engine/keyprovider.py:123` identifies existing secret-provider boundary; `src/decoy_engine/execution/_isolated_commit.py:73` identifies publication integration. New scratch APIs and test files are deliverables, not existing prerequisites.
+
+**Acceptance:** all A01-A14, with A09/A11 executed across fresh process/host-key lifecycle and key-service outage. Consumer contract tests prove startup cleanup preserves valid checkpoints and final outputs. Include standalone library, CLI and worker lifecycles in release evidence.
+
+**Gate:** Dennis adversarial implementation verdict, independent exact-artifact final gate per repository policy, Barry documentation reconciliation, required checks and qualification evidence all refer to the final revision. Existing relevant suites plus `tests/sentry`, security/privacy and full regression checks run; large-block test-flight gate follows CONTRIBUTING.md. A missing privileged test is an unresolved gap, not a pass. No merge/push is part of this draft task.
+
+Rollout/rollback: inventory existing consumers before changing defaults. Require an explicit configured storage provider for temporary work; refuse old naked-directory behavior after activation. Keep format versions and key references in the ledger. Rollback stops new attempts and preserves retained arenas/checkpoints; an older binary must refuse unknown ledger versions rather than delete them. Resume or disposal uses a compatible recovery tool. Do not automatically migrate historical scratch contents or remove keys during a binary rollback.
+
+## 4. Cross-surface notes and build blockers
+
+| Surface | Contract to verify and implement | Evidence status |
+|---|---|---|
+| Engine connector adapters | Source streams may be memory-only; any local materialization obtains a managed file and stops source consumption on failure. PostgreSQL snapshot is already in this repo and is T13. | Engine anchors above verified. Caller spool implementations **asserted, verify before build**. |
+| CLI | Configure approved storage/key provider; create one job/attempt capability; use managed staging for downloads and subset-then-mask; show quota and retained-resource reports; call conservative reconciliation. | CLI source paths and flags **asserted, verify before build**. No fabricated anchors. |
+| Worker lifecycle | Provision quota/encryption domains, inject identity and key access, maintain leases, own execution-group fencing, account for all attempts, invoke authorized sweep, preserve checkpoint retention. | Worker authority and process-control interfaces **asserted, verify before build**. |
+| Platform lock recovery | Reuse its durable job/attempt/lock authority and owner-generation rules. Lock recovery alone must not authorize arena deletion. | Existing lock recovery and MX-04 detail **asserted, verify before build**. |
+| Roadmap and carrier features | Reconcile F13, F23-F24, F26, F45 contracts with the ResourceLedger seam; update platform F25 status only when evidence covers actual consumers. Retrieve S10/S11 plan and G14/P-C4 records. | `decoy-platform/docs/ROADMAP.md` and missing planning records **asserted, verify before build**. |
+
+The qualification gate must resolve storage provisioning, output policy compatibility, quota transfer, key-service recovery and ownership-authority integration. These are concrete unanswered deployment questions, not excuses to implement an unenforced placeholder. This draft makes a falsifiable backend choice and specifies what would force revision.
+
+Documentation ownership during implementation follows the repository role split. This first draft is authored directly as requested; it does not run or impersonate the subsequent Gemini or Dennis review.
+
+## 5. Provenance
+
+Draft verification: source/write census and cited-anchor existence checks completed; T01-T17 and A01-A14 are enumerated; no em-dashes or whitespace errors. Implementation tests, backend qualification and benchmarks have not run. The review fields below are intentionally empty.
+
+### Gemini review
+
+Gemini 2.5 Pro (plan gate, 2026-10-29): **GO-WITH-FIXES**. Assessed exceptionally strong; the capability model, kernel-quota authority, fscrypt honesty, lease-checked sweep, and sentry are all sound, with no viable T01-T17 bypass. Fixes folded: (Tier1) Slice 0 now delivers a hard dependency-verification report with a working fscryptctl+quotactl native-charge prototype and the single-lease-authority subordination contract, blocking later slices; (Tier2) the control arena is sized to always record a terminal failure even near its own limit, `quota_inodes` is a first-class policy field with an A02 inode-exhaustion test, and subprocess children receive the capability + lock fd only over a restricted pipe/inherited fd, never argv/env/path; (Tier3) `Arena.checkpoint` takes a validator/manifest with a manager `verify()` (A09), the control-arena bootstrap verifies single-device placement (A13), and A12 adds an `O_TMPFILE`/`open`+`unlink` sentry case. The standing risk Gemini named is the asserted platform dependencies, which the hardened Slice 0 manages.
+
+### Dennis review
+
+Dennis (repo-grounded plan gate, 2026-10-29): **GO**, 0 blocker / 0 high, 1 MEDIUM (Slice-0 carry-forward) / 2 LOW. Verified ~40 source anchors across T01-T17 plus the grounding/crypto/CI/sentry-precedent anchors first-hand against baseline `2a44723f`; confirmed the OOC cap is a point-in-time walk not a quota, no existing checkpoint writer or lease-reaper, no Rust write site, and exemplary phantom-prereq discipline (the ext4+fscrypt+quotactl profile is a qualification target, not an assertion). Judged the choke-point/sentry sound (the DB-fence-cannot-revoke-an-open-fd race is correctly closed by the exclusive kernel liveness lock held through deletion), the crypto/quota/sweep honest, and all seven folded Gemini fixes coherent. MEDIUM M1 (owner-decision carry-forward, now named in the Slice-0 gate): the fail-closed `scratch_backend_unavailable` posture hard-fails temp-storage operations on any host without ext4 + fscrypt v2 + project quotas, so Slice 0 must qualify against the actual shipped self-hosted deployment baseline and the owner must accept the hard-fail. Folded: L1 bars shipping managed-plaintext scratch as an interim improvement; L2 (platform contracts as the standing dependency) is carried as the known risk, bounded by the Slice-0 hard gate.

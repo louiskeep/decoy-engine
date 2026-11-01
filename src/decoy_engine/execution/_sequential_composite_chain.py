@@ -23,6 +23,7 @@ from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
+from decoy_engine import reasons
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.plan._types import ColumnSeed
 from decoy_engine.relationships._graph import OrphanPolicy
@@ -31,8 +32,8 @@ if TYPE_CHECKING:
     from decoy_engine.execution._runner import WorkNode
     from decoy_engine.relationships._graph import RelationshipEdge, RelationshipGraph
 
-COMPOSITE_CHAIN_CODE = "sequential_composite_fk_chain_unsupported"
-_RAW_CODE = "orphan_remap_parent_missing"
+COMPOSITE_CHAIN_CODE = reasons.runtime.SEQUENTIAL_COMPOSITE_FK_CHAIN_UNSUPPORTED
+_RAW_CODE = reasons.runtime.ORPHAN_REMAP_PARENT_MISSING
 
 
 def composite_chain_offender(

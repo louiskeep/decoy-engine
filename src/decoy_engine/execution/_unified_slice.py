@@ -37,6 +37,7 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any, cast
 
+from decoy_engine import reasons
 from decoy_engine.errors import DecoyError
 from decoy_engine.execution import _unified_slice_admission as _admission
 from decoy_engine.execution._row_errors import RowErrorRecord
@@ -90,7 +91,7 @@ class UnifiedSliceInvariantError(DecoyError):
     another lane's own internal-consistency guard.
     """
 
-    code: str = "unified_slice_invariant_violation"
+    code: str = reasons.runtime.UNIFIED_SLICE_INVARIANT_VIOLATION
 
 
 def _typed_warnings(items: tuple[object, ...]) -> tuple[QualityWarning, ...]:

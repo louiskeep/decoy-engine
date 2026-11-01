@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from decoy_engine import reasons
 from decoy_engine.plan._errors import PlanCompileError
 
 
@@ -36,7 +37,7 @@ def resolve_pool_size(col_entry: dict[str, Any], *, table_name: str, col_name: s
         and top_pool_size != provider_pool_size
     ):
         raise PlanCompileError(
-            code="pool_size_location_conflict",
+            code=reasons.plan.POOL_SIZE_LOCATION_CONFLICT,
             path=f"tables.{table_name}.columns.{col_name}.pool_size",
             message=(
                 f"Column {table_name}.{col_name}: top-level "

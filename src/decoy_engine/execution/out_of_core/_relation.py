@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
-import hashlib
+import itertools
+from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Final, TypeAlias
 
 import pyarrow as pa
 
+from decoy_engine import reasons
+from decoy_engine._opaque import OpaqueBox
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._fk_keys import NULL_FK_KEY, fk_join_key_tuple, fk_key_value
+from decoy_engine.execution.out_of_core._compat import _column_seed
 from decoy_engine.execution.out_of_core._duckdb import connect_duckdb
 from decoy_engine.execution.out_of_core._join import _sql_string
 from decoy_engine.execution.out_of_core._key_width import SlimRowWidthTracker
@@ -81,68 +85,73 @@ def build_parent_key_relation(
     such parents must build from their post-rewrite output
     (`build_parent_key_relation_aligned`) instead.
     """
-    schema = _parent_source_schema(parent)
-    key_seeds: list[ColumnSeed] = []
-    masked_types: list[pa.DataType] = []
-    for parent_col in edge.parent_columns:
-        seed = _column_seed(plan, edge.parent_table, parent_col)
-        if seed is None:
-            raise ExecutionError(
-                code="out_of_core_parent_seed_missing",
-                message=f"parent key {edge.parent_table}.{parent_col} is not in the plan.",
-            )
-        if seed.strategy == "hash" and seed.namespace is None:
-            raise ExecutionError(
-                code="out_of_core_parent_strategy_unsupported",
-                message="hash parent FK keys must carry a namespace.",
-            )
-        if schema is not None and parent_col not in schema.names:
-            raise ExecutionError(
-                code="out_of_core_parent_column_missing",
-                message=f"parent source table has no column {parent_col!r}.",
-            )
-        source_type = schema.field(parent_col).type if schema is not None else None
-        masked_types.append(masked_output_type(seed, source_type))
-        key_seeds.append(seed)
-    # DE-02: the keyed-mask IKM; None falls back to job_seed (byte-identical).
-    job_seed = mask_key if mask_key is not None else plan.seed_envelope.job_seed
-
-    def masked_batch_fn(
-        start: int, key_arrays: list[pa.Array], keep_mask: pa.BooleanArray
-    ) -> list[pa.Array]:
-        # Filter-then-mask is byte-identical to pre-mask-then-filter: every
-        # admitted kernel is per-value deterministic and null-preserving, and
-        # keep_mask only drops null-key rows. Masking the kept slice keeps the
-        # per-call work batch-sized.
-        masked: list[pa.Array] = []
-        for key_array, seed in zip(key_arrays, key_seeds, strict=True):
-            kept = key_array.filter(keep_mask)
-            if seed.strategy == "hash":
-                if seed.namespace is None:
-                    raise AssertionError("hash namespace checked before streaming")
-                # Dispatched through this module's own hash_array binding so
-                # the hash path's per-batch residency stays observable here.
-                masked.append(
-                    hash_array(
-                        kept,
-                        seed=job_seed,
-                        namespace=seed.namespace,
-                        truncate=_hash_truncate(seed),
-                    )
+    try:
+        schema = _parent_source_schema(parent)
+        key_seeds: list[ColumnSeed] = []
+        masked_types: list[pa.DataType] = []
+        for parent_col in edge.parent_columns:
+            seed = _column_seed(plan, edge.parent_table, parent_col)
+            if seed is None:
+                raise ExecutionError(
+                    code=reasons.runtime.OUT_OF_CORE_PARENT_SEED_MISSING,
+                    message=f"parent key {edge.parent_table}.{parent_col} is not in the plan.",
                 )
-            else:
-                masked.append(mask_column(kept, seed, job_seed))
-        return masked
+            if seed.strategy == "hash" and seed.namespace is None:
+                raise ExecutionError(
+                    code=reasons.runtime.OUT_OF_CORE_PARENT_STRATEGY_UNSUPPORTED,
+                    message="hash parent FK keys must carry a namespace.",
+                )
+            if schema is not None and parent_col not in schema.names:
+                raise ExecutionError(
+                    code=reasons.runtime.OUT_OF_CORE_PARENT_COLUMN_MISSING,
+                    message=f"parent source table has no column {parent_col!r}.",
+                )
+            source_type = schema.field(parent_col).type if schema is not None else None
+            masked_types.append(masked_output_type(seed, source_type))
+            key_seeds.append(seed)
+        # DE-02: the keyed-mask IKM; None falls back to job_seed (byte-identical). Boxed for the
+        # closure (`_opaque`).
+        key_box = OpaqueBox(mask_key if mask_key is not None else plan.seed_envelope.job_seed)
 
-    return _build_relation(
-        source_parent=parent,
-        edge=edge,
-        temp_dir=temp_dir,
-        memory_limit=memory_limit,
-        batch_rows=batch_rows,
-        masked_batch_fn=masked_batch_fn,
-        masked_types=tuple(masked_types),
-    )
+        def masked_batch_fn(
+            start: int, key_arrays: list[pa.Array], keep_mask: pa.BooleanArray
+        ) -> list[pa.Array]:
+            # Filter-then-mask is byte-identical to pre-mask-then-filter: every
+            # admitted kernel is per-value deterministic and null-preserving, and
+            # keep_mask only drops null-key rows. Masking the kept slice keeps the
+            # per-call work batch-sized.
+            masked: list[pa.Array] = []
+            for key_array, seed in zip(key_arrays, key_seeds, strict=True):
+                kept = key_array.filter(keep_mask)
+                if seed.strategy == "hash":
+                    if seed.namespace is None:
+                        raise AssertionError("hash namespace checked before streaming")
+                    # Dispatched through this module's own hash_array binding so
+                    # the hash path's per-batch residency stays observable here.
+                    masked.append(
+                        hash_array(
+                            kept,
+                            seed=key_box.open()[0],
+                            namespace=seed.namespace,
+                            truncate=_hash_truncate(seed),
+                        )
+                    )
+                else:
+                    masked.append(mask_column(kept, seed, key_box.open()[0]))
+            return masked
+
+        return _build_relation(
+            source_parent=parent,
+            edge=edge,
+            temp_dir=temp_dir,
+            memory_limit=memory_limit,
+            batch_rows=batch_rows,
+            masked_batch_fn=masked_batch_fn,
+            masked_types=tuple(masked_types),
+        )
+    except BaseException:
+        del mask_key
+        raise
 
 
 def build_parent_key_relation_from_tables(
@@ -192,12 +201,12 @@ def build_parent_key_relation_aligned(
     for parent_col in edge.parent_columns:
         if source_schema is not None and parent_col not in source_schema.names:
             raise ExecutionError(
-                code="out_of_core_parent_column_missing",
+                code=reasons.runtime.OUT_OF_CORE_PARENT_COLUMN_MISSING,
                 message=f"parent source table has no column {parent_col!r}.",
             )
         if parent_col not in masked_schema.names:
             raise ExecutionError(
-                code="out_of_core_parent_column_missing",
+                code=reasons.runtime.OUT_OF_CORE_PARENT_COLUMN_MISSING,
                 message=f"masked parent table has no column {parent_col!r}.",
             )
     if masked_types is None:
@@ -360,7 +369,7 @@ def _parent_key_batches(
         for col in parent_columns:
             if batch.schema.get_field_index(col) < 0:
                 raise ExecutionError(
-                    code="out_of_core_parent_column_missing",
+                    code=reasons.runtime.OUT_OF_CORE_PARENT_COLUMN_MISSING,
                     message=f"parent source table has no column {col!r}.",
                 )
         for start in range(0, batch.num_rows, batch_rows):
@@ -446,9 +455,8 @@ def _build_relation(
         width_tracker.wrap(batches),
     )
     temp_dir.mkdir(parents=True, exist_ok=True)
-    out_path = temp_dir / (
-        f"{edge.parent_table}_{_column_tuple_slug(edge.parent_columns)}_key_relation.parquet"
-    )
+    stem = _edge_stem(edge)
+    out_path = temp_dir / f"{stem}_key_relation.parquet"
     # The dedup staging copy: the registered RecordBatchReader is single-pass,
     # but the last-write-wins dedup needs to read the keys TWICE (a GROUP BY to
     # find each key's winning row, then a join back to recover that row's masked
@@ -456,12 +464,8 @@ def _build_relation(
     # `temp_dir/"duckdb"` tree as DuckDB's own spill so `check_temp_disk_budget`
     # bounds it, and removed in the finally.
     duckdb_dir = temp_dir / "duckdb"
-    staged_path = duckdb_dir / (
-        f"{edge.parent_table}_{_column_tuple_slug(edge.parent_columns)}_key_staged.parquet"
-    )
-    winners_path = duckdb_dir / (
-        f"{edge.parent_table}_{_column_tuple_slug(edge.parent_columns)}_key_winners.parquet"
-    )
+    staged_path = duckdb_dir / f"{stem}_key_staged.parquet"
+    winners_path = duckdb_dir / f"{stem}_key_winners.parquet"
     conn = connect_duckdb(temp_dir=duckdb_dir, memory_limit=memory_limit)
     try:
         # Last-write-wins dedup via STAGE -> max(row_nr) GROUP BY -> JOIN BACK,
@@ -559,30 +563,22 @@ def _build_relation(
     )
 
 
-def _column_tuple_slug(columns: tuple[str, ...]) -> str:
-    """A collision-free filename slug for a parent-column tuple.
-
-    A plain ``'_'.join(columns)`` is NOT injective: the tuples ('a_b', 'c')
-    and ('a', 'b_c') both render 'a_b_c', so two distinct relations from the
-    same parent table (different column tuples that underscore-collide) would
-    stage to the same Parquet path and the second build would clobber the
-    first. A length-prefixed encoding (the same injective framing
-    `fk_join_key_tuple` uses) hashed to a fixed-width hex digest is stable and
-    unambiguous for arbitrary column names, including names carrying
-    filesystem-unsafe characters.
-    """
-    encoded = "".join(f"{len(col)}:{col}\x00" for col in columns).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()[:16]
+_EDGE_STEMS: OrderedDict[tuple[str, tuple[str, ...]], str] = OrderedDict()
+_EDGE_SEQ = itertools.count()
 
 
-def _column_seed(plan: Plan, table: str, column: str) -> ColumnSeed | None:
-    for table_name, table_seed in plan.seed_envelope.per_table:
-        if table_name != table:
-            continue
-        for col_name, col_seed in table_seed.per_column:
-            if col_name == column:
-                return col_seed
-    return None
+def _edge_stem(edge: RelationshipEdge) -> str:
+    """Opaque scratch filename stem (`e000000`, ...), never built from a table or column name
+    (`dir / "/abs"` leaves `dir`). One stem per (parent table, columns) while remembered, in a
+    bounded LRU; ids are never reused."""
+    key = (edge.parent_table, tuple(edge.parent_columns))
+    stem = _EDGE_STEMS.get(key)
+    if stem is None:
+        stem = _EDGE_STEMS[key] = f"e{next(_EDGE_SEQ):06d}"
+        if len(_EDGE_STEMS) > 4096:
+            _EDGE_STEMS.popitem(last=False)
+    _EDGE_STEMS.move_to_end(key)
+    return stem
 
 
 def _hash_truncate(seed: ColumnSeed) -> int | None:

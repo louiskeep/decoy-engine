@@ -20,6 +20,7 @@ from typing import Any
 
 import pyarrow as pa
 
+from decoy_engine import reasons
 from decoy_engine.execution._errors import StrategyError
 from decoy_engine.execution.native._crypto_ext import load_compiled_crypto_kernel
 
@@ -50,21 +51,25 @@ def native_keyed_hash(
     kernel's own contract (`MaskKeyRequiredError`, raised before any row is
     processed); this function does not duplicate that guard.
     """
-    if namespace is None:
-        raise StrategyError(
-            code="hash_requires_namespace",
-            strategy="hash",
-            message="the hash strategy requires a namespace; got None.",
+    try:
+        if namespace is None:
+            raise StrategyError(
+                code=reasons.runtime.HASH_REQUIRES_NAMESPACE,
+                strategy="hash",
+                message="the hash strategy requires a namespace; got None.",
+            )
+        resolved_truncate = truncate if isinstance(truncate, int) and truncate > 0 else None
+        kernel = load_compiled_crypto_kernel()
+        return kernel.derive_batch(
+            array,
+            mask_key=mask_key,
+            namespace=namespace,
+            truncate=resolved_truncate,
+            native_threads=native_threads,
         )
-    resolved_truncate = truncate if isinstance(truncate, int) and truncate > 0 else None
-    kernel = load_compiled_crypto_kernel()
-    return kernel.derive_batch(
-        array,
-        mask_key=mask_key,
-        namespace=namespace,
-        truncate=resolved_truncate,
-        native_threads=native_threads,
-    )
+    except BaseException:
+        del mask_key
+        raise
 
 
 __all__ = ["native_keyed_hash"]

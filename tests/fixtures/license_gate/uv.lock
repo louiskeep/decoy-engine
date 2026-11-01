@@ -1,0 +1,54 @@
+version = 1
+revision = 3
+requires-python = ">=3.10"
+
+[[package]]
+name = "fixture-root"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "evilpkg" },
+    { name = "okpkg" },
+    { name = "winonly", marker = "sys_platform == 'win32'" },
+]
+
+[package.optional-dependencies]
+dev = [
+    { name = "devonly" },
+]
+sftp = [
+    { name = "lgplpkg" },
+]
+
+[[package]]
+name = "childpkg"
+version = "0.1"
+source = { registry = "https://pypi.org/simple" }
+
+[[package]]
+name = "devonly"
+version = "3.0"
+source = { registry = "https://pypi.org/simple" }
+
+[[package]]
+name = "evilpkg"
+version = "2.0"
+source = { registry = "https://pypi.org/simple" }
+
+[[package]]
+name = "lgplpkg"
+version = "1.0"
+source = { registry = "https://pypi.org/simple" }
+
+[[package]]
+name = "okpkg"
+version = "1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "childpkg" },
+]
+
+[[package]]
+name = "winonly"
+version = "1.0"
+source = { registry = "https://pypi.org/simple" }

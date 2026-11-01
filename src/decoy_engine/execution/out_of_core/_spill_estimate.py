@@ -156,12 +156,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from decoy_engine import fileaccess
 from decoy_engine.execution._mem_estimate import _FIXED_WIDTH_DTYPE_BYTES, is_fixed_width_dtype
 from decoy_engine.execution.out_of_core._budget import (
     DiskSpillPreflight,
     _nearest_existing_ancestor,
     check_disk_spill_preflight,
 )
+from decoy_engine.fileaccess import FileAccessDenied, FileRequest, FileRole
 
 if TYPE_CHECKING:
     from decoy_engine.profile._types import ColumnProfile, Profile
@@ -526,16 +528,38 @@ def default_ooc_temp_root() -> Path:
     return Path(tempfile.gettempdir())
 
 
-def _config_target_dirs(config: dict[str, Any]) -> list[Path]:
-    """Parent directories of every file target in `config`, for the output-
-    filesystem comparison. Non-file / path-less targets are skipped."""
-    dirs: list[Path] = []
-    for spec in (config.get("targets") or {}).values():
+def _config_target_dirs(config: dict[str, Any]) -> list[tuple[str, Path]]:
+    """`(config position, parent directory)` of every file target in `config`, for the
+    output-filesystem comparison. Non-file / path-less targets are skipped."""
+    dirs: list[tuple[str, Path]] = []
+    for name, spec in (config.get("targets") or {}).items():
         if isinstance(spec, dict):
             path = spec.get("path")
             if isinstance(path, str) and path:
-                dirs.append(Path(path).parent)
+                dirs.append((f"targets.{name}.path", Path(path).parent))
     return dirs
+
+
+def _target_device(directory: Path, field_key: str) -> int | None:
+    """`st_dev` of the nearest existing ancestor of a target directory, asked of the policy.
+
+    `None` when the policy refuses or the device cannot be read, which the caller treats as
+    "may share the temp filesystem" (the conservative direction)."""
+    policy = fileaccess.current()
+    for candidate in (directory, *directory.parents):
+        try:
+            return policy.stat(
+                FileRequest(FileRole.SPILL_HINT, "stat", str(candidate), field_key)
+            ).st_dev
+        except (FileNotFoundError, NotADirectoryError):
+            continue
+        except (OSError, FileAccessDenied) as exc:
+            # A refusal is advisory here (the conservative answer is used); a resource
+            # failure is not, and keeps its class.
+            if not isinstance(exc, FileAccessDenied) and fileaccess.keeps_class(exc):
+                raise
+            return None
+    return None
 
 
 def _output_shares_temp_filesystem(config: dict[str, Any], temp_root: Path) -> bool:
@@ -555,11 +579,9 @@ def _output_shares_temp_filesystem(config: dict[str, Any], temp_root: Path) -> b
         temp_dev = os.stat(_nearest_existing_ancestor(temp_root)).st_dev
     except OSError:
         return True
-    for directory in target_dirs:
-        try:
-            if os.stat(_nearest_existing_ancestor(directory)).st_dev == temp_dev:
-                return True
-        except OSError:
+    for field_key, directory in target_dirs:
+        device = _target_device(directory, field_key)
+        if device is None or device == temp_dev:
             return True
     return False
 

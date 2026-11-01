@@ -27,6 +27,7 @@ from __future__ import annotations
 import math
 from typing import Any
 
+from decoy_engine import reasons
 from decoy_engine.execution._strategies._top_code import _MAX_EXACT_INT, _PRESETS
 from decoy_engine.plan._errors import PlanCompileError
 
@@ -144,7 +145,7 @@ def check_top_code_config(config: dict[str, Any]) -> None:
             # RowError positioning is correct.
             if col_entry.get("strategy") == "nested" and pc.get("strategy") == "top_code":
                 raise PlanCompileError(
-                    code="top_code_unsupported_in_nested",
+                    code=reasons.plan.TOP_CODE_UNSUPPORTED_IN_NESTED,
                     path=f"tables.{table_name}.columns.{col_name}.provider_config.strategy",
                     message=(
                         f"top_code column {where} sets a `nested` strategy with a "
@@ -176,7 +177,7 @@ def check_top_code_config(config: dict[str, Any]) -> None:
             when_val = col_entry.get("when")
             if isinstance(when_val, str) and when_val.strip():
                 raise PlanCompileError(
-                    code="top_code_with_when_unsupported",
+                    code=reasons.plan.TOP_CODE_WITH_WHEN_UNSUPPORTED,
                     path=f"tables.{table_name}.columns.{col_name}.when",
                     message=(
                         f"top_code column {where} combines `when` with top_code. "
@@ -194,7 +195,7 @@ def check_top_code_config(config: dict[str, Any]) -> None:
                 # list/dict preset would raise `TypeError: unhashable type`.
                 if not isinstance(preset, str) or preset not in _PRESETS:
                     raise PlanCompileError(
-                        code="top_code_bounds_unresolvable",
+                        code=reasons.plan.TOP_CODE_BOUNDS_UNRESOLVABLE,
                         path=f"tables.{table_name}.columns.{col_name}.provider_config.preset",
                         message=(
                             f"top_code column {where} has preset {preset!r}, which is "
@@ -208,7 +209,7 @@ def check_top_code_config(config: dict[str, Any]) -> None:
             else:
                 cap = _reject_unusable_bound(
                     pc.get("cap"),
-                    code="top_code_bounds_unresolvable",
+                    code=reasons.plan.TOP_CODE_BOUNDS_UNRESOLVABLE,
                     path=f"tables.{table_name}.columns.{col_name}.provider_config.cap",
                     kind="cap",
                     where=where,
@@ -216,7 +217,7 @@ def check_top_code_config(config: dict[str, Any]) -> None:
                 over_label = pc.get("over_label")
                 if not isinstance(over_label, str) or not over_label:
                     raise PlanCompileError(
-                        code="top_code_missing_over_label",
+                        code=reasons.plan.TOP_CODE_MISSING_OVER_LABEL,
                         path=(f"tables.{table_name}.columns.{col_name}.provider_config.over_label"),
                         message=(
                             f"top_code column {col_name!r} in table "
@@ -240,7 +241,7 @@ def check_top_code_config(config: dict[str, Any]) -> None:
                 # rather than silently ignore it.
                 if pc.get("under_label") is not None:
                     raise PlanCompileError(
-                        code="top_code_under_label_without_floor",
+                        code=reasons.plan.TOP_CODE_UNDER_LABEL_WITHOUT_FLOOR,
                         path=(
                             f"tables.{table_name}.columns.{col_name}.provider_config.under_label"
                         ),
@@ -253,7 +254,7 @@ def check_top_code_config(config: dict[str, Any]) -> None:
                 continue
             floor = _reject_unusable_bound(
                 pc.get("floor"),
-                code="top_code_invalid_floor",
+                code=reasons.plan.TOP_CODE_INVALID_FLOOR,
                 path=f"tables.{table_name}.columns.{col_name}.provider_config.floor",
                 kind="floor",
                 where=where,
@@ -261,7 +262,7 @@ def check_top_code_config(config: dict[str, Any]) -> None:
             under_label = pc.get("under_label")
             if not isinstance(under_label, str) or not under_label:
                 raise PlanCompileError(
-                    code="top_code_missing_under_label",
+                    code=reasons.plan.TOP_CODE_MISSING_UNDER_LABEL,
                     path=(f"tables.{table_name}.columns.{col_name}.provider_config.under_label"),
                     message=(
                         f"top_code column {col_name!r} in table {table_name!r} "
@@ -272,7 +273,7 @@ def check_top_code_config(config: dict[str, Any]) -> None:
                 )
             if floor >= cap:
                 raise PlanCompileError(
-                    code="top_code_floor_ge_cap",
+                    code=reasons.plan.TOP_CODE_FLOOR_GE_CAP,
                     path=f"tables.{table_name}.columns.{col_name}.provider_config.floor",
                     message=(
                         f"top_code column {col_name!r} in table {table_name!r} "

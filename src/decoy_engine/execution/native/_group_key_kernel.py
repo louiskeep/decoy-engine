@@ -40,6 +40,7 @@ from typing import Any
 import pyarrow as pa
 import pyarrow.compute as pc
 
+from decoy_engine import reasons
 from decoy_engine.execution._fk_keys import to_pandas_fk_safe
 from decoy_engine.execution.native._group_key_ext import (
     RawHexDerivationKernel,
@@ -87,50 +88,54 @@ def derive_group_key_from_strings(
     resolved first, which the full-frame route needs for its companion-absent
     decline).
     """
-    n = len(string_col)
-    hex_out = raw_hex_kernel.derive_hex_raw_batch(
-        string_col,
-        mask_key=mask_key,
-        namespace=namespace,
-        hex_chars=length,
-        native_threads=native_threads,
-    )
-    if derive_calls is not None:
-        derive_calls.append(n)
-    # Runtime invariants on the kernel's own result, mirroring `native_categorical`:
-    # the isinstance/type check comes FIRST so a non-`pa.Array` result cannot leak
-    # an uncoded AttributeError.
-    if not isinstance(hex_out, pa.Array) or hex_out.type != pa.string():
-        got = hex_out.type if isinstance(hex_out, pa.Array) else type(hex_out).__name__
-        raise GenerationError(
-            code="raw_hex_batch_type_mismatch",
-            message=f"derive_hex_raw_batch returned {got}, expected a string Arrow array",
+    try:
+        n = len(string_col)
+        hex_out = raw_hex_kernel.derive_hex_raw_batch(
+            string_col,
+            mask_key=mask_key,
+            namespace=namespace,
+            hex_chars=length,
+            native_threads=native_threads,
         )
-    if len(hex_out) != n:
-        raise GenerationError(
-            code="raw_hex_batch_length_mismatch",
-            message=f"derive_hex_raw_batch returned {len(hex_out)} keys for {n} input rows",
-        )
-    if hex_out.null_count != 0:
-        # The stringify makes every cell non-null (a null becomes its stringified
-        # form, "None" or "<NA>"), so the kernel must return a fully-valid key
-        # column; a null here means the never-null invariant was violated upstream.
-        raise GenerationError(
-            code="raw_hex_batch_unexpected_null",
-            message="derive_hex_raw_batch returned a null key for a populated string row",
-        )
-    if not prefix:
-        return hex_out
-    # Vectorized `prefix + key` per row; no nulls are present, so the default
-    # emit-null handling never fires. The last positional argument is the
-    # separator (empty), so each element is the plain concatenation.
-    prefix_col = pa.array([prefix] * n, type=pa.string())
-    # `binary_join_element_wise(a, b, sep)` concatenates a + sep + b per row; the
-    # separator is the empty string, so each element is `prefix + key`. The paired
-    # `unused-ignore` code keeps this green across the pinned mypy (which resolves
-    # the pyarrow.compute stub, making the attr-defined ignore "unused") and newer
-    # mypy (which does not, so the ignore is needed).
-    return pc.binary_join_element_wise(prefix_col, hex_out, "")  # type: ignore[attr-defined, unused-ignore]
+        if derive_calls is not None:
+            derive_calls.append(n)
+        # Runtime invariants on the kernel's own result, mirroring `native_categorical`:
+        # the isinstance/type check comes FIRST so a non-`pa.Array` result cannot leak
+        # an uncoded AttributeError.
+        if not isinstance(hex_out, pa.Array) or hex_out.type != pa.string():
+            got = hex_out.type if isinstance(hex_out, pa.Array) else type(hex_out).__name__
+            raise GenerationError(
+                code=reasons.runtime.RAW_HEX_BATCH_TYPE_MISMATCH,
+                message=f"derive_hex_raw_batch returned {got}, expected a string Arrow array",
+            )
+        if len(hex_out) != n:
+            raise GenerationError(
+                code=reasons.runtime.RAW_HEX_BATCH_LENGTH_MISMATCH,
+                message=f"derive_hex_raw_batch returned {len(hex_out)} keys for {n} input rows",
+            )
+        if hex_out.null_count != 0:
+            # The stringify makes every cell non-null (a null becomes its stringified
+            # form, "None" or "<NA>"), so the kernel must return a fully-valid key
+            # column; a null here means the never-null invariant was violated upstream.
+            raise GenerationError(
+                code=reasons.runtime.RAW_HEX_BATCH_UNEXPECTED_NULL,
+                message="derive_hex_raw_batch returned a null key for a populated string row",
+            )
+        if not prefix:
+            return hex_out
+        # Vectorized `prefix + key` per row; no nulls are present, so the default
+        # emit-null handling never fires. The last positional argument is the
+        # separator (empty), so each element is the plain concatenation.
+        prefix_col = pa.array([prefix] * n, type=pa.string())
+        # `binary_join_element_wise(a, b, sep)` concatenates a + sep + b per row; the
+        # separator is the empty string, so each element is `prefix + key`. The paired
+        # `unused-ignore` code keeps this green across the pinned mypy (which resolves
+        # the pyarrow.compute stub, making the attr-defined ignore "unused") and newer
+        # mypy (which does not, so the ignore is needed).
+        return pc.binary_join_element_wise(prefix_col, hex_out, "")  # type: ignore[attr-defined, unused-ignore]
+    except BaseException:
+        del mask_key
+        raise
 
 
 def _stringify_sibling(sibling: pa.Table) -> pa.Array:
@@ -206,27 +211,31 @@ def native_group_key(
     raw-hex probe and relies on this load to decline when the companion is absent, empty
     columns included.
     """
-    if mask_key is None:  # pragma: no cover - require_mask_key never returns None
-        raise AssertionError(
-            "group_key reached with mask_key=None; require_mask_key always "
-            "resolves a concrete key before the native route dispatches."
-        )
-    n = group_by_sibling.num_rows
+    try:
+        if mask_key is None:  # pragma: no cover - require_mask_key never returns None
+            raise AssertionError(
+                "group_key reached with mask_key=None; require_mask_key always "
+                "resolves a concrete key before the native route dispatches."
+            )
+        n = group_by_sibling.num_rows
 
-    kernel = raw_hex_kernel if raw_hex_kernel is not None else load_compiled_raw_hex_kernel()
-    if n == 0:
-        return pa.array([], type=pa.string())
-    string_col = _stringify_sibling(group_by_sibling)
-    return derive_group_key_from_strings(
-        string_col,
-        length=length,
-        prefix=prefix,
-        mask_key=mask_key,
-        namespace=namespace,
-        raw_hex_kernel=kernel,
-        native_threads=native_threads,
-        derive_calls=derive_calls,
-    )
+        kernel = raw_hex_kernel if raw_hex_kernel is not None else load_compiled_raw_hex_kernel()
+        if n == 0:
+            return pa.array([], type=pa.string())
+        string_col = _stringify_sibling(group_by_sibling)
+        return derive_group_key_from_strings(
+            string_col,
+            length=length,
+            prefix=prefix,
+            mask_key=mask_key,
+            namespace=namespace,
+            raw_hex_kernel=kernel,
+            native_threads=native_threads,
+            derive_calls=derive_calls,
+        )
+    except BaseException:
+        del mask_key
+        raise
 
 
 __all__ = [

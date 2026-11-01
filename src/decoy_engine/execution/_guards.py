@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING
 
 import pyarrow as pa
 
+from decoy_engine import reasons
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._runner import build_work_list
 from decoy_engine.plan._checks import _INT_NULL_REJECTED_STRATEGIES
@@ -53,7 +54,7 @@ def null_bearing_int_candidates(
 def null_bearing_int_error(node: WorkNode) -> ExecutionError:
     """The one typed rejection every route raises for an integer column with nulls."""
     return ExecutionError(
-        code="null_bearing_int_unsupported",
+        code=reasons.runtime.NULL_BEARING_INT_UNSUPPORTED,
         message=(
             f"Column {node.table}.{node.columns[0]} is an integer column with nulls "
             f"masked under {node.strategy!r}. Integer-with-null is not supported "
@@ -114,7 +115,7 @@ def reject_gated_hash_on_integer(
         if relationship_graph.parents_of(node.table, node.columns):
             continue
         raise ExecutionError(
-            code="gated_hash_on_integer_unsupported",
+            code=reasons.runtime.GATED_HASH_ON_INTEGER_UNSUPPORTED,
             message=(
                 f"Column {node.table}.{column} is an integer column hashed under a "
                 "`when:` condition. Conditional hashing of an integer column is not "

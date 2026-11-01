@@ -12,9 +12,10 @@ ship in SP-10c:
                   the walk is deterministic under a fixed seed.
 
 Pattern: pandas groupby cumcount + derive()-seeded monotone walk. cumcount
-positions follow pandas GroupBy.cumcount() (SDV per-group sequencing;
-https://sdv.dev/SDV/user_guides/timeseries/index.html, MIT License). Per-
-group RNG seeds for monotone_walk come from
+positions follow pandas GroupBy.cumcount() (per-group sequencing as in the SDV
+PAR method: Zhang, Patki and Veeramachaneni, "Sequential Models in the Synthetic
+Data Vault", arXiv:2207.14406, 2022; method only, no SDV code: SDV is BUSL-1.1).
+Per-group RNG seeds for monotone_walk come from
 decoy_engine.determinism._derive.derive(seed, namespace, group_label)
 (HKDF-SHA256 + HMAC-SHA256, RFC 5869 + RFC 2104), so two monotone_walk
 columns with the same groups produce independent walks.
@@ -50,6 +51,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from decoy_engine import reasons
 from decoy_engine.determinism._derive import derive
 from decoy_engine.plan._errors import PlanCompileError
 
@@ -105,7 +107,7 @@ class GroupedSeriesConfig:
         group_by = cfg.get("group_by")
         if not group_by:
             raise PlanCompileError(
-                code="grouped_series_group_by_missing",
+                code=reasons.plan.GROUPED_SERIES_GROUP_BY_MISSING,
                 path="provider_config.group_by",
                 message=(
                     "'group_by' is required for the grouped_series strategy. "
@@ -116,7 +118,7 @@ class GroupedSeriesConfig:
         order_by = cfg.get("order_by")
         if not order_by:
             raise PlanCompileError(
-                code="grouped_series_order_by_missing",
+                code=reasons.plan.GROUPED_SERIES_ORDER_BY_MISSING,
                 path="provider_config.order_by",
                 message=(
                     "'order_by' is required for the grouped_series strategy. "
@@ -128,7 +130,7 @@ class GroupedSeriesConfig:
         generator = str(cfg.get("generator", "cumcount"))
         if generator not in GROUPED_SERIES_GENERATORS:
             raise PlanCompileError(
-                code="grouped_series_generator_invalid",
+                code=reasons.plan.GROUPED_SERIES_GENERATOR_INVALID,
                 path="provider_config.generator",
                 message=(
                     f"'generator' must be one of "
@@ -144,7 +146,7 @@ class GroupedSeriesConfig:
 
         if step < 0 or step > max_step:
             raise PlanCompileError(
-                code="grouped_series_step_out_of_range",
+                code=reasons.plan.GROUPED_SERIES_STEP_OUT_OF_RANGE,
                 path="provider_config.step",
                 message=(
                     f"'step' ({step}) must be in [0, max_step ({max_step})]. "
@@ -184,22 +186,28 @@ def apply_grouped_series(
     Returns:
         A pandas Series aligned to ``df``'s index with the series values.
     """
-    group_col = config.group_by
-    order_col = config.order_by
-    n = len(df)
+    try:
+        group_col = config.group_by
+        order_col = config.order_by
+        n = len(df)
 
-    if n == 0:
-        return pd.Series([], dtype=int)
+        if n == 0:
+            return pd.Series([], dtype=int)
 
-    # Annotate with original position so we can map results back to input order.
-    pos_col = "__decoy_row_pos__"
-    working = df[[group_col, order_col]].copy()
-    working[pos_col] = range(n)
+        # Annotate with original position so we can map results back to input order.
+        pos_col = "__decoy_row_pos__"
+        working = df[[group_col, order_col]].copy()
+        working[pos_col] = range(n)
 
-    if config.generator == "cumcount":
-        return _apply_cumcount(config, working, group_col, order_col, pos_col, n)
-    # monotone_walk
-    return _apply_monotone_walk(config, working, group_col, order_col, pos_col, n, seed, namespace)
+        if config.generator == "cumcount":
+            return _apply_cumcount(config, working, group_col, order_col, pos_col, n)
+        # monotone_walk
+        return _apply_monotone_walk(
+            config, working, group_col, order_col, pos_col, n, seed, namespace
+        )
+    except BaseException:
+        del seed
+        raise
 
 
 def _apply_cumcount(
@@ -254,28 +262,32 @@ def _apply_monotone_walk(
     two monotone_walk columns produce independent step streams even when
     they share the same group_by column and group labels.
     """
-    sorted_df = working.sort_values([group_col, order_col], kind="stable")
+    try:
+        sorted_df = working.sort_values([group_col, order_col], kind="stable")
 
-    result: list[int] = [0] * n
-    current_group: Any = object()
-    cumulative = config.start
-    group_rng: np.random.Generator | None = None
+        result: list[int] = [0] * n
+        current_group: Any = object()
+        cumulative = config.start
+        group_rng: np.random.Generator | None = None
 
-    for _, row in sorted_df.iterrows():
-        g = row[group_col]
-        orig_pos = int(row[pos_col])
-        if g != current_group:
-            current_group = g
-            cumulative = config.start
-            g_seed = int.from_bytes(
-                derive(seed, namespace, str(g).encode("utf-8", errors="replace"))[:8],
-                "big",
-            )
-            group_rng = np.random.default_rng(g_seed)
-        # First row of the group gets start; subsequent rows add a non-neg step.
-        result[orig_pos] = cumulative
-        if group_rng is not None:
-            step = int(group_rng.integers(config.step, config.max_step + 1))
-            cumulative += step
+        for _, row in sorted_df.iterrows():
+            g = row[group_col]
+            orig_pos = int(row[pos_col])
+            if g != current_group:
+                current_group = g
+                cumulative = config.start
+                g_seed = int.from_bytes(
+                    derive(seed, namespace, str(g).encode("utf-8", errors="replace"))[:8],
+                    "big",
+                )
+                group_rng = np.random.default_rng(g_seed)
+            # First row of the group gets start; subsequent rows add a non-neg step.
+            result[orig_pos] = cumulative
+            if group_rng is not None:
+                step = int(group_rng.integers(config.step, config.max_step + 1))
+                cumulative += step
 
-    return pd.Series(result, dtype=int)
+        return pd.Series(result, dtype=int)
+    except BaseException:
+        del seed
+        raise

@@ -59,6 +59,7 @@ from typing import Any
 
 import pandas as pd
 
+from decoy_engine import reasons
 from decoy_engine.determinism._derive import derive
 from decoy_engine.plan._errors import PlanCompileError
 
@@ -100,7 +101,7 @@ class GroupKeyConfig:
         group_by = cfg.get("group_by")
         if not group_by:
             raise PlanCompileError(
-                code="group_key_group_by_missing",
+                code=reasons.plan.GROUP_KEY_GROUP_BY_MISSING,
                 path="provider_config.group_by",
                 message=(
                     "'group_by' is required for the group_key strategy. "
@@ -112,7 +113,7 @@ class GroupKeyConfig:
         length = int(cfg.get("length", 16))
         if length % 2 != 0:
             raise PlanCompileError(
-                code="group_key_length_odd",
+                code=reasons.plan.GROUP_KEY_LENGTH_ODD,
                 path="provider_config.length",
                 message=(
                     f"'length' must be even (hex string of n bytes = 2n characters); got {length}."
@@ -120,7 +121,7 @@ class GroupKeyConfig:
             )
         if length < _MIN_LENGTH or length > _MAX_LENGTH:
             raise PlanCompileError(
-                code="group_key_length_out_of_range",
+                code=reasons.plan.GROUP_KEY_LENGTH_OUT_OF_RANGE,
                 path="provider_config.length",
                 message=(f"'length' must be in [{_MIN_LENGTH}, {_MAX_LENGTH}]; got {length}."),
             )
@@ -158,19 +159,23 @@ def apply_group_key(
         List of key strings aligned to df rows. Each string is ``config.prefix``
         followed by ``config.length`` lowercase hex characters.
     """
-    group_col = config.group_by
-    n_bytes = config.length // 2  # hex chars -> bytes
+    try:
+        group_col = config.group_by
+        n_bytes = config.length // 2  # hex chars -> bytes
 
-    # Cache: avoid re-deriving for the same group value in the same call.
-    key_cache: dict[Any, str] = {}
+        # Cache: avoid re-deriving for the same group value in the same call.
+        key_cache: dict[Any, str] = {}
 
-    result: list[str] = []
-    for raw_val in df[group_col]:
-        if raw_val not in key_cache:
-            source = str(raw_val).encode("utf-8")
-            raw_bytes = derive(seed, namespace, source)
-            hex_key = raw_bytes[:n_bytes].hex()
-            key_cache[raw_val] = config.prefix + hex_key
-        result.append(key_cache[raw_val])
+        result: list[str] = []
+        for raw_val in df[group_col]:
+            if raw_val not in key_cache:
+                source = str(raw_val).encode("utf-8")
+                raw_bytes = derive(seed, namespace, source)
+                hex_key = raw_bytes[:n_bytes].hex()
+                key_cache[raw_val] = config.prefix + hex_key
+            result.append(key_cache[raw_val])
 
-    return result
+        return result
+    except BaseException:
+        del seed
+        raise

@@ -57,7 +57,7 @@ def _validated_dump(cfg: dict) -> dict:
 def _config(tmp_path, columns: list[dict], table: str = "accounts") -> dict:
     return _validated_dump(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 42},
             "sources": {table: {"type": "file", "format": "csv", "path": str(tmp_path / "in.csv")}},
             "tables": [{"name": table, "columns": columns}],
@@ -401,7 +401,7 @@ class TestFailClosed:
         df = pd.DataFrame({"val": [f"v{i}" for i in range(_ROWS)]})
         cfg = _validated_dump(
             {
-                "version": 1,
+                "version": 2,
                 "global_settings": {"seed": 42},
                 "sources": {
                     name: {"type": "file", "format": "csv", "path": str(tmp_path / f"{name}.csv")}
@@ -478,7 +478,7 @@ class TestFailClosed:
         df.to_csv(tmp_path / "in.csv", index=False)
         cfg = _validated_dump(
             {
-                "version": 1,
+                "version": 2,
                 "global_settings": {"seed": 42},
                 "sources": {
                     "accounts": {"type": "file", "format": "csv", "path": str(tmp_path / "in.csv")}
@@ -530,7 +530,7 @@ class TestFailClosed:
         orders.to_csv(tmp_path / "orders.csv", index=False)
         cfg = _validated_dump(
             {
-                "version": 1,
+                "version": 2,
                 "global_settings": {"seed": 42},
                 "sources": {
                     "customers": {
@@ -1218,8 +1218,8 @@ class TestVault:
 
     def test_vault_file_round_trip_identical(self, tmp_path, monkeypatch):
         pytest.importorskip("cryptography")
-        from decoy_engine.plan._seed import _normalize_job_seed
         from decoy_engine.vault import load_vault, vault_writer_for_config
+        from tests._keyed_secret import THROWAWAY_KEY_PROVIDER
 
         cfg, sources = self._vault_job(tmp_path)
         monkeypatch.delenv("DECOY_SUBSTRATE", raising=False)
@@ -1238,7 +1238,7 @@ class TestVault:
             )
             path = tmp_path / f"{label}.vault"
             writer.write(path)
-            maps[label], ambiguous = load_vault(path, _normalize_job_seed(cfg))
+            maps[label], ambiguous = load_vault(path, THROWAWAY_KEY_PROVIDER.mask_key())
             assert ambiguous == 0
         assert maps["auto"] == maps["forced"]
         assert len(maps["auto"]) == _ROWS
