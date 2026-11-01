@@ -62,7 +62,6 @@ from decoy_engine.generation.pool._canonicalize import _canonicalize_source
 from decoy_engine.generation.pool._events import QualityWarning
 from decoy_engine.kernel import encode_int
 from decoy_engine.plan._types import ColumnSeed
-from decoy_engine.reasons import ReasonCode
 
 # Resolution for the deterministic-weighted CDF. 1_000_000 supports
 # weights down to 1e-6 with the precision the CDF rounding allows.
@@ -79,18 +78,15 @@ _EXACT_FLOAT_TYPES: frozenset[type] = frozenset({float, np.float16, np.float32, 
 _MAX_DOUBLE_RATIO = float.as_integer_ratio(sys.float_info.max)
 
 
-def _weight_error(code: ReasonCode, message: str) -> StrategyError:
-    return StrategyError(code=code, strategy="categorical", message=message)
-
-
 def _exact_ratios(weights: list[Any]) -> list[tuple[int, int]]:
     """Each weight as an exact `(numerator, power-of-two denominator)`; refusals run as
     whole-vector passes (type, then non-finite) and report the lowest index only."""
     for i, w in enumerate(weights):
         if type(w) not in _EXACT_INT_TYPES and type(w) not in _EXACT_FLOAT_TYPES:
-            raise _weight_error(
-                reasons.runtime.CATEGORICAL_WEIGHTS_NONPOSITIVE,
-                f"categorical weight at index {i:d} is not a number; cannot normalize.",
+            raise StrategyError(
+                code=reasons.runtime.CATEGORICAL_WEIGHTS_NONPOSITIVE,
+                strategy="categorical",
+                message=f"categorical weight at index {i:d} is not a number; cannot normalize.",
             )
     ratios: list[tuple[int, int]] = []
     for i, w in enumerate(weights):
@@ -99,9 +95,10 @@ def _exact_ratios(weights: list[Any]) -> list[tuple[int, int]]:
             continue
         x = float(w)
         if not math.isfinite(x):
-            raise _weight_error(
-                reasons.runtime.CATEGORICAL_WEIGHTS_NONPOSITIVE,
-                f"categorical weight at index {i:d} is NaN or infinite; cannot normalize.",
+            raise StrategyError(
+                code=reasons.runtime.CATEGORICAL_WEIGHTS_NONPOSITIVE,
+                strategy="categorical",
+                message=f"categorical weight at index {i:d} is NaN or infinite; cannot normalize.",
             )
         ratios.append(float.as_integer_ratio(x))
     return ratios
@@ -127,9 +124,10 @@ def _build_cdf(weights: list[Any]) -> list[int]:
     ratios = _exact_ratios(weights)
     for i, (num, _) in enumerate(ratios):
         if num < 0:
-            raise _weight_error(
-                reasons.runtime.CATEGORICAL_WEIGHTS_NEGATIVE,
-                f"categorical weight at index {i:d} is negative.",
+            raise StrategyError(
+                code=reasons.runtime.CATEGORICAL_WEIGHTS_NEGATIVE,
+                strategy="categorical",
+                message=f"categorical weight at index {i:d} is negative.",
             )
     denom = max((d for _, d in ratios), default=1)
     scaled = [num * (denom // d) for num, d in ratios]
@@ -138,14 +136,16 @@ def _build_cdf(weights: list[Any]) -> list[int]:
         total += v
     max_num, max_den = _MAX_DOUBLE_RATIO
     if total * max_den > max_num * denom:
-        raise _weight_error(
-            reasons.runtime.CATEGORICAL_WEIGHTS_NONPOSITIVE,
-            "categorical weights sum above the largest finite double; cannot normalize.",
+        raise StrategyError(
+            code=reasons.runtime.CATEGORICAL_WEIGHTS_NONPOSITIVE,
+            strategy="categorical",
+            message="categorical weights sum above the largest finite double; cannot normalize.",
         )
     if total == 0:
-        raise _weight_error(
-            reasons.runtime.CATEGORICAL_WEIGHTS_NONPOSITIVE,
-            "categorical weights sum to 0; cannot normalize.",
+        raise StrategyError(
+            code=reasons.runtime.CATEGORICAL_WEIGHTS_NONPOSITIVE,
+            strategy="categorical",
+            message="categorical weights sum to 0; cannot normalize.",
         )
     cdf: list[int] = []
     running = 0
@@ -154,11 +154,14 @@ def _build_cdf(weights: list[Any]) -> list[int]:
         running += v
         threshold = (2 * running * _WEIGHTED_CDF_RES + total) // (2 * total)
         if v > 0 and threshold == prev_threshold:
-            raise _weight_error(
-                reasons.runtime.CATEGORICAL_WEIGHT_BELOW_RESOLUTION,
-                f"categorical weight at index {i:d} is below the CDF resolution "
-                f"(1 / {_WEIGHTED_CDF_RES:d} of total). The category would never be "
-                "selected; remove the category or raise its weight.",
+            raise StrategyError(
+                code=reasons.runtime.CATEGORICAL_WEIGHT_BELOW_RESOLUTION,
+                strategy="categorical",
+                message=(
+                    f"categorical weight at index {i:d} is below the CDF resolution "
+                    f"(1 / {_WEIGHTED_CDF_RES:d} of total). The category would never be "
+                    "selected; remove the category or raise its weight."
+                ),
             )
         prev_threshold = threshold
         cdf.append(threshold)
