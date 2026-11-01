@@ -9,6 +9,26 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Fixed (slice 0 item 3: derived expression visibility, 2026-11-01)
+
+- A `derived` expression now sees exactly the columns it references, read by real column
+  name. Before, the row context came from pandas `itertuples()._asdict()`, which renames a
+  column whose name is not an identifier or starts with an underscore to `_<position>`: an
+  expression `_1 + 0` could read an undeclared column at position 1, and a declared `_total`
+  could not be read at all.
+- A per-row `derived` failure no longer echoes the cell value: the text is the output
+  column, the row index and a fixed reason word, with nothing chained. In mask execution it is
+  `ExecutionError(code="derived_evaluation_failed")`; a reference missing from the frame is
+  refused once before any row with `derived_ref_missing` (two new `runtime` reasons, registry
+  1.2.0).
+- A source table with duplicate field names (caller Arrow tables, `LazySource` footers,
+  `source_loader` tables, non-CSV declared descriptors, chunks from any iterator) is refused
+  with `TransformError(code="duplicate_source_field_names")` at the earliest point of every
+  public entry, before routing, profiling and any pandas conversion, instead of an uncoded
+  `KeyError`/`ValueError` or a silent out-of-core success. `run_pipeline_isolated()` checks
+  caller tables in the parent before serializing them. The message names the table and a
+  count, no longer the duplicated names.
+
 ### Added (R1-c: CycloneDX SBOM generator, 2026-10-31)
 
 `scripts/release/sbom.sh` writes a reproducible CycloneDX 1.6 SBOM of the wheel's base runtime closure from `uv.lock` (tool environment pinned, hash-enforced and wheel-only from `scripts/release/sbom-tool-requirements.txt`, run isolated with `python -I`, `uv --no-config`, no ambient `UV_*` settings and CPython 3.12 only; lock hashes; no timestamp or serial; public-index runtime closure only, keyed by name, version and source; well-formed hashed pins only, with the generated components checked against the pins). Not signed or published. Docs: `docs/sbom.md`.
@@ -78,7 +98,7 @@ phases: Pre-scan (`pre_scan`: profile / detect), Transform (`transform`: mask / 
 ### Added (F29: stable machine-readable errors and progress, engine slices, 2026-10-29)
 
 New public `decoy_engine.reasons`: one engine-owned, versioned registry of reason codes (`registry_version`
-1.0.0; 868 identities across 12 namespaces when F29 landed, 884 across 14 after the STORM close-out merge below, 891 across 14 after the F13 merge (the seven `runtime` secret-provider identities, registry 1.1.0; the pinned manifest stays the 884-entry append-only baseline), of which 841 are the frozen baseline and 2 are tombstones) with a fixed safe summary, kind, phase rules and, per phase,
+1.0.0; 868 identities across 12 namespaces when F29 landed, 884 across 14 after the STORM close-out merge below, 891 across 14 after the F13 merge (the seven `runtime` secret-provider identities, registry 1.1.0; the pinned manifest stays the 884-entry append-only baseline), 893 across 14 after slice 0 item 3 (registry 1.2.0), of which 841 are the frozen baseline and 2 are tombstones) with a fixed safe summary, kind, phase rules and, per phase,
 a severity, outcome category and retry class (`never`, `configuration_repair`, `environment_repair`,
 `retry_operation`, `restart_attempt`, `unknown`). Every producer now references a registry symbol whose
 value is the legacy wire string, so existing `.code` values, `CODES` attributes and exception

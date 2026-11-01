@@ -26,6 +26,8 @@ __all__ = [
     "CSV_MALFORMED",
     "CSV_RECORD_EXCEEDS_MAX_ROW_BYTES",
     "CYCLIC_WORK_ORDERING",
+    "DERIVED_EVALUATION_FAILED",
+    "DERIVED_REF_MISSING",
     "FK_FULL_FRAME_OOM_RISK_REJECTED",
     "FK_FULL_FRAME_OOM_RISK_REJECTED_ESTIMATED",
     "FPE_CHARSET_DEGENERATE",
@@ -179,6 +181,8 @@ COMPOSITE_OUTPUT_COLUMN_MISSING = _d(
     "composite_output_column_missing", "Composite output column missing."
 )
 CYCLIC_WORK_ORDERING = _d("cyclic_work_ordering", "Cyclic work ordering.")
+DERIVED_EVALUATION_FAILED = _d("derived_evaluation_failed", "Derived evaluation failed.")
+DERIVED_REF_MISSING = _d("derived_ref_missing", "Derived reference missing.")
 FK_FULL_FRAME_OOM_RISK_REJECTED = _d(
     "fk_full_frame_oom_risk_rejected", "FK full frame OOM risk rejected."
 )

@@ -386,3 +386,33 @@ class IsolatedRunResult:
     # Driver-side memory sampling of a capped isolated run; a suspicion beside an unchanged
     # outcome, never a verdict. None for uncapped and in-process runs. Stays the last field.
     memory_evidence: MemoryEvidence | None = None
+
+
+def parent_duplicate_refusal(sources: dict[str, Any] | None) -> IsolatedRunResult | None:
+    """Refuse a caller table with repeated field names before the parent serializes it.
+
+    Serialization is the one table-touching step ahead of the child, and it can fail first on
+    an unrelated type Parquet cannot write, so the check runs here on schema names only. The
+    result has the no-child shape: no pid, return code or memory sample.
+    """
+    from decoy_engine.execution import _guards
+    from decoy_engine.execution._transforms import TransformError
+    from decoy_engine.reason_adapter import reason_from_exception
+
+    try:
+        for name, table in (sources or {}).items():
+            _guards.refuse_duplicate_field_names(name, table.schema.names)
+    except TransformError as exc:
+        return IsolatedRunResult(
+            outcome="crashed",
+            peak_rss_mb=None,
+            outputs=None,
+            quality_metrics={},
+            table_kinds={},
+            returncode=None,
+            signal_number=None,
+            error=exception_error_text(exc),
+            isolated=True,
+            reason=reason_from_exception(exc),
+        )
+    return None

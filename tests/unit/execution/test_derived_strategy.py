@@ -591,3 +591,10 @@ def test_t3_identifier_named_output_snapshot() -> None:
     assert out.column("s").to_pylist() == [12.0, 24.0, None]
     assert out.column("t").to_pylist() == ["x-", "y-", "z-"]
     assert out.column_names == ["a", "b", "label", "s", "t"]
+
+
+def test_constant_expression_fills_every_row() -> None:
+    # CHARACTERIZATION: an expression with no column reference still yields one value per row.
+    table = _float_table({"a": [1.0, 2.0, 3.0], "d": [0.0, 0.0, 0.0]})
+    out = _run_table(table, [("a", _col("passthrough")), ("d", _derived("1 + 1"))])
+    assert out.column("d").to_pylist() == [2.0, 2.0, 2.0]

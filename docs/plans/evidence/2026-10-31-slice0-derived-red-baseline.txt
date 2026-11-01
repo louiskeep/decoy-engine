@@ -1,31 +1,54 @@
 Slice 0 item 3 (derived visibility): red baseline of every acceptance cell on origin/main.
 Plan: docs/plans/2026-10-31-slice0-derived-visibility.md (revision 5 + Codex round 5 amendments, f7f1d6bc).
-Tree under test: origin/main 1ee89e68 (src only: PYTHONPATH=<detached main worktree>/src), test files from this branch.
+Tree under test: branch commit 2b91ad78 (tests only on top of the plan merge); its src, scripts, pyproject.toml and uv.lock are
+byte-identical to origin/main 1ee89e68 (`git diff --stat origin/main 2b91ad78 -- src scripts pyproject.toml uv.lock` is empty).
+Note: pytest's `pythonpath = ["src"]` (pyproject.toml) puts the rootdir's src ahead of PYTHONPATH, so a PYTHONPATH override does not
+select the tree; later main runs use a detached worktree at 2b91ad78 with the branch's tests copied in, src checked equal to origin/main.
 Environment: scripts/dev/bootstrap.sh -> .venv from uv.lock (RESULT OK): Python 3.10.20, pandas 2.3.3, pyarrow 24.0.0; native companion not installed (native-only cells skip).
-Command: PYTHONPATH=<main-wt>/src:. .venv/bin/python -m pytest -p no:cacheprovider -m 'not benchmark and not packaging and not codspeed' \
+Command: .venv/bin/python -m pytest -p no:cacheprovider -m 'not benchmark and not packaging and not codspeed' \
   tests/unit/execution/test_derived_strategy.py tests/unit/transforms/test_derived.py tests/unit/transforms/test_derived_value_free.py \
   tests/unit/execution/test_duplicate_field_names_matrix.py tests/unit/execution/test_derived_route_matrix.py \
   tests/unit/profile/test_duplicate_header_readers.py tests/physical/test_unified_slice_admission.py tests/unit/test_reason_registry.py \
   tests/sentry/test_reason_registry.py tests/unit/execution/test_engine_transforms_exact.py tests/unit/execution/test_engine_transforms_routes.py
-Result on main: 151 failed, 447 passed, 2 skipped.
-Label check: a FAIL-BEFORE or NEW-SEAM cell must be red on main, a CHARACTERIZATION or CONFIG-FIRST cell green; contradictions: 0.
+The isolated child imports decoy_engine through the venv's editable install, so main runs also export
+PYTHONPATH=<main worktree>/src for the child (an earlier run without it let E3 child cells execute branch code; discarded).
+
+Result on main: 151 failed, 448 passed, 2 skipped. Label contradictions: 0.
+Label check: a FAIL-BEFORE or NEW-SEAM cell must be red on main, a CHARACTERIZATION or CONFIG-FIRST cell green.
 CHARACTERIZATION rows include every pre-existing test of the touched suites (existing suites kept green, plan T3).
-Composite labels: "FAIL-BEFORE(message+spy; type/code CHARACTERIZATION)" = the type and code assertions pass on main and the cell goes red at the message assertion;
-"FAIL-BEFORE(spy; result CHARACTERIZATION)" = the IsolatedRunResult assertions pass on main and the cell goes red at the spy (E2) or no-spawn (E3, round 5 parent check) assertion.
-The text after "::" is the first line of main's failure, i.e. the recorded main outcome.
+Composite labels: 'FAIL-BEFORE(message+spy; type/code CHARACTERIZATION)' = type and code pass on main, red at the message;
+'FAIL-BEFORE(spy; result CHARACTERIZATION)' = the IsolatedRunResult assertions pass on main, red at the spy (E2) or no-spawn (E3) assertion.
+The text after '::' is the first line of main's failure, i.e. the recorded main outcome.
+Counts on main (label, outcome):
+   429  CHARACTERIZATION  green
+     2  CHARACTERIZATION  skipped
+    19  CONFIG-FIRST  green
+   130  FAIL-BEFORE  red
+     1  FAIL-BEFORE(message)  red
+     9  FAIL-BEFORE(message+spy; type/code CHARACTERIZATION)  red
+     1  FAIL-BEFORE(spy, structural)  red
+     6  FAIL-BEFORE(spy; result CHARACTERIZATION)  red
+     4  NEW-SEAM  red
 
-Counts by label and outcome:
-    428 CHARACTERIZATION green
-      2 CHARACTERIZATION skipped
-     19 CONFIG-FIRST green
-    130 FAIL-BEFORE red
-      1 FAIL-BEFORE(message) red
-      9 FAIL-BEFORE(message+spy; type/code
-      1 FAIL-BEFORE(spy, structural)
-      6 FAIL-BEFORE(spy; result
-      4 NEW-SEAM red
+Counts on the branch build (label as on main, outcome after the fix):
+   428  CHARACTERIZATION  green
+     1  CHARACTERIZATION  red
+     2  CHARACTERIZATION  skipped
+    17  CONFIG-FIRST  green
+     2  CONFIG-FIRST  red
+   130  FAIL-BEFORE  green
+     1  FAIL-BEFORE(message)  green
+     9  FAIL-BEFORE(message+spy; type/code CHARACTERIZATION)  green
+     1  FAIL-BEFORE(spy, structural)  green
+     6  FAIL-BEFORE(spy; result CHARACTERIZATION)  green
+     4  NEW-SEAM  green
 
-Cells (label, outcome on main, id :: main outcome):
+Not green after the build (open findings, see the build report; not patched):
+CONFIG-FIRST                                  red   tests/unit/execution/test_duplicate_field_names_matrix.py::test_e3_isolated_default[out_of_core-res-transform-row1-CONFIG-FIRST] :: AssertionError: assert 'duplicate_source_field_names' == 'per_table_transforms_present'
+CONFIG-FIRST                                  red   tests/unit/execution/test_duplicate_field_names_matrix.py::test_e3_isolated_default[out_of_core-desc-transform-row1-CONFIG-FIRST] :: assert (2 == 0)
+CHARACTERIZATION                              red   tests/unit/execution/test_engine_transforms_exact/TestDefectsThroughRoutes.py::test_duplicate_field_table_without_transforms_fails_as_on_main :: decoy_engine.execution._transforms.TransformError: table 't' has 1 duplicated field name(s)
+
+Cells that are not CHARACTERIZATION, on main (label, outcome, id :: main outcome):
 FAIL-BEFORE                                   red   tests/unit/execution/test_derived_strategy.py::test_expression_never_reads_an_undeclared_column_through_a_positional_alias :: assert [999.0, 888.0] == [5.0, 6.0]
 FAIL-BEFORE                                   red   tests/unit/execution/test_derived_strategy.py::test_declared_underscore_column_is_readable :: ValueError: derived expression evaluation failed at column 'd', row 0: '_total'
 FAIL-BEFORE                                   red   tests/unit/execution/test_derived_strategy.py::test_t6a_declared_reference_reads_its_own_column[_total-FAIL-BEFORE] :: ValueError: derived expression evaluation failed at column 'd', row 0: '_total'
@@ -154,9 +177,9 @@ FAIL-BEFORE                                   red   tests/unit/execution/test_du
 FAIL-BEFORE                                   red   tests/unit/execution/test_duplicate_field_names_matrix.py::test_e3_isolated_default[out_of_core-desc-redact-row7/2-FAIL-BEFORE] :: AssertionError: assert ('decoy', 'unexpected_error') == ('runtime', '..._field_names')
 FAIL-BEFORE                                   red   tests/unit/execution/test_duplicate_field_names_matrix.py::test_e3_isolated_default[out_of_core-res-derived-row7/2-FAIL-BEFORE] :: AssertionError: assert ('decoy', 'unexpected_error') == ('runtime', '..._field_names')
 FAIL-BEFORE                                   red   tests/unit/execution/test_duplicate_field_names_matrix.py::test_e3_isolated_default[out_of_core-desc-derived-row7/2-FAIL-BEFORE] :: AssertionError: assert ('decoy', 'unexpected_error') == ('runtime', '..._field_names')
-FAIL-BEFORE(spy; result CHARACTERIZATION)     red   tests/unit/execution/test_duplicate_field_names_matrix.py::test_e3_isolated_default[auto-res-transform-row4-CHARACTERIZATION-result] :: assert ([13654] == []
-FAIL-BEFORE(spy; result CHARACTERIZATION)     red   tests/unit/execution/test_duplicate_field_names_matrix.py::test_e3_isolated_default[full_frame-res-transform-row4-CHARACTERIZATION-result] :: assert ([13693] == []
-FAIL-BEFORE(spy; result CHARACTERIZATION)     red   tests/unit/execution/test_duplicate_field_names_matrix.py::test_e3_isolated_default[sequential-res-transform-row4-CHARACTERIZATION-result] :: assert ([13732] == []
+FAIL-BEFORE(spy; result CHARACTERIZATION)     red   tests/unit/execution/test_duplicate_field_names_matrix.py::test_e3_isolated_default[auto-res-transform-row4-CHARACTERIZATION-result] :: assert ([28490] == []
+FAIL-BEFORE(spy; result CHARACTERIZATION)     red   tests/unit/execution/test_duplicate_field_names_matrix.py::test_e3_isolated_default[full_frame-res-transform-row4-CHARACTERIZATION-result] :: assert ([28554] == []
+FAIL-BEFORE(spy; result CHARACTERIZATION)     red   tests/unit/execution/test_duplicate_field_names_matrix.py::test_e3_isolated_default[sequential-res-transform-row4-CHARACTERIZATION-result] :: assert ([28611] == []
 FAIL-BEFORE                                   red   tests/unit/execution/test_duplicate_field_names_matrix.py::test_e3_isolated_default[auto-desc-transform-row2-FAIL-BEFORE] :: AssertionError: assert ('decoy', 'unexpected_error') == ('runtime', '..._field_names')
 FAIL-BEFORE                                   red   tests/unit/execution/test_duplicate_field_names_matrix.py::test_e3_isolated_default[full_frame-desc-transform-row2-FAIL-BEFORE] :: AssertionError: assert ('decoy', 'unexpected_error') == ('runtime', '..._field_names')
 FAIL-BEFORE                                   red   tests/unit/execution/test_duplicate_field_names_matrix.py::test_e3_isolated_default[sequential-desc-transform-row2-FAIL-BEFORE] :: AssertionError: assert ('decoy', 'unexpected_error') == ('runtime', '..._field_names')
@@ -212,6 +235,7 @@ CHARACTERIZATION                              green tests/unit/execution/test_de
 CHARACTERIZATION                              green tests/unit/execution/test_derived_strategy.py::test_t6c_non_identifier_references_are_refused_at_parse[na\xefve + 0]
 CHARACTERIZATION                              green tests/unit/execution/test_derived_strategy.py::test_t6c_non_identifier_references_are_refused_at_parse[__class__]
 CHARACTERIZATION                              green tests/unit/execution/test_derived_strategy.py::test_t3_identifier_named_output_snapshot
+CHARACTERIZATION                              green tests/unit/execution/test_derived_strategy.py::test_constant_expression_fills_every_row
 CHARACTERIZATION                              green tests/unit/transforms/test_derived_value_free.py::test_marker_absent_where_main_was_already_value_free[division-int]
 CHARACTERIZATION                              green tests/unit/transforms/test_derived_value_free.py::test_marker_absent_where_main_was_already_value_free[type-mismatch-str]
 CHARACTERIZATION                              green tests/unit/transforms/test_derived_value_free.py::test_marker_absent_where_main_was_already_value_free[type-mismatch-list]
