@@ -13,7 +13,7 @@ import functools
 import inspect
 from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
-from typing import Any, TypeVar
+from typing import Any, NoReturn, TypeVar
 
 from decoy_engine.fileaccess._local import LocalFileAccess
 from decoy_engine.fileaccess._types import FileAccess, FileAccessUnavailable
@@ -30,6 +30,38 @@ _ambient_forbidden = False
 # with no policy (a raw thread, a callback) fails closed instead of falling back to the CLI
 # policy, since the process is evidently serving policy-bound work.
 _strict_in_use = False
+
+
+def _unavailable(message: str) -> NoReturn:
+    """Raise `FileAccessUnavailable` with no inherited chain: a caller may resolve a policy
+    while handling its own exception (a decode error holding secret bytes, say), which Python
+    would otherwise attach as `__context__`."""
+    try:
+        raise FileAccessUnavailable(message)
+    except FileAccessUnavailable as fresh:
+        fresh.__cause__ = None
+        fresh.__context__ = None
+        fresh.__suppress_context__ = True
+        raise
+
+
+class _Arguments:
+    """A call's arguments, held where a traceback keeps the frame: the repr is fixed, so
+    `TracebackException(capture_locals=True)` shows no ref, path or value a caller passed."""
+
+    __slots__ = ("args", "kwargs")
+
+    def __init__(self, args: tuple[Any, ...], kwargs: dict[str, Any]) -> None:
+        self.args = args
+        self.kwargs = kwargs
+
+    def __repr__(self) -> str:
+        return "<arguments>"
+
+    __str__ = __repr__
+
+    def __reduce_ex__(self, *_: object) -> Any:
+        raise TypeError("call arguments cannot be pickled")
 
 
 def forbid_ambient() -> None:
@@ -52,7 +84,7 @@ def current() -> FileAccess:
     if policy is not None:
         return policy
     if _ambient_forbidden or _strict_in_use:
-        raise FileAccessUnavailable("no file access policy is installed")
+        _unavailable("no file access policy is installed")
     return _ambient()
 
 
@@ -86,7 +118,7 @@ def require_ambient(what: str) -> None:
     For the few engine routes that act on a caller-named scratch or staging path: a strict
     policy cannot vouch for such a path, so the route fails closed before any I/O."""
     if not is_ambient():
-        raise FileAccessUnavailable(f"{what} needs the ambient file access policy")
+        _unavailable(f"{what} needs the ambient file access policy")
 
 
 def _note(policy: FileAccess) -> FileAccess:
@@ -110,18 +142,25 @@ def reset_for_tests() -> None:
     _reset_for_tests()
 
 
+def _not_broader(explicit: FileAccess, installed: FileAccess) -> bool:
+    """The only ordering policies have: the ambient CLI policy is the widest, and two strict
+    policies are incomparable unless they are the same object."""
+    return explicit is installed or isinstance(installed, LocalFileAccess)
+
+
 def _resolve(explicit: FileAccess | None) -> FileAccess:
+    existing = _CURRENT.get()
     if explicit is not None:
         if _ambient_forbidden and isinstance(explicit, LocalFileAccess):
-            raise FileAccessUnavailable("the ambient policy is forbidden in this process")
+            _unavailable("the ambient policy is forbidden in this process")
+        # A nested call never widens the installed policy, even by naming one.
+        if existing is not None and not _not_broader(explicit, existing):
+            _unavailable("an explicit file access policy may not widen the installed one")
         return _note(explicit)
-    existing = _CURRENT.get()
     if existing is not None:
         return existing
     if _ambient_forbidden or _strict_in_use:
-        raise FileAccessUnavailable(
-            "no file access policy was given and ambient access is forbidden"
-        )
+        _unavailable("no file access policy was given and ambient access is forbidden")
     return _ambient()
 
 
@@ -212,7 +251,9 @@ def run_in_context(fn: Callable[..., T]) -> Callable[..., T]:
 
     @functools.wraps(fn)
     def task(*args: Any, **kwargs: Any) -> T:
-        return ctx.run(fn, *args, **kwargs)
+        call = _Arguments(args, kwargs)
+        del args, kwargs
+        return ctx.run(fn, *call.args, **call.kwargs)
 
     return task
 
@@ -230,23 +271,34 @@ def entry_point(fn: F) -> F:
     if "file_access" not in inspect.signature(fn).parameters:
         raise TypeError(f"{fn.__qualname__} must accept file_access=")
 
+    # Both wrappers move the caller's arguments into `_Arguments` before anything can raise,
+    # and unpack them only inside the call expression, so no wrapper frame on a traceback
+    # holds a ref, path or value in a local.
     if inspect.isgeneratorfunction(fn):
 
         @functools.wraps(fn)
         def gen_wrapper(*args: Any, **kwargs: Any) -> Any:
-            policy = _resolve(kwargs.get("file_access"))
-            return bind_iterator(policy, fn(*args, **kwargs))
+            call = _Arguments(args, kwargs)
+            del args, kwargs
+            return bind_iterator(
+                _resolve(call.kwargs.get("file_access")), fn(*call.args, **call.kwargs)
+            )
 
         gen_wrapper.__decoy_entry_point__ = True  # type: ignore[attr-defined]
         return gen_wrapper  # type: ignore[return-value]
 
     @functools.wraps(fn)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
-        with scope(kwargs.get("file_access")) as policy:
-            result = fn(*args, **kwargs)
-        if isinstance(result, Iterator):
-            return bind_iterator(policy, result)
-        return result
+        call = _Arguments(args, kwargs)
+        del args, kwargs
+        token = _CURRENT.set(_resolve(call.kwargs.get("file_access")))
+        try:
+            result = fn(*call.args, **call.kwargs)
+            if isinstance(result, Iterator):
+                return bind_iterator(_CURRENT.get(), result)  # type: ignore[arg-type]
+            return result
+        finally:
+            _CURRENT.reset(token)
 
     wrapper.__decoy_entry_point__ = True  # type: ignore[attr-defined]
     return wrapper  # type: ignore[return-value]

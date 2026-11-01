@@ -99,10 +99,19 @@ def parse_ref(text: object) -> SecretRef:
     (whose text and ``__context__`` can hold part of the reference) survives.
     """
     if type(text) is not str:  # exact: a str subclass could run code inside the parser
+        del text
         raise _bad_ref()
+    parsed = _parse_or_none(text)
+    del text  # a traceback keeps this frame: its locals must not name the reference
+    if parsed is None:
+        raise _bad_ref()
+    return parsed
+
+
+def _parse_or_none(text: str) -> SecretRef | None:
     with contextlib.suppress(Exception):  # every parse failure is the one fixed reason
         return _parse(text)
-    raise _bad_ref()
+    return None
 
 
 def _parse(text: str) -> SecretRef:

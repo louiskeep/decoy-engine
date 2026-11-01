@@ -189,9 +189,12 @@ def key_provider_from_ref(
     closes it automatically and nothing caches it). Prefer
     `decoy_engine.secret_providers.admit_mask_key`, which also owns closing.
     """
-    from decoy_engine.secret_providers import prepare_ref
+    from decoy_engine.secret_providers import _preflight
 
-    return prepare_ref(ref, key_version=key_version).key_provider()
+    # The boxed-entry pattern of the admission boundary: nothing in this frame names the ref.
+    box = _preflight._OpaqueBox(ref, key_version)
+    del ref, key_version, file_access
+    return _preflight._call_closed(_preflight._ref_boxed, box).key_provider()
 
 
 def plan_has_keyed_strategy(plan: Plan) -> bool:

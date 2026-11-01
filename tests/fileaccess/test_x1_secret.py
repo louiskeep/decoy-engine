@@ -20,6 +20,7 @@ from decoy_engine.keyprovider import (
     SecretKeyProvider,
     key_provider_from_ref,
 )
+from tests.fileaccess.locals_support import assert_no_engine_local_holds
 from tests.fileaccess.support import RootRelative
 
 SENTINEL = "SECRET-" + uuid.uuid4().hex[:10]
@@ -96,14 +97,9 @@ def _assert_clean(exc: BaseException, *, secret_path: str) -> None:
     for link in _links(exc):
         assert not isinstance(link, UnicodeDecodeError)
         assert SENTINEL not in repr(getattr(link, "object", ""))
-    # Frame locals of engine frames on the traceback never hold the secret text.
-    tb = exc.__traceback__
-    while tb is not None:
-        engine_frame = "/src/decoy_engine/" in tb.tb_frame.f_code.co_filename
-        for value in tb.tb_frame.f_locals.values() if engine_frame else ():
-            if isinstance(value, (str, bytes)):
-                assert SENTINEL not in (value if isinstance(value, str) else value.decode("latin1"))
-        tb = tb.tb_next
+    # Frame locals of engine frames on every link never hold the secret text, the secret
+    # file's path or the ref, as a repr or nested in a tuple, list or dict.
+    assert_no_engine_local_holds(exc, SENTINEL, secret_path)
 
 
 @pytest.mark.parametrize("name", sorted(CASES))
