@@ -64,6 +64,8 @@ from decoy_engine.profile._fixed_width_reader import (
     _strip_pad,
 )
 
+_FIELD_KEY = "target.path"
+
 # The reader never reads the bytes between columns (every column is an absolute
 # `[start, start + width)` slice), so any gap fill round-trips. A space is the
 # conventional fixed-width filler and encodes to one UTF-8 byte.
@@ -240,7 +242,10 @@ def write_fixed_width(
         raise TypeError(f"path must be a str or os.PathLike[str], got {type(path).__name__}")
     if "\x00" in path:
         raise ValueError("path must not contain a NUL character")
-    spec = _resolve_layout(layout, path=path)
+    # The path under the ambient CLI policy (unchanged text), the field position under a
+    # strict one: a strict error never names the file.
+    shown = fileaccess.shown(path, _FIELD_KEY)
+    spec = _resolve_layout(layout, path=shown)
 
     layout_message = _check_layout(spec)
     if layout_message is not None:
@@ -304,9 +309,9 @@ def _write_all(frame: pd.DataFrame, spec: FixedWidthLayout, path: str) -> str | 
     # plain Python values.
     columns = {column.name: frame[column.name].tolist() for column in spec.columns}
     row_count = len(frame.index)
-    rendered = _render_path(path)
+    rendered = _render_path(fileaccess.shown(path, _FIELD_KEY))
     out = fileaccess.current().output_dir(
-        FileRequest(FileRole.TARGET_OUTPUT, "write", path, "target.path")
+        FileRequest(FileRole.TARGET_OUTPUT, "write", path, _FIELD_KEY)
     )
 
     # The stage publishes by atomic rename and aborts on any exception, so a data
