@@ -1,0 +1,308 @@
+diff --git a/api/jobs/job_run_context.py b/api/jobs/job_run_context.py
+index 30acf7f..3d1ca82 100644
+--- a/api/jobs/job_run_context.py
++++ b/api/jobs/job_run_context.py
+@@ -57,6 +57,8 @@ class JobRunContext:
+     dispatch_plan: DispatchPlan | None
+     validated_source_paths: dict[str, str] | None
+     job_seed: Any
++    # The one engine mask-key provider of this attempt (api/jobs/engine_key.py).
++    key_provider: Any
+     vault_writer: Any
+     # Mutated in place by the executors and the terminal tail; the binding is frozen.
+     phase_timings: dict[str, float]
+diff --git a/api/jobs/preview_child.py b/api/jobs/preview_child.py
+index b3c10c1..4bd320e 100644
+--- a/api/jobs/preview_child.py
++++ b/api/jobs/preview_child.py
+@@ -227,6 +227,7 @@ def main(argv: list[str]) -> int:
+         from api.engine_compat import engine_version as installed_engine_version
+ 
+         assert_engine_transform_ownership()
++        from api.jobs.engine_key import ephemeral_preview_key_provider
+         from api.jobs.v2_runner import run_v2_pipeline
+ 
+         child_config = request["child_config"]
+@@ -250,6 +251,9 @@ def main(argv: list[str]) -> int:
+             engine_version=installed_engine_version(),
+             instance_default_locale=instance_default_locale,
+             job_seed=preview_seed,
++            # One random key per preview request, built here so none crosses the
++            # process boundary; a preview never reads the master key.
++            key_provider=ephemeral_preview_key_provider(),
+             # B3: a preview is one small unpriced sample, so one thread.
+             native_threads=1,
+             # Owner decision (M5): previews report check results, never fail on them.
+diff --git a/api/jobs/route_dispatch_exec.py b/api/jobs/route_dispatch_exec.py
+index 408cfed..118460b 100644
+--- a/api/jobs/route_dispatch_exec.py
++++ b/api/jobs/route_dispatch_exec.py
+@@ -75,6 +75,7 @@ def execute_streaming(
+         ctx.claim_streaming_plan,
+         engine_version=ctx.engine_version,
+         native_budget=ctx.native_budget,
++        key_provider=ctx.key_provider,
+         native_threads=native_threads,
+         phase_timings=ctx.phase_timings,
+     )
+@@ -116,6 +117,7 @@ def execute_full_frame(
+         vault_writer=ctx.vault_writer,
+         token_vault_writer=ctx.token_vault_writer,
+         job_seed=ctx.job_seed,
++        key_provider=ctx.key_provider,
+         phase_timings=ctx.phase_timings,
+         native_threads=native_threads,  # type: ignore[arg-type]
+     )
+@@ -136,6 +138,7 @@ def execute_out_of_core(ctx: JobRunContext, state: JobRunState) -> None:
+         engine_version=ctx.engine_version,
+         vault_writer=ctx.vault_writer,
+         job_seed=ctx.job_seed,
++        key_provider=ctx.key_provider,
+         phase_timings=ctx.phase_timings,
+     )
+ 
+@@ -153,6 +156,7 @@ def execute_sequential(ctx: JobRunContext, state: JobRunState) -> None:
+         engine_version=ctx.engine_version,
+         vault_writer=ctx.vault_writer,
+         job_seed=ctx.job_seed,
++        key_provider=ctx.key_provider,
+         phase_timings=ctx.phase_timings,
+     )
+ 
+diff --git a/api/jobs/v2_full_frame.py b/api/jobs/v2_full_frame.py
+index 07380e1..9c3a95e 100644
+--- a/api/jobs/v2_full_frame.py
++++ b/api/jobs/v2_full_frame.py
+@@ -79,6 +79,7 @@ def run_full_frame_branch(
+     vault_writer: Any,
+     token_vault_writer: Any = None,
+     job_seed: Any,
++    key_provider: Any,
+     phase_timings: dict[str, float],
+     native_threads: int,
+ ) -> dict[str, dict[str, Any]]:
+@@ -104,6 +105,7 @@ def run_full_frame_branch(
+         vault_writer=vault_writer,
+         token_vault_writer=token_vault_writer,
+         job_seed=job_seed,
++        key_provider=key_provider,
+         phase_timings=phase_timings,
+         native_threads=native_threads,
+     )
+diff --git a/api/jobs/v2_orchestrator.py b/api/jobs/v2_orchestrator.py
+index 031e8fa..33bea12 100644
+--- a/api/jobs/v2_orchestrator.py
++++ b/api/jobs/v2_orchestrator.py
+@@ -149,7 +149,11 @@ def run_v2_pipeline_job(
+     # Gap-closure item 6: when the config declares `vault: true` columns, build a
+     # VaultWriter keyed by the run's job seed (vaults are mask-only, so this is
+     # the fixed instance key). The engine fills it during the run.
+-    vault_writer = _build_job_vault_writer(config, job_seed=job_seed)
++    # F13: one mask-key provider per attempt; the vault writer and every route get it.
++    from api.jobs.engine_key import instance_key_provider
++
++    key_provider = instance_key_provider()
++    vault_writer = _build_job_vault_writer(config, job_seed=job_seed, key_provider=key_provider)
+     # MG-5 vault V2d: build the managed token vault for a tokenize job. Resolution
+     # can fail closed (no/unknown/revoked vault); mirror the _budget_error idiom
+     # and raise it INSIDE the try below so the job lands `failed` with the reason,
+@@ -204,6 +208,7 @@ def run_v2_pipeline_job(
+         dispatch_plan=dispatch_plan,
+         validated_source_paths=validated_source_paths,
+         job_seed=job_seed,
++        key_provider=key_provider,
+         vault_writer=vault_writer,
+         token_vault_writer=token_vault_writer,
+         phase_timings=phase_timings,
+diff --git a/api/jobs/v2_out_of_core.py b/api/jobs/v2_out_of_core.py
+index d47efe8..c75fe0a 100644
+--- a/api/jobs/v2_out_of_core.py
++++ b/api/jobs/v2_out_of_core.py
+@@ -228,6 +228,7 @@ def _run_v2_pipeline_out_of_core_to_stage(
+     *,
+     stage_dir: Path,
+     engine_version: str,
++    key_provider: Any,
+ ) -> ExecutionResult:
+     """Run a relationship-bearing mask job through the engine out-of-core FK
+     route, committing outputs to ``stage_dir`` as Parquet.
+@@ -339,6 +340,7 @@ def _run_v2_pipeline_out_of_core_to_stage(
+             # only memory sizing changes (engine _runner.py docstring).
+             budget_bytes=budget.budget_bytes,
+             batch_rows=budget.batch_rows,
++            key_provider=key_provider,
+         )
+     except ExecutionError as exc:
+         # dennis+Codex HIGH-1 (Codex-recommended fix): `run_fk_out_of_core`
+@@ -381,6 +383,7 @@ def run_out_of_core_relationship_job(
+     engine_version: str,
+     vault_writer: Any,
+     job_seed: int,
++    key_provider: Any,
+     phase_timings: dict[str, float],
+ ) -> dict[str, dict[str, Any]]:
+     """Fourth execution route: run a large relationship-bearing mask-only job
+@@ -411,6 +414,7 @@ def run_out_of_core_relationship_job(
+         engine_version=engine_version,
+         vault_writer=vault_writer,
+         job_seed=job_seed,
++        key_provider=key_provider,
+         phase_timings=phase_timings,
+         stage_runner=_run_v2_pipeline_out_of_core_to_stage,
+         stage_prefix="ooc",
+diff --git a/api/jobs/v2_runner.py b/api/jobs/v2_runner.py
+index db9d61b..08d825b 100644
+--- a/api/jobs/v2_runner.py
++++ b/api/jobs/v2_runner.py
+@@ -149,6 +149,7 @@ def run_v2_pipeline(
+     phase_timings: dict[str, float] | None = None,
+     enforce_post_validation: bool = True,
+     native_threads: int,
++    key_provider: Any,
+ ) -> ExecutionResult:
+     """FC-1 (2026-06-02): run a unified mask + generate config end-to-end.
+ 
+@@ -236,6 +237,7 @@ def run_v2_pipeline(
+         # auto-chunk when it is set (engine V0b); the platform also route-guards
+         # tokenize jobs to this full-frame path (decide_job_route / available_routes).
+         token_vault_writer=token_vault_writer,
++        key_provider=key_provider,
+         # Phase 3.3 rollback lever: UNIFIED_SLICE_ENABLED=false forces the legacy
+         # pandas full-frame oracle without an engine release (default True; the
+         # engine already defaults the unified lane on).
+@@ -262,6 +264,7 @@ def _run_v2_pipeline_streaming(
+     base_row_offset: int = 0,
+     entry: Any = None,
+     native_threads: int,
++    key_provider: Any,
+ ) -> dict[str, dict[str, Any]]:
+     """H5 (Sprint H, D4/D9): the chunk-safe streaming route for one table.
+ 
+@@ -375,6 +378,7 @@ def _run_v2_pipeline_streaming(
+                 table=table,
+                 engine_version=engine_version,
+                 vault_writer=vault_writer,
++                key_provider=key_provider,
+                 base_row_offset=base_row_offset,
+                 native_threads=native_threads,
+                 chunk_result_sink=sink,
+@@ -388,6 +392,7 @@ def _run_v2_pipeline_streaming(
+                 table=table,
+                 engine_version=engine_version,
+                 vault_writer=vault_writer,
++                key_provider=key_provider,
+                 base_row_offset=base_row_offset,
+             )
+         for masked in masked_chunks:
+diff --git a/api/jobs/v2_sequential.py b/api/jobs/v2_sequential.py
+index 2167c31..d5c3484 100644
+--- a/api/jobs/v2_sequential.py
++++ b/api/jobs/v2_sequential.py
+@@ -150,6 +150,7 @@ def _run_v2_pipeline_sequential_to_stage(
+     *,
+     stage_dir: Path,
+     engine_version: str,
++    key_provider: Any,
+ ) -> ExecutionResult:
+     """Run a relationship-bearing mask job through engine sequential eviction.
+ 
+@@ -206,6 +207,7 @@ def _run_v2_pipeline_sequential_to_stage(
+         relationship_graph=graph,
+         namespace_registry=ns_registry,
+         sink=ParquetTransactionalSink(stage_dir),
++        key_provider=key_provider,
+     )
+     return ExecutionResult(
+         outputs={},
+@@ -361,6 +363,7 @@ def _run_relationship_job_to_targets(
+     engine_version: str,
+     vault_writer: Any,
+     job_seed: int,
++    key_provider: Any,
+     phase_timings: dict[str, float],
+     stage_runner: Callable[..., ExecutionResult],
+     stage_prefix: str,
+@@ -402,6 +405,7 @@ def _run_relationship_job_to_targets(
+             run_config,
+             stage_dir=stage_dir,
+             engine_version=engine_version,
++            key_provider=key_provider,
+         )
+         phase_timings["execute"] = round((time.perf_counter() - _t_run0) * 1000.0, 1)
+ 
+@@ -479,6 +483,7 @@ def run_sequential_relationship_job(
+     engine_version: str,
+     vault_writer: Any,
+     job_seed: int,
++    key_provider: Any,
+     phase_timings: dict[str, float],
+ ) -> dict[str, dict[str, Any]]:
+     """Third execution route: run a relationship-bearing mask-only job through
+@@ -504,6 +509,7 @@ def run_sequential_relationship_job(
+         engine_version=engine_version,
+         vault_writer=vault_writer,
+         job_seed=job_seed,
++        key_provider=key_provider,
+         phase_timings=phase_timings,
+         stage_runner=_run_v2_pipeline_sequential_to_stage,
+         stage_prefix="seq",
+diff --git a/api/jobs/v2_stream_coordinator.py b/api/jobs/v2_stream_coordinator.py
+index 97b14e8..0632938 100644
+--- a/api/jobs/v2_stream_coordinator.py
++++ b/api/jobs/v2_stream_coordinator.py
+@@ -104,6 +104,7 @@ def run_v2_pipeline_streaming_multitable(
+     native_budget: Any = None,
+     native_threads: int | None = None,
+     evidence_out: dict[str, dict[str, Any]] | None = None,
++    key_provider: Any,
+ ) -> StreamingJobResult:
+     """Stream every table `plan` admits, one table resident at a time,
+     publishing each ATOMICALLY before moving to the next.
+@@ -188,6 +189,7 @@ def run_v2_pipeline_streaming_multitable(
+                 table=table,
+                 engine_version=resolved_engine_version,
+                 job_seed=job_seed,
++                key_provider=key_provider,
+                 writer=writer,
+                 base_row_offset=base_row_offset,
+                 entry=budget.tables[table],
+@@ -292,6 +294,7 @@ def run_claim_time_streaming_route(
+     native_budget: Any = None,
+     native_threads: int | None = None,
+     phase_timings: dict[str, float] | None = None,
++    key_provider: Any,
+ ) -> StreamingJobResult:
+     """Task 1.5's orchestration entry point: `v2_orchestrator.run_v2_pipeline_
+     job` calls this the moment it finds a claim-time-admitted `plan` on the
+@@ -324,6 +327,7 @@ def run_claim_time_streaming_route(
+         native_budget=native_budget,
+         native_threads=native_threads,
+         evidence_out=evidence,
++        key_provider=key_provider,
+     )
+     reserved = getattr(native_budget, "threads", None)
+     for table in plan.tables:
+diff --git a/api/jobs/v2_vault.py b/api/jobs/v2_vault.py
+index df8f4c3..f8c646c 100644
+--- a/api/jobs/v2_vault.py
++++ b/api/jobs/v2_vault.py
+@@ -20,7 +20,9 @@ from api.keys import derive_mask_job_seed_int
+ _log = logging.getLogger("api.jobs.v2_runner")
+ 
+ 
+-def _build_job_vault_writer(config: dict[str, Any], *, job_seed: int | None = None) -> Any:
++def _build_job_vault_writer(
++    config: dict[str, Any], *, job_seed: int | None = None, key_provider: Any
++) -> Any:
+     """Gap-closure item 6: a VaultWriter for a job's `vault: true` columns, or None.
+ 
+     Keyed by the run's job seed so the vault key matches the masked output.
+@@ -37,7 +39,7 @@ def _build_job_vault_writer(config: dict[str, Any], *, job_seed: int | None = No
+     seeded.setdefault("global_settings", {})["seed"] = (
+         job_seed if job_seed is not None else derive_mask_job_seed_int()
+     )
+-    return vault_writer_for_config(seeded)
++    return vault_writer_for_config(seeded, key_provider=key_provider)
+ 
+ 
+ def vault_dir() -> Any:

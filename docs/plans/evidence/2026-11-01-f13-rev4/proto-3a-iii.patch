@@ -1,0 +1,167 @@
+diff --git a/api/jobs/v2_config.py b/api/jobs/v2_config.py
+index c6b9a38..9dac8de 100644
+--- a/api/jobs/v2_config.py
++++ b/api/jobs/v2_config.py
+@@ -37,8 +37,10 @@ def validate_v2_config(raw: dict[str, Any]) -> dict[str, Any]:
+     from decoy_engine.config import PipelineConfig, PipelineConfigError
+     from pydantic import ValidationError
+ 
++    from api.pipelines.mask_secret_guard import reject_mask_secret_ref
+     from api.vaults.marker import carry_token_vault_marker, without_token_vault_marker
+ 
++    reject_mask_secret_ref(raw)
+     # The platform-only `token_vault` marker is `extra_forbidden` to the engine: validate
+     # a copy without it, then carry it through for build_job_token_vault_writer to pop.
+     try:
+diff --git a/api/nested_preview/router.py b/api/nested_preview/router.py
+index 834f59f..5bb4e49 100644
+--- a/api/nested_preview/router.py
++++ b/api/nested_preview/router.py
+@@ -19,7 +19,10 @@ import pandas as pd
+ from decoy_engine.execution._errors import StrategyError
+ from decoy_engine.execution._strategies import SCALAR_HANDLERS
+ from decoy_engine.execution._strategies._nested import NestedStrategyHandler
++from decoy_engine.plan import PlanCompileError
+ from decoy_engine.plan._types import ColumnSeed
++
++from api.jobs.engine_key import ephemeral_preview_key_provider
+ from fastapi import APIRouter, Depends, HTTPException
+ from pydantic import BaseModel, Field
+ 
+@@ -53,6 +56,10 @@ class _FakeCtx:
+     # flag below. Without this attribute the handler AttributeErrors -> 500.
+     def __init__(self) -> None:
+         self.row_errors: list[Any] = []
++        # Keyed children read ctx.mask_key. One random key per request, never the
++        # instance key: a preview must not compute production keyed output for input
++        # the operator chooses (and must not read the master key at all).
++        self.mask_key: bytes = ephemeral_preview_key_provider().mask_key()
+ 
+ 
+ @router.post("/preview", response_model=NestedPreviewOut)
+@@ -84,7 +91,8 @@ def nested_preview(
+     if body.strategy_config:
+         provider_config.append(("strategy_config", body.strategy_config))
+     seed = ColumnSeed(
+-        namespace=None,
++        # Keyed children require a namespace; a constant one, since the key is per request.
++        namespace="nested_preview",
+         strategy="nested",
+         provider=None,
+         backend_type="decoy_native",
+@@ -96,9 +104,14 @@ def nested_preview(
+     df = pd.DataFrame({"_col": body.cells})
+     try:
+         out_df, warnings = NestedStrategyHandler().run(df, "_col", seed, _FakeCtx())  # type: ignore[arg-type]
+-    except StrategyError as exc:
++    except (StrategyError, PlanCompileError) as exc:
+         if exc.code != "nested_target_matched_nothing":
+-            raise
++            # A child the preview cannot run (no vault for tokenize, missing config):
++            # its registered code, constant text, never the engine message.
++            raise HTTPException(
++                status_code=422,
++                detail={"code": exc.code, "message": "the child strategy cannot run in preview"},
++            ) from None
+         # Preview is exploratory. The engine fail-closes a wholly-unmatched
+         # target for a real job (a misconfigured JSONPath must not silently
+         # pass PII through), but an operator tuning a path in the preview should
+diff --git a/api/pipelines/mask_secret_guard.py b/api/pipelines/mask_secret_guard.py
+new file mode 100644
+index 0000000..49654e8
+--- /dev/null
++++ b/api/pipelines/mask_secret_guard.py
+@@ -0,0 +1,22 @@
++"""Platform job configs may not name a mask-secret reference.
++
++The platform keys masking from its instance master key (``api/jobs/engine_key.py``);
++a ``global_settings.mask_secret_ref`` in a job config would let its author choose a
++host environment variable or file for the server to read. Presence-based: ``None``
++is allowed, anything else (``""`` included) is refused with a constant message that
++never echoes the value. FastAPI-free and non-mutating, like ``config_guard.py``.
++"""
++
++from __future__ import annotations
++
++from typing import Any
++
++from api.keys.mask_secret_errors import MaskSecretConfigError
++
++CODE = "mask_secret_ref_not_allowed"
++
++
++def reject_mask_secret_ref(config: Any) -> None:
++    settings = config.get("global_settings") if isinstance(config, dict) else None
++    if isinstance(settings, dict) and settings.get("mask_secret_ref") is not None:
++        raise MaskSecretConfigError(CODE)
+diff --git a/api/pipelines/v2_validation.py b/api/pipelines/v2_validation.py
+index 102d109..2669d22 100644
+--- a/api/pipelines/v2_validation.py
++++ b/api/pipelines/v2_validation.py
+@@ -262,6 +262,15 @@ def validate_v2_or_graph(yaml_text: str) -> ValidationResult:
+     from decoy_engine.config import PipelineConfig
+     from pydantic import ValidationError
+ 
++    from api.keys.mask_secret_errors import MaskSecretConfigError
++    from api.pipelines.mask_secret_guard import reject_mask_secret_ref
++
++    try:
++        reject_mask_secret_ref(parsed)
++    except MaskSecretConfigError as exc:
++        result.add_error(code=exc.code, message=exc.message, path="global_settings.mask_secret_ref")
++        return result
++
+     # The platform-only `token_vault` marker would be `extra_forbidden` to the
+     # engine; validate a COPY without it (the caller's YAML/config keeps it for
+     # execution, which strips its own copy).
+diff --git a/api/unmask/router.py b/api/unmask/router.py
+index 8526e09..81c4fac 100644
+--- a/api/unmask/router.py
++++ b/api/unmask/router.py
+@@ -23,6 +23,7 @@ import pandas as pd
+ import pyarrow as pa
+ from decoy_engine import unmask_pipeline
+ from decoy_engine.execution import ExecutionError
++from decoy_engine.keyprovider import MaskSecretError
+ from fastapi import APIRouter, Depends, HTTPException
+ from pydantic import BaseModel, Field
+ from sqlalchemy.orm import Session
+@@ -30,7 +31,10 @@ from sqlalchemy.orm import Session
+ from api.audit.logger import write_audit
+ from api.auth.deps import require_permission
+ from api.database import get_db
++from api.jobs.engine_key import instance_key_provider
+ from api.keys import derive_mask_job_seed_int
++from api.keys.mask_secret_errors import MaskSecretConfigError
++from api.pipelines.mask_secret_guard import reject_mask_secret_ref
+ from api.models import JobNodeRun, User
+ 
+ router = APIRouter(prefix="/unmask", tags=["unmask"])
+@@ -115,6 +119,13 @@ def unmask(
+     user: User = Depends(require_permission("outputs.unmask", min_role="admin")),
+     db: Session = Depends(get_db),
+ ) -> UnmaskOut:
++    try:
++        # Real jobs mask under the instance key, so the request is keyed the same way;
++        # a request may not choose a secret source of its own.
++        reject_mask_secret_ref(body.config)
++        key_provider = instance_key_provider()
++    except MaskSecretConfigError as exc:
++        raise HTTPException(status_code=422, detail={"code": exc.code, "message": exc.message})
+     tables = body.config.get("tables") or []
+     known = {t.get("name") for t in tables if isinstance(t, dict)}
+     if body.table not in known:
+@@ -147,8 +158,11 @@ def unmask(
+         preserve_index=False,
+     )
+     try:
+-        result = unmask_pipeline(config, {body.table: frame}, vault_path=vault_path)
+-    except ExecutionError as exc:
++        result = unmask_pipeline(
++            config, {body.table: frame}, vault_path=vault_path, key_provider=key_provider
++        )
++    except (ExecutionError, MaskSecretError) as exc:
++        # Both carry a registered code and engine-constant text.
+         raise HTTPException(status_code=422, detail={"code": exc.code, "message": exc.message})
+ 
+     # AUDIT-1: de-pseudonymization is the most sensitive read in the product, so the

@@ -1,0 +1,492 @@
+diff --git a/src/decoy/_mask_secret.py b/src/decoy/_mask_secret.py
+new file mode 100644
+index 0000000..59bdfeb
+--- /dev/null
++++ b/src/decoy/_mask_secret.py
+@@ -0,0 +1,57 @@
++"""The one mask-secret path every CLI surface shares.
++
++Ref shape (`env:NAME` / `file:/PATH`), flag injection (`--mask-secret` or `mask_secret=`
++fills the same `global_settings.mask_secret_ref` slot the YAML can set; both set is a usage
++error, keyed on presence), one admission per command (the engine's `AdmissionScope`, closed
++on every exit, so a run and its vault see one read of the secret), and the error text a
++secret failure prints. Callers pass their own wording, so each surface's text is unchanged.
++"""
++
++from __future__ import annotations
++
++from collections.abc import Iterator
++from contextlib import contextmanager
++from typing import Any
++
++
++class MaskSecretFlagError(Exception):
++    """A usage error from `apply_mask_secret` on a surface with no error type of its own."""
++
++
++BOTH_SET = (
++    "--mask-secret was passed but the YAML already sets global_settings.mask_secret_ref. "
++    "Set the masking secret in exactly one place: drop --mask-secret, or remove "
++    "mask_secret_ref from the config."
++)
++INVALID = (
++    "Invalid mask secret: expected an 'env:NAME' or 'file:/PATH' reference to a >=32-byte "
++    "secret (from --mask-secret or global_settings.mask_secret_ref). It is a REFERENCE, "
++    "never the raw secret. See: decoy explain keys."
++)
++
++
++def is_valid_mask_secret_ref(value: object) -> bool:
++    return isinstance(value, str) and value.startswith(("env:", "file:"))
++
++
++def apply_mask_secret(
++    config_dict: dict, flag: str | None, *, error: type[Exception], both_set: str, invalid: str
++) -> None:
++    """Inject `flag`, then check the effective ref. Never echoes a value."""
++    if flag is not None:
++        if (config_dict.get("global_settings") or {}).get("mask_secret_ref") is not None:
++            raise error(both_set)
++        config_dict.setdefault("global_settings", {})["mask_secret_ref"] = flag
++    ref = (config_dict.get("global_settings") or {}).get("mask_secret_ref")
++    if ref is not None and not is_valid_mask_secret_ref(ref):
++        raise error(invalid)
++
++
++@contextmanager
++def admitted_key_provider(config_dict: dict) -> Iterator[Any]:
++    """The command's one admitted provider (None when nothing is keyed and no ref is set)."""
++    from decoy_engine.secret_providers import AdmissionScope, admit_mask_key
++
++    with AdmissionScope() as scope:
++        yield scope.adopt(admit_mask_key(config_dict)).key_provider
++
+diff --git a/src/decoy/_mask_secret_guidance.py b/src/decoy/_mask_secret_guidance.py
+index 7f1194b..fd6fc7a 100644
+--- a/src/decoy/_mask_secret_guidance.py
++++ b/src/decoy/_mask_secret_guidance.py
+@@ -22,15 +22,16 @@ RUN = (
+ )
+ 
+ UNMASK = (
+-    f"{CODE}: reversing keyed columns needs the mask secret the run used. Set "
+-    f"global_settings.mask_secret_ref in the pipeline YAML to {_FORMS}, the same secret "
+-    "the mask run used. See `decoy explain keys`."
++    f"{CODE}: reversing keyed columns needs the mask secret the run used. Pass "
++    f"--mask-secret with {_FORMS}, or set global_settings.mask_secret_ref in the pipeline "
++    "YAML (one place, not both): the same secret the mask run used. See `decoy explain keys`."
+ )
+ 
+ REPORT_VAULT = (
+     f"{CODE}: a vault is encrypted under the mask secret the run used, and none was "
+-    f"supplied. Set global_settings.mask_secret_ref in the pipeline YAML to {_FORMS}, the "
+-    "same secret the `decoy run --vault` call used. See `decoy explain keys`."
++    f"supplied. Pass --mask-secret with {_FORMS}, or set global_settings.mask_secret_ref in "
++    "the pipeline YAML (one place, not both): the same secret the `decoy run --vault` call "
++    "used. See `decoy explain keys`."
+ )
+ 
+ API = (
+diff --git a/src/decoy/api.py b/src/decoy/api.py
+index e44a003..10826b3 100644
+--- a/src/decoy/api.py
++++ b/src/decoy/api.py
+@@ -31,10 +31,10 @@ from typing import Any
+ import pandas as pd
+ import pyarrow as pa
+ 
+-from decoy import _mask_secret_guidance, _native_gate
++from decoy import _mask_secret, _mask_secret_guidance, _native_gate
+ from decoy.cli.extras import UnsupportedCloudEndpointError
++from decoy._mask_secret import is_valid_mask_secret_ref as _is_valid_mask_secret_ref
+ from decoy.cli.run import (
+-    _is_valid_mask_secret_ref,
+     _load_sources_from_config,
+     _write_mask_outputs,
+ )
+@@ -117,36 +117,23 @@ def _apply_mask_secret(config_dict: dict, mask_secret: str | None) -> None:
+     (DE-02 Option B): one secret source per run, chosen explicitly, and a
+     fail-closed refusal when the installed engine predates DE-02's
+     keyprovider (which would otherwise silently emit UNKEYED output)."""
+-    if mask_secret is not None:
+-        existing_ref = (config_dict.get("global_settings") or {}).get("mask_secret_ref")
+-        if existing_ref is not None:
+-            raise MaskSecretConfigError(
+-                "mask_secret was passed but the config already sets "
+-                "global_settings.mask_secret_ref. Set the masking secret "
+-                "in exactly one place: drop mask_secret=, or remove "
+-                "mask_secret_ref from the config."
+-            )
+-        config_dict.setdefault("global_settings", {})["mask_secret_ref"] = mask_secret
+-
+-    effective_ref = (config_dict.get("global_settings") or {}).get("mask_secret_ref")
+-    if effective_ref is not None:
+-        if not _is_valid_mask_secret_ref(effective_ref):
+-            raise MaskSecretConfigError(
+-                "Invalid mask secret: expected an 'env:NAME' or 'file:/PATH' "
+-                "reference to a >=32-byte secret (from mask_secret= or "
+-                "global_settings.mask_secret_ref). It is a REFERENCE, never "
+-                "the raw secret."
+-            )
+-        try:
+-            import decoy_engine.keyprovider  # noqa: F401
+-        except ImportError as exc:
+-            raise MaskSecretConfigError(
+-                "a mask secret is configured (mask_secret_ref / "
+-                "mask_secret=) but the installed decoy-engine is too old "
+-                "to honor it -- it has no DE-02 keyprovider, so it would "
+-                "silently emit UNKEYED output. Upgrade to "
+-                "decoy-engine>=0.4.0."
+-            ) from exc
++    _mask_secret.apply_mask_secret(
++        config_dict,
++        mask_secret,
++        error=MaskSecretConfigError,
++        both_set=(
++            "mask_secret was passed but the config already sets "
++            "global_settings.mask_secret_ref. Set the masking secret "
++            "in exactly one place: drop mask_secret=, or remove "
++            "mask_secret_ref from the config."
++        ),
++        invalid=(
++            "Invalid mask secret: expected an 'env:NAME' or 'file:/PATH' "
++            "reference to a >=32-byte secret (from mask_secret= or "
++            "global_settings.mask_secret_ref). It is a REFERENCE, never "
++            "the raw secret."
++        ),
++    )
+ 
+ 
+ def _build_generation_resolver(master_key: str | bytes | None, key_label: str | None):
+diff --git a/src/decoy/cli/explain.py b/src/decoy/cli/explain.py
+index df9654f..bee863a 100644
+--- a/src/decoy/cli/explain.py
++++ b/src/decoy/cli/explain.py
+@@ -229,7 +229,7 @@ _TOPICS: dict[str, _Topic] = {
+             "   Make a throwaway secret for local development:\n"
+             "     export DECOY_MASK_SECRET=$(openssl rand -hex 32)\n"
+             "     decoy run pipeline.yaml --mask-secret env:DECOY_MASK_SECRET\n"
+-            "   `decoy unmask` reads the secret from global_settings.mask_secret_ref only;\n"
++            "   `decoy unmask` and `decoy report vault` take --mask-secret or the YAML ref;\n"
+             "   it must be the same secret the mask run used."
+         ),
+         see_also=("decoy run --help",),
+diff --git a/src/decoy/cli/report.py b/src/decoy/cli/report.py
+index c0988c2..a4c4456 100644
+--- a/src/decoy/cli/report.py
++++ b/src/decoy/cli/report.py
+@@ -2208,6 +2208,10 @@ See also: decoy run --vault, decoy unmask --vault.
+ """
+ 
+ 
++from decoy import _mask_secret  # noqa: E402
++from decoy._mask_secret import MaskSecretFlagError as _MaskSecretFlagError  # noqa: E402
++
++
+ def _vault(
+     vault: Path = typer.Argument(
+         ...,
+@@ -2223,8 +2227,17 @@ def _vault(
+         dir_okay=False,
+         readable=True,
+         help=(
+-            "The pipeline config the mask run used (must carry the same seed "
+-            "as the run that wrote the vault)."
++            "The pipeline config the mask run used. The vault opens only under the "
++            "mask secret that run used (--mask-secret or global_settings.mask_secret_ref)."
++        ),
++    ),
++    mask_secret: str | None = typer.Option(
++        None,
++        "--mask-secret",
++        help=(
++            "Reference to the mask secret the run used: 'env:NAME' or 'file:/PATH' (a "
++            ">=32-byte secret, never the raw value). Sets global_settings.mask_secret_ref; "
++            "an error if the YAML also sets it. See: decoy explain keys."
+         ),
+     ),
+     json_: bool = typer.Option(
+@@ -2287,17 +2300,27 @@ def _vault(
+         )
+         raise typer.Exit(code=EXIT_USAGE)
+ 
++    try:
++        _mask_secret.apply_mask_secret(
++            raw,
++            mask_secret,
++            error=_MaskSecretFlagError,
++            both_set=_mask_secret.BOTH_SET,
++            invalid=_mask_secret.INVALID,
++        )
++    except _MaskSecretFlagError as exc:
++        _emit_error(str(exc))
++        raise typer.Exit(code=EXIT_USAGE)
++
+     from decoy_engine import VaultError, load_vault
+     from decoy_engine.keyprovider import MaskSecretError
+-    from decoy_engine.secret_providers import AdmissionScope, admit_mask_key
+ 
+     from decoy import _mask_secret_guidance
+ 
+     # The engine's own admission path (the one `decoy unmask` reaches through
+     # unmask_pipeline); the scope closes the admitted secret on every exit.
+     try:
+-        with AdmissionScope() as scope:
+-            provider = scope.adopt(admit_mask_key(raw)).key_provider
++        with _mask_secret.admitted_key_provider(raw) as provider:
+             if provider is None:
+                 # A vault is always keyed; there is no seed fallback to open it with.
+                 _emit_error(_mask_secret_guidance.REPORT_VAULT)
+@@ -2325,7 +2348,7 @@ def _vault(
+                 f"{getattr(exc, 'code', type(exc).__name__)}: "
+                 f"{getattr(exc, 'message', exc)}",
+                 hint_text=(
+-                    "use the mask secret (global_settings.mask_secret_ref) of the "
++                    "use the mask secret (--mask-secret or global_settings.mask_secret_ref) of the "
+                     "`decoy run --vault` call that wrote this vault."
+                 ),
+             )
+diff --git a/src/decoy/cli/run.py b/src/decoy/cli/run.py
+index e9124f5..c903500 100644
+--- a/src/decoy/cli/run.py
++++ b/src/decoy/cli/run.py
+@@ -11,6 +11,7 @@ rejects them with a typed error before this module sees them.
+ """
+ 
+ import binascii
++import contextlib
+ import json as _json
+ import os
+ import time
+@@ -22,7 +23,7 @@ import typer
+ from rich.text import Text
+ 
+ from decoy import __version__ as _cli_version
+-from decoy import _mask_secret_guidance, _native_gate
++from decoy import _mask_secret, _mask_secret_guidance, _native_gate
+ from decoy.cli._duckdb_source import DuckDBSourceError, acquire_relation, parse_flag
+ from decoy.cli._sources import iter_source_chunks, read_source
+ from decoy.cli._yaml_errors import sanitize_yaml_error
+@@ -162,8 +163,7 @@ class _ConfigValidationError(Exception):
+ # Shared by the raw pre-check (before Pydantic) and the merged effective-ref
+ # guard so the two can never diverge. Callers ALWAYS raise a redacted error --
+ # they never echo the value, which may be a raw secret.
+-def _is_valid_mask_secret_ref(value: object) -> bool:
+-    return isinstance(value, str) and value.startswith(("env:", "file:"))
++_is_valid_mask_secret_ref = _mask_secret.is_valid_mask_secret_ref
+ 
+ 
+ def _load_raw_config(config_path: Path) -> dict | None:
+@@ -476,7 +476,7 @@ def run(
+     _run_started_at = datetime.now(timezone.utc)
+     started = time.perf_counter()
+     try:
+-        with spinner(state, f"Running {yaml_mode}..."):
++        with spinner(state, f"Running {yaml_mode}..."), contextlib.ExitStack() as _exits:
+             from decoy_engine import (
+                 PipelineConfig,
+                 run_pipeline,
+@@ -616,57 +616,24 @@ def run(
+             # must not silently override it -- one secret source per run, chosen
+             # explicitly. The flag itself has no env var, so `mask_secret is
+             # None` here means "flag absent".
+-            if mask_secret is not None:
+-                existing_ref = (config_dict.get("global_settings") or {}).get("mask_secret_ref")
+-                if existing_ref is not None:
+-                    raise _MaskSecretUsageError(
+-                        "--mask-secret was passed but the YAML already sets "
+-                        "global_settings.mask_secret_ref. Set the masking "
+-                        "secret in exactly one place: drop --mask-secret, or "
+-                        "remove mask_secret_ref from the config."
+-                    )
+-                config_dict.setdefault("global_settings", {})["mask_secret_ref"] = mask_secret
+-
+-            # Validate + fail-closed guard on the EFFECTIVE ref (whether it came
+-            # from --mask-secret or the YAML). Keyed off PRESENCE, not
+-            # truthiness: a configured-but-empty `mask_secret_ref: ""` is a user
+-            # error, NOT a silent fall-through to an unkeyed (job_seed) run --
+-            # the engine's resolvers treat empty as no-secret, so truthiness
+-            # here would let an empty ref emit UNKEYED output pre-GA. A present
+-            # ref must be a well-formed `env:`/`file:` reference.
+-            #
+-            # Never echo the ref VALUE in any error (it may be a raw secret a
+-            # user pasted by mistake): the message states the expected format
+-            # only. This also keeps the value out of the --json error payload,
+-            # which is built from `str(exc)`.
+-            effective_ref = (config_dict.get("global_settings") or {}).get("mask_secret_ref")
+-            if effective_ref is not None:
+-                if not _is_valid_mask_secret_ref(effective_ref):
+-                    raise _MaskSecretUsageError(
+-                        "Invalid mask secret: expected an 'env:NAME' or "
+-                        "'file:/PATH' reference to a >=32-byte secret (from "
+-                        "--mask-secret or global_settings.mask_secret_ref). It "
+-                        "is a REFERENCE, never the raw secret. "
+-                        "See: decoy explain keys."
+-                    )
+-                # A mask_secret_ref is only honored by a DE-02 engine; a
+-                # pre-DE-02 engine has no `keyprovider` module and would
+-                # SILENTLY IGNORE the ref, emitting job-seed-keyed output
+-                # (fail-open). The pyproject floor (decoy-engine>=0.4.0, DE-02's
+-                # release marker) is the first line of defense; this runtime
+-                # probe is defense-in-depth against a broken or forced install
+-                # that satisfies the resolver but lacks keyprovider -- refuse
+-                # the run rather than leak an unkeyed artifact.
+-                try:
+-                    import decoy_engine.keyprovider  # noqa: F401
+-                except ImportError as exc:
+-                    raise _MaskSecretUsageError(
+-                        "a mask secret is configured (mask_secret_ref / "
+-                        "--mask-secret) but the installed decoy-engine is too "
+-                        "old to honor it -- it has no DE-02 keyprovider, so it "
+-                        "would silently emit UNKEYED output. Upgrade to "
+-                        "decoy-engine>=0.4.0 (with DE-02). See: decoy explain keys."
+-                    ) from exc
++            _mask_secret.apply_mask_secret(
++                config_dict,
++                mask_secret,
++                error=_MaskSecretUsageError,
++                both_set=(
++                    "--mask-secret was passed but the YAML already sets "
++                    "global_settings.mask_secret_ref. Set the masking "
++                    "secret in exactly one place: drop --mask-secret, or "
++                    "remove mask_secret_ref from the config."
++                ),
++                invalid=(
++                    "Invalid mask secret: expected an 'env:NAME' or "
++                    "'file:/PATH' reference to a >=32-byte secret (from "
++                    "--mask-secret or global_settings.mask_secret_ref). It "
++                    "is a REFERENCE, never the raw secret. "
++                    "See: decoy explain keys."
++                ),
++            )
+ 
+             _ev_config_dict = config_dict
+             _ev_engine_version = engine_version
+@@ -784,14 +751,17 @@ def run(
+             if gate_result.warn_message and state.mode is not OutputMode.quiet:
+                 state.err_console.print(warn("warning:"), Text(gate_result.warn_message))
+ 
++            # One admission per run: the vault writer and the engine get the same
++            # provider, so the secret is read once and both use one key.
++            key_provider = _exits.enter_context(_mask_secret.admitted_key_provider(config_dict))
+             vault_writer = None
+             if vault is not None:
+                 from decoy_engine import vault_writer_for_config
+ 
+-                vault_writer = vault_writer_for_config(config_dict)
++                vault_writer = vault_writer_for_config(config_dict, key_provider=key_provider)
+ 
+             if chunked:
+-                _run_chunked_mask(config_dict, config.parent, chunk_size, vault_writer)
++                _run_chunked_mask(config_dict, config.parent, chunk_size, vault_writer, key_provider)
+                 _native_route = _native_gate.classify_route(
+                     chunked=True,
+                     any_generate=any_generate,
+@@ -825,6 +795,7 @@ def run(
+                     derive_key=resolver,
+                     instance_default_locale=instance_locale,
+                     vault_writer=vault_writer,
++                    key_provider=key_provider,
+                     **_report_kwargs,
+                     **_native_gate.run_pipeline_kwargs(gate_result),
+                 )
+@@ -1400,6 +1371,7 @@ def _run_chunked_mask(
+     base_dir: Path,
+     chunk_size: int,
+     vault_writer=None,
++    key_provider=None,
+ ) -> None:
+     """WS4 chunked mask path: stream each mask table's source through
+     `decoy_engine.run_mask_pipeline_chunked`, writing output per chunk, on
+@@ -1446,6 +1418,7 @@ def _run_chunked_mask(
+             table=name,
+             engine_version=engine_version,
+             vault_writer=vault_writer,
++            key_provider=key_provider,
+         )
+         _write_chunked_output(
+             masked_iter, out_path, src_path, src_is_parquet=src_spec.get("format") == "parquet"
+diff --git a/src/decoy/cli/tokenize.py b/src/decoy/cli/tokenize.py
+index 9e053cb..eb3c602 100644
+--- a/src/decoy/cli/tokenize.py
++++ b/src/decoy/cli/tokenize.py
+@@ -27,6 +27,7 @@ from pathlib import Path
+ 
+ import typer
+ 
++from decoy import _mask_secret
+ from decoy.cli._token_vault import LocalTokenVault, TokenVaultError, iter_tokenize_columns
+ from decoy.cli._yaml_errors import sanitize_yaml_error
+ from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
+@@ -95,12 +96,7 @@ See also: decoy tokenize, decoy explain tokenize.
+ """
+ 
+ 
+-def _is_valid_mask_secret_ref(value: object) -> bool:
+-    # Mirrors decoy.cli.run._is_valid_mask_secret_ref: a valid ref is a
+-    # non-empty `env:NAME` / `file:/PATH` string. Kept local (one short pure
+-    # predicate) rather than importing run.py, whose module-level import pulls
+-    # in the whole run command surface.
+-    return isinstance(value, str) and value.startswith(("env:", "file:"))
++_is_valid_mask_secret_ref = _mask_secret.is_valid_mask_secret_ref
+ 
+ 
+ def tokenize(
+diff --git a/src/decoy/cli/unmask.py b/src/decoy/cli/unmask.py
+index f33662f..fa03635 100644
+--- a/src/decoy/cli/unmask.py
++++ b/src/decoy/cli/unmask.py
+@@ -18,7 +18,8 @@ from pathlib import Path
+ import typer
+ import yaml as _yaml
+ 
+-from decoy import _mask_secret_guidance
++from decoy import _mask_secret, _mask_secret_guidance
++from decoy._mask_secret import MaskSecretFlagError as _MaskSecretFlagError
+ from decoy.cli._yaml_errors import sanitize_yaml_error
+ from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
+ from decoy.ui.output import OutputMode, emit_json, setup_output
+@@ -46,7 +47,7 @@ Examples:
+ Only `strategy: fpe` columns reverse from the config alone; hash,
+ redact, faker and the other one-way strategies pass through unchanged
+ unless the column was vaulted at mask time. The config's
+-global_settings.mask_secret_ref must name the secret the mask run used;
++--mask-secret (or global_settings.mask_secret_ref) must name the secret the mask run used;
+ the vault file is a re-identification map, store it separately from the
+ masked output.
+ 
+@@ -95,6 +96,15 @@ def unmask(
+             "mask secret named by global_settings.mask_secret_ref."
+         ),
+     ),
++    mask_secret: str | None = typer.Option(
++        None,
++        "--mask-secret",
++        help=(
++            "Reference to the mask secret the run used: 'env:NAME' or 'file:/PATH' (a "
++            ">=32-byte secret, never the raw value). Sets global_settings.mask_secret_ref; "
++            "an error if the YAML also sets it. See: decoy explain keys."
++        ),
++    ),
+     json_: bool = typer.Option(
+         False,
+         "--json",
+@@ -153,6 +163,18 @@ def unmask(
+         )
+         raise typer.Exit(code=EXIT_USAGE)
+ 
++    try:
++        _mask_secret.apply_mask_secret(
++            raw,
++            mask_secret,
++            error=_MaskSecretFlagError,
++            both_set=_mask_secret.BOTH_SET,
++            invalid=_mask_secret.INVALID,
++        )
++    except _MaskSecretFlagError as exc:
++        _emit_error(str(exc))
++        raise typer.Exit(code=EXIT_USAGE)
++
+     mask_tables = [
+         t.get("name")
+         for t in (raw.get("tables") or [])

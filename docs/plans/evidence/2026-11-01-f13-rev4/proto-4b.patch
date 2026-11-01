@@ -1,0 +1,96 @@
+diff --git a/src/decoy/_mask_secret.py b/src/decoy/_mask_secret.py
+index 59bdfeb..765f51f 100644
+--- a/src/decoy/_mask_secret.py
++++ b/src/decoy/_mask_secret.py
+@@ -55,3 +55,13 @@ def admitted_key_provider(config_dict: dict) -> Iterator[Any]:
+     with AdmissionScope() as scope:
+         yield scope.adopt(admit_mask_key(config_dict)).key_provider
+ 
++
++def mask_secret_error_text(exc: BaseException, keyed_remedy: str) -> str:
++    """`code: engine text` for a secret failure, or the surface's remedy for the keyed refusal.
++    Reads only the registered code and the engine's constant message, never `str(exc)`."""
++    from decoy import _mask_secret_guidance
++
++    if _mask_secret_guidance.is_keyed_secret_refusal(exc):
++        return keyed_remedy
++    message = getattr(exc, "message", None)
++    return f"{getattr(exc, 'code', type(exc).__name__)}: {message if isinstance(message, str) else ''}"
+diff --git a/src/decoy/cli/report.py b/src/decoy/cli/report.py
+index a4c4456..bb59396 100644
+--- a/src/decoy/cli/report.py
++++ b/src/decoy/cli/report.py
+@@ -2328,10 +2328,7 @@ def _vault(
+             mapping, ambiguous_dropped = load_vault(str(vault), provider.mask_key())
+     except MaskSecretError as exc:
+         # Value-free engine messages; the keyed refusal names its Python API, so swap it.
+-        if _mask_secret_guidance.is_keyed_secret_refusal(exc):
+-            _emit_error(_mask_secret_guidance.REPORT_VAULT)
+-        else:
+-            _emit_error(f"{getattr(exc, 'code', type(exc).__name__)}: {getattr(exc, 'message', exc)}")
++        _emit_error(_mask_secret.mask_secret_error_text(exc, _mask_secret_guidance.REPORT_VAULT))
+         raise typer.Exit(code=EXIT_USAGE)
+     except VaultError as exc:
+         if getattr(exc, "code", None) == "vault_protocol_version_mismatch":
+diff --git a/src/decoy/cli/run.py b/src/decoy/cli/run.py
+index c903500..7605a4b 100644
+--- a/src/decoy/cli/run.py
++++ b/src/decoy/cli/run.py
+@@ -977,9 +977,8 @@ def run(
+         if len(error_text) > 500:
+             error_text = error_text[:500] + "..."
+         keyed_refusal = _mask_secret_guidance.is_keyed_secret_refusal(exc)
+-        if keyed_refusal:
+-            # The engine words this for its Python API; the CLI remedy is a flag.
+-            error_text = _mask_secret_guidance.RUN
++        if isinstance(exc, _mask_secret_error_types):
++            error_text = _mask_secret.mask_secret_error_text(exc, _mask_secret_guidance.RUN)
+ 
+         # PII egress guard (dennis sprint-5 BLOCKER): the raw engine error
+         # can quote source-row cell values verbatim (see the comment above),
+diff --git a/src/decoy/cli/tokenize.py b/src/decoy/cli/tokenize.py
+index eb3c602..d62009e 100644
+--- a/src/decoy/cli/tokenize.py
++++ b/src/decoy/cli/tokenize.py
+@@ -27,7 +27,7 @@ from pathlib import Path
+ 
+ import typer
+ 
+-from decoy import _mask_secret
++from decoy import _mask_secret, _mask_secret_guidance
+ from decoy.cli._token_vault import LocalTokenVault, TokenVaultError, iter_tokenize_columns
+ from decoy.cli._yaml_errors import sanitize_yaml_error
+ from decoy.cli.exit_codes import EXIT_RUNTIME, EXIT_USAGE
+@@ -353,7 +353,10 @@ def tokenize(
+         # engine redacts; it names the env var / path, never the secret), so the
+         # same coded `{code}: {message}` surface the other engine errors get is
+         # safe here.
+-        _emit_error(f"{getattr(exc, 'code', type(exc).__name__)}: {getattr(exc, 'message', exc)}")
++        if isinstance(exc, MaskSecretError):
++            _emit_error(_mask_secret.mask_secret_error_text(exc, _mask_secret_guidance.RUN))
++        else:
++            _emit_error(f"{getattr(exc, 'code', type(exc).__name__)}: {getattr(exc, 'message', exc)}")
+         raise typer.Exit(code=EXIT_USAGE)
+     except typer.Exit:
+         raise
+diff --git a/src/decoy/cli/unmask.py b/src/decoy/cli/unmask.py
+index fa03635..e240346 100644
+--- a/src/decoy/cli/unmask.py
++++ b/src/decoy/cli/unmask.py
+@@ -250,13 +250,11 @@ def unmask(
+         # A missing, weak or unresolvable secret is the operator's config, not a crash
+         # (`decoy run` and `decoy tokenize` classify it the same way). The engine's
+         # messages are value-free; its keyed refusal names its Python API, so swap it.
+-        if _mask_secret_guidance.is_keyed_secret_refusal(exc):
+-            _emit_error(_mask_secret_guidance.UNMASK)
+-        else:
+-            _emit_error(f"{getattr(exc, 'code', type(exc).__name__)}: {getattr(exc, 'message', exc)}")
++        _emit_error(_mask_secret.mask_secret_error_text(exc, _mask_secret_guidance.UNMASK))
+         raise typer.Exit(code=EXIT_USAGE)
+     except Exception as exc:  # runtime failure, not a usage problem
+-        _emit_error(f"unmask failed: {type(exc).__name__}: {exc}"[:500])
++        # Type only: a runtime error's text can quote a source or masked cell.
++        _emit_error(f"unmask failed: {type(exc).__name__}")
+         raise typer.Exit(code=EXIT_RUNTIME)
+ 
+     out_path = output if output is not None else masked.with_suffix(".unmasked.csv")
