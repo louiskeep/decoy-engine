@@ -9,6 +9,19 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Changed (licensing: generated NOTICE, license gate, SDV citations, 2026-11-01)
+
+- `NOTICE` (shipped in the wheel) is generated from `uv.lock` by `scripts/dev/licenses_write.sh`: name,
+  version, license and scope (`[runtime]` or `[extra: ...]`) for all 103 pins that installing the engine or
+  a runtime extra can pull in, plus the named exceptions (`paramiko` LGPL-2.1 and `tqdm` MPL-2.0 AND MIT,
+  optional only; `certifi` MPL-2.0; `python-stdnum` LGPL-2.0-or-later; numpy's SPDX expression). The
+  licensor name is a marked owner placeholder. Policy: `docs/license-policy.md`.
+- `tests/sentry/test_license_policy.py` and the `licenses` step of `scripts/dev/gates.sh` fail on a stale or
+  hand-edited `NOTICE`, a license outside the policy, or `NOTICE` disagreeing with installed metadata.
+- SDV citations no longer call SDV MIT: SDV is BUSL-1.1. The engine cites the HMA1 and PAR methods (papers
+  named) and uses no SDV code; `tests/sentry/test_sdv_import_sentry.py` fails on an SDV or sdmetrics import
+  and on a citation labelling SDV permissive.
+
 ### Fixed (out-of-core: typed temporal FK seam, release R-b, 2026-11-01)
 
 The out-of-core FK join rebuilt every child FK value from Python scalars by type inference, so a
@@ -4384,8 +4397,9 @@ own branches and are not part of this batch.
   validators ship: `luhn`, `npi`, `iban`, `vin` (all delegate to
   `checksums.validate` from SP-04), `fk_intact` (every non-null child FK value
   resolves to a parent PK), and `no_orphan_children` (every child row has a
-  non-null FK value). The two FK validators implement the SDV HMA1 parent-first
-  DAG pattern (sdv-dev/SDV, MIT). `validate(outputs, config)` is the single
+  non-null FK value). The two FK validators implement the parent-first DAG
+  pattern of the SDV HMA1 method (Patki et al., IEEE DSAA 2016; method only, no
+  SDV code is used: SDV is BUSL-1.1). `validate(outputs, config)` is the single
   entry point; it returns a frozen `ValidationReport` and never mutates output.
   The `ValidationReport` and per-finding `ValidatorFinding` are persisted to the
   evidence manifest under `quality_metrics["validation"]["validators"]`.

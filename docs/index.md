@@ -61,6 +61,7 @@ link to GitHub rather than into the rendered API reference.
 
 - [CI regression gate](ci-regression-gate.md): the performance / regression gate contract.
 - [SBOM](sbom.md): generating the CycloneDX SBOM for the engine wheel.
+- [License policy](license-policy.md): allowed licenses, named exceptions, and how NOTICE is generated and checked.
 - Engine-scoped implementation plans, decision records, and the findings register live in `docs/plans/`, `docs/decisions/`, and `docs/remediation-source.md` (working docs, not guides).
 - Shipped-work history (sprint plans, review snapshots, superseded design discussions) is kept in `docs/archive/` for context; see `docs/archive/README.md`. None of it is current how-to guidance.
 
@@ -100,6 +101,7 @@ native/supported-matrix
 
 ci-regression-gate
 sbom
+license-policy
 ```
 
 ```{toctree}

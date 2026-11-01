@@ -2,7 +2,8 @@
 (Sprint 2 honesty pack, S4 / p5-j-validators-extended).
 
 Both validators mirror `_fk_validators.py`'s parent-first edge-lookup pattern
-(SDV HMA1, sdv-dev/SDV, MIT): find the declared `relationships:` edge linking
+(SDV HMA1 method, Patki et al., IEEE DSAA 2016; method only, no SDV code: SDV is
+BUSL-1.1): find the declared `relationships:` edge linking
 the two named tables, resolve child rows to their parent via the edge's FK
 columns, then apply the validator's own check. No second join mechanism is
 invented (trap T8); `_edge_for` below is the one lookup helper both share.

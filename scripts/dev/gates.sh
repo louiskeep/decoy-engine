@@ -4,7 +4,7 @@
 #   --keep-going  run every step even after a failure (default: stop at the first)
 #   --baseline    rerun the same steps on origin/main in a temporary detached
 #                 worktree, with the SAME venv, and diff the failing test ids
-#   --steps LIST  comma list from: env,ruff,format,mypy,sentry,tests (default: all)
+#   --steps LIST  comma list from: env,ruff,format,mypy,sentry,licenses,tests (default: all)
 #   test paths    default: tests touching files changed against origin/main
 set -uo pipefail
 
@@ -13,6 +13,7 @@ REPO_NAME=decoy-engine
 RUFF_PATHS=(src tests testflight scripts)
 MYPY_ARGS=(src/decoy_engine testflight)
 SENTRY_PATHS=(tests/sentry)
+LICENSE_TESTS=(tests/sentry/test_license_policy.py tests/sentry/test_sdv_import_sentry.py)
 PYTEST_ARGS=(-m 'not benchmark and not packaging and not codspeed')
 SRC_MATCH='src/*.py'   # changed files that map to a dotted module
 SRC_STRIP='src/'       # prefix removed before turning a path into a module
@@ -22,7 +23,7 @@ IMPORT_PKG=decoy_engine
 ROOT=$(git rev-parse --show-toplevel) || exit 2
 VENV=${DECOY_VENV:-${UV_PROJECT_ENVIRONMENT:-$ROOT/.venv}}
 BIN=$VENV/bin
-KEEP=0 BASELINE=0 STEPS=env,ruff,format,mypy,sentry,tests PATHS=()
+KEEP=0 BASELINE=0 STEPS=env,ruff,format,mypy,sentry,licenses,tests PATHS=()
 while [ $# -gt 0 ]; do
   case $1 in
     --keep-going) KEEP=1 ;;
@@ -70,7 +71,7 @@ fi
 pypath() { local d out=""; for d in "${PYPATH_DIRS[@]}"; do out="$out${out:+:}$1/$d"; done; echo "$out"; }
 
 run_steps() {  # $1 label, $2 tree
-  local label=$1 tree=$2 name rc stop=0 p cmd shown tests=()
+  local label=$1 tree=$2 name rc stop=0 p cmd shown tests=() lic=()
   : >"$OUT/$label.steps"
   for name in ${STEPS//,/ }; do
     local junit=(-p no:cacheprovider -q -rfE "--junitxml=$OUT/$label-$name.xml" "${PYTEST_ARGS[@]}")
@@ -80,6 +81,10 @@ run_steps() {  # $1 label, $2 tree
       format) cmd=("$BIN/ruff" format --check "${RUFF_PATHS[@]}") ;;
       mypy) cmd=("$BIN/mypy" "${MYPY_ARGS[@]}") ;;
       sentry) cmd=("$BIN/python" -m pytest "${junit[@]}" "${SENTRY_PATHS[@]}") ;;
+      # strict: a venv that drifted from uv.lock fails instead of skipping the metadata check
+      licenses)
+        lic=(); for p in "${LICENSE_TESTS[@]}"; do [ -e "$tree/$p" ] && lic+=("$p"); done
+        cmd=(env DECOY_LICENSE_STRICT=1 "$BIN/python" -m pytest "${junit[@]}" "${lic[@]}") ;;
       tests)
         tests=(); for p in "${PATHS[@]}"; do [ -e "$tree/${p%%::*}" ] && tests+=("$p"); done
         cmd=("$BIN/python" -m pytest "${junit[@]}" "${tests[@]}") ;;
@@ -87,6 +92,7 @@ run_steps() {  # $1 label, $2 tree
     esac
     if [ $stop = 1 ]; then rc=-2
     elif [ "$name" = tests ] && [ ${#tests[@]} -eq 0 ]; then rc=-1; cmd=("(no test paths present)")
+    elif [ "$name" = licenses ] && [ ${#lic[@]} -eq 0 ]; then rc=-1; cmd=("(no license tests in this tree)")
     elif [ "$name" = env ] && [ "$label" = baseline ]; then rc=-1; cmd=("(same venv as branch)")
     else
       echo "gates: [$label] $name ..." >&2

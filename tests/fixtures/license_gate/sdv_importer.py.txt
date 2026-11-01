@@ -1,0 +1,3 @@
+"""Seeded violation for the SDV sentry: a module under src/ that imports SDV."""
+
+from sdv.multi_table import HMASynthesizer  # noqa: F401
