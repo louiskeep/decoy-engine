@@ -472,3 +472,77 @@ Failing ids are identical to main on both interpreters. ruff check and format cl
 3.12; mypy (3.10) 0 errors, 704 files.
 
 Not run: native companion, CI, platform or CLI suites, live Vault, Windows, mutmut.
+
+## 12. Round 6: secret material in engine frames, closed by census (class 1)
+
+Codex re-check at f0d33076: NO-GO, one BLOCKER, the round-3 class again (class 1, secret
+material in engine-frame locals): `ModelPackLoader._check_signature.key` (the raw
+`DECOY_PACK_SIGNING_KEY` bytes while it raises), `derive_pack_signing_key.master` on an invalid
+master, `sign_pack.key` on a corrupt manifest. Origin main a3fe49e8 (SBOM only) merged first,
+no conflicts (2aa00d7e).
+
+### 12.1 The census, derived from the code
+
+`scripts/secret_material_census.py` walks the AST of `src/decoy_engine` (no selected list) and
+lists every binding where secret material can sit in a frame a traceback keeps: secret-named
+(`key|secret|master|signing|password|token|seed|ikm|prk|okm|material|root`) parameters annotated
+bytes-like or unannotated; secret-named locals bound to an environment read, a
+`FileRole.SECRET` read, box contents, a bytes-returning package function, a bytes operation, a
+bytes class attribute, or an alias, slice or sum of tracked material; closure cells (nested
+`def` and lambda); environment reads of KEY/SECRET/TOKEN or computed names; calls passing
+`FileRole.SECRET`; `OpaqueBox`es holding tracked material; secret-named bytes class fields.
+Committed: `tests/sentry/secret_material_census.json`, 257 entries over 227 functions or classes
+in 87 files. Verdicts: wiped 183, boxed 28, hidden 20, not-secret 15, no-raise 7, unbound 2,
+contained 2. `scripts/_secret_census_verdicts.py` re-checks wiped, boxed, unbound, hidden and
+contained from the AST; no-raise (five Protocol stubs, `_require_mask_key` on an empty key,
+`GenDeriveContext.__init__`) and not-secret (the configured `job_seed`, 8-byte pool RNG seeds,
+formula text, a vault ciphertext block, a version label and a provider object under the
+admission boundary) carry their reason in the census.
+
+Beyond the three listed sites the census found the class in ~190 more functions (masking
+kernels, FF1, text_mask, code_set, joint_mask, date_shift, pools, OOC drivers, native providers,
+vault, unmask), derived keys bound as locals, closure cells, a lambda cell, the env secret
+provider, the dataclass-generated `__init__` of `ShadowContext` and `ProviderSpec` (a raising
+`__post_init__` runs in the frame that holds every field), and secret-named bytes fields printed
+by dataclass reprs. Found by review next to the census: `verify_manifest` bound the expected MAC
+of the manifest under check (a forgery value on a corrupt `manifest_hmac`), and
+`fileaccess.read_checked` kept the bytes already read when a later read or the close failed.
+
+### 12.2 Fixes (`b5fc1a68`)
+
+Wiped (`try` / `except BaseException: del <name>; raise`) for every parameter entry; boxed or
+never bound for derived keys; `_opaque.validate_after_init` for the two validating dataclasses;
+`repr=False` on the fields; env text wiped and the signing key boxed in
+`load_signing_key_from_env` / `_check_signature`; `read_checked` clears its buffer. No module
+ceiling raised: `text_mask` synthetic values moved to `_text_mask_synthetic.py` (census 708 ->
+650), `code_set` picks to `_codeset_pick.py`, the two drivers' `_open_joiner` to one
+`open_joiner` (runner 681 -> 644, stream_driver leaves the census), `_column_seed` duplicates to
+`_compat`, two `SeqNativeRun` helpers to `_sequential_native_ops`; `columns.py` 660 -> 658.
+`d23794cd` points two OOC test fixtures at `_compat._column_seed` (import path only).
+
+Docs (`8710fa9c`): `file-access-policy.md` states exactly what the census covers and what stays
+out (paths, refs and configs in entry frames: F31, owner decision).
+
+### 12.3 Tests, red first, mutants
+
+- `tests/sentry/test_secret_material_census.py`: re-derives the census (missing, stale, every
+  verdict), plus the seeded violation `tests/sentry/fixtures/secret_census_seeded.py` (a new
+  function taking `signing_key: bytes` and raising) copied into a scratch tree: reported missing;
+  a census row claiming it wiped fails the verdict check; the wiped version passes.
+- `tests/fileaccess/test_secret_census_frames.py`: one cell per census function taking material
+  (165), canary key in raw/16/8-byte and str forms, every other argument a bomb; walks the locals
+  of every `decoy_engine` frame on every chain link (cause, context, group).
+- `tests/fileaccess/test_secret_census_dedicated.py`: the three sites with real bad inputs
+  (unsigned and tampered packs with the env key set; a non-32-byte master as bytes and str; a
+  corrupt and an incomplete manifest), the expected-MAC case, a closure cell, the validated
+  dataclasses, a SECRET read failing part way, an unencodable env secret, the vault writer under
+  a refusing policy.
+
+Red on the pre-fix head 2aa00d7e (new files copied into a detached worktree): 181 failed,
+29 passed (165 frame cells, 13 dedicated cells, 3 sentry cells red). Mutants on the fixed tree,
+one at a time, restored and hash-checked, none committed: the box removed at `_check_signature`,
+the wipe removed at `derive_pack_signing_key` and at `sign_pack`, a census entry dropped
+(`sign_pack.key`), `validate_after_init` removed from `ShadowContext`, the closure owner's wipe
+removed, `read_checked`'s clear removed, a kernel wipe removed (frame cell and verdict checker),
+the expected MAC bound again: all ten red. Record:
+`docs/plans/evidence/2026-11-01-a4-f13-reconcile-r6-red.txt`.
