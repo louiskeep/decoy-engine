@@ -77,6 +77,10 @@ def mask_child_fk(
     join processing holds nothing sized by total child cardinality. The
     resident `child` frame itself (and the runner-precomputed `remap_values`)
     are bounded by later sprints, not here.
+
+    No production route calls this: it is the whole-child test oracle. It keeps value inference
+    (`output_types=None`), so temporal keys come back `timestamp[us]`; the batch joiners publish
+    the resolved unit (characterized in test_ooc_fk_seam_round2.py).
     """
     if edge.orphan_policy is OrphanPolicy.REMAP and remap_values is None:
         raise ExecutionError(
@@ -159,6 +163,7 @@ def mask_child_fk(
                 edge=edge,
                 remap_values=remap_values,
                 output_chunks=output_chunks,
+                output_types=None,
             )
     finally:
         conn.close()
@@ -251,11 +256,14 @@ def _append_output_batch(
     edge: RelationshipEdge,
     remap_values: tuple[pa.Array, ...] | None,
     output_chunks: list[list[pa.Array]],
+    output_types: tuple[pa.DataType, ...] | None,
 ) -> int:
     """Apply the orphan policy to one ordered join-result batch.
 
     Returns this batch's orphan count; every Python list here is bounded by
-    the result batch size, never by total child cardinality.
+    the result batch size, never by total child cardinality. `output_types`
+    are the joiner's fixed types (None only for the whole-child oracle, which
+    keeps value inference); each chunk is built by `fk_output_array`.
     """
     n_components = len(edge.child_columns)
     row_nrs = batch.column("__decoy_row_nr").to_pylist()
@@ -297,41 +305,84 @@ def _append_output_batch(
                 # oracle's parent_map lookup already collapsed it to.
                 for idx, component in enumerate(out):
                     component.append(fk_key_value(source_components[idx][row]))
-    for idx, component in enumerate(out):
-        try:
-            output_chunks[idx].append(pa.array(component, from_pandas=True))
-        except (pa.ArrowInvalid, pa.ArrowTypeError, OverflowError) as exc:
-            # Same fail-closed contract as `cast_fk_chunk`'s cross-batch guard,
-            # pulled forward to the per-batch build: a SINGLE result batch can
-            # already mix FK output values Arrow cannot reconcile into one array
-            # -- a matched float parent value beside an orphan integer key past
-            # exactly-representable float precision (> 2**53), for one -- so
-            # `pa.array` inference raises a raw ArrowInvalid here, before any
-            # cross-batch cast is reached. Surface the existing coded rejection
-            # instead of the uncoded crash. The pandas oracle silently ROUNDS
-            # this key rather than crashing, so it is not a clean ground truth
-            # for this shape; the route rejects rather than drift (see
-            # tests/parity/SEMANTIC_DIFFERENCES.md). `OverflowError` is the
-            # SAME "Arrow cannot hold this value" failure as `ArrowInvalid` for
-            # this call (DE-10 reland LOW): a matched `uint64` parent value in
-            # `[2**63, 2**64)` sharing a batch with a signed-range value makes
-            # `pa.array`'s int64-first inference raise a raw, uncoded
-            # `OverflowError` rather than `ArrowInvalid` -- same shape, same
-            # fix, just a different exception type pyarrow happens to raise
-            # for it.
-            raise ExecutionError(
-                code=FK_KEY_DTYPE_UNSUPPORTED_CODE,
-                message=(
-                    "out-of-core FK output batch mixes key values Arrow cannot "
-                    "reconcile into one array (e.g. a matched float parent value "
-                    "with an orphan integer child key beyond exactly-representable "
-                    "float precision, > 2**53, or a matched unsigned key beyond "
-                    "int64's range sharing a batch with a signed-range value); "
-                    "rejected rather than crashing with a raw ArrowInvalid/"
-                    "OverflowError."
-                ),
-            ) from exc
+    # Build every component before appending any, so a refusal leaves no partial output.
+    arrays = [
+        fk_output_array(component, None if output_types is None else output_types[idx])
+        for idx, component in enumerate(out)
+    ]
+    for idx, array in enumerate(arrays):
+        output_chunks[idx].append(array)
     return orphans
+
+
+def fk_output_array(values: list[object], target: pa.DataType | None) -> pa.Array:
+    """The one place FK Python values become an Arrow array: exact, or one coded refusal.
+
+    A tz-naive timestamp target is built with typed construction, then checked value by value,
+    because `as_py()` re-encodes `timestamp[ns]` as `pd.Timestamp` and inference types it
+    `timestamp[us]` (the value loss this seam closes), and typed construction alone truncates
+    silently into a coarser unit. Arrow's safe conversion refuses an out-of-range instant
+    (pyarrow `pa.array(..., type=...)`; the same exact-or-raise rule as its safe cast). Every
+    other target keeps inference: the joiner records the inferred chunk type to replay
+    whole-column narrowing (`_emit._fk_resident_column`), and the oracle types an all-null
+    string or date32 column null; the cast to `target` is validated here and applied by the
+    caller through `cast_fk_chunk`'s representability guard. pyarrow's error text echoes the
+    value, so the coded error is raised after the `except` block, with no cause or context.
+    Precedent for keeping Arrow scalars out of Python: `_external_sort_run.py:65-80`.
+    """
+    temporal = target is not None and pa.types.is_timestamp(target) and target.tz is None
+    array: pa.Array | None = None
+    try:
+        if temporal:
+            array = pa.array(values, type=target, from_pandas=True)
+        else:
+            array = pa.array(values, from_pandas=True)
+            if target is not None:
+                cast_fk_chunk(array, target)
+    except MemoryError:
+        # `pa.ArrowMemoryError` is also an ArrowException: exhaustion is not a key type.
+        raise
+    except (pa.ArrowException, OverflowError):
+        array = None
+    if array is None or (temporal and not _holds_exactly(values, array)):
+        raise _unrepresentable(target)
+    return array
+
+
+def _holds_exactly(values: list[object], array: pa.Array) -> bool:
+    # `!=` is exact across datetime and pd.Timestamp; NaT, unequal to itself, is a null.
+    return all(
+        (got is None and (value is None or value != value)) or (got is not None and value == got)
+        for value, got in zip(values, array.to_pylist(), strict=True)
+    )
+
+
+def _unrepresentable(target: pa.DataType | None) -> ExecutionError:
+    if target is not None and pa.types.is_timestamp(target):
+        return ExecutionError(
+            code=FK_KEY_DTYPE_UNSUPPORTED_CODE,
+            message=(
+                f"out-of-core FK output holds a key value {target} cannot hold exactly (an "
+                "instant outside its range or finer than its unit); rejected rather than "
+                "published wrapped or truncated."
+            ),
+        )
+    # Same fail-closed contract as `cast_fk_chunk`'s cross-batch guard, pulled forward to the
+    # per-batch build: one batch can already mix values Arrow cannot reconcile (a matched float
+    # beside an orphan int beyond 2**53, or a uint64 beyond int64 beside a signed value). The
+    # pandas oracle silently rounds such a key (tests/parity/SEMANTIC_DIFFERENCES.md).
+    return ExecutionError(
+        code=FK_KEY_DTYPE_UNSUPPORTED_CODE,
+        message=(
+            "out-of-core FK output batch mixes key values Arrow cannot "
+            "reconcile into one array (e.g. a matched float parent value "
+            "with an orphan integer child key beyond exactly-representable "
+            "float precision, > 2**53, or a matched unsigned key beyond "
+            "int64's range sharing a batch with a signed-range value); "
+            "rejected rather than crashing with a raw ArrowInvalid/"
+            "OverflowError."
+        ),
+    )
 
 
 def _concat_fk_chunks(chunks: list[pa.Array]) -> pa.Array:
@@ -418,7 +469,16 @@ def cast_fk_chunk(chunk: pa.Array, target: pa.DataType) -> pa.Array:
                 ),
             )
         return widened
-    return chunk.cast(target)
+    # pyarrow's cast error quotes the value. The same Arrow class is re-raised with the types
+    # only, after the `except` block (no cause or context): `fk_output_array` turns it into the
+    # coded refusal, and the whole-column parity battery expects the Arrow family here.
+    try:
+        return chunk.cast(target)
+    except MemoryError:
+        raise
+    except pa.ArrowException as exc:
+        failed = type(exc)
+    raise failed(f"cannot cast an FK key chunk {chunk.type} -> {target} exactly")
 
 
 def _unified_chunk_type(types: set[pa.DataType]) -> pa.DataType | None:
@@ -466,4 +526,4 @@ def _sql_string(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
 
 
-__all__ = ["mask_child_fk", "mask_child_fk_fail"]
+__all__ = ["fk_output_array", "mask_child_fk", "mask_child_fk_fail"]

@@ -125,7 +125,7 @@ ALLOWLIST: dict[str, int] = {
     # corpus schema checks and verify_corpus; split into _codeset_verify.py when next touched.
     "src/decoy_engine/transforms/_codeset_loader.py": 607,
     # one StreamFkJoiner lifecycle class (stage, orphan count, ordered and bounded-reorder joins, resolve); explain/optimizer helpers live in _stream_join_plan.py.
-    "src/decoy_engine/execution/out_of_core/_stream_join.py": 650,
+    "src/decoy_engine/execution/out_of_core/_stream_join.py": 645,
     # custom-provider registry snapshot for the shadow-parity gate; one cohesive module, no split identified.
     "src/decoy_engine/internal/faker_setup.py": 637,
     # FF1 span path and sub-floor policy; split into _text_mask_sub_floor.py when next touched.
