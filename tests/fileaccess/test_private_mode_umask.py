@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 
+from decoy_engine import fileaccess
 from decoy_engine.fileaccess import FileRequest, FileRole, RootedFileAccess
 from decoy_engine.quarantine import publish_staged_jsonl, write_jsonl_staged
 from decoy_engine.vault import VaultError, VaultWriter
@@ -69,7 +70,19 @@ def _fail_fchmod(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_ambient_fchmod_failure_leaves_no_stage(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    txn = (
+        fileaccess.current()
+        .output_dir(
+            FileRequest(
+                FileRole.QUARANTINE_OUTPUT, "write", str(tmp_path / "q.jsonl"), "quarantine"
+            )
+        )
+        .begin("file", "exclusive", label="quarantine")
+    )
     _fail_fchmod(monkeypatch)
+    with pytest.raises(OSError):
+        txn.create_file("sidecar")  # the txn removes its own stage; no caller abort
+    assert list(tmp_path.iterdir()) == []
     with pytest.raises(OSError):
         write_jsonl_staged(str(tmp_path / "q.jsonl"), RECORDS)
     with pytest.raises((OSError, VaultError)):
