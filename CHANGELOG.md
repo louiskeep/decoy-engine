@@ -9,6 +9,72 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Fixed (out-of-core: typed temporal FK seam, release R-b, 2026-11-01)
+
+The out-of-core FK join rebuilt every child FK value from Python scalars by type inference, so a
+`timestamp[ns]` key was published as `timestamp[us]` (nanosecond keys collapsed), and its join token was
+tagged by Python class, so one instant read at two units (`ns` on one side, `s|ms|us` on the other) missed
+itself and published false orphans. Plan: `docs/plans/2026-10-31-slice0-ooc-fk-typed-seam.md`.
+
+- Join tokens encode a tz-naive instant as exact epoch nanoseconds: equal instants match across units.
+- Each FK component has one fixed Arrow type from the schemas: tz-naive timestamps unify to the finest unit
+  among the policy's candidates; under `orphan_policy: fail` the masked-parent type alone. Every output array
+  (matched, orphan, REMAP input, zero-row table) is built at that type through one function
+  (`out_of_core/_join.fk_output_array`): exact, or the registered `out_of_core_fk_key_dtype_unsupported`
+  refusal for an instant outside the type's range or finer than its unit. Out-of-core temporal FK columns now
+  publish the resolved unit (were `timestamp[us]`).
+- The router no longer diverts a tz-naive unit promotion over an identity parent key (passthrough or no
+  seed): every published value is a child instant or a parent instant equal to one, so it is in range.
+- Error text: a refused FK key, and a failed FK chunk cast, carry no key value, cause or context.
+- Resource exhaustion (`MemoryError`, including `pyarrow.ArrowMemoryError`) propagates through the seam
+  unchanged instead of being reported as an unsupported key type.
+
+## [0.17.0] - 2026-11-01
+
+Pre-GA release (`RELEASE_PHASE = "pre-ga"`): the minor bump carries breaking changes with no shims.
+Everything since v0.16.0 is below; the 0.14.2 to 0.16.0 sections are reconstructed from their tags.
+
+### Breaking for consumers (since v0.16.0)
+
+- Pipeline config: `version: 2` is required (`version: 1` is rejected). `run_storm: true` is gone; use
+  `post_scan: {integrity: true}`. `PipelineConfig.run_storm` -> `PipelineConfig.post_scan` (`PostScanConfig`).
+- Wire names: `quality_metrics["storm_postmask"]` -> `quality_metrics["post_scan_integrity"]`; report schema
+  `storm-post-mask/v1` -> `post-scan-integrity/v2`; profiler event `storm.scan` -> `pre_scan.profile`; route
+  reason `run_storm_requested` -> `post_scan_integrity_requested`; resident reason `run_storm` ->
+  `post_scan_integrity` (the old two stay resolvable as registry tombstones only).
+- `PostMaskReport.residual_pii` / `.fk_preservation` / `.policy_validation` are tuples (were lists);
+  `PostValidationRunner.run` returns its summary and no longer writes `quality_metrics`.
+- Keyed masking needs an admitted secret in every release phase (the `job_seed` fallback is removed):
+  `keyed_strategy_requires_secret`.
+- `decoy_engine.keyprovider`: `resolve_key_provider` and `resolve_mask_secret_ref` removed (use
+  `decoy_engine.secret_providers.admit_mask_key`); `resolve_mask_key` lost `mask_secret_ref`;
+  `key_provider_from_ref` returns `KeyProvider` and its `key_version` defaults to `None` (was `"v1"`); the
+  incidental `keyprovider.is_pre_ga` re-export is gone (use `decoy_engine.is_pre_ga`). An unknown secret ref
+  scheme is `secret_provider_unknown` (was `bad_secret_ref`).
+- `when:` grammar: `type` is a reserved name on every Python.
+- DP: the certified rows are re-pinned for 0.17.0; the CLI's `requirements-certified.txt` header fingerprint
+  moves to `a7b40d54...`.
+
+### Changed (release R-a: one version source, release pins, 2026-11-01)
+
+`pyproject.toml` `[project].version` is the single source of the engine version. `decoy_engine.__version__`,
+the `uv.lock` root entry, the installed metadata, the newest dated section of this file and the
+`docs/proof-manifest.json` stamp (its generator used to read this file's newest heading) are held to it by
+`tests/unit/test_version_agreement.py`; `scripts/release/cut-release.sh` (dry run by default, `APPLY=1` to tag)
+reads the tag name from it and refuses any branch but `main`, a dirty tree, an unexpected head, or an existing
+tag. Releases are now cut from `main` itself. The 0.8.0 to 0.16.0 tags were version stamps off `main`, so `main`
+kept reporting 0.7.0 and the DP certified rows were never re-pinned for them: a certified `fit_dp_snapshot`
+could not complete on any of those tagged installs. Both certified rows are re-pinned for 0.17.0
+(`5a76ea92...`, the engine dev/CI profile; `a7b40d54...`, the decoy-cli runtime profile, which the CLI repo's
+`requirements-certified.txt` header must also record), and the Phase F FR0 manifest is re-frozen for engine
+minor `0.17` (envelope digests only; every golden table digest is unchanged).
+
+The reason registry ships at `registry_version` 1.1.0 (891 identities). The seven F13 `runtime.secret_*`
+identities now declare `since` 1.1.0, the registry version that introduced them (they said 1.0.0).
+`tests/fixtures/f29/reason-registry-release.json` pins the shipped catalog (digest and per-`since` counts):
+any change at 1.1.0, or a new identity claiming an already-released `since`, now fails
+`tests/unit/test_reason_release_pin.py`.
+
 ### Added (R1-c: CycloneDX SBOM generator, 2026-10-31)
 
 `scripts/release/sbom.sh` writes a reproducible CycloneDX 1.6 SBOM of the wheel's base runtime closure from `uv.lock` (tool environment pinned, hash-enforced and wheel-only from `scripts/release/sbom-tool-requirements.txt`, run isolated with `python -I`, `uv --no-config`, no ambient `UV_*` settings and CPython 3.12 only; lock hashes; no timestamp or serial; public-index runtime closure only, keyed by name, version and source; well-formed hashed pins only, with the generated components checked against the pins). Not signed or published. Docs: `docs/sbom.md`.
@@ -110,6 +176,10 @@ authored by route selection; foreign text must not steer a reroute). `IsolatedRu
 field before `memory_evidence`, which stays last. See [Reason codes and progress events](docs/reasons.md).
 Consumer slices (CLI exits, platform persistence) are separate work and are not part of this change.
 
+## [0.16.0] - 2026-10-29
+
+Version stamp `5da40c2c` over main `2a44723f`, cut off main. Section reconstructed from the tag.
+
 ### Changed (BREAKING, pre-GA: `TokenVaultWriter.put` returns the authoritative token, 2026-10-29)
 
 `TokenVaultWriter.put(namespace, plaintext, token)` now returns `str`: the token the vault actually
@@ -118,6 +188,20 @@ stored, which may differ from the proposed `token` when a concurrent writer comm
 proposal, so a published token always has a reverse mapping. A writer that returns `None`, an empty
 string or a non-`str` fails the run closed (`tokenize_vault_error`). Writers must be updated to return
 the stored token; there is no compatibility shim. Ships in the next engine minor.
+
+## [0.15.1] - 2026-10-26
+
+Version stamp `fd51be10`, cut off main. Section reconstructed from the tag; the DI1 entry existed only there.
+
+### Added (DI1: datetime and free-text goodness-of-fit measurement, 2026-10-26)
+
+Report-only generation-output goodness-of-fit (GOF) measurement now covers datetime and free-text
+columns. Datetime runs a KS-complement on the yearly ECDF; free-text runs it on the string-length
+histogram. Both reuse the existing `ks_complement_binned` statistic, so no new statistical primitive
+is introduced. The values are reported as additive `extra_metrics`: they are not folded into any
+per-section similarity score or the overall score, and they make no distribution-preserving,
+differential-privacy, or utility claim. An absent histogram reports `comparable: false` with a coded
+reason rather than a fabricated statistic.
 
 ### Added (parity E2a: shared bounded reader + progress stream, 2026-10-26)
 
@@ -140,66 +224,6 @@ The inert execution knobs `substrate`, `max_workers`, and `fallback_to_pandas`, 
 `decoy_engine.license` (`LicenseVerifier`) and `decoy_engine.schema` (`SchemaInspector`) packages,
 are removed (pre-GA hard delete; no consumer in the CLI or platform). `DECOY_SUBSTRATE` stays
 pandas-only.
-### Added (B-6: tokenization write-seam, 2026-10-26)
-
-A `tokenize` strategy writes a deterministic surrogate token for each source
-value and records the plaintext-to-token mapping in a caller-supplied vault, so
-the mapping can be reversed later by an authorized reader. `run_pipeline` grows
-a keyword-only `token_vault_writer` parameter (default `None`, additive, recorded
-in the compatibility contract section 3.4): the platform passes the vault through
-it. A tokenize job runs full-frame only, so supplying the writer forces the
-full-frame route and disables auto-chunk; the bounded routes do not thread the
-writer and a bounded route with a vault fails closed with `tokenize_requires_vault`.
-The token is derived from the mask key, the column namespace, and the
-NFC-normalized source string (the same canonicalization as `mask.hash`'s string
-branch), and the same string is stored as the vault plaintext, so round-trip and
-determinism hold. tokenize accepts only string or object dtype columns and fails
-closed on any other dtype with `tokenize_requires_string_dtype`; it also requires
-a namespace (`tokenize_requires_namespace`).
-
-The token is always derived from the secret mask key, never the public job seed:
-tokenize is an always-keyed strategy, so at GA a tokenize job with no resolved
-secret fails closed with `keyed_strategy_requires_secret` rather than minting
-seed-derived, dictionary-attackable tokens. The `TokenVaultWriter` seam is scoped
-by namespace: `lookup_existing(namespace, plaintext)` and
-`put(namespace, plaintext, token)` take the column namespace, so the same plaintext
-under two namespaces is two distinct vault entries with two distinct tokens and the
-namespaces cannot be linked through a shared token. A vault callback that raises is
-translated to a coded, run-aborting `tokenize_vault_error` whose message carries
-neither the source value nor the token, with the original exception chain
-suppressed, so a vault error that echoes the value cannot leak the plaintext
-through the pipeline's exception. The run aborts with no output table and no
-partial sink commit.
-
-### Changed (Phase D / Dmp: multi-parent FK admitted on the out-of-core route, 2026-10-24)
-
-A child FK column tuple that references several parent tables (the polymorphic
-association) now runs on the out-of-core route; `out_of_core_multi_parent_child_unsupported`
-is gone (pre-GA hard delete). The route merges the parents' key relations into one
-first-hit-wins relation in relationship order (the order the full-frame and sequential routes
-already resolve in) and joins the child once, so the output, warnings and FAIL code match the
-full-frame oracle exactly (`tests/parity/test_phase_d_dmp_multi_parent_ooc.py`). The one
-shape the route refuses is parents whose masked key types differ (for example an integer and
-a float key), which fails closed with `out_of_core_fk_key_dtype_unsupported` before any
-output; run such a job with `execution_mode="sequential"`. The compile-time
-`orphan_policy_conflict` rule is unchanged, and the out-of-core merge re-checks it under the same
-code, so a relationship graph that bypassed the planner with conflicting per-edge policies fails
-closed before any output instead of resolving under the first edge's policy.
-
-### Changed (Phase D / Dcomp-OOC: composite FK on the out-of-core route, 2026-10-24)
-
-The out-of-core FK route's `orphan_fk_violation` error (orphan policy `fail` with a genuine
-orphan) now carries the same message as the full-frame and sequential routes ("N orphan
-row(s) in <child>.<columns> reference no parent key in <parent>.<columns>
-(orphan_policy=fail)."); the code is unchanged, and every route (full-frame, sequential, both
-out-of-core lanes, the mixed generate-parent bridge) now builds it through the one producer
-`_fk_resolve.orphan_fk_violation_error`. A composite FK chain (a composite child
-used as a parent key) is declined out-of-core with the new code
-`out_of_core_composite_fk_chain_unsupported` instead of `out_of_core_parent_seed_missing`;
-the job runs on the sequential route as before. Composite FK groups out-of-core are now
-pinned strictly against the oracle (`tests/parity/test_phase_d_dcomp_composite_ooc*.py`);
-the pre-existing route-level differences they surfaced are recorded in
-`tests/parity/SEMANTIC_DIFFERENCES.md` (Dcomp-OOC section).
 
 ### Added (parity E2a: shared bounded reader, 2026-10-24)
 
@@ -272,6 +296,80 @@ block, stamped only when `fpe_chunk_count` is non-default, drops its
 `requested_substrate`, `max_workers` and `fallback_to_pandas` keys. The never-implemented
 `SchemaInspector` and always-free `LicenseVerifier` stubs are deleted from the public API.
 Pre-GA hard delete: a caller passing a removed kwarg gets a `TypeError`.
+
+## [0.15.0] - 2026-10-26
+
+Version stamp `ec3fc5c4` over main `e3abfdf7`, cut off main. Section reconstructed from the tag.
+
+### Added (B-6: tokenization write-seam, 2026-10-26)
+
+A `tokenize` strategy writes a deterministic surrogate token for each source
+value and records the plaintext-to-token mapping in a caller-supplied vault, so
+the mapping can be reversed later by an authorized reader. `run_pipeline` grows
+a keyword-only `token_vault_writer` parameter (default `None`, additive, recorded
+in the compatibility contract section 3.4): the platform passes the vault through
+it. A tokenize job runs full-frame only, so supplying the writer forces the
+full-frame route and disables auto-chunk; the bounded routes do not thread the
+writer and a bounded route with a vault fails closed with `tokenize_requires_vault`.
+The token is derived from the mask key, the column namespace, and the
+NFC-normalized source string (the same canonicalization as `mask.hash`'s string
+branch), and the same string is stored as the vault plaintext, so round-trip and
+determinism hold. tokenize accepts only string or object dtype columns and fails
+closed on any other dtype with `tokenize_requires_string_dtype`; it also requires
+a namespace (`tokenize_requires_namespace`).
+
+The token is always derived from the secret mask key, never the public job seed:
+tokenize is an always-keyed strategy, so at GA a tokenize job with no resolved
+secret fails closed with `keyed_strategy_requires_secret` rather than minting
+seed-derived, dictionary-attackable tokens. The `TokenVaultWriter` seam is scoped
+by namespace: `lookup_existing(namespace, plaintext)` and
+`put(namespace, plaintext, token)` take the column namespace, so the same plaintext
+under two namespaces is two distinct vault entries with two distinct tokens and the
+namespaces cannot be linked through a shared token. A vault callback that raises is
+translated to a coded, run-aborting `tokenize_vault_error` whose message carries
+neither the source value nor the token, with the original exception chain
+suppressed, so a vault error that echoes the value cannot leak the plaintext
+through the pipeline's exception. The run aborts with no output table and no
+partial sink commit.
+
+## [0.14.2] - 2026-10-25
+
+Version stamp `ec9be3fc` over main `b2749ab1`, cut off main. Section reconstructed from the tag; the `### Fixed` entry existed only there.
+
+### Fixed
+
+- Subset single-table over-budget now returns a typed structured error instead of a
+  `max()`-on-empty crash when a table has no edges (#312).
+
+### Changed (Phase D / Dmp: multi-parent FK admitted on the out-of-core route, 2026-10-24)
+
+A child FK column tuple that references several parent tables (the polymorphic
+association) now runs on the out-of-core route; `out_of_core_multi_parent_child_unsupported`
+is gone (pre-GA hard delete). The route merges the parents' key relations into one
+first-hit-wins relation in relationship order (the order the full-frame and sequential routes
+already resolve in) and joins the child once, so the output, warnings and FAIL code match the
+full-frame oracle exactly (`tests/parity/test_phase_d_dmp_multi_parent_ooc.py`). The one
+shape the route refuses is parents whose masked key types differ (for example an integer and
+a float key), which fails closed with `out_of_core_fk_key_dtype_unsupported` before any
+output; run such a job with `execution_mode="sequential"`. The compile-time
+`orphan_policy_conflict` rule is unchanged, and the out-of-core merge re-checks it under the same
+code, so a relationship graph that bypassed the planner with conflicting per-edge policies fails
+closed before any output instead of resolving under the first edge's policy.
+
+### Changed (Phase D / Dcomp-OOC: composite FK on the out-of-core route, 2026-10-24)
+
+The out-of-core FK route's `orphan_fk_violation` error (orphan policy `fail` with a genuine
+orphan) now carries the same message as the full-frame and sequential routes ("N orphan
+row(s) in <child>.<columns> reference no parent key in <parent>.<columns>
+(orphan_policy=fail)."); the code is unchanged, and every route (full-frame, sequential, both
+out-of-core lanes, the mixed generate-parent bridge) now builds it through the one producer
+`_fk_resolve.orphan_fk_violation_error`. A composite FK chain (a composite child
+used as a parent key) is declined out-of-core with the new code
+`out_of_core_composite_fk_chain_unsupported` instead of `out_of_core_parent_seed_missing`;
+the job runs on the sequential route as before. Composite FK groups out-of-core are now
+pinned strictly against the oracle (`tests/parity/test_phase_d_dcomp_composite_ooc*.py`);
+the pre-existing route-level differences they surfaced are recorded in
+`tests/parity/SEMANTIC_DIFFERENCES.md` (Dcomp-OOC section).
 
 ### Added (§CSV-PARAMS: declare headerless and non-comma delimited sources, 2026-10-23)
 
