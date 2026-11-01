@@ -1,304 +1,323 @@
-Status: plan, rev 2 (Opus, 2026-11-01). Handoff. Risk class R2 (plan only, no code).
+Status: plan, rev 3 (Opus, 2026-11-01). Handoff. Risk class R2 (plan only, no code).
 
 # PLAN: B-6 tokenization vault, crypto remediation (engine, platform, CLI)
 
-Branch `plan/b6-vault-crypto-remediation` off engine `origin/main` `1132d29e` (R-a, 0.17.0). Rev 2
-resolves the Codex plan gate NO-GO on rev 1 (`27032a1b`: 1 BLOCKER, 2 HIGH, 4 MEDIUM, 1 LOW) and
-applies the owner decisions of 2026-11-01 (§7). The plan builds after A-4 (`claude/jolly-carson-3k5stf`)
-merges; A-4 is not on main at the time of writing. Nothing here is built; every slice is specified
-red first.
+Branch `plan/b6-vault-crypto-remediation` off engine `1132d29e` (R-a, 0.17.0). Rev 3 resolves the
+Codex gate NO-GO on rev 2 (`f4a2a3b1`: 2 BLOCKER, 2 HIGH, 2 MEDIUM) by replacing one design choice,
+"delete a NEW vault after an output failure", with the owner's never-delete rule (§0a), and shrinks
+the plan around it. Rev 1's gate findings stay resolved where rev 2 put them (§0c). The plan builds
+after A-4 (`claude/jolly-carson-3k5stf`) merges; nothing here is built; every slice is red first.
 
-Bases read for this plan (every line cited below was re-read at these refs on 2026-11-01):
+Bases re-read for rev 3 (2026-11-01):
 
 | Repo | Ref | Sha | Role |
 |---|---|---|---|
-| decoy-engine | `origin/main` | `a3fe49e8` | current main; one commit past the branch base `1132d29e` (#359, SBOM scripts and `docs/sbom.md` only, no file this plan cites) |
-| decoy-engine | `origin/feat/b6-batch-vault-writer-engine` | `e3c539d6` | B-6 batch writer branch under review (merge-base with main `0090f6f9`) |
-| decoy-engine | `origin/claude/jolly-carson-3k5stf` | `a19889a5` | A-4 file access, merging before this plan builds (`fileaccess`, `_opaque`, registry 1.2.0). Rev 1 read `e60c93f9`; every A-4 line below is re-cited at `a19889a5` |
-| decoy-platform | `origin/main` | `2d40c9a` | #131-#133 landed since rev 1 (`19b5007`); the vault files cited are byte-identical between the two (`git diff --stat 19b5007 2d40c9a -- api/vaults/store.py api/jobs/v2_full_frame.py api/jobs/v2_vault.py api/jobs/v2_token_vault.py tests/test_vault_durability.py` is empty) |
-| louiskeep/decoy (CLI) | `origin/main` | `a5d36b4` | #76 (`57e8b81`) landed since rev 1 (`df4c069`): repin to `decoy-engine==0.17.0` and `LocalTokenVault.put -> str`; see N2 |
+| decoy-engine | `origin/main` | `51548303` | current main. Every engine file this plan cites on main is byte-identical to rev 2's `a3fe49e8` (`git diff --stat a3fe49e8 51548303 -- src/decoy_engine/determinism/_hkdf.py src/decoy_engine/vault.py src/decoy_engine/reasons scripts/release/reason_release_pin.py tests/unit/test_reason_release_pin.py tests/unit/determinism/test_hkdf.py docs/reasons.md docs/security/token-vault.md` is empty) |
+| decoy-engine | `origin/claude/jolly-carson-3k5stf` | `a19889a5` | A-4 (`fileaccess`, `_opaque`, registry 1.2.0); merge-base with main `a3fe49e8` |
+| decoy-engine | `origin/feat/b6-batch-vault-writer-engine` | `e3c539d6` | B-6 batch writer under review; unchanged since rev 2 |
+| decoy-platform | `origin/main` | `7fc4612d` | `git diff --stat 2d40c9a 7fc4612 -- api/vaults api/jobs api/unmask tests/test_vault_durability.py` is empty: every platform line cited by rev 2 is unchanged; the lines added in rev 3 were read at `7fc4612d` |
+| louiskeep/decoy (CLI) | `origin/main` | `a5d36b4` (rev 2) | NOT re-read in rev 3: attaching the repository was refused in this session. CLI citations are rev 2's (`run.py:840, 854`, `tokenize.py:326, 341, 348, 383`, `_token_vault.py:109`) plus the gate's (`run.py:1572-1589`, `_write_mask_outputs`, the per-table write loop). Each CLI slice re-reads them first and records the shas; a moved line is a plan amendment, not a builder decision |
 
-Every rev 1 measurement was taken from the engine lock (`uv.lock`, `cryptography 49.0.0`, Python
-3.11.18, `uv sync --frozen --all-extras` on `1132d29e`, `.venv/bin/python`) against a worktree of
-the branch named in each row; those numbers stand as recorded in §9. The one new measurement in
-rev 2 (the PyCA empty-salt probe, §1) ran on the container's system interpreter (Python 3.13.18,
-`cryptography 50.0.1`) against a standalone copy of main's `_hkdf.py`, because no lock environment
-was built in this session; it is labelled as such where it is used. The platform and CLI were read,
-not executed: every platform and CLI claim is VERIFIED-BY-READ and its slice names the test that
-proves it in CI.
+Measurements: rev 1's were taken from the engine lock (`uv sync --frozen --all-extras`, Python
+3.11.18, `cryptography 49.0.0`) and stand as recorded in §9; rev 2's empty-salt probe ran on the
+system interpreter and is labelled. Rev 3 made no new measurement; every rev 3 claim is
+VERIFIED-BY-READ at the shas above, and every slice names the test that proves it in CI.
 
-## 0a. Owner decisions applied (2026-11-01; delegated, not reopened)
+## 0a. Owner decisions applied (delegated, not reopened)
 
-- D2 / Q1: HARD CUT. Pre-release rule: no backward compatibility, no migration of data. A vault
-  minted under the old derivation is refused with one registered code,
-  `token_vault_derivation_unsupported`: a new tokenization against it fails closed before the
-  engine runs and never continues with the new key. No marker row, no dual derivation, no schema
-  change for compatibility. The rev 1 "option (b)" design and its machinery (`token_derivation`
-  columns, the `TOKEN_DERIVATION` export, the label-recording sentence of D3) are removed from
-  this plan.
-- Q4: the CLI refuses to overwrite an existing vault it did not create in this run
-  (`vault_exists`, registered, EXIT_USAGE), on both `run --vault` routes.
-- Q3: the platform's documented non-fatal file-vault write becomes fatal. The test that decides
-  it is named in D1 ("Platform: fatal, decided by the failure order").
+- Rev 3 (2026-11-01), the retention rule: a committed vault is NEVER deleted by a failure path.
+  Only an unpublished stage file is cleaned. A vault that exists is the recovery key for any
+  output that may have been published; a leftover vault with no output is harmless (D1 R4). This
+  removes rev 2's NEW versus EXISTING cleanup table and its `O_EXCL` ownership-for-deletion race.
+- D2 / Q1: HARD CUT. A vault minted under the old derivation is refused with
+  `token_vault_derivation_unsupported` before the engine runs. No marker, no dual derivation, no
+  migration of data.
+- Q4: the CLI refuses to overwrite an existing vault (`vault_exists`, registered, EXIT_USAGE) on
+  both `run --vault` routes. The refusal is the engine's exclusive publication (`link(2)` refusing
+  an existing leaf); it is not an ownership claim and licenses no deletion.
+- Q3: the platform's non-fatal file-vault write becomes fatal (D1 "Platform").
 
-## 0b. Gate findings at 27032a1b and where each is resolved
+## 0b. Gate findings on rev 2 (`f4a2a3b1`) and where each is resolved
 
-| Gate finding | Class | Resolved in | Slice | Red-first test |
-|---|---|---|---|---|
-| 1 BLOCKER, D1 §6 (rev 1 lines 121, 370): "no leaf and no stage" is unreachable; monkeypatching `os` is not a crash test; recovery semantics unspecified | 3, 2 | D1 steps 1-7, the kill-point table and the recovery table | S4a, S4b | `tests/unit/test_vault_publish.py::test_sigkill_at_each_publish_step_leaves_a_loadable_leaf_or_none[K1..K7]` (subprocess, SIGKILL), `::test_publish_fsyncs_file_then_directory` (strace), `::test_a_failure_after_the_stage_exists_leaves_no_leaf_and_no_stage[write, file_fsync, link, dir_fsync]` (fault injection on the error path, labelled as such) |
-| 2 HIGH, D1 inverse partial commit (rev 1 lines 128, 375) | 2 | D1 "Callers" table: NEW vs EXISTING, retained vs rolled back, per caller | S6a-ii, S7a, S7b | platform `tests/test_vault_durability.py::test_output_failure_after_a_file_vault_commit_removes_the_vault`, `::test_output_failure_after_the_token_commit_keeps_rows_and_a_rerun_adds_none`; CLI `tests/e2e/test_run_vault_gating.py::test_output_failure_after_the_vault_commit_removes_the_vault`; CLI `tests/e2e/test_tokenize_cli.py::test_output_failure_after_commit_removes_a_vault_this_run_created`, `::test_output_failure_after_commit_keeps_a_preexisting_vault_and_its_new_rows` |
-| 3 HIGH, reason registry (rev 1 lines 338, 356) | 10 | §5 "Reason registry" rule: main's value at build time plus one minor, `since` equals that literal; manifest v1 immutable; release pin recaptured only at the cut | S2, S4b | `tests/unit/test_reason_release_pin.py::test_live_registry_honours_the_released_pin` (red the moment an identity is added without the bump), `::test_no_identity_claims_a_since_newer_than_the_live_registry_version` (new) |
-| 4 MEDIUM, N1 (rev 1 lines 259, 390) | 7 | D6 (N1): a second session's `complete()` under `lock_timeout`, one parameter per boundary | S6b | platform `tests/test_vault_concurrency_pg.py::test_write_lock_is_reacquired_after[commit, rollback, savepoint_rollback]` |
-| 5 MEDIUM, N3 (rev 1 lines 125, 374) | 10, 8 | D1 step 6 and the N3 row | S4a | `tests/unit/test_vault_publish.py::test_an_existing_vault_in_a_read_only_parent_is_preserved_and_no_stage_remains` (replaces pin 2), `::test_a_hardlinked_twin_is_not_rewritten` (replaces pin 1) |
-| 6 MEDIUM, D7 empty salt (rev 1 lines 268, 391) | 9 | D7: the empty-salt refusal is preserved on the one-shot, vectors cover it, probe in §1 | S1 | `tests/unit/determinism/test_hkdf.py::test_oneshot_rejects_empty_salt`, `::test_engine_vectors_are_unchanged_by_the_pyca_swap` (the vector file holds the refusal case) |
-| 7 MEDIUM, slice sizes (rev 1 line 299) | n/a | §4 budget table; S4, S6a and S7 split | all | n/a |
-| 8 LOW, F4 canary (rev 1 line 383) | 8 | D4 "Canary": ASCII key bytes searched in the representation the helper inspects; mutation retains only `mask_key` | S3 | `tests/unit/execution/test_tokenize_frame_locals.py::test_vault_failure_traceback_holds_no_plaintext_or_key[per_row, batch, lazy_mapping]` |
+| # | Sev | Class (fixed as a class) | Resolved in | Slice | Red-first test; seeded violation; fails before |
+|---|---|---|---|---|---|
+| 1 | BLOCKER | 5 referential integrity (published output whose vault is gone) and 2 (a destructive cleanup on an exit path). Class fix: one retention rule R1-R4 for every caller, plus a no-removal sentry per repo | D1 R1-R4, callers table | S4b, S6a-ii, S7a, S7b | platform `tests/test_vault_durability.py::test_table_b_failure_keeps_a_vault_that_reidentifies_table_a[sequential, out_of_core]`; seeded: `write_v2_outputs` raises on table 2 of 2; fails before at main `v2_sequential.py:336` publishing inside the loop `:319-350` while the vault is persisted only at `route_dispatch_exec.py:246-247`, after the loop, and the uncommitted node is lost to `v2_orchestrator.py:269` `db.rollback()`; `/unmask` answers `unmask_vault_not_found` (`unmask/router.py:80-95`). CLI `tests/e2e/test_run_vault_gating.py::test_table_b_failure_keeps_a_vault_that_reidentifies_table_a`; seeded: the table-B write raises inside `_write_mask_outputs` (`run.py:1572-1589`); fails before at `run.py:840` (outputs) preceding `:854` (vault). Sentries: platform `tests/test_vault_retention_sentry.py::test_no_code_path_removes_a_vault_leaf` (seeded: rev 2's unlink-on-failure wrapper) |
+| 2 | BLOCKER | 8 (a harness that cannot reach the states it asserts) and 3 | D1 "Crash harness": one wrapped call per step, kill after it returns, K7 is the no-kill control with rc 0, table = harness | S4a, S4b | `tests/unit/test_vault_publish.py::test_sigkill_after_each_publish_step[ambient\|strict × K1..K7]`; seeded: none needed, the A-4 code is the violation; fails before at A-4 `_local.py:225-231` (ambient opens the leaf in place, K1 never fires), `serial.py:45-47` (buffered `fh.write`, no `os.write` and no file `fsync`: K2, K3 never fire), `_output.py:252-268` (no directory fsync in the exclusive branch: K5 never fires); the child exits 0 and the parent fails "kill point K<n> not reached" |
+| 3 | HIGH | 10 (the registry bump is a frozen contract; a pin moved without its partner) and 8 | §5 "Reason registry": the base is derived from git, not hardcoded | S2 (lands the test), S4b (uses it) | `tests/unit/test_reason_registry_bump.py::test_registry_is_merge_base_plus_one_minor_and_new_identities_carry_it`; seeded: one new identity with `since="1.2.0"` and `REGISTRY_VERSION` left at `"1.2.0"` on a branch whose merge-base value is 1.2.0; fails before at `scripts/release/reason_release_pin.py:48-65` (released pin 1.1.0 < live 1.2.0, so `pin_violations` checks only `since > current` and `since <= pinned`; a `since` equal to an unreleased live version passes) |
+| 4 | MEDIUM | 8 (a test that contradicts the design it tests) | D1 N3 | S4a | `tests/unit/test_vault_publish.py::test_an_existing_hardlinked_vault_is_refused_and_both_names_are_unchanged`; seeded: leaf and twin are two names of one inode holding old bytes; fails before at A-4 `test_char_vault_in_place.py:23-30` (pin asserts the write goes through the twin) and `_local.py:225-231` |
+| 5 | MEDIUM | 4 (route parity; hand-maintained route list). Second class-4 miss on this plan; a third stops the slice (§8) | D1 "Route parity" | S6a-ii | `tests/test_vault_route_parity_sentry.py::test_every_route_commits_the_vault_before_publish_or_refuses_vault_jobs` (derived from `ALL_ROUTES` plus AST) and `tests/test_vault_durability.py::test_vault_is_committed_before_any_output_exists[<derived route>]`; seeded: a synthetic `execute_<route>` reading `ctx.vault_writer` with no driver, and a route in `ALL_ROUTES` with no executor; fails before at `route_dispatch_exec.py:246-247` (persist after the relationship publish) |
+| 6 | MEDIUM | 3 and 7 (an ownership claim used to delete). Fixed by removing the use: nothing deletes a leaf, so no ownership is needed | D1 "Q4 and N4" | S7a, S7b | CLI `tests/e2e/test_run_vault_gating.py::test_a_concurrent_second_run_is_refused_and_never_deletes_the_first_runs_vault`; seeded: two `decoy run --vault <same>` processes released together, and a sequential variant where run 1 fails on table B first; fails before at `run.py:854` (the vault write overwrites) and `tokenize.py:383` (unlinks a vault it judged its own from `exists()` at `:326`) |
 
-Two defects found while re-reading for rev 2 that no gate finding lists are registered as N4 and N5
-in §0 and in the repeat-class register (§8); each has its own test and slice. They are reported,
-not folded into another finding.
+Finding 1's platform half needs one thing rev 2 did not have: the `target.vault` node must be
+committed with the vault, before the first publish, or a failed job's rollback
+(`v2_orchestrator.py:269`) removes the only proof `/unmask` accepts (`router.py:80-95` requires a
+`status=="ok"` node). This is part of finding 1's test ("re-identifies table A"), not a new
+finding; it is reported here because it changes the platform design.
+
+## 0c. Rev 1 gate findings (`27032a1b`): still resolved
+
+1 (unreachable states, mocks as crashes) and 2 (inverse partial commit): D1, rewritten in rev 3.
+3 (registry): §5, rewritten in rev 3. 4 (N1 lock proof): D6, S6b. 5 (N3 pins): D1 N3, pin 1
+corrected in rev 3. 6 (empty salt): D7, S1. 7 (slice sizes): §4. 8 (F4 canary): D4, S3.
 
 ## 0. Findings register
 
 Classes: (1) value-bearing output; (2) cleanup missing on an exit path; (3) state machine and
-concurrency; (4) route parity and silent fallback; (5) referential integrity; (6) untrusted producer;
-(7) check then use; (8) weak tests and overclaimed evidence; (9) behavior-preserving refactor drift;
-(10) frozen contract drift.
+concurrency; (4) route parity and silent fallback; (5) referential integrity; (6) untrusted
+producer; (7) check then use; (8) weak tests and overclaimed evidence; (9) behavior-preserving
+refactor drift; (10) frozen contract drift.
 
-| Id | Sev | Class | Where (re-read) | Design | Slice | Red-first test (file::function) |
-|---|---|---|---|---|---|---|
-| F1 | HIGH | 3 (+2 crash window, +10 pinned partner) | engine `vault.py:305` on main; A-4 `vault.py:332-345`, `fileaccess/_local.py:225-237`, `_output.py:71-77, 246-273`, `adapters/serial.py:45-47`; platform `v2_full_frame.py:166-172, 205-206`, `v2_vault.py:78-100`; CLI `run.py:840, 854`, `tokenize.py:341, 348` | D1 | S4a, S4b, S6a-ii, S7a, S7b | `tests/unit/test_vault_publish.py::test_sigkill_at_each_publish_step_leaves_a_loadable_leaf_or_none`, `::test_two_real_writers_one_publishes_one_fails_closed`, `::test_publish_fsyncs_file_then_directory`; platform `tests/test_vault_durability.py::test_file_vault_commit_failure_publishes_nothing`; CLI `tests/e2e/test_run_vault_gating.py::test_vault_commit_failure_writes_no_outputs` |
-| F2 | HIGH | 1 | B-6 `_tokenize.py:253-258`; `_adapter.py:98-157` (no vault scope in either protocol); platform `v2_token_vault.py:158-166` supplies none; CLI `_token_vault.py:215-251` supplies none | D2 | S2, S6a-i, S7a | `tests/unit/execution/test_tokenize_domain_separation.py::test_two_vaults_same_key_namespace_plaintext_mint_different_proposals`, `::test_writer_without_derivation_scope_fails_closed` |
-| F3 | HIGH | 1 | B-6 `_tokenize.py:255` vs `kernel/_scalar.py:88` and `generation/pool/_canonicalize.py:120` (NFC string branch) | D3 | S2 | `tests/unit/execution/test_tokenize_domain_separation.py::test_token_payload_never_equals_hash_truncate_32`, `::test_tokenize_subkey_vector` |
-| F4 | MEDIUM | 1 (second appearance, see §8) | B-6 `_tokenize.py:147-155` (`df`, `col`, `normalized`, `distinct`, `ctx`), `:233-258` (`distinct`, `mask_key`, `plaintext`, `minted`), `:181` (`args`) | D4 | S3 | `tests/unit/execution/test_tokenize_frame_locals.py::test_vault_failure_traceback_holds_no_plaintext_or_key` |
-| F5 | MEDIUM | 4 (guard placement) | B-6 `_tokenize.py:169-186` sanitizes `fn(*args)` only; `:212` consumes `result.items()` outside it; `:192` `bool(token)` on an unchecked type | D5 | S3 | `tests/unit/execution/test_tokenize.py::test_lazy_mapping_whose_items_raises_is_sanitized`, `::test_hostile_key_and_token_objects_are_rejected_inside_the_boundary` |
-| F6 | MEDIUM | 8 | B-6 `tests/unit/execution/test_tokenize.py:535-541` (one fixed parity example), `:565-579` (fabricated winner); platform has no batch seam on main (`v2_token_vault.py:146-166`) | D6 | S5, S6b | engine `tests/property/test_tokenize_parity.py::test_batch_and_per_row_emit_identical_tokens`; platform `tests/test_vault_batch_pg.py::test_two_sessions_interleave_lookup_many_and_put_many`, `::test_partial_put_many_after_a_concurrent_commit`, `::test_batch_commit_failure_publishes_nothing` |
-| F7 | MEDIUM | 9 (the swap must be byte-identical; the refusal must survive it) | `determinism/_hkdf.py:1-95` (stdlib HKDF; docstring lines 8-13 say PyCA is not a dep, which is false since Task 5.2; `hkdf_extract` refuses an empty salt at `:54-59` and `hkdf_sha256` at `:90-95` inherits the refusal through it); callers `_derive.py:213,303`, `context.py:348-371` (zero salt), `profiling/model_pack/provenance.py:114` (zero salt) | D7 | S1 | `tests/unit/determinism/test_hkdf.py::test_engine_vectors_are_unchanged_by_the_pyca_swap`, `::test_oneshot_rejects_empty_salt`, `tests/sentry/test_hkdf_is_pyca.py::test_hkdf_module_delegates_to_cryptography` |
-| F8 | LOW | 8 | B-6 `docs/handoffs/inputs/b6-engine-api-note.md:2` ("platform half not started"), `:93-96` ("the engine will never relay it"; false for F5), `:114-115` ("or the job seed pre-GA"; false since F13: `vault.py:349-350`, `test_tokenize.py::test_tokenize_requires_a_secret_key`) | D8 | S5 | `tests/sentry/test_b6_note_currency.py::test_note_signatures_and_claims_match_code` |
-| N1 | HIGH | 7 | platform `api/vaults/store.py:88,160-165`: `_write_locked` is never cleared on commit or rollback (`grep after_commit\|after_rollback\|after_soft_rollback api/vaults` finds only the rotation launcher at `:391`), so a store reused after `session.commit()`, `session.rollback()` or a savepoint rollback skips `SELECT ... FOR UPDATE` and writes unlocked, racing `complete()` (`rotation.py:205-214`, which locks first) | D6 (N1) | S6b | platform `tests/test_vault_concurrency_pg.py::test_write_lock_is_reacquired_after[commit, rollback, savepoint_rollback]` |
-| N2 | resolved upstream | 10 | rev 1 read CLI `df4c069` where `put` returned `None`. CLI main `a5d36b4` (#76, `57e8b81`) returns the stored token (`_token_vault.py:223-251`, docstring "return the stored token, which the engine (>=0.16.0) emits") and pins `decoy-engine==0.17.0` (`pyproject.toml:103`); `tests/unit/test_token_vault.py::test_put_is_idempotent_on_same_token` asserts the return on both paths. Nothing to build; S7a repins to R-b only | D2 (CLI) | S7a | existing `test_put_is_idempotent_on_same_token` stays; no new test |
-| N3 | MEDIUM | 10 | A-4 `tests/fileaccess/test_char_vault_in_place.py:23-45` pins the in-place truncate rewrite (a hardlinked twin written through, a writable vault in a read-only directory rewritten) that F1 removes; the pin and the behavior move in one commit, and both pins are replaced, not only the first | D1 step 6 | S4a | `tests/unit/test_vault_publish.py::test_a_hardlinked_twin_is_not_rewritten` (replaces `:23-30`), `::test_an_existing_vault_in_a_read_only_parent_is_preserved_and_no_stage_remains` (replaces `:33-45`) |
-| N4 (new, rev 2) | MEDIUM | 7 | CLI `tokenize.py:326` reads `vault_preexisted = vault.exists()`, then `_token_vault.py:109` creates with `os.open(path, O_RDWR \| O_CREAT, 0o600)` (no `O_EXCL`). Two first runs on one path both observe "absent", both create, both believe they own the file; the one that fails removes the other's committed vault (`tokenize.py:383`). D1's rollback for a NEW vault relies on ownership being exact, so this is on the path this plan changes | D1 (CLI tokenize) | S7a | CLI `tests/unit/test_token_vault.py::test_created_is_false_for_a_path_that_already_exists`, `::test_exactly_one_of_two_processes_creates_one_path` |
-| N5 (new, rev 2) | HIGH | 4 (route parity; second class-4 instance, §8) | platform relationship routes publish table by table at `v2_sequential.py:450` (`_materialize_staged_sequential_outputs`, shared by the sequential and out-of-core FK routes through `_run_relationship_job_to_targets`, `v2_out_of_core.py:406-420`) and persist the file vault afterwards at `route_dispatch_exec.py:246-247` ("the call above already published every declared target"). Rev 1 reordered the full-frame route only (`v2_full_frame.py`); admission prices vault state on these routes (`admission.py:570-581`), so vault jobs do reach them | D1 (platform, both route families) | S6a-ii | platform `tests/test_vault_durability.py::test_relationship_routes_persist_the_vault_before_the_first_table_publishes[sequential_fk, out_of_core_fk]`, `::test_relationship_route_output_failure_removes_the_vault` |
-
-Defects found in the existing code that are NOT folded into any move: N1, N3, N4, N5 each have
-their own row, test and slice step. N2 is closed by read and kept for the record.
+| Id | Sev | Class | Where (re-read) | Design | Slice |
+|---|---|---|---|---|---|
+| F1 | HIGH | 3, 5 (+2 crash window, +10 pinned partner) | main `vault.py:305` (`Path.write_bytes`); A-4 `vault.py:336-350`, `fileaccess/_local.py:225-231`, `_output.py:71-77, 246-275`, `adapters/serial.py:45-47`; platform `v2_full_frame.py:166-206`, `v2_vault.py:65-100`, `route_dispatch_exec.py:236-247`, `v2_sequential.py:319-350, 450`; CLI `run.py:840, 854, 1572-1589`, `tokenize.py:341, 348, 383` | D1 | S4a, S4b, S6a-ii, S7a, S7b |
+| F2 | HIGH | 1 | B-6 `_tokenize.py:253-258`; `_adapter.py:98-157`; platform `v2_token_vault.py:158-166`; CLI `_token_vault.py:215-251` | D2 | S2, S6a-i, S7a |
+| F3 | HIGH | 1 | B-6 `_tokenize.py:255` vs `kernel/_scalar.py:88` | D3 | S2 |
+| F4 | MEDIUM | 1 (second appearance, §8) | B-6 `_tokenize.py:147-155, 181, 233-258` | D4 | S3 |
+| F5 | MEDIUM | 4 (guard placement) | B-6 `_tokenize.py:169-186, 192, 212` | D5 | S3 |
+| F6 | MEDIUM | 8 | B-6 `test_tokenize.py:535-541, 565-579`; platform `v2_token_vault.py:146-166` | D6 | S5, S6b |
+| F7 | MEDIUM | 9 | `determinism/_hkdf.py:1-95` (`:54-59` empty-salt refusal) | D7 | S1 |
+| F8 | LOW | 8 | B-6 `docs/handoffs/inputs/b6-engine-api-note.md:2, 93-96, 114-115` | D8 | S5 |
+| N1 | HIGH | 7 | platform `api/vaults/store.py:88, 160-165` (`_write_locked` never cleared) | D6 | S6b |
+| N2 | closed upstream | 10 | CLI `57e8b81` (`put -> str`, pin 0.17.0) | D2 | S7a (repin only) |
+| N3 | MEDIUM | 10 | A-4 `tests/fileaccess/test_char_vault_in_place.py:23-30, 33-45` pin the in-place rewrite F1 removes | D1 N3 | S4a |
+| N4 | MEDIUM | 7 | CLI `tokenize.py:326` (`exists()`) then `:383` (unlink) | D1 Q4 and N4: the unlink is deleted, so the check has no use and is deleted | S7a |
+| N5 | HIGH | 4 | platform relationship routes publish per table (`v2_sequential.py:319-350`) before the vault persist (`route_dispatch_exec.py:246-247`) | D1 route parity | S6a-ii |
 
 ## 1. What was verified, and how
 
-Probe script: `scratchpad/probes/probe_b6.py` (not committed; its content is reproduced in §9) run
-with the lock env against the B-6 worktree. Baseline on B-6 `e3c539d6`:
-`tests/unit/execution/test_tokenize.py tests/unit/determinism tests/unit/test_vault.py`: 132 passed.
-
 | Claim | Result | Where it fails before the fix |
 |---|---|---|
-| F3: `hash` with `truncate: 32` equals the token payload for the same `(mask_key, namespace, NFC(plaintext))` | True (probe) | `_tokenize.py:255` and `kernel/_scalar.py:88` share `derive(mask_key, namespace, NFC(pt).encode())` |
-| F2: the proposal is a pure function of `(mask_key, namespace, plaintext)` | True (probe, and by construction at `_tokenize.py:253-258`) | no vault input exists on either protocol (`_adapter.py:98-157`) |
-| F4: frames on the `StrategyError` traceback that hold the plaintext or key | `run: df, ctx, col, normalized, distinct`; `_resolve_tokens: distinct, mask_key, plaintext, minted`; `_vault_call: args` (probe) | listed lines |
-| F5: a batch writer whose returned mapping raises from `items()` | `RuntimeError` escapes `_vault_call`, message quotes the plaintext (probe) | `_tokenize.py:212` |
-| F7: PyCA `HKDF`/`HKDFExpand` equal `_hkdf` byte for byte | True on the engine salt, the RFC A.2-shaped vector, the 255*32 maximum, the 32-zero-byte salt, and expand-only (probe, lock env) | n/a (behavior-preserving) |
-| F7 empty salt (rev 2): PyCA `HKDF(salt=b"")` derives the same bytes as `salt=None` and as `salt=b"\x00" * 32`; main's `hkdf_sha256(salt=b"")` raises `ValueError("hkdf_extract: salt must be non-empty...")` | True, True, raises (probe, system Python 3.13.18 + `cryptography 50.0.1`, standalone copy of main `_hkdf.py`; §9) | a naive one-shot swap would accept the empty salt and silently derive under the all-zero salt, the degrade QA-10 F12 (2026-06-01) refused |
-| F1 engine: `Path.write_bytes` straight to the final path | main `vault.py:305`; A-4 ambient route opens the target with `O_TRUNC` in place (`_local.py:34, 225-231`) and never fsyncs; A-4 strict route stages and links (`_output.py:254-268`) but never fsyncs the file data (`serial.py:45-47`), swallows the directory fsync error (`_output.py:71-77`, `_local.py:178-193`) and unlinks the stage after the link with the error swallowed (`_output.py:266-269`) | by read |
-| F1 callers publish outputs before the vault commits | platform `v2_full_frame.py:168` (`write_v2_outputs`) precedes `:206` (`_persist_job_vault`), and `v2_vault.py:78-80` documents that a vault write failure does not fail the job; relationship routes: `v2_sequential.py:450` precedes `route_dispatch_exec.py:247` (N5); CLI `run.py:840` precedes `:854`; CLI `tokenize.py:341` precedes `:348` | VERIFIED-BY-READ |
-| Platform two-writer serialization | `store.py:138-158` takes `SELECT ... FOR UPDATE` on the vault row per transaction on Postgres (nothing on SQLite); real two-session races exist for the per-row seam only (`tests/test_vault_tokenize_race_pg.py::_RaceWriter`), gated on `DECOY_TEST_DB_BACKEND=postgres` in the `backend-postgres` CI leg ("PG-semantic tests must run (by marker, fail the leg if any skip)") | VERIFIED-BY-READ; N1 is the gap |
-| Platform batch seam | absent on main; the old batch branch is not a usable base (its diff against main deletes `test_vault_concurrency_pg.py`, `test_vault_durability.py`, `rate_limit.py`) | VERIFIED-BY-READ |
-| Platform relationship routes stage before they publish | the engine run commits every table to `stage_dir/{table}.parquet` (`ParquetTransactionalSink`) before `_materialize_staged_sequential_outputs` publishes them one at a time (`v2_sequential.py:291-350`); the vault writer is complete when that loop starts, so the vault can be persisted before the first table publishes without buffering | VERIFIED-BY-READ |
-| CLI local vault | SQLite, cleartext by design, `put -> str` since #76, no scope, commit after outputs, create without `O_EXCL` (N4) | VERIFIED-BY-READ at `a5d36b4` |
-| CLI chunked route | `_run_chunked_mask` (`run.py:1398-1450`) writes each table's output as chunks arrive (`_write_chunked_output`) while the vault writer accumulates entries; the vault is written once, after every table (`:854`), so vault-first needs the outputs staged | VERIFIED-BY-READ |
-| Registry version | main `a3fe49e8`: `REGISTRY_VERSION = "1.1.0"` (`reasons/_registry.py:24`), release pin at 1.1.0 (891 identities); A-4 `a19889a5`: `"1.2.0"` with `since="1.2.0"` on `runtime/_secret_provider.py:85` and `decoy/_core.py:53`; A-4 regenerates neither fixture (`git diff --stat origin/main..a19889a5 -- tests/fixtures/f29` touches `consumer-contract.json` only) | by read |
-| CLI `rule_codes` | the engine half is derived from the pinned engine's registry at first use (`rule_codes.py:9-15`); a registered code needs no literal there | by read |
+| F3: `hash` `truncate: 32` equals the token payload for one `(mask_key, namespace, NFC(pt))` | True (probe, lock env, §9) | `_tokenize.py:255`, `kernel/_scalar.py:88` |
+| F2: the proposal is a pure function of `(mask_key, namespace, plaintext)` | True (probe and by construction) | `_adapter.py:98-157` has no vault input |
+| F4: frames on the `StrategyError` traceback holding plaintext or key | `run`: `df, ctx, col, normalized, distinct`; `_resolve_tokens`: `distinct, mask_key, plaintext, minted`; `_vault_call`: `args` (probe) | listed lines |
+| F5: a batch result whose `items()` raises | `RuntimeError` escapes `_vault_call`, quoting the plaintext (probe) | `_tokenize.py:212` |
+| F7: PyCA `HKDF`/`HKDFExpand` equal `_hkdf` byte for byte; PyCA `salt=b""` equals the all-zero salt; main's one-shot refuses `b""` | True; True; raises (probe; the empty-salt part on system Python 3.13.18, `cryptography 50.0.1`) | a naive swap accepts `b""` |
+| F1 engine write paths | main `vault.py:305` writes the leaf directly; A-4 ambient opens the leaf `O_TRUNC` in place (`_local.py:34, 225-231`); A-4 strict stages and links (`_output.py:252-268`) but writes through a buffered handle with no `fsync` (`serial.py:45-47`), swallows the directory fsync (`_output.py:71-77`, `_local.py:178-193`) and swallows the stage unlink (`_output.py:266-269`) | by read |
+| F1 callers publish before the vault commits | platform full frame `v2_full_frame.py:168` before `:206`; relationship `v2_sequential.py:336` (inside the `:319-350` loop) before `route_dispatch_exec.py:247`; CLI `run.py:840` before `:854`; CLI tokenize `:341` before `:348` | by read |
+| A failed platform job loses an uncommitted `target.vault` node | `v2_orchestrator.py:269` `db.rollback()` on any execution error; `/unmask` requires a `status=="ok"` node (`unmask/router.py:80-95`) and the file (`:97-108`) | by read |
+| Platform route set is closed | `dispatch_route.py:55` `ALL_ROUTES`; `:121` refuses any other planned route; dispatch arms `v2_orchestrator.py:254-258`; streaming refuses vault columns (`_phase1_eligibility.py:181-183`) | by read |
+| No platform code removes a vault file today | `git grep "job_vault_path\|vault_dir()\|dcyvault" 7fc4612d -- api` finds the writer (`v2_vault.py:43-100`), the reader (`unmask/router.py:97-99`), quota and inventory accounting (`disk_quota_matrix.py:139`, `admin/storage_inventory.py:423`) and no unlink | by read |
+| Registry | main `REGISTRY_VERSION = "1.1.0"` (`_registry.py:24`), released pin 1.1.0; A-4 `"1.2.0"`; identity key `(namespace, code)` (`_registry.py:28, 150-178`) | by read |
+| Engine CI depth | `ci.yml:102` `regression-gate` has `fetch-depth: 0`; `engine-v2-substrate-matrix.yml:51` runs `pytest tests` on a depth-1 checkout | by read |
 
-Unverifiable from this checkout: PostgreSQL behavior and crash behavior of the platform store. Each
-is covered by a named test in S6a/S6b that runs in the `backend-postgres` leg with a real
-`postgres:15`, and by a crash-injection test that uses two sessions, not mocks. Power-loss
-durability of `fsync` is a kernel property and is not tested; the engine tests prove the order of
-the calls (strace) and the crash consistency of names and contents (SIGKILL).
+Unverifiable here: PostgreSQL behavior (S6 tests run in the `backend-postgres` leg on
+`postgres:15`, marker `pg_semantic`, which fails the leg on skip) and power-loss durability of
+`fsync` (a kernel property; the engine tests prove the call order with strace and name/content
+crash consistency with SIGKILL).
 
-## 2. Established methodology (surveyed; the designs follow it, nothing is invented)
+## 2. Established methodology (surveyed; nothing is invented)
 
-- Purpose separation of derived keys: RFC 5869 §3.2 (`info` binds the derived key to its
-  application context; may carry identifiers), NIST SP 800-108r1 §4 (a KDF input holds a
-  `Label` naming the purpose and a `Context` naming the parties or identifiers; keys for
-  different purposes come from different label/context pairs). The engine already uses this
-  shape: `vault-key/v1` (`vault.py:88`) and `ff1-key/v1` (`_derive.py:126`) are purpose labels
-  fed through `derive` to mint a subkey from the mask root. D2/D3 add `tokenize-key/v1` with the
-  vault scope as the context, through the same `derive` envelope. No new primitive.
-- KDF implementation: PyCA `cryptography.hazmat.primitives.kdf.hkdf.HKDF` and `HKDFExpand`
-  (RFC 5869), PyCA `cryptography.hazmat.primitives.hmac.HMAC` for the extract step. The platform
-  already derives fingerprint keys with PyCA `HKDF` (`api/crypto/vault_key.py:187`). PyCA maps an
-  absent salt to `HashLen` zero bytes and an empty salt to the same HMAC key (§1 probe); the
-  engine's explicit refusal of an empty salt is an application rule layered on the primitive, as
-  QA-10 F12 recorded, and D7 keeps it on both entry points.
-- Crash-atomic file publication: write to a same-directory stage, `fsync` the file, `link` or
-  `rename` into the leaf, `fsync` the directory (POSIX; the pattern SQLite's atomic-commit notes
-  and PostgreSQL's `durable_rename` implement). Recovery follows the same sources: the leaf name
-  is the only authoritative name, a stage is never read as data, and a stage left by a crash is
-  reclaimed only by something that can prove no writer owns it (SQLite reclaims a hot journal
-  because the journal is named after the database and the database is locked; this plan has no
-  lock, so it reclaims nothing, §D1). A-4 already stages and links through `fileaccess` (cap-std
-  `Dir`, Spark `FileOutputCommitter`). D1 adds the two missing `fsync` calls, makes their failure
-  fail the commit, and uses the existing `exclusive` mode (`link(2)` refusing an existing leaf) as
-  the compare-and-set between two writers. No lock file, no new mechanism.
-- Crash tests: a child interpreter killed with `SIGKILL` at a numbered step, state asserted by the
-  parent after the child is gone (the shape of SQLite's `crashtest` and PostgreSQL's
-  `test_fsync`-adjacent recovery tests). `SIGKILL` runs no `finally`, no `__del__` and no
-  `weakref.finalize` (A-4's `_finalizer`), which is what a monkeypatched `raise` cannot model.
-- Lock proofs: a second session that must block is given PostgreSQL `lock_timeout` and the test
-  expects `lock_not_available` (SQLSTATE `55P03`); `pg_locks` is not read, because a row in
-  `pg_locks` proves a lock exists, not that the session under test holds it on the row that
-  matters.
-- Secret-free frames: the A-4 boxed-entry construction (`decoy_engine/_opaque.py`,
-  `secret_providers/_preflight.py:165-198`): value-bearing arguments move into an `OpaqueBox`,
-  the plain names are deleted, the work runs in a contained call whose frames never reach the
-  raised error.
-- Idempotent concurrent insert: `INSERT ... ON CONFLICT DO NOTHING` plus re-read (already in
-  `store.py:255-319`); the batch form is the same statement over many rows.
-- Exclusive create as ownership: `O_CREAT | O_EXCL` (POSIX; what `tempfile.mkstemp` and
-  A-4's `_CREATE` use) is the only portable way for a process to learn that it created a path;
-  N4 replaces an `exists()` pre-check with it.
+- Purpose separation of derived keys: RFC 5869 §3.2 (`info` binds a key to its context), NIST SP
+  800-108r1 §4 (`Label` names the purpose, `Context` the parties). The engine already does this
+  (`vault-key/v1`, `vault.py:88`; `ff1-key/v1`, `_derive.py:126`); D2 adds `tokenize-key/v1`.
+- KDF implementation: PyCA `HKDF`, `HKDFExpand`, `HMAC` (RFC 5869); the platform already uses PyCA
+  `HKDF` (`api/crypto/vault_key.py:187`). The engine's empty-salt refusal is an application rule
+  over the primitive (QA-10 F12), kept on both entry points (D7).
+- Crash-atomic publication: stage in the same directory, `fsync` the file, `link` into the leaf,
+  `fsync` the directory (POSIX; SQLite's atomic-commit notes, PostgreSQL `durable_rename`). The
+  leaf is the only authoritative name; a stage is never read as data. Exclusive `link(2)` is the
+  compare-and-set between two writers (A-4's `exclusive` mode).
+- Retention: a write-ahead artifact is kept until the thing that depends on it is gone, never
+  removed on the failure of a later step (PostgreSQL keeps WAL a replica may need; SQLite never
+  deletes a database file on a failed transaction, it rolls the transaction back inside it). Here
+  the vault is the dependency of any published output, so no failure path removes it.
+- Crash tests: a child interpreter killed with `SIGKILL` at a numbered point, the state asserted
+  by the parent (SQLite `crashtest`). `SIGKILL` runs no `finally`, `__del__` or
+  `weakref.finalize`, which a monkeypatched `raise` cannot model.
+- Lock proofs: the blocked session runs under `lock_timeout` and expects SQLSTATE `55P03`.
+- Secret-free frames: A-4's `OpaqueBox` (`_opaque.py`, `secret_providers/_preflight.py:165-198`).
+- Idempotent concurrent insert: `INSERT ... ON CONFLICT DO NOTHING` plus re-read (`store.py:255-319`).
 
 ## 3. Designs
 
-### D1. Durable, exclusive vault publication; callers gate on it (F1, N3, N4, N5)
+### D1. Durable, exclusive vault publication; vault before output; never delete (F1, N3, N4, N5)
 
-Engine (`vault.py`, A-4 `fileaccess`), after the A-4 merge. `VaultWriter.write(path | OutputDir)`
+Retention rule (one rule; every caller, every repo):
+
+- R1. Once `link(stage, leaf)` has returned, no failure path in engine, platform or CLI removes,
+  truncates or replaces the leaf.
+- R2. A failure path removes only names it created and never published: the engine's own
+  `_decoy_vault_stage_*`, and the CLI chunked route's own output stages. Nothing else.
+- R3. Every caller commits the vault before its first output byte is published. A vault commit
+  failure publishes nothing. On the platform, "commits" includes the `target.vault` node.
+- R4. A vault left by a failed job is kept. It re-identifies whatever of that job's output was
+  published; with no output it holds ciphertext of mappings the same job config would recreate,
+  under the same 0600 file and directory rules as any vault. `docs/security/token-vault.md`
+  "Operational rules" states this and the operator rule: delete a vault only together with the
+  outputs it re-identifies; a `_decoy_vault_stage_*` file beside a vault with no running job may
+  be deleted, it is never a vault.
+
+Engine (`vault.py`, A-4 `fileaccess`, after the A-4 merge). `VaultWriter.write(path | OutputDir)`
 always publishes through a stage beside the leaf in `exclusive` mode. The ambient path-string
-route stops using the `vault_direct` in-place label: `_local.py:225-231` and the label itself are
-deleted (pre-release hard delete). Under the ambient policy a path string stages in the target's
-parent exactly as the strict route does (`_CREATE` with `O_EXCL` on a `_decoy_vault_stage_<hex>`
-sibling, `_local.py:244-246`, prefix table `_output.py:32-41`). The publication is these numbered
-steps, in both `RootedOutputTxn` (`_output.py:246`) and `LocalOutputTxn` (`_local.py:260`):
+route stops using `vault_direct`: `_local.py:225-231` and the label are deleted (hard delete);
+an ambient path stages in its parent exactly as the strict route does (`_CREATE` with `O_EXCL`,
+`_local.py:33, 244-246`; prefix table `_output.py:32-41`). The steps, in both `RootedOutputTxn`
+(`_output.py:246`) and `LocalOutputTxn` (`_local.py:260`):
 
-1. `open(parent/_decoy_vault_stage_<hex>, O_CREAT | O_EXCL | O_WRONLY)`.
-2. write every byte of the vault (`serial.write_bytes`, `durable=True`).
-3. `fsync(stage fd)`, then close it (`serial.write_bytes(..., durable=True)`: `flush()` then
-   `os.fsync(fd)` before the handle closes; the vault is the only caller that passes it).
-4. `link(stage, leaf)` (`follow_symlinks=False`): the compare-and-set. `EEXIST` means another
-   vault owns the leaf: the stage is unlinked and `write` raises `VaultError(code="vault_exists")`.
-5. `fsync(parent directory fd)`: the leaf's directory entry is durable. A failure raises
-   (`OutputTxn.publish(durable=True)` no longer swallows it as `_output.py:71-77` and
-   `_local.py:178-193` do); before raising, the leaf and the stage are unlinked on a best-effort
-   basis and `write` raises `VaultError(code="vault_commit_failed")`.
-6. `unlink(stage)`.
-7. `fsync(parent directory fd)`: the stage's removal is durable. A failure raises exactly as in
-   step 5 (the leaf is complete and durable at this point, but `write` has promised nothing until
-   it returns, and the caller's rollback rule below is written for that).
+1. `os.open(parent/_decoy_vault_stage_<hex>, O_CREAT | O_EXCL | O_WRONLY)`.
+2. `os.write` in a loop until every byte is written (`serial.write_bytes(..., durable=True)`; the
+   raw-descriptor loop replaces the buffered `fh.write` of `serial.py:45-47` for this mode only,
+   because it handles short writes and keeps the descriptor for step 3).
+3. `os.fsync(stage fd)`, then close.
+4. `os.link(stage, leaf, follow_symlinks=False)`: the compare-and-set. `EEXIST`: the stage is
+   unlinked (R2) and `write` raises `VaultError(code="vault_exists")`.
+5. `os.fsync(parent directory fd)`. This is the commit point. A failure raises
+   `vault_commit_failed`; the stage name is unlinked (R2); the leaf is kept (R1).
+6. `os.unlink(stage)`.
+7. `os.fsync(parent directory fd)`.
 
-`write` returns the entry count only after step 7. Every `OSError` from steps 2-7 becomes
-`vault_commit_failed` with no path and no value in the message; a failure in step 1 (parent
-missing, parent unwritable) keeps the A-4 shape (`FileNotFoundError` / `PermissionError` naming
-the path under the ambient policy, as `test_char_vault_in_place.py:48-54` pins; locator-free
-`FileAccessUnavailable` under a strict policy), because no stage exists and nothing was promised.
-Existing callers of `publish()` and `write_bytes()` are unchanged (`durable` defaults to `False`).
+`write` returns the entry count after step 7. Steps 6 and 7 tidy a name after the commit: an
+error there is not raised and nothing value-bearing is recorded; it
+leaves the K5 or K6 residue below, which R4's operator rule covers. Every `OSError` from steps 2-5
+becomes `vault_commit_failed` with no path and no errno text; a step 1 failure keeps the A-4 shape
+(`FileNotFoundError`/`PermissionError` naming the path under the ambient policy, as
+`test_char_vault_in_place.py:48-54` pins; `FileAccessUnavailable` under a strict policy), because
+nothing was created. Existing `publish()` and `write_bytes()` callers are unchanged (`durable`
+defaults to `False`).
 
-Kill points (state on disk after `SIGKILL` at each step, as the next process sees it; `K7` is the
-control, no kill):
+Crash harness (gate rev 2 #2). `tests/unit/vault_publish_child.py <route> <K> <dir>` replaces
+`os.open`, `os.write`, `os.fsync`, `os.link` and `os.unlink` on the `os` module before importing
+the engine (the `fileaccess` modules call them as `os.<name>` at call time: `_local.py:231, 284,
+296`; `_output.py:256` passes `os.link` through `_call`). Each wrapper calls the real function
+and, when its step's predicate matches, sends itself `SIGKILL` after the call has returned. No
+production seam is added. `route` is `ambient` (path string) or `strict` (`OutputDir`).
 
-| Kill after | Leaf | Stage | Invariant that holds |
-|---|---|---|---|
-| K1 step 1 | absent | present, empty | no leaf |
-| K2 step 2 | absent | present, some or all bytes | no leaf |
-| K3 step 3 | absent | present, complete | no leaf |
-| K4 step 4 | present (directory entry may not have reached disk) | present, same inode as the leaf | a leaf that exists is complete (its bytes were fsynced in step 3) |
-| K5 step 5 | present, durable | present, same inode | leaf complete; stage identical by construction |
-| K6 step 6 | present, durable | absent (its unlink may not have reached disk) | leaf complete |
-| K7 step 7 | present, durable | absent | leaf only |
+| K | Step | Wrapped call, killed after it returns | Predicate | Leaf after | Stage after | Child rc | Parent's second `write` |
+|---|---|---|---|---|---|---|---|
+| K1 | 1 | `os.open` | basename starts `_decoy_vault_stage_` | absent | present, 0 bytes | -9 | publishes |
+| K2 | 2 | `os.write` | fd is the K1 descriptor; first call | absent | present, exactly the byte count that call returned | -9 | publishes |
+| K3 | 3 | `os.fsync` | fd is the K1 descriptor | absent | present, every byte | -9 | publishes |
+| K4 | 4 | `os.link` | destination basename is the leaf | present, loads | present, same inode, `st_nlink == 2` | -9 | `vault_exists` |
+| K5 | 5 | `os.fsync` | `S_ISDIR(fstat(fd))`, first call after K4's | present, loads | present, same inode | -9 | `vault_exists` |
+| K6 | 6 | `os.unlink` | basename starts `_decoy_vault_stage_` | present, loads, `st_nlink == 1` | absent | -9 | `vault_exists` |
+| K7 | none: step 7 runs and the child exits | none | none | present, loads | absent | 0 | `vault_exists` |
 
-The rev 1 claim "no leaf and no stage at every step" is withdrawn; it is unreachable with two
-names and no transaction, and the invariant above is what the tests assert.
+`test_sigkill_after_each_publish_step[ambient|strict × K1..K7]` asserts the row exactly: the
+return code first (a K1-K6 child that exits 0 fails with "kill point K<n> not reached"; a K7
+child that does not exit 0 fails), then the leaf (`load_vault` returns the expected entries when
+present), the stage (size, inode, link count), then the parent's second `write` to the same leaf,
+after which any residue the kill left is byte-identical and the parent left no stage of its own.
+Red first on A-4 `a19889a5`: ambient K1-K6 are not reached (no stage, `_local.py:231`); strict
+K2, K3 (no `os.write`, no file `fsync`, `serial.py:45-47`) and K5 (`_output.py:252-268`) are not
+reached. Main `vault.py:305` behaves as ambient.
 
-Recovery (what the next open does; the leaf is the only authoritative name):
+Fault injection (not a crash test, labelled so):
+`test_an_injected_failure_at_each_step[write, file_fsync, link_eio, link_eexist, dir_fsync, unlink,
+dir_fsync_after_unlink]` patches the named call to raise and asserts one row each: before the link
+(`write`, `file_fsync`, `link_eio`) `vault_commit_failed`, no leaf, no stage; `link_eexist`
+`vault_exists`, the pre-existing leaf byte-identical, no stage; `dir_fsync` `vault_commit_failed`,
+the leaf kept and loads (R1), no stage; `unlink` and `dir_fsync_after_unlink` `write` returns the
+count, the leaf loads, at most the K5-shaped stage remains. No message holds the path or errno
+text. Red first on A-4: `dir_fsync` returns success (`_output.py:71-77`).
 
-| Residue found | `load_vault(leaf)` | `VaultWriter.write(leaf)` |
-|---|---|---|
-| no leaf, one or more stages (K1-K3, or a loser's residue) | `vault_unreadable` (existing code; the file is absent) | writes through its own fresh stage name and publishes; the old stages are not opened, not removed |
-| leaf and a stage of the same inode (K4-K6) | reads the leaf; the stage is identical bytes and is never opened | `vault_exists` |
-| leaf and a stage of a different inode (another writer's K1-K3 residue beside a published leaf) | reads the leaf; the stage is never opened | `vault_exists`; the stage is not touched |
-| leaf only | reads | `vault_exists` |
+Order: `test_publish_fsyncs_file_then_directory` runs `tests/fileaccess/strace_support.py`
+(`-f -yy`) over a child and asserts `fsync(stage)` before `linkat`, `fsync(parent)` after `linkat`
+and before `unlinkat`, and `fsync(parent)` after `unlinkat`; the helper fails, never skips, when
+`strace` is absent. Two writers: `test_two_real_writers_one_publishes_one_fails_closed` (two
+threads, a `Barrier` after both staged; one leaf, the loser `vault_exists`, no stage residue).
 
-Nothing reclaims a stage automatically: with no lock, a stage cannot be attributed to a dead
-writer rather than a live one, and removing a live writer's stage is the class-3 race this design
-exists to avoid. A stage holds Fernet ciphertext only (the plaintext is encrypted chunk by chunk
-before any byte reaches `serial.write_bytes`, `vault.py:306-324`), so a residue is junk, not
-exposure. `docs/security/token-vault.md` "Operational rules" gains the operator rule: a
-`_decoy_vault_stage_*` file beside a vault with no running job may be deleted; it is never a vault.
+N3 (gate rev 2 #4). Both pins of `test_char_vault_in_place.py` assert the in-place rewrite and are
+replaced in S4a, the commit that deletes `vault_direct`:
 
-Two writers: `exclusive` publication is the compare-and-set. The first `link(2)` wins; the second
-gets `EEXIST`, its stage is removed, and `write` raises `vault_exists`. A vault leaf is never
-replaced in place. Hardlinks (N3): a twin hardlink of an existing leaf is no longer rewritten
-through (it keeps the old inode) and an existing vault in a read-only parent is preserved (step 1
-fails, nothing else runs); these are the behaviors N3's two pins protected and both pins are
-replaced in S4a, the commit that deletes `vault_direct`.
+- pin 1 (`:23-30`) becomes `test_an_existing_hardlinked_vault_is_refused_and_both_names_are_unchanged`:
+  leaf and twin are two names of one inode holding old bytes; `write(leaf)` raises `vault_exists`;
+  afterwards both names have the original `st_ino`, `st_nlink == 2` and the old bytes, and no
+  stage remains. The leaf cannot become a new inode: exclusive publication refuses it.
+- pin 2 (`:33-45`) becomes `test_an_existing_vault_in_a_read_only_parent_is_preserved_and_no_stage_remains`:
+  step 1 fails with `PermissionError` naming the path (ambient); the vault bytes and the listing
+  are unchanged. Skipped only when `os.geteuid() == 0`, as the deleted pin was; engine CI runs
+  `ubuntu-latest` without a container (`ci.yml`), where it runs.
 
-Tests (S4a, S4b; `tests/unit/test_vault_publish.py` unless noted):
+Callers (one retention rule; no per-caller split):
 
-- `test_sigkill_at_each_publish_step_leaves_a_loadable_leaf_or_none[K1..K7]`: the parent starts
-  `sys.executable tests/unit/vault_publish_child.py <K> <dir>`; the child, before importing the
-  writer, wraps `os.fsync`, `os.link` and `os.unlink` as seen by `fileaccess._output` and
-  `fileaccess._local` so that the wrapper calls the real function and then
-  `os.kill(os.getpid(), signal.SIGKILL)` once the numbered step has completed (`K2` kills before
-  the first `fsync`, after the write). The parent waits for the child (`returncode == -9`), then
-  asserts the row of the kill-point table: the leaf, when present, loads with the expected
-  entries through `load_vault`; every other name in the directory matches
-  `_decoy_vault_stage_*`; a second `write` from the parent succeeds exactly when the leaf is
-  absent and raises `vault_exists` otherwise; after it, the leaf loads and the old residue is
-  unchanged. Red first on A-4 `a19889a5`: `K4`-`K6` cannot be reached (the ambient route has no
-  stage and `K2` leaves a truncated leaf in place, `_local.py:231`), which the test reports as
-  "leaf present but does not load".
-- `test_publish_fsyncs_file_then_directory`: `tests/fileaccess/strace_support.py` (`-f -yy`,
-  decodes descriptors to paths) over a child that writes one vault; assert one `fsync` on the
-  stage path before `linkat`, one `fsync` on the parent directory after `linkat` and before
-  `unlinkat`, and one after `unlinkat`. The helper fails, never skips, when `strace` is absent.
-  Red first on A-4: no `fsync` on the stage path (`serial.py:45-47`), none on the directory in the
-  exclusive branch (`_output.py:254-269`).
-- `test_a_failure_after_the_stage_exists_leaves_no_leaf_and_no_stage[write, file_fsync, link,
-  dir_fsync]`: fault injection, not a crash test: `monkeypatch` the named call as seen by the
-  `fileaccess` module to raise `OSError(EIO)`; expect `vault_commit_failed`, no leaf, no stage,
-  no path and no `EIO` text in the message. Red first on A-4: the directory fsync error is
-  swallowed (`_output.py:71-77`), so `dir_fsync` returns success.
-- `test_two_real_writers_one_publishes_one_fails_closed`: two threads, real `tmp_path`,
-  `threading.Barrier` after both staged; exactly one leaf, loser raises `vault_exists`, no
-  `_decoy_vault_stage_*` residue, `load_vault` reads the winner. Red first on main `vault.py:305`:
-  both succeed, last writer wins.
-- `test_a_hardlinked_twin_is_not_rewritten` (N3, replaces pin 1): a twin keeps the old bytes and
-  the leaf is a new inode.
-- `test_an_existing_vault_in_a_read_only_parent_is_preserved_and_no_stage_remains` (N3, replaces
-  pin 2): a writable vault in a read-only parent; `write` fails with `PermissionError` naming the
-  path (ambient), the vault's bytes are unchanged, the directory listing is unchanged. Skipped
-  when `os.geteuid() == 0`, the same condition the deleted pin carried; the engine CI legs run on
-  `ubuntu-latest` without a container (`.github/workflows/ci.yml`), where the test runs.
+| Caller (read) | Vault | Order after this plan | Output failure after the vault commit | Test |
+|---|---|---|---|---|
+| platform full frame, `v2_full_frame.py:160-172, 205-206` | file vault `job_<id>.dcyvault`, token rows | after the last cancel poll: `vault_writer.write(job_vault_path)`; add the `status="ok"` `target.vault` node; one `db.commit()` that also commits the token rows (`_commit_vaults_before_publish` in `v2_vault.py` replaces `_commit_token_vault_before_publish`, `v2_full_frame.py:47-62`); then `write_v2_outputs` | job failed; vault, node and rows kept; `/unmask` works for every published table | `tests/test_vault_durability.py::test_output_failure_keeps_a_reachable_vault[full_frame]` |
+| platform relationship routes (N5), `v2_sequential.py:319-350, 450`; `route_dispatch_exec.py:246-247` | file vault | `_commit_vaults_before_publish` runs in `_run_relationship_job_to_targets` immediately before `_materialize_staged_sequential_outputs` (`:450`); the late persist at `route_dispatch_exec.py:246-247` is deleted | tables already published stay; vault and node kept; job failed | `::test_table_b_failure_keeps_a_vault_that_reidentifies_table_a[sequential, out_of_core]` (POST `/unmask` on table A returns the source values) |
+| platform token rows | Postgres | committed in the same `db.commit()` | rows kept; a rerun emits the same tokens and adds no row | `::test_output_failure_after_the_token_commit_keeps_rows_and_a_rerun_adds_none` |
+| CLI `run.py` plain route, `:840, :854`, loop `:1572-1589` | file vault | vault (exclusive: an existing leaf is `vault_exists`, EXIT_USAGE, nothing written), then `_write_mask_outputs` | tables already written stay; the vault stays; EXIT_RUNTIME; the message says the vault was kept and that a rerun needs a new `--vault` path or the old vault removed with its outputs | `tests/e2e/test_run_vault_gating.py::test_table_b_failure_keeps_a_vault_that_reidentifies_table_a`, `::test_vault_commit_failure_writes_no_outputs`, `::test_an_existing_vault_is_refused_before_any_output` |
+| CLI `run.py` chunked route, `_run_chunked_mask:1398`, `_write_chunked_output:1455` | file vault | each table streams to its own `_decoy_stage_<hex><suffix>` beside its target; then the vault; then each stage is `os.replace`d onto its target | a vault failure unlinks every output stage (R2), no target written; a failure inside the replace loop keeps the vault and the renamed tables, unlinks the remaining stages (R2), and names how many of N tables published | `::test_chunked_vault_commit_failure_leaves_no_output_and_no_stage`, `::test_chunked_replace_failure_keeps_the_vault`; existing `tests/e2e/test_vault_cli.py::test_chunked_run_writes_equivalent_vault` stays green |
+| CLI `tokenize.py`, `:326, :341-348, :377-383` | SQLite token vault | `commit()`, then `_write_mask_outputs` | the file is never removed by a failure path; rows kept; a rerun reuses them | `tests/e2e/test_tokenize_cli.py::test_output_failure_after_commit_keeps_the_vault_and_its_rows` |
 
-Callers (publication gated on the vault commit). For every caller the table says whether the vault
-is NEW or EXISTING at its commit, the order, and what an output failure after the commit retains
-or rolls back; each cell is a test.
+Platform: fatal. `_persist_job_vault` (`v2_vault.py:65-100`) stops catching: its error node, the
+`str(exc)` in it and the "does NOT fail the job" docstring are deleted (hard delete).
+`_commit_vaults_before_publish` raises `VaultCommitError` (new, `v2_vault.py`, carrying the engine
+code `vault_commit_failed` or `vault_exists`), which the runner's terminal handler
+(`runner.py:124-156`) lands as a failed job whose manifest names the code and no path.
+`test_file_vault_commit_failure_publishes_nothing`: `write` raises `vault_commit_failed`; the job
+fails; `write_v2_outputs` is never called. If the engine `write` succeeded and the `db.commit()`
+then fails, no output is published and the leaf without a node is an R4 leftover that `/unmask`
+refuses; `::test_node_commit_failure_publishes_nothing_and_keeps_the_leaf` pins it.
 
-| Caller (read) | Vault | New or existing at the commit | Order after this plan | Output failure after the commit | Test |
-|---|---|---|---|---|---|
-| platform full-frame, `v2_full_frame.py:166-172, 205-206` | file vault `job_<id>.dcyvault` | NEW: per job id, exclusive | token commit, file vault, `write_v2_outputs` | ROLLED BACK: `_persist_job_vault` moves before `write_v2_outputs`; the publication is wrapped so that any exception unlinks `job_vault_path(job.id)` (idempotent, `missing_ok`, logged by exception type only) and re-raises; the `target.vault` node is added after publication succeeds | `tests/test_vault_durability.py::test_output_failure_after_a_file_vault_commit_removes_the_vault` |
-| platform relationship routes (N5), `v2_sequential.py:450`, `route_dispatch_exec.py:246-247` | file vault | NEW | file vault persisted inside `_run_relationship_job_to_targets` immediately before `_materialize_staged_sequential_outputs`; `route_dispatch_exec.py:246-247` deleted | ROLLED BACK, same wrapper; tables already published by an earlier loop iteration stay (each publish is atomic per table; the manifest records the count), the vault does not | `::test_relationship_routes_persist_the_vault_before_the_first_table_publishes[sequential_fk, out_of_core_fk]`, `::test_relationship_route_output_failure_removes_the_vault` |
-| platform token vault, `_commit_token_vault_before_publish` (`v2_full_frame.py:47, 166`) | Postgres rows | EXISTING: the vault row predates the job | commit, then publish (already so) | RETAINED: rows are never deleted after a commit. A concurrent job may already have read them (`lookup_existing`) and emitted their tokens; deleting them would orphan that job's output. A rerun emits the same tokens (the derivation is a pure function of scope, key, namespace, plaintext, and the vault is authoritative) and inserts no row | `::test_output_failure_after_the_token_commit_keeps_rows_and_a_rerun_adds_none` |
-| CLI `run.py` plain route, `:840, :854` | file vault | NEW: Q4, an existing leaf is refused with `vault_exists` (EXIT_USAGE, the message names the `--vault` argument the operator typed) before any output is written | vault, then `_write_mask_outputs` | ROLLED BACK: the leaf this run created is unlinked; exit EXIT_RUNTIME | CLI `tests/e2e/test_run_vault_gating.py::test_vault_commit_failure_writes_no_outputs`, `::test_output_failure_after_the_vault_commit_removes_the_vault`, `::test_an_existing_vault_is_refused_before_any_output` |
-| CLI `run.py` chunked route, `_run_chunked_mask:1398`, `_write_chunked_output:1455` | file vault | NEW | each table streams to a same-directory stage `_decoy_stage_<hex><suffix>` beside its target; after the last table the vault is written; then each stage is `os.replace`d onto its target | vault failure: every stage unlinked, no leaf, exit EXIT_RUNTIME; a failure inside the replace loop: the leaf and the remaining stages are unlinked, the tables already renamed stay (each rename is atomic) and the error names how many of N tables published | `::test_chunked_vault_commit_failure_leaves_no_output_and_no_stage`; existing `tests/e2e/test_vault_cli.py::test_chunked_run_writes_equivalent_vault` stays green |
-| CLI `tokenize.py`, `:333-348, :377-383` | SQLite token vault | NEW when `LocalTokenVault(create=True)` won the exclusive create (N4: `created` is the only ownership signal); EXISTING otherwise | `commit()`, then `_write_mask_outputs` | NEW: the file is unlinked on output failure although rows were committed (the cleanup condition becomes `created and not output_written`); EXISTING: committed rows are retained, same rule as the platform | CLI `tests/e2e/test_tokenize_cli.py::test_output_failure_after_commit_removes_a_vault_this_run_created`, `::test_output_failure_after_commit_keeps_a_preexisting_vault_and_its_new_rows`; existing `::test_failed_run_leaves_no_empty_vault`, `::test_failed_run_keeps_a_preexisting_vault` stay |
+Route parity (N5, gate rev 2 #5). The vault-capable route list is derived, not maintained:
+`tests/_route_vault_derivation.py::derive()` returns `{route: "commits" | "refuses"}` from
 
-Platform: fatal, decided by the failure order. `v2_vault.py:78-80` documents that a file vault
-write failure does not fail the job and `:89-100` records it as a `status="error"` node. The test
-`tests/test_vault_durability.py::test_file_vault_commit_failure_publishes_nothing` orders the vault
-before publication and asserts that a `vault_commit_failed` from `VaultWriter.write` ends the job
-before `write_v2_outputs` is called. Once that order holds, a vault failure that did not fail the job
-would publish an output whose vaulted columns can never be recovered, which is F1 itself; there is
-no state in which output publishes without a durable vault commit, so there is nothing for a
-non-fatal write to be non-fatal about. The node path at `:89-100` and the docstring sentence are
-deleted (hard delete); `_persist_job_vault` raises `VaultCommitError` (new, `api/jobs/v2_vault.py`,
-carrying the engine's registered `vault_commit_failed` or `vault_exists`), which the runner's
-existing terminal handler (`runner.py:124-156`) maps to a failed job whose manifest carries the
-reason and no path.
+1. the closed route set `api.jobs.dispatch_route.ALL_ROUTES` (`dispatch_route.py:55`; `:121`
+   refuses any other planned route, so no route exists outside it);
+2. AST of `route_dispatch_exec.py`: each route `r` has a function `execute_<r>` (missing: fail),
+   and every `execute_*` or `dispatch_*` call in the orchestrator's dispatch block
+   (`v2_orchestrator.py:254-258`, located by AST, not by line) resolves to a function of that
+   module (unmapped: fail);
+3. classification: `commits` when the executor reads `ctx.vault_writer` (AST attribute access),
+   `refuses` when the route's eligibility module emits a reason literal starting
+   `vault_not_supported_` (streaming: `_phase1_eligibility.py:181-183`), neither: fail (a route
+   that drops a vault silently, class 4).
 
-N4 (CLI tokenize ownership): `LocalTokenVault(create=True)` opens the path with
-`O_CREAT | O_EXCL | O_RDWR, 0o600` first and, on `FileExistsError`, with `O_RDWR`; the result is
-`self.created: bool`. `tokenize.py:326` (`vault_preexisted = vault.exists()`) is deleted and the
-`finally` reads `token_vault.created`. The 0600 and parent 0700 rules (`_token_vault.py:95-115`)
-are unchanged.
+`test_every_route_commits_the_vault_before_publish_or_refuses_vault_jobs` runs `derive()` on the
+tree and requires every `commits` route to have a job driver in `tests/test_vault_durability.py`'s
+`DRIVERS` mapping; a derived route with no driver fails at collection. Seeded red (fixture source
+trees under `tests/fixtures/route_sentry/`): a new `execute_x` reading `ctx.vault_writer` with no
+driver; a route in `ALL_ROUTES` with no executor; a route neither reading the writer nor refusing.
+The runtime property `test_vault_is_committed_before_any_output_exists[<each commits route>]`,
+parametrized from `derive()`, spies `_commit_vaults_before_publish`: at its return the leaf loads,
+a second `Session` sees the `ok` node, and the job's target directory holds no output file; after
+the job every declared target exists. That ordering holds whichever function publishes, so a new
+publisher inside an existing route is also caught. Mutation: move the relationship commit back
+after the loop; `[sequential, out_of_core]` go red.
+
+Retention sentry (class fix for finding 1, platform): `tests/test_vault_retention_sentry.py::
+test_no_code_path_removes_a_vault_leaf` walks the AST of `api/**/*.py` and fails when a function
+that references `job_vault_path` or `vault_dir` also calls `unlink`, `remove`, `rmtree`,
+`truncate`, `os.replace` or `os.rename`. Empty allowlist (no such function exists at
+`7fc4612d`, §1). Seeded red: rev 2's wrapper that unlinked `job_vault_path(job.id)` on an output
+failure.
+
+Q4 and N4 (gate rev 2 #6). The CLI `run --vault` refusal is the engine's exclusive publication
+(step 4); the CLI maps `vault_exists` to EXIT_USAGE and adds no `exists()` pre-check. Tokenize:
+with R1 nothing unlinks the SQLite vault, so `vault_preexisted = vault.exists()`
+(`tokenize.py:326`) and the unlink at `:383` are both deleted; `LocalTokenVault`'s open
+(`_token_vault.py:109`, `O_RDWR | O_CREAT`, 0600) is unchanged. No ownership flag exists.
+`test_a_concurrent_second_run_is_refused_and_never_deletes_the_first_runs_vault`: (a) two
+`decoy run --vault V` processes released by a `multiprocessing.Barrier` in a launcher, 20 trials:
+exactly one exits 0, the other exits EXIT_USAGE with `vault_exists`, `V` loads with the winner's
+entries and has the winner's `st_ino`, the loser wrote no output; (b) sequential: run 1 fails on
+table B (finding 1's seed), run 2 on the same `V` is refused, `V` is byte-identical to run 1's and
+re-identifies run 1's table A. Mutation: an unlink of the leaf on the refused path or on output
+failure; (a) or (b) goes red.
+
+One existing CLI test inverts under R1 and is named here as the only pinned test this plan edits
+outside N3: `tests/e2e/test_tokenize_cli.py::test_failed_run_leaves_no_empty_vault` becomes
+`::test_failed_run_keeps_the_vault_file_and_adds_no_rows` (a run that fails before `commit()`
+leaves the file, with zero rows from that run). Deleting the file needed the ownership claim the
+owner removed (the N4 race: another run may have committed rows into it). `::test_failed_run_keeps_a_preexisting_vault`
+stays unchanged.
+
+Architecture view (the whole lifecycle):
+
+```
+caller (platform route / CLI)                engine VaultWriter.write(leaf)
+  run engine; vault_writer filled
+  last cancel poll
+  -- vault commit --------------------------> 1 open stage O_EXCL   2 os.write loop   3 fsync(stage)
+                                              4 link(stage, leaf)   EEXIST -> vault_exists (stage unlinked)
+                                              5 fsync(dir)          COMMIT POINT; error -> vault_commit_failed, leaf kept
+                                              6 unlink(stage)       7 fsync(dir)   (errors leave junk, never raise)
+  platform: add target.vault ok node; db.commit() (token rows too)
+     any failure up to here: job fails, nothing published
+  -- publish table 1 .. N -------------------  failure at table k: tables < k stay, vault stays (R1), job fails
+  success
+removal of a vault leaf: never by code; an operator deletes a vault with its outputs (R4)
+```
 
 ### D2. Vault-scoped token derivation (F2, N2)
 
@@ -333,7 +352,10 @@ Scope sources:
   populated table without a data migration (a default or a delete), which the pre-release rule
   forbids; a `NULL` is the hard cut's refusal signal, not a compatibility state.
 - CLI: `meta.derivation_scope` (hex) written at `LocalTokenVault(create=True)`, 32 bytes from
-  `secrets.token_bytes`; `_SCHEMA_VERSION` 1 to 2 (`_token_vault.py:63`).
+  `secrets.token_bytes`; `_SCHEMA_VERSION` 1 to 2 (`_token_vault.py:63`). The scope is written
+  inside the schema-initialising transaction (`BEGIN IMMEDIATE`, `INSERT OR IGNORE`, then re-read),
+  so two first runs on one path agree on one scope without any ownership flag (rev 3, D1 N4);
+  `test_derivation_scope_is_32_random_bytes_and_stable_across_reopen` gains a two-process case.
 - CLI N2: closed on CLI main (`57e8b81`); `put` returns the stored token on both paths. `put_many`
   and `lookup_existing_many` are added over one `executemany` and one `IN (...)` query; both
   namespace-scoped; `put_many` returns the stored token per key the way `put` does.
@@ -501,221 +523,186 @@ protocol method and that the strings "job seed", "not started" and "never relay"
 
 ## 4. Slices
 
-Each slice: one repo, at most 10 production files, at most 800 changed lines (tests included in
-the line count, excluded from the file count), red tests first, then the change, then the mutation
-run recorded in the PR. LOC budgets (600 aim, 700 max) measured with `wc -l` from the lock:
-`vault.py` 451 on main and 525 on A-4; `_tokenize.py` 276 on B-6; `_derive.py` 419 on A-4;
-`_adapter.py` 431 on B-6; `_local.py` 378 and `_output.py` 389 on A-4. S4b keeps `vault.py` under
-600 (525 plus about 60); S3 splits the key helper out of `_tokenize.py` rather than growing it
-past 400.
+Each slice: one repo, at most 10 production files, at most 800 changed lines (tests counted in
+lines, not files), red tests first, then the change, then the mutation run recorded in the PR.
+Module LOC (aim 600, max 700; `wc -l`): `vault.py` 451 on main and 531 on A-4 `a19889a5` (rev 2
+said 525, read at an earlier A-4 head); `_tokenize.py` 276 on B-6; `_adapter.py` 431 on B-6;
+`_local.py` 378, `_output.py` 389, `serial.py` 47 on A-4. S4b deletes the ambient branch from
+`vault.py` (`:336-343`) and adds about 30 lines; S3 splits the key helper out of `_tokenize.py`.
 
 | Slice | Repo, base | Resolves | Production files | Depends on |
 |---|---|---|---|---|
 | S1 | engine, main | F7 | `determinism/_hkdf.py`, `docs/methodology-registry.yaml`, `docs/security/key-derivation.md` | none |
-| S2 | engine, main after B-6 merges | F2, F3, hard-cut codes | `execution/_adapter.py`, `execution/_strategies/_tokenize.py`, `execution/_strategies/_tokenize_key.py` (new), `reasons/runtime/_part3.py` (`tokenize_vault_scope_required`, `token_vault_derivation_unsupported`), `reasons/_registry.py` (minor bump), `docs/reasons.md` (line 21), `docs/compatibility-contract.md`, `docs/security/key-derivation.md`, `CHANGELOG.md` | S1 (vectors), B-6 branch merged |
-| S3 | engine | F4, F5 | `_opaque.py`, `execution/_strategies/_tokenize.py`, `docs/security/error-reporting-and-data-exposure.md` | S2, A-4 merged (for `_opaque.py` and `locals_support`) |
-| S4a | engine | F1 (fileaccess half), N3 | `fileaccess/_output.py`, `fileaccess/_local.py` (delete `vault_direct`, `publish(durable=)`, raising directory fsync), `fileaccess/adapters/serial.py` (`write_bytes(durable=)`), `fileaccess/_types.py` (the `publish(durable=)` protocol) | A-4 merged |
-| S4b | engine | F1 (vault half) | `vault.py`, `reasons/runtime/_part3.py` (`vault_commit_failed`, `vault_exists`), `reasons/_registry.py` (minor bump), `docs/reasons.md`, `docs/security/token-vault.md`, `docs/compatibility-contract.md`, `CHANGELOG.md` | S4a |
-| S5 | engine | F6 (engine), F8 | `docs/handoffs/inputs/b6-engine-api-note.md`, `CHANGELOG.md` (plus the property and sentry tests) | S2, S3 |
-| S6a-i | platform, main | F2 (platform), hard cut, pin | `api/migrations/versions/vault_v5_derivation_scope.py` (new), `api/models.py`, `api/vaults/store.py` (scope at create), `api/jobs/v2_token_vault.py` (`derivation_scope`, `_resolve_vault` refusal), `api/engine_a8_guard.py`, `pyproject.toml` (repin to R-b), `.github/workflows/backend.yml` (`ENGINE_PIN_SHA`) | R-b released |
-| S6a-ii | platform | F1 (platform, both route families), N5 | `api/jobs/v2_vault.py` (raise, rollback helper), `api/jobs/v2_full_frame.py`, `api/jobs/v2_sequential.py`, `api/jobs/route_dispatch_exec.py` | S6a-i |
-| S6b | platform | F6 (platform), N1 | `api/vaults/store.py` (`lookup_existing_many`, `put_many`, lock-cache clearing), `api/jobs/v2_token_vault.py` (batch adapter) | S6a-i |
-| S7a | CLI, main | F2 (CLI), N4, F1 (tokenize), N2 record | `src/decoy/cli/_token_vault.py`, `src/decoy/cli/tokenize.py`, `pyproject.toml` (repin to R-b) | R-b released |
-| S7b | CLI | F1 (run, plain and chunked), Q4 | `src/decoy/cli/run.py` | S7a |
+| S2 | engine, main after B-6 | F2, F3, hard-cut codes, registry bump test (gate rev 2 #3) | `execution/_adapter.py`, `execution/_strategies/_tokenize.py`, `execution/_strategies/_tokenize_key.py` (new), `reasons/runtime/_part3.py`, `reasons/_registry.py`, `docs/reasons.md`, `docs/compatibility-contract.md`, `docs/security/key-derivation.md`, `CHANGELOG.md`, `.github/workflows/engine-v2-substrate-matrix.yml` (`fetch-depth: 0`, §5) | S1, B-6 merged |
+| S3 | engine | F4, F5 | `_opaque.py`, `execution/_strategies/_tokenize.py`, `docs/security/error-reporting-and-data-exposure.md` | S2, A-4 merged |
+| S4a | engine | F1 (fileaccess half), N3 | `fileaccess/_output.py`, `fileaccess/_local.py` (delete `vault_direct`, `publish(durable=)`, steps 4-7), `fileaccess/adapters/serial.py` (`write_bytes(durable=)`: `os.write` loop, `fsync`), `fileaccess/_types.py` (`publish(durable=)`) | A-4 merged |
+| S4b | engine | F1 (vault half), gate rev 2 #2 | `vault.py`, `reasons/runtime/_part3.py` (`vault_commit_failed`, `vault_exists`), `reasons/_registry.py`, `docs/reasons.md`, `docs/security/token-vault.md` (R1-R4, operator rule), `docs/compatibility-contract.md`, `CHANGELOG.md` | S4a |
+| S5 | engine | F6 (engine), F8 | `docs/handoffs/inputs/b6-engine-api-note.md`, `CHANGELOG.md` | S2, S3 |
+| S6a-i | platform, main | F2 (platform), hard cut, pin | `api/migrations/versions/vault_v5_derivation_scope.py` (new), `api/models.py`, `api/vaults/store.py`, `api/jobs/v2_token_vault.py`, `api/engine_a8_guard.py`, `pyproject.toml`, `.github/workflows/backend.yml` | R-b released |
+| S6a-ii | platform | F1 (platform), N5, gate rev 2 #1 and #5 | `api/jobs/v2_vault.py` (`_commit_vaults_before_publish`, `VaultCommitError`, error node deleted), `api/jobs/v2_full_frame.py`, `api/jobs/v2_sequential.py`, `api/jobs/route_dispatch_exec.py` | S6a-i |
+| S6b | platform | F6 (platform), N1 | `api/vaults/store.py`, `api/jobs/v2_token_vault.py` | S6a-i |
+| S7a | CLI, main | F2 (CLI), F1 (tokenize), N4, N2 record | `src/decoy/cli/_token_vault.py`, `src/decoy/cli/tokenize.py`, `pyproject.toml` | R-b released |
+| S7b | CLI | F1 (run, plain and chunked), Q4, gate rev 2 #6 | `src/decoy/cli/run.py` | S7a |
 
-Changed-line budget per slice (estimate from the cited line ranges; tests included; limit 800;
-the builder records the actual `git diff --stat` in the PR and splits again if a slice measures
-over):
+Changed-line budget (estimate; the builder records `git diff --stat` and splits if over 800):
 
-| Slice | Est. production lines | Est. test lines | Est. total | Note |
-|---|---|---|---|---|
-| S1 | 110 | 140 | 250 | vectors fixture counted as test lines |
-| S2 | 180 | 260 | 440 | `FakeVault` fixtures in `test_tokenize.py` gain `derivation_scope` |
-| S3 | 150 | 230 | 380 | |
-| S4a | 130 | 180 | 310 | strace order test, fault-injection test, two N3 replacements, two pins deleted |
-| S4b | 120 | 420 | 540 | kill-point child script and seven parameters, two writers, hardlink |
-| S5 | 90 | 220 | 310 | |
-| S6a-i | 110 | 220 | 330 | v5 migration test sibling of `test_vault_v1_migration.py` |
-| S6a-ii | 90 | 300 | 390 | durability tests for both route families and the token rows |
-| S6b | 140 | 320 | 460 | |
-| S7a | 150 | 280 | 430 | N4 two-process test |
-| S7b | 120 | 220 | 340 | chunked staging |
+| Slice | Prod | Test | Total | Rev 2 total | Why it moved |
+|---|---|---|---|---|---|
+| S1 | 110 | 140 | 250 | 250 | |
+| S2 | 185 | 345 | 530 | 440 | merge-base registry test (about 90 lines), one workflow line |
+| S3 | 150 | 230 | 380 | 380 | |
+| S4a | 120 | 200 | 320 | 310 | the seven-row fault table replaces two tests |
+| S4b | 90 | 270 | 360 | 540 | no stage reclaim, no recovery table: one kill table, one child |
+| S5 | 90 | 220 | 310 | 310 | |
+| S6a-i | 110 | 220 | 330 | 330 | |
+| S6a-ii | 80 | 300 | 380 | 390 | no rollback helper; the derivation and retention sentries are added |
+| S6b | 140 | 320 | 460 | 460 | |
+| S7a | 110 | 200 | 310 | 430 | no `O_EXCL` ownership, no two-process ownership test, one unlink deleted |
+| S7b | 120 | 240 | 360 | 340 | concurrent-refusal test |
+| Total | 1305 | 2685 | 3790 | 4180 | |
 
-Why S4, S6a and S7 are split: rev 1's S4 measured at about 720 including the kill-point tests and
-S6a at about 560 with N5 added; a split keeps each under the limit with margin and gives N3 its own
-commit (the pin and the behavior move together in S4a) and N5 its own tests in S6a-ii.
-
-`rule_codes.py` (CLI) is not in S7a's file list: its engine half is derived from the pinned
-registry at first use (`rule_codes.py:9-15`), so the four registered codes appear after the repin
-without an edit; `tests/unit/test_ci_rule_codes.py` re-derives the set and is the check.
-
-The CLI B-1 writer does not share the derivation (the engine mints; `_token_vault.py:11-15`), but
-S7a is still required: the protocol gains `derivation_scope` (F2), the schema goes to 2, `created`
-replaces the `exists()` pre-check (N4), and the output/vault order is reversed (F1).
-
-Call sites that change:
-
-| Repo | File:line (read) | Change |
-|---|---|---|
-| engine | `vault.py:332-345` (A-4 numbering) | durable exclusive publish, `vault_commit_failed`, `vault_exists`, `vault_direct` route deleted |
-| engine | `fileaccess/_output.py:71-77, 246-273`; `_local.py:178-193, 225-231, 260-300`; `adapters/serial.py:45-47`; `_types.py:204` | `durable=True` fsyncs, raising directory fsync, step order 1-7 |
-| engine | `_tokenize.py:85-94, 154, 253-258` | scope check, subkey mint, boxed frames |
-| engine | `_adapter.py:98-157` | `derivation_scope` on `TokenVaultWriter` |
-| platform | `v2_token_vault.py:146-166, 177-195` | scope attribute, batch methods, old-vault refusal |
-| platform | `v2_full_frame.py:165-172, 205-206` | vault write before publish, failure fatal, rollback on output failure |
-| platform | `v2_sequential.py:449-456`, `route_dispatch_exec.py:246-247` | vault persisted before the per-table publish; the late persist deleted |
-| platform | `v2_vault.py:65-100` | raise instead of an error node; rollback helper |
-| platform | `store.py:88, 93-113, 255-319` | scope at create, lock-cache clearing, batch statements |
-| platform | `engine_a8_guard.py:60-110` | assert `derivation_scope` and the batch signatures |
-| CLI | `_token_vault.py:63, 95-130, 203-211, 215-251` | schema v2, scope, `O_EXCL` create and `created`, old-vault refusal, batch methods |
-| CLI | `tokenize.py:326, 333-348, 377-383` | ownership from `created`, vault commit before outputs, rollback of a new vault on output failure |
-| CLI | `run.py:840, 854, 1398-1470` | vault before outputs on the plain route; staged outputs on the chunked route; `vault_exists` to EXIT_USAGE |
+`rule_codes.py` (CLI) needs no edit: its engine half is derived from the pinned registry
+(`rule_codes.py:9-15`, rev 2 read); `tests/unit/test_ci_rule_codes.py` re-derives the set.
 
 ## 5. Merge and release order, versions, where each is recorded
 
-Order: S1, S2, S3 land on engine main in that order (each its own PR, Codex gate each), after the
-B-6 batch branch merges (the batch writer preserves single-row behavior; S2 and S3 change the
-behavior it preserves). A-4 merges, then S4a, S4b, then S5. Release R-b is cut from the engine main
-that carries A-4 and S1-S5 as `v0.18.0`; `docs/records/release-rb-facts.md` is written the way
-`release-ra-facts.md` is (every value with its command). Then S6a-i, S6a-ii, S6b on the platform
-(repin `decoy-engine==0.18.0`, `ENGINE_PIN_SHA` in `backend.yml`), then S7a, S7b on the CLI (repin
-`decoy-engine==0.18.0`). Nothing in S6/S7 can land against 0.17.0: the protocol attribute and the
-reason codes do not exist there.
+Order: S1, S2, S3 on engine main (each its own PR and Codex gate) after B-6 merges; A-4 merges;
+then S4a, S4b, S5. R-b is cut as `v0.18.0` from the main carrying A-4 and S1-S5, with
+`docs/records/release-rb-facts.md` written like `release-ra-facts.md`. Then S6a-i, S6a-ii, S6b on
+the platform (repin `decoy-engine==0.18.0`, `ENGINE_PIN_SHA`), then S7a, S7b on the CLI (repin).
+Nothing in S6/S7 can land against 0.17.0: the protocol attribute and the codes do not exist there.
 
-Reason registry (gate finding 3). A slice that adds identities sets `REGISTRY_VERSION`
-(`reasons/_registry.py:24`) to the value on `origin/main` at that slice's merge-base plus one minor,
-and every identity it adds carries `since=` that same literal (the form A-4 uses at
-`runtime/_secret_provider.py:85`). The literal appears in `_registry.py`, in the `since=` keywords,
-and in `docs/reasons.md` line 21, which `test_reasons_doc_states_the_live_registry_version` ties to
-the live value; no test hardcodes it. For the record, not as an instruction: main is 1.1.0 today,
-A-4 sets 1.2.0, so S2 (building after A-4) would write 1.3.0 and S4b 1.4.0; if anything else bumps
-in between, the rule decides, not these numbers. `tests/fixtures/f29/reason-manifest-v1.json` is the
-immutable append-only pin (`test_v1_manifest_is_append_only`) and is NOT regenerated.
-`tests/fixtures/f29/reason-registry-release.json` is recaptured once, at the R-b cut, by
-`scripts/release/reason_release_pin.py --write` (which `cut-release.sh` requires), never inside a
-slice. Tests that prove the bump: `tests/unit/test_reason_release_pin.py::test_live_registry_honours_the_released_pin`
-is red on the slice branch the moment an identity is added without the bump (`pin_violations`
-reports "without a registry version bump", `test_reason_release_pin.py:85-87` shows the shape) and
-green after it; `::test_identities_added_after_the_v1_pin_name_their_own_since` rejects a `since`
-at or below the v1 floor; `::test_reasons_doc_states_the_live_registry_version` ties the doc. S2
-adds `::test_no_identity_claims_a_since_newer_than_the_live_registry_version` (every `since` is at
-most `REGISTRY_VERSION`; red first by seeding one identity one minor above the live value).
-Mutation for each adding slice: revert `REGISTRY_VERSION` to main's value; the pin test goes red.
-The task's reference to the test named in the CDF plan (T17) could not be resolved: no plan in
-decoy-engine or decoy-platform `docs/` names a registry-bump test under that label (searched
-`CDF`, `T17`); the tests above are the engine's own.
+Reason registry (gate rev 2 #3). Rule: a slice that adds identities sets `REGISTRY_VERSION` to its
+merge-base's value plus exactly one minor (`X.Y.Z` to `X.(Y+1).0`), and every identity it adds
+carries `since=` that value. Neither the tests nor this plan hardcode a version; for the record
+only, main is 1.1.0 and A-4 sets 1.2.0.
 
-The code `token_vault_derivation_unsupported` is declared under
-`_catalog.runtime("decoy_engine.execution._adapter")`, the module that defines the scope contract,
-and raised by the platform and the CLI; no engine test requires a registered code to have an engine
-producer site (`test_every_producer_resolves`, `test_reason_registry.py:177-199`, checks that
-inventory sites resolve, not the converse).
+`tests/unit/test_reason_registry_bump.py::test_registry_is_merge_base_plus_one_minor_and_new_identities_carry_it`
+(lands in S2, red first; S4b is its second user):
 
-Version and format bumps, exact:
+1. `git rev-parse --is-inside-work-tree`; outside a git checkout `pytest.skip` with the reason
+   "not a git checkout: the merge-base registry bump rule is UNCHECKED" (the only skip).
+2. `base = git merge-base HEAD origin/main`. Inside a checkout where `origin/main` does not
+   resolve the test FAILS with "fetch origin/main (CI checks out with fetch-depth: 0)"; it does
+   not skip. `ci.yml:102` already fetches full history for `regression-gate`; S2 adds
+   `fetch-depth: 0` to `engine-v2-substrate-matrix.yml` (the only other workflow running the
+   unit tree, on a depth-1 checkout, `:51`). No other workflow runs `tests/unit` whole.
+3. Base version: `git show <base>:src/decoy_engine/reasons/_registry.py`, parsed with `ast` for the
+   `REGISTRY_VERSION` assignment. Base identities: `git archive <base> src/decoy_engine` into
+   `tmp_path`, then a subprocess imports that tree first on `sys.path` and prints
+   `reasons.manifest()`; identity key `(namespace, code)` (`_registry.py:28`).
+4. Asserts: `new = live_keys - base_keys`. If `new` is empty and no base identity changed its
+   `since`, `live == base`; otherwise `live == bump_minor(base)` and every identity in `new` has
+   `since == live`; no identity of the base changed its `since`.
+
+On main after a merge, `HEAD` is its own merge-base and the test asserts `live == base`. Seeded
+red: one identity added with `since="1.2.0"` while `REGISTRY_VERSION` stays `"1.2.0"` on a branch
+off A-4 (exactly the gate's case, green on both existing tests). Mutations: bump by two minors;
+bump the patch instead; leave one new identity at the base `since`; each red.
+`test_live_registry_honours_the_released_pin`, `test_identities_added_after_the_v1_pin_name_their_own_since`
+and `test_reasons_doc_states_the_live_registry_version` stay. Rev 2's
+`test_no_identity_claims_a_since_newer_than_the_live_registry_version` is dropped: `pin_violations`
+already reports it (`reason_release_pin.py:58-60`). `reason-manifest-v1.json` is immutable and not
+regenerated; `reason-registry-release.json` is recaptured only at the R-b cut by
+`reason_release_pin.py --write`.
+
+`token_vault_derivation_unsupported` is declared under
+`_catalog.runtime("decoy_engine.execution._adapter")` and raised by the platform and the CLI; no
+engine test requires an engine producer site for a registered code (`test_reason_registry.py:177-199`).
 
 | Surface | Today | After | Recorded in |
 |---|---|---|---|
-| Engine package | 0.17.0 | 0.18.0 (R-b) | `pyproject.toml` version, `CHANGELOG.md` `## [0.18.0]`, tag `v0.18.0` |
-| `TokenVaultWriter` protocol | `lookup_existing`, `put` | plus `derivation_scope: bytes` (required) | `docs/compatibility-contract.md` §3.4 (the tokenize paragraph at lines 522-540) and CHANGELOG; a required attribute is not additive under §4.1, legal pre-GA only, stated as such |
-| Token derivation | unlabeled `derive(mask_key, ns, pt)` | `tokenize-key/v1` subkey with scope | engine `_tokenize_key.py`; nothing stored beside the vault (D2 hard cut) |
-| `SEED_PROTOCOL_VERSION` | 7 | 7 (unchanged; `derive` is untouched) | `_derive.py:136`, `test_derive_vectors.py::test_seed_protocol_version_is_seven` stays |
-| File vault format | `decoy-vault/v2`, `vault-key/v1` | unchanged (bytes identical; only the publication path changes) | `vault.py:82-88`, `docs/security/token-vault.md` "File format" |
-| Reason registry | main's value at build time (1.1.0 on main today; 1.2.0 once A-4 merges) | plus one minor per adding slice (S2: `tokenize_vault_scope_required`, `token_vault_derivation_unsupported`; S4b: `vault_commit_failed`, `vault_exists`), each `since` equal to its slice's literal | `reasons/runtime/_part3.py`, `reasons/_registry.py`, `docs/reasons.md`; `reason-registry-release.json` at the R-b cut only; `reason-manifest-v1.json` untouched |
-| Platform DB | vault_v4 | `vault_v5_derivation_scope`: `derivation_scope BYTEA NULL` (NULL = refused, D2) | `api/migrations/versions/`, `test_vault_v1_migration.py` sibling `test_vault_v5_migration.py` |
-| CLI vault schema | `meta.schema_version = 1` | 2 (a 1 is refused with `token_vault_derivation_unsupported`) | `_token_vault.py::_SCHEMA_VERSION`, CLI CHANGELOG |
-| Platform engine pin | 0.16.0 | 0.18.0 | `pyproject.toml:36`, `backend.yml` `ENGINE_PIN_SHA` |
-| CLI engine pin | 0.17.0 (since #76) | 0.18.0 | `pyproject.toml:103` |
+| Engine package | 0.17.0 | 0.18.0 (R-b) | `pyproject.toml`, `CHANGELOG.md`, tag |
+| `TokenVaultWriter` | `lookup_existing`, `put` | plus `derivation_scope: bytes` (required; legal pre-GA only, stated) | `docs/compatibility-contract.md` §3.4, CHANGELOG |
+| Token derivation | `derive(mask_key, ns, pt)` | `tokenize-key/v1` subkey with scope | `_tokenize_key.py` |
+| `SEED_PROTOCOL_VERSION` | 7 | 7 | `_derive.py:136` |
+| File vault format | `decoy-vault/v2`, `vault-key/v1` | unchanged bytes; publication path and retention change | `vault.py:82-88`, `docs/security/token-vault.md` |
+| Reason registry | merge-base value | plus one minor per adding slice (S2: `tokenize_vault_scope_required`, `token_vault_derivation_unsupported`; S4b: `vault_commit_failed`, `vault_exists`) | `_part3.py`, `_registry.py`, `docs/reasons.md` |
+| Platform DB | vault_v4 | `vault_v5_derivation_scope` (`BYTEA NULL`, NULL refused) | `api/migrations/versions/`, `test_vault_v5_migration.py` |
+| CLI vault schema | 1 | 2 (1 refused with `token_vault_derivation_unsupported`) | `_token_vault.py::_SCHEMA_VERSION` |
+| Platform / CLI engine pin | 0.16.0 / 0.17.0 | 0.18.0 | `pyproject.toml`, `backend.yml` |
 
 ## 6. Acceptance tests (red first)
 
-Every test is written and shown red on the base named in "fails before" with the seeded violation,
-then the change is made, then the named mutation is applied and the test shown red again, then
-reverted. Mutations are recorded in the PR's evidence record under `docs/records/`. Baselines run
-from the lock in the same environment as the branch, and the record says so.
+Each test is shown red on its "fails before" base with the seeded violation, then the change is
+made, then the mutation is applied and the test shown red, then reverted (never committed with a
+mutation applied). Baselines run from the lock in the branch's environment, and the record says so.
 
-| Test | Seeded violation (red first) | Fails before (file:line, base) | Mutation that must turn it red |
+| Test | Seeded violation | Fails before | Mutation |
 |---|---|---|---|
-| `tests/unit/test_vault_publish.py::test_sigkill_at_each_publish_step_leaves_a_loadable_leaf_or_none[K1..K7]` | child interpreter, real `tmp_path`, `SIGKILL` after the numbered step; parent asserts the kill-point table and the recovery table | A-4 `_local.py:231` (ambient truncates the leaf in place: `K2` leaves a leaf that does not load; `K4`-`K6` unreachable); main `vault.py:305` | restore the in-place open; or unlink the stage before the link; or swallow the `link` error |
-| `::test_publish_fsyncs_file_then_directory` | `strace -f -yy` over a child; `fsync` on the stage path before `linkat`, on the parent after `linkat` and after `unlinkat` | A-4 `serial.py:45-47` (no file fsync), `_output.py:254-269` (no directory fsync in the exclusive branch) | drop any one fsync; swap the file fsync after the link |
-| `::test_a_failure_after_the_stage_exists_leaves_no_leaf_and_no_stage[write, file_fsync, link, dir_fsync]` | fault injection (not a crash test): the named call raises `OSError(EIO)`; expect `vault_commit_failed`, no leaf, no stage, no path or errno text | A-4 `_output.py:71-77`, `_local.py:178-193` (directory fsync error swallowed) | swallow the error; keep the leaf on a directory fsync failure |
-| `::test_two_real_writers_one_publishes_one_fails_closed` | two threads, real `tmp_path`, `threading.Barrier` after both staged; exactly one leaf, loser raises `vault_exists`, no `_decoy_vault_stage_*` residue, `load_vault` reads the winner | main `vault.py:305`: both succeed, last writer wins | switch the label to `replace` |
-| `::test_a_hardlinked_twin_is_not_rewritten` (replaces N3 pin 1) | a hardlinked twin keeps the old bytes; the leaf is a new inode | A-4 `test_char_vault_in_place.py:23-30` asserts the opposite | re-add `vault_direct` |
-| `::test_an_existing_vault_in_a_read_only_parent_is_preserved_and_no_stage_remains` (replaces N3 pin 2) | writable vault in a read-only parent; `write` raises `PermissionError` naming the path (ambient); vault bytes and directory listing unchanged; skipped only as root | A-4 `test_char_vault_in_place.py:33-45` asserts the rewrite | re-add `vault_direct` (the in-place `O_TRUNC` open succeeds on a writable file in a read-only directory) |
-| platform `tests/test_vault_durability.py::test_file_vault_commit_failure_publishes_nothing` | `VaultWriter.write` raises `vault_commit_failed`; job failed; `write_v2_outputs` never called; no `target.vault` node | `v2_full_frame.py:206` runs after `:168`; `v2_vault.py:89-100` returns an error node | move `_persist_job_vault` back after `write_v2_outputs`; restore the error node |
-| `::test_output_failure_after_a_file_vault_commit_removes_the_vault` | `write_v2_outputs` raises after the vault leaf exists; leaf absent after, job failed, no stage | no rollback exists on any base | skip the unlink |
-| `::test_relationship_routes_persist_the_vault_before_the_first_table_publishes[sequential_fk, out_of_core_fk]` (N5) | `_materialize_staged_sequential_outputs` spy records whether the leaf existed at its first call | `route_dispatch_exec.py:247` runs after `v2_sequential.py:450` | move the persist back after the loop |
-| `::test_relationship_route_output_failure_removes_the_vault` (N5) | the per-table publish raises on table 2 of 2; leaf absent, table 1 published, job failed | no rollback exists | skip the unlink |
-| `::test_output_failure_after_the_token_commit_keeps_rows_and_a_rerun_adds_none` | `write_v2_outputs` raises after `_commit_token_vault_before_publish`; the second session sees the rows; a rerun of the same config emits the same tokens and `count(*)` is unchanged | n/a (documents the retention rule; passes on main for the per-row seam, red for the batch seam until S6b) | delete rows on failure |
-| CLI `tests/e2e/test_run_vault_gating.py::test_vault_commit_failure_writes_no_outputs` | vault parent unwritable | `run.py:854` after `:840` | reorder back |
-| `::test_output_failure_after_the_vault_commit_removes_the_vault` | target parent made unwritable after the vault commit (monkeypatched `_write_mask_outputs` raising) | no rollback exists | skip the unlink |
-| `::test_an_existing_vault_is_refused_before_any_output` (Q4) | a pre-existing vault file; expect EXIT_USAGE, `vault_exists` in the output, vault bytes unchanged, no output files | `run.py:854` overwrites; outputs already written at `:840` | pre-delete the leaf |
-| `::test_chunked_vault_commit_failure_leaves_no_output_and_no_stage` | `--chunked --vault` with the vault parent unwritable; no target file, no `_decoy_stage_*` beside it | `_write_chunked_output` writes the target directly (`run.py:1455`) | publish the stages before the vault |
-| CLI `tests/e2e/test_tokenize_cli.py::test_output_failure_after_commit_removes_a_vault_this_run_created` | `_write_mask_outputs` raises after `commit()`; vault absent | `tokenize.py:383` keeps a committed vault | restore the `not committed` condition |
-| `::test_output_failure_after_commit_keeps_a_preexisting_vault_and_its_new_rows` | same, against a vault from a prior run; file kept, `count()` grew, a rerun reuses the tokens | n/a (passes on main; pins the retention rule) | delete this run's rows on failure |
-| CLI `tests/unit/test_token_vault.py::test_created_is_false_for_a_path_that_already_exists` (N4) | an empty 0600 file pre-created; `LocalTokenVault(path, create=True).created is False` | `created` does not exist on `a5d36b4` | derive `created` from `exists()` before the open |
-| `::test_exactly_one_of_two_processes_creates_one_path` (N4) | two `multiprocessing` children open one absent path with `create=True` behind a barrier; exactly one reports `created` | same | replace `O_EXCL` with the `exists()` pre-check |
-| `tests/unit/execution/test_tokenize_domain_separation.py::test_two_vaults_same_key_namespace_plaintext_mint_different_proposals` | two `FakeVault`s with distinct `derivation_scope`, same key, ns, plaintext; `puts[0][2]` differ | B-6 `_tokenize.py:253-258` | drop the scope from the label |
-| `::test_writer_without_derivation_scope_fails_closed` | `FakeVault` without the attribute; expect `tokenize_vault_scope_required` before any `lookup` call | no check exists (`_tokenize.py:85-94`) | default the scope to `b""` |
-| `::test_token_payload_never_equals_hash_truncate_32` | Hypothesis corpus; `hash_array(..., truncate=32)` vs token payload | B-6 `_tokenize.py:255` vs `kernel/_scalar.py:88` (probe: equal) | mint with `mask_key` as the inner IKM |
-| `::test_tokenize_subkey_vector` | pinned hex for `(key, ns, scope, pt)` captured at S2 | n/a (new) | any change to the label, the prefix or the order |
-| platform `tests/test_token_vault_adapter.py::test_a_vault_without_a_derivation_scope_is_refused_before_the_engine_runs` | a vault row with `derivation_scope = NULL`; `build_job_token_vault_writer` raises `token_vault_derivation_unsupported`; `run_pipeline` never called | no column, no check on main | return a constant scope for `NULL` |
-| platform `tests/test_vault_store.py::test_two_vaults_tokenize_apart_through_the_real_engine` | same plaintext, two vaults, real engine via `run_pipeline` | `v2_token_vault.py:158-166` (no scope) | return a constant scope |
-| CLI `tests/unit/test_token_vault.py::test_v1_vault_is_refused_with_the_derivation_code` | a schema-1 file; expect `token_vault_derivation_unsupported`, not `vault_schema_mismatch` | `_SCHEMA_VERSION` is 1 (`_token_vault.py:63`) | accept version 1; or fall through to the generic mismatch |
-| `::test_derivation_scope_is_32_random_bytes_and_stable_across_reopen` | two creates differ; reopen returns the same | no scope exists | regenerate on open |
-| `tests/unit/execution/test_tokenize_frame_locals.py::test_vault_failure_traceback_holds_no_plaintext_or_key[per_row, batch, lazy_mapping]` | `assert_no_engine_local_holds(exc, "canary-key-", "pt-canary-")` with the ASCII key `b"canary-key-0123456789abcdefghijk"` (A-4 `tests/fileaccess/locals_support.py:53`) | B-6 frames listed in §1 (`_resolve_tokens` local `mask_key`, `run` local `normalized`) | keep only `mask_key` as a plain local (box everything else): red on the key canary alone |
-| `tests/unit/execution/test_tokenize.py::test_lazy_mapping_whose_items_raises_is_sanitized[lookup_many, put_many]` | mapping subclass whose `items()` raises with the plaintext in the message; expect `tokenize_vault_error` with empty chain | B-6 `_tokenize.py:212` (probe: `RuntimeError` escapes) | materialize outside the `try` |
-| `::test_hostile_key_and_token_objects_are_rejected_inside_the_boundary` | `str` subclasses whose `__eq__`, `__hash__`, `__bool__` raise, as keys and as values, both seams | `_tokenize.py:192, 214` | replace `type(x) is str` with `isinstance` |
-| `tests/property/test_tokenize_parity.py::test_batch_and_per_row_emit_identical_tokens` | generated lists with duplicates, NFC pairs, nulls, preloaded hits | B-6 `test_tokenize.py:535-541` covers one example | skip NFC on the batch seam; include a hit in `put_many` |
-| platform `tests/test_vault_batch_pg.py::test_two_sessions_interleave_lookup_many_and_put_many` | two sessions, barrier after both lookups miss, A commits | no batch seam on main | return the proposal instead of the re-read |
-| `::test_partial_put_many_after_a_concurrent_commit` | A commits a subset between B's lookup and put | same | skip the re-read for conflict losers |
-| `::test_batch_commit_failure_publishes_nothing` | `db.commit` raises | `test_vault_durability.py:167` covers the per-row seam only | call `write_v2_outputs` before the commit |
-| platform `tests/test_vault_concurrency_pg.py::test_write_lock_is_reacquired_after[commit, rollback, savepoint_rollback]` (N1) | A put, boundary, A put again; B `complete()` under `lock_timeout` must raise `55P03`; control before the boundary | `store.py:88, 160-165` (N1): after the boundary B's `complete()` returns at once | remove the listener for that boundary |
-| `tests/unit/determinism/test_hkdf.py::test_engine_vectors_are_unchanged_by_the_pyca_swap` | fixture captured on main `1132d29e` from the lock, including the empty-salt refusal entries | n/a (behavior-preserving) | change the salt, info order or length handling; map an empty salt to zeros |
-| `::test_oneshot_rejects_empty_salt` | `hkdf_sha256(ikm, b"", info, 32)` raises `ValueError` matching `salt must be non-empty`; red first on a naive swap seeded in the worktree (PyCA accepts, §1) | n/a on main (passes through `hkdf_extract`); red on the seeded swap | drop the guard from `hkdf_sha256` |
-| `tests/sentry/test_hkdf_is_pyca.py::test_hkdf_module_delegates_to_cryptography` | `_hkdf` imports `HKDF`, `HKDFExpand`, `HMAC` from `cryptography` and does not import `hashlib` | main `_hkdf.py:26-27` | re-add the stdlib loop |
-| `tests/unit/test_reason_release_pin.py::test_no_identity_claims_a_since_newer_than_the_live_registry_version` | one identity seeded with `since` one minor above `REGISTRY_VERSION` | n/a (new) | remove the check |
-| `tests/sentry/test_b6_note_currency.py::test_note_signatures_and_claims_match_code` | note quotes signatures; forbidden phrases | B-6 note lines 2, 93-96, 114-115 | re-add "job seed" |
+| `tests/unit/test_vault_publish.py::test_sigkill_after_each_publish_step[ambient\|strict × K1..K7]` | none: the A-4 code; SIGKILL after the wrapped call of each step | A-4 `_local.py:225-231`, `serial.py:45-47`, `_output.py:252-268` (kill points not reached); main `vault.py:305` | restore the in-place open; buffered write; drop the file fsync |
+| `::test_an_injected_failure_at_each_step[write, file_fsync, link_eio, link_eexist, dir_fsync, unlink, dir_fsync_after_unlink]` | the named call raises | A-4 `_output.py:71-77`, `_local.py:178-193` (directory fsync swallowed) | swallow the step 5 error; unlink the leaf on step 5 failure |
+| `::test_publish_fsyncs_file_then_directory` | strace order | A-4 `serial.py:45-47`, `_output.py:252-268` | drop any fsync; fsync after the link |
+| `::test_two_real_writers_one_publishes_one_fails_closed` | two threads, barrier | main `vault.py:305` | publish with `replace` |
+| `::test_an_existing_hardlinked_vault_is_refused_and_both_names_are_unchanged` (N3 pin 1) | leaf and twin share one inode with old bytes | A-4 `test_char_vault_in_place.py:23-30` | re-add `vault_direct` |
+| `::test_an_existing_vault_in_a_read_only_parent_is_preserved_and_no_stage_remains` (N3 pin 2) | writable vault, read-only parent | A-4 `test_char_vault_in_place.py:33-45` | re-add `vault_direct` |
+| platform `tests/test_vault_durability.py::test_file_vault_commit_failure_publishes_nothing` | `write` raises `vault_commit_failed` | `v2_full_frame.py:206` after `:168`; `v2_vault.py:89-100` error node | restore the error node |
+| `::test_node_commit_failure_publishes_nothing_and_keeps_the_leaf` | `db.commit` raises after `write` | `v2_vault.py:65-100` has no such commit | publish before the commit |
+| `::test_output_failure_keeps_a_reachable_vault[full_frame]` | `write_v2_outputs` raises | `v2_full_frame.py:168` before `:206`; rollback `v2_orchestrator.py:269` | add the node after publication |
+| `::test_table_b_failure_keeps_a_vault_that_reidentifies_table_a[sequential, out_of_core]` (gate #1) | table 2 of 2 raises; POST `/unmask` on table A | `v2_sequential.py:319-350` before `route_dispatch_exec.py:246-247`; `router.py:80-95` | unlink the leaf on failure; skip the node commit |
+| `::test_vault_is_committed_before_any_output_exists[<derived>]` (N5) | spy at the vault commit | `route_dispatch_exec.py:246-247` | move the relationship commit after the loop |
+| `::test_output_failure_after_the_token_commit_keeps_rows_and_a_rerun_adds_none` | publish raises after the commit | n/a (pins retention; red for batch until S6b) | delete rows on failure |
+| `tests/test_vault_route_parity_sentry.py::test_every_route_commits_the_vault_before_publish_or_refuses_vault_jobs` (gate #5) | fixture trees: unmapped route, executor without driver, route neither committing nor refusing | n/a on main (new); red on each fixture | drop the driver for `out_of_core` |
+| `tests/test_vault_retention_sentry.py::test_no_code_path_removes_a_vault_leaf` | rev 2's unlink-on-failure wrapper | n/a (main has no removal) | add `job_vault_path(job.id).unlink()` in an `except` |
+| CLI `tests/e2e/test_run_vault_gating.py::test_table_b_failure_keeps_a_vault_that_reidentifies_table_a` (gate #1) | table B write raises in `_write_mask_outputs` | `run.py:840` before `:854` | unlink the vault on failure |
+| `::test_vault_commit_failure_writes_no_outputs` | vault parent unwritable | `run.py:854` after `:840` | reorder back |
+| `::test_an_existing_vault_is_refused_before_any_output` (Q4) | pre-existing vault | `run.py:854` overwrites | pre-delete the leaf |
+| `::test_a_concurrent_second_run_is_refused_and_never_deletes_the_first_runs_vault` (gate #6) | two processes released together, 20 trials; and run 1 failing on table B then run 2 | `run.py:854` (overwrite) | unlink the leaf on the refused or failed path |
+| `::test_chunked_vault_commit_failure_leaves_no_output_and_no_stage` | `--chunked --vault`, vault parent unwritable | `run.py:1455` writes the target directly | publish stages before the vault |
+| `::test_chunked_replace_failure_keeps_the_vault` | the second `os.replace` raises | no staging exists | unlink the vault |
+| CLI `tests/e2e/test_tokenize_cli.py::test_output_failure_after_commit_keeps_the_vault_and_its_rows` | `_write_mask_outputs` raises after `commit()` | `tokenize.py:383` unlinks a vault judged new at `:326` | re-add the unlink |
+| `::test_failed_run_keeps_the_vault_file_and_adds_no_rows` (replaces `test_failed_run_leaves_no_empty_vault`, §D1) | failure before `commit()` | `tokenize.py:383` | re-add the unlink |
+| `tests/unit/test_reason_registry_bump.py::test_registry_is_merge_base_plus_one_minor_and_new_identities_carry_it` (gate #3) | new identity at the base `since`, version unbumped | `reason_release_pin.py:48-65` passes it | bump two minors; bump the patch |
+| `tests/unit/execution/test_tokenize_domain_separation.py::test_two_vaults_same_key_namespace_plaintext_mint_different_proposals` | two scopes | B-6 `_tokenize.py:253-258` | drop the scope from the label |
+| `::test_writer_without_derivation_scope_fails_closed` | no attribute | `_tokenize.py:85-94` | default the scope to `b""` |
+| `::test_token_payload_never_equals_hash_truncate_32` | Hypothesis corpus | `_tokenize.py:255` vs `kernel/_scalar.py:88` | `mask_key` as inner IKM |
+| `::test_tokenize_subkey_vector` | pinned hex captured at S2 | n/a | change label, prefix or order |
+| platform `tests/test_token_vault_adapter.py::test_a_vault_without_a_derivation_scope_is_refused_before_the_engine_runs` | `derivation_scope = NULL` | no column on main | constant scope for NULL |
+| platform `tests/test_vault_store.py::test_two_vaults_tokenize_apart_through_the_real_engine` | same plaintext, two vaults | `v2_token_vault.py:158-166` | constant scope |
+| CLI `tests/unit/test_token_vault.py::test_v1_vault_is_refused_with_the_derivation_code` | schema-1 file | `_token_vault.py:63` | accept version 1 |
+| `::test_derivation_scope_is_32_random_bytes_and_stable_across_reopen` | two creates; reopen | no scope | regenerate on open |
+| `tests/unit/execution/test_tokenize_frame_locals.py::test_vault_failure_traceback_holds_no_plaintext_or_key[per_row, batch, lazy_mapping]` | ASCII key canary | B-6 frames (§1) | keep only `mask_key` unboxed |
+| `tests/unit/execution/test_tokenize.py::test_lazy_mapping_whose_items_raises_is_sanitized[lookup_many, put_many]` | `items()` raises with plaintext | `_tokenize.py:212` | materialize outside the `try` |
+| `::test_hostile_key_and_token_objects_are_rejected_inside_the_boundary` | `str` subclasses with raising hooks | `_tokenize.py:192, 214` | `isinstance` for `type(x) is str` |
+| `tests/property/test_tokenize_parity.py::test_batch_and_per_row_emit_identical_tokens` | generated lists | `test_tokenize.py:535-541` | skip NFC on one seam; a hit in `put_many` |
+| platform `tests/test_vault_batch_pg.py::test_two_sessions_interleave_lookup_many_and_put_many`, `::test_partial_put_many_after_a_concurrent_commit`, `::test_batch_commit_failure_publishes_nothing` | two sessions | no batch seam on main | return the proposal; skip the re-read; publish before the commit |
+| platform `tests/test_vault_concurrency_pg.py::test_write_lock_is_reacquired_after[commit, rollback, savepoint_rollback]` (N1) | B `complete()` under `lock_timeout` | `store.py:88, 160-165` | remove one listener |
+| `tests/unit/determinism/test_hkdf.py::test_engine_vectors_are_unchanged_by_the_pyca_swap`, `::test_oneshot_rejects_empty_salt` | captured vectors incl. refusals; naive swap seeded | n/a; red on the seeded swap | map empty salt to zeros; drop a guard |
+| `tests/sentry/test_hkdf_is_pyca.py::test_hkdf_module_delegates_to_cryptography` | stdlib import | main `_hkdf.py:26-27` | re-add the stdlib loop |
+| `tests/sentry/test_b6_note_currency.py::test_note_signatures_and_claims_match_code` | forbidden phrases | B-6 note `:2, 93-96, 114-115` | re-add "job seed" |
 
-No threshold, slice bound, allowlist or census entry is widened by this plan. `vault.py` on A-4 is
-525 lines; S4b is budgeted to stay under 600 and takes no census entry. The two deleted pins
-(`test_char_vault_in_place.py:23-45`) are each replaced by a named test in the same commit; no other
-pinned test or golden is edited.
+No threshold, slice bound, allowlist or census entry is widened. Pinned tests edited: the two N3
+pins (`test_char_vault_in_place.py:23-45`, replaced in S4a) and
+`test_tokenize_cli.py::test_failed_run_leaves_no_empty_vault` (replaced in S7a, R1); no other pin
+or golden moves.
 
 ## 7. Owner decisions applied, and the one open question
 
-Applied as written (§0a): D2/Q1 hard cut; Q3 the platform file-vault write is fatal (decided by
-`test_file_vault_commit_failure_publishes_nothing`, D1); Q4 the CLI refuses an existing vault
-(`vault_exists`). Not reopened.
+Applied as written (§0a): never-delete; D2/Q1 hard cut; Q3 fatal; Q4 refusal. Not reopened.
 
-- Q2 (goldens), still open. Does the tokenize and hash domain separation move any pinned golden?
-  Engine: no golden fixture contains a tokenize output (`grep -rl "tok_" tests/fixtures tests/golden`
-  on main returns nothing); `hash`, `fpe`, generation and the file vault bytes are unchanged (D7).
-  Platform: `tests/test_vault_e2e.py` and `test_token_vault_adapter.py` assert shape and round trip,
-  not token values. CLI: `tests/e2e/test_tokenize_cli.py` asserts the prefix and reversal. The plan
-  therefore moves no golden; confirm, or name the pin to re-record.
-
-No decision is needed for N4 or N5: each is fixed in its class with a test, and neither changes a
-documented behavior beyond what D1 already changes.
+- Q2 (goldens), still open: no engine golden holds a tokenize output (`grep -rl "tok_"
+  tests/fixtures tests/golden` on main is empty); `hash`, `fpe`, generation and vault bytes are
+  unchanged; platform and CLI tests assert shape and round trip, not token values. The plan moves
+  no golden; confirm, or name the pin to re-record.
+- Consequence to acknowledge, not a new decision: under R1 a CLI `run --vault V` that fails after
+  the vault commit leaves `V`, so a rerun to `V` is refused (Q4) until the operator chooses a new
+  path or removes `V` with its outputs. The message says so (D1 callers table).
 
 ## 8. Repeat-class register and stop conditions
 
-- F4 is the second appearance of class 1 frame-local secret material: the first was A-4 round 4
-  (`_derive.py:282-309`, `vault.py` `_fernet`/`assert_keyed_with`, owner decision 2026-11-01 §A-4
-  round 4). The fix is the shared construction (D4), not a local `del`. If a third instance of this
-  class appears in any gate on this plan's slices, the builder stops and reports instead of patching.
-- Class 4 (route parity): F5 (engine guard placement) was the first instance; N5 (platform
-  relationship routes persist the vault after the per-table publish) is the second, found in rev 2
-  by reading every caller of `_persist_job_vault` rather than the one rev 1 cited. A third class-4
-  instance in any slice stops that slice.
-- Class 7 (check then use): N1 (platform lock cache) and N4 (CLI `exists()` before a non-exclusive
-  create) are the two instances, in different repos. A further class-7 finding in S6 or S7 stops
+- Class 1, frame-local secrets: F4 is the second instance (A-4 round 4 the first); D4 is the shared
+  fix. A third instance in any slice gate stops the builder.
+- Class 4, route parity: F5 first, N5 second; gate rev 2 #5 (a hand-maintained route list) is the
+  second class-4 miss on this plan's design. The route list is now derived (D1). A third class-4
+  finding in any slice stops that slice.
+- Class 2 and 5, destructive cleanup: gate rev 2 #1 is the first; R1 plus one retention sentry
+  per repo is the class fix. A second instance stops the slice.
+- Class 7: N1 and N4. N4 is closed by deleting the use (no unlink), not by a stronger check. A
+  further class-7 finding in S6 or S7 stops that slice.
+- Class 8, harness that cannot reach its asserted states: gate rev 2 #2 and #4. Every crash row
+  now names its wrapped call and its return code. A further instance in S4 stops S4b.
+- Class 10: N3 (pins), gate rev 2 #3 (registry). A further class-10 finding in S2, S4 or S7 stops
   that slice.
-- N3 is class 10 (a pin without its partner), resolved by moving both pins and the behavior in one
-  commit (S4a); N2 was class 10 and is closed upstream. A further class-10 finding in S4 or S7
-  stops that slice.
-- Class 3 (state machine): the rev 1 publication design claimed an unreachable state (gate
-  finding 1); D1 now states the reachable states. A class-3 finding against D1's table in the S4
-  gate stops S4b.
 
 ## 9. Measurements and probes (reproducible from the lock)
 
@@ -724,67 +711,56 @@ uv sync --frozen --all-extras            # engine 1132d29e; cryptography 49.0.0;
 git worktree add /tmp/wt-b6 origin/feat/b6-batch-vault-writer-engine
 cd /tmp/wt-b6 && /path/to/engine/.venv/bin/python -m pytest -q -p no:cacheprovider \
   tests/unit/execution/test_tokenize.py tests/unit/determinism tests/unit/test_vault.py
-# 132 passed
+# 132 passed (rev 1)
 ```
 
-Probe (run with `PYTHONPATH` at the B-6 worktree `src`; results in §1):
-
-```python
-from decoy_engine.determinism import derive
-from decoy_engine.determinism._hkdf import hkdf_sha256, hkdf_extract, hkdf_expand
-from decoy_engine.kernel._scalar import hash_array
-from decoy_engine.execution._strategies import _tokenize as T
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.kdf.hkdf import HKDF, HKDFExpand
-import pyarrow as pa, unicodedata
-key, ns, pt = b"k" * 32, "pan_ns", unicodedata.normalize("NFC", "4111111111111111")
-h = hash_array(pa.array([pt]), seed=key, namespace=ns, truncate=32).to_pylist()[0]
-tok = T._TOKEN_PREFIX + derive(key, ns, pt.encode()).hex()[:T._TOKEN_HEX_LEN]
-assert h == tok[4:]                                     # F3
-salt = b"decoy-engine/determinism/v1"
-assert hkdf_sha256(ikm=key, salt=salt, info=b"pan_ns", length=32) == \
-    HKDF(algorithm=hashes.SHA256(), length=32, salt=salt, info=b"pan_ns").derive(key)   # F7
-prk = hkdf_extract(salt, key)
-assert hkdf_expand(prk, b"i", 64) == HKDFExpand(algorithm=hashes.SHA256(), length=64, info=b"i").derive(prk)
-# F4: raise from a writer's put; walk exc.__traceback__ frames; see §1 for the frames found.
-# F5: a dict subclass whose items() raises, returned from lookup_existing_many: RuntimeError escapes.
-```
+The F3/F7 probe script is unchanged from rev 2 and is not repeated: `git show
+f4a2a3b1:docs/plans/2026-11-01-b6-vault-crypto-remediation.md`, §9 (results in §1 above).
 
 Empty-salt probe (rev 2; system Python 3.13.18, `cryptography 50.0.1`, standalone copy of main
-`a3fe49e8` `determinism/_hkdf.py` imported as a module; the lock environment was not built in the
-rev 2 session, so the builder re-runs this from the lock in S1 and records the output):
+`_hkdf.py`; S1 re-runs it from the lock and records the output): PyCA `salt=b""`, `salt=None` and
+`salt=b"\x00" * 32` derive equal bytes; main's `hkdf_sha256(salt=b"")` raises `ValueError:
+hkdf_extract: salt must be non-empty`.
 
-```python
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.kdf.hkdf import HKDF
-import _hkdf_main as H                      # copy of src/decoy_engine/determinism/_hkdf.py
-k = b"k" * 32
-empty = HKDF(algorithm=hashes.SHA256(), length=32, salt=b"", info=b"i").derive(k)
-zeros = HKDF(algorithm=hashes.SHA256(), length=32, salt=b"\x00" * 32, info=b"i").derive(k)
-none_ = HKDF(algorithm=hashes.SHA256(), length=32, salt=None, info=b"i").derive(k)
-assert empty == zeros == none_              # PyCA: empty salt silently equals the all-zero salt
-H.hkdf_sha256(ikm=k, salt=b"", info=b"i", length=32)   # ValueError: hkdf_extract: salt must be non-empty
-assert H.hkdf_sha256(ikm=k, salt=b"\x00" * 32, info=b"i", length=32) == zeros
-```
+Not run in rev 3: no test, probe or build. Rev 3 is a read-only revision; the CLI was not re-read
+(see the bases table).
 
-Output observed: `pyca empty==zeros: True empty==None: True`; `engine one-shot: ValueError:
-hkdf_extract: salt must be non-empty`; `engine zeros == pyca zeros: True`.
+## 10. Is this the smallest design that closes the defect, and what I would cut
 
-LOC (`wc -l`, lock env, rev 1): `vault.py` main 451 / A-4 525; `_tokenize.py` B-6 276; `_derive.py`
-A-4 419; `_adapter.py` B-6 431; `_hkdf.py` 95; `_local.py` A-4 378; `_output.py` A-4 389;
-`_opaque.py` A-4 37.
+The defect is F1 (a published output can lose its vault, and a vault can be torn or overwritten)
+plus the crypto findings F2-F7. For F1 the design is now close to minimal: one engine publication
+sequence that every caller already reaches through `VaultWriter.write`, one ordering rule (vault
+before output) and one retention rule that needs no state. Rev 3 removed rev 2's per-caller
+NEW/EXISTING split, the rollback helper, the stage reclaim and recovery table, the `O_EXCL`
+ownership flag and its race test, and one redundant registry test; the estimate fell from 4180 to
+3790 changed lines and the plan from 790 lines to the length of this file.
 
-## 10. Plan lint and done-when
+It is not the smallest possible plan. What I would cut, and what each cut costs:
 
-Plan lint: no plan-lint tool exists in decoy-engine, decoy-platform or the CLI (searched
-`plan-lint`, `plan_lint`, `planlint`, `lint_plan` over `*.py`, `*.toml`, `*.md`, `*.yml`, `*.sh`;
-the only hits are two prose mentions in `decoy-platform/docs/ROADMAP.md`). The referenced
-`/home/cam/dev-rules` directory is not present in this environment. This plan was checked by hand
-against the required-content list: every finding, including the eight gate findings and N4, N5,
-has a section, a slice, a named red test with its seeded violation, fail-before location and
-mutation; the owner decisions are applied in §0a and nowhere reopened; the version bumps and their
-recording places are in §5; every slice has a changed-line estimate under 800 in §4.
+1. S6b's platform batch seam (`lookup_existing_many`, `put_many`, three PG tests, about 330 of
+   its 460 lines). The per-row seam is correct today; the batch seam is a performance feature
+   carried here because F6 asks for tests at its boundary. Keep N1 (a real lock bug) as a 130-line
+   slice. Cost: the platform stays on the per-row seam until a later item.
+2. The CLI chunked staging (half of S7b). Refusing `--chunked --vault` with a registered code
+   closes F1 on that route in about 40 lines. Cost: a supported flag combination stops working
+   pre-GA; owner call.
+3. D1 step 7 (the second directory fsync) and its kill row. Without it a power loss can bring a
+   stage name back as a hardlink twin of the leaf, which R4 already declares junk. Kept only
+   because the gate's harness spec names seven steps.
+4. The D8 note-currency sentry (S5): a doc rewrite without a sentry closes F8 at the cost of
+   future drift detection.
 
-Done when: this file is on `plan/b6-vault-crypto-remediation`; the ROADMAP B-6 row in
-decoy-platform links it (a one-line platform PR by the orchestrator, not this plan); the Codex plan
-gate returns GO; S1-S7b then follow the order in §5.
+Not cuttable without reopening the defect: the stage-fsync-link-fsync sequence, vault before
+output on every vault-capable route with the derived route list, the never-delete rule and its
+sentries, D2's scope (F2), D4 and D5 (F4, F5), and D7's preserved refusal.
+
+## 11. Plan lint and done-when
+
+No plan-lint tool exists in decoy-engine, decoy-platform or the CLI (rev 2 searched); the
+`/home/cam/dev-rules` directory is not present in this environment. Checked by hand: each gate
+rev 2 finding maps to a section, a slice and a red-first test with seeded violation and fail-before
+location (§0b); owner decisions are applied and not reopened (§0a); version bumps are in §5;
+every slice estimate is under 800 (§4).
+
+Done when: this file is on `plan/b6-vault-crypto-remediation`; the platform ROADMAP B-6 row links
+it (orchestrator); the Codex plan gate returns GO; S1-S7b follow §5.
