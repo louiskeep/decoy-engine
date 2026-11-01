@@ -37,7 +37,7 @@ if TYPE_CHECKING:
 class OocPreflight:
     # Boxed (`_opaque`): the runner's frame keeps this object for the whole run, and the drivers
     # unbox the key only in their call expressions.
-    mask_key: OpaqueBox
+    key_box: OpaqueBox
     reorder_threshold_rows: int
 
 

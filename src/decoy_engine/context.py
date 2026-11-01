@@ -361,14 +361,18 @@ def _hkdf_sha256(master: bytes, info: str, length: int = 32) -> bytes:
     sites (verified by reference-vector unit tests in
     `tests/unit/test_hkdf.py`).
     """
-    from decoy_engine.determinism._hkdf import hkdf_sha256
+    try:
+        from decoy_engine.determinism._hkdf import hkdf_sha256
 
-    return hkdf_sha256(
-        ikm=master,
-        salt=b"\x00" * 32,
-        info=info.encode("utf-8"),
-        length=length,
-    )
+        return hkdf_sha256(
+            ikm=master,
+            salt=b"\x00" * 32,
+            info=info.encode("utf-8"),
+            length=length,
+        )
+    except BaseException:
+        del master
+        raise
 
 
 def make_key_resolver(

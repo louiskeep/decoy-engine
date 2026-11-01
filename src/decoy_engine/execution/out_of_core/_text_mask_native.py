@@ -239,36 +239,40 @@ def native_text_mask_array(
     same `StrategyError(code='fpe_unencryptable_domain')` on a fail-closed span, so this route
     raises where the per-cell loop did. Its per-call notices are merged into the caller's per-table
     accumulator so the one aggregate `text_mask_sub_floor_span_handled` warning is unchanged."""
-    config = native.decision.config
-    if config is None:  # pragma: no cover - a native decision always carries its config
-        raise ExecutionError(
-            code=reasons.runtime.OUT_OF_CORE_TEXT_MASK_UNPREPARED,
-            message="a native text_mask column reached the kernel without a resolved config.",
+    try:
+        config = native.decision.config
+        if config is None:  # pragma: no cover - a native decision always carries its config
+            raise ExecutionError(
+                code=reasons.runtime.OUT_OF_CORE_TEXT_MASK_UNPREPARED,
+                message="a native text_mask column reached the kernel without a resolved config.",
+            )
+        native.decision.native_calls += 1
+        out, notices = native_text_mask(
+            values,
+            mask_key=mask_key,
+            column=native.decision.column,
+            detectors=config.detectors,
+            per_detector_strategy=config.per_detector,
+            unmatched_span_policy=config.unmatched_span_policy,
+            token=config.token,
+            date_shift_bounds=config.date_shift_bounds,
+            sub_floor_span_policy=config.sub_floor_span_policy,
         )
-    native.decision.native_calls += 1
-    out, notices = native_text_mask(
-        values,
-        mask_key=mask_key,
-        column=native.decision.column,
-        detectors=config.detectors,
-        per_detector_strategy=config.per_detector,
-        unmatched_span_policy=config.unmatched_span_policy,
-        token=config.token,
-        date_shift_bounds=config.date_shift_bounds,
-        sub_floor_span_policy=config.sub_floor_span_policy,
-    )
-    if sub_floor_notices is not None:
-        for detector_id, count in notices.items():
-            sub_floor_notices[detector_id] = sub_floor_notices.get(detector_id, 0) + count
-    if not isinstance(out, pa.Array) or out.type != pa.string() or len(out) != len(values):
-        raise ExecutionError(
-            code=reasons.runtime.OUT_OF_CORE_TEXT_MASK_NATIVE_RESULT_INVALID,
-            message=(
-                "the native text_mask kernel returned an array that is not one string per "
-                "input row."
-            ),
-        )
-    return out
+        if sub_floor_notices is not None:
+            for detector_id, count in notices.items():
+                sub_floor_notices[detector_id] = sub_floor_notices.get(detector_id, 0) + count
+        if not isinstance(out, pa.Array) or out.type != pa.string() or len(out) != len(values):
+            raise ExecutionError(
+                code=reasons.runtime.OUT_OF_CORE_TEXT_MASK_NATIVE_RESULT_INVALID,
+                message=(
+                    "the native text_mask kernel returned an array that is not one string per "
+                    "input row."
+                ),
+            )
+        return out
+    except BaseException:
+        del mask_key
+        raise
 
 
 __all__ = [

@@ -70,6 +70,7 @@ import os
 from pathlib import Path
 
 from decoy_engine import fileaccess
+from decoy_engine._opaque import OpaqueBox
 from decoy_engine.profiling.model_pack import _packio
 from decoy_engine.profiling.model_pack.types import ModelPackManifest
 
@@ -112,16 +113,20 @@ def derive_pack_signing_key(master: bytes) -> bytes:
     ValueError
         If ``master`` is not exactly 32 bytes.
     """
-    if not isinstance(master, (bytes, bytearray)) or len(master) != 32:
-        raise ValueError("master key must be 32 bytes")
-    from decoy_engine.determinism._hkdf import hkdf_sha256
+    try:
+        if not isinstance(master, (bytes, bytearray)) or len(master) != 32:
+            raise ValueError("master key must be 32 bytes")
+        from decoy_engine.determinism._hkdf import hkdf_sha256
 
-    return hkdf_sha256(
-        ikm=bytes(master),
-        salt=b"\x00" * 32,
-        info=PACK_SIGNING_INFO.encode("utf-8"),
-        length=32,
-    )
+        return hkdf_sha256(
+            ikm=bytes(master),
+            salt=b"\x00" * 32,
+            info=PACK_SIGNING_INFO.encode("utf-8"),
+            length=32,
+        )
+    except BaseException:
+        del master
+        raise
 
 
 def sign_pack(pack_dir: Path, key: bytes) -> str:
@@ -150,34 +155,38 @@ def sign_pack(pack_dir: Path, key: bytes) -> str:
     ValueError
         If ``key`` is empty or ``manifest.json`` is missing/corrupt.
     """
-    if not key:
-        raise ValueError("sign_pack: key must be non-empty bytes")
-    shown = _packio.member_display(pack_dir)
     try:
-        data = _packio.read_member(pack_dir, "manifest.json")
-        if data is None:
-            raise FileNotFoundError(
-                errno.ENOENT, os.strerror(errno.ENOENT), f"{shown}/manifest.json"
-            )
-        raw = json.loads(data.decode("utf-8"))
-        manifest = ModelPackManifest.from_dict(raw)
-    except (OSError, json.JSONDecodeError, TypeError, KeyError) as exc:
-        # X3: a policy decision or a resource failure (denial, memory, ENOSPC/EDQUOT/ENOMEM, read
-        # error) keeps its class and errno rather than becoming a plain ValueError that would lose
-        # OOM/disk-quota handling. X2: the pack is named by its config position under a strict
-        # policy; the CLI still sees the path.
-        if fileaccess.keeps_class(exc):
-            raise
-        raise ValueError(f"sign_pack: cannot read manifest in {shown}: {exc}") from exc
-    digest = sign_manifest(manifest, key)
-    raw["manifest_hmac"] = digest
-    # Write canonically (sort_keys) so the on-disk manifest is stable across signings.
-    _packio.write_member(
-        pack_dir,
-        "manifest.json",
-        (json.dumps(raw, indent=2, sort_keys=True) + "\n").encode("utf-8"),
-    )
-    return digest
+        if not key:
+            raise ValueError("sign_pack: key must be non-empty bytes")
+        shown = _packio.member_display(pack_dir)
+        try:
+            data = _packio.read_member(pack_dir, "manifest.json")
+            if data is None:
+                raise FileNotFoundError(
+                    errno.ENOENT, os.strerror(errno.ENOENT), f"{shown}/manifest.json"
+                )
+            raw = json.loads(data.decode("utf-8"))
+            manifest = ModelPackManifest.from_dict(raw)
+        except (OSError, json.JSONDecodeError, TypeError, KeyError) as exc:
+            # X3: a policy decision or a resource failure (denial, memory, ENOSPC/EDQUOT/ENOMEM, read
+            # error) keeps its class and errno rather than becoming a plain ValueError that would lose
+            # OOM/disk-quota handling. X2: the pack is named by its config position under a strict
+            # policy; the CLI still sees the path.
+            if fileaccess.keeps_class(exc):
+                raise
+            raise ValueError(f"sign_pack: cannot read manifest in {shown}: {exc}") from exc
+        digest = sign_manifest(manifest, key)
+        raw["manifest_hmac"] = digest
+        # Write canonically (sort_keys) so the on-disk manifest is stable across signings.
+        _packio.write_member(
+            pack_dir,
+            "manifest.json",
+            (json.dumps(raw, indent=2, sort_keys=True) + "\n").encode("utf-8"),
+        )
+        return digest
+    except BaseException:
+        del key
+        raise
 
 
 def _canonical_payload(manifest: ModelPackManifest) -> bytes:
@@ -216,10 +225,14 @@ def sign_manifest(manifest: ModelPackManifest, key: bytes) -> str:
     ValueError
         If ``key`` is empty.
     """
-    if not key:
-        raise ValueError("sign_manifest: key must be non-empty bytes")
-    payload = _canonical_payload(manifest)
-    return _hmac_mod.new(key, payload, hashlib.sha256).hexdigest()
+    try:
+        if not key:
+            raise ValueError("sign_manifest: key must be non-empty bytes")
+        payload = _canonical_payload(manifest)
+        return _hmac_mod.new(key, payload, hashlib.sha256).hexdigest()
+    except BaseException:
+        del key
+        raise
 
 
 def verify_manifest(manifest: ModelPackManifest, key: bytes) -> bool:
@@ -241,15 +254,18 @@ def verify_manifest(manifest: ModelPackManifest, key: bytes) -> bool:
         ``False`` if the manifest has been tampered with, the key is wrong,
         or ``manifest_hmac`` is empty.
     """
-    if not key:
-        return False
-    stored = manifest.manifest_hmac or ""
-    if not stored:
-        return False
-    expected = sign_manifest(manifest, key)
-    # compare_digest guards against timing attacks; both args must be the
-    # same type (str here).
-    return _hmac_mod.compare_digest(expected, stored)
+    try:
+        if not key:
+            return False
+        stored = manifest.manifest_hmac or ""
+        if not stored:
+            return False
+        # compare_digest guards against timing attacks; both args must be the
+        # same type (str here). The expected MAC is never a local: it would sign this manifest.
+        return _hmac_mod.compare_digest(sign_manifest(manifest, key), stored)
+    except BaseException:
+        del key
+        raise
 
 
 def load_signing_key_from_env() -> bytes | None:
@@ -264,21 +280,26 @@ def load_signing_key_from_env() -> bytes | None:
     so a misconfigured deployment surfaces the issue without crashing.
     """
     raw = os.environ.get(SIGNING_KEY_ENV, "")
-    if not raw:
-        return None
+    # The hex text and the key are secret material in a frame a traceback may keep (`_opaque`).
     try:
-        key = bytes.fromhex(raw)
-    except ValueError:
-        _log.warning(
-            "%s is set but is not valid hex; pack signature verification disabled. "
-            "Expected 64 hex characters (32 bytes).",
-            SIGNING_KEY_ENV,
-        )
-        return None
-    if len(key) < 16:
-        _log.warning(
-            "%s key is only %d bytes; at least 16 bytes recommended.",
-            SIGNING_KEY_ENV,
-            len(key),
-        )
-    return key
+        if not raw:
+            return None
+        try:
+            key_box = OpaqueBox(bytes.fromhex(raw))
+        except ValueError:
+            _log.warning(
+                "%s is set but is not valid hex; pack signature verification disabled. "
+                "Expected 64 hex characters (32 bytes).",
+                SIGNING_KEY_ENV,
+            )
+            return None
+        if len(key_box.open()[0]) < 16:
+            _log.warning(
+                "%s key is only %d bytes; at least 16 bytes recommended.",
+                SIGNING_KEY_ENV,
+                len(key_box.open()[0]),
+            )
+        return key_box.open()[0]
+    except BaseException:
+        del raw
+        raise

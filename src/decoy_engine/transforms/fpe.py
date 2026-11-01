@@ -219,79 +219,83 @@ def _permute(s: str, key: bytes, charset: str, tweak: bytes, *, forward: bool) -
     ever reaching this function (see ``_fpe_value``); this is the leaf
     permutation only.
     """
-    n = len(s)
-    if n == 0:
-        return s
-    radix = len(charset)
-
-    if len(key) != _ff1.FF1_KEY_BYTES:
-        raise FpeUnencryptableError(
-            f"fpe key must be exactly {_ff1.FF1_KEY_BYTES} bytes (AES-256 only); "
-            f"got {len(key)}. This indicates a key-derivation bug, not a data issue.",
-            code=reasons.runtime.FPE__UNENCRYPTABLE_LENGTH,
-        )
-    if not (_ff1.FF1_MIN_RADIX <= radix <= _ff1.FF1_MAX_RADIX):
-        raise FpeUnencryptableError(
-            f"fpe charset resolves to radix {radix}, outside the deployed profile's "
-            f"[{_ff1.FF1_MIN_RADIX}, {_ff1.FF1_MAX_RADIX}] range.",
-            code=reasons.runtime.FPE__UNENCRYPTABLE_LENGTH,
-        )
-    if len(set(charset)) != radix:
-        raise FpeUnencryptableError(
-            "fpe charset contains duplicate symbols; FF1 requires an ordered, "
-            "duplicate-free alphabet (a duplicate would make decode ambiguous).",
-            code=reasons.runtime.FPE__UNENCRYPTABLE_LENGTH,
-        )
-    check_charset_ascii_printable(charset)
-    min_len = _ff1.min_domain_length(radix)
-    if n < min_len:
-        raise FpeUnencryptableError(
-            f"value has {n} in-charset character(s); the domain (radix**length = "
-            f"{radix}**{n} = {radix**n}) is below the FF1 minimum admissible domain "
-            f"({_ff1.FF1_MIN_DOMAIN}). Use a wider charset, a longer/covering format, "
-            "or route this column through a different strategy.",
-            code=reasons.runtime.FPE__UNENCRYPTABLE_DOMAIN,
-        )
-    if n > _ff1.FF1_MAX_LEN:
-        raise FpeUnencryptableError(
-            f"value has {n} in-charset characters, exceeding the deployed FF1 "
-            f"profile's maximum length of {_ff1.FF1_MAX_LEN}.",
-            code=reasons.runtime.FPE__UNENCRYPTABLE_LENGTH,
-        )
-    if len(tweak) > _ff1.FF1_MAX_TWEAK_LEN:
-        raise FpeUnencryptableError(
-            f"fpe tweak is {len(tweak)} bytes, exceeding the deployed profile's "
-            f"maximum tweak length ({_ff1.FF1_MAX_TWEAK_LEN} bytes).",
-            code=reasons.runtime.FPE__UNENCRYPTABLE_LENGTH,
-        )
-
-    char_to_idx = _char_lookup(charset)
-    # P7: check membership before indexing rather than catching the dict
-    # KeyError. A KeyError raised from `char_to_idx[ch]` carries the actual
-    # offending character as its arg, and Python sets that KeyError as the
-    # new exception's `__context__` even when raised with `from None` or
-    # after explicitly clearing the attribute -- the interpreter re-attaches
-    # it at raise time. Raising outside any `except` block sidesteps this
-    # entirely, so the source character never reaches the exception chain.
-    if any(ch not in char_to_idx for ch in s):
-        raise FpeUnencryptableError(
-            "fpe body contains a character outside the configured alphabet; "
-            "every body character must be a member of the resolved charset.",
-            code=reasons.runtime.FPE__UNENCRYPTABLE_LENGTH,
-        )
-    numerals = [char_to_idx[ch] for ch in s]
-
     try:
-        result = (
-            _ff1.encrypt(key, tweak, radix, numerals)
-            if forward
-            else _ff1.decrypt(key, tweak, radix, numerals)
-        )
-    except _ff1.Ff1Error as exc:
-        raise FpeUnencryptableError(
-            f"FF1 rejected this input: {exc}", code=reasons.runtime.FPE__UNENCRYPTABLE_LENGTH
-        ) from exc
-    return "".join(charset[i] for i in result)
+        n = len(s)
+        if n == 0:
+            return s
+        radix = len(charset)
+
+        if len(key) != _ff1.FF1_KEY_BYTES:
+            raise FpeUnencryptableError(
+                f"fpe key must be exactly {_ff1.FF1_KEY_BYTES} bytes (AES-256 only); "
+                f"got {len(key)}. This indicates a key-derivation bug, not a data issue.",
+                code=reasons.runtime.FPE__UNENCRYPTABLE_LENGTH,
+            )
+        if not (_ff1.FF1_MIN_RADIX <= radix <= _ff1.FF1_MAX_RADIX):
+            raise FpeUnencryptableError(
+                f"fpe charset resolves to radix {radix}, outside the deployed profile's "
+                f"[{_ff1.FF1_MIN_RADIX}, {_ff1.FF1_MAX_RADIX}] range.",
+                code=reasons.runtime.FPE__UNENCRYPTABLE_LENGTH,
+            )
+        if len(set(charset)) != radix:
+            raise FpeUnencryptableError(
+                "fpe charset contains duplicate symbols; FF1 requires an ordered, "
+                "duplicate-free alphabet (a duplicate would make decode ambiguous).",
+                code=reasons.runtime.FPE__UNENCRYPTABLE_LENGTH,
+            )
+        check_charset_ascii_printable(charset)
+        min_len = _ff1.min_domain_length(radix)
+        if n < min_len:
+            raise FpeUnencryptableError(
+                f"value has {n} in-charset character(s); the domain (radix**length = "
+                f"{radix}**{n} = {radix**n}) is below the FF1 minimum admissible domain "
+                f"({_ff1.FF1_MIN_DOMAIN}). Use a wider charset, a longer/covering format, "
+                "or route this column through a different strategy.",
+                code=reasons.runtime.FPE__UNENCRYPTABLE_DOMAIN,
+            )
+        if n > _ff1.FF1_MAX_LEN:
+            raise FpeUnencryptableError(
+                f"value has {n} in-charset characters, exceeding the deployed FF1 "
+                f"profile's maximum length of {_ff1.FF1_MAX_LEN}.",
+                code=reasons.runtime.FPE__UNENCRYPTABLE_LENGTH,
+            )
+        if len(tweak) > _ff1.FF1_MAX_TWEAK_LEN:
+            raise FpeUnencryptableError(
+                f"fpe tweak is {len(tweak)} bytes, exceeding the deployed profile's "
+                f"maximum tweak length ({_ff1.FF1_MAX_TWEAK_LEN} bytes).",
+                code=reasons.runtime.FPE__UNENCRYPTABLE_LENGTH,
+            )
+
+        char_to_idx = _char_lookup(charset)
+        # P7: check membership before indexing rather than catching the dict
+        # KeyError. A KeyError raised from `char_to_idx[ch]` carries the actual
+        # offending character as its arg, and Python sets that KeyError as the
+        # new exception's `__context__` even when raised with `from None` or
+        # after explicitly clearing the attribute -- the interpreter re-attaches
+        # it at raise time. Raising outside any `except` block sidesteps this
+        # entirely, so the source character never reaches the exception chain.
+        if any(ch not in char_to_idx for ch in s):
+            raise FpeUnencryptableError(
+                "fpe body contains a character outside the configured alphabet; "
+                "every body character must be a member of the resolved charset.",
+                code=reasons.runtime.FPE__UNENCRYPTABLE_LENGTH,
+            )
+        numerals = [char_to_idx[ch] for ch in s]
+
+        try:
+            result = (
+                _ff1.encrypt(key, tweak, radix, numerals)
+                if forward
+                else _ff1.decrypt(key, tweak, radix, numerals)
+            )
+        except _ff1.Ff1Error as exc:
+            raise FpeUnencryptableError(
+                f"FF1 rejected this input: {exc}", code=reasons.runtime.FPE__UNENCRYPTABLE_LENGTH
+            ) from exc
+        return "".join(charset[i] for i in result)
+    except BaseException:
+        del key
+        raise
 
 
 def _fpe_pure_value(
@@ -320,30 +324,34 @@ def _fpe_pure_value(
     The pre-WS1 shape (permute all n chars, overwrite the last with the check
     digit) discarded one encrypted character and was therefore not invertible;
     the change is covered by the SEED_PROTOCOL_VERSION 4 -> 5 bump."""
-    # Defense-in-depth only: `_fpe_value` (this function's only caller) now
-    # rejects an empty value with `FpeUnencryptableError` before ever reaching
-    # here (plan P2), so `s` is unreachable-empty on both its call sites --
-    # empty passed straight through, empty out-of-charset positions raised
-    # earlier, and the non-preserve-separators path already required `val`
-    # itself non-empty. Kept as a guard against a hypothetical future direct
-    # caller of this "pure" leaf, not as documented empty-string policy.
-    if not s:
-        return s
-    if checksum is not None:
-        # Codex cross-model review (2026-07-14): route EVERY length through the
-        # checksum path (was `and len(s) >= 2`). A len-0/1 value used to skip this
-        # dispatch, fall to `_permute`, and permute to itself -- bypassing the
-        # scheme's length/validity check entirely. `_fpe_checksum_permute` now
-        # length-validates up front and fails closed on any invalid length.
-        # Lazy import breaks the fpe <-> _fpe_checksum cycle: _fpe_checksum imports
-        # `_permute` from this module at load, so it must load AFTER fpe is ready.
-        from decoy_engine.transforms._fpe_checksum import _fpe_checksum_permute
+    try:
+        # Defense-in-depth only: `_fpe_value` (this function's only caller) now
+        # rejects an empty value with `FpeUnencryptableError` before ever reaching
+        # here (plan P2), so `s` is unreachable-empty on both its call sites --
+        # empty passed straight through, empty out-of-charset positions raised
+        # earlier, and the non-preserve-separators path already required `val`
+        # itself non-empty. Kept as a guard against a hypothetical future direct
+        # caller of this "pure" leaf, not as documented empty-string policy.
+        if not s:
+            return s
+        if checksum is not None:
+            # Codex cross-model review (2026-07-14): route EVERY length through the
+            # checksum path (was `and len(s) >= 2`). A len-0/1 value used to skip this
+            # dispatch, fall to `_permute`, and permute to itself -- bypassing the
+            # scheme's length/validity check entirely. `_fpe_checksum_permute` now
+            # length-validates up front and fails closed on any invalid length.
+            # Lazy import breaks the fpe <-> _fpe_checksum cycle: _fpe_checksum imports
+            # `_permute` from this module at load, so it must load AFTER fpe is ready.
+            from decoy_engine.transforms._fpe_checksum import _fpe_checksum_permute
 
-        return _fpe_checksum_permute(s, key, charset, tweak, checksum, forward=forward)
-    if validate_luhn and len(s) >= 2:
-        body = _permute(s[:-1], key, charset, tweak, forward=forward)
-        return body + _luhn_check_digit(body)
-    return _permute(s, key, charset, tweak, forward=forward)
+            return _fpe_checksum_permute(s, key, charset, tweak, checksum, forward=forward)
+        if validate_luhn and len(s) >= 2:
+            body = _permute(s[:-1], key, charset, tweak, forward=forward)
+            return body + _luhn_check_digit(body)
+        return _permute(s, key, charset, tweak, forward=forward)
+    except BaseException:
+        del key
+        raise
 
 
 def _fpe_value(
@@ -379,78 +387,82 @@ def _fpe_value(
     prefix carries is surfaced by the handler as a `QualityWarning`; full
     coverage is a further follow-up (structured/typed-subfield FPE), independent
     of the FF1 primitive swap (Task 5.2)."""
-    # Empty-string reject (plan P2): a present-but-empty value is NOT a null --
-    # nulls never reach this layer at all (skipped via na_mask one layer up) --
-    # so an empty string here is a genuine zero-length value with a zero-length
-    # (radix**0 == 1) in-charset domain, below the FF1 minimum admissible domain
-    # exactly like any other sub-floor value. The engine used to pass this
-    # through unchanged (a silent cleartext no-op distinct from every other
-    # unencryptable case below, which all fail closed); that carve-out is gone.
-    if not val:
-        raise FpeUnencryptableError(
-            "fpe cannot encrypt an empty (zero-length) value: its in-charset "
-            "domain is below the FF1 minimum admissible domain. An empty "
-            "string is not a null (nulls never reach this layer) and carries "
-            "no format-preserving domain to permute over.",
-            value=val,
-            code=reasons.runtime.FPE__UNENCRYPTABLE_DOMAIN,
-        )
-    charset_set = set(charset)
-    if preserve_separators:
-        positions = [i for i, ch in enumerate(val) if ch in charset_set]
-        if not positions:
+    try:
+        # Empty-string reject (plan P2): a present-but-empty value is NOT a null --
+        # nulls never reach this layer at all (skipped via na_mask one layer up) --
+        # so an empty string here is a genuine zero-length value with a zero-length
+        # (radix**0 == 1) in-charset domain, below the FF1 minimum admissible domain
+        # exactly like any other sub-floor value. The engine used to pass this
+        # through unchanged (a silent cleartext no-op distinct from every other
+        # unencryptable case below, which all fail closed); that carve-out is gone.
+        if not val:
             raise FpeUnencryptableError(
-                f"fpe cannot encrypt this {len(val)}-character value: it has no "
-                "character in the configured charset, so there is nothing to "
-                "format-preserving-encrypt and the value cannot be reversibly "
-                "masked. The engine fails closed rather than emit a "
-                "non-invertible covering hash that would silently not "
-                "round-trip. Use a charset that covers this column's data, or route "
-                "the column through a different strategy (hash/redact).",
+                "fpe cannot encrypt an empty (zero-length) value: its in-charset "
+                "domain is below the FF1 minimum admissible domain. An empty "
+                "string is not a null (nulls never reach this layer) and carries "
+                "no format-preserving domain to permute over.",
+                value=val,
+                code=reasons.runtime.FPE__UNENCRYPTABLE_DOMAIN,
+            )
+        charset_set = set(charset)
+        if preserve_separators:
+            positions = [i for i, ch in enumerate(val) if ch in charset_set]
+            if not positions:
+                raise FpeUnencryptableError(
+                    f"fpe cannot encrypt this {len(val)}-character value: it has no "
+                    "character in the configured charset, so there is nothing to "
+                    "format-preserving-encrypt and the value cannot be reversibly "
+                    "masked. The engine fails closed rather than emit a "
+                    "non-invertible covering hash that would silently not "
+                    "round-trip. Use a charset that covers this column's data, or route "
+                    "the column through a different strategy (hash/redact).",
+                    value=val,
+                )
+            body = _fpe_pure_value(
+                "".join(val[i] for i in positions),
+                key,
+                charset,
+                tweak,
+                validate_luhn,
+                forward=forward,
+                checksum=checksum,
+            )
+            # Codex cross-model review (2026-07-14): the permuted body must have exactly
+            # one character per in-charset position. It always does after the checksum
+            # length-validation (a fixed-width scheme body used to be shorter/longer than
+            # the source, which the old non-strict zip silently absorbed -- leaking the
+            # surplus source char). This guard turns any future mismatch into a loud
+            # fail-closed error instead of a silent leak/truncation; the `strict` zip is
+            # the belt-and-suspenders backstop.
+            if len(body) != len(positions):
+                raise FpeUnencryptableError(
+                    f"fpe internal length invariant: permuted body length {len(body)} != "
+                    f"{len(positions)} in-charset positions (source value length "
+                    f"{len(val)}). Refusing to reinsert a mismatched body, which would "
+                    "leak or drop a character.",
+                    value=val,
+                )
+            result = list(val)
+            for pos, ch in zip(positions, body, strict=True):
+                result[pos] = ch
+            return "".join(result)
+        if not all(ch in charset_set for ch in val):
+            out_of_charset_count = len({ch for ch in val if ch not in charset_set})
+            raise FpeUnencryptableError(
+                f"fpe cannot encrypt this {len(val)}-character value with "
+                f"preserve_separators=false: it contains {out_of_charset_count} distinct "
+                "out-of-charset character(s). Returning the value unchanged would leak it "
+                "in the clear, so the engine fails closed. Enable preserve_separators to "
+                "keep structural separators in place, use a charset that covers the data, "
+                "or route the column through a different strategy.",
                 value=val,
             )
-        body = _fpe_pure_value(
-            "".join(val[i] for i in positions),
-            key,
-            charset,
-            tweak,
-            validate_luhn,
-            forward=forward,
-            checksum=checksum,
+        return _fpe_pure_value(
+            val, key, charset, tweak, validate_luhn, forward=forward, checksum=checksum
         )
-        # Codex cross-model review (2026-07-14): the permuted body must have exactly
-        # one character per in-charset position. It always does after the checksum
-        # length-validation (a fixed-width scheme body used to be shorter/longer than
-        # the source, which the old non-strict zip silently absorbed -- leaking the
-        # surplus source char). This guard turns any future mismatch into a loud
-        # fail-closed error instead of a silent leak/truncation; the `strict` zip is
-        # the belt-and-suspenders backstop.
-        if len(body) != len(positions):
-            raise FpeUnencryptableError(
-                f"fpe internal length invariant: permuted body length {len(body)} != "
-                f"{len(positions)} in-charset positions (source value length "
-                f"{len(val)}). Refusing to reinsert a mismatched body, which would "
-                "leak or drop a character.",
-                value=val,
-            )
-        result = list(val)
-        for pos, ch in zip(positions, body, strict=True):
-            result[pos] = ch
-        return "".join(result)
-    if not all(ch in charset_set for ch in val):
-        out_of_charset_count = len({ch for ch in val if ch not in charset_set})
-        raise FpeUnencryptableError(
-            f"fpe cannot encrypt this {len(val)}-character value with "
-            f"preserve_separators=false: it contains {out_of_charset_count} distinct "
-            "out-of-charset character(s). Returning the value unchanged would leak it "
-            "in the clear, so the engine fails closed. Enable preserve_separators to "
-            "keep structural separators in place, use a charset that covers the data, "
-            "or route the column through a different strategy.",
-            value=val,
-        )
-    return _fpe_pure_value(
-        val, key, charset, tweak, validate_luhn, forward=forward, checksum=checksum
-    )
+    except BaseException:
+        del key
+        raise
 
 
 def fpe_encrypt_value(
@@ -472,9 +484,13 @@ def fpe_encrypt_value(
 
     ``checksum`` takes priority over ``validate_luhn`` when both are set.
     """
-    return _fpe_value(
-        val, key, charset, tweak, preserve_separators, validate_luhn, checksum, forward=True
-    )
+    try:
+        return _fpe_value(
+            val, key, charset, tweak, preserve_separators, validate_luhn, checksum, forward=True
+        )
+    except BaseException:
+        del key
+        raise
 
 
 def fpe_decrypt_value(
@@ -493,6 +509,10 @@ def fpe_decrypt_value(
     was already checksum-valid for the configured scheme (see
     ``_fpe_pure_value`` and ``_fpe_checksum_permute``).
     """
-    return _fpe_value(
-        val, key, charset, tweak, preserve_separators, validate_luhn, checksum, forward=False
-    )
+    try:
+        return _fpe_value(
+            val, key, charset, tweak, preserve_separators, validate_luhn, checksum, forward=False
+        )
+    except BaseException:
+        del key
+        raise

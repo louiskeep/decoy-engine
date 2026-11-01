@@ -39,7 +39,7 @@ from decoy_engine.execution.native.protocol.providers_base import DrawSiteProvid
 # transforms/fpe.py (FF1_KEY_LABEL). Task 5.2: retired the Feistel-era
 # `b"fpe-key/v1"` label; the drift test now pins this to the FF1 key label.
 _FPE_KEY_LABEL = b"ff1-key/v1"
-# transforms/code_set.py:132 (_KEYED_SALT).
+# transforms/_codeset_pick.py (_KEYED_SALT).
 _CODE_SET_KEYED_SALT = b"decoy.code_set.keyed_access.v1"
 # transforms/joint_mask.py:64 (_KEYED_ROW_SOURCE).
 _JOINT_MASK_KEYED_ROW_SOURCE = b"joint_mask/keyed_row/v1"
@@ -47,9 +47,15 @@ _JOINT_MASK_KEYED_ROW_SOURCE = b"joint_mask/keyed_row/v1"
 
 def _hmac_hex(key: bytes, value: Any) -> str | None:
     """HMAC-SHA256(key, str(value)) hex. Mirrors ``internal/crypto.py:hmac_hex``."""
-    if value is None:
-        return None
-    return hmac.new(key, str(value).encode("utf-8", errors="replace"), hashlib.sha256).hexdigest()
+    try:
+        if value is None:
+            return None
+        return hmac.new(
+            key, str(value).encode("utf-8", errors="replace"), hashlib.sha256
+        ).hexdigest()
+    except BaseException:
+        del key
+        raise
 
 
 def _hole_resolve(idx: int, position: int | None) -> int:
@@ -77,17 +83,25 @@ class FpeKeyProvider(DrawSiteProvider):
     draw_site_id = "mask.fpe"
 
     def column_key(self, mask_key: bytes, namespace: str) -> bytes:
-        return derive(mask_key, namespace, _FPE_KEY_LABEL)
+        try:
+            return derive(mask_key, namespace, _FPE_KEY_LABEL)
+        except BaseException:
+            del mask_key
+            raise
 
     def partitioned_draw(self, mask_key: bytes, namespace: str) -> bytes:
-        self.assert_partitionable()
-        return self.column_key(mask_key, namespace)
+        try:
+            self.assert_partitionable()
+            return self.column_key(mask_key, namespace)
+        except BaseException:
+            del mask_key
+            raise
 
 
 class CodeSetKeyedSelectProvider(DrawSiteProvider):
     """``mask.code_set`` (mask mode): two-step keyed selection index.
 
-    Shipped mask-mode selection (``transforms/code_set.py:_pick_from_seq``):
+    Shipped mask-mode selection (``transforms/_codeset_pick.py:_pick_from_seq``):
     ``hmac_key = derive(mask_key, namespace or "code_set", _KEYED_SALT)``, then
     ``idx = int(hmac_hex(hmac_key, key_value)[:8], 16) % candidate_count``, then
     ``seq[hole_resolve(idx, position)]``. Keyed on the masked key value, so
@@ -98,15 +112,23 @@ class CodeSetKeyedSelectProvider(DrawSiteProvider):
     draw_site_id = "mask.code_set"
 
     def hmac_key(self, mask_key: bytes, namespace: str | None) -> bytes:
-        return derive(mask_key, namespace or "code_set", _CODE_SET_KEYED_SALT)
+        try:
+            return derive(mask_key, namespace or "code_set", _CODE_SET_KEYED_SALT)
+        except BaseException:
+            del mask_key
+            raise
 
     def select_index(
         self, mask_key: bytes, namespace: str | None, key_value: str, candidate_count: int
     ) -> int:
-        hex_digest = _hmac_hex(self.hmac_key(mask_key, namespace), key_value)
-        if hex_digest is None:
-            raise ValueError("hmac_hex returned None for a non-None key_value")
-        return int(hex_digest[:8], 16) % candidate_count
+        try:
+            hex_digest = _hmac_hex(self.hmac_key(mask_key, namespace), key_value)
+            if hex_digest is None:
+                raise ValueError("hmac_hex returned None for a non-None key_value")
+            return int(hex_digest[:8], 16) % candidate_count
+        except BaseException:
+            del mask_key
+            raise
 
     def resolve_hole(self, idx: int, position: int | None) -> int:
         return _hole_resolve(idx, position)
@@ -114,8 +136,12 @@ class CodeSetKeyedSelectProvider(DrawSiteProvider):
     def partitioned_draw(
         self, mask_key: bytes, namespace: str | None, key_value: str, candidate_count: int
     ) -> int:
-        self.assert_partitionable()
-        return self.select_index(mask_key, namespace, key_value, candidate_count)
+        try:
+            self.assert_partitionable()
+            return self.select_index(mask_key, namespace, key_value, candidate_count)
+        except BaseException:
+            del mask_key
+            raise
 
 
 class JointMaskKeyedRowProvider(DrawSiteProvider):
@@ -132,19 +158,31 @@ class JointMaskKeyedRowProvider(DrawSiteProvider):
     draw_site_id = "mask.joint_mask_keyed_row"
 
     def hmac_key(self, mask_key: bytes, namespace: str) -> bytes:
-        return derive(mask_key, namespace, _JOINT_MASK_KEYED_ROW_SOURCE)
+        try:
+            return derive(mask_key, namespace, _JOINT_MASK_KEYED_ROW_SOURCE)
+        except BaseException:
+            del mask_key
+            raise
 
     def row_index(self, mask_key: bytes, namespace: str, key_value: str, row_count: int) -> int:
-        hex_digest = _hmac_hex(self.hmac_key(mask_key, namespace), key_value)
-        if hex_digest is None:
-            raise ValueError("hmac_hex returned None for a non-None key_value")
-        return int(hex_digest[:8], 16) % row_count
+        try:
+            hex_digest = _hmac_hex(self.hmac_key(mask_key, namespace), key_value)
+            if hex_digest is None:
+                raise ValueError("hmac_hex returned None for a non-None key_value")
+            return int(hex_digest[:8], 16) % row_count
+        except BaseException:
+            del mask_key
+            raise
 
     def partitioned_draw(
         self, mask_key: bytes, namespace: str, key_value: str, row_count: int
     ) -> int:
-        self.assert_partitionable()
-        return self.row_index(mask_key, namespace, key_value, row_count)
+        try:
+            self.assert_partitionable()
+            return self.row_index(mask_key, namespace, key_value, row_count)
+        except BaseException:
+            del mask_key
+            raise
 
 
 # ---------------------------------------------------------------------------
@@ -163,11 +201,19 @@ class ShuffleProvider(DrawSiteProvider):
     draw_site_id = "mask.shuffle"
 
     def seed_int(self, mask_key: bytes, namespace: str, column: str) -> int:
-        return int.from_bytes(derive(mask_key, namespace, column.encode("utf-8"))[:8], "big")
+        try:
+            return int.from_bytes(derive(mask_key, namespace, column.encode("utf-8"))[:8], "big")
+        except BaseException:
+            del mask_key
+            raise
 
     def permutation(self, mask_key: bytes, namespace: str, column: str, n: int) -> np.ndarray:
-        rng = np.random.default_rng(self.seed_int(mask_key, namespace, column))
-        return rng.permutation(n)
+        try:
+            rng = np.random.default_rng(self.seed_int(mask_key, namespace, column))
+            return rng.permutation(n)
+        except BaseException:
+            del mask_key
+            raise
 
 
 class GroupedSeriesWalkProvider(DrawSiteProvider):
@@ -183,13 +229,21 @@ class GroupedSeriesWalkProvider(DrawSiteProvider):
     draw_site_id = "mask.grouped_series_monotone_walk"
 
     def group_seed_int(self, mask_key: bytes, namespace: str, group_label: Any) -> int:
-        source = str(group_label).encode("utf-8", errors="replace")
-        return int.from_bytes(derive(mask_key, namespace, source)[:8], "big")
+        try:
+            source = str(group_label).encode("utf-8", errors="replace")
+            return int.from_bytes(derive(mask_key, namespace, source)[:8], "big")
+        except BaseException:
+            del mask_key
+            raise
 
     def group_generator(
         self, mask_key: bytes, namespace: str, group_label: Any
     ) -> np.random.Generator:
-        return np.random.default_rng(self.group_seed_int(mask_key, namespace, group_label))
+        try:
+            return np.random.default_rng(self.group_seed_int(mask_key, namespace, group_label))
+        except BaseException:
+            del mask_key
+            raise
 
     def walk(
         self,
@@ -203,13 +257,17 @@ class GroupedSeriesWalkProvider(DrawSiteProvider):
         max_step: int,
     ) -> list[int]:
         """Reproduce one group's monotone walk: ``start`` then cumulative steps."""
-        rng = self.group_generator(mask_key, namespace, group_label)
-        out: list[int] = []
-        cumulative = start
-        for _ in range(group_len):
-            out.append(cumulative)
-            cumulative += int(rng.integers(step, max_step + 1))
-        return out
+        try:
+            rng = self.group_generator(mask_key, namespace, group_label)
+            out: list[int] = []
+            cumulative = start
+            for _ in range(group_len):
+                out.append(cumulative)
+                cumulative += int(rng.integers(step, max_step + 1))
+            return out
+        except BaseException:
+            del mask_key
+            raise
 
 
 class WindowedDateProvider(DrawSiteProvider):
@@ -225,20 +283,32 @@ class WindowedDateProvider(DrawSiteProvider):
     draw_site_id = "mask.windowed_date"
 
     def row_seed_int(self, mask_key: bytes, namespace: str, global_row_index: int) -> int:
-        source = global_row_index.to_bytes(8, "big")
-        return int.from_bytes(derive(mask_key, namespace, source)[:8], "big")
+        try:
+            source = global_row_index.to_bytes(8, "big")
+            return int.from_bytes(derive(mask_key, namespace, source)[:8], "big")
+        except BaseException:
+            del mask_key
+            raise
 
     def row_generator(
         self, mask_key: bytes, namespace: str, global_row_index: int
     ) -> np.random.Generator:
-        return np.random.default_rng(self.row_seed_int(mask_key, namespace, global_row_index))
+        try:
+            return np.random.default_rng(self.row_seed_int(mask_key, namespace, global_row_index))
+        except BaseException:
+            del mask_key
+            raise
 
     def partitioned_draw(
         self, mask_key: bytes, namespace: str, global_row_index: int
     ) -> np.random.Generator:
         """A partition reproduces row ``i`` from its GLOBAL index, unchanged."""
-        self.assert_partitionable()
-        return self.row_generator(mask_key, namespace, global_row_index)
+        try:
+            self.assert_partitionable()
+            return self.row_generator(mask_key, namespace, global_row_index)
+        except BaseException:
+            del mask_key
+            raise
 
 
 class MaskFormulaProvider(DrawSiteProvider):

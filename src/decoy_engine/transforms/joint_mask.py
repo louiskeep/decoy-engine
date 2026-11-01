@@ -54,6 +54,7 @@ import numpy as np
 import pandas as pd
 
 from decoy_engine import fileaccess, reasons
+from decoy_engine._opaque import OpaqueBox
 from decoy_engine.determinism import derive
 from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.plan._errors import PlanCompileError
@@ -274,19 +275,23 @@ def apply_joint_mask(
     Returns:
         A copy of ``df`` with ``config.columns`` replaced by reference-table rows.
     """
-    result = df.copy()
+    try:
+        result = df.copy()
 
-    if mode == "mask":
-        rows = _pick_rows_mask(df, config, job_seed, namespace=namespace, key_series=key_series)
-    elif mode == "gen":
-        rows = _pick_rows_gen(len(df), config, job_seed)
-    else:
-        raise ValueError(f"joint_mask: unsupported mode {mode!r}. Use 'mask' or 'gen'.")
+        if mode == "mask":
+            rows = _pick_rows_mask(df, config, job_seed, namespace=namespace, key_series=key_series)
+        elif mode == "gen":
+            rows = _pick_rows_gen(len(df), config, job_seed)
+        else:
+            raise ValueError(f"joint_mask: unsupported mode {mode!r}. Use 'mask' or 'gen'.")
 
-    for col in config.columns:
-        result[col] = [r.get(col) for r in rows]
+        for col in config.columns:
+            result[col] = [r.get(col) for r in rows]
 
-    return result
+        return result
+    except BaseException:
+        del job_seed
+        raise
 
 
 def _pick_rows_mask(
@@ -313,29 +318,37 @@ def _pick_rows_mask(
     Pattern: HMAC-SHA256 via ReferenceTable.keyed_row (RFC 2104).
     SP-06 cross-version caveat: modular index shifts if row_count changes.
     """
-    tbl = config.table
-    # Cross-column V1: a provided pre-mask snapshot of key_by is the SOURCE key
-    # (same source entity -> same reference row); otherwise fall back to the live
-    # frame for direct (non-adapter) callers.
-    if key_series is not None:
-        key_col = key_series
-    else:
-        key_col = df[config.key_by] if config.key_by in df.columns else pd.Series([None] * len(df))
-    hmac_key = derive(job_seed, namespace or _DEFAULT_NAMESPACE, _KEYED_ROW_SOURCE)
-
-    rows: list[dict[str, Any]] = []
-    # Seeded RNG for null-key fallback rows only.
-    rng = np.random.default_rng(int.from_bytes(job_seed[:8], "big"))
-    for val in key_col:
-        if val is None or (isinstance(val, float) and np.isnan(val)):
-            # Null key: fall back to a seeded random row (no usable key).
-            idx = int(rng.integers(0, tbl.row_count))
-            rows.append(tbl.row(idx))
+    try:
+        tbl = config.table
+        # Cross-column V1: a provided pre-mask snapshot of key_by is the SOURCE key
+        # (same source entity -> same reference row); otherwise fall back to the live
+        # frame for direct (non-adapter) callers.
+        if key_series is not None:
+            key_col = key_series
         else:
-            # Non-null: keyed_row selects under the secret-derived HMAC key.
-            rows.append(tbl.keyed_row(str(val), hmac_key=hmac_key))
+            key_col = (
+                df[config.key_by] if config.key_by in df.columns else pd.Series([None] * len(df))
+            )
+        hmac_key_box = OpaqueBox(
+            derive(job_seed, namespace or _DEFAULT_NAMESPACE, _KEYED_ROW_SOURCE)
+        )
 
-    return rows
+        rows: list[dict[str, Any]] = []
+        # Seeded RNG for null-key fallback rows only.
+        rng = np.random.default_rng(int.from_bytes(job_seed[:8], "big"))
+        for val in key_col:
+            if val is None or (isinstance(val, float) and np.isnan(val)):
+                # Null key: fall back to a seeded random row (no usable key).
+                idx = int(rng.integers(0, tbl.row_count))
+                rows.append(tbl.row(idx))
+            else:
+                # Non-null: keyed_row selects under the secret-derived HMAC key.
+                rows.append(tbl.keyed_row(str(val), hmac_key=hmac_key_box.open()[0]))
+
+        return rows
+    except BaseException:
+        del job_seed
+        raise
 
 
 def _pick_rows_gen(
@@ -348,8 +361,12 @@ def _pick_rows_gen(
     Deterministic: same job_seed + same n -> same sequence of rows.
     Independent of source column values (gen mode has no source to key from).
     """
-    tbl = config.table
-    seed_int = int.from_bytes(job_seed[:8], "big")
-    rng = np.random.default_rng(seed_int)
-    indices = rng.integers(0, tbl.row_count, size=n)
-    return [tbl.row(int(idx)) for idx in indices]
+    try:
+        tbl = config.table
+        seed_int = int.from_bytes(job_seed[:8], "big")
+        rng = np.random.default_rng(seed_int)
+        indices = rng.integers(0, tbl.row_count, size=n)
+        return [tbl.row(int(idx)) for idx in indices]
+    except BaseException:
+        del job_seed
+        raise

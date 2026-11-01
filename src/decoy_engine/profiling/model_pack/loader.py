@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Any
 
 from decoy_engine import fileaccess
+from decoy_engine._opaque import OpaqueBox
 from decoy_engine.errors import DecoyError
 from decoy_engine.fileaccess import (
     DirHandle,
@@ -318,13 +319,15 @@ class ModelPackLoader:
         outside signature scope but are never read by the loader, and the
         weights are independently SHA-256 checked.
         """
-        key = load_signing_key_from_env()
+        # Boxed (`_opaque`): this frame raises below while the key is live, and a traceback keeps
+        # it; the key is unboxed only inside the call that consumes it.
+        key_box = OpaqueBox(load_signing_key_from_env())
         # Fail CLOSED on a set-but-unparseable key: an operator who configured
         # DECOY_PACK_SIGNING_KEY intended enforcement, so a typo'd/invalid value
         # must not silently collapse to "no key" (which would let a tampered
         # signed pack through on the trusted default). Mirrors the fail-closed
         # posture of _require_signature_enabled on an ambiguous flag.
-        if key is None and os.environ.get(SIGNING_KEY_ENV, "").strip():
+        if key_box.open()[0] is None and os.environ.get(SIGNING_KEY_ENV, "").strip():
             raise ModelPackLoadError(
                 f"{SIGNING_KEY_ENV} is set but could not be parsed as a valid "
                 "signing key; refusing to load (fail-closed). Fix the key value "
@@ -335,7 +338,7 @@ class ModelPackLoader:
         # hard-lockdown flag is set (which also tightens the trusted default).
         require_sig = _require_signature_enabled() or not self._trusted
 
-        if key is not None:
+        if key_box.open()[0] is not None:
             # A key is configured: enforce the signature regardless of trust.
             if not signed:
                 raise ModelPackLoadError(
@@ -343,7 +346,7 @@ class ModelPackLoader:
                     "but DECOY_PACK_SIGNING_KEY is configured. "
                     "Sign the pack with sign_manifest() before deploying."
                 )
-            if not verify_manifest(manifest, key):
+            if not verify_manifest(manifest, key_box.open()[0]):
                 raise ModelPackLoadError(
                     f"Pack {self._label} signature verification FAILED. "
                     "The manifest may have been tampered with. "

@@ -170,14 +170,18 @@ def _gen_hmac(key: bytes, label: bytes, *, extra: bytes = b"") -> bytes:
     way the mask path is), so the protocol version is the single
     compatibility knob and a cross-version vaulted-unmask can detect drift.
     """
-    hmac_input = (
-        bytes([SEED_PROTOCOL_VERSION])
-        + len(label).to_bytes(4, "big")
-        + label
-        + len(extra).to_bytes(4, "big")
-        + extra
-    )
-    return hmac.new(key, hmac_input, hashlib.sha256).digest()
+    try:
+        hmac_input = (
+            bytes([SEED_PROTOCOL_VERSION])
+            + len(label).to_bytes(4, "big")
+            + label
+            + len(extra).to_bytes(4, "big")
+            + extra
+        )
+        return hmac.new(key, hmac_input, hashlib.sha256).digest()
+    except BaseException:
+        del key
+        raise
 
 
 class GenDeriveContext:
@@ -272,11 +276,10 @@ class GenDeriveContext:
         return cls(digest)
 
     def _family_key(self, family: str) -> bytes:
-        key = self._family_keys.get(family)
-        if key is None:
-            key = _gen_hmac(self._root, b"fam:" + family.encode("utf-8"))
-            self._family_keys[family] = key
-        return key
+        # No local holds the sub-key (`_opaque`).
+        if family not in self._family_keys:
+            self._family_keys[family] = _gen_hmac(self._root, b"fam:" + family.encode("utf-8"))
+        return self._family_keys[family]
 
     def family_bytes(self, label: str) -> bytes:
         """Public byte-returning accessor for an arbitrary sub-key label.

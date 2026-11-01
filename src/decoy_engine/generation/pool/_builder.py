@@ -104,12 +104,16 @@ def _derive_pool_seed(
     The `pool/{provider}/{locale}/{namespace}` namespace shape is canonical
     per S5 spec §3.1; any change is a SEED_PROTOCOL_VERSION bump.
     """
-    pool_namespace = f"pool/{provider}/{locale or 'default'}/{namespace or '_default'}"
-    return derive(
-        seed=job_seed,
-        namespace=pool_namespace,
-        source=config_hash.encode("utf-8"),
-    )[:8]
+    try:
+        pool_namespace = f"pool/{provider}/{locale or 'default'}/{namespace or '_default'}"
+        return derive(
+            seed=job_seed,
+            namespace=pool_namespace,
+            source=config_hash.encode("utf-8"),
+        )[:8]
+    except BaseException:
+        del job_seed
+        raise
 
 
 class PoolBuilder:
@@ -146,14 +150,18 @@ class PoolBuilder:
         and the field order matches `ValuePool.identity`, so the two cannot
         drift.
         """
-        effective_locale = locale or "default"
-        cfg_hash = _config_hash(config)
-        pool_seed = _derive_pool_seed(job_seed, provider, effective_locale, namespace, cfg_hash)
-        # The binding token rides in the identity's config field only. The pool
-        # seed above stays derived from the bare config hash, so pool values do
-        # not depend on which adapter object served them.
-        keyed_hash = f"{cfg_hash}|{_binding_token(self._registry, provider)}"
-        return (provider, effective_locale, keyed_hash, pool_seed, size)
+        try:
+            effective_locale = locale or "default"
+            cfg_hash = _config_hash(config)
+            pool_seed = _derive_pool_seed(job_seed, provider, effective_locale, namespace, cfg_hash)
+            # The binding token rides in the identity's config field only. The pool
+            # seed above stays derived from the bare config hash, so pool values do
+            # not depend on which adapter object served them.
+            keyed_hash = f"{cfg_hash}|{_binding_token(self._registry, provider)}"
+            return (provider, effective_locale, keyed_hash, pool_seed, size)
+        except BaseException:
+            del job_seed
+            raise
 
     def build(
         self,
@@ -180,60 +188,64 @@ class PoolBuilder:
             PoolCapacityError(code='provider_not_poolable') when the
                 provider's CapabilityMatrix declares `poolable: False`.
         """
-        caps = self._registry.get_capabilities(provider)
-        if not caps.poolable:
-            raise PoolCapacityError(
-                code=reasons.runtime.PROVIDER_NOT_POOLABLE,
-                message=(
-                    f"Provider {provider!r} declares `poolable: False`; "
-                    "PoolBuilder cannot build a pool for it. Route through "
-                    "the underlying adapter directly via generate(...) per row."
-                ),
+        try:
+            caps = self._registry.get_capabilities(provider)
+            if not caps.poolable:
+                raise PoolCapacityError(
+                    code=reasons.runtime.PROVIDER_NOT_POOLABLE,
+                    message=(
+                        f"Provider {provider!r} declares `poolable: False`; "
+                        "PoolBuilder cannot build a pool for it. Route through "
+                        "the underlying adapter directly via generate(...) per row."
+                    ),
+                )
+            adapter = self._registry.get_adapter(provider)
+            effective_locale = locale or "default"
+            cfg_hash = _config_hash(config)
+            pool_seed = _derive_pool_seed(job_seed, provider, effective_locale, namespace, cfg_hash)
+
+            # Build-time ProviderSpec is non-deterministic in the cardinality
+            # sense (determinism for the column enters at sample-time via
+            # derive_index), but it now carries `seed=pool_seed` so the adapter
+            # can seed its RNG for build-time reproducibility (S5 F2). Without
+            # this the pool_seed only entered the cache identity while the
+            # underlying Faker batch stayed unseeded: two builds of the same
+            # identity produced different values, making the identity a lie.
+            # `deterministic=False` keeps the S4 contract (seeding is opt-in via
+            # a non-None seed, not the cardinality-determinism axis).
+            spec = ProviderSpec(
+                locale=locale,
+                deterministic=False,
+                namespace=None,
+                seed=pool_seed,
+                extra=dict(config or {}),
             )
-        adapter = self._registry.get_adapter(provider)
-        effective_locale = locale or "default"
-        cfg_hash = _config_hash(config)
-        pool_seed = _derive_pool_seed(job_seed, provider, effective_locale, namespace, cfg_hash)
 
-        # Build-time ProviderSpec is non-deterministic in the cardinality
-        # sense (determinism for the column enters at sample-time via
-        # derive_index), but it now carries `seed=pool_seed` so the adapter
-        # can seed its RNG for build-time reproducibility (S5 F2). Without
-        # this the pool_seed only entered the cache identity while the
-        # underlying Faker batch stayed unseeded: two builds of the same
-        # identity produced different values, making the identity a lie.
-        # `deterministic=False` keeps the S4 contract (seeding is opt-in via
-        # a non-None seed, not the cardinality-determinism axis).
-        spec = ProviderSpec(
-            locale=locale,
-            deterministic=False,
-            namespace=None,
-            seed=pool_seed,
-            extra=dict(config or {}),
-        )
+            start = time.monotonic()
+            raw_values = adapter.generate_batch(provider, spec=spec, count=size)
+            build_time_ms = (time.monotonic() - start) * 1000.0
 
-        start = time.monotonic()
-        raw_values = adapter.generate_batch(provider, spec=spec, count=size)
-        build_time_ms = (time.monotonic() - start) * 1000.0
+            values = np.array(list(raw_values), dtype=object)
+            values = _freeze_array(values)
 
-        values = np.array(list(raw_values), dtype=object)
-        values = _freeze_array(values)
+            # Distinct count: use set for object dtype, np.unique for numeric.
+            if values.dtype == object:
+                distinct_count = len(set(values.tolist()))
+            else:
+                distinct_count = int(np.unique(values).size)
 
-        # Distinct count: use set for object dtype, np.unique for numeric.
-        if values.dtype == object:
-            distinct_count = len(set(values.tolist()))
-        else:
-            distinct_count = int(np.unique(values).size)
-
-        return ValuePool(
-            values=values,
-            provider=provider,
-            locale=effective_locale,
-            config_hash=f"{cfg_hash}|{_binding_token(self._registry, provider)}",
-            seed=pool_seed,
-            size=size,
-            build_time_ms=build_time_ms,
-            backend_type=caps.backend_type,
-            backend_version=caps.backend_version,
-            distinct_count=distinct_count,
-        )
+            return ValuePool(
+                values=values,
+                provider=provider,
+                locale=effective_locale,
+                config_hash=f"{cfg_hash}|{_binding_token(self._registry, provider)}",
+                seed=pool_seed,
+                size=size,
+                build_time_ms=build_time_ms,
+                backend_type=caps.backend_type,
+                backend_version=caps.backend_version,
+                distinct_count=distinct_count,
+            )
+        except BaseException:
+            del job_seed
+            raise

@@ -13,13 +13,16 @@ against a structural Protocol because they are shared with the live
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar
 
 import pyarrow as pa
 
-from decoy_engine import fileaccess
+from decoy_engine import fileaccess, reasons
 from decoy_engine.execution._adapter import provider_config_to_dict
+from decoy_engine.execution._errors import ExecutionError
+from decoy_engine.execution.out_of_core._compat import _column_seed
 from decoy_engine.execution.out_of_core._mask import masked_output_type, table_seed
+from decoy_engine.relationships._graph import OrphanPolicy
 from decoy_engine.transforms.code_set import (
     CodeSetConfig,
     describe_loaded_corpus,
@@ -27,10 +30,12 @@ from decoy_engine.transforms.code_set import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Callable, Mapping, Sequence
+    from pathlib import Path
 
+    from decoy_engine.execution.out_of_core._relation import ParentKeyRelation
     from decoy_engine.execution.out_of_core._stream_join import StreamFkJoiner
-    from decoy_engine.plan._types import Plan
+    from decoy_engine.plan._types import ColumnSeed, Plan
     from decoy_engine.relationships._graph import RelationshipEdge
     from decoy_engine.transforms._codeset_loader import _CorpusRecord
 
@@ -166,6 +171,55 @@ def _code_set_records_and_evidence_for_table(
         evidence = describe_loaded_corpus(code_cfg, record=record)
         corpora[(table_name, column)] = {**evidence, "table": table_name, "column": column}
     return records, corpora
+
+
+_J = TypeVar("_J")
+
+
+def open_joiner(
+    joiner: Callable[..., _J],
+    plan: Plan,
+    edge: RelationshipEdge,
+    relation: ParentKeyRelation,
+    source_schema: pa.Schema,
+    temp_dir: Path,
+    memory_limit: str | None,
+    *,
+    mask_key: bytes | None = None,
+) -> _J:
+    """Open one edge's FK joiner (`ChildFkBatchJoiner` or `StreamFkJoiner`, the two drivers'),
+    after checking the child columns and, under REMAP, the parent seeds."""
+    try:
+        for child_col in edge.child_columns:
+            if child_col not in source_schema.names:
+                raise ExecutionError(
+                    code=reasons.runtime.OUT_OF_CORE_CHILD_COLUMN_MISSING,
+                    message=f"child source table has no column {child_col!r}.",
+                )
+        remap_seeds: tuple[ColumnSeed, ...] | None = None
+        if edge.orphan_policy is OrphanPolicy.REMAP:
+            seeds: list[ColumnSeed] = []
+            for parent_col in edge.parent_columns:
+                seed = _column_seed(plan, edge.parent_table, parent_col)
+                if seed is None:
+                    raise ExecutionError(
+                        code=reasons.runtime.OUT_OF_CORE_PARENT_SEED_MISSING,
+                        message=f"parent key {edge.parent_table}.{parent_col} is not in the plan.",
+                    )
+                seeds.append(seed)
+            remap_seeds = tuple(seeds)
+        return joiner(
+            edge=edge,
+            parent_relation=relation,
+            child_key_types=tuple(source_schema.field(col).type for col in edge.child_columns),
+            temp_dir=temp_dir,
+            memory_limit=memory_limit,
+            remap_seeds=remap_seeds,
+            job_seed=mask_key if mask_key is not None else plan.seed_envelope.job_seed,
+        )
+    except BaseException:
+        del mask_key
+        raise
 
 
 __all__ = [

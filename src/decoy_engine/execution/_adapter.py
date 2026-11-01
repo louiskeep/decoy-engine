@@ -137,7 +137,7 @@ class StrategyContext:
     pool_cache: PoolCache
     relationship_graph: RelationshipGraph
     namespace_registry: NamespaceRegistry
-    job_seed: bytes
+    job_seed: bytes = field(repr=False)
     # DE-02 (2026-07-14): the keyed-mask IKM. Empty sentinel means "not supplied"
     # -> falls back to job_seed in __post_init__, keeping every pre-DE-02
     # construction (including the test fixtures that never pass it) byte-identical.

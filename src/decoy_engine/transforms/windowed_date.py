@@ -313,23 +313,31 @@ def apply_windowed_date(
             ``""`` and ``"NaT"``), lies outside ``SUPPORTED_MIN``..``SUPPORTED_MAX``, or the
             window arithmetic or formatting overflows. Fail-closed: no row is clamped.
     """
-    anchor_series = df[config.anchor]
-    result: list[str | None] = []
+    try:
+        anchor_series = df[config.anchor]
+        result: list[str | None] = []
 
-    # C8-iii-d: `positions` gives each row its full-table row number under a `when:` gate, so a
-    # selected row seeds the same as in an ungated run. Without it, rows are contiguous from
-    # `row_offset`, byte-identical to the previous `enumerate(..., start=row_offset)`.
-    row_numbers: Sequence[int] = (
-        positions if positions is not None else range(row_offset, row_offset + len(anchor_series))
-    )
-    for i, raw_anchor in zip(row_numbers, anchor_series, strict=True):
-        if _is_null_cell(raw_anchor):
-            result.append(None)
-            continue
-        anchor_ts = _parse_anchor(raw_anchor, int(i))
-        row_seed_int = int.from_bytes(derive(seed, namespace, int(i).to_bytes(8, "big"))[:8], "big")
-        row_rng = np.random.default_rng(row_seed_int)
-        offset = _sample_offset(row_rng, config.min_days, config.max_days, config.distribution)
-        result.append(_shift_and_format(anchor_ts, offset, int(i)))
+        # C8-iii-d: `positions` gives each row its full-table row number under a `when:` gate, so a
+        # selected row seeds the same as in an ungated run. Without it, rows are contiguous from
+        # `row_offset`, byte-identical to the previous `enumerate(..., start=row_offset)`.
+        row_numbers: Sequence[int] = (
+            positions
+            if positions is not None
+            else range(row_offset, row_offset + len(anchor_series))
+        )
+        for i, raw_anchor in zip(row_numbers, anchor_series, strict=True):
+            if _is_null_cell(raw_anchor):
+                result.append(None)
+                continue
+            anchor_ts = _parse_anchor(raw_anchor, int(i))
+            row_seed_int = int.from_bytes(
+                derive(seed, namespace, int(i).to_bytes(8, "big"))[:8], "big"
+            )
+            row_rng = np.random.default_rng(row_seed_int)
+            offset = _sample_offset(row_rng, config.min_days, config.max_days, config.distribution)
+            result.append(_shift_and_format(anchor_ts, offset, int(i)))
 
-    return result
+        return result
+    except BaseException:
+        del seed
+        raise

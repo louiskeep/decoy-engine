@@ -77,9 +77,13 @@ class EnvSecretProvider(_LocalProvider):
 
     def _read(self, ref: SecretRef) -> bytes:
         value = os.environ.get(ref.locator)
-        if value is None:
-            raise MissingMaskSecret(MISSING_MESSAGE)
-        return value.encode("utf-8")
+        try:
+            if value is None:
+                raise MissingMaskSecret(MISSING_MESSAGE)
+            return value.encode("utf-8")
+        except BaseException:
+            del value
+            raise
 
 
 def _owner_only(info: os.stat_result) -> None:

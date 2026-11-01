@@ -271,24 +271,28 @@ def native_faker_array(
     to the column's call count; an all-null slice still goes through the kernel so
     its string typing and null restoration match the oracle exactly.
     """
-    n = len(values)
-    if n == 0:
-        return pa.array([], type=pa.string())
-    pool = native.decision.pool
-    if pool is None:  # pragma: no cover - a native decision always carries its pool
-        raise ExecutionError(
-            code=reasons.runtime.OUT_OF_CORE_FAKER_UNPREPARED,
-            message="a native faker column reached the kernel without a prepared pool.",
+    try:
+        n = len(values)
+        if n == 0:
+            return pa.array([], type=pa.string())
+        pool = native.decision.pool
+        if pool is None:  # pragma: no cover - a native decision always carries its pool
+            raise ExecutionError(
+                code=reasons.runtime.OUT_OF_CORE_FAKER_UNPREPARED,
+                message="a native faker column reached the kernel without a prepared pool.",
+            )
+        native.decision.select_calls += 1
+        return sample_faker_array(
+            values,
+            pool=pool,
+            namespace=namespace,
+            mask_key=mask_key,
+            index_kernel=native.bound.kernel,
+            native_threads=native.bound.native_threads,
         )
-    native.decision.select_calls += 1
-    return sample_faker_array(
-        values,
-        pool=pool,
-        namespace=namespace,
-        mask_key=mask_key,
-        index_kernel=native.bound.kernel,
-        native_threads=native.bound.native_threads,
-    )
+    except BaseException:
+        del mask_key
+        raise
 
 
 __all__ = [

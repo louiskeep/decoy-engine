@@ -109,13 +109,11 @@ from pathlib import Path
 from typing import Any
 
 from decoy_engine import reasons
-from decoy_engine.determinism import derive, derive_index
-from decoy_engine.internal.crypto import hmac_hex
 from decoy_engine.plan._errors import PlanCompileError
 from decoy_engine.transforms._codeset_config_checks import (
     validate_code_set_config,
 )
-from decoy_engine.transforms._codeset_index import hole_candidate_count, hole_resolve
+from decoy_engine.transforms._codeset_index import hole_candidate_count
 from decoy_engine.transforms._codeset_loader import (
     _SHIPPED_CORPORA,  # noqa: F401 -- re-exported (validate_code_set_config moved out)
     CorpusVerifyReport,  # noqa: F401 -- re-exported public API (see below)
@@ -126,11 +124,12 @@ from decoy_engine.transforms._codeset_loader import (
     load_corpus_provenance,  # noqa: F401 -- re-exported public API (see below)
     verify_corpus,  # noqa: F401 -- re-exported public API (see below)
 )
-
-# Stable salt for HMAC-keyed row derivation. Same purpose as
-# reference_tables._KEYED_ACCESS_SALT: determinism, not secrecy.
-# RFC 2104: HMAC(key, msg) -- here key = salt, msg = str(input_value).
-_KEYED_SALT = b"decoy.code_set.keyed_access.v1"
+from decoy_engine.transforms._codeset_pick import (  # noqa: F401 -- _KEYED_SALT re-exported
+    _KEYED_SALT,
+    _pick_from_seq,
+    _pick_gen,
+    _pick_mask,
+)
 
 # `load_corpus` / `load_corpus_provenance` / `verify_corpus` /
 # `CorpusVerifyReport` / `_get_corpus_record` and the `_SHIPPED_CORPORA` name
@@ -378,45 +377,56 @@ def apply_code_set(
             config.corpus_source_version when the latter is set (HC-2 D2a).
         ValueError: Unsupported mode.
     """
-    if corpus_record is None:
-        corpus_name, override_path = _resolve_corpus_path(config)
-        record = _get_corpus_record(
-            corpus_name,
-            override_path,
-            is_shipped=override_path is None,
-            expected_source_version=config.corpus_source_version,
-        )
-    else:
-        record = corpus_record
-        # Defense-in-depth (Codex HIGH): a caller that resolved this record
-        # under one config and now applies it under a DIFFERENT pinned config
-        # would otherwise skip verification entirely (the resolve-time pin
-        # check ran against the OTHER config). Re-verify the pin against the
-        # record we are about to mask with, so the pin is enforced wherever a
-        # pinned config is used, not only on the self-resolving path.
-        corpus_name, override_path = _resolve_corpus_path(config)
-        _check_source_version_pin(corpus_name, override_path, record, config.corpus_source_version)
-    rows = record.rows
-
-    if config.chapter_preserve:
-        return _apply_chapter_preserve(
-            value, record, mode=mode, job_seed=job_seed, namespace=namespace, row_index=row_index
-        )
-
-    if mode == "mask":
-        return _pick_mask(value, record, mask_key=job_seed, namespace=namespace)
-    if mode == "gen":
-        if namespace is None:
-            raise PlanCompileError(
-                code=reasons.plan.CODE_SET_GEN_REQUIRES_NAMESPACE,
-                path="namespace",
-                message=(
-                    "code_set gen mode requires a column namespace. "
-                    "Set namespace on the ColumnSeed or pass namespace= to apply_code_set."
-                ),
+    try:
+        if corpus_record is None:
+            corpus_name, override_path = _resolve_corpus_path(config)
+            record = _get_corpus_record(
+                corpus_name,
+                override_path,
+                is_shipped=override_path is None,
+                expected_source_version=config.corpus_source_version,
             )
-        return _pick_gen(rows, job_seed=job_seed, namespace=namespace, row_index=row_index)
-    raise ValueError(f"code_set: unsupported mode {mode!r}. Use 'mask' or 'gen'.")
+        else:
+            record = corpus_record
+            # Defense-in-depth (Codex HIGH): a caller that resolved this record
+            # under one config and now applies it under a DIFFERENT pinned config
+            # would otherwise skip verification entirely (the resolve-time pin
+            # check ran against the OTHER config). Re-verify the pin against the
+            # record we are about to mask with, so the pin is enforced wherever a
+            # pinned config is used, not only on the self-resolving path.
+            corpus_name, override_path = _resolve_corpus_path(config)
+            _check_source_version_pin(
+                corpus_name, override_path, record, config.corpus_source_version
+            )
+        rows = record.rows
+
+        if config.chapter_preserve:
+            return _apply_chapter_preserve(
+                value,
+                record,
+                mode=mode,
+                job_seed=job_seed,
+                namespace=namespace,
+                row_index=row_index,
+            )
+
+        if mode == "mask":
+            return _pick_mask(value, record, mask_key=job_seed, namespace=namespace)
+        if mode == "gen":
+            if namespace is None:
+                raise PlanCompileError(
+                    code=reasons.plan.CODE_SET_GEN_REQUIRES_NAMESPACE,
+                    path="namespace",
+                    message=(
+                        "code_set gen mode requires a column namespace. "
+                        "Set namespace on the ColumnSeed or pass namespace= to apply_code_set."
+                    ),
+                )
+            return _pick_gen(rows, job_seed=job_seed, namespace=namespace, row_index=row_index)
+        raise ValueError(f"code_set: unsupported mode {mode!r}. Use 'mask' or 'gen'.")
+    except BaseException:
+        del job_seed
+        raise
 
 
 def _apply_chapter_preserve(
@@ -436,164 +446,85 @@ def _apply_chapter_preserve(
     chapter bucket holds only the input code (code_set_sole_member_bucket); or
     mode is "gen" with namespace None (code_set_gen_requires_namespace).
     """
-    rows = record.rows
-    if not rows or "chapter" not in rows[0]:
-        raise PlanCompileError(
-            code=reasons.plan.CODE_SET_CHAPTER_COLUMN_MISSING,
-            path="provider_config.chapter_preserve",
-            message=(
-                "chapter_preserve=True requires the corpus to have a 'chapter' column. "
-                "The loaded corpus does not have a 'chapter' column."
-            ),
+    try:
+        rows = record.rows
+        if not rows or "chapter" not in rows[0]:
+            raise PlanCompileError(
+                code=reasons.plan.CODE_SET_CHAPTER_COLUMN_MISSING,
+                path="provider_config.chapter_preserve",
+                message=(
+                    "chapter_preserve=True requires the corpus to have a 'chapter' column. "
+                    "The loaded corpus does not have a 'chapter' column."
+                ),
+            )
+
+        # Input's chapter, O(1) via the memoized chapter_index (HC-1 slice 1).
+        input_chapter = _get_chapter(value, record.selection.chapter_index)
+        if input_chapter is None:
+            # Unknown chapter: derive from first char of code.
+            input_chapter = value[0] if value else ""
+
+        # Bucket = rows in the same chapter. HC-1 slice 2: O(1) via the
+        # precomputed chapter_buckets, replacing the old per-value O(corpus) filter.
+        buckets = record.selection.chapter_buckets
+        bucket = buckets.get(input_chapter, []) if buckets else []
+
+        if not bucket:
+            # Fail closed: the input's chapter is absent. Falling back to
+            # full-corpus selection would return a code from a different chapter,
+            # silently breaking the invariant (same posture as sole-member below).
+            raise PlanCompileError(
+                code=reasons.plan.CODE_SET_CHAPTER_ABSENT,
+                path="provider_config.chapter_preserve",
+                message=(
+                    f"chapter_preserve: chapter {input_chapter!r} (derived from input "
+                    f"{value!r}) is not present in the corpus. Cannot preserve the chapter "
+                    "invariant: no candidates exist in this chapter. Use a larger corpus "
+                    "that covers this chapter, or disable chapter_preserve for this field."
+                ),
+            )
+
+        # Candidate set: bucket MINUS the input code (output != input guarantee).
+        # bucket_code_index locates the hole in O(1); since input_chapter came from
+        # the SAME chapter_index, a corpus-member `value` always lands in THIS bucket.
+        bkci = record.selection.bucket_code_index
+        position = bkci.get(value) if bkci else None
+        candidate_count = hole_candidate_count(len(bucket), position)
+
+        if candidate_count == 0:
+            raise PlanCompileError(
+                code=reasons.plan.CODE_SET_SOLE_MEMBER_BUCKET,
+                path="provider_config.chapter_preserve",
+                message=(
+                    f"chapter_preserve: chapter {input_chapter!r} has only one code "
+                    f"({value!r}) in the corpus. Cannot produce output != input. "
+                    f"Use a larger corpus or disable chapter_preserve for this field."
+                ),
+            )
+
+        if mode == "mask":
+            return _pick_from_seq(
+                value, bucket, position, candidate_count, mask_key=job_seed, namespace=namespace
+            )
+        # Gen mode: draw from the bucket minus the input, keeping the
+        # chapter_preserve gen path symmetric with mask (input is not a gen hint).
+        if namespace is None:
+            raise PlanCompileError(
+                code=reasons.plan.CODE_SET_GEN_REQUIRES_NAMESPACE,
+                path="namespace",
+                message=(
+                    "code_set gen mode requires a column namespace. "
+                    "Set namespace on the ColumnSeed or pass namespace= to apply_code_set."
+                ),
+            )
+        return _pick_gen(
+            bucket,
+            job_seed=job_seed,
+            namespace=namespace,
+            row_index=row_index,
+            position=position,
+            candidate_count=candidate_count,
         )
-
-    # Input's chapter, O(1) via the memoized chapter_index (HC-1 slice 1).
-    input_chapter = _get_chapter(value, record.selection.chapter_index)
-    if input_chapter is None:
-        # Unknown chapter: derive from first char of code.
-        input_chapter = value[0] if value else ""
-
-    # Bucket = rows in the same chapter. HC-1 slice 2: O(1) via the
-    # precomputed chapter_buckets, replacing the old per-value O(corpus) filter.
-    buckets = record.selection.chapter_buckets
-    bucket = buckets.get(input_chapter, []) if buckets else []
-
-    if not bucket:
-        # Fail closed: the input's chapter is absent. Falling back to
-        # full-corpus selection would return a code from a different chapter,
-        # silently breaking the invariant (same posture as sole-member below).
-        raise PlanCompileError(
-            code=reasons.plan.CODE_SET_CHAPTER_ABSENT,
-            path="provider_config.chapter_preserve",
-            message=(
-                f"chapter_preserve: chapter {input_chapter!r} (derived from input "
-                f"{value!r}) is not present in the corpus. Cannot preserve the chapter "
-                "invariant: no candidates exist in this chapter. Use a larger corpus "
-                "that covers this chapter, or disable chapter_preserve for this field."
-            ),
-        )
-
-    # Candidate set: bucket MINUS the input code (output != input guarantee).
-    # bucket_code_index locates the hole in O(1); since input_chapter came from
-    # the SAME chapter_index, a corpus-member `value` always lands in THIS bucket.
-    bkci = record.selection.bucket_code_index
-    position = bkci.get(value) if bkci else None
-    candidate_count = hole_candidate_count(len(bucket), position)
-
-    if candidate_count == 0:
-        raise PlanCompileError(
-            code=reasons.plan.CODE_SET_SOLE_MEMBER_BUCKET,
-            path="provider_config.chapter_preserve",
-            message=(
-                f"chapter_preserve: chapter {input_chapter!r} has only one code "
-                f"({value!r}) in the corpus. Cannot produce output != input. "
-                f"Use a larger corpus or disable chapter_preserve for this field."
-            ),
-        )
-
-    if mode == "mask":
-        return _pick_from_seq(
-            value, bucket, position, candidate_count, mask_key=job_seed, namespace=namespace
-        )
-    # Gen mode: draw from the bucket minus the input, keeping the
-    # chapter_preserve gen path symmetric with mask (input is not a gen hint).
-    if namespace is None:
-        raise PlanCompileError(
-            code=reasons.plan.CODE_SET_GEN_REQUIRES_NAMESPACE,
-            path="namespace",
-            message=(
-                "code_set gen mode requires a column namespace. "
-                "Set namespace on the ColumnSeed or pass namespace= to apply_code_set."
-            ),
-        )
-    return _pick_gen(
-        bucket,
-        job_seed=job_seed,
-        namespace=namespace,
-        row_index=row_index,
-        position=position,
-        candidate_count=candidate_count,
-    )
-
-
-def _pick_mask(value: str, record: _CorpusRecord, *, mask_key: bytes, namespace: str | None) -> str:
-    """HMAC-keyed selection from the corpus, excluding the input value.
-
-    code_index locates the input's hole in O(1), then _pick_from_seq picks
-    from the corpus minus that hole (output != input, domain-exclusion idiom).
-    SP-06 caveat: candidate_count changes if corpus rows are added/removed.
-    """
-    rows = record.rows
-    position = record.selection.code_index.get(value)
-    candidate_count = hole_candidate_count(len(rows), position)
-    if candidate_count == 0:
-        # Only one code in corpus and it equals the input -- cannot differ.
-        raise PlanCompileError(
-            code=reasons.plan.CODE_SET_SINGLE_ROW_CORPUS,
-            path="provider_config.code_set",
-            message=(
-                f"Corpus has only one code ({value!r}) and it equals the input. "
-                "Mask mode requires at least two distinct codes in the corpus."
-            ),
-        )
-    return _pick_from_seq(
-        value, rows, position, candidate_count, mask_key=mask_key, namespace=namespace
-    )
-
-
-def _pick_from_seq(
-    key_value: str,
-    seq: list[dict[str, Any]],
-    position: int | None,
-    candidate_count: int,
-    *,
-    mask_key: bytes,
-    namespace: str | None,
-) -> str:
-    """Pick one row from seq, excluding the row at ``position``, using
-    HMAC(key, key_value) % candidate_count.
-
-    ``seq`` sorted by code (guaranteed by _read_corpus_record). ``position``/
-    ``candidate_count`` drive the "index with hole" selection (see
-    ``_codeset_index``) that reproduces `[r for r in seq if code != value][idx]`
-    without materializing the filtered list. HMAC primitive: RFC 2104. DE-02:
-    the HMAC key is SECRET-derived (`derive(mask_key, namespace, _KEYED_SALT)`),
-    so the remap is not globally reversible (Codex BLOCKER 1); `mask_key ==
-    job_seed` on the no-secret path keeps it deterministic.
-    """
-    hmac_key = derive(mask_key, namespace or "code_set", _KEYED_SALT)
-    hex_digest = hmac_hex(hmac_key, key_value)
-    if hex_digest is None:
-        raise ValueError("hmac_hex returned None for a non-None key_value")
-    # First 8 hex chars -> 32-bit int, modulo candidate count.
-    idx = int(hex_digest[:8], 16) % candidate_count
-    return str(seq[hole_resolve(idx, position)]["code"])
-
-
-def _pick_gen(
-    rows: list[dict[str, Any]],
-    *,
-    job_seed: bytes,
-    namespace: str,
-    row_index: int = 0,
-    position: int | None = None,
-    candidate_count: int | None = None,
-) -> str:
-    """Pick one row via ``derive_index`` keyed on namespace and row_index.
-
-    Callers validate namespace first (validate-then-call keeps the hot path
-    free of repeated None checks). Deterministic: same job_seed + namespace +
-    row_index + corpus -> same code. Decorrelated: different namespaces sharing
-    a job_seed produce independent sequences (HKDF binds namespace into the key
-    material, SP-09c). ``position``/``candidate_count``, when given, exclude the
-    row at ``position`` (chapter_preserve gen exclusion, same hole_resolve math
-    as mask); omitted, draws from the full pool.
-    """
-    pool_size = len(rows) if candidate_count is None else candidate_count
-    idx = derive_index(
-        job_seed[:8],
-        namespace,
-        row_index.to_bytes(8, "big"),
-        pool_size=pool_size,
-    )
-    return str(rows[hole_resolve(idx, position)]["code"])
+    except BaseException:
+        del job_seed
+        raise

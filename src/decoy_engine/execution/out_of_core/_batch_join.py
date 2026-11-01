@@ -109,66 +109,70 @@ class ChildFkBatchJoiner:
         remap_seeds: tuple[ColumnSeed, ...] | None = None,
         job_seed: bytes | None = None,
     ) -> None:
-        if len(child_key_types) != len(edge.child_columns):
-            raise ExecutionError(
-                code=reasons.runtime.OUT_OF_CORE_CHILD_KEY_TYPES_MISMATCH,
-                message="one child key type is required per FK child column.",
-            )
-        if edge.orphan_policy is OrphanPolicy.REMAP:
-            if remap_seeds is None or job_seed is None:
-                raise ExecutionError(
-                    code=reasons.runtime.OUT_OF_CORE_REMAP_SEEDS_MISSING,
-                    message="orphan_policy='remap' requires the parent key seeds and job seed.",
-                )
-            for parent_col, seed in zip(edge.parent_columns, remap_seeds, strict=True):
-                if seed is None:
-                    raise ExecutionError(
-                        code=reasons.runtime.OUT_OF_CORE_PARENT_SEED_MISSING,
-                        message=f"parent key {edge.parent_table}.{parent_col} is not in the plan.",
-                    )
-        self._edge = edge
-        self._relation = parent_relation
-        self._remap_seeds = remap_seeds
-        self._job_seed = job_seed
-        # The relation's Parquet footer is metadata-only to read and is the
-        # authoritative masked-key type: it already reflects the DuckDB COPY
-        # round trip the join result will take.
-        relation_schema = pq.read_metadata(parent_relation.path).schema.to_arrow_schema()
-        masked_types = tuple(
-            relation_schema.field(name).type for name in parent_relation.masked_key_columns
-        )
-        self._output_types = _resolve_output_types(
-            edge=edge,
-            masked_types=masked_types,
-            child_key_types=child_key_types,
-            remap_seeds=remap_seeds,
-        )
-        self._observed_types: tuple[set[pa.DataType], ...] = tuple(
-            set() for _ in edge.child_columns
-        )
-        # Typing is settled; only now acquire the connection so a fail-closed
-        # rejection never leaks one.
-        self._conn = connect_duckdb(temp_dir=temp_dir / "duckdb", memory_limit=memory_limit)
         try:
-            # Materialize the relation ONCE as a TEMP TABLE, not a TEMP VIEW over
-            # read_parquet: `join_batch` runs one LEFT JOIN against parent_keys
-            # PER child batch (hundreds of times for a large child), and a view
-            # re-reads and re-parses the whole relation parquet on every one of
-            # those scans -- O(child_batches * relation_rows) disk reads, badly
-            # amplified now that the memory-sizing fix runs DuckDB at threads=1.
-            # A temp table parses the parquet once and is buffer-managed
-            # (spilling to temp_directory under memory_limit, so still bounded by
-            # disk, not RAM). Same pattern `_join.py` already uses for the child
-            # side (`CREATE TEMP TABLE child_keys AS SELECT * FROM ...`).
-            self._conn.execute(
-                "CREATE TEMP TABLE parent_keys AS SELECT * FROM "
-                f"read_parquet({_sql_string(str(parent_relation.path))})"
+            if len(child_key_types) != len(edge.child_columns):
+                raise ExecutionError(
+                    code=reasons.runtime.OUT_OF_CORE_CHILD_KEY_TYPES_MISMATCH,
+                    message="one child key type is required per FK child column.",
+                )
+            if edge.orphan_policy is OrphanPolicy.REMAP:
+                if remap_seeds is None or job_seed is None:
+                    raise ExecutionError(
+                        code=reasons.runtime.OUT_OF_CORE_REMAP_SEEDS_MISSING,
+                        message="orphan_policy='remap' requires the parent key seeds and job seed.",
+                    )
+                for parent_col, seed in zip(edge.parent_columns, remap_seeds, strict=True):
+                    if seed is None:
+                        raise ExecutionError(
+                            code=reasons.runtime.OUT_OF_CORE_PARENT_SEED_MISSING,
+                            message=f"parent key {edge.parent_table}.{parent_col} is not in the plan.",
+                        )
+            self._edge = edge
+            self._relation = parent_relation
+            self._remap_seeds = remap_seeds
+            self._job_seed = job_seed
+            # The relation's Parquet footer is metadata-only to read and is the
+            # authoritative masked-key type: it already reflects the DuckDB COPY
+            # round trip the join result will take.
+            relation_schema = pq.read_metadata(parent_relation.path).schema.to_arrow_schema()
+            masked_types = tuple(
+                relation_schema.field(name).type for name in parent_relation.masked_key_columns
             )
+            self._output_types = _resolve_output_types(
+                edge=edge,
+                masked_types=masked_types,
+                child_key_types=child_key_types,
+                remap_seeds=remap_seeds,
+            )
+            self._observed_types: tuple[set[pa.DataType], ...] = tuple(
+                set() for _ in edge.child_columns
+            )
+            # Typing is settled; only now acquire the connection so a fail-closed
+            # rejection never leaks one.
+            self._conn = connect_duckdb(temp_dir=temp_dir / "duckdb", memory_limit=memory_limit)
+            try:
+                # Materialize the relation ONCE as a TEMP TABLE, not a TEMP VIEW over
+                # read_parquet: `join_batch` runs one LEFT JOIN against parent_keys
+                # PER child batch (hundreds of times for a large child), and a view
+                # re-reads and re-parses the whole relation parquet on every one of
+                # those scans -- O(child_batches * relation_rows) disk reads, badly
+                # amplified now that the memory-sizing fix runs DuckDB at threads=1.
+                # A temp table parses the parquet once and is buffer-managed
+                # (spilling to temp_directory under memory_limit, so still bounded by
+                # disk, not RAM). Same pattern `_join.py` already uses for the child
+                # side (`CREATE TEMP TABLE child_keys AS SELECT * FROM ...`).
+                self._conn.execute(
+                    "CREATE TEMP TABLE parent_keys AS SELECT * FROM "
+                    f"read_parquet({_sql_string(str(parent_relation.path))})"
+                )
+            except BaseException:
+                # A constructor that raises never returns, so __exit__/close can
+                # never release the connection; release it on the way out.
+                self._conn.close()
+                self._conn = None
+                raise
         except BaseException:
-            # A constructor that raises never returns, so __exit__/close can
-            # never release the connection; release it on the way out.
-            self._conn.close()
-            self._conn = None
+            del job_seed
             raise
 
     @property
@@ -549,21 +553,29 @@ def _remap_values(
     joiner tests compare against. `mask_key` (DE-02) defaults to `job_seed`
     when absent (byte-identical).
     """
-    key = mask_key if mask_key is not None else plan.seed_envelope.job_seed
-    remapped: list[pa.Array] = []
-    for parent_column, child_column in zip(edge.parent_columns, edge.child_columns, strict=True):
-        parent_seed = _column_seed(plan, edge.parent_table, parent_column)
-        if parent_seed is None:
-            raise ExecutionError(
-                code=reasons.runtime.OUT_OF_CORE_PARENT_SEED_MISSING,
-                message=f"parent key {edge.parent_table}.{parent_column} is not in the plan.",
+    try:
+        mask_key = mask_key if mask_key is not None else plan.seed_envelope.job_seed
+        remapped: list[pa.Array] = []
+        for parent_column, child_column in zip(
+            edge.parent_columns, edge.child_columns, strict=True
+        ):
+            parent_seed = _column_seed(plan, edge.parent_table, parent_column)
+            if parent_seed is None:
+                raise ExecutionError(
+                    code=reasons.runtime.OUT_OF_CORE_PARENT_SEED_MISSING,
+                    message=f"parent key {edge.parent_table}.{parent_column} is not in the plan.",
+                )
+            normalized = [
+                None if fk_key_value(value) is NULL_FK_KEY else fk_key_value(value)
+                for value in source_child.column(child_column).combine_chunks().to_pylist()
+            ]
+            remapped.append(
+                mask_column(pa.array(normalized, from_pandas=True), parent_seed, mask_key)
             )
-        normalized = [
-            None if fk_key_value(value) is NULL_FK_KEY else fk_key_value(value)
-            for value in source_child.column(child_column).combine_chunks().to_pylist()
-        ]
-        remapped.append(mask_column(pa.array(normalized, from_pandas=True), parent_seed, key))
-    return tuple(remapped)
+        return tuple(remapped)
+    except BaseException:
+        del mask_key
+        raise
 
 
 __all__ = ["ChildFkBatchJoiner"]

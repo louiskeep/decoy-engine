@@ -44,7 +44,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 from collections.abc import Iterable, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from decoy_engine import reasons
@@ -191,7 +191,7 @@ class DeriveContext:
     the same inputs.
     """
 
-    _hmac_key: bytes
+    _hmac_key: bytes = field(repr=False)
 
     @classmethod
     def for_column(cls, seed: bytes, namespace: str) -> DeriveContext:
@@ -201,17 +201,24 @@ class DeriveContext:
         scalar `derive(...)` does. Construction cost is the same as
         one HKDF-SHA256 call (2x HMAC-SHA256 invocations).
         """
-        if len(seed) not in _SEED_LENGTHS:
-            raise DeterminismError(
-                code=reasons.runtime.SEED_WRONG_LENGTH,
-                message=f"seed must be 8 (job_seed) or 32 (mask_key) bytes; got {len(seed)}",
+        try:
+            if len(seed) not in _SEED_LENGTHS:
+                raise DeterminismError(
+                    code=reasons.runtime.SEED_WRONG_LENGTH,
+                    message=f"seed must be 8 (job_seed) or 32 (mask_key) bytes; got {len(seed)}",
+                )
+            if not namespace:
+                raise DeterminismError(
+                    code=reasons.runtime.NAMESPACE_EMPTY, message="namespace must be non-empty"
+                )
+            return cls(
+                _hmac_key=hkdf_sha256(
+                    ikm=seed, salt=_SALT, info=namespace.encode("utf-8"), length=32
+                )
             )
-        if not namespace:
-            raise DeterminismError(
-                code=reasons.runtime.NAMESPACE_EMPTY, message="namespace must be non-empty"
-            )
-        key = hkdf_sha256(ikm=seed, salt=_SALT, info=namespace.encode("utf-8"), length=32)
-        return cls(_hmac_key=key)
+        except BaseException:
+            del seed
+            raise
 
     def derive_source(self, namespace: str, source: bytes) -> bytes:
         """Per-row HMAC. Same output as `derive(seed, namespace, source)`

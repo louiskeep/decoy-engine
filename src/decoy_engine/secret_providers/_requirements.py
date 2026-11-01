@@ -60,10 +60,10 @@ def _prepare_mask_root(material: bytes, key_version: str) -> bytes:
 
 
 def _prepare_fernet(material: bytes, _key_version: str) -> bytes:
-    from cryptography.fernet import Fernet
-
     box = OpaqueBox(material.strip())
     del material  # a traceback keeps this frame: the material must not be among its locals
+    from cryptography.fernet import Fernet
+
     valid = True
     try:
         Fernet(box.open()[0])
@@ -75,17 +75,20 @@ def _prepare_fernet(material: bytes, _key_version: str) -> bytes:
 
 
 def _prepare_hmac(material: bytes, _key_version: str) -> bytes:
-    if len(material) < 32:
+    try:
+        if len(material) < 32:
+            raise SecretMaterialInvalid
+        return material
+    except BaseException:
         del material  # a traceback keeps this frame: the material must not be among its locals
-        raise SecretMaterialInvalid
-    return material
+        raise
 
 
 def _prepare_aes_gcm(material: bytes, _key_version: str) -> bytes:
-    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-
     box = OpaqueBox(material)
     del material  # a traceback keeps this frame: the material must not be among its locals
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
     valid = len(box.open()[0]) in (16, 24, 32)
     if valid:
         try:

@@ -135,10 +135,13 @@ class SecretKeyProvider:
     def __init__(self, secret: bytes, key_version: str = "v1") -> None:
         # Hand-written instead of the generated one so no frame on a refusal's traceback keeps
         # the secret: `__post_init__` raises on a weak secret after this frame drops its name.
-        object.__setattr__(self, "secret", secret)
-        object.__setattr__(self, "key_version", key_version)
-        del secret
-        self.__post_init__()
+        try:
+            object.__setattr__(self, "secret", secret)
+            object.__setattr__(self, "key_version", key_version)
+            self.__post_init__()
+        except BaseException:
+            del secret
+            raise
 
     def __post_init__(self) -> None:
         if not isinstance(self.secret, (bytes, bytearray)):
@@ -239,10 +242,13 @@ def require_mask_key(plan: Plan, key_provider: KeyProvider | None) -> bytes:
     if key_provider is None or isinstance(key_provider, SeedKeyProvider):
         raise KeyedStrategyRequiresSecret(KEY_REQUIRED_GUIDANCE)
     mask_key = key_provider.mask_key()
-    if len(mask_key) < MIN_SECRET_BYTES:
+    try:
+        if len(mask_key) < MIN_SECRET_BYTES:
+            raise KeyedStrategyRequiresSecret(KEY_REQUIRED_GUIDANCE)
+        return mask_key
+    except BaseException:
         del mask_key  # a traceback keeps this frame: the short key must not be among its locals
-        raise KeyedStrategyRequiresSecret(KEY_REQUIRED_GUIDANCE)
-    return mask_key
+        raise
 
 
 def mask_key_from_provider(provider: KeyProvider | None, job_seed: bytes) -> bytes:
@@ -250,7 +256,11 @@ def mask_key_from_provider(provider: KeyProvider | None, job_seed: bytes) -> byt
 
     Ungated -- callers that need the fail-closed gate use `require_mask_key`.
     """
-    return provider.mask_key() if provider is not None else job_seed
+    try:
+        return provider.mask_key() if provider is not None else job_seed
+    except BaseException:
+        del job_seed
+        raise
 
 
 def resolve_mask_key(*, plan: Plan, key_provider: KeyProvider | None = None) -> bytes:

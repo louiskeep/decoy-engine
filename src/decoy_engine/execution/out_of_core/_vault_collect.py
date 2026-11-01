@@ -65,14 +65,18 @@ def assert_vault_inputs(
     writer would encrypt reversible plaintext under the wrong secret (DE-02). Direct
     callers of `run_fk_out_of_core` do not pass through `run_pipeline`'s own guard.
     """
-    if vault_writer is None:
-        return
-    if config is None:
-        raise ExecutionError(
-            code=reasons.runtime.OUT_OF_CORE_VAULT_CONFIG_REQUIRED,
-            message="a vault_writer on the out-of-core route needs the job config.",
-        )
-    assert_vault_writer_keyed(vault_writer, mask_key)
+    try:
+        if vault_writer is None:
+            return
+        if config is None:
+            raise ExecutionError(
+                code=reasons.runtime.OUT_OF_CORE_VAULT_CONFIG_REQUIRED,
+                message="a vault_writer on the out-of-core route needs the job config.",
+            )
+        assert_vault_writer_keyed(vault_writer, mask_key)
+    except BaseException:
+        del mask_key
+        raise
 
 
 def collect_batch_vault(

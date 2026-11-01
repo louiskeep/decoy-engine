@@ -55,8 +55,17 @@ def read_checked(
                 return b"".join(chunks)
             chunks.append(data)
             offset += len(data)
+    except BaseException:
+        # A read that fails part way, or a failing close, must not leave the bytes already read
+        # in this frame: the role is SECRET for the mask secret (`_opaque`).
+        chunks = data = None  # type: ignore[assignment]
+        raise
     finally:
-        handle.close()
+        try:
+            handle.close()
+        except BaseException:
+            chunks = data = None  # type: ignore[assignment]
+            raise
 
 
 def shown(locator: str, field_key: str) -> str:

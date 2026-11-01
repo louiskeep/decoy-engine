@@ -105,31 +105,35 @@ def sample_faker_array(
     exact same position, never label-aligned (an Arrow column carries no
     label index to misalign with in the first place).
     """
-    if mask_key is None:  # pragma: no cover - require_mask_key never returns None
-        raise AssertionError(
-            "faker pool selection reached with mask_key=None; require_mask_key "
-            "always resolves a concrete key before the native route dispatches."
+    try:
+        if mask_key is None:  # pragma: no cover - require_mask_key never returns None
+            raise AssertionError(
+                "faker pool selection reached with mask_key=None; require_mask_key "
+                "always resolves a concrete key before the native route dispatches."
+            )
+        col = source.combine_chunks() if isinstance(source, pa.ChunkedArray) else source
+        n = len(col)
+        idx = _checked_batch(
+            index_kernel.derive_index_batch(
+                col,
+                mask_key=mask_key,
+                namespace=namespace,
+                pool_size=pool.size,
+                native_threads=native_threads,
+            ),
+            n=n,
         )
-    col = source.combine_chunks() if isinstance(source, pa.ChunkedArray) else source
-    n = len(col)
-    idx = _checked_batch(
-        index_kernel.derive_index_batch(
-            col,
-            mask_key=mask_key,
-            namespace=namespace,
-            pool_size=pool.size,
-            native_threads=native_threads,
-        ),
-        n=n,
-    )
-    idx_valid = idx.is_valid().to_numpy(zero_copy_only=False)
-    col_valid = col.is_valid().to_numpy(zero_copy_only=False)
-    if not np.array_equal(idx_valid, col_valid):
-        raise GenerationError(
-            code=reasons.runtime.INDEX_BATCH_NULL_MASK_MISMATCH,
-            message="derive_index_batch's null positions do not match the source column's",
-        )
-    return _gather_pool_values(pool, idx, idx_valid)
+        idx_valid = idx.is_valid().to_numpy(zero_copy_only=False)
+        col_valid = col.is_valid().to_numpy(zero_copy_only=False)
+        if not np.array_equal(idx_valid, col_valid):
+            raise GenerationError(
+                code=reasons.runtime.INDEX_BATCH_NULL_MASK_MISMATCH,
+                message="derive_index_batch's null positions do not match the source column's",
+            )
+        return _gather_pool_values(pool, idx, idx_valid)
+    except BaseException:
+        del mask_key
+        raise
 
 
 def sample_faker_array_positional(
@@ -164,39 +168,43 @@ def sample_faker_array_positional(
     decides it from the dtype it rebuilds, so it is not always Arrow validity. Both routes pass
     it; `None` falls back to Arrow validity, which is the oracle's answer for a string source.
     """
-    if job_seed is None:  # pragma: no cover - the chunked adapter always passes the job seed
-        raise AssertionError("positional faker selection reached with job_seed=None.")
-    col = source.combine_chunks() if isinstance(source, pa.ChunkedArray) else source
-    n = len(col)
-    keys = positional_key_array(
-        row_offset,
-        n,
-        code=reasons.runtime.FAKER_POSITION_OUT_OF_DOMAIN,
-        gate_positions=gate_positions,
-    )
-    idx = _checked_batch(
-        index_kernel.derive_index_batch(
-            keys,
-            mask_key=job_seed,
-            namespace=namespace,
-            pool_size=pool.size,
-            native_threads=native_threads,
-        ),
-        n=n,
-    )
-    if idx.null_count:
-        # Dense uint64 keys have no nulls, so a null index is a malformed kernel, not data.
-        raise GenerationError(
-            code=reasons.runtime.INDEX_BATCH_NULL_MASK_MISMATCH,
-            message="derive_index_batch returned null indices for non-null positional keys",
+    try:
+        if job_seed is None:  # pragma: no cover - the chunked adapter always passes the job seed
+            raise AssertionError("positional faker selection reached with job_seed=None.")
+        col = source.combine_chunks() if isinstance(source, pa.ChunkedArray) else source
+        n = len(col)
+        keys = positional_key_array(
+            row_offset,
+            n,
+            code=reasons.runtime.FAKER_POSITION_OUT_OF_DOMAIN,
+            gate_positions=gate_positions,
         )
-    if missing_mask is None:
-        valid = col.is_valid().to_numpy(zero_copy_only=False)
-    else:
-        if len(missing_mask) != n:  # pragma: no cover - the routes build it from the same rows
-            raise AssertionError("positional faker missing mask length differs from the batch")
-        valid = ~missing_mask.to_numpy(zero_copy_only=False)
-    return _gather_pool_values(pool, idx, valid)
+        idx = _checked_batch(
+            index_kernel.derive_index_batch(
+                keys,
+                mask_key=job_seed,
+                namespace=namespace,
+                pool_size=pool.size,
+                native_threads=native_threads,
+            ),
+            n=n,
+        )
+        if idx.null_count:
+            # Dense uint64 keys have no nulls, so a null index is a malformed kernel, not data.
+            raise GenerationError(
+                code=reasons.runtime.INDEX_BATCH_NULL_MASK_MISMATCH,
+                message="derive_index_batch returned null indices for non-null positional keys",
+            )
+        if missing_mask is None:
+            valid = col.is_valid().to_numpy(zero_copy_only=False)
+        else:
+            if len(missing_mask) != n:  # pragma: no cover - the routes build it from the same rows
+                raise AssertionError("positional faker missing mask length differs from the batch")
+            valid = ~missing_mask.to_numpy(zero_copy_only=False)
+        return _gather_pool_values(pool, idx, valid)
+    except BaseException:
+        del job_seed
+        raise
 
 
 def _checked_batch(idx: object, *, n: int) -> pa.Array:
@@ -321,132 +329,165 @@ def run_kernel_step(
     any non-empty sibling (a null cell is stringified and hashed), date_shift and
     bucket_perturb only chunks with a parseable value.
     """
-    if isinstance(params, PassthroughParams):
-        return StepResult(native_passthrough(source), None)
-    if isinstance(params, RedactParams):
-        return StepResult(native_redact(source, redact_with=params.redact_with), None)
-    if isinstance(params, TruncateParams):
-        out = native_truncate(
-            source, length=params.length, keep=params.keep, mask_char=params.mask_char
-        )
-        return StepResult(out, None)
-    if isinstance(params, TextRedactParams):
-        out = native_text_redact(
-            source,
-            detectors=params.detectors,
-            token=params.token,
-            label_token=params.label_token,
-        )
-        return StepResult(out, None)
-    if isinstance(params, TextMaskParams):
-        # text_mask runs the shipped handler per cell on the ARROW_PYTHON path (no Rust kernel;
-        # ran=None, like text_redact). `native_text_mask` reproduces the handler: it threads the
-        # mask key, builds the sub-floor notices, and raises the fail-closed StrategyError itself.
-        out, notices = native_text_mask(
-            source,
-            mask_key=mask_key,
-            column=params.column,
-            detectors=params.detectors,
-            per_detector_strategy=dict(params.per_detector_strategy),
-            unmatched_span_policy=params.unmatched_span_policy,
-            token=params.token,
-            date_shift_bounds=params.date_shift_bounds,
-            sub_floor_span_policy=params.sub_floor_span_policy,
-        )
-        return StepResult(out, None, text_mask_notices=notices)
-    if isinstance(params, HashParams):
-        # native_keyed_hash never falls back to the pure-Python reference
-        # (see _kernels_keyed.py); a successful call IS the compiled kernel.
-        out = native_keyed_hash(
-            source,
-            mask_key=mask_key,
-            namespace=params.namespace,
-            truncate=params.truncate,
-            native_threads=native_threads,
-        )
-        return StepResult(out, True)
-    if isinstance(params, FpeParams):
-        # native_fpe loads its own compiled FF1 kernel (fail-closed), like native_keyed_hash;
-        # a successful call IS the compiled kernel. The per-row errors ride the StepResult's own
-        # fpe channel, and each route maps a non-empty set to the fail-closed StrategyError kill.
-        result = native_fpe(
-            source,
-            mask_key=mask_key,
-            namespace=params.namespace,
-            tweak_column=params.tweak_column,
-            config=fpe_config_from_params(params),
-            forward=True,
-            native_threads=native_threads,
-        )
-        return StepResult(result.values, True, fpe_errors=result.errors)
-    if isinstance(params, FakerParams) and params.positional:
-        if pool is None or job_seed is None or params.selection_namespace is None:
-            # The unified route never builds positional params, and the chunked adapter passes
-            # the pool and the job seed for every admitted column.
-            raise AssertionError(
-                "positional FakerParams reached the kernel step with no pool, job_seed or "
-                "selection namespace."
+    try:
+        if isinstance(params, PassthroughParams):
+            return StepResult(native_passthrough(source), None)
+        if isinstance(params, RedactParams):
+            return StepResult(native_redact(source, redact_with=params.redact_with), None)
+        if isinstance(params, TruncateParams):
+            out = native_truncate(
+                source, length=params.length, keep=params.keep, mask_char=params.mask_char
             )
-        if len(source) == 0:
-            return StepResult(pa.array([], pa.string()), False)
-        out = sample_faker_array_positional(
-            source,
-            pool=pool,
-            row_offset=row_offset,
-            job_seed=job_seed,
-            namespace=params.selection_namespace,
-            index_kernel=_index_kernel_for(params, index_kernel),
-            native_threads=native_threads,
-            missing_mask=missing_mask,
-            gate_positions=gate_positions,
-        )
-        return StepResult(out, True)
-    if isinstance(params, FakerParams):
-        if params.namespace is None or pool is None:  # pragma: no cover - admission requires both
-            raise AssertionError("FakerParams reached the kernel step with no namespace or pool.")
-        out = sample_faker_array(
-            source,
-            pool=pool,
-            namespace=params.namespace,
-            mask_key=mask_key,
-            index_kernel=_index_kernel_for(params, index_kernel),
-            native_threads=native_threads,
-        )
-        return StepResult(out, True)
-    if isinstance(params, CategoricalParams):
-        kernel = _index_kernel_for(params, index_kernel)
-        prepared = params.prepared
-        if not prepared.positional:
-            out = native_categorical(
+            return StepResult(out, None)
+        if isinstance(params, TextRedactParams):
+            out = native_text_redact(
                 source,
+                detectors=params.detectors,
+                token=params.token,
+                label_token=params.label_token,
+            )
+            return StepResult(out, None)
+        if isinstance(params, TextMaskParams):
+            # text_mask runs the shipped handler per cell on the ARROW_PYTHON path (no Rust kernel;
+            # ran=None, like text_redact). `native_text_mask` reproduces the handler: it threads the
+            # mask key, builds the sub-floor notices, and raises the fail-closed StrategyError itself.
+            out, notices = native_text_mask(
+                source,
+                mask_key=mask_key,
+                column=params.column,
+                detectors=params.detectors,
+                per_detector_strategy=dict(params.per_detector_strategy),
+                unmatched_span_policy=params.unmatched_span_policy,
+                token=params.token,
+                date_shift_bounds=params.date_shift_bounds,
+                sub_floor_span_policy=params.sub_floor_span_policy,
+            )
+            return StepResult(out, None, text_mask_notices=notices)
+        if isinstance(params, HashParams):
+            # native_keyed_hash never falls back to the pure-Python reference
+            # (see _kernels_keyed.py); a successful call IS the compiled kernel.
+            out = native_keyed_hash(
+                source,
+                mask_key=mask_key,
+                namespace=params.namespace,
+                truncate=params.truncate,
+                native_threads=native_threads,
+            )
+            return StepResult(out, True)
+        if isinstance(params, FpeParams):
+            # native_fpe loads its own compiled FF1 kernel (fail-closed), like native_keyed_hash;
+            # a successful call IS the compiled kernel. The per-row errors ride the StepResult's own
+            # fpe channel, and each route maps a non-empty set to the fail-closed StrategyError kill.
+            result = native_fpe(
+                source,
+                mask_key=mask_key,
+                namespace=params.namespace,
+                tweak_column=params.tweak_column,
+                config=fpe_config_from_params(params),
+                forward=True,
+                native_threads=native_threads,
+            )
+            return StepResult(result.values, True, fpe_errors=result.errors)
+        if isinstance(params, FakerParams) and params.positional:
+            if pool is None or job_seed is None or params.selection_namespace is None:
+                # The unified route never builds positional params, and the chunked adapter passes
+                # the pool and the job seed for every admitted column.
+                raise AssertionError(
+                    "positional FakerParams reached the kernel step with no pool, job_seed or "
+                    "selection namespace."
+                )
+            if len(source) == 0:
+                return StepResult(pa.array([], pa.string()), False)
+            out = sample_faker_array_positional(
+                source,
+                pool=pool,
+                row_offset=row_offset,
+                job_seed=job_seed,
+                namespace=params.selection_namespace,
+                index_kernel=_index_kernel_for(params, index_kernel),
+                native_threads=native_threads,
+                missing_mask=missing_mask,
+                gate_positions=gate_positions,
+            )
+            return StepResult(out, True)
+        if isinstance(params, FakerParams):
+            if (
+                params.namespace is None or pool is None
+            ):  # pragma: no cover - admission requires both
+                raise AssertionError(
+                    "FakerParams reached the kernel step with no namespace or pool."
+                )
+            out = sample_faker_array(
+                source,
+                pool=pool,
+                namespace=params.namespace,
+                mask_key=mask_key,
+                index_kernel=_index_kernel_for(params, index_kernel),
+                native_threads=native_threads,
+            )
+            return StepResult(out, True)
+        if isinstance(params, CategoricalParams):
+            kernel = _index_kernel_for(params, index_kernel)
+            prepared = params.prepared
+            if not prepared.positional:
+                out = native_categorical(
+                    source,
+                    categories=prepared.categories,
+                    cdf=prepared.cdf,
+                    mask_key=mask_key,
+                    namespace=params.namespace or "",
+                    index_kernel=kernel,
+                    native_threads=native_threads,
+                )
+                return StepResult(out, True)
+            if len(source) == 0:
+                return StepResult(pa.array([], pa.string()), False)
+            out = native_categorical_positional(
+                source,
+                row_offset=row_offset,
                 categories=prepared.categories,
                 cdf=prepared.cdf,
                 mask_key=mask_key,
                 namespace=params.namespace or "",
                 index_kernel=kernel,
                 native_threads=native_threads,
+                gate_positions=gate_positions,
             )
             return StepResult(out, True)
-        if len(source) == 0:
-            return StepResult(pa.array([], pa.string()), False)
-        out = native_categorical_positional(
-            source,
-            row_offset=row_offset,
-            categories=prepared.categories,
-            cdf=prepared.cdf,
-            mask_key=mask_key,
-            namespace=params.namespace or "",
-            index_kernel=kernel,
-            native_threads=native_threads,
-            gate_positions=gate_positions,
-        )
-        return StepResult(out, True)
-    derive_calls: list[int] = []
-    if isinstance(params, BucketPerturbParams):
+        derive_calls: list[int] = []
+        if isinstance(params, BucketPerturbParams):
+            preserved = _preserved_mask(params.preserve, source)
+            out = native_bucket_perturb(
+                source,
+                bucket=params.bucket,
+                date_format=params.date_format,
+                mask_key=mask_key,
+                namespace=params.namespace or "",
+                index_kernel=_index_kernel_for(params, index_kernel),
+                native_threads=native_threads,
+                derive_calls=derive_calls,
+                **_preserved_kwargs(preserved),
+            )
+            return StepResult(out, sum(derive_calls) > 0, preserved_rows=_count(preserved))
+        if isinstance(params, GroupKeyParams):
+            if sibling is None:  # pragma: no cover - the caller slices the sibling for group_key
+                raise AssertionError("GroupKeyParams reached the kernel step with no sibling.")
+            out = native_group_key(
+                sibling,
+                length=params.length,
+                prefix=params.prefix,
+                mask_key=mask_key,
+                namespace=params.namespace,
+                native_threads=native_threads,
+                raw_hex_kernel=raw_hex_kernel,
+                derive_calls=derive_calls,
+            )
+            return StepResult(out, sum(derive_calls) > 0)
         preserved = _preserved_mask(params.preserve, source)
-        out = native_bucket_perturb(
+        out, positions = native_date_shift(
             source,
-            bucket=params.bucket,
+            min_days=params.min_days,
+            max_days=params.max_days,
             date_format=params.date_format,
             mask_key=mask_key,
             namespace=params.namespace or "",
@@ -455,35 +496,10 @@ def run_kernel_step(
             derive_calls=derive_calls,
             **_preserved_kwargs(preserved),
         )
-        return StepResult(out, sum(derive_calls) > 0, preserved_rows=_count(preserved))
-    if isinstance(params, GroupKeyParams):
-        if sibling is None:  # pragma: no cover - the caller slices the sibling for group_key
-            raise AssertionError("GroupKeyParams reached the kernel step with no sibling.")
-        out = native_group_key(
-            sibling,
-            length=params.length,
-            prefix=params.prefix,
-            mask_key=mask_key,
-            namespace=params.namespace,
-            native_threads=native_threads,
-            raw_hex_kernel=raw_hex_kernel,
-            derive_calls=derive_calls,
-        )
-        return StepResult(out, sum(derive_calls) > 0)
-    preserved = _preserved_mask(params.preserve, source)
-    out, positions = native_date_shift(
-        source,
-        min_days=params.min_days,
-        max_days=params.max_days,
-        date_format=params.date_format,
-        mask_key=mask_key,
-        namespace=params.namespace or "",
-        index_kernel=_index_kernel_for(params, index_kernel),
-        native_threads=native_threads,
-        derive_calls=derive_calls,
-        **_preserved_kwargs(preserved),
-    )
-    return StepResult(out, sum(derive_calls) > 0, positions, preserved_rows=_count(preserved))
+        return StepResult(out, sum(derive_calls) > 0, positions, preserved_rows=_count(preserved))
+    except BaseException:
+        del job_seed, mask_key
+        raise
 
 
 def run_kernel_step_masked(
@@ -519,29 +535,33 @@ def run_kernel_step_masked(
     ignore it). `missing_mask` is the batch's full missing mask, filtered to the subset here so the
     kernel sees the selected rows' missingness.
     """
-    plain = source.combine_chunks() if isinstance(source, pa.ChunkedArray) else source
-    if not (pc.sum(mask).as_py() or 0):  # type: ignore[attr-defined, unused-ignore]
-        return StepResult(plain, False)
-    selected = np.flatnonzero(mask.to_numpy(zero_copy_only=False))
-    result = run_kernel_step(
-        params,
-        pc.filter(plain, mask),  # type: ignore[attr-defined, unused-ignore]
-        mask_key=mask_key,
-        native_threads=native_threads,
-        index_kernel=index_kernel,
-        pool=pool,
-        row_offset=row_offset,
-        job_seed=job_seed,
-        missing_mask=pc.filter(missing_mask, mask) if missing_mask is not None else None,  # type: ignore[attr-defined, unused-ignore]
-        gate_positions=selected,
-    )
-    positions = result.format_error_positions
-    if positions:
-        # The kernel numbered its errors within the selected subset; callers need chunk positions.
-        positions = tuple(int(selected[p]) for p in positions)
-    return StepResult(
-        pc.replace_with_mask(plain, mask, result.out),  # type: ignore[attr-defined, unused-ignore]
-        result.ran,
-        positions,
-        preserved_rows=result.preserved_rows,
-    )
+    try:
+        plain = source.combine_chunks() if isinstance(source, pa.ChunkedArray) else source
+        if not (pc.sum(mask).as_py() or 0):  # type: ignore[attr-defined, unused-ignore]
+            return StepResult(plain, False)
+        selected = np.flatnonzero(mask.to_numpy(zero_copy_only=False))
+        result = run_kernel_step(
+            params,
+            pc.filter(plain, mask),  # type: ignore[attr-defined, unused-ignore]
+            mask_key=mask_key,
+            native_threads=native_threads,
+            index_kernel=index_kernel,
+            pool=pool,
+            row_offset=row_offset,
+            job_seed=job_seed,
+            missing_mask=pc.filter(missing_mask, mask) if missing_mask is not None else None,  # type: ignore[attr-defined, unused-ignore]
+            gate_positions=selected,
+        )
+        positions = result.format_error_positions
+        if positions:
+            # The kernel numbered its errors within the selected subset; callers need chunk positions.
+            positions = tuple(int(selected[p]) for p in positions)
+        return StepResult(
+            pc.replace_with_mask(plain, mask, result.out),  # type: ignore[attr-defined, unused-ignore]
+            result.ran,
+            positions,
+            preserved_rows=result.preserved_rows,
+        )
+    except BaseException:
+        del job_seed, mask_key
+        raise

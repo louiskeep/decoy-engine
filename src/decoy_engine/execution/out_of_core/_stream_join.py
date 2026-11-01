@@ -143,68 +143,68 @@ class StreamFkJoiner:
         remap_seeds: tuple[ColumnSeed, ...] | None = None,
         job_seed: bytes | None = None,
     ) -> None:
-        if len(child_key_types) != len(edge.child_columns):
-            raise ExecutionError(
-                code=reasons.runtime.OUT_OF_CORE_CHILD_KEY_TYPES_MISMATCH,
-                message="one child key type is required per FK child column.",
-            )
-        if edge.orphan_policy is OrphanPolicy.REMAP:
-            if remap_seeds is None or job_seed is None:
+        try:
+            if len(child_key_types) != len(edge.child_columns):
                 raise ExecutionError(
-                    code=reasons.runtime.OUT_OF_CORE_REMAP_SEEDS_MISSING,
-                    message="orphan_policy='remap' requires the parent key seeds and job seed.",
+                    code=reasons.runtime.OUT_OF_CORE_CHILD_KEY_TYPES_MISMATCH,
+                    message="one child key type is required per FK child column.",
                 )
-            for parent_col, seed in zip(edge.parent_columns, remap_seeds, strict=True):
-                if seed is None:
+            if edge.orphan_policy is OrphanPolicy.REMAP:
+                if remap_seeds is None or job_seed is None:
                     raise ExecutionError(
-                        code=reasons.runtime.OUT_OF_CORE_PARENT_SEED_MISSING,
-                        message=f"parent key {edge.parent_table}.{parent_col} is not in the plan.",
+                        code=reasons.runtime.OUT_OF_CORE_REMAP_SEEDS_MISSING,
+                        message="orphan_policy='remap' requires the parent key seeds and job seed.",
                     )
-        self._edge = edge
-        self._relation = parent_relation
-        self._remap_seeds = remap_seeds
-        self._job_seed = job_seed
-        self._child_columns = edge.child_columns
-        # The key schema mirrors `_join.py::_child_key_schema` exactly (row_nr,
-        # join_key, then one raw src column per child key column), built from the
-        # source key types the runner passes so the empty child_keys table can be
-        # created before any batch is staged.
-        self._key_schema = pa.schema(
-            [
-                pa.field("__decoy_row_nr", pa.int64()),
-                pa.field("__decoy_fk_join_key", pa.string()),
-            ]
-            + [
-                pa.field(f"__decoy_src_{idx}", child_key_types[idx])
-                for idx in range(len(edge.child_columns))
-            ]
-        )
-        # The relation's Parquet footer is the authoritative masked-key type
-        # (already through the DuckDB COPY round trip the join result takes).
-        relation_schema = pq.read_metadata(parent_relation.path).schema.to_arrow_schema()
-        masked_types = tuple(
-            relation_schema.field(name).type for name in parent_relation.masked_key_columns
-        )
-        self._output_types = _resolve_output_types(
-            edge=edge,
-            masked_types=masked_types,
-            child_key_types=child_key_types,
-            remap_seeds=remap_seeds,
-        )
-        self._observed_types: tuple[set[pa.DataType], ...] = tuple(
-            set() for _ in edge.child_columns
-        )
-        self._orphan_total = 0
-        self._staged_rows = 0
-        self._staged = False
-        self._temp_dir = temp_dir
-        self._memory_limit = memory_limit
-        self._child_keys: SpillChildKeys | None = None
-        # No connection is opened here (Codex plan-gate LOW 7 / P4-A.3 Task 2):
-        # a joiner that only ever stages keys (or fails before any join runs)
-        # never needs one, so `_ensure_conn()` opens and configures it lazily,
-        # on first use, rather than unconditionally at construction.
-        self._conn: Any = None
+                for parent_col, seed in zip(edge.parent_columns, remap_seeds, strict=True):
+                    if seed is None:
+                        raise ExecutionError(
+                            code=reasons.runtime.OUT_OF_CORE_PARENT_SEED_MISSING,
+                            message=f"parent key {edge.parent_table}.{parent_col} is not in the plan.",
+                        )
+            self._edge = edge
+            self._relation = parent_relation
+            self._remap_seeds = remap_seeds
+            self._job_seed = job_seed
+            self._child_columns = edge.child_columns
+            # Mirrors `_join.py::_child_key_schema` (row_nr, join_key, one raw src column per child
+            # key), from the runner's key types, so child_keys exists before any batch is staged.
+            self._key_schema = pa.schema(
+                [
+                    pa.field("__decoy_row_nr", pa.int64()),
+                    pa.field("__decoy_fk_join_key", pa.string()),
+                ]
+                + [
+                    pa.field(f"__decoy_src_{idx}", child_key_types[idx])
+                    for idx in range(len(edge.child_columns))
+                ]
+            )
+            # The relation footer is the authoritative masked-key type (after the COPY round trip).
+            relation_schema = pq.read_metadata(parent_relation.path).schema.to_arrow_schema()
+            masked_types = tuple(
+                relation_schema.field(name).type for name in parent_relation.masked_key_columns
+            )
+            self._output_types = _resolve_output_types(
+                edge=edge,
+                masked_types=masked_types,
+                child_key_types=child_key_types,
+                remap_seeds=remap_seeds,
+            )
+            self._observed_types: tuple[set[pa.DataType], ...] = tuple(
+                set() for _ in edge.child_columns
+            )
+            self._orphan_total = 0
+            self._staged_rows = 0
+            self._staged = False
+            self._temp_dir = temp_dir
+            self._memory_limit = memory_limit
+            self._child_keys: SpillChildKeys | None = None
+            # No connection is opened here (Codex plan-gate LOW 7 / P4-A.3 Task 2): a joiner that
+            # only stages keys (or fails before any join) never needs one, so `_ensure_conn()`
+            # opens and configures it lazily, on first use.
+            self._conn: Any = None
+        except BaseException:
+            del job_seed
+            raise
 
     @property
     def output_types(self) -> tuple[pa.DataType, ...]:

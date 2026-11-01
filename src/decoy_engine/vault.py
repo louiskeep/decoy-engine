@@ -226,13 +226,17 @@ class VaultWriter:
     """
 
     def __init__(self, mask_key: bytes, *, file_access: FileAccess | None = None) -> None:
-        # DE-02: the vault's keyed-mask IKM (job_seed when no secret is present).
-        self._mask_key = mask_key
-        del mask_key  # the policy lookup below can raise; this frame must not hold the key
-        self._entries: set[tuple[str, str, str]] = set()
-        # The writer writes after the entry point that built it returned, so it keeps the
-        # policy it was built under and never looks one up later.
-        self._access = fileaccess.capture(file_access)
+        # DE-02: the vault's keyed-mask IKM (job_seed when no secret is present). The policy
+        # lookup below can raise; this frame must not hold the key then (`_opaque`).
+        try:
+            self._mask_key = mask_key
+            self._entries: set[tuple[str, str, str]] = set()
+            # The writer writes after the entry point that built it returned, so it keeps the
+            # policy it was built under and never looks one up later.
+            self._access = fileaccess.capture(file_access)
+        except BaseException:
+            del mask_key
+            raise
 
     def assert_keyed_with(self, mask_key: bytes) -> None:
         """Fail closed if this writer's key does not match `mask_key`.
@@ -243,18 +247,20 @@ class VaultWriter:
         secret. `run_pipeline` calls this against the run's resolved `mask_key`
         before any masking. Constant-time compare; never echoes the key bytes.
         """
-        matched = hmac.compare_digest(self._mask_key, mask_key)
-        del mask_key  # a traceback keeps this frame: the key must not be among its locals
-        if not matched:
-            raise VaultError(
-                code=reasons.runtime.VAULT_KEY_MISMATCH,
-                message=(
-                    "the supplied vault writer is keyed with a different secret than "
-                    "the masking run resolved. Build the vault writer from the same "
-                    "key_provider / mask_secret_ref (vault_writer_for_config(config, "
-                    "key_provider=...)) so the vault decrypts under the run secret."
-                ),
-            )
+        try:
+            if not hmac.compare_digest(self._mask_key, mask_key):
+                raise VaultError(
+                    code=reasons.runtime.VAULT_KEY_MISMATCH,
+                    message=(
+                        "the supplied vault writer is keyed with a different secret than "
+                        "the masking run resolved. Build the vault writer from the same "
+                        "key_provider / mask_secret_ref (vault_writer_for_config(config, "
+                        "key_provider=...)) so the vault decrypts under the run secret."
+                    ),
+                )
+        except BaseException:
+            del mask_key  # a traceback keeps this frame: the key must not be among its locals
+            raise
 
     def add(self, entries: Iterable[tuple[str, str, str]]) -> None:
         """Accumulate `(namespace, masked, source)` triples."""

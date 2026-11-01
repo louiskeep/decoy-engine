@@ -11,7 +11,10 @@ boxed-entry pattern of the secret-admission boundary (`secret_providers._preflig
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Callable
+from typing import Any, TypeVar
+
+_T = TypeVar("_T")
 
 
 class OpaqueBox:
@@ -34,4 +37,26 @@ class OpaqueBox:
         raise TypeError("opaque boxes cannot be pickled")
 
 
-__all__ = ["OpaqueBox"]
+def validate_after_init(cls: type[_T]) -> type[_T]:
+    """Run a dataclass's `_validate` after its generated `__init__` has returned.
+
+    A `__post_init__` that raises does so from inside the generated `__init__`, whose frame holds
+    every field as a parameter, so a secret field's bytes ride on the refusal's traceback. Here
+    the arguments travel boxed through a frame that holds only the box, the generated `__init__`
+    returns (its frame is gone), and only then does `_validate` run.
+    """
+    generated: Callable[..., None] = cls.__init__
+
+    def init(self: Any, *args: Any, **kwargs: Any) -> None:
+        box = OpaqueBox(args, kwargs)
+        del args, kwargs
+        generated(self, *box.open()[0], **box.open()[1])
+        self._validate()
+
+    init.__wrapped__ = generated  # type: ignore[attr-defined]
+    init.__name__ = init.__qualname__ = "__init__"
+    cls.__init__ = init  # type: ignore[method-assign]
+    return cls
+
+
+__all__ = ["OpaqueBox", "validate_after_init"]

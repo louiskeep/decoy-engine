@@ -11,8 +11,10 @@ from typing import TYPE_CHECKING, Final, TypeAlias
 import pyarrow as pa
 
 from decoy_engine import reasons
+from decoy_engine._opaque import OpaqueBox
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._fk_keys import NULL_FK_KEY, fk_join_key_tuple, fk_key_value
+from decoy_engine.execution.out_of_core._compat import _column_seed
 from decoy_engine.execution.out_of_core._duckdb import connect_duckdb
 from decoy_engine.execution.out_of_core._join import _sql_string
 from decoy_engine.execution.out_of_core._key_width import SlimRowWidthTracker
@@ -83,68 +85,73 @@ def build_parent_key_relation(
     such parents must build from their post-rewrite output
     (`build_parent_key_relation_aligned`) instead.
     """
-    schema = _parent_source_schema(parent)
-    key_seeds: list[ColumnSeed] = []
-    masked_types: list[pa.DataType] = []
-    for parent_col in edge.parent_columns:
-        seed = _column_seed(plan, edge.parent_table, parent_col)
-        if seed is None:
-            raise ExecutionError(
-                code=reasons.runtime.OUT_OF_CORE_PARENT_SEED_MISSING,
-                message=f"parent key {edge.parent_table}.{parent_col} is not in the plan.",
-            )
-        if seed.strategy == "hash" and seed.namespace is None:
-            raise ExecutionError(
-                code=reasons.runtime.OUT_OF_CORE_PARENT_STRATEGY_UNSUPPORTED,
-                message="hash parent FK keys must carry a namespace.",
-            )
-        if schema is not None and parent_col not in schema.names:
-            raise ExecutionError(
-                code=reasons.runtime.OUT_OF_CORE_PARENT_COLUMN_MISSING,
-                message=f"parent source table has no column {parent_col!r}.",
-            )
-        source_type = schema.field(parent_col).type if schema is not None else None
-        masked_types.append(masked_output_type(seed, source_type))
-        key_seeds.append(seed)
-    # DE-02: the keyed-mask IKM; None falls back to job_seed (byte-identical).
-    job_seed = mask_key if mask_key is not None else plan.seed_envelope.job_seed
-
-    def masked_batch_fn(
-        start: int, key_arrays: list[pa.Array], keep_mask: pa.BooleanArray
-    ) -> list[pa.Array]:
-        # Filter-then-mask is byte-identical to pre-mask-then-filter: every
-        # admitted kernel is per-value deterministic and null-preserving, and
-        # keep_mask only drops null-key rows. Masking the kept slice keeps the
-        # per-call work batch-sized.
-        masked: list[pa.Array] = []
-        for key_array, seed in zip(key_arrays, key_seeds, strict=True):
-            kept = key_array.filter(keep_mask)
-            if seed.strategy == "hash":
-                if seed.namespace is None:
-                    raise AssertionError("hash namespace checked before streaming")
-                # Dispatched through this module's own hash_array binding so
-                # the hash path's per-batch residency stays observable here.
-                masked.append(
-                    hash_array(
-                        kept,
-                        seed=job_seed,
-                        namespace=seed.namespace,
-                        truncate=_hash_truncate(seed),
-                    )
+    try:
+        schema = _parent_source_schema(parent)
+        key_seeds: list[ColumnSeed] = []
+        masked_types: list[pa.DataType] = []
+        for parent_col in edge.parent_columns:
+            seed = _column_seed(plan, edge.parent_table, parent_col)
+            if seed is None:
+                raise ExecutionError(
+                    code=reasons.runtime.OUT_OF_CORE_PARENT_SEED_MISSING,
+                    message=f"parent key {edge.parent_table}.{parent_col} is not in the plan.",
                 )
-            else:
-                masked.append(mask_column(kept, seed, job_seed))
-        return masked
+            if seed.strategy == "hash" and seed.namespace is None:
+                raise ExecutionError(
+                    code=reasons.runtime.OUT_OF_CORE_PARENT_STRATEGY_UNSUPPORTED,
+                    message="hash parent FK keys must carry a namespace.",
+                )
+            if schema is not None and parent_col not in schema.names:
+                raise ExecutionError(
+                    code=reasons.runtime.OUT_OF_CORE_PARENT_COLUMN_MISSING,
+                    message=f"parent source table has no column {parent_col!r}.",
+                )
+            source_type = schema.field(parent_col).type if schema is not None else None
+            masked_types.append(masked_output_type(seed, source_type))
+            key_seeds.append(seed)
+        # DE-02: the keyed-mask IKM; None falls back to job_seed (byte-identical). Boxed for the
+        # closure (`_opaque`).
+        key_box = OpaqueBox(mask_key if mask_key is not None else plan.seed_envelope.job_seed)
 
-    return _build_relation(
-        source_parent=parent,
-        edge=edge,
-        temp_dir=temp_dir,
-        memory_limit=memory_limit,
-        batch_rows=batch_rows,
-        masked_batch_fn=masked_batch_fn,
-        masked_types=tuple(masked_types),
-    )
+        def masked_batch_fn(
+            start: int, key_arrays: list[pa.Array], keep_mask: pa.BooleanArray
+        ) -> list[pa.Array]:
+            # Filter-then-mask is byte-identical to pre-mask-then-filter: every
+            # admitted kernel is per-value deterministic and null-preserving, and
+            # keep_mask only drops null-key rows. Masking the kept slice keeps the
+            # per-call work batch-sized.
+            masked: list[pa.Array] = []
+            for key_array, seed in zip(key_arrays, key_seeds, strict=True):
+                kept = key_array.filter(keep_mask)
+                if seed.strategy == "hash":
+                    if seed.namespace is None:
+                        raise AssertionError("hash namespace checked before streaming")
+                    # Dispatched through this module's own hash_array binding so
+                    # the hash path's per-batch residency stays observable here.
+                    masked.append(
+                        hash_array(
+                            kept,
+                            seed=key_box.open()[0],
+                            namespace=seed.namespace,
+                            truncate=_hash_truncate(seed),
+                        )
+                    )
+                else:
+                    masked.append(mask_column(kept, seed, key_box.open()[0]))
+            return masked
+
+        return _build_relation(
+            source_parent=parent,
+            edge=edge,
+            temp_dir=temp_dir,
+            memory_limit=memory_limit,
+            batch_rows=batch_rows,
+            masked_batch_fn=masked_batch_fn,
+            masked_types=tuple(masked_types),
+        )
+    except BaseException:
+        del mask_key
+        raise
 
 
 def build_parent_key_relation_from_tables(
@@ -572,16 +579,6 @@ def _edge_stem(edge: RelationshipEdge) -> str:
             _EDGE_STEMS.popitem(last=False)
     _EDGE_STEMS.move_to_end(key)
     return stem
-
-
-def _column_seed(plan: Plan, table: str, column: str) -> ColumnSeed | None:
-    for table_name, table_seed in plan.seed_envelope.per_table:
-        if table_name != table:
-            continue
-        for col_name, col_seed in table_seed.per_column:
-            if col_name == column:
-                return col_seed
-    return None
 
 
 def _hash_truncate(seed: ColumnSeed) -> int | None:

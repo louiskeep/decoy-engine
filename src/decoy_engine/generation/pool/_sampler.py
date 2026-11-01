@@ -132,33 +132,37 @@ def _derive_pool_indices(
     sub-microsecond timestamps), while the compiled kernel canonicalizes the
     admitted Arrow types identically to the per-row path (the index KAT).
     """
-    raw_values = nonnull_source.tolist()
-    compiled = _compiled_index_kernel()
-    if compiled is not None:
-        try:
-            arrow_values: pa.Array | None = pa.Array.from_pandas(nonnull_source)
-        except (pa.ArrowInvalid, pa.ArrowTypeError, pa.ArrowNotImplementedError, OverflowError):
-            # A magnitude past int64 or a mixed-type object column cannot become
-            # one native Arrow array; the reference handles it over raw values.
-            arrow_values = None
-        if arrow_values is not None:
+    try:
+        raw_values = nonnull_source.tolist()
+        compiled = _compiled_index_kernel()
+        if compiled is not None:
             try:
-                idx = compiled.derive_index_batch(
-                    arrow_values, mask_key=seed, namespace=namespace, pool_size=pool_size
-                )
-                return _validated_index_array(
-                    idx, expected_len=len(raw_values), pool_size=pool_size
-                )
-            except GenerationError as exc:
-                # The compiled kernel rejects every un-admitted Arrow type with
-                # one code; the reference derives those value classes directly
-                # (or raises the same per-value error the per-row path raised).
-                if exc.code != "native_type_not_admitted":
-                    raise
-    idx = _reference_index_kernel().derive_index_batch(
-        raw_values, mask_key=seed, namespace=namespace, pool_size=pool_size
-    )
-    return _validated_index_array(idx, expected_len=len(raw_values), pool_size=pool_size)
+                arrow_values: pa.Array | None = pa.Array.from_pandas(nonnull_source)
+            except (pa.ArrowInvalid, pa.ArrowTypeError, pa.ArrowNotImplementedError, OverflowError):
+                # A magnitude past int64 or a mixed-type object column cannot become
+                # one native Arrow array; the reference handles it over raw values.
+                arrow_values = None
+            if arrow_values is not None:
+                try:
+                    idx = compiled.derive_index_batch(
+                        arrow_values, mask_key=seed, namespace=namespace, pool_size=pool_size
+                    )
+                    return _validated_index_array(
+                        idx, expected_len=len(raw_values), pool_size=pool_size
+                    )
+                except GenerationError as exc:
+                    # The compiled kernel rejects every un-admitted Arrow type with
+                    # one code; the reference derives those value classes directly
+                    # (or raises the same per-value error the per-row path raised).
+                    if exc.code != "native_type_not_admitted":
+                        raise
+        idx = _reference_index_kernel().derive_index_batch(
+            raw_values, mask_key=seed, namespace=namespace, pool_size=pool_size
+        )
+        return _validated_index_array(idx, expected_len=len(raw_values), pool_size=pool_size)
+    except BaseException:
+        del seed
+        raise
 
 
 def _seed_bytes_to_int(seed: bytes) -> int:
@@ -172,14 +176,18 @@ def _seed_bytes_to_int(seed: bytes) -> int:
     truncate or overflow through int.from_bytes. A wrong-length seed is a
     determinism-envelope bug, not a value to tolerate -- raise instead.
     """
-    if len(seed) != 8:
-        raise GenerationError(
-            code=reasons.runtime.INVALID_SEED_LENGTH,
-            message=(
-                f"PoolSampler non-deterministic seed must be exactly 8 bytes; got {len(seed)}."
-            ),
-        )
-    return int.from_bytes(seed, "big")
+    try:
+        if len(seed) != 8:
+            raise GenerationError(
+                code=reasons.runtime.INVALID_SEED_LENGTH,
+                message=(
+                    f"PoolSampler non-deterministic seed must be exactly 8 bytes; got {len(seed)}."
+                ),
+            )
+        return int.from_bytes(seed, "big")
+    except BaseException:
+        del seed
+        raise
 
 
 class PoolSampler:
@@ -231,96 +239,100 @@ class PoolSampler:
             GenerationError(code='uniqueness_impossible') if UNIQUE and the
                 non-null output-row count exceeds pool.size (DE-11).
         """
-        if deterministic:
-            if source is None or namespace is None:
-                raise GenerationError(
-                    code=reasons.runtime.DETERMINISTIC_REQUIRES_SOURCE_AND_NAMESPACE,
-                    message=(
-                        "deterministic=True requires both `source` and `namespace`; "
-                        f"got source={'set' if source is not None else 'None'}, "
-                        f"namespace={namespace!r}."
-                    ),
-                )
-            # QA-1 H9 (2026-06-01): reject the impossible combo. Pre-fix
-            # this branch fell through to _deterministic which produces
-            # REUSE semantics (silently ignoring the UNIQUE constraint).
-            if mode is CardinalityMode.UNIQUE:
-                raise GenerationError(
-                    code=reasons.runtime.DETERMINISTIC_MODE_UNSUPPORTED_CARDINALITY,
-                    message=(
-                        "deterministic=True is incompatible with mode=UNIQUE: "
-                        "the deterministic path keys output on source row identity, "
-                        "so identical source values map to identical outputs (which "
-                        "violates UNIQUE). Use deterministic=True with mode=REUSE, "
-                        "or mode=UNIQUE with deterministic=False."
-                    ),
-                )
-            return self._deterministic(pool, n, source, seed, namespace)
-
-        # Non-deterministic dispatch.
-        rng = np.random.default_rng(_seed_bytes_to_int(seed))
-        if mode is CardinalityMode.REUSE:
-            indices = rng.integers(0, pool.size, size=n)
-            output = pool.values[indices]
-            return pd.Series(output)
-        if mode is CardinalityMode.UNIQUE:
-            # DE-11: UNIQUE capacity is the NON-NULL output-row count. Preserved
-            # source nulls are re-emitted as null and consume no pool value, so
-            # a null-bearing column needs only as many distinct values as it has
-            # non-null rows -- not `n`. Sizing on `n` over-rejected null-bearing
-            # columns and disagreed with the compile-time check. When no source
-            # is supplied (direct callers/tests), every position is non-null, so
-            # the requirement collapses back to `n` and the output is unchanged.
-            if source is None:
-                nonnull_mask = None
-                required = n
-            else:
-                if len(source) != n:
+        try:
+            if deterministic:
+                if source is None or namespace is None:
                     raise GenerationError(
-                        code=reasons.runtime.SOURCE_LENGTH_MISMATCH,
+                        code=reasons.runtime.DETERMINISTIC_REQUIRES_SOURCE_AND_NAMESPACE,
                         message=(
-                            f"UNIQUE sample called with source length {len(source)} "
-                            f"but n={n}; they must match."
+                            "deterministic=True requires both `source` and `namespace`; "
+                            f"got source={'set' if source is not None else 'None'}, "
+                            f"namespace={namespace!r}."
                         ),
                     )
-                nonnull_mask = source.notna().to_numpy()
-                required = int(nonnull_mask.sum())
-            # UNIQUE requires distinct OUTPUT values, so capacity and the draw
-            # must be on the pool's DISTINCT value set, not its raw size/indices.
-            # PoolBuilder does not dedup -- a provider can collide -- so a pool
-            # may hold duplicate values; drawing distinct INDICES from such a
-            # pool would silently emit duplicates and violate UNIQUE. Dedup is
-            # stable (first-seen order), so for an all-distinct pool this is
-            # byte-identical to the previous index draw. (Codex HIGH-2, 2026-07-14.)
-            distinct_values = pd.unique(pool.values)
-            if not unique_capacity_ok(len(distinct_values), required):
-                raise GenerationError(
-                    code=reasons.runtime.UNIQUENESS_IMPOSSIBLE,
-                    message=(
-                        f"UNIQUE-mode sample needs {required} distinct value(s) "
-                        f"(non-null output rows) but the pool has only "
-                        f"{len(distinct_values)} distinct value(s): cannot draw "
-                        "without replacement."
-                    ),
-                )
-            drawn = distinct_values[rng.permutation(len(distinct_values))[:required]]
-            if nonnull_mask is None:
-                return pd.Series(drawn)
-            # Scatter the distinct draws into non-null positions; null-source
-            # rows stay null (uniform null contract with the deterministic and
-            # MATCH/SCALE paths).
-            output = np.empty(n, dtype=object)
-            output[:] = pd.NA
-            output[nonnull_mask] = drawn
-            return pd.Series(output)
-        if mode is CardinalityMode.MATCH_SOURCE_CARDINALITY:
-            return self._match_source_cardinality(pool, n, source, rng, scale=1.0)
-        if mode is CardinalityMode.SCALE_SOURCE_CARDINALITY:
-            return self._match_source_cardinality(pool, n, source, rng, scale=scale)
-        raise GenerationError(
-            code=reasons.runtime.UNKNOWN_CARDINALITY_MODE,
-            message=f"CardinalityMode {mode!r} is not handled by PoolSampler.",
-        )
+                # QA-1 H9 (2026-06-01): reject the impossible combo. Pre-fix
+                # this branch fell through to _deterministic which produces
+                # REUSE semantics (silently ignoring the UNIQUE constraint).
+                if mode is CardinalityMode.UNIQUE:
+                    raise GenerationError(
+                        code=reasons.runtime.DETERMINISTIC_MODE_UNSUPPORTED_CARDINALITY,
+                        message=(
+                            "deterministic=True is incompatible with mode=UNIQUE: "
+                            "the deterministic path keys output on source row identity, "
+                            "so identical source values map to identical outputs (which "
+                            "violates UNIQUE). Use deterministic=True with mode=REUSE, "
+                            "or mode=UNIQUE with deterministic=False."
+                        ),
+                    )
+                return self._deterministic(pool, n, source, seed, namespace)
+
+            # Non-deterministic dispatch.
+            rng = np.random.default_rng(_seed_bytes_to_int(seed))
+            if mode is CardinalityMode.REUSE:
+                indices = rng.integers(0, pool.size, size=n)
+                output = pool.values[indices]
+                return pd.Series(output)
+            if mode is CardinalityMode.UNIQUE:
+                # DE-11: UNIQUE capacity is the NON-NULL output-row count. Preserved
+                # source nulls are re-emitted as null and consume no pool value, so
+                # a null-bearing column needs only as many distinct values as it has
+                # non-null rows -- not `n`. Sizing on `n` over-rejected null-bearing
+                # columns and disagreed with the compile-time check. When no source
+                # is supplied (direct callers/tests), every position is non-null, so
+                # the requirement collapses back to `n` and the output is unchanged.
+                if source is None:
+                    nonnull_mask = None
+                    required = n
+                else:
+                    if len(source) != n:
+                        raise GenerationError(
+                            code=reasons.runtime.SOURCE_LENGTH_MISMATCH,
+                            message=(
+                                f"UNIQUE sample called with source length {len(source)} "
+                                f"but n={n}; they must match."
+                            ),
+                        )
+                    nonnull_mask = source.notna().to_numpy()
+                    required = int(nonnull_mask.sum())
+                # UNIQUE requires distinct OUTPUT values, so capacity and the draw
+                # must be on the pool's DISTINCT value set, not its raw size/indices.
+                # PoolBuilder does not dedup -- a provider can collide -- so a pool
+                # may hold duplicate values; drawing distinct INDICES from such a
+                # pool would silently emit duplicates and violate UNIQUE. Dedup is
+                # stable (first-seen order), so for an all-distinct pool this is
+                # byte-identical to the previous index draw. (Codex HIGH-2, 2026-07-14.)
+                distinct_values = pd.unique(pool.values)
+                if not unique_capacity_ok(len(distinct_values), required):
+                    raise GenerationError(
+                        code=reasons.runtime.UNIQUENESS_IMPOSSIBLE,
+                        message=(
+                            f"UNIQUE-mode sample needs {required} distinct value(s) "
+                            f"(non-null output rows) but the pool has only "
+                            f"{len(distinct_values)} distinct value(s): cannot draw "
+                            "without replacement."
+                        ),
+                    )
+                drawn = distinct_values[rng.permutation(len(distinct_values))[:required]]
+                if nonnull_mask is None:
+                    return pd.Series(drawn)
+                # Scatter the distinct draws into non-null positions; null-source
+                # rows stay null (uniform null contract with the deterministic and
+                # MATCH/SCALE paths).
+                output = np.empty(n, dtype=object)
+                output[:] = pd.NA
+                output[nonnull_mask] = drawn
+                return pd.Series(output)
+            if mode is CardinalityMode.MATCH_SOURCE_CARDINALITY:
+                return self._match_source_cardinality(pool, n, source, rng, scale=1.0)
+            if mode is CardinalityMode.SCALE_SOURCE_CARDINALITY:
+                return self._match_source_cardinality(pool, n, source, rng, scale=scale)
+            raise GenerationError(
+                code=reasons.runtime.UNKNOWN_CARDINALITY_MODE,
+                message=f"CardinalityMode {mode!r} is not handled by PoolSampler.",
+            )
+        except BaseException:
+            del seed
+            raise
 
     def _deterministic(
         self,
@@ -342,30 +354,34 @@ class PoolSampler:
         order. Output is byte-identical to the former per-row path (proven by the
         legacy-oracle differential tests).
         """
-        if len(source) != n:
-            # Caller error: source length must match n; this is a
-            # contract surface, raise loudly.
-            raise GenerationError(
-                code=reasons.runtime.SOURCE_LENGTH_MISMATCH,
-                message=(
-                    f"deterministic sample called with source length {len(source)} "
-                    f"but n={n}; they must match for per-row determinism."
-                ),
-            )
-        is_null = source.isna().to_numpy()
-        output: list[Any] = [pd.NA] * n
-        nonnull_positions = np.flatnonzero(~is_null)
-        if nonnull_positions.size:
-            idx_np = _derive_pool_indices(
-                source.iloc[nonnull_positions],
-                seed=seed,
-                namespace=namespace,
-                pool_size=pool.size,
-            )
-            selected = pool.values[idx_np]
-            for pos, value in zip(nonnull_positions.tolist(), selected, strict=True):
-                output[pos] = value
-        return pd.Series(output)
+        try:
+            if len(source) != n:
+                # Caller error: source length must match n; this is a
+                # contract surface, raise loudly.
+                raise GenerationError(
+                    code=reasons.runtime.SOURCE_LENGTH_MISMATCH,
+                    message=(
+                        f"deterministic sample called with source length {len(source)} "
+                        f"but n={n}; they must match for per-row determinism."
+                    ),
+                )
+            is_null = source.isna().to_numpy()
+            output: list[Any] = [pd.NA] * n
+            nonnull_positions = np.flatnonzero(~is_null)
+            if nonnull_positions.size:
+                idx_np = _derive_pool_indices(
+                    source.iloc[nonnull_positions],
+                    seed=seed,
+                    namespace=namespace,
+                    pool_size=pool.size,
+                )
+                selected = pool.values[idx_np]
+                for pos, value in zip(nonnull_positions.tolist(), selected, strict=True):
+                    output[pos] = value
+            return pd.Series(output)
+        except BaseException:
+            del seed
+            raise
 
     def _match_source_cardinality(
         self,
@@ -447,79 +463,83 @@ class PoolSampler:
         byte-for-byte aligned with the scalar sampler (same `derive_index_batch`
         + `_canonicalize_source`), which the cross-sprint coherence contract needs.
         """
-        cols = pool.output_columns
-        if not cols:
-            raise GenerationError(
-                code=reasons.runtime.BUNDLE_MISSING_OUTPUT_COLUMNS,
-                message="sample_bundle requires a BundlePool with non-empty output_columns.",
-            )
-
-        if deterministic:
-            if source is None or namespace is None:
+        try:
+            cols = pool.output_columns
+            if not cols:
                 raise GenerationError(
-                    code=reasons.runtime.DETERMINISTIC_REQUIRES_SOURCE_AND_NAMESPACE,
-                    message=(
-                        "deterministic=True requires both `source` and `namespace`; "
-                        f"got source={'set' if source is not None else 'None'}, "
-                        f"namespace={namespace!r}."
-                    ),
+                    code=reasons.runtime.BUNDLE_MISSING_OUTPUT_COLUMNS,
+                    message="sample_bundle requires a BundlePool with non-empty output_columns.",
                 )
-            # QA-1 H9 (2026-06-01): reject UNIQUE + deterministic on the
-            # bundle path too. See `sample()` for rationale.
+
+            if deterministic:
+                if source is None or namespace is None:
+                    raise GenerationError(
+                        code=reasons.runtime.DETERMINISTIC_REQUIRES_SOURCE_AND_NAMESPACE,
+                        message=(
+                            "deterministic=True requires both `source` and `namespace`; "
+                            f"got source={'set' if source is not None else 'None'}, "
+                            f"namespace={namespace!r}."
+                        ),
+                    )
+                # QA-1 H9 (2026-06-01): reject UNIQUE + deterministic on the
+                # bundle path too. See `sample()` for rationale.
+                if mode is CardinalityMode.UNIQUE:
+                    raise GenerationError(
+                        code=reasons.runtime.DETERMINISTIC_MODE_UNSUPPORTED_CARDINALITY,
+                        message=(
+                            "sample_bundle: deterministic=True is incompatible with "
+                            "mode=UNIQUE. Same constraint as the scalar sample() path."
+                        ),
+                    )
+                if len(source) != n:
+                    raise GenerationError(
+                        code=reasons.runtime.SOURCE_LENGTH_MISMATCH,
+                        message=(
+                            f"sample_bundle deterministic called with source length "
+                            f"{len(source)} but n={n}; they must match."
+                        ),
+                    )
+                # ONE shared batch-index array per row across every bundle column:
+                # the same `derive_index_batch` drop-in as the scalar path, then each
+                # column gathers by the SAME index (the cross-column tuple-integrity
+                # contract is preserved by construction). Nulls stay positional.
+                per_col: dict[str, list[Any]] = {c: [pd.NA] * n for c in cols}
+                is_null = source.isna().to_numpy()
+                nonnull_positions = np.flatnonzero(~is_null)
+                if nonnull_positions.size:
+                    idx_np = _derive_pool_indices(
+                        source.iloc[nonnull_positions],
+                        seed=seed,
+                        namespace=namespace,
+                        pool_size=pool.size,
+                    )
+                    pool_values = pool.values
+                    for pos, ix in zip(nonnull_positions.tolist(), idx_np.tolist(), strict=True):
+                        bundle = pool_values[ix]
+                        for j, c in enumerate(cols):
+                            per_col[c][pos] = bundle[j]
+                return {c: pd.Series(per_col[c]) for c in cols}
+
+            # Non-deterministic: with-replacement by default; UNIQUE without.
+            rng = np.random.default_rng(_seed_bytes_to_int(seed))
             if mode is CardinalityMode.UNIQUE:
-                raise GenerationError(
-                    code=reasons.runtime.DETERMINISTIC_MODE_UNSUPPORTED_CARDINALITY,
-                    message=(
-                        "sample_bundle: deterministic=True is incompatible with "
-                        "mode=UNIQUE. Same constraint as the scalar sample() path."
-                    ),
-                )
-            if len(source) != n:
-                raise GenerationError(
-                    code=reasons.runtime.SOURCE_LENGTH_MISMATCH,
-                    message=(
-                        f"sample_bundle deterministic called with source length "
-                        f"{len(source)} but n={n}; they must match."
-                    ),
-                )
-            # ONE shared batch-index array per row across every bundle column:
-            # the same `derive_index_batch` drop-in as the scalar path, then each
-            # column gathers by the SAME index (the cross-column tuple-integrity
-            # contract is preserved by construction). Nulls stay positional.
-            per_col: dict[str, list[Any]] = {c: [pd.NA] * n for c in cols}
-            is_null = source.isna().to_numpy()
-            nonnull_positions = np.flatnonzero(~is_null)
-            if nonnull_positions.size:
-                idx_np = _derive_pool_indices(
-                    source.iloc[nonnull_positions],
-                    seed=seed,
-                    namespace=namespace,
-                    pool_size=pool.size,
-                )
-                pool_values = pool.values
-                for pos, ix in zip(nonnull_positions.tolist(), idx_np.tolist(), strict=True):
-                    bundle = pool_values[ix]
-                    for j, c in enumerate(cols):
-                        per_col[c][pos] = bundle[j]
+                if n > pool.size:
+                    raise GenerationError(
+                        code=reasons.runtime.UNIQUENESS_IMPOSSIBLE,
+                        message=(
+                            f"UNIQUE-mode bundle sample of size {n} from pool of size "
+                            f"{pool.size}: cannot draw without replacement."
+                        ),
+                    )
+                indices = rng.permutation(pool.size)[:n]
+            else:
+                indices = rng.integers(0, pool.size, size=n)
+            per_col = {c: [] for c in cols}
+            for idx in indices:
+                bundle = pool.values[idx]
+                for j, c in enumerate(cols):
+                    per_col[c].append(bundle[j])
             return {c: pd.Series(per_col[c]) for c in cols}
-
-        # Non-deterministic: with-replacement by default; UNIQUE without.
-        rng = np.random.default_rng(_seed_bytes_to_int(seed))
-        if mode is CardinalityMode.UNIQUE:
-            if n > pool.size:
-                raise GenerationError(
-                    code=reasons.runtime.UNIQUENESS_IMPOSSIBLE,
-                    message=(
-                        f"UNIQUE-mode bundle sample of size {n} from pool of size "
-                        f"{pool.size}: cannot draw without replacement."
-                    ),
-                )
-            indices = rng.permutation(pool.size)[:n]
-        else:
-            indices = rng.integers(0, pool.size, size=n)
-        per_col = {c: [] for c in cols}
-        for idx in indices:
-            bundle = pool.values[idx]
-            for j, c in enumerate(cols):
-                per_col[c].append(bundle[j])
-        return {c: pd.Series(per_col[c]) for c in cols}
+        except BaseException:
+            del seed
+            raise
