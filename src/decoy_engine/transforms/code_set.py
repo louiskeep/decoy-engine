@@ -111,7 +111,7 @@ from decoy_engine import reasons
 from decoy_engine.determinism import derive, derive_index
 from decoy_engine.internal.crypto import hmac_hex
 from decoy_engine.plan._errors import PlanCompileError
-from decoy_engine.transforms._codeset_config import CodeSetConfig
+from decoy_engine.transforms._codeset_config import CodeSetConfig as CodeSetConfig
 from decoy_engine.transforms._codeset_config_checks import (  # noqa: F401 -- re-exported
     validate_code_set_config,
 )
