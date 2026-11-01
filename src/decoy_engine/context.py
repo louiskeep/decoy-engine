@@ -388,11 +388,11 @@ def make_key_resolver(
     """
     # No frame on a traceback keeps the master or the pipeline key: both are dropped or boxed
     # before anything can raise, and the closure holds only the box (`_opaque`).
-    if not isinstance(master, (bytes, bytearray)) or len(master) != 32:
-        del master
-        raise ValueError("master key must be 32 bytes")
-    pipeline_key = OpaqueBox(_hkdf_sha256(master, f"pipeline:{pipeline_label}"))
+    box = OpaqueBox(master)
     del master
+    if not isinstance(box.open()[0], (bytes, bytearray)) or len(box.open()[0]) != 32:
+        raise ValueError("master key must be 32 bytes")
+    pipeline_key = OpaqueBox(_hkdf_sha256(box.open()[0], f"pipeline:{pipeline_label}"))
 
     def resolver(info: str) -> bytes:
         info.encode("utf-8")  # a malformed label fails here, before the key is unboxed

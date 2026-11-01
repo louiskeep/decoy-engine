@@ -121,6 +121,15 @@ def test_load_vault_wrong_key(tmp_path: Path) -> None:
     _assert_no_frame_holds(info.value, *_vault_derived(VAULT_KEY), *_vault_derived(OTHER_KEY))
 
 
+def test_fernet_construction_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import cryptography.fernet
+
+    monkeypatch.setattr(cryptography.fernet, "Fernet", _raise)
+    with pytest.raises(RuntimeError) as info:
+        vault.load_vault(str(tmp_path / "absent.vault"), VAULT_KEY)
+    _assert_no_frame_holds(info.value, *_vault_derived(VAULT_KEY))
+
+
 def test_vault_writer_construction_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(vault.fileaccess, "capture", _raise)
     with pytest.raises(RuntimeError) as info:
@@ -221,6 +230,17 @@ def test_make_key_resolver_bad_master() -> None:
     with pytest.raises(ValueError) as info:
         _context.make_key_resolver(MASTER[:31], "p")
     _assert_no_frame_holds(info.value, MASTER[:31])
+
+
+class _BadLabel:
+    def __format__(self, spec: str) -> str:
+        raise RuntimeError("label failed")
+
+
+def test_make_key_resolver_label_formatting_fails() -> None:
+    with pytest.raises(RuntimeError) as info:
+        _context.make_key_resolver(MASTER, _BadLabel())  # type: ignore[arg-type]
+    _assert_no_frame_holds(info.value, MASTER)
 
 
 def test_make_key_resolver_bad_label() -> None:
