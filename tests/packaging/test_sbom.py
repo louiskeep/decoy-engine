@@ -947,3 +947,280 @@ def test_sourceless_edge_reaching_both_twins_keeps_both_in_either_order(git_firs
     checks = _load_checks()
     assert checks.lock_violations(_twin_lock(None, git_first)) == ["six 1.17.0"]
     assert len(checks._closure_packages(tomllib.loads(_twin_lock(None, git_first)))) == 3
+
+
+# --- round 3: closed-set errors, subprocess output, environment scrub -------------
+
+_CANARY = "CANARY_SBOM_TEXT_5b21"
+_LOCK_REFUSAL = "sbom.sh: unreadable lock (not a uv.lock with a single root project)\n"
+_DEBUG_VAR = "DECOY_SBOM_DEBUG"
+
+
+def _assert_closed(r, *needles: str) -> None:
+    """No traceback, no canary, no path, no exception text on either stream."""
+    text = r.stdout + r.stderr
+    for needle in (_CANARY, "Traceback", "Error:", "/tmp/", str(_REPO_ROOT), *needles):
+        assert needle not in text, (needle, text)
+
+
+def _truncated_lock() -> bytes:
+    data = (_FIXTURE / "uv.lock").read_bytes()
+    cut = data.index(b'name = "six"') + len(b'name = "si')
+    return data[:cut]
+
+
+_BAD_LOCKS = {
+    "empty": b"",
+    "binary": b"\xff\xfe\x00" + _CANARY.encode() + b"\x80\x81\n",
+    "truncated": _truncated_lock(),
+    "no-package-table": f'version = 1\nrequires-python = ">=3.10"\n# {_CANARY}\n'.encode(),
+    "package-not-a-table": f'version = 1\npackage = "{_CANARY}"\n'.encode(),
+    "dependencies-not-a-list": (
+        f'version = 1\n[[package]]\nname = "{_CANARY}"\nversion = "1.0"\n'
+        f'source = {{ virtual = "." }}\ndependencies = "{_CANARY}"\n'
+    ).encode(),
+    "toml-error-at-canary": f"version = 1\n[[package]]\nname = {_CANARY}\n".encode(),
+}
+
+
+@pytest.mark.parametrize("data", list(_BAD_LOCKS.values()), ids=list(_BAD_LOCKS))
+def test_malformed_lock_gets_one_fixed_message(tmp_path, data):
+    proj = tmp_path / f"{_CANARY}-dir"
+    shutil.copytree(_FIXTURE, proj)
+    (proj / "uv.lock").write_bytes(data)
+    out = tmp_path / "sbom.cdx.json"
+    r = _run(proj / "uv.lock", out)
+    assert r.returncode == 1
+    assert r.stdout == ""
+    assert r.stderr == _LOCK_REFUSAL
+    _assert_closed(r)
+    assert not out.exists()
+
+
+@pytest.mark.parametrize("data", list(_BAD_LOCKS.values()), ids=list(_BAD_LOCKS))
+def test_checker_lock_mode_never_raises(tmp_path, capsys, data):
+    lock = tmp_path / "uv.lock"
+    lock.write_bytes(data)
+    assert _load_checks().main(["sbom_checks.py", "lock", str(lock)]) == 1
+    cap = capsys.readouterr()
+    assert (cap.out, cap.err) == ("", _LOCK_REFUSAL)
+
+
+def test_lock_that_uv_rejects_does_not_echo_its_text(tmp_path):
+    # Passes the checker (the canary sits in a dev-only package) but uv cannot parse it;
+    # uv's own error quotes the offending TOML line.
+    proj = tmp_path / "proj"
+    shutil.copytree(_FIXTURE, proj)
+    lock = proj / "uv.lock"
+    text = lock.read_text()
+    bad = text.replace(
+        '[[package]]\nname = "iniconfig"\nversion = "2.0.0"',
+        f'[[package]]  # {_CANARY}\nname = "iniconfig"\nversion = "{_CANARY}"',
+        1,
+    )
+    assert bad != text
+    lock.write_text(bad)
+    out = tmp_path / "sbom.cdx.json"
+    r = _run(lock, out)
+    assert r.returncode == 1
+    assert re.fullmatch(r"sbom\.sh: uv export failed \(exit [0-9]+\)\n", r.stderr), r.stderr
+    _assert_closed(r)
+    assert not out.exists()
+
+
+def _failing_uv(tmp_path: Path, fail_on: str) -> dict[str, str]:
+    """PATH shim: the `fail_on` subcommand prints a canary to stderr and exits 3."""
+    real_uv = shutil.which("uv")
+    assert real_uv
+    shim_dir = tmp_path / "failing-uv"
+    shim_dir.mkdir()
+    shim = shim_dir / "uv"
+    shim.write_text(
+        "#!/usr/bin/env bash\n"
+        f'if [ "$1" = {fail_on} ]; then\n'
+        f'  echo "{_CANARY} /tmp/canary-path" >&2; echo "{_CANARY}"; exit 3\n'
+        "fi\n"
+        f'exec {real_uv} "$@"\n'
+    )
+    shim.chmod(0o755)
+    return {"PATH": f"{shim_dir}{os.pathsep}{os.environ['PATH']}"}
+
+
+@pytest.mark.parametrize(
+    ("fail_on", "message"),
+    [
+        ("venv", "tool environment install failed (no CPython 3.12)"),
+        ("pip", "tool environment install failed (hashes are enforced)"),
+        ("export", "uv export failed"),
+    ],
+)
+def test_failing_uv_gets_a_fixed_message_and_its_exit_code(tmp_path, fail_on, message):
+    out = tmp_path / "sbom.cdx.json"
+    r = _run(_FIXTURE / "uv.lock", out, env_extra=_failing_uv(tmp_path, fail_on))
+    assert r.returncode == 1
+    assert r.stdout == ""
+    assert r.stderr == f"sbom.sh: {message} (exit 3)\n"
+    _assert_closed(r)
+    assert not out.exists()
+
+
+def test_debug_variable_shows_the_raw_uv_output(tmp_path):
+    env = {**_failing_uv(tmp_path, "export"), _DEBUG_VAR: "1"}
+    r = _run(_FIXTURE / "uv.lock", tmp_path / "sbom.cdx.json", env_extra=env)
+    assert r.returncode == 1
+    assert _CANARY in r.stderr
+    assert r.stderr.endswith("sbom.sh: uv export failed (exit 3)\n")
+
+
+def test_tool_lock_failure_gets_a_fixed_message(tmp_path):
+    script = _script_copy(tmp_path).parent / "sbom-tool-lock.sh"
+    before = (script.parent / "sbom-tool-requirements.txt").read_bytes()
+    r = _run_lock(script, env_extra=_failing_uv(tmp_path, "pip"))
+    assert r.returncode == 1
+    assert r.stdout == ""
+    assert r.stderr == "sbom-tool-lock.sh: uv pip compile failed (exit 3)\n"
+    _assert_closed(r)
+    assert (script.parent / "sbom-tool-requirements.txt").read_bytes() == before
+
+
+def test_successful_run_prints_only_the_fixed_line(tmp_path):
+    # cyclonedx-py warns on stderr with the throwaway venv's path; that must not reach a log.
+    out = tmp_path / f"{_CANARY}.json"
+    r = _run(_FIXTURE / "uv.lock", out)
+    assert r.returncode == 0, r.stderr
+    assert (r.stdout, r.stderr) == ("", "sbom.sh: wrote SBOM\n")
+
+
+@pytest.mark.parametrize(
+    "content",
+    [b"", b"\xff\xfe" + _CANARY.encode(), f'{{"specVersion": "{_CANARY}"}}'.encode()],
+    ids=["empty", "binary", "bad-spec-version"],
+)
+def test_validate_on_unreadable_input_gets_a_fixed_message(tmp_path, content):
+    target = tmp_path / f"{_CANARY}.json"
+    target.write_bytes(content)
+    r = subprocess.run(  # noqa: S603 -- static argv (bash + repo script + tmp path)
+        ["bash", str(_SCRIPT), "--validate", str(target)],  # noqa: S607 -- bash from PATH
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert r.returncode == 1
+    assert (r.stdout, r.stderr) == ("", "sbom.sh: not a readable CycloneDX JSON document\n")
+    _assert_closed(r)
+
+
+def test_validate_on_a_schema_violation_names_no_values(tmp_path):
+    doc = json.loads(_generate(tmp_path).read_text())
+    doc["components"][0]["purl"] = {"canary": _CANARY}
+    target = tmp_path / "bad.json"
+    target.write_text(json.dumps(doc))
+    r = subprocess.run(  # noqa: S603 -- static argv (bash + repo script + tmp path)
+        ["bash", str(_SCRIPT), "--validate", str(target)],  # noqa: S607 -- bash from PATH
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert r.returncode == 1
+    assert (r.stdout, r.stderr) == ("INVALID\n", "")
+
+
+@pytest.mark.parametrize(
+    "args",
+    [["--validate", f"{_CANARY}/x.json"], [f"{_CANARY}/uv.lock"], [f"{_CANARY}.lock"]],
+    ids=["validate-missing", "lock-missing", "lock-wrong-name"],
+)
+def test_argument_errors_name_no_caller_path(tmp_path, args):
+    r = subprocess.run(  # noqa: S603 -- static argv (bash + repo script + names)
+        ["bash", str(_SCRIPT), *args],  # noqa: S607 -- bash from PATH
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+        check=False,
+    )
+    assert r.returncode == 1
+    _assert_closed(r)
+
+
+def test_unwritable_output_gets_a_fixed_message(tmp_path):
+    blocker = tmp_path / _CANARY
+    blocker.write_text("")
+    r = _run(_FIXTURE / "uv.lock", blocker / "sub" / "sbom.cdx.json")
+    assert r.returncode == 1
+    assert r.stderr == "sbom.sh: cannot write the SBOM to the output path\n"
+    _assert_closed(r)
+
+
+# Every variable the scrub must drop, with a hostile value; PYTHONDONTWRITEBYTECODE is the
+# one PYTHON* variable allowed through (it only stops .pyc writes into the throwaway venv).
+def _hostile_env(tmp_path: Path) -> dict[str, str]:
+    shadow = _shadow_dir(tmp_path)
+    userbase = tmp_path / "userbase"
+    site = userbase / "lib" / "python3.12" / "site-packages"
+    shutil.copytree(shadow, site)
+    startup = tmp_path / "startup.py"
+    startup.write_text(f'import sys; print("{_CANARY}", file=sys.stderr)\n')
+    return {
+        "PYTHONPATH": str(shadow),
+        "PYTHONHOME": f"/nonexistent/{_CANARY}",
+        "PYTHONSTARTUP": str(startup),
+        "PYTHONUSERBASE": str(userbase),
+        "PYTHONINSPECT": "1",
+        "PYTHONVERBOSE": "1",
+        "PYTHONWARNINGS": "error",
+        "PYTHONSAFEPATH": "1",
+        "PYTHONIOENCODING": "latin-1",
+        "PYTHONUTF8": "0",
+        "PYTHONBREAKPOINT": _CANARY,
+        "PIP_INDEX_URL": "https://canary-index.invalid/simple",
+        "PIP_EXTRA_INDEX_URL": "https://canary-index.invalid/simple",
+        "PIP_FIND_LINKS": f"/nonexistent/{_CANARY}",
+        "PIP_NO_BINARY": ":all:",
+        "PIP_CONFIG_FILE": f"/nonexistent/{_CANARY}",
+        "PIP_REQUIRE_VIRTUALENV": "1",
+        "PIP_TRUSTED_HOST": "canary-index.invalid",
+    }
+
+
+def _env_recording_uv(tmp_path: Path) -> tuple[dict[str, str], Path]:
+    """PATH shim: record the PIP_*/PYTHON* names every uv call sees, then run real uv."""
+    real_uv = shutil.which("uv")
+    assert real_uv
+    shim_dir = tmp_path / "recording-uv"
+    shim_dir.mkdir()
+    record = tmp_path / "uv-env.txt"
+    shim = shim_dir / "uv"
+    shim.write_text(
+        "#!/usr/bin/env bash\n"
+        f"compgen -e | grep -E '^(PIP_|PYTHON)' >> {str(record)!r} || true\n"
+        f'exec {real_uv} "$@"\n'
+    )
+    shim.chmod(0o755)
+    return {"PATH": f"{shim_dir}{os.pathsep}{os.environ['PATH']}"}, record
+
+
+def test_pip_and_python_variables_never_reach_uv_or_the_tool(tmp_path):
+    env, record = _env_recording_uv(tmp_path)
+    hostile = {**_hostile_env(tmp_path), "PYTHONDONTWRITEBYTECODE": "1"}
+    r = _run(_FIXTURE / "uv.lock", tmp_path / "sbom.cdx.json", env_extra={**hostile, **env})
+    assert r.returncode == 0, r.stderr
+    seen = set(record.read_text().split())
+    assert seen == {"PYTHONDONTWRITEBYTECODE"}, seen
+
+
+def test_tool_lock_scrubs_pip_and_python_variables(tmp_path):
+    script = _script_copy(tmp_path).parent / "sbom-tool-lock.sh"
+    env, record = _env_recording_uv(tmp_path)
+    r = _run_lock(script, env_extra={**_hostile_env(tmp_path), **env})
+    assert r.returncode == 0, r.stderr
+    assert set(record.read_text().split()) <= {"PYTHONDONTWRITEBYTECODE"}
+
+
+def test_hostile_pip_and_python_variables_leave_the_output_byte_identical(tmp_path):
+    clean = _generate(tmp_path, "clean.json")
+    hostile = {**_hostile_env(tmp_path), "PYTHONDONTWRITEBYTECODE": "1"}
+    out = tmp_path / "hostile.json"
+    r = _run(_FIXTURE / "uv.lock", out, env_extra=hostile)
+    assert r.returncode == 0, r.stderr
+    assert out.read_bytes() == clean.read_bytes()
+    _assert_closed(r)
