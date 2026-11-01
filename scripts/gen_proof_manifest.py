@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
-import re
+import sys
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
@@ -24,6 +24,11 @@ from typing import NamedTuple
 import pandas as pd
 import pyarrow as pa
 import yaml
+
+if sys.version_info >= (3, 11):
+    import tomllib
+else:
+    import tomli as tomllib
 
 from decoy_engine.config._pipeline import PipelineConfig
 from decoy_engine.execution._pipeline import run_pipeline
@@ -52,31 +57,19 @@ def _surface() -> dict:
     }
 
 
-_CHANGELOG_PATH = Path(__file__).resolve().parent.parent / "CHANGELOG.md"
-# A released section heading starts with a digit ("## [0.14.1] - ..."), which
-# excludes the "## [Unreleased]" heading above it without a special case.
-_RELEASED_SECTION = re.compile(r"^## \[(?P<version>\d[^\]]*)\]")
+_PYPROJECT_PATH = Path(__file__).resolve().parent.parent / "pyproject.toml"
 
 
 def _released_engine_version() -> str:
-    # Authoritative release signal: the newest released section in CHANGELOG.md
-    # (the first "## [X.Y.Z]" heading below [Unreleased]). It is in-repo and
-    # deterministic, so the stamp tracks the real release and cannot silently rot
-    # the way a hand-maintained constant did. pyproject `version` is a stale
-    # placeholder (hatch-vcs stamps the real version at the release cut), and
-    # git describe / importlib.metadata are not available or not deterministic in
-    # every run context (sdist build, CI without tags, uninstalled checkout).
-    for line in _CHANGELOG_PATH.read_text(encoding="utf-8").splitlines():
-        m = _RELEASED_SECTION.match(line)
-        if m:
-            return m.group("version")
-    raise RuntimeError(f"no released version section found in {_CHANGELOG_PATH}")
+    # pyproject `[project].version` is the engine's one version source
+    # (tests/unit/test_version_agreement.py holds the module, lock and CHANGELOG to it).
+    with _PYPROJECT_PATH.open("rb") as fh:
+        return str(tomllib.load(fh)["project"]["version"])
 
 
 # Stamp values held as module constants so the generator is deterministic and
 # the sentry diff is stable. GENERATED_AT is bumped by hand when refreshing
-# benchmarks or samples; ENGINE_VERSION is derived from the CHANGELOG release
-# section (see _released_engine_version) so it follows the real release.
+# benchmarks or samples; ENGINE_VERSION is read from pyproject.toml.
 _PROOF_SECRET = b"decoy-proof-manifest-throwaway-secret!"
 _PROOF_KEY = SecretKeyProvider(_PROOF_SECRET)
 ENGINE_VERSION = _released_engine_version()
