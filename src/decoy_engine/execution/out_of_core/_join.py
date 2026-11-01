@@ -339,6 +339,9 @@ def fk_output_array(values: list[object], target: pa.DataType | None) -> pa.Arra
             array = pa.array(values, from_pandas=True)
             if target is not None:
                 cast_fk_chunk(array, target)
+    except MemoryError:
+        # `pa.ArrowMemoryError` is also an ArrowException: exhaustion is not a key type.
+        raise
     except (pa.ArrowException, OverflowError):
         array = None
     if array is None or (temporal and not _holds_exactly(values, array)):
@@ -471,6 +474,8 @@ def cast_fk_chunk(chunk: pa.Array, target: pa.DataType) -> pa.Array:
     # coded refusal, and the whole-column parity battery expects the Arrow family here.
     try:
         return chunk.cast(target)
+    except MemoryError:
+        raise
     except pa.ArrowException as exc:
         failed = type(exc)
     raise failed(f"cannot cast an FK key chunk {chunk.type} -> {target} exactly")
