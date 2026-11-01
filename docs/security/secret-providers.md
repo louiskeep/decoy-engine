@@ -81,6 +81,14 @@ engine's constant text for that code. An unregistered code, a code that is not a
 therefore shows no frame that held secret material. Between the read and the derivation, material
 lives only in `SecretBuffer` objects, which render as `<redacted secret>`.
 
+Past the boundary, the public entries that take or derive a key (`vault.load_vault`,
+`vault_writer_for_config`, `VaultWriter`, `unmask_pipeline`, `run_fk_out_of_core`,
+`make_key_resolver`, `require_mask_key`, `SecretKeyProvider`, `derive*`,
+`REQUIREMENTS[*].prepare`, `SecretBuffer`) keep no secret material in their own locals on a
+failure, and `StrategyContext` does not render its mask key. That is the extent of the promise:
+internal frames below an entry may still hold the key as a parameter, and paths, refs and
+configs in entry frames are not covered (F31 revision 3). Keep locals capture off.
+
 ## Cache and lifetime
 
 - One admitted secret is reused for the whole run; it is closed (best-effort overwritten) when the

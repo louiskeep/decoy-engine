@@ -33,6 +33,18 @@ minimum engine version it was tested against via its
 - `write_fixed_width` under a strict policy names `target.path` in its errors, never the path
   (ambient text unchanged). File outputs published by replace fsync their directory again
   (best effort, ambient and strict), as main's fixed-width writer did.
+- `secret_providers.parse_ref` refuses with no cause or context, even inside a caller's handler.
+- `build_profile_source` names "the value at <position>" instead of a malformed `path`, `layout`,
+  `format` or `type` value under a strict policy (ambient text unchanged). `plan_from_yaml` refuses
+  a corrupted embedded snapshot or an unpinned `snapshot_file` with its manifest position only,
+  under every policy, and no longer chains the JSON decoder error.
+- No public entry keeps secret material (raw secret, mask key, derived key) in its frame locals on
+  a failure: `vault.load_vault`, `vault_writer_for_config`, `VaultWriter`,
+  `assert_vault_writer_keyed`, `unmask_pipeline`, `run_fk_out_of_core`, `run_sequential`
+  (`StrategyContext` no longer renders `mask_key`), `make_key_resolver`, `require_mask_key`,
+  `resolve_mask_key`, `SecretKeyProvider`, `derive`/`derive_index`/`derive_value`,
+  `REQUIREMENTS[*].prepare`, `SecretBuffer`. Paths, refs and configs in entry frames are not
+  covered yet (F31).
 
 ### Changed (BREAKING, pre-GA: file-access coverage after the main merge, 2026-10-29)
 

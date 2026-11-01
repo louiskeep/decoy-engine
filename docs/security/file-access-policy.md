@@ -112,6 +112,17 @@ parse error quoting a cell, say). Cell values in logs are a separate program.
 - Scratch paths built from a table, column or edge name use opaque per-run ids. A shipped name
   (corpus, reference table) resolves only through its registry, before any file-system call.
 
+### Traceback frame locals: what is covered now
+
+Covered: the admission boundary (its frames hold only an opaque box) and secret material in
+the frames of public entries. No public entry keeps a raw secret, a mask key or a key derived
+from one in a parameter or local once something can raise (`decoy_engine._opaque`;
+`tests/fileaccess/test_secret_material_frames.py` walks every non-test frame of a seeded
+failure). Not covered: paths, refs and configs held in entry frames, and secret material in
+internal frames below an entry (a masking kernel takes the key as a parameter). F31 revision 3
+owns the general construction; until then, leave locals capture off (see
+`error-reporting-and-data-exposure.md`).
+
 ## What changes for the CLI
 
 Exactly two behavior changes, both listed in the CHANGELOG:
