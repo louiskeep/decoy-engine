@@ -479,16 +479,27 @@ def build_profile_source(
 
         return build_gcs_profile_source(descriptor)
     raise NotImplementedError(
-        f"profile_source: unsupported source type {src_type!r}. "
+        f"profile_source: unsupported source type "
+        f"{fileaccess.shown(repr(src_type), _at(field_key, 'type'))}. "
         "Supported types: file, s3, gcs (S18 adds sftp; V2.1 adds db)."
     )
+
+
+def _at(field_key: str, name: str) -> str:
+    """Where a refused descriptor field sits. A strict refusal names this, never the value,
+    which may be a path (a `Path`, a layout file, a mistyped format)."""
+    base = field_key[: -len(".path")] if field_key.endswith(".path") else field_key
+    return f"the value at {base}.{name}"
 
 
 def _build_file_source(descriptor: dict[str, Any], field_key: str) -> ProfileSource:
     fmt = descriptor.get("format")
     path = descriptor.get("path")
     if not isinstance(path, str):
-        raise ValueError(f"profile_source: file source missing string `path`, got {path!r}")
+        raise ValueError(
+            "profile_source: file source missing string `path`, got "
+            f"{fileaccess.shown(repr(path), _at(field_key, 'path'))}"
+        )
     if fmt == "csv":
         return CsvFileSource(
             Path(path),
@@ -503,11 +514,12 @@ def _build_file_source(descriptor: dict[str, Any], field_key: str) -> ProfileSou
         layout = descriptor.get("layout")
         if not isinstance(layout, dict):
             raise ValueError(
-                f"profile_source: fixed_width file source missing `layout`, got {layout!r}"
+                "profile_source: fixed_width file source missing `layout`, got "
+                f"{fileaccess.shown(repr(layout), _at(field_key, 'layout'))}"
             )
         return FixedWidthFileSource(Path(path), layout, field_key=field_key)
     raise NotImplementedError(
-        f"profile_source: unsupported file format {fmt!r}. "
+        f"profile_source: unsupported file format {fileaccess.shown(repr(fmt), _at(field_key, 'format'))}. "
         "V1 supports csv | parquet | fixed_width only."
     )
 

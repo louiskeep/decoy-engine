@@ -38,9 +38,9 @@ Known limits (documented in the E1 build record):
     graph; this is the surface a strict policy reaches and keeps the sentry precise.
   - A basename (``.name``/``.stem``/``.suffix``) is treated as not a locator, matching the engine's
     existing disclosure (disguises and faker log ``path.name``) and the AT-X2 tests.
-  - Compile-time plan metadata is out of the model: ``plan/_serialize.py`` echoes an embedded
-    ``source_path`` in serialized plan JSON, but that is an in-memory plan object, not a live file
-    operation under a policy, so it is outside the D5 live-locator class this sentry guards.
+  - An embedded ``source_path``/``snapshot_file`` read back from a stored plan is a locator too
+    (the path the plan was compiled from): ``plan/_serialize.py`` refuses a corrupted snapshot
+    with its manifest position only, and both names are in ``PATH_NAMES``.
 """
 
 from __future__ import annotations
@@ -83,6 +83,8 @@ PATH_NAMES = frozenset(
         "temp_dir",
         "tmp_dir",
         "scratch_root",
+        "source_path",
+        "snapshot_file",
     }
 )
 
@@ -123,10 +125,6 @@ _POLICY_MARKERS = (
 
 # (module path relative to decoy_engine, qualified function, variable) -> (count, reason).
 WAIVERS: dict[tuple[str, str, str], tuple[int, str]] = {
-    ("profile/_readers.py", "_build_file_source", "path"): (
-        1,
-        "reports a malformed non-string `path` config field (repr of a non-str), not a locator",
-    ),
     ("profile/_fixed_width_reader.py", "_resolve_layout", "path"): (
         1,
         "the `path` parameter holds handle.display (read_fixed_width reassigns path = "

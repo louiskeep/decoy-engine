@@ -210,9 +210,9 @@ def resolve_pinned_snapshot(
     if read is not None:
         return read.parsed
     if failures is not None:
-        raise failures.get(
-            snapshot_file,
-            StatisticalSpecError(
+        failure = failures.get(snapshot_file)
+        if failure is None:
+            failure = StatisticalSpecError(
                 code=reasons.plan.STATISTICAL_SNAPSHOT_UNREADABLE,
                 message=(
                     f"snapshot_file {fileaccess.shown(snapshot_file, 'snapshot_file')!r} has no "
@@ -220,8 +220,8 @@ def resolve_pinned_snapshot(
                     "recorded read failure from this compile's read-once pass; "
                     "refusing rather than reopening the path."
                 ),
-            ),
-        )
+            )
+        raise failure
     return _load_snapshot(snapshot_file)[1]
 
 
