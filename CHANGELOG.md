@@ -9,6 +9,15 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Changed (B-6 vault crypto core, 2026-11-01)
+
+Plan: `docs/plans/2026-11-01-b6-vault-crypto-remediation.md` (slices S1, S2, S2b, S4a, S4b).
+
+- HKDF-SHA256 (`determinism/_hkdf.py`) delegates to PyCA `cryptography` (`HKDF`, `HKDFExpand`,
+  `HMAC`) instead of a hand-written loop. Every derived key is byte-identical (RFC 5869 §A vectors
+  and a corpus captured from the stdlib implementation); the empty-salt refusal holds on both
+  `hkdf_extract` and the one-shot `hkdf_sha256`.
+
 ### Fixed (out-of-core: typed temporal FK seam, release R-b, 2026-11-01)
 
 The out-of-core FK join rebuilt every child FK value from Python scalars by type inference, so a

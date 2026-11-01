@@ -139,3 +139,13 @@ reconstruct any key from the label alone.
 See [SQL surfaces](sql-surfaces.md) for the companion security doc covering
 SQL injection surfaces, and [token vault](token-vault.md) for the vault's
 own threat model.
+
+## HKDF implementation
+
+Every HKDF-SHA256 call above (`mask_key`, the per-namespace `derive` key, the vault key, the
+pipeline and model-pack keys) goes through `decoy_engine.determinism._hkdf`, which delegates the
+RFC 5869 arithmetic to PyCA `cryptography` (`HKDF`, `HKDFExpand`, `HMAC`). The engine adds one
+rule over the primitive: an empty salt is refused on both `hkdf_extract` and the one-shot
+`hkdf_sha256`, because RFC 5869 and PyCA would otherwise derive under the all-zero salt. Moving
+from the earlier stdlib implementation changed no derived byte: the RFC 5869 §A vectors and a
+corpus captured from the stdlib function (`tests/fixtures/hkdf/engine-vectors.json`) pin it.
