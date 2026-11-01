@@ -98,7 +98,6 @@ from decoy_engine.execution._isolated_common import (
     commit_error_text,
     exception_error_text,
     is_memory_failure,
-    parent_duplicate_refusal,
     peak_rss_mb,
 )
 from decoy_engine.execution._isolated_memwatch import error_suffix, evidence_of, start_sampler
@@ -332,9 +331,6 @@ def _run_isolated(
     timeout_s: float | None,
     run_pipeline_kwargs: dict[str, Any],
 ) -> IsolatedRunResult:
-    refused = parent_duplicate_refusal(sources)
-    if refused is not None:
-        return refused
     owns_work_root = staging_dir is None
     work_root = (
         Path(staging_dir)

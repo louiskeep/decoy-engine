@@ -565,17 +565,12 @@ def test_e3_isolated_default(cell: Cell, tmp_path: Path, spies: Spies, child_spy
         assert spies.raises == [] and "shared-raise" not in lines
         return
     _assert_isolated_d(result, isolated=True)
-    if cell.kind == "res":
-        # Refused in the parent before serialization: no child, no staging output.
-        assert spawned == [] and lines == []
-        assert result.pid is None and result.returncode is None and result.peak_rss_mb is None
-        assert len(spies.raises) == 1
-        assert not any((tmp_path / "d" / "staging").glob("**/*.parquet"))
-    else:
-        # A declared descriptor is read only in the child.
-        assert spawned and result.pid is not None and result.returncode == 0
-        assert lines.count("shared-raise") == 1
-        assert "handler" not in lines and "convert" not in lines
+    # The parent does not check, so config-only refusals in the child win as in process (E2):
+    # a caller table reaches the child as a LazySource, a descriptor is read only there.
+    assert spawned and result.pid is not None and result.returncode == 0
+    assert spies.raises == []
+    assert lines.count("shared-raise") == 1
+    assert "handler" not in lines and "convert" not in lines
 
 
 def _unwritable_child(*, dup: bool) -> pa.Table:
@@ -584,22 +579,35 @@ def _unwritable_child(*, dup: bool) -> pa.Table:
     return child.append_column("iv", interval)
 
 
-def test_e3_unwritable_duplicate_is_refused_before_serialization(
-    tmp_path: Path, spies: Spies
+def test_e3_unwritable_duplicate_surfaces_the_serialization_failure(
+    tmp_path: Path, spies: Spies, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # FAIL-BEFORE (main: uncoded ArrowNotImplementedError raised out of the call).
-    cell = Cell("auto", "res", "redact", row="0a", label="FAIL-BEFORE")
-    result, spawned = _isolated(
-        tmp_path, cell, dup="qty", isolate=True, child=_unwritable_child(dup=True)
-    )
-    _assert_isolated_d(result, isolated=True)
-    assert spawned == [] and result.pid is None
-    assert len(spies.raises) == 1
+    # CHARACTERIZATION of the narrowed contract (row 0): a duplicate table Parquet cannot write
+    # fails at the parent's serialization, as on main, ahead of the child's refusal. It is
+    # raised out of the call, not returned as a result (open finding, plan section 13).
+    from decoy_engine.execution import _isolated_run
+
+    cell = Cell("auto", "res", "redact", row="0", label="CHARACTERIZATION")
+    spawned: list[object] = []
+    monkeypatch.setattr(_isolated_run, "_spawn_and_classify", lambda *a, **k: spawned.append(a))
+    with pytest.raises(pa.ArrowNotImplementedError) as exc:
+        _isolated(tmp_path, cell, dup="qty", isolate=True, child=_unwritable_child(dup=True))
+    err = exc.value
+    expected = "Unhandled type for Arrow to Parquet schema conversion: month_day_nano_interval"
+    assert str(err) == expected and err.args == (expected,)
+    assert getattr(err, "__notes__", []) == []
+    assert err.__cause__ is None and err.__context__ is None
+    for name in (*_NAMES, "iv"):
+        assert name not in str(err), name
+    assert spawned == [] and spies.raises == [] and spies.calls == 0
+    # The caller owns staging_dir (kept on every path); the unwritable table left no file.
+    assert not (tmp_path / "staging" / "sources" / "child.parquet").exists()
+    assert not (tmp_path / "staging" / "payload.json").exists()
 
 
 def test_e3_unwritable_unique_control_still_fails_serialization(tmp_path: Path) -> None:
-    # CHARACTERIZATION: the parent check is a duplicate refusal, not a serializability gate.
-    cell = Cell("auto", "res", "redact", row="0a", label="CHARACTERIZATION")
+    # CHARACTERIZATION: the same failure without the duplicate; the parent has no refusal.
+    cell = Cell("auto", "res", "redact", row="0", label="CHARACTERIZATION")
     with pytest.raises(pa.ArrowNotImplementedError):
         _isolated(tmp_path, cell, dup=None, isolate=True, child=_unwritable_child(dup=False))
 
