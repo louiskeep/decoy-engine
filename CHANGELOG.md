@@ -13,7 +13,8 @@ minimum engine version it was tested against via its
 
 Pre-GA release (`RELEASE_PHASE = "pre-ga"`): the minor bump carries breaking changes with no shims. It is
 0.17.0 plus the A-4 file-access policy reconciled with F13 secret admission, the typed out-of-core temporal
-FK seam, and the SBOM error-handling fixes.
+FK seam, the SBOM error-handling fixes, the exact-integer categorical CDF builder, and the generated NOTICE
+with its license gate and the SDV citation fixes.
 
 ### Breaking for consumers (since v0.17.0)
 
@@ -35,6 +36,15 @@ FK seam, and the SBOM error-handling fixes.
   policy an explicit `file_access=` must be that policy or narrower, else `FileAccessUnavailable`.
 - Out-of-core temporal FK columns publish the resolved unit of their key (were always `timestamp[us]`); a key
   outside the resolved type is refused with `out_of_core_fk_key_dtype_unsupported`.
+- Weighted categorical masking (`strategy: categorical` with `weights`) moves masked output: the CDF
+  thresholds are now rounded half up over exact integers instead of floored from a float running sum. On the
+  seeded 20,000-vector corpus (`tests/unit/execution/_cdf_oracle.py`) at least one threshold moves in about 99%
+  of weight vectors, every moved threshold by at most one slot, so a row changes category with probability
+  about 5e-5. `[1, 1, 1]` gives `[333333, 666667, 1000000]` (was `[333333, 666666, 1000000]`). Output is now
+  identical on 3.10, 3.11 and 3.12. Weight vectors that built before and are now refused: a weight under one
+  slot after rounding (`[1.0, 2e-6, 1.0]`), a total above the largest double (`[1e308, 1e308]`), and `bool`,
+  `Decimal`, `Fraction` or subclass weights; NaN or infinite weights raise `StrategyError`
+  (`categorical_weights_nonpositive`) instead of a bare `ValueError`.
 - `ProviderSpec.seed`, `ValuePool.seed`, `SeedEnvelope.job_seed`, `StrategyContext.job_seed`/`mask_key` and
   `ShadowContext.job_seed`/`mask_key` are `repr=False`: they no longer appear in `repr()` output.
 - No public module or exported symbol was removed or renamed (`CodeSetConfig` moved to a private module and is
@@ -42,6 +52,9 @@ FK seam, and the SBOM error-handling fixes.
 - DP: the certified rows are re-pinned for 0.18.0 (`31ecf945...`, engine dev/CI profile; `b643894d...`, the
   decoy-cli runtime profile). The CLI's `requirements-certified.txt` header fingerprint moves to `b643894d...`;
   a CLI install of 0.18.0 cannot run a certified fit until it does.
+
+The generated `NOTICE`, the license gate and the SDV citation fixes are not breaking: no runtime code,
+dependency or public symbol changes.
 
 ### Changed (release R-b, 2026-11-01)
 
@@ -51,6 +64,37 @@ rows exactly). The reason release pin (`tests/fixtures/f29/reason-registry-relea
 registry 1.2.0 (893 identities: 884 `since` 1.0.0, 7 `since` 1.1.0, 2 `since` 1.2.0). The Phase F FR0
 manifest is re-frozen for engine minor `0.18` (envelope digests only; every golden table digest is
 unchanged).
+
+### Fixed (categorical CDF: exact integer builder, 2026-11-01)
+
+The weighted categorical CDF summed weights with the builtin `sum()`, which CPython 3.12 made
+compensated, so about 2.3% of weight vectors got thresholds one slot apart on 3.12 versus 3.10/3.11 and
+masked output depended on the interpreter. `_build_cdf` now converts each weight to its exact dyadic
+rational and computes `(2 * C_i * RES + T) // (2 * T)` (round half up) over exact integers. Plan:
+`docs/plans/2026-10-31-categorical-cdf-exact-arithmetic.md` (branch `plan/cdf-exact-arithmetic`).
+
+- Output: versus 3.10 output, at least one threshold moves in about 99% of weight vectors, each by at most
+  one slot (a row changes category with probability about 5e-5); `[1, 1, 1]` becomes
+  `[333333, 666667, 1000000]` (was `[333333, 666666, 1000000]`). `[1.0, 2e-6, 1.0]` is now refused as below
+  resolution (0.999999 of a slot); `[1e308, 1e308]` is refused as an overflowing total.
+- Weights must be `int`, a numpy integer, `float` or numpy `float16/32/64`, by exact type: `bool`, `str`,
+  `None`, `Decimal`, `Fraction` and subclasses are refused. NaN and infinity raise `StrategyError`
+  (`categorical_weights_nonpositive`) instead of a bare `ValueError`. Refusals run as whole-vector passes
+  (type, non-finite, negative, total, resolution) and their messages carry the index only, no value.
+
+### Changed (licensing: generated NOTICE, license gate, SDV citations, 2026-11-01)
+
+- `NOTICE` (shipped in the wheel) is generated from `uv.lock` by `scripts/dev/licenses_write.sh`: name,
+  version, license and scope (`[runtime]` or `[extra: ...]`) for all 103 pins that installing the engine or
+  a runtime extra can pull in, plus the named exceptions (`paramiko` LGPL-2.1 and `tqdm` MPL-2.0 AND MIT,
+  optional only; `certifi` MPL-2.0; `python-stdnum` LGPL-2.0-or-later; numpy's SPDX expression). The
+  licensor name is a marked owner placeholder. Policy: `docs/license-policy.md`.
+- `tests/sentry/test_license_policy.py` and the `licenses` step of `scripts/dev/gates.sh` fail on a stale or
+  hand-edited `NOTICE`, a license outside the policy, or `NOTICE` disagreeing with installed metadata.
+- SDV citations no longer call SDV MIT: SDV is BUSL-1.1. The engine cites the HMA1 and PAR methods (papers
+  named) and uses no SDV code; `tests/sentry/test_sdv_import_sentry.py` fails on an SDV or sdmetrics import
+  and on a citation labelling SDV permissive.
+
 
 ### Fixed (out-of-core: typed temporal FK seam, release R-b, 2026-11-01)
 
@@ -4427,8 +4471,9 @@ own branches and are not part of this batch.
   validators ship: `luhn`, `npi`, `iban`, `vin` (all delegate to
   `checksums.validate` from SP-04), `fk_intact` (every non-null child FK value
   resolves to a parent PK), and `no_orphan_children` (every child row has a
-  non-null FK value). The two FK validators implement the SDV HMA1 parent-first
-  DAG pattern (sdv-dev/SDV, MIT). `validate(outputs, config)` is the single
+  non-null FK value). The two FK validators implement the parent-first DAG
+  pattern of the SDV HMA1 method (Patki et al., IEEE DSAA 2016; method only, no
+  SDV code is used: SDV is BUSL-1.1). `validate(outputs, config)` is the single
   entry point; it returns a frozen `ValidationReport` and never mutates output.
   The `ValidationReport` and per-finding `ValidatorFinding` are persisted to the
   evidence manifest under `quality_metrics["validation"]["validators"]`.
