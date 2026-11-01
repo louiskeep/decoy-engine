@@ -518,3 +518,225 @@ def test_masked_null_parent_key_warn_counts_only_true_orphans(tmp_path) -> None:
     assert out.column("customer_id").to_pylist() == [None, "orphan1", None]
     assert len(warnings) == 1
     assert warnings[0].detail["orphan_rows"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Slice 0 item 2: the typed FK output seam (plan T4, T4z, T6, T7). Labels in the test names and
+# ids: FB = FAIL-BEFORE (red on main), CH = CHARACTERIZATION (green before and after),
+# NS = NEW-SEAM (a unit cell of `fk_output_array`, which does not exist on main; neither red
+# nor characterization evidence). `fk_output_array` is imported inside the NEW-SEAM tests so
+# the rest of this module still collects on main.
+# ---------------------------------------------------------------------------
+
+import datetime as _dt  # noqa: E402
+
+import pandas as pd  # noqa: E402
+
+from decoy_engine.execution._fk_keys import FK_KEY_DTYPE_UNSUPPORTED_CODE  # noqa: E402
+from tests.parity import _d2b_shapes as _d2b  # noqa: E402
+from tests.parity import _dcomp_ooc_shapes as _dco  # noqa: E402
+from tests.parity import _ooc_temporal_fk as _tf  # noqa: E402
+from tests.unit.execution.test_out_of_core_batch_join import (  # noqa: E402
+    _col,
+    _joiner,
+    _relation_for,
+    _two_table_plan,
+)
+
+
+def _chain(exc: BaseException) -> list[BaseException]:
+    seen: list[BaseException] = []
+    todo: list[BaseException | None] = [exc]
+    while todo:
+        current = todo.pop()
+        if current is None or any(current is s for s in seen):
+            continue
+        seen.append(current)
+        todo += [current.__cause__, current.__context__]
+    return seen
+
+
+def _assert_value_free(exc: BaseException, marker: str) -> None:
+    for link in _chain(exc):
+        assert marker not in str(link), type(link).__name__
+        assert marker not in repr(link.args), type(link).__name__
+        for note in getattr(link, "__notes__", ()):
+            assert marker not in note
+
+
+def _seam(values: list[Any], target: pa.DataType) -> pa.Array:
+    from decoy_engine.execution.out_of_core._join import fk_output_array
+
+    return fk_output_array(values, target)
+
+
+def _cast(values: list[Any], target: pa.DataType) -> pa.Array:
+    return join_mod.cast_fk_chunk(_seam(values, target), target)
+
+
+class TestFkOutputArrayNewSeam:
+    """T4 (NS): exact or raising, one code, no cause or context."""
+
+    def test_integer_beyond_2_53_exactly_representable_is_admitted_into_float64_NS(self) -> None:
+        assert _cast([2**54], pa.float64()).to_pylist() == [float(2**54)]
+
+    @pytest.mark.parametrize(
+        ("values", "target"),
+        [
+            pytest.param([2**53 + 1], pa.float64(), id="int_beyond_exact_float"),
+            pytest.param([1.5, 2**53 + 1], pa.float64(), id="mixed_batch_beyond_exact_float"),
+            pytest.param([2.5], pa.int64(), id="fraction_into_int64"),
+            pytest.param([Decimal("1.234")], pa.decimal128(4, 2), id="decimal_rescale"),
+            pytest.param([_dt.datetime(9999, 1, 1)], pa.timestamp("ns"), id="far_date_into_ns"),
+            pytest.param(
+                [pd.Timestamp("2020-01-01 00:00:00.000000001")], pa.timestamp("us"), id="ns_into_us"
+            ),
+            pytest.param(
+                [_dt.datetime(2020, 1, 1, 0, 0, 0, 5)], pa.timestamp("ms"), id="us_into_ms"
+            ),
+            pytest.param([_dt.date(2020, 1, 1)], pa.timestamp("us"), id="date_into_timestamp"),
+            pytest.param(["CANARY-7f3a"], pa.timestamp("ns"), id="string_into_timestamp"),
+        ],
+    )
+    def test_unrepresentable_values_raise_the_one_code_NS(self, values, target) -> None:
+        with pytest.raises(ExecutionError) as exc:
+            _cast(values, target)
+        assert exc.value.code == FK_KEY_DTYPE_UNSUPPORTED_CODE
+        assert exc.value.__cause__ is None and exc.value.__context__ is None
+        _assert_value_free(exc.value, "CANARY-7f3a")
+        _assert_value_free(exc.value, "9999")
+        _assert_value_free(exc.value, str(2**53 + 1))
+
+    @pytest.mark.parametrize(
+        ("values", "target"),
+        [
+            pytest.param(
+                [pd.Timestamp("2020-01-01 00:00:00.000000001"), None],
+                pa.timestamp("ns"),
+                id="timestamp_with_ns_part",
+            ),
+            pytest.param(
+                [_dt.datetime(2020, 1, 1, 0, 0, 0, 5)], pa.timestamp("ns"), id="datetime_into_ns"
+            ),
+            pytest.param(
+                [_dt.datetime(9999, 1, 1), _dt.datetime(1, 1, 1)],
+                pa.timestamp("us"),
+                id="far_dates_us",
+            ),
+            pytest.param([None, None], pa.timestamp("ns"), id="all_null_keeps_the_fixed_type"),
+        ],
+    )
+    def test_temporal_values_are_built_exactly_at_the_fixed_type_NS(self, values, target) -> None:
+        out = _seam(values, target)
+        assert out.type == target
+        assert out.to_pylist() == values
+
+    def test_non_temporal_targets_keep_inference_NS(self) -> None:
+        # The joiner records the pre-cast chunk type to replay whole-column narrowing, and the
+        # oracle types an all-null string or date32 child `null`: those stay inferred.
+        assert _seam([1, 2], pa.float64()).type == pa.int64()
+        assert _seam([None, None], pa.string()).type == pa.null()
+        assert _seam([None], pa.date32()).type == pa.null()
+
+
+def _float_parent_int_child(tmp_path, child_keys: list[int]):
+    plan = _two_table_plan(_col("passthrough"), "customers", "orders", "customer_id")
+    edge = RelationshipEdge(
+        parent_table="customers",
+        parent_columns=("customer_id",),
+        child_table="orders",
+        child_columns=("customer_id",),
+        namespace="cust",
+        orphan_policy=OrphanPolicy.PRESERVE,
+    )
+    parent = pa.table({"customer_id": pa.array([2.0, 1.5], pa.float64())})
+    child = pa.table({"customer_id": pa.array(child_keys, pa.int64())})
+    relation = _relation_for(plan, edge, parent, tmp_path / "rel")
+    return _joiner(plan, edge, relation, tmp_path / "join", child), child
+
+
+_MARKER_INT = 2**53 + 1  # 9007199254740993: pyarrow's own error text echoes it
+
+
+def test_a_refused_fk_batch_carries_no_key_value_in_its_error_chain_FB(tmp_path) -> None:
+    """T6 (FB): a matched float key and an orphan integer beyond exact float precision share a
+    batch. Main raises the coded error `from exc`, so pyarrow's text with the value sits in
+    `__cause__`; the seam raises after its `except` block, with no cause or context."""
+    joiner, child = _float_parent_int_child(tmp_path, [2, _MARKER_INT])
+    with joiner, pytest.raises(ExecutionError) as exc:
+        joiner.join_batch(child.to_batches()[0])
+    assert exc.value.code == FK_KEY_DTYPE_UNSUPPORTED_CODE
+    _assert_value_free(exc.value, str(_MARKER_INT))
+
+
+def test_a_refused_fk_batch_leaves_the_joiner_usable_and_closable_CH(tmp_path) -> None:
+    """T7 (CH): the refusal exists on main; it emits nothing for the batch, the staging
+    registration is released (a following valid batch joins), and close() releases DuckDB."""
+    joiner, child = _float_parent_int_child(tmp_path, [2, _MARKER_INT])
+    with pytest.raises(ExecutionError) as exc:
+        joiner.join_batch(child.to_batches()[0])
+    assert exc.value.code == FK_KEY_DTYPE_UNSUPPORTED_CODE
+    out, orphans = joiner.join_batch(
+        pa.table({"customer_id": pa.array([2], pa.int64())}).to_batches()[0]
+    )
+    assert (out.column(0).to_pylist(), orphans) == ([2.0], 0)
+    joiner.close()
+    assert joiner._conn is None
+
+
+def test_an_out_of_range_value_emits_no_output_chunk_NS() -> None:
+    """T7 (NS): the range refusal raises before anything is appended to `output_chunks`."""
+    edge = RelationshipEdge(
+        parent_table="p",
+        parent_columns=("k",),
+        child_table="c",
+        child_columns=("k",),
+        namespace="n",
+        orphan_policy=OrphanPolicy.PRESERVE,
+    )
+    batch = pa.record_batch(
+        {
+            "__decoy_row_nr": pa.array([0], pa.int64()),
+            "__decoy_fk_join_key": pa.array(["t"]),
+            "__decoy_src_0": pa.array([_dt.datetime(9999, 1, 1)], pa.timestamp("us")),
+            "__decoy_parent_match": pa.array(["t"]),
+            "__decoy_parent_masked_0": pa.array([_dt.datetime(9999, 1, 1)], pa.timestamp("us")),
+        }
+    )
+    chunks: list[list[pa.Array]] = [[]]
+    with pytest.raises(ExecutionError) as exc:
+        join_mod._append_output_batch(
+            batch,
+            edge=edge,
+            remap_values=None,
+            output_chunks=chunks,
+            output_types=(pa.timestamp("ns"),),
+        )
+    assert exc.value.code == FK_KEY_DTYPE_UNSUPPORTED_CODE
+    assert chunks == [[]]
+
+
+_ZERO_ROW = [("us", "ns"), ("ns", "us"), ("ns", "ns"), ("ms", "s")]
+_ALL_POLICIES = [OrphanPolicy.PRESERVE, OrphanPolicy.WARN, OrphanPolicy.REMAP, OrphanPolicy.FAIL]
+_FINER = {"s": 0, "ms": 1, "us": 2, "ns": 3}
+
+
+@pytest.mark.parametrize("policy", _ALL_POLICIES, ids=[f"{p.value}-FB" for p in _ALL_POLICIES])
+@pytest.mark.parametrize(("p", "c"), _ZERO_ROW, ids=[f"{p}->{c}" for p, c in _ZERO_ROW])
+def test_empty_output_table_is_typed(p: str, c: str, policy: OrphanPolicy) -> None:
+    """T4z (FB): a zero-row child publishes the fixed type (main: `null`); under FAIL the
+    masked-parent type, otherwise the finer unit."""
+    shape = _tf.scalar_shape(policy, pa.timestamp(p), pa.timestamp(c), _tf.instants(3), [])
+    out = _dco.run_ooc(shape).outputs["C"].column("n")
+    parent = _tf.RELATION_UNIT[p]
+    unit = parent if policy is OrphanPolicy.FAIL else max(parent, c, key=_FINER.__getitem__)
+    assert out.type == pa.timestamp(unit)
+    assert len(out) == 0
+    assert _d2b.run_full(shape).outputs["C"].num_rows == 0
+
+
+def test_a_string_zero_row_child_stays_null_typed_CH() -> None:
+    """T4z (CH): non-temporal zero-row FK columns keep today's null type, matching the oracle."""
+    shape = _tf.scalar_shape(OrphanPolicy.WARN, pa.string(), pa.string(), ["a"], [])
+    assert _dco.run_ooc(shape).outputs["C"].column("n").type == pa.null()
+    assert _d2b.run_full(shape).outputs["C"].column("n").type == pa.null()

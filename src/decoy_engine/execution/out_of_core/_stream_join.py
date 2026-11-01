@@ -44,8 +44,11 @@ import pyarrow.parquet as pq
 
 from decoy_engine import reasons
 from decoy_engine.execution._errors import ExecutionError
-from decoy_engine.execution._fk_keys import NULL_FK_KEY, fk_key_value
-from decoy_engine.execution.out_of_core._batch_join import _cast_chunks, _resolve_output_types
+from decoy_engine.execution.out_of_core._batch_join import (
+    _cast_chunks,
+    _resolve_output_types,
+    mint_remap_values,
+)
 from decoy_engine.execution.out_of_core._duckdb import connect_duckdb
 from decoy_engine.execution.out_of_core._external_sort import BoundedExternalSorter
 from decoy_engine.execution.out_of_core._join import (
@@ -54,7 +57,6 @@ from decoy_engine.execution.out_of_core._join import (
     _q,
     _sql_string,
 )
-from decoy_engine.execution.out_of_core._mask import mask_column
 from decoy_engine.execution.out_of_core._payload_store import SpillChildKeys
 from decoy_engine.execution.out_of_core._stream_join_cursors import (
     ChildKeyLockstepCursor,
@@ -593,6 +595,7 @@ class StreamFkJoiner:
             edge=edge,
             remap_values=remap_values,
             output_chunks=output_chunks,
+            output_types=self._output_types,
         )
         for idx in range(n_components):
             for chunk in output_chunks[idx]:
@@ -629,16 +632,8 @@ class StreamFkJoiner:
         # deterministic, so orphan positions carry the same values either way),
         # from the raw src columns that rode through the join unchanged. Bounded
         # by the result batch size, never child cardinality.
-        remapped = []
-        for idx, seed in enumerate(self._remap_seeds):
-            normalized = [
-                None if fk_key_value(value) is NULL_FK_KEY else fk_key_value(value)
-                for value in result.column(f"__decoy_src_{idx}").to_pylist()
-            ]
-            remapped.append(
-                mask_column(pa.array(normalized, from_pandas=True), seed, self._job_seed)
-            )
-        return tuple(remapped)
+        keys = [result.column(f"__decoy_src_{idx}") for idx in range(len(self._remap_seeds))]
+        return mint_remap_values(keys, self._remap_seeds, self._job_seed)
 
     def _with_positional_row_nr(self, result: pa.RecordBatch) -> pa.RecordBatch:
         columns = list(result.columns)

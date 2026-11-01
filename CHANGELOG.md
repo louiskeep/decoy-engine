@@ -9,6 +9,26 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Fixed (out-of-core: typed temporal FK seam, release R-b, 2026-11-01)
+
+The out-of-core FK join rebuilt every child FK value from Python scalars by type inference, so a
+`timestamp[ns]` key was published as `timestamp[us]` (nanosecond keys collapsed), and its join token was
+tagged by Python class, so one instant read at two units (`ns` on one side, `s|ms|us` on the other) missed
+itself and published false orphans. Plan: `docs/plans/2026-10-31-slice0-ooc-fk-typed-seam.md`.
+
+- Join tokens encode a tz-naive instant as exact epoch nanoseconds: equal instants match across units.
+- Each FK component has one fixed Arrow type from the schemas: tz-naive timestamps unify to the finest unit
+  among the policy's candidates; under `orphan_policy: fail` the masked-parent type alone. Every output array
+  (matched, orphan, REMAP input, zero-row table) is built at that type through one function
+  (`out_of_core/_join.fk_output_array`): exact, or the registered `out_of_core_fk_key_dtype_unsupported`
+  refusal for an instant outside the type's range or finer than its unit. Out-of-core temporal FK columns now
+  publish the resolved unit (were `timestamp[us]`).
+- The router no longer diverts a tz-naive unit promotion over an identity parent key (passthrough or no
+  seed): every published value is a child instant or a parent instant equal to one, so it is in range.
+- Error text: a refused FK key, and a failed FK chunk cast, carry no key value, cause or context.
+- Resource exhaustion (`MemoryError`, including `pyarrow.ArrowMemoryError`) propagates through the seam
+  unchanged instead of being reported as an unsupported key type.
+
 ### Changed (BREAKING, pre-GA: the file-access policy meets F13 secret admission, 2026-11-01)
 
 - A `file:` mask secret is read through the installed file-access policy (`FileRole.SECRET` at
