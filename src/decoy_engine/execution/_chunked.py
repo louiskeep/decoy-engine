@@ -183,6 +183,7 @@ from ._chunked_fk import (
     gate_fk_child_edges,
 )
 from ._column_access import composite_provider_offenders
+from ._errors import vault_requires_resident_output
 from ._transforms_gate import reject_per_table_transforms
 from .native import _faker_positional_admission as faker_gate
 
@@ -409,9 +410,12 @@ def run_mask_pipeline_chunked(
     is retained for a future non-pandas substrate; pandas is the only
     substrate today.
 
-    `vault_writer` (a `decoy_engine.vault.VaultWriter`) collects each
-    chunk's source->masked pairs for `vault: true` columns as the chunk
-    masks; the caller writes the artifact after the stream drains.
+    `vault_writer` must be `None`: any writer is refused with
+    `ExecutionError(code="vault_requires_resident_output")` before a chunk is
+    read (B-6 boundary rule B0). The caller publishes each yielded chunk, so
+    a vault written after the stream drains would follow output it reverses.
+    A vault job runs through `run_pipeline` without a sink, whose auto-chunk
+    lane still bounds masking memory and returns resident output.
 
     `chunk_result_sink` (optional list) receives each chunk's full
     `ExecutionResult` as it is produced, so callers that need the
@@ -427,35 +431,20 @@ def run_mask_pipeline_chunked(
     Validation and plan compile happen EAGERLY at call time; only the
     per-chunk masking is lazy.
     """
+    if vault_writer is not None:
+        raise vault_requires_resident_output()
     from . import _chunked_oracle
 
-    state = _chunked_oracle._oracle_preflight(
+    return _chunked_oracle.mask_pipeline_chunked(
         config,
         chunks,
         table=table,
         engine_version=engine_version,
         registry=registry,
         adapter=adapter,
-        vault_writer=vault_writer,
+        chunk_result_sink=chunk_result_sink,
         key_provider=key_provider,
         base_row_offset=base_row_offset,
-        pool_cache=None,
-    )
-    if state.first is None:
-        # Admission cleared (or the plan is unkeyed); there is genuinely nothing to mask.
-        state.close_secret()
-        return iter(())
-    return _chunked_oracle.release_when_done(
-        _chunked_oracle._oracle_masked(
-            state,
-            config=config,
-            table=table,
-            vault_writer=vault_writer,
-            chunk_result_sink=chunk_result_sink,
-            base_row_offset=base_row_offset,
-            on_chunk=None,
-        ),
-        state,
     )
 
 

@@ -548,6 +548,16 @@ so at GA it requires a resolved >=32-byte secret like every other keyed
 surface (`keyed_strategy_requires_secret`); it never derives tokens from the
 public job seed.
 
+A file-vault `vault_writer` is accepted only where the engine holds every output
+row until the caller can publish the vault first (B-6 boundary rule B0, 2026-11-01;
+breaking, pre-GA): `run_pipeline(sink=..., vault_writer=...)` with both set,
+`run_mask_chunked` and `run_mask_pipeline_chunked` with any `vault_writer`, and
+`run_fk_out_of_core` with both a `sink` and a `vault_writer` raise
+`ExecutionError(code="vault_requires_resident_output")` before any source or chunk
+is read. The parameters stay in the signatures (so the refusal is explicit, not a
+`TypeError`); `vault_writer=None` is unchanged. A vault job runs through
+`run_pipeline` without a sink; its auto-chunk lane still bounds masking memory.
+
 `TokenVaultWriter` gained a required `derivation_scope: bytes` attribute on
 2026-11-01 (B-6 D2; a breaking protocol change, legal pre-GA only): a non-secret,
 vault-unique 16-to-64-byte value the vault owner mints once and stores with the

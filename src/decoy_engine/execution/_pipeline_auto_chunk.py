@@ -229,12 +229,13 @@ def _run_legacy(
     chunk_results: list[ExecutionResult],
     preresolved: PreResolvedColumn | None = None,
 ) -> pa.Table:
-    from decoy_engine.execution import _chunked
+    from decoy_engine.execution import _chunked, _chunked_oracle
 
     if preresolved is not None:  # pragma: no cover - the mixed route requires the dispatcher lane
         raise AssertionError("a pre-resolved column reaches only the dispatcher lane")
+    # The internal name: this lane returns resident output, so it may collect vault entries (B0).
     masked_chunks = list(
-        _chunked.run_mask_pipeline_chunked(
+        _chunked_oracle.mask_pipeline_chunked(
             config,
             _slices(source, chunk_size_rows),
             table=table,
@@ -264,14 +265,15 @@ def _run_dispatcher(
     chunk_results: list[ExecutionResult],
     preresolved: PreResolvedColumn | None = None,
 ) -> pa.Table:
-    # Looked up through the module so a spy on the public entry sees the call.
+    # Looked up through the module so a spy sees the call. The internal name: this lane returns
+    # resident output, so it may collect vault entries (B0).
     from decoy_engine.execution.native import _chunked_entry
 
     # The C5c-ii producer: resident slices carry the resident schema metadata-inclusive,
     # which the chunked route needs to admit deterministic Faker over bool/int/uint.
     producer = _chunked_input.fixed_schema_chunks_from_resident(source, chunk_size_rows)
     chunks = list(
-        _chunked_entry.run_mask_chunked(
+        _chunked_entry.count_chunked(
             config,
             producer if preresolved is None else preresolved.wrap(producer),
             table=table,
@@ -326,7 +328,7 @@ def _run_streamed(
         # The columns B1's schema rule pins resolve from chunk 0, so only the rest can hold
         # the stream back (`_chunked_output_sink` module docstring).
         rule = build_schema_rule(config, table=table, first=first, registry=registry)
-        chunks = _chunked_entry.run_mask_chunked(
+        chunks = _chunked_entry.count_chunked(
             config,
             stream,
             table=table,

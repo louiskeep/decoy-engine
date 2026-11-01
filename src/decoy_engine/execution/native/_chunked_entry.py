@@ -14,7 +14,11 @@ table admits, and on the pandas oracle otherwise, behind one contract:
   microseconds, out-of-range dates, `-2^63` timestamps, nested columns) comes back
   exact. Output types follow the schema rule in `_chunked_schema_rule` on both
   routes, and no chunk carries pandas metadata.
-- `vault_writer`, `chunk_result_sink` and `base_row_offset` behave the same on
+- A `vault_writer` is refused (`vault_requires_resident_output`, B-6 rule B0):
+  the caller publishes each yielded chunk, so a vault written afterwards would
+  follow output it reverses. `count_chunked` takes one for `run_pipeline`'s
+  auto-chunk lane, which returns resident output.
+- `chunk_result_sink` and `base_row_offset` behave the same on
   both routes. The sink receives one `ExecutionResult` per chunk whose
   `quality_metrics["chunked_route"]` records each column's planned and executed
   backend (see `_chunked_evidence`).
@@ -38,7 +42,7 @@ from decoy_engine.execution import _chunked_dgrn as dgrn
 from decoy_engine.execution import _chunked_text_mask as text_mask_gate
 from decoy_engine.execution._adapter import ExecutionResult
 from decoy_engine.execution._chunked import _chain_first
-from decoy_engine.execution._errors import ExecutionError
+from decoy_engine.execution._errors import ExecutionError, vault_requires_resident_output
 from decoy_engine.execution._guards import run_chunk_ingest_guards
 from decoy_engine.execution._output_projection import (
     enforce_output_projection,
@@ -630,6 +634,9 @@ def run_mask_chunked(
     output type, and both routes run the same per-chunk ingest guards, so an
     input the oracle masks or refuses is masked or refused the same way.
 
+    `vault_writer` must be `None`: a writer raises
+    `ExecutionError(code="vault_requires_resident_output")` before any chunk is read.
+
     Validation and route choice happen eagerly at call time; only the per-chunk
     masking is lazy. A chunk whose output cannot be made schema-stable without
     losing data raises `ExecutionError(code="chunked_schema_mismatch")`. On both
@@ -639,26 +646,34 @@ def run_mask_chunked(
     produced it before it is brought to the first chunk's type. A column that is `null`-typed in the first
     chunk and typed later raises `ExecutionError(code="chunked_leading_null_type")`.
     """
+    if vault_writer is not None:
+        raise vault_requires_resident_output()
+    return count_chunked(
+        config,
+        chunks,
+        table=table,
+        engine_version=engine_version,
+        registry=registry,
+        adapter=adapter,
+        chunk_result_sink=chunk_result_sink,
+        key_provider=key_provider,
+        base_row_offset=base_row_offset,
+        native_threads=native_threads,
+        route_evidence_sink=route_evidence_sink,
+        pool_cache=pool_cache,
+    )
+
+
+def count_chunked(
+    config: Any, chunks: Iterable[pa.Table], *, table: str, native_threads: int = 1, **kwargs: Any
+) -> Iterator[pa.Table]:
+    """`run_mask_chunked`'s body, which also takes a `vault_writer`: for `run_pipeline`'s
+    auto-chunk lane only, which returns resident output (B0)."""
     _validate_native_threads(native_threads)
     # Progress: account every yielded chunk on the active channel (bound by the
     # caller, e.g. `run_pipeline(progress=...)`); a no-op when nothing is bound.
     return get_active_channel().count_rows(
-        table,
-        _run_chunked(
-            config,
-            chunks,
-            table=table,
-            engine_version=engine_version,
-            registry=registry,
-            adapter=adapter,
-            vault_writer=vault_writer,
-            chunk_result_sink=chunk_result_sink,
-            key_provider=key_provider,
-            base_row_offset=base_row_offset,
-            native_threads=native_threads,
-            route_evidence_sink=route_evidence_sink,
-            pool_cache=pool_cache,
-        ),
+        table, _run_chunked(config, chunks, table=table, native_threads=native_threads, **kwargs)
     )
 
 

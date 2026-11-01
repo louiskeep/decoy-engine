@@ -17,6 +17,9 @@ from typing import Any
 import pyarrow as pa
 
 from decoy_engine import run_mask_chunked
+
+# A vault writer goes through the internal entry: the public one refuses it (B-6 B0).
+from decoy_engine.execution.native._chunked_entry import count_chunked
 from decoy_engine.vault import VaultWriter
 from tests.native._chunked_entry_support import (
     ENGINE_VERSION,
@@ -53,8 +56,9 @@ def run_one(
     sink: list[Any] = []
     ev: list[Any] = route_evidence_sink if route_evidence_sink is not None else []
     writer = VaultWriter(vault_key()) if vault else None
+    entry = count_chunked if writer is not None else run_mask_chunked
     out = list(
-        run_mask_chunked(
+        entry(
             config,
             list(chunks),
             table=TABLE,

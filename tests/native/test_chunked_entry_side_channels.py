@@ -17,7 +17,9 @@ from decoy_engine import run_mask_chunked, run_mask_pipeline_chunked
 from decoy_engine.errors import RowErrorsFailedError
 from decoy_engine.execution import _chunked_dgrn
 from decoy_engine.execution._chunked import check_chunked_compatibility
+from decoy_engine.execution._chunked_oracle import mask_pipeline_chunked
 from decoy_engine.execution._pandas_adapter import PandasExecutionAdapter
+from decoy_engine.execution.native._chunked_entry import count_chunked
 from decoy_engine.execution.native._dispatch import NativeRouteEvidence
 from decoy_engine.providers_v2 import get_default_registry
 from decoy_engine.vault import VaultWriter, collect_vault_entries
@@ -55,9 +57,9 @@ def _entry(config: dict[str, Any], chunks: Any, **kw: Any) -> Any:
     forcing column, proves the table stayed on the oracle for the exact reason."""
     kw.setdefault("key_provider", key_provider())
     sink = kw.setdefault("route_evidence_sink", [])
-    out = run_mask_chunked(
-        config, chunks, table=kw.pop("table", TABLE), engine_version=ENGINE_VERSION, **kw
-    )
+    # A vault writer goes through the internal entry: the public one refuses it (B-6 B0).
+    entry = count_chunked if kw.get("vault_writer") is not None else run_mask_chunked
+    out = entry(config, chunks, table=kw.pop("table", TABLE), engine_version=ENGINE_VERSION, **kw)
     for column in _forced_columns(config):
         assert len(sink) == 1, sink
         assert sink[0].native_admitted is False, sink[0]
@@ -67,9 +69,10 @@ def _entry(config: dict[str, Any], chunks: Any, **kw: Any) -> Any:
 
 def _oracle(config: dict[str, Any], chunks: Any, **kw: Any) -> Any:
     kw.setdefault("key_provider", key_provider())
-    return run_mask_pipeline_chunked(
-        config, chunks, table=kw.pop("table", TABLE), engine_version=ENGINE_VERSION, **kw
+    entry = (
+        mask_pipeline_chunked if kw.get("vault_writer") is not None else run_mask_pipeline_chunked
     )
+    return entry(config, chunks, table=kw.pop("table", TABLE), engine_version=ENGINE_VERSION, **kw)
 
 
 class _RecordingAdapter(PandasExecutionAdapter):

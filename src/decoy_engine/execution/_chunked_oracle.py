@@ -487,3 +487,48 @@ def _oracle_masked(
             yield masked
 
     return _masked()
+
+
+def mask_pipeline_chunked(
+    config: dict[str, Any],
+    chunks: Iterable[pa.Table],
+    *,
+    table: str,
+    engine_version: str,
+    registry: Any = None,
+    adapter: Any = None,
+    vault_writer: Any = None,
+    chunk_result_sink: list[Any] | None = None,
+    key_provider: Any = None,
+    base_row_offset: int = 0,
+) -> Iterator[pa.Table]:
+    """`run_mask_pipeline_chunked` with a `vault_writer`, for `run_pipeline`'s auto-chunk lane
+    only: that lane returns resident output, so the caller writes the vault before publishing."""
+    state = _oracle_preflight(
+        config,
+        chunks,
+        table=table,
+        engine_version=engine_version,
+        registry=registry,
+        adapter=adapter,
+        vault_writer=vault_writer,
+        key_provider=key_provider,
+        base_row_offset=base_row_offset,
+        pool_cache=None,
+    )
+    if state.first is None:
+        # Admission cleared (or the plan is unkeyed); there is genuinely nothing to mask.
+        state.close_secret()
+        return iter(())
+    return release_when_done(
+        _oracle_masked(
+            state,
+            config=config,
+            table=table,
+            vault_writer=vault_writer,
+            chunk_result_sink=chunk_result_sink,
+            base_row_offset=base_row_offset,
+            on_chunk=None,
+        ),
+        state,
+    )

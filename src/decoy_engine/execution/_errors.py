@@ -38,6 +38,19 @@ class StrategyError(ExecutionError):
         super().__init__(code=code, message=f"strategy={strategy!r}: {message}")
 
 
+def vault_requires_resident_output() -> ExecutionError:
+    """B-6 D1 boundary rule B0: a file-vault writer where the engine does not hold every output row.
+
+    With a `sink` the engine commits output inside the run, and a chunked entry yields chunks the
+    caller publishes as they arrive; either way the caller could write the vault only after
+    output it reverses is already public. The text is the registered summary, nothing else.
+    """
+    return ExecutionError(
+        code=reasons.runtime.VAULT_REQUIRES_RESIDENT_OUTPUT,
+        message=reasons.get("runtime", reasons.runtime.VAULT_REQUIRES_RESIDENT_OUTPUT).summary,
+    )
+
+
 def seq_ineligible(message: str) -> ConfigError:
     """An explicit ``execution_mode="sequential"`` for a job that is not eligible for it.
 

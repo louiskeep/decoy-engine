@@ -26,7 +26,12 @@ from decoy_engine import run_mask_chunked, run_mask_pipeline_chunked
 from decoy_engine.execution import ExecutionError
 from decoy_engine.execution._adapter import ExecutionResult
 from decoy_engine.execution._pandas_adapter import PandasExecutionAdapter
-from decoy_engine.execution.native._chunked_entry import aggregate_chunked_route_evidence
+
+# A vault writer goes through the internal entry: the public one refuses it (B-6 B0).
+from decoy_engine.execution.native._chunked_entry import (
+    aggregate_chunked_route_evidence,
+    count_chunked,
+)
 from decoy_engine.execution.native._dispatch import (
     NativeChunkSchemaDriftError,
     NativeRouteEvidence,
@@ -409,7 +414,7 @@ def _drive_with_state(config: dict[str, Any], chunks: list[pa.Table]) -> tuple[O
     out: list[pa.Table] = []
     caught: Exception | None = None
     try:
-        for t in run_mask_chunked(
+        for t in count_chunked(
             config,
             list(chunks),
             table=TABLE,

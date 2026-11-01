@@ -49,6 +49,7 @@ import pyarrow as pa
 import pyarrow.compute as pc
 
 from decoy_engine.execution._adapter import ExecutionResult, provider_config_to_dict
+from decoy_engine.execution._errors import vault_requires_resident_output
 from decoy_engine.execution._fk_resolve import orphan_fk_violation_error
 from decoy_engine.execution._output_projection import (
     UnconfiguredColumnPolicy,
@@ -187,8 +188,12 @@ def run_fk_out_of_core(
     `vault_writer` + `config` (D3b): both drivers add each masked batch's `vault: true`
     pairs to the writer at their mask step. Routing admits only jobs whose vaulted columns
     are route-stable (`_vault_collect.vault_ooc_safe`); persisting is the caller's, after a
-    successful return.
+    successful return. A `vault_writer` with a `sink` is refused before any read
+    (`vault_requires_resident_output`, B-6 rule B0): the sink commits inside this call, so
+    the vault could only follow the output it reverses.
     """
+    if sink is not None and vault_writer is not None:
+        raise vault_requires_resident_output()
     pre = run_preflight(
         plan,
         sources,

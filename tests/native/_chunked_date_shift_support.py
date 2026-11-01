@@ -15,6 +15,9 @@ from typing import Any
 import pyarrow as pa
 
 from decoy_engine import run_mask_chunked
+
+# A vault writer goes through the internal entry: the public one refuses it (B-6 B0).
+from decoy_engine.execution.native._chunked_entry import count_chunked
 from decoy_engine.vault import VaultWriter
 from tests.native._b8_support import (
     FORCE,
@@ -132,8 +135,9 @@ def run_outcome(
             outcome.chunks_pulled += 1
             yield chunk
 
+    entry = count_chunked if with_vault else run_mask_chunked
     try:
-        for table in run_mask_chunked(
+        for table in entry(
             config,
             pulled(),
             table=TABLE,

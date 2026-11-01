@@ -26,6 +26,16 @@ Plan: `docs/plans/2026-11-01-b6-vault-crypto-remediation.md` (slices S1, S2, S2b
   a malformed scope with `runtime.tokenize_vault_scope_required`; both are raised before any
   source is read, with the registered summary as their only text. No dual derivation and no
   migration: old vaults stop working with this release. Reason registry 1.3.0.
+- BREAKING (pre-GA): boundary rule B0. A file-vault `vault_writer` is refused with the new
+  `runtime.vault_requires_resident_output` wherever the engine cannot hold every output row
+  until the vault is published: `run_pipeline` with both a `sink` and a `vault_writer`,
+  `run_mask_chunked` / `run_mask_pipeline_chunked` with any `vault_writer`, and
+  `run_fk_out_of_core` with both. With a sink the engine committed output inside the run and
+  the vault could only follow it, so a crash between the two left published output whose vault
+  never existed. The refusal runs before any source or chunk is read. `run_pipeline` without a
+  sink (including its auto-chunk lane, which now calls internal entry names) is unchanged. The
+  `decoy` CLI's `run --chunked --vault` uses the refused combination and must refuse the flag
+  pair before it repins to this release.
 - `tests/unit/test_reason_registry_bump.py`: a branch that adds reason identities must set the
   registry to its merge base's next minor and give every added identity that `since`.
   `engine-v2-substrate-matrix.yml` now checks out with `fetch-depth: 0` for it.
