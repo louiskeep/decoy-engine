@@ -278,7 +278,6 @@ def run_fk_out_of_core(
                 "outputs": outputs,
                 "warnings": warnings,
                 "unconfigured_column_policy": unconfigured_column_policy,
-                "mask_key": mask_key,
                 "code_set_corpora": code_set_corpora,
                 "hash_run": hash_run,
                 "vault_writer": vault_writer,
@@ -291,12 +290,13 @@ def run_fk_out_of_core(
             if route.reorder_caps is not None:
                 stream_table(
                     **table_kwargs,
+                    mask_key=mask_key.open()[0],
                     run_bytes_cap=route.reorder_caps.run_bytes_cap,
                     merge_fan_in=route.reorder_caps.merge_fan_in,
                     reorder_caps=route.reorder_caps,
                 )
             else:
-                _stream_table(**table_kwargs)
+                _stream_table(**table_kwargs, mask_key=mask_key.open()[0])
             _pg.flush(table_name)
             _pg.phase_finish("mask", _pg_started, table=table_name)
             if temp_disk_budget_bytes is not None:

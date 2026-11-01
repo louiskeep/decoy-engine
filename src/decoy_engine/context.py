@@ -18,6 +18,8 @@ paths use it partially.
 from collections.abc import Callable
 from typing import Any, Literal, Protocol, runtime_checkable
 
+from decoy_engine._opaque import OpaqueBox
+
 
 @runtime_checkable
 class Logger(Protocol):
@@ -384,11 +386,16 @@ def make_key_resolver(
     ``api/keys/make_resolver`` is structurally identical and produces the
     same bytes given the same inputs.
     """
+    # No frame on a traceback keeps the master or the pipeline key: both are dropped or boxed
+    # before anything can raise, and the closure holds only the box (`_opaque`).
     if not isinstance(master, (bytes, bytearray)) or len(master) != 32:
+        del master
         raise ValueError("master key must be 32 bytes")
-    pipeline_key = _hkdf_sha256(master, f"pipeline:{pipeline_label}")
+    pipeline_key = OpaqueBox(_hkdf_sha256(master, f"pipeline:{pipeline_label}"))
+    del master
 
     def resolver(info: str) -> bytes:
-        return _hkdf_sha256(pipeline_key, info)
+        info.encode("utf-8")  # a malformed label fails here, before the key is unboxed
+        return _hkdf_sha256(pipeline_key.open()[0], info)
 
     return resolver

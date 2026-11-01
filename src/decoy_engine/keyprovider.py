@@ -118,7 +118,7 @@ class KeyProvider(Protocol):
     def mask_key(self) -> bytes: ...
 
 
-@dataclass(frozen=True, repr=False)
+@dataclass(frozen=True, repr=False, init=False)
 class SecretKeyProvider:
     """GA path: a managed, opaque >=32-byte secret. Derives a versioned root.
 
@@ -131,6 +131,14 @@ class SecretKeyProvider:
 
     secret: bytes
     key_version: str = "v1"
+
+    def __init__(self, secret: bytes, key_version: str = "v1") -> None:
+        # Hand-written instead of the generated one so no frame on a refusal's traceback keeps
+        # the secret: `__post_init__` raises on a weak secret after this frame drops its name.
+        object.__setattr__(self, "secret", secret)
+        object.__setattr__(self, "key_version", key_version)
+        del secret
+        self.__post_init__()
 
     def __post_init__(self) -> None:
         if not isinstance(self.secret, (bytes, bytearray)):
@@ -232,6 +240,7 @@ def require_mask_key(plan: Plan, key_provider: KeyProvider | None) -> bytes:
         raise KeyedStrategyRequiresSecret(KEY_REQUIRED_GUIDANCE)
     mask_key = key_provider.mask_key()
     if len(mask_key) < MIN_SECRET_BYTES:
+        del mask_key  # a traceback keeps this frame: the short key must not be among its locals
         raise KeyedStrategyRequiresSecret(KEY_REQUIRED_GUIDANCE)
     return mask_key
 

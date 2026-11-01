@@ -40,6 +40,7 @@ from typing import TYPE_CHECKING, Any
 import pyarrow as pa
 
 from decoy_engine import fileaccess, reasons
+from decoy_engine._opaque import OpaqueBox
 from decoy_engine.determinism import derive
 from decoy_engine.errors import FpeUnencryptableError
 from decoy_engine.execution._errors import ExecutionError
@@ -258,7 +259,8 @@ def unmask_pipeline(
     with AdmissionScope() as scope:
         admitted = scope.adopt(admit_mask_key(config, key_provider=key_provider))
         provider = admitted.key_provider
-        mask_key = provider.mask_key() if provider is not None else job_seed
+        # Boxed: this frame outlives many raises below and must not hold the key (`_opaque`).
+        mask_key = OpaqueBox(provider.mask_key() if provider is not None else job_seed)
     # DE-02 (Codex MEDIUM 6): unmask reverses KEYED surface (fpe + vaulted
     # columns). Route it through the same fail-closed gate: a resolved key < 32
     # bytes (the 8-byte job_seed fallback, or an empty custom provider) is NOT a
@@ -266,7 +268,7 @@ def unmask_pipeline(
     # of silently producing wrong plaintext labelled "reversed".
     from decoy_engine.keyprovider import MIN_SECRET_BYTES, KeyedStrategyRequiresSecret
 
-    _authenticated = len(mask_key) >= MIN_SECRET_BYTES
+    _authenticated = len(mask_key.open()[0]) >= MIN_SECRET_BYTES
     _has_fpe = any(
         (c.get("strategy") == "fpe")
         for t in (config.get("tables") or [])
@@ -286,7 +288,7 @@ def unmask_pipeline(
         from decoy_engine.vault import VaultError, load_vault
 
         try:
-            vault_map, vault_ambiguous = load_vault(vault_path, mask_key, vault=vault)
+            vault_map, vault_ambiguous = load_vault(vault_path, mask_key.open()[0], vault=vault)
         except VaultError as exc:
             raise ExecutionError(code=exc.code, message=exc.message) from exc
     reports: list[UnmaskColumnReport] = []
@@ -398,7 +400,6 @@ def unmask_pipeline(
                     ),
                 )
             cfg = col_cfg.get("provider_config") or {}
-            key = derive(mask_key, namespace, FF1_KEY_LABEL)
             # SP-46: mirror the join-group tweak resolution from _strategies/_fpe.py.
             # When fpe_join_group is set the tweak is the group name, not the column
             # name; using the wrong tweak produces incorrect decryption. The config
@@ -409,7 +410,14 @@ def unmask_pipeline(
                 FF1_TWEAK_SCOPE_JOIN_GROUP if join_group else FF1_TWEAK_SCOPE_COLUMN,
                 join_group or col,
             )
-            table = _decrypt_column(table, col, key=key, cfg=cfg, tweak=fpe_tweak, table_name=name)
+            table = _decrypt_column(
+                table,
+                col,
+                key=derive(mask_key.open()[0], namespace, FF1_KEY_LABEL),
+                cfg=cfg,
+                tweak=fpe_tweak,
+                table_name=name,
+            )
             # checksum takes priority over validate_luhn (same as encrypt). Both
             # recompute the check digit on decrypt rather than store it, so the
             # round trip is byte-exact iff the source was valid for the scheme.

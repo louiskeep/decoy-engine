@@ -30,6 +30,7 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from decoy_engine import fileaccess, reasons
+from decoy_engine._opaque import OpaqueBox as _OpaqueBox
 from decoy_engine.keyprovider import (
     KEY_REQUIRED_GUIDANCE,
     MIN_SECRET_BYTES,
@@ -156,26 +157,6 @@ def _load(
             requirement_ids=tuple(r.id for r in requirements),
             expires_at=resolved.expires_at,
         )
-
-
-class _OpaqueBox:
-    """Carries value-bearing objects through frames that traceback rendering may capture."""
-
-    __slots__ = ("_items",)
-
-    def __init__(self, *items: object) -> None:
-        self._items = items
-
-    def open(self) -> tuple[Any, ...]:
-        return self._items
-
-    def __repr__(self) -> str:
-        return "<opaque>"
-
-    __str__ = __repr__
-
-    def __reduce_ex__(self, *_: object) -> Any:
-        raise TypeError("opaque boxes cannot be pickled")
 
 
 _T = TypeVar("_T")

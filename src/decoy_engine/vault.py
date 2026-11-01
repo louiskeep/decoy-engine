@@ -73,6 +73,7 @@ from typing import TYPE_CHECKING, Any, Literal
 import pyarrow as pa
 
 from decoy_engine import fileaccess, reasons
+from decoy_engine._opaque import OpaqueBox
 from decoy_engine.determinism import SEED_PROTOCOL_VERSION, derive
 from decoy_engine.errors import DecoyError
 from decoy_engine.fileaccess import (
@@ -139,11 +140,12 @@ class VaultError(DecoyError):
         super().__init__(f"[{code}] {message}")
 
 
-def _fernet(mask_key: bytes) -> Any:
+def _fernet(mask_key: OpaqueBox) -> Any:
     # DE-02: the Fernet key derives from the keyed-mask IKM -- the 8-byte job_seed
     # when no secret is present (byte-identical to pre-DE-02) or a 32-byte
     # KeyProvider mask root under a secret. A vault written under job_seed cannot
     # be opened under a secret key (pre-GA = hard-delete/regenerate; no dual-read).
+    # The IKM arrives boxed and the derived key is never a local (`_opaque`).
     try:
         from cryptography.fernet import Fernet
     except ImportError as exc:
@@ -154,8 +156,9 @@ def _fernet(mask_key: bytes) -> Any:
                 f"vault extra: {_INSTALL_HINT}"
             ),
         ) from exc
-    key = derive(mask_key, VAULT_NAMESPACE, VAULT_KEY_LABEL)
-    return Fernet(base64.urlsafe_b64encode(key))
+    return Fernet(
+        base64.urlsafe_b64encode(derive(mask_key.open()[0], VAULT_NAMESPACE, VAULT_KEY_LABEL))
+    )
 
 
 def iter_vault_columns(config: dict[str, Any]) -> list[tuple[str, str, str]]:
@@ -225,6 +228,7 @@ class VaultWriter:
     def __init__(self, mask_key: bytes, *, file_access: FileAccess | None = None) -> None:
         # DE-02: the vault's keyed-mask IKM (job_seed when no secret is present).
         self._mask_key = mask_key
+        del mask_key  # the policy lookup below can raise; this frame must not hold the key
         self._entries: set[tuple[str, str, str]] = set()
         # The writer writes after the entry point that built it returned, so it keeps the
         # policy it was built under and never looks one up later.
@@ -239,7 +243,9 @@ class VaultWriter:
         secret. `run_pipeline` calls this against the run's resolved `mask_key`
         before any masking. Constant-time compare; never echoes the key bytes.
         """
-        if not hmac.compare_digest(self._mask_key, mask_key):
+        matched = hmac.compare_digest(self._mask_key, mask_key)
+        del mask_key  # a traceback keeps this frame: the key must not be among its locals
+        if not matched:
             raise VaultError(
                 code=reasons.runtime.VAULT_KEY_MISMATCH,
                 message=(
@@ -339,7 +345,7 @@ class VaultWriter:
         return len(rows)
 
     def _fernet(self) -> Any:
-        return _fernet(self._mask_key)
+        return _fernet(OpaqueBox(self._mask_key))
 
 
 def assert_vault_writer_keyed(vault_writer: object, mask_key: bytes) -> None:
@@ -352,6 +358,8 @@ def assert_vault_writer_keyed(vault_writer: object, mask_key: bytes) -> None:
     under a key that does not match the masking run's resolved secret. A
     duck-typed writer without the key-match contract is rejected outright.
     """
+    key = OpaqueBox(mask_key)
+    del mask_key  # a traceback keeps this frame: the key must not be among its locals
     if not isinstance(vault_writer, VaultWriter):
         raise VaultError(
             code=reasons.runtime.VAULT_WRITER_UNSUPPORTED,
@@ -361,7 +369,7 @@ def assert_vault_writer_keyed(vault_writer: object, mask_key: bytes) -> None:
                 "(DE-02 fail-closed vault-key guard)."
             ),
         )
-    vault_writer.assert_keyed_with(mask_key)
+    vault_writer.assert_keyed_with(key.open()[0])
 
 
 @fileaccess.entry_point
@@ -387,8 +395,8 @@ def vault_writer_for_config(
     # secret fails closed in every release phase. A-4: the writer carries the caller's policy.
     with AdmissionScope() as scope:
         provider = scope.adopt(admit_mask_key(config, key_provider=key_provider)).key_provider
-        mask_key = provider.mask_key() if provider is not None else job_seed
-    return VaultWriter(mask_key, file_access=file_access)
+        key = OpaqueBox(provider.mask_key() if provider is not None else job_seed)
+    return VaultWriter(key.open()[0], file_access=file_access)
 
 
 @fileaccess.entry_point
@@ -426,7 +434,9 @@ def load_vault(
     # vault_crypto_not_installed even when the file is absent (preserves the
     # pre-streaming ordering the absent-dep contract test pins). Building the
     # object only derives the key; it does not decrypt.
-    fernet = _fernet(mask_key)
+    key = OpaqueBox(mask_key)
+    del mask_key  # a traceback keeps this frame: the key must not be among its locals
+    fernet = _fernet(key)
     handle = vault
     if handle is None:
         if path is None or not fileaccess.is_ambient():
