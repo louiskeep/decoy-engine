@@ -247,7 +247,9 @@ class LazySource:
     @property
     def schema(self) -> pa.Schema:
         """The file's Arrow schema, read from the Parquet footer only."""
-        return pq.ParquetFile(self.path).schema_arrow
+        # Closed here, not left to garbage collection: entry checks read this before any batch.
+        with pq.ParquetFile(self.path) as parquet_file:
+            return parquet_file.schema_arrow
 
     @property
     def num_rows(self) -> int:
