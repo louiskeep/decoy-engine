@@ -192,94 +192,110 @@ def _bound_params(
     resolves the pool and kernel first), run in the order that decides which message a
     malformed binding raises.
     """
-    operator_id = binding.operator_id
-    params = binding.params
-    if operator_id in _UNKEYED_PARAMS:
-        if not isinstance(params, _UNKEYED_PARAMS[operator_id]):  # pragma: no cover - compile binds
+    try:
+        operator_id = binding.operator_id
+        params = binding.params
+        if operator_id in _UNKEYED_PARAMS:
+            if not isinstance(
+                params, _UNKEYED_PARAMS[operator_id]
+            ):  # pragma: no cover - compile binds
+                raise AssertionError(
+                    f"{operator_id} node reached run_operator with no resolved params"
+                )
+        elif operator_id == _KEYED_HASH:
+            if binding.key_binding is None:  # pragma: no cover - C0 always binds this for hash
+                raise AssertionError("hash node reached run_operator with no KeyBinding")
+            if not isinstance(params, HashParams):  # pragma: no cover - C0 binds it with the key
+                raise AssertionError("hash node reached run_operator with no resolved params")
+        elif operator_id == _FPE:
+            if binding.key_binding is None:  # pragma: no cover - C0 always binds this for fpe
+                raise AssertionError("fpe node reached run_operator with no KeyBinding")
+            if not isinstance(params, FpeParams):  # pragma: no cover - C0 binds it with the key
+                raise AssertionError("fpe node reached run_operator with no resolved params")
+        elif operator_id == _FAKER_SELECT:
+            if binding.key_binding is None or binding.pool_binding is None:
+                # pragma: no cover - C0 always binds both together for faker
+                raise AssertionError(
+                    "faker node reached run_operator with no KeyBinding/PoolBinding"
+                )
+            if pool is None or index_kernel is None:
+                # pragma: no cover - the coordinator always resolves both before
+                # calling run_operator for a faker-bound node
+                raise AssertionError(
+                    "faker node reached run_operator with no resolved pool/index_kernel"
+                )
+            if not isinstance(params, FakerParams):  # pragma: no cover - C0 binds it with the key
+                raise AssertionError("faker node reached run_operator with no resolved params")
+            if params.positional and not job_seed:
+                raise AssertionError("positional faker node reached run_operator with no job_seed")
+        elif operator_id == _CATEGORICAL:
+            if binding.key_binding is None:  # pragma: no cover - C0 always binds this
+                raise AssertionError("categorical node reached run_operator with no KeyBinding")
+            if index_kernel is None:  # pragma: no cover - the coordinator loads it first
+                raise AssertionError("categorical node reached run_operator with no index_kernel")
+            if not isinstance(
+                params, CategoricalParams
+            ):  # pragma: no cover - C0 binds it with the key
+                raise AssertionError(
+                    "categorical node reached run_operator with no resolved params"
+                )
+        elif operator_id == _BUCKET_PERTURB:
+            if binding.key_binding is None:  # pragma: no cover - C0 always binds this
+                raise AssertionError("bucket_perturb node reached run_operator with no KeyBinding")
+            if (
+                not isinstance(params, BucketPerturbParams)
+                or params.bucket is None
+                or params.date_format is None
+            ):  # pragma: no cover - C0 binds both together with the KeyBinding
+                raise AssertionError(
+                    "bucket_perturb node reached run_operator with no resolved bucket/date_format"
+                )
+            if index_kernel is None:  # pragma: no cover - the coordinator loads it first
+                raise AssertionError(
+                    "bucket_perturb node reached run_operator with no index_kernel"
+                )
+        elif operator_id == _GROUP_KEY:
+            # group_key is the one operator whose input is NOT the target column and NOT the bare
+            # `array`: the coordinator feeds the SIBLING as a single-column source slice
+            # (`batch.select([group_by])`) so its `b"pandas"` schema-metadata sidecar and field name
+            # survive for the oracle-equivalent stringify. The derived key is written to the target.
+            if (
+                binding.key_binding is None
+                or not isinstance(params, GroupKeyParams)
+                or params.group_by is None
+                or params.length is None
+                or group_key_sibling is None
+            ):  # pragma: no cover - C0 binds these together for group_key
+                raise AssertionError(
+                    "group_key node reached run_operator with no KeyBinding/group_by/length/sibling"
+                )
+        elif operator_id == _DATE_SHIFT:
+            if binding.key_binding is None:  # pragma: no cover - C0 always binds this
+                raise AssertionError("date_shift node reached run_operator with no KeyBinding")
+            if (
+                not isinstance(params, DateShiftParams)
+                or params.date_format is None
+                or params.min_days is None
+                or params.max_days is None
+            ):  # pragma: no cover - C0 binds all three together with the KeyBinding
+                raise AssertionError(
+                    "date_shift node reached run_operator with no resolved "
+                    "date_format/min_days/max_days"
+                )
+            if column is None:
+                # The records must name their column; a caller that cannot say which
+                # column it is masking cannot attribute a format_error, so fail closed.
+                raise AssertionError("date_shift node reached run_operator with no target column")
+            if index_kernel is None:  # pragma: no cover - the coordinator loads it first
+                raise AssertionError("date_shift node reached run_operator with no index_kernel")
+        else:  # pragma: no cover - C0 only ever binds the shadow-admitted operators
+            raise AssertionError(f"unbound operator id {operator_id!r}")
+        if params is None:  # pragma: no cover - every branch above rejects a missing params
             raise AssertionError(f"{operator_id} node reached run_operator with no resolved params")
-    elif operator_id == _KEYED_HASH:
-        if binding.key_binding is None:  # pragma: no cover - C0 always binds this for hash
-            raise AssertionError("hash node reached run_operator with no KeyBinding")
-        if not isinstance(params, HashParams):  # pragma: no cover - C0 binds it with the key
-            raise AssertionError("hash node reached run_operator with no resolved params")
-    elif operator_id == _FPE:
-        if binding.key_binding is None:  # pragma: no cover - C0 always binds this for fpe
-            raise AssertionError("fpe node reached run_operator with no KeyBinding")
-        if not isinstance(params, FpeParams):  # pragma: no cover - C0 binds it with the key
-            raise AssertionError("fpe node reached run_operator with no resolved params")
-    elif operator_id == _FAKER_SELECT:
-        if binding.key_binding is None or binding.pool_binding is None:
-            # pragma: no cover - C0 always binds both together for faker
-            raise AssertionError("faker node reached run_operator with no KeyBinding/PoolBinding")
-        if pool is None or index_kernel is None:
-            # pragma: no cover - the coordinator always resolves both before
-            # calling run_operator for a faker-bound node
-            raise AssertionError(
-                "faker node reached run_operator with no resolved pool/index_kernel"
-            )
-        if not isinstance(params, FakerParams):  # pragma: no cover - C0 binds it with the key
-            raise AssertionError("faker node reached run_operator with no resolved params")
-        if params.positional and not job_seed:
-            raise AssertionError("positional faker node reached run_operator with no job_seed")
-    elif operator_id == _CATEGORICAL:
-        if binding.key_binding is None:  # pragma: no cover - C0 always binds this
-            raise AssertionError("categorical node reached run_operator with no KeyBinding")
-        if index_kernel is None:  # pragma: no cover - the coordinator loads it first
-            raise AssertionError("categorical node reached run_operator with no index_kernel")
-        if not isinstance(params, CategoricalParams):  # pragma: no cover - C0 binds it with the key
-            raise AssertionError("categorical node reached run_operator with no resolved params")
-    elif operator_id == _BUCKET_PERTURB:
-        if binding.key_binding is None:  # pragma: no cover - C0 always binds this
-            raise AssertionError("bucket_perturb node reached run_operator with no KeyBinding")
-        if (
-            not isinstance(params, BucketPerturbParams)
-            or params.bucket is None
-            or params.date_format is None
-        ):  # pragma: no cover - C0 binds both together with the KeyBinding
-            raise AssertionError(
-                "bucket_perturb node reached run_operator with no resolved bucket/date_format"
-            )
-        if index_kernel is None:  # pragma: no cover - the coordinator loads it first
-            raise AssertionError("bucket_perturb node reached run_operator with no index_kernel")
-    elif operator_id == _GROUP_KEY:
-        # group_key is the one operator whose input is NOT the target column and NOT the bare
-        # `array`: the coordinator feeds the SIBLING as a single-column source slice
-        # (`batch.select([group_by])`) so its `b"pandas"` schema-metadata sidecar and field name
-        # survive for the oracle-equivalent stringify. The derived key is written to the target.
-        if (
-            binding.key_binding is None
-            or not isinstance(params, GroupKeyParams)
-            or params.group_by is None
-            or params.length is None
-            or group_key_sibling is None
-        ):  # pragma: no cover - C0 binds these together for group_key
-            raise AssertionError(
-                "group_key node reached run_operator with no KeyBinding/group_by/length/sibling"
-            )
-    elif operator_id == _DATE_SHIFT:
-        if binding.key_binding is None:  # pragma: no cover - C0 always binds this
-            raise AssertionError("date_shift node reached run_operator with no KeyBinding")
-        if (
-            not isinstance(params, DateShiftParams)
-            or params.date_format is None
-            or params.min_days is None
-            or params.max_days is None
-        ):  # pragma: no cover - C0 binds all three together with the KeyBinding
-            raise AssertionError(
-                "date_shift node reached run_operator with no resolved "
-                "date_format/min_days/max_days"
-            )
-        if column is None:
-            # The records must name their column; a caller that cannot say which
-            # column it is masking cannot attribute a format_error, so fail closed.
-            raise AssertionError("date_shift node reached run_operator with no target column")
-        if index_kernel is None:  # pragma: no cover - the coordinator loads it first
-            raise AssertionError("date_shift node reached run_operator with no index_kernel")
-    else:  # pragma: no cover - C0 only ever binds the shadow-admitted operators
-        raise AssertionError(f"unbound operator id {operator_id!r}")
-    if params is None:  # pragma: no cover - every branch above rejects a missing params
-        raise AssertionError(f"{operator_id} node reached run_operator with no resolved params")
-    return params
+        return params
+    except BaseException:
+        del job_seed
+        raise
 
 
 def run_operator(

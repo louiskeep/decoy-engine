@@ -94,29 +94,33 @@ class OocFakerPoolContext:
         builder: PoolBuilder | None = None,
         reserve_bytes_per_value: int = _RESERVE_BYTES_PER_VALUE,
     ) -> None:
-        if max_pool_bytes <= 0:
-            raise ExecutionError(
-                code=reasons.runtime.OUT_OF_CORE_FAKER_POOL_BUDGET_INVALID,
-                message=f"max_pool_bytes must be positive, got {max_pool_bytes}.",
-            )
-        if reserve_bytes_per_value <= 0:
-            raise ExecutionError(
-                code=reasons.runtime.OUT_OF_CORE_FAKER_POOL_BUDGET_INVALID,
-                message=f"reserve_bytes_per_value must be positive, got {reserve_bytes_per_value}.",
-            )
-        self._registry = registry
-        self._job_seed = job_seed
-        self._max_pool_bytes = max_pool_bytes
-        self._reserve_per_value = reserve_bytes_per_value
-        # Reuse the builder the identity split expects; default to one bound to
-        # this run's registry so a rebound provider can never alias another
-        # binding's pool (PoolBuilder keys the adapter serial into the identity).
-        self._builder = builder if builder is not None else PoolBuilder(registry)
-        # A fresh per-run cache, never the module singleton: a run's pools must
-        # not bleed into another run's cache (cross-job key contamination).
-        self._cache = PoolCache(max_bytes=max_pool_bytes)
-        self._reserved_bytes = 0
-        self._builds = 0
+        try:
+            if max_pool_bytes <= 0:
+                raise ExecutionError(
+                    code=reasons.runtime.OUT_OF_CORE_FAKER_POOL_BUDGET_INVALID,
+                    message=f"max_pool_bytes must be positive, got {max_pool_bytes}.",
+                )
+            if reserve_bytes_per_value <= 0:
+                raise ExecutionError(
+                    code=reasons.runtime.OUT_OF_CORE_FAKER_POOL_BUDGET_INVALID,
+                    message=f"reserve_bytes_per_value must be positive, got {reserve_bytes_per_value}.",
+                )
+            self._registry = registry
+            self._job_seed = job_seed
+            self._max_pool_bytes = max_pool_bytes
+            self._reserve_per_value = reserve_bytes_per_value
+            # Reuse the builder the identity split expects; default to one bound to
+            # this run's registry so a rebound provider can never alias another
+            # binding's pool (PoolBuilder keys the adapter serial into the identity).
+            self._builder = builder if builder is not None else PoolBuilder(registry)
+            # A fresh per-run cache, never the module singleton: a run's pools must
+            # not bleed into another run's cache (cross-job key contamination).
+            self._cache = PoolCache(max_bytes=max_pool_bytes)
+            self._reserved_bytes = 0
+            self._builds = 0
+        except BaseException:
+            del job_seed
+            raise
 
     def prepare(
         self,

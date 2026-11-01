@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import NoReturn
 
+from decoy_engine._opaque import OpaqueBox
 from decoy_engine.secret_providers._errors import SecretClosedError
 
 _REDACTED = "<redacted secret>"
@@ -22,7 +23,9 @@ class SecretBuffer:
     __slots__ = ("_buf", "_closed")
 
     def __init__(self, data: bytes | bytearray | memoryview) -> None:
-        self._buf = bytearray(data)
+        box = OpaqueBox(data)
+        del data  # the copy below can raise; this frame must not hold the material
+        self._buf = bytearray(box.open()[0])
         self._closed = False
 
     @classmethod

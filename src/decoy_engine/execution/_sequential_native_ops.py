@@ -27,7 +27,7 @@ Reason codes carry the strategy, the column name and the Arrow type only, never 
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -38,6 +38,7 @@ import pyarrow.compute as pc
 from decoy_engine import reasons
 from decoy_engine.execution._adapter import provider_config_to_dict
 from decoy_engine.execution._errors import ExecutionError
+from decoy_engine.execution._operator_registry import PYTHON_SCALAR
 from decoy_engine.execution._row_errors import RowError
 from decoy_engine.execution.native._bucket_perturb_ext import native_bucket_perturb
 from decoy_engine.execution.native._categorical_ext import native_categorical
@@ -77,7 +78,29 @@ from decoy_engine.execution.out_of_core._hash_native import (
 if TYPE_CHECKING:
     from decoy_engine.generation.pool import ValuePool
     from decoy_engine.generation.pool._events import QualityWarning
-    from decoy_engine.plan._types import ColumnSeed
+    from decoy_engine.plan._types import ColumnSeed, Plan, TableSeed
+
+
+# The decline record and seed lookup `SeqNativeRun` writes per FK key column.
+PATH_KEY_DECLINED = "fk_key_declined"
+
+
+def _declined_entry(table: str, column: str, reason: str) -> dict[str, Any]:
+    return {
+        "table": table,
+        "column": column,
+        "path": PATH_KEY_DECLINED,
+        "executed_backend": PYTHON_SCALAR,
+        "reason": reason,
+    }
+
+
+def _table_columns(plan: Plan, table: str) -> dict[str, ColumnSeed]:
+    seed: TableSeed | None = next(
+        (t for name, t in plan.seed_envelope.per_table if name == table), None
+    )
+    return dict(seed.per_column) if seed is not None else {}
+
 
 HASH = "hash"
 FPE = "fpe"
@@ -132,14 +155,14 @@ class NativeOp:
 @dataclass(frozen=True)
 class HashCall:
     namespace: str
-    mask_key: bytes
+    mask_key: bytes = field(repr=False)
     truncate: int | None
 
 
 @dataclass(frozen=True)
 class FpeCall:
     namespace: str
-    mask_key: bytes
+    mask_key: bytes = field(repr=False)
     config: FpeConfig
     tweak_column: str
 
@@ -150,7 +173,7 @@ class CategoricalCall:
     weight CDF (None = uniform). `admit` returns a reason only, so these travel here."""
 
     namespace: str
-    mask_key: bytes
+    mask_key: bytes = field(repr=False)
     categories: tuple[str, ...]
     cdf: tuple[int, ...] | None
 
@@ -162,7 +185,7 @@ class BucketCall:
     appends to so the seam reports what actually ran."""
 
     namespace: str
-    mask_key: bytes
+    mask_key: bytes = field(repr=False)
     bucket: str
     date_format: str
     preserved: np.ndarray[Any, Any] | None
@@ -181,7 +204,7 @@ class FakerCall:
     leg: str
     pool: ValuePool
     namespace: str
-    key: bytes
+    key: bytes = field(repr=False)
     row_offset: int = 0
     gate_positions: np.ndarray[Any, Any] | None = None
 

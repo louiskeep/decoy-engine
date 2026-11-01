@@ -29,24 +29,34 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, TypeVar
 
+from decoy_engine import fileaccess, reasons
+from decoy_engine._opaque import OpaqueBox as _OpaqueBox
 from decoy_engine.keyprovider import (
     KEY_REQUIRED_GUIDANCE,
     MIN_SECRET_BYTES,
     KeyedStrategyRequiresSecret,
     KeyProvider,
+    MaskSecretError,
     SeedKeyProvider,
 )
 from decoy_engine.secret_providers._buffer import SecretBuffer
 from decoy_engine.secret_providers._cache import default_cache
 from decoy_engine.secret_providers._errors import (
+    BAD_ENCODING_AT_POSITION_MESSAGE,
+    BAD_ENCODING_MESSAGE,
     Failure,
+    KeptFileFailure,
     SecretExpired,
     SecretLeaseUnsupported,
     SecretProviderUnavailable,
     SecretVersionUnavailable,
     error_for,
     failure_of,
+    is_kept,
+    kept_error,
 )
+from decoy_engine.secret_providers._errors import raise_bare as _raise_bare
+from decoy_engine.secret_providers._local import FileSecretProvider, _LocalProvider
 from decoy_engine.secret_providers._registry import SecretProviderRegistry, default_registry
 from decoy_engine.secret_providers._requirements import (
     MASK_ROOT,
@@ -99,6 +109,27 @@ def _derive(
         raise
 
 
+def _decoded(
+    provider: SecretProvider, raw: bytes, ref: SecretRef, requirement: SecretRequirement
+) -> bytes:
+    """`decode_material`; for a `file:` secret under a strict file-access policy a bad encoding
+    names its config position, with a fixed engine text (owner decision, A-4 x F13)."""
+    positioned = False
+    try:
+        return decode_material(raw, ref.encoding, requirement)
+    except MaskSecretError as exc:
+        positioned = (
+            type(provider) is FileSecretProvider
+            and not fileaccess.is_ambient()
+            and getattr(exc, "message", None) == BAD_ENCODING_MESSAGE
+        )
+        if not positioned:
+            raise
+    raise MaskSecretError(
+        code=reasons.runtime.BAD_SECRET_REF, message=BAD_ENCODING_AT_POSITION_MESSAGE
+    )
+
+
 def _load(
     provider: SecretProvider,
     ref: SecretRef,
@@ -116,7 +147,7 @@ def _load(
             if clock.wall() >= resolved.expires_at:
                 raise SecretExpired
         material = SecretBuffer.adopt(
-            bytearray(decode_material(bytes(resolved.buffer.view()), ref.encoding, requirements[0]))
+            bytearray(_decoded(provider, bytes(resolved.buffer.view()), ref, requirements[0]))
         )
         with material:
             derived = _derive(material, requirements, descriptor.key_version)
@@ -126,26 +157,6 @@ def _load(
             requirement_ids=tuple(r.id for r in requirements),
             expires_at=resolved.expires_at,
         )
-
-
-class _OpaqueBox:
-    """Carries value-bearing objects through frames that traceback rendering may capture."""
-
-    __slots__ = ("_items",)
-
-    def __init__(self, *items: object) -> None:
-        self._items = items
-
-    def open(self) -> tuple[Any, ...]:
-        return self._items
-
-    def __repr__(self) -> str:
-        return "<opaque>"
-
-    __str__ = __repr__
-
-    def __reduce_ex__(self, *_: object) -> Any:
-        raise TypeError("opaque boxes cannot be pickled")
 
 
 _T = TypeVar("_T")
@@ -164,14 +175,54 @@ def _contained(
     return None, failure
 
 
+# How many admission boundaries enclose the current call. Only the outermost one turns a kept
+# file failure into its real class; an inner one re-raises the carrier for the next to recognize.
+_DEPTH: contextvars.ContextVar[int] = contextvars.ContextVar("decoy_admission_depth", default=0)
+
+
+def _rebuilt(failure: Failure, *, outermost: bool) -> BaseException:
+    if is_kept(failure):
+        return kept_error(failure, outermost=outermost)
+    return error_for(failure)
+
+
 def _call_closed(work: Callable[[_OpaqueBox], _T], box: _OpaqueBox) -> _T:
     """Raise from a frame whose locals hold no value-bearing object (only the box)."""
-    result, failure = _contained(work, box)
+    depth = _DEPTH.get()
+    token = _DEPTH.set(depth + 1)
+    try:
+        result, failure = _contained(work, box)
+    finally:
+        _DEPTH.reset(token)
     if failure is not None:
-        raise error_for(failure).with_traceback(None) from None
+        _raise_bare(_rebuilt(failure, outermost=depth == 0))
     if result is None:  # unreachable: a failure raises above
         raise SecretProviderUnavailable
     return result
+
+
+def _file_provider_only(provider: object, call: Callable[[], _T]) -> _T:
+    """A kept file failure is honored only from the built-in file provider; from any other
+    provider it is an ordinary failure (``secret_provider_unavailable``)."""
+    foreign = False
+    try:
+        return call()
+    except KeptFileFailure:
+        if type(provider) is FileSecretProvider:
+            raise
+        foreign = True
+    if foreign:
+        raise SecretProviderUnavailable
+    raise AssertionError("unreachable")  # pragma: no cover
+
+
+def _is_local(provider: object) -> bool:
+    """env and file are never cached, whatever their descriptor says: a cached local secret could
+    be served to a run whose file-access policy would deny the read (A-4 x F13 decision 3)."""
+    return isinstance(provider, _LocalProvider) or getattr(provider, "scheme", None) in (
+        "env",
+        "file",
+    )
 
 
 def _resolve_context(provider: SecretProvider) -> ResolveContext:
@@ -190,9 +241,11 @@ def _prepare_boxed(box: _OpaqueBox) -> PreparedSecret:
     )
 
     def loader() -> PreparedSecret:
-        return _load(provider, ref, requirements, policy.clock, context)
+        return _file_provider_only(
+            provider, lambda: _load(provider, ref, requirements, policy.clock, context)
+        )
 
-    if policy.ttl_seconds > 0:
+    if policy.ttl_seconds > 0 and not _is_local(provider):
         return default_cache().get_or_load(
             key,
             owners=(provider, _ADMITTING_REGISTRY.get()),
@@ -255,7 +308,9 @@ def _ref_boxed(box: _OpaqueBox) -> PreparedSecret:
     if key_version is not None:
         ref = replace(ref, key_version=key_version)
     provider = default_registry().get(ref.scheme)
-    return provider.preflight(ref, (MASK_ROOT,), SecretCachePolicy())
+    return _file_provider_only(
+        provider, lambda: provider.preflight(ref, (MASK_ROOT,), SecretCachePolicy())
+    )
 
 
 def prepare_ref(ref: str, *, key_version: str | None = None) -> PreparedSecret:
@@ -322,7 +377,10 @@ def _admit_boxed(box: _OpaqueBox) -> AdmittedKey:
     # ``preflight`` is extension code: its errors cross the same closed boundary.
     scope = _ADMITTING_REGISTRY.set(registry)
     try:
-        admitted = provider.preflight(ref, requirements, cache_policy or SecretCachePolicy())
+        admitted = _file_provider_only(
+            provider,
+            lambda: provider.preflight(ref, requirements, cache_policy or SecretCachePolicy()),
+        )
     finally:
         _ADMITTING_REGISTRY.reset(scope)
     return AdmittedKey(admitted.key_provider(), admitted, requirements)

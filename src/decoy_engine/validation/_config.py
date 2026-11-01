@@ -11,10 +11,14 @@ from typing import Any
 
 import yaml
 
+from decoy_engine import fileaccess
 from decoy_engine.errors import ConfigError, PipelineValidationError
+from decoy_engine.fileaccess import FileAccess, FileRequest, FileRole
+from decoy_engine.fileaccess.adapters import serial
 
 
-def validate_config(config: str | Path | dict) -> None:
+@fileaccess.entry_point
+def validate_config(config: str | Path | dict, *, file_access: FileAccess | None = None) -> None:
     """Validate a decoy_engine pipeline config.
 
     Accepts a YAML file path or an already-loaded config dict. Detects
@@ -40,13 +44,20 @@ def _load_config(config: str | Path | dict) -> dict:
     if not isinstance(config, (str, Path)):
         raise ConfigError(f"Config must be a path or dict, got {type(config).__name__}")
     path = Path(config)
-    if not path.exists():
-        raise ConfigError(f"Config file not found: {path}")
+    handle = fileaccess.current().open_read(
+        FileRequest(FileRole.CONFIG, "read", str(path), "config")
+    )
     try:
-        with open(path, encoding="utf-8") as f:
-            data = yaml.safe_load(f)
-    except yaml.YAMLError as e:
-        raise ConfigError(f"Failed to parse YAML: {e}") from e
+        try:
+            handle.stat()
+        except (FileNotFoundError, NotADirectoryError):
+            raise ConfigError(f"Config file not found: {handle.display}") from None
+        try:
+            data = serial.yaml_safe_load(handle)
+        except yaml.YAMLError as e:
+            raise ConfigError(f"Failed to parse YAML: {e}") from e
+    finally:
+        handle.close()
     if not isinstance(data, dict):
         raise ConfigError(f"Config root must be a YAML mapping, got {type(data).__name__}")
     return data

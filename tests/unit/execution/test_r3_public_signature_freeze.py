@@ -69,6 +69,8 @@ FROZEN_PARAMETERS: tuple[tuple[str, str, str, str], ...] = (
     ("secret_registry", "KEYWORD_ONLY", "None", "SecretProviderRegistry | None"),
     ("secret_cache_policy", "KEYWORD_ONLY", "None", "SecretCachePolicy | None"),
     ("_provider_snapshot", "KEYWORD_ONLY", "None", "Mapping[str, Callable[[Faker], Any]] | None"),
+    # E1: the one additive keyword the file-access policy adds (compatibility contract section 9).
+    ("file_access", "KEYWORD_ONLY", "None", "FileAccess | None"),
 )
 FROZEN_RETURN = "ExecutionResult"
 
@@ -92,7 +94,7 @@ def test_run_pipeline_return_annotation_is_frozen() -> None:
 
 def test_the_frozen_table_covers_every_parameter_once() -> None:
     names = [row[0] for row in FROZEN_PARAMETERS]
-    assert len(names) == len(set(names)) == 39
+    assert len(names) == len(set(names)) == 40
     positional = [r[0] for r in FROZEN_PARAMETERS if r[1] == "POSITIONAL_OR_KEYWORD"]
     assert positional == ["config", "sources"]
 

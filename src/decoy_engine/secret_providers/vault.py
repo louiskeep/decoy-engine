@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Literal
 
+from decoy_engine._opaque import OpaqueBox
 from decoy_engine.errors import DecoyError
 from decoy_engine.secret_providers._buffer import SecretBuffer
 from decoy_engine.secret_providers._errors import (
@@ -76,23 +77,30 @@ def client_from_env(
     (``insecure_skip_tls_verify=True``), not an environment toggle that can silently enable a
     man-in-the-middle on a privacy product.
     """
-    env = os.environ if environ is None else environ
-    if str(env.get("VAULT_SKIP_VERIFY", "")).strip().lower() in _TRUTHY:
+    # The mapping holds VAULT_TOKEN (and, for os.environ, every secret in the process): a refusal's
+    # traceback keeps this frame, so it holds only a box (`_opaque`) and the token is read only
+    # inside the client call expression.
+    box = OpaqueBox(os.environ if environ is None else environ)
+    del environ
+    if str(box.open()[0].get("VAULT_SKIP_VERIFY", "")).strip().lower() in _TRUTHY:
         raise VaultClientConfigError(
             "VAULT_SKIP_VERIFY is not honored: disabling TLS verification requires an explicit "
             "in-code override (insecure_skip_tls_verify=True)."
         )
-    addr = env.get("VAULT_ADDR")
+    addr = box.open()[0].get("VAULT_ADDR")
     if not addr:
         raise VaultClientConfigError("VAULT_ADDR is required to build a Vault client.")
-    verify: bool | str = False if insecure_skip_tls_verify else (env.get("VAULT_CACERT") or True)
-    cert_file, key_file = env.get("VAULT_CLIENT_CERT"), env.get("VAULT_CLIENT_KEY")
+    verify: bool | str = (
+        False if insecure_skip_tls_verify else (box.open()[0].get("VAULT_CACERT") or True)
+    )
+    cert_file = box.open()[0].get("VAULT_CLIENT_CERT")
+    key_file = box.open()[0].get("VAULT_CLIENT_KEY")
     if bool(cert_file) != bool(key_file):
         raise VaultClientConfigError("VAULT_CLIENT_CERT and VAULT_CLIENT_KEY must be set together.")
     return _hvac().Client(
         url=addr,
-        token=env.get("VAULT_TOKEN"),
-        namespace=env.get("VAULT_NAMESPACE") or None,
+        token=box.open()[0].get("VAULT_TOKEN"),
+        namespace=box.open()[0].get("VAULT_NAMESPACE") or None,
         verify=verify,
         cert=(cert_file, key_file) if cert_file and key_file else None,
     )

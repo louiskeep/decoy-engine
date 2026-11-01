@@ -137,11 +137,12 @@ class StrategyContext:
     pool_cache: PoolCache
     relationship_graph: RelationshipGraph
     namespace_registry: NamespaceRegistry
-    job_seed: bytes
+    job_seed: bytes = field(repr=False)
     # DE-02 (2026-07-14): the keyed-mask IKM. Empty sentinel means "not supplied"
     # -> falls back to job_seed in __post_init__, keeping every pre-DE-02
     # construction (including the test fixtures that never pass it) byte-identical.
-    mask_key: bytes = b""
+    # Never rendered: a traceback that captures a handler's locals shows `ctx` by repr.
+    mask_key: bytes = field(default=b"", repr=False)
     # Sprint 2 honesty pack (D7): the shared per-row-error sink. The
     # dataclass is frozen, but a mutable field's CONTENTS may still be
     # mutated: handlers append RowError instances here; nothing reassigns

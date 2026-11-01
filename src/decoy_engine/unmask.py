@@ -39,11 +39,13 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
-from decoy_engine import reasons
+from decoy_engine import fileaccess, reasons
+from decoy_engine._opaque import OpaqueBox
 from decoy_engine.determinism import derive
 from decoy_engine.errors import FpeUnencryptableError
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._strategies._fpe import FF1_KEY_LABEL
+from decoy_engine.fileaccess import FileAccess, FileHandle
 from decoy_engine.plan._seed import _normalize_job_seed
 from decoy_engine.transforms.fpe import (
     FF1_TWEAK_SCOPE_COLUMN,
@@ -103,66 +105,70 @@ def _decrypt_column(
     tweak: bytes,
     table_name: str,
 ) -> pa.Table:
-    charset_spec = cfg.get("charset", "digits")
-    charset = resolve_fpe_charset(charset_spec)
-    # Round-2 BLOCKER-2/MEDIUM-2: a duplicate-symbol or degenerate charset can
-    # never have produced a masked value in the first place (the mask-side
-    # `FpeStrategyHandler.run` / OOC `fpe_array` fail closed on both, codes
-    # `fpe_charset_duplicate_symbols` / `fpe_charset_degenerate`). This used to
-    # be a silent `return table` no-op here -- the column came back UNCHANGED
-    # (still ciphertext, or whatever the stored config now resolves to) while
-    # the caller still reported `reversed_unverified`, a silent failed
-    # reversal masquerading as a completed one. Fail closed instead, matching
-    # the mask side's codes exactly, so a config edited after the mask run
-    # (or a hand-written unmask config) cannot produce a false reversal claim.
     try:
-        check_charset_unique(charset_spec, charset)
-    except FpeUnencryptableError as exc:
-        raise ExecutionError(
-            code=reasons.runtime.FPE_CHARSET_DUPLICATE_SYMBOLS,
-            message=f"column {column!r} in table {table_name!r}: {exc}",
-        ) from exc
-    if len(charset) < 2:
-        raise ExecutionError(
-            code=reasons.runtime.FPE_CHARSET_DEGENERATE,
-            message=(
-                f"column {column!r} in table {table_name!r} uses fpe but its "
-                f"resolved charset {charset_spec!r} -> {charset!r} has fewer than 2 "
-                "distinct characters. A degenerate charset has nothing to permute "
-                "over, so this column cannot be reversed."
-            ),
+        charset_spec = cfg.get("charset", "digits")
+        charset = resolve_fpe_charset(charset_spec)
+        # Round-2 BLOCKER-2/MEDIUM-2: a duplicate-symbol or degenerate charset can
+        # never have produced a masked value in the first place (the mask-side
+        # `FpeStrategyHandler.run` / OOC `fpe_array` fail closed on both, codes
+        # `fpe_charset_duplicate_symbols` / `fpe_charset_degenerate`). This used to
+        # be a silent `return table` no-op here -- the column came back UNCHANGED
+        # (still ciphertext, or whatever the stored config now resolves to) while
+        # the caller still reported `reversed_unverified`, a silent failed
+        # reversal masquerading as a completed one. Fail closed instead, matching
+        # the mask side's codes exactly, so a config edited after the mask run
+        # (or a hand-written unmask config) cannot produce a false reversal claim.
+        try:
+            check_charset_unique(charset_spec, charset)
+        except FpeUnencryptableError as exc:
+            raise ExecutionError(
+                code=reasons.runtime.FPE_CHARSET_DUPLICATE_SYMBOLS,
+                message=f"column {column!r} in table {table_name!r}: {exc}",
+            ) from exc
+        if len(charset) < 2:
+            raise ExecutionError(
+                code=reasons.runtime.FPE_CHARSET_DEGENERATE,
+                message=(
+                    f"column {column!r} in table {table_name!r} uses fpe but its "
+                    f"resolved charset {charset_spec!r} -> {charset!r} has fewer than 2 "
+                    "distinct characters. A degenerate charset has nothing to permute "
+                    "over, so this column cannot be reversed."
+                ),
+            )
+        preserve_sep = bool(cfg.get("preserve_separators", True))
+        # Codex cross-model review (2026-07-14): forward `checksum` and mirror the
+        # encrypt-side resolution EXACTLY (checksum takes priority over validate_luhn).
+        # Pre-existing bug (since the 2026-06-12 checksum landing, 07d85368): decrypt
+        # forwarded validate_luhn but NOT checksum, so a checksum-mode fpe column ran
+        # the plain inverse and silently returned WRONG plaintext (e.g. npi
+        # 1234567893 -> 1770507352 -> 5577387655), still reported `reversed`.
+        checksum: str | None = cfg.get("checksum") or None
+        validate_luhn = (
+            checksum is None
+            and bool(cfg.get("validate_luhn", False))
+            and all(c in "0123456789" for c in charset)
         )
-    preserve_sep = bool(cfg.get("preserve_separators", True))
-    # Codex cross-model review (2026-07-14): forward `checksum` and mirror the
-    # encrypt-side resolution EXACTLY (checksum takes priority over validate_luhn).
-    # Pre-existing bug (since the 2026-06-12 checksum landing, 07d85368): decrypt
-    # forwarded validate_luhn but NOT checksum, so a checksum-mode fpe column ran
-    # the plain inverse and silently returned WRONG plaintext (e.g. npi
-    # 1234567893 -> 1770507352 -> 5577387655), still reported `reversed`.
-    checksum: str | None = cfg.get("checksum") or None
-    validate_luhn = (
-        checksum is None
-        and bool(cfg.get("validate_luhn", False))
-        and all(c in "0123456789" for c in charset)
-    )
 
-    def _decrypt_one(v: object) -> object:
-        if v is None:
-            return v
-        s = str(v)
-        if s == "":
-            # Empty string is not null; the mask side now treats it as a
-            # missing-data passthrough rather than sending it to the cipher
-            # (plan P2: an empty value's domain is below the FF1 floor), so
-            # the masked output already carries it unchanged. Mirror that
-            # here instead of calling `fpe_decrypt_value` on it.
-            return s
-        return fpe_decrypt_value(s, key, charset, tweak, preserve_sep, validate_luhn, checksum)
+        def _decrypt_one(v: object) -> object:
+            if v is None:
+                return v
+            s = str(v)
+            if s == "":
+                # Empty string is not null; the mask side now treats it as a
+                # missing-data passthrough rather than sending it to the cipher
+                # (plan P2: an empty value's domain is below the FF1 floor), so
+                # the masked output already carries it unchanged. Mirror that
+                # here instead of calling `fpe_decrypt_value` on it.
+                return s
+            return fpe_decrypt_value(s, key, charset, tweak, preserve_sep, validate_luhn, checksum)
 
-    values = table.column(column).to_pylist()
-    decrypted = [_decrypt_one(v) for v in values]
-    idx = table.schema.get_field_index(column)
-    return table.set_column(idx, column, pa.array(decrypted, type=pa.string()))
+        values = table.column(column).to_pylist()
+        decrypted = [_decrypt_one(v) for v in values]
+        idx = table.schema.get_field_index(column)
+        return table.set_column(idx, column, pa.array(decrypted, type=pa.string()))
+    except BaseException:
+        del key
+        raise
 
 
 def _vault_recover_column(
@@ -213,12 +219,15 @@ def _vault_recover_column(
     )
 
 
+@fileaccess.entry_point
 def unmask_pipeline(
     config: dict[str, Any],
     masked_sources: dict[str, pa.Table],
     *,
     vault_path: str | None = None,
     key_provider: KeyProvider | None = None,
+    vault: FileHandle | None = None,
+    file_access: FileAccess | None = None,
 ) -> UnmaskResult:
     """Invert the fpe and vaulted columns of `masked_sources` under `config`.
 
@@ -229,7 +238,8 @@ def unmask_pipeline(
     from `masked_sources` are reported `table_missing`, never invented.
     `vault_path` names the encrypted vault artifact the mask run wrote;
     one-way columns declared `vault: true` recover through it (see
-    `decoy_engine.vault` for the security model).
+    `decoy_engine.vault` for the security model). `vault` is a handle the policy issued
+    for that artifact; a `vault_path` string is accepted only under the ambient CLI policy.
 
     Raises:
         ExecutionError: ``code='fpe_requires_namespace'`` when an fpe
@@ -253,7 +263,8 @@ def unmask_pipeline(
     with AdmissionScope() as scope:
         admitted = scope.adopt(admit_mask_key(config, key_provider=key_provider))
         provider = admitted.key_provider
-        mask_key = provider.mask_key() if provider is not None else job_seed
+        # Boxed: this frame outlives many raises below and must not hold the key (`_opaque`).
+        mask_key = OpaqueBox(provider.mask_key() if provider is not None else job_seed)
     # DE-02 (Codex MEDIUM 6): unmask reverses KEYED surface (fpe + vaulted
     # columns). Route it through the same fail-closed gate: a resolved key < 32
     # bytes (the 8-byte job_seed fallback, or an empty custom provider) is NOT a
@@ -261,13 +272,14 @@ def unmask_pipeline(
     # of silently producing wrong plaintext labelled "reversed".
     from decoy_engine.keyprovider import MIN_SECRET_BYTES, KeyedStrategyRequiresSecret
 
-    _authenticated = len(mask_key) >= MIN_SECRET_BYTES
+    _authenticated = len(mask_key.open()[0]) >= MIN_SECRET_BYTES
     _has_fpe = any(
         (c.get("strategy") == "fpe")
         for t in (config.get("tables") or [])
         for c in (t.get("columns") or [])
     )
-    _keyed_reversal = vault_path is not None or _has_fpe
+    # A-4 adds the handle form of the vault; F13 removed the pre-GA bypass. Both hold.
+    _keyed_reversal = vault_path is not None or vault is not None or _has_fpe
     if _keyed_reversal and not _authenticated:
         raise KeyedStrategyRequiresSecret(
             "unmask reverses keyed columns (fpe / vaulted) which require the mask secret. "
@@ -276,11 +288,11 @@ def unmask_pipeline(
         )
     vault_map: dict[tuple[str, str], str] | None = None
     vault_ambiguous = 0
-    if vault_path is not None:
+    if vault_path is not None or vault is not None:
         from decoy_engine.vault import VaultError, load_vault
 
         try:
-            vault_map, vault_ambiguous = load_vault(vault_path, mask_key)
+            vault_map, vault_ambiguous = load_vault(vault_path, mask_key.open()[0], vault=vault)
         except VaultError as exc:
             raise ExecutionError(code=exc.code, message=exc.message) from exc
     reports: list[UnmaskColumnReport] = []
@@ -392,7 +404,6 @@ def unmask_pipeline(
                     ),
                 )
             cfg = col_cfg.get("provider_config") or {}
-            key = derive(mask_key, namespace, FF1_KEY_LABEL)
             # SP-46: mirror the join-group tweak resolution from _strategies/_fpe.py.
             # When fpe_join_group is set the tweak is the group name, not the column
             # name; using the wrong tweak produces incorrect decryption. The config
@@ -403,7 +414,14 @@ def unmask_pipeline(
                 FF1_TWEAK_SCOPE_JOIN_GROUP if join_group else FF1_TWEAK_SCOPE_COLUMN,
                 join_group or col,
             )
-            table = _decrypt_column(table, col, key=key, cfg=cfg, tweak=fpe_tweak, table_name=name)
+            table = _decrypt_column(
+                table,
+                col,
+                key=derive(mask_key.open()[0], namespace, FF1_KEY_LABEL),
+                cfg=cfg,
+                tweak=fpe_tweak,
+                table_name=name,
+            )
             # checksum takes priority over validate_luhn (same as encrypt). Both
             # recompute the check digit on decrypt rather than store it, so the
             # round trip is byte-exact iff the source was valid for the scheme.

@@ -51,6 +51,7 @@ from typing import TYPE_CHECKING, Any
 import pyarrow as pa
 
 from decoy_engine import reasons
+from decoy_engine._opaque import OpaqueBox
 from decoy_engine.detection.detectors import iter_spans
 from decoy_engine.determinism import derive, derive_index
 from decoy_engine.errors import FpeChecksumError, FpeUnencryptableError
@@ -128,77 +129,87 @@ def fpe_array(
     cfg: dict[str, Any],
 ) -> pa.Array:
     """Format-preserving-encrypt each non-null value, byte-identical to the oracle."""
-    if namespace is None:
-        raise StrategyError(
-            code=reasons.runtime.FPE_REQUIRES_NAMESPACE,
-            strategy="fpe",
-            message="fpe strategy requires a namespace.",
-        )
-    charset = _fpe_charset(cfg)
-    preserve_sep = bool(cfg.get("preserve_separators", True))
-    checksum: str | None = cfg.get("checksum") or None
-    validate_luhn = (
-        checksum is None
-        and bool(cfg.get("validate_luhn", False))
-        and all(c in "0123456789" for c in charset)
-    )
-    join_group: str | None = cfg.get("fpe_join_group") or None
-    tweak_source = join_group or column
-    if tweak_source is None:
-        # Only reachable if fpe were masked without a column context (e.g. an
-        # FK-key/remap caller). The compat gate keeps fpe off the parent-key
-        # surface, so this fails closed rather than silently mis-tweaking.
-        raise ExecutionError(
-            code=reasons.runtime.OUT_OF_CORE_FPE_COLUMN_REQUIRED,
-            message="fpe out-of-core masking needs a column name (or fpe_join_group) for the tweak.",
-        )
-    tweak = build_ff1_tweak(
-        FF1_TWEAK_SCOPE_JOIN_GROUP if join_group else FF1_TWEAK_SCOPE_COLUMN, tweak_source
-    )
-    key = derive(job_seed, namespace, FF1_KEY_LABEL)
-
-    out: list[str | None] = []
-    # DE-01 cluster-C (2026-07-14): translate the value-level fail-closed raises
-    # into the SAME StrategyError type + codes the full-frame handler
-    # (`_strategies/_fpe.FpeStrategyHandler.run`) uses, so a consumer keying on
-    # `StrategyError.code` sees an identical fail-closed event on both routes.
     try:
-        for value in _array_to_pylist(values):
-            if _is_missing(value):
-                out.append(None)
-                continue
-            str_value = str(value)
-            if str_value == "":
-                # Empty string is not null (`_is_missing` misses it), but
-                # `fpe_encrypt_value` now fails closed on it (plan P2: its
-                # in-charset domain, radix**0 == 1, is below the FF1 floor).
-                # Treat it like null at this per-cell missing-data boundary --
-                # preserved as "", never sent to the cipher -- matching the
-                # full-frame handler (`_strategies/_fpe.FpeStrategyHandler.run`)
-                # so both routes stay byte-identical for a legitimately empty cell.
-                out.append("")
-                continue
-            out.append(
-                fpe_encrypt_value(
-                    str_value, key, charset, tweak, preserve_sep, validate_luhn, checksum
-                )
+        if namespace is None:
+            raise StrategyError(
+                code=reasons.runtime.FPE_REQUIRES_NAMESPACE,
+                strategy="fpe",
+                message="fpe strategy requires a namespace.",
             )
-    except FpeUnencryptableError as exc:
-        raise StrategyError(
-            code=strategy_code_for_unencryptable(exc),
-            strategy="fpe",
-            message=(
-                f"column {column!r}: {exc}. The engine fails closed rather than "
-                "emit unmaskable or non-round-trip output."
-            ),
-        ) from exc
-    except FpeChecksumError as exc:
-        raise StrategyError(
-            code=strategy_code_for_checksum(exc),
-            strategy="fpe",
-            message=f"column {column!r}: {exc}",
-        ) from exc
-    return pa.array(out, type=pa.string())
+        charset = _fpe_charset(cfg)
+        preserve_sep = bool(cfg.get("preserve_separators", True))
+        checksum: str | None = cfg.get("checksum") or None
+        validate_luhn = (
+            checksum is None
+            and bool(cfg.get("validate_luhn", False))
+            and all(c in "0123456789" for c in charset)
+        )
+        join_group: str | None = cfg.get("fpe_join_group") or None
+        tweak_source = join_group or column
+        if tweak_source is None:
+            # Only reachable if fpe were masked without a column context (e.g. an
+            # FK-key/remap caller). The compat gate keeps fpe off the parent-key
+            # surface, so this fails closed rather than silently mis-tweaking.
+            raise ExecutionError(
+                code=reasons.runtime.OUT_OF_CORE_FPE_COLUMN_REQUIRED,
+                message="fpe out-of-core masking needs a column name (or fpe_join_group) for the tweak.",
+            )
+        tweak = build_ff1_tweak(
+            FF1_TWEAK_SCOPE_JOIN_GROUP if join_group else FF1_TWEAK_SCOPE_COLUMN, tweak_source
+        )
+        key_box = OpaqueBox(derive(job_seed, namespace, FF1_KEY_LABEL))
+
+        out: list[str | None] = []
+        # DE-01 cluster-C (2026-07-14): translate the value-level fail-closed raises
+        # into the SAME StrategyError type + codes the full-frame handler
+        # (`_strategies/_fpe.FpeStrategyHandler.run`) uses, so a consumer keying on
+        # `StrategyError.code` sees an identical fail-closed event on both routes.
+        try:
+            for value in _array_to_pylist(values):
+                if _is_missing(value):
+                    out.append(None)
+                    continue
+                str_value = str(value)
+                if str_value == "":
+                    # Empty string is not null (`_is_missing` misses it), but
+                    # `fpe_encrypt_value` now fails closed on it (plan P2: its
+                    # in-charset domain, radix**0 == 1, is below the FF1 floor).
+                    # Treat it like null at this per-cell missing-data boundary --
+                    # preserved as "", never sent to the cipher -- matching the
+                    # full-frame handler (`_strategies/_fpe.FpeStrategyHandler.run`)
+                    # so both routes stay byte-identical for a legitimately empty cell.
+                    out.append("")
+                    continue
+                out.append(
+                    fpe_encrypt_value(
+                        str_value,
+                        key_box.open()[0],
+                        charset,
+                        tweak,
+                        preserve_sep,
+                        validate_luhn,
+                        checksum,
+                    )
+                )
+        except FpeUnencryptableError as exc:
+            raise StrategyError(
+                code=strategy_code_for_unencryptable(exc),
+                strategy="fpe",
+                message=(
+                    f"column {column!r}: {exc}. The engine fails closed rather than "
+                    "emit unmaskable or non-round-trip output."
+                ),
+            ) from exc
+        except FpeChecksumError as exc:
+            raise StrategyError(
+                code=strategy_code_for_checksum(exc),
+                strategy="fpe",
+                message=f"column {column!r}: {exc}",
+            ) from exc
+        return pa.array(out, type=pa.string())
+    except BaseException:
+        del job_seed
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -354,44 +365,48 @@ def categorical_array(
     the compat gate rejects non-deterministic categorical (its position-keyed
     implementation is deferred), so reaching it here is a wiring bug.
     """
-    categories, weights = _categorical_config(cfg)
-    if not deterministic:
-        raise ExecutionError(
-            code=reasons.runtime.OUT_OF_CORE_CATEGORICAL_NONDETERMINISTIC_UNSUPPORTED,
-            message="out-of-core categorical requires deterministic mode (gate should reject).",
-        )
-    if namespace is None:
-        raise StrategyError(
-            code=reasons.runtime.CATEGORICAL_REQUIRES_NAMESPACE,
-            strategy="categorical",
-            message="deterministic categorical requires a namespace.",
-        )
+    try:
+        categories, weights = _categorical_config(cfg)
+        if not deterministic:
+            raise ExecutionError(
+                code=reasons.runtime.OUT_OF_CORE_CATEGORICAL_NONDETERMINISTIC_UNSUPPORTED,
+                message="out-of-core categorical requires deterministic mode (gate should reject).",
+            )
+        if namespace is None:
+            raise StrategyError(
+                code=reasons.runtime.CATEGORICAL_REQUIRES_NAMESPACE,
+                strategy="categorical",
+                message="deterministic categorical requires a namespace.",
+            )
 
-    out: list[Any] = []
-    if weights is None:
-        pool_size = len(categories)
-        for value in _array_to_pylist(values):
-            if _is_missing(value):
-                out.append(None)
-                continue
-            idx = derive_index(
-                job_seed, namespace, _canonicalize_source(value), pool_size=pool_size
-            )
-            out.append(categories[idx])
-    else:
-        cdf = _build_cdf(weights)
-        for value in _array_to_pylist(values):
-            if _is_missing(value):
-                out.append(None)
-                continue
-            bucket = derive_index(
-                job_seed, namespace, _canonicalize_source(value), pool_size=_WEIGHTED_CDF_RES
-            )
-            cat_idx = bisect.bisect_right(cdf, bucket)
-            if cat_idx >= len(categories):
-                cat_idx = len(categories) - 1
-            out.append(categories[cat_idx])
-    return pa.array(out, from_pandas=True)
+        out: list[Any] = []
+        if weights is None:
+            pool_size = len(categories)
+            for value in _array_to_pylist(values):
+                if _is_missing(value):
+                    out.append(None)
+                    continue
+                idx = derive_index(
+                    job_seed, namespace, _canonicalize_source(value), pool_size=pool_size
+                )
+                out.append(categories[idx])
+        else:
+            cdf = _build_cdf(weights)
+            for value in _array_to_pylist(values):
+                if _is_missing(value):
+                    out.append(None)
+                    continue
+                bucket = derive_index(
+                    job_seed, namespace, _canonicalize_source(value), pool_size=_WEIGHTED_CDF_RES
+                )
+                cat_idx = bisect.bisect_right(cdf, bucket)
+                if cat_idx >= len(categories):
+                    cat_idx = len(categories) - 1
+                out.append(categories[cat_idx])
+        return pa.array(out, from_pandas=True)
+    except BaseException:
+        del job_seed
+        raise
 
 
 # ---------------------------------------------------------------------------

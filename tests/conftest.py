@@ -253,6 +253,17 @@ def mock_logger():
     return get_logger(logger_config)
 
 
+@pytest.fixture(autouse=True)
+def _file_access_latch_reset():
+    """Installing a strict policy latches the process into fail-closed mode; tests that do so
+    must not change how later tests resolve the default policy."""
+    from decoy_engine.fileaccess import _entry
+
+    _entry._reset_for_tests()
+    yield
+    _entry._reset_for_tests()
+
+
 def _install_default_secret(monkeypatch: pytest.MonkeyPatch) -> None:
     """Fill in the shared throwaway secret at the admission seams, for keyed work only."""
     import decoy_engine.keyprovider as kp

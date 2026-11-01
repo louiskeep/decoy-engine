@@ -31,6 +31,7 @@ link to GitHub rather than into the rendered API reference.
 
 ## Security
 
+- [File access policy](security/file-access-policy.md): the `FileAccess` contract for integrators: roles, capabilities, denial shape, strict policies, and the routes a strict policy does not serve.
 - [Error reporting and data exposure](security/error-reporting-and-data-exposure.md): what error messages promise about the sensitive input data being masked, and why error trackers must not capture frame locals.
 - [Key derivation](security/key-derivation.md): the KeyProvider / `mask_secret_ref` model and HKDF-SHA256 derivation contract.
 - [Secret providers](security/secret-providers.md): the versioned `secret-provider/v1` contract, before-read admission, per-algorithm validation, cache/lifetime bounds and the HashiCorp Vault KV v2 adapter.
@@ -60,6 +61,7 @@ link to GitHub rather than into the rendered API reference.
 
 - [CI regression gate](ci-regression-gate.md): the performance / regression gate contract.
 - [SBOM](sbom.md): generating the CycloneDX SBOM for the engine wheel.
+- [License policy](license-policy.md): allowed licenses, named exceptions, and how NOTICE is generated and checked.
 - Engine-scoped implementation plans, decision records, and the findings register live in `docs/plans/`, `docs/decisions/`, and `docs/remediation-source.md` (working docs, not guides).
 - Shipped-work history (sprint plans, review snapshots, superseded design discussions) is kept in `docs/archive/` for context; see `docs/archive/README.md`. None of it is current how-to guidance.
 
@@ -99,6 +101,7 @@ native/supported-matrix
 
 ci-regression-gate
 sbom
+license-policy
 ```
 
 ```{toctree}

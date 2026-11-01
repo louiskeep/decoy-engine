@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from decoy_engine import reasons
+from decoy_engine._opaque import OpaqueBox
 from decoy_engine.keyprovider import MaskSecretError, SecretKeyProvider
 from decoy_engine.secret_providers._errors import (
     BAD_ENCODING_MESSAGE,
@@ -53,36 +54,50 @@ class SecretRequirement:
 
 def _prepare_mask_root(material: bytes, key_version: str) -> bytes:
     # SecretKeyProvider owns the >=32 rule (weak_mask_secret) and the HKDF derivation.
-    return SecretKeyProvider(material, key_version=key_version).mask_key()
+    box = OpaqueBox(material)
+    del material  # a traceback keeps this frame: the material must not be among its locals
+    return SecretKeyProvider(box.open()[0], key_version=key_version).mask_key()
 
 
 def _prepare_fernet(material: bytes, _key_version: str) -> bytes:
+    box = OpaqueBox(material.strip())
+    del material  # a traceback keeps this frame: the material must not be among its locals
     from cryptography.fernet import Fernet
 
-    text = material.strip()
+    valid = True
     try:
-        Fernet(text)
+        Fernet(box.open()[0])
     except Exception:  # library validation is authoritative; its text is never surfaced
-        raise SecretMaterialInvalid from None
-    return text
+        valid = False
+    if not valid:
+        raise SecretMaterialInvalid
+    return box.open()[0]
 
 
 def _prepare_hmac(material: bytes, _key_version: str) -> bytes:
-    if len(material) < 32:
-        raise SecretMaterialInvalid
-    return material
+    try:
+        if len(material) < 32:
+            raise SecretMaterialInvalid
+        return material
+    except BaseException:
+        del material  # a traceback keeps this frame: the material must not be among its locals
+        raise
 
 
 def _prepare_aes_gcm(material: bytes, _key_version: str) -> bytes:
+    box = OpaqueBox(material)
+    del material  # a traceback keeps this frame: the material must not be among its locals
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-    if len(material) not in (16, 24, 32):
+    valid = len(box.open()[0]) in (16, 24, 32)
+    if valid:
+        try:
+            AESGCM(box.open()[0])
+        except Exception:
+            valid = False
+    if not valid:
         raise SecretMaterialInvalid
-    try:
-        AESGCM(material)
-    except Exception:
-        raise SecretMaterialInvalid from None
-    return material
+    return box.open()[0]
 
 
 REQUIREMENTS: Mapping[str, SecretRequirement] = {
@@ -104,35 +119,42 @@ def _bad_encoding_for(req: SecretRequirement) -> Exception:
 
 
 def decode_material(raw: bytes, encoding: str | None, req: SecretRequirement) -> bytes:
-    """Decode provider bytes per the ref's explicit encoding, or the legacy rule (mask root only)."""
-    if encoding is None:
-        if not req.legacy_decoding:
-            raise MaskSecretError(
-                code=reasons.runtime.BAD_SECRET_REF, message=NEEDS_ENCODING_MESSAGE
-            )
-        return _decode_legacy(raw, req)
+    """Decode provider bytes per the ref's explicit encoding, or the legacy rule (mask root only).
+
+    A refusal is raised outside any handler (no decoder error rides as its context; a
+    `UnicodeDecodeError` holds the bytes) from a frame that no longer names the material."""
     if encoding == "raw":
         return raw
+    box = OpaqueBox(raw)
+    del raw
+    if encoding is None and not req.legacy_decoding:
+        raise MaskSecretError(code=reasons.runtime.BAD_SECRET_REF, message=NEEDS_ENCODING_MESSAGE)
+    decoded = _legacy_or_none(box) if encoding is None else _explicit_or_none(box, encoding)
+    if decoded is None:
+        raise _bad_encoding_for(req)
+    return decoded
+
+
+def _explicit_or_none(box: OpaqueBox, encoding: str) -> bytes | None:
     try:
-        text = raw.decode("ascii")
-        stripped = "".join(text.split())
+        stripped = "".join(box.open()[0].decode("ascii").split())
         if not stripped:
-            raise ValueError
+            return None
         if encoding == "hex":
             return bytes.fromhex(stripped)
         return base64.b64decode(stripped, validate=True)
     except (ValueError, UnicodeDecodeError, binascii.Error):
-        raise _bad_encoding_for(req) from None
+        return None
 
 
-def _decode_legacy(raw: bytes, req: SecretRequirement) -> bytes:
+def _legacy_or_none(box: OpaqueBox) -> bytes | None:
     """Hex first (64 hex chars are unambiguously 32 bytes), base64 as the fallback."""
     try:
-        stripped = "".join(raw.decode("utf-8").split())
-        if not stripped:
-            raise ValueError
-    except (UnicodeDecodeError, ValueError):
-        raise _bad_encoding_for(req) from None
+        stripped = "".join(box.open()[0].decode("utf-8").split())
+    except UnicodeDecodeError:
+        return None
+    if not stripped:
+        return None
     try:
         return bytes.fromhex(stripped)
     except ValueError:
@@ -140,7 +162,7 @@ def _decode_legacy(raw: bytes, req: SecretRequirement) -> bytes:
     try:
         return base64.b64decode(stripped, validate=True)
     except (binascii.Error, ValueError):
-        raise _bad_encoding_for(req) from None
+        return None
 
 
 # --- classification ------------------------------------------------------------------------

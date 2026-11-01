@@ -62,21 +62,25 @@ def native_categorical(
     final assembly (`_shadow_assembly.assemble_column`); the chunked route keeps
     `string` on every chunk (`_chunked_schema_rule`).
     """
-    if mask_key is None:  # pragma: no cover - require_mask_key never returns None
-        raise AssertionError(
-            "categorical selection reached with mask_key=None; require_mask_key "
-            "always resolves a concrete key before the native route dispatches."
+    try:
+        if mask_key is None:  # pragma: no cover - require_mask_key never returns None
+            raise AssertionError(
+                "categorical selection reached with mask_key=None; require_mask_key "
+                "always resolves a concrete key before the native route dispatches."
+            )
+        col = array.combine_chunks() if isinstance(array, pa.ChunkedArray) else array
+        pool_size = len(categories) if cdf is None else _WEIGHTED_CDF_RES
+        idx = index_kernel.derive_index_batch(
+            col,
+            mask_key=mask_key,
+            namespace=namespace,
+            pool_size=pool_size,
+            native_threads=native_threads,
         )
-    col = array.combine_chunks() if isinstance(array, pa.ChunkedArray) else array
-    pool_size = len(categories) if cdf is None else _WEIGHTED_CDF_RES
-    idx = index_kernel.derive_index_batch(
-        col,
-        mask_key=mask_key,
-        namespace=namespace,
-        pool_size=pool_size,
-        native_threads=native_threads,
-    )
-    return _select(idx, col.is_valid(), col.is_valid(), categories, cdf, pool_size)
+        return _select(idx, col.is_valid(), col.is_valid(), categories, cdf, pool_size)
+    except BaseException:
+        del mask_key
+        raise
 
 
 def _select(
@@ -169,24 +173,28 @@ def native_categorical_positional(
     Under a `when:` gate the masked step hands only the selected subset and its full-table
     positions as `gate_positions` (C8-iii-d-2), so the key of local row `i` is
     `row_offset + gate_positions[i]` -- that row's full-table number, equal to the d-1 oracle's."""
-    if mask_key is None:  # pragma: no cover - require_mask_key never returns None
-        raise AssertionError("positional categorical reached with mask_key=None")
-    col = array.combine_chunks() if isinstance(array, pa.ChunkedArray) else array
-    keys = positional_key_array(
-        row_offset,
-        len(col),
-        code=reasons.runtime.CATEGORICAL_POSITION_OUT_OF_DOMAIN,
-        gate_positions=gate_positions,
-    )
-    pool_size = len(categories) if cdf is None else _WEIGHTED_CDF_RES
-    idx = index_kernel.derive_index_batch(
-        keys,
-        mask_key=mask_key,
-        namespace=namespace,
-        pool_size=pool_size,
-        native_threads=native_threads,
-    )
-    return _select(idx, keys.is_valid(), col.is_valid(), categories, cdf, pool_size)
+    try:
+        if mask_key is None:  # pragma: no cover - require_mask_key never returns None
+            raise AssertionError("positional categorical reached with mask_key=None")
+        col = array.combine_chunks() if isinstance(array, pa.ChunkedArray) else array
+        keys = positional_key_array(
+            row_offset,
+            len(col),
+            code=reasons.runtime.CATEGORICAL_POSITION_OUT_OF_DOMAIN,
+            gate_positions=gate_positions,
+        )
+        pool_size = len(categories) if cdf is None else _WEIGHTED_CDF_RES
+        idx = index_kernel.derive_index_batch(
+            keys,
+            mask_key=mask_key,
+            namespace=namespace,
+            pool_size=pool_size,
+            native_threads=native_threads,
+        )
+        return _select(idx, keys.is_valid(), col.is_valid(), categories, cdf, pool_size)
+    except BaseException:
+        del mask_key
+        raise
 
 
 __all__ = ["native_categorical", "native_categorical_positional"]
