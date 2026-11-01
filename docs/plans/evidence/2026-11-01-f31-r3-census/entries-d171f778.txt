@@ -1,0 +1,26 @@
+# engine claude/jolly-carson-3k5stf d171f778 (A-4 tip), uv run --locked
+public entries: 232 | entry points (fileaccess): 42 | taking a path/config-named parameter: 76
+[('generation', 18), ('execution', 13), ('plan', 6), ('sdk', 5), ('secret_providers', 4), ('transforms', 4), ('determinism', 3), ('profile', 3), ('subset', 3), ('validation_result', 3), ('vault', 3), ('io', 2)]
+outside ENTRY_POINTS: 43 in 20 approx modules
+21 files
+  5 <string>
+  3 determinism/_derive.py
+  1 execution/_adapter.py
+  2 execution/_pandas_adapter.py
+  1 execution/_pipeline_context.py
+  2 generation/composite/_custom.py
+  4 generation/composite/_generator.py
+  2 generation/composite/_person.py
+  2 generation/composite/_provider.py
+  2 generation/pool/_builder.py
+  2 generation/pool/_pool_adapter.py
+  2 generation/pool/_sampler.py
+  1 plan/_seed.py
+  2 providers_v2/_adapter.py
+  1 relationships/_graph.py
+  1 relationships/_namespace.py
+  3 sdk.py
+  3 secret_providers/_types.py
+  1 validation/post/_runner.py
+  2 validation_result.py
+  1 vault.py

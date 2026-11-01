@@ -1,0 +1,177 @@
+# engine ab29ef0c, uv run --locked (Python 3.11.18)
+## ctor.py (constructors of the nine 5.4 types)
+## CheckResult: 12 calls in 3 files; fstr/str() args at 6
+    src/decoy_engine/connectors/gcs.py:158 
+    src/decoy_engine/connectors/gcs.py:236 
+    src/decoy_engine/connectors/gcs.py:157 str()
+    src/decoy_engine/connectors/gcs.py:235 str()
+    src/decoy_engine/connectors/s3.py:210 
+    src/decoy_engine/connectors/s3.py:312 
+    src/decoy_engine/connectors/s3.py:209 str()
+    src/decoy_engine/connectors/s3.py:311 str()
+    src/decoy_engine/connectors/sftp.py:277 
+    src/decoy_engine/connectors/sftp.py:356 
+    src/decoy_engine/connectors/sftp.py:276 str()
+    src/decoy_engine/connectors/sftp.py:355 str()
+## UnmaskColumnReport: 10 calls in 1 files; fstr/str() args at 1
+    src/decoy_engine/unmask.py:211 
+    src/decoy_engine/unmask.py:299 
+    src/decoy_engine/unmask.py:312 
+    src/decoy_engine/unmask.py:429 
+    src/decoy_engine/unmask.py:439 
+    src/decoy_engine/unmask.py:453 
+    src/decoy_engine/unmask.py:333 
+    src/decoy_engine/unmask.py:378 fstr
+    src/decoy_engine/unmask.py:340 
+    src/decoy_engine/unmask.py:357 
+## QualityWarning: 22 calls in 19 files; fstr/str() args at 0
+    src/decoy_engine/execution/_fk_resolve.py:161 
+    src/decoy_engine/execution/_output_projection.py:140 
+    src/decoy_engine/execution/_residency_warning.py:90 
+    src/decoy_engine/execution/_strategies/_fpe.py:261 
+    src/decoy_engine/execution/_strategies/_fpe.py:309 
+    src/decoy_engine/execution/_strategies/_geo_generalize.py:86 
+    src/decoy_engine/execution/_strategies/_nested.py:369 
+    src/decoy_engine/execution/_strategies/_nested.py:341 
+    src/decoy_engine/execution/_strategies/_text_mask.py:237 
+    src/decoy_engine/execution/_strategies/_top_code.py:245 
+    src/decoy_engine/execution/native/_crypto_reference.py:202 
+    src/decoy_engine/execution/native/_text_mask_route.py:60 
+    src/decoy_engine/execution/out_of_core/_join.py:47 
+    src/decoy_engine/execution/out_of_core/_mask_group_c.py:127 
+    src/decoy_engine/generation/pool/_cache.py:143 
+    src/decoy_engine/providers_v2/mimesis/_adapter.py:201 
+    src/decoy_engine/validation/post/_checks/_cardinality.py:56 
+    src/decoy_engine/validation/post/_checks/_fk_validity.py:70 
+    src/decoy_engine/validation/post/_checks/_format_rules.py:57 
+    src/decoy_engine/validation/post/_checks/_leakage.py:80 
+    src/decoy_engine/validation/post/_checks/_leakage.py:63 
+    src/decoy_engine/validation/post/_runner.py:117 
+## ExecutionEvent: 0 calls in 0 files; fstr/str() args at 0
+## CapacityEstimate: 9 calls in 2 files; fstr/str() args at 3
+    src/decoy_engine/execution/capacity.py:193 
+    src/decoy_engine/execution/out_of_core/_capacity_eval.py:382 
+    src/decoy_engine/execution/out_of_core/_capacity_eval.py:214 fstr
+    src/decoy_engine/execution/out_of_core/_capacity_eval.py:261 fstr
+    src/decoy_engine/execution/out_of_core/_capacity_eval.py:274 
+    src/decoy_engine/execution/out_of_core/_capacity_eval.py:332 fstr
+    src/decoy_engine/execution/out_of_core/_capacity_eval.py:354 
+    src/decoy_engine/execution/out_of_core/_capacity_eval.py:301 
+    src/decoy_engine/execution/out_of_core/_capacity_eval.py:249 
+## PlanCheckError: 2 calls in 1 files; fstr/str() args at 0
+    src/decoy_engine/plan/validate/_consolidator.py:89 
+    src/decoy_engine/plan/validate/_consolidator.py:93 
+## ValidationMessage: 2 calls in 1 files; fstr/str() args at 0
+    src/decoy_engine/validation_result.py:109 
+    src/decoy_engine/validation_result.py:129 
+## JobEstimate: 6 calls in 1 files; fstr/str() args at 0
+    src/decoy_engine/execution/_job_estimate.py:194 
+    src/decoy_engine/execution/_job_estimate.py:159 
+    src/decoy_engine/execution/_job_estimate.py:172 
+    src/decoy_engine/execution/_job_estimate.py:182 
+    src/decoy_engine/execution/_job_estimate.py:90 
+    src/decoy_engine/execution/_job_estimate.py:171 
+## IsolatedRunResult: 8 calls in 1 files; fstr/str() args at 1
+    src/decoy_engine/execution/_isolated_run.py:307 
+    src/decoy_engine/execution/_isolated_run.py:510 
+    src/decoy_engine/execution/_isolated_run.py:574 
+    src/decoy_engine/execution/_isolated_run.py:541 
+    src/decoy_engine/execution/_isolated_run.py:268 
+    src/decoy_engine/execution/_isolated_run.py:458 fstr
+    src/decoy_engine/execution/_isolated_run.py:561 
+    src/decoy_engine/execution/_isolated_run.py:293 
+## argl.py (non-constant free-text field arguments)
+src/decoy_engine/connectors/gcs.py:157 CheckResult.detail = str(_wrap_gcs_error(exc))
+src/decoy_engine/connectors/gcs.py:235 CheckResult.detail = str(_wrap_gcs_error(exc))
+src/decoy_engine/connectors/s3.py:209 CheckResult.detail = str(_wrap_client_error(exc))
+src/decoy_engine/connectors/s3.py:311 CheckResult.detail = str(_wrap_client_error(exc))
+src/decoy_engine/connectors/sftp.py:276 CheckResult.detail = str(exc)
+src/decoy_engine/connectors/sftp.py:355 CheckResult.detail = str(exc)
+src/decoy_engine/execution/_isolated_run.py:519 IsolatedRunResult.error = abnormal_exit_text(proc.returncode, signal_name, stderr, stdout) + (error_suffix(evidence)
+src/decoy_engine/execution/_isolated_run.py:549 IsolatedRunResult.error = envelope.get('error')
+src/decoy_engine/execution/_isolated_run.py:276 IsolatedRunResult.error = exception_error_text(exc)
+src/decoy_engine/execution/_isolated_run.py:466 IsolatedRunResult.error = f'child exceeded timeout_s={timeout_s}s and was killed'
+src/decoy_engine/execution/_isolated_run.py:569 IsolatedRunResult.error = commit_error_text(exc)
+src/decoy_engine/execution/_isolated_run.py:301 IsolatedRunResult.error = commit_error_text(exc)
+src/decoy_engine/execution/_job_estimate.py:199 JobEstimate.notes = notes
+src/decoy_engine/execution/_job_estimate.py:162 JobEstimate.notes = ('mixed mask+generate job: generated volume is not priced',)
+src/decoy_engine/execution/_job_estimate.py:185 JobEstimate.notes = (f'unpriceable variable-width column(s) without a sample: {cols}',)
+src/decoy_engine/execution/_job_estimate.py:93 JobEstimate.notes = (f'estimate unavailable ({type(exc).__name__})',)
+src/decoy_engine/execution/_job_estimate.py:171 JobEstimate.notes = ('generate row count undeclared',)
+src/decoy_engine/execution/capacity.py:199 CapacityEstimate.message = message
+src/decoy_engine/execution/out_of_core/_capacity_eval.py:388 CapacityEstimate.message = message
+src/decoy_engine/execution/out_of_core/_capacity_eval.py:221 CapacityEstimate.message = f"this job's execution route is {inputs.route!r}, not out_of_core; the out-of-core-FK capa
+src/decoy_engine/execution/out_of_core/_capacity_eval.py:268 CapacityEstimate.message = f'cannot price an exact row count for table(s) {names} (no cheap exact count available for
+src/decoy_engine/execution/out_of_core/_capacity_eval.py:339 CapacityEstimate.message = f'predicted relation-build floor ~{floor_gib:.2f} GiB for table {table!r} exceeds the buil
+src/decoy_engine/execution/out_of_core/_capacity_eval.py:307 CapacityEstimate.message = exc.message
+src/decoy_engine/execution/out_of_core/_capacity_eval.py:255 CapacityEstimate.message = exc.message
+src/decoy_engine/plan/validate/_consolidator.py:89 PlanCheckError.message = exc.message
+src/decoy_engine/plan/validate/_consolidator.py:93 PlanCheckError.message = exc.message
+src/decoy_engine/unmask.py:212 UnmaskColumnReport.detail = detail
+src/decoy_engine/unmask.py:434 UnmaskColumnReport.detail = detail
+src/decoy_engine/unmask.py:383 UnmaskColumnReport.detail = f'{strategy} does not retain the information needed to invert'
+## logcalls.py (R2 census)
+116 calls in 37 files; 85 with arguments in 29 files
+   2  2 src/decoy_engine/connectors/postgres_snapshot.py
+   3  3 src/decoy_engine/disguises/loader.py
+   1  1 src/decoy_engine/execution/_governor_monitor.py
+   2  2 src/decoy_engine/execution/_isolated_memwatch.py
+   2  1 src/decoy_engine/execution/_isolated_run.py
+   1  1 src/decoy_engine/execution/_pipeline_auto_chunk.py
+   1  1 src/decoy_engine/execution/_pipeline_multi_table.py
+   1  1 src/decoy_engine/execution/_transforms.py
+   2  2 src/decoy_engine/execution/_unified_slice.py
+   2  2 src/decoy_engine/execution/_when_gate.py
+   1  0 src/decoy_engine/execution/out_of_core/_capacity_eval.py
+   1  1 src/decoy_engine/execution/out_of_core/_spill_estimate.py
+   2  1 src/decoy_engine/generation/_fidelity_gate.py
+  13  3 src/decoy_engine/generators/_distribution.py
+   6  3 src/decoy_engine/generators/_formula.py
+  15 15 src/decoy_engine/generators/columns.py
+   8  8 src/decoy_engine/internal/faker_setup.py
+   9  8 src/decoy_engine/internal/logging.py
+   5  3 src/decoy_engine/internal/memory.py
+   1  1 src/decoy_engine/profile/_pii.py
+   1  0 src/decoy_engine/profiling/model_pack/classify.py
+   6  6 src/decoy_engine/profiling/model_pack/loader.py
+   2  2 src/decoy_engine/profiling/model_pack/provenance.py
+   8  4 src/decoy_engine/profiling/profiler.py
+   1  0 src/decoy_engine/quality/_freetext_advisory.py
+   1  0 src/decoy_engine/quality/_retention_gate.py
+   1  0 src/decoy_engine/quality/dp_policy.py
+   1  1 src/decoy_engine/quarantine.py
+   2  2 src/decoy_engine/reference_tables/_loader.py
+   1  1 src/decoy_engine/transforms/_codeset_loader.py
+   1  0 src/decoy_engine/transforms/_text_mask_splice.py
+   4  4 src/decoy_engine/transforms/base.py
+   1  0 src/decoy_engine/transforms/bucket_perturb.py
+   4  4 src/decoy_engine/transforms/date_shift.py
+   1  1 src/decoy_engine/transforms/formula.py
+   2  0 src/decoy_engine/transforms/geo_generalize.py
+   1  1 src/decoy_engine/transforms/text_mask.py
+## r7b.py (except-bound text reads)
+inside raise: 79 | outside raise: 39 in 24 files {'str()': 4, 'fstring': 26, '.message': 9}
+  2 connectors/sftp.py
+  1 execution/_job_estimate.py
+  2 execution/_mixed_static.py
+  1 execution/_pipeline_full_frame.py
+  3 execution/_planner.py
+  1 execution/_sequential_native_group_key.py
+  1 execution/_strategies/_code_set.py
+  3 execution/capacity.py
+  1 execution/native/_requirements.py
+  2 execution/out_of_core/_capacity_eval.py
+  1 expressions/_when_parser.py
+  1 generation/_window_admission.py
+  1 internal/memory.py
+  3 plan/_checks_dp.py
+  2 plan/_generation.py
+  2 plan/validate/_consolidator.py
+  1 profile/_fixed_width_reader.py
+  1 profiling/profiler.py
+  1 subset/_edges.py
+  3 transforms/_codeset_loader.py
+  1 transforms/base.py
+  1 transforms/date_shift.py
+  1 verification/postmask/policy_validation.py
+  3 verification/postmask/runner.py
