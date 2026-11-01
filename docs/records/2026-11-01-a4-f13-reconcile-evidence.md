@@ -269,3 +269,17 @@ patched: `profile/_readers.py:_build_file_source` renders `{path!r}` when the de
 is not a `str` (a `PathLike` shows the path); `plan/_serialize.py` names an embedded snapshot's
 recorded `source_path` in `dp_pinned_snapshot_digest_mismatch` text and `path`, whatever policy is
 installed. Both are main's text, outside this branch's diff.
+
+Full suite, round 3 (pyproject addopts, `pytest tests`, venvs from each tree's `uv.lock`, run on
+the code at e5ac344b; the later commits change only docs):
+
+| Python | main 1ee89e68 | head e5ac344b |
+|---|---|---|
+| 3.10.20 | 0 failed, 29053 passed, 5286 skipped, 6 xfailed, 65 xpassed | 0 failed, 29962 passed, 5288 skipped, 6 xfailed, 65 xpassed |
+| 3.12.3 | 1 failed (`tests/unit/execution/test_categorical_weighted.py::TestCdfBuilder::test_skewed_weights_skew_cdf`, known), 28968 passed, 5370 skipped | 1 failed (the same id), 29877 passed, 5372 skipped |
+
+The failing ids are the same for head and main on both interpreters.
+
+Not run in round 3: native companion (native-only tests skip, as on main), CI, platform or CLI
+suites, live Vault, Windows, a mutmut campaign (one hand mutation per mechanism, fourteen in all),
+ruff/mypy on 3.12 (run on 3.10 only).
