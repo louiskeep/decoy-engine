@@ -125,10 +125,14 @@ def check_determinism(
     cross-process leg (the real hard gate) is proven separately in
     test_mimesis_adapter.py::test_seeded_batch_reproducible_cross_process.
     """
-    spec = ProviderSpec(locale=locale, deterministic=False, namespace=None, seed=seed)
-    run1 = MimesisAdapter(locale=locale).generate_batch(provider, spec=spec, count=64)
-    run2 = MimesisAdapter(locale=locale).generate_batch(provider, spec=spec, count=64)
-    return list(run1) == list(run2), {"sample_count": 64}
+    try:
+        spec = ProviderSpec(locale=locale, deterministic=False, namespace=None, seed=seed)
+        run1 = MimesisAdapter(locale=locale).generate_batch(provider, spec=spec, count=64)
+        run2 = MimesisAdapter(locale=locale).generate_batch(provider, spec=spec, count=64)
+        return list(run1) == list(run2), {"sample_count": 64}
+    except BaseException:
+        del seed
+        raise
 
 
 def check_distribution(

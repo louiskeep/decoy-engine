@@ -30,7 +30,7 @@ tables keep native acceleration.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol
 
 import pyarrow as pa
@@ -60,7 +60,7 @@ from ._crypto_ext import (
 
 @dataclass(frozen=True)
 class GroupKeyRawKatVector:
-    mask_key: bytes
+    mask_key: bytes = field(repr=False)
     namespace: str
     hex_chars: int
     values: tuple[str, ...]
@@ -143,18 +143,22 @@ class _CompiledRawHexKernel:
     ) -> pa.Array:
         # Fail before the compiled kernel is even called, matching the
         # reference's unconditional pre-loop guard exactly.
-        key = _require_mask_key(mask_key, "group_key_derivation")
-        array = values.combine_chunks() if isinstance(values, pa.ChunkedArray) else values
         try:
-            return self._derive_hex_raw_batch_fn(
-                array,
-                mask_key=key,
-                namespace=namespace,
-                hex_chars=hex_chars,
-                native_threads=native_threads,
-            )
-        except ValueError as exc:
-            raise _translate_compiled_raw_hex_kernel_error(exc) from exc
+            mask_key = _require_mask_key(mask_key, "group_key_derivation")
+            array = values.combine_chunks() if isinstance(values, pa.ChunkedArray) else values
+            try:
+                return self._derive_hex_raw_batch_fn(
+                    array,
+                    mask_key=mask_key,
+                    namespace=namespace,
+                    hex_chars=hex_chars,
+                    native_threads=native_threads,
+                )
+            except ValueError as exc:
+                raise _translate_compiled_raw_hex_kernel_error(exc) from exc
+        except BaseException:
+            del mask_key
+            raise
 
 
 # ---------------------------------------------------------------------------
@@ -291,22 +295,26 @@ class _ReferenceRawHexDerivation:
         # `native_threads` is accepted for Protocol conformance but IGNORED: the
         # compiled kernel is thread-invariant, so the single-threaded reference
         # is a sound parity oracle at every thread count.
-        del native_threads
-        key = _require_mask_key(mask_key, "group_key_derivation")
-        n_bytes = hex_chars // 2
-        # Accept the pa.Array / pa.ChunkedArray / list forms the Protocol admits.
-        if isinstance(values, list):
-            items = values
-        else:
-            array = values.combine_chunks() if isinstance(values, pa.ChunkedArray) else values
-            items = array.to_pylist()
-        out: list[str | None] = []
-        for value in items:
-            if value is None:
-                out.append(None)
-                continue
-            out.append(derive(key, namespace, str(value).encode("utf-8"))[:n_bytes].hex())
-        return pa.array(out, type=pa.string())
+        try:
+            del native_threads
+            mask_key = _require_mask_key(mask_key, "group_key_derivation")
+            n_bytes = hex_chars // 2
+            # Accept the pa.Array / pa.ChunkedArray / list forms the Protocol admits.
+            if isinstance(values, list):
+                items = values
+            else:
+                array = values.combine_chunks() if isinstance(values, pa.ChunkedArray) else values
+                items = array.to_pylist()
+            out: list[str | None] = []
+            for value in items:
+                if value is None:
+                    out.append(None)
+                    continue
+                out.append(derive(mask_key, namespace, str(value).encode("utf-8"))[:n_bytes].hex())
+            return pa.array(out, type=pa.string())
+        except BaseException:
+            del mask_key
+            raise
 
 
 def reference_raw_hex_derivation() -> RawHexDerivationKernel:

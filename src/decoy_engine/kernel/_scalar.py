@@ -80,14 +80,18 @@ def hash_array(
     derive_func=derive,
 ) -> pa.Array:
     """Mask non-null values with derive(seed, namespace, canonical(value)).hex()."""
-    out: list[str | None] = []
-    for value in _array_to_pylist(values):
-        if _is_missing(value):
-            out.append(None)
-            continue
-        token = derive_func(seed, namespace, canonicalize_derive_source(value)).hex()
-        out.append(token[:truncate] if truncate is not None else token)
-    return pa.array(out, type=pa.string())
+    try:
+        out: list[str | None] = []
+        for value in _array_to_pylist(values):
+            if _is_missing(value):
+                out.append(None)
+                continue
+            token = derive_func(seed, namespace, canonicalize_derive_source(value)).hex()
+            out.append(token[:truncate] if truncate is not None else token)
+        return pa.array(out, type=pa.string())
+    except BaseException:
+        del seed
+        raise
 
 
 def _redact_array_reference(

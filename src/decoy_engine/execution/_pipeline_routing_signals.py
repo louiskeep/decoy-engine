@@ -19,20 +19,26 @@ exactly the bounded input shape that most needs it.
 from __future__ import annotations
 
 import warnings
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
+from decoy_engine import fileaccess
 from decoy_engine.config import post_scan_integrity_requested
-from decoy_engine.execution._mem_estimate_arrow import column_arrow_types as _column_arrow_types
-from decoy_engine.execution._mem_estimate_arrow import source_nullable_columns
+from decoy_engine.execution._mem_estimate_arrow import (  # noqa: F401 - read here by tests
+    column_arrow_types as _column_arrow_types,
+)
+from decoy_engine.execution._pipeline_routing_samples import _mask_specs as _mask_specs
+from decoy_engine.execution._pipeline_routing_samples import (
+    _resident_column_arrays as _resident_column_arrays,
+)
 from decoy_engine.execution._transforms_admission import admission_signals, decline_out_of_core
 from decoy_engine.profile._readers import LazySource
 
 if TYPE_CHECKING:
     from decoy_engine.plan._types import Plan
-    from decoy_engine.profile._types import Profile, TableProfile
+    from decoy_engine.profile._types import Profile
     from decoy_engine.providers_v2 import ProviderRegistry
     from decoy_engine.relationships import RelationshipGraph
 
@@ -269,43 +275,6 @@ def out_of_core_routing_signals(
     return compatible, reject_code, rows, exact
 
 
-def _mask_specs(mask_tables: Sequence[Any], caller_sources: Mapping[str, Any]) -> tuple[Any, ...]:
-    """The `TableSizeSpec` of each mask table, typed from its caller source if any."""
-    from decoy_engine.execution._mem_estimate_schema import table_size_spec_from_profile
-
-    return tuple(
-        table_size_spec_from_profile(
-            table,
-            sample=_resident_column_arrays(caller_sources.get(table.name), table),
-            arrow_types=_column_arrow_types(caller_sources.get(table.name), table),
-            masked_columns=source_nullable_columns(caller_sources.get(table.name)),
-        )
-        for table in mask_tables
-    )
-
-
-def _resident_column_arrays(
-    resident: pa.Table | LazySource | None, profile_table: TableProfile
-) -> dict[str, pa.Array | pa.ChunkedArray]:
-    """`{column_name: array}` for `profile_table`'s columns present in a
-    RESIDENT source, or `{}` for a lazy (not-yet-loaded) table.
-
-    Zero-copy: `pa.Table.column` returns a view into the existing Arrow
-    buffer, not a copy.
-
-    TB-1: a `LazySource` is treated like `None` -- sampling it would force a
-    full read, which the byte-estimate / probe-recovery admission path must
-    never do. An unsampleable variable-width column is UNPRICEABLE, which the
-    byte-estimate router treats as "does not fit" and routes bounded.
-    """
-    if resident is None or isinstance(resident, LazySource):
-        return {}
-    names = set(resident.column_names)
-    return {
-        col.name: resident.column(col.name) for col in profile_table.columns if col.name in names
-    }
-
-
 def byte_estimate_full_frame_fits(
     profile: Any,
     *,
@@ -408,6 +377,7 @@ def resolve_probe_recovery(
     measure:
 
       - either flag is off;
+      - a strict file-access policy is installed (the probe needs a child process);
       - `full_frame_fits_estimate is True` already -- nothing to recover,
         the static estimate already admits full_frame;
       - no mask-kind table exists;
@@ -450,6 +420,10 @@ def resolve_probe_recovery(
     if not (use_probe_routing and use_byte_estimate_routing):
         return None
     if full_frame_fits_estimate is True:
+        return None
+    if not fileaccess.is_ambient():
+        # The probe runs the job in a child process, which cannot carry a strict policy;
+        # "inconclusive" leaves routing to the static estimate instead of refusing the job.
         return None
 
     mask_tables = [t for t in profile.tables if table_kinds.get(t.name) == "mask"]

@@ -59,6 +59,7 @@ from decoy_engine.execution.native._chunked_evidence import (
     chunk_route_evidence,
     plan_column_backends,
 )
+from decoy_engine.execution.native._chunked_oracle_rows import _oracle_preserved_rows
 from decoy_engine.execution.native._chunked_pools import (
     prepared_categoricals,
     resolve_admitted_pools,
@@ -83,6 +84,7 @@ from decoy_engine.execution.native._route_decline_codes import (
     table_decline,
 )
 from decoy_engine.execution.native._when_mask import plan_when_masks
+from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.generation.pool import PoolCache, ValuePool
 from decoy_engine.instrumentation.timing import StrategyTimingRecord
 from decoy_engine.progress import get_active_channel
@@ -173,11 +175,6 @@ def _oracle_route(
     )
 
 
-def _oracle_preserved_rows(quality_metrics: dict[str, Any]) -> dict[str, int]:
-    """The oracle leg's D1c sentinel counts per column, from the handlers' own metrics."""
-    return {e["column"]: e["preserved_rows"] for e in quality_metrics.get("date_preserve", ())}
-
-
 def _native_chunk_result(
     *,
     table: str,
@@ -252,12 +249,14 @@ def _native_route(
     the plan does not cover; they are carried unchanged. A group_key column reads its sibling
     from the raw chunk, so the loop keeps both tables (see `_mask_chunk_native`); everything else
     works on the cast one."""
+    from decoy_engine._opaque import OpaqueBox
     from decoy_engine.errors import RowErrorsFailedError
     from decoy_engine.keyprovider import require_mask_key
 
     first = state.first
     plan = state.plan
-    mask_key = require_mask_key(plan, state.key_provider)
+    # Boxed (`_opaque`): the generator below and this frame outlive many raises.
+    key_box = OpaqueBox(require_mask_key(plan, state.key_provider))
     table_seed = next((ts for (name, ts) in plan.seed_envelope.per_table if name == table), None)
     if table_seed is None:  # pragma: no cover - admission implies a seed envelope
         raise AssertionError(
@@ -312,7 +311,7 @@ def _native_route(
             masked = _mask_chunk_native(
                 chunk,
                 col_seed_by_name=col_seed_by_name,
-                mask_key=mask_key,
+                mask_key=key_box.open()[0],
                 evidence=decision,
                 pool_by_column=pool_by_column,
                 native_threads=native_threads,
@@ -333,11 +332,10 @@ def _native_route(
                 table=table,
                 preserved_rows=preserved_rows,
             )
-            # The one enforcement point: the same call the stock adapter makes, so the
-            # warning (and, if a table were ever admitted under `error`, the refusal)
-            # cannot drift from the oracle route's. The operator warnings (fpe residual, C6a §3e;
-            # text_mask sub-floor, C6b-i) are already in work order and ride FIRST, with the
-            # projection warnings LAST, which is the oracle route's order.
+            # The one enforcement point: the same call the stock adapter makes, so the warning
+            # (and, if a table were ever admitted under `error`, the refusal) cannot drift from the
+            # oracle route's. The operator warnings (fpe residual, C6a §3e; text_mask sub-floor,
+            # C6b-i) ride FIRST, in work order, the projection warnings LAST: the oracle's order.
             warnings = (
                 *operator_warnings,
                 *enforce_output_projection(
@@ -346,10 +344,9 @@ def _native_route(
             )
             row_errors = format_error_records(table, format_errors)
             if row_errors:
-                # The oracle leg's rule: a per-row error cannot be routed anywhere on the
-                # chunked path, and yielding the chunk would leave the raw value in the
-                # output. Record the failing chunk, then fail before the offset advances,
-                # the vault is written or the chunk is yielded.
+                # The oracle leg's rule: a per-row error cannot be routed on the chunked path, and
+                # yielding the chunk would leave the raw value in the output. Record the failing
+                # chunk, then fail before the offset advances, the vault is written or it yields.
                 if chunk_result_sink is not None:
                     chunk_result_sink.append(
                         _native_chunk_result(
@@ -583,6 +580,7 @@ def _route_chunked(
     )
 
 
+@entry_point
 def run_mask_chunked(
     config: dict[str, Any],
     chunks: Iterable[pa.Table],
@@ -598,6 +596,7 @@ def run_mask_chunked(
     native_threads: int = 1,
     route_evidence_sink: list[NativeRouteEvidence] | None = None,
     pool_cache: PoolCache | None = None,
+    file_access: FileAccess | None = None,
 ) -> Iterator[pa.Table]:
     """Mask `table` chunk-by-chunk, natively when the whole table admits.
 

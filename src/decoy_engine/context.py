@@ -18,6 +18,8 @@ paths use it partially.
 from collections.abc import Callable
 from typing import Any, Literal, Protocol, runtime_checkable
 
+from decoy_engine._opaque import OpaqueBox
+
 
 @runtime_checkable
 class Logger(Protocol):
@@ -359,14 +361,18 @@ def _hkdf_sha256(master: bytes, info: str, length: int = 32) -> bytes:
     sites (verified by reference-vector unit tests in
     `tests/unit/test_hkdf.py`).
     """
-    from decoy_engine.determinism._hkdf import hkdf_sha256
+    try:
+        from decoy_engine.determinism._hkdf import hkdf_sha256
 
-    return hkdf_sha256(
-        ikm=master,
-        salt=b"\x00" * 32,
-        info=info.encode("utf-8"),
-        length=length,
-    )
+        return hkdf_sha256(
+            ikm=master,
+            salt=b"\x00" * 32,
+            info=info.encode("utf-8"),
+            length=length,
+        )
+    except BaseException:
+        del master
+        raise
 
 
 def make_key_resolver(
@@ -384,11 +390,16 @@ def make_key_resolver(
     ``api/keys/make_resolver`` is structurally identical and produces the
     same bytes given the same inputs.
     """
-    if not isinstance(master, (bytes, bytearray)) or len(master) != 32:
+    # No frame on a traceback keeps the master or the pipeline key: both are dropped or boxed
+    # before anything can raise, and the closure holds only the box (`_opaque`).
+    box = OpaqueBox(master)
+    del master
+    if not isinstance(box.open()[0], (bytes, bytearray)) or len(box.open()[0]) != 32:
         raise ValueError("master key must be 32 bytes")
-    pipeline_key = _hkdf_sha256(master, f"pipeline:{pipeline_label}")
+    pipeline_key = OpaqueBox(_hkdf_sha256(box.open()[0], f"pipeline:{pipeline_label}"))
 
     def resolver(info: str) -> bytes:
-        return _hkdf_sha256(pipeline_key, info)
+        info.encode("utf-8")  # a malformed label fails here, before the key is unboxed
+        return _hkdf_sha256(pipeline_key.open()[0], info)
 
     return resolver

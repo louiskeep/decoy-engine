@@ -445,6 +445,13 @@ UNCLASSIFIED: dict[str, str] = {
     "UnknownReasonError": (
         "an unregistered reason identity; the phase boundary converts it to PhaseContractError"
     ),
+    # E1 file-access errors carry an encoded field key and no code. The denial has its fixed
+    # identity (decoy.file_access_denied, reason_adapter._FIXED); these two have none yet.
+    "FileAccessReadError": "a library failure on an authorized file; text is the encoded position",
+    "FileAccessUnavailable": "no policy where one is required, or an unservable strict route",
+    # A-4 x F13: an internal carrier between the file provider and the admission boundary, which
+    # rebuilds it into one closed-set class; it never reaches a caller.
+    "KeptFileFailure": "internal carrier; the admission boundary rebuilds it, never raised to callers",
 }
 
 

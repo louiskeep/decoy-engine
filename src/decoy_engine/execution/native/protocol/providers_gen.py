@@ -58,7 +58,11 @@ class _SeededFromBytesNumpyProvider(DrawSiteProvider):
     """
 
     def generator(self, seed: bytes) -> np.random.Generator:
-        return np.random.default_rng(int.from_bytes(seed, "big"))
+        try:
+            return np.random.default_rng(int.from_bytes(seed, "big"))
+        except BaseException:
+            del seed
+            raise
 
 
 class PoolNonDeterministicProvider(_SeededFromBytesNumpyProvider):
@@ -73,7 +77,11 @@ class CompositeBuildPoolProvider(_SeededFromBytesNumpyProvider):
     draw_site_id = "gen.composite_build_pool"
 
     def generator(self, seed: bytes | None) -> np.random.Generator:
-        return super().generator(seed if seed else b"\x00" * 8)
+        try:
+            return super().generator(seed if seed else b"\x00" * 8)
+        except BaseException:
+            del seed
+            raise
 
 
 # ---------------------------------------------------------------------------
@@ -249,8 +257,12 @@ class FakerPoolBuildProvider(DrawSiteProvider):
         namespace: str | None,
         config_hash: str,
     ) -> bytes:
-        pool_namespace = f"pool/{provider}/{locale or 'default'}/{namespace or '_default'}"
-        return derive(job_seed, pool_namespace, config_hash.encode("utf-8"))[:8]
+        try:
+            pool_namespace = f"pool/{provider}/{locale or 'default'}/{namespace or '_default'}"
+            return derive(job_seed, pool_namespace, config_hash.encode("utf-8"))[:8]
+        except BaseException:
+            del job_seed
+            raise
 
     def faker_seed_int(
         self,
@@ -260,9 +272,13 @@ class FakerPoolBuildProvider(DrawSiteProvider):
         namespace: str | None,
         config_hash: str,
     ) -> int:
-        return int.from_bytes(
-            self.pool_seed(job_seed, provider, locale, namespace, config_hash), "big"
-        )
+        try:
+            return int.from_bytes(
+                self.pool_seed(job_seed, provider, locale, namespace, config_hash), "big"
+            )
+        except BaseException:
+            del job_seed
+            raise
 
     def partitioned_draw(
         self,
@@ -272,8 +288,12 @@ class FakerPoolBuildProvider(DrawSiteProvider):
         namespace: str | None,
         config_hash: str,
     ) -> bytes:
-        self.assert_partitionable()
-        return self.pool_seed(job_seed, provider, locale, namespace, config_hash)
+        try:
+            self.assert_partitionable()
+            return self.pool_seed(job_seed, provider, locale, namespace, config_hash)
+        except BaseException:
+            del job_seed
+            raise
 
 
 # ---------------------------------------------------------------------------

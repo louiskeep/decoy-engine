@@ -83,9 +83,33 @@ def test_a_bumped_addition_with_a_new_since_is_accepted() -> None:
 
 
 def test_an_unbumped_addition_to_the_live_catalog_fails_the_checked_in_pin() -> None:
-    live = _live()
-    live["entries"].append({**live["entries"][0], "code": "brand_new_code"})
-    assert any("without a registry version bump" in p for p in pin_violations(_pin(), live))
+    # The premise is stated, not inherited: the live catalog sits at the PINNED version (no
+    # bump), whatever version the registry has moved to since the release.
+    pin = _pin()
+    live = copy.deepcopy(_live())
+    live["registry_version"] = pin["registry_version"]
+    live["entries"].append(
+        {**live["entries"][0], "code": "brand_new_code", "since": pin["registry_version"]}
+    )
+    expected = (
+        f"the catalog released as {pin['registry_version']} changed without a registry version bump"
+    )
+    assert expected in pin_violations(pin, live)
+
+
+def test_a_bumped_addition_to_the_live_catalog_passes_the_checked_in_pin() -> None:
+    # The sibling: the same addition under a version above the pin, claiming that version, is a
+    # correct bump and reports nothing.
+    pin = _pin()
+    pinned = Version(pin["registry_version"])
+    bumped = max(
+        Version(_live()["registry_version"]), Version(f"{pinned.major}.{pinned.minor + 1}.0")
+    )
+    live = copy.deepcopy(_live())
+    live["registry_version"] = str(bumped)
+    live["entries"].append({**live["entries"][0], "code": "brand_new_code", "since": str(bumped)})
+    assert bumped > pinned
+    assert pin_violations(pin, live) == []
 
 
 def since_violations(v1_pin: dict, live: dict) -> list[str]:

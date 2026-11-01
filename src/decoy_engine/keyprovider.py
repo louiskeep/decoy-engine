@@ -36,9 +36,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-from decoy_engine import reasons
+from decoy_engine import fileaccess, reasons
 from decoy_engine.determinism._hkdf import hkdf_sha256
 from decoy_engine.errors import DecoyError
+from decoy_engine.fileaccess import FileAccess
 
 if TYPE_CHECKING:
     from decoy_engine.plan._types import Plan
@@ -117,7 +118,7 @@ class KeyProvider(Protocol):
     def mask_key(self) -> bytes: ...
 
 
-@dataclass(frozen=True, repr=False)
+@dataclass(frozen=True, repr=False, init=False)
 class SecretKeyProvider:
     """GA path: a managed, opaque >=32-byte secret. Derives a versioned root.
 
@@ -130,6 +131,17 @@ class SecretKeyProvider:
 
     secret: bytes
     key_version: str = "v1"
+
+    def __init__(self, secret: bytes, key_version: str = "v1") -> None:
+        # Hand-written instead of the generated one so no frame on a refusal's traceback keeps
+        # the secret: `__post_init__` raises on a weak secret after this frame drops its name.
+        try:
+            object.__setattr__(self, "secret", secret)
+            object.__setattr__(self, "key_version", key_version)
+            self.__post_init__()
+        except BaseException:
+            del secret
+            raise
 
     def __post_init__(self) -> None:
         if not isinstance(self.secret, (bytes, bytearray)):
@@ -175,16 +187,25 @@ class SeedKeyProvider:
         return self.job_seed
 
 
-def key_provider_from_ref(ref: str, *, key_version: str | None = None) -> KeyProvider:
+@fileaccess.entry_point
+def key_provider_from_ref(
+    ref: str, *, key_version: str | None = None, file_access: FileAccess | None = None
+) -> KeyProvider:
     """Admit a `mask_secret_ref` through the secret-provider choke point.
+
+    `file_access` is the policy a `file:` secret is read under (the ambient CLI policy when
+    omitted).
 
     Returns a `KeyProvider` view of the prepared secret; the caller owns its lifetime (nothing
     closes it automatically and nothing caches it). Prefer
     `decoy_engine.secret_providers.admit_mask_key`, which also owns closing.
     """
-    from decoy_engine.secret_providers import prepare_ref
+    from decoy_engine.secret_providers import _preflight
 
-    return prepare_ref(ref, key_version=key_version).key_provider()
+    # The boxed-entry pattern of the admission boundary: nothing in this frame names the ref.
+    box = _preflight._OpaqueBox(ref, key_version)
+    del ref, key_version, file_access
+    return _preflight._call_closed(_preflight._ref_boxed, box).key_provider()
 
 
 def plan_has_keyed_strategy(plan: Plan) -> bool:
@@ -221,9 +242,13 @@ def require_mask_key(plan: Plan, key_provider: KeyProvider | None) -> bytes:
     if key_provider is None or isinstance(key_provider, SeedKeyProvider):
         raise KeyedStrategyRequiresSecret(KEY_REQUIRED_GUIDANCE)
     mask_key = key_provider.mask_key()
-    if len(mask_key) < MIN_SECRET_BYTES:
-        raise KeyedStrategyRequiresSecret(KEY_REQUIRED_GUIDANCE)
-    return mask_key
+    try:
+        if len(mask_key) < MIN_SECRET_BYTES:
+            raise KeyedStrategyRequiresSecret(KEY_REQUIRED_GUIDANCE)
+        return mask_key
+    except BaseException:
+        del mask_key  # a traceback keeps this frame: the short key must not be among its locals
+        raise
 
 
 def mask_key_from_provider(provider: KeyProvider | None, job_seed: bytes) -> bytes:
@@ -231,7 +256,11 @@ def mask_key_from_provider(provider: KeyProvider | None, job_seed: bytes) -> byt
 
     Ungated -- callers that need the fail-closed gate use `require_mask_key`.
     """
-    return provider.mask_key() if provider is not None else job_seed
+    try:
+        return provider.mask_key() if provider is not None else job_seed
+    except BaseException:
+        del job_seed
+        raise
 
 
 def resolve_mask_key(*, plan: Plan, key_provider: KeyProvider | None = None) -> bytes:

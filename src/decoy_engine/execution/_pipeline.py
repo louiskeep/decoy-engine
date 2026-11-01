@@ -85,6 +85,7 @@ from decoy_engine.execution._planner import (
     OUT_OF_CORE_THRESHOLD_ROWS_DEFAULT,
 )
 from decoy_engine.execution._transforms_prepare import prepare_transform_sources
+from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.profile._readers import LazySource
 from decoy_engine.progress import ProgressChannel, ProgressSink, use_progress
 from decoy_engine.secret_providers import AdmissionScope
@@ -100,18 +101,16 @@ if TYPE_CHECKING:
 
 __all__ = ["classify_table_kinds", "run_pipeline"]
 
-# The substrate/auto-chunk knob defaults live on `_pipeline_finalize` now
-# (single source of truth for both this signature and the non-default-ness
-# check `stamp_execution_metrics` computes); referenced here via the
-# already-imported module so this file does not re-declare them.
-# SC2 out-of-core auto-routing thresholds (per largest mask table). Defaults
-# target the 32 GB deployment box; see `_planner` for the memory-model
-# reasoning. Plumbed as run_pipeline kwargs so the platform SC5 estimator can
-# override them with box+schema-calibrated values.
+# The substrate/auto-chunk knob defaults live on `_pipeline_finalize` now (single source of truth
+# for this signature and the non-default-ness check `stamp_execution_metrics` computes).
+# SC2 out-of-core auto-routing thresholds (per largest mask table). Defaults target the 32 GB
+# deployment box; see `_planner` for the memory-model reasoning. Plumbed as run_pipeline kwargs so
+# the platform SC5 estimator can override them with box+schema-calibrated values.
 _OUT_OF_CORE_THRESHOLD_DEFAULT = OUT_OF_CORE_THRESHOLD_ROWS_DEFAULT
 _FULL_FRAME_REJECT_DEFAULT = FULL_FRAME_REJECT_ROWS_DEFAULT
 
 
+@entry_point
 def run_pipeline(
     config: dict[str, Any],
     sources: Mapping[str, pa.Table | LazySource] | None = None,
@@ -153,6 +152,7 @@ def run_pipeline(
     secret_registry: SecretProviderRegistry | None = None,
     secret_cache_policy: SecretCachePolicy | None = None,
     _provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None = None,
+    file_access: FileAccess | None = None,
 ) -> ExecutionResult:
     """Execute a mixed mask + generate config end-to-end.
 

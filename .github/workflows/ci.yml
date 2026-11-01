@@ -113,6 +113,8 @@ jobs:
         # lean-install profile; see packaging-gate below for the corresponding
         # "base wheel does not require boto3/google-cloud-storage" assertion.
         run: pip install -e ".[dev,cloud]"
+      - name: Install strace (the file-access runtime detector; it fails, never skips, without it)
+        run: sudo apt-get update && sudo apt-get install -y strace
       - name: Routing guard (every named suite directory must exist)
         run: |
           for d in \
@@ -122,6 +124,7 @@ jobs:
             tests/parity \
             tests/integration/golden \
             tests/sentry \
+            tests/fileaccess \
             tests/security \
             tests/privacy ; do
             test -d "$d" || { echo "MISSING SUITE DIR: $d"; exit 1; }

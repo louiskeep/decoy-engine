@@ -3,11 +3,12 @@ Logging utilities for the decoy_engine package.
 """
 
 import logging
-import os
 import time
 from logging.handlers import RotatingFileHandler
-from pathlib import Path
 from typing import Any
+
+from decoy_engine import fileaccess
+from decoy_engine.fileaccess import FileAccessUnavailable, LocalFileAccess
 
 # Create a module-level logger instance
 _LOGGER_INSTANCE = None
@@ -31,6 +32,15 @@ def get_logger(config: dict[str, Any] | None = None):
         _configure_logger(_LOGGER_INSTANCE, config)
 
     return _LOGGER_INSTANCE
+
+
+def _ambient_policy() -> LocalFileAccess | None:
+    """The ambient CLI policy when file logging is allowed, else None."""
+    try:
+        policy = fileaccess.capture()
+    except FileAccessUnavailable:
+        return None
+    return policy if isinstance(policy, LocalFileAccess) else None
 
 
 def _create_logger(config: dict[str, Any] | None = None):
@@ -99,16 +109,15 @@ def _configure_logger(logger, config: dict[str, Any]):
     # AND degrade gracefully on OSError/PermissionError, falling back
     # to console-only logging with a warning.
     log_file = config.get("file", "logs/decoy_engine.log")
-    if log_file:
+    # A log file is a path from config, so it is only opened under the ambient CLI policy.
+    # Under any other policy, or once the process forbade ambient access, the setting is
+    # ignored and the platform logs through its own handlers.
+    ambient = _ambient_policy()
+    if log_file and ambient is not None:
         try:
-            log_dir = os.path.dirname(log_file)
-            if log_dir:
-                Path(log_dir).mkdir(parents=True, exist_ok=True)
             max_size_mb = config.get("max_size_mb", 10)
             backup_count = config.get("backup_count", 5)
-            file_handler = RotatingFileHandler(
-                log_file, maxBytes=max_size_mb * 1024 * 1024, backupCount=backup_count
-            )
+            file_handler = ambient.log_handler(log_file, max_size_mb * 1024 * 1024, backup_count)
             file_handler.setFormatter(formatter)
             logger.addHandler(file_handler)
         except (OSError, PermissionError) as exc:

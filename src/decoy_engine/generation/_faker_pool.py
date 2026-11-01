@@ -343,17 +343,21 @@ def build_pool_values(
     `values` truthiness, to tell "genuinely empty pool" apart (impossible
     today: `pool_size` is always > 0) from "build declined".
     """
-    faker_inst = make_faker(effective_locale)
-    provider_callable, exact_name_available, custom_override_present = resolve_pool_provider(
-        faker_inst, faker_type, provider_snapshot=provider_snapshot
-    )
-    if custom_override_present or not exact_name_available:
-        return [], exact_name_available, custom_override_present
-    assert provider_callable is not None  # noqa: S101 -- exact_name_available guarantees this
+    try:
+        faker_inst = make_faker(effective_locale)
+        provider_callable, exact_name_available, custom_override_present = resolve_pool_provider(
+            faker_inst, faker_type, provider_snapshot=provider_snapshot
+        )
+        if custom_override_present or not exact_name_available:
+            return [], exact_name_available, custom_override_present
+        assert provider_callable is not None  # noqa: S101 -- exact_name_available guarantees this
 
-    faker_inst.seed_instance(int.from_bytes(build_seed, "big", signed=False))
-    raw_values = [provider_callable(**faker_kwargs) for _ in range(pool_size)]
-    return raw_values, exact_name_available, custom_override_present
+        faker_inst.seed_instance(int.from_bytes(build_seed, "big", signed=False))
+        raw_values = [provider_callable(**faker_kwargs) for _ in range(pool_size)]
+        return raw_values, exact_name_available, custom_override_present
+    except BaseException:
+        del build_seed
+        raise
 
 
 def _build_and_sample_returning_pool(
@@ -380,34 +384,38 @@ def _build_and_sample_returning_pool(
     custom_override_present)`; the first two are `None` together when the
     build declined (mirrors `build_and_sample`'s `None` return).
     """
-    raw_values, exact_name_available, custom_override_present = build_pool_values(
-        faker_type,
-        effective_locale,
-        build_seed,
-        pool_size,
-        faker_kwargs,
-        provider_snapshot=provider_snapshot,
-    )
-    if custom_override_present or not exact_name_available:
-        return None, None, exact_name_available, custom_override_present
+    try:
+        raw_values, exact_name_available, custom_override_present = build_pool_values(
+            faker_type,
+            effective_locale,
+            build_seed,
+            pool_size,
+            faker_kwargs,
+            provider_snapshot=provider_snapshot,
+        )
+        if custom_override_present or not exact_name_available:
+            return None, None, exact_name_available, custom_override_present
 
-    values = _freeze_array(np.array(raw_values, dtype=object))
-    pool = ValuePool(
-        values=values,
-        provider=f"gen.faker_pool.{faker_type}",
-        locale=effective_locale or "default",
-        config_hash="",
-        seed=build_seed,
-        size=pool_size,
-        build_time_ms=0.0,
-        backend_type="faker",
-        backend_version=_FAKER_VERSION,
-        distinct_count=len(set(values.tolist())),
-    )
-    sampled = PoolSampler().sample(
-        pool, n, mode=CardinalityMode.REUSE, seed=selection_seed, deterministic=False
-    )
-    return values.tolist(), sampled.tolist(), exact_name_available, custom_override_present
+        values = _freeze_array(np.array(raw_values, dtype=object))
+        pool = ValuePool(
+            values=values,
+            provider=f"gen.faker_pool.{faker_type}",
+            locale=effective_locale or "default",
+            config_hash="",
+            seed=build_seed,
+            size=pool_size,
+            build_time_ms=0.0,
+            backend_type="faker",
+            backend_version=_FAKER_VERSION,
+            distinct_count=len(set(values.tolist())),
+        )
+        sampled = PoolSampler().sample(
+            pool, n, mode=CardinalityMode.REUSE, seed=selection_seed, deterministic=False
+        )
+        return values.tolist(), sampled.tolist(), exact_name_available, custom_override_present
+    except BaseException:
+        del build_seed, selection_seed
+        raise
 
 
 def _pool_seeds(gen_ctx: GenDeriveContext) -> tuple[bytes, bytes]:
@@ -435,8 +443,12 @@ class PooledSelector:
     """
 
     def __init__(self, values: Any, selection_seed: bytes) -> None:
-        self._values = values
-        self._rng = np.random.default_rng(_seed_bytes_to_int(selection_seed))
+        try:
+            self._values = values
+            self._rng = np.random.default_rng(_seed_bytes_to_int(selection_seed))
+        except BaseException:
+            del selection_seed
+            raise
 
     def select(self, size: int) -> list[Any]:
         indices = self._rng.integers(0, len(self._values), size=size)
