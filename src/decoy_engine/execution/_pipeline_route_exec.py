@@ -188,7 +188,6 @@ def run_sequential_route(
         quality_metrics=seq_quality_metrics,
         table_kinds=table_kinds,
         row_errors=seq_result.row_errors,
-        publication_receipt=seq_result.publication_receipt,
     )
 
 
@@ -464,7 +463,6 @@ def run_out_of_core_route(
         quality_metrics=quality_metrics,
         table_kinds=table_kinds,
         row_errors=ooc_result.row_errors,
-        publication_receipt=ooc_result.publication_receipt,
     )
 
 

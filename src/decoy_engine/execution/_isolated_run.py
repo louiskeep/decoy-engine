@@ -65,8 +65,10 @@ import json
 import logging
 import os
 import shutil
+import subprocess
+import sys
 import tempfile
-from collections.abc import Callable, Iterable
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -74,34 +76,39 @@ from typing import Any
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from decoy_engine import publication as _pub
 from decoy_engine.execution._isolated_commit import (
     CommitError,
-    PublishContext,
-    StagingLease,
     atomic_commit,
+    read_envelope,
     read_staged_row_errors,
     resolve_staging_output_dir,
     sibling_staging_dir,
     stage_tables,
 )
+from decoy_engine.execution._isolated_commit import signal_name as _signal_name
 from decoy_engine.execution._isolated_common import (
+    CAPPED_ENV,
     ISOLATED_WORKER_ENV,
+    RESULT_FILENAME,
     RLIMIT_KINDS,
     IsolatedRunOutcome,
     IsolatedRunResult,
+    abnormal_exit_text,
+    classify_abnormal_exit,
     commit_error_text,
     exception_error_text,
     is_memory_failure,
     peak_rss_mb,
 )
-from decoy_engine.execution._isolated_spawn import SelfReport, spawn_and_classify
+from decoy_engine.execution._isolated_memwatch import error_suffix, evidence_of, start_sampler
 from decoy_engine.execution._pipeline import run_pipeline
 from decoy_engine.execution._row_errors import RowErrorRecord
 
 __all__ = ["run_pipeline_isolated"]
 
 _logger = logging.getLogger(__name__)
+
+_WORKER_MODULE = "decoy_engine.execution._isolated_worker"
 
 # MED-2: an unbounded default (`None`) means a hung child (a wedged
 # provider, a deadlocked DuckDB query) blocks its caller forever with no
@@ -138,13 +145,6 @@ def run_pipeline_isolated(
     isolate: bool = True,
     on_spawn: Callable[[int], None] | None = None,
     timeout_s: float | None = _DEFAULT_TIMEOUT_S,
-    operation_id: str | None = None,
-    cancel_check: Callable[[], bool] | None = None,
-    checks: Iterable[_pub.CheckResult] = (),
-    validation_policy_fingerprint: str | None = None,
-    expected_tables: Iterable[str] | None = None,
-    unit: str = _pub.UNIT_IMMUTABLE_DIRECTORY,
-    overwrite: _pub.OverwritePolicy = _pub.ErrorIfDifferent(),  # noqa: B008
     **run_pipeline_kwargs: Any,
 ) -> IsolatedRunResult:
     """Run one pipeline job in a fresh child process; return a clean result.
@@ -179,13 +179,6 @@ def run_pipeline_isolated(
             `_DEFAULT_TIMEOUT_S` (30 minutes, MED-2) -- an unconditional
             safety bound, not a tuned per-job budget; pass `None` only if
             you have deliberately decided an unbounded hang is acceptable.
-        operation_id: stable publication identity for `output_dir`; a retry that keeps it
-            gets `already_committed` instead of a failed non-empty-target commit.
-        cancel_check: polled by the parent under the destination lock immediately before
-            the final rename; True refuses publication (`cancelled_before_commit`).
-        checks / validation_policy_fingerprint / expected_tables / unit / overwrite: the
-            publication request the parent enforces at the child gate (before any payload
-            read) and at promotion; a required failing check refuses, nothing is read.
         **run_pipeline_kwargs: forwarded to `run_pipeline` (e.g.
             `engine_version`, `execution_mode`, `native_threads`). See
             `_NOT_SERIALIZABLE_KWARGS` for the excluded subset.
@@ -202,15 +195,6 @@ def run_pipeline_isolated(
             spawned.
     """
     _reject_unserializable_kwargs(run_pipeline_kwargs)
-    publish = PublishContext(
-        operation_id=operation_id,
-        cancelled=cancel_check,
-        checks=tuple(checks),
-        validation_policy_fingerprint=validation_policy_fingerprint,
-        expected_tables=None if expected_tables is None else tuple(expected_tables),
-        unit=unit,
-        overwrite=overwrite,
-    )
     if mem_cap_bytes is not None and rlimit_kind not in RLIMIT_KINDS:
         raise ValueError(f"rlimit_kind={rlimit_kind!r} is not one of {sorted(RLIMIT_KINDS)}")
 
@@ -240,7 +224,7 @@ def run_pipeline_isolated(
                 "per-job sample; do not feed it into telemetry recalibration."
             )
         output_dir_path = Path(output_dir) if output_dir is not None else None
-        return _run_in_process(config, sources, run_pipeline_kwargs, output_dir_path, publish)
+        return _run_in_process(config, sources, run_pipeline_kwargs, output_dir_path)
 
     return _run_isolated(
         config,
@@ -252,7 +236,6 @@ def run_pipeline_isolated(
         on_spawn=on_spawn,
         timeout_s=timeout_s,
         run_pipeline_kwargs=run_pipeline_kwargs,
-        publish=publish,
     )
 
 
@@ -273,7 +256,6 @@ def _run_in_process(
     sources: dict[str, pa.Table] | None,
     run_pipeline_kwargs: dict[str, Any],
     output_dir: Path | None,
-    publish: PublishContext = PublishContext(),  # noqa: B008
 ) -> IsolatedRunResult:
     try:
         result = run_pipeline(config, sources, **run_pipeline_kwargs)
@@ -292,7 +274,6 @@ def _run_in_process(
         )
 
     committed_dir: str | None = None
-    receipt = None
     if output_dir is not None:
         # HIGH-2: honor output_dir in the fallback too, with the same
         # stage-then-atomic-rename discipline as the isolated path (MED-1)
@@ -300,18 +281,10 @@ def _run_in_process(
         # lands on disk despite reporting the same `completed` outcome.
         staging_dir = sibling_staging_dir(output_dir)
         try:
-            with StagingLease(staging_dir):
-                stage_tables(result.outputs, staging_dir)
-                receipt = atomic_commit(
-                    _pub.ChildPreparationEnvelope(
-                        staging_dir,
-                        tuple(result.outputs),
-                        tuple(sorted((t, tbl.num_rows) for t, tbl in result.outputs.items())),
-                    ),
-                    output_dir,
-                    publish=publish,
-                )
+            stage_tables(result.outputs, staging_dir)
+            atomic_commit(staging_dir, output_dir)
         except CommitError as exc:
+            shutil.rmtree(staging_dir, ignore_errors=True)
             return IsolatedRunResult(
                 outcome="crashed",
                 peak_rss_mb=round(peak_rss_mb(), 1),
@@ -322,7 +295,6 @@ def _run_in_process(
                 signal_number=None,
                 error=commit_error_text(exc),
                 isolated=False,
-                publication_receipt=exc.receipt,
             )
         committed_dir = str(output_dir)
 
@@ -338,7 +310,6 @@ def _run_in_process(
         isolated=False,
         committed_output_dir=committed_dir,
         row_errors=tuple(result.row_errors),
-        publication_receipt=receipt,
     )
 
 
@@ -353,7 +324,6 @@ def _run_isolated(
     on_spawn: Callable[[int], None] | None,
     timeout_s: float | None,
     run_pipeline_kwargs: dict[str, Any],
-    publish: PublishContext,
 ) -> IsolatedRunResult:
     owns_work_root = staging_dir is None
     work_root = (
@@ -366,31 +336,24 @@ def _run_isolated(
     staging_output_dir = resolve_staging_output_dir(work_root, output_dir_path)
 
     try:
-        # The lease is the one owner of the staged dataset: whatever does not commit is gone
-        # when this block exits, however it exits (refusal, crash, timeout, cancel, error).
-        with StagingLease(staging_output_dir):
-            payload_path = _write_payload(
-                work_root,
-                config,
-                sources,
-                run_pipeline_kwargs,
-                mem_cap_bytes,
-                rlimit_kind,
-                staging_output_dir,
-            )
-            child = spawn_and_classify(
-                payload_path,
-                on_spawn=on_spawn,
-                timeout_s=timeout_s,
-                mem_cap_bytes=mem_cap_bytes,
-                rlimit_kind=rlimit_kind,
-            )
-            if not isinstance(child, SelfReport):
-                return child
-            result = _result_from_envelope(
-                child.envelope, output_dir_path, child.pid, staging_output_dir, publish
-            )
-            return replace(result, memory_evidence=child.memory_evidence)
+        payload_path = _write_payload(
+            work_root,
+            config,
+            sources,
+            run_pipeline_kwargs,
+            mem_cap_bytes,
+            rlimit_kind,
+            staging_output_dir,
+        )
+        return _spawn_and_classify(
+            payload_path,
+            staging_output_dir,
+            output_dir_path,
+            on_spawn=on_spawn,
+            timeout_s=timeout_s,
+            mem_cap_bytes=mem_cap_bytes,
+            rlimit_kind=rlimit_kind,
+        )
     finally:
         if owns_work_root:
             shutil.rmtree(work_root, ignore_errors=True)
@@ -437,18 +400,131 @@ def _write_payload(
     return payload_path
 
 
-def _result_from_envelope(
-    envelope: dict[str, Any],
-    output_dir: Path | None,
-    pid: int,
+def _spawn_and_classify(
+    payload_path: Path,
     staging_output_dir: Path,
-    publish: PublishContext = PublishContext(),  # noqa: B008
+    output_dir: Path | None,
+    *,
+    on_spawn: Callable[[int], None] | None,
+    timeout_s: float | None,
+    mem_cap_bytes: int | None,
+    rlimit_kind: str,
+) -> IsolatedRunResult:
+    # HIGH-1: the envelope is a known FILE in work_root (payload_path's own
+    # parent), never stdout's last line -- see `_isolated_common.RESULT_
+    # FILENAME`'s docstring for the stdout-contamination class this
+    # replaces. stdout/stderr below remain captured for diagnostics only.
+    result_path = payload_path.parent / RESULT_FILENAME
+    cmd = [sys.executable, "-m", _WORKER_MODULE, str(payload_path)]
+    # _CAPPED_ENV must land BEFORE the child interpreter starts: glibc reads
+    # MALLOC_ARENA_MAX at startup and pyarrow reads ARROW_DEFAULT_MEMORY_POOL
+    # at import, so `env=` at spawn time is the only place this can work.
+    # ISOLATED_WORKER_ENV marks the child as "inside an isolated worker" so a
+    # re-entrant `run_pipeline_isolated` call (probe/governor routing inside
+    # the child's `run_pipeline`) runs in-process instead of spawning a
+    # grandchild -- see that marker's docstring for the runaway it prevents.
+    env = {**os.environ, **CAPPED_ENV, ISOLATED_WORKER_ENV: "1"}
+    proc = subprocess.Popen(  # noqa: S603
+        cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+    )
+
+    sampler = None
+    try:
+        # Started before on_spawn so a callback that kills the child still leaves samples;
+        # inside the try so a construction error still kills and reaps the child.
+        if mem_cap_bytes is not None:
+            sampler = start_sampler(proc.pid, mem_cap_bytes, rlimit_kind)
+        if on_spawn is not None:
+            # The child's PID is live NOW, mid-run -- this is the hook a
+            # governor (or a test simulating one) uses to SIGKILL it before
+            # it can report. MED-3: this call is now INSIDE the try, so a
+            # raising callback still hits the `except BaseException` below
+            # and gets the child killed + reaped rather than leaked.
+            on_spawn(proc.pid)
+        stdout, stderr = proc.communicate(timeout=timeout_s)
+        # Stop before envelope work so late parsing cannot age or extend the evidence.
+        finished = sampler.finish() if sampler else None
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        _stdout, _stderr = proc.communicate()
+        finished = sampler.finish() if sampler else None
+        shutil.rmtree(staging_output_dir, ignore_errors=True)
+        return IsolatedRunResult(
+            outcome="crashed",
+            peak_rss_mb=None,
+            outputs=None,
+            quality_metrics={},
+            table_kinds={},
+            returncode=proc.returncode,
+            signal_number=None,
+            error=f"child exceeded timeout_s={timeout_s}s and was killed",
+            isolated=True,
+            pid=proc.pid,
+            memory_evidence=evidence_of(finished, abnormal=False),
+        )
+    except BaseException:
+        # MED-3: on_spawn raised (a governor bug, not the child's fault).
+        # Guarantee the child is killed and reaped here -- otherwise it is
+        # a zombie + leaked stdout/stderr pipe fds the instant this
+        # exception propagates past a caller who never gets a PID to
+        # clean up themselves.
+        proc.kill()
+        proc.communicate()
+        if sampler:
+            sampler.finish()
+        raise
+
+    envelope = read_envelope(result_path)
+    if (
+        proc.returncode == 0
+        and envelope is not None
+        and envelope.get("outcome")
+        in (
+            "completed",
+            "oom_killed",
+            "crashed",
+        )
+    ):
+        result = _result_from_envelope(envelope, output_dir, proc.pid, staging_output_dir)
+        return replace(result, memory_evidence=evidence_of(finished, abnormal=False))
+
+    # The child died too hard to self-report (a harder rlimit trip the
+    # kernel turned into a signal, or an external SIGKILL -- the governor
+    # simulation teeth). Classify from the outside; nothing was ever
+    # committed to output_dir, so discard whatever the child may have
+    # started staging.
+    shutil.rmtree(staging_output_dir, ignore_errors=True)
+    outcome = classify_abnormal_exit(proc.returncode, stderr)
+    signal_number = -proc.returncode if proc.returncode < 0 else None
+    signal_name = _signal_name(signal_number)
+    # stderr/stdout feed the classifier and the route-marker scan only; their text is
+    # never exposed (a crashing strategy can print the data value it choked on).
+    evidence = evidence_of(finished, abnormal=True)
+    return IsolatedRunResult(
+        outcome=outcome,
+        peak_rss_mb=None,  # unrecoverable: the child is gone and never reported
+        outputs=None,
+        quality_metrics={},
+        table_kinds={},
+        returncode=proc.returncode,
+        signal_number=signal_number,
+        error=(
+            abnormal_exit_text(proc.returncode, signal_name, stderr, stdout)
+            + (error_suffix(evidence) if evidence else "")
+        ),
+        isolated=True,
+        pid=proc.pid,
+        memory_evidence=evidence,
+    )
+
+
+def _result_from_envelope(
+    envelope: dict[str, Any], output_dir: Path | None, pid: int, staging_output_dir: Path
 ) -> IsolatedRunResult:
     outcome = envelope["outcome"]
     peak = envelope.get("peak_rss_mb")
     if outcome != "completed":
         # A self-reported failure may have staged part of its output; nothing commits it.
-        # Idempotent with the caller's lease, which stays the owner on every other path.
         shutil.rmtree(staging_output_dir, ignore_errors=True)
         return IsolatedRunResult(
             outcome=outcome,
@@ -464,13 +540,11 @@ def _result_from_envelope(
         )
 
     try:
-        outputs, committed_dir, row_errors, receipt = _commit(
-            envelope, output_dir, publish, staging_output_dir
-        )
+        outputs, committed_dir, row_errors = _commit(envelope, output_dir)
     except CommitError as exc:
         # MED-1: the rename failed (pre-existing non-empty target is the
         # common case) -- a classified `crashed` result, not a driver-side
-        # exception; the caller's lease disposes the staging.
+        # exception; staging was already rmtree'd inside `_commit`.
         return IsolatedRunResult(
             outcome="crashed",
             peak_rss_mb=peak,
@@ -482,7 +556,6 @@ def _result_from_envelope(
             error=commit_error_text(exc),
             isolated=True,
             pid=pid,
-            publication_receipt=exc.receipt,
         )
     return IsolatedRunResult(
         outcome="completed",
@@ -497,30 +570,12 @@ def _result_from_envelope(
         pid=pid,
         committed_output_dir=committed_dir,
         row_errors=row_errors,
-        publication_receipt=receipt,
     )
 
 
-def _validated_child(
-    envelope: dict[str, Any], assigned: Path, output_dir: Path | None, publish: PublishContext
-) -> _pub.ChildPreparationEnvelope:
-    """Rebuild the typed child envelope; refuse (touching nothing) if it is not exactly
-    the parent-assigned directory's well-formed, versioned preparation."""
-    try:
-        return _pub.parse_child_envelope(envelope.get("preparation"), assigned)
-    except _pub.ChildEnvelopeError as exc:
-        raise _pub.PublicationRefusedError(
-            "child preparation refused (child_envelope_invalid)",
-            _pub.CommitReceipt("rejected", publish.operation_id or "", "child_envelope_invalid"),
-        ) from exc
-
-
 def _commit(
-    envelope: dict[str, Any],
-    output_dir: Path | None,
-    publish: PublishContext,
-    assigned: Path,
-) -> tuple[dict[str, pa.Table], str | None, tuple[RowErrorRecord, ...], Any]:
+    envelope: dict[str, Any], output_dir: Path | None
+) -> tuple[dict[str, pa.Table], str | None, tuple[RowErrorRecord, ...]]:
     """Read the child's staged tables + row_errors, then commit-or-discard
     per §12 ruling 3.
 
@@ -530,27 +585,24 @@ def _commit(
     simply discarded once read.
 
     Raises:
-        CommitError: the atomic rename failed (MED-1). Staging is left for the caller's
-            `StagingLease`, the single owner of its disposal.
+        CommitError: the atomic rename failed (MED-1). Staging is rmtree'd
+            here before re-raising so the caller never has to.
     """
-    prepared_dir = _validated_child(envelope, assigned, output_dir, publish)
-    staging_output_dir = prepared_dir.staging_dir
-    # Verify the child's claim structurally BEFORE reading any of it.
-    _pub.verify_child_envelope(prepared_dir, publish.request_for(output_dir or staging_output_dir))
-    try:
-        outputs = {
-            table: pq.read_table(  # type: ignore[no-untyped-call, unused-ignore]
-                staging_output_dir / f"{table}.parquet"
-            )
-            for table in prepared_dir.tables
-        }
-    except (OSError, pa.ArrowException) as exc:
-        raise _pub.PublicationRefusedError(
-            "child preparation refused: a declared table is unreadable",
-            _pub.CommitReceipt("rejected", publish.operation_id or "", "child_envelope_invalid"),
-        ) from exc
+    staging_output_dir = Path(envelope["staging_output_dir"])
+    outputs = {
+        table: pq.read_table(  # type: ignore[no-untyped-call, unused-ignore]
+            staging_output_dir / f"{table}.parquet"
+        )
+        for table in envelope.get("staged_tables", [])
+    }
     row_errors = read_staged_row_errors(staging_output_dir)
     if output_dir is None:
-        return outputs, None, row_errors, None
-    receipt = atomic_commit(prepared_dir, output_dir, publish=publish)
-    return outputs, str(output_dir), row_errors, receipt
+        shutil.rmtree(staging_output_dir, ignore_errors=True)
+        return outputs, None, row_errors
+
+    try:
+        atomic_commit(staging_output_dir, output_dir)
+    except CommitError:
+        shutil.rmtree(staging_output_dir, ignore_errors=True)
+        raise
+    return outputs, str(output_dir), row_errors

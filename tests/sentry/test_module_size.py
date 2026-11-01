@@ -64,11 +64,9 @@ MAX = 700
 # One-line rationale per entry; the per-file growth history lives in
 # docs/decisions/module-size-census-history.md.
 ALLOWLIST: dict[str, int] = {
-    # F22 r5: the sink-local lock, the WRITING/COMMITTING in-flight states and the written transition table; split the preparation sink and the publishing half into their own modules.
-    "src/decoy_engine/execution/_transactional_sink.py": 684,
+    # sampler start/finish and evidence threading in _spawn_and_classify; split the spawn/classify half into _isolated_spawn.py.
+    "src/decoy_engine/execution/_isolated_run.py": 608,
     # bounded-eligible fit rule, the fk-dtype retention branch and the D3a validator admission in decide_execution_route; split the route-priority docstring into the plan doc.
-    # F22: the receipt rides the sequential and out-of-core ExecutionResult reconstruction sites.
-    "src/decoy_engine/execution/_pipeline_route_exec.py": 601,
     "src/decoy_engine/execution/_pipeline_routing.py": 700,
     # wiring of the fk-dtype hazard and D3a validator signals into the one routing call site, plus
     # the B4 source-type admission threading (_source_arrow_types + the source_types param); split
@@ -119,14 +117,11 @@ ALLOWLIST: dict[str, int] = {
     "src/decoy_engine/execution/_sequential_native.py": 699,
     # sequential FK route threading; split the per-table mask/quarantine loop.
     # cross-column V1 folds joint_mask key_by into the source-anchor build (a comment, no new logic).
-    # F22: receipt capture and the in-unit quarantine sidecar stage/preflight calls (logic lives in quarantine.py).
-    "src/decoy_engine/execution/_sequential.py": 699,
+    "src/decoy_engine/execution/_sequential.py": 691,
     # transactional publish hardening and row mask; split the publish cluster.
-    # F22: in-unit sidecar preflight/stage helpers; split the staged-publish cluster.
-    "src/decoy_engine/quarantine.py": 683,
+    "src/decoy_engine/quarantine.py": 645,
     # code_set provenance and FF1 notice plumbing through the streaming runner.
-    # F22: receipt capture and BaseException-safe abort at the commit boundary.
-    "src/decoy_engine/execution/out_of_core/_runner.py": 688,
+    "src/decoy_engine/execution/out_of_core/_runner.py": 679,
     # D3a validator mask-step hook threaded through the reorder driver; all logic lives in _validate_batch.py.
     "src/decoy_engine/execution/out_of_core/_stream_driver.py": 608,
     # corpus schema checks and verify_corpus; split into _codeset_verify.py when next touched.

@@ -1,43 +1,34 @@
 """Staging, atomic-commit, and result-envelope IO for the isolated-run primitive.
 
-Split out of `_isolated_run.py` (publication orchestration; the process lifecycle lives in
-`_isolated_spawn.py`) to stay under the ~600 LOC orchestration cap (CLAUDE.md, `graph/runner.py`
+Split out of `_isolated_run.py` (which owns spawn/classify orchestration) to
+stay under the ~600 LOC orchestration cap (CLAUDE.md, `graph/runner.py`
 threshold) -- these are pure IO/filesystem helpers with no subprocess
 lifecycle logic of their own, shared by both the isolated (subprocess) path
 and the `isolate=False` in-process fallback so the two modes commit with
 identical discipline (dennis review HIGH-2).
 
-F22: the parent is the only publisher. The child returns a prepared directory
-(`ParquetPreparationSink`); `atomic_commit` re-measures it, builds the descriptor and
-binds it through the one `decoy_engine.publication` backend, so this path and
-`ParquetTransactionalSink.commit` share one commit implementation.
+Same same-parent-directory staging + single-rename discipline
+`ParquetTransactionalSink.commit` uses, reused here rather than re-derived
+(spec §12 ruling 3).
 """
 
 from __future__ import annotations
 
 import json
-import logging
 import os
-import shutil
 import signal
-import threading
 import uuid
-from collections.abc import Callable
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from decoy_engine import publication as _pub
+from decoy_engine.errors import DecoyError
 from decoy_engine.execution._row_errors import RowErrorRecord
-from decoy_engine.publication import CommitError
 
 __all__ = [
     "CommitError",
-    "PublishContext",
-    "StagingLease",
     "atomic_commit",
     "read_envelope",
     "read_staged_row_errors",
@@ -49,76 +40,17 @@ __all__ = [
 
 _STAGING_DIR_PREFIX = "_decoy_isolated_stage_"
 
-_logger = logging.getLogger(__name__)
 
+class CommitError(DecoyError):
+    """The atomic staging -> output_dir rename failed (dennis review MED-1).
 
-class StagingLease:
-    """Sole owner of one parent-assigned staging directory: disposed on every exit that did
-    not commit.
-
-    Pattern: `tempfile.TemporaryDirectory` / `contextlib` scoped ownership (the owner, not
-    each failure branch, removes the resource), with the Arrow/Parquet-style rule of never
-    following a symlink while deleting.
-
-    Promotion renames the directory away, so a commit leaves nothing at this path and disposal
-    is then a no-op: the lease never deletes a published result. The path is chosen by the
-    parent and never derived from anything the child reports, so a child that names some other
-    directory cannot get that directory deleted.
+    Raised by `atomic_commit` so both callers (the isolated path's commit
+    step and the in-process fallback's own commit step) can catch it and
+    turn a raw `OSError` -- most commonly a pre-existing non-empty target,
+    which `os.replace` on a directory refuses with ENOTEMPTY -- into a
+    classified `crashed` `IsolatedRunResult` instead of letting it escape as
+    an unhandled exception with staging orphaned outside `work_root`.
     """
-
-    def __init__(self, path: Path) -> None:
-        self.path = path
-        self._lock = threading.Lock()
-
-    def __enter__(self) -> StagingLease:
-        return self
-
-    def __exit__(self, *_exc: object) -> None:
-        self.dispose()
-
-    def dispose(self) -> None:
-        with self._lock:
-            try:
-                if os.path.islink(self.path):
-                    os.unlink(self.path)  # a swapped-in link is removed, never followed
-                else:
-                    shutil.rmtree(self.path, ignore_errors=True)
-            except OSError:
-                pass
-            if os.path.lexists(self.path):
-                _logger.warning("staging directory could not be fully disposed")
-
-
-@dataclass(frozen=True)
-class PublishContext:
-    """Caller-fixed publication request for the parent's one publication (stable across
-    retries). `request_for` is the ONLY place the parent builds a request, so the child
-    gate and the promotion can never see different checks, tables, unit or overwrite."""
-
-    operation_id: str | None = None
-    cancelled: Callable[[], bool] | None = None
-    checks: tuple[_pub.CheckResult, ...] = ()
-    validation_policy_fingerprint: str | None = None
-    expected_tables: tuple[str, ...] | None = None
-    unit: str = _pub.UNIT_IMMUTABLE_DIRECTORY
-    overwrite: _pub.OverwritePolicy = _pub.ErrorIfDifferent()  # noqa: RUF009
-
-    def __post_init__(self) -> None:
-        # Minted once, so the child gate and the promotion name the same operation.
-        if self.operation_id is None:
-            object.__setattr__(self, "operation_id", uuid.uuid4().hex)
-
-    def request_for(self, destination: Path) -> _pub.PublicationRequest:
-        return _pub.PublicationRequest(
-            destination=destination,
-            operation_id=self.operation_id or "",
-            unit=self.unit,
-            cancelled=self.cancelled,
-            checks=self.checks,
-            validation_policy_fingerprint=self.validation_policy_fingerprint,
-            expected_tables=self.expected_tables,
-            overwrite=self.overwrite,
-        )
 
 
 def sibling_staging_dir(output_dir: Path) -> Path:
@@ -138,31 +70,20 @@ def stage_tables(outputs: dict[str, pa.Table], staging_dir: Path) -> None:
         )
 
 
-def atomic_commit(
-    envelope: _pub.ChildPreparationEnvelope,
-    output_dir: Path,
-    *,
-    publish: PublishContext | None = None,
-) -> _pub.CommitReceipt:
-    """Re-measure the validated child preparation and bind it to `output_dir` (§12 ruling 3).
-
-    Accepts ONLY a `ChildPreparationEnvelope` (already bound to the parent-assigned
-    staging directory); the declared tables and row counts are enforced against the files.
-
-    A different or legacy occupant raises a classified `CommitError` (never a raw
-    `OSError`, with staging left for the caller to discard); an identical committed
-    result is returned as `already_committed` and its redundant staging is removed.
+def atomic_commit(staging_dir: Path, output_dir: Path) -> None:
+    """Single-rename commit (spec §12 ruling 3), wrapped per MED-1: a
+    pre-existing non-empty target makes `os.replace` raise (ENOTEMPTY on
+    Linux); that must surface as a classified failure, not propagate as a
+    raw `OSError` that also leaves staging orphaned outside `work_root`.
     """
-    if not isinstance(envelope, _pub.ChildPreparationEnvelope):
-        raise TypeError("atomic_commit promotes only a validated ChildPreparationEnvelope")
-    staging_dir = envelope.staging_dir
-    publish = publish or PublishContext()
-    request = publish.request_for(output_dir)
     output_dir.parent.mkdir(parents=True, exist_ok=True)
-    receipt = _pub.promote_child_envelope(envelope, request)
-    if receipt.outcome == "already_committed":
-        receipt = _pub.with_cleanup(receipt, _pub.cleanup_staging(staging_dir))
-    return receipt
+    try:
+        os.replace(staging_dir, output_dir)
+    except OSError as exc:
+        raise CommitError(
+            f"could not commit staged output to {output_dir} (a pre-existing "
+            f"non-empty target is the common cause): {exc}"
+        ) from exc
 
 
 def resolve_staging_output_dir(work_root: Path, output_dir: Path | None) -> Path:

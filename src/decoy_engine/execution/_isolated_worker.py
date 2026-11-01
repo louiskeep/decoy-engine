@@ -39,9 +39,8 @@ from decoy_engine.execution._isolated_common import (
     peak_rss_mb,
 )
 from decoy_engine.execution._pipeline import run_pipeline
-from decoy_engine.execution._transactional_sink import ParquetPreparationSink
+from decoy_engine.execution._transactional_sink import ParquetTransactionalSink
 from decoy_engine.profile._readers import LazySource
-from decoy_engine.publication import ChildPreparationEnvelope, child_envelope_to_doc
 
 
 def _error_text(exc: BaseException) -> str:
@@ -138,12 +137,12 @@ def _finalize_outputs(result: ExecutionResult, staging_output_dir: str) -> list[
 
     - STREAMED (sequential/out_of_core, and since B6a the auto-chunk lane and a fully
       dispatched multi-table split, now that `_run` always hands
-      `run_pipeline` a `ParquetPreparationSink` pointed at
+      `run_pipeline` a `ParquetTransactionalSink` pointed at
       `staging_output_dir`; since B6b those lanes also read their input lazily, as
       batches, so a routed job holds neither side resident): `result.outputs` is `{}` by construction (see
       `run_out_of_core_route`/`run_sequential_route`'s docstrings) -- the
       sink already wrote bounded batches straight to `staging_output_dir`
-      and committed them there (`ParquetPreparationSink.commit`'s single
+      and committed them there (`ParquetTransactionalSink.commit`'s single
       atomic rename), so this worker never holds a full output table
       resident. `staged_tables` is enumerated from what actually landed on
       disk rather than from `result.outputs.keys()`, which is empty.
@@ -209,9 +208,7 @@ def _run(payload: dict[str, Any]) -> dict[str, Any]:
         # one here is a no-op for that route -- safe to do unconditionally,
         # since the worker does not know the route in advance (the decision
         # happens inside `run_pipeline`, after this call is already made).
-        # F22: preparation-only. The child seals a directory but never writes a descriptor;
-        # only the parent publishes (re-measures and promotes) it.
-        sink = ParquetPreparationSink(Path(staging_output_dir))
+        sink = ParquetTransactionalSink(Path(staging_output_dir))
         result = run_pipeline(payload["config"], sources, sink=sink, **payload["kwargs"])
         # Staging allocates too, so a memory failure here must self-report as well.
         staged_tables = _finalize_outputs(result, staging_output_dir)
@@ -227,21 +224,8 @@ def _run(payload: dict[str, Any]) -> dict[str, Any]:
     return {
         "outcome": "completed",
         "peak_rss_mb": round(peak_rss_mb(), 1),
+        "staging_output_dir": payload["staging_output_dir"],
         "staged_tables": staged_tables,
-        "preparation": child_envelope_to_doc(
-            ChildPreparationEnvelope(
-                staging_dir=Path(staging_output_dir),
-                tables=tuple(staged_tables),
-                row_counts=tuple(
-                    sorted(
-                        {
-                            **sink.row_counts,
-                            **{name: tbl.num_rows for name, tbl in result.outputs.items()},
-                        }.items()
-                    )
-                ),
-            )
-        ),
         "quality_metrics": dict(result.quality_metrics),
         "table_kinds": dict(result.table_kinds),
     }

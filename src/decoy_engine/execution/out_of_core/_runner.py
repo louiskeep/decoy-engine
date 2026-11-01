@@ -101,7 +101,6 @@ from decoy_engine.execution.out_of_core._vault_collect import (
 )
 from decoy_engine.plan._types import ColumnSeed
 from decoy_engine.progress import get_active_channel
-from decoy_engine.publication import CommitReceipt
 from decoy_engine.relationships._graph import OrphanPolicy
 
 if TYPE_CHECKING:
@@ -310,25 +309,17 @@ def run_fk_out_of_core(
         # Before the publish: a failed validation commits nothing.
         _validate_batch.finish_validation(validators, quality_metrics)
         if sink is not None:
-            receipt = sink.commit()
+            sink.commit()
             committed = True
             return ExecutionResult(
-                outputs={},
-                warnings=tuple(warnings),
-                quality_metrics=quality_metrics,
-                publication_receipt=receipt if isinstance(receipt, CommitReceipt) else None,
+                outputs={}, warnings=tuple(warnings), quality_metrics=quality_metrics
             )
         return ExecutionResult(
             outputs=outputs, warnings=tuple(warnings), quality_metrics=quality_metrics
         )
-    except BaseException:
-        # BaseException, as on the sequential route: a KeyboardInterrupt/SystemExit before
-        # the binding must not leave staging behind; after `committed` abort never runs.
+    except Exception:
         if sink is not None and not committed:
-            try:
-                sink.abort()
-            except Exception:
-                pass
+            sink.abort()
         raise
     finally:
         # The relation/join staging subtrees hold (source_key, masked_key) pairs

@@ -736,18 +736,3 @@ E3b (2026-10-24): +1 line passing `run_storm=bool(config.get("run_storm"))` into
 the single `decide_execution_route` call site. Decomposition target unchanged:
 split the probe-recovery resolver into its own module when next touched.
 
-
-
-## F22 atomic and idempotent publication (2026-10-29)
-
-Census bumps from threading the publication receipt and the in-unit quarantine sidecar
-through existing routes; every new behavior lives in `src/decoy_engine/publication/`.
-
-| Module | Census | Why |
-|---|---|---|
-| `execution/_isolated_run.py` | 608 -> 695 (r4), 695 -> 555 (r5, entry removed) | parent publication plumbing: `operation_id`, `cancel_check`, receipt on both result paths, the versioned child-preparation validation (r2), and the publication request (`checks`, `expected_tables`, `unit`, `overwrite`) a real run carries into the child gate (r4). The r5 split moved the spawn/classify half into `_isolated_spawn.py` (146 LOC, under the goal) and the scattered staging cleanup into `StagingLease`, so the module is back under 600 and has no census entry. |
-| `execution/_transactional_sink.py` | 559 -> 684 (new entry, r5) | sink-local lock, in-flight WRITING/COMMITTING states and the written transition table. Decomposition target: split the preparation sink and the publishing half into their own modules. |
-| `execution/_sequential.py` | 691 -> 699 | capture the sink's receipt; call the quarantine preflight/stage helpers. |
-| `quarantine.py` | 645 -> 683 | `preflight_unit_sidecar` / `stage_unit_sidecar` / `already_in_unit`. Decomposition target: the staged-publish cluster. |
-| `execution/out_of_core/_runner.py` | 679 -> 688 | receipt capture; `except BaseException` abort that closes the cancellation gap. |
-| `execution/_pipeline_route_exec.py` | 600 -> 601 (new entry) | the receipt rides the two `ExecutionResult` reconstruction sites. |

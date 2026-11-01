@@ -9,43 +9,6 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
-### Added (F22: atomic and idempotent publication, 2026-10-29)
-
-New `decoy_engine.publication` package. A content-addressed descriptor (`_decoy_publication.json`,
-`decoy-publication/v1`, SHA-256 `result_id` over the artifact inventory) is now the single commit truth for
-Parquet output. `ParquetTransactionalSink.commit()` returns a `CommitReceipt` and recognizes a verified
-identical committed result as `already_committed` instead of failing on a non-empty target; any other occupant
-is a typed refusal (`PublicationRefusedError`, a `CommitError`). Receipts ride `ExecutionResult`,
-`GenerationResult` and `IsolatedRunResult` (`publication_receipt`). New: `ManagedDatasetSink`
-(`managed_dataset/v1`, atomically replaced `CURRENT` pointer, typed `Replace` policy with optional protected
-backup and `restore_backup`), a `commit_uncertain` outcome for the post-rename window, destination locking
-(unsupported filesystems are refused before any write), opt-in complete-unit quarantine
-(`PublicationRequest.sidecars_in_unit`), opt-in rejected-staging retention (`RetentionPolicy`), per-sink
-protocol declarations with admission (`admit`), and a reusable adapter conformance suite
-(`decoy_engine.publication.conformance`). `run_pipeline_isolated` gains `operation_id` and `cancel_check`;
-the isolated child is preparation-only and the parent is the only publisher. The out-of-core route now aborts
-its sink on `BaseException` like the sequential route.
-
-### Changed (F22 remediation r5, 2026-10-30)
-
-Pre-GA hard change: `CommitReceipt` no longer has a `destination` field and `CommitReceipt.artifacts`
-holds `ArtifactSummary` (role, size, SHA-256, rows, schema digest) instead of `ArtifactRef` paths; receipts
-and refusals carry only stable tokens (`rename_failed:ENOSPC`), never paths, OS error text or table names.
-The isolated parent disposes the staged dataset on every non-commit exit through one `StagingLease`, bounds
-the child's Parquet footer before parsing it, and `ParquetTransactionalSink`/`ManagedDatasetSink` are safe to
-call from several threads (`commit_in_progress` / `write_in_progress` refusals; a racing `abort()` can no
-longer poison `reconcile()`). `execution/_isolated_spawn.py` holds the spawn/classify half.
-
-### Changed (BREAKING, pre-GA: published Parquet directories carry a descriptor, 2026-10-29)
-
-A published directory now also contains `_decoy_publication.json` and `_decoy_evidence_core.json`. Consumers
-that assumed "only `.parquet` files" must ignore those two reserved names. A non-empty directory without a
-descriptor is refused (`target_occupied_legacy`) and is never adopted or converted. A failed commit now raises
-`PublicationRefusedError` (carrying the receipt and, for a failed rename, the original `OSError` as
-`__cause__`) instead of a bare `OSError`. `IsolatedRunResult.error` for a failed commit now reads
-`CommitError: staged output could not be committed (reason=...)`. Replacing a different result requires
-`ManagedDatasetSink`; there is no migration adapter.
-
 ### Changed (BREAKING, pre-GA: `TokenVaultWriter.put` returns the authoritative token, 2026-10-29)
 
 `TokenVaultWriter.put(namespace, plaintext, token)` now returns `str`: the token the vault actually
