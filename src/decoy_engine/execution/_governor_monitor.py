@@ -26,6 +26,8 @@ import os
 import signal
 import threading
 
+from decoy_engine.fileaccess import run_in_context
+
 __all__ = ["_RssMonitor", "_read_child_status", "_read_child_vmrss_bytes"]
 
 _logger = logging.getLogger(__name__)
@@ -96,7 +98,7 @@ class _RssMonitor:
         self._peak_bytes = 0
         self._started = False  # LOW-3: did Thread.start() actually succeed?
         self._thread = threading.Thread(
-            target=self._run, name=f"decoy-governor-rss-{pid}", daemon=True
+            target=run_in_context(self._run), name=f"decoy-governor-rss-{pid}", daemon=True
         )
 
     def start(self) -> None:

@@ -26,7 +26,9 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from decoy_engine import fileaccess
 from decoy_engine.errors import DecoyError
+from decoy_engine.fileaccess import FileAccess, FileHandle, FileRequest, FileRole
 
 
 class DiscoverySqlError(DecoyError):
@@ -155,18 +157,22 @@ def _coerce(value: Any) -> Any:
     return str(value)
 
 
+@fileaccess.entry_point
 def run_discovery_sql(
     sql: str,
-    tables: Mapping[str, str],
+    tables: Mapping[str, str | FileHandle],
     *,
     row_limit: int = 10_000,
+    file_access: FileAccess | None = None,
 ) -> DiscoveryResult:
     """Run a SELECT-only SQL statement against on-disk Parquet tables.
 
-    ``tables`` maps table name -> absolute Parquet path. Each name is
-    registered as a DuckDB view via ``read_parquet`` so the planner
-    can prune columns + push down predicates. ``row_limit`` caps the
-    number of returned rows -- the query itself is unbounded, but we
+    ``tables`` maps table name -> absolute Parquet path, or a handle the caller's policy
+    already issued for it. Each table is opened through the file-access policy and
+    registered as an Arrow dataset on a locked in-memory DuckDB connection (external access
+    off, configuration locked), so the planner can still push projections and predicates down
+    but no SQL text can read or write a file, attach a database or load an extension.
+    ``row_limit`` caps the number of returned rows -- the query itself is unbounded, but we
     truncate the materialized result to keep the response small.
 
     Raises ``DiscoverySqlError`` on validation failure or DuckDB
@@ -174,33 +180,68 @@ def run_discovery_sql(
     """
     import duckdb
 
+    from decoy_engine.fileaccess.adapters.duckdb import statement_kinds, untrusted_session
+
     _validate_select_only(sql)
+    if statement_kinds(sql) != ["SELECT"]:
+        raise DiscoverySqlError("Only a single SELECT statement is allowed.")
 
-    con = duckdb.connect(":memory:")
+    policy = fileaccess.current()
+    opened: list[FileHandle] = []
     try:
-        for name, path in tables.items():
-            # DuckDB rejects `?` parameter binding inside CREATE VIEW
-            # at the binder layer ("Unexpected prepared parameter").
-            # Use the Python relational API instead: read_parquet()
-            # takes the path as a typed Python argument (no SQL string
-            # concatenation, no injection surface), and create_view()
-            # registers the resulting relation under a name that DuckDB
-            # quotes internally.
-            con.read_parquet(path).create_view(name, replace=True)
+        handles: dict[str, FileHandle] = {}
+        for name, source in tables.items():
+            if isinstance(source, str):
+                handle = policy.open_read(
+                    FileRequest(FileRole.SOURCE, "read", source, f"discovery.tables.{name}")
+                )
+                opened.append(handle)
+            else:
+                handle = source
+            handles[name] = handle
 
-        try:
-            rel = con.execute(sql)
-        except duckdb.Error as exc:
-            raise DiscoverySqlError(f"SQL execution failed: {exc}") from exc
-
-        cols = [d[0] for d in rel.description]
-        # fetchmany pulls at most row_limit rows; we don't materialize
-        # everything in case the user wrote `SELECT * FROM huge`.
-        raw = rel.fetchmany(row_limit)
-        rows = [{col: _coerce(value) for col, value in zip(cols, row, strict=False)} for row in raw]
-        return DiscoveryResult(columns=cols, rows=rows)
+        strict = not fileaccess.is_ambient()
+        pairs = [(h.library_path(), h.display) for h in handles.values()] + [
+            (src, handles[n].display) for n, src in tables.items() if isinstance(src, str)
+        ]
+        failure: duckdb.Error | None = None
+        cols: list[str] = []
+        raw: list[Any] = []
+        with untrusted_session(handles) as con:
+            try:
+                rel = con.execute(sql)
+            except duckdb.Error as exc:
+                if not strict:
+                    raise DiscoverySqlError(f"SQL execution failed: {exc}") from exc
+                if fileaccess.keeps_class(exc):
+                    raise
+                failure = exc
+            else:
+                cols = [d[0] for d in rel.description]
+                # fetchmany pulls at most row_limit rows; we don't materialize
+                # everything in case the user wrote `SELECT * FROM huge`.
+                if not strict:
+                    raw = rel.fetchmany(row_limit)
+                else:
+                    try:
+                        raw = rel.fetchmany(row_limit)
+                    except duckdb.Error as exc:
+                        if fileaccess.keeps_class(exc):
+                            raise
+                        failure = exc
+            if failure is not None:
+                # Raised after the handlers close: no library error is the cause or context,
+                # and the library's text names the descriptor path, not the file.
+                text = fileaccess.redact_locators(str(failure), pairs)
+                failure = None
+                raise DiscoverySqlError(f"SQL execution failed: {text}") from None
+            rows = [
+                {col: _coerce(value) for col, value in zip(cols, row, strict=False)} for row in raw
+            ]
+            return DiscoveryResult(columns=cols, rows=rows)
     finally:
-        con.close()
+        for handle in opened:
+            handle.close()
 
 
 __all__ = [

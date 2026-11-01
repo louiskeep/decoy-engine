@@ -14,6 +14,7 @@ from __future__ import annotations
 import pyarrow as pa
 
 from decoy_engine import reasons
+from decoy_engine._opaque import OpaqueBox
 from decoy_engine.determinism import derive
 from decoy_engine.errors import FpeChecksumError, FpeUnencryptableError
 from decoy_engine.execution._strategies._fpe import (
@@ -66,16 +67,20 @@ class _ReferenceKeyedDerivation:
         # single-threaded Python reference is the parity oracle, and the compiled
         # kernel's output is thread-invariant (proven at every thread count), so the
         # thread count never changes bytes on either side.
-        del native_threads
-        key = _require_mask_key(mask_key, "keyed_derivation")
-        out: list[str | None] = []
-        for value in _array_to_pylist(values):
-            if _is_missing(value):
-                out.append(None)
-                continue
-            token = derive(key, namespace, canonicalize_derive_source(value)).hex()
-            out.append(token[:truncate] if truncate is not None else token)
-        return pa.array(out, type=pa.string())
+        try:
+            del native_threads
+            mask_key = _require_mask_key(mask_key, "keyed_derivation")
+            out: list[str | None] = []
+            for value in _array_to_pylist(values):
+                if _is_missing(value):
+                    out.append(None)
+                    continue
+                token = derive(mask_key, namespace, canonicalize_derive_source(value)).hex()
+                out.append(token[:truncate] if truncate is not None else token)
+            return pa.array(out, type=pa.string())
+        except BaseException:
+            del mask_key
+            raise
 
 
 class _ReferenceFpe:
@@ -97,14 +102,18 @@ class _ReferenceFpe:
         tweak_column: str,
         config: FpeConfig,
     ) -> FpeBatchResult:
-        return self._run(
-            values,
-            mask_key=mask_key,
-            namespace=namespace,
-            tweak_column=tweak_column,
-            config=config,
-            forward=True,
-        )
+        try:
+            return self._run(
+                values,
+                mask_key=mask_key,
+                namespace=namespace,
+                tweak_column=tweak_column,
+                config=config,
+                forward=True,
+            )
+        except BaseException:
+            del mask_key
+            raise
 
     def decrypt_batch(
         self,
@@ -115,14 +124,18 @@ class _ReferenceFpe:
         tweak_column: str,
         config: FpeConfig,
     ) -> FpeBatchResult:
-        return self._run(
-            values,
-            mask_key=mask_key,
-            namespace=namespace,
-            tweak_column=tweak_column,
-            config=config,
-            forward=False,
-        )
+        try:
+            return self._run(
+                values,
+                mask_key=mask_key,
+                namespace=namespace,
+                tweak_column=tweak_column,
+                config=config,
+                forward=False,
+            )
+        except BaseException:
+            del mask_key
+            raise
 
     def _run(
         self,
@@ -134,51 +147,63 @@ class _ReferenceFpe:
         config: FpeConfig,
         forward: bool,
     ) -> FpeBatchResult:
-        key_material = _require_mask_key(mask_key, "fpe")
-        charset, preserve_sep, validate_luhn, checksum = config._resolve()
-        tweak = build_ff1_tweak(
-            FF1_TWEAK_SCOPE_JOIN_GROUP if config.join_group else FF1_TWEAK_SCOPE_COLUMN,
-            config.join_group or tweak_column,
-        )
-        key = derive(key_material, namespace, FF1_KEY_LABEL)
-        transform = fpe_encrypt_value if forward else fpe_decrypt_value
+        try:
+            mask_key = _require_mask_key(mask_key, "fpe")
+            charset, preserve_sep, validate_luhn, checksum = config._resolve()
+            tweak = build_ff1_tweak(
+                FF1_TWEAK_SCOPE_JOIN_GROUP if config.join_group else FF1_TWEAK_SCOPE_COLUMN,
+                config.join_group or tweak_column,
+            )
+            key_box = OpaqueBox(derive(mask_key, namespace, FF1_KEY_LABEL))
+            transform = fpe_encrypt_value if forward else fpe_decrypt_value
 
-        out: list[str | None] = []
-        errors: list[FpeRowError] = []
-        non_na_values: list[str] = []
-        for row_index, value in enumerate(_array_to_pylist(values)):
-            if _is_missing(value):
-                out.append(None)
-                continue
-            text = str(value)
-            if text == "":
-                # Missing-data policy shared with the strategy and unmask: no cipher, no warning.
-                out.append("")
-                continue
-            non_na_values.append(text)
-            try:
-                out.append(
-                    transform(text, key, charset, tweak, preserve_sep, validate_luhn, checksum)
-                )
-            except FpeUnencryptableError as exc:
-                out.append(None)
-                errors.append(_row_error(row_index, strategy_code_for_unencryptable(exc)))
-            except FpeChecksumError as exc:
-                out.append(None)
-                errors.append(_row_error(row_index, strategy_code_for_checksum(exc)))
+            out: list[str | None] = []
+            errors: list[FpeRowError] = []
+            non_na_values: list[str] = []
+            for row_index, value in enumerate(_array_to_pylist(values)):
+                if _is_missing(value):
+                    out.append(None)
+                    continue
+                text = str(value)
+                if text == "":
+                    # Missing-data policy shared with the strategy and unmask: no cipher, no warning.
+                    out.append("")
+                    continue
+                non_na_values.append(text)
+                try:
+                    out.append(
+                        transform(
+                            text,
+                            key_box.open()[0],
+                            charset,
+                            tweak,
+                            preserve_sep,
+                            validate_luhn,
+                            checksum,
+                        )
+                    )
+                except FpeUnencryptableError as exc:
+                    out.append(None)
+                    errors.append(_row_error(row_index, strategy_code_for_unencryptable(exc)))
+                except FpeChecksumError as exc:
+                    out.append(None)
+                    errors.append(_row_error(row_index, strategy_code_for_checksum(exc)))
 
-        warnings = self._warnings(
-            non_na_values,
-            charset=charset,
-            preserve_sep=preserve_sep,
-            column=tweak_column,
-            join_group=config.join_group,
-        )
-        return FpeBatchResult(
-            values=pa.array(out, type=pa.string()),
-            errors=tuple(errors),
-            warnings=tuple(warnings),
-        )
+            warnings = self._warnings(
+                non_na_values,
+                charset=charset,
+                preserve_sep=preserve_sep,
+                column=tweak_column,
+                join_group=config.join_group,
+            )
+            return FpeBatchResult(
+                values=pa.array(out, type=pa.string()),
+                errors=tuple(errors),
+                warnings=tuple(warnings),
+            )
+        except BaseException:
+            del mask_key
+            raise
 
     def _warnings(
         self,

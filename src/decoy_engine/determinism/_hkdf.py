@@ -49,13 +49,17 @@ def hkdf_extract(salt: bytes, ikm: bytes) -> bytes:
     Raises:
         ValueError: if `salt` is empty (QA-10 F12, 2026-06-01).
     """
-    if not salt:
-        raise ValueError(
-            "hkdf_extract: salt must be non-empty. Pass an application-"
-            "specific context string. If you genuinely want the RFC 5869 "
-            "§2.2 all-zero default, pass b'\\x00' * 32 explicitly."
-        )
-    return hmac.new(salt, ikm, hashlib.sha256).digest()
+    try:
+        if not salt:
+            raise ValueError(
+                "hkdf_extract: salt must be non-empty. Pass an application-"
+                "specific context string. If you genuinely want the RFC 5869 "
+                "§2.2 all-zero default, pass b'\\x00' * 32 explicitly."
+            )
+        return hmac.new(salt, ikm, hashlib.sha256).digest()
+    except BaseException:
+        del ikm
+        raise
 
 
 def hkdf_expand(prk: bytes, info: bytes, length: int) -> bytes:
@@ -76,15 +80,19 @@ def hkdf_expand(prk: bytes, info: bytes, length: int) -> bytes:
     Raises:
         ValueError if `length` exceeds RFC 5869's upper bound.
     """
-    if length > 255 * _HASH_LEN:
-        raise ValueError(f"HKDF length {length} exceeds RFC 5869 maximum {255 * _HASH_LEN}")
-    n = (length + _HASH_LEN - 1) // _HASH_LEN
-    t = b""
-    okm_chunks: list[bytes] = []
-    for i in range(1, n + 1):
-        t = hmac.new(prk, t + info + bytes([i]), hashlib.sha256).digest()
-        okm_chunks.append(t)
-    return b"".join(okm_chunks)[:length]
+    try:
+        if length > 255 * _HASH_LEN:
+            raise ValueError(f"HKDF length {length} exceeds RFC 5869 maximum {255 * _HASH_LEN}")
+        n = (length + _HASH_LEN - 1) // _HASH_LEN
+        t = b""
+        okm_chunks: list[bytes] = []
+        for i in range(1, n + 1):
+            t = hmac.new(prk, t + info + bytes([i]), hashlib.sha256).digest()
+            okm_chunks.append(t)
+        return b"".join(okm_chunks)[:length]
+    except BaseException:
+        del prk
+        raise
 
 
 def hkdf_sha256(ikm: bytes, salt: bytes, info: bytes, length: int) -> bytes:
@@ -92,4 +100,8 @@ def hkdf_sha256(ikm: bytes, salt: bytes, info: bytes, length: int) -> bytes:
 
     Equivalent to `hkdf_expand(hkdf_extract(salt, ikm), info, length)`.
     """
-    return hkdf_expand(hkdf_extract(salt, ikm), info, length)
+    try:
+        return hkdf_expand(hkdf_extract(salt, ikm), info, length)
+    except BaseException:
+        del ikm
+        raise

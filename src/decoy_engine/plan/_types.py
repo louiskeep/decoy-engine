@@ -179,7 +179,7 @@ class SeedEnvelope:
     the pipeline-config adapter boundary in `compile_plan`.
     """
 
-    job_seed: bytes
+    job_seed: bytes = field(repr=False)
     per_table: tuple[tuple[str, TableSeed], ...] = field(default_factory=tuple)
 
 

@@ -56,7 +56,7 @@ _ACCEPTED: list[str | None] = [
 
 def _config(provider_config: dict[str, Any], *, strategy: str = "bucket_perturb") -> dict:
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42},
         "tables": [
             {

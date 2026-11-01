@@ -116,7 +116,7 @@ def _profile() -> Profile:
 
 def config(tables: list[dict[str, Any]], *, seed: int = 20261016) -> dict[str, Any]:
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": seed},
         "sources": {},
         "tables": tables,
@@ -694,7 +694,7 @@ def run_mixed_fk() -> dict[str, pa.Table]:
         src = Path(tmp) / "accounts.parquet"
         pq.write_table(accounts, src)
         raw = {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 20261016},
             "sources": {"accounts": {"type": "file", "format": "parquet", "path": str(src)}},
             "targets": {

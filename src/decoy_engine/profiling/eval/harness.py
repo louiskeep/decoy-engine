@@ -17,7 +17,7 @@ A missed PII column leaks; a false alarm costs a UI glance.
 
 Read-only over the detectors: it introduces no public run-path change and
 mutates nothing. The metrics dataclasses follow the pure-dataclass /
-JSON-serializable convention in ``storm/types.py``.
+JSON-serializable convention in ``profiling/types.py``.
 """
 
 from __future__ import annotations

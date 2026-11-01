@@ -451,7 +451,7 @@ def _plan_inputs(tmp_path: Path, table: pa.Table, **write_kwargs: Any) -> Any:
     path = b6b.write(table, tmp_path / "handed.parquet", **write_kwargs)
     config = PipelineConfig.model_validate(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 1},
             "sources": {"t": {"type": "file", "format": "parquet", "path": profiled}},
             "targets": {

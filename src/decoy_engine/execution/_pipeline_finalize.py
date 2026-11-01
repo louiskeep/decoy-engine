@@ -30,6 +30,7 @@ from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
+from decoy_engine.config import post_scan_integrity_requested
 from decoy_engine.execution._planner import AUTO_CHUNK_THRESHOLD_ROWS_DEFAULT
 
 if TYPE_CHECKING:
@@ -290,9 +291,8 @@ def compute_post_validation(
     Flag off (the default) -> this returns before importing `validation.post`, so
     the hot path is unchanged and the output byte-identical. Flag on -> it builds
     the `config` dict the `PostValidationRunner` reads and calls it; the runner
-    scans the masked output against the sources and writes the full manifest block
-    under `quality_metrics["quality_summary"]` (mutating the mutable dict the
-    frozen `ExecutionResult` holds).
+    scans the masked output against the sources and returns the summary, which this
+    function attaches under `quality_metrics["quality_summary"]`.
 
     Job-outcome signal (LOCKED: warn-only default). The runner sets
     `QualitySummary.failed_checks` (the hard-failed scan names). This surfaces them
@@ -345,9 +345,11 @@ def compute_post_validation(
     if summary is None:  # pragma: no cover - post_validation=True always returns a summary
         return
     qm = execution_result.quality_metrics
-    quality_summary = qm.get("quality_summary")
-    if quality_summary is not None:
-        _filter_sampled_values_source_equality(quality_summary, sources)
+    # The orchestrator owns attachment: the runner returns a value and never writes
+    # into the mutable dict the frozen ExecutionResult holds.
+    quality_summary = dataclasses.asdict(summary)
+    _filter_sampled_values_source_equality(quality_summary, sources)
+    qm["quality_summary"] = quality_summary
     qm["failed_checks"] = [
         {"code": name, "message": f"post-validation scan {name!r} hard-failed"}
         for name in summary.failed_checks
@@ -465,14 +467,14 @@ def finalize_validators_and_quarantine(
     return outputs, quarantine_removed
 
 
-def compute_storm_postmask(
+def compute_post_scan_integrity(
     execution_result: ExecutionResult,
     *,
     config: Mapping[str, Any],
     sources: Mapping[str, pa.Table],
 ) -> None:
-    """`run_storm: true` (E3b): run the STORM post-mask integrity checks over every
-    mask table and stamp the report under `quality_metrics["storm_postmask"]`.
+    """`post_scan_integrity: true` (E3b): run the Post-scan integrity integrity checks over every
+    mask table and stamp the report under `quality_metrics["post_scan_integrity"]`.
 
     The config key was accepted by the schema for a long time but nothing in the
     spine honoured it, so a user who asked for the in-run check silently got
@@ -481,7 +483,7 @@ def compute_storm_postmask(
     full-frame finalize branch, which routing guarantees for an opted-in job
     (see `_sequential_eligible`), so the whole output is resident here.
     """
-    if not config.get("run_storm"):
+    if not post_scan_integrity_requested(config):
         return
     from decoy_engine.verification import run_post_mask
 
@@ -498,4 +500,4 @@ def compute_storm_postmask(
         output_frames={name: execution_result.outputs[name].to_pandas() for name in mask_tables},
         config=dict(config),
     )
-    execution_result.quality_metrics["storm_postmask"] = report
+    execution_result.quality_metrics["post_scan_integrity"] = report

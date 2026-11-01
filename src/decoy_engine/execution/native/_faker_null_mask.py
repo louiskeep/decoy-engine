@@ -40,7 +40,7 @@ def faker_missing_mask(raw: pa.Table, column: str, protected: Collection[str] = 
     if pa.types.is_string(source.type) or pa.types.is_large_string(source.type):
         # A string value is never missing in pandas, so Arrow validity is the mask and the
         # conversion would only cost time on the path that ran natively before.
-        return pc.is_null(source.combine_chunks())
+        return pc.is_null(source.combine_chunks())  # type: ignore[attr-defined, unused-ignore]
     frame = to_pandas_fk_safe(raw.select([column]), set(protected) & {column})
     return pa.array(frame[column].isna().to_numpy(dtype=bool), type=pa.bool_())
 

@@ -1,6 +1,6 @@
-# STORM Detector Name-Hint Library (v1)
+# Pre-scan Detector Name-Hint Library (v1)
 
-This directory holds the column-name patterns the STORM scan uses to
+This directory holds the column-name patterns the Pre-scan uses to
 recognize what KIND of data is in each column of an uploaded file. The
 files were extracted from a hard-coded Python dict
 (`decoy_engine.detection.detectors._NAME_HINTS`) on 2026-05-25 so the

@@ -28,7 +28,7 @@ oracle, so `plan_native_route` checks them here once it has the first chunk:
   only for the providers C1 admits; any other provider, for example a
   date-of-birth provider, produces values the string pool cannot hold). The
   provider's actual output under the caller's registry is checked separately,
-  on the resolved pool, by `_chunked_entry._resolve_admitted_pools`.
+  on the resolved pool, by `_chunked_pools.resolve_admitted_pools`.
 
 A rejection reroutes the whole table to the oracle with a coded reason, so the
 two routes agree on the input instead of the native one failing after the first

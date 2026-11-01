@@ -1,4 +1,5 @@
-Status: plan (Phase D / audit GAP8. rev 3, Codex plan-gate rev1+rev2 REVISE folded. Admit integer-typed fpe FK KEY columns to the compiled FF1 kernel on the SEQ route, byte-identical to the existing Python path.)
+Status: built
+Shipped: commit 9ef26c9f (PR #257)
 
 # fpe on an integer FK key native on the sequential route
 

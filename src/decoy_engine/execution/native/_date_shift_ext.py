@@ -88,38 +88,42 @@ def _derive_offsets(
     """The keyed `[0, range_size)` draw per (non-null, parseable) row, with the
     same runtime invariants `native_bucket_perturb` applies to the kernel's own
     result, so a malformed compiled kernel fails here, coded and fail-closed."""
-    idx = index_kernel.derive_index_batch(
-        values,
-        mask_key=mask_key,
-        namespace=namespace,
-        pool_size=range_size,
-        native_threads=native_threads,
-    )
-    # Type check FIRST so a non-`pa.Array` result cannot leak an uncoded
-    # AttributeError from the checks below.
-    if not isinstance(idx, pa.Array) or idx.type != pa.uint64():
-        got = idx.type if isinstance(idx, pa.Array) else type(idx).__name__
-        raise GenerationError(
-            code=reasons.runtime.INDEX_BATCH_TYPE_MISMATCH,
-            message=f"derive_index_batch returned {got}, expected a uint64 Arrow array",
+    try:
+        idx = index_kernel.derive_index_batch(
+            values,
+            mask_key=mask_key,
+            namespace=namespace,
+            pool_size=range_size,
+            native_threads=native_threads,
         )
-    if len(idx) != len(values):
-        raise GenerationError(
-            code=reasons.runtime.INDEX_BATCH_LENGTH_MISMATCH,
-            message=f"derive_index_batch returned {len(idx)} indices for {len(values)} rows",
-        )
-    if idx.null_count != 0:
-        raise GenerationError(
-            code=reasons.runtime.INDEX_BATCH_NULL_MASK_MISMATCH,
-            message="derive_index_batch returned a null offset for a non-null source row",
-        )
-    idx_np = idx.to_numpy(zero_copy_only=False)
-    if idx_np.size and int(idx_np.max()) >= range_size:
-        raise GenerationError(
-            code=reasons.runtime.INDEX_BATCH_OUT_OF_BOUNDS,
-            message=f"derive_index_batch returned an offset >= range_size {range_size}",
-        )
-    return idx_np
+        # Type check FIRST so a non-`pa.Array` result cannot leak an uncoded
+        # AttributeError from the checks below.
+        if not isinstance(idx, pa.Array) or idx.type != pa.uint64():
+            got = idx.type if isinstance(idx, pa.Array) else type(idx).__name__
+            raise GenerationError(
+                code=reasons.runtime.INDEX_BATCH_TYPE_MISMATCH,
+                message=f"derive_index_batch returned {got}, expected a uint64 Arrow array",
+            )
+        if len(idx) != len(values):
+            raise GenerationError(
+                code=reasons.runtime.INDEX_BATCH_LENGTH_MISMATCH,
+                message=f"derive_index_batch returned {len(idx)} indices for {len(values)} rows",
+            )
+        if idx.null_count != 0:
+            raise GenerationError(
+                code=reasons.runtime.INDEX_BATCH_NULL_MASK_MISMATCH,
+                message="derive_index_batch returned a null offset for a non-null source row",
+            )
+        idx_np = idx.to_numpy(zero_copy_only=False)
+        if idx_np.size and int(idx_np.max()) >= range_size:
+            raise GenerationError(
+                code=reasons.runtime.INDEX_BATCH_OUT_OF_BOUNDS,
+                message=f"derive_index_batch returned an offset >= range_size {range_size}",
+            )
+        return idx_np
+    except BaseException:
+        del mask_key
+        raise
 
 
 def native_date_shift(
@@ -154,68 +158,72 @@ def native_date_shift(
     whole-column strftime, are never format errors, and keep their source text. The returned
     positions are rebased to `array`.
     """
-    if mask_key is None:  # pragma: no cover - require_mask_key never returns None
-        raise AssertionError(
-            "date_shift reached with mask_key=None; require_mask_key always "
-            "resolves a concrete key before the native route dispatches."
-        )
-    min_days, range_size = resolve_shift_range(min_days, max_days)
-    col = array.combine_chunks() if isinstance(array, pa.ChunkedArray) else array
-    if preserved is not None and preserved.any():
-        rest = pa.array(~preserved)
-        computed, positions = native_date_shift(
-            col.filter(rest),
-            min_days=min_days,
-            max_days=max_days,
-            date_format=date_format,
-            mask_key=mask_key,
-            namespace=namespace,
-            index_kernel=index_kernel,
-            native_threads=native_threads,
-            derive_calls=derive_calls,
-        )
-        kept = np.flatnonzero(~preserved)
-        return (
-            pc.replace_with_mask(col.cast(pa.string()), rest, computed),
-            tuple(int(kept[p]) for p in positions),
-        )
+    try:
+        if mask_key is None:  # pragma: no cover - require_mask_key never returns None
+            raise AssertionError(
+                "date_shift reached with mask_key=None; require_mask_key always "
+                "resolves a concrete key before the native route dispatches."
+            )
+        min_days, range_size = resolve_shift_range(min_days, max_days)
+        col = array.combine_chunks() if isinstance(array, pa.ChunkedArray) else array
+        if preserved is not None and preserved.any():
+            rest = pa.array(~preserved)
+            computed, positions = native_date_shift(
+                col.filter(rest),
+                min_days=min_days,
+                max_days=max_days,
+                date_format=date_format,
+                mask_key=mask_key,
+                namespace=namespace,
+                index_kernel=index_kernel,
+                native_threads=native_threads,
+                derive_calls=derive_calls,
+            )
+            kept = np.flatnonzero(~preserved)
+            return (
+                pc.replace_with_mask(col.cast(pa.string()), rest, computed),  # type: ignore[attr-defined, unused-ignore]
+                tuple(int(kept[p]) for p in positions),
+            )
 
-    # The oracle's own series preparation: an extension dtype is coerced to
-    # object before parsing. `to_pandas()` of a pa.string() column is object
-    # dtype with None for nulls, matching the frame the oracle reads.
-    series = col.to_pandas()
-    if pd.api.types.is_extension_array_dtype(series.dtype):
-        series = series.astype(object)
-    parsed = pd.to_datetime(series, format=date_format, errors="coerce")
-    unusable = parsed.isna().to_numpy()
-    source_null = series.isna().to_numpy()
+        # The oracle's own series preparation: an extension dtype is coerced to
+        # object before parsing. `to_pandas()` of a pa.string() column is object
+        # dtype with None for nulls, matching the frame the oracle reads.
+        series = col.to_pandas()
+        if pd.api.types.is_extension_array_dtype(series.dtype):
+            series = series.astype(object)
+        parsed = pd.to_datetime(series, format=date_format, errors="coerce")
+        unusable = parsed.isna().to_numpy()
+        source_null = series.isna().to_numpy()
 
-    # Unusable rows get a zero shift, exactly as the oracle's per-row loop does,
-    # so the vectorized add below is the same operation over the same inputs.
-    shifts = np.zeros(len(series), dtype=np.int64)
-    usable = ~unusable
-    if usable.any():
-        offsets = _derive_offsets(
-            col.filter(pa.array(usable)),
-            range_size=range_size,
-            mask_key=mask_key,
-            namespace=namespace,
-            index_kernel=index_kernel,
-            native_threads=native_threads,
-        )
-        shifts[usable] = offsets.astype(np.int64) + min_days
-    if derive_calls is not None:
-        derive_calls.append(int(usable.any()))
+        # Unusable rows get a zero shift, exactly as the oracle's per-row loop does,
+        # so the vectorized add below is the same operation over the same inputs.
+        shifts = np.zeros(len(series), dtype=np.int64)
+        usable = ~unusable
+        if usable.any():
+            offsets = _derive_offsets(
+                col.filter(pa.array(usable)),
+                range_size=range_size,
+                mask_key=mask_key,
+                namespace=namespace,
+                index_kernel=index_kernel,
+                native_threads=native_threads,
+            )
+            shifts[usable] = offsets.astype(np.int64) + min_days
+        if derive_calls is not None:
+            derive_calls.append(int(usable.any()))
 
-    shifted = parsed + pd.to_timedelta(shifts, unit="D")
-    formatted = shifted.dt.strftime(date_format)
+        shifted = parsed + pd.to_timedelta(shifts, unit="D")
+        formatted = shifted.dt.strftime(date_format)
 
-    out = np.array(series.astype(object).to_numpy(copy=True), dtype=object)
-    if usable.any():
-        out[usable] = np.asarray(formatted.to_numpy()[usable], dtype=object)
+        out = np.array(series.astype(object).to_numpy(copy=True), dtype=object)
+        if usable.any():
+            out[usable] = np.asarray(formatted.to_numpy()[usable], dtype=object)
 
-    format_errors = tuple(int(i) for i in np.flatnonzero(unusable & ~source_null))
-    return pa.array(out, type=pa.string()), format_errors
+        format_errors = tuple(int(i) for i in np.flatnonzero(unusable & ~source_null))
+        return pa.array(out, type=pa.string()), format_errors
+    except BaseException:
+        del mask_key
+        raise
 
 
 __all__ = [

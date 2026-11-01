@@ -683,7 +683,7 @@ def _fk_ooc_config(tmp_path: Path) -> dict[str, Any]:
     parent_src = _write_source(tmp_path, parent, "parent")
     child_src = _write_source(tmp_path, child, "child")
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"job_name": "ooc-d-disk-preflight", "seed": 7},
         "sources": {
             "parent": {"type": "file", "path": parent_src, "format": "parquet"},
@@ -732,7 +732,7 @@ def _cyclic_fk_config(tmp_path: Path) -> dict[str, Any]:
     a_src = _write_source(tmp_path, a, "a")
     b_src = _write_source(tmp_path, b, "b")
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"job_name": "ooc-d-cyclic-unaffected", "seed": 7},
         "sources": {
             "a": {"type": "file", "path": a_src, "format": "parquet"},

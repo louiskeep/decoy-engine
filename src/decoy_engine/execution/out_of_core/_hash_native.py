@@ -71,19 +71,23 @@ def native_hash_array(
     the Python path emits (a string array, one token per row) before the caller
     inserts it.
     """
-    out = bound.kernel.derive_batch(
-        values,
-        mask_key=mask_key,
-        namespace=namespace,
-        truncate=truncate,
-        native_threads=bound.native_threads,
-    )
-    if not isinstance(out, pa.Array) or out.type != pa.string() or len(out) != len(values):
-        raise ExecutionError(
-            code=reasons.runtime.OUT_OF_CORE_HASH_NATIVE_RESULT_INVALID,
-            message="the native hash kernel returned an array that is not one string per input row.",
+    try:
+        out = bound.kernel.derive_batch(
+            values,
+            mask_key=mask_key,
+            namespace=namespace,
+            truncate=truncate,
+            native_threads=bound.native_threads,
         )
-    return out
+        if not isinstance(out, pa.Array) or out.type != pa.string() or len(out) != len(values):
+            raise ExecutionError(
+                code=reasons.runtime.OUT_OF_CORE_HASH_NATIVE_RESULT_INVALID,
+                message="the native hash kernel returned an array that is not one string per input row.",
+            )
+        return out
+    except BaseException:
+        del mask_key
+        raise
 
 
 __all__ = [

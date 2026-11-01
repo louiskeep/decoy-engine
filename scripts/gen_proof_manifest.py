@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
-import re
+import sys
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
@@ -25,8 +25,14 @@ import pandas as pd
 import pyarrow as pa
 import yaml
 
+if sys.version_info >= (3, 11):
+    import tomllib
+else:
+    import tomli as tomllib
+
 from decoy_engine.config._pipeline import PipelineConfig
 from decoy_engine.execution._pipeline import run_pipeline
+from decoy_engine.keyprovider import SecretKeyProvider
 
 SAMPLE_ROWS = 5
 
@@ -51,31 +57,21 @@ def _surface() -> dict:
     }
 
 
-_CHANGELOG_PATH = Path(__file__).resolve().parent.parent / "CHANGELOG.md"
-# A released section heading starts with a digit ("## [0.14.1] - ..."), which
-# excludes the "## [Unreleased]" heading above it without a special case.
-_RELEASED_SECTION = re.compile(r"^## \[(?P<version>\d[^\]]*)\]")
+_PYPROJECT_PATH = Path(__file__).resolve().parent.parent / "pyproject.toml"
 
 
 def _released_engine_version() -> str:
-    # Authoritative release signal: the newest released section in CHANGELOG.md
-    # (the first "## [X.Y.Z]" heading below [Unreleased]). It is in-repo and
-    # deterministic, so the stamp tracks the real release and cannot silently rot
-    # the way a hand-maintained constant did. pyproject `version` is a stale
-    # placeholder (hatch-vcs stamps the real version at the release cut), and
-    # git describe / importlib.metadata are not available or not deterministic in
-    # every run context (sdist build, CI without tags, uninstalled checkout).
-    for line in _CHANGELOG_PATH.read_text(encoding="utf-8").splitlines():
-        m = _RELEASED_SECTION.match(line)
-        if m:
-            return m.group("version")
-    raise RuntimeError(f"no released version section found in {_CHANGELOG_PATH}")
+    # pyproject `[project].version` is the engine's one version source
+    # (tests/unit/test_version_agreement.py holds the module, lock and CHANGELOG to it).
+    with _PYPROJECT_PATH.open("rb") as fh:
+        return str(tomllib.load(fh)["project"]["version"])
 
 
 # Stamp values held as module constants so the generator is deterministic and
 # the sentry diff is stable. GENERATED_AT is bumped by hand when refreshing
-# benchmarks or samples; ENGINE_VERSION is derived from the CHANGELOG release
-# section (see _released_engine_version) so it follows the real release.
+# benchmarks or samples; ENGINE_VERSION is read from pyproject.toml.
+_PROOF_SECRET = b"decoy-proof-manifest-throwaway-secret!"
+_PROOF_KEY = SecretKeyProvider(_PROOF_SECRET)
 ENGINE_VERSION = _released_engine_version()
 GENERATED_AT = "2026-06-14"
 
@@ -138,7 +134,7 @@ def _run_hero(
     tmp: Path,
 ) -> dict:
     config = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 1234567, "post_validation": False},
         # sources/targets: PipelineConfig requires both; profile_source reads
         # the sources block to build the column profile. We write temp CSVs so
@@ -272,7 +268,9 @@ def _run_hero(
         "claims": pa.Table.from_pandas(claims),
         "providers": pa.Table.from_pandas(providers),
     }
-    result = run_pipeline(cfg, sources, engine_version=ENGINE_VERSION)
+    # Keyed strategies need a secret in every release phase; a fixed throwaway keeps the manifest
+    # reproducible (it documents behavior, not secrecy).
+    result = run_pipeline(cfg, sources, engine_version=ENGINE_VERSION, key_provider=_PROOF_KEY)
     out = result.outputs
 
     inputs = {"members": members, "claims": claims, "providers": providers}
@@ -321,7 +319,7 @@ def _mask_proof(
         "columns": [{"name": column, "strategy": strategy_id, **column_cfg}],
     }
     cfg = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 1234567, "post_validation": False},
         "tables": [table],
     }
@@ -620,6 +618,15 @@ CAPABILITY_PROOFS: list[CapabilityProof] = [
 ]
 
 
+def _run_single_table(cfg: dict, df: pd.DataFrame) -> pd.DataFrame:
+    validated = PipelineConfig.model_validate(cfg).model_dump()
+    sources = {"t": pa.Table.from_pandas(df)}
+    result = run_pipeline(
+        validated, sources, engine_version=ENGINE_VERSION, key_provider=_PROOF_KEY
+    )
+    return result.outputs["t"].to_pandas()
+
+
 def _yaml_for(proof: CapabilityProof) -> str:
     table = proof.config["tables"][0]
     snippet = {"tables": [{"name": table["name"], "columns": table["columns"]}]}
@@ -642,10 +649,7 @@ def _run_capability(proof: CapabilityProof) -> dict:
                 "t": {"type": "file", "format": "csv", "path": "/dev/null"},
             },
         }
-        validated = PipelineConfig.model_validate(cfg).model_dump()
-        sources = {"t": pa.Table.from_pandas(df)}
-        result = run_pipeline(validated, sources, engine_version=ENGINE_VERSION)
-        out_df = result.outputs["t"].to_pandas()
+        out_df = _run_single_table(cfg, df)
 
     inp = _records(df, n=len(df))
     out = _records(out_df, n=len(out_df))
@@ -762,7 +766,7 @@ def _derived_proof() -> dict:
         df.to_csv(csv_path, index=False)
 
         cfg = {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 1234567, "post_validation": False},
             "sources": {"t": {"type": "file", "format": "csv", "path": str(csv_path)}},
             "targets": {"t": {"type": "file", "format": "csv", "path": "/dev/null"}},
@@ -780,10 +784,7 @@ def _derived_proof() -> dict:
                 }
             ],
         }
-        validated = PipelineConfig.model_validate(cfg).model_dump()
-        sources = {"t": pa.Table.from_pandas(df)}
-        result = run_pipeline(validated, sources, engine_version=ENGINE_VERSION)
-        out_df = result.outputs["t"].to_pandas()
+        out_df = _run_single_table(cfg, df)
 
     # Invariant: b = a * 2 for every row; all outputs differ from the placeholder
     # placeholder (0.0) except when a=0.
@@ -842,7 +843,7 @@ def _derived_aggregate_proof() -> dict:
         df.to_csv(csv_path, index=False)
 
         cfg = {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 1234567, "post_validation": False},
             "sources": {"t": {"type": "file", "format": "csv", "path": str(csv_path)}},
             "targets": {"t": {"type": "file", "format": "csv", "path": "/dev/null"}},
@@ -860,10 +861,7 @@ def _derived_aggregate_proof() -> dict:
                 }
             ],
         }
-        validated = PipelineConfig.model_validate(cfg).model_dump()
-        sources = {"t": pa.Table.from_pandas(df)}
-        result = run_pipeline(validated, sources, engine_version=ENGINE_VERSION)
-        out_df = result.outputs["t"].to_pandas()
+        out_df = _run_single_table(cfg, df)
 
     # Invariant: every row of total == sum(amount)
     for idx, row in out_df.iterrows():
@@ -922,7 +920,7 @@ def _grouped_series_proof() -> dict:
         df.to_csv(csv_path, index=False)
 
         cfg = {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 42, "post_validation": False},
             "sources": {"t": {"type": "file", "format": "csv", "path": str(csv_path)}},
             "targets": {"t": {"type": "file", "format": "csv", "path": "/dev/null"}},
@@ -947,10 +945,7 @@ def _grouped_series_proof() -> dict:
                 }
             ],
         }
-        validated = PipelineConfig.model_validate(cfg).model_dump()
-        sources = {"t": pa.Table.from_pandas(df)}
-        result = run_pipeline(validated, sources, engine_version=ENGINE_VERSION)
-        out_df = result.outputs["t"].to_pandas()
+        out_df = _run_single_table(cfg, df)
 
     # Invariant: within each group, counter values are consecutive from 0.
     for group, gdf in out_df.groupby("group_id"):
@@ -1010,7 +1005,7 @@ def _windowed_date_proof() -> dict:
         df.to_csv(csv_path, index=False)
 
         cfg = {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 99, "post_validation": False},
             "sources": {"t": {"type": "file", "format": "csv", "path": str(csv_path)}},
             "targets": {"t": {"type": "file", "format": "csv", "path": "/dev/null"}},
@@ -1033,10 +1028,7 @@ def _windowed_date_proof() -> dict:
                 }
             ],
         }
-        validated = PipelineConfig.model_validate(cfg).model_dump()
-        sources = {"t": pa.Table.from_pandas(df)}
-        result = run_pipeline(validated, sources, engine_version=ENGINE_VERSION)
-        out_df = result.outputs["t"].to_pandas()
+        out_df = _run_single_table(cfg, df)
 
     # Invariant: each output date is within [min_days, max_days] of its anchor.
     for idx, row in out_df.iterrows():
@@ -1097,7 +1089,7 @@ def _group_key_proof() -> dict:
         df.to_csv(csv_path, index=False)
 
         cfg = {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 77, "post_validation": False},
             "sources": {"t": {"type": "file", "format": "csv", "path": str(csv_path)}},
             "targets": {"t": {"type": "file", "format": "csv", "path": "/dev/null"}},
@@ -1119,10 +1111,7 @@ def _group_key_proof() -> dict:
                 }
             ],
         }
-        validated = PipelineConfig.model_validate(cfg).model_dump()
-        sources = {"t": pa.Table.from_pandas(df)}
-        result = run_pipeline(validated, sources, engine_version=ENGINE_VERSION)
-        out_df = result.outputs["t"].to_pandas()
+        out_df = _run_single_table(cfg, df)
 
     # Invariant 1: same group_by value -> same key within the result.
     group_keys: dict[str, str] = {}

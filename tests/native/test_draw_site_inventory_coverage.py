@@ -229,7 +229,7 @@ def _strip_prose(text: str) -> str:
 _ALLOWLIST = frozenset(
     {
         "execution/_chunked.py",
-        "execution/_chunked_fk.py",  # a log-message string quotes "derive(seed, ns, value)"
+        "execution/_chunked_fk_edge_checks.py",  # a log-message string quotes "derive(seed, ns, value)"
         "execution/_chunked_profile.py",
         "execution/_pipeline.py",
         "execution/native/_determinism_protocol.py",
@@ -244,9 +244,20 @@ _ALLOWLIST = frozenset(
         # siblings above: these are DrawSite literals whose seed_derivation/notes
         # strings quote the call shape the scan looks for.
         "execution/native/_draw_sites_tokenize.py",
+        # Per-family DRAW_SITES data modules assembled by _determinism_protocol.py.
+        # Same rationale as the siblings above: DrawSite literals whose
+        # seed_derivation/notes strings quote the call shapes the scan looks for.
+        "execution/native/_draw_sites_gen.py",
+        "execution/native/_draw_sites_mask.py",
+        "execution/native/_draw_sites_provider_backed.py",
         # Task 0.3 protocol plumbing: reproduces the catalogued draws off the
         # hot path (one provider per DRAW_SITES entry). Not a new output site.
         "execution/native/_draw_site_providers.py",
+        # The provider classes split out of _draw_site_providers.py into the
+        # protocol package; same non-output-draw rationale as that module's entry.
+        "execution/native/protocol/providers_base.py",
+        "execution/native/protocol/providers_gen.py",
+        "execution/native/protocol/providers_mask.py",
         # GP2 (2026-09-17): DrawSiteProvider siblings split out of
         # _draw_site_providers.py's own recorded LOC ceiling; same non-output-draw
         # rationale as that module's own entry above.

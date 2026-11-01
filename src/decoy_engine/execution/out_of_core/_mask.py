@@ -151,95 +151,98 @@ def mask_column(
     `text_redact_native` is the text_redact counterpart; `text_redact_array` stays the reference
     and the declined path.
     """
-    job_seed = mask_key
-    cfg = provider_config_to_dict(seed.provider_config)
-    if seed.strategy in GROUP_B_STRATEGIES:
-        if seed.strategy == "fpe":
-            if fpe_native is not None and seed.namespace is not None and column is not None:
-                return native_fpe_array(
-                    values,
-                    native=fpe_native,
-                    mask_key=job_seed,
-                    namespace=seed.namespace,
-                    column=column,
+    try:
+        cfg = provider_config_to_dict(seed.provider_config)
+        if seed.strategy in GROUP_B_STRATEGIES:
+            if seed.strategy == "fpe":
+                if fpe_native is not None and seed.namespace is not None and column is not None:
+                    return native_fpe_array(
+                        values,
+                        native=fpe_native,
+                        mask_key=mask_key,
+                        namespace=seed.namespace,
+                        column=column,
+                    )
+                return fpe_array(
+                    values, job_seed=mask_key, namespace=seed.namespace, column=column, cfg=cfg
                 )
-            return fpe_array(
-                values, job_seed=job_seed, namespace=seed.namespace, column=column, cfg=cfg
-            )
-        if seed.strategy == "text_redact":
-            if text_redact_native is not None:
-                return native_text_redact_array(values, native=text_redact_native)
-            return text_redact_array(values, plan=seed)
-        if categorical_native is not None and seed.namespace is not None:
-            return native_categorical_array(
-                values, native=categorical_native, mask_key=job_seed, namespace=seed.namespace
-            )
-        return categorical_array(
-            values,
-            job_seed=job_seed,
-            namespace=seed.namespace,
-            deterministic=seed.deterministic,
-            cfg=cfg,
-        )
-    if seed.strategy in GROUP_C_STRATEGIES:
-        return group_c_array(
-            values,
-            seed,
-            job_seed,
-            column=column,
-            cfg=cfg,
-            corpus_record=corpus_record,
-            sub_floor_notices=sub_floor_notices,
-            bucket_native=bucket_native,
-            text_mask_native=text_mask_native,
-        )
-    if seed.strategy == "faker":
-        # faker has no in-route Python reference (a pool must be built from the
-        # provider registry), so it runs ONLY through the per-table context the
-        # run-scoped plan prepared. A faker column that reaches here without that
-        # handle is a routing/preflight gap, not a column to pass through raw:
-        # fail closed rather than leak the source value.
-        if faker_native is None or seed.namespace is None:
-            raise ExecutionError(
-                code=reasons.runtime.OUT_OF_CORE_FAKER_POOL_UNSUPPORTED,
-                message=(
-                    "faker reached the out-of-core mask without a prepared pool; the route "
-                    "admits only the deterministic-REUSE native shape, decided per table."
-                ),
-            )
-        return native_faker_array(
-            values, native=faker_native, mask_key=job_seed, namespace=seed.namespace
-        )
-    if seed.strategy == "passthrough":
-        return passthrough_array(values)
-    if seed.strategy == "redact":
-        return redact_array(values, redact_with=cfg.get("redact_with", "REDACTED"))
-    if seed.strategy == "truncate":
-        # Fail-closed: truncate_params raises on an invalid config rather than
-        # letting the raw column pass through unmasked.
-        length, keep, mask_char = truncate_params(cfg)
-        return truncate_array(values, length=length, keep=keep, mask_char=mask_char)
-    if seed.strategy == "hash":
-        if seed.namespace is None:
-            raise ExecutionError(
-                code=reasons.runtime.HASH_REQUIRES_NAMESPACE,
-                message="hash strategy requires a namespace.",
-            )
-        raw_truncate = cfg.get("truncate")
-        truncate = raw_truncate if isinstance(raw_truncate, int) and raw_truncate > 0 else None
-        if hash_kernel is not None:
-            return native_hash_array(
+            if seed.strategy == "text_redact":
+                if text_redact_native is not None:
+                    return native_text_redact_array(values, native=text_redact_native)
+                return text_redact_array(values, plan=seed, column=column)
+            if categorical_native is not None and seed.namespace is not None:
+                return native_categorical_array(
+                    values, native=categorical_native, mask_key=mask_key, namespace=seed.namespace
+                )
+            return categorical_array(
                 values,
-                bound=hash_kernel,
-                mask_key=job_seed,
+                job_seed=mask_key,
                 namespace=seed.namespace,
-                truncate=truncate,
+                deterministic=seed.deterministic,
+                cfg=cfg,
             )
-        return hash_array(values, seed=job_seed, namespace=seed.namespace, truncate=truncate)
-    raise ExecutionError(
-        code=reasons.runtime.OUT_OF_CORE_STRATEGY_UNSUPPORTED,
-        message=f"strategy {seed.strategy!r} is not supported by the out-of-core runner.",
-    )
+        if seed.strategy in GROUP_C_STRATEGIES:
+            return group_c_array(
+                values,
+                seed,
+                mask_key,
+                column=column,
+                cfg=cfg,
+                corpus_record=corpus_record,
+                sub_floor_notices=sub_floor_notices,
+                bucket_native=bucket_native,
+                text_mask_native=text_mask_native,
+            )
+        if seed.strategy == "faker":
+            # faker has no in-route Python reference (a pool must be built from the
+            # provider registry), so it runs ONLY through the per-table context the
+            # run-scoped plan prepared. A faker column that reaches here without that
+            # handle is a routing/preflight gap, not a column to pass through raw:
+            # fail closed rather than leak the source value.
+            if faker_native is None or seed.namespace is None:
+                raise ExecutionError(
+                    code=reasons.runtime.OUT_OF_CORE_FAKER_POOL_UNSUPPORTED,
+                    message=(
+                        "faker reached the out-of-core mask without a prepared pool; the route "
+                        "admits only the deterministic-REUSE native shape, decided per table."
+                    ),
+                )
+            return native_faker_array(
+                values, native=faker_native, mask_key=mask_key, namespace=seed.namespace
+            )
+        if seed.strategy == "passthrough":
+            return passthrough_array(values)
+        if seed.strategy == "redact":
+            return redact_array(values, redact_with=cfg.get("redact_with", "REDACTED"))
+        if seed.strategy == "truncate":
+            # Fail-closed: truncate_params raises on an invalid config rather than
+            # letting the raw column pass through unmasked.
+            length, keep, mask_char = truncate_params(cfg)
+            return truncate_array(values, length=length, keep=keep, mask_char=mask_char)
+        if seed.strategy == "hash":
+            if seed.namespace is None:
+                raise ExecutionError(
+                    code=reasons.runtime.HASH_REQUIRES_NAMESPACE,
+                    message="hash strategy requires a namespace.",
+                )
+            raw_truncate = cfg.get("truncate")
+            truncate = raw_truncate if isinstance(raw_truncate, int) and raw_truncate > 0 else None
+            if hash_kernel is not None:
+                return native_hash_array(
+                    values,
+                    bound=hash_kernel,
+                    mask_key=mask_key,
+                    namespace=seed.namespace,
+                    truncate=truncate,
+                )
+            return hash_array(values, seed=mask_key, namespace=seed.namespace, truncate=truncate)
+        raise ExecutionError(
+            code=reasons.runtime.OUT_OF_CORE_STRATEGY_UNSUPPORTED,
+            message=f"strategy {seed.strategy!r} is not supported by the out-of-core runner.",
+        )
+    except BaseException:
+        del mask_key
+        raise
 
 
 def masked_output_type(seed: ColumnSeed, source_type: pa.DataType | None = None) -> pa.DataType:
@@ -331,32 +334,36 @@ def mask_table(
     single-shot whole-table path resolves the whole column in one call, so it
     has no cross-call aggregation need of its own).
     """
-    seed = table_seed(plan, table_name)
-    if seed is None:
-        return table
-    key = mask_key if mask_key is not None else plan.seed_envelope.job_seed
-    records = code_set_corpus_records or {}
-    out = table
-    for column, column_seed in seed.per_column:
-        if column in skip_columns:
-            continue
-        if column not in out.column_names:
-            continue
-        notices = (
-            sub_floor_totals.setdefault(column, {})
-            if sub_floor_totals is not None and column_seed.strategy == "text_mask"
-            else None
-        )
-        masked = mask_column(
-            out.column(column),
-            column_seed,
-            key,
-            column=column,
-            corpus_record=records.get(column),
-            sub_floor_notices=notices,
-        )
-        out = out.set_column(out.schema.get_field_index(column), column, masked)
-    return out
+    try:
+        seed = table_seed(plan, table_name)
+        if seed is None:
+            return table
+        mask_key = mask_key if mask_key is not None else plan.seed_envelope.job_seed
+        records = code_set_corpus_records or {}
+        out = table
+        for column, column_seed in seed.per_column:
+            if column in skip_columns:
+                continue
+            if column not in out.column_names:
+                continue
+            notices = (
+                sub_floor_totals.setdefault(column, {})
+                if sub_floor_totals is not None and column_seed.strategy == "text_mask"
+                else None
+            )
+            masked = mask_column(
+                out.column(column),
+                column_seed,
+                mask_key,
+                column=column,
+                corpus_record=records.get(column),
+                sub_floor_notices=notices,
+            )
+            out = out.set_column(out.schema.get_field_index(column), column, masked)
+        return out
+    except BaseException:
+        del mask_key
+        raise
 
 
 def mask_batch(
@@ -399,79 +406,83 @@ def mask_batch(
     `hash_plan` carries the table's per-column hash decisions (resolved once before
     the first batch); `None` leaves every hash column on the Python kernel unrecorded.
     """
-    seed = table_seed(plan, table_name)
-    if seed is None:
-        return batch
-    key = mask_key if mask_key is not None else plan.seed_envelope.job_seed
-    records = code_set_corpus_records or {}
-    fields = list(batch.schema)
-    arrays = list(batch.columns)
-    for column, column_seed in seed.per_column:
-        if column in skip_columns:
-            continue
-        hash_kernel = (
-            hash_plan.kernel_for(column, batch)
-            if hash_plan is not None and column_seed.strategy == "hash"
-            else None
-        )
-        categorical_native = (
-            hash_plan.categorical_for(column, batch)
-            if hash_plan is not None and column_seed.strategy == "categorical"
-            else None
-        )
-        bucket_native = (
-            hash_plan.bucket_for(column, batch)
-            if hash_plan is not None and column_seed.strategy == "bucket_perturb"
-            else None
-        )
-        fpe_native = (
-            hash_plan.fpe_for(column, batch)
-            if hash_plan is not None and column_seed.strategy == "fpe"
-            else None
-        )
-        text_redact_native = (
-            hash_plan.text_redact_for(column, batch)
-            if hash_plan is not None and column_seed.strategy == "text_redact"
-            else None
-        )
-        text_mask_native = (
-            hash_plan.text_mask_for(column, batch)
-            if hash_plan is not None and column_seed.strategy == "text_mask"
-            else None
-        )
-        faker_native = (
-            hash_plan.faker_for(column, batch)
-            if hash_plan is not None and column_seed.strategy == "faker"
-            else None
-        )
-        idx = batch.schema.get_field_index(column)
-        if idx < 0:
-            continue
-        notices = (
-            sub_floor_totals.setdefault(column, {})
-            if sub_floor_totals is not None and column_seed.strategy == "text_mask"
-            else None
-        )
-        masked = mask_column(
-            arrays[idx],
-            column_seed,
-            key,
-            column=column,
-            corpus_record=records.get(column),
-            sub_floor_notices=notices,
-            hash_kernel=hash_kernel,
-            categorical_native=categorical_native,
-            bucket_native=bucket_native,
-            fpe_native=fpe_native,
-            text_redact_native=text_redact_native,
-            text_mask_native=text_mask_native,
-            faker_native=faker_native,
-        )
-        arrays[idx] = masked
-        # Same field semantics as Table.set_column with a bare name: the field
-        # type follows the masked array, prior field metadata is not carried.
-        fields[idx] = pa.field(column, masked.type)
-    return pa.record_batch(arrays, schema=pa.schema(fields, metadata=batch.schema.metadata))
+    try:
+        seed = table_seed(plan, table_name)
+        if seed is None:
+            return batch
+        mask_key = mask_key if mask_key is not None else plan.seed_envelope.job_seed
+        records = code_set_corpus_records or {}
+        fields = list(batch.schema)
+        arrays = list(batch.columns)
+        for column, column_seed in seed.per_column:
+            if column in skip_columns:
+                continue
+            hash_kernel = (
+                hash_plan.kernel_for(column, batch)
+                if hash_plan is not None and column_seed.strategy == "hash"
+                else None
+            )
+            categorical_native = (
+                hash_plan.categorical_for(column, batch)
+                if hash_plan is not None and column_seed.strategy == "categorical"
+                else None
+            )
+            bucket_native = (
+                hash_plan.bucket_for(column, batch)
+                if hash_plan is not None and column_seed.strategy == "bucket_perturb"
+                else None
+            )
+            fpe_native = (
+                hash_plan.fpe_for(column, batch)
+                if hash_plan is not None and column_seed.strategy == "fpe"
+                else None
+            )
+            text_redact_native = (
+                hash_plan.text_redact_for(column, batch)
+                if hash_plan is not None and column_seed.strategy == "text_redact"
+                else None
+            )
+            text_mask_native = (
+                hash_plan.text_mask_for(column, batch)
+                if hash_plan is not None and column_seed.strategy == "text_mask"
+                else None
+            )
+            faker_native = (
+                hash_plan.faker_for(column, batch)
+                if hash_plan is not None and column_seed.strategy == "faker"
+                else None
+            )
+            idx = batch.schema.get_field_index(column)
+            if idx < 0:
+                continue
+            notices = (
+                sub_floor_totals.setdefault(column, {})
+                if sub_floor_totals is not None and column_seed.strategy == "text_mask"
+                else None
+            )
+            masked = mask_column(
+                arrays[idx],
+                column_seed,
+                mask_key,
+                column=column,
+                corpus_record=records.get(column),
+                sub_floor_notices=notices,
+                hash_kernel=hash_kernel,
+                categorical_native=categorical_native,
+                bucket_native=bucket_native,
+                fpe_native=fpe_native,
+                text_redact_native=text_redact_native,
+                text_mask_native=text_mask_native,
+                faker_native=faker_native,
+            )
+            arrays[idx] = masked
+            # Same field semantics as Table.set_column with a bare name: the field
+            # type follows the masked array, prior field metadata is not carried.
+            fields[idx] = pa.field(column, masked.type)
+        return pa.record_batch(arrays, schema=pa.schema(fields, metadata=batch.schema.metadata))
+    except BaseException:
+        del mask_key
+        raise
 
 
 __all__ = [

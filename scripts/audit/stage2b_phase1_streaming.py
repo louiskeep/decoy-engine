@@ -59,7 +59,7 @@ def main() -> None:
     input_bytes = src_path.stat().st_size
 
     config = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 1},
         "sources": {"t": {"type": "file", "format": "parquet", "path": str(src_path)}},
         "targets": {
@@ -167,7 +167,7 @@ def main() -> None:
     fw_input_bytes = fw_path.stat().st_size
 
     fw_config = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 1},
         "sources": {
             "t": {

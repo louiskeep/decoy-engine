@@ -1,4 +1,5 @@
-Status: plan (Phase D slice D1a: hash native on the OOC route; sub-slice of the approved Phase D program plan; rev 5. Round-4 Codex gate closed both HIGH findings (#1 Unicode policy + #2 reachability); rev 5 folds the two remaining MEDIUMs verbatim per Codex's remediation: the Unicode-table/crate-version guard alongside the fixed-token lock-test, and the tightened perf spec (total peak RSS gate + frozen data generator), plus the normalization-sensitive-sequence fixture note.)
+Status: built
+Shipped: merge PR #237 (c75d6f70)
 
 # Phase D / D1a: hash masking native on the out-of-core route
 

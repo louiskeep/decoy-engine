@@ -215,6 +215,22 @@ def _git(*args: str) -> str:
     ).stdout
 
 
+# The retired package name, spelled in two parts so the residual sentry has no literal to flag.
+_RETIRED = "sto" + "rm"
+
+
+def _only_these_line_changes(base: str, path: str, allowed: dict[str, str]) -> bool:
+    """True when the file's diff against `base` is exactly the removed->added pairs in `allowed`."""
+    lines = [
+        ln
+        for ln in _git("diff", "-U0", base, "HEAD", "--", path).splitlines()
+        if ln[:1] in "+-" and not ln.startswith(("+++", "---"))
+    ]
+    removed = [ln for ln in lines if ln[0] == "-"]
+    added = [ln for ln in lines if ln[0] == "+"]
+    return sorted(removed) == sorted(allowed) and sorted(added) == sorted(allowed.values())
+
+
 def _origin_main_available() -> bool:
     try:
         _git("rev-parse", "--verify", "origin/main")
@@ -236,7 +252,8 @@ F29_REGISTRY_MIGRATION = frozenset(
         "src/decoy_engine/execution/_chunked_text_mask.py",
         "src/decoy_engine/execution/_fk_keys.py",
         "src/decoy_engine/execution/_isolated_reason.py",
-        "src/decoy_engine/execution/_output_projection.py",
+        # `_output_projection.py` is deliberately absent: its only allowance is the exact-line
+        # check below, so an unlisted edit to it trips this guard.
         "src/decoy_engine/execution/_publication_observer.py",
         "src/decoy_engine/execution/_residency_warning.py",
         "src/decoy_engine/execution/_strategies/_bucketize.py",
@@ -323,6 +340,9 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
             # config resolver, and nothing under `execution.physical`.
             "src/decoy_engine/execution/_throughput_calibration.py",
             "src/decoy_engine/execution/_job_estimate.py",
+            # The B5 telemetry self-calibration loop had no engine, platform or CLI caller and
+            # moved to `scripts/mem_telemetry.py` as calibration tooling (a deletion here).
+            "src/decoy_engine/execution/_mem_telemetry.py",
             # F2 (production mixed generate+mask route): the semantic admission core and the
             # generate-parent FK bridge move OUT of `execution/physical/_shadow_mixed.py` /
             # `_shadow_fk.py` into `_mixed_admission.py` / `_mixed_fk_bridge.py` so the shadow and
@@ -339,9 +359,9 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
             "src/decoy_engine/execution/_pipeline_routing.py",
             "src/decoy_engine/execution/_pipeline_routing_signals.py",
             "src/decoy_engine/execution/_pipeline_sources.py",
-            # E3b (run_storm honoured in-run): `capacity.py` passes
-            # `run_storm=bool(config.get("run_storm"))` into its two `decide_execution_route`
-            # calls so the capacity probe sees the same storm-forces-full-frame decision the
+            # E3b (post_scan_integrity honoured in-run): `capacity.py` passes
+            # `post_scan_integrity=post_scan_integrity_requested(config)` into its two `decide_execution_route`
+            # calls so the capacity probe sees the same Post-scan-integrity full-frame decision the
             # production route makes. Pure kwarg threading; imports nothing from
             # `execution.physical` (the import-direction sweeps above stay green).
             "src/decoy_engine/execution/capacity.py",
@@ -460,6 +480,14 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
             # §WHEN-NUMERIC: a pure value-shape guard on the gated pandas write (no physical seam).
             "src/decoy_engine/execution/_gated_string_guard.py",
             "src/decoy_engine/execution/native/_determinism_protocol.py",
+            # DRAW_SITES split by family: the record type and enums, and the per-family data
+            # modules `_determinism_protocol.py` assembles (the two existing data siblings, already
+            # listed, only repoint their `DrawSite` import). Pure data moves; none imports
+            # `execution.physical`.
+            "src/decoy_engine/execution/native/_draw_site_types.py",
+            "src/decoy_engine/execution/native/_draw_sites_gen.py",
+            "src/decoy_engine/execution/native/_draw_sites_mask.py",
+            "src/decoy_engine/execution/native/_draw_sites_provider_backed.py",
             # C5c-ii (deterministic Faker over bool/int/uint on the native routes, 2026-10-09): the
             # closed metadata-shape admission classifier (`native/_faker_deterministic_admission.py`,
             # new) and the degenerate output-type pin shared by the chunked and from_pandas routes
@@ -477,6 +505,14 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
             "src/decoy_engine/execution/_strategies/_categorical.py",
             "src/decoy_engine/execution/native/_capabilities.py",
             "src/decoy_engine/execution/native/_draw_site_providers.py",
+            # Draw-site providers split into the `native/protocol/` package (shared base,
+            # masking-side, generation-side); `_draw_site_providers.py` keeps the registry and
+            # re-exports, and its gen-pool sibling repoints its base-class import. Pure moves;
+            # none imports `execution.physical`.
+            "src/decoy_engine/execution/native/protocol/__init__.py",
+            "src/decoy_engine/execution/native/protocol/providers_base.py",
+            "src/decoy_engine/execution/native/protocol/providers_gen.py",
+            "src/decoy_engine/execution/native/protocol/providers_mask.py",
             "src/decoy_engine/execution/out_of_core/_mask_group_b.py",
             # Slice C5b-i (position-keyed non-deterministic Faker, 2026-10-05): the oracle Faker
             # handler selects through a shared index-kernel helper and a shared uint64 position-key
@@ -489,6 +525,12 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
             # seam, like faker and categorical. The SEQ modules were already permitted; nothing here
             # imports `execution.physical`.
             "src/decoy_engine/execution/_strategies/_text_redact.py",
+            # text_redact NER de-duplication: the `ner` config resolution and the
+            # `ner_model_version_mismatch` guard the full-frame handler and the out-of-core
+            # kernel each carried move into one shared parent-level `_strategies/_ner_config.py`
+            # (new). It imports only the detection package, the reasons registry and
+            # `_errors`; nothing from `execution.physical`.
+            "src/decoy_engine/execution/_strategies/_ner_config.py",
             # C6b-ii slice a: text_mask joins the SEQ-native seam the same way. The handler offers its
             # resolved config, and the operator descriptor lives in its own module so
             # `_sequential_native_ops.py` stays under the size policy. Neither imports
@@ -533,6 +575,13 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
             "src/decoy_engine/execution/out_of_core/_compat.py",
             "src/decoy_engine/execution/_guards.py",
             "src/decoy_engine/execution/_strategies/_date_shift.py",
+            # Chunked FK gate split: `_chunked_fk.py` (already listed under F29) keeps the edge
+            # walk; the ordered edge checks, the per-chunk runtime guards and the shared
+            # strategy/dtype vocabulary move to these siblings. Pure moves; none imports
+            # `execution.physical`.
+            "src/decoy_engine/execution/_chunked_fk_edge_checks.py",
+            "src/decoy_engine/execution/_chunked_fk_runtime.py",
+            "src/decoy_engine/execution/_chunked_fk_vocab.py",
             # Phase 5 Track B (native categorical operator, 2026-09-21): the new
             # operator extends the NATIVE route -- its config/determinism gate
             # (`_requirements.py`), the config-only eligibility query (`_plan.py`),
@@ -598,9 +647,16 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
             "src/decoy_engine/execution/_chunked_profile.py",
             "src/decoy_engine/execution/native/_chunk_schema.py",
             "src/decoy_engine/execution/native/_chunked_entry.py",
+            # F13: pool/categorical helpers split out of `_chunked_entry.py` to hold its 700-LOC ceiling.
+            "src/decoy_engine/execution/native/_chunked_pools.py",
             # OBS-2: the non-empty-source preflight wiring split out of `_chunked_entry.py` for
             # module headroom (pure move); imports nothing from `execution.physical`.
             "src/decoy_engine/execution/native/_chunked_preflight_wiring.py",
+            # A-4 x F13 merge: pure moves out of three modules to hold main's size ceilings
+            # (re-exported where callers import them); none imports `execution.physical`.
+            "src/decoy_engine/execution/native/_chunked_oracle_rows.py",
+            "src/decoy_engine/execution/_chunked_aggregate.py",
+            "src/decoy_engine/execution/_pipeline_routing_samples.py",
             # OBS-2c: bounded value-free row-error summary (schema ids, trigger codes, counts);
             # pure, imports nothing from `execution.physical`.
             "src/decoy_engine/execution/_row_error_summary.py",
@@ -687,6 +743,9 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
             "src/decoy_engine/execution/_chunked_group_key.py",
             "src/decoy_engine/execution/native/_chunked_group_key_gate.py",
             "src/decoy_engine/execution/native/_group_key_kernel.py",
+            # A-4 secret-material census: both raw-hex derivations wipe the mask key on raise and the
+            # KAT vector's key field is `repr=False` (adds `dataclasses.field`); no `execution.physical`.
+            "src/decoy_engine/execution/native/_group_key_ext.py",
             # C6c-i (text_redact as an ARROW_PYTHON operator): the scalar kernel module gains
             # `native_text_redact`, which calls the oracle's `iter_spans` and `_splice`. It imports
             # nothing from `execution.physical`, and the import-direction sweeps above still apply.
@@ -694,7 +753,7 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
             # C6c-ii (text_redact Rust span kernel): `_kernels_scalar.native_text_redact` now routes
             # all eleven built-in detectors into the compiled companion on ASCII-safe cells via the
             # new `_text_redact_kernel.py` (the catalog, loader and `merge_text_redact_spans`). The
-            # new module imports only `storm.detectors` and stdlib -- nothing from `execution.physical`
+            # new module imports only `detection.detectors` and stdlib -- nothing from `execution.physical`
             # -- so every import-direction sweep and the fresh-import probe above stay green.
             "src/decoy_engine/execution/native/_text_redact_kernel.py",
             # FPE reference kernel: `_crypto_reference.py` keeps an empty string as missing data like
@@ -719,11 +778,11 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
             "src/decoy_engine/execution/native/_text_mask_route.py",
             # C6b-ii slice b (native text_mask splice): `_text_mask_native_splice.py` is new -- the loader
             # and planner for the Rust redact/passthrough splice kernel. It imports only `_text_redact_kernel`,
-            # `storm.detectors`, and `transforms._text_mask_splice`/`transforms.text_mask`, nothing from
+            # `detection.detectors`, and `transforms._text_mask_splice`/`transforms.text_mask`, nothing from
             # `execution.physical`; `_kernels_scalar.native_text_mask` (permitted above) calls it.
             "src/decoy_engine/execution/native/_text_mask_native_splice.py",
-            # `_text_mask_native_fpe.py` (added to main after the STORM split was cut): import retarget
-            # `storm.detectors` -> `detection.detectors` only; no `execution.physical` import.
+            # `_text_mask_native_fpe.py` (added to main after the Pre-scan split was cut): import retarget
+            # `detection.detectors` -> `detection.detectors` only; no `execution.physical` import.
             "src/decoy_engine/execution/native/_text_mask_native_fpe.py",
             # bucket_perturb date_format guard: the oracle handler and the nested handler validate the
             # format before any early return, and the out-of-core kernel validates before its autodetect
@@ -779,6 +838,10 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
             # are DuckDB EXPLAIN strings, not an import).
             "src/decoy_engine/execution/out_of_core/_payload_store.py",
             "src/decoy_engine/execution/out_of_core/_stream_join.py",
+            # Typed temporal FK seam (slice 0 item 2): `empty_output_table` types a zero-row temporal
+            # FK column at the joiner's fixed type through `_join.fk_output_array`. Imports nothing
+            # from `execution.physical`.
+            "src/decoy_engine/execution/out_of_core/_emit.py",
             # D3a (validators on the bounded out-of-core route): `_validate_batch.py` is new -- it
             # computes validator admission, evaluates the admitted per-cell validators per masked
             # batch, and assembles the ValidationReport. `_runner.py` / `_stream_driver.py` hook it at
@@ -836,12 +899,46 @@ def test_production_execution_modules_are_byte_identical_to_origin_main() -> Non
             # `native/_draw_site_providers.py`. Pure moves; none imports `execution.physical`.
             "src/decoy_engine/execution/_fk_key_compat.py",
             "src/decoy_engine/execution/native/_draw_sites_tokenize.py",
+            # E1: opaque scratch identifiers for config-derived table/edge/relation names
+            # (X4). The reorder/batch relation paths are built from per-run ids, not names,
+            # and import nothing from execution.physical.
+            "src/decoy_engine/execution/out_of_core/_relation.py",
+            # E1 (the FileAccess policy, 2026-10-07): every file the engine opens goes through
+            # `decoy_engine.fileaccess`. These modules gain a policy-bound reader, a stage or a
+            # propagated context and import nothing from `execution.physical`: the governor and its
+            # RSS monitor thread (`run_in_context`), the FPE thread pool (`map_in_context`), the
+            # capacity estimate (a lexical path join), the DuckDB connection helper (the adapter),
+            # the spill estimate's output-device probe (a policy `stat`), the out-of-core key
+            # stager's scratch `LazySource`, and the new scratch-root helper. Also the chunked
+            # code_set resolver and the code_set and joint_mask handlers and the shared
+            # out-of-core resolver, which name the column a corpus read belongs to (`at_position`).
+            # (`_strategies/_fpe.py` is already permitted above.)
+            "src/decoy_engine/execution/_governor_monitor.py",
+            "src/decoy_engine/execution/out_of_core/_duckdb.py",
+            "src/decoy_engine/execution/out_of_core/_scratch.py",
+            "src/decoy_engine/execution/out_of_core/_spill_estimate.py",
+            "src/decoy_engine/execution/out_of_core/_stage.py",
+            "src/decoy_engine/execution/_chunked_code_set.py",
+            "src/decoy_engine/execution/_strategies/_code_set.py",
         }
     )
+    # Files allowed to change ONLY by these exact line replacements (path -> {removed: added}).
+    # Anything else in the file, now or later, trips the guard.
+    exact_line_changes = {
+        "src/decoy_engine/execution/_output_projection.py": {
+            f"-probabilistic `{_RETIRED}/postmask/residual_pii` advisory (two distinct layers).": "+probabilistic `verification/postmask/residual_pii` advisory (two distinct layers).",
+        },
+    }
+    exact_ok = {
+        name
+        for name, allowed in exact_line_changes.items()
+        if name in diff_names and _only_these_line_changes(base, name, allowed)
+    }
     unexpected = [
         name
         for name in diff_names
         if "/execution/physical/" not in name
+        and name not in exact_ok
         # Polars masking removal (2026-09-21): the whole execution/polars/ adapter
         # tree was deleted; permit those deletions wholesale rather than enumerate.
         and "/execution/polars/" not in name

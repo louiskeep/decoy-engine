@@ -203,31 +203,35 @@ def native_fpe_array(
     Python loop raises (first failing row). The kernel validates the key and tweak itself and
     answers an empty or all-null slice with a `string` array, matching the Python loop's
     always-`string` output, so no slice is short-circuited here."""
-    config = native.decision.config
-    if config is None:  # pragma: no cover - a native decision always carries its config
-        raise ExecutionError(
-            code=reasons.runtime.OUT_OF_CORE_FPE_UNPREPARED,
-            message="a native fpe column reached the kernel without a resolved config.",
+    try:
+        config = native.decision.config
+        if config is None:  # pragma: no cover - a native decision always carries its config
+            raise ExecutionError(
+                code=reasons.runtime.OUT_OF_CORE_FPE_UNPREPARED,
+                message="a native fpe column reached the kernel without a resolved config.",
+            )
+        native.decision.native_calls += 1
+        result = native.bound.kernel.run(
+            values,
+            mask_key=mask_key,
+            namespace=namespace,
+            tweak_column=column,
+            config=config,
+            forward=True,
+            native_threads=native.bound.native_threads,
         )
-    native.decision.native_calls += 1
-    result = native.bound.kernel.run(
-        values,
-        mask_key=mask_key,
-        namespace=namespace,
-        tweak_column=column,
-        config=config,
-        forward=True,
-        native_threads=native.bound.native_threads,
-    )
-    if result.errors:
-        raise fpe_fail_closed_error(result.errors, column)
-    out = result.values
-    if not isinstance(out, pa.Array) or out.type != pa.string() or len(out) != len(values):
-        raise ExecutionError(
-            code=reasons.runtime.OUT_OF_CORE_FPE_NATIVE_RESULT_INVALID,
-            message="the native fpe kernel returned an array that is not one string per input row.",
-        )
-    return out
+        if result.errors:
+            raise fpe_fail_closed_error(result.errors, column)
+        out = result.values
+        if not isinstance(out, pa.Array) or out.type != pa.string() or len(out) != len(values):
+            raise ExecutionError(
+                code=reasons.runtime.OUT_OF_CORE_FPE_NATIVE_RESULT_INVALID,
+                message="the native fpe kernel returned an array that is not one string per input row.",
+            )
+        return out
+    except BaseException:
+        del mask_key
+        raise
 
 
 __all__ = [

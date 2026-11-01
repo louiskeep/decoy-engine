@@ -57,6 +57,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from decoy_engine._opaque import validate_after_init
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
 
@@ -75,6 +77,8 @@ _DEFAULT_BATCH_SIZE_ROWS = 50_000
 __all__ = ["ShadowContext"]
 
 
+# Validated after the generated __init__ returns: its frame holds `mask_key` (`_opaque`).
+@validate_after_init
 @dataclass(frozen=True)
 class ShadowContext:
     """Runtime dependencies for one shadow run: the resolved keyed-mask IKM
@@ -130,7 +134,7 @@ class ShadowContext:
     """
 
     mask_key: bytes = field(repr=False)
-    job_seed: bytes = b""
+    job_seed: bytes = field(default=b"", repr=False)
     batch_size_rows: int = _DEFAULT_BATCH_SIZE_ROWS
     native_threads: int | None = None
     plan: Plan | None = None
@@ -149,7 +153,7 @@ class ShadowContext:
     quarantine_requested: bool = False
     provider_snapshot: Mapping[str, Callable[[Faker], Any]] | None = None
 
-    def __post_init__(self) -> None:
+    def _validate(self) -> None:
         if self.batch_size_rows < 1:
             raise ValueError(f"batch_size_rows must be >= 1, got {self.batch_size_rows!r}")
         if self.native_threads is not None and self.native_threads < 1:
@@ -216,9 +220,9 @@ class ShadowContext:
         """
         from decoy_engine.keyprovider import resolve_mask_key
 
-        mask_key = resolve_mask_key(plan=plan, key_provider=key_provider)
+        # Never a local (`_opaque`): `__post_init__` can raise.
         return cls(
-            mask_key=mask_key,
+            mask_key=resolve_mask_key(plan=plan, key_provider=key_provider),
             job_seed=plan.seed_envelope.job_seed,
             batch_size_rows=batch_size_rows,
             native_threads=native_threads,

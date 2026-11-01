@@ -1,8 +1,8 @@
 {
-  "engine_minor": "0.7",
+  "engine_minor": "0.17",
   "fixtures": {
     "categorical": {
-      "envelope_digest": "47ee3b519e9fb093bdfbf0a15b0e57d9c6037ccfffd7cdbc6d1c98dce0539b7f",
+      "envelope_digest": "06261977bf6cfc8571b02e606193795bd9990d6ea87be4ed174cab4faf975381",
       "excluded_columns": [],
       "status": "unchanged",
       "tables": {
@@ -10,7 +10,7 @@
       }
     },
     "conditional": {
-      "envelope_digest": "8f99802742a3942c56b586e2f359a89aabc5d71ce211640b0faa660f8bf91cdf",
+      "envelope_digest": "ea7d300bd165e0b7dd276d416e4aab873ab6b9e7ed01d9f430c5284fae0352be",
       "excluded_columns": [],
       "status": "unchanged",
       "tables": {
@@ -18,7 +18,7 @@
       }
     },
     "derived": {
-      "envelope_digest": "6098078fe2e5d6b1e13677b4c730e38ece6cec74a778d00f27fa91ca55ac695f",
+      "envelope_digest": "c2663183ca3e1bf7aa3507cc126c383d7ba94a610d7e4200e856a5075fd0fe9d",
       "excluded_columns": [],
       "status": "unchanged",
       "tables": {
@@ -26,7 +26,7 @@
       }
     },
     "derived_aggregate": {
-      "envelope_digest": "9fad100e22fd29a8014bb04d8e266b0b339157edf2e0cb2066d8d73972a259e4",
+      "envelope_digest": "c3b7949712fbb76763453f69ffec23e97210243fa0d9153640621db1fadc42f4",
       "excluded_columns": [],
       "status": "unchanged",
       "tables": {
@@ -34,7 +34,7 @@
       }
     },
     "formula": {
-      "envelope_digest": "3acdbe82f83cddde238d8e11c7887ef24d81ca32007e0948d0b77693260490bd",
+      "envelope_digest": "cdb7cccbe7f640bf9bdceb5bf239737af94e60c532479b6f3051c469b900907f",
       "excluded_columns": [],
       "status": "unchanged",
       "tables": {
@@ -42,7 +42,7 @@
       }
     },
     "grouped_windowed": {
-      "envelope_digest": "9512d7a4598e1fe9d0bbf6058ffc7d40a912a94d341a3676b7725b2279a00799",
+      "envelope_digest": "6f5dd4c0db0b9e601ec8bccbbe9df70c7236194e1c45ca06516038834cb46425",
       "excluded_columns": [],
       "status": "unchanged",
       "tables": {
@@ -50,7 +50,7 @@
       }
     },
     "keyed_derive": {
-      "envelope_digest": "b55f6aa4862d013fb55dd9ef770a8ba3f8180e55098fe0daa1fa7cd58dcb1478",
+      "envelope_digest": "84fdb685abbc7524eb36f8b6f86869e74f145a6f68b879ffe07275c19ef121ed",
       "excluded_columns": [],
       "status": "unchanged",
       "tables": {
@@ -58,7 +58,7 @@
       }
     },
     "live_faker": {
-      "envelope_digest": "913b06eea5f4a48a641cbe3f17538614894258a2491a9b146ece4fa52053908d",
+      "envelope_digest": "2a173066f0a1701f67d9bc5dc35f7e4976682cb358bc003d3d729c2ee5a8a204",
       "excluded_columns": [],
       "status": "unchanged",
       "tables": {
@@ -66,7 +66,7 @@
       }
     },
     "live_faker_default_locale": {
-      "envelope_digest": "16446cc2c075bc5af09c05f59eb85569efc49bc46f0e55d3fd71ab1532dc5bd5",
+      "envelope_digest": "9a86258a99ca926e0efc8a10415f7b556973f2d84292730d9f948f54c529946d",
       "excluded_columns": [],
       "status": "unchanged",
       "tables": {
@@ -74,7 +74,7 @@
       }
     },
     "nulls": {
-      "envelope_digest": "83d9870085d5bf392cd7b16a4da2b305a323a67842393b68df8b624a6e6c6049",
+      "envelope_digest": "9baa8e83533419376ddb5e94c530af5f57fcb9927466cf5f5885e9b0980594a1",
       "excluded_columns": [],
       "status": "refrozen",
       "tables": {
@@ -83,7 +83,7 @@
       }
     },
     "pooled_faker": {
-      "envelope_digest": "66c2f9a17e9565d28af0df57ab5b269f9af2d863c35cf0a75bf8fa2a1bcb1df6",
+      "envelope_digest": "8f49b47fcd87f9ec8812ea1c3160d898a0a8270b638a5f563e113128651324fa",
       "excluded_columns": [],
       "status": "unchanged",
       "tables": {
@@ -91,7 +91,7 @@
       }
     },
     "reference": {
-      "envelope_digest": "d256f2095f55f5b37aa16958a093d9ffedb6369524ca250bae9c8a43667337a9",
+      "envelope_digest": "3858e89e8266d2c0b968d6a41014e31fc746f2e2c6f33f120a40ccc418d0e6a5",
       "excluded_columns": [],
       "status": "unchanged",
       "tables": {
@@ -100,7 +100,7 @@
       }
     },
     "referenced_formula": {
-      "envelope_digest": "16bdc36b9d043b91b720c6473aa648229712627194a6c8a70fb37101629f1754",
+      "envelope_digest": "26dbf8ae4ab45724f69db3604a13aac0087953bfcac7e35f9653058a62b1f880",
       "excluded_columns": [],
       "status": "unchanged",
       "tables": {
@@ -108,7 +108,7 @@
       }
     },
     "sequence": {
-      "envelope_digest": "1a547f6c2bf91c3d30b8ac402fbef1e1868022736b66b064d07fe1f9830bb6a9",
+      "envelope_digest": "6e63ba73fde435ab1c2f3ef8b7bbd9f4fb30e58c2d3323459e7c0a546e6d1f42",
       "excluded_columns": [],
       "status": "unchanged",
       "tables": {
@@ -116,7 +116,7 @@
       }
     },
     "statistical": {
-      "envelope_digest": "36777fd10cab6e460d2e6eab5d447a02f5d12a2c782b0ca5814981ea48be0e75",
+      "envelope_digest": "33337f0fb94164e36f4f15b374dca111c1b5d74759c8f5e70bbb2714ce77f2b0",
       "excluded_columns": [],
       "status": "unchanged",
       "tables": {

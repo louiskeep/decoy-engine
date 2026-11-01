@@ -293,7 +293,7 @@ class TestT5UnmaskRoundTrip:
         source_called = ["4155552671", "9998887776", "5551234567"]
 
         cfg_raw = {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 999},
             "sources": {
                 "subs": {
@@ -381,7 +381,7 @@ class TestT5UnmaskRoundTrip:
 
         # Both tables in one config -- the compile check sees both members.
         raw = {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 777},
             "sources": {
                 "subscribers": {
@@ -704,7 +704,7 @@ class TestT8AuditSignal:
         from decoy_engine.plan._compile import compile_plan
 
         cfg_raw = {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 42},
             "sources": {
                 "subs": {
@@ -763,7 +763,7 @@ class TestT8AuditSignal:
         from decoy_engine.plan._compile import compile_plan
 
         cfg_raw = {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 42},
             "sources": {
                 "t": {

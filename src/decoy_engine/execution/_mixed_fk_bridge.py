@@ -136,9 +136,9 @@ def _resolve_arrow(
     """
     child_c = child_keys.cast(common)
     parent_c = parent_keys.cast(common)
-    indices = pc.index_in(child_c, value_set=parent_c, skip_nulls=True)
-    orphan_mask = pc.and_(pc.is_null(indices), pc.is_valid(child_c))
-    orphan_count = pc.sum(orphan_mask, min_count=0).as_py()
+    indices = pc.index_in(child_c, value_set=parent_c, skip_nulls=True)  # type: ignore[attr-defined, unused-ignore]
+    orphan_mask = pc.and_(pc.is_null(indices), pc.is_valid(child_c))  # type: ignore[attr-defined, unused-ignore]
+    orphan_count = pc.sum(orphan_mask, min_count=0).as_py()  # type: ignore[attr-defined, unused-ignore]
     policy = edge.orphan_policy
     warnings: tuple[QualityWarning, ...] = ()
     if orphan_count > 0:
@@ -149,7 +149,7 @@ def _resolve_arrow(
         if policy is OrphanPolicy.WARN:
             warnings = (orphan_fk_warning(edge, int(orphan_count)),)
     taken = pc.take(parent_c, indices)
-    resolved = pc.if_else(orphan_mask, child_c, taken)
+    resolved = pc.if_else(orphan_mask, child_c, taken)  # type: ignore[attr-defined, unused-ignore]
     if pa.types.is_string(common) or pa.types.is_large_string(common):
         # String keys: normalize the type in Arrow and skip the Python list and
         # the pandas round-trip, which dominate memory at 100M rows. The oracle's

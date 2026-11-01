@@ -209,25 +209,29 @@ def native_categorical_array(
     unconditionally, so an empty or entirely null slice is answered here without a kernel
     call; its result is the null-typed array the Python loop yields for the same slice, and
     it adds nothing to the column's call count."""
-    n = len(values)
-    if n == 0 or values.null_count == n:
-        return pa.nulls(n)
-    prepared = native.decision.prepared
-    if prepared is None:  # pragma: no cover - a native decision always carries its artifact
-        raise ExecutionError(
-            code=reasons.runtime.OUT_OF_CORE_CATEGORICAL_UNPREPARED,
-            message="a native categorical column reached the kernel without a prepared pool.",
+    try:
+        n = len(values)
+        if n == 0 or values.null_count == n:
+            return pa.nulls(n)
+        prepared = native.decision.prepared
+        if prepared is None:  # pragma: no cover - a native decision always carries its artifact
+            raise ExecutionError(
+                code=reasons.runtime.OUT_OF_CORE_CATEGORICAL_UNPREPARED,
+                message="a native categorical column reached the kernel without a prepared pool.",
+            )
+        native.decision.native_calls += 1
+        return native_categorical(
+            values,
+            categories=prepared.categories,
+            cdf=prepared.cdf,
+            mask_key=mask_key,
+            namespace=namespace,
+            index_kernel=native.bound.kernel,
+            native_threads=native.bound.native_threads,
         )
-    native.decision.native_calls += 1
-    return native_categorical(
-        values,
-        categories=prepared.categories,
-        cdf=prepared.cdf,
-        mask_key=mask_key,
-        namespace=namespace,
-        index_kernel=native.bound.kernel,
-        native_threads=native.bound.native_threads,
-    )
+    except BaseException:
+        del mask_key
+        raise
 
 
 __all__ = [

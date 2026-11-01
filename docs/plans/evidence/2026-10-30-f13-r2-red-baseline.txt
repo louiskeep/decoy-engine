@@ -1,0 +1,94 @@
+# F13 r2 RED evidence: the new regression tests run against the pre-fix source at 969ff7e4.
+# For this run src/ was stashed (git diff 969ff7e4 -- src empty); only tests/secret_providers were edited.
+# Environment: CPython 3.10.20, Linux x86_64, venv synced from uv.lock (uv sync --frozen;
+#   extras dev, hashicorp-vault, xdist, lint). Command:
+#   python -m pytest tests/secret_providers -q -p no:cacheprovider --tb=line -rf
+# Each failure line names the assertion that went red. "secret material reached: <surfaces>" lists every surface the
+# marker was found on, so each new sentry surface (capture_locals, stdout, stderr, audit, json, log) is red at least once.
+# Example pre-fix capture_locals leak (aes-gcm-length): frame _load has raw = b'F13LOCALS-aes-gcm-20B' and
+#   material = b'F13LOCALS-aes-gcm-20B'; frame _prepare_aes_gcm has material = b'F13LOCALS-aes-gcm-20B'.
+# Item 6 red: the ORIGINAL test_compat.py::test_key_provider_protocol_is_unchanged at 969ff7e4 fails on 3.10 with
+#   AttributeError: type object 'KeyProvider' has no attribute '__protocol_attrs__'. The fix is test-side, so the
+#   portable version passes on both the old and new source; it is not in the list below.
+# Green pre-fix by design: test_sdk_exception_text_never_survives_any_surface. A non-MaskSecretError SDK exception was
+#   already replaced by a fresh SecretProviderUnavailable; that test extends the existing case to the new surfaces.
+# After the fix (same command, same environment): 0 failed; see the PR body for counts.
+
+tests/secret_providers/test_cache_and_concurrency.py:161: assert (1 == 1 and 0 == 1)
+tests/secret_providers/test_cache_and_concurrency.py:177: assert 1 == 2
+tests/secret_providers/test_cache_and_concurrency.py:201: assert 1 == 2
+tests/secret_providers/test_cache_and_concurrency.py:212: Failed: DID NOT RAISE SecretProviderUnavailable
+tests/secret_providers/test_cache_and_concurrency.py:225: assert 129 == 128
+tests/secret_providers/test_cache_and_concurrency.py:239: assert 6 == 1
+tests/secret_providers/test_cache_and_concurrency.py:244: TypeError: SecretCache.__init__() got an unexpected keyword argument 'capacity'
+tests/secret_providers/test_leak_sentry.py:252: AssertionError: aes-gcm-length
+tests/secret_providers/test_leak_sentry.py:252: AssertionError: fernet-invalid
+tests/secret_providers/test_leak_sentry.py:252: AssertionError: fernet-needs-encoding
+tests/secret_providers/test_leak_sentry.py:252: AssertionError: hmac-short
+tests/secret_providers/test_leak_sentry.py:252: AssertionError: mask-root-bad-hex
+tests/secret_providers/test_leak_sentry.py:252: AssertionError: mask-root-legacy-decoding
+tests/secret_providers/test_leak_sentry.py:252: AssertionError: mask-root-weak
+tests/secret_providers/test_leak_sentry.py:361: AssertionError: assert False
+tests/secret_providers/test_leak_sentry.py:360: AssertionError: assert 'F13-VALUE-MARKER-c0ffee' == 'secret_provider_unavailable'
+ERROR    f13.sentry:test_leak_sentry.py:290 admission failed
+tests/secret_providers/test_leak_sentry.py:318: AssertionError: secret material reached: audit, capture_locals, format_exception, json, log, repr, stderr, stdout, str
+tests/secret_providers/test_leak_sentry.py:360: AssertionError: assert 7 == ((None or 'secret_provider_unavailable'))
+ERROR    f13.sentry:test_leak_sentry.py:290 admission failed
+tests/secret_providers/test_leak_sentry.py:318: AssertionError: secret material reached: audit, capture_locals, format_exception, json, log, repr, stderr, stdout, str
+tests/secret_providers/test_leak_sentry.py:379: assert 'F13-VALUE-MARKER-c0ffee' not in 'Traceback (...c903fb490>"}'
+tests/secret_providers/test_leak_sentry.py:378: AssertionError: assert 'F13-VALUE-MARKER-c0ffee' == 'secret_provider_unavailable'
+tests/secret_providers/test_leak_sentry.py:379: assert 'F13-VALUE-MARKER-c0ffee' not in 'Traceback (...c903fada0>"}'
+tests/secret_providers/test_leak_sentry.py:378: AssertionError: assert 7 == ((None or 'secret_provider_unavailable'))
+tests/secret_providers/test_leak_sentry.py:379: assert 'F13-VALUE-MARKER-c0ffee' not in 'Traceback (...c9014ccd0>"}'
+ERROR    f13.sentry:test_leak_sentry.py:290 admission failed
+tests/secret_providers/test_leak_sentry.py:318: AssertionError: secret material reached: audit, capture_locals
+ERROR    f13.sentry:test_leak_sentry.py:290 admission failed
+tests/secret_providers/test_leak_sentry.py:318: AssertionError: secret material reached: audit, capture_locals
+ERROR    f13.sentry:test_leak_sentry.py:290 admission failed
+tests/secret_providers/test_leak_sentry.py:318: AssertionError: secret material reached: audit, capture_locals
+ERROR    f13.sentry:test_leak_sentry.py:290 admission failed
+tests/secret_providers/test_leak_sentry.py:318: AssertionError: secret material reached: audit, capture_locals
+ERROR    f13.sentry:test_leak_sentry.py:290 admission failed
+tests/secret_providers/test_leak_sentry.py:318: AssertionError: secret material reached: audit, capture_locals
+ERROR    f13.sentry:test_leak_sentry.py:290 admission failed
+tests/secret_providers/test_leak_sentry.py:318: AssertionError: secret material reached: audit, capture_locals
+ERROR    f13.sentry:test_leak_sentry.py:290 admission failed
+tests/secret_providers/test_leak_sentry.py:318: AssertionError: secret material reached: audit, capture_locals
+tests/secret_providers/test_vault_adapter.py:187: AssertionError: assert 1 == 2
+tests/secret_providers/test_vault_adapter.py:187: AssertionError: assert 1 == 2
+tests/secret_providers/test_vault_adapter.py:187: AssertionError: assert 1 == 2
+FAILED tests/secret_providers/test_cache_and_concurrency.py::test_providers_sharing_a_scheme_and_reference_never_share_an_entry
+FAILED tests/secret_providers/test_cache_and_concurrency.py::test_the_same_provider_in_two_registries_is_cached_per_registry
+FAILED tests/secret_providers/test_cache_and_concurrency.py::test_the_provider_security_context_is_part_of_the_key
+FAILED tests/secret_providers/test_cache_and_concurrency.py::test_a_failing_security_context_fails_closed
+FAILED tests/secret_providers/test_cache_and_concurrency.py::test_the_cache_is_bounded_by_capacity
+FAILED tests/secret_providers/test_cache_and_concurrency.py::test_expired_entries_and_their_locks_are_pruned_on_access
+FAILED tests/secret_providers/test_cache_and_concurrency.py::test_capacity_eviction_closes_the_evicted_master
+FAILED tests/secret_providers/test_leak_sentry.py::test_validation_failures_carry_no_secret_in_traceback_locals[aes-gcm-length]
+FAILED tests/secret_providers/test_leak_sentry.py::test_validation_failures_carry_no_secret_in_traceback_locals[fernet-invalid]
+FAILED tests/secret_providers/test_leak_sentry.py::test_validation_failures_carry_no_secret_in_traceback_locals[fernet-needs-encoding]
+FAILED tests/secret_providers/test_leak_sentry.py::test_validation_failures_carry_no_secret_in_traceback_locals[hmac-short]
+FAILED tests/secret_providers/test_leak_sentry.py::test_validation_failures_carry_no_secret_in_traceback_locals[mask-root-bad-hex]
+FAILED tests/secret_providers/test_leak_sentry.py::test_validation_failures_carry_no_secret_in_traceback_locals[mask-root-legacy-decoding]
+FAILED tests/secret_providers/test_leak_sentry.py::test_validation_failures_carry_no_secret_in_traceback_locals[mask-root-weak]
+FAILED tests/secret_providers/test_leak_sentry.py::test_a_value_bearing_provider_error_is_rebuilt_from_its_code[closed-subclass]
+FAILED tests/secret_providers/test_leak_sentry.py::test_a_value_bearing_provider_error_is_rebuilt_from_its_code[free-code]
+FAILED tests/secret_providers/test_leak_sentry.py::test_a_value_bearing_provider_error_is_rebuilt_from_its_code[legacy-code]
+FAILED tests/secret_providers/test_leak_sentry.py::test_a_value_bearing_provider_error_is_rebuilt_from_its_code[non-string-code]
+FAILED tests/secret_providers/test_leak_sentry.py::test_a_value_bearing_provider_error_is_rebuilt_from_its_code[registered-code]
+FAILED tests/secret_providers/test_leak_sentry.py::test_a_value_bearing_error_from_a_custom_preflight_is_rebuilt[closed-subclass]
+FAILED tests/secret_providers/test_leak_sentry.py::test_a_value_bearing_error_from_a_custom_preflight_is_rebuilt[free-code]
+FAILED tests/secret_providers/test_leak_sentry.py::test_a_value_bearing_error_from_a_custom_preflight_is_rebuilt[legacy-code]
+FAILED tests/secret_providers/test_leak_sentry.py::test_a_value_bearing_error_from_a_custom_preflight_is_rebuilt[non-string-code]
+FAILED tests/secret_providers/test_leak_sentry.py::test_a_value_bearing_error_from_a_custom_preflight_is_rebuilt[registered-code]
+FAILED tests/secret_providers/test_leak_sentry.py::test_validation_failures_are_value_free_on_every_surface[aes-gcm-length]
+FAILED tests/secret_providers/test_leak_sentry.py::test_validation_failures_are_value_free_on_every_surface[fernet-invalid]
+FAILED tests/secret_providers/test_leak_sentry.py::test_validation_failures_are_value_free_on_every_surface[fernet-needs-encoding]
+FAILED tests/secret_providers/test_leak_sentry.py::test_validation_failures_are_value_free_on_every_surface[hmac-short]
+FAILED tests/secret_providers/test_leak_sentry.py::test_validation_failures_are_value_free_on_every_surface[mask-root-bad-hex]
+FAILED tests/secret_providers/test_leak_sentry.py::test_validation_failures_are_value_free_on_every_surface[mask-root-legacy-decoding]
+FAILED tests/secret_providers/test_leak_sentry.py::test_validation_failures_are_value_free_on_every_surface[mask-root-weak]
+FAILED tests/secret_providers/test_vault_adapter.py::test_the_client_security_context_scopes_the_cache[namespace]
+FAILED tests/secret_providers/test_vault_adapter.py::test_the_client_security_context_scopes_the_cache[token]
+FAILED tests/secret_providers/test_vault_adapter.py::test_the_client_security_context_scopes_the_cache[url]
+34 failed, 131 passed, 5 skipped in 1.81s

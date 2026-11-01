@@ -1,6 +1,7 @@
 # Engine auto-chunk incremental output sink (Rust engine program B6a)
 
-Status: plan (revision 2.2: owner decision on the oracle-path wall p95 bar, applied after measurement; revision 2.1 was Codex plan-gate round 2 GO with its two LOW wording gaps applied by the orchestrator)
+Status: built
+Shipped: docs/records/2026-10-02-b6a-incremental-sink-build.md
 
 Revision 2.2 note (owner decision, Cam, 2026-10-02, after the oracle 10M cell was measured): on the oracle (pandas-fallback) route only, the wall-time p95 bar is directional, not a pass/fail gate. It is still computed and recorded, and a reader checks it for a pathological regression, but it does not set the benchmark verdict. The oracle p50 wall bar, every memory bar (M1, M2 and the ceilings) on both routes, and every native-route bar (p50 1.10 times and p95 1.15 times, unchanged) stay hard gates. Cause: the oracle 10M cell has one warmup and five measured rounds (the pandas path gets few runs), nearest-rank p95 equals the maximum at five rounds, and its streamed maximum was one contended trial (347.7 s against 243 to 256 s for the other four) on the shared devbox; p50 was 0.972 times resident. This revision is made after that measurement, at the owner's direction, and the build record says so.
 

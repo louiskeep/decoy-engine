@@ -1,4 +1,5 @@
-Status: plan (Phase D / OOC text_redact native. DRAFT rev 1, pre Codex plan-gate. Wire the existing compiled text_redact kernel onto the out-of-core route.)
+Status: built
+Shipped: commit c4dd75a9 (PR #256)
 
 # text_redact native on the out-of-core route
 

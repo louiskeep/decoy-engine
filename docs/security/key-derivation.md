@@ -20,8 +20,8 @@ same `derive(...)` domain separation by namespace and per-purpose label that
 existed before DE-02 applies unchanged; only the root IKM fed into it moved.
 
 ```
-mask_key = job_seed                                (no secret configured)
-mask_key = HKDF-SHA256(secret, purpose/version)     (a >=32-byte secret is present)
+mask_key = HKDF-SHA256(secret, purpose/version)     (a >=32-byte secret is admitted)
+mask_key = job_seed                                (only for plans with NO keyed strategy; inert)
 ```
 
 ## Where the secret comes from
@@ -32,14 +32,13 @@ stores a secret itself:
 - **`SecretKeyProvider`** wraps a caller-supplied `bytes` secret (>=32 bytes,
   enforced at construction) and derives `mask_key()` as
   `HKDF-SHA256(secret, salt=<keyprovider salt>, info="decoy/mask/{key_version}")`.
-- **`SeedKeyProvider`** is the pre-GA / no-secret path: `mask_key()` returns
-  the 8-byte `job_seed` unchanged, so output is byte-identical to before
-  DE-02.
-- **`global_settings.mask_secret_ref`** is a *reference*, never the secret
-  itself: `env:NAME` (an environment variable) or `file:/PATH` (a file's
-  contents), each hex- or base64-decoded to raw bytes. The engine resolves
-  the ref at the run edge (`decoy_engine.keyprovider.resolve_key_provider`,
-  called from `run_pipeline`) into a `SecretKeyProvider`.
+- **`SeedKeyProvider`** stays importable but is **never a secret**: keyed work given one fails
+  with `keyed_strategy_requires_secret`. `job_seed` is for generation only.
+- **`global_settings.mask_secret_ref`** is a *reference*, never the secret itself, resolved by the
+  versioned `secret-provider/v1` contract (see [secret providers](secret-providers.md)): `env:NAME`,
+  `file:/PATH` (hex- or base64-decoded for the mask root; any other requirement needs an explicit
+  `?encoding=`) or a registered provider such as `vault://`. Admission runs before any source is
+  read (`decoy_engine.secret_providers.admit_mask_key`).
 - A programmatic `run(key_provider=...)` (any object implementing the
   `KeyProvider` protocol: `key_version` + `mask_key()`) takes precedence over
   `mask_secret_ref`.
@@ -70,16 +69,15 @@ Error types (`decoy_engine.keyprovider`, all subclasses of `MaskSecretError`):
 
 | Error | Code | Raised when |
 |---|---|---|
-| `KeyedStrategyRequiresSecret` | `keyed_strategy_requires_secret` | A plan with a keyed strategy runs at GA with no resolved secret, or a resolved secret is < 32 bytes. |
+| `KeyedStrategyRequiresSecret` | `keyed_strategy_requires_secret` | A plan with a keyed strategy runs with no admitted secret (any release phase), is given a `SeedKeyProvider`, or its resolved key is < 32 bytes. |
 | `MissingMaskSecret` | `missing_mask_secret` | A `mask_secret_ref` points at an unset env var or an unreadable file. |
 | `WeakMaskSecret` | `weak_mask_secret` | A resolved secret is shorter than 32 bytes (enforced at `SecretKeyProvider` construction, pre-GA or GA). |
-| `MaskSecretError` (`bad_secret_ref`) | `bad_secret_ref` | The ref kind is unrecognized, or the material is neither valid hex nor base64. |
+| `MaskSecretError` (`bad_secret_ref`) | `bad_secret_ref` | The reference is malformed, or the material is not decodable (an unrecognized scheme is `secret_provider_unknown`). |
 
-Pre-GA, a keyed plan with no provider configured falls back to `job_seed`
-(byte-identical to the pre-DE-02 behavior) so existing golden-output tests
-stay stable during the migration window. At GA (`decoy_engine.RELEASE_PHASE
-== "ga"`) that fallback is removed: a keyed plan with no secret, or a secret
-under 32 bytes, hard-errors with `KeyedStrategyRequiresSecret`.
+A keyed plan with no admitted secret, a `SeedKeyProvider`, or a mask key under 32 bytes
+hard-errors with `KeyedStrategyRequiresSecret` in **every** release phase (the pre-GA `job_seed`
+fallback was removed by F13). Material rules are per algorithm, not a universal 32-byte rule; see
+[secret providers](secret-providers.md).
 
 For local development, a throwaway secret is enough:
 

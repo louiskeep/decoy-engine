@@ -1,6 +1,6 @@
 """Dataclasses for the deterministic column feature builder (BF2 / ML1).
 
-Pure dataclasses, mirroring the convention in ``storm/types.py`` (no
+Pure dataclasses, mirroring the convention in ``profiling/types.py`` (no
 Pydantic). Everything here is JSON-serializable via ``dataclasses.asdict``.
 
 This is a SEPARATE artifact from ``ColumnProfile`` / ``FieldStats`` on

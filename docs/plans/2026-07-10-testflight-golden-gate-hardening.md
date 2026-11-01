@@ -1,5 +1,7 @@
 # Program: Test-Flight Golden-Gate Hardening (TH-1 .. TH-4)
 
+Status: plan
+
 Source of goal: adversarial review of the acceptance test-flight suite by an independent
 Fable-model reviewer, 2026-07-10. The suite (`docs/acceptance-test-flight.md`,
 `scripts/test_flight.py`, `testflight/`) is the team's designated "does the engine actually

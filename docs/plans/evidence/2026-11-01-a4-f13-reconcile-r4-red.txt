@@ -1,0 +1,129 @@
+A-4 x F13 reconcile, remediation round 4: red-first records and hand mutants
+Environment: venvs from the merged uv.lock (CPython 3.10.20, extras dev, lint, vault, cloud); same environment for red and green.
+Red runs: the new tests against the code as committed before each fix (git stash of the src change, then pop).
+
+### R4-2 parse_ref red at dbeec5a4
+=========================== short test summary info ============================
+FAILED tests/secret_providers/test_parse_ref_caller_context.py::test_parse_ref_inside_a_callers_handler_carries_nothing_of_it[bad_encoding]
+FAILED tests/secret_providers/test_parse_ref_caller_context.py::test_parse_ref_inside_a_callers_handler_carries_nothing_of_it[bad_vault]
+FAILED tests/secret_providers/test_parse_ref_caller_context.py::test_parse_ref_inside_a_callers_handler_carries_nothing_of_it[bytes]
+FAILED tests/secret_providers/test_parse_ref_caller_context.py::test_parse_ref_inside_a_callers_handler_carries_nothing_of_it[empty]
+FAILED tests/secret_providers/test_parse_ref_caller_context.py::test_parse_ref_inside_a_callers_handler_carries_nothing_of_it[no_scheme]
+FAILED tests/secret_providers/test_parse_ref_caller_context.py::test_parse_ref_inside_a_callers_handler_carries_nothing_of_it[not_a_str]
+FAILED tests/secret_providers/test_parse_ref_caller_context.py::test_parse_ref_inside_a_callers_handler_carries_nothing_of_it[nul]
+FAILED tests/secret_providers/test_parse_ref_caller_context.py::test_parse_ref_inside_a_handler_whose_exception_carries_the_canary_in_args
+8 failed, 1 passed in 0.27s
+
+### R4-3 build_profile_source / R4-4 plan_from_yaml red at dbeec5a4 (code unchanged since the merge-follow commit)
+=========================== short test summary info ============================
+FAILED tests/fileaccess/test_profile_source_path_text.py::test_a_strict_refusal_names_the_position_not_the_value[format_path]
+FAILED tests/fileaccess/test_profile_source_path_text.py::test_a_strict_refusal_names_the_position_not_the_value[layout_string]
+FAILED tests/fileaccess/test_profile_source_path_text.py::test_a_strict_refusal_names_the_position_not_the_value[path_bytes]
+FAILED tests/fileaccess/test_profile_source_path_text.py::test_a_strict_refusal_names_the_position_not_the_value[path_object]
+FAILED tests/fileaccess/test_profile_source_path_text.py::test_a_strict_refusal_names_the_position_not_the_value[type_path]
+FAILED tests/fileaccess/test_plan_snapshot_strict_text.py::test_a_corrupted_snapshot_is_refused_without_its_source_path[digest_mismatch]
+FAILED tests/fileaccess/test_plan_snapshot_strict_text.py::test_a_corrupted_snapshot_is_refused_without_its_source_path[payload_not_json]
+FAILED tests/fileaccess/test_plan_snapshot_strict_text.py::test_the_ambient_refusal_is_closed_set_too[digest_mismatch]
+FAILED tests/fileaccess/test_plan_snapshot_strict_text.py::test_the_ambient_refusal_is_closed_set_too[payload_not_json]
+9 failed, 5 passed in 0.29s
+
+### R4-4 sweep cell (unpinned snapshot_file echo) red on the pre-fix _serialize.py
+=========================== short test summary info ============================
+FAILED tests/fileaccess/test_plan_snapshot_strict_text.py::test_a_corrupted_snapshot_is_refused_without_its_source_path[digest_mismatch]
+FAILED tests/fileaccess/test_plan_snapshot_strict_text.py::test_a_corrupted_snapshot_is_refused_without_its_source_path[payload_not_json]
+FAILED tests/fileaccess/test_plan_snapshot_strict_text.py::test_a_corrupted_snapshot_is_refused_without_its_source_path[unpinned_reference]
+FAILED tests/fileaccess/test_plan_snapshot_strict_text.py::test_the_ambient_refusal_is_closed_set_too[digest_mismatch]
+FAILED tests/fileaccess/test_plan_snapshot_strict_text.py::test_the_ambient_refusal_is_closed_set_too[payload_not_json]
+FAILED tests/fileaccess/test_plan_snapshot_strict_text.py::test_the_ambient_refusal_is_closed_set_too[unpinned_reference]
+6 failed in 0.30s
+
+### R4-5 secret material in frames: red at 358d6f91 (src as committed; new test file only)
+exc = RuntimeError('domain failed')
+FAILED tests/fileaccess/test_secret_material_frames.py::test_load_vault_without_a_handle
+FAILED tests/fileaccess/test_secret_material_frames.py::test_load_vault_missing_file
+FAILED tests/fileaccess/test_secret_material_frames.py::test_load_vault_wrong_key
+FAILED tests/fileaccess/test_secret_material_frames.py::test_vault_writer_construction_failure
+FAILED tests/fileaccess/test_secret_material_frames.py::test_vault_writer_key_mismatch
+FAILED tests/fileaccess/test_secret_material_frames.py::test_assert_vault_writer_keyed[duck]
+FAILED tests/fileaccess/test_secret_material_frames.py::test_assert_vault_writer_keyed[other_key]
+FAILED tests/fileaccess/test_secret_material_frames.py::test_vault_writer_for_config
+FAILED tests/fileaccess/test_secret_material_frames.py::test_unmask_pipeline_missing_vault
+FAILED tests/fileaccess/test_secret_material_frames.py::test_unmask_pipeline_fpe_failure
+FAILED tests/fileaccess/test_secret_material_frames.py::test_run_fk_out_of_core
+FAILED tests/fileaccess/test_secret_material_frames.py::test_strategy_context_repr_hides_the_mask_key
+FAILED tests/fileaccess/test_secret_material_frames.py::test_make_key_resolver_bad_master
+FAILED tests/fileaccess/test_secret_material_frames.py::test_make_key_resolver_bad_label
+FAILED tests/fileaccess/test_secret_material_frames.py::test_mask_key_gate_with_a_short_key[require_mask_key]
+FAILED tests/fileaccess/test_secret_material_frames.py::test_mask_key_gate_with_a_short_key[resolve_mask_key]
+FAILED tests/fileaccess/test_secret_material_frames.py::test_secret_key_provider_weak_secret
+FAILED tests/fileaccess/test_secret_material_frames.py::test_derive_failures[derive_bad_source]
+FAILED tests/fileaccess/test_secret_material_frames.py::test_derive_failures[derive_empty_namespace]
+FAILED tests/fileaccess/test_secret_material_frames.py::test_derive_failures[derive_index_bad_pool]
+FAILED tests/fileaccess/test_secret_material_frames.py::test_derive_failures[derive_index_empty_namespace]
+FAILED tests/fileaccess/test_secret_material_frames.py::test_derive_failures[derive_value_domain_fails]
+FAILED tests/fileaccess/test_secret_material_frames.py::test_requirement_prepare_refusal[aes-gcm-v1]
+FAILED tests/fileaccess/test_secret_material_frames.py::test_requirement_prepare_refusal[decoy-mask-root-v1]
+FAILED tests/fileaccess/test_secret_material_frames.py::test_requirement_prepare_refusal[fernet-v1]
+FAILED tests/fileaccess/test_secret_material_frames.py::test_requirement_prepare_refusal[hmac-sha256-v1]
+FAILED tests/fileaccess/test_secret_material_frames.py::test_secret_buffer_bad_type
+27 failed, 3 passed in 0.44s
+
+### R4-5 re-run after adding the escaped-repr needle: red at 358d6f91
+exc = RuntimeError('domain failed')
+FAILED tests/fileaccess/test_secret_material_frames.py::test_run_fk_out_of_core
+FAILED tests/fileaccess/test_secret_material_frames.py::test_run_sequential
+28 failed, 2 passed in 0.42s
+
+### R4-2 sweep (raise inside except): red at 358d6f91
+FAILED tests/fileaccess/test_raise_in_handler_sweep.py::test_rooted_emptiness_probe_denies_without_the_os_error
+FAILED tests/fileaccess/test_raise_in_handler_sweep.py::test_ambient_exclusive_publish_onto_an_occupant_carries_no_link_error
+FAILED tests/fileaccess/test_raise_in_handler_sweep.py::test_decode_material_refuses_bare[base64_bad]
+FAILED tests/fileaccess/test_raise_in_handler_sweep.py::test_decode_material_refuses_bare[hex_not_ascii]
+FAILED tests/fileaccess/test_raise_in_handler_sweep.py::test_decode_material_refuses_bare[legacy_bad_base64]
+FAILED tests/fileaccess/test_raise_in_handler_sweep.py::test_decode_material_refuses_bare[legacy_empty]
+FAILED tests/fileaccess/test_raise_in_handler_sweep.py::test_decode_material_refuses_bare[legacy_not_utf8]
+FAILED tests/fileaccess/test_raise_in_handler_sweep.py::test_decode_material_refuses_bare[needs_encoding]
+8 failed, 5 passed in 0.24s
+
+### R4-5 make_key_resolver label-format cell: red on the committed context.py (67954798)
+exc = RuntimeError('label failed')
+FAILED tests/fileaccess/test_secret_material_frames.py::test_make_key_resolver_label_formatting_fails
+1 failed, 3 passed, 28 deselected in 0.22s
+
+### Hand mutants (one per mechanism; each applied to the committed tree, its test run, then git checkout of the file)
+First pass survivors (fixed in 'fix(context): make_key_resolver boxes the master...'): M7 _fernet derived key as a local; M14 make_key_resolver keeps master. Second pass below:
+M1 parse_ref: raise inside caller's handler (no raise_bare): RED | tests/secret_providers/test_parse_ref_caller_context.py | 1 failed in 0.21s
+M2 raise_bare keeps context: RED | tests/secret_providers/test_parse_ref_caller_context.py | 1 failed in 0.22s
+M3 _readers path text back to repr: RED | tests/fileaccess/test_profile_source_path_text.py | 1 failed, 2 passed in 0.22s
+M4 _serialize digest text names source_path: RED | tests/fileaccess/test_plan_snapshot_strict_text.py | 1 failed in 0.22s
+M4b sentry catches a source_path interpolation: RED | tests/sentry/test_locator_hygiene.py | 1 failed in 0.46s
+M5 _serialize non-JSON raised inside handler: RED | tests/fileaccess/test_plan_snapshot_strict_text.py | 1 failed, 1 passed in 0.26s
+M6 load_vault keeps mask_key: RED | tests/fileaccess/test_secret_material_frames.py::test_load_vault_missing_file | 1 failed in 0.25s
+M7 _fernet derived key as a local: RED | tests/fileaccess/test_secret_material_frames.py::test_fernet_construction_failure | 1 failed in 0.22s
+M8 VaultWriter.__init__ keeps mask_key: RED | tests/fileaccess/test_secret_material_frames.py::test_vault_writer_construction_failure | 1 failed in 0.25s
+M9 assert_keyed_with keeps mask_key: RED | tests/fileaccess/test_secret_material_frames.py::test_vault_writer_key_mismatch | 1 failed in 0.23s
+M10 vault_writer_for_config unboxed: RED | tests/fileaccess/test_secret_material_frames.py::test_vault_writer_for_config | 1 failed in 0.22s
+M11 unmask keeps the key unboxed: RED | tests/fileaccess/test_secret_material_frames.py::test_unmask_pipeline_fpe_failure | 1 failed in 0.23s
+M12 OocPreflight raw key in runner: RED | tests/fileaccess/test_secret_material_frames.py::test_run_fk_out_of_core | 1 failed in 0.22s
+M13 StrategyContext repr shows mask_key: RED | tests/fileaccess/test_secret_material_frames.py::test_run_sequential | 1 failed in 0.23s
+M14 make_key_resolver keeps master: RED | tests/fileaccess/test_secret_material_frames.py::test_make_key_resolver_label_formatting_fails | 1 failed in 0.23s
+M14b resolver closure holds the raw pipeline key: RED | tests/fileaccess/test_secret_material_frames.py::test_make_key_resolver_bad_label | 1 failed in 0.22s
+M15 require_mask_key keeps the short key: RED | tests/fileaccess/test_secret_material_frames.py::test_mask_key_gate_with_a_short_key | 1 failed in 0.22s
+M16 SecretKeyProvider keeps secret in __init__: RED | tests/fileaccess/test_secret_material_frames.py::test_secret_key_provider_weak_secret | 1 failed in 0.22s
+M17 derive keeps seed: RED | tests/fileaccess/test_secret_material_frames.py::test_derive_failures | 1 failed in 0.21s
+M18 requirement prepare keeps material (hmac): RED | tests/fileaccess/test_secret_material_frames.py::test_requirement_prepare_refusal | 1 failed, 3 passed in 0.22s
+M19 decode_material raises inside handler: RED | tests/fileaccess/test_raise_in_handler_sweep.py::test_decode_material_refuses_bare | 1 failed in 0.21s
+M20 SecretBuffer keeps data: RED | tests/fileaccess/test_secret_material_frames.py::test_secret_buffer_bad_type | 1 failed in 0.22s
+M21 is_empty_or_absent raises inside handler: RED | tests/fileaccess/test_raise_in_handler_sweep.py::test_rooted_emptiness_probe_denies_without_the_os_error | 1 failed in 0.22s
+M22 ambient publish raises inside handler: RED | tests/fileaccess/test_raise_in_handler_sweep.py::test_ambient_exclusive_publish_onto_an_occupant_carries_no_link_error | 1 failed in 0.23s
+
+### R4-5 client_from_env: red at 59d285fd
+FAILED tests/fileaccess/test_secret_material_frames.py::test_client_from_env_refusal[half_mtls]
+FAILED tests/fileaccess/test_secret_material_frames.py::test_client_from_env_refusal[no_address]
+FAILED tests/fileaccess/test_secret_material_frames.py::test_client_from_env_refusal[skip_verify]
+FAILED tests/fileaccess/test_secret_material_frames.py::test_client_from_env_from_the_process_environment
+4 failed, 32 deselected in 0.26s
+
+### Hand mutants for client_from_env
+M25 client_from_env keeps the caller's mapping: RED | tests/fileaccess/test_secret_material_frames.py::test_client_from_env_refusal | 1 failed in 0.23s
+M26 client_from_env binds the environment to a local: RED | tests/fileaccess/test_secret_material_frames.py::test_client_from_env_from_the_process_environment | 1 failed in 0.23s

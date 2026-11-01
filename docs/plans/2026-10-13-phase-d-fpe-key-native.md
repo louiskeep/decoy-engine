@@ -1,4 +1,5 @@
-Status: plan (Phase D / FK-key-native slice. rev 2, folds Codex plan-gate round 1 = 1 HIGH + 2 MED. fpe native on an FK key + conservative decline for the not-guaranteed-injective key operators, on the SEQ route.)
+Status: built
+Shipped: merge PR #251 (c61fb658)
 
 # Phase D / FK-key-native: fpe on an FK key native; the non-injective-risk operators decline with a reason
 

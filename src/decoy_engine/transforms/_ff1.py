@@ -105,18 +105,26 @@ def _ciph(key: bytes, block: bytes) -> bytes:
     This is ``CIPH_K`` in the spec's notation: forward cipher only, per the
     Rev.1 2PD prohibition on the inverse-cipher optimization.
     """
-    encryptor = Cipher(algorithms.AES(key), modes.ECB()).encryptor()  # noqa: S305 -- single-block CIPH_K per NIST SP 800-38G; never used to encrypt multi-block data, so ECB's pattern-leak weakness does not apply
-    return encryptor.update(block) + encryptor.finalize()
+    try:
+        encryptor = Cipher(algorithms.AES(key), modes.ECB()).encryptor()  # noqa: S305 -- single-block CIPH_K per NIST SP 800-38G; never used to encrypt multi-block data, so ECB's pattern-leak weakness does not apply
+        return encryptor.update(block) + encryptor.finalize()
+    except BaseException:
+        del key
+        raise
 
 
 def _prf(key: bytes, data: bytes) -> bytes:
     """CBC-MAC over ``data`` (must be a multiple of 16 bytes): the last block
     of AES-CBC-encrypting ``data`` under an all-zero IV, forward-AES-only."""
-    if len(data) % 16 != 0:
-        raise Ff1Error(f"PRF input must be block-aligned; got {len(data)} bytes")
-    encryptor = Cipher(algorithms.AES(key), modes.CBC(b"\x00" * 16)).encryptor()
-    ciphertext = encryptor.update(data) + encryptor.finalize()
-    return ciphertext[-16:]
+    try:
+        if len(data) % 16 != 0:
+            raise Ff1Error(f"PRF input must be block-aligned; got {len(data)} bytes")
+        encryptor = Cipher(algorithms.AES(key), modes.CBC(b"\x00" * 16)).encryptor()
+        ciphertext = encryptor.update(data) + encryptor.finalize()
+        return ciphertext[-16:]
+    except BaseException:
+        del key
+        raise
 
 
 def _s_block(key: bytes, r: bytes, d: int) -> bytes:
@@ -127,13 +135,17 @@ def _s_block(key: bytes, r: bytes, d: int) -> bytes:
     ``R XOR j`` (j = 1, 2, ... as a 16-byte big-endian integer) until there
     are enough bytes, per SP 800-38G's S-block construction.
     """
-    s = bytearray(r)
-    j = 1
-    while len(s) < d:
-        block = int.from_bytes(r, "big") ^ j
-        s.extend(_ciph(key, block.to_bytes(16, "big")))
-        j += 1
-    return bytes(s[:d])
+    try:
+        s = bytearray(r)
+        j = 1
+        while len(s) < d:
+            block = int.from_bytes(r, "big") ^ j
+            s.extend(_ciph(key, block.to_bytes(16, "big")))
+            j += 1
+        return bytes(s[:d])
+    except BaseException:
+        del key
+        raise
 
 
 def _num_radix(numerals: list[int], radix: int) -> int:
@@ -184,34 +196,38 @@ def _build_p(radix: int, u: int, n: int, tweak_len: int) -> bytes:
 
 
 def _validate_common(key: bytes, tweak: bytes, radix: int, numerals: list[int]) -> tuple[int, int]:
-    if len(key) not in (16, 24, 32):
-        raise Ff1Error(f"AES key must be 16, 24, or 32 bytes; got {len(key)}")
-    if radix < 2:
-        raise Ff1Error(f"radix must be >= 2; got {radix}")
-    if radix > FF1_STANDARD_MAX_RADIX:
-        # NIST SP 800-38G Rev.1 2PD's own domain bound, not the deployed
-        # profile's tighter FF1_MAX_RADIX=64 cap: every caller already enforces
-        # 64, but the raw primitive should still refuse a radix the STANDARD
-        # itself does not define, independent of any one deployment's policy.
-        raise Ff1Error(
-            f"radix must be <= {FF1_STANDARD_MAX_RADIX} (NIST SP 800-38G Rev.1 2PD's "
-            f"own domain bound); got {radix}"
-        )
-    n = len(numerals)
-    if n < 2:
-        raise Ff1Error(f"numeral string must have length >= 2 (NIST FF1 precondition); got {n}")
-    if any(not (0 <= digit < radix) for digit in numerals):
-        # Never echo the numeral list itself: for a real caller (transforms.fpe's
-        # _permute) it is a reversible encoding of the source value, and this
-        # exception's text must stay safe to log (Task 5.2 P7).
-        out_of_range = sum(1 for digit in numerals if not (0 <= digit < radix))
-        raise Ff1Error(
-            f"every numeral must be in [0, {radix}); {out_of_range} of {len(numerals)} "
-            "numeral(s) are out of range"
-        )
-    if len(tweak) >= 2**32:
-        raise Ff1Error(f"tweak length must fit in a uint32; got {len(tweak)} bytes")
-    return n, len(tweak)
+    try:
+        if len(key) not in (16, 24, 32):
+            raise Ff1Error(f"AES key must be 16, 24, or 32 bytes; got {len(key)}")
+        if radix < 2:
+            raise Ff1Error(f"radix must be >= 2; got {radix}")
+        if radix > FF1_STANDARD_MAX_RADIX:
+            # NIST SP 800-38G Rev.1 2PD's own domain bound, not the deployed
+            # profile's tighter FF1_MAX_RADIX=64 cap: every caller already enforces
+            # 64, but the raw primitive should still refuse a radix the STANDARD
+            # itself does not define, independent of any one deployment's policy.
+            raise Ff1Error(
+                f"radix must be <= {FF1_STANDARD_MAX_RADIX} (NIST SP 800-38G Rev.1 2PD's "
+                f"own domain bound); got {radix}"
+            )
+        n = len(numerals)
+        if n < 2:
+            raise Ff1Error(f"numeral string must have length >= 2 (NIST FF1 precondition); got {n}")
+        if any(not (0 <= digit < radix) for digit in numerals):
+            # Never echo the numeral list itself: for a real caller (transforms.fpe's
+            # _permute) it is a reversible encoding of the source value, and this
+            # exception's text must stay safe to log (Task 5.2 P7).
+            out_of_range = sum(1 for digit in numerals if not (0 <= digit < radix))
+            raise Ff1Error(
+                f"every numeral must be in [0, {radix}); {out_of_range} of {len(numerals)} "
+                "numeral(s) are out of range"
+            )
+        if len(tweak) >= 2**32:
+            raise Ff1Error(f"tweak length must fit in a uint32; got {len(tweak)} bytes")
+        return n, len(tweak)
+    except BaseException:
+        del key
+        raise
 
 
 def encrypt(key: bytes, tweak: bytes, radix: int, numerals: list[int]) -> list[int]:
@@ -220,27 +236,31 @@ def encrypt(key: bytes, tweak: bytes, radix: int, numerals: list[int]) -> list[i
     ``numerals`` is X: a list of integers in ``[0, radix)``, MSB first.
     Returns the ciphertext numeral list, same length as ``numerals``.
     """
-    n, t = _validate_common(key, tweak, radix, numerals)
-    u = n // 2
-    v = n - u
-    a = list(numerals[:u])
-    b = list(numerals[u:])
-    byte_len = _byte_len_for_radix_power(radix, v)
-    d = 4 * ((byte_len + 3) // 4) + 4
-    p = _build_p(radix, u, n, t)
-    zero_pad = bytes((-t - byte_len - 1) % 16)
+    try:
+        n, t = _validate_common(key, tweak, radix, numerals)
+        u = n // 2
+        v = n - u
+        a = list(numerals[:u])
+        b = list(numerals[u:])
+        byte_len = _byte_len_for_radix_power(radix, v)
+        d = 4 * ((byte_len + 3) // 4) + 4
+        p = _build_p(radix, u, n, t)
+        zero_pad = bytes((-t - byte_len - 1) % 16)
 
-    for i in range(_ROUNDS):
-        q = tweak + zero_pad + bytes([i]) + _num_radix(b, radix).to_bytes(byte_len, "big")
-        r = _prf(key, p + q)
-        s = _s_block(key, r, d)
-        y = int.from_bytes(s, "big")
-        m = u if i % 2 == 0 else v
-        c = (_num_radix(a, radix) + y) % (radix**m)
-        c_numerals = _str_m_radix(c, m, radix)
-        a, b = b, c_numerals
+        for i in range(_ROUNDS):
+            q = tweak + zero_pad + bytes([i]) + _num_radix(b, radix).to_bytes(byte_len, "big")
+            r = _prf(key, p + q)
+            s = _s_block(key, r, d)
+            y = int.from_bytes(s, "big")
+            m = u if i % 2 == 0 else v
+            c = (_num_radix(a, radix) + y) % (radix**m)
+            c_numerals = _str_m_radix(c, m, radix)
+            a, b = b, c_numerals
 
-    return a + b
+        return a + b
+    except BaseException:
+        del key
+        raise
 
 
 def decrypt(key: bytes, tweak: bytes, radix: int, numerals: list[int]) -> list[int]:
@@ -251,24 +271,28 @@ def decrypt(key: bytes, tweak: bytes, radix: int, numerals: list[int]) -> list[i
     (rounds applied 9 downto 0, subtracting the round value instead of
     adding it) per the spec's decrypt direction.
     """
-    n, t = _validate_common(key, tweak, radix, numerals)
-    u = n // 2
-    v = n - u
-    a = list(numerals[:u])
-    b = list(numerals[u:])
-    byte_len = _byte_len_for_radix_power(radix, v)
-    d = 4 * ((byte_len + 3) // 4) + 4
-    p = _build_p(radix, u, n, t)
-    zero_pad = bytes((-t - byte_len - 1) % 16)
+    try:
+        n, t = _validate_common(key, tweak, radix, numerals)
+        u = n // 2
+        v = n - u
+        a = list(numerals[:u])
+        b = list(numerals[u:])
+        byte_len = _byte_len_for_radix_power(radix, v)
+        d = 4 * ((byte_len + 3) // 4) + 4
+        p = _build_p(radix, u, n, t)
+        zero_pad = bytes((-t - byte_len - 1) % 16)
 
-    for i in reversed(range(_ROUNDS)):
-        q = tweak + zero_pad + bytes([i]) + _num_radix(a, radix).to_bytes(byte_len, "big")
-        r = _prf(key, p + q)
-        s = _s_block(key, r, d)
-        y = int.from_bytes(s, "big")
-        m = u if i % 2 == 0 else v
-        c = (_num_radix(b, radix) - y) % (radix**m)
-        c_numerals = _str_m_radix(c, m, radix)
-        b, a = a, c_numerals
+        for i in reversed(range(_ROUNDS)):
+            q = tweak + zero_pad + bytes([i]) + _num_radix(a, radix).to_bytes(byte_len, "big")
+            r = _prf(key, p + q)
+            s = _s_block(key, r, d)
+            y = int.from_bytes(s, "big")
+            m = u if i % 2 == 0 else v
+            c = (_num_radix(b, radix) - y) % (radix**m)
+            c_numerals = _str_m_radix(c, m, radix)
+            b, a = a, c_numerals
 
-    return a + b
+        return a + b
+    except BaseException:
+        del key
+        raise

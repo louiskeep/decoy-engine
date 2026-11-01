@@ -131,7 +131,7 @@ def test_no_orphan_pattern_lines_in_unregistered_modules() -> None:
     should be registered, or the docstring marker should not claim
     methodology citation.
 
-    Limited to src/decoy_engine/transforms/*, forecast/*, storm/*, and
+    Limited to src/decoy_engine/transforms/*, forecast/*, pre-scan/*, and
     a couple of high-risk modules. A broader scan would over-flag
     modules that mention 'Pattern:' in unrelated contexts.
     """

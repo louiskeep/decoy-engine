@@ -101,7 +101,7 @@ def _config(
         paths[name] = tmp / f"{name}.parquet"
         pq.write_table(table, paths[name])
     config = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"job_name": "gap9", "seed": 11},
         "sources": {
             n: {"type": "file", "path": str(p), "format": "parquet"} for n, p in paths.items()
@@ -250,7 +250,7 @@ def composite_job(
         paths[name] = tmp / f"{name}.parquet"
         pq.write_table(table, paths[name])
     config = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"job_name": "gap9-composite", "seed": 11},
         "sources": {
             n_: {"type": "file", "path": str(p), "format": "parquet"} for n_, p in paths.items()

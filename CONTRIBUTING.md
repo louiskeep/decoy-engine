@@ -36,12 +36,20 @@ pytest tests/ -n auto
 
 The suite is parallel-safe and finishes in roughly 10 minutes this way, versus over 25 minutes serial on a 4-core machine. `xdist` is a separate extra on purpose (it stays out of the certified DP profile); CI still runs the suite serially.
 
+### Lock-exact environment and local gates (workers)
+
+- `scripts/dev/bootstrap.sh` syncs `.venv` exactly from `uv.lock` (`uv sync --frozen`, the dp-certified-gate profile on CPython 3.10.20) and prints python, DuckDB, pyarrow, polars, pandas and native companion ABI against what the tree expects. Any mismatch exits non-zero with the fix; `--check` verifies without installing.
+- `scripts/dev/gates.sh [paths...]` runs the env check, ruff check, ruff format --check, mypy, `tests/sentry`, `licenses` (the license and SDV sentries with `DECOY_LICENSE_STRICT=1`, so NOTICE is compared with the venv's installed metadata and a drifted venv fails instead of skipping), then the given tests (default: tests touching files changed against `origin/main`), stopping at the first failure unless `--keep-going`.
+- It ends with an EVIDENCE block (commands, tool versions, per-step counts, failing test ids). Paste that block into evidence files instead of summarizing. The gate fails unless that block printed in full and at least one step ran.
+- `--baseline` reruns the same steps on `origin/main` in a temporary detached worktree with the same venv and labels each failing id BOTH, BRANCH-ONLY or BASELINE-ONLY, so "same failures as baseline" is computed, not claimed.
+- Both scripts are covered by `tests/unit/scripts/test_dev_bootstrap_gates.py`.
+
 ## Pull requests
 
 - One topic per PR. Smaller diffs land faster.
 - Use `git commit -s` to sign off (Developer Certificate of Origin). The project is licensed Apache-2.0; contributions are accepted under the same license.
 - Public-API changes (`decoy_engine.__init__.__all__`) and YAML-surface changes (new strategy, new transform op, renamed key) need a `CHANGELOG.md` entry under `[Unreleased]`.
-- Capability changes (a new mask/generate strategy, synthetic provider, connector, STORM detector, or disguise) must regenerate the capability matrix: run `python scripts/gen_capability_matrix.py` and commit the updated `docs/capability-matrix.md`. The `tests/sentry/test_capability_matrix.py` guard fails CI if you forget, so a new capability cannot ship without its docs entry.
+- Capability changes (a new mask/generate strategy, synthetic provider, connector, detector, or disguise) must regenerate the capability matrix: run `python scripts/gen_capability_matrix.py` and commit the updated `docs/capability-matrix.md`. The `tests/sentry/test_capability_matrix.py` guard fails CI if you forget, so a new capability cannot ship without its docs entry.
 - If a change is more than one PR, file an Issue describing the plan first.
 
 ## Pre-merge gate for large engine blocks

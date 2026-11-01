@@ -17,7 +17,7 @@ from typing import Any
 import pyarrow as pa
 import pytest
 
-from decoy_engine.detection import detectors as storm_detectors
+from decoy_engine.detection import detectors as detection_detectors
 from decoy_engine.execution import _operator_registry
 from decoy_engine.execution._operator_registry import ARROW_PYTHON, OPERATORS
 from decoy_engine.execution._runner import WorkNode
@@ -228,7 +228,7 @@ def test_the_kernel_module_defines_no_regex_of_its_own() -> None:
 
 
 def test_the_kernel_reuses_the_oracles_objects_rather_than_copies() -> None:
-    assert _kernels_scalar.iter_spans is storm_detectors.iter_spans
+    assert _kernels_scalar.iter_spans is detection_detectors.iter_spans
     assert _kernels_scalar._splice is _text_redact._splice
 
 

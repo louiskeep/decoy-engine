@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from decoy_engine import reasons
+from decoy_engine import fileaccess, reasons
 from decoy_engine.execution._adapter import StrategyContext, provider_config_to_dict
 from decoy_engine.execution._errors import StrategyError
 from decoy_engine.generation.pool._events import QualityWarning
@@ -63,7 +63,10 @@ class JointMaskHandler:
     ) -> tuple[pd.DataFrame, list[QualityWarning]]:
         cfg = provider_config_to_dict(plan.provider_config)
         mode = str(cfg.get("mode", "mask"))
-        joint_cfg = JointMaskConfig.from_dict(cfg)
+        with fileaccess.at_position(
+            f"tables.{ctx.current_table}.columns.{ctx.nested_outer_column or column}"
+        ):
+            joint_cfg = JointMaskConfig.from_dict(cfg)
         # Cross-column V1: key_by is a SOURCE key (its docstring: "key_by: Source
         # column"; the FK-key identity analogy), so read its immutable pre-mask
         # value from ctx.group_anchor_snapshots -- the date_shift group-anchor

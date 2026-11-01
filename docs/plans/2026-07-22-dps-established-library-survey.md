@@ -1,5 +1,7 @@
 # DPS established-library survey
 
+Status: record
+
 **Date:** 2026-07-22
 **Purpose:** survey vetted, established differential-privacy libraries so the
 next DPS implementation guide adopts/wraps proven mechanisms instead of

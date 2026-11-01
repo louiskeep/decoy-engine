@@ -1,0 +1,6 @@
+# F13 r2 failure list. Tree: pre-change worktree fdd08a89 (PR base)
+# Environment: CPython 3.12.3, same platform, venv from uv sync --frozen (extras dev, hashicorp-vault, xdist), duckdb 1.5.4
+# Command (from the worktree root): PYTHONPATH=<wt>/src:<wt> python -m pytest tests/parity -q -p no:cacheprovider -n 2 -rfE
+# Result: 1 failed, 2898 passed, 1203 skipped, 4 xfailed, 60 xpassed, 2311 warnings in 283.81s (0:04:43)
+
+FAILED tests/parity/test_phase_f_f2_mixed_admission.py::test_an_unparseable_sibling_when_declines_rather_than_guessing
