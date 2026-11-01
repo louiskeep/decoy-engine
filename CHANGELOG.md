@@ -20,8 +20,9 @@ FK seam, and the SBOM error-handling fixes.
 - A `file:` mask secret (`global_settings.mask_secret_ref: file:<path>`, or `keyprovider.key_provider_from_ref
   ("file:...")`) must be owner-only. Any group or other permission bit (0640, 0644, 0444, 0660 ...) refuses it
   with `runtime.secret_file_permissions_unsafe`, checked with `fstat` on the descriptor that is read; no bypass
-  setting. Deployed secret mounts and test fixtures that write a secret file under the default umask must
-  `chmod 0600` (or 0400) it. Windows ACLs are not inspected.
+  setting. The mode is checked before the length, so a short secret at 0644 is refused for its mode, not as
+  `weak_mask_secret`. Deployed secret mounts and test fixtures that write a secret file under the default
+  umask must `chmod 0600` (or 0400) it. Windows ACLs are not inspected.
 - `env:` and `file:` secrets are never cached, whatever the `SecretCachePolicy` TTL.
 - Reason registry `1.1.0` -> `1.2.0` (891 -> 893 identities). New: `runtime.secret_file_permissions_unsafe`,
   `decoy.file_access_denied` (the identity of `FileAccessDenied`). A consumer that pins the registry version or
@@ -34,8 +35,8 @@ FK seam, and the SBOM error-handling fixes.
   policy an explicit `file_access=` must be that policy or narrower, else `FileAccessUnavailable`.
 - Out-of-core temporal FK columns publish the resolved unit of their key (were always `timestamp[us]`); a key
   outside the resolved type is refused with `out_of_core_fk_key_dtype_unsupported`.
-- `ProviderSpec.seed`, `ValuePool.seed`, `StrategyContext.job_seed`/`mask_key` and `ShadowContext.job_seed`
-  are `repr=False`: they no longer appear in `repr()` output.
+- `ProviderSpec.seed`, `ValuePool.seed`, `SeedEnvelope.job_seed`, `StrategyContext.job_seed`/`mask_key` and
+  `ShadowContext.job_seed`/`mask_key` are `repr=False`: they no longer appear in `repr()` output.
 - No public module or exported symbol was removed or renamed (`CodeSetConfig` moved to a private module and is
   still importable from `decoy_engine.transforms.code_set`).
 - DP: the certified rows are re-pinned for 0.18.0 (`31ecf945...`, engine dev/CI profile; `b643894d...`, the
