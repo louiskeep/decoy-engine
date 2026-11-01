@@ -169,7 +169,7 @@ def mask_column(
         if seed.strategy == "text_redact":
             if text_redact_native is not None:
                 return native_text_redact_array(values, native=text_redact_native)
-            return text_redact_array(values, plan=seed)
+            return text_redact_array(values, plan=seed, column=column)
         if categorical_native is not None and seed.namespace is not None:
             return native_categorical_array(
                 values, native=categorical_native, mask_key=job_seed, namespace=seed.namespace
