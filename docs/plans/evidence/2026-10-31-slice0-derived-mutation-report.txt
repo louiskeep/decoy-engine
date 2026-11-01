@@ -1,0 +1,30 @@
+Slice 0 item 3 (derived visibility): mutation proofs, one per new mechanism.
+Build: ef8e484b. Each mutation was applied to the working tree alone, its tests run with -x, and the file restored with
+`git checkout -- <file>` before the next one; `git status --porcelain src` was empty after the run. No commit was made
+while a mutation was applied. Venv from uv.lock, Python 3.10.20.
+
+Mechanism (mutation)                                                    Result  First red cell
+M1  apply_derived narrows to compiled refs (pass the caller dict through)  RED   transforms/test_derived.py::test_apply_derived_sees_only_compiled_refs (T9)
+M2  handler reads by real name (restore itertuples()._asdict() aliases)    RED   test_derived_strategy.py::test_expression_never_reads_an_undeclared_column_through_a_positional_alias (T1)
+M3  translated error raised after the except block (raise inside it)       RED   test_derived_value_free.py::test_apply_derived_failure_is_value_free[bad-date-str] (T5, __context__)
+M4  exact-type reason table (use str(exc) as the reason)                   RED   test_derived_value_free.py::test_apply_derived_failure_is_value_free[bad-date-str] (T5)
+M5  pre-row derived_ref_missing refusal (disable it)                       RED   test_derived_strategy.py::test_t8_missing_declared_ref_at_runtime_is_one_coded_error (T8)
+M6  shared duplicate refusal (make it a no-op)                             RED   test_duplicate_field_names_matrix.py::test_e1_run_pipeline[auto-res-derived-row7-FAIL-BEFORE] (T10)
+M7  value-free refusal message (echo the duplicated names)                 RED   test_duplicate_field_names_matrix.py::test_t6d5_shared_refusal_names_the_table_and_a_count_only[names0-1]
+M8  descriptor check deny-list (add parquet, so no descriptor is checked)  RED   test_e1_run_pipeline[auto-desc-derived-row2-FAIL-BEFORE] (and T12-R6)
+M9  caller-source check, resident and LazySource (drop it)                 RED   test_e1_run_pipeline[auto-res-derived-row7-FAIL-BEFORE]
+M10 loader wrap (drop it)                                                  RED   test_e1_run_pipeline[auto-loader-redact-row17-FAIL-BEFORE] (the silent out-of-core success returns)
+M11 isolated parent check (drop it)                                        RED   test_e3_unwritable_duplicate_is_refused_before_serialization
+M12 chunked first-chunk check (drop it)                                    RED   test_e4_e5_chunked[E4-redact-first-row15-FAIL-BEFORE]
+M13 innermost per-chunk wrapper (drop it)                                  RED   test_e4_e5_chunked[E5-redact-later-row16a-FAIL-BEFORE] (drift validator KeyError)
+M14 refusal first in run_chunk_ingest_guards (append instead of prepend)   RED   test_derived_strategy.py::test_t6d2_duplicate_guarded_field_is_refused_with_the_code[truncate-full]
+M15 handler duplicate check (drop it)                                      RED   test_derived_strategy.py::test_t6d3_direct_handler_call_refuses_a_duplicate_labelled_frame
+M16 check_transform_source_schema delegates (restore its name-echoing branch) RED test_t6d4_transform_schema_check_keeps_type_and_code_with_a_value_free_message
+M17 sequential uses run_chunk_ingest_guards (call the two guards one by one) RED test_t6d2_duplicate_guarded_field_is_refused_with_the_code[truncate-seq]
+M18 constant expression row source (iterate the zero-column projection)    RED   test_derived_strategy.py::test_constant_expression_fills_every_row
+M19 pinned owner (raise ExecutionError from the shared refusal)            RED   test_t7c_shared_refusal_raises_the_pinned_owner_only (T7c)
+M20 isolated parent result is value-free (error=str(exc))                  RED   test_e3_unwritable_duplicate_is_refused_before_serialization
+M2 was first written against a pre-format line and did not apply; it was re-anchored and re-run (RED). No mutation tripped a different rule.
+
+1M-row timing (plan pre-mortem; no threshold): handler `run` on a 5-column frame, expression `a * 2 + b`, best of 2,
+same venv, same loaded machine: main 38.55 s, build 38.14 s.
