@@ -9,6 +9,35 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Changed (BREAKING, pre-GA: vault key floor and simpleeval floor, 2026-11-01)
+
+A token vault is a re-identification database, and the engine could still key one on the 8-byte public
+`job_seed`. Plan: `docs/plans/2026-10-31-slice0-vault-key-floor-and-simpleeval.md`.
+
+- `VaultWriter`, `load_vault` and the run-entry key-match guard (`assert_vault_writer_keyed`, so
+  `run_pipeline`, `run_mask_pipeline_chunked` and direct out-of-core callers) refuse a key that is not
+  `bytes`/`bytearray` of at least `MIN_SECRET_BYTES` (32) with `VaultError(code="weak_mask_secret")`
+  and fixed text. The check runs at construction and again at every write, load and key-match, before
+  any file is created, changed or read.
+- `vault_writer_for_config` never keys a vault on `job_seed`: with no admitted secret it raises
+  `KeyedStrategyRequiresSecret` for every config, keyed or not.
+- A writer stores an immutable `bytes` copy of its key, and `SecretKeyProvider` freezes its secret to
+  `bytes`, so a caller-held `bytearray` cannot change a key after admission.
+- Seed-keyed vaults written by older engines no longer open under any key. There is no migration and
+  no recovery path: regenerate the vault together with its masked output by re-running the mask job
+  under a secret of at least 32 bytes. The `decoy-vault/v2` format and the `vault-key/v1` label are
+  unchanged, so a vault written under a 32-byte key opens unchanged.
+- `simpleeval>=1.0.5` (was `>=0.9.13`): GHSA-44vg-5wv2-h2hg / CVE-2026-32640 is patched in 1.0.5. The
+  lock already resolved 1.0.7; nothing installed changes.
+
+**Breaking for consumers.** This change is safe to land alone only while consumers run pinned engines.
+Before the platform or the CLI bumps its `decoy-engine` pin past this change, its own half must land:
+the platform's (`api/jobs/v2_vault.py`, F13 slice 3a) builds each job vault writer with a
+`SecretKeyProvider` and passes the same provider to `run_pipeline`; the CLI's (`run.py` and the vault
+inspector in `report.py`, F13 slice 4a) builds the writer from the run's resolved secret and opens
+vaults with that secret instead of `job_seed_for_config`. Without them every vault job fails closed
+and the inspector opens no vault.
+
 ### Fixed (out-of-core: typed temporal FK seam, release R-b, 2026-11-01)
 
 The out-of-core FK join rebuilt every child FK value from Python scalars by type inference, so a
