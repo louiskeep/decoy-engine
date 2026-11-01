@@ -1,0 +1,211 @@
+Slice 0 item 1: vault key floor (11.1) and simpleeval floor (12.3). Red baseline and evidence (T8).
+
+Base: origin/main da1a522f (A-4 #361 squash-merged; tree identical to the A-4 tip df3e7e6e).
+Branch: fix/vault-key-floor. Commits: ccbd8207 (merge plan/slice0, docs), ad079931 (corpus regenerated
+under a 32-byte key, old artifact moved to the T3b fixture; first commit, before the floor), ad748ab0
+(slice A), 02cce1ac (slice B), f5447656 (CHANGELOG, implementation record).
+
+Environment: the uv.lock venv built by scripts/dev/bootstrap.sh (Python 3.10.20, pyarrow 24.0.0,
+pandas 2.3.3, duckdb 1.5.4, polars 1.42.0, simpleeval 1.0.7; native companion not installed, so
+native-only tests skip). Python 3.12 venv: `uv sync --frozen` from the same lock with the same extras
+(Python 3.12.3). Every "main" run below ran in a worktree at da1a522f; pytest's `pythonpath = ["src"]`
+makes the tree under test import its own src, checked by printing decoy_engine.__file__.
+
+== 1. Cell labels: main outcome vs branch outcome ==
+Main: worktree at da1a522f with only the new and migrated test files and fixtures copied in (src
+untouched). Branch: f5447656. A cell whose main outcome contradicts its label fails this table.
+
+CHARACTERIZATION main=PASSED branch=PASSED integration/compat_corpus/test_compat_corpus.py::test_corpus_artifact_round_trips[decoy-vault/v2]
+CHARACTERIZATION main=PASSED branch=PASSED integration/compat_corpus/test_compat_corpus.py::test_corpus_artifact_round_trips[distribution-snapshot/v1]
+CHARACTERIZATION main=PASSED branch=PASSED integration/compat_corpus/test_compat_corpus.py::test_harness_bites_on_corruption
+CHARACTERIZATION main=PASSED branch=PASSED integration/compat_corpus/test_compat_corpus.py::test_harness_bites_on_corruption_snapshot
+CHARACTERIZATION main=PASSED branch=PASSED integration/compat_corpus/test_compat_corpus.py::test_manifest_exists
+FAIL-BEFORE      main=FAILED branch=PASSED sentry/test_dependency_floors.py::test_simpleeval_floor_is_advisory_fixed_and_lock_satisfies_it[floor_ge_1_0_5-FAIL_BEFORE]
+                 main failure: AssertionError: assert <Version('0.9.13')> >= <Version('1.0.5')>
+CHARACTERIZATION main=PASSED branch=PASSED sentry/test_dependency_floors.py::test_simpleeval_floor_is_advisory_fixed_and_lock_satisfies_it[lock_ge_floor-CHARACTERIZATION]
+FAIL-BEFORE      main=FAILED branch=PASSED test_de02_keyprovider.py::TestEveryRunEntryRefusesWeakVaultWriter::test_direct_out_of_core_guard_refuses_weak_writer_FAIL_BEFORE
+                 main failure: Failed: DID NOT RAISE VaultError
+FAIL-BEFORE      main=FAILED branch=PASSED test_de02_keyprovider.py::TestEveryRunEntryRefusesWeakVaultWriter::test_every_run_entry_refuses_weak_vault_writer_before_masking[full_frame-FAIL_BEFORE]
+                 main failure: Failed: DID NOT RAISE VaultError
+FAIL-BEFORE      main=FAILED branch=PASSED test_de02_keyprovider.py::TestEveryRunEntryRefusesWeakVaultWriter::test_every_run_entry_refuses_weak_vault_writer_before_masking[out_of_core-FAIL_BEFORE]
+                 main failure: Failed: DID NOT RAISE VaultError
+FAIL-BEFORE      main=FAILED branch=PASSED test_de02_keyprovider.py::TestEveryRunEntryRefusesWeakVaultWriter::test_every_run_entry_refuses_weak_vault_writer_before_masking[run_mask_pipeline_chunked-FAIL_BEFORE]
+                 main failure: Failed: DID NOT RAISE VaultError
+FAIL-BEFORE      main=FAILED branch=PASSED test_de02_keyprovider.py::TestEveryRunEntryRefusesWeakVaultWriter::test_every_run_entry_refuses_weak_vault_writer_before_masking[sequential-FAIL_BEFORE]
+                 main failure: decoy_engine.errors.ConfigError: execution_mode='sequential' requested but the job is not sequential-eligible (vault_writer_requested).
+CHARACTERIZATION main=PASSED branch=PASSED test_de02_keyprovider.py::TestEveryRunEntryRefusesWeakVaultWriter::test_strong_key_each_route_still_completes[full_frame-CHARACTERIZATION]
+CHARACTERIZATION main=PASSED branch=PASSED test_de02_keyprovider.py::TestEveryRunEntryRefusesWeakVaultWriter::test_strong_key_each_route_still_completes[out_of_core-CHARACTERIZATION]
+CHARACTERIZATION main=PASSED branch=PASSED test_de02_keyprovider.py::TestEveryRunEntryRefusesWeakVaultWriter::test_strong_key_each_route_still_completes[run_mask_pipeline_chunked-CHARACTERIZATION]
+FAIL-BEFORE      main=FAILED branch=PASSED test_de02_keyprovider.py::test_secret_key_provider_freezes_mutable_secret_FAIL_BEFORE
+                 main failure: AssertionError: assert <class 'bytearray'> is bytes
+FAIL-BEFORE      main=FAILED branch=PASSED test_vault.py::TestVaultKeyFloor::test_exit_paths_construction_creates_nothing_FAIL_BEFORE
+                 main failure: Failed: DID NOT RAISE VaultError
+FAIL-BEFORE      main=FAILED branch=PASSED test_vault.py::TestVaultKeyFloor::test_exit_paths_load_refuses_before_read_FAIL_BEFORE
+                 main failure: AssertionError: assert 'vault_unreadable' == 'weak_mask_secret'
+FAIL-BEFORE      main=FAILED branch=PASSED test_vault.py::TestVaultKeyFloor::test_exit_paths_write_after_key_drift_creates_no_file_FAIL_BEFORE
+                 main failure: Failed: DID NOT RAISE VaultError
+FAIL-BEFORE      main=FAILED branch=PASSED test_vault.py::TestVaultKeyFloor::test_exit_paths_write_after_key_drift_leaves_existing_file_FAIL_BEFORE
+                 main failure: Failed: DID NOT RAISE VaultError
+CHARACTERIZATION main=PASSED branch=PASSED test_vault.py::TestVaultKeyFloor::test_refusal_text_carries_no_key_marker_32_byte_wrong_key_CHARACTERIZATION
+FAIL-BEFORE      main=FAILED branch=PASSED test_vault.py::TestVaultKeyFloor::test_refusal_text_carries_no_key_marker_7_byte_key_FAIL_BEFORE
+                 main failure: Failed: DID NOT RAISE VaultError
+CHARACTERIZATION main=PASSED branch=PASSED test_vault.py::TestVaultKeyFloor::test_refusal_text_carries_no_ref_marker_CHARACTERIZATION
+CHARACTERIZATION main=PASSED branch=PASSED test_vault.py::TestVaultKeyFloor::test_seed_keyed_vault_no_longer_opens_any_32_byte_key_CHARACTERIZATION
+FAIL-BEFORE      main=FAILED branch=PASSED test_vault.py::TestVaultKeyFloor::test_seed_keyed_vault_no_longer_opens_seed_key_FAIL_BEFORE
+                 main failure: Failed: DID NOT RAISE VaultError
+CHARACTERIZATION main=PASSED branch=PASSED test_vault.py::TestVaultKeyFloor::test_vault_header_keys_are_frozen_CHARACTERIZATION
+CHARACTERIZATION main=PASSED branch=PASSED test_vault.py::TestVaultKeyFloor::test_vault_key_field_walk_32_bytes_CHARACTERIZATION
+FAIL-BEFORE      main=FAILED branch=PASSED test_vault.py::TestVaultKeyFloor::test_vault_key_field_walk_refuses[bytes31-FAIL_BEFORE]
+                 main failure: Failed: DID NOT RAISE VaultError
+FAIL-BEFORE      main=FAILED branch=PASSED test_vault.py::TestVaultKeyFloor::test_vault_key_field_walk_refuses[int-FAIL_BEFORE]
+                 main failure: Failed: DID NOT RAISE VaultError
+FAIL-BEFORE      main=FAILED branch=PASSED test_vault.py::TestVaultKeyFloor::test_vault_key_field_walk_refuses[memoryview32-FAIL_BEFORE]
+                 main failure: Failed: DID NOT RAISE VaultError
+FAIL-BEFORE      main=FAILED branch=PASSED test_vault.py::TestVaultKeyFloor::test_vault_key_field_walk_refuses[none-FAIL_BEFORE]
+                 main failure: Failed: DID NOT RAISE VaultError
+FAIL-BEFORE      main=FAILED branch=PASSED test_vault.py::TestVaultKeyFloor::test_vault_key_field_walk_refuses[str32-FAIL_BEFORE]
+                 main failure: Failed: DID NOT RAISE VaultError
+FAIL-BEFORE      main=FAILED branch=PASSED test_vault.py::TestVaultKeyFloor::test_vault_key_mutation_after_admission_FAIL_BEFORE
+                 main failure: AssertionError: assert <class 'bytearray'> is bytes
+FAIL-BEFORE      main=FAILED branch=PASSED test_vault.py::TestVaultKeyFloor::test_vault_writer_for_config_refuses_seed_only_config_no_keyed_column_FAIL_BEFORE
+                 main failure: Failed: DID NOT RAISE KeyedStrategyRequiresSecret
+CHARACTERIZATION main=PASSED branch=PASSED test_vault.py::TestVaultKeyFloor::test_vault_writer_for_config_refuses_seed_only_config_vault_true_column_CHARACTERIZATION
+CHARACTERIZATION main=PASSED branch=PASSED test_vault.py::TestVaultKeyFloor::test_vault_writer_for_config_with_key_provider_CHARACTERIZATION
+CHARACTERIZATION main=PASSED branch=PASSED test_vault.py::TestVaultKeyFloor::test_writer_accepts_a_root_length_key[len32-CHARACTERIZATION]
+CHARACTERIZATION main=PASSED branch=PASSED test_vault.py::TestVaultKeyFloor::test_writer_accepts_a_root_length_key[len64-CHARACTERIZATION]
+FAIL-BEFORE      main=FAILED branch=PASSED test_vault.py::TestVaultKeyFloor::test_writer_refuses_short_key[len0-FAIL_BEFORE]
+                 main failure: Failed: DID NOT RAISE VaultError
+FAIL-BEFORE      main=FAILED branch=PASSED test_vault.py::TestVaultKeyFloor::test_writer_refuses_short_key[len1-FAIL_BEFORE]
+                 main failure: Failed: DID NOT RAISE VaultError
+FAIL-BEFORE      main=FAILED branch=PASSED test_vault.py::TestVaultKeyFloor::test_writer_refuses_short_key[len31-FAIL_BEFORE]
+                 main failure: Failed: DID NOT RAISE VaultError
+FAIL-BEFORE      main=FAILED branch=PASSED test_vault.py::TestVaultKeyFloor::test_writer_refuses_short_key[len8-FAIL_BEFORE]
+                 main failure: Failed: DID NOT RAISE VaultError
+
+cells: 42; label/outcome mismatches: 0
+
+Plan T-number map: T1 test_writer_refuses_short_key / test_writer_accepts_a_root_length_key; T2
+test_vault_writer_for_config_*; T3a compat_corpus round trip and tamper; T3b
+test_seed_keyed_vault_no_longer_opens_*; T4 test_refusal_text_carries_no_*; T5 test_exit_paths_*;
+T6 TestEveryRunEntryRefusesWeakVaultWriter; T7 test_vault_key_field_walk_* and
+test_vault_key_mutation_after_admission; T9 test_vault_header_keys_are_frozen; T10
+test_dependency_floors; T11 test_secret_key_provider_freezes_mutable_secret.
+
+One cell was relabelled before any fix landed: T4b with a 40-byte key was red on main
+(DeterminismError seed_wrong_length: derive takes only 8 or 32 bytes), so it was not a
+characterization; it now uses a 32-byte marker key (plan implementation record, row 3).
+
+== 2. Mutation proofs (one per new mechanism; applied, run, restored with git checkout) ==
+Each mutation was applied to the branch head, the slice cells above were run, the file was restored.
+No commit was made while a mutation was applied; the tree was clean after the run.
+
+== M1 _require_vault_key pass-through (no floor): 20 failed, 22 passed, 1 skipped in 1.23s
+   red: TestVaultKeyFloor::test_writer_refuses_short_key[len0-FAIL_BEFORE]
+   red: TestVaultKeyFloor::test_writer_refuses_short_key[len1-FAIL_BEFORE]
+   red: TestVaultKeyFloor::test_writer_refuses_short_key[len8-FAIL_BEFORE]
+   red: TestVaultKeyFloor::test_writer_refuses_short_key[len31-FAIL_BEFORE]
+   red: TestVaultKeyFloor::test_seed_keyed_vault_no_longer_opens_seed_key_FAIL_BEFORE
+   red: TestVaultKeyFloor::test_refusal_text_carries_no_key_marker_7_byte_key_FAIL_BEFORE
+   red: TestVaultKeyFloor::test_exit_paths_construction_creates_nothing_FAIL_BEFORE
+   red: TestVaultKeyFloor::test_exit_paths_write_after_key_drift_creates_no_file_FAIL_BEFORE
+   red: TestVaultKeyFloor::test_exit_paths_write_after_key_drift_leaves_existing_file_FAIL_BEFORE
+   red: TestVaultKeyFloor::test_exit_paths_load_refuses_before_read_FAIL_BEFORE
+   red: TestVaultKeyFloor::test_vault_key_field_walk_refuses[none-FAIL_BEFORE]
+   red: TestVaultKeyFloor::test_vault_key_field_walk_refuses[str32-FAIL_BEFORE]
+   red: TestVaultKeyFloor::test_vault_key_field_walk_refuses[int-FAIL_BEFORE]
+   red: TestVaultKeyFloor::test_vault_key_field_walk_refuses[memoryview32-FAIL_BEFORE]
+   red: TestVaultKeyFloor::test_vault_key_field_walk_refuses[bytes31-FAIL_BEFORE]
+   red: TestEveryRunEntryRefusesWeakVaultWriter::test_every_run_entry_refuses_weak_vault_writer_before_masking[full_frame-FAIL_BEFORE]
+   red: TestEveryRunEntryRefusesWeakVaultWriter::test_every_run_entry_refuses_weak_vault_writer_before_masking[sequential-FAIL_BEFORE]
+   red: TestEveryRunEntryRefusesWeakVaultWriter::test_every_run_entry_refuses_weak_vault_writer_before_masking[out_of_core-FAIL_BEFORE]
+   red: TestEveryRunEntryRefusesWeakVaultWriter::test_every_run_entry_refuses_weak_vault_writer_before_masking[run_mask_pipeline_chunked-FAIL_BEFORE]
+   red: TestEveryRunEntryRefusesWeakVaultWriter::test_direct_out_of_core_guard_refuses_weak_writer_FAIL_BEFORE
+== M2 drop revalidation from assert_keyed_with: 5 failed, 37 passed, 1 skipped in 1.30s
+   red: TestEveryRunEntryRefusesWeakVaultWriter::test_every_run_entry_refuses_weak_vault_writer_before_masking[full_frame-FAIL_BEFORE]
+   red: TestEveryRunEntryRefusesWeakVaultWriter::test_every_run_entry_refuses_weak_vault_writer_before_masking[sequential-FAIL_BEFORE]
+   red: TestEveryRunEntryRefusesWeakVaultWriter::test_every_run_entry_refuses_weak_vault_writer_before_masking[out_of_core-FAIL_BEFORE]
+   red: TestEveryRunEntryRefusesWeakVaultWriter::test_every_run_entry_refuses_weak_vault_writer_before_masking[run_mask_pipeline_chunked-FAIL_BEFORE]
+   red: TestEveryRunEntryRefusesWeakVaultWriter::test_direct_out_of_core_guard_refuses_weak_writer_FAIL_BEFORE
+== M3 drop the bytes() copy: 1 failed, 41 passed, 1 skipped in 0.76s
+   red: TestVaultKeyFloor::test_vault_key_mutation_after_admission_FAIL_BEFORE
+== M4 drop the exact-type check: 4 failed, 38 passed, 1 skipped in 0.55s
+   red: TestVaultKeyFloor::test_vault_key_field_walk_refuses[none-FAIL_BEFORE]
+   red: TestVaultKeyFloor::test_vault_key_field_walk_refuses[str32-FAIL_BEFORE]
+   red: TestVaultKeyFloor::test_vault_key_field_walk_refuses[int-FAIL_BEFORE]
+   red: TestVaultKeyFloor::test_vault_key_field_walk_refuses[memoryview32-FAIL_BEFORE]
+== M5 drop the floor recheck in _fernet (write/load): 10 failed, 32 passed, 1 skipped in 0.55s
+   red: TestVaultKeyFloor::test_seed_keyed_vault_no_longer_opens_seed_key_FAIL_BEFORE
+   red: TestVaultKeyFloor::test_refusal_text_carries_no_key_marker_7_byte_key_FAIL_BEFORE
+   red: TestVaultKeyFloor::test_exit_paths_write_after_key_drift_creates_no_file_FAIL_BEFORE
+   red: TestVaultKeyFloor::test_exit_paths_write_after_key_drift_leaves_existing_file_FAIL_BEFORE
+   red: TestVaultKeyFloor::test_exit_paths_load_refuses_before_read_FAIL_BEFORE
+   red: TestVaultKeyFloor::test_vault_key_field_walk_refuses[none-FAIL_BEFORE]
+   red: TestVaultKeyFloor::test_vault_key_field_walk_refuses[str32-FAIL_BEFORE]
+   red: TestVaultKeyFloor::test_vault_key_field_walk_refuses[int-FAIL_BEFORE]
+   red: TestVaultKeyFloor::test_vault_key_field_walk_refuses[memoryview32-FAIL_BEFORE]
+   red: TestVaultKeyFloor::test_vault_key_field_walk_refuses[bytes31-FAIL_BEFORE]
+== M6 publish a partial file before the Fernet is built (exit-path ordering): 2 failed, 40 passed, 1 skipped in 0.56s
+   red: TestVaultKeyFloor::test_exit_paths_write_after_key_drift_creates_no_file_FAIL_BEFORE
+   red: TestVaultKeyFloor::test_exit_paths_write_after_key_drift_leaves_existing_file_FAIL_BEFORE
+== M7 restore the job_seed fallback in vault_writer_for_config: 1 failed, 41 passed, 1 skipped in 0.55s
+   red: TestVaultKeyFloor::test_vault_writer_for_config_refuses_seed_only_config_no_keyed_column_FAIL_BEFORE
+== M8 refusal text carries the key bytes: 1 failed, 41 passed, 1 skipped in 0.55s
+   red: TestVaultKeyFloor::test_refusal_text_carries_no_key_marker_7_byte_key_FAIL_BEFORE
+== M9 change VAULT_KEY_LABEL: 1 failed, 41 passed, 1 skipped in 0.54s
+   red: test_corpus_artifact_round_trips[decoy-vault/v2]
+== M10 add a header key: 1 failed, 41 passed, 1 skipped in 0.54s
+   red: TestVaultKeyFloor::test_vault_header_keys_are_frozen_CHARACTERIZATION
+== M11 drop the SecretKeyProvider freeze: 1 failed, 41 passed, 1 skipped in 0.54s
+   red: test_secret_key_provider_freezes_mutable_secret_FAIL_BEFORE
+== M12 floor set to >=1.0.4: 1 failed, 41 passed, 1 skipped in 0.54s
+   red: test_simpleeval_floor_is_advisory_fixed_and_lock_satisfies_it[floor_ge_1_0_5-FAIL_BEFORE]
+== M13 lock resolves 1.0.3: 1 failed, 41 passed, 1 skipped in 0.54s
+   red: test_simpleeval_floor_is_advisory_fixed_and_lock_satisfies_it[lock_ge_floor-CHARACTERIZATION]
+TREE CLEAN
+
+== 3. Full suite, by test id (junit XML), branch vs main, same lock ==
+Command (per tree): python -m pytest -p no:cacheprovider -q -rfE --junitxml=... tests
+(pyproject addopts: -m 'not benchmark and not testflight and not packaging and not codspeed and
+not determinism_harness').
+
+main310    1 failed, 32060 passed, 5289 skipped, 185 deselected, 6 xfailed, 65 xpassed, 75 warnings in 2356.78s (0:39:16)
+           FAILED tests/property/test_dp_provenance_invariants.py::test_check_fit_environment_rejects_stack_one_distribution_off
+branch310  32101 passed, 5289 skipped, 185 deselected, 6 xfailed, 65 xpassed, 76 warnings in 2323.94s (0:38:43)
+main312    1 failed, 31976 passed, 5373 skipped, 185 deselected, 6 xfailed, 65 xpassed, 327 warnings in 1965.16s (0:32:45)
+           FAILED tests/unit/execution/test_categorical_weighted.py::TestCdfBuilder::test_skewed_weights_skew_cdf
+branch312  1 failed, 32016 passed, 5373 skipped, 185 deselected, 6 xfailed, 65 xpassed, 325 warnings in 1900.50s (0:31:40)
+           FAILED tests/unit/execution/test_categorical_weighted.py::TestCdfBuilder::test_skewed_weights_skew_cdf
+
+== py310: main 37421 ids, branch 37461 ids; new 40, removed 0, status changed 1
+  changed: tests.property.test_dp_provenance_invariants::test_check_fit_environment_rejects_stack_one_distribution_off: failed -> passed
+  new statuses: {'passed': 40, 'failed': 0, 'skipped': 0}
+== py312: main 37421 ids, branch 37461 ids; new 40, removed 0, status changed 0
+  new statuses: {'passed': 40, 'failed': 0, 'skipped': 0}
+  The 40 new ids: TestVaultKeyFloor 26, TestEveryRunEntryRefusesWeakVaultWriter 8,
+  test_secret_key_provider_freezes_mutable_secret 1, test_dependency_floors 2, and 3 ids that
+  sentries derive from repo content (test_perf_claim_provenance 2 for the new docs,
+  test_secret_census_frames 1 for the new census entry).
+
+Main 3.12 failure: test_skewed_weights_skew_cdf, the known one; same on the branch.
+Main 3.10 failure: test_check_fit_environment_rejects_stack_one_distribution_off, a Hypothesis
+FlakyStrategyDefinition. It passed 3 of 3 rerun alone on main 3.10 and passes on the branch. The test
+inspects installed distributions, and this baseline run overlapped a re-sync of the 3.10 venv (the
+editable decoy-engine metadata was reinstalled after the slice B lock edit), the likely external state.
+
+== 4. Lint, types, sentries ==
+ruff check src tests testflight scripts: main 0, branch 0. ruff format --check: clean on both
+(1924 vs 1925 files, the new sentry). mypy src/decoy_engine testflight: main 0, branch 0 (706 files).
+Sentries on the branch: test_module_size (vault.py 531 -> 574 LOC, under 600; keyprovider.py 271),
+test_physical_seam_disconnection, test_secret_material_census, test_reason_registry,
+test_public_import_boundary: 837 passed.
+
+== 5. Lock ==
+uv lock after the pyproject edit changes one line, uv.lock:667, the mirrored requires-dist
+specifier (simpleeval >=0.9.13 -> >=1.0.5). No [[package]] version changes (simpleeval stays 1.0.7);
+a second uv lock is a no-op and uv lock --check passes.
+
+== 6. Not run ==
+scripts/dev/gates.sh as a single command (its steps were run individually above); the benchmark,
+packaging, codspeed, testflight and determinism_harness markers; native-companion tests (companion not
+installed: they skip on main and branch alike); Windows; any platform or CLI repo test (their halves are
+release prerequisites outside this slice).
