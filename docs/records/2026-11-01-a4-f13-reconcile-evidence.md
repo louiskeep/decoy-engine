@@ -442,3 +442,33 @@ The native companion is not installed (native-only tests skip, as on main). No C
 platform or CLI suite, no live Vault, no Windows run, no mutmut campaign (hand mutants only, 26
 in the final passes). mypy on 3.12 stops on the same two environment errors as main (`tomli` stub
 missing, numpy stub syntax under the configured `python_version` 3.10); it is run on 3.10.
+
+## 11. Round 5: the release-pin test (class 8)
+
+`tests/unit/test_reason_release_pin.py::test_an_unbumped_addition_to_the_live_catalog_fails_the_checked_in_pin`
+held only while the live `registry_version` equalled the pinned one (the semantic conflict of
+10.1). It now sets its copied catalog to the pinned version, adds an entry claiming that version
+and asserts the exact "changed without a registry version bump" violation; a new sibling adds the
+same entry under a version above the pin and asserts no violation. Only that file changed; no
+other pinned test, sentry, fixture or golden; the pin is not re-captured
+(`scripts/release/reason_release_pin.py --check` still reports 1.1.0/891 vs 1.2.0/893 stale, as
+expected until the release step writes it).
+
+Red first and mutants: `docs/plans/evidence/2026-11-01-a4-f13-reconcile-r5-red.txt`. Original test
+red on be26383f; edited file 11 passed on the same head. Mutants of `pin_violations`: inverted
+version comparison, both tests red; version comparison ignored (digest checked at any version),
+the bumped sibling red; digest rule dropped, the unbumped test red.
+
+Full suite (pyproject addopts, `pytest tests`, lock venvs, extras dev, lint, vault, cloud), head
+e60c93f9 versus main 1132d29e (main unchanged since round 4; its runs in section 10.5 are the
+baseline):
+
+| Python | main 1132d29e | head e60c93f9 |
+|---|---|---|
+| 3.10.20 | 0 failed, 29095 passed, 5286 skipped | 0 failed, 30083 passed, 5288 skipped |
+| 3.12.3 | 1 failed (`test_skewed_weights_skew_cdf`), 29010 passed, 5370 skipped | 1 failed (the same id), 29998 passed, 5372 skipped |
+
+Failing ids are identical to main on both interpreters. ruff check and format clean on 3.10 and
+3.12; mypy (3.10) 0 errors, 704 files.
+
+Not run: native companion, CI, platform or CLI suites, live Vault, Windows, mutmut.

@@ -1,0 +1,25 @@
+A-4 x F13 reconcile, round 5: release-pin test red-first and mutants (3.10.20 lock venv; mutants applied to scripts/release/reason_release_pin.py, each reverted with git checkout)
+
+### R5 original test on be26383f (3.10.20 lock venv)
+E       assert False
+E        +  where False = any(<generator object test_an_unbumped_addition_to_the_live_catalog_fails_the_checked_in_pin.<locals>.<genexpr> at 0x7f3892fd1230>)
+FAILED tests/unit/test_reason_release_pin.py::test_an_unbumped_addition_to_the_live_catalog_fails_the_checked_in_pin
+1 failed, 9 passed in 1.44s
+
+### R5 edited tests on the same head, test file only changed
+11 passed in 0.40s
+
+### MA ignore the version comparison (digest checked at any version)
+FAILED tests/unit/test_reason_release_pin.py::test_a_bumped_addition_to_the_live_catalog_passes_the_checked_in_pin
+1 failed, 1 passed, 9 deselected in 0.29s
+
+### MB invert the version comparison
+FAILED tests/unit/test_reason_release_pin.py::test_an_unbumped_addition_to_the_live_catalog_fails_the_checked_in_pin
+FAILED tests/unit/test_reason_release_pin.py::test_a_bumped_addition_to_the_live_catalog_passes_the_checked_in_pin
+2 failed, 9 deselected in 0.30s
+
+### MC drop the digest rule
+FAILED tests/unit/test_reason_release_pin.py::test_an_unbumped_addition_to_the_live_catalog_fails_the_checked_in_pin
+1 failed, 1 passed, 9 deselected in 0.23s
+
+### pin check: reason release pin is stale: pinned 1.1.0 (891 identities), live 1.2.0 (893); re-capture with --write (exit 1, expected until the release step re-captures)
