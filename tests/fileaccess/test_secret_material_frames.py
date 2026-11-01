@@ -349,3 +349,36 @@ def test_the_prepared_values_are_unchanged() -> None:
         hashlib.sha256(bytes(SecretBuffer(b"abc").view())).hexdigest()
         == hashlib.sha256(b"abc").hexdigest()
     )
+
+
+# --- secret_providers.vault.client_from_env ---------------------------------------------------
+
+TOKEN = "R4-VAULT-TOKEN-CANARY"
+
+CLIENT_ENV_CASES = {
+    "no_address": {"VAULT_TOKEN": TOKEN},
+    "skip_verify": {"VAULT_TOKEN": TOKEN, "VAULT_ADDR": "https://v", "VAULT_SKIP_VERIFY": "1"},
+    "half_mtls": {"VAULT_TOKEN": TOKEN, "VAULT_ADDR": "https://v", "VAULT_CLIENT_CERT": "c.pem"},
+}
+
+
+@pytest.mark.parametrize("case", sorted(CLIENT_ENV_CASES))
+def test_client_from_env_refusal(case: str) -> None:
+    from decoy_engine.secret_providers.vault import VaultClientConfigError, client_from_env
+
+    with pytest.raises(VaultClientConfigError) as info:
+        client_from_env(dict(CLIENT_ENV_CASES[case]))
+    for function, name, text in _all_locals(info.value):
+        assert TOKEN not in text, f"{function}() local {name!r} holds the token"
+
+
+def test_client_from_env_from_the_process_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    from decoy_engine.secret_providers.vault import VaultClientConfigError, client_from_env
+
+    monkeypatch.setenv("VAULT_TOKEN", TOKEN)
+    monkeypatch.delenv("VAULT_ADDR", raising=False)
+    monkeypatch.delenv("VAULT_SKIP_VERIFY", raising=False)
+    with pytest.raises(VaultClientConfigError) as info:
+        client_from_env()
+    for function, name, text in _all_locals(info.value):
+        assert TOKEN not in text, f"{function}() local {name!r} holds the token"
