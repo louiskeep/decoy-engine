@@ -37,6 +37,12 @@ plus every transitive dependency (CPython 3.12, universal markers, wheels only).
 Every `uv` call (venv, install, export) passes `--no-config`, and the script drops every
 `UV_*` variable except `UV_CACHE_DIR`, `UV_NATIVE_TLS` and `UV_HTTP_TIMEOUT` (`--no-config`
 skips `uv.toml` files but not `UV_*` variables such as `UV_INDEX_URL` or `UV_FROZEN`).
+It also drops every `PIP_*` variable and every `PYTHON*` variable except
+`PYTHONDONTWRITEBYTECODE` before any subprocess starts, so neither uv nor the interpreters
+it runs see the caller's `PYTHONPATH`, `PYTHONHOME`, `PYTHONSTARTUP`, `PYTHONUSERBASE`,
+`PYTHONINSPECT`, pip index or config settings. `PYTHONDONTWRITEBYTECODE` only stops `.pyc`
+files being written into the throwaway venv, so it passes through. `sbom-tool-lock.sh`
+applies the same scrub.
 Regenerate the tool file, after editing the pins in
 `scripts/release/sbom-tool-requirements.in`, with:
 
@@ -86,7 +92,18 @@ The script exits non-zero and writes nothing when:
 - the tool requirements file is missing, breaks the grammar above, lacks a hash, any hash
   does not match, or a dependency has no wheel; or the venv interpreter is not CPython 3.12.
 
-Error messages name files by basename only.
+Every refusal is one fixed line on stderr and exit 1. Messages name no path the caller
+gave (not even a basename), do not quote the lock or the SBOM, and carry no Python
+traceback or exception text: a lock that is empty, not UTF-8, truncated, missing its
+`package` table or shaped wrong gets `unreadable lock (not a uv.lock with a single root
+project)`. When a `uv` call or `cyclonedx-py` fails, the script prints which step failed
+and its exit code, for example `uv export failed (exit 2)`, and nothing of the tool's own
+output. A successful run prints only `sbom.sh: wrote SBOM`; `--validate` prints `VALID` or
+`INVALID` and never the validator's message.
+
+To see the raw `uv` and `cyclonedx-py` output while debugging, set `DECOY_SBOM_DEBUG=1`
+(both `sbom.sh` and `sbom-tool-lock.sh`). That output **may contain local paths**, lock
+text and environment details, so do not set it where logs are kept (CI, release records).
 
 ## Tests
 
@@ -94,5 +111,7 @@ Error messages name files by basename only.
 completeness against an independent walk of the lock (component count equals pin count,
 PEP 503 names, `pkg:pypi` purls), lock hashes, byte-identical reruns, leak canaries, every
 refusal above, and run-time isolation (`PYTHONPATH` shadowing, `uv.toml` and `UV_*`
-overrides, a different interpreter, an sdist-only dependency, `CDPATH`). It needs `uv` and
+overrides, a different interpreter, an sdist-only dependency, `CDPATH`, the `PIP_*` and
+`PYTHON*` scrub), and the fixed messages (malformed locks, a failing `uv` shim, schema
+errors, unwritable output, all checked with a canary). It needs `uv` and
 network on first use.

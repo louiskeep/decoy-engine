@@ -15,6 +15,8 @@ Modes (each exits 1 with a registered message on refusal):
 ``pins FILE``  the requirements file ``uv export`` wrote: well-formed hashed
     ``name==version [ ; marker ]`` lines only, each re-parsed with
     ``packaging.requirements.Requirement`` (the parser ``cyclonedx-py`` relies on).
+``validate SBOM``  schema-check an SBOM with the pinned library's strict JSON validator;
+    prints ``VALID`` or ``INVALID`` and never the validator's message, which quotes values.
 ``complete LOCK FILE SBOM``  the SBOM's components equal the exported pins as a multiset
     of (PEP 503 name, PEP 440 version), the root component is present, and every exported
     pin lies in the checked runtime closure: a pin the tool dropped, merged or invented, or
@@ -26,6 +28,11 @@ printable ASCII plus ``\\n`` (``str.splitlines()`` also splits on ``\\r``, ``\\x
 ``\\x0c``, ``\\x1c``-``\\x1e``, ``\\x85``, ``\\u2028`` and ``\\u2029``), and versions are
 canonical PEP 440 (regex from PEP 440, Appendix B). Whatever still parses differently is
 caught by ``complete``.
+
+Every refusal is one fixed message per mode and exit 1: an input that fails to decode or
+parse, or has the wrong shape, never reaches the caller as a traceback or exception text,
+which would quote lock or SBOM content and the script's own paths (the closed-set error
+pattern; any ``Exception`` maps to the mode's message in ``main``).
 """
 
 from __future__ import annotations
@@ -63,6 +70,19 @@ GRAMMAR = (
     "(SBOM covers well-formed public-index pins only)"
 )
 TOOL_GRAMMAR = "tool environment install failed: sbom-tool-requirements.txt is not hashed pins only"
+LOCK_UNREADABLE = "unreadable lock (not a uv.lock with a single root project)"
+INCOMPLETE = (
+    "SBOM does not match the runtime closure (a pin was dropped, merged or added, "
+    "or its source was not checked)"
+)
+SBOM_UNREADABLE = "not a readable CycloneDX JSON document"
+_FALLBACK = {
+    "pins-with-comments": TOOL_GRAMMAR,
+    "lock": LOCK_UNREADABLE,
+    "pins": GRAMMAR,
+    "complete": INCOMPLETE,
+    "validate": SBOM_UNREADABLE,
+}
 
 
 def canonical_name(name: str) -> str:
@@ -238,6 +258,11 @@ def uncovered_pins(lock_text: str, text: str) -> list[str]:
 # --- entry point ----------------------------------------------------------------------
 
 
+def _read_utf8(path: str) -> str:
+    with open(path, "rb") as fh:
+        return fh.read().decode("utf-8")
+
+
 def _read(path: str) -> str | None:
     # Raw bytes: text mode would translate CRLF and lone CR before the check sees them.
     with open(path, "rb") as fh:
@@ -253,22 +278,38 @@ def _refuse(message: str) -> int:
     return 1
 
 
+def _validate(path: str) -> int:
+    from cyclonedx.schema import SchemaVersion
+    from cyclonedx.validation.json import JsonStrictValidator
+
+    text = _read_utf8(path)
+    version = SchemaVersion.from_version(json.loads(text)["specVersion"])
+    errors = JsonStrictValidator(version).validate_str(text)
+    print("INVALID" if errors else "VALID")
+    return 1 if errors else 0
+
+
 def main(argv: list[str]) -> int:
     mode, args = (argv[1], argv[2:]) if len(argv) > 1 else ("", [])
-    arity = {"pins-with-comments": 1, "lock": 1, "pins": 1, "complete": 3}
+    arity = {"pins-with-comments": 1, "lock": 1, "pins": 1, "complete": 3, "validate": 1}
     if arity.get(mode) != len(args):
         print(
-            "usage: sbom_checks.py pins-with-comments|lock|pins FILE | complete LOCK PINS SBOM",
+            "usage: sbom_checks.py pins-with-comments|lock|pins|validate FILE"
+            " | complete LOCK PINS SBOM",
             file=sys.stderr,
         )
         return 2
+    try:
+        return _main(mode, args)
+    except Exception:  # closed set: the message must not carry input text
+        return _refuse(_FALLBACK[mode])
+
+
+def _main(mode: str, args: list[str]) -> int:
+    if mode == "validate":
+        return _validate(args[0])
     if mode == "lock":
-        with open(args[0], encoding="utf-8") as fh:
-            lock_text = fh.read()
-        try:
-            bad = lock_violations(lock_text)
-        except (ValueError, KeyError, tomllib.TOMLDecodeError):
-            return _refuse("unreadable lock (no single root project)")
+        bad = lock_violations(_read_utf8(args[0]))
         if bad:
             return _refuse(
                 "non-public source in the runtime closure "
@@ -289,16 +330,11 @@ def main(argv: list[str]) -> int:
         ):
             return _refuse(GRAMMAR)
         return 0
-    with open(args[0], encoding="utf-8") as fh:
-        lock_text = fh.read()
+    lock_text = _read_utf8(args[0])
     text = _read(args[1])
-    with open(args[2], encoding="utf-8") as fh:
-        sbom = json.load(fh)
+    sbom = json.loads(_read_utf8(args[2]))
     if text is None or uncovered_pins(lock_text, text) or completeness_violations(text, sbom):
-        return _refuse(
-            "SBOM does not match the runtime closure (a pin was dropped, merged or added, "
-            "or its source was not checked)"
-        )
+        return _refuse(INCOMPLETE)
     return 0
 
 
