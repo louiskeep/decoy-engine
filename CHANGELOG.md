@@ -9,6 +9,19 @@ minimum engine version it was tested against via its
 
 ## [Unreleased]
 
+### Changed (licensing: generated NOTICE, license gate, SDV citations, 2026-11-01)
+
+- `NOTICE` (shipped in the wheel) is generated from `uv.lock` by `scripts/dev/licenses_write.sh`: name,
+  version, license and scope (`[runtime]` or `[extra: ...]`) for all 103 pins that installing the engine or
+  a runtime extra can pull in, plus the named exceptions (`paramiko` LGPL-2.1 and `tqdm` MPL-2.0 AND MIT,
+  optional only; `certifi` MPL-2.0; `python-stdnum` LGPL-2.0-or-later; numpy's SPDX expression). The
+  licensor name is a marked owner placeholder. Policy: `docs/license-policy.md`.
+- `tests/sentry/test_license_policy.py` and the `licenses` step of `scripts/dev/gates.sh` fail on a stale or
+  hand-edited `NOTICE`, a license outside the policy, or `NOTICE` disagreeing with installed metadata.
+- SDV citations no longer call SDV MIT: SDV is BUSL-1.1. The engine cites the HMA1 and PAR methods (papers
+  named) and uses no SDV code; `tests/sentry/test_sdv_import_sentry.py` fails on an SDV or sdmetrics import
+  and on a citation labelling SDV permissive.
+
 ### Fixed (out-of-core: typed temporal FK seam, release R-b, 2026-11-01)
 
 The out-of-core FK join rebuilt every child FK value from Python scalars by type inference, so a

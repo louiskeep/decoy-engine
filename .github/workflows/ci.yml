@@ -279,3 +279,11 @@ jobs:
                   f"failures={failures} (need passed>0, all others 0)"
               )
           PY
+      - name: License sentries against the certified profile's installed metadata
+        # The one lock-exact CI venv: NOTICE is compared with installed metadata here.
+        # DECOY_LICENSE_STRICT=1 turns the drifted-venv skip into a failure.
+        env:
+          DECOY_LICENSE_STRICT: "1"
+        run: >
+          uv run pytest tests/sentry/test_license_policy.py tests/sentry/test_sdv_import_sentry.py
+          --tb=short -rs
