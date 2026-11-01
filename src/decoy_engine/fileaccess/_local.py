@@ -175,6 +175,24 @@ class _LocalStageDir:
         return str(self._dir)
 
 
+def _sync_dir(directory: Path) -> None:
+    """Best-effort fsync of a directory so a rename into it survives a crash. A directory that
+    cannot be opened, synced or closed is skipped: the rename has already published."""
+    try:
+        fd = os.open(directory, os.O_RDONLY | os.O_CLOEXEC)
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass
+    finally:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+
+
 class LocalOutputTxn(_LocalStageDir):
     """The legacy stage: a `mkdtemp` directory (or one `mkstemp` file) in the target's parent."""
 
@@ -259,6 +277,7 @@ class LocalOutputTxn(_LocalStageDir):
         if self._mode == "replace":
             os.replace(staged, self._target)
             self._finished = True
+            _sync_dir(self._target.parent)
             return
         try:
             os.link(staged, self._target)

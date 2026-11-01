@@ -2,7 +2,7 @@
 # `ordinal` is the index of the call among identical sinks in the function. An entry may be
 # removed freely; adding one needs a `rule` (how the path is built), an `owner` and a `reason`.
 # `ambient_only` marks a caller-derived path that is reached only after `require_ambient`.
-# Count: 191 (asserted by the sentry).
+# Count: 192 (asserted by the sentry).
 
 [[entry]]
 module = "decoy_engine/connectors/sftp.py"
@@ -1198,6 +1198,15 @@ ordinal = 1
 rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
 owner = "cam"
 reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
+
+[[entry]]
+module = "decoy_engine/fileaccess/_local.py"
+function = "_sync_dir"
+sink = "os.open"
+ordinal = 0
+rule = "the parent directory of a FileRequest.locator served by LocalFileAccess, opened read-only after the replace to fsync it"
+owner = "cam"
+reason = "ambient CLI semantics: best-effort directory fsync after a published replace (main's fixed-width writer did it)"
 
 [[entry]]
 module = "decoy_engine/fileaccess/_local.py"
