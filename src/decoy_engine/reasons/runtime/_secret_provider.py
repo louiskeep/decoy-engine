@@ -24,6 +24,7 @@ SECRET_PROVIDER_UNKNOWN = _d(
     phases=(Phase.RESOLVE,),
     outcome=Outcome.CONFIGURATION,
     retry=RetryClass.CONFIGURATION_REPAIR,
+    since="1.1.0",
 )
 SECRET_PROVIDER_UNAVAILABLE = _d(
     "secret_provider_unavailable",
@@ -31,6 +32,7 @@ SECRET_PROVIDER_UNAVAILABLE = _d(
     phases=(Phase.RESOLVE,),
     outcome=Outcome.EXECUTION,
     retry=RetryClass.RETRY_OPERATION,
+    since="1.1.0",
 )
 SECRET_ACCESS_DENIED = _d(
     "secret_access_denied",
@@ -38,6 +40,7 @@ SECRET_ACCESS_DENIED = _d(
     phases=(Phase.RESOLVE,),
     outcome=Outcome.CONFIGURATION,
     retry=RetryClass.ENVIRONMENT_REPAIR,
+    since="1.1.0",
 )
 SECRET_VERSION_UNAVAILABLE = _d(
     "secret_version_unavailable",
@@ -45,6 +48,7 @@ SECRET_VERSION_UNAVAILABLE = _d(
     phases=(Phase.RESOLVE,),
     outcome=Outcome.CONFIGURATION,
     retry=RetryClass.CONFIGURATION_REPAIR,
+    since="1.1.0",
 )
 SECRET_EXPIRED = _d(
     "secret_expired",
@@ -52,6 +56,7 @@ SECRET_EXPIRED = _d(
     phases=(Phase.RESOLVE,),
     outcome=Outcome.CONFIGURATION,
     retry=RetryClass.CONFIGURATION_REPAIR,
+    since="1.1.0",
 )
 SECRET_LEASE_UNSUPPORTED = _d(
     "secret_lease_unsupported",
@@ -59,6 +64,7 @@ SECRET_LEASE_UNSUPPORTED = _d(
     phases=(Phase.RESOLVE,),
     outcome=Outcome.CONFIGURATION,
     retry=RetryClass.CONFIGURATION_REPAIR,
+    since="1.1.0",
 )
 SECRET_MATERIAL_INVALID = _d(
     "secret_material_invalid",
@@ -66,6 +72,7 @@ SECRET_MATERIAL_INVALID = _d(
     phases=(Phase.RESOLVE,),
     outcome=Outcome.CONFIGURATION,
     retry=RetryClass.CONFIGURATION_REPAIR,
+    since="1.1.0",
 )
 # E1: a `file:` secret readable by group or other is refused on the opened descriptor (OpenSSH's
 # "UNPROTECTED PRIVATE KEY FILE" rule).
