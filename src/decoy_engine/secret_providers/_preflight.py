@@ -27,7 +27,7 @@ from __future__ import annotations
 import contextvars
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any, NoReturn, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from decoy_engine import fileaccess, reasons
 from decoy_engine.keyprovider import (
@@ -54,6 +54,7 @@ from decoy_engine.secret_providers._errors import (
     is_kept,
     kept_error,
 )
+from decoy_engine.secret_providers._errors import raise_bare as _raise_bare
 from decoy_engine.secret_providers._local import FileSecretProvider, _LocalProvider
 from decoy_engine.secret_providers._registry import SecretProviderRegistry, default_registry
 from decoy_engine.secret_providers._requirements import (
@@ -202,19 +203,6 @@ def _rebuilt(failure: Failure, *, outermost: bool) -> BaseException:
     if is_kept(failure):
         return kept_error(failure, outermost=outermost)
     return error_for(failure)
-
-
-def _raise_bare(error: BaseException) -> NoReturn:
-    """Raise `error` with no inherited chain. A caller may call admission while handling its own
-    exception (a secret-bearing decode error, say), which Python would attach as `__context__`;
-    so the error is raised, caught, cleared and re-raised bare (A-4 AT-X1, `raise_clean`)."""
-    try:
-        raise error.with_traceback(None)
-    except BaseException as fresh:
-        fresh.__cause__ = None
-        fresh.__context__ = None
-        fresh.__suppress_context__ = True
-        raise
 
 
 def _call_closed(work: Callable[[_OpaqueBox], _T], box: _OpaqueBox) -> _T:

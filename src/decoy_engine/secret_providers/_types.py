@@ -25,6 +25,7 @@ from decoy_engine.secret_providers._errors import (
     BAD_REF_MESSAGE,
     SecretClosedError,
     SecretProviderUnavailable,
+    raise_bare,
 )
 
 API_VERSION: Literal["secret-provider/v1"] = "secret-provider/v1"
@@ -95,16 +96,17 @@ def parse_ref(text: object) -> SecretRef:
 
     Any other well-formed ``scheme:locator[?encoding=..&key_version=..]`` parses with the local
     grammar so the registry, not the parser, owns the "unknown provider" decision. Anything
-    malformed is ``bad_secret_ref``, raised outside any handler: no parser or decoder exception
-    (whose text and ``__context__`` can hold part of the reference) survives.
+    malformed is ``bad_secret_ref``, raised outside any handler and bare: no parser or decoder
+    exception (whose text and ``__context__`` can hold part of the reference) survives, nor an
+    exception the caller was handling when it called the parser.
     """
     if type(text) is not str:  # exact: a str subclass could run code inside the parser
         del text
-        raise _bad_ref()
+        raise_bare(_bad_ref())
     parsed = _parse_or_none(text)
     del text  # a traceback keeps this frame: its locals must not name the reference
     if parsed is None:
-        raise _bad_ref()
+        raise_bare(_bad_ref())
     return parsed
 
 

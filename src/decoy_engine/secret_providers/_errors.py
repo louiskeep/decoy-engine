@@ -15,6 +15,7 @@ from __future__ import annotations
 import errno
 import os
 from collections.abc import Callable
+from typing import NoReturn
 
 from decoy_engine import reasons
 from decoy_engine.errors import DecoyError
@@ -38,6 +39,19 @@ BAD_ENCODING_AT_POSITION_MESSAGE = (
 NEEDS_ENCODING_MESSAGE = "This secret requirement needs an explicit encoding."
 MISSING_MESSAGE = "The mask secret could not be resolved."
 WEAK_MESSAGE = f"The mask secret must be at least {MIN_SECRET_BYTES} bytes."
+
+
+def raise_bare(error: BaseException) -> NoReturn:
+    """Raise `error` with no inherited chain. A caller may reach an exported entry while handling
+    its own exception (a secret-bearing decode error, say), which Python would attach as
+    `__context__`; so the error is raised, caught, cleared and re-raised bare (A-4 AT-X1)."""
+    try:
+        raise error.with_traceback(None)
+    except BaseException as fresh:
+        fresh.__cause__ = None
+        fresh.__context__ = None
+        fresh.__suppress_context__ = True
+        raise
 
 
 class SecretProviderError(MaskSecretError):
