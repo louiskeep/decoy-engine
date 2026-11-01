@@ -266,3 +266,14 @@ def test_refuses_when_the_checks_leave_the_tree_dirty(repo: Repo) -> None:
     _refused(repo.run(sha=repo.head, apply=True, STUB_DIRTY="sbom.cdx.json"), "not clean")
     assert repo.checks_ran()
     _nothing_happened(repo)
+
+
+@pytest.mark.parametrize("flag", ["--assume-unchanged", "--skip-worktree"])
+def test_refuses_index_flags_that_hide_a_modified_file(repo: Repo, flag: str) -> None:
+    # git status reports such a file clean while the checks would run its edited content.
+    _git(repo.work, "update-index", flag, "CHANGELOG.md")
+    (repo.work / "CHANGELOG.md").write_text(CHANGELOG + "\nedit\n")
+    assert _git(repo.work, "status", "--porcelain") == ""
+    _refused(repo.run(sha=repo.head, apply=True), "hides")
+    assert not repo.checks_ran()
+    _nothing_happened(repo)

@@ -9,7 +9,8 @@
 #   - a remote ($RELEASE_REMOTE, default origin) whose URL does not match $EXPECTED_REMOTE_RE
 #     (default: the GitHub decoy-engine repository);
 #   - any checkout but the branch main (another branch, a detached HEAD, a rebase in progress);
-#   - a working tree with any tracked change, staged change or untracked file;
+#   - a working tree with any tracked change, staged change or untracked file, or an index entry
+#     marked assume-unchanged or skip-worktree (git status cannot see those);
 #   - HEAD other than EXPECTED_SHA, or a main that differs from the remote main just fetched;
 #   - a tag v<version> that already exists locally or on the remote, or a version that is not
 #     newer than every existing v* tag;
@@ -50,6 +51,9 @@ clean_main_at_expected() {
   branch="$(git symbolic-ref --quiet --short HEAD 2>/dev/null)" || branch=""
   [ "$branch" = main ] || die "not on main (HEAD is ${branch:-detached})"
   [ -z "$(git status --porcelain=v1 --untracked-files=all)" ] || die "working tree is not clean"
+  # assume-unchanged (lowercase tag) and skip-worktree (S) entries are invisible to git status.
+  [ -z "$(git ls-files -v | grep -E '^([a-z]|S) ' || true)" ] \
+    || die "the index hides files from git status (assume-unchanged or skip-worktree)"
   [ "$(git rev-parse HEAD)" = "$expected" ] || die "HEAD is $(git rev-parse HEAD), expected $expected"
 }
 
