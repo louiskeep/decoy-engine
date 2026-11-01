@@ -50,6 +50,7 @@ FILE_ACCESS_DENIED = _d(
     "The file-access policy does not allow this file for this job.",
     outcome=Outcome.CONFIGURATION,
     retry=RetryClass.CONFIGURATION_REPAIR,
+    since="1.2.0",
 )
 STORAGE_CAPACITY_EXHAUSTED = _d(
     "storage_capacity_exhausted",

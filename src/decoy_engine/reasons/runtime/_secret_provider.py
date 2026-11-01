@@ -82,4 +82,5 @@ SECRET_FILE_PERMISSIONS_UNSAFE = _d(
     phases=(Phase.RESOLVE,),
     outcome=Outcome.CONFIGURATION,
     retry=RetryClass.CONFIGURATION_REPAIR,
+    since="1.2.0",
 )

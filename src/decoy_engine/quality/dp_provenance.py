@@ -65,7 +65,7 @@ from packaging.utils import canonicalize_name
 
 from decoy_engine import fileaccess, reasons
 from decoy_engine.errors import DecoyError
-from decoy_engine.fileaccess import FileHandle, FileRequest, FileRole
+from decoy_engine.fileaccess import FileRequest, FileRole
 
 __all__ = [
     "CERTIFIED_PLATFORM",
@@ -520,15 +520,11 @@ def assert_lock_matches_installed(lock_path: str | Path | None = None) -> None:
 
     from packaging.markers import Marker
 
-    lock_file: FileHandle
-    if lock_path is None:
-        path = _default_lock_path()
-        lock_file = fileaccess.engine_handle(path)
-    else:
-        path = Path(lock_path)
-        lock_file = fileaccess.capture().open_read(
-            FileRequest(FileRole.CONFIG, "read", str(path), "dp.lock_path")
-        )
+    path = _default_lock_path() if lock_path is None else Path(lock_path)
+    req = FileRequest(FileRole.CONFIG, "read", str(path), "dp.lock_path")
+    lock_file = (
+        fileaccess.engine_handle(path) if lock_path is None else fileaccess.capture().open_read(req)
+    )
     try:
         with lock_file.open_binary() as handle:
             lock = toml_reader.load(handle)
