@@ -84,7 +84,7 @@ def test_fk_output_array_cast_check_propagates_memory_error_R3FB(
 def test_cast_fk_chunk_propagates_memory_error_unchanged(exc_type: type[BaseException]) -> None:
     exc = exc_type("injected: allocation failed")
     with pytest.raises(MemoryError) as raised:
-        join_mod.cast_fk_chunk(_ExhaustedChunk(pa.string(), exc), pa.int64())  # type: ignore[arg-type]
+        join_mod.cast_fk_chunk(_ExhaustedChunk(pa.string(), exc), pa.int64())
     _assert_same(raised, exc)
 
 
@@ -93,14 +93,14 @@ def test_concat_fk_chunks_propagates_memory_error_unchanged_R3FB() -> None:
     exc = _oom()
     chunks = [_ExhaustedChunk(pa.string(), exc), pa.array([b"x"])]
     with pytest.raises(MemoryError) as raised:
-        join_mod._concat_fk_chunks(chunks)  # type: ignore[arg-type]
+        join_mod._concat_fk_chunks(chunks)
     _assert_same(raised, exc)
 
 
 def test_batch_joiner_cast_propagates_memory_error_unchanged_R3FB() -> None:
     exc = _oom()
     with pytest.raises(MemoryError) as raised:
-        _batch_join._cast_chunks([_ExhaustedChunk(pa.string(), exc)], pa.int64())  # type: ignore[list-item]
+        _batch_join._cast_chunks([_ExhaustedChunk(pa.string(), exc)], pa.int64())
     _assert_same(raised, exc)
 
 
@@ -147,7 +147,7 @@ def test_the_join_batch_step_propagates_memory_error(
 
 
 # The narrowing must keep every genuine dtype or cast failure on the registered code.
-_GENUINE = {
+_GENUINE: dict[str, tuple[list[object], pa.DataType | None]] = {
     "range": ([2**63 + 5], pa.int64()),
     "fraction": ([1.5], pa.int64()),
     "unimplemented": ([True], pa.date32()),

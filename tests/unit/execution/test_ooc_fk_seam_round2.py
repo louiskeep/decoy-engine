@@ -85,7 +85,7 @@ def test_the_whole_child_concat_carries_no_key_value_R2FB() -> None:
 
 # The finding as written (LOW): `fk_output_array` lets the cast error ride as `__cause__`.
 # Rejected: the coded error is raised after the `except` block, so it has no cause or context.
-_SEAM_CASES = {
+_SEAM_CASES: dict[str, tuple[list[object], pa.DataType, str]] = {
     "uint64_beyond_int64": ([_BIG], pa.int64(), str(_BIG)),
     "fractional_float_to_int": ([424_242.5], pa.int64(), "424242"),
     "int_beyond_int8": ([424_242], pa.int8(), "424242"),
@@ -105,7 +105,7 @@ def test_fk_output_array_refusal_has_no_cause_context_or_value(name: str) -> Non
 
 # `fk_output_array` promises exact output or one coded refusal; a cast Arrow does not implement
 # escaped uncoded.
-_UNIMPLEMENTED = {
+_UNIMPLEMENTED: dict[str, tuple[list[object], pa.DataType]] = {
     "date_to_int64": ([dt.date(2020, 1, 1)], pa.int64()),
     "bool_to_date32": ([True], pa.date32()),
     "float_to_date32": ([1.5], pa.date32()),
@@ -188,7 +188,7 @@ def test_no_production_route_reaches_the_whole_child_oracle_R2CH(
     monkeypatch.setattr(join_mod, "mask_child_fk", refuse)
     monkeypatch.setattr(ooc_pkg, "mask_child_fk", refuse)
     with pytest.raises(AssertionError, match="whole-child oracle"):  # the patch is live
-        ooc_pkg.mask_child_fk()
+        ooc_pkg.mask_child_fk()  # type: ignore[call-arg]
     for policy in ("preserve", "warn", "remap", "fail"):
         child = tf.instants_array("ns", 3)
         config, sources = tf.job(
