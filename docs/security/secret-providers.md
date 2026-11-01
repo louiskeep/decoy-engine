@@ -84,7 +84,7 @@ lives only in `SecretBuffer` objects, which render as `<redacted secret>`.
 Past the boundary, the public entries that take or derive a key (`vault.load_vault`,
 `vault_writer_for_config`, `VaultWriter`, `unmask_pipeline`, `run_fk_out_of_core`,
 `make_key_resolver`, `require_mask_key`, `SecretKeyProvider`, `derive*`,
-`REQUIREMENTS[*].prepare`, `SecretBuffer`) keep no secret material in their own locals on a
+`REQUIREMENTS[*].prepare`, `SecretBuffer`, `vault.client_from_env`) keep no secret material in their own locals on a
 failure, and `StrategyContext` does not render its mask key. That is the extent of the promise:
 internal frames below an entry may still hold the key as a parameter, and paths, refs and
 configs in entry frames are not covered (F31 revision 3). Keep locals capture off.

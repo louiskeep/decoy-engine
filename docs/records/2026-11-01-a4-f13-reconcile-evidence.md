@@ -283,3 +283,162 @@ The failing ids are the same for head and main on both interpreters.
 Not run in round 3: native companion (native-only tests skip, as on main), CI, platform or CLI
 suites, live Vault, Windows, a mutmut campaign (one hand mutation per mechanism, fourteen in all),
 ruff/mypy on 3.12 (run on 3.10 only).
+
+## 10. Remediation round 4 (Codex FINAL NO-GO on round 3: one BLOCKER, three HIGH, all class 1)
+
+Scope by orchestrator decision: the three HIGH and every frame that holds secret material. The
+general entry-frame construction for paths and configs is F31 revision 3.
+
+### 10.1 Merge of origin/main 1132d29e (R-a release prep 0.17.0)
+
+Merge commit 8ea85a45. Textual conflicts: `CHANGELOG.md` only. Both entries kept: this branch's
+unreleased sections stay under `[Unreleased]` above main's new dated `[0.17.0]`; git had placed the
+branch's 2026-10-29 "file-access coverage" section inside `[0.17.0]`, and it was moved back up
+(it is not in that release).
+
+Registry version: the hand-off expected 1.2.0 on both sides; main is at **1.1.0** (shipped in
+0.17.0, pinned by `tests/fixtures/f29/reason-registry-release.json`, 891 identities). Main did not
+move it, so this branch's single bump to 1.2.0 stands and was not bumped again.
+
+What the merge then required (commit dbeec5a4):
+
+- Main's new release pin rejects a new identity that claims an already-released `since`. The
+  branch's two identities (`decoy.file_access_denied`, `runtime.secret_file_permissions_unsafe`)
+  now declare `since="1.2.0"`; `docs/reasons.md` states 1.2.0.
+- The merged `quality/dp_provenance.py` was 606 lines against the branch's census entry of 602
+  (main's four re-pin comment lines plus this branch's policy open). The branch side of the
+  lock-file open is written in four fewer lines with the same behavior: census stays 602, no
+  ceiling raised.
+
+**Semantic conflict, not resolved (owner decision needed):** main's
+`tests/unit/test_reason_release_pin.py::test_an_unbumped_addition_to_the_live_catalog_fails_the_checked_in_pin`
+appends an identity to the live catalog and expects the "changed without a registry version bump"
+violation against the checked-in pin. That violation is only produced while the live registry
+version equals the pinned one (1.1.0). Any correctly bumped addition after a release (this
+branch's 1.2.0) makes it report the "already-released since" violation instead, so the test fails
+on this branch and will fail on main at its first post-release identity. It is main's pinned test,
+so it is not edited here; it is the one new failure in the full suites below. Likely fix (main):
+build the "unbumped" live catalog at the pin's version (`live["registry_version"] = pin[...]`).
+Relatedly, `scripts/release/reason_release_pin.py --check` reports the pin stale (1.1.0/891 vs
+live 1.2.0/893), which is expected until the next release re-captures it with `--write`.
+
+### 10.2 Findings and fixes
+
+Red records and mutant results: `docs/plans/evidence/2026-11-01-a4-f13-reconcile-r4-red.txt`.
+Red runs are the new tests against the code as committed before each fix (stash of the source
+change), in the same lock venv (3.10.20).
+
+| # | Class | Finding | Fix | Red first | Mutants |
+|---|---|---|---|---|---|
+| H1 | 1 | `parse_ref` (exported) raised `bad_secret_ref` with the caller's in-flight exception as `__context__` | `raise_bare` (moved from `_preflight` to `_errors` so `_types` can use it): cause and context cleared, context suppressed | `tests/secret_providers/test_parse_ref_caller_context.py`: 7 malformed shapes inside a handler holding a canary (message, note, decode object), plus a canary in `args`; 8 red | M1 (raise without `raise_bare`), M2 (`raise_bare` keeps context): red |
+| H2 | 1 | `build_profile_source` interpolated `{path!r}` for a non-str path; the same function echoed `layout`, `format` and `type` | each through `fileaccess.shown`: the repr under ambient (text unchanged), "the value at `<position>`" under any other | `tests/fileaccess/test_profile_source_path_text.py` through the exported `build_profile_source`: `Path` with a canary directory, bytes path, layout string, format and type; strict 5 red; ambient text pinned | M3: red |
+| H3 | 1 | `plan_from_yaml`: digest-mismatch and non-JSON refusals echoed the embedded `source_path`; the non-JSON one chained the decoder error; same function's unpinned-`snapshot_file` refusal echoed the path | closed-set text naming `generation.snapshots[<i>]` / the column's `snapshot_file` position under every policy; non-JSON raised outside the handler | `tests/fileaccess/test_plan_snapshot_strict_text.py`: corrupted plan under a strict policy and ambient, three cases; 6 red | M4, M5: red |
+| B1 | 1 | secret material in public entry frames (`load_vault` and the rest, 10.3) | drop or box (`decoy_engine._opaque.OpaqueBox`) before anything can raise; unbox only inside the consuming call expression | `tests/fileaccess/test_secret_material_frames.py`: seeded failure per entry, every non-test frame on every chain link (engine, library, generated) checked for the raw secret and each derived key in raw, hex and escaped-repr form; 28 red, then 1 + 4 more red for the cells added below | M6-M20, M25, M26: red (second pass) |
+| S | 1 | `raise` inside `except` sweep (10.4) | raise after the handler | `tests/fileaccess/test_raise_in_handler_sweep.py`; 8 red | M19, M21, M22: red |
+
+Sentry (item 7): `tests/sentry/test_locator_hygiene.py` loses the `_build_file_source` waiver and
+the "compile-time plan metadata is out of the model" limit; `source_path` and `snapshot_file` join
+`PATH_NAMES`. The one site that then surfaced (`plan/_generation.resolve_pinned_snapshot`: its
+text already used `fileaccess.shown`, the path was only a dict-lookup key inside the raise
+expression) now raises a local, so no waiver was added. Mutant M4b (an interpolated
+`source_path` in `_serialize`) turns the sentry red.
+
+Mutation passes: first pass 22 mutants, two survived and were real gaps: M7 (`vault._fernet`
+keeping the derived Fernet key as a local: no cell failed inside `_fernet`) and M14
+(`make_key_resolver`'s second `del master` guarded nothing, because the HKDF call that can raise
+ran before it, with the master in the frame). Fixed in 3c0ad1c8 with two new cells; second pass 24 mutants, all red; M25/M26 for `client_from_env`, red.
+No commit was made with a mutant applied.
+
+### 10.3 Public entries checked for secret material
+
+Secret material = raw key bytes, mask keys, secret values, tokens, passwords, derived keys (not
+paths, refs, seeds or configs). "None" means no such value is a parameter or local of that frame
+(key providers render redacted; configs, paths and refs are F31's).
+
+The 42 `fileaccess.ENTRY_POINTS` (the hand-off said 41; `resolve_mask_secret_ref` left and
+`key_provider_from_ref` joined in round 2):
+
+| Entry | Holds | Result |
+|---|---|---|
+| `vault.load_vault` | `mask_key` parameter; `_fernet`'s derived Fernet key | fixed |
+| `vault.vault_writer_for_config` | resolved mask key | fixed |
+| `unmask.unmask_pipeline` | resolved mask key; per-column FPE key | fixed |
+| `out_of_core._runner.run_fk_out_of_core` | `pre` (mask key in repr), `mask_key`, `table_kwargs["mask_key"]` | fixed (key boxed in `OocPreflight`, passed in the driver calls only; line-neutral, census 681) |
+| `_sequential.run_sequential` | `ctx` (`StrategyContext` rendered `mask_key`) | fixed (`repr=False`) |
+| `keyprovider.key_provider_from_ref` | ref (boxed, round 3) | none |
+| `run_pipeline`, `run_mask_pipeline_chunked`, `run_mask_chunked` | `key_provider` objects (redacted), `derive_key` callable, contexts holding the provider | none |
+| `generate_tables`, `generate_rows`, `execute_pinned` | `derive_key` callable, generation `seed` | none |
+| `profile_source` (the `_source.py:48` site) | `config`, sampling `seed` | none (config: F31) |
+| `estimate_job`, `estimate_job_capacity`, `run_job_with_governor`, `run_pipeline_isolated`, `run_fk...`'s siblings `plan_subset`, `run_subset`, `run_subset_preflight` (`job_seed`) | configs, paths, seeds | none |
+| `compile_plan`, `validate_plan`, `run_config_only_checks`, `validate_config`, `plan_from_yaml`, `compile_pinned_plan`, `compile_pinned_plan_with_generation`, `apply_table_transforms`, `validate_joint_mask_config`, `strategy_config_fingerprint` | configs / plan text | none |
+| `read_fixed_width`, `write_fixed_width`, `iter_csv_chunks`, `iter_parquet_chunks`, `load_table`, `load_corpus`, `load_corpus_provenance`, `verify_corpus`, `load_custom_providers`, `apply_quarantine`, `run_discovery_sql`, `profile_columns` | paths, frames, SQL | none |
+
+Other exported names (`decoy_engine.__all__`, and the public `keyprovider`, `vault`, `context`,
+`determinism`, `secret_providers`, `secret_providers.vault` modules):
+
+| Name | Holds | Result |
+|---|---|---|
+| `VaultWriter.__init__`, `.assert_keyed_with`, `vault.assert_vault_writer_keyed` | `mask_key` parameter | fixed |
+| `context.make_key_resolver` (and its resolver closure) | master, pipeline key | fixed (boxed; closure holds the box) |
+| `keyprovider.require_mask_key`, `resolve_mask_key` | a short key on refusal | fixed |
+| `keyprovider.SecretKeyProvider` | `secret` in the generated `__init__` on a weak-secret refusal | fixed (hand-written `__init__`) |
+| `determinism.derive`, `derive_index`, `derive_value` | `seed` (the mask key on a keyed surface), derived HMAC key | fixed (every failure drops `seed`; `derive_index` still checks the pool size first) |
+| `secret_providers.REQUIREMENTS[*].prepare` | material | fixed (refusals outside the handler) |
+| `secret_providers.SecretBuffer(data)` | data on a type error | fixed |
+| `secret_providers.vault.client_from_env` | the environment mapping (VAULT_TOKEN; all of `os.environ`) | fixed |
+| `prepare_secret`, `prepare_legacy`, `prepare_ref`, `admit_mask_key` | boxed (round 3) | none |
+| `parse_ref` | ref (deleted, round 3) | none; now raises bare (H1) |
+| `keyprovider.mask_key_from_provider`, `SeedKeyProvider`, `job_seed_for_config` | seeds; the key only in a return expression | none |
+| `ExecutionContext`, `PandasExecutionAdapter.run/run_sequential/run_single`, `register_secret_provider`, `SecretProviderRegistry`, `ResolvedSecret`, `PreparedSecret`, `PreparedKeyProvider`, `SecretCache`, `VaultContext` | callables, key providers, buffers (all render redacted); `VaultContext.token` is a `repr=False` frozen dataclass built and used inside the admission boundary | none |
+
+Not covered, reported (the same class one level down; not patched in this round): internal frames
+below an entry still take the key as a parameter or local, for example
+`native._chunked_entry._native_route` (`mask_key`), the out-of-core drivers and kernels
+(`_stream_table`, `stream_table`, `_mask.mask_batch`/`mask_column`, `_hash_native`, ...),
+`_vault_collect.assert_vault_inputs`, `transforms.text_mask.mask_cell`,
+`transforms.fpe.fpe_encrypt_value`, `native.protocol.providers_mask.*`,
+`determinism._hkdf.hkdf_sha256`, `context._hkdf_sha256`, and library frames (cryptography,
+hvac) handed a key. A failure inside one of them leaves the key in that frame. The docs say so
+and keep "leave locals capture off" as the operator rule.
+
+### 10.4 Sweep: `raise` inside `except` in fileaccess/ and secret_providers/
+
+| Site | Form | Result |
+|---|---|---|
+| `fileaccess/_local.py` `LocalOutputTxn.publish` | `FileExistsError ... from None`, context = the link error naming both paths | fixed |
+| `fileaccess/_output.py` `RootedOutputDir.is_empty_or_absent` | `deny(...) from None`, context = the OSError naming the leaf | fixed |
+| `secret_providers/_requirements.py` `_prepare_fernet`, `_prepare_aes_gcm` | `SecretMaterialInvalid from None`, context = library validation error | fixed (B1) |
+| `secret_providers/_requirements.py` `decode_material`, legacy decode (three sites) | `from None`, context = `UnicodeDecodeError` holding the bytes | fixed |
+| `secret_providers/_types.py` `_parse_vault` (two sites) | `from None` | listed: runs inside `parse_ref`'s `contextlib.suppress`; swallowed; `parse_ref` raises bare |
+| `secret_providers/vault.py` `_parse_rfc3339`, `_to_resolved` | `from None` | listed: provider code run inside the admission boundary, which records the code only and raises fresh and bare |
+| `secret_providers/vault.py` `_hvac` | `from None`, context = `ImportError` (no value) | listed: also reached from `client_from_env` outside the boundary; the context names only the missing module |
+| every other `raise` inside an `except` in both packages | bare re-raise | unchanged (re-raises the same exception) |
+
+### 10.5 Suites
+
+Full suite (pyproject addopts, `pytest tests`, venvs from each tree's `uv.lock`, extras dev, lint,
+vault, cloud; main in a detached worktree of origin/main 1132d29e; head = c133fb3d, the code of
+this round; the record commit after it changes only docs):
+
+| Python | main 1132d29e | head c133fb3d |
+|---|---|---|
+| 3.10.20 | 0 failed, 29095 passed, 5286 skipped, 6 xfailed, 65 xpassed | 1 failed, 30081 passed, 5288 skipped, 6 xfailed, 65 xpassed |
+| 3.12.3 | 1 failed, 29010 passed, 5370 skipped, 6 xfailed, 65 xpassed | 2 failed, 29996 passed, 5372 skipped, 6 xfailed, 65 xpassed |
+
+Failing ids, head versus main: 3.12 both have
+`tests/unit/execution/test_categorical_weighted.py::TestCdfBuilder::test_skewed_weights_skew_cdf`
+(known). Head adds, on both interpreters,
+`tests/unit/test_reason_release_pin.py::test_an_unbumped_addition_to_the_live_catalog_fails_the_checked_in_pin`,
+the semantic merge conflict of 10.1 (main's test, not edited). No other difference.
+
+ruff check and format (`src tests testflight scripts`): clean on 3.10 and 3.12. mypy
+(`src/decoy_engine testflight`, 3.10): 0 errors, 704 files. Module-size and physical-seam
+sentries pass; this round changes no census entry and raises no ceiling (the only census delta
+since round 3 is main's own shrink of `scripts/gen_proof_manifest.py`, 1237 -> 1230).
+
+### 10.6 Not run
+
+The native companion is not installed (native-only tests skip, as on main). No CI run, no
+platform or CLI suite, no live Vault, no Windows run, no mutmut campaign (hand mutants only, 26
+in the final passes). mypy on 3.12 stops on the same two environment errors as main (`tomli` stub
+missing, numpy stub syntax under the configured `python_version` 3.10); it is run on 3.10.

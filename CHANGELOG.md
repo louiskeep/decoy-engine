@@ -43,7 +43,8 @@ minimum engine version it was tested against via its
   `assert_vault_writer_keyed`, `unmask_pipeline`, `run_fk_out_of_core`, `run_sequential`
   (`StrategyContext` no longer renders `mask_key`), `make_key_resolver`, `require_mask_key`,
   `resolve_mask_key`, `SecretKeyProvider`, `derive`/`derive_index`/`derive_value`,
-  `REQUIREMENTS[*].prepare`, `SecretBuffer`. Paths, refs and configs in entry frames are not
+  `REQUIREMENTS[*].prepare`, `SecretBuffer`, `secret_providers.vault.client_from_env` (which held
+  the environment mapping, `VAULT_TOKEN` included). Paths, refs and configs in entry frames are not
   covered yet (F31).
 
 ### Changed (BREAKING, pre-GA: file-access coverage after the main merge, 2026-10-29)

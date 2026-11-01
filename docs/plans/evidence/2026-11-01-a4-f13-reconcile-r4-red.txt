@@ -116,3 +116,14 @@ M19 decode_material raises inside handler: RED | tests/fileaccess/test_raise_in_
 M20 SecretBuffer keeps data: RED | tests/fileaccess/test_secret_material_frames.py::test_secret_buffer_bad_type | 1 failed in 0.22s
 M21 is_empty_or_absent raises inside handler: RED | tests/fileaccess/test_raise_in_handler_sweep.py::test_rooted_emptiness_probe_denies_without_the_os_error | 1 failed in 0.22s
 M22 ambient publish raises inside handler: RED | tests/fileaccess/test_raise_in_handler_sweep.py::test_ambient_exclusive_publish_onto_an_occupant_carries_no_link_error | 1 failed in 0.23s
+
+### R4-5 client_from_env: red at 59d285fd
+FAILED tests/fileaccess/test_secret_material_frames.py::test_client_from_env_refusal[half_mtls]
+FAILED tests/fileaccess/test_secret_material_frames.py::test_client_from_env_refusal[no_address]
+FAILED tests/fileaccess/test_secret_material_frames.py::test_client_from_env_refusal[skip_verify]
+FAILED tests/fileaccess/test_secret_material_frames.py::test_client_from_env_from_the_process_environment
+4 failed, 32 deselected in 0.26s
+
+### Hand mutants for client_from_env
+M25 client_from_env keeps the caller's mapping: RED | tests/fileaccess/test_secret_material_frames.py::test_client_from_env_refusal | 1 failed in 0.23s
+M26 client_from_env binds the environment to a local: RED | tests/fileaccess/test_secret_material_frames.py::test_client_from_env_from_the_process_environment | 1 failed in 0.23s
