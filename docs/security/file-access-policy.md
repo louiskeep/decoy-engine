@@ -114,13 +114,46 @@ parse error quoting a cell, say). Cell values in logs are a separate program.
 
 ### Traceback frame locals: what is covered now
 
-Covered: the admission boundary (its frames hold only an opaque box) and secret material in
-the frames of public entries. No public entry keeps a raw secret, a mask key or a key derived
-from one in a parameter or local once something can raise (`decoy_engine._opaque`;
-`tests/fileaccess/test_secret_material_frames.py` walks every non-test frame of a seeded
-failure). Not covered: paths, refs and configs held in entry frames, and secret material in
-internal frames below an entry (a masking kernel takes the key as a parameter). F31 revision 3
-owns the general construction; until then, leave locals capture off (see
+The claim is exactly the secret-material census, and no broader. `scripts/secret_material_census.py`
+derives it from the AST of `src/decoy_engine` (no hand-picked list); the committed result is
+`tests/sentry/secret_material_census.json`, and `tests/sentry/test_secret_material_census.py`
+re-derives it and fails on a binding the census lacks, a stale entry, or a verdict the code does
+not bear out. The census lists, in any `decoy_engine` function (`def`, `async def`, nested
+`def`, lambda closures):
+
+- parameters whose name matches `key|secret|master|signing|password|token|seed|ikm|prk|okm|`
+  `material|root` and whose annotation is `bytes`, `bytearray` or `memoryview` (or which are
+  unannotated);
+- locals with such a name bound to an environment read, a `FileRole.SECRET` read, the contents of
+  an `OpaqueBox`, a package function annotated to return bytes, a bytes operation, a bytes class
+  attribute, or a slice, sum or alias of tracked material;
+- closure cells over those names; every environment read of a name holding KEY, SECRET or TOKEN
+  (or a computed name); every call passing `FileRole.SECRET`; every `OpaqueBox` holding tracked
+  material; and every class attribute with such a name and a bytes annotation.
+
+Each entry has a verdict. Re-checked from the AST: `wiped` (the body is a `try` whose
+`except BaseException:` deletes the name and re-raises; a closure cell is wiped by its enclosing
+function and the nested function never escapes it), `boxed` (`decoy_engine._opaque.OpaqueBox`,
+unboxed only in the consuming call), `unbound` (consumed inside an expression), `hidden` (a
+`repr=False` field or a class `__repr__`, and no raising `__post_init__`: a dataclass that
+validates a secret field uses `_opaque.validate_after_init`) and `contained` (run only under
+the admission boundary `_call_closed`). Reviewed, with the reason in the census: `no-raise` and
+`not-secret`. Runtime cells: `tests/fileaccess/test_secret_census_frames.py` calls every census
+function that takes material with a canary key and bad inputs and walks every `decoy_engine`
+frame on every chain link; `tests/fileaccess/test_secret_census_dedicated.py` covers the entries
+a bad argument alone cannot make raise.
+
+Not covered, and not claimed:
+
+- paths, refs and configs held in entry frames (deferred to F31 by owner decision);
+- material under a name outside the pattern or without a bytes annotation (`Any`, a `str` that
+  is not an environment read), including generic helpers that receive it under another name
+  (`fileaccess.read_checked` clears its read buffer on failure by review, not by the census);
+- frames outside `decoy_engine` (the standard library, `cryptography`, the native companion);
+- values derived from material that are not bytes (an `int` seed from `int.from_bytes`);
+- value-bearing data that is not key material (source cells, decrypted vault entries).
+
+Until F31 revision 3 owns the general construction, leave locals capture off (see
 `error-reporting-and-data-exposure.md`).
 
 ## What changes for the CLI
