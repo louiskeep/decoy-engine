@@ -238,9 +238,9 @@ jobs:
         # cloud extra required: boto3 partially survives via moto[s3], but
         # google-cloud-storage does not survive at all once cloud is optional,
         # which fails check_fit_environment() below. The dist set matches the
-        # pre-split 895b9a20... profile except decoy-engine's own version
-        # (now 0.7.0), so the certified row is 72c03428... (see
-        # dp_provenance._CERTIFIED_STACKS).
+        # pre-split 895b9a20... profile except decoy-engine's own version,
+        # which is part of the hashed set: every engine version bump re-pins
+        # the certified row (see dp_provenance._CERTIFIED_STACKS).
         run: uv sync --frozen --extra dev --extra lint --extra vault --extra cloud --python 3.10.20
       - name: Assert this profile is certified (fail loud on drift)
         run: >
