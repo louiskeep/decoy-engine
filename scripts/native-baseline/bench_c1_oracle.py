@@ -238,7 +238,7 @@ def build_config(data_dir: Path) -> dict[str, Any]:
     from decoy_engine.config._pipeline import PipelineConfig
 
     raw = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": FIXED_SEED, "post_validation": False},
         "sources": {
             "patients": {

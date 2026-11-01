@@ -1,7 +1,7 @@
 """SeedEnvelope construction, split from _compile.py (F11d).
 
 Builds the per-table / per-column / per-group SeedEnvelope from config +
-profile + the provider registry. The providers_v2 and storm.ner imports stay
+profile + the provider registry. The providers_v2 and detection.ner imports stay
 deferred inside the function body (real runtime cycle; see F12). Imported back
 into _compile.py; SEED_PROTOCOL_VERSION and the persisted format are untouched.
 """

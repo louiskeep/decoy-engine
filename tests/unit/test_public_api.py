@@ -224,6 +224,14 @@ def test_all_lists_every_public_name():
         # DE-02 (2026-07-14): the KeyProvider keyed-mask secret boundary +
         # its fail-closed error taxonomy.
         "KeyProvider",
+        # F13 (2026-10-30): the secret-provider/v1 contract (additive).
+        "SecretCachePolicy",
+        "SecretDescriptor",
+        "SecretProvider",
+        "SecretProviderError",
+        "SecretProviderRegistry",
+        "SecretRef",
+        "register_secret_provider",
         "SecretKeyProvider",
         "SeedKeyProvider",
         "MaskSecretError",

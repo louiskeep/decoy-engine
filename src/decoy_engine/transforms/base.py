@@ -3,6 +3,7 @@ Base class for masking strategies in the decoy_engine package.
 """
 
 from abc import abstractmethod
+from collections.abc import Callable
 from typing import Any
 
 import pandas as pd
@@ -16,7 +17,9 @@ class BaseMaskingStrategy(MaskingStrategy):
     Implements common functionality and defines the interface.
     """
 
-    def __init__(self, seed: int = 42, logger=None, derive_key=None):
+    def __init__(
+        self, seed: int = 42, logger=None, derive_key: Callable[[str], bytes] | None = None
+    ):
         """
         Initialize the strategy with a seed for deterministic behavior
 

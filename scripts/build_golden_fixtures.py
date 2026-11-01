@@ -505,7 +505,7 @@ def build_dirty_data() -> None:
             ],
             "relationships": [],
             "invariants_post_mask": [
-                "STORM sentinel detection flags pre-redacted XXX-XX-XXXX placeholders before masking",
+                "Pre-scan sentinel detection flags pre-redacted XXX-XX-XXXX placeholders before masking",
                 "empty strings and NULL literals are distinguishable in profiling",
                 "unicode normalization does not change content during mask (NFC stays NFC)",
             ],

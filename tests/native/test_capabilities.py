@@ -61,6 +61,24 @@ def test_windowed_date_needs_global_row_identity_not_row_local() -> None:
     assert c.is_row_local is False
 
 
+def test_top_code_is_row_local_not_global() -> None:
+    # top_code caps/floors are config literals or a named preset
+    # (_strategies/_top_code.py); there is no percentile or column-statistic
+    # path, so each row's output is a pure function of its own value. It is
+    # CHUNK_SAFE for the same reason. It stays off the native route for lack of
+    # a native kernel (no_native_kernel), not for being global.
+    c = capabilities_for("top_code")
+    assert c.is_row_local is True
+    assert c.is_global is False
+    assert c.is_order_sensitive is False
+    assert c.needs_global_row_identity is False
+    assert c.output_type_is_static is True
+    # The diagnostics it DOES carry are unchanged by the reclassification.
+    assert c.row_error_modes == ("format_error",)
+    assert c.warning_codes == ("top_code_generalized",)
+    assert c.quarantine_required is True
+
+
 # ---------------------------------------------------------------------------
 # Machine-classifiable diagnostics (Phase 1 eligibility reads these fields).
 # ---------------------------------------------------------------------------

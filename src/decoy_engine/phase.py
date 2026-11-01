@@ -1,0 +1,595 @@
+"""Phase-boundary contract: `phase-result/v1` and `phase-event/v1`.
+
+Pre-scan, Transform and Post-scan report through one typed envelope. Internal
+assembly stays mutable in the orchestrator; `freeze` is the single export
+boundary, and the public types declare only `tuple`/`frozenset` collections so
+immutability holds at the type level, not just at export.
+
+Safe output: `to_wire` is the only serializer. It accepts primitives, tuples and
+frozen mappings (tuples of key/value pairs) and refuses anything else, so a raw
+exception, DataFrame or arbitrary object cannot reach ordinary evidence.
+Reasons are registry identities (`decoy_engine.reasons`), never formatted text.
+
+Every envelope, coverage and reason field is type-checked at construction and
+again at export (a frozen dataclass can still be forced with `object.__setattr__`),
+so nothing is accepted that later fails `canonical_bytes`, and every malformed
+envelope surfaces as `PhaseContractError`, never a stray `TypeError`.
+
+Containment (V1 threat model: ordinary values, ordinary callee exceptions): every public
+constructor and serializer runs inside `_contained`. It catches `Exception`, keeps only a text
+from the closed `_FIXED_TEXTS` set (anything else becomes "malformed phase evidence"), leaves
+the handler and raises a fresh `PhaseContractError` outside it, so the error has no
+`__context__`, `__cause__`, notes or wrapper locals holding the input. `KeyboardInterrupt` and
+`SystemExit` pass through. `freeze` matches scalars, `list`, `tuple` and `FrozenMap` by exact
+type but still accepts `Mapping`, `set` and `frozenset` subclasses; identity (also `Mapping`),
+reasons and coverage scopes accept `list`/`tuple` subclasses, then check each element by exact
+type. Hostile in-process objects are V2 scope.
+
+Payload contract: accepted field content (payload, identity, check_id, method, coverage scopes,
+event name) is caller-owned evidence, passed through `repr` and `to_wire` unchanged. Keeping
+source values out of it is the producer's job (F31). The envelope guarantees only that its
+errors, notes, chains and `error_result` output carry no input value.
+
+Gate rule: only a `passed` result of a known schema can satisfy a required gate;
+unknown schema, status or reason identity fails closed. Pattern: MLIR's split
+between analyses that inspect input and transforms that change it, applied as
+"assessment returns new evidence values and never mutates what it inspects".
+"""
+
+from __future__ import annotations
+
+import json
+import math
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
+from functools import wraps
+from typing import Any, Literal, TypeVar
+
+from decoy_engine.errors import DecoyError
+from decoy_engine.reasons import ReasonRef, UnknownReasonError, require_known
+
+__all__ = [
+    "EVENT_SCHEMA",
+    "INT_MAX",
+    "INT_MIN",
+    "MAX_DEPTH",
+    "PHASES",
+    "RESULT_SCHEMA",
+    "STATUSES",
+    "FrozenMap",
+    "FrozenScalar",
+    "FrozenValue",
+    "Phase",
+    "PhaseContractError",
+    "PhaseCoverage",
+    "PhaseEvent",
+    "PhaseResult",
+    "Status",
+    "canonical_bytes",
+    "error_result",
+    "freeze",
+    "satisfies_required_gate",
+    "to_wire",
+]
+
+_F = TypeVar("_F", bound=Callable[..., Any])
+
+# Canonical JSON must round-trip through every consumer, so integers are bounded to signed
+# 64-bit (also keeps int -> str clear of CPython's digit-conversion limit) and nesting is
+# bounded well inside the interpreter recursion limit.
+INT_MIN = -(2**63)
+INT_MAX = 2**63 - 1
+MAX_DEPTH = 64
+
+RESULT_SCHEMA = "phase-result/v1"
+EVENT_SCHEMA = "phase-event/v1"
+
+Phase = Literal["pre_scan", "transform", "post_scan"]
+Status = Literal[
+    "completed", "passed", "failed", "error", "unavailable", "skipped", "not_applicable"
+]
+
+PHASES: frozenset[str] = frozenset({"pre_scan", "transform", "post_scan"})
+STATUSES: frozenset[str] = frozenset(
+    {"completed", "passed", "failed", "error", "unavailable", "skipped", "not_applicable"}
+)
+
+# Frozen JSON: scalars, tuples of frozen values, and `FrozenMap` (a tuple of key/value pairs).
+# A mapping is a `FrozenMap`, never a plain tuple, so thawing never guesses list vs object.
+FrozenScalar = str | int | float | bool | None
+FrozenValue = FrozenScalar | tuple["FrozenValue", ...]
+
+
+class PhaseContractError(DecoyError, ValueError):
+    """A phase envelope that is malformed, unsafe to export, or of an unknown version."""
+
+
+_MALFORMED = "malformed phase evidence"
+_SCOPE_FIELDS = ("requested_scope", "observed_scope", "limits", "omissions")
+_STR_FIELDS = (
+    "phase",
+    "check_id",
+    "status",
+    "method",
+    "method_version",
+    "schema_version",
+    "event",
+    "sampling_method",
+    "reason namespace",
+    "reason code",
+)
+# Every rejection text this module raises. A text outside this set (a caller's own
+# PhaseContractError, or a new site not listed here) degrades to `_MALFORMED`, never leaks.
+_FIXED_TEXTS: frozenset[str] = frozenset(
+    {
+        _MALFORMED,
+        "FrozenMap entries must be (key, value) pairs",
+        "FrozenMap keys must be str",
+        "duplicate key in FrozenMap",
+        "integer outside the 64-bit canonical range",
+        "phase evidence nested too deeply",
+        "non-finite number in phase evidence",
+        "unfrozen value in FrozenMap",
+        "identity must be a mapping or a tuple of (str, str) pairs",
+        "identity entries must be (str, str) pairs",
+        "identity keys and values must be str",
+        "duplicate identity key",
+        "reasons must be ReasonRef",
+        "reasons must be a tuple of ReasonRef",
+        "set elements must be None, bool, int, float or str",
+        "phase evidence mapping keys must be str",
+        "cannot freeze this type into phase evidence",
+        "unsafe value in phase evidence",
+        "coverage must be PhaseCoverage",
+        "rows_examined must be int or None",
+        "exact must be bool",
+        "identity must be a tuple of (str, str) pairs",
+        "unknown schema_version",
+        "unknown phase",
+        "unknown status",
+        "unknown reason identity",
+        "phase envelope has no canonical encoding",
+        "not a phase envelope",
+    }
+    | {f"{n} must be a tuple of str" for n in _SCOPE_FIELDS}
+    | {f"{n} must contain only str" for n in _SCOPE_FIELDS}
+    | {f"{n} must be str" for n in _STR_FIELDS}
+)
+
+
+def _fixed_text(exc: Exception) -> str:
+    if type(exc) is PhaseContractError and len(exc.args) == 1:
+        text = exc.args[0]
+        if type(text) is str and text in _FIXED_TEXTS:
+            return text
+    return _MALFORMED
+
+
+def _contained(fn: _F) -> _F:
+    """The one containment boundary; `tests/sentry/test_phase_containment.py` enforces its use."""
+
+    @wraps(fn)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:
+            text = _fixed_text(exc)
+        # Raised outside the handler with the inputs dropped from this frame, so neither the
+        # exception chain nor captured traceback locals hold caller data.
+        del args, kwargs
+        raise PhaseContractError(text)
+
+    wrapper.__phase_contained__ = True  # type: ignore[attr-defined]
+    return wrapper  # type: ignore[return-value]
+
+
+class FrozenMap(tuple[tuple[str, Any], ...]):
+    """An immutable JSON object: a tuple of `(str, FrozenValue)` pairs sorted by key.
+
+    Validated at construction, not at export: keys must be exact, unique `str` and values
+    already frozen, so a direct `FrozenMap(...)` can never collide on serialization, drop a
+    field, or pass the gate and then fail `canonical_bytes`.
+    """
+
+    __slots__ = ()
+
+    @_contained
+    def __new__(cls, pairs: Any = ()) -> FrozenMap:
+        items = tuple(pairs)
+        seen: set[str] = set()
+        for item in items:
+            if type(item) is not tuple or len(item) != 2:
+                raise PhaseContractError("FrozenMap entries must be (key, value) pairs")
+            key, value = item
+            if type(key) is not str:
+                raise PhaseContractError("FrozenMap keys must be str")
+            if key in seen:
+                raise PhaseContractError("duplicate key in FrozenMap")
+            seen.add(key)
+            _require_frozen(value)
+        return super().__new__(cls, sorted(items, key=lambda kv: kv[0]))
+
+
+def _check_int(value: int) -> None:
+    if not INT_MIN <= value <= INT_MAX:
+        raise PhaseContractError("integer outside the 64-bit canonical range")
+
+
+def _check_depth(depth: int) -> None:
+    if depth > MAX_DEPTH:
+        raise PhaseContractError("phase evidence nested too deeply")
+
+
+def _is_scalar(value: Any) -> bool:
+    """Exact-type JSON scalar check; range/finiteness violations raise."""
+    t = type(value)
+    if value is None or t is str or t is bool:
+        return True
+    if t is int:
+        _check_int(value)
+        return True
+    if t is float:
+        if not math.isfinite(value):
+            raise PhaseContractError("non-finite number in phase evidence")
+        return True
+    return False
+
+
+def _require_frozen(value: Any, depth: int = 0) -> None:
+    _check_depth(depth)
+    if _is_scalar(value):
+        return
+    if type(value) is FrozenMap:
+        for _, v in value:
+            _require_frozen(v, depth + 1)
+        return
+    if type(value) is tuple:
+        for v in value:
+            _require_frozen(v, depth + 1)
+        return
+    raise PhaseContractError("unfrozen value in FrozenMap")
+
+
+def _identity_pairs(value: Any) -> tuple[tuple[str, str], ...]:
+    if not isinstance(value, (Mapping, tuple, list)):
+        raise PhaseContractError("identity must be a mapping or a tuple of (str, str) pairs")
+    items = value.items() if isinstance(value, Mapping) else value
+    pairs: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for item in items:
+        if type(item) is not tuple or len(item) != 2:
+            raise PhaseContractError("identity entries must be (str, str) pairs")
+        key, val = item
+        if type(key) is not str or type(val) is not str:
+            raise PhaseContractError("identity keys and values must be str")
+        if key in seen:
+            raise PhaseContractError("duplicate identity key")
+        seen.add(key)
+        pairs.append((key, val))
+    return tuple(pairs)
+
+
+def _str_tuple(value: Any, name: str) -> tuple[str, ...]:
+    # A bare str is iterable; accepting it would silently explode "abc" into ("a", "b", "c").
+    if isinstance(value, (str, bytes, Mapping)) or not isinstance(value, (tuple, list)):
+        raise PhaseContractError(f"{name} must be a tuple of str")
+    items = tuple(value)
+    if not all(type(i) is str for i in items):
+        raise PhaseContractError(f"{name} must contain only str")
+    return items
+
+
+def _require_str(value: Any, name: str) -> None:
+    if type(value) is not str:
+        raise PhaseContractError(f"{name} must be str")
+
+
+def _require_opt_str(value: Any, name: str) -> None:
+    if value is not None:
+        _require_str(value, name)
+
+
+def _require_reason(value: Any) -> None:
+    if type(value) is not ReasonRef:
+        raise PhaseContractError("reasons must be ReasonRef")
+    _require_str(value.namespace, "reason namespace")
+    _require_str(value.code, "reason code")
+
+
+def _reason_tuple(value: Any) -> tuple[ReasonRef, ...]:
+    if not isinstance(value, (tuple, list)):
+        raise PhaseContractError("reasons must be a tuple of ReasonRef")
+    items = tuple(value)
+    for ref in items:
+        _require_reason(ref)
+    return items
+
+
+_SET_RANK = {bool: 1, int: 2, float: 3, str: 4}
+
+
+def _set_sort_key(value: Any) -> tuple[int, Any]:
+    # Rank by exact type so only same-typed primitives are ever compared with `<`; a foreign
+    # `__lt__`/`__repr__` is unreachable because exact-type validation precedes sorting.
+    if not _is_scalar(value):
+        raise PhaseContractError("set elements must be None, bool, int, float or str")
+    if value is None:
+        return (0, 0)
+    return (_SET_RANK[type(value)], value)
+
+
+def _freeze(value: Any, depth: int) -> FrozenValue:
+    _check_depth(depth)
+    if _is_scalar(value):
+        return value
+    if type(value) is FrozenMap:
+        return FrozenMap((k, _freeze(v, depth + 1)) for k, v in value)
+    if isinstance(value, Mapping):
+        if not all(type(k) is str for k in value):
+            raise PhaseContractError("phase evidence mapping keys must be str")
+        return FrozenMap(
+            (k, _freeze(v, depth + 1)) for k, v in sorted(value.items(), key=lambda kv: kv[0])
+        )
+    if isinstance(value, (set, frozenset)):
+        ordered = sorted(((_set_sort_key(v), v) for v in value), key=lambda kv: kv[0])
+        return tuple(v for _, v in ordered)
+    if type(value) is list or type(value) is tuple:
+        return tuple(_freeze(v, depth + 1) for v in value)
+    raise PhaseContractError("cannot freeze this type into phase evidence")
+
+
+@_contained
+def freeze(value: Any) -> FrozenValue:
+    """Deep-copy plain JSON-like data into the immutable representation.
+
+    Lossless for JSON: objects become `FrozenMap`, arrays become tuples. Mapping keys must
+    already be `str` (JSON object keys are strings; coercing `1` to `"1"` could silently merge
+    two entries). Sets of primitives freeze to a tuple ordered by (type rank, value) because
+    JSON has no set; other set elements are refused before any comparison or repr runs.
+    NaN/inf and integers outside signed 64-bit are refused because they have no canonical form.
+    """
+    return _freeze(value, 0)
+
+
+def _thaw(value: Any, depth: int = 0) -> Any:
+    _check_depth(depth)
+    if _is_scalar(value):
+        return value
+    if type(value) is FrozenMap:
+        return {k: _thaw(v, depth + 1) for k, v in value}
+    if type(value) is tuple:
+        return [_thaw(v, depth + 1) for v in value]
+    raise PhaseContractError("unsafe value in phase evidence")
+
+
+@dataclass(frozen=True)
+class PhaseCoverage:
+    requested_scope: tuple[str, ...] = ()
+    observed_scope: tuple[str, ...] = ()
+    rows_examined: int | None = None
+    exact: bool = True
+    sampling_method: str | None = None
+    limits: tuple[str, ...] = ()
+    omissions: tuple[str, ...] = ()
+
+    @_contained
+    def __post_init__(self) -> None:
+        for name in _SCOPE_FIELDS:
+            object.__setattr__(self, name, _str_tuple(getattr(self, name), name))
+        _check_coverage(self)
+
+
+def _check_coverage(cov: Any) -> None:
+    if type(cov) is not PhaseCoverage:
+        raise PhaseContractError("coverage must be PhaseCoverage")
+    for name in _SCOPE_FIELDS:
+        value = getattr(cov, name)
+        if type(value) is not tuple or not all(type(i) is str for i in value):
+            raise PhaseContractError(f"{name} must be a tuple of str")
+    # bool is an int subclass; a count of True is a type confusion, not a count.
+    if cov.rows_examined is not None and type(cov.rows_examined) is not int:
+        raise PhaseContractError("rows_examined must be int or None")
+    if cov.rows_examined is not None:
+        _check_int(cov.rows_examined)
+    if type(cov.exact) is not bool:
+        raise PhaseContractError("exact must be bool")
+    _require_opt_str(cov.sampling_method, "sampling_method")
+
+
+@dataclass(frozen=True)
+class PhaseResult:
+    phase: Phase
+    check_id: str
+    status: Status
+    method: str
+    method_version: str
+    coverage: PhaseCoverage = field(default_factory=PhaseCoverage)
+    reasons: tuple[ReasonRef, ...] = ()
+    identity: tuple[tuple[str, str], ...] = ()
+    payload: FrozenValue = None
+    schema_version: str = RESULT_SCHEMA
+
+    @_contained
+    def __post_init__(self) -> None:
+        # Coerce at construction so a caller's list/dict can never alias evidence that was
+        # already hashed: frozen dataclass fields alone only block re-assignment.
+        object.__setattr__(self, "reasons", _reason_tuple(self.reasons))
+        object.__setattr__(self, "identity", _identity_pairs(self.identity))
+        object.__setattr__(self, "payload", freeze(self.payload))
+        # Types only: unknown phase/status/schema values stay constructible so the gate can
+        # report them as fail-closed evidence rather than crash the producer.
+        _check_result_fields(self)
+
+
+def _check_result_fields(item: PhaseResult) -> None:
+    for name in ("phase", "check_id", "status", "method", "method_version", "schema_version"):
+        _require_str(getattr(item, name), name)
+    _check_coverage(item.coverage)
+    if type(item.reasons) is not tuple:
+        raise PhaseContractError("reasons must be a tuple of ReasonRef")
+    for ref in item.reasons:
+        _require_reason(ref)
+    if type(item.identity) is not tuple:
+        raise PhaseContractError("identity must be a tuple of (str, str) pairs")
+    _identity_pairs(item.identity)
+
+
+@dataclass(frozen=True)
+class PhaseEvent:
+    phase: Phase
+    event: str
+    status: Status
+    reason: ReasonRef | None = None
+    schema_version: str = EVENT_SCHEMA
+
+    @_contained
+    def __post_init__(self) -> None:
+        _check_event_fields(self)
+
+
+def _check_event_fields(item: PhaseEvent) -> None:
+    for name in ("phase", "event", "status", "schema_version"):
+        _require_str(getattr(item, name), name)
+    if item.reason is not None:
+        _require_reason(item.reason)
+
+
+def _check_header(phase: str, status: str, schema: str, expected: str) -> None:
+    # Fixed text: the offending value is caller data and never echoed.
+    if schema != expected:
+        raise PhaseContractError("unknown schema_version")
+    if phase not in PHASES:
+        raise PhaseContractError("unknown phase")
+    if status not in STATUSES:
+        raise PhaseContractError("unknown status")
+
+
+# Both raise outside the handler: `raise ... from None` inside it would still set
+# `__context__` to the callee's error, whose text can carry the input.
+def _reason_wire(ref: ReasonRef) -> dict[str, str]:
+    try:
+        spec = require_known(ref)
+        return {"namespace": spec.namespace, "code": spec.code}
+    except UnknownReasonError:
+        pass
+    raise PhaseContractError("unknown reason identity")
+
+
+def _encode(wire: dict[str, Any]) -> bytes:
+    try:
+        return json.dumps(wire, sort_keys=True, separators=(",", ":")).encode()
+    except Exception:
+        pass
+    raise PhaseContractError("phase envelope has no canonical encoding")
+
+
+@_contained
+def to_wire(item: PhaseResult | PhaseEvent) -> dict[str, Any]:
+    """The one serializer: validates versions and reasons, thaws to JSON-safe data.
+
+    Exact-type dispatch: a duck-typed or subclassed look-alike is not an envelope. The wire
+    form is proven canonically encodable before it is returned, so a caller (and the gate)
+    never holds an envelope that later fails hashing or persistence.
+    """
+    wire = _wire(item)
+    _encode(wire)
+    return wire
+
+
+def _wire(item: PhaseResult | PhaseEvent) -> dict[str, Any]:
+    if type(item) is PhaseResult:
+        _check_result_fields(item)
+        _check_header(item.phase, item.status, item.schema_version, RESULT_SCHEMA)
+        cov = item.coverage
+        return {
+            "schema_version": item.schema_version,
+            "phase": item.phase,
+            "check_id": item.check_id,
+            "status": item.status,
+            "method": item.method,
+            "method_version": item.method_version,
+            "identity": {k: v for k, v in item.identity},
+            "coverage": {
+                "requested_scope": list(cov.requested_scope),
+                "observed_scope": list(cov.observed_scope),
+                "rows_examined": cov.rows_examined,
+                "exact": cov.exact,
+                "sampling_method": cov.sampling_method,
+                "limits": list(cov.limits),
+                "omissions": list(cov.omissions),
+            },
+            "reasons": [_reason_wire(r) for r in item.reasons],
+            "payload": _thaw(item.payload),
+        }
+    if type(item) is not PhaseEvent:
+        raise PhaseContractError("not a phase envelope")
+    _check_event_fields(item)
+    _check_header(item.phase, item.status, item.schema_version, EVENT_SCHEMA)
+    return {
+        "schema_version": item.schema_version,
+        "phase": item.phase,
+        "event": item.event,
+        "status": item.status,
+        "reason": None if item.reason is None else _reason_wire(item.reason),
+    }
+
+
+@_contained
+def canonical_bytes(item: PhaseResult | PhaseEvent) -> bytes:
+    return _encode(_wire(item))
+
+
+@_contained
+def satisfies_required_gate(item: PhaseResult) -> bool:
+    """Fail-closed: only a `passed` result of a known schema with known reasons counts."""
+    if type(item) is not PhaseResult:
+        return False
+    try:
+        canonical_bytes(item)
+    except PhaseContractError:
+        return False
+    return item.status == "passed"
+
+
+# Exact type, never `__name__`: an unlisted or subclassed exception records "Exception".
+_ERROR_KINDS: dict[type[BaseException], str] = {
+    OSError: "OSError",
+    ValueError: "ValueError",
+    TypeError: "TypeError",
+    KeyError: "KeyError",
+    IndexError: "IndexError",
+    RuntimeError: "RuntimeError",
+    MemoryError: "MemoryError",
+    TimeoutError: "TimeoutError",
+    NotImplementedError: "NotImplementedError",
+    ArithmeticError: "ArithmeticError",
+    ZeroDivisionError: "ZeroDivisionError",
+    OverflowError: "OverflowError",
+    UnicodeError: "UnicodeError",
+    AssertionError: "AssertionError",
+}
+
+
+@_contained
+def error_result(
+    phase: Phase,
+    check_id: str,
+    method: str,
+    method_version: str,
+    reason: ReasonRef,
+    exc: BaseException,
+) -> PhaseResult:
+    """A failed check as evidence: registry reason plus a fixed error kind.
+
+    Raw exception text can carry paths and cell values, and a callee's class name is caller
+    text too, so neither is read: the kind comes from an exact-type table of builtins.
+    """
+    return PhaseResult(
+        phase=phase,
+        check_id=check_id,
+        status="error",
+        method=method,
+        method_version=method_version,
+        reasons=(reason,),
+        payload=freeze({"error_type": _ERROR_KINDS.get(type(exc), "Exception")}),
+    )

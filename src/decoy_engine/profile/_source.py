@@ -34,6 +34,7 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Any
 
+from decoy_engine.fileaccess import FileAccess, entry_point
 from decoy_engine.profile._readers import (
     BOUNDED_FALLBACK_ROWS,
     ProfileSource,
@@ -43,12 +44,14 @@ from decoy_engine.profile._types import Profile, Relationship, TableProfile
 from decoy_engine.profile._walk import walk_dataframe
 
 
+@entry_point
 def profile_source(
     config: dict[str, Any],
     *,
     sample_rows: int | None = 10_000,
     seed: int | None = None,
     residency: str = "bounded",
+    file_access: FileAccess | None = None,
 ) -> Profile:
     """Profile every source declared in `config["sources"]`.
 
@@ -126,7 +129,7 @@ def profile_source(
     sources = config.get("sources", {}) or {}
     tables: list[TableProfile] = []
     for table_name, source_descriptor in sources.items():
-        reader = build_profile_source(source_descriptor)
+        reader = build_profile_source(source_descriptor, field_key=f"sources.{table_name}.path")
         table = _profile_one_source(
             reader,
             table_name=table_name,

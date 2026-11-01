@@ -235,8 +235,8 @@ class NestedStrategyHandler:
         # df UNCHANGED with a QualityWarning -- a misconfigured target
         # (e.g. `$.patient_name` typoed as `$.patientName`, or a child
         # strategy name typo) silently passed PII through. The warning
-        # surfaced only in the Storm report, not at job failure, and
-        # operators who don't audit Storm output had no signal.
+        # surfaced only in the Post-scan integrity report, not at job failure, and
+        # operators who don't audit Post-scan integrity output had no signal.
         # Sparse-path passthrough (some cells have matches, some don't)
         # stays a non-error case per spec; that branch is handled below
         # by the "if not leaf_values" early-return without raising.
@@ -362,7 +362,7 @@ class NestedStrategyHandler:
             # writeback. This makes the ordering deterministic and the
             # outer container's masked value always reflects the last
             # write. We also emit a typed QualityWarning so operators
-            # auditing the Storm report can see the path was ambiguous.
+            # auditing the Post-scan integrity report can see the path was ambiguous.
             ordered_matches = _order_matches_deepest_first(matches)
             if _has_prefix_overlap(ordered_matches):
                 warnings.append(

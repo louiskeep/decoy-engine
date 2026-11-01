@@ -262,7 +262,7 @@ def _fits(ledger: GenerationBudgetLedger, need: int) -> bool:
 def _check_width(arr: pa.Array, bound: int, column: str) -> None:
     if not (pa.types.is_string(arr.type) or pa.types.is_large_string(arr.type)):
         return
-    longest = pc.max(pc.binary_length(arr)).as_py()
+    longest = pc.max(pc.binary_length(arr)).as_py()  # type: ignore[attr-defined, unused-ignore]
     if longest is not None and longest > bound:
         raise GenerationBudgetExceeded(
             code=reasons.runtime.VALUE_EXCEEDS_DECLARED_BOUND,

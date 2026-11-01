@@ -1,5 +1,8 @@
 # OOC-B Milestone 1: external row_nr sorter + reorder budget ledger
 
+Status: superseded
+Superseded by: docs/plans/2026-09-01-p4a2-bounded-external-sorter.md (OOC-B reverted in commit ed148156; docs/records/2026-10-10-ooc-reorder-liveness.md:53-56)
+
 > **For agentic workers:** REQUIRED SUB-SKILL: use superpowers:subagent-driven-development or
 > superpowers:executing-plans to implement this task-by-task. Steps use `- [ ]` checkboxes.
 

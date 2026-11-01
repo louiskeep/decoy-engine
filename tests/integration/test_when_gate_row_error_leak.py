@@ -38,7 +38,7 @@ def _bucketize_when_config(
     src_path: str, target_path: str, *, quarantine: dict[str, Any] | None = None
 ) -> dict[str, Any]:
     cfg: dict[str, Any] = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"job_name": "b1-when-bucketize", "seed": 42},
         "sources": {"t": {"type": "file", "path": src_path, "format": "parquet"}},
         "targets": {"t": {"type": "file", "path": target_path, "format": "parquet"}},
@@ -67,7 +67,7 @@ def _date_shift_when_config(
     src_path: str, target_path: str, *, quarantine: dict[str, Any] | None = None
 ) -> dict[str, Any]:
     cfg: dict[str, Any] = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"job_name": "b1-when-date-shift", "seed": 42},
         "sources": {"t": {"type": "file", "path": src_path, "format": "parquet"}},
         "targets": {"t": {"type": "file", "path": target_path, "format": "parquet"}},

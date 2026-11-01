@@ -23,7 +23,7 @@ from decoy_engine.execution._sequential_native import (
 )
 from decoy_engine.execution.native._crypto_ext import FpeConfig
 from decoy_engine.relationships._graph import OrphanPolicy
-from tests.parity._d1a_hash_data import JOB_SEED, column_seed
+from tests.parity._d1a_hash_data import MASK_KEY, column_seed
 from tests.parity._d2a_seq_data import RecordingSink, callable_sink
 from tests.parity._d2b_shapes import hashed, run_full, run_seq, strs
 from tests.parity._d2c_fpe_data import (
@@ -87,7 +87,7 @@ def test_native_ciphertext_matches_python_ciphertext_through_the_kernel_argument
     run_seq(payload_shape())
     by_column = {c.tweak_column: c for c in kernel.calls}
     digits = by_column["f_digits"]
-    assert digits.namespace == "ns_fpe" and digits.mask_key == JOB_SEED
+    assert digits.namespace == "ns_fpe" and digits.mask_key == MASK_KEY
     assert digits.config == FpeConfig()
     assert digits.arrow_type == pa.string() and digits.rows == len(DIGITS)
     assert by_column["f_alnum"].config == FpeConfig(charset="alphanum")

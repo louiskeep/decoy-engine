@@ -55,7 +55,7 @@
 # ── Honest coverage notes (SP-11) ────────────────────────────────────────────
 #
 #  FREE-TEXT (clinical_notes, claim_description, etc.):
-#    No 'clinical_notes' or 'claim_description' detector is registered in STORM.
+#    No 'clinical_notes' or 'claim_description' detector is registered in Pre-scan.
 #    The pack cannot auto-route free-text columns. Configure text_mask manually:
 #
 #      columns:
@@ -73,7 +73,7 @@
 #
 #  HCPCS / NDC procedure and drug codes:
 #    The hcpcs and ndc corpora are shipped for manual use with code_set.
-#    No STORM detectors are registered for 'hcpcs' or 'ndc'; the pack cannot
+#    No detectors are registered for 'hcpcs' or 'ndc'; the pack cannot
 #    route these columns automatically. Configure code_set manually:
 #
 #      columns:
@@ -329,7 +329,7 @@ field_rules:
   # The HMAC-keyed selection (RFC 2104) is deterministic so provider-level
   # analytics survive masking.
   #
-  # HCPCS and NDC: shipped corpora exist but no STORM detectors are registered
+  # HCPCS and NDC: shipped corpora exist but no detectors are registered
   # for these code types. Configure code_set: hcpcs or code_set: ndc manually
   # in the recipe YAML for procedure and drug code columns.
   # LOINC: corpus NOT shipped (SP-09 carry-forward). Do not claim Safe Harbor

@@ -1,5 +1,8 @@
 # OOC-B Final Architecture: Unordered DuckDB Join + Bounded External row_nr Reorder
 
+Status: superseded
+Superseded by: docs/plans/2026-09-01-p4a2-bounded-external-sorter.md (OOC-B reverted in commit ed148156; docs/records/2026-10-10-ooc-reorder-liveness.md:53-56)
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 >
 > **Provenance.** This is the FINAL OOC-B architecture, decided by a cross-model architecture consult (Codex gpt-5.6-sol, 2026-07-22) after the GCP 200M@8GB run proved a DuckDB-ordered streaming join cannot reach never-OOM (peak RSS ~21 GB, indistinguishable from the unfixed regression; the dominant unbounded structure is the global `ORDER BY __decoy_row_nr` external sort, which `memory_limit` does not bound). PR #108 reverts main to the bounded O(parent) `_batch_join.py` path as the interim; the single-source-read scaffolding this plan rebuilds from is preserved on `origin/fix/ooc-b-memory-streaming-join`. Do not redesign the mechanism; it is fixed by the consult.

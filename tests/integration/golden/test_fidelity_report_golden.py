@@ -37,7 +37,7 @@ _PINNED_NOW = "2026-06-26T00:00:00+00:00"
 def _config() -> dict:
     src = str(GOLDEN / "relational_parent_child" / "customers.csv")
     raw = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 42},
         "sources": {"customers": {"type": "file", "format": "csv", "path": src}},
         "tables": [

@@ -1,4 +1,5 @@
-Status: plan (revision 2.2, BUILT, author = Opus). Codex plan gate: round 1 REVISE folded; round 2 GO (1 LOW folded).
+Status: built
+Shipped: docs/records/2026-10-05-unified-route-evidence-build.md
 
 # Unified-slice per-column route evidence
 

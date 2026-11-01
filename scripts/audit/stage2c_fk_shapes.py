@@ -127,7 +127,7 @@ def _base_relational_config(
     extra: dict | None = None,
 ) -> dict:
     cfg: dict[str, Any] = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 20260930},
         "sources": {
             t["name"]: {"type": "file", "format": "parquet", "path": sources[t["name"]]}
@@ -386,7 +386,7 @@ def build_fk_generate_mixed(n_parent: int, n_child: int) -> tuple[dict, dict]:
         {"name": "child", "columns": child_cols},
     ]
     cfg = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 20260930},
         "sources": {"child": {"type": "file", "format": "parquet", "path": c_path}},
         "targets": {

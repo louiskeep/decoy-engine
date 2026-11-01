@@ -66,7 +66,7 @@ def single_table_config(
     src = write_parquet(tmp_path, table, f"{name}_in")
     return validated(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 11},
             "sources": {name: {"type": "file", "format": "parquet", "path": src}},
             "tables": [
@@ -101,7 +101,7 @@ def fk_config(
     child_src = write_parquet(tmp_path, child, "child_in")
     return validated(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 7},
             "sources": {
                 "parent": {"type": "file", "format": "parquet", "path": parent_src},

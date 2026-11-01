@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from typing import Any
 
 import pandas as pd
@@ -43,7 +44,9 @@ class MaskingStrategy(ABC):
     Abstract base class for masking strategies.
     """
 
-    def __init__(self, seed: int = 42, logger=None, derive_key=None):
+    def __init__(
+        self, seed: int = 42, logger=None, derive_key: Callable[[str], bytes] | None = None
+    ):
         """
         Initialize with a seed for deterministic behavior
 

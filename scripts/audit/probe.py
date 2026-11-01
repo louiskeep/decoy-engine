@@ -350,7 +350,7 @@ def _base_config(
     if source_format == "fixed_width":
         source_entry["layout"] = {"columns": layout_columns}
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": seed},
         "sources": {table: source_entry},
         "targets": {
@@ -618,7 +618,7 @@ def run_generate_only(spec: dict) -> dict:
     rows = spec.get("rows", 10_000)
     table = "g"
     raw_config = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 20260930},
         "sources": {},
         "targets": {
@@ -683,7 +683,7 @@ def run_mask_generate(spec: dict) -> dict:
     source_table = pa.table(src_columns)
     resident, path = _write_and_reload_parquet(tmp_dir, spec["id"], source_table)
     raw_config = {
-        "version": 1,
+        "version": 2,
         "global_settings": {"seed": 20260930},
         "sources": {mask_table: {"type": "file", "format": "parquet", "path": path}},
         "targets": {

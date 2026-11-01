@@ -9,6 +9,7 @@ import pandas as pd
 import pyarrow as pa
 
 from decoy_engine.config import PipelineConfig
+from tests._keyed_secret import THROWAWAY_SECRET
 
 ENGINE_VERSION = "f29-integration"
 
@@ -23,11 +24,17 @@ def fk_job(
     customers.to_csv(cp, index=False)
     orders.to_csv(op, index=False)
     settings: dict[str, Any] = {"seed": 42}
-    if mask_secret_ref is not None:
-        settings["mask_secret_ref"] = mask_secret_ref
+    if mask_secret_ref is None:
+        # Keyed strategies need a secret in every release phase (F13). A file ref reaches the
+        # isolated child process too, which the in-process throwaway-secret fixture cannot.
+        key_file = tmp_path / "throwaway.key"
+        key_file.write_text(THROWAWAY_SECRET.hex())
+        key_file.chmod(0o600)  # E1: owner-only secret file
+        mask_secret_ref = f"file:{key_file}"
+    settings["mask_secret_ref"] = mask_secret_ref
     cfg = PipelineConfig.model_validate(
         {
-            "version": 1,
+            "version": 2,
             "global_settings": settings,
             "sources": {
                 "customers": {"type": "file", "format": "csv", "path": str(cp)},

@@ -1,6 +1,7 @@
 # Byte-estimate routing: price columns by Arrow type, not "not numpy means string"
 
-Status: plan
+Status: built
+Shipped: src/decoy_engine/execution/_mem_estimate_arrow.py:153 (classify_column); no _arrow_size_label left under src/
 
 Revision 3.2 (2026-10-01). After the dennis build gate (HIGH: a high-cardinality resident or prepared dictionary column decodes to a pandas Categorical costing more than its decoded value price; MEDIUM: a pandas-written schema whose metadata marks a nullable extension dtype carries a mask even with no nulls). Coarse rules, per the owner direction: (a) every dictionary column on the resident, prepared and lazy paths is UNPRICEABLE (no decode, no sampling); this supersedes the earlier one-step dictionary-of-plain sampling and the statement that decoding over-prices safely, which is false at high cardinality; (b) when a schema's `b"pandas"` metadata marks a column as a pandas nullable extension dtype (`Int*`, `UInt*`, `Float*`, `boolean`, `string`), the column is priced with `has_nulls=True` on both the resident and lazy adapters. Both only raise estimates or turn a priced column UNPRICEABLE. Tests: dictionary<int32->int64> and dictionary<string> at high cardinality on resident and prepared paths are UNPRICEABLE and `fits` is None; a no-null pandas-written Int8/boolean/Int64 column prices at the widened class.
 

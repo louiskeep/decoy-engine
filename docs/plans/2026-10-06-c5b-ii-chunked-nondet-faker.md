@@ -1,4 +1,5 @@
-Status: plan (revision 4, BUILD-READY, author = Opus). Codex plan gate: rounds 1-3 REVISE folded; round 4 (owner-authorized) GO, 1 LOW folded.
+Status: built
+Shipped: docs/records/2026-10-06-c5b-ii-chunked-nondet-faker-build.md
 Rules consulted: 00-universal, development-loop, testing, architecture, code-review, scope-discipline, api-and-compatibility
 
 # C5b-ii: non-deterministic REUSE Faker on the chunked native route

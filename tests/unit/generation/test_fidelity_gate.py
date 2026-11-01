@@ -59,7 +59,7 @@ def _config(snapshot_file: str, *, threshold: float | None = None, row_count: in
     if threshold is not None:
         gs["fidelity_warn_threshold"] = threshold
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": gs,
         "tables": [
             {
@@ -206,7 +206,7 @@ class TestNonStatisticalTables:
 
     def test_faker_only_config_logs_nothing(self, caplog):
         cfg = {
-            "version": 1,
+            "version": 2,
             "global_settings": {"seed": 42},
             "tables": [
                 {

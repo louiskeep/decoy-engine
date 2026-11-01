@@ -51,7 +51,7 @@ def _fpe_payload_fk_config(tmp_path: Path) -> dict[str, Any]:
     )
     tables = {"parent": parent, "child": child}
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"job_name": "sc3-fpe-routing", "seed": 11},
         "sources": {
             name: {"type": "file", "path": _src(tmp_path, tbl, name), "format": "parquet"}

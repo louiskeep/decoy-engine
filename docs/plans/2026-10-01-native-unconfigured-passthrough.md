@@ -1,6 +1,7 @@
 # Native admission for unconfigured passthrough columns (Rust engine program B8)
 
-Status: plan (revision 4.5.2)
+Status: built
+Shipped: docs/records/2026-10-02-b8-native-unconfigured-passthrough-build.md
 
 Revision 4.5.2 note: plan amendment after dennis round 3 (GO with fixes). A provider known only to the caller's registry cannot run end to end through `run_mask_chunked(registry=reg)`, because `compile_plan`, the composite wiring check, the seed envelope and `compile_native_plan` resolve providers through the default registry and raise `PlanCompileError(unknown_provider)` before any output (same as main). Tests 15 and 24(b) therefore assert, for the caller-only custom composite, that fail-closed outcome on the normal and row-error paths (coded error, no sink append, no source value in any output), and keep the end-to-end restoration assertions for every default-registry composite and the rebound-registry case. Routing compile through the caller's registry is out of B8's scope. `plan_column_backends` takes `registry` as a required keyword (dennis round 3 MEDIUM-1).
 

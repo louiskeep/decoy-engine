@@ -41,18 +41,22 @@ def resolve_faker_pool_identity(
     `pool_size`/`locale` are pool-BUILD knobs, not Faker provider-method
     kwargs, and must not leak into the config hash the other kwargs feed.
     """
-    pool_size = plan_pool_size if plan_pool_size is not None else resolve_runtime_pool_size(cfg)
-    locale = cfg.get("locale")
-    build_config = {k: v for k, v in cfg.items() if k not in ("pool_size", "locale")}
-    identity = builder.identity_for(
-        provider,
-        size=pool_size,
-        job_seed=job_seed,
-        locale=locale,
-        config=build_config,
-        namespace=namespace,
-    )
-    return pool_size, locale, build_config, identity
+    try:
+        pool_size = plan_pool_size if plan_pool_size is not None else resolve_runtime_pool_size(cfg)
+        locale = cfg.get("locale")
+        build_config = {k: v for k, v in cfg.items() if k not in ("pool_size", "locale")}
+        identity = builder.identity_for(
+            provider,
+            size=pool_size,
+            job_seed=job_seed,
+            locale=locale,
+            config=build_config,
+            namespace=namespace,
+        )
+        return pool_size, locale, build_config, identity
+    except BaseException:
+        del job_seed
+        raise
 
 
 __all__ = ["DEFAULT_POOL_SCALE", "PoolIdentity", "resolve_faker_pool_identity"]

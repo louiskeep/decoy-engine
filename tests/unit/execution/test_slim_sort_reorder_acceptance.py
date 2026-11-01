@@ -32,9 +32,9 @@ import pyarrow as pa
 import pytest
 
 from decoy_engine.execution._errors import ExecutionError
+from decoy_engine.execution.out_of_core._compat import _column_seed
 from decoy_engine.execution.out_of_core._mask import mask_table
 from decoy_engine.execution.out_of_core._relation import build_parent_key_relation_from_tables
-from decoy_engine.execution.out_of_core._runner import _column_seed
 from decoy_engine.execution.out_of_core._stream_join import (
     ChildKeyLockstepCursor,
     StreamFkJoiner,

@@ -120,7 +120,7 @@ def build_fixture(
         for c in range(n_payload_cols)
     ]
     return {
-        "version": 1,
+        "version": 2,
         "global_settings": {"job_name": "tb3-cgroup-validation", "seed": 11},
         "sources": {
             name: {

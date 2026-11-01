@@ -7,7 +7,7 @@
 ## Where we actually are (not a greenfield)
 
 Already built + merged to engine main, flag-gated **default-OFF**, **never validated**:
-- Estimator (`_mem_estimate*`), two-point probe (`_probe*`), runtime governor (`_governor*`), telemetry (`_mem_telemetry`), subprocess isolation (`_isolated_*`, `run_pipeline_isolated`). These are the doc's Sprint 1a/1b + B1–B5 machinery.
+- Estimator (`_mem_estimate*`), two-point probe (`_probe*`), runtime governor (`_governor*`), telemetry (`scripts/mem_telemetry.py`, moved out of `src/` as calibration tooling), subprocess isolation (`_isolated_*`, `run_pipeline_isolated`). These are the doc's Sprint 1a/1b + B1–B5 machinery.
 
 Why it was never turned on: the 50M benchmark's governor phase (B6) came back **DEGRADED** — it proved *containment* (clean SIGKILL + diagnostic, no wedge) but never proved *reroute-to-completion*. Root-cause (#54, code-verified + measured #56): two independent defects.
 

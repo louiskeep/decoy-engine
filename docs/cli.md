@@ -47,21 +47,21 @@ Key options:
   portable, machine-stable deterministic **masking**; sets
   `global_settings.mask_secret_ref`. See [determinism](determinism.md).
 
-## `storm` subcommands
+## `pre-scan` subcommands
 
-`storm` profiles a dataset for PII, format signals, and re-identification risk.
+`pre-scan` profiles a dataset for PII, format signals, and re-identification risk.
 
 | Command | What it does |
 |---|---|
-| `decoy storm analyze <data.csv>` | Profile a dataset. This is the canonical scan command. |
-| `decoy storm scan <data.csv>` | Deprecated alias for `analyze` (still works). |
-| `decoy storm integrity ...` | Integrity checks over a masked output. |
-| `decoy storm fields <scan> <field>` | Inspect one field from a scan. |
-| `decoy storm show ...` | Display a saved scan. |
-| `decoy storm diff <old> <new>` | Compare two scans. |
-| `decoy storm test ...` | Detector test helper. |
+| `decoy pre-scan analyze <data.csv>` | Profile a dataset. This is the canonical scan command. |
+| `decoy pre-scan scan <data.csv>` | Deprecated alias for `analyze` (still works). |
+| `decoy pre-scan integrity ...` | Integrity checks over a masked output. |
+| `decoy pre-scan fields <scan> <field>` | Inspect one field from a scan. |
+| `decoy pre-scan show ...` | Display a saved scan. |
+| `decoy pre-scan diff <old> <new>` | Compare two scans. |
+| `decoy pre-scan test ...` | Detector test helper. |
 
-Common `storm analyze` options: `--rows N` caps rows scanned, `--strategy`
+Common `pre-scan analyze` options: `--rows N` caps rows scanned, `--strategy`
 selects the sampling strategy, `--json` / `--out <path>` writes a structured
 profile.
 

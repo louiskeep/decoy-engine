@@ -49,6 +49,7 @@ from typing import TYPE_CHECKING, Any, Final
 import pandas as pd
 import pyarrow as pa
 
+from decoy_engine.config import post_scan_integrity_requested
 from decoy_engine.execution._errors import ExecutionError
 from decoy_engine.execution._fk_keys import to_pandas_fk_safe
 from decoy_engine.execution._guards import (
@@ -247,7 +248,11 @@ def cheap_admission(
         # slice returns early without it, so admitting an opted-in job would
         # silently skip post-validation while reporting success.
         return None
-    if config.get("validators") or config.get("quarantine") or config.get("run_storm"):
+    if (
+        config.get("validators")
+        or config.get("quarantine")
+        or post_scan_integrity_requested(config)
+    ):
         return None
     if profile.relationships:
         return None
