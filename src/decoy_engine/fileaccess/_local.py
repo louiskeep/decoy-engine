@@ -21,7 +21,14 @@ from pathlib import Path
 from typing import BinaryIO, Literal, TextIO
 
 from decoy_engine.fileaccess._errors import deny
-from decoy_engine.fileaccess._output import CREATES_PARENTS, STAGE_PREFIX, STAGE_SUFFIX
+from decoy_engine.fileaccess._output import (
+    CREATES_PARENTS,
+    DEFAULT_STAGE_MODE,
+    DURABLE_LABELS,
+    STAGE_MODE,
+    STAGE_PREFIX,
+    STAGE_SUFFIX,
+)
 from decoy_engine.fileaccess._types import (
     FileAccessUnavailable,
     FileRequest,
@@ -31,7 +38,7 @@ from decoy_engine.fileaccess._types import (
 _logger = logging.getLogger("decoy_engine.quarantine")
 
 _CREATE = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC
-_CREATE_IN_PLACE = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_CLOEXEC
+_DIR = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC
 
 
 class LocalHandle:
@@ -209,6 +216,9 @@ class LocalOutputTxn(_LocalStageDir):
         self._label = label
         self._staged_file: Path | None = None
         self._direct = False
+        # A durable stage is created and published through its parent's descriptor, opened
+        # before the stage exists, so no step after the link can fail for want of one.
+        self._parent_fd = -1
         stage: Path | None = None
         if kind == "dir":
             if label in CREATES_PARENTS:
@@ -222,13 +232,8 @@ class LocalOutputTxn(_LocalStageDir):
             self._check(component)
             if self._staged_file is not None:
                 raise FileAccessUnavailable("a file stage holds exactly one file")
-            if self._label == "vault_direct":
-                # The ambient vault write truncates and rewrites the named file in place,
-                # as `Path.write_bytes` always did (hardlinks, a read-only directory and a
-                # missing parent behave as before). Only this policy issues the label.
-                self._direct = True
-                self._staged_file = self._target
-                return os.open(self._target, _CREATE_IN_PLACE, 0o666)
+            if self._label in DURABLE_LABELS:
+                return self._create_durable_stage()
             if self._label in CREATES_PARENTS:
                 self._target.parent.mkdir(parents=True, exist_ok=True)
             if self._mode == "replace" and self._writes_through():
@@ -243,8 +248,73 @@ class LocalOutputTxn(_LocalStageDir):
                 return fd
             stage = self._target.parent / f"{prefix}{secrets.token_hex(6)}{suffix}"
             self._staged_file = stage
-            return os.open(stage, _CREATE, 0o666)
+            return os.open(stage, _CREATE, STAGE_MODE.get(self._label, DEFAULT_STAGE_MODE))
         return super().create_file(component)
+
+    def _create_durable_stage(self) -> int:
+        """Open the parent, then create the stage beside the leaf with mode 0600. A failure here
+        created nothing and keeps the ambient error shape: the class and the target's path."""
+        name = f"{STAGE_PREFIX[self._label]}{secrets.token_hex(6)}"
+        failed: OSError | None = None
+        try:
+            self._parent_fd = os.open(self._target.parent, _DIR)
+            fd = os.open(name, _CREATE, STAGE_MODE[self._label], dir_fd=self._parent_fd)
+        except OSError as exc:
+            failed = exc
+        if failed is not None:
+            code, cls = failed.errno, type(failed)
+            del failed
+            self._close_parent()
+            raise cls(code, os.strerror(code or errno.EIO), str(self._target))
+        self._staged_file = self._target.parent / name
+        return fd
+
+    def _close_parent(self) -> None:
+        if self._parent_fd >= 0:
+            fd, self._parent_fd = self._parent_fd, -1
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
+    def _unlink_stage(self) -> None:
+        if self._staged_file is not None and self._parent_fd >= 0:
+            try:
+                os.unlink(self._staged_file.name, dir_fd=self._parent_fd)
+            except OSError:
+                pass
+
+    def _publish_durable(self) -> None:
+        """Link the fsynced stage to the leaf (refusing an existing one), fsync the parent (the
+        commit point), then drop the stage name. Errors carry an errno, never a path; after the
+        link only the stage is ever removed."""
+        staged = self._staged_file
+        if staged is None:  # pragma: no cover - checked by publish
+            raise FileAccessUnavailable("nothing was staged")
+        self._finished = True
+        parent = self._parent_fd
+        code = 0
+        try:
+            os.link(
+                staged.name,
+                self._target.name,
+                src_dir_fd=parent,
+                dst_dir_fd=parent,
+                follow_symlinks=False,
+            )
+        except OSError as exc:
+            code = exc.errno or errno.EIO
+        if not code:
+            try:
+                os.fsync(parent)
+            except OSError as exc:
+                code = -(exc.errno or errno.EIO)  # negative: the leaf is published
+        self._unlink_stage()
+        self._close_parent()
+        if code == errno.EEXIST:
+            raise FileExistsError(errno.EEXIST, "output exists")
+        if code:
+            raise OSError(abs(code), os.strerror(abs(code)))
 
     def _writes_through(self) -> bool:
         """An existing special file (`/dev/null`) or symlink is written in place, as the
@@ -271,6 +341,9 @@ class LocalOutputTxn(_LocalStageDir):
         staged = self._staged_file
         if staged is None:
             raise FileAccessUnavailable("nothing was staged")
+        if self._label in DURABLE_LABELS:
+            self._publish_durable()
+            return
         if self._direct:
             self._finished = True
             return
@@ -308,6 +381,10 @@ class LocalOutputTxn(_LocalStageDir):
         if self._stage is not None:
             shutil.rmtree(self._stage, ignore_errors=True)
             self._stage = None
+        if self._label in DURABLE_LABELS:
+            self._unlink_stage()
+            self._close_parent()
+            return
         if self._staged_file is not None and not self._direct:
             try:
                 self._staged_file.unlink(missing_ok=True)

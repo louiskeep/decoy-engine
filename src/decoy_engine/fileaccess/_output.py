@@ -43,6 +43,15 @@ STAGE_SUFFIX: dict[str, str] = {"quarantine": ".jsonl", "quarantine_direct": ".j
 # Every output but a vault leaf may create missing parent directories; a vault leaf sits
 # directly in a directory the caller already provided.
 CREATES_PARENTS: frozenset[str] = frozenset(STAGE_PREFIX) - {"vault"}
+# The stage's creation mode, given to `open(2)` so no umask widens it and no later chmod leaves
+# a window; a hardlinked leaf shares it. Private artifacts are owner-only (`mkstemp` is 0600).
+STAGE_MODE: dict[str, int] = {"quarantine": 0o600, "vault": 0o600}
+DEFAULT_STAGE_MODE = 0o666
+# Labels published durably and exclusively (B-6 D1): the stage is fsynced by its writer
+# (`serial.write_durable`), linked to the leaf, then the parent is fsynced; that fsync is the
+# commit point and its failure is raised. A failure path removes only the unpublished stage,
+# never the leaf.
+DURABLE_LABELS: frozenset[str] = frozenset({"vault"})
 
 T = TypeVar("T")
 
@@ -219,7 +228,8 @@ class RootedOutputTxn(_StageDir):
         name = f"{STAGE_PREFIX[label]}{secrets.token_hex(6)}{STAGE_SUFFIX.get(label, '')}"
         state = _State(os.dup(parent_fd), name, kind)
         self._state = state
-        mode_bits = 0o600 if label == "quarantine" else 0o666
+        mode_bits = STAGE_MODE.get(label, DEFAULT_STAGE_MODE)
+        self._durable = label in DURABLE_LABELS
         stage_fd = -1
         if kind == "dir":
             _call(os.mkdir, name, 0o700, dir_fd=state.parent_fd)
@@ -263,6 +273,21 @@ class RootedOutputTxn(_StageDir):
             except FileExistsError:
                 _discard(state)
                 raise
+            except OSError:
+                if self._durable:  # nothing was published: only the stage is removed
+                    _discard(state)
+                raise
+            if self._durable:
+                # The commit point: a published leaf whose directory entry is not durable is
+                # reported, never removed (the stage is, on every path).
+                failed = 0
+                try:
+                    os.fsync(parent)
+                except OSError as exc:
+                    failed = exc.errno or errno.EIO
+                if failed:
+                    _discard(state)
+                    raise OSError(failed, os.strerror(failed))
             try:
                 os.unlink(state.stage_name, dir_fd=parent)
             except OSError:
@@ -386,4 +411,11 @@ class RootedOutputDir:
             _close(child)
 
 
-__all__ = ["STAGE_PREFIX", "STAGE_SUFFIX", "RootedOutputDir", "RootedOutputTxn"]
+__all__ = [
+    "DURABLE_LABELS",
+    "STAGE_MODE",
+    "STAGE_PREFIX",
+    "STAGE_SUFFIX",
+    "RootedOutputDir",
+    "RootedOutputTxn",
+]

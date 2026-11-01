@@ -68,7 +68,7 @@ import hmac
 import json
 from collections.abc import Iterable, Mapping
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 
 import pyarrow as pa
 
@@ -269,10 +269,9 @@ class VaultWriter:
     def write(self, path: str | Path | OutputDir) -> int:
         """Encrypt and write the vault file. Returns the entry count written.
 
-        `path` is an `OutputDir` the policy issued (the file is created exclusively,
-        refusing an existing leaf), or, under the ambient CLI policy only, a path that is
-        overwritten as it always was. A path under any other policy raises
-        `FileAccessUnavailable`.
+        `path` is an `OutputDir` the policy issued, or, under the ambient CLI policy only, a
+        path string (any other policy raises `FileAccessUnavailable`). Either way the file is
+        created exclusively through a private, durable stage: an existing leaf is refused.
 
         Conflicting sources for one `(namespace, masked)` key are
         dropped (see the module docstring's ambiguity policy); the
@@ -339,14 +338,12 @@ class VaultWriter:
                     "pass an OutputDir issued by the policy"
                 )
             out = self._access.output_dir(FileRequest(FileRole.VAULT, "write", str(path), "vault"))
-            mode: Literal["exclusive", "replace"] = "replace"
-            label: Literal["vault", "vault_direct"] = "vault_direct"
         else:
             out = path
-            mode = "exclusive"
-            label = "vault"
-        with out.begin("file", mode, label=label) as txn:
-            serial.write_bytes(txn, "vault", b"".join(parts))
+        # A 0600 stage, written and fsynced, linked exclusively, then the parent fsynced
+        # (`fileaccess` `DURABLE_LABELS`); an existing vault is refused, never rewritten.
+        with out.begin("file", "exclusive", label="vault") as txn:
+            serial.write_durable(txn.create_file("vault"), b"".join(parts))
             txn.publish()
         return len(rows)
 

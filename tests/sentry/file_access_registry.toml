@@ -2,7 +2,7 @@
 # `ordinal` is the index of the call among identical sinks in the function. An entry may be
 # removed freely; adding one needs a `rule` (how the path is built), an `owner` and a `reason`.
 # `ambient_only` marks a caller-derived path that is reached only after `require_ambient`.
-# Count: 192 (asserted by the sentry).
+# Count: 195 (asserted by the sentry).
 
 [[entry]]
 module = "decoy_engine/connectors/sftp.py"
@@ -1138,9 +1138,36 @@ reason = "ambient CLI semantics: the one policy that follows a caller path; neve
 
 [[entry]]
 module = "decoy_engine/fileaccess/_local.py"
-function = "LocalOutputTxn.create_file"
+function = "LocalOutputTxn._create_durable_stage"
 sink = "os.open"
-ordinal = 2
+ordinal = 0
+rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
+owner = "cam"
+reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
+
+[[entry]]
+module = "decoy_engine/fileaccess/_local.py"
+function = "LocalOutputTxn._create_durable_stage"
+sink = "os.open"
+ordinal = 1
+rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
+owner = "cam"
+reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
+
+[[entry]]
+module = "decoy_engine/fileaccess/_local.py"
+function = "LocalOutputTxn._unlink_stage"
+sink = "os.unlink"
+ordinal = 0
+rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
+owner = "cam"
+reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
+
+[[entry]]
+module = "decoy_engine/fileaccess/_local.py"
+function = "LocalOutputTxn._publish_durable"
+sink = "os.link"
+ordinal = 0
 rule = "the FileRequest.locator of a request served by LocalFileAccess (or a stage name generated beside it)"
 owner = "cam"
 reason = "ambient CLI semantics: the one policy that follows a caller path; never installed after forbid_ambient()"
