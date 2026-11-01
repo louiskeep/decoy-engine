@@ -25,9 +25,10 @@ minimum engine version it was tested against via its
   `source_loader` tables, non-CSV declared descriptors, chunks from any iterator) is refused
   with `TransformError(code="duplicate_source_field_names")` at the earliest point of every
   public entry, before routing, profiling and any pandas conversion, instead of an uncoded
-  `KeyError`/`ValueError` or a silent out-of-core success. `run_pipeline_isolated()` checks
-  caller tables in the parent before serializing them. The message names the table and a
-  count, no longer the duplicated names.
+  `KeyError`/`ValueError` or a silent out-of-core success. `run_pipeline_isolated()` refuses
+  in the child, so config-only refusals win as in process; a duplicate table that Parquet
+  cannot serialize still fails at serialization. The message names the table and a count,
+  no longer the duplicated names.
 
 ### Added (R1-c: CycloneDX SBOM generator, 2026-10-31)
 
