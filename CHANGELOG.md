@@ -25,6 +25,14 @@ minimum engine version it was tested against via its
   `runtime.secret_file_permissions_unsafe` the registry has 893 identities; `REGISTRY_VERSION` 1.2.0.
 - A strict-policy table sink's abort records cleanup `attempted` (was `unknown`).
 - New `fileaccess.reset_for_tests()` for host test isolation (instead of `fileaccess._entry`).
+- Under an installed policy, an explicit `file_access=` (and the `scope`/`capture` argument) must be
+  that same policy or narrower than an installed ambient one; any other raises
+  `FileAccessUnavailable`. Policy-resolution refusals carry no `__cause__`/`__context__`.
+- No `entry_point` wrapper frame, nor `key_provider_from_ref`'s or `parse_ref`'s, keeps a caller
+  argument (ref, path, value) in its locals on a failing call.
+- `write_fixed_width` under a strict policy names `target.path` in its errors, never the path
+  (ambient text unchanged). File outputs published by replace fsync their directory again
+  (best effort, ambient and strict), as main's fixed-width writer did.
 
 ### Added (R1-c: CycloneDX SBOM generator, 2026-10-31)
 

@@ -34,8 +34,11 @@ Every callable in `fileaccess.ENTRY_POINTS` takes a keyword-only `file_access=`.
 that policy for its duration and keeps it on any iterator or object it returns, so a lazy chunk
 iterator, a `LazySource`, a `ParquetTransactionalSink` or a `VaultWriter` is judged by the policy it
 was created under, whatever is installed when it is used later. A nested engine call never downgrades
-the installed policy. After `forbid_ambient()`, a call with no policy raises `FileAccessUnavailable`
-instead of falling back to ambient access. `forbid_ambient()` is one way for the process. So is the
+the installed policy, even by naming one: under an installed policy an explicit `file_access=` (or
+`scope`/`capture` argument) is used only if it is that same object or the installed one is the ambient
+CLI policy; any other raises `FileAccessUnavailable`. After `forbid_ambient()`, a call with no policy
+raises `FileAccessUnavailable` instead of falling back to ambient access. Every such refusal is raised
+with no cause or context. `forbid_ambient()` is one way for the process. So is the
 first use of any non-ambient policy: from then on a context with no policy installed (a raw thread, a
 callback) raises `FileAccessUnavailable` rather than reading through the ambient CLI policy. Work a
 thread pool does for a call must be submitted with `fileaccess.run_in_context` or `map_in_context`.

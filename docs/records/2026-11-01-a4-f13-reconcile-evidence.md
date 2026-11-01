@@ -206,3 +206,66 @@ The native companion is not installed (native-only tests skip, as on main). No C
 platform or CLI suite, no live Vault (`test_vault_live.py` skips as on main), no Windows run (the
 `os.name == "nt"` branch is covered by a patched-`os.name` test only), no mutmut campaign (one
 hand mutation per mechanism, section 5).
+
+## 9. Remediation round 3 (Codex FINAL NO-GO on d8850f00: four HIGH, one MEDIUM)
+
+Merged origin/main 1ee89e68 first (OOC harvest #354, SBOM #355, native release script #353; merge
+58706fa7). Only `CHANGELOG.md` conflicted (both entries kept); main did not touch
+`REGISTRY_VERSION` or the identity count, so neither changed. Environment as above: venvs from the
+merged `uv.lock` (3.10.20 and 3.12.3, extras dev, lint, vault, cloud); baselines in a detached
+worktree of origin/main 1ee89e68 with venvs from its own lock. Red records and mutant results:
+`docs/plans/evidence/2026-11-01-a4-f13-reconcile-r3-red.txt`.
+
+All five findings were reproduced before any fix (probe, then the tests below red). None is
+rejected.
+
+| # | Class | Finding | Fix | Red first | Mutants |
+|---|---|---|---|---|---|
+| 1 | 3/7 | `_resolve` took an explicit policy before looking at the installed one, so a nested call could swap a tenant policy for `LocalFileAccess` or another strict one | The only ordering policies have: ambient is the widest; two strict policies are incomparable unless the same object. Under an installed policy an explicit one is used iff it `is` the installed one or the installed one is ambient; otherwise `FileAccessUnavailable`. Applies to `entry_point`, `scope`, `capture` (all resolve through `_resolve`). | `tests/fileaccess/test_nested_explicit_policy.py`: 6 ordering pairs (strict/ambient, strict/other strict, strict/same, ambient/strict, ambient/same, ambient/other ambient) x 3 routes, plus a nested entry inside a strict call; 7 red | M1 `_not_broader` -> `True`: 7 red |
+| 2 | 1 | `key_provider_from_ref` kept `ref` as a local and the decorator kept it in `args`/`kwargs`; `capture_locals=True` printed the path | Wrappers (`entry_point`, its generator variant, `run_in_context`) move arguments into `_Arguments` (fixed repr) and delete them before anything can raise, unpacking only inside the call expression. `key_provider_from_ref` uses the admission boxed-entry pattern (`_OpaqueBox`, `del`, `_call_closed(_ref_boxed)`). `parse_ref` deletes `text` before raising. | `tests/fileaccess/test_x1_secret.py` locals check extended to path and ref, reprs and strings nested in tuple/list/set/dict, on every chain link; `tests/fileaccess/test_entry_frame_locals.py` covers every admission entry and every wrapper; 16 red | M2a-M2f (each wrapper's `del`, the holder's repr, `key_provider_from_ref`'s `del`, `parse_ref`'s `del`): all red |
+| 3 | 1/4 | Resolution ran before the closed boundary, so a refusal inherited the caller's in-flight exception as `__context__` | Every resolution refusal (`_resolve`, `current`, `require_ambient`) goes through `_unavailable`, which raises with cause and context cleared and `__suppress_context__` set. The class keeps its type (`FileAccessUnavailable`). | `tests/secret_providers/test_boundary_caller_context.py`: the six admission routes with ambient forbidden and nothing installed (1 red: `key_provider_from_ref`; the other five already met the refusal inside the boundary); `test_nested_explicit_policy.py`: six resolution routes inside a caller's handler (6 red) | M3 (drop the context clearing): 13 red |
+| 4 | 1 | `write_fixed_width` put the raw path in row-failure and layout-failure text under a strict policy | Both texts use `fileaccess.shown(path, "target.path")`: the path under ambient (main's text unchanged), `target.path` under strict | `tests/fileaccess/test_fixed_width_writer_strict_text.py`: overflow and bad layout, absolute and relative locator, canary over str, repr, args, notes, cause, context and the formatted traceback; ambient text pinned to start with the path; 4 red | M4a/M4b (each text back to the raw path): red |
+| 5 | 8/9 | The ambient and strict replace publishes dropped main's best-effort directory fsync, and `test_fsync_dir_survives_close_error` was deleted | `LocalOutputTxn.publish` and `RootedOutputTxn.publish` fsync the parent after a file-stage replace, swallowing fsync and close errors. The deletion was not justified (the guard it tested was lost with it); the test is restored under its name, now end to end through `write_fixed_width` on both policies, asserting the target directory's inode was fsynced and that fsync/close faults do not fail the write | 4 red | M5a/M5b (drop each fsync), M5c/M5d (stop swallowing the fsync error): all red |
+
+Scope notes:
+
+- Finding 5 is restored for file stages published by replace, which is where main had it (the
+  fixed-width writer). The other file-replace outputs through the same transactions (`pack`,
+  `quarantine_direct`, vault replace) also get the best-effort fsync; exclusive (`link`) and
+  directory publishes do not, as on main. The ambient directory open is a new sink:
+  `tests/sentry/file_access_registry.toml` gains exactly one entry (`_local.py:_sync_dir`,
+  `os.open`), count 191 -> 192. No other allowlist or threshold changed.
+- Finding 1 refusal raises `FileAccessUnavailable`, the class the forbidden-ambient refusal already
+  used. That class has no registry identity (only `FileAccessDenied` does); unchanged here.
+
+Class enumeration for finding 2 (public entries that keep a ref, path or secret in a frame local
+or a decorator's arguments):
+
+- Covered and tested: the admission entries `prepare_secret`, `prepare_legacy`, `prepare_ref`,
+  `admit_mask_key` (already boxed), `key_provider_from_ref` and `parse_ref` (fixed here); the
+  wrapper frames of all 41 `fileaccess.ENTRY_POINTS` members and of `run_in_context` (fixed here).
+- Not covered, reported (see the round-3 hand-off): the entry functions' own frames hold their own
+  parameters. Path or locator parameters: `iter_csv_chunks`, `iter_parquet_chunks`,
+  `read_fixed_width`, `write_fixed_width`, `reference_tables.load_table`, `load_corpus`,
+  `load_corpus_provenance`, `verify_corpus`, `load_custom_providers`, `estimate_job`,
+  `estimate_job_capacity` (`base_dir`), `run_pipeline_isolated` (`staging_dir`, `output_dir`),
+  `run_fk_out_of_core` (`temp_dir`), `run_subset` (`output_dir`), `unmask_pipeline`
+  (`vault_path`), `vault.load_vault` (`path` and the raw `mask_key` bytes). Config parameters that
+  can hold `mask_secret_ref` and file locators: `run_pipeline`, `run_mask_pipeline_chunked`,
+  `run_mask_chunked`, `run_job_with_governor`, `compile_plan`, `validate_plan`,
+  `run_config_only_checks`, `validate_config`, `vault_writer_for_config`, `profile_source`,
+  `plan_from_yaml` (`s`). `key_provider` parameters render redacted (`SecretKeyProvider`,
+  `SeedKeyProvider`, `PreparedKeyProvider` reprs). The documented promise
+  (`docs/security/secret-providers.md`) covers the admission boundary only, and
+  `docs/security/error-reporting-and-data-exposure.md` tells operators to turn off locals capture
+  for everything else; closing these frames means boxing every public entry, a new mechanism, so
+  it is reported rather than patched.
+
+Sentries: module size and physical seam pass unchanged (no ceiling raised; `_entry.py` 322 lines).
+ruff check and format clean; mypy 2.3.0 `src/decoy_engine testflight` 0 errors (703 files).
+
+Class sweep for finding 4 (engine error text naming a file under a strict policy), reported, not
+patched: `profile/_readers.py:_build_file_source` renders `{path!r}` when the descriptor's `path`
+is not a `str` (a `PathLike` shows the path); `plan/_serialize.py` names an embedded snapshot's
+recorded `source_path` in `dp_pinned_snapshot_digest_mismatch` text and `path`, whatever policy is
+installed. Both are main's text, outside this branch's diff.
