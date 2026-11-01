@@ -12,9 +12,10 @@ ship in SP-10c:
                   the walk is deterministic under a fixed seed.
 
 Pattern: pandas groupby cumcount + derive()-seeded monotone walk. cumcount
-positions follow pandas GroupBy.cumcount() (SDV per-group sequencing;
-https://sdv.dev/SDV/user_guides/timeseries/index.html, MIT License). Per-
-group RNG seeds for monotone_walk come from
+positions follow pandas GroupBy.cumcount() (per-group sequencing as in the SDV
+PAR method: Zhang, Patki and Veeramachaneni, "Sequential Models in the Synthetic
+Data Vault", arXiv:2207.14406, 2022; method only, no SDV code: SDV is BUSL-1.1).
+Per-group RNG seeds for monotone_walk come from
 decoy_engine.determinism._derive.derive(seed, namespace, group_label)
 (HKDF-SHA256 + HMAC-SHA256, RFC 5869 + RFC 2104), so two monotone_walk
 columns with the same groups produce independent walks.

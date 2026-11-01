@@ -56,7 +56,7 @@ modules:
   # DAG pattern: materialise parent PK set, resolve child FK values against it.
   - path: src/decoy_engine/validators/_fk_validators.py
     pattern: SDV HMA1
-    source: sdv-dev/SDV (MIT); HierarchicalMetaData model (HMA1)
+    source: HMA1 method, Patki et al., "The Synthetic Data Vault", IEEE DSAA 2016 (method only; no SDV code, SDV is BUSL-1.1)
 
   # SP-06 / P5.INFRA.2 (2026-06-27): closed-vocabulary expression parser.
   # Lark EBNF grammar closes the arbitrary-code-execution surface that
@@ -151,7 +151,7 @@ modules:
   # produce independent walks.
   - path: src/decoy_engine/transforms/grouped_series.py
     pattern: pandas groupby cumcount + derive()-seeded monotone walk
-    source: pandas 2.x (Apache-2.0); SDV (MIT); RFC 5869 (HKDF); RFC 2104 (HMAC)
+    source: pandas 2.x (Apache-2.0); SDV PAR method, Zhang et al., arXiv:2207.14406 (method only; no SDV code, SDV is BUSL-1.1); RFC 5869 (HKDF); RFC 2104 (HMAC)
 
   # Sprint G (2026-07-03): SS3 closure engine, the novel core of FK-aware
   # subsetting. Downward+upward fixpoint over the declared relationships

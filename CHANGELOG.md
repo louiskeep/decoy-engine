@@ -52,6 +52,34 @@ Plan: `docs/plans/2026-11-01-b6-vault-crypto-remediation.md` (slices S1, S2, S2b
   registry to its merge base's next minor and give every added identity that `since`.
   `engine-v2-substrate-matrix.yml` now checks out with `fetch-depth: 0` for it.
 
+### Fixed (categorical CDF: exact integer builder, 2026-11-01)
+
+The weighted categorical CDF summed weights with the builtin `sum()`, which CPython 3.12 made
+compensated, so about 2.3% of weight vectors got thresholds one slot apart on 3.12 versus 3.10/3.11 and
+masked output depended on the interpreter. `_build_cdf` now converts each weight to its exact dyadic
+rational and computes `(2 * C_i * RES + T) // (2 * T)` (round half up) over exact integers. Plan:
+`docs/plans/2026-10-31-categorical-cdf-exact-arithmetic.md` (branch `plan/cdf-exact-arithmetic`).
+
+- Output: thresholds move by at most one slot for about 2.2% of vectors versus 3.10 output; `[1, 1, 1]`
+  becomes `[333333, 666667, 1000000]` (was `[333333, 666666, 1000000]`). `[1.0, 2e-6, 1.0]` is now
+  refused as below resolution (0.999999 of a slot); `[1e308, 1e308]` is refused as an overflowing total.
+- Weights must be `int`, a numpy integer, `float` or numpy `float16/32/64`, by exact type: `bool`, `str`,
+  `None`, `Decimal`, `Fraction` and subclasses are refused. NaN and infinity raise `StrategyError`
+  (`categorical_weights_nonpositive`) instead of a bare `ValueError`. Refusals run as whole-vector passes
+  (type, non-finite, negative, total, resolution) and their messages carry the index only, no value.
+### Changed (licensing: generated NOTICE, license gate, SDV citations, 2026-11-01)
+
+- `NOTICE` (shipped in the wheel) is generated from `uv.lock` by `scripts/dev/licenses_write.sh`: name,
+  version, license and scope (`[runtime]` or `[extra: ...]`) for all 103 pins that installing the engine or
+  a runtime extra can pull in, plus the named exceptions (`paramiko` LGPL-2.1 and `tqdm` MPL-2.0 AND MIT,
+  optional only; `certifi` MPL-2.0; `python-stdnum` LGPL-2.0-or-later; numpy's SPDX expression). The
+  licensor name is a marked owner placeholder. Policy: `docs/license-policy.md`.
+- `tests/sentry/test_license_policy.py` and the `licenses` step of `scripts/dev/gates.sh` fail on a stale or
+  hand-edited `NOTICE`, a license outside the policy, or `NOTICE` disagreeing with installed metadata.
+- SDV citations no longer call SDV MIT: SDV is BUSL-1.1. The engine cites the HMA1 and PAR methods (papers
+  named) and uses no SDV code; `tests/sentry/test_sdv_import_sentry.py` fails on an SDV or sdmetrics import
+  and on a citation labelling SDV permissive.
+
 ### Fixed (out-of-core: typed temporal FK seam, release R-b, 2026-11-01)
 
 The out-of-core FK join rebuilt every child FK value from Python scalars by type inference, so a
@@ -4427,8 +4455,9 @@ own branches and are not part of this batch.
   validators ship: `luhn`, `npi`, `iban`, `vin` (all delegate to
   `checksums.validate` from SP-04), `fk_intact` (every non-null child FK value
   resolves to a parent PK), and `no_orphan_children` (every child row has a
-  non-null FK value). The two FK validators implement the SDV HMA1 parent-first
-  DAG pattern (sdv-dev/SDV, MIT). `validate(outputs, config)` is the single
+  non-null FK value). The two FK validators implement the parent-first DAG
+  pattern of the SDV HMA1 method (Patki et al., IEEE DSAA 2016; method only, no
+  SDV code is used: SDV is BUSL-1.1). `validate(outputs, config)` is the single
   entry point; it returns a frozen `ValidationReport` and never mutates output.
   The `ValidationReport` and per-finding `ValidatorFinding` are persisted to the
   evidence manifest under `quality_metrics["validation"]["validators"]`.
