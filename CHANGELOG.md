@@ -4264,8 +4264,9 @@ own branches and are not part of this batch.
   validators ship: `luhn`, `npi`, `iban`, `vin` (all delegate to
   `checksums.validate` from SP-04), `fk_intact` (every non-null child FK value
   resolves to a parent PK), and `no_orphan_children` (every child row has a
-  non-null FK value). The two FK validators implement the SDV HMA1 parent-first
-  DAG pattern (sdv-dev/SDV, MIT). `validate(outputs, config)` is the single
+  non-null FK value). The two FK validators implement the parent-first DAG
+  pattern of the SDV HMA1 method (Patki et al., IEEE DSAA 2016; method only, no
+  SDV code is used: SDV is BUSL-1.1). `validate(outputs, config)` is the single
   entry point; it returns a frozen `ValidationReport` and never mutates output.
   The `ValidationReport` and per-finding `ValidatorFinding` are persisted to the
   evidence manifest under `quality_metrics["validation"]["validators"]`.
