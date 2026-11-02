@@ -57,7 +57,11 @@ from decoy_engine.determinism import derive, derive_index
 from decoy_engine.errors import FpeChecksumError, FpeUnencryptableError
 from decoy_engine.execution._adapter import provider_config_to_dict
 from decoy_engine.execution._errors import ExecutionError, StrategyError
-from decoy_engine.execution._strategies._categorical import _WEIGHTED_CDF_RES, _build_cdf
+from decoy_engine.execution._strategies._categorical import (
+    _WEIGHTED_CDF_RES,
+    _admit_weights,
+    _build_cdf,
+)
 from decoy_engine.execution._strategies._fpe import (
     FF1_KEY_LABEL,
     strategy_code_for_checksum,
@@ -312,7 +316,7 @@ def _passthrough_values(values: pa.Array | pa.ChunkedArray) -> pa.Array:
 # ---------------------------------------------------------------------------
 
 
-def _categorical_config(cfg: dict[str, Any]) -> tuple[list[Any], list[float] | None]:
+def _categorical_config(cfg: dict[str, Any]) -> tuple[list[Any], list[Any] | None]:
     """Resolve + validate categories/weights, fail-closed with the oracle's codes."""
     raw_categories = cfg.get("categories")
     if (
@@ -336,7 +340,7 @@ def _categorical_config(cfg: dict[str, Any]) -> tuple[list[Any], list[float] | N
             message="categorical strategy provided no categories.",
         )
     weights_raw = cfg.get("weights")
-    weights: list[float] | None = None
+    weights: list[Any] | None = None
     if weights_raw is not None:
         if not isinstance(weights_raw, (list, tuple)) or len(weights_raw) != len(categories):
             raise StrategyError(
@@ -347,7 +351,7 @@ def _categorical_config(cfg: dict[str, Any]) -> tuple[list[Any], list[float] | N
                     f"({len(categories)})."
                 ),
             )
-        weights = [float(w) for w in weights_raw]
+        weights = _admit_weights(weights_raw)
     return categories, weights
 
 
