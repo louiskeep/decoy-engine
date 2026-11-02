@@ -22,12 +22,15 @@ values live ONLY on `SeedSpec.keys`; they are never serialized (see
 
 from __future__ import annotations
 
+import math
 import operator
 from collections.abc import Mapping
+from fractions import Fraction
 from functools import reduce
 from math import floor
 from typing import Any
 
+import numpy as np
 import polars as pl
 
 from decoy_engine import reasons
@@ -57,7 +60,12 @@ def _predicate_expr(p: Predicate, kf: pl.DataFrame, table: str) -> pl.Expr:
     target = kf.schema[p.column]
     values = list(p.value) if p.op == "in" else [p.value]
     try:
-        literal = _literals_exact(values, target)
+        try:
+            literal = _literals_exact(values, target)
+        except _LITERAL_ERRORS:
+            if p.op not in _ORDERING or not _is_real_bound(p.value, target):
+                raise
+            return _range_expr(c, p.op, p.value, target)
     except _LITERAL_ERRORS as exc:
         # Same boundary as explicit keys: polars' error text echoes the literal.
         raise SubsetConfigError(
@@ -68,6 +76,89 @@ def _predicate_expr(p: Predicate, kf: pl.DataFrame, table: str) -> pl.Expr:
     if p.op == "in":
         return c.is_in(literal.implode())
     return _OPS[p.op](c, pl.lit(literal).first())
+
+
+_ORDERING = frozenset({"lt", "le", "gt", "ge"})
+_INT_BITS: dict[type[pl.DataType], tuple[int, bool]] = {
+    pl.Int8: (8, True),
+    pl.Int16: (16, True),
+    pl.Int32: (32, True),
+    pl.Int64: (64, True),
+    pl.UInt8: (8, False),
+    pl.UInt16: (16, False),
+    pl.UInt32: (32, False),
+    pl.UInt64: (64, False),
+}
+_FLOAT_NP: dict[type[pl.DataType], type[np.floating[Any]]] = {
+    pl.Float32: np.float32,
+    pl.Float64: np.float64,
+}
+
+
+def _is_real_bound(value: object, target: pl.DataType) -> bool:
+    """An int/float literal (never bool) against an int/float column."""
+    if type(value) not in (int, float):
+        return False
+    return target.base_type() in _INT_BITS or target.base_type() in _FLOAT_NP
+
+
+def _range_expr(c: pl.Expr, op: str, value: float, target: pl.DataType) -> pl.Expr:
+    """`c <op> value` for a bound the column dtype cannot hold exactly.
+
+    Pattern: exact rational comparison (Python's own int/float ordering, which
+    compares the true values; CPython `float_richcompare`). The bound is moved
+    to the nearest value of the column's dtype on the correct side, computed
+    with `fractions.Fraction`, so nothing rounds: `c < 1.5` on integers is
+    `c <= 1`, `c < 2**53 + 1` on Float64 is `c <= 2**53`. A bound beyond the
+    dtype's range selects every non-null row or none.
+    """
+    upper = op in ("lt", "le")  # the column must lie below the bound
+    if isinstance(value, float) and math.isnan(value):
+        raise ValueError("NaN range bound")
+    if isinstance(value, float) and math.isinf(value):
+        below_all = value < 0
+        return c.is_not_null() if upper != below_all else pl.lit(False)
+    bound = Fraction(value)
+    base = target.base_type()
+    if base in _INT_BITS:
+        bits, signed = _INT_BITS[base]
+        lo, hi = (-(2 ** (bits - 1)), 2 ** (bits - 1) - 1) if signed else (0, 2**bits - 1)
+        if upper:
+            edge = math.ceil(bound) - 1 if op == "lt" else math.floor(bound)
+            if edge < lo:
+                return pl.lit(False)
+            return c.is_not_null() if edge >= hi else c <= pl.lit(edge, dtype=target)
+        edge = math.floor(bound) + 1 if op == "gt" else math.ceil(bound)
+        if edge > hi:
+            return pl.lit(False)
+        return c.is_not_null() if edge <= lo else c >= pl.lit(edge, dtype=target)
+    # Float column: the bound is not a dtype value, so lt == le and gt == ge.
+    edge_f = _float_edge(bound, _FLOAT_NP[base], down=upper)
+    return c <= pl.lit(edge_f, dtype=target) if upper else c >= pl.lit(edge_f, dtype=target)
+
+
+def _float_edge(bound: Fraction, ftype: type[np.floating[Any]], *, down: bool) -> float:
+    """The largest dtype float <= `bound` (`down`), else the smallest >= it.
+
+    Infinity is a dtype value, so a bound beyond the finite range lands on
+    the largest finite value or on an infinity, which keeps the comparison
+    exact for infinite column values too.
+    """
+    with np.errstate(over="ignore"):
+        try:
+            f = ftype(float(bound))
+        except OverflowError:
+            f = ftype(math.inf if bound > 0 else -math.inf)
+
+    def ok(x: np.floating[Any]) -> bool:
+        if math.isinf(x):
+            return bool(x < 0) if down else bool(x > 0)
+        return Fraction(float(x)) <= bound if down else Fraction(float(x)) >= bound
+
+    step = ftype(-math.inf if down else math.inf)
+    while not ok(f):
+        f = np.nextafter(f, step)
+    return float(f)
 
 
 def _select_sample(spec: SeedSpec, kf: pl.DataFrame, job_seed: bytes) -> tuple[frozenset[int], int]:
