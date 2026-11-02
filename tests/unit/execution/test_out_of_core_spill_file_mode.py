@@ -15,6 +15,7 @@ import shutil
 import stat
 import tempfile
 from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -29,12 +30,24 @@ ROWS = 3000
 
 
 @pytest.fixture(params=UMASKS, ids=lambda m: f"umask{m:04o}")
-def umask(request: pytest.FixtureRequest) -> Iterator[int]:
-    old = os.umask(request.param)
+def umask_value(request: pytest.FixtureRequest) -> int:
+    return int(request.param)
+
+
+@contextmanager
+def _umask(value: int) -> Iterator[int]:
+    old = os.umask(value)
     try:
-        yield request.param
+        yield value
     finally:
         os.umask(old)
+
+
+@pytest.fixture
+def umask(umask_value: int) -> Iterator[int]:
+    # Applied before the test body: only for tests that create no input of their own.
+    with _umask(umask_value):
+        yield umask_value
 
 
 class _Recorder:
@@ -160,10 +173,11 @@ _EXPECTED = (
 
 
 def test_out_of_core_scratch_files_are_0600_and_dirs_0700(
-    tmp_path: Path, umask: int, recorder: _Recorder
+    tmp_path: Path, umask_value: int, recorder: _Recorder
 ) -> None:
-    descriptors, lazy = _sources(tmp_path)
-    result = run(_config(tmp_path, descriptors), lazy, execution_mode="out_of_core")
+    descriptors, lazy = _sources(tmp_path)  # inputs, and the recorder's temp base: before the umask
+    with _umask(umask_value) as umask:
+        result = run(_config(tmp_path, descriptors), lazy, execution_mode="out_of_core")
     assert result.quality_metrics["execution"]["execution_mode"] == "out_of_core"
 
     files = {k: v for k, v in recorder.files.items() if _engine_owned(k)}
@@ -260,7 +274,9 @@ def test_external_sort_runs_and_merges_are_0600(
     assert dir_mode == 0o700, (oct(umask), oct(dir_mode))
 
 
-def test_multi_parent_merge_files_are_0600(tmp_path: Path, umask: int, recorder: _Recorder) -> None:
+def test_multi_parent_merge_files_are_0600(
+    tmp_path: Path, umask_value: int, recorder: _Recorder
+) -> None:
     from decoy_engine.execution.out_of_core._multi_parent import merge_parent_relations
     from decoy_engine.execution.out_of_core._relation import ParentKeyRelation
 
@@ -274,7 +290,8 @@ def test_multi_parent_merge_files_are_0600(tmp_path: Path, umask: int, recorder:
             path,
         )
         members.append(ParentKeyRelation(path=path))
-    merged = merge_parent_relations(members, temp_dir=base / "group_0", memory_limit=None)
+    with _umask(umask_value) as umask:  # the member inputs above are written before it applies
+        merged = merge_parent_relations(members, temp_dir=base / "group_0", memory_limit=None)
     recorder._note(merged.path)
     recorder.tree(base / "group_0")
     files = {k: v for k, v in recorder.files.items() if k.startswith("group_0")}

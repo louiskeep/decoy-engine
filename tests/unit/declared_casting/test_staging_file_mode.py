@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import stat
 from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -21,10 +22,15 @@ UMASKS = (0o000, 0o077, 0o777)
 
 
 @pytest.fixture(params=UMASKS, ids=lambda m: f"umask{m:04o}")
-def umask(request: pytest.FixtureRequest) -> Iterator[int]:
-    old = os.umask(request.param)
+def umask_value(request: pytest.FixtureRequest) -> int:
+    return int(request.param)
+
+
+@contextmanager
+def _umask(value: int) -> Iterator[int]:
+    old = os.umask(value)
     try:
-        yield request.param
+        yield value
     finally:
         os.umask(old)
 
@@ -62,10 +68,12 @@ def _lazy(tmp_path: Path, rows: int) -> Any:
 
 
 @pytest.mark.parametrize("rows", [5000, 0], ids=["rows", "zero_rows"])
-def test_staged_copy_is_0600_while_written_and_after(tmp_path: Path, umask: int, rows: int) -> None:
+def test_staged_copy_is_0600_while_written_and_after(
+    tmp_path: Path, umask_value: int, rows: int
+) -> None:
     from decoy_engine.declared_casting._stream import run_staged
 
-    source = _lazy(tmp_path, rows)  # written before the umask applies to anything of ours
+    source = _lazy(tmp_path, rows)  # an input: written before the umask applies
     caller = tmp_path / "caller-root"
     run = _Run(caller)
     seen: dict[str, Any] = {}
@@ -77,7 +85,9 @@ def test_staged_copy_is_0600_while_written_and_after(tmp_path: Path, umask: int,
         return "ok"
 
     call = {"cast_run": run, "plan": object(), "sources": {"t": source}, "temp_dir": caller}
-    assert run_staged(fn, call, 1000) == "ok"
+    # The engine runs, and creates the missing caller-root, under the umask.
+    with _umask(umask_value) as umask:
+        assert run_staged(fn, call, 1000) == "ok"
 
     assert len(seen["after"]) == 1, seen  # non-vacuity: exactly one staged copy was observed
     assert set(seen["after"].values()) == {0o600}, (oct(umask), seen["after"])
