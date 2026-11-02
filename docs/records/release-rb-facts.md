@@ -1,8 +1,10 @@
 # Engine release R-b: facts for the platform and CLI repin
 
-Status: prepared, not tagged. Branch `chore/release-rb-prep` off engine main `da1a522f`, which carries
-#361 (A-4 file-access policy and secret providers reconciled onto main, F13, E1 owner-only secret
-files), #360 (typed out-of-core temporal FK seam) and #359 (closed-set SBOM errors). The tag is cut by
+Status: prepared, not tagged. Branch `chore/release-rb-prep`, cut off engine main `da1a522f` and brought up
+to date by merging main `0173c05e`. It carries #363 (exact-integer categorical CDF builder), #362
+(generated NOTICE, license allowlist gate, SDV citation fixes and import sentry), #361 (A-4 file-access
+policy and secret providers reconciled onto main, F13, E1 owner-only secret files), #360 (typed
+out-of-core temporal FK seam) and #359 (closed-set SBOM errors). The tag is cut by
 `scripts/release/cut-release.sh` from main after this branch merges; until then the sha below is a
 placeholder.
 
@@ -24,7 +26,8 @@ cloud --python 3.10.20`, then `.venv/bin/python`).
 
 Why 0.18.0. The newest tag is `v0.17.0` (`git ls-remote --tags origin \| sort -V -k2 \| tail -1`), so
 0.18.0 is the next minor. This release breaks consumers (a `file:` mask secret with group or other
-permission bits is refused; `quarantine.write_jsonl_staged` returns an `OutputTxn`; registry 1.2.0).
+permission bits is refused; `quarantine.write_jsonl_staged` returns an `OutputTxn`; registry 1.2.0;
+weighted categorical masked output moves).
 Compatibility contract section 5 calls for a deprecation path or a major bump for those, but section 1
 puts the project in pre-GA, where engineering best practices section 8.1 (pre-GA = hard delete) needs no
 shims, and section 7 accepts that a 0.x minor may break. 1.0.0 is kept for GA (`RELEASE_PHASE` flips to
@@ -53,6 +56,8 @@ DP certified rows, and the Phase F FR0 manifest (`engine_minor`).
 | File-access entry points | `42` | `python -c "import decoy_engine.fileaccess as f; print(len(f.ENTRY_POINTS))"` |
 | DP certified row, engine dev/CI profile (77 dists, 3.10.20) | `31ecf94503eff107631191426072eee757af72a2229ab594d2fc2e8e6bfac7b1` | `python -c "from decoy_engine.quality import dp_provenance as d; print(d.compute_lock_fingerprint(d.installed_distribution_set())); d.check_fit_environment()"` |
 | DP certified row, CLI runtime profile (65 dists) | `b643894ded2ab84c4a0a9d9032a1de3d2330db89161f231e509024428b7533f3` | in the CLI repo, after the repin: `.venv-certified/bin/python scripts/cert_smoke.py` |
+| `NOTICE` (generated from the lock, 103 pins) | sha256 `6e9be238acf9f205677b6d74019d872998fa5492dd2aab2838f46f64dd65469a`; regenerates byte-identical | `DECOY_VENV=.venv scripts/dev/licenses_write.sh && git diff --exit-code NOTICE` (prints `licenses: NOTICE matches the lock and every license is allowed`) |
+| License gate | `63 passed` | `DECOY_LICENSE_STRICT=1 python -m pytest tests/sentry/test_license_policy.py tests/sentry/test_sdv_import_sentry.py` |
 | SBOM of this lock (CycloneDX 1.6, reproducible) | sha256 `d9e8bb93d59ce00849e19bd7385d38709e08b23d298237348502906ff808d37a`, root `decoy-engine 0.18.0`, 40 components | `scripts/release/sbom.sh uv.lock /tmp/sbom.cdx.json && sha256sum /tmp/sbom.cdx.json` |
 
 The engine row was installed: setting only `decoy-engine` back to `0.17.0` in the 77-dist set
@@ -60,6 +65,14 @@ reproduces the old row `5a76ea92...` exactly. The CLI row is derived, not instal
 CLI's `requirements-certified.txt` (CLI main `a5d36b4`) plus `decoy-engine 0.17.0` and `decoy-cli 0.1.0`
 hash to the old row `a7b40d54...` exactly, and the same set with `decoy-engine 0.18.0` hashes to
 `b643894d...`. `cert_smoke.py` on a real install is the proof of record.
+
+Merging main `0173c05e` (#362, #363) moved none of the pins: it changes no dependency, `pyproject.toml`,
+`uv.lock` or reason identity. Re-derived on the merged head with the lock environment: the version
+agreement test (8 passed), `reason_release_pin.py --check` (`reason release pin current: registry 1.2.0,
+893`), the engine DP row (`31ecf945...`, and `check_fit_environment()` passes), `python
+scripts/gen_proof_manifest.py` and `python -m tests.parity._fr0_refreeze > tests/fixtures/phase_f_fr0/manifest.json`
+(both rewrite their files byte-identical: `git status` clean afterwards). The CLI-profile DP row hashes
+distribution names and versions only, so it does not move either.
 
 ## Pin sites the consumers hold
 
@@ -99,6 +112,7 @@ Command: `grep -rn '0\.17\.0\|a7b40d54\|1132d29e' pyproject.toml tests .github r
 | Platform | The pin sites above. The 3a key-provider work (moving off `SecretKeyProvider(..., key_version="v1")` in `api/engine_a8_guard.py` and the vault tests) is separate and not required by R-b: `SecretKeyProvider` is unchanged. | — | — |
 | CLI | Test fixtures that write a `file:` secret must `chmod 0o600` it: `tests/e2e/test_tokenize_cli.py` `_mask_secret_ref` (line 46) and the weak-secret cases (lines 344, 705), plus any other `file:` secret a test writes. The weak-secret cases expect `weak_mask_secret`; a group- or world-readable file is refused for its mode first. | `runtime.secret_file_permissions_unsafe` | `grep -rn 'file:{' tests` |
 | CLI | User guidance that suggests `file:/PATH` (`src/decoy/_mask_secret_guidance.py`, the gdpr/pci/hipaa templates) should say the file must be owner-only (`chmod 600`). | same | `grep -rn 'file:/PATH' src` |
+| Platform, CLI | Any golden, snapshot or expected value of weighted categorical masked output (`strategy: categorical` with `weights`) must be re-captured: at least one CDF threshold moves in about 99% of weight vectors (at most one slot each; a row changes category with probability about 5e-5; `[1, 1, 1]` gives `[333333, 666667, 1000000]`). Output is now the same on 3.10, 3.11 and 3.12. Configs with a `bool`, `Decimal` or `Fraction` weight, a weight under one slot after rounding, or a total above the largest double are refused. A grep of platform main `0ace724` found no pinned weighted categorical output. | CDF thresholds round half up over exact integers (#363) | `git grep -n -i 'categorical' -- tests \| grep -i weight` |
 | CLI | The pin sites above, including the certified fingerprint. Without the new header and an engine-0.18.0 install, `fit_dp_snapshot` refuses with `dp_stack_uncertified`. | DP row `b643894d...` | `grep -n a7b40d54 requirements-certified.txt scripts/cert_smoke.py` |
 
 ## Public surface removed or changed since v0.17.0
@@ -120,7 +134,8 @@ No public module and no exported symbol was removed or renamed. `CodeSetConfig` 
 | `ProviderSpec.seed`, `ValuePool.seed`, `SeedEnvelope.job_seed`, `StrategyContext.job_seed` / `.mask_key`, `ShadowContext.job_seed` / `.mask_key` | `repr=False`: no longer in `repr()` | `git grep -n 'repr=False' v0.17.0 HEAD -- src` (1 site at v0.17.0) |
 | Out-of-core temporal FK columns | publish the resolved unit of the key (were always `timestamp[us]`); an instant outside it is refused with `out_of_core_fk_key_dtype_unsupported` | `git grep -n 'def fk_output_array' HEAD -- src/decoy_engine/execution/out_of_core/_join.py`; CHANGELOG `[0.18.0]` "typed temporal FK seam" |
 
-Behavioral, not a Python symbol: `env:` and `file:` secrets are never cached even with a positive
+Behavioral, not a Python symbol: weighted categorical masking moves output as described under "What
+consumers must change" (`_build_cdf` is private; its refusals now carry the index only, no weight value). `env:` and `file:` secrets are never cached even with a positive
 `SecretCachePolicy` TTL; under an installed strict policy `FileAccessDenied`, `FileAccessUnavailable`,
 `MemoryError` and `ENOMEM`/`ENOSPC`/`EDQUOT` keep their class across secret admission.
 
@@ -128,10 +143,32 @@ Additive since v0.17.0 (no repin action): `decoy_engine.fileaccess` (+ `.adapter
 `.pandas`, `.polars`, `.serial`), `fileaccess.reset_for_tests()`, `context.OpaqueBox`,
 `LazySource.iter_batches(columns=)` / `to_table(columns=)`.
 
-## Not in R-b
+## Suite baseline on 3.10 and 3.12
 
-- `fix/cdf-exact-arithmetic` (the `test_skewed_weights_skew_cdf` failure on 3.12) is not merged: only
-  `plan/cdf-exact-arithmetic` exists on the remote (`git ls-remote origin | grep -i cdf`).
+Full suite, branch head `d9c17afa` against merged main `0173c05e`, compared by test id (junit XML). Lock
+venvs from `uv sync --frozen --extra dev --extra lint --extra vault --extra cloud --extra xdist --python
+3.10.20` (and `--python 3.12.3`), one per tree, run with `python -m pytest -n 4 tests`. The `xdist` extra
+takes the venv out of the certified DP profile, so 84 certified-DP tests skip there; their seven files were
+re-run serially in the plain lock venv (3.10.20, no xdist): `221 passed`.
+
+| Interpreter | Main `0173c05e` | Branch `d9c17afa` | Differences by test id |
+|---|---|---|---|
+| CPython 3.10.20 | 2 failed, 32093 passed, 5371 skipped, 6 xfailed, 65 xpassed | 32096 passed, 5371 skipped, 6 xfailed, 65 xpassed | the two census tests below (failed -> passed); one new id, `test_perf_claims_cite_a_measurement[docs/records/release-rb-facts.md]` (passed) |
+| CPython 3.12.3 | 2 failed, 32093 passed, 5371 skipped, 6 xfailed, 65 xpassed | 32096 passed, 5371 skipped, 6 xfailed, 65 xpassed | same as 3.10 |
+
+| Row | 3.10.20 | 3.12.3 |
+|---|---|---|
+| Categorical CDF (`tests/unit/execution/test_categorical_weighted.py::TestCdfBuilder::test_skewed_weights_skew_cdf`) | passes | passes (failed on 3.12 before #363) |
+| `tests/fileaccess/test_char_sink_publish.py::test_nul_and_overlong_names_fail_at_write_not_at_validation` | passes | passes; also passes on CPython 3.12.13, where it failed before this branch: 3.12.13 and 3.13 word the error `unlink: embedded null character in path`, 3.10 to 3.12.3 `embedded null byte`. The match accepts both; the `ValueError` and nothing-written assertions are unchanged |
+| `tests/sentry/test_secret_material_census.py` (2 tests) | fail on main, pass on the branch | same |
+
+The census failure is on main `0173c05e` itself: #362 turned one-line SDV citation comments in
+`context.py` and `transforms/grouped_series.py` into two lines, which moved six census bindings down one
+line. The branch re-derives `tests/sentry/secret_material_census.json` with `python
+scripts/secret_material_census.py --write` (line numbers only; 258 entries, 0 unreviewed).
+
+The 3.12 rows are from the lock resolved with `--python 3.12` in this container (3.12.3). A full suite on
+3.12.13 was not run.
 
 ## Not run here
 
@@ -139,3 +176,4 @@ Additive since v0.17.0 (no repin action): `decoy_engine.fileaccess` (+ `.adapter
 - The native companion build and the GitHub native release workflow (`native-companion-release.yml`).
 - The CLI-profile DP row on a real install (`cert_smoke.py`); derived by hash only, as stated above.
 - The platform and CLI repins themselves.
+- The full suite on CPython 3.12.13 (only `tests/fileaccess/test_char_sink_publish.py` ran there).
