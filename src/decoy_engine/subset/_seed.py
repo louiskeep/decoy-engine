@@ -25,6 +25,7 @@ from __future__ import annotations
 import math
 import operator
 from collections.abc import Mapping
+from decimal import Decimal
 from fractions import Fraction
 from functools import reduce
 from math import floor
@@ -96,45 +97,95 @@ _FLOAT_NP: dict[type[pl.DataType], type[np.floating[Any]]] = {
 
 
 def _is_real_bound(value: object, target: pl.DataType) -> bool:
-    """An int/float literal (never bool) against an int/float column."""
-    if type(value) not in (int, float):
+    """An int, float or Decimal literal (never bool) against an int, float or Decimal column."""
+    if type(value) not in (int, float, Decimal):
         return False
-    return target.base_type() in _INT_BITS or target.base_type() in _FLOAT_NP
+    base = target.base_type()
+    return base in _INT_BITS or base in _FLOAT_NP or base is pl.Decimal
 
 
-def _range_expr(c: pl.Expr, op: str, value: float, target: pl.DataType) -> pl.Expr:
-    """`c <op> value` for a bound the column dtype cannot hold exactly.
+# |exponent| past every dtype's reach: Float64 tops out near 1e308 and its
+# smallest subnormal is near 5e-324; polars Decimal holds 38 digits at scale <= 38.
+_EXP_CLAMP = 400
 
-    Pattern: exact rational comparison (Python's own int/float ordering, which
-    compares the true values; CPython `float_richcompare`). The bound is moved
-    to the nearest value of the column's dtype on the correct side, computed
-    with `fractions.Fraction`, so nothing rounds: `c < 1.5` on integers is
-    `c <= 1`, `c < 2**53 + 1` on Float64 is `c <= 2**53`. A bound beyond the
-    dtype's range selects every non-null row or none.
+
+def _exact_bound(value: float | Decimal) -> Fraction:
+    """`value` as an exact rational; a Decimal exponent is clamped first.
+
+    Fraction(Decimal("1E+999999999")) builds a billion-digit integer. Any
+    exponent beyond `_EXP_CLAMP` orders the same against every dtype value as
+    10**±_EXP_CLAMP of the same sign, so the clamp changes no comparison.
     """
-    upper = op in ("lt", "le")  # the column must lie below the bound
-    if isinstance(value, float) and math.isnan(value):
-        raise ValueError("NaN range bound")
-    if isinstance(value, float) and math.isinf(value):
-        below_all = value < 0
-        return c.is_not_null() if upper != below_all else pl.lit(False)
-    bound = Fraction(value)
+    if isinstance(value, Decimal) and value and abs(value.adjusted()) > _EXP_CLAMP:
+        sign = -1 if value.is_signed() else 1
+        if value.adjusted() > 0:
+            return Fraction(sign * 10**_EXP_CLAMP)
+        return Fraction(sign, 10**_EXP_CLAMP)
+    return Fraction(value)
+
+
+def _grid(target: pl.DataType) -> tuple[int, int, int]:
+    """(scale, lowest k, highest k): an int or Decimal dtype holds exactly k / 10**scale."""
     base = target.base_type()
     if base in _INT_BITS:
         bits, signed = _INT_BITS[base]
         lo, hi = (-(2 ** (bits - 1)), 2 ** (bits - 1) - 1) if signed else (0, 2**bits - 1)
-        if upper:
-            edge = math.ceil(bound) - 1 if op == "lt" else math.floor(bound)
-            if edge < lo:
-                return pl.lit(False)
-            return c.is_not_null() if edge >= hi else c <= pl.lit(edge, dtype=target)
-        edge = math.floor(bound) + 1 if op == "gt" else math.ceil(bound)
-        if edge > hi:
+        return 0, lo, hi
+    if not isinstance(target, pl.Decimal) or target.precision is None:
+        raise TypeError("not an integer or Decimal dtype")
+    top = 10**target.precision - 1
+    return target.scale, -top, top
+
+
+def _grid_lit(k: int, scale: int, target: pl.DataType) -> pl.Expr:
+    if isinstance(target, pl.Decimal):
+        # A string builds the Decimal exactly; arithmetic would round to 28 digits.
+        return pl.lit(Decimal(f"{k}E-{scale}"), dtype=target)
+    return pl.lit(k, dtype=target)
+
+
+def _range_expr(c: pl.Expr, op: str, value: float | Decimal, target: pl.DataType) -> pl.Expr:
+    """`c <op> value` for a bound the column dtype cannot hold exactly.
+
+    Pattern: exact rational comparison (Python's own int/float/Decimal
+    ordering, which compares the true values; CPython `float_richcompare`).
+    The bound is moved to the nearest value of the column's dtype on the
+    correct side, computed with `fractions.Fraction`, so nothing rounds:
+    `c < 1.5` on integers is `c <= 1`, `c < 1.005` on Decimal(10, 2) is
+    `c <= 1.00`, `c < 2**53 + 1` on Float64 is `c <= 2**53`. A bound beyond
+    the dtype's range selects every non-null row or none.
+    """
+    upper = op in ("lt", "le")  # the column must lie below the bound
+    if (isinstance(value, Decimal) and value.is_nan()) or (
+        isinstance(value, float) and math.isnan(value)
+    ):
+        raise ValueError("NaN range bound")
+    base = target.base_type()
+    if isinstance(value, Decimal) and value.is_infinite() and base in _FLOAT_NP:
+        # Float columns hold infinities; compare against the float infinity itself.
+        return _OPS[op](c, pl.lit(float(value), dtype=target))
+    # math.isinf(Decimal("1E+400")) is True: it converts to float first.
+    if (isinstance(value, Decimal) and value.is_infinite()) or (
+        isinstance(value, float) and math.isinf(value)
+    ):
+        below_all = value < 0
+        return c.is_not_null() if upper != below_all else pl.lit(False)
+    bound = _exact_bound(value)
+    if base in _FLOAT_NP:
+        # The bound is not a dtype value, so lt == le and gt == ge.
+        edge_f = _float_edge(bound, _FLOAT_NP[base], down=upper)
+        return c <= pl.lit(edge_f, dtype=target) if upper else c >= pl.lit(edge_f, dtype=target)
+    scale, lo, hi = _grid(target)
+    scaled = bound * 10**scale
+    if upper:
+        edge = math.ceil(scaled) - 1 if op == "lt" else math.floor(scaled)
+        if edge < lo:
             return pl.lit(False)
-        return c.is_not_null() if edge <= lo else c >= pl.lit(edge, dtype=target)
-    # Float column: the bound is not a dtype value, so lt == le and gt == ge.
-    edge_f = _float_edge(bound, _FLOAT_NP[base], down=upper)
-    return c <= pl.lit(edge_f, dtype=target) if upper else c >= pl.lit(edge_f, dtype=target)
+        return c.is_not_null() if edge >= hi else c <= _grid_lit(edge, scale, target)
+    edge = math.floor(scaled) + 1 if op == "gt" else math.ceil(scaled)
+    if edge > hi:
+        return pl.lit(False)
+    return c.is_not_null() if edge <= lo else c >= _grid_lit(edge, scale, target)
 
 
 def _float_edge(bound: Fraction, ftype: type[np.floating[Any]], *, down: bool) -> float:
@@ -251,6 +302,21 @@ def _column_accepts(target: pl.DataType, family: tuple[object, str | None]) -> b
 _LITERAL_ERRORS = (pl.exceptions.PolarsError, TypeError, ValueError, OverflowError)
 
 
+def _literal_series(value: object) -> pl.Series:
+    """A one-value Series for `value`, or a `_LITERAL_ERRORS` error.
+
+    polars panics on a non-finite Decimal (a PanicException is a
+    BaseException, so no handler here would see it) and raises a bare
+    RuntimeError for a Decimal beyond Decimal128.
+    """
+    if isinstance(value, Decimal) and not value.is_finite():
+        raise ValueError("non-finite Decimal literal")
+    try:
+        return pl.Series([value], strict=True)
+    except RuntimeError as exc:
+        raise ValueError("literal outside the polars range") from exc
+
+
 def _literals_exact(values: list[Any], target: pl.DataType) -> pl.Series:
     """Convert operator literals (explicit keys, filter values) to `target`, or raise.
 
@@ -274,7 +340,7 @@ def _literals_exact(values: list[Any], target: pl.DataType) -> pl.Series:
         if value is None:
             parts.append(pl.Series([None], dtype=target))
             continue
-        src = pl.Series([value], strict=True)
+        src = _literal_series(value)
         value_family = _value_family(src.dtype)
         if family is None:
             family = value_family
